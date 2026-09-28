@@ -2,17 +2,18 @@
 
 /**
  * @file GnssTypes.hpp
- * @brief Constellation and measurement-type enums shared across the codebase.
+ * @brief Constellation, measurement-type and drop-reason enums shared across
+ *        the codebase.
  *
- * The two enums here are the most basic categorical types in the project:
  * @c System identifies a GNSS constellation (GPS / Galileo / GLONASS / etc.),
- * and @c MeasurementType classifies a row by observable category (code,
- * phase, Doppler, SNR, inertial).  These are used throughout RINEX
- * parsing, the measurement model, the Kalman filter, and trace logging.
+ * @c MeasurementType classifies a row by observable category (code, phase,
+ * Doppler, SNR, inertial), and @c DropReason records why a satellite was
+ * dropped before the Kalman update.  The first two are used throughout RINEX
+ * parsing, the measurement model, the Kalman filter and trace logging.
  *
- * Kept dependency-free (no Eigen, no LogManager) so any header in any
- * subdirectory can include this without dragging in heavier transitive
- * deps.  The inline @c classifyMeasurement helper dispatches on the
+ * The header has no dependencies beyond @c <string> (no Eigen, no LogManager),
+ * so any header in any subdirectory can include it without heavier transitive
+ * dependencies.  The inline @c classifyMeasurement helper dispatches on the
  * leading character of a RINEX-style observable key.
  */
 
@@ -36,9 +37,9 @@ namespace GnssProcessor {
     /**
      * @brief Enumeration of GNSS and auxiliary measurement types.
      *
-     * Used to classify measurement rows so that the measurement model,
-     * Jacobian builder and noise assignment can dispatch on the observable
-     * category rather than parsing the first character of RINEX codes.
+     * Classifies measurement rows so that the measurement model, Jacobian
+     * builder and noise assignment dispatch on the observable category
+     * instead of parsing the first character of RINEX codes.
      */
     enum class MeasurementType {
         Code,       /**< Pseudorange (code) measurement (RINEX 'C' observables). */
@@ -52,18 +53,19 @@ namespace GnssProcessor {
     /**
      * @brief Reason a satellite was dropped before reaching the Kalman update.
      *
-     * Produced by @c ModelGeometry::computeSatelliteGeometry and aggregated
+     * Produced by @c Model::Geometry::computeSatelliteGeometry
+     * (model/ModelGeometry.hpp) and aggregated
      * per-satellite by @c PppModel::computeModels; consumed by the
      * @c satellite_status_trace logger so the per-epoch strip chart can
-     * distinguish actionable failure modes from each other.
+     * separate the failure modes.
      *
-     * Ordering choice: @c None as 0 lets callers default-construct a reason
-     * variable that means "no failure yet".  The non-success values are
-     * ranked roughly by how much user effort it takes to fix:
-     *   @c BelowMask  -> turn a config knob;
+     * Ordering: @c None is 0, so a default-constructed reason means "no
+     * failure yet".  The other values are ranked roughly by the effort needed
+     * to remove the cause:
+     *   @c BelowMask  -> change a config knob;
      *   @c NoProduct  -> improve the product chain;
      *   @c NoModel    -> tighten or loosen ATX/BIA/signal-selection rules;
-     *   @c Eclipsing  -> unavoidable until a yaw-attitude model is wired in.
+     *   @c Eclipsing  -> unavoidable while eclipse yaw attitude is not modelled.
      */
     enum class DropReason {
         None = 0,    /**< Satellite passed all geometry / model checks. */

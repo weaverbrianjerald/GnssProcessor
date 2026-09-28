@@ -1,6 +1,6 @@
 /**
  * @file NetworkCanonicalPairAdmission.cpp
- * @brief Card CPA: canonical-pair admission (see NetworkCanonicalPairAdmission.hpp).
+ * @brief Canonical-pair admission, card CPA (design in NetworkCanonicalPairAdmission.hpp).
  */
 #include "filter/NetworkCanonicalPairAdmission.hpp"
 
@@ -22,14 +22,14 @@ namespace GnssProcessor {
 
         /// @brief The station's canonical pairs, keyed by constellation display name.
         ///
-        /// Read straight off the model's latch: @c PppModel::exportCanonicalSignals
-        /// returns one row per DECIDED (constellation, band, obs-type), so a
-        /// constellation absent from the result simply has not been decided yet.
-        /// The four slots are filled by the RINEX band DIGIT of the latched code,
-        /// which is what the evidence's emulation meant by "band 1" and "band 2"
-        /// and needs no second band-name table here.  A constellation that cannot
-        /// fill all four (Galileo, whose band digits are 1/5/7/6, is the structural
-        /// case) ends with @c CanonicalPair::decided() false and is never screened.
+        /// Read directly from the model's latch: @c PppModel::exportCanonicalSignals
+        /// returns one row per decided (constellation, band, obs-type), so a
+        /// constellation absent from the result has not been decided yet.  The four
+        /// slots are filled by the RINEX band digit of each latched signal code,
+        /// which matches what the emulation meant by "band 1" and "band 2" and needs
+        /// no second band-name table.  A constellation that cannot fill all four
+        /// (structurally Galileo, whose band digits are 1/5/7/6) ends with
+        /// @c CanonicalPair::decided() false and is never screened.
         std::map<std::string, CanonicalPair> latchedPairs(const PppModel& model) {
             std::map<std::string, CanonicalPair> out;
             for (const auto& e : model.exportCanonicalSignals()) {
@@ -45,9 +45,9 @@ namespace GnssProcessor {
 
         /// @brief True when all four canonical observables are present in the record.
         ///
-        /// "Present" is a key in @c measurements: the parser inserts nothing for a
-        /// blank RINEX field, and under @c processing.rinex_skip_zero_values nothing
-        /// for a written-0.0 sentinel either, so key presence IS the tracking state.
+        /// "Present" means a key in @c measurements: the parser inserts nothing for a
+        /// blank RINEX field, nor, under @c processing.rinex_skip_zero_values, for a
+        /// written 0.0 sentinel, so key presence is the tracking state.
         bool pairHeld(const RinexObservation& o, const CanonicalPair& p) {
             return o.measurements.count(p.l1) && o.measurements.count(p.c1)
                 && o.measurements.count(p.l2) && o.measurements.count(p.c2);
@@ -63,9 +63,9 @@ namespace GnssProcessor {
                                         long long epoch_idx, int keep) {
         CanonicalPairStep s;
         if (good) {
-            // The RE-COUPLING edge is read BEFORE the state is updated: the gap it
-            // reports is the run of withheld epochs that ends here, which is the
-            // quantity a reader needs to size what was reconnected.
+            // The re-coupling edge is read before the state is updated: the gap it
+            // reports is the run of withheld epochs that ends here, which sizes what
+            // was reconnected.
             s.readmit_edge = tr.withheld_ep > 0;
             s.gap_ep       = tr.withheld_ep;
             s.action       = CanonicalPairAction::AdmitGood;
@@ -73,21 +73,21 @@ namespace GnssProcessor {
             tr.withheld_ep = 0;
             return s;
         }
-        // Not good.  Never good at all ⇒ before_first, whatever the tolerance: a
-        // tolerance is a licence to carry a value FORWARD from a good epoch, and
-        // there is none to carry.
+        // Not good.  A pair that has never been good is before_first regardless of
+        // the tolerance: the tolerance carries admission forward from a good epoch,
+        // and there is none to carry from.
         const bool never = tr.last_good < 0;
         const long long since = never ? 0 : epoch_idx - tr.last_good;
         if (!never && since <= static_cast<long long>(keep)) {
             s.action = CanonicalPairAction::AdmitWithinKeep;
             s.gap_ep = since;
-            // An admitted epoch closes nothing and opens nothing: a pair inside the
-            // tolerance was never withheld, so neither edge is crossed here.
+            // An epoch admitted within the tolerance crosses neither edge: the pair
+            // was not withheld, so nothing opens or closes here.
             return s;
         }
         s.action = never ? CanonicalPairAction::WithholdBeforeFirst
                          : CanonicalPairAction::WithholdBeyondKeep;
-        s.withhold_edge = tr.withheld_ep == 0;   // the DECOUPLING edge, once per run
+        s.withhold_edge = tr.withheld_ep == 0;   // the decoupling edge, once per run of withholds
         s.gap_ep        = since;
         ++tr.withheld_ep;
         return s;
@@ -129,17 +129,17 @@ namespace GnssProcessor {
         if (!st.armed) return se_in;           // byte-identical path: no copy, no walk
 
         auto& ctr = ctx.counters.cpa;
-        // THE processed-epoch clock of this card.  Its own counter rather than the
-        // slip-QC one: that index is advanced inside PASS A, downstream of this
-        // seam, and an epoch PASS A skips never advances it at all, so a gap
-        // measured against it would silently stop counting exactly where a station
-        // dropped out.  One increment per seam invocation counts every epoch that
-        // reached the epoch body, which is the emulation's own clock.
+        // The processed-epoch clock of this card.  It is a separate counter, not
+        // the slip-QC index: that index is advanced inside PASS A, downstream of
+        // this seam, and an epoch PASS A skips does not advance it, so a gap
+        // measured against it would stop counting where a station dropped out.
+        // One increment per seam invocation counts every epoch that reached the
+        // epoch body, which is the clock the emulation used.
         const long long epoch_idx = st.epochs++;
         ++ctr.epochs;
 
-        // Pass 1 decides, on the CALLER's epoch, and records what must go.  The
-        // copy is taken only if pass 1 found something, so an armed epoch that
+        // Pass 1 decides on the caller's epoch and records what must be removed.
+        // The copy is taken only if pass 1 found something, so an armed epoch that
         // withholds nothing costs one walk and no allocation.
         std::vector<std::pair<int, std::string>> kill;   // (station index, satellite)
 
@@ -155,17 +155,17 @@ namespace GnssProcessor {
                 auto pit = cache.find(cons);
                 if (pit == cache.end()) {
                     // First sighting of this constellation at this station, or the
-                    // latch had not been decided the last time we looked.  The latch
-                    // is written once and never revised, so this refresh stops as
-                    // soon as it yields an entry.
+                    // latch was still undecided at the previous lookup.  The latch
+                    // is written once and never revised, so the refresh stops once
+                    // it yields an entry.
                     if (!stations[i].model) continue;
                     auto fresh = latchedPairs(*stations[i].model);
                     auto fit = fresh.find(cons);
                     if (fit == fresh.end()) {
                         // Undecided: the station has not yet run computeModels for
-                        // this constellation (its first epoch is decided INSIDE
-                        // PASS A, downstream of here).  Left untouched, and retried
-                        // next epoch.
+                        // this constellation (the latch for its first epoch is
+                        // decided inside PASS A, downstream of here).  Left
+                        // untouched and retried next epoch.
                         ++ctr.unscreened;
                         continue;
                     }
@@ -173,8 +173,8 @@ namespace GnssProcessor {
                 }
                 if (!pit->second.decided()) {
                     // A constellation the latch decided but that has no canonical
-                    // pair on band digits 1 and 2 at all (Galileo's digits are
-                    // 1/5/7/6) is outside this rule and is LEFT UNTOUCHED.
+                    // pair on band digits 1 and 2 (Galileo's digits are 1/5/7/6) is
+                    // outside this rule and is left untouched.
                     ++ctr.unscreened;
                     continue;
                 }
@@ -233,12 +233,12 @@ namespace GnssProcessor {
 
         if (kill.empty()) return se_in;         // nothing withheld: no copy this epoch
 
-        // Pass 2: the ONE copy, and the erase.  The record leaves the epoch whole,
-        // never a per-signal edit, so every downstream consumer (computeModels, the
-        // T0 detectors, networkComputeRawObservables, assembly, the RAIM pools, the
-        // traces) sees exactly what it would have seen had the RINEX record been
-        // missing, and the row-level gap re-entry tier reads the return as a
-        // RE-ENTRY rather than as a continuing arc.
+        // Pass 2: the single copy, then the erase.  The whole record leaves the
+        // epoch (never a per-signal edit), so every downstream consumer
+        // (computeModels, the T0 detectors, networkComputeRawObservables, assembly,
+        // the RAIM pools, the traces) sees what it would see had the RINEX record
+        // been missing, and the row-level gap re-entry tier reads the return as a
+        // re-entry rather than as a continuing arc.
         scratch = se_in;
         ++ctr.epochs_copied;
         std::size_t k = 0;

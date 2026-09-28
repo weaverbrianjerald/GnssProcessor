@@ -1,36 +1,36 @@
 /**
  * @file test_resume_signal_canon_restore.cpp
- * @brief Contract tests for the RS-8 CANONICAL-SIGNAL continuity card
+ * @brief Contract tests for the RS-8 canonical-signal continuity card
  *        (docs/SPEC_event_harness.md §21.16): the snapshot's format-forward
  *        @c CN records (one per (station roster index, constellation, band,
- *        C|L) naming the locked RINEX code), the loader's side of the write
+ *        C|L), naming the locked RINEX code), the loader's side of the write
  *        knob (@c network.state_snapshot_signal_capture) and the read knob
  *        (@c network.resume_signal_canon_restore), and @c PppModel's
  *        export / restore pair.
  *
- * The defect this pins: @c PppModel::decideConstellationCanonicals picks each
- * station's per-(band, obs-type) canonical signal from that station's FIRST
- * processed epoch's satellite counts and LOCKS it for the run.  The latch was in
- * no snapshot, so a warm resume re-decided it from the resume epoch's counts —
- * GAMB00PYF flipped L2X→L2W, CPVG00CPV L2W→L2X — which changed the L2X tracker
- * set, left the eq34 L2X component without its datum receiver, and stepped six
- * phase-bias families ~25 m at the seam.
+ * Background: @c PppModel::decideConstellationCanonicals picks each station's
+ * per-(band, obs-type) canonical signal from the satellite counts of that
+ * station's first processed epoch and locks it for the run.  Without the @c CN
+ * records a warm resume re-decides the latch from the resume epoch's counts and
+ * can pick a different signal.  In the field this flipped L2X/L2W at two
+ * stations, changed the L2X tracker set, left the eq34 L2X component without its
+ * datum receiver and stepped six phase-bias families by about 25 m at the seam.
  *
- * What is locked here:
- *   (a) the rows round-trip through the snapshot TEXT under the EXISTING header
+ * Checked here:
+ *   (a) the rows round-trip through the snapshot text under the existing header
  *       (format-forward, not a version bump), preserving per-station order;
- *   (b) a malformed @c CN row is a HARD parse failure — the @c RC / @c SD
- *       precedent — including an obs-type that is neither 'C' nor 'L', which
- *       would install an entry no lookup can ever match and so read as a cold
- *       latch for that band;
- *   (c) a snapshot with no @c CN rows restores nothing (an old file keeps
- *       today's re-decide behaviour) and the write knob OFF emits none of them;
+ *   (b) a malformed @c CN row is a hard parse failure (the @c RC / @c SD
+ *       precedent), including an obs-type that is neither 'C' nor 'L', which
+ *       would install an entry no lookup can match and so act as a cold latch
+ *       for that band;
+ *   (c) a snapshot with no @c CN rows restores nothing (an old file keeps the
+ *       re-decide behaviour) and with the write knob off none are emitted;
  *   (d) @c PppModel::exportCanonicalSignals / @c restoreCanonicalSignals
- *       round-trip, and — the whole point of the card — a RESTORED latch is not
- *       re-decided by the next epoch's tally even when that tally would pick a
- *       different signal, while the same model WITHOUT the restore does flip;
+ *       round-trip, and a restored latch is not re-decided by the next epoch's
+ *       tally even when that tally would pick a different signal, while the
+ *       same model without the restore does flip (the card's main contract);
  *   (e) the loader's defaults, its @c resume_frame_restore prerequisite, and the
- *       INERT-not-fatal posture with no snapshot path.
+ *       inert (not fatal) posture with no snapshot path.
  *
  * The seam mechanics themselves (the L2X tracker set, the eq34 datum receiver
  * and the raw phase-bias level actually continuing across a warm resume) are
@@ -59,8 +59,8 @@ using namespace GnssProcessor;
 namespace GnssProcessor {
 
 /// Test seam (declared a friend in include/model/PppModel.hpp): reaches the
-/// PRIVATE first-epoch decision and the latch members, so the restore's contract
-/// can be pinned without a geometry / product chain.
+/// private first-epoch decision and the latch members, so the restore's contract
+/// can be tested without a geometry / product chain.
 struct PppModelCanonicalTestAccess {
     static void decide(PppModel& m, const std::vector<RinexObservation>& obs) {
         m.decideConstellationCanonicals(obs);
@@ -90,8 +90,8 @@ NetworkStateSnapshot baseSnapshot() {
     return s;
 }
 
-/// A snapshot carrying the latch of two stations, including the exact L2 flip
-/// §21.16 measured (station 0 locked on L2X, station 7 on L2W).
+/// A snapshot carrying the latch of two stations, including the L2 split from
+/// §21.16 (station 0 locked on L2X, station 7 on L2W).
 NetworkStateSnapshot canonSnapshot() {
     NetworkStateSnapshot s = baseSnapshot();
     s.canonical_signals[0] = {
@@ -169,7 +169,7 @@ std::vector<PppModel::CanonicalSignal> staged(const NetworkStateSnapshot& s, int
     return out;
 }
 
-/// One GPS epoch's observations with a chosen L2W / L2X satellite split — the
+/// One GPS epoch's observations with a chosen L2W / L2X satellite split, the
 /// tally decideConstellationCanonicals runs on.  L1W is present on every
 /// satellite so the L1 band has an unambiguous winner either way.
 std::vector<RinexObservation> gpsEpoch(int n_l2w, int n_l2x) {
@@ -210,14 +210,14 @@ struct ModelFixture {
 } // namespace
 
 // ---------------------------------------------------------------------------
-// (a) the snapshot TEXT round-trip
+// (a) the snapshot text round-trip
 // ---------------------------------------------------------------------------
 
 TEST(ResumeSignalCanonRestore, CanonicalRowsRoundTripThroughTheSnapshotText) {
     const NetworkStateSnapshot s = canonSnapshot();
     ASSERT_TRUE(s.hasCanonicalSignalState());
     const std::string text = serialized(s);
-    // The rows ride the EXISTING header — format-forward, not a version bump.
+    // The rows use the existing header: format-forward, not a version bump.
     EXPECT_EQ(text.rfind("# gnss_network_state_snapshot v1\n", 0), 0u) << text.substr(0, 60);
     EXPECT_NE(text.find("CN,0,GPS,L2,L,L2X"), std::string::npos) << text;
     EXPECT_NE(text.find("CN,7,GPS,L2,L,L2W"), std::string::npos) << text;
@@ -231,7 +231,7 @@ TEST(ResumeSignalCanonRestore, CanonicalRowsRoundTripThroughTheSnapshotText) {
     ASSERT_EQ(r.canonical_signals.size(), 2u);
     ASSERT_EQ(r.canonical_signals.at(0).size(), 4u);
     ASSERT_EQ(r.canonical_signals.at(7).size(), 2u);
-    // Per-station ORDER survives: the writer exports in the model's own map order
+    // Per-station order survives: the writer exports in the model's own map order
     // and the reader appends, so a diff of two snapshots is row-stable.
     EXPECT_EQ(r.canonical_signals.at(0)[3].signal, "L2X");
     EXPECT_EQ(r.canonical_signals.at(0)[3].band, "L2");
@@ -241,11 +241,11 @@ TEST(ResumeSignalCanonRestore, CanonicalRowsRoundTripThroughTheSnapshotText) {
     EXPECT_EQ(r.canonical_signals.at(7)[1].constellation, "Galileo");
 }
 
-/// A malformed row is a HARD parse failure (the caller's documented cold-start
-/// signal), never a silent partial restore — the RC / SD precedent.  The obs-type
-/// case is the one worth naming: anything but 'C' or 'L' installs an entry no
-/// lookup can match, which reads as a COLD latch for that band and re-opens the
-/// exact defect the rows exist to close.
+/// A malformed row is a hard parse failure (the caller's documented cold-start
+/// signal), never a silent partial restore, as for RC / SD rows.  The obs-type
+/// case matters most: anything but 'C' or 'L' installs an entry no lookup can
+/// match, which acts as a cold latch for that band and brings back the re-decide
+/// the rows exist to prevent.
 TEST(ResumeSignalCanonRestore, MalformedCanonicalRowIsAHardParseFailure) {
     const auto mangle = [](const std::string& repl) {
         std::string text = serialized(canonSnapshot());
@@ -280,7 +280,7 @@ TEST(ResumeSignalCanonRestore, MalformedCanonicalRowIsAHardParseFailure) {
 // ---------------------------------------------------------------------------
 
 /// A file with no CN rows restores nothing: an old snapshot (or a writer without
-/// the capture knob) leaves every station re-deciding its latch as today.
+/// the capture knob) leaves every station re-deciding its latch, as without the card.
 TEST(ResumeSignalCanonRestore, SnapshotWithoutCanonicalRowsRestoresNothing) {
     const NetworkStateSnapshot s = baseSnapshot();
     ASSERT_FALSE(s.hasCanonicalSignalState());
@@ -295,16 +295,17 @@ TEST(ResumeSignalCanonRestore, SnapshotWithoutCanonicalRowsRestoresNothing) {
     EXPECT_FALSE(r.hasCanonicalSignalState());
     EXPECT_TRUE(staged(r, 0).empty());
 
-    // ...and the restore applied to an empty stage is a no-op on the model: the
-    // latch stays undecided, so the first epoch decides it exactly as today.
+    // The restore applied to an empty stage is a no-op on the model: the latch
+    // stays undecided, so the first epoch decides it as without the card.
     ModelFixture f("inertmodel");
     EXPECT_EQ(f.model->restoreCanonicalSignals(staged(r, 0)), 0u);
     EXPECT_FALSE(PppModelCanonicalTestAccess::decided(*f.model, "GPS"));
 }
 
-/// The WRITE knob is what the driver gates the capture on, so with it off the
-/// container stays empty and the file the same snapshot produces is byte-identical
-/// to the pre-card one (standing invariant #6, at the format level).
+/// The driver gates the capture on the write knob, so with it off the container
+/// stays empty and the file the snapshot produces is byte-identical to one written
+/// without the card (standing invariant #6, at the format level).  With a row, the
+/// only differences are that row and the END line.
 TEST(ResumeSignalCanonRestore, WriteKnobOffEmitsNoneOfTheRows) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("nocapture",
@@ -336,10 +337,10 @@ TEST(ResumeSignalCanonRestore, WriteKnobOffEmitsNoneOfTheRows) {
 // (d) the model's export / restore pair and the first-epoch guard
 // ---------------------------------------------------------------------------
 
-/// The baseline the card is about: with NO restore, the station's latch is
-/// decided by whatever epoch it happens to see first — so the same model fed a
-/// leg-shaped epoch first locks L2W where a seed-shaped epoch locks L2X.  This is
-/// the flip §21.16 measured (GAMB00PYF L2X→L2W), reproduced in a unit test.
+/// The baseline behaviour: with no restore, the station's latch is decided by the
+/// first epoch it sees, so the same model fed a leg-shaped epoch first locks L2W
+/// where a seed-shaped epoch locks L2X.  This reproduces the L2X to L2W flip of
+/// §21.16 in a unit test.
 TEST(ResumeSignalCanonRestore, WithoutARestoreTheFirstEpochsTallyDecidesTheLatch) {
     {   // seed-shaped first epoch: L2X leads 10 to 9
         ModelFixture f("seedshape");
@@ -350,7 +351,7 @@ TEST(ResumeSignalCanonRestore, WithoutARestoreTheFirstEpochsTallyDecidesTheLatch
             if (c.band == "L2" && c.obs_type == 'L') { EXPECT_EQ(c.signal, "L2X"); found = true; }
         EXPECT_TRUE(found) << "no L2 phase canonical was decided";
     }
-    {   // leg-shaped first epoch: L2W leads 10 to 8 — the latch flips
+    {   // leg-shaped first epoch: L2W leads 10 to 8, and the latch flips
         ModelFixture f("legshape");
         PppModelCanonicalTestAccess::decide(*f.model, gpsEpoch(/*l2w=*/10, /*l2x=*/8));
         const auto rows = f.model->exportCanonicalSignals();
@@ -359,10 +360,10 @@ TEST(ResumeSignalCanonRestore, WithoutARestoreTheFirstEpochsTallyDecidesTheLatch
     }
 }
 
-/// The card's contract, in one test: a RESTORED latch marks the constellation
-/// DECIDED, so the next epoch's tally — even one that would pick the other
-/// channel — leaves it alone.  Export after the epoch returns the writer's
-/// signals, and the audit reports the disagreement rather than acting on it.
+/// The card's contract in one test: a restored latch marks the constellation
+/// decided, so the next epoch's tally leaves it unchanged, even when that tally
+/// would pick the other channel.  Export after the epoch returns the writer's
+/// signals, and the audit reports the disagreement without acting on it.
 TEST(ResumeSignalCanonRestore, ARestoredLatchIsNotReDecidedByTheNextEpochsTally) {
     ModelFixture f("restored");
     // The writer's latch: L2X (what a 00:00 epoch decided).
@@ -378,7 +379,7 @@ TEST(ResumeSignalCanonRestore, ARestoredLatchIsNotReDecidedByTheNextEpochsTally)
     EXPECT_EQ(f.model->canonicalAuditEntries(), 0);
     EXPECT_EQ(f.model->canonicalAuditDisagreements(), 0);
 
-    // The resume epoch's tally prefers L2W — exactly the leg-shaped counts.
+    // The resume epoch's tally prefers L2W (the leg-shaped counts).
     PppModelCanonicalTestAccess::decide(*f.model, gpsEpoch(/*l2w=*/10, /*l2x=*/8));
 
     const auto after = f.model->exportCanonicalSignals();
@@ -386,9 +387,9 @@ TEST(ResumeSignalCanonRestore, ARestoredLatchIsNotReDecidedByTheNextEpochsTally)
     for (const auto& c : after)
         if (c.band == "L2" && c.obs_type == 'L')
             EXPECT_EQ(c.signal, "L2X") << "the restored latch was RE-DECIDED";
-    // The audit ran exactly once, compared the bands the epoch also tallied, and
-    // found the L2 phase channel disagreeing — a nonzero count is the defect being
-    // PREVENTED, and it is the run-end instrument for that.
+    // The audit ran once, compared the bands the epoch also tallied, and found the
+    // L2 phase channel disagreeing.  A nonzero count means a re-decide was
+    // prevented; it is the run-end instrument for that.
     EXPECT_FALSE(PppModelCanonicalTestAccess::auditPending(*f.model, "GPS"));
     EXPECT_GE(f.model->canonicalAuditEntries(), 2);
     EXPECT_EQ(f.model->canonicalAuditDisagreements(), 1);
@@ -401,10 +402,9 @@ TEST(ResumeSignalCanonRestore, ARestoredLatchIsNotReDecidedByTheNextEpochsTally)
         if (c.band == "L2" && c.obs_type == 'L') EXPECT_EQ(c.signal, "L2X");
 }
 
-/// A restore whose latch AGREES with the resume epoch reports zero
-/// disagreements — the other direction of the same instrument, so a 0 at run end
-/// reads as "the seam epoch agreed", never as "the wiring did nothing" (the
-/// entries / stations counters carry that).
+/// A restore whose latch agrees with the resume epoch reports zero
+/// disagreements.  A 0 at run end therefore means "the seam epoch agreed"; whether
+/// the wiring ran at all is shown by the entries / stations counters.
 TEST(ResumeSignalCanonRestore, AnAgreeingRestoreAuditsZeroDisagreements) {
     ModelFixture f("agree");
     EXPECT_EQ(f.model->restoreCanonicalSignals(staged(canonSnapshot(), 0)), 4u);
@@ -413,10 +413,10 @@ TEST(ResumeSignalCanonRestore, AnAgreeingRestoreAuditsZeroDisagreements) {
     EXPECT_EQ(f.model->canonicalAuditDisagreements(), 0);
 }
 
-/// Rows the restore cannot mean anything by are ignored rather than installed —
-/// an entry with a bogus obs-type would sit in the map matching no lookup, which
-/// reads as a cold latch for that band.  (The parser refuses such a row outright;
-/// this is the model's own belt-and-braces for a non-snapshot caller.)
+/// Rows with an empty field or an invalid obs-type are ignored rather than
+/// installed: an entry with an invalid obs-type would sit in the map matching no
+/// lookup, which acts as a cold latch for that band.  (The parser already refuses
+/// such a row; this is the model's own guard for a caller other than the snapshot.)
 TEST(ResumeSignalCanonRestore, RestoreIgnoresRowsItCannotMean) {
     ModelFixture f("ignore");
     const std::vector<PppModel::CanonicalSignal> rows = {
@@ -453,12 +453,13 @@ TEST(ResumeSignalCanonRestoreConfig, CaptureKnobParsesAndDoesNotArmTheReadSide) 
     EXPECT_FALSE(cfg.networkResumeSignalCanonRestore());
 }
 
-/// The arcs the restored realization frame names ARE the writer's canonical
-/// signals', so the read knob is only meaningful when that frame also continues —
-/// mirroring resume_datum_restore / resume_emit_restore / resume_station_restore.
+/// The arcs the restored realization frame names are those of the writer's
+/// canonical signals, so the read knob is meaningful only when that frame also
+/// continues, as for resume_datum_restore / resume_emit_restore /
+/// resume_station_restore.
 TEST(ResumeSignalCanonRestoreConfig, RestoreWithoutFrameRestoreIsRejected) {
-    // The loader turns its own throw into a FAILED LOAD (loadFromJson catches and
-    // returns false) — the shape every other restore prerequisite is asserted in.
+    // The loader turns its own throw into a failed load (loadFromJson catches and
+    // returns false), the form in which every other restore prerequisite is tested.
     GnssConfig cfg;
     EXPECT_FALSE(loadInto("noframe",
         networkConfig("    \"state_snapshot_path\": \"state_snapshot.snap\",\n"
@@ -478,8 +479,8 @@ TEST(ResumeSignalCanonRestoreConfig, ArmedPostureLoads) {
     EXPECT_TRUE(cfg.networkResumeFrameRestore());
 }
 
-/// Armed with no snapshot path the loader warns and still loads (INERT, not
-/// fatal) — the posture every other resume-response knob takes.
+/// Armed with no snapshot path, the loader warns and still loads (inert, not
+/// fatal), as for every other resume-response knob.
 TEST(ResumeSignalCanonRestoreConfig, ArmedWithoutASnapshotPathStillLoads) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("inert",

@@ -2,32 +2,32 @@
 
 /**
  * @file NetworkClockLevel.hpp
- * @brief Card CLV (docs/refound/CLV_clock_level_2026-09-22.md): the satellite clock
- *        LEVEL, estimated from the code alone and re-based into the carry
- *        (@c network.clock_level_carry).
+ * @brief The satellite clock level, estimated from the code alone and re-based into
+ *        the carry (@c network.clock_level_carry; card CLV,
+ *        docs/refound/CLV_clock_level_2026-09-22.md).
  *
  * The level direction of satellite s moves its clock column and every one of its
  * phase-bias columns by the same amount.  MeasurementModel.cpp writes the satellite
- * clock with a -1 partial on code AND phase rows (lines 1588-1594) and the satellite
- * phase bias with a +1 partial on phase rows only (lines 1546-1551), and
- * networkSplitStation_ copies those columns verbatim into the shared border
- * (ApplicationNetworkAssembly.cpp:113-144).  So a shift d along the direction leaves
- * every phase row invariant (-d + d) and moves every code row of s by -d: the level is
- * a code-only quantity.
+ * clock with a -1 partial on code and phase rows (the per-satellite clock block) and
+ * the satellite phase bias with a +1 partial on phase rows only (the per-satellite
+ * signal phase-bias block), and networkSplitStation_ in ApplicationNetworkAssembly.cpp
+ * copies those columns verbatim into the shared border.  A shift d along the direction
+ * therefore leaves every phase row invariant (-d + d) and moves every code row of s by
+ * -d: the level is a code-only quantity.
  *
- * Why it freezes.  Card 1d's time update of a coupling row shrinks each border term by
- * kappa = p / (p + q dt) with the legacy clock rate q = filter.process_noise.sat_clock_q
+ * Why it freezes.  The time update of a coupling row (card 1d) shrinks each border term
+ * by kappa = p / (p + q dt) with the legacy clock rate q = filter.process_noise.sat_clock_q
  * (1e-3 m^2/s: kappa about 3e-4 for a clock carried at the Q3 anchor's variance floor),
  * while the phase-bias terms keep kappa about 1.  A carried ambiguity, whose exact
  * regression is on the phase side (-clock + phase bias), then states its phase bias
  * alone, and the phase rows turn that into a phase-precision statement about the level.
- * Every carried ambiguity does this, which is the 22-arm ladder's finding that no single
- * knob releases the level.
+ * Every carried ambiguity does this, so no single knob releases the level (the 22-arm
+ * ladder in the card).
  *
  * What the card does.  The solve is not loosened: freeing the level inside the solve
- * makes it the cheapest outlet for any station's phase inconsistency (measured on the
- * field bed: an undetected L2W event at one station moved four satellite clocks by 4 to
- * 8 m in one epoch and tripped the Q3 anchor on each).  Instead, after every kept epoch:
+ * makes it the cheapest outlet for any station's phase inconsistency (on the field bed,
+ * one undetected L2W event at one station moved four satellite clocks by metres in one
+ * epoch and tripped the Q3 anchor on each).  Instead, after every kept epoch:
  *  1. the post-fit ionosphere-free code residual of each (station, satellite) pair of
  *     full-weight code rows on the constellation's pin bands is formed
  *     (@ref clockLevelIfResidual, @ref clockLevelIfInformation);
@@ -44,7 +44,7 @@
  *     clock-jump baselines, and the emit-side hold's transfer, so the wire's clock
  *     record and phase-bias records move together and its phase side does not.
  *
- * Seam contract: free functions over @c NetworkRunContext that own NO state; every
+ * Seam contract: free functions over @c NetworkRunContext that own no state; every
  * persistent value is a reference into @c ctx.carry.clk_level.
  */
 
@@ -69,7 +69,7 @@ struct NetworkCarryState;
 struct NetworkRunTraces;
 struct GnssTime;
 
-/// Information weight at or above which a code row counts as FULL weight: the
+/// Information weight at or above which a code row counts as full weight: the
 /// population network_pf_rows.csv grades (it excludes the gross line-of-sight screen's
 /// deweighted rows and anything stronger).
 constexpr double kClvFullWeight = 1e-2;

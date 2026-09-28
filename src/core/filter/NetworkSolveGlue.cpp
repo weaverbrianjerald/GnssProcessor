@@ -1,30 +1,30 @@
 /**
  * @file NetworkSolveGlue.cpp
- * @brief Implementation of @ref networkSolveGlue, the SB_SOLVEGLUE block relocated out
- *        of Application::runNetwork at decomposition INC-9b (2026-07-22).  The datum /
- *        solve / within-epoch-RAIM body is a byte-copy of the former block (dedent-8);
- *        the only edits are the four `continue;` -> SkipEpoch returns and the result
- *        epilogue (see the header banner).  The alias preamble byte-copies the run-TU
- *        nc / ctx / traces / ws / setup aliases + the emitEpochStatus / emitEvent
- *        lambdas so the body reads the original names.
+ * @brief Implementation of @ref networkSolveGlue: the network producer's per-epoch datum
+ *        rows, solve and within-epoch RAIM (block SB_SOLVEGLUE, moved out of
+ *        Application::runNetwork at decomposition INC-9b).  Where the driver loop used
+ *        `continue;`, the body sets EpochAction::SkipEpoch and returns (four sites); the
+ *        result contract is in the header banner.  The alias preamble reconstructs the
+ *        run-TU nc / ctx / traces / ws / setup aliases and the emitEpochStatus /
+ *        emitEvent lambdas so the body reads the driver's names.
  */
 
 #include "filter/NetworkSolveGlue.hpp"
 
 #include "app/NetworkRunContext.hpp"
-#include "atmosphere/SphericalHarmonicIonosphere.hpp"   // Phase 2.2 SH gate: coeffs()
+#include "atmosphere/SphericalHarmonicIonosphere.hpp"   // SH gate (Phase 2.2): coeffs()
 #include "config/GnssConfig.hpp"
 #include "logging/NetworkRunTraces.hpp"
 #include "filter/NetworkChainDatum.hpp"
-#include "filter/NetworkClockAnchor.hpp"   // Card Q3 guarded temporal clock anchor
+#include "filter/NetworkClockAnchor.hpp"   // guarded temporal clock anchor (card Q3)
 #include "filter/NetworkDatumGraph.hpp"   // datum graph census: the per-epoch spectral hand-off
-#include "filter/NetworkFrameDiag.hpp"   // invariant #7: networkDatumInfoRatio
-#include "filter/NetworkHandoverStransform.hpp"   // queue 1(b): the clock-pivot handover S-transform
+#include "filter/NetworkFrameDiag.hpp"   // networkDatumInfoRatio (invariant #7)
+#include "filter/NetworkHandoverStransform.hpp"   // the clock-pivot handover S-transform (queue 1(b))
 #include "filter/NetworkPhaseDatum.hpp"
 #include "filter/NetworkPivotHandover.hpp"
-#include "filter/NetworkPrefitCensus.hpp"   // H-rider: networkPrefitSigma0 (census-fed H σ̂₀)
+#include "filter/NetworkPrefitCensus.hpp"   // networkPrefitSigma0, the census-fed H σ̂₀ (H-rider)
 #include "filter/NetworkRelevel.hpp"
-#include "filter/NetworkRhsAttrib.hpp"   // INC-5 flight-recorder trip latch + inline A4 dump
+#include "filter/NetworkRhsAttrib.hpp"   // flight-recorder trip latch and inline A4 dump (INC-5)
 #include "filter/NetworkRobustStats.hpp"
 #include "filter/NetworkSbasis.hpp"
 #include "filter/StateKeySchema.hpp"
@@ -118,27 +118,27 @@ NetworkSolveGlueResult networkSolveGlue(
     auto& zwd_carry = ctx.carry.zwd_carry;
     const bool   pl_on         = ctx.knobs.pl_on;
     const int    pl_warmup     = ctx.knobs.pl_warmup;
-    const bool   carry_cpl_cond = ctx.knobs.carry_cpl_cond; // Card 1: conditional local carry (coupling rows) — requires fullcov_on (enforced at load)
-    const bool   carry_cpl_joint = ctx.knobs.carry_cpl_joint; // Card 1b: JOINTLY whiten the coupling rows (departed cols → M_w) — requires carry_cpl_cond (enforced at load)
-    const bool   ura_retro     = ctx.knobs.ura_retro;             // B1: retro-bump flagged SATELLITE(s) on next emit
-    const double ura_refloat_inflate = ctx.knobs.ura_refloat_inflate; // B1: URA multiplier post-refloat
+    const bool   carry_cpl_cond = ctx.knobs.carry_cpl_cond; // conditional local carry on the coupling rows; requires fullcov_on, enforced at load (card 1)
+    const bool   carry_cpl_joint = ctx.knobs.carry_cpl_joint; // whiten the coupling rows jointly (departed columns into M_w); requires carry_cpl_cond, enforced at load (card 1b)
+    const bool   ura_retro     = ctx.knobs.ura_retro;             // retro-bump the flagged satellites on the next emit (B1)
+    const double ura_refloat_inflate = ctx.knobs.ura_refloat_inflate; // URA multiplier after a refloat (B1)
     const double raim_k        = ctx.knobs.raim_k;      // standardized post-fit residual flag threshold
     const double raim_s0_floor = ctx.knobs.raim_s0_floor; // floor on the robust a-posteriori σ̂0 (1.0 default; lower lets σ̂0 < 1)
     const int    raim_min_sta  = ctx.knobs.raim_min_sta; // cross-station consensus count
-    const double raim_withhold = ctx.knobs.raim_withhold; // A4: >0 withholds (not emits) an epoch whose post-adaptation σ̂0 exceeds this ceiling; 0 = off
-    const bool   raim_redun    = ctx.knobs.raim_redun; // B2: Baarda per-row r_i normalization of the RAIM residual
+    const double raim_withhold = ctx.knobs.raim_withhold; // > 0 withholds (does not emit) an epoch whose post-adaptation σ̂0 exceeds this ceiling; 0 = off (A4)
+    const bool   raim_redun    = ctx.knobs.raim_redun; // Baarda per-row r_i normalization of the RAIM residual (B2)
     const bool   clk_mon_couple = ctx.knobs.clk_mon_couple;  // also refloat RAIM-flagged sats' clocks (opt-in)
-    const bool   pivot_vr_signal = ctx.knobs.pivot_vr_signal;  // A1: also signal a vanish-return pivot change
-    const bool   emit_clock_disc = ctx.knobs.emit_clock_disc;            // A2: clock disc channel + per-constellation bump scoping
-    const bool   sticky_pivot    = ctx.knobs.sticky_pivot;              // RTA-1: keep the incumbent clock pivot while it stays registered
-    const bool   clock_sum_to_zero = ctx.knobs.clock_sum_to_zero;    // anchor-free per-constellation clock gauge (Σδtˢ=0) instead of a pivot pin — no pivot/handover machinery
-    const bool   clock_brdc_anchored = ctx.knobs.clock_brdc_anchored; // brdc_rts: per-sat broadcast anchors ARE the clock gauge (pre-gate) — no pivot machinery AND no sum-to-zero membership wander
-    const bool   clock_signal_basis_hold = ctx.knobs.clock_signal_basis_hold; // W6: HOLD each sat's IF-pin reference pair fixed across epochs (time-consistent δtˢ↔dˢ split) instead of re-selecting from each epoch's coverage — inert without estimate_sat_code_bias
-    const bool   cb_time_linked  = ctx.knobs.cb_time_linked;      // Card 2 (W6): impose the code-bias datum (IF pin + per-(const,signal) s2z) as a TIME datum — pin the CHANGE of the previous epoch's solved values, not the level to zero; mutually exclusive with clock_signal_basis_hold (load-validated)
-    const bool   scoped_handover = ctx.knobs.scoped_handover;   // RTA-2: per-constellation scoping of the INTERNAL handover response
-    const bool   perconst_on       = ctx.knobs.perconst_on;          // RTA-10: per-constellation carve-out of the A4 σ̂0 withhold
-    const int    perconst_min_rows = ctx.knobs.perconst_min_rows;   // RTA-10: min σ̂0-pool rows for a constellation to be judgeable
-    const bool   emit_epoch_status = ctx.knobs.emit_epoch_status;     // RTA-10: per-epoch H heartbeat in the product file (incl. withheld epochs)
+    const bool   pivot_vr_signal = ctx.knobs.pivot_vr_signal;  // also signal a vanish-return pivot change (A1)
+    const bool   emit_clock_disc = ctx.knobs.emit_clock_disc;            // clock disc channel and per-constellation bump scoping (A2)
+    const bool   sticky_pivot    = ctx.knobs.sticky_pivot;              // keep the incumbent clock pivot while it stays registered (RTA-1)
+    const bool   clock_sum_to_zero = ctx.knobs.clock_sum_to_zero;    // anchor-free per-constellation clock gauge (Σδtˢ = 0) in place of a pivot pin; no pivot or handover machinery
+    const bool   clock_brdc_anchored = ctx.knobs.clock_brdc_anchored; // brdc_rts: the per-satellite broadcast anchors are the clock gauge (pre-gate); no pivot machinery and no sum-to-zero membership wander
+    const bool   clock_signal_basis_hold = ctx.knobs.clock_signal_basis_hold; // hold each satellite's IF-pin reference pair fixed across epochs (a time-consistent δtˢ↔dˢ split) instead of re-selecting it from each epoch's coverage; inert without estimate_sat_code_bias (W6)
+    const bool   cb_time_linked  = ctx.knobs.cb_time_linked;      // impose the code-bias datum (IF pin and per-(constellation, signal) s2z) as a time datum: pin the change from the previous epoch's solved values rather than the level to zero; mutually exclusive with clock_signal_basis_hold, validated at load (card 2, W6)
+    const bool   scoped_handover = ctx.knobs.scoped_handover;   // per-constellation scoping of the internal handover response (RTA-2)
+    const bool   perconst_on       = ctx.knobs.perconst_on;          // per-constellation carve-out of the A4 σ̂0 withhold (RTA-10)
+    const int    perconst_min_rows = ctx.knobs.perconst_min_rows;   // minimum σ̂0-pool rows for a constellation to be judged (RTA-10)
+    const bool   emit_epoch_status = ctx.knobs.emit_epoch_status;     // per-epoch H heartbeat in the product file, withheld epochs included (RTA-10)
     const bool   clk_model_on   = ctx.knobs.clk_model_on;
     const bool   emit_clock_rate_on = ctx.knobs.emit_clock_rate_on;
     auto& prev_tow = ctx.counters.prev_tow;
@@ -157,12 +157,12 @@ NetworkSolveGlueResult networkSolveGlue(
     const bool phase_datum_eq34        = ctx.knobs.phase_datum_eq34;
     const bool phase_datum_prioritized = ctx.knobs.phase_datum_prioritized;
     const auto& t = est.sectionTimers();
-    // H-rider (edge-queue §1.6 item 3a): the census-fed H σ̂₀, computed ONCE per
-    // epoch, PRE-solve, so every H site downstream — including the pre-solve
-    // observability-gate withhold just below — reads the same value.  The inputs
-    // (asm_res row stacks) are frozen at assembly; MEASURE-ONLY.  0.0 = the H
-    // grammar's "unavailable" (empty pool), and the reset keeps a knob-off run
-    // carrying an inert 0 rather than a stale value.
+    // The census-fed H σ̂₀ is computed once per epoch, before the solve, so every H
+    // site downstream (including the pre-solve observability-gate withhold further
+    // down) reads the same value.  Its inputs, the asm_res row stacks, are fixed at
+    // assembly, and the value is measure-only.  0.0 is the H grammar's "unavailable"
+    // (empty pool); the reset keeps a knob-off run at an inert 0 rather than a stale
+    // value (H-rider, edge-queue §1.6 item 3a).
     ctx.carry.ep_h_sigma0_census = 0.0;
     if (ctx.knobs.h_sigma0_census) {
         ctx.carry.ep_h_sigma0_census = networkPrefitSigma0(
@@ -170,24 +170,23 @@ NetworkSolveGlueResult networkSolveGlue(
         if (ctx.carry.ep_h_sigma0_census > 0.0) ++ctx.carry.h_sig0_census_nonzero;
     }
     auto emitEpochStatus = [&](const char* disposition, const EpochStatusRow& r) {
-        // Measurement-admission census (docs/SPEC_measurement_admission.md INC-3):
-        // stamped HERE rather than at the four withhold sites below, because the
-        // census is MEASURE-ONLY and a withheld epoch is exactly the epoch a reader
-        // most wants the absolute |z| population for.  The screen runs pre-assembly,
-        // so by this point ctx.carry holds this epoch's numbers; the TOW compare
-        // leaves the columns blank on an epoch it did not screen.
-        // PD-safe DD fold (docs/SPEC_pd_safe_dd_fold.md INC-0): same reasoning — the PD
-        // screen's verdict is exactly what a reader wants on a WITHHELD epoch, since a
-        // degenerate carry block is a plausible cause of one.
+        // The measurement-admission census columns are stamped here rather than at the
+        // four withhold sites below: the census is measure-only, and a withheld epoch is
+        // the one for which the absolute |z| population is most wanted.  The screen runs
+        // before assembly, so ctx.carry already holds this epoch's numbers; the TOW
+        // compare leaves the columns blank on an epoch the screen did not see
+        // (docs/SPEC_measurement_admission.md INC-3).
+        // The PD-safe DD fold columns are stamped here for the same reason: a degenerate
+        // carry block is a plausible cause of a withheld epoch
+        // (docs/SPEC_pd_safe_dd_fold.md INC-0).
         //
-        // Read STRAIGHT off the kernel, NOT through a ctx.carry stamp.  The stamp is
-        // written by the install seam, which runs AFTER this one and only on an ACCEPTED
-        // epoch — so a stamp-based test here is dead wiring by construction and every
-        // withheld row would silently blank the very columns this block exists to fill.
-        // (Caught by the card's own review, 2026-08-03.)  `ddFoldStats()` is per-epoch:
-        // NetworkEstimator::beginEpoch resets it, so `blocks == 0` means "no fold has run
-        // this epoch" and the columns correctly stay blank.  A within-epoch RAIM re-solve
-        // re-folds and overwrites, so what is read is always the latest fold.
+        // The fold statistics are read from the kernel, not from a ctx.carry stamp.  The
+        // stamp is written by the install seam, which runs after this one and only on an
+        // accepted epoch, so a stamp-based test here would leave these columns blank on
+        // every withheld row.  `ddFoldStats()` is per-epoch (NetworkEstimator::beginEpoch
+        // resets it), so `blocks == 0` means no fold has run this epoch and the columns
+        // stay blank.  A within-epoch RAIM re-solve folds again and overwrites, so the
+        // value read is always from the latest fold.
         const bool have_adm =
             std::abs(ctx.carry.adm_ep_tow - se.time.tow) < 1e-6;
         const NetworkNormalEquations::DdFoldStats& es_ddfold = est.ddFoldStats();
@@ -228,27 +227,26 @@ NetworkSolveGlueResult networkSolveGlue(
     NetworkSolveGlueResult result;
 
 
-// W6 satellite code-bias datum rows relocated to
-// NetworkSbasis::buildCodeBiasDatumRows (INC-8) — full design rationale
-// (IF pin + per-(constellation,signal) sum-to-zero, Card-2 time-linking,
-// basis hold/latch/re-latch) in the method Doxygen.  The fold + the
-// RAIM-replay cap_* capture and the first-N summary stay HERE (writer-site
-// contract, NetworkRunTypes.hpp).
-// Reset the hold-OFF IF-pin selection scratch for THIS epoch (mirrors the
-// per-epoch this_epoch_anchor.clear()).  Unconditional — done even when the
-// code-bias block below is skipped (no registered keys) so a stale prior-epoch
-// selection can never reach the emit-site comparison.  A no-op on the empty
-// map in the default (emit_clock_disc OFF) config.
+// The W6 satellite code-bias datum rows are built by
+// NetworkSbasis::buildCodeBiasDatumRows (INC-8), whose Doxygen holds the design
+// (IF pin and per-(constellation, signal) sum-to-zero, card-2 time-linking, basis
+// hold / latch / re-latch).  The fold, the RAIM-replay cap_* capture and the first-N
+// summary stay here (writer-site contract, NetworkRunTypes.hpp).
+// Clear the hold-off IF-pin selection scratch for this epoch (the counterpart of the
+// per-epoch this_epoch_anchor.clear()).  The clear is unconditional, done even when
+// the code-bias block below is skipped (no registered keys), so a prior epoch's
+// selection cannot reach the emit-site comparison.  In the default config
+// (emit_clock_disc off) the map is empty and the clear is a no-op.
 this_epoch_if_pin_sel.clear();
-// S-contract §1.5 declaration scratch — same unconditional per-epoch clear, for the
-// same reason (a stale prior-epoch pair must never reach the emit-site fill).
+// The S-contract §1.5 declaration scratch gets the same unconditional per-epoch clear,
+// so a prior epoch's pair cannot reach the emit-site fill.
 this_epoch_if_pin_real.clear();
 this_epoch_gf_pin_real.clear();
 ctx.carry.this_epoch_family_gf_pin_real.clear();
-this_epoch_cb_ifpin.clear();   // Card 2: this epoch's IF-pin pairs (persisted at harvest)
-this_epoch_cb_reseed.clear();  // Card 2: this epoch's re-seeds (merged into the pending disc set at the emit site — withheld epochs never reach it)
-// B5D: this epoch's HELD extra-band keys, on the same unconditional per-epoch clear —
-// a stale hold would withhold a bias the current epoch actually determined.
+this_epoch_cb_ifpin.clear();   // this epoch's IF-pin pairs, persisted at harvest (card 2)
+this_epoch_cb_reseed.clear();  // this epoch's re-seeds, merged into the pending disc set at the emit site, which withheld epochs never reach (card 2)
+// This epoch's held extra-band keys get the same unconditional per-epoch clear: a stale
+// hold would withhold a bias that the current epoch determined (B5D).
 ctx.carry.this_epoch_extra_band_held.clear();
 if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
     // Carrier frequency of a (sat,signal) from any present station's model.
@@ -261,21 +259,20 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
         return 0.0;
     };
 
-    // --- FAMILY-GF: run-latched family census (docs/SPEC_family_gf_datum.md §3.2) ---
-    // Runs whenever the GF datum is armed, knob ON or OFF, because an armed-but-inert
-    // configuration must READ as such (standing invariant #4) — and because the OFF +
-    // PARTITIONED line is exactly the diagnosis that was missing when
-    // `_pc305_gg_tri_slant_20m` withheld every epoch on 2026-08-12 with nothing in the
-    // log naming the receiver-family split as the cause.
+    // --- Family-GF: run-latched receiver-family census (docs/SPEC_family_gf_datum.md §3.2) ---
+    // Runs whenever the GF datum is armed, with network.code_bias_gf_datum_per_family on
+    // or off, so that an armed but inert configuration shows in the log (standing
+    // invariant #4).  With the per-family knob off, the census lines of a partitioned
+    // constellation also name the null-space gate withholds to expect, which otherwise
+    // appear in the log with no pointer to the receiver-family split.
     //
-    // An INDEPENDENT scan, deliberately not a rider on the CB-ADM admission census: that
-    // census reduces its per-(station, pair) map to an int support count and discards
-    // station identity, so it cannot answer "does any station bridge the two families?",
-    // and it does not run on this lineage at all (network.cb_admission is set in two
-    // configs repo-wide, neither in the pc305 chain) — piggybacking would mean arming a
-    // structurally different registration path to get a diagnostic.
+    // This is a separate scan, not a rider on the CB-ADM admission census.  That census
+    // reduces its per-(station, pair) map to an integer support count and discards
+    // station identity, so it cannot tell whether any station bridges the two families,
+    // and it runs only under network.cb_admission; riding on it would mean arming a
+    // different registration path to get a diagnostic.
     //
-    // LATCHED on the first epoch with a usable station set: the partition is a property
+    // Latched on the first epoch with a usable station set: the partition is a property
     // of the receiver hardware population, not of an epoch.
     if (config_.networkCodeBiasGfDatum() && !family_census.latched) {
         std::map<std::string, std::set<std::string>> station_signals;
@@ -297,32 +294,34 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
                                 "constellation and null-space gate withholds.");
         }
     }
-    // Empty unless the knob is ON *and* the census found a partition ⇒ the row builder
-    // folds nothing extra and the run is byte-identical in every other posture.
+    // Empty unless the per-family knob is on and the census found a partition, so in
+    // every other posture the row builder folds nothing extra and the run is
+    // byte-identical.
     static const std::set<std::string> kNoFamilies;
     const std::set<std::string>& gf_family_constellations =
         (config_.networkCodeBiasGfDatum() && config_.networkCodeBiasGfDatumPerFamily())
             ? family_census.partitioned
             : kNoFamilies;
 
-    // --- RF-0f: the ISC BRIDGING ROSTER -----------------------------------------
+    // --- ISC bridging roster (RF-0f) --------------------------------------------
     // Which (satellite, companion signal) inter-signal corrections the data can reach
-    // this epoch.  The test is per SATELLITE and per PAIR, not per channel: an ISC is a
-    // pure bias difference, so it is determined iff some present station carries BOTH
-    // signals of that satellite in its own code-bias state map — the same map
-    // ApplicationNetworkAssembly.cpp:2126/:2150 registers the shared columns from, keyed
-    // "sat|signal" (StateKeys::parseSatBiasKey).  Anything less — the channel being dense
-    // network-wide, or both signals being present at DIFFERENT stations — does not
-    // determine it, because each station's own receiver code bias absorbs its half.
+    // this epoch.  The test is per satellite and per same-band signal pair, not per
+    // channel: an ISC is a pure bias difference, so it is determined if and only if some
+    // present station carries both signals of that satellite in its own code-bias state
+    // map, keyed "sat|signal" (StateKeys::parseSatBiasKey); the shared columns are
+    // registered from the same map (networkAssemblyRegisterColumns_ in
+    // ApplicationNetworkAssembly.cpp).  A channel that is dense network-wide, or two
+    // signals present at different stations, does not determine it, because each
+    // station's own receiver code bias absorbs its half.
     //
     // Built here rather than in the row builder because only the driver sees the
-    // stations; empty unless the knob is armed, so the builder's lookups are never
-    // reached on an unarmed run.
+    // stations.  Empty unless network.sat_isc_state is armed, so an unarmed run never
+    // reaches the builder's lookups.
     std::set<std::string> isc_bridged;
     if (config_.getNetworkConfig().sat_isc_state) {
         for (size_t i = 0; i < stations.size(); ++i) {
             if (!present[i] || !stations[i].sm) continue;
-            // sat -> the signals THIS station holds for it
+            // sat -> the signals this station holds for it
             std::map<std::string, std::set<std::string>> by_sat;
             for (const auto& kv : stations[i].sm->getSatBiasStates()) {
                 const auto parts = StateKeys::parseSatBiasKey(kv.first);
@@ -336,26 +335,27 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
         }
     }
 
-    // --- B5D: the EXTRA-BAND DETERMINATION ROSTER --------------------------------
+    // --- Extra-band determination roster (B5D) -----------------------------------
     // Which (satellite, extra signal) code-bias columns the data determine this epoch,
-    // for a given pin pair.  The test is per SATELLITE and per CELL, not per channel:
+    // for a given pin pair.  The test is per satellite and per station, not per channel:
     // with the pinned pair fixing that station's slant ionosphere and the satellite
-    // clock, one station carrying code on the pair's FIRST band, on its SECOND band and
-    // on the extra signal determines d_k up to the family constant its own receiver
-    // extra-band code bias absorbs.  The channel being dense network-wide does not: three
+    // clock, one station carrying code on the pair's first band, on its second band and
+    // on the extra signal determines d_k up to the family constant that its own receiver
+    // extra-band code bias absorbs.  A channel that is dense network-wide does not: three
     // stations each holding one of the three codes leave the ionosphere free at all three.
     //
-    // Keyed on the pin pair's BAND DIGITS as well as the satellite and signal, because
-    // the builder's realized pair is not always (L1, L2) — clock_signal_basis_hold can
-    // hold or re-latch it — and a roster that answered for the wrong pair would free a
-    // column nothing determines.  Built here rather than in the row builder because only
-    // the driver sees the stations; empty unless the knob is armed, so the builder's
-    // lookups are never reached on an unarmed run.
+    // Keys carry the pin pair's band digits as well as the satellite and signal
+    // ("sat|signal|b1b2"), because the builder's realized pair is not always (L1, L2)
+    // (clock_signal_basis_hold can hold or re-latch it), and a roster that answered for
+    // the wrong pair would free a column that nothing determines.  Built here rather than
+    // in the row builder because only the driver sees the stations.  Empty unless
+    // network.sat_gf_extra_band_free is armed, so an unarmed run never reaches the
+    // builder's lookups.
     std::set<std::string> extra_band_determined;
     if (config_.getNetworkConfig().sat_gf_extra_band_free) {
         for (size_t i = 0; i < stations.size(); ++i) {
             if (!present[i] || !stations[i].sm) continue;
-            // sat -> the code signals THIS station holds for it (the sat-bias state map
+            // sat -> the code signals this station holds for it (the sat-bias state map
             // is code-only: NetworkBiasAdmission admits raw 'C' observables alone).
             std::map<std::string, std::set<std::string>> by_sat;
             for (const auto& kv : stations[i].sm->getSatBiasStates()) {
@@ -386,15 +386,15 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
         est, registered_code_keys, freqOf,
         cb_time_linked, clock_signal_basis_hold, emit_clock_disc,
         config_.networkCodeBiasGfDatum(),
-        // RF-0c: the mode, and the run-latched broadcast targets (empty in every
-        // mode but broadcast_tgd, which is what makes the builder fall back to a
-        // zero target rather than guess).
+        // The satellite GF datum mode and the run-latched broadcast targets.  The
+        // targets are empty in every mode except broadcast_tgd, and an empty target
+        // makes the builder fall back to zero rather than guess (RF-0c).
         config_.getNetworkConfig().sat_gf_datum, setup.sat_gf_target_m,
-        // RF-0e: the two arms of the level-datum A/B (loader refuses both at once).
+        // The two arms of the level-datum A/B; the loader refuses both at once (RF-0e).
         config_.getNetworkConfig().sat_if_level_datum,
         config_.getNetworkConfig().sat_gf_datum_time_linked,
         config_.getNetworkConfig().sat_isc_state, isc_bridged,
-        // B5D: the extra-band columns the data determine, and the knob that frees them.
+        // The extra-band columns the data determine, and the knob that frees them (B5D).
         config_.getNetworkConfig().sat_gf_extra_band_free, extra_band_determined,
         gf_family_constellations,
         code_bias_prev_, code_bias_ifpin_pair_,
@@ -404,33 +404,31 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
         ctx.carry.this_epoch_family_gf_pin_real,
         this_epoch_cb_ifpin, this_epoch_cb_reseed,
         basis_relatch_disc_pending, emitEvent);
-    // Card SID phase 2: the IF pin pair election becomes a roster WRITER.  HERE,
-    // because this is the only site that knows which signals the S-basis actually
-    // pinned this epoch (the realized pair, after the basis hold and any re-latch).
-    // OBSERVATORY: it fills BandRoster::datum_code / datum_phase and a census, and
-    // nothing reads either field, so the solve is untouched.  No-op when the roster
-    // is disarmed.
+    // Record the IF pin pair election in the signal roster.  This is the only site that
+    // knows which signals the S-basis pinned this epoch (the realized pair, after the
+    // basis hold and any re-latch).  It fills BandRoster::datum_code / datum_phase and a
+    // census; the solve does not read them (the wire's signal declaration does, in
+    // networkLedgerEmitBuildDeclaration).  No-op when the roster is disarmed (card SID
+    // phase 2).
     networkSignalRosterDatumPin(ctx, this_epoch_if_pin_real);
     if (cbd.H.rows() > 0) {
         est.attribTag("w6_cb_gauge");
         est.addSharedConstraintRows(cbd.H, cbd.z, NetworkSbasis::kCodeBiasGaugeWeight);
-        // RF-0b ON-path telemetry.  In the no-constraint posture these rows are not a
-        // gauge ALONGSIDE an ionosphere constraint, they are the ENTIRE satellite
-        // code-bias datum, so the run has to be able to say how many epochs actually
-        // folded them and how many channel levels they pinned (standing invariant #4:
-        // "0 folded" is what inert wiring looks like, and the log alone cannot tell
-        // that from a healthy run).
+        // On-path telemetry (RF-0b).  In the no-constraint posture these rows are the
+        // whole satellite code-bias datum, not a gauge beside an ionosphere constraint,
+        // so the run counts the epochs that folded them and the channel levels they
+        // pinned.  A count of 0 folded identifies inert wiring, which the log alone
+        // cannot tell apart from a working run (standing invariant #4).
         if (config_.getNetworkConfig().w6_iono_constraint
             == NetworkW6IonoConstraint::None) {
             ++ctx.counters.n_w6_iono_none_epochs;
             ctx.counters.n_w6_iono_none_s2z_rows +=
                 static_cast<std::size_t>(cbd.n_s2z_channels);
         }
-        // RF-0c ON-path telemetry.  Under the no-constraint posture this row IS the
-        // datum for the between-satellite geometry-free split, so the run has to be
-        // able to say how many satellites actually received one and — under
-        // broadcast_tgd — how many got a real group delay rather than a fallback zero
-        // wearing a physical name (standing invariant #4).
+        // On-path telemetry (RF-0c).  Under the no-constraint posture this row is the
+        // datum for the between-satellite geometry-free split, so the run counts the
+        // satellites that received one and, under broadcast_tgd, how many got a real
+        // group delay and how many a fallback zero (standing invariant #4).
         if (config_.getNetworkConfig().sat_gf_datum != NetworkSatGfDatum::NoneMode) {
             ++ctx.counters.n_sat_gf_epochs;
             ctx.counters.n_sat_gf_rows   += static_cast<std::size_t>(cbd.n_sat_gf_rows);
@@ -450,7 +448,7 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
             ctx.counters.n_sat_gf_anchored+= static_cast<std::size_t>(cbd.n_sat_gf_anchored);
             ctx.counters.n_isc_observed += static_cast<std::size_t>(cbd.n_isc_observed);
             ctx.counters.n_isc_pinned   += static_cast<std::size_t>(cbd.n_isc_pinned);
-            // Card GAL (R3 iii): the same counters per constellation letter.
+            // The same counters per constellation letter (card GAL, R3 iii).
             for (const auto& [cst, g] : cbd.sat_gf_by_const) {
                 auto& a = ctx.counters.sat_gf_by_const[cst];
                 a.rows += g.rows;              a.tgd_hits += g.tgd_hits;
@@ -459,37 +457,38 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
                 a.isc_zero += g.isc_zero;      a.sameband_free += g.sameband_free;
                 a.carried += g.carried;        a.anchored += g.anchored;
             }
-            // B5D: the three extra-band dispositions, and the sum-to-zero level
-            // re-references (invariant #7's decoupling edge) the freed channels now have.
+            // The three extra-band dispositions, and the sum-to-zero level re-references
+            // of the freed channels, which are invariant #7's decoupling edge (B5D).
             ctx.counters.n_extra_band_free    += static_cast<std::size_t>(cbd.n_extra_band_free);
             ctx.counters.n_extra_band_carried += static_cast<std::size_t>(cbd.n_extra_band_carried);
             ctx.counters.n_extra_band_held    += static_cast<std::size_t>(cbd.n_extra_band_held);
             ctx.counters.n_s2z_reseed_rows    += static_cast<std::size_t>(cbd.n_s2z_reseed_rows);
             ctx.counters.n_s2z_reseed_sats    += static_cast<std::size_t>(cbd.n_s2z_reseed_sats);
-            // B5D: the HELD keys come back FROM the builder rather than being re-derived
-            // here (the RF-0f verdicts below are re-derived because they are a two-way
-            // test on one roster; a hold is a three-way branch over the roster AND the
-            // carry map, and a second derivation of it would drift).  Empty unless armed.
+            // The held keys are taken from the builder rather than re-derived here.  The
+            // RF-0f verdicts below are re-derived because they are a two-way test on one
+            // roster; a hold is a three-way branch over the roster and the carry map, and
+            // a second derivation of it could drift from the first.  Empty unless armed
+            // (B5D).
             ctx.carry.this_epoch_extra_band_held = cbd.extra_band_held;
-            // RF-0f: re-derive the per-key verdicts for the EMIT side, from the same two
-            // inputs the row builder used — this epoch's realized IF pin pair (so a held
-            // or re-selected pair is honoured) and the bridging roster.  Derived here
-            // rather than returned from the builder because the emit prep needs them
-            // keyed, and a second return channel for the same fact is how two views of
-            // one truth drift apart.
+            // Re-derive the per-key verdicts for the emit side from the same two inputs the
+            // row builder used: this epoch's realized IF pin pair (so a held or
+            // re-selected pair is respected) and the bridging roster.  They are derived
+            // here rather than returned from the builder because the emit prep needs them
+            // keyed, and a second return channel for the same fact could drift from the
+            // first (RF-0f).
             ctx.carry.this_epoch_isc_obs.clear();
             ctx.carry.this_epoch_isc_pinned.clear();
-            // Card GAL: the verdicts exist only under network.sat_isc_state, as RF-0f and
-            // the NetworkSolPrep erase site document ("both sets are empty unless the knob
-            // is armed").  Before card GAL this loop ran with the knob OFF as well, where
-            // isc_bridged is empty by construction, so EVERY companion on the pin pair's
-            // second band was classed as pinned and ERASED from the wire: a Galileo C5X
+            // The verdicts exist only under network.sat_isc_state, as RF-0f and the
+            // NetworkSolPrep erase site document ("both sets are empty unless the knob is
+            // armed").  With the knob off, isc_bridged is empty by construction, so this
+            // loop would class every companion on the pin pair's second band as pinned
+            // and the emit prep would erase it from the wire, including a Galileo C5X
             // column beside the (C1C, C5Q) pair, which the RF-0d rules pin at the pair's
-            // own target and which the combined-channel consumer needs, never reached
-            // it.  With the knob OFF the RF-0d rule stands (the column is pinned, the
-            // assertion is counted in n_sat_gf_isc_zero, and the bias is emitted).  On
-            // the GPS dual posture no band-2 companion is registered (C2W is every
-            // station's latch), so GPS alone is byte-identical.
+            // own target and which the combined-channel consumer needs.  With the knob
+            // off the RF-0d rule stands: the column is pinned, the assertion is counted
+            // in n_sat_gf_isc_zero, and the bias is emitted.  On the GPS dual posture no
+            // band-2 companion is registered (C2W is every station's latch), so GPS-only
+            // output does not depend on this guard (card GAL).
             if (config_.getNetworkConfig().sat_isc_state) {
                 for (const auto& [sat, sig] : registered_code_keys) {
                     const auto pit = this_epoch_if_pin_real.find(sat);
@@ -510,47 +509,46 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
             cap_has_constraint = true;
         }
     }
-    // --- Card KP: loose physical-bound prior on the ADMITTED OSB columns ---
-    // Folded AFTER the tight gauge rows and BEFORE the rank gate, through
-    // the DIAGONAL prior channel rather than the gauge stack, so
-    // plan.declared_dimension is untouched by construction (K3).  Targets
-    // the CODE-dominated residual direction the phase drop-and-heal cannot
-    // reach: the heal anchors PB columns only, so a near-null direction
-    // with zero phase weight is structurally beyond it.  OFF ⇒ empty list
-    // ⇒ addSharedPrior returns immediately (byte-identical).
+    // --- Loose physical-bound prior on the admitted OSB columns (card KP) ---
+    // Folded after the tight gauge rows and before the rank gate, through the
+    // diagonal prior channel rather than the gauge stack, so
+    // plan.declared_dimension is unchanged by construction (K3).  It targets the
+    // code-dominated residual direction that the phase drop-and-heal cannot
+    // reach: it anchors PB columns only, so a near-null direction with zero phase
+    // weight is outside its reach.  With the knob off the list is empty and
+    // addSharedPrior returns immediately (byte-identical).
     if (config_.networkCbKaulaPrior()) {
         const auto kp = NetworkSbasis::buildCodeBiasKaulaPriors(
             registered_code_keys, config_.networkCbKaulaSigmaM());
         if (!kp.empty()) {
             est.attribTag("cb_kaula");
             est.addSharedPrior(kp);
-            // The RAIM within-epoch replay re-solves from a fresh
-            // beginEpoch(); a prior missing there would silently give the
-            // replayed solve a DIFFERENT datum from the first one.
+            // The RAIM within-epoch replay re-solves from a fresh beginEpoch();
+            // a prior missing there would give the replayed solve a different
+            // datum from the first one, with nothing in the log.
             if (within_epoch_armed)
                 cap_priors.insert(cap_priors.end(), kp.begin(), kp.end());
             ++ctx.counters.n_kp_epochs;
             ctx.counters.n_kp_cols += kp.size();
-            // The K2 anti-fragility margin is measured AFTER the gate (see
-            // the one-shot block there), not here: it needs lambda_max of
-            // the SAME reduced system the gate judges, and calling
-            // reducedSharedNormals() at this point would force the Schur
-            // reduction BEFORE the clock datum rows are folded.  That is
-            // survivable — addSharedInfo carries a shared-border delta
-            // through a cached reduction in place — but the clock rows'
-            // w·HᵀH increment is not bit-symmetric, so reducing early would
-            // make the first epoch's last bits depend on whether KP is armed.
+            // The K2 anti-fragility margin is measured after the gate (in the
+            // one-shot block there), not here: it needs lambda_max of the same
+            // reduced system the gate judges, and calling reducedSharedNormals()
+            // here would force the Schur reduction before the clock datum rows
+            // are folded.  addSharedInfo would carry the shared-border delta
+            // through the cached reduction in place, but the clock rows' w·HᵀH
+            // increment is not bit-symmetric, so reducing early would make the
+            // first epoch's last bits depend on whether KP is armed.
         }
     }
     if (spectrum_diag_budget > 0)   // first-N (spectrum block decrements below)
         log->warn("Network[W6-cb]{}: nshared={}, n_cb={}, folded {} code-bias gauge "
                   "rows (IF pin for {} sats + sum-to-zero for {} (const,signal) levels"
                   "{}{}{})",
-                  // RF-0b: in the no-constraint posture these rows are the WHOLE
-                  // satellite code-bias datum, not a gauge beside an ionosphere
-                  // constraint.  Naming the posture on the line that reports the row
-                  // count is what lets a first-N read of any log say which datum
-                  // produced the product it is looking at.
+                  // In the no-constraint posture these rows are the whole satellite
+                  // code-bias datum, not a gauge beside an ionosphere constraint.
+                  // Naming the posture on the line that reports the row count lets a
+                  // first-N read of any log tell which datum produced the product
+                  // (RF-0b).
                   config_.getNetworkConfig().w6_iono_constraint
                           == NetworkW6IonoConstraint::None
                       ? "[iono-none]" : "",
@@ -561,22 +559,20 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
                                     "no third band and are now fully datum-fixed",
                                     cbd.n_gf_pin_sats, cbd.n_gf_only_pair)
                       : std::string(),
-                  // FAMILY-GF: the ON-path telemetry for the extra rows.  Printed only
-                  // when rows actually folded, because "0 folded" is exactly what an
-                  // inert knob looks like and the census line above already reports the
-                  // verdict that explains a zero (invariant #4: check the counter, not
-                  // the absence of a crash).
+                  // Family-GF on-path telemetry for the extra rows.  Printed only when
+                  // rows folded: "0 folded" is what an inert knob looks like, and the
+                  // census line above already reports the verdict that explains a zero
+                  // (invariant #4: check the counter, not the absence of a crash).
                   cbd.n_family_gf_rows > 0
                       ? fmt::format(" + FAMILY-GF pin for {} (sat,secondary-family) pairs, "
                                     "of which {} have a two-band family whose entire "
                                     "estimable content is the inter-family ISC",
                                     cbd.n_family_gf_rows, cbd.n_family_gf_only_pair)
                       : std::string(),
-                  // RF-0c: name the datum on the line that reports the row count, so a
-                  // first-N read of any log says which S-basis produced the product it
-                  // is looking at — the zero and TGD frames differ by c*T_GD on every
-                  // code bias and by the same amount, opposite sign, in the emitted
-                  // ionosphere.
+                  // Name the datum on the line that reports the row count, so a first-N
+                  // read of any log tells which S-basis produced the product: the zero
+                  // and TGD frames differ by c*T_GD on every code bias, and by the same
+                  // amount with the opposite sign in the emitted ionosphere (RF-0c).
                   cbd.n_sat_gf_rows > 0
                       ? fmt::format(
                             " + SAT-GF {} datum for {} sats{}",
@@ -599,23 +595,23 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
 NetworkSbasis sb;
 SbasisDeclaration decl;
 decl.reference_receiver_id = nc.clock_datum_station;
-decl.emit_code_bias = config_.estimateNetworkSatCodeBias();  // W6: self-describe the OSB datum
-// Fix A: self-describe the anchor-free ensemble phase-bias frame so a
-// consumer knows the emitted bias references the receiver ensemble (Σ_r z=0),
-// not a single pivot receiver's ambiguity.
+decl.emit_code_bias = config_.estimateNetworkSatCodeBias();  // self-describe the OSB datum (W6)
+// Self-describe the anchor-free ensemble phase-bias frame, so a consumer knows the
+// emitted bias references the receiver ensemble (Σ_r z = 0), not a single pivot
+// receiver's ambiguity (fix A).
 if (phase_datum_ensemble)
     decl.amb_datum = SbasisDeclaration::AmbDatum::SumToZeroPerReceiver;
-// Card 3: self-describe the Eq-34 single-receiver-chain phase-bias frame so a
-// consumer knows the emitted between-satellite reference is integer-consistent
-// (each chain hop an integer) — wire value 2 rides the existing v2 S line.
+// Self-describe the Eq-34 single-receiver-chain phase-bias frame, so a consumer knows
+// the emitted between-satellite reference is integer-consistent (each chain hop is an
+// integer).  The wire value is 2, on the existing v2 S line (card 3).
 else if (phase_datum_eq34)
     decl.amb_datum = SbasisDeclaration::AmbDatum::SingleReceiverChain;
 if (clock_brdc_anchored) {
-    // Broadcast-anchored clock gauge: buildSharedDatum branches on this to
-    // emit one per-satellite anchor row (Δδtˢ→0 = its own broadcast
-    // a-priori) at 1/σ² — the anchors ARE the datum (no pivot, empty datum,
-    // declared dimension 0), and unlike sum-to-zero the frame does not
-    // redistribute when membership changes.
+    // Broadcast-anchored clock gauge: buildSharedDatum branches on this to emit
+    // one anchor row per satellite (Δδtˢ → 0, toward its own broadcast a-priori)
+    // at weight 1/σ².  The anchors are the datum (no pivot, empty datum, declared
+    // dimension 0), and unlike sum-to-zero the frame does not redistribute when
+    // membership changes.
     decl.isb_datum = SbasisDeclaration::IsbDatum::BroadcastAnchoredPerSatellite;
     decl.broadcast_anchor_sigma_m = clk_anchor_sigma;  // D6-resolved (brdc_rts auto = 3.0 m; load-validated binding)
 } else if (clock_sum_to_zero) {
@@ -629,19 +625,18 @@ if (clock_brdc_anchored) {
 
 NetworkSbasis::Plan plan;
 try {
-    // RTA-1: in sticky mode the incumbent baseline is last_pivot, NOT
-    // prev_pivot — prev_pivot is wholesale-replaced at each emit, so a
-    // constellation absent from the last emitted epoch drops out of it,
-    // and its return would spuriously re-select (and, with the
-    // vanish-return arm off, SILENTLY re-reference the datum).
-    // last_pivot is merge-updated at the same emit site, so per
-    // constellation it holds the pivot of the last emitted product that
-    // CONTAINED it — exactly the datum a consumer of that constellation
-    // last adopted.  Both maps advance only at the emit site (P0-1), so
-    // stickiness tracks the datum of the last EMITTED product: a
-    // handover epoch that is subsequently withheld leaves the incumbent
-    // unchanged, and if the incumbent returns before any new-datum epoch
-    // emits, the datum simply never moves.
+    // In sticky mode the incumbent baseline is last_pivot, not prev_pivot.
+    // prev_pivot is replaced wholesale at each emit, so a constellation absent
+    // from the last emitted epoch drops out of it, and its return would
+    // re-select a pivot spuriously (and, with the vanish-return arm off,
+    // re-reference the datum without a signal).  last_pivot is merge-updated at
+    // the same emit site, so per constellation it holds the pivot of the last
+    // emitted product that contained it: the datum a consumer of that
+    // constellation last adopted.  Both maps advance only at the emit site
+    // (P0-1), so stickiness follows the datum of the last emitted product.  A
+    // handover epoch that is then withheld leaves the incumbent unchanged, and if
+    // the incumbent returns before any new-datum epoch emits, the datum does not
+    // move (RTA-1).
     plan = sb.buildSharedDatum(est, registered_clock_sats, decl,
                                sticky_pivot ? &last_pivot : nullptr);
 } catch (const std::exception& ex) {
@@ -654,35 +649,34 @@ try {
     return result;
 }
 
-// Constraint-realized clock datums: fold the gauge rows onto the shared
-// border BEFORE the null-space gate — sum-to-zero mode carries one
-// per-constellation Σδtˢ=0 row, broadcast-anchored mode one per-satellite
-// Δδtˢ→0 anchor row at 1/σ² (the anchors ARE the datum there) — so plan
-// carries constraint rows instead of hard pins and declared_dimension is 0.
-// Folded exactly like the code-bias gauge (additive information; the
-// within-epoch re-solve re-applies them from plan, which is in scope
-// there).  Empty (0 rows) in PIN mode → this is a no-op, byte-identical.
+// Constraint-realized clock datums: fold the gauge rows onto the shared border
+// before the null-space gate.  Sum-to-zero mode carries one Σδtˢ = 0 row per
+// constellation; broadcast-anchored mode carries one Δδtˢ → 0 anchor row per
+// satellite at weight 1/σ² (there the anchors are the datum).  In both modes plan
+// carries constraint rows instead of hard pins, and declared_dimension is 0.  The
+// rows are folded like the code-bias gauge (additive information; the within-epoch
+// re-solve re-applies them from plan, which is in scope there).  In pin mode plan
+// has 0 rows and this is a no-op (byte-identical).
 if (plan.clock_constraint_H.rows() > 0) {
     est.attribTag("clock_datum_rows");
     est.addSharedConstraintRows(plan.clock_constraint_H, plan.clock_constraint_z,
                                 plan.clock_constraint_weight);
 }
 
-// Pivot handover: the previous epoch's shared estimate lives in the OLD
-// datum, so a changed clock pivot invalidates the D2 carry-forward (and
-// forces a discontinuity bump downstream).
-// A1/A2: detect a clock-pivot datum re-reference and record WHICH
-// constellations changed (for the A2 per-constellation emit-bump scoping).
-// Arm (b) (vanish-return) is gated on network.pivot_vanish_return_signal;
-// when off this reproduces the legacy adjacent-epoch-only detection.
+// Pivot handover: the previous epoch's shared estimate is in the old datum, so a
+// changed clock pivot invalidates the D2 carry-forward (and forces a discontinuity
+// bump downstream).  Detect a clock-pivot datum re-reference and record which
+// constellations changed, for the A2 per-constellation emit-bump scoping (A1, A2).
+// Arm (b), vanish-return, is gated on network.pivot_vanish_return_signal; with it
+// off, detection is the legacy adjacent-epoch-only test.
 std::set<char> changed_consts;
 const bool datum_changed = pivotHandoverSignalled(
     plan.clock_pivot, prev_pivot, last_pivot, pivot_vr_signal, changed_consts);
-// RTA-2: does THIS key's carried state belong to a retired datum?  With
-// network.scoped_handover_response off this is exactly datum_changed (the
-// legacy global response, byte-identical); when on, only keys of the
-// constellation(s) whose pivot changed — the SAME changed_consts set the
-// A2 emit bump consumes (single source of truth) — are invalidated.
+// Whether a key's carried state belongs to a retired datum.  With
+// network.scoped_handover_response off this equals datum_changed (the legacy
+// global response, byte-identical); with it on, only keys of the constellations
+// whose pivot changed are invalidated, taken from the same changed_consts set that
+// the A2 emit bump consumes (RTA-2).
 const auto handover_affects = [&](const std::string& sat) {
     return datum_changed
         && datumChangeAffectsKey(sat, changed_consts, scoped_handover);
@@ -694,80 +688,73 @@ networkInjectShVtecPrior(ctx, ws, config_, est, sh_model.get(),
 
 networkInjectPhaseHoldPrior(ctx, ws, est, within_epoch_armed);
 
-// eq34 reattach hygiene INC-2: the open pin bridges.  Same PRE-gate placement and
-// the same reason as the phase hold above — for a bridged key this soft row IS the
-// datum (the election left it deliberately unpinned), so it has to be in the reduced
-// normals the gate inspects.  No-op when no bridge is open.
+// The open pin bridges (eq34 reattach hygiene, INC-2).  Injected before the gate for
+// the same reason as the phase hold above: for a bridged key this soft row is the
+// datum (the election left the key unpinned on purpose), so it must be in the reduced
+// normals that the gate inspects.  No-op when no bridge is open.
 networkInjectPinBridgePrior(ctx, ws, est, within_epoch_armed, log);
-// Record THIS epoch's clock-datum verdict for the next election's bridge lifecycle: a
-// pivot handover re-references every satellite phase bias (the phase observable ties
-// δtˢ + b_s), so a level harvested before it belongs to the retired frame.  The
-// bridge therefore drops at the NEXT hygiene pass with reason=datum.  The one-epoch
+// Record this epoch's clock-datum verdict for the next election's bridge lifecycle.
+// A pivot handover re-references every satellite phase bias (the phase observable
+// ties δtˢ + b_s), so a level harvested before it belongs to the retired frame, and
+// the bridge drops at the next hygiene pass with reason=datum.  The one-epoch
 // exposure is deliberate and bounded: the election commits to the bridge before
-// buildSharedDatum has chosen this epoch's pivots, and the row is SOFT, so a
-// stale-by-one-epoch value is outvoted by the data everywhere except along the gauge
-// direction it legitimately owns (spec §7 pre-declares this deferral).
+// buildSharedDatum has chosen this epoch's pivots, and the row is soft, so a value
+// one epoch stale is outweighed by the data everywhere except along the gauge
+// direction that the row owns (docs/SPEC_eq34_reattach_hygiene.md §7 declares this
+// deferral).
 ctx.carry.last_datum_changed = datum_changed;
 
-// Prioritized phase-bias datum drop-and-heal relocated to
-// filter/NetworkPhaseDatum (INC-8) — the seam's seed; the anchor election
-// + incumbent carry join it at INC-8b.  Full rationale + the ★ PERF note
-// (full eigenvector decomposition — gate-failure path ONLY, never per
-// epoch) in the function Doxygen.
+// The prioritized phase-bias datum drop-and-heal lives in filter/NetworkPhaseDatum
+// (INC-8), with the anchor election and the incumbent carry (INC-8b).  Its function
+// Doxygen holds the rationale and the performance note: the full eigenvector
+// decomposition runs on the gate-failure path only, never per epoch.
 
-// Null-space rank gate.  The reduced shared normals are deliberately
-// ill-conditioned: the phase rows pin the satellite-clock / phase-bias
-// SUM to ~σ_phase precision (weight ~1e5), while CODE alone separates the
-// two (the clock-vs-bias split), so that split is orders of magnitude
-// weaker — yet still firmly non-zero.  Empirically the spectrum shows a
-// clean ~7-decade gap between the true gauge freedoms (the per-
-// constellation clock datum, σ ~ 1e-10 of σ_max) and the weakest REAL
-// direction (σ ~ 1e-2).  The default 1e-6 relative tolerance sits above
-// the weak-but-real directions and miscounts them as deficiencies; a
-// 1e-9 relative tolerance lands squarely in that GPS+Galileo-era gap,
-// counting only the genuine gauges while still catching a truly unpinned
+// Null-space rank gate.  The reduced shared normals are ill-conditioned by design:
+// the phase rows pin the satellite-clock / phase-bias sum to about σ_phase
+// precision (weight about 1e5), while only code separates the two (the
+// clock-vs-bias split), so that split is orders of magnitude weaker but still
+// non-zero.  Measured spectra show a clean gap of about 7 decades between the true
+// gauge freedoms (the per-constellation clock datum, σ ~ 1e-10 of σ_max) and the
+// weakest real direction (σ ~ 1e-2).  A relative tolerance of 1e-6 sits above the
+// weak but real directions and miscounts them as deficiencies; 1e-9 lands in the
+// GPS+Galileo gap, counting only the true gauges while still catching an unpinned
 // datum.
 //
-// Card DG (2026-07-22): the gap MOVES with the constellation mix, so the
-// tolerance is a per-config CALIBRATION parameter (network.rank_gate_tol),
-// resolved once into est.setRankGateTol() and read here — the same value
-// the estimability dump and the drop-and-heal read (DG2: no consumer keeps
-// a private tolerance, or the dump would describe a decision the gate did
-// not make and the heal would soft-anchor weak-but-REAL directions).  It
-// defaults to NetworkEstimator::kNullSpaceTol, so an unset key is
-// byte-identical.  Adding BeiDou is the second instance of the same
-// miscount 1e-6 → 1e-9 already fixed once: the BDS weak-but-real family
-// layer sits ≈1.7e-10 of λmax, ~3 decades deeper relatively, with a
-// six-decade measured gap down to the declared gauges.
+// The gap moves with the constellation mix, so the tolerance is a per-config
+// calibration parameter (network.rank_gate_tol), resolved once into
+// est.setRankGateTol() and read here.  The estimability dump and the drop-and-heal
+// read the same value (DG2): a private tolerance would make the dump describe a
+// decision the gate did not make, or make the heal soft-anchor weak but real
+// directions.  It defaults to NetworkEstimator::kNullSpaceTol (1e-9), so an unset
+// key is byte-identical.  With BeiDou the default miscounts in the same way: the
+// BDS weak-but-real family layer sits at about 1.7e-10 of λmax, about 3 decades
+// deeper, with a measured six-decade gap down to the declared gauges (card DG).
 
-// ---- One-shot estimability diagnostic (default-OFF) ---------------
-// Spectrum dump relocated to NetworkEstimator::dumpEstimabilitySpectrum
-// (INC-8) — the derivation and the eigen-vs-SVD cost rationale live in
-// the method Doxygen.  The one-shot LATCH is always taken so the
-// co-located W6-cb one-shot log above still fires exactly once.
-// DG5: the returned struct is the SAME numbers the WARN lines print,
-// mirrored into network_estimability.csv so the storm analyzer reads a
-// CSV instead of re-parsing log text.  The log text itself is unchanged.
-// RF-NS: the latch is RE-ARMABLE.  network.trace_estimability_budget sets how
-// many evaluations it may spend (default 6 = the constant this replaced) and
-// network.trace_estimability_deficit_only spends them only on epochs whose
-// census actually shows a deficit.  Why it was needed: with the fixed 6 every
-// field run's census lands inside ignition, so the RF-2d hour-4/5 withhold
-// stretches had NO spectrum at all and the withhold was diagnosable only from
-// the sbc_skip attribution.  Budget is spent AFTER the dump (not before) so a
-// skipped clean epoch does not consume it; with deficit_only false the spend is
-// unconditional, i.e. bit-for-bit the previous order (nothing between the two
-// points reads the counter).
+// ---- Estimability diagnostic (default off) --------------------------
+// The spectrum dump is NetworkEstimator::dumpEstimabilitySpectrum (INC-8), whose
+// Doxygen holds the derivation and the eigen-vs-SVD cost rationale.  The returned
+// struct holds the numbers the warn lines print, mirrored into
+// network_estimability.csv so the storm analyzer reads a CSV instead of parsing
+// log text (DG5).
+// The budget is re-armable (RF-NS): network.trace_estimability_budget sets how many
+// evaluations it may spend (default 6), and network.trace_estimability_deficit_only
+// spends them only on epochs whose census shows a deficit.  A fixed budget of 6 is
+// spent during ignition on a field run, leaving later withhold stretches without a
+// spectrum.  The budget is decremented after the dump, not before, so a clean epoch
+// skipped under deficit_only does not consume it.  Otherwise every epoch that
+// reaches this block decrements it, whether or not the dump is armed, and nothing
+// between the two points reads the counter.  The W6-cb first-N log above is gated
+// on the same budget.
 if (spectrum_diag_budget > 0) {
     bool spend = true;
     if (nc.trace_estimability) {
         const auto dump = est.dumpEstimabilitySpectrum(
             se.time.tow, plan.declared_dimension, col_desc, log);
         if (dump.valid) {
-            // The census has to RUN to know whether this epoch is in deficit —
-            // there is no cheaper predicate for "n_below > declared" — so the
+            // The census has to run to tell whether this epoch is in deficit
+            // (there is no cheaper predicate for "n_below > declared"), so the
             // eigen-decomposition cost is paid on every budgeted epoch either
-            // way; what deficit_only saves is the budget and the rows.
+            // way; deficit_only saves the budget and the rows.
             if (nc.trace_estimability_deficit_only
                 && dump.n_below <= dump.declared_dim) {
                 spend = false;
@@ -784,17 +771,17 @@ if (spectrum_diag_budget > 0) {
 }
 
 bool gate_ok = true;
-// DG6: the observed near-null count, captured on BOTH the passing and the
-// throwing path (the exception text cannot be parsed back into a number).
-// "Under-specified" (observed > declared — a missing datum constraint) and
-// "over-specified" (observed < declared — a tolerance below THIS config's
-// gauge depth, i.e. a mis-calibration withholding a healthy config) demand
-// opposite fixes, so they are counted separately.
-// Card KP — the K2 anti-fragility margin, logged ONCE, on the SAME reduced
-// system the gate is about to judge (lambda_max here == the gate's, and
-// the reduction now includes the clock datum rows).  The CB-ADM card
-// rejected a loose prior whose information sat AT the rank cutoff, so this
-// one must sit >= 2 decades ABOVE it; a sub-2-decade margin WARNS.
+// The observed near-null count is captured on both the passing and the throwing
+// path, because the exception text cannot be parsed back into a number (DG6).
+// "Under-specified" (observed > declared: a missing datum constraint) and
+// "over-specified" (observed < declared: a tolerance below this config's gauge
+// depth, a mis-calibration that withholds a sound config) need opposite fixes, so
+// they are counted separately.
+// The K2 anti-fragility margin of the KP prior is logged once, on the same reduced
+// system the gate is about to judge (lambda_max here equals the gate's, and the
+// reduction includes the clock datum rows).  The CB-ADM card rejected a loose prior
+// whose information sat at the rank cutoff, so this one must sit at least 2
+// decades above it; a margin under 2 decades logs a warning (card KP).
 if (config_.networkCbKaulaPrior() && !ctx.counters.kp_margin_logged
     && ctx.counters.n_kp_cols > 0) {
     ctx.counters.kp_margin_logged = true;
@@ -823,26 +810,26 @@ if (config_.networkCbKaulaPrior() && !ctx.counters.kp_margin_logged
     }
 }
 
-// --- SBC S-basis completion (network.sbasis_complete) --------------------
-// The declared dimension counts the STRUCTURAL gauges only (per-constellation
-// clock in PIN mode); the realized epoch can carry more — measured GPS+Gal:
+// --- S-basis completion, SBC (network.sbasis_complete) -------------------
+// The declared dimension counts only the structural gauges (the per-constellation
+// clock in pin mode); a realized epoch can carry more.  Measured on GPS+Galileo:
 // per-satellite channel-family phase-bias↔iono trade directions (eigenvector
-// ∝ μ_σ over one Q/X receiver family's PB columns) that only the SH prior
-// resists once that family's code support thins.  Derive the REALIZED
-// dimension from the same matrix state the gate inspects and constrain each
-// extra direction along its own eigenvector at its CARRIED level, so the
-// unobservable combination holds instead of stepping (engage edge) and the
-// data re-determines it from the held level when observability returns
-// (release edge) — both edges evented per standing invariant #7.  Refusals
-// (cap / degenerate split / marginal weight) fold NOTHING and fall through
-// to the unchanged gate → withhold; Card PA stays the armed backstop.
+// ∝ μ_σ over one Q/X receiver family's PB columns) that only the SH prior resists
+// once that family's code support thins.  Derive the realized dimension from the
+// same matrix state the gate inspects, and constrain each extra direction along
+// its own eigenvector at its carried level, so the unobservable combination holds
+// instead of stepping (engage edge) and the data re-determine it from the held
+// level when observability returns (release edge); both edges are evented
+// (standing invariant #7).  A refusal (cap, degenerate split, marginal weight)
+// folds nothing and falls through to the unchanged gate, which withholds; card PA
+// remains the armed backstop.
 if (ctx.knobs.sbasis_complete_on) {
     // Continuity targets: the carried shared state mapped into this epoch's
-    // columns.  PhaseBias rides pb_level_prev (prev_carry omits it under
-    // carry_invariant — the same gap the INC-2 bridge hit), CodeBias prefers
-    // the Card-2 kept-epoch map when present.  On a datum re-reference the
-    // carried values belong to the retired frame → targets re-seed at 0,
-    // like every other re-referenced quantity.
+    // columns.  Phase biases come from pb_level_prev (prev_carry omits them under
+    // carry_invariant, the same gap the INC-2 pin bridge meets); code biases take
+    // the card-2 kept-epoch map where it has a value.  On a datum re-reference the
+    // carried values belong to the retired frame, so the targets re-seed at 0, like
+    // every other re-referenced quantity.
     Eigen::VectorXd sbc_x_prev = Eigen::VectorXd::Zero(est.numShared());
     if (!datum_changed) {
         for (const auto& cp : ctx.carry.prev_carry) {
@@ -858,7 +845,7 @@ if (ctx.knobs.sbasis_complete_on) {
                     sbc_x_prev(est.vtecCoeffColumn(cp.sh_n, cp.sh_m, cp.sh_trig,
                                                    cp.sh_layer)) = cp.value; break;
                 }
-            } catch (...) { /* departed key — no target */ }
+            } catch (...) { /* departed key: no target */ }
         }
         for (const auto& [key, v] : ctx.carry.pb_level_prev) {
             const auto us = key.find('_');
@@ -883,23 +870,24 @@ if (ctx.knobs.sbasis_complete_on) {
         sbc_x_prev,
         [&est](Eigen::Index c) { return est.sharedColumnLabel(c); },
         ctx.knobs.sbasis_complete_max);
-    // --- datum graph census hand-off (docs/SPEC_datum_graph_census.md) ----
-    // The SPECTRAL half of the census's contingency, captured HERE and only
-    // here: this is the one place in the run where the realized near-null
-    // count is measured PRE-completion and its directions still carry
-    // attribution.  The gate below runs on the COMPLETED system and would
-    // report `observed == declared`, i.e. the completion's own success, which
-    // is not the quantity the census is reconciling against.
+    // --- Datum graph census hand-off (docs/SPEC_datum_graph_census.md) -----
+    // The spectral half of the census's contingency, with direction identities,
+    // is captured here: this is the only place in the run where the realized
+    // near-null count is measured before completion and its directions still
+    // carry attribution.  The gate below runs on the completed system and would
+    // report `observed == declared`, the completion's own success, which is not
+    // the quantity the census reconciles against.  (Runs without SBC get a
+    // count-only fallback after the gate.)
     //
-    // MEASURE-ONLY and armed-only: nothing downstream of this block reads
-    // ctx.carry.dg_spec, so an unarmed run pays one predictable branch.  The
-    // identities come from parsing `d.detail` — the SAME string the
-    // sbc_engage / sbc_skip events carry — so the census and the event stream
-    // agree about a direction's identity by construction rather than by two
-    // parallel derivations that can drift.  Both populations are recorded:
-    // the CONSTRAINED extras and the SKIPPED orphans are equally "observed",
-    // and dropping the orphans would silently delete the `observed only` cell
-    // that measures this predictor's honest boundary.
+    // Measure-only and armed-only: only the datum graph census reads
+    // ctx.carry.dg_spec, so the solve is unaffected and an unarmed run pays one
+    // predictable branch.  The identities come from parsing `d.detail`, the same
+    // string that the sbc_engage / sbc_skip events carry, so the census and the
+    // event stream agree on a direction's identity by construction rather than
+    // through two derivations that could drift.  Both populations are recorded:
+    // the constrained extras and the skipped orphans are equally "observed", and
+    // dropping the orphans would empty the `observed only` cell, which measures
+    // the limit of this predictor.
     if (ctx.knobs.dg_on) {
         auto& dgs = ctx.carry.dg_spec;
         dgs.valid    = true;
@@ -907,7 +895,7 @@ if (ctx.knobs.sbasis_complete_on) {
         dgs.observed = sbc.observed;
         dgs.declared = plan.declared_dimension;
         // Overwrite, never append: if a within-epoch adaptation ever re-enters
-        // this body the census must see THIS evaluation's directions, not the
+        // this body, the census must see this evaluation's directions, not the
         // union of every attempt.
         dgs.dirs.clear();
         const auto push = [&dgs](const NetworkSbasis::GaugeCompletion::Dir& d,
@@ -923,21 +911,21 @@ if (ctx.knobs.sbasis_complete_on) {
         for (const auto& d : sbc.dirs)    push(d, false);
         for (const auto& d : sbc.skipped) push(d, true);
     }
-    // Per-direction skips (unseparated from the declared-gauge cluster —
-    // orphaned exact gauges, Card PA's class) are NOT epoch-fatal: the
-    // separated extras still fold below, the gate then throws by exactly
-    // n_skipped, and the drop-and-heal composes on that remainder.  Counted
-    // per DIRECTION and evented per epoch so a skip is never silent.
+    // A per-direction skip (a direction not separated from the declared-gauge
+    // cluster: an orphaned exact gauge, card PA's class) does not end the epoch:
+    // the separated extras still fold below, the gate then throws by exactly
+    // n_skipped, and the drop-and-heal works on that remainder.  Skips are
+    // counted per direction and each one is evented, so none goes unreported.
     if (sbc.n_skipped > 0) {
         ctx.counters.n_sbc_degenerate += static_cast<std::size_t>(sbc.n_skipped);
         log->debug("Network (SBC): TOW {:.1f} skipped {} unseparated extra "
                    "direction(s) (machine-zero orphan class — left to the "
                    "drop-and-heal); {} separated extra(s) proceed.",
                    se.time.tow, sbc.n_skipped, sbc.n_extra);
-        // One ATTRIBUTED event per skipped direction: a skipped orphan that
-        // then withholds the epoch must name its own columns, or the withhold
-        // is undiagnosable from the trace (the heal cannot see this class —
-        // no PB span ≥ 0.3 — so this event is the only attribution there is).
+        // One attributed event per skipped direction: a skipped orphan that then
+        // withholds the epoch must name its own columns, or the withhold cannot be
+        // diagnosed from the trace.  The heal does not see this class (no PB span
+        // ≥ 0.3), so this event is its only attribution.
         for (const auto& d : sbc.skipped)
             emitEvent("GATE", "sbc_skip",
                       d.sats.size() == 1 ? *d.sats.begin() : std::string{}, "",
@@ -953,9 +941,9 @@ if (ctx.knobs.sbasis_complete_on) {
         emitEvent("GATE", "sbc_refuse", "", "",
                   static_cast<double>(sbc.observed),
                   static_cast<double>(plan.declared_dimension), why, "");
-        // Active set deliberately unchanged: nothing was constrained and the
-        // epoch is headed for a withhold — a release edge here would claim a
-        // re-coupling that never happened.
+        // The active set is left unchanged on purpose: nothing was constrained and
+        // the epoch is headed for a withhold, so a release edge here would report a
+        // re-coupling that did not happen.
     } else if (sbc.n_extra > 0) {
         est.attribTag("sbasis_complete");
         est.addSharedConstraintRows(sbc.H, sbc.z,
@@ -975,8 +963,8 @@ if (ctx.knobs.sbasis_complete_on) {
                       d.ev, d.top_span, "gauge_row",
                       fmt::format("{};target={:.4f}", d.detail, d.target));
         }
-        // Release edge (invariant #7's re-coupling): a satellite constrained
-        // last epoch and in NO direction now has re-observed — the data takes
+        // Release edge (invariant #7's re-coupling): a satellite constrained last
+        // epoch and in no direction now has been re-observed, and the data take
         // over from the held level.
         for (const auto& s : ctx.carry.sbc_active_sats)
             if (!now_active.count(s)) {
@@ -998,8 +986,8 @@ if (ctx.knobs.sbasis_complete_on) {
                        se.time.tow, sbc.n_extra, sbc.observed,
                        plan.declared_dimension);
     } else if (!ctx.carry.sbc_active_sats.empty()) {
-        // Clean epoch (no extras): every previously-constrained satellite has
-        // re-observed — emit its release and clear the set.
+        // Clean epoch (no extras): every satellite constrained on an earlier epoch
+        // has been re-observed, so emit its release and clear the set.
         for (const auto& s : ctx.carry.sbc_active_sats) {
             ++ctx.counters.n_sbc_release;
             emitEvent("GATE", "sbc_release", s, "", std::nullopt, std::nullopt,
@@ -1009,42 +997,41 @@ if (ctx.knobs.sbasis_complete_on) {
     }
 }
 
-int gate_observed       = -1;   // the LAST evaluation this epoch (post-heal if a re-gate ran)
-int gate_first_observed = -1;   // this epoch's FIRST evaluation — the DG6 min/max sample
-double gate_ev_max      = -1.0; // invariant #7: λmax of the FIRST evaluation (the gate's own cutoff)
+int gate_observed       = -1;   // the last evaluation this epoch (after the heal if a re-gate ran)
+int gate_first_observed = -1;   // this epoch's first evaluation: the DG6 min/max sample
+double gate_ev_max      = -1.0; // λmax of the first evaluation, which sets the gate's own cutoff (invariant #7)
 ++ctx.counters.n_gate_evaluated;
 try {
     sb.assertNullSpaceRank(est.reducedSharedNormals(), plan.declared_dimension,
                            est.rankGateTol(), &gate_observed, &gate_ev_max);
     gate_first_observed = gate_observed;
 } catch (const std::exception& ex) {
-    // assertNullSpaceRank writes observed_out BEFORE the equality test, so
-    // the count that caused this throw is already in gate_observed; latch it
-    // now, before a possible re-gate overwrites it.
+    // assertNullSpaceRank writes observed_out before the equality test, so the
+    // count that caused this throw is already in gate_observed; latch it now,
+    // before a possible re-gate overwrites it.
     gate_first_observed = gate_observed;
-    // The reduced shared system carries MORE gauge freedoms than the
-    // declared datum can pin — typically a satellite that is momentarily
-    // unobservable (seen by a single station at marginal geometry), or —
-    // under the prioritized datum — a phase-bias column whose anchor was
-    // dropped / whose separation is weak.  For the prioritized case, try to
-    // soft-anchor exactly those near-null phase-bias columns and RE-GATE
-    // before withholding (the eigenVECTOR heal runs ONLY here, not every
-    // epoch).  If the datum is still deficient after healing (or on the
-    // legacy path), the product would be a meaningless least-norm split, so
-    // WITHHOLD (the plan's "gate emission until convergence" safeguard).
+    // The near-null count differs from the declared dimension.  Typically the
+    // reduced shared system carries more gauge freedoms than the declared datum
+    // can pin: a satellite that is momentarily unobservable (seen by a single
+    // station at marginal geometry) or, under the prioritized datum, a
+    // phase-bias column whose anchor was dropped or whose separation is weak.
+    // In the prioritized case, soft-anchor those near-null phase-bias columns and
+    // gate again before withholding (the eigenvector heal runs only here, not
+    // every epoch).  If the datum is still deficient after the heal (or on the
+    // legacy path), the product would be an arbitrary least-norm split, so
+    // withhold (the plan's "gate emission until convergence" safeguard).
     bool recovered = false;
-    // PA2: per-healed-column attribution for the trace_events rows below.
-    // Declared OUTSIDE the inner try so the rows are still emitted when the
-    // RE-GATE (not the heal) is what threw — a heal that fired and did not
-    // rescue the epoch is exactly the case worth seeing.
+    // Per-healed-column attribution for the trace_events rows below (PA2).
+    // Declared outside the inner try so the rows are still emitted when the
+    // re-gate, not the heal, throws: a heal that fired and did not recover the
+    // epoch is the case these rows exist for.
     std::vector<PhaseHealEvent> heal_events;
-    int healed_n = 0;   // >0 only once the heal RETURNED (its priors are folded)
-    // DG6 observability: the heal / re-gate failure text, CAPTURED rather than
-    // logged in place, so the single withhold WARN below owns the whole
-    // user-visible report.  Stays empty when the inner try returns without
-    // throwing — which includes the case that used to be logged nowhere at all:
-    // healed == 0 skips the re-gate, so nothing in the block can throw and the
-    // epoch reaches the withhold carrying no exception of its own.
+    int healed_n = 0;   // > 0 only once the heal has returned (its priors are folded)
+    // The heal / re-gate failure text is captured rather than logged in place, so
+    // the single withhold warning below carries the whole user-visible report
+    // (DG6).  It stays empty when the inner try returns without throwing, which
+    // includes healed == 0: the re-gate is skipped, nothing in the block can
+    // throw, and the epoch reaches the withhold with no exception of its own.
     std::string heal_fail_what;
     try {
         const int healed = healNearNullPhaseBias(
@@ -1052,9 +1039,9 @@ try {
             within_epoch_armed, cap_priors,    // 0 unless prioritized + near-null PB
             &heal_events);
         healed_n = healed;
-        // PA2: count the ATTEMPT before the re-gate can throw — the
-        // success-only pair below cannot distinguish "the heal never ran"
-        // from "the heal ran every epoch and never rescued the gate".
+        // Count the attempt before the re-gate can throw: the success-only pair
+        // below cannot tell "the heal never ran" from "the heal ran every epoch
+        // and never recovered the gate" (PA2).
         if (healed > 0) {
             ++ctx.counters.n_heal_attempt_epochs;
             ctx.counters.n_heal_attempt_cols += static_cast<size_t>(healed);
@@ -1072,22 +1059,20 @@ try {
         }
     } catch (const std::exception& ex2) {
         // The heal (eigensolve / addSharedPrior) or the re-gate reported a
-        // deficiency it could not resolve — withhold rather than crash.  The
-        // report is deferred to the unified WARN on the !recovered path: this
-        // catch is NOT the only route to a withhold, and when it used to own
-        // the only warn the other routes were invisible above debug level.
+        // deficiency it could not resolve: withhold rather than crash.  The report
+        // is deferred to the single warning on the !recovered path, because this
+        // catch is not the only route to a withhold; a warning emitted only here
+        // would leave the other routes visible at debug level alone.
         heal_fail_what = ex2.what();
     }
-    // PA2: one row per soft-anchored column (station-less by nature — the
-    // heal acts on a SHARED column).  statistic = the eigenvalue of the
-    // near-null direction the column spans most heavily, threshold = that
-    // |component|; action records whether the heal actually rescued the
-    // epoch, so an attributable-but-futile heal is distinguishable from a
-    // working one.  Gated on healed_n > 0 so a heal that THREW mid-fold
-    // cannot emit rows claiming columns were anchored when no prior was
-    // installed — the re-gate throw (healed_n > 0, recovered false) is the
-    // case worth seeing, and it is preserved.  No-op unless
-    // network.trace_events.
+    // One row per soft-anchored column (PA2), with no station because the heal
+    // acts on a shared column.  statistic is the eigenvalue of the near-null
+    // direction the column spans most heavily, threshold is that |component|, and
+    // action records whether the heal recovered the epoch, so an attributable but
+    // ineffective heal can be told from a working one.  Gated on healed_n > 0 so
+    // a heal that threw mid-fold cannot emit rows claiming anchored columns when
+    // no prior was installed; the re-gate throw (healed_n > 0, recovered false)
+    // still emits its rows.  No-op unless network.trace_events.
     if (healed_n > 0) {
         for (const auto& h : heal_events)
             emitEvent("GATE", "phase_heal", h.sat, "", h.ev, h.span,
@@ -1097,35 +1082,25 @@ try {
     if (!recovered) {
         gate_ok = false;
         ++n_gate_withheld;
-        // DG6: split the withhold by DIRECTION.  observed > declared is a
-        // missing datum constraint (the BeiDou storm); observed < declared
-        // means the tolerance sits BELOW this config's own gauge depth, so
-        // the gauges stopped being counted — a mis-calibration withholding a
-        // HEALTHY config, which no amount of datum work will fix.  gate_observed
-        // is whatever the LAST gate evaluation of this epoch measured.
+        // Split the withhold by direction (DG6).  observed > declared is a missing
+        // datum constraint (the BeiDou storm); observed < declared means the
+        // tolerance sits below this config's own gauge depth, so the gauges are no
+        // longer counted: a mis-calibration withholding a sound config, which no
+        // datum work will fix.  gate_observed is what the last gate evaluation of
+        // this epoch measured; an unknown count (< 0) is counted as under.
         if (gate_observed >= 0 && gate_observed < plan.declared_dimension)
             ++ctx.counters.n_gate_withheld_over;
         else
             ++ctx.counters.n_gate_withheld_under;
-        // DG6 observability: ONE warn-level line on EVERY withhold, whatever
-        // route reached it, reporting BOTH gate evaluations.  It replaces a
-        // debug-only line and a warn that only the inner catch could emit —
-        // two defects measured on the DOY-129 GPS+Gal cluster at TOW
-        // 263250/263280/263310/263340/263370:
-        //   (1) INVISIBLE WITHHOLDS.  A heal that anchors 0 columns (a
-        //       machine-zero orphan direction with no phase-bias span, smallest
-        //       ev -6.36e-12) never re-gates, so the inner catch never ran and
-        //       the epoch was withheld with nothing above debug.  The run-end
-        //       counter said 5, the log showed 4, and TOW 263250 appeared only
-        //       in network_events.csv.
-        //   (2) WRONG COUNT.  The old warn printed the RE-GATE text, i.e. the
-        //       deficiency remaining AFTER the heal folded its soft anchors —
-        //       "observed 4" in the log against "observed 5" in the CSV, the
-        //       heal having collapsed exactly one of three extra directions.
-        //       A log-only reader under-counted the deficiency by one.
-        // gate_first_observed and gate_observed are latched for precisely this
-        // purpose; ex.what() is the FIRST evaluation, so this line and the
-        // gate_withheld CSV row below now tell the same story.
+        // One warning line on every withhold, whichever route reached it,
+        // reporting both gate evaluations (DG6).  A heal that anchors 0 columns
+        // (a machine-zero orphan direction with no phase-bias span) skips the
+        // re-gate, so the inner catch never runs; this line still reports the
+        // withhold.  The count reported first is the first evaluation's
+        // (gate_first_observed; ex.what() is also from the first evaluation), not
+        // the re-gate's, which measures only the deficiency left after the heal's
+        // soft anchors and is reported after it.  This line and the gate_withheld
+        // CSV row below therefore report the same count.
         const std::string regate_part =
             (healed_n > 0) ? fmt::format(", re-gate observed {}", gate_observed)
                            : std::string(" (no re-gate ran)");
@@ -1141,37 +1116,36 @@ try {
                   "skip_epoch", ex.what());
     }
 }
-// DG6: run-wide observed-near-null envelope, ONE sample per epoch (the
-// FIRST gate evaluation — a post-heal re-gate answers a different
-// question and is already counted by n_healed_epochs).  This is the
-// evidence DG3's placement rule is audited against: a run whose observed
-// count never leaves {declared} needs no calibration at all.
+// Run-wide envelope of the observed near-null count, one sample per epoch from the
+// first gate evaluation (DG6); a re-gate after the heal answers a different
+// question and is counted by n_healed_epochs.  DG3's placement rule is audited
+// against this envelope: a run whose observed count never leaves {declared} needs
+// no calibration.
 if (gate_first_observed >= 0) {
     auto& lo = ctx.counters.nullspace_obs_min;
     auto& hi = ctx.counters.nullspace_obs_max;
     if (lo < 0 || gate_first_observed < lo) lo = gate_first_observed;
     if (hi < 0 || gate_first_observed > hi) hi = gate_first_observed;
 }
-// STANDING INVARIANT #7 (docs/SPEC_card1_coupling_carry.md §13): measure how much
-// information each DECLARED datum direction carries, on the SAME normals and cutoff the
-// gate just judged.  The gate's integer count cannot distinguish "the tolerance is
-// mis-placed" from "a carry FILLED a gauge direction", and those need opposite fixes —
-// this ratio is the discriminator, and it is the reason that class can never again go
-// silent.  Measure-only, unconditional, ~one k×k quadratic form per constellation.
-// Deliberately AFTER the withhold accounting above so the coincidence counter
-// (OVER-specified withhold on a breached epoch) can be formed here in one place.
+// Measure how much information each declared datum direction carries (standing
+// invariant #7, docs/SPEC_card1_coupling_carry.md §13), on the same normals and
+// cutoff the gate just judged.  The gate's integer count cannot tell "the tolerance
+// is misplaced" from "a carry filled a gauge direction", and the two need opposite
+// fixes; this ratio tells them apart, so a filled gauge direction is reported.
+// Measure-only, unconditional, about one k×k quadratic form per constellation.
+// Runs after the withhold accounting above so the coincidence counter (an
+// over-specified withhold on a breached epoch) is formed here in one place.
 networkDatumInfoRatio(ctx, traces, se, est, plan.declared_dimension,
                       registered_clock_sats, gate_ev_max,
                       /*gate_over_withheld=*/!gate_ok && gate_observed >= 0
                           && gate_observed < plan.declared_dimension);
-// Datum graph census: the FALLBACK spectral hand-off, for runs without SBC.
-// The gate's own first evaluation is then the only realized near-null count
-// there is — a COUNT with no direction identities, which the census labels
-// `obs_src=count` rather than pretending it can attribute.  Deliberately does
-// NOT overwrite an SBC capture: with the completion armed the gate inspects
-// the COMPLETED system and reads back the declared dimension, so taking its
-// count would report the completion succeeding instead of the deficiency the
-// census is reconciling against.
+// Datum graph census: the fallback spectral hand-off, for runs without SBC.  The
+// gate's own first evaluation is then the only realized near-null count, a count
+// with no direction identities, which the census labels `obs_src=count` rather
+// than attributing it.  An SBC capture is not overwritten: with the completion
+// armed, the gate inspects the completed system and reads back the declared
+// dimension, so its count would report the completion's success instead of the
+// deficiency the census reconciles against.
 if (ctx.knobs.dg_on) {
     auto& dgs = ctx.carry.dg_spec;
     if (!dgs.from_sbc && gate_first_observed >= 0) {
@@ -1188,28 +1162,28 @@ if (!gate_ok) {
     { EpochStatusRow es; es.n_present = n_present; es.n_clock_sats = n_clock;
       es.datum_changed = datum_changed ? 1 : 0;
       emitEpochStatus("gate_withheld", es); }
-    // RTA-10: product-level heartbeat for a WITHHELD epoch — an H line with NO
-    // E line, so a live tail can tell "gate withheld" from "producer died".
-    // Before the deferred product writer opens (the first emit) the heartbeat is
-    // BUFFERED in setup.pending_h_pre_open and flushed at the open — a leg that
-    // opens inside a withhold era previously wrote nothing for the whole era.
-    // σ̂0 is unavailable pre-solve (0 per the H grammar); withheld="*" = whole epoch.
+    // Product-level heartbeat for a withheld epoch: an H line with no E line, so a
+    // live tail can tell "gate withheld" from "producer died" (RTA-10).  Before the
+    // deferred product writer opens (at the first emit) the heartbeat is buffered in
+    // setup.pending_h_pre_open and flushed at the open, so a leg that opens inside a
+    // withhold era still records the era.  The RAIM σ̂0 is not available before the
+    // solve (0 per the H grammar); withheld="*" means the whole epoch.
     if (emit_epoch_status) {
         NetworkProducerStatus hst;
         hst.time.week = se.time.week;
         hst.time.tow  = se.time.tow;
         hst.state     = NetworkProducerStatus::State::WithheldGate;
-        // H-rider: the census σ̂₀ is PRE-solve, so unlike the RAIM statistic it
-        // exists even on a gate-withheld epoch (0.0 stays the sentinel when
-        // the feed is off or the pool was empty).
+        // The census σ̂₀ is computed before the solve, so unlike the RAIM
+        // statistic it exists on a gate-withheld epoch; 0.0 stays the sentinel
+        // when the feed is off or the pool was empty (H-rider).
         if (ctx.knobs.h_sigma0_census) hst.sigma0 = ctx.carry.ep_h_sigma0_census;
         hst.withheld  = "*";
         if (product_writer) {
             product_writer->writeEpochStatus(hst);
             if (nc.product_flush_per_epoch) product_writer->flush();
         } else if (setup.contract_pending) {
-            // Buffer ONLY while a v2 writer open is still coming — with no
-            // product path (or v1 immediate open) there is nothing to flush into.
+            // Buffer only while a v2 writer open is still pending; with no
+            // product path (or a v1 immediate open) there is nothing to flush into.
             setup.pending_h_pre_open.push_back(hst);
         }
     }
@@ -1222,29 +1196,29 @@ if (!gate_ok) {
 // cold-start convergence horizon.  Its per-epoch predictions (for the post-solve update
 // + normalized-innovation test) are stashed here.
 const bool clk_model_warm = clk_model_on && (static_cast<int>(n_emitted) >= pl_warmup);
-// network.emit_clock_rate: same warmup gate as the clock model — skip the cold-start
-// epochs where the floated clock would finite-difference into a huge spurious C1 rate.
+// network.emit_clock_rate: same warmup gate as the clock model, skipping the cold-start
+// epochs where the floated clock would finite-difference into a large spurious C1 rate.
 const bool emit_rate_warm = emit_clock_rate_on && (static_cast<int>(n_emitted) >= pl_warmup);
 auto& clk_pred = ws.clk_pred;
 auto& clk_prior_info = ws.clk_prior_info;
 
-// --- Card 6 (RTF-2 / plan D3): ephemeris-cutover re-level ---------------------------
-// Re-base the carried clock state by -Delta_eph on a broadcast IODE roll (MUST precede
-// the prior injection + solve).  Relocated VERBATIM to filter/NetworkRelevel at the
-// Card-6 relevel decomposition (2026-07-23); full ordering rationale lives there.
+// --- Ephemeris-cutover re-level (card 6, RTF-2 / plan D3) ---------------------------
+// Re-base the carried clock state by -Delta_eph on a broadcast IODE roll.  This must
+// run before the prior injection and the solve; filter/NetworkRelevel holds the full
+// ordering rationale.
 networkEphCutoverRelevel(ctx, log, traces, se, registered_clock_sats, brdc_rts);
 
-// --- Queue 1(b): the clock-pivot handover S-transform (SPEC_pivot_visibility_gauge_defect §8)
-// Re-express the CHANGED constellation's carried shared means in the INCOMING clock
+// --- Clock-pivot handover S-transform (queue 1(b), SPEC_pivot_visibility_gauge_defect §8)
+// Re-express the changed constellation's carried shared means in the incoming clock
 // datum and mark them for fold release, so the prior below folds instead of being
-// skipped for one epoch.  Placed here — immediately before the first fold that reads
-// prev_carry — deliberately: every consumer of the carry must see the same frame, and
-// this is the last point at which that is guaranteed by construction rather than by an
-// audit of the intervening seams.  It runs AFTER the eph-cutover re-level so the two
-// re-basings compose in the order the carry actually experienced them (cutover first:
-// it is a change of the a-priori the carry is expressed AGAINST; the handover is a
-// change of the gauge that carry realizes).  No-op and byte-identical when the knob is
-// off; clears its own release set every epoch.
+// skipped for one epoch.  It sits immediately before the first fold that reads
+// prev_carry: every consumer of the carry must see the same frame, and this is the
+// last point at which that holds by construction rather than by an audit of the seams
+// in between.  It runs after the ephemeris-cutover re-level so the two re-basings
+// compose in the order the carry experienced them: the cutover changes the a-priori
+// the carry is expressed against, and the handover changes the gauge the carry
+// realizes.  No-op and byte-identical when the knob is off; it clears its own release
+// set every epoch.
 networkHandoverStransform(ctx, config_, log, traces, se.time, plan, datum_changed,
                           changed_consts, registered_clock_sats);
 
@@ -1256,37 +1230,37 @@ networkInjectClockOscPrior(ctx, ws, traces, se.time, est, registered_clock_sats,
                            pl_now_s, dt, within_epoch_armed);
 
 // --- A-priori satellite-clock anchor (cold-start conditioning) ------
-// The shared clock column is Δδtˢ relative to the a-priori PRECISE product
-// clock, so it is genuinely small (sub-metre for precise post-processing).
-// With no absolute anchor the per-epoch joint solve floats it by hundreds
-// of metres at cold start to absorb the clock↔iono↔bias confusion (no
-// carry-forward exists yet at epoch 1, and epoch 2+ then anchors to that
-// floated value).  A Tikhonov prior pulling each Δδtˢ toward 0 with
-// σ = initial_std.sat_clock (the documented "Δδtˢ vs a-priori product clock"
-// quality: sub-m precise, looser for RT broadcast) regularizes ONLY the
-// ill-conditioned cold-start direction: the per-constellation clock DATUM
-// stays fixed by the explicit Datum (a large-weight pin that dominates this
-// soft prior), so the few-metre datum offset the data determines survives.
-// Applied POST-gate (like the carry-forward) so the null-space rank gate
-// still sees the clock datum as a gauge, and it combines in information space
-// with the carry-forward (anchor-toward-0 + RW-toward-previous).  Gated to a
-// BINDING std (< 100 m): the legacy loose default (1000 m) leaves the anchor
-// off, so every existing network config is byte-identical.
+// The shared clock column is Δδtˢ relative to the a-priori precise product clock,
+// so it is small (sub-metre for precise post-processing).  With no absolute anchor
+// the per-epoch joint solve floats it by hundreds of metres at cold start to absorb
+// the clock↔iono↔bias confusion (no carry-forward exists at epoch 1, and from
+// epoch 2 on the carry anchors to that floated value).  A Tikhonov prior pulling
+// each Δδtˢ toward 0 with σ = initial_std.sat_clock (the documented "Δδtˢ vs
+// a-priori product clock" quality: sub-metre for precise products, looser for RT
+// broadcast) regularizes only the ill-conditioned cold-start direction.  The
+// per-constellation clock datum stays fixed by the explicit Datum (a large-weight
+// pin that dominates this soft prior), so the few-metre datum offset that the data
+// determine is kept.  The prior is applied after the gate (like the carry-forward)
+// so the null-space rank gate still sees the clock datum as a gauge, and it
+// combines in information space with the carry-forward (anchor toward 0 plus random
+// walk toward the previous value).  It applies only when σ binds (< 100 m); the
+// loose default (1000 m) leaves the anchor off and the run byte-identical.
 //
-// SCOPE (measured, 305-sta GPS+Gal, 2026-06-30; see [[project_global_sh_iono]]):
-// σ=0.05 m collapses cold-start clock-Δ rms 56→2.9 m for ~6 epochs, then the
-// W6 clock↔bias↔ambiguity systematic (data wants ~80 m, info ≫ the anchor)
-// reasserts.  This improves cold-start CLOCK-PRODUCT quality only — the
-// co-estimated SH-VTEC field divergence is a SEPARATE, DECOUPLED cold-start
-// estimability defect (its large-scale level is unobservable under the
-// common-mode-free iono R); pinning the clock does NOT move the field.
+// Measured scope (305 stations, GPS+Galileo; see [[project_global_sh_iono]]):
+// σ = 0.05 m reduces the cold-start clock-Δ rms from 56 to 2.9 m for about 6
+// epochs, after which the W6 clock↔bias↔ambiguity systematic returns (the data want
+// about 80 m, with information far above the anchor's).  The anchor improves
+// cold-start clock-product quality only.  The divergence of the co-estimated
+// SH-VTEC field is a separate, decoupled cold-start estimability defect (its
+// large-scale level is unobservable under the common-mode-free iono R), and
+// pinning the clock does not move the field.
 {
     const double clk_sigma = clk_anchor_sigma;  // m (D6-resolved; sp3 auto == initial_std.sat_clock)
-    // Broadcast-anchored datum: the SAME per-satellite anchors were already
-    // folded PRE-gate as the gauge realization (buildSharedDatum constraint
-    // rows) — folding them again here would double the anchor information
-    // (effective σ/√2).  Skip; every other mode keeps the post-gate
-    // regularizer exactly as before.
+    // Broadcast-anchored datum: the same per-satellite anchors were folded before
+    // the gate as the gauge realization (buildSharedDatum constraint rows), and
+    // folding them again here would double the anchor information (effective
+    // σ/√2).  Skip them in that mode; every other mode keeps the post-gate
+    // regularizer.
     if (!clock_brdc_anchored
         && std::isfinite(clk_sigma) && clk_sigma > 0.0 && clk_sigma < 100.0) {
         const double clk_info = 1.0 / (clk_sigma * clk_sigma);
@@ -1307,34 +1281,33 @@ networkInjectClockOscPrior(ctx, ws, traces, se.time, est, registered_clock_sats,
     }
 }
 
-// A clock-pivot handover re-references the whole shared solution; the
-// forced bump steps BOTH phase and code discontinuity counters next
-// emit (the code per-(const,signal) sum-to-zero and IF-pin re-references
-// are detected by the emitter from the emitted epoch itself — see
-// NetworkProductEmitter; only this clock-pivot signal is driver-known).
-// Both the emitter datum bump (markDatumChange) AND the prev_pivot /
-// last_pivot baseline advance are DEFERRED to the emit site: the maps
-// must describe the datum of the last EMITTED product (the consumer's
-// view).  Advancing them here — before the solve — would make a handover
-// epoch that is subsequently skipped (solve failure, σ̂0 withhold)
-// compare equal next epoch: the discontinuity signal would be lost
-// forever AND the old-datum prev_carry/clock_osc would fold as priors
-// into the new-datum solve.  With the baseline frozen across skipped
-// epochs, every skip path re-detects the handover until one epoch
-// actually emits in the new datum.
+// A clock-pivot handover re-references the whole shared solution; the forced bump
+// steps both the phase and the code discontinuity counters at the next emit.  (The
+// emitter detects the code per-(constellation, signal) sum-to-zero and IF-pin
+// re-references from the emitted epoch itself, see NetworkProductEmitter; only this
+// clock-pivot signal is known to the driver alone.)  The emitter datum bump
+// (markDatumChange) and the prev_pivot / last_pivot baseline advance are both
+// deferred to the emit site, because the maps must describe the datum of the last
+// emitted product (the consumer's view).  Advancing them here, before the solve,
+// would make a handover epoch that is then skipped (solve failure, σ̂0 withhold)
+// compare equal on the next epoch: the discontinuity signal would be lost, and the
+// old-datum prev_carry / clock_osc would fold as priors into the new-datum solve.
+// With the baseline frozen across skipped epochs, every skip path re-detects the
+// handover until an epoch emits in the new datum.
 
 Eigen::VectorXd x_s;
 try {
-    // parallel_carry: the WHOLE est.solve() is Eigen-threaded work — foldReducedDdPriors
-    // fans its per-station reduction across threads itself (Eigen PINNED), and its dense
-    // GEMMs + the K×K middle inverse run under Eigen's own threading.  So, unlike the two
-    // isolated build/install GEMM stages, solve() is NOT wrapped in a CarryEigenScope: an
-    // un-pin here would nest the fold's OpenMP with Eigen's GEMM threads.  It is also why
-    // parallel_carry cannot coexist with parallel_reduce (which would OpenMP-fan this same
-    // Eigen-threaded solve across stations) — the loader keeps them mutually exclusive.
+    // parallel_carry: all of est.solve() is Eigen-threaded work.  foldReducedDdPriors
+    // spreads its per-station reduction across threads itself (with Eigen pinned), and
+    // its dense GEMMs and the K×K middle inverse run under Eigen's own threading.  So,
+    // unlike the two isolated build/install GEMM stages, solve() is not wrapped in a
+    // CarryEigenScope: an un-pin here would nest the fold's OpenMP inside Eigen's GEMM
+    // threads.  For the same reason parallel_carry cannot coexist with parallel_reduce
+    // (which would spread this Eigen-threaded solve across stations with OpenMP); the
+    // loader keeps the two mutually exclusive.
     x_s = est.solve(plan.shared_datum);
-    // Card 1d debug: full-precision solve checksum for A/B-arm differencing
-    // (print-precision-proof).  One-shot budget; log-only.
+    // Debug: full-precision solve checksum for differencing A/B arms without print
+    // precision loss.  Budgeted by n_cpl_solve_dump; log only (card 1d).
     if (carry_cpl_cond && n_cpl_solve_dump > 0) {
         --n_cpl_solve_dump;
         log->info("Network (Card 1d dbg): solve checksum TOW {:.1f}: sum={:.17e} "
@@ -1346,81 +1319,82 @@ try {
     ++n_skipped;
     { EpochStatusRow es; es.n_present = n_present; es.n_clock_sats = n_clock;
       es.datum_changed = datum_changed ? 1 : 0;
-      emitEpochStatus("solve_failed", es); }   // x_s empty — no clock stats
+      emitEpochStatus("solve_failed", es); }   // x_s is empty: no clock stats
     prev_week = se.time.week; prev_tow = se.time.tow;
     result.action = EpochAction::SkipEpoch;
     return result;
 }
 
-// Satellites whose carried SHARED state (clock + coupled phase/code bias) is to be
-// REFLOATED at the end-of-epoch stash: the per-satellite clock monitor (below, the
-// detector for a lone lock-in the σ̂0 RAIM misses) plus — only when
-// clock_monitor_couple_raim is opted in — every satellite the within-epoch / post-fit
-// RAIM already flags (so a slip that leaked into the shared clock reinitializes the
-// clock too, not just the ambiguity).  Empty unless network.clock_monitor, so the stash
-// stays byte-identical when off.
+// Satellites whose carried shared state (clock and coupled phase/code bias) is
+// refloated at the end-of-epoch stash: those flagged by the per-satellite clock
+// monitor (below; it detects a lone lock-in that the σ̂0 RAIM misses) and, only when
+// clock_monitor_couple_raim is opted in, every satellite the within-epoch or
+// post-fit RAIM flags, so a slip that leaked into the shared clock reinitializes the
+// clock as well as the ambiguity.  Empty unless network.clock_monitor, so the stash
+// is byte-identical when off.
 std::set<std::string> clock_refloat_sats;
-int n_arc_refloat_epoch = 0;   // T2d: isolated-arc RAIM refloats executed this epoch (heartbeat metric)
-// B1 retro-bump / URA-inflate feed (P0-2): the union of satellites ANY QC tier
-// flags this epoch, independent of clock_monitor_couple_raim.  clock_refloat_sats
-// only captures the RAIM tiers under the couple opt-in (it drives the CARRY
-// refloat, a numeric action), so a separate accumulator is needed so the
-// retro-bump reaches every tier without forcing a carry refloat.  Populated only
-// when a URA feature that consumes it is on; inert (byte-identical) otherwise.
+int n_arc_refloat_epoch = 0;   // isolated-arc RAIM refloats executed this epoch, a heartbeat metric (T2d)
+// Retro-bump / URA-inflate feed (B1, P0-2): the union of satellites that any QC
+// tier flags this epoch, independent of clock_monitor_couple_raim.
+// clock_refloat_sats captures the RAIM tiers only under the couple opt-in (it drives
+// the carry refloat, a numeric action), so a separate accumulator lets the
+// retro-bump reach every tier without forcing a carry refloat.  Populated only when
+// a URA feature that consumes it is on; otherwise inert (byte-identical).
 std::set<std::string> retro_flag_sats;
 const bool retro_feed = ura_retro || ura_refloat_inflate > 1.0;
 
-// --- Card Q3: the guarded temporal clock anchor (docs/SPEC_clock_temporal_anchor.md) ---
-// MUST run here — after the primary solve, BEFORE the within-epoch adaptation
-// below.  A stiff clock prior fighting a genuine step dumps the tension into the
-// residuals and raises σ̂0; the adaptation would then attribute a PRIOR fault to a
-// satellite's or a station's DATA and drop it.  A prior fault is resolved first,
+// --- Guarded temporal clock anchor (card Q3, docs/SPEC_clock_temporal_anchor.md) ---
+// Must run here: after the primary solve and before the within-epoch adaptation
+// below.  A stiff clock prior fighting a real step pushes the tension into the
+// residuals and raises σ̂0, and the adaptation would then attribute a prior fault to
+// a satellite's or a station's data and drop it.  A prior fault is resolved first,
 // by refloating the prior (never by de-weighting a measurement) and re-solving the
-// epoch in place — so the assessment below sees the corrected solve and the epoch
-// EMITS (adapt-and-emit; a withhold here would be an adaptation failure).
-// clock_refloat_sats is empty at this point on every path except a warm carry of
-// the previous epoch's flags, so the guard's `ext` coupling reads exactly the
-// tiers that have already spoken.  No-op (not even a state allocation) when off.
+// epoch in place, so the assessment below sees the corrected solve and the epoch
+// emits (adapt-and-emit; a withhold here would be an adaptation failure).
+// clock_refloat_sats is always empty at this call (nothing is inserted before the
+// within-epoch adaptation below), so the guard's `ext` coupling reads no satellites
+// on this path.  No-op, with no state allocation, when off.
 networkClockAnchorGuard(ctx, config_, log, traces, se.time, est, plan, x_s, ws,
                         registered_clock_sats, clock_refloat_sats, datum_changed,
                         changed_consts);
 
-// --- Within-epoch adaptation: drop the dominant culprit(s) and re-solve --------
-// When σ̂0 (the robust a-posteriori variance factor) shows the joint solve is
-// contaminated, peel the single most-prominent culprit — a whole SATELLITE (its
-// rows de-weighted network-wide) or a whole STATION (excluded) — re-solve THIS epoch
+// --- Within-epoch adaptation: drop the dominant culprits and re-solve ----------
+// When σ̂0 (the robust a-posteriori variance factor) shows that the joint solve is
+// contaminated, remove the single most prominent culprit, a whole satellite (its
+// rows de-weighted network-wide) or a whole station (excluded), re-solve this epoch
 // over a fresh beginEpoch() replay of the captured shared system, and repeat until
-// σ̂0 falls below the trigger or a cap.  Only the (rare, already-contaminated) trigger
-// epochs pay the re-solve; try/catch reverts to the last good solve on any failure.
-// Uses the same robust median-polish attribution as the RAIM refloat.
+// σ̂0 falls below the trigger or a cap is reached.  Only the (rare, already
+// contaminated) trigger epochs pay for the re-solve; try/catch reverts to the last
+// good solve on any failure.  Attribution uses the same robust median polish as the
+// RAIM refloat.
 int  n_adapt = 0;
 bool we_adapt_attempted = false;   // a within-epoch re-solve was launched (est layout was rebuilt)
-double sigma0_adapt = 0.0;         // A4: final within-epoch σ̂0 (0 = adaptation did not run this epoch)
-// SPEC_withhold_era_release: era continuity resolved ONCE per epoch (the census-
-// freshness idiom — the era lives iff the immediately-previous LOOP epoch was the
-// last A4-withheld decide; any bypass/skip epoch breaks it, C5/C7).  Declared at
-// function scope like sigma0_adapt because the A4 decision site consumes both
-// after the within-epoch block closes.
+double sigma0_adapt = 0.0;         // final within-epoch σ̂0; 0 = adaptation did not run this epoch (A4)
+// Withhold-era continuity, resolved once per epoch (SPEC_withhold_era_release; the
+// census-freshness idiom): the era is live if and only if the immediately previous
+// loop epoch was the last A4-withheld decision, so any bypass or skip epoch breaks
+// it (C5, C7).  Declared at function scope, like sigma0_adapt, because the A4
+// decision site reads both after the within-epoch block closes.
 const bool wh_era_live = ctx.carry.wh_era_len > 0 &&
     ctx.carry.wh_last_loop_ep ==
         static_cast<long long>(ctx.counters.n_loop_epochs) - 1;
-bool wh_escalated = false;         // §3(a) budget escalation in effect THIS epoch
-// RTA-10 (network.per_const_withhold): per-CONSTELLATION partition of the LAST
-// assess()'s standardized-residual pool — the very rows whose median is the global
-// σ̂0 the A4 withhold compares, keyed by the ambiguity's satellite constellation
-// (pa.sat[0]).  Cleared and refilled on every assess() so, like sigma0_adapt, it
-// describes the FINAL within-epoch solve.  Populated only when the carve-out is
-// armed (empty otherwise — no cost, no behavior change on the default path).
+bool wh_escalated = false;         // in effect this epoch: the budget escalation of §3(a)
+// Per-constellation partition of the last assess()'s standardized-residual pool
+// (RTA-10, network.per_const_withhold): the rows whose median is the global σ̂0 that
+// the A4 withhold compares, keyed by the ambiguity's satellite constellation
+// (pa.sat[0]).  Cleared and refilled on every assess() so that, like sigma0_adapt,
+// it describes the final within-epoch solve.  Populated only when the carve-out is
+// armed; otherwise empty, with no cost and no change on the default path.
 std::map<char, std::vector<double>> we_sigma0_pool_c;
-// R12: the B8/T2 flag-rate (first-solve σ̂0 > trigger) is DECIDED here but COMMITTED at
-// the emit site, so a subsequently-withheld epoch is excluded from T2's denominator —
-// matching T3–T6, which only accrue on emitted epochs.  Without this, T2 counted withheld
-// (contaminated) epochs while the post-fit tiers did not, giving incomparable alphas.
+// The B8/T2 flag rate (first-solve σ̂0 > trigger) is decided here but committed at the
+// emit site, so an epoch withheld later is excluded from T2's denominator, as for
+// T3–T6, which accrue only on emitted epochs.  Counting withheld (contaminated) epochs
+// in T2 alone would make its alpha incomparable with the post-fit tiers' (R12).
 bool we_t2_opp = false, we_t2_flag = false;
-// R0 (SPEC_pivot_visibility_gauge_defect §5.07.5): reset the tier's per-epoch
-// observability EVERY epoch that reaches the solve, so an epoch the tier does
-// not assess leaves the epoch-status columns blank instead of repeating the
-// last assessed epoch's numbers ("unavailable is not 0").
+// Reset the tier's per-epoch observability (R0, SPEC_pivot_visibility_gauge_defect
+// §5.07.5) on every epoch that reaches the solve, so an epoch the tier does not
+// assess leaves the epoch-status columns blank instead of repeating the last
+// assessed epoch's numbers ("unavailable is not 0").
 ctx.carry.ep_sigma0_first    = -1.0;
 ctx.carry.ep_we_refloat_sats = -1;
 ctx.carry.ep_we_clk_move_max = -1.0;
@@ -1430,30 +1404,31 @@ if (within_epoch_armed && carry_warm) {
     const bool   surgical  = config_.networkRaimSurgicalStation();
     const double sta_bias  = surgical ? config_.networkRaimStationDropBias() : 1.0;
     constexpr int    kMaxAdapt   = 5;
-    // SPEC_withhold_era_release §3(a): inside a live withhold era the budget
-    // escalates so the era can end the SANCTIONED way — a landed adaptation
-    // takes the normal accepted path and the full downstream healing (harvest +
-    // post-fit RAIM commit) runs.  Nothing else changes: same culprit scoring,
-    // same k-gate, same σ̂0, same ceiling.  Measured motivation (fld63 29-epoch
-    // era): n_adapt pinned at kMaxAdapt on every era epoch with culprits still
-    // clearing the k-gate.  Loader guarantees wh_escalate is 0 or > kMaxAdapt.
+    // Inside a live withhold era the adaptation budget escalates, per
+    // SPEC_withhold_era_release §3(a), so the era can end through the sanctioned
+    // route: a landed adaptation takes the normal accepted path, and the full
+    // downstream recovery (harvest and post-fit RAIM commit) runs.  Nothing else
+    // changes: same culprit scoring, same k-gate, same σ̂0, same ceiling.  Measured
+    // motivation: in a withhold era, n_adapt sat at kMaxAdapt on every era epoch
+    // with culprits still clearing the k-gate.  The loader guarantees that
+    // wh_escalate is 0 or > kMaxAdapt.
     wh_escalated = wh_era_live && ctx.knobs.wh_escalate > kMaxAdapt;
     const int max_adapt_eff = wh_escalated ? ctx.knobs.wh_escalate : kMaxAdapt;
-    // --- WE-CI (network.raim_we_code_iono): code + iono-constraint row pools ----
-    // The historical pool below is the carried-ambiguity PHASE rows; the code and
-    // per-LOS↔SH iono-constraint rows were screened by NO tier (P1-4 skips
-    // SH-touching rows by design), which is exactly where the DOY-129 19:26:00
-    // SH detonation entered.  When armed, assess() additionally pools them into
-    // per-pool robust σ̂0 with their own triggers, and the adaptation loop gains
-    // two response classes: epoch-scoped station exclusion (the measured
-    // BSHM/GOLD epicenter pattern) and network-wide satellite code-row de-weight
-    // (σ×10 — fallback, not drop).  The phase pool, σ̂0_adapt and the A4 ceiling
-    // are untouched; every new branch is behind we_ci, so OFF is byte-identical.
+    // --- Code and iono-constraint row pools (WE-CI, network.raim_we_code_iono) ---
+    // The pool below holds the carried-ambiguity phase rows.  Without WE-CI no tier
+    // screens the code rows or the per-LOS↔SH iono-constraint rows (P1-4 skips
+    // SH-touching rows by design), so a fault entering through them is not seen.
+    // When armed, assess() also pools them into per-pool robust σ̂0 with their own
+    // triggers, and the adaptation loop gains two response classes: epoch-scoped
+    // station exclusion (for a fault concentrated at a few stations) and a
+    // network-wide satellite code-row de-weight (σ×10, a fallback rather than a
+    // drop).  The phase pool, σ̂0_adapt and the A4 ceiling are unchanged; every new
+    // branch is behind we_ci, so with it off the run is byte-identical.
     const bool   we_ci     = config_.networkRaimWeCodeIono();
     const double trig_code = config_.networkRaimWeCodeTrigger();
     const double trig_iono = config_.networkRaimWeIonoTrigger();
     constexpr double kWeCiCodeWeightScale = 1e-2;   // de-weighted code row: w×1e-2 = σ×10
-    // Shared-column classification, built once per epoch — the shared layout is
+    // Shared-column classification, built once per epoch: the shared layout is
     // frozen for the epoch, so the maps stay valid across within-epoch re-solves.
     // Same label source and prefixes as the P1-4 pass (NetworkFrameDiag.cpp).
     std::vector<char> ci_sh_col, ci_cb_col;
@@ -1501,55 +1476,57 @@ if (within_epoch_armed && carry_warm) {
     for (size_t i = 0; i < stations.size(); ++i)
         orig_added[i] = (est_index_of[i] >= 0) ? 1 : 0;
 
-    // Culprit sets.  A bad AMBIGUITY (cycle slip — the dominant contamination the
-    // carried-phase RAIM sees) needs REINITIALIZATION, not measurement de-weighting: the
-    // re-solve REFLOATS the culprit's ambiguities (withholds their stale carry prior) so
-    // they re-estimate from full-weight data and absorb the slip locally.  A whole bad
-    // STATION (a data-quality problem, not a slip) is EXCLUDED — the de-weight/exclude
-    // tool, which is the right one for a bad measurement.
+    // Culprit sets.  A bad ambiguity (a cycle slip, the dominant contamination the
+    // carried-phase RAIM sees) needs reinitialization, not measurement de-weighting:
+    // the re-solve refloats the culprit's ambiguities (withholds their stale carry
+    // prior) so they re-estimate from full-weight data and absorb the slip locally.
+    // A whole bad station (a data-quality problem, not a slip) is excluded, which is
+    // the de-weight / exclude tool, the right one for a bad measurement.
     std::set<std::string> drop_sats;                       // refloat that sat's ambiguities network-wide
     std::set<int>         drop_stations;                   // excluded entirely (bad-data case)
-    std::map<int, std::set<std::string>> drop_arcs;        // (station → sats) refloat at that station ONLY
-    // C3c §3: the DD-carry re-solve (buildCarryDdPriors, via resolve_dropping)
-    // treats a mid-epoch RAIM culprit as slipped, so its stale carry is not
-    // re-folded (refold from unchanged predicted state, H13 + culprit-withhold).
-    // Aliases live only while this block runs; nulled before the sets leave scope.
+    std::map<int, std::set<std::string>> drop_arcs;        // (station → sats) refloat at that station only
+    // The DD-carry re-solve (buildCarryDdPriors, via resolve_dropping) treats a
+    // mid-epoch RAIM culprit as slipped, so its stale carry is not folded again
+    // (C3c §3, H13 plus culprit withhold: refold from the unchanged predicted
+    // state).  The aliases live only while this block runs and are nulled before
+    // the sets leave scope.
     carry_we_drop_sats = &drop_sats;
     carry_we_drop_arcs = &drop_arcs;
 
-    // σ̂0 + median-polish effects of the CURRENT shared solution.  The (station × sat)
-    // residual table (carried-ambiguity PHASE rows only) decomposes additively into a
-    // per-satellite column effect, a per-station row effect, and an isolated-arc
-    // interaction.  Computed over EVERY present ambiguity — a refloated ambiguity fits
-    // its own data (its residual collapses after the re-solve), so σ̂0 stays an HONEST
-    // measure of the REMAINING contamination without special-casing; the culprit is kept
-    // out of the next pick by the candidate-set exclusion, not by hiding it here.
+    // σ̂0 and median-polish effects of the current shared solution.  The (station × sat)
+    // residual table (carried-ambiguity phase rows only) decomposes additively into a
+    // per-satellite column effect, a per-station row effect and an isolated-arc
+    // interaction.  Computed over every present ambiguity: a refloated ambiguity fits
+    // its own data (its residual collapses after the re-solve), so σ̂0 remains a
+    // faithful measure of the remaining contamination without special cases; the
+    // culprit is kept out of the next pick by the candidate-set exclusion, not by
+    // hiding it here.
     auto assess = [&](const Eigen::VectorXd& xs, double& sigma0_out,
                       std::map<std::string, double>& sat_eff,
                       std::map<int, double>& sta_eff,
                       std::map<std::pair<int, std::string>, double>& arc_eff) {
         std::vector<double> r_pool;
-        std::vector<double> ci_code_pool, ci_iono_pool;   // WE-CI per-pool standardized rows
+        std::vector<double> ci_code_pool, ci_iono_pool;   // per-pool standardized rows (WE-CI)
         if (we_ci) { ci_sat_code_max.clear(); ci_sta_max.clear(); }
-        if (perconst_on) we_sigma0_pool_c.clear();   // RTA-10: re-partition per assess
+        if (perconst_on) we_sigma0_pool_c.clear();   // re-partition per assess (RTA-10)
         std::map<std::pair<int, std::string>, double> cell_max;
         for (size_t i = 0; i < stations.size(); ++i) {
-            // Prioritized: keep the former pivot in the σ̂0 pool — it now
-            // carries fault-testable non-anchored arcs; its anchored (pinned)
-            // keys are already absent from R.pl_amb (per-(sat,signal) partition).
+            // Prioritized datum: keep the legacy pivot station in the σ̂0 pool, as
+            // it carries fault-testable non-anchored arcs; its anchored (pinned)
+            // keys are already absent from R.pl_amb (per-(sat, signal) partition).
             if (!orig_added[i] || est_index_of[i] < 0
                 || (!phase_datum_prioritized && stations[i].is_pivot)) continue;
             const StationAssembly& R = asm_res[i];
             if (R.A_s.cols() != xs.size()) continue;
-            // WE-CI also screens stations with NO carried ambiguity (their code
-            // and iono rows are data too); OFF keeps the historical skip.
+            // WE-CI also screens stations with no carried ambiguity (their code
+            // and iono rows are data too); with it off, such stations are skipped.
             if (R.pl_amb.empty() && !we_ci) continue;
             Eigen::VectorXd x_r;
             try { x_r = est.reconstructStation(static_cast<std::size_t>(est_index_of[i]), xs); }
             catch (...) { continue; }
             if (x_r.size() != R.A_r.cols()) continue;
             const Eigen::VectorXd resid = R.y - R.A_s * xs - R.A_r * x_r;
-            Eigen::VectorXd row_r;   // B2: per-row Baarda redundancy (empty when off)
+            Eigen::VectorXd row_r;   // per-row Baarda redundancy, empty when off (B2)
             if (raim_redun) {
                 try {
                     row_r = est.rowRedundancy(static_cast<std::size_t>(est_index_of[i]),
@@ -1563,16 +1540,16 @@ if (within_epoch_armed && carry_warm) {
                     if (std::abs(R.A_r(row, pa.col)) <= 0.5) continue;
                     const double w = (row < R.w.size()) ? R.w(row) : 1.0;
                     double r = std::abs(resid(row)) * std::sqrt(std::max(0.0, w));
-                    if (raim_redun && row < row_r.size()) {   // B2: standardize v/(σ·√r_i)
+                    if (raim_redun && row < row_r.size()) {   // standardize v/(σ·√r_i) (B2)
                         constexpr double kRedFloor = 1e-6;
                         const double ri = row_r(row);
                         if (ri <= kRedFloor) continue;   // uncheckable row: exclude from σ̂0 pool + r_max
                         r /= std::sqrt(ri);
                     }
                     r_pool.push_back(r);
-                    // RTA-10: the SAME standardized row (weighting and B2 √r_i
-                    // normalization included; redundancy-floored rows excluded by
-                    // the continue above), partitioned by constellation.
+                    // The same standardized row (weighting and B2 √r_i normalization
+                    // included; redundancy-floored rows excluded by the continue
+                    // above), partitioned by constellation (RTA-10).
                     if (perconst_on && !pa.sat.empty())
                         we_sigma0_pool_c[pa.sat[0]].push_back(r);
                     if (r > r_max) r_max = r;
@@ -1581,7 +1558,7 @@ if (within_epoch_armed && carry_warm) {
                 auto it = cell_max.find(key);
                 if (it == cell_max.end() || r_max > it->second) cell_max[key] = r_max;
             }
-            // --- WE-CI: pool this station's code + iono-constraint rows ---------
+            // --- Pool this station's code and iono-constraint rows (WE-CI) -------
             if (we_ci) {
                 std::vector<char> is_amb_col(static_cast<std::size_t>(R.A_r.cols()), 0);
                 for (const auto& pa : R.pl_amb)
@@ -1636,7 +1613,7 @@ if (within_epoch_armed && carry_warm) {
         arc_eff.clear();
         for (std::size_t k = 0; k < tbl.size(); ++k)
             arc_eff[std::make_pair(std::get<0>(tbl[k]), std::get<1>(tbl[k]))] = mp.interaction[k];
-        if (we_ci) {   // WE-CI per-pool robust σ̂0 (same estimator as the phase pool)
+        if (we_ci) {   // per-pool robust σ̂0, same estimator as the phase pool (WE-CI)
             auto pool_s0 = [](std::vector<double>& p) -> double {
                 if (p.empty()) return 0.0;
                 std::nth_element(p.begin(),
@@ -1650,16 +1627,17 @@ if (within_epoch_armed && carry_warm) {
     };
 
     // Replay the epoch over a fresh arrowhead (beginEpoch reopens the frozen layout;
-    // only reset() would clear it), REFLOATING the culprit ambiguities.  Rebuilds
+    // only reset() would clear it), refloating the culprit ambiguities.  Rebuilds
     // est_index_of so reconstructStation / harvest stay valid on the final solve.  The
-    // measurements stay at FULL weight — de-weighting is the tool for a bad measurement,
-    // whereas a slipped ambiguity needs a new VALUE.  A satellite culprit refloats its
-    // ambiguities at every station; an arc culprit at one station only; a whole-station
-    // culprit is excluded (its data, not a single ambiguity, is bad).  A refloated
-    // ambiguity keeps its full-weight data (so its local block stays positive-definite —
-    // no drop-induced singularity) but WITHHOLDS its carry prior, so the re-solve lets it
-    // find its new value and absorb the slip locally; the harvest then re-stashes that
-    // corrected value (self-contained reinit — no reliance on the post-fit refloat).
+    // measurements stay at full weight (apart from the WE-CI code-row de-weight below):
+    // de-weighting is the tool for a bad measurement, whereas a slipped ambiguity needs
+    // a new value.  A satellite culprit refloats its ambiguities at every station, an
+    // arc culprit at one station only; a whole-station culprit is excluded (its data,
+    // not a single ambiguity, is bad).  A refloated ambiguity keeps its full-weight
+    // data (so its local block stays positive-definite, with no singularity from a
+    // drop) but withholds its carry prior, so the re-solve lets it find its new value
+    // and absorb the slip locally; the harvest then stashes that corrected value (a
+    // self-contained reinit that does not rely on the post-fit refloat).
     auto resolve_dropping = [&]() -> Eigen::VectorXd {
         est.beginEpoch();
         for (size_t i = 0; i < stations.size(); ++i) {
@@ -1668,9 +1646,9 @@ if (within_epoch_armed && carry_warm) {
                 continue;
             }
             const StationAssembly& R = asm_res[i];
-            // WE-CI: de-weight the culprit satellites' code rows (σ×10) in a
-            // per-station copy; `*wr` binds R.w itself on the OFF path and
-            // whenever no row matches, so the default numbers are untouched.
+            // De-weight the culprit satellites' code rows (σ×10) in a per-station
+            // copy (WE-CI); `*wr` binds R.w itself when WE-CI is off and whenever no
+            // row matches, so the default numbers are unchanged.
             Eigen::VectorXd w_ci;
             const Eigen::VectorXd* wr = &R.w;
             if (we_ci && !dw_code_sats.empty()) {
@@ -1697,32 +1675,35 @@ if (within_epoch_armed && carry_warm) {
                 }
                 if (w_ci.size() > 0) wr = &w_ci;
             }
-            // A_r columns of THIS station's ambiguities to refloat (withhold their prior).
-            // A SATELLITE culprit refloats its ambiguities at every station tracking it: a
-            // satellite-level contamination pulls the shared clock at ALL its stations, and
-            // its arcs are contaminated to varying degrees — a strict per-arc gate on the
-            // (inflated) σ̂0 would miss the moderately-slipped ones and leave a worse
-            // mixed state, so the whole satellite is reinitialized consistently.  An ARC
-            // culprit refloats at ONE station only (surgical, isolated slip).
+            // A_r columns of this station's ambiguities to refloat (withhold their prior).
+            // A satellite culprit refloats its ambiguities at every station tracking it: a
+            // satellite-level contamination pulls the shared clock at all its stations,
+            // and its arcs are contaminated to varying degrees.  A strict per-arc gate on
+            // the (inflated) σ̂0 would miss the moderately slipped ones and leave a worse
+            // mixed state, so the whole satellite is reinitialized consistently.  An arc
+            // culprit refloats at one station only (a surgical response to an isolated
+            // slip).
             std::set<Eigen::Index> refloat_cols;
             const auto dai = drop_arcs.find(static_cast<int>(i));
             for (const auto& pa : R.pl_amb)
                 if (drop_sats.count(pa.sat) ||
                     (dai != drop_arcs.end() && dai->second.count(pa.sat)))
                     refloat_cols.insert(pa.col);
-            // Card 1: a refloated ambiguity's carry is a coupling ROW inside A_s/A_r
-            // (not a carry_cols diagonal prior), so withholding it means ZEROING that
-            // row before re-adding the block — the coupling-row analogue of the
-            // diagonal-path prior withhold below.  The refloated ambiguity keeps its
-            // full-weight DATA rows, so its local block stays PD.  A copy so the
-            // primary R (and any iterated replay) is untouched.
+            // Under the conditional carry, a refloated ambiguity's carry is a coupling
+            // row inside A_s/A_r (not a carry_cols diagonal prior), so withholding it
+            // means zeroing that row before re-adding the block: the coupling-row
+            // analogue of the diagonal-path prior withhold below.  The refloated
+            // ambiguity keeps its full-weight data rows, so its local block stays PD.
+            // The edit is made on a copy, so the primary R (and any later replay) is
+            // unchanged (card 1).
             if (carry_cpl_cond && carry_cpl_joint && !R.cpl_raw.empty()
                 && !refloat_cols.empty() && R.cpl_row_start >= 0) {
-                // Card 1b: the joint whitening MIXES a station's coupling rows, so a
-                // refloat cannot zero individual output rows — re-whiten the SURVIVING
-                // rows (dropping the refloated locals) and re-append them after the
-                // unchanged data rows.  A re-whiten failure drops all coupling rows for
-                // the epoch (safe degrade: the refloated arcs re-float from data anyway).
+                // The joint whitening mixes a station's coupling rows, so a refloat
+                // cannot zero individual output rows: re-whiten the surviving rows
+                // (dropping the refloated locals) and append them after the unchanged
+                // data rows.  A re-whiten failure drops all coupling rows for the epoch,
+                // a safe degradation since the refloated arcs float from data anyway
+                // (card 1b).
                 Eigen::MatrixXd Hr, Hs;
                 Eigen::VectorXd z;
                 const bool ok = whitenCouplingRows(R.cpl_raw, R.cpl_white_pw, refloat_cols,
@@ -1745,18 +1726,19 @@ if (within_epoch_armed && carry_warm) {
             } else if (carry_cpl_cond && !refloat_cols.empty() && R.cpl_row_start >= 0) {
                 Eigen::MatrixXd As = R.A_s, Ar = R.A_r;
                 Eigen::VectorXd rw = *wr, ry = R.y;
-                // F3 (network.phase_leveling_local_block): the whitening MIXES the
-                // block's rows (each output row is a row of L⁻¹ over ALL block columns),
-                // so a refloated column cannot be withheld by zeroing its own row — the
-                // refloated columns are MARGINALIZED (dropped from Σ) and the SURVIVORS
-                // re-whitened: the Card-1b re-whiten above, on the local block.
-                // Survivors land in their own row slots; the dropped columns' slots stay
-                // zero (the scalar loop below zeroes them again — consistent, since
-                // cpl_row_local_cols carries each block row's PRIMARY column).  A
-                // non-SPD re-whiten drops the whole block for this re-solve (safe
-                // degrade: the refloated arcs re-float from data anyway).  Both outcomes
-                // are counted: this IS invariant #7's re-coupling edge for the block.
-                // Empty pl_blk (knob off / no block) ⇒ untouched, byte-identical.
+                // Local leveling block (F3, network.phase_leveling_local_block): the
+                // whitening mixes the block's rows (each output row is a row of L⁻¹ over
+                // all block columns), so a refloated column cannot be withheld by zeroing
+                // its own row.  The refloated columns are marginalized (dropped from Σ)
+                // and the survivors re-whitened, as in the card-1b re-whiten above but on
+                // the local block.  Survivors land in their own row slots; the dropped
+                // columns' slots stay zero (the scalar loop below zeroes them again,
+                // which is consistent because cpl_row_local_cols carries each block row's
+                // primary column).  A non-SPD re-whiten drops the whole block for this
+                // re-solve, a safe degradation since the refloated arcs float from data
+                // anyway.  Both outcomes are counted: this is invariant #7's re-coupling
+                // edge for the block.  An empty pl_blk (knob off or no block) leaves the
+                // rows untouched (byte-identical).
                 if (!R.pl_blk.rows.empty()) {
                     bool hit = false;
                     for (const CplRowRaw& br : R.pl_blk.rows)
@@ -1798,28 +1780,31 @@ if (within_epoch_armed && carry_warm) {
             } else {
                 est_index_of[i] = static_cast<int>(est.addStation(R.A_s, R.A_r, *wr, R.y));
             }
-            // B9: re-inject the pivot's ZWD carry too (its R.carry_cols is empty
-            // unless network.carry_zwd), so the within-epoch re-solve matches the
-            // primary solve.  refloat_cols only ever names ambiguity columns, so a
-            // pivot's lone ZWD column is never in it (empty → the fast path).
-            // Gate MIRRORS the primary solve's install site (ApplicationNetworkAssembly,
-            // `(carry_warm || rx_cb_on || rx_cb_datum) && !R.carry_cols.empty()`) so the
-            // re-solve folds exactly the priors the primary one did.  BYTE-IDENTICAL
-            // today — this lambda lives inside `if (within_epoch_armed && carry_warm)`,
-            // so carry_warm is already true here and the two added disjuncts cannot
-            // change the predicate.  It is written out anyway because decoupling the
-            // within-epoch tier from carry_warm is a sanctioned open fix (CLAUDE.md,
-            // standard armed set): the moment that lands, a bare `carry_warm` here
-            // would silently drop the rx-CB carry and RXCB-DATUM rows the primary
-            // solve folded, and the replay would disagree with the solve it replays.
+            // Re-inject the pivot's ZWD carry as well (its R.carry_cols is empty unless
+            // network.carry_zwd), so the within-epoch re-solve matches the primary
+            // solve (B9).  refloat_cols names only ambiguity columns, so a pivot's lone
+            // ZWD column is never in it, and the pivot takes the fast path.
+            // The gate follows the primary solve's install site in
+            // ApplicationNetworkAssembly, `(carry_warm || rx_cb_on || rx_cb_datum ||
+            // R.opin_rows > 0) && !R.carry_cols.empty()`, so the re-solve folds the
+            // priors the primary one did; this copy lacks the oracle-pin disjunct
+            // `R.opin_rows > 0`.  Today both reduce to `!R.carry_cols.empty()`: this
+            // lambda runs inside `if (within_epoch_armed && carry_warm)`, so carry_warm
+            // is true here and the other disjuncts cannot change the predicate.  They
+            // are written out because decoupling the within-epoch tier from carry_warm
+            // is a sanctioned open fix (CLAUDE.md, standard armed set); once that
+            // lands, a bare `carry_warm` here would drop the rx-CB carry and
+            // RXCB-DATUM rows that the primary solve folded (and, without its
+            // disjunct, the oracle-pin rows), and the replay would disagree with the
+            // solve it replays.
             if ((carry_warm || ctx.knobs.rx_cb_on || ctx.knobs.rx_cb_datum)
                 && !R.carry_cols.empty()) {
                 if (refloat_cols.empty()) {
                     est.addStationPrior(static_cast<std::size_t>(est_index_of[i]),
                                         R.carry_cols, R.carry_dNrr, R.carry_dur);
                 } else {
-                    // Inject the carry prior for every carried ambiguity EXCEPT the
-                    // refloated ones (those are left free → re-estimated from data).
+                    // Inject the carry prior for every carried ambiguity except the
+                    // refloated ones (those are left free and re-estimated from data).
                     std::vector<Eigen::Index> cc;
                     Eigen::VectorXd cdn(R.carry_cols.size()), cdu(R.carry_cols.size());
                     cc.reserve(R.carry_cols.size());
@@ -1842,26 +1827,25 @@ if (within_epoch_armed && carry_warm) {
         }
         est.attribTag("replay_refold");
         if (cap_has_constraint) est.addSharedConstraintRows(cap_H, cap_z, cap_constraint_weight);
-        // Re-apply the sum-to-zero clock gauge on the fresh arrowhead (plan is
-        // in scope; its rows are layout-frozen for the epoch so they match the
-        // primary solve).  No-op / byte-identical in PIN mode (0 rows).
+        // Re-apply the constraint-realized clock gauge rows (sum-to-zero or
+        // broadcast-anchored) on the fresh arrowhead.  plan is in scope, and its rows
+        // are frozen with the layout for the epoch, so they match the primary solve.
+        // In pin mode there are 0 rows and this is a no-op (byte-identical).
         if (plan.clock_constraint_H.rows() > 0)
             est.addSharedConstraintRows(plan.clock_constraint_H, plan.clock_constraint_z,
                                         plan.clock_constraint_weight);
-        // SBC completion rows: re-applied verbatim (EpochWorkspace writer-site
-        // contract) so the replayed solve carries the SAME completed datum —
-        // the weight is the compile constant, so none travels in the capture.
+        // SBC completion rows, re-applied unchanged (EpochWorkspace writer-site
+        // contract) so the replayed solve carries the same completed datum; the
+        // weight is the compile-time constant, so no weight travels in the capture.
         if (cap_sbc_H.rows() > 0)
             est.addSharedConstraintRows(cap_sbc_H, cap_sbc_z,
                                         NetworkSbasis::kSbasisCompleteWeight);
-        // Card C-GF: the replay must fold the SAME prior the primary solve folded.  It
-        // previously called the plain accumulator unconditionally, so with the gauge-free
-        // downdate armed the replayed system carried information along the datum gauge
-        // that the primary solve had removed — and the within-epoch RAIM trip decision
-        // was then taken against a DIFFERENT system than the one being tested.  Latent
-        // while the downdate was reachable only through the Q3 anchor (outside the
-        // standard armed set); live the moment it arms with the carry, since the
-        // within-epoch tier IS in the standard armed set.
+        // The replay must fold the same prior the primary solve folded.  With the
+        // gauge-free downdate armed, the plain accumulator would leave information
+        // along the datum gauge that the primary solve removed, and the within-epoch
+        // RAIM trip decision would be taken against a different system from the one
+        // under test.  The within-epoch tier is in the standard armed set, so this
+        // applies whenever the downdate is armed with the carry (card C-GF).
         if (!cap_priors.empty()) {
             if (ctx.knobs.carry_gauge_free)
                 est.addSharedPriorClockGaugeFree(cap_priors,
@@ -1869,24 +1853,23 @@ if (within_epoch_armed && carry_warm) {
             else
                 est.addSharedPrior(cap_priors);
         }
-        // C1: replay the dense D2 fold on the fresh arrowhead.  The layout is
-        // frozen for the epoch, so the key→column mapping and the LDLT are
-        // bit-reproducible — the re-solve sees the identical shared system.
-        // Non-empty only when the primary dense fold succeeded (its fallback
-        // routed through cap_priors above), so this cannot throw where the
-        // primary did not.
+        // Replay the dense D2 fold on the fresh arrowhead (C1).  The layout is frozen
+        // for the epoch, so the key→column mapping and the LDLT are bit-reproducible
+        // and the re-solve sees the identical shared system.  The capture is
+        // non-empty only when the primary dense fold succeeded (its fallback went
+        // through cap_priors above), so this cannot throw where the primary did not.
         if (!cap_dense_keys.empty())
             est.addSharedPriorDense(cap_dense_keys, cap_dense_cov, nullptr,
                                     ctx.knobs.carry_gauge_free,
-                                    ctx.knobs.carry_gauge_free_closure);   // Card C-GF: same fold as the primary solve
-        // Fix A: rebuild the ensemble phase-bias gauges on the fresh arrowhead
-        // (beginEpoch reopened the layout but est_index_of was rebuilt above and
-        // refloated stations may have dropped, so the stored gauges' station
-        // indices are stale).  No-op when OFF.
+                                    ctx.knobs.carry_gauge_free_closure);   // same fold as the primary solve (card C-GF)
+        // Rebuild the ensemble phase-bias gauges on the fresh arrowhead (fix A):
+        // beginEpoch reopened the layout, est_index_of was rebuilt above and
+        // excluded stations may have dropped out, so the stored gauges' station
+        // indices are stale.  No-op when off.
         buildEnsembleGauges();
-        // Card 4 (M1) C3b: rebuild the DD-prior blocks on the fresh arrowhead
-        // (beginEpoch cleared them + est_index_of was rebuilt above).  The
-        // predict is NOT re-run — only the fold is rebuilt.  No-op when OFF.
+        // Rebuild the DD-prior blocks on the fresh arrowhead (beginEpoch cleared
+        // them, and est_index_of was rebuilt above).  The predict is not re-run;
+        // only the fold is rebuilt.  No-op when off (card 4 (M1), C3b).
         buildCarryDdPriors();
         return est.solve(plan.shared_datum);
     };
@@ -1897,11 +1880,11 @@ if (within_epoch_armed && carry_warm) {
     std::map<std::pair<int, std::string>, double> arc_eff;
     assess(x_s, sigma0, sat_eff, sta_eff, arc_eff);
     const double sigma0_first = sigma0;
-    // R0: park the pre-adaptation σ̂₀ for the epoch-status row — this is the null
-    // sample QUEUE item 4 needs on disk (it previously existed only inside a trip
-    // event's detail span, so quiet epochs left nothing to fit).
+    // Keep the pre-adaptation σ̂₀ for the epoch-status row (R0): it is the null sample
+    // that queue item 4 needs on disk, and it is recorded on quiet epochs as well as
+    // on those with a trip event.
     ctx.carry.ep_sigma0_first = sigma0_first;
-    // R0 (§5.07.2 impulse-channel meter): the PRIMARY solve's satellite clocks,
+    // The primary solve's satellite clocks (R0, §5.07.2 impulse-channel meter),
     // captured before any within-epoch re-solve can move them.  The shared layout
     // is frozen for the epoch, so clockColumn stays valid across re-solves.
     std::map<std::string, double> we_clk_first;
@@ -1909,7 +1892,7 @@ if (within_epoch_armed && carry_warm) {
         try {
             const Eigen::Index c = est.clockColumn(s);   // throws if absent
             if (c >= 0 && c < x_s.size()) we_clk_first[s] = x_s(c);
-        } catch (...) { /* no clock column — not in this epoch's layout */ }
+        } catch (...) { /* no clock column: not in this epoch's layout */ }
     }
     if (trace_flag_rates) { we_t2_opp = true; we_t2_flag = (sigma0_first > trig); }  // B8/T2 (R12: committed at emit, below)
     if (we_ci) {   // invariant-#4 telemetry: first-assess trips + run maxima
@@ -1925,11 +1908,12 @@ if (within_epoch_armed && carry_warm) {
          && (sigma0 > trig
              || (we_ci && (s0_code_we > trig_code || s0_iono_we > trig_iono)));
          ++iter) {
-        // Best NEW culprit per granularity (all gated on effect/σ̂0 > raim_k).  An
-        // isolated ARC is the finest, least-destructive peel; a whole STATION is the
-        // coarsest (it discards good arcs too) and is de-rated by sta_bias so it is
-        // only chosen when it dominates the best satellite/arc by that margin.
-        // Preference on equal score is ARC > SAT > STA (surgical-first tie-break).
+        // Best new culprit per granularity (all gated on effect/σ̂0 > raim_k).  An
+        // isolated arc is the finest and least destructive removal; a whole station is
+        // the coarsest (it discards good arcs too) and is de-rated by sta_bias, so it
+        // is chosen only when it dominates the best satellite or arc by that margin.
+        // On an equal score the preference is arc, then satellite, then station
+        // (surgical-first tie-break).
         std::string best_arc_sat; int best_arc_sta = -1; double best_arc_eff = 0.0;
         if (surgical)
             for (const auto& [key, eff] : arc_eff) {
@@ -1947,11 +1931,11 @@ if (within_epoch_armed && carry_warm) {
             if (!drop_stations.count(sta) && eff > best_sta_eff) { best_sta_eff = eff; best_sta = sta; }
 
         // Consensus escalation: a satellite with ≥ raim_min_sta arcs currently over the
-        // gate is a NETWORK-WIDE problem (its shared clock/phase-bias is corrupted), not a
-        // stack of isolated arcs — reinitialize the whole satellite in ONE iteration (one
-        // re-solve) rather than peeling arc by arc.  When the best arc belongs to such a
-        // satellite, redirect to the satellite branch.  Reuses the RAIM cross-station
-        // consensus count (§ post-fit RAIM).
+        // gate is a network-wide problem (its shared clock or phase bias is corrupted),
+        // not a stack of isolated arcs, so reinitialize the whole satellite in one
+        // iteration (one re-solve) rather than arc by arc.  When the best arc belongs
+        // to such a satellite, redirect to the satellite branch.  Reuses the RAIM
+        // cross-station consensus count (§ post-fit RAIM).
         if (surgical && best_arc_sta >= 0 && !drop_sats.count(best_arc_sat)) {
             int n_bad = 0;
             for (const auto& [key, eff] : arc_eff) {
@@ -1981,12 +1965,12 @@ if (within_epoch_armed && carry_warm) {
         bool ci_acted = false;
         if (kind == Kind::None && we_ci
             && (s0_code_we > trig_code || s0_iono_we > trig_iono)) {
-            // WE-CI culprits (the phase effects had nothing left to peel): worst
-            // station by its max code/iono row vs worst satellite by its
-            // network-wide max code row, both raim_k-gated against the offending
-            // pools' σ̂0.  Station exclusion is the epicenter response (BSHM/GOLD
-            // class); a satellite culprit gets its code rows DE-WEIGHTED
-            // (fallback, not drop).
+            // WE-CI culprits, when the phase effects have nothing left to remove: the
+            // worst station by its maximum code/iono row against the worst satellite
+            // by its network-wide maximum code row, both gated on raim_k against the
+            // larger of the two pools' σ̂0.  A station culprit is excluded (the
+            // response to a fault concentrated at one station); a satellite culprit
+            // has its code rows de-weighted (a fallback rather than a drop).
             const double s0_ci = std::max({s0_code_we, s0_iono_we, 1e-9});
             int best_ci_sta = -1; double best_ci_sta_v = 0.0;
             for (const auto& [sta, v] : ci_sta_max)
@@ -2032,10 +2016,10 @@ if (within_epoch_armed && carry_warm) {
         we_adapt_attempted = true;
         try { x_try = resolve_dropping(); }
         catch (const std::exception& ex) {
-            // Should be unreachable now (the per-station full-weight retry uses the
-            // known-PD original assembly).  Last resort: restore the clean no-drop solve
-            // so the emit / harvest run on a consistent estimator rather than a
-            // half-rebuilt one (the old "keep prior solve" left est mid-rebuild).
+            // Not expected to be reachable (the per-station full-weight retry uses the
+            // known-PD original assembly).  Last resort: restore the clean no-drop
+            // solve so the emit / harvest run on a consistent estimator rather than a
+            // half-rebuilt one (keeping the prior solve would leave est mid-rebuild).
             log->warn("Network[RAIM within-epoch]: re-solve failed ({}); restoring clean solve.",
                       ex.what());
             drop_sats.clear(); drop_stations.clear(); drop_arcs.clear();
@@ -2046,10 +2030,10 @@ if (within_epoch_armed && carry_warm) {
         ++n_adapt;
         assess(x_s, sigma0, sat_eff, sta_eff, arc_eff);
     }
-    // R0: the settled clock displacement of this epoch's re-solves — (final −
-    // primary) per satellite, the §5.07.2 impulse-channel meter.  Identically 0
-    // when no re-solve ran (x_s is untouched), so only adapted epochs pay the
-    // comparison loop.
+    // The settled clock displacement of this epoch's re-solves, (final − primary) per
+    // satellite: the §5.07.2 impulse-channel meter (R0).  Identically 0 when no
+    // re-solve ran (x_s is unchanged), so only adapted epochs pay for the comparison
+    // loop.
     double      we_clk_move_max = 0.0;   // signed; compared by |·|
     std::string we_clk_move_sat;
     if (n_adapt > 0) {
@@ -2065,15 +2049,15 @@ if (within_epoch_armed && carry_warm) {
                 we_clk_move_max = dv;
                 we_clk_move_sat = s;
             }
-            // One trace row per satellite the tier measurably moved (> 1 mm) —
-            // the per-identity channel; the epoch max goes to the status row.
+            // One trace row per satellite the tier moved measurably (> 1 mm): the
+            // per-identity channel.  The epoch maximum goes to the status row.
             if (events_trace.is_open() && std::abs(dv) > 1e-3)
                 emitEvent("T2_within_epoch", "we_clock_move", s, "", dv,
                           std::nullopt, "measure",
                           fmt::format("{:.4f}->{:.4f}", v0, v1));
         }
-        // R0 run-end counters for the three response classes (previously only the
-        // withhold had one) + the run-max clock move with its identity.
+        // Run-end counters for the three response classes, and the run-maximum clock
+        // move with its identity (R0).
         auto& sc = ctx.counters;
         sc.we_refloat_sat_total += static_cast<long long>(drop_sats.size());
         {
@@ -2094,8 +2078,9 @@ if (within_epoch_armed && carry_warm) {
                   se.time.tow, n_adapt, drop_sats.size(),
                   [&] { size_t n = 0; for (const auto& kv : drop_arcs) n += kv.second.size(); return n; }(),
                   drop_stations.size(), adapt_detail, sigma0_first, sigma0, trig);
-        // T2: one event per settled culprit (whole-sat drop, per-(sta,sat) arc drop,
-        // excluded station).  statistic=final σ̂0, threshold=trigger, detail=first->final.
+        // One event per settled culprit (whole-satellite drop, per-(sta, sat) arc drop,
+        // excluded station, WE-CI code de-weight): statistic = final σ̂0,
+        // threshold = trigger, detail = first->final (T2).
         if (events_trace.is_open()) {
             const std::string span = fmt::format("{:.2f}->{:.2f}", sigma0_first, sigma0);
             for (const auto& s : drop_sats)
@@ -2114,83 +2099,88 @@ if (within_epoch_armed && carry_warm) {
         }
     }
 
-    // A within-epoch satellite refloat reinitialized that sat's AMBIGUITY at every
-    // station; its coupled shared clock is just as suspect, so refloat the carried
-    // clock too (the stash below skips it).  Opt-in (clock_monitor_couple_raim).
+    // A within-epoch satellite refloat reinitialized that satellite's ambiguity at
+    // every station; its coupled shared clock is just as suspect, so refloat the
+    // carried clock as well (the stash below skips it).  Opt-in
+    // (clock_monitor_couple_raim).
     if (clk_mon_couple)
         for (const auto& s : drop_sats) clock_refloat_sats.insert(s);
-    // P0-2: a within-epoch whole-satellite drop contaminated that sat's emitted
-    // correction — feed the retro-bump regardless of the (numeric) couple opt-in.
+    // A within-epoch whole-satellite drop means that satellite's emitted correction
+    // is contaminated: feed the retro-bump regardless of the (numeric) couple opt-in
+    // (P0-2).
     if (retro_feed)
         for (const auto& s : drop_sats) retro_flag_sats.insert(s);
 
-    // R0: park the tier's per-epoch observability for the epoch-status row.  The
-    // refloat count is the tier's OWN settled whole-sat set (es.n_refloat_sats
-    // reads the clock-COUPLE set, which is empty unless clock_monitor_couple_raim
-    // — §5.07.4 defect 5); the clock move is 0.0 on an assessed-but-quiet epoch,
+    // Keep the tier's per-epoch observability for the epoch-status row (R0).  The
+    // refloat count is the tier's own settled whole-satellite set (es.n_refloat_sats
+    // reads the clock-couple set, which is empty unless clock_monitor_couple_raim;
+    // §5.07.4 defect 5).  The clock move is 0.0 on an assessed but quiet epoch,
     // which is a real measurement, not an absence.
     ctx.carry.ep_we_refloat_sats = static_cast<int>(drop_sats.size());
     ctx.carry.ep_we_clk_move_max = std::abs(we_clk_move_max);
     ctx.carry.ep_we_clk_move_sat = we_clk_move_sat;
 
-    sigma0_adapt = sigma0;   // A4: publish the final within-epoch σ̂0 for the withhold gate
+    sigma0_adapt = sigma0;   // publish the final within-epoch σ̂0 for the withhold gate (A4)
 }
-// C3c §3: drop_sats/drop_arcs leave scope with the RAIM block — retire the aliases
-// so the next epoch's primary buildCarryDdPriors never dereferences a dangling set.
+// drop_sats / drop_arcs leave scope with the RAIM block, so retire the aliases and the
+// next epoch's primary buildCarryDdPriors cannot dereference a dangling set (see C3c
+// §3 at the alias site).
 carry_we_drop_sats = nullptr;
 carry_we_drop_arcs = nullptr;
 
-// Reduce-once invariant (design §3.5): the carried prior is injected
-// pre-gate, so the single gate reduce() must be the ONLY per-station Schur
-// recompute this epoch — UNLESS the within-epoch adaptation deliberately re-solved
-// (each drop→re-solve is another reduce()).  A second recompute otherwise means a
-// stray post-gate local-block change silently doubled the serial path.
+// Reduce-once invariant (design §3.5): the carried prior is injected before the gate,
+// so the single gate reduce() must be the only per-station Schur recompute this
+// epoch, unless the within-epoch adaptation re-solved (each drop and re-solve is
+// another reduce()).  Otherwise a second recompute means that a stray post-gate
+// local-block change doubled the serial path without notice.
 if (pl_on && !we_adapt_attempted && est.reduceRecomputeCount() != 1) {
     log->error("Network[phase-leveling]: reduce() recomputed {} times this epoch "
                "(expected exactly 1) — a stray post-gate local-block change doubled "
                "the serial Schur path.", est.reduceRecomputeCount());
 }
 
-// --- Within-epoch escape-hatch: withhold rather than emit a still-contaminated epoch
-// The capped adaptation (drop culprit → re-solve, kMaxAdapt passes) may not fully
-// isolate the fault; if σ̂0 STILL exceeds the withhold ceiling the shared solution
-// is too corrupted to publish.  Reuse the observability-gate disposition (no emit,
-// no carry stash, epoch skipped — the contaminated solve never enters the store or
-// the carry) instead of emitting it with only a log warning.  OFF (raim_withhold ≤ 0)
-// is byte-identical: the epoch emits exactly as today.
+// --- Within-epoch escape hatch: withhold rather than emit a still-contaminated epoch
+// The capped adaptation (drop a culprit and re-solve, up to kMaxAdapt passes) may not
+// fully isolate the fault; if σ̂0 still exceeds the withhold ceiling, the shared
+// solution is too corrupted to publish.  Reuse the observability-gate disposition
+// (no emit, no carry stash, epoch skipped, so the contaminated solve never enters
+// the store or the carry) instead of emitting it with only a log warning.  With the
+// ceiling off (raim_withhold ≤ 0) the epoch emits as usual (byte-identical).
 //
-// P0-4: gate on σ̂0 ALONE, NOT on we_adapt_attempted.  A DIFFUSE contamination
-// that leaves NO single dominant culprit (kind == Kind::None) never launches a
-// re-solve, so we_adapt_attempted stays false — yet σ̂0 is high, and that is
-// exactly the case the withhold ceiling should catch.  sigma0_adapt is set to the
-// assessed σ̂0 whenever the within-epoch RAIM block runs (whether or not a culprit
-// was dropped) and stays 0 otherwise, so a clean/OFF epoch (sigma0_adapt == 0)
-// still can never trip it.
-// RTA-10 (network.per_const_withhold): per-CONSTELLATION carve-out of the σ̂0
-// withhold.  When the ceiling trips, judge each constellation by its OWN σ̂0_c —
+// Gate on σ̂0 alone, not on we_adapt_attempted (P0-4).  A diffuse contamination that
+// leaves no single dominant culprit (kind == Kind::None) never launches a re-solve,
+// so we_adapt_attempted stays false while σ̂0 is high, which is the case the withhold
+// ceiling is meant to catch.  sigma0_adapt is set to the assessed σ̂0 whenever the
+// within-epoch RAIM block runs (whether or not a culprit was dropped) and stays 0
+// otherwise, so an epoch without the tier (sigma0_adapt == 0) cannot trip it.
+// Per-constellation carve-out of the σ̂0 withhold (RTA-10,
+// network.per_const_withhold).  When the ceiling trips, judge each constellation by
+// its own σ̂0_c:
 //
-//   σ̂0_c = max(1, 1.4826 · median{ r_i : i ∈ constellation c's rows })
+//   σ̂0_c = max(raim_s0_floor, 1.4826 · median{ r_i : i ∈ constellation c's rows })
 //
-// over EXACTLY the rows the global σ̂0 pools (carried-ambiguity PHASE rows of
-// every present non-pivot station, r_i = |v_i|·√w_i, divided by √(redundancy r̄_i)
-// under B2 with its uncheckable-row exclusion), partitioned by the ambiguity's
-// satellite constellation.  Same statistic, same ceiling, restricted support.
+// over the same rows the global σ̂0 pools (the carried-ambiguity phase rows of every
+// present station, the pivot excluded unless the phase datum is prioritized;
+// r_i = |v_i|·√w_i, divided by √(redundancy r̄_i) under B2 with its uncheckable-row
+// exclusion), partitioned by the ambiguity's satellite constellation.  Same
+// statistic, same floor (raim_s0_floor, default 1.0), same ceiling, restricted
+// support.
 //
-// APPROXIMATION (stated, not hidden): the residuals are evaluated at the JOINT
-// solution — a contamination in constellation A perturbs shared per-station
-// nuisances (receiver clock, ZWD, iono) that leak into B's residuals, and each
-// row's B2 redundancy is its share of the JOINT system's redundancy, not of a
-// per-constellation solve.  σ̂0_c therefore under-separates cross-constellation
-// coupling; the "every constellation individually clean while the global σ̂0
-// tripped" outcome below is the honest edge of that approximation and is
-// published-with-warning + counted (n_perconst_diffuse_published), not silently
-// absorbed.  A constellation also needs >= per_const_withhold_min_rows rows to
-// be JUDGEABLE — fewer cannot certify cleanliness under a contaminated epoch.
+// Approximation: the residuals are evaluated at the joint solution.  A contamination
+// in constellation A perturbs shared per-station nuisances (receiver clock, ZWD,
+// iono) that leak into B's residuals, and each row's B2 redundancy is its share of
+// the joint system's redundancy, not of a per-constellation solve.  σ̂0_c therefore
+// under-separates cross-constellation coupling.  The outcome "every constellation
+// individually clean while the global σ̂0 tripped" marks the limit of that
+// approximation; it is published with a warning and counted
+// (n_perconst_diffuse_published).  A constellation also needs at least
+// per_const_withhold_min_rows rows to be judged: fewer rows cannot establish that it
+// is clean in a contaminated epoch.
 //
-// The RANK/OBSERVABILITY gate above keeps whole-epoch semantics untouched: a
-// rank deficiency means the declared datum itself is invalid — the product
-// would be a meaningless least-norm split, so no "healthy subset" exists to
-// carve out.  This carve-out applies ONLY to the σ̂0 (contamination) withhold.
+// The rank / observability gate above keeps its whole-epoch semantics: a rank
+// deficiency means the declared datum itself is invalid and the product would be an
+// arbitrary least-norm split, so there is no sound subset to carve out.  The
+// carve-out applies only to the σ̂0 (contamination) withhold.
 bool           perconst_active = false;   // a publishable subset exists this epoch
 std::set<char> perconst_publish;          // constellations to keep in the emission
 std::set<char> perconst_dec_withhold;     // constellations the decision withheld
@@ -2199,7 +2189,7 @@ if (perconst_on && raim_withhold > 0.0 && sigma0_adapt > raim_withhold) {
     for (auto& [cst, pool] : we_sigma0_pool_c) {
         NetworkEstimator::PerConstSigma0 st;
         st.rows = static_cast<int>(pool.size());
-        if (!pool.empty()) {   // same median × 1.4826, floor 1 as the global σ̂0
+        if (!pool.empty()) {   // same median × 1.4826 and floor as the global σ̂0
             std::nth_element(pool.begin(), pool.begin() + pool.size() / 2, pool.end());
             st.sigma0_c = std::max(raim_s0_floor, 1.4826 * pool[pool.size() / 2]);
         }
@@ -2223,23 +2213,23 @@ if (perconst_on && raim_withhold > 0.0 && sigma0_adapt > raim_withhold) {
                   se.time.tow, sigma0_adapt, raim_withhold, dec.publish.size(),
                   perconst_stats.size(), detail);
     }
-    // dec.publish empty ⇒ NO constellation is individually publishable — fall
-    // through to the whole-epoch withhold below, exactly as without the toggle.
+    // An empty dec.publish means no constellation is individually publishable: fall
+    // through to the whole-epoch withhold below, as without the toggle.
 }
-// INC-5 flight-recorder trigger (docs/SPEC_prefit_census_observability.md §7).
-// Evaluated on EVERY epoch that reaches this decision, whichever way it goes —
-// passing `false` is what clears the era and re-arms the latch, and the
-// consultation count is the invariant-#4 proof that the site is wired.  The A4
-// era is the CEILING BREACH, not the withhold action, so the per-constellation
-// carve-out does not suppress it: the epoch is still contaminated.
+// Flight-recorder trigger (INC-5, docs/SPEC_prefit_census_observability.md §7).
+// Evaluated on every epoch that reaches this decision, whichever way it goes:
+// passing `false` clears the era and re-arms the latch, and the consultation count
+// shows that the site is wired (invariant #4).  The recorder's A4 era is the ceiling
+// breach, not the withhold action, so the per-constellation carve-out does not
+// suppress it: the epoch is still contaminated.
 const bool a4_over_ceiling = raim_withhold > 0.0 && sigma0_adapt > raim_withhold;
 networkRhsTripEdge(ctx, "sigma0", a4_over_ceiling);
-// --- A4 withhold-era bookkeeping (SPEC_withhold_era_release §3; both edges per
-// invariant #7).  Gated on the policy knobs so the OFF path emits no events and
-// keeps every counter at zero (network_events.csv is in the byte-cert set).  The
-// era here is the withhold ACTION (a carve-out-published epoch EXITS it — the
-// declared RTA-10 limitation); the recorder line above tracks the ceiling
-// BREACH — a deliberately different edge, kept unconfusable by the n_wh_* names.
+// --- Withhold-era bookkeeping for the A4 withhold (SPEC_withhold_era_release §3;
+// both edges, per invariant #7).  Gated on the policy knobs, so with them off no
+// events are emitted and every counter stays at zero (network_events.csv is in the
+// byte-cert set).  The era here is the withhold action (a carve-out-published epoch
+// exits it, the declared RTA-10 limitation); the recorder line above follows the
+// ceiling breach, a different edge on purpose, kept distinct by the n_wh_* names.
 if (ctx.knobs.wh_escalate > 0 || ctx.knobs.wh_free_erase) {
     const bool wh_withholding = a4_over_ceiling && !perconst_active;
     if (wh_escalated) {
@@ -2250,8 +2240,8 @@ if (ctx.knobs.wh_escalate > 0 || ctx.knobs.wh_free_erase) {
     if (wh_withholding) {
         if (ctx.carry.wh_era_len > 0 && !wh_era_live) {
             // An era interrupted by a bypass path (datum_failed / gate_withheld /
-            // solve_failed / head-skip) never reached an exiting decide — close it
-            // honestly before opening the new one (C7).
+            // solve_failed / head-skip) never reached an exiting decision: close it,
+            // marked as interrupted, before opening the new one (C7).
             ++ctx.counters.n_wh_era_exits;
             emitEvent("SIGMA0", "era_exit", "", "",
                       static_cast<double>(ctx.carry.wh_era_len), 0.0,
@@ -2288,15 +2278,15 @@ if (a4_over_ceiling && !perconst_active) {
     emitEvent("SIGMA0", "withhold", "", "", sigma0_adapt, raim_withhold,
               "skip_epoch", fmt::format("{} re-solve(s)", n_adapt));
     ++n_skipped;
-    ++n_sigma0_withheld;   // R8: dedicated count of σ̂0-ceiling withholds (reported in the summary)
+    ++n_sigma0_withheld;   // dedicated count of σ̂0-ceiling withholds, reported in the summary (R8)
     if (trace) trace << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow)
                      << ',' << n_present << ',' << n_clock << ',' << n_pb
                      << ',' << plan.declared_dimension << ",1,0,0,0," << total_pins << '\n';
     { EpochStatusRow es; es.sigma0 = sigma0_adapt; es.n_adapt = n_adapt;
       es.n_present = n_present; es.n_clock_sats = n_clock;
       es.datum_changed = datum_changed ? 1 : 0;
-      // R0: a withheld epoch is precisely where the tier's first-assess σ̂₀ and
-      // the impulse meter matter most — carry them onto the disposition row.
+      // A withheld epoch is where the tier's first-assess σ̂₀ and the impulse
+      // meter matter most, so carry them onto the disposition row (R0).
       if (ctx.carry.ep_sigma0_first >= 0.0) {
           es.sigma0_first = ctx.carry.ep_sigma0_first;
           if (ctx.carry.ep_we_refloat_sats >= 0)
@@ -2307,19 +2297,20 @@ if (a4_over_ceiling && !perconst_active) {
           }
       }
       emitEpochStatus("sigma0_withheld", es); }
-    // RTA-10: product-level heartbeat for the WITHHELD epoch (H line, no E line)
-    // — a live tail can tell "σ̂0 withheld" from "producer died".  Before the
-    // deferred product writer opens (the first emit) the heartbeat is BUFFERED
-    // in setup.pending_h_pre_open and flushed at the open.  withheld="*" = whole epoch.
+    // Product-level heartbeat for the withheld epoch (an H line with no E line), so a
+    // live tail can tell "σ̂0 withheld" from "producer died" (RTA-10).  Before the
+    // deferred product writer opens (at the first emit) the heartbeat is buffered in
+    // setup.pending_h_pre_open and flushed at the open.  withheld="*" means the whole
+    // epoch.
     if (emit_epoch_status) {
         NetworkProducerStatus hst;
         hst.time.week = se.time.week;
         hst.time.tow  = se.time.tow;
         hst.state     = NetworkProducerStatus::State::WithheldSigma0;
-        // H-rider: UNIFORM statistic per wire — when the census feed is armed
-        // EVERY H site carries it (a consumer thresholding field 5 needs one
-        // population; the withhold REASON is already in the state token, and
-        // the A4 ceiling itself still read sigma0_adapt above, unchanged).
+        // One statistic per wire: when the census feed is armed, every H site
+        // carries it, because a consumer thresholding field 5 needs one population.
+        // The withhold reason is already in the state token, and the A4 ceiling
+        // above still reads sigma0_adapt (H-rider).
         hst.sigma0    = ctx.knobs.h_sigma0_census ? ctx.carry.ep_h_sigma0_census
                                                   : sigma0_adapt;
         hst.withheld  = "*";
@@ -2327,29 +2318,29 @@ if (a4_over_ceiling && !perconst_active) {
             product_writer->writeEpochStatus(hst);
             if (nc.product_flush_per_epoch) product_writer->flush();
         } else if (setup.contract_pending) {
-            // Buffer ONLY while a v2 writer open is still coming — with no
-            // product path (or v1 immediate open) there is nothing to flush into.
+            // Buffer only while a v2 writer open is still pending; with no
+            // product path (or a v1 immediate open) there is nothing to flush into.
             setup.pending_h_pre_open.push_back(hst);
         }
     }
-    // INC-5: this epoch is about to `continue`, so it never reaches the
-    // SB_FRAMEDIAG consumer — the recorder has to fire HERE or the A4 trigger
-    // would be permanently inert (it would only ever dump the NEXT epoch, which
-    // is a different system).  The kernel and the captures are still this
-    // epoch's, so the dump is exact; the same call also retains this epoch as
-    // the next trip's "before" frame.
+    // This epoch returns SkipEpoch (the driver's `continue`), so it never reaches the
+    // SB_FRAMEDIAG consumer.  The recorder has to fire here, or the A4 trigger would
+    // never dump the epoch that tripped it (only the next one, which is a different
+    // system).  The kernel and the captures still belong to this epoch, so the dump
+    // is exact; the same call also keeps this epoch as the next trip's "before" frame
+    // (INC-5).
     networkRhsAttribTrip(ctx, config_, log, traces, se, setup.stations, est,
                          plan.shared_datum, asm_res, est_index_of);
-    // SPEC_withhold_era_release §3(b): make the free-epoch response durable to
-    // the discarded epoch.  Detection ran pre-solve on raw observables (a
-    // withhold-independent verdict); erasing the freed entries makes
-    // carry-absence the durable free re-level at the next ACCEPTED epoch
-    // (Assembly:2781 — no entry, no inject).  Reset-class only: no value from
-    // this contaminated solve is stored.  Bridged bands were already removed
-    // from the latch, so a delta-bridged carry can never be erased here; the
-    // pending-reseed mark was consumed in PASS-B — the ERASE is the
-    // load-bearing half.  Touches nothing the epoch-status/H/recorder writes
-    // above read (G5-safe placement).
+    // Per SPEC_withhold_era_release §3(b), make the free-epoch response survive the
+    // discarded epoch.  Detection ran before the solve on raw observables (a verdict
+    // independent of the withhold); erasing the freed entries makes the missing carry
+    // the free re-level at the next accepted epoch (assembly injects no carry for a
+    // key with no local_carry entry).  Reset class only: no value from this
+    // contaminated solve is stored.  Bridged bands were already removed from the
+    // latch, so a delta-bridged carry cannot be erased here; the pending-reseed mark
+    // was consumed in PASS-B, so the erase is the half that takes effect.  Touches
+    // nothing that the epoch-status, H and recorder writes above read (G5-safe
+    // placement).
     if (ctx.knobs.wh_free_erase) {
         for (const auto& fa : ctx.carry.relevel.free_ambs) {
             const auto parts = StateKeys::parseAmbiguityKey(fa.second);
@@ -2365,15 +2356,15 @@ if (a4_over_ceiling && !perconst_active) {
 }
 
 
-    // --- SPEC_day129_frame_guards Phase 2.2: SH-field health GATE verdict -----
-    // Post-solve, pre-emit (this is the only pre-emit seam holding x_s), on
-    // epochs that survived the rank gate and the A4 σ̂0 withhold above.  The
-    // verdict is EMISSION-ONLY: NetworkSolPrep + NetworkEmitStore early-return
-    // on ctx.carry.sh_gate_engaged, while the carry stash and every QC tier
-    // still run — an hours-long out-of-band era must not expire the carry the
-    // way the A4 skip-epoch semantics would.  Out-of-band EPOCHS are counted
-    // (not warns — the throttled T1a WARN under-read the reference run 23.8×)
-    // and every engage/release transition is logged + evented un-throttled.
+    // --- SH-field health gate verdict (SPEC_day129_frame_guards Phase 2.2) -----
+    // After the solve and before emission (this is the only pre-emit seam holding
+    // x_s), on epochs that passed the rank gate and the A4 σ̂0 withhold above.  The
+    // verdict affects emission only: NetworkSolPrep and NetworkEmitStore return
+    // early on ctx.carry.sh_gate_engaged, while the carry stash and every QC tier
+    // still run, because an out-of-band era lasting hours must not expire the carry
+    // as the A4 skip-epoch semantics would.  Out-of-band epochs are counted, not
+    // warned (the throttled T1a warning under-counts them), and every engage and
+    // release transition is logged and evented without throttling.
     if (nc.sh_health_gate && sh_model) {
         const GlobalVtecShConfig& shc_g = config_.getGlobalVtecShConfig();
         const auto& coeffs_g = sh_model->coeffs();
@@ -2391,8 +2382,8 @@ if (a4_over_ceiling && !perconst_active) {
                     a00_total = val;
             } catch (...) { coeff_ok = false; }
         }
-        // Dual-layer: the physical band bounds the TOTAL mean VTEC (layer sum),
-        // exactly as the T1a WARN does.
+        // Dual-layer: the physical band bounds the total mean VTEC (layer sum), as
+        // the T1a warning does.
         if (coeff_ok && sh_model2 && std::isfinite(a00_total)) {
             try { a00_total += x_s(est.vtecCoeffColumn(0, 0, 'C', 1)); }
             catch (...) { coeff_ok = false; }
@@ -2415,10 +2406,10 @@ if (a4_over_ceiling && !perconst_active) {
                 ctx.carry.sh_gate_oob_run = 0;
             }
             const bool engage = ctx.carry.sh_gate_oob_run >= nc.sh_gate_min_epochs;
-            // INC-5 flight-recorder trigger: the ENGAGE era.  Called on every
-            // evaluated epoch (false clears the era), and it must precede the
-            // engage block below so the SB_FRAMEDIAG consumer — which runs later
-            // this same epoch — sees the pending trip.
+            // Flight-recorder trigger for the engage era (INC-5).  Called on every
+            // evaluated epoch (false clears the era); it must precede the engage
+            // block below so that the SB_FRAMEDIAG consumer, which runs later in the
+            // same epoch, sees the pending trip.
             networkRhsTripEdge(ctx, "sh_gate", engage);
             if (engage && !ctx.carry.sh_gate_engaged) {
                 ++ctx.carry.sh_gate_engagements;
@@ -2452,9 +2443,9 @@ if (a4_over_ceiling && !perconst_active) {
                           fmt::format("rms_all={:.2f} withheld_total={}", rms_all,
                                       ctx.counters.n_sh_gate_withheld));
             } else if (engage && (ctx.carry.sh_gate_oob_run % 20) == 0) {
-                // Un-throttled visibility during a LONG engaged era: a periodic
-                // count-bearing line every 20 epochs (10 min at 30 s) — the era's
-                // full extent is in the per-epoch counters/events regardless.
+                // Visibility during a long engaged era: a periodic line with the
+                // counts every 20 epochs (10 min at 30 s).  The era's full extent is
+                // in the per-epoch counters and events in any case.
                 log->warn("Network (SH gate): still engaged at TOW {:.1f} — {} consecutive "
                           "out-of-band epoch(s), a00 {:.1f} TECU, rms_all {:.2f}; {} "
                           "emission(s) withheld so far.",
@@ -2463,9 +2454,9 @@ if (a4_over_ceiling && !perconst_active) {
             }
             ctx.carry.sh_gate_engaged = engage;
         }
-        // coeff_ok false ⇒ a column lookup failed (field not in this epoch's
-        // solve) — leave the gate state unchanged rather than fabricating a
-        // release; the next computable epoch re-evaluates.
+        // coeff_ok false means a column lookup failed (the field is not in this
+        // epoch's solve): leave the gate state unchanged rather than report a
+        // release that did not happen; the next computable epoch re-evaluates.
     }
 
     // --- Result epilogue: hand the 18 crossing locals to the caller. ---

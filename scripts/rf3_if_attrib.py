@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""RF-3-read: what moves the per-satellite IF correction a consumer applies (a DIAGNOSTIC).
+"""RF-3-read: what moves the per-satellite IF correction a consumer applies (a diagnostic).
 
 Pre-registered in docs/refound/RF-3-prep_golden_rebase_2026-09-15.md s5.  For every satellite the
 consumer's code correction is ``x_s(t) = -clk + a1*b(C1C) + a2*b(C2W)`` (refound_grade.if_dispersion's
-quantity).  Its network-COMMON change cancels in the consumer clock, so each epoch-to-epoch change is
+quantity).  Its network-common change cancels in the consumer clock, so each epoch-to-epoch change is
 de-commoned by the median change over the satellites present at both epochs:
 
     dy_s(t) = dx_s(t) - median_{s' in both} dx_s'(t)
 
-and split into STEPS (|dy| > --step-m) and SMOOTH movement; a satellite absent in between is a GAP
+and split into steps (|dy| > --step-m) and smooth movement; a satellite absent in between is a gap
 (its arc boundary), reported separately.  Each step is matched to the trace events of that satellite
 logged in (t_prev, t] and compared with the same match rate over the non-step pairs (the base rate:
 at storm density "an event nearby" is near its base rate, so a lift, not a count, attributes).
@@ -185,9 +185,9 @@ def main():
 
 
 def handover_table(run_dir, big_m=1.0):
-    """Held-basis handovers by per-satellite-epoch MODE vs the de-commoned IF-correction step they coincide with.
+    """Held-basis handovers by per-satellite-epoch mode versus the de-commoned IF-correction step they coincide with.
 
-    Mode per (sat, tow) from the PBGAUGE rows: all-continuous / all-cold / MIXED (one signal of the satellite kept
+    Mode per (sat, tow) from the PBGAUGE rows: all-continuous / all-cold / mixed (one signal of the satellite kept
     its frame, the other re-realized).  'cold_unmarked' = an sts_cold_declared row with marked=0 (the RF-2b predicate
     |value - prev_value| read 0 although the family re-realized).  |dy| = the larger de-commoned step at the handover
     epoch and the next emitted epoch; 'none' = satellite-epochs with no handover (the null)."""

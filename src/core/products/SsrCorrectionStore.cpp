@@ -27,16 +27,17 @@ bool freshEnough(const GnssTime& record, const GnssTime& query, double max_age_s
     if (record.week == 0 && record.tow == 0.0) return false; // never set
     if (query.week == 0 && query.tow == 0.0)   return true;  // caller doesn't know time; trust the record
     const double age = secondsBetween(query, record);
-    // Symmetric tolerance.  A mildly-negative age (record stamped a touch after
-    // the query — sub-second clock drift, frame jitter) is fine.  But a record
-    // from far in the FUTURE relative to the query is NOT a correction for this
-    // observation: it is the live-corrections-vs-lagging-obs desync (obs ~1.5 h
-    // behind fresh SSR → age ≈ −5400 s).  Applying it extrapolates the SSR
-    // clock backward over that gap and detonates (c1·dt + c2·dt² → "zero/invalid
-    // clock product" on every satellite).  Reject it so the satellite falls back
-    // to its (self-consistent, obs-time) broadcast clock instead.
-    if (age < -max_age_s) return false;  // record far in the future vs query → REJECT
-    if (age < 0.0) return true;          // mild negative (drift/jitter) → accept
+    // Symmetric tolerance.  A slightly negative age (record stamped just after
+    // the query: sub-second clock drift, frame jitter) is accepted.  A record more
+    // than max_age_s in the future of the query is not a correction for this
+    // observation: it is the desync between live corrections and lagging
+    // observations (observations 1.5 h behind fresh SSR give age ≈ −5400 s).
+    // Applying it would extrapolate the SSR clock polynomial (c1·dt + c2·dt²)
+    // backward over that gap and yield an invalid clock on every satellite.  It
+    // is rejected, so the satellite falls back to its broadcast clock, which is
+    // consistent with the observation time.
+    if (age < -max_age_s) return false;  // record far in the future of the query: reject
+    if (age < 0.0) return true;          // slightly negative (drift, jitter): accept
     return age <= max_age_s;
 }
 
@@ -70,10 +71,10 @@ bool SsrCorrectionStore::pushFastClock(const SsrClockCorrection& rec) {
     const auto it = by_sat_.find(rec.sat);
     if (it == by_sat_.end() || !it->second.clock) return false;   // refresh only, never establish
     SsrClockCorrection& c = *it->second.clock;
-    // Exactly three fields move: the value, and the two times that define its age and
-    // its extrapolation base.  Everything else — c1, c2, iod_ssr, iode, orbit linkage,
-    // combined_code_sigma_m, code_phase_corr, disc_counter — and the shared SatRecord
-    // header belong to the slow era and are left untouched by contract.
+    // Three fields change: the value, and the two times that define its age and its
+    // extrapolation base.  All other fields (c1, c2, iod_ssr, iode, orbit linkage,
+    // combined_code_sigma_m, code_phase_corr, disc_counter) and the shared SatRecord
+    // header belong to the slow-cadence record and are left untouched by contract.
     c.c0            = rec.c0;
     c.received_time = rec.received_time;
     c.epoch_time    = rec.epoch_time;
@@ -89,12 +90,12 @@ void SsrCorrectionStore::pushCodeBias(const SsrCodeBias& rec, const SsrHeader& h
     std::lock_guard<std::mutex> lock(mutex_);
     auto& r = by_sat_[rec.sat]; r.code_bias = rec; r.header = header;
 
-    // Diagnostic (trace): the code-bias signal keys the SSR stream actually
-    // carries per Galileo satellite.  getCodeBias() matches the receiver's exact
-    // RINEX obs code, so if a sat shows only "C1C" (stream omits E5a/E5b) or
-    // "C5X"/"C5I" where the receiver tracks C5Q (sig-id mismatch), the E5a/E5b
-    // lookup returns 0 and the sat-bias state must cover it.  "corrections" is
-    // registered in the global spdlog registry by LogManager.
+    // Trace diagnostic: the code-bias signal keys the SSR stream carries for each
+    // Galileo satellite.  getCodeBias() matches the receiver's exact RINEX obs
+    // code, so when a satellite shows only "C1C" (the stream omits E5a/E5b) or
+    // "C5X"/"C5I" where the receiver tracks C5Q (signal-ID mismatch), the E5a/E5b
+    // lookup returns 0 and the satellite-bias state has to absorb that bias.
+    // LogManager registers "corrections" in the global spdlog registry.
     if (!rec.sat.empty() && rec.sat[0] == 'E') {
         if (auto lg = spdlog::get("corrections");
             lg && lg->should_log(spdlog::level::trace)) {
@@ -118,9 +119,10 @@ void SsrCorrectionStore::pushUra(const SsrUra& rec, const SsrHeader& header) {
 
 void SsrCorrectionStore::pushSlantIono(const SsrSlantIono& rec) {
     std::lock_guard<std::mutex> lock(mutex_);
-    // Deliberately does NOT touch r.header — the slant-iono channel uses its own
-    // received_time for freshness, and clobbering the header would strip the real
-    // IOD-SSR / provider emitToStore stamped for this satellite the same epoch.
+    // Leaves r.header unchanged on purpose: the slant-iono channel uses its own
+    // received_time for freshness, and overwriting the header would discard the
+    // IOD-SSR and provider that emitToStore stamped for this satellite in the
+    // same epoch.
     by_sat_[rec.sat].slant_iono = rec;
 }
 
@@ -156,18 +158,19 @@ SsrCorrectionStore::getOrbitClock(const std::string& sat,
         out.c1            = rec_copy.combined->c1;
         out.c2            = rec_copy.combined->c2;
         out.iode             = rec_copy.combined->iode;
-        // RTF-2 (Card 3): a combined message guarantees IOD coherence, so the
-        // clock shares the orbit IOD; the orbit echo is the record's own IOD-SSR /
-        // content epoch (the consumer's echo check then trivially agrees).
+        // A combined message guarantees IOD coherence, so the clock shares the
+        // orbit IOD, and the orbit echo is the record's own IOD-SSR and content
+        // epoch (the consumer's echo check then agrees by construction).
+        // (RTF-2, Card 3)
         out.clock_iode       = rec_copy.combined->iode;
         out.orbit_iod_ssr    = rec_copy.combined->iod_ssr;
         out.orbit_epoch      = rec_copy.combined->epoch_time;
-        // Card 7: the APPLIED orbit's own identity — for a combined record it
-        // equals the echo above by construction (in-message coherence), so the
-        // consumer echo check short-circuits to Match without a second lookup.
+        // Identity of the applied orbit.  For a combined record it equals the echo
+        // above by construction (in-message coherence), so the consumer echo check
+        // returns Match without a second lookup.  (Card 7)
         out.applied_orbit_iod_ssr = rec_copy.combined->iod_ssr;
-        // Orbit + clock share one content epoch in a combined message.  The dt
-        // base is the SSR CONTENT reference epoch (not received_time): the clock
+        // Orbit and clock share one content epoch in a combined message.  The dt
+        // base is the SSR content reference epoch, not received_time: the clock
         // polynomial and RAC rates are defined relative to the provider's epoch,
         // so applyClockToBias / applyOrbitToPosition propagate over the true age.
         out.epoch_time       = rec_copy.combined->epoch_time;
@@ -181,7 +184,7 @@ SsrCorrectionStore::getOrbitClock(const std::string& sat,
             out.delta_rac_dot    = rec_copy.orbit->delta_rac_dot;
             out.iode             = rec_copy.orbit->iode;
             out.orbit_epoch_time = rec_copy.orbit->epoch_time;   // orbit dt base (content epoch)
-            out.applied_orbit_iod_ssr = rec_copy.orbit->iod_ssr; // Card 7: applied-orbit identity for the echo check
+            out.applied_orbit_iod_ssr = rec_copy.orbit->iod_ssr; // applied-orbit identity for the echo check (Card 7)
             out.has_orbit        = true;
             out.orbit_reference_point = rec_copy.orbit->reference_point;  // RTB-5(b)
         }
@@ -189,32 +192,33 @@ SsrCorrectionStore::getOrbitClock(const std::string& sat,
             out.c0         = rec_copy.clock->c0;
             out.c1         = rec_copy.clock->c1;
             out.c2         = rec_copy.clock->c2;
-            // Separate orbit/clock subtypes (the IGS-SSR norm) can carry different
-            // content epochs; the clock polynomial MUST use the clock epoch (its
-            // dt is c1/c2-sensitive), independent of any orbit record's epoch.
+            // Separate orbit and clock subtypes (the IGS-SSR norm) can carry
+            // different content epochs.  The clock polynomial uses the clock epoch
+            // (its dt enters through c1 and c2), independent of any orbit record's
+            // epoch.
             out.epoch_time = rec_copy.clock->epoch_time;
             out.has_clock  = true;
-            // out.iode (the ORBIT anchor) is intentionally left as the orbit
-            // branch set it (or the -1 "unknown" default for a STANDALONE clock —
-            // network / IGS-SSR clock streams carry no orbit IODE; RT0-1).
+            // out.iode (the orbit anchor) stays as the orbit branch set it, or at
+            // the -1 "unknown" default for a standalone clock: network and IGS-SSR
+            // clock streams carry no orbit IODE (RT0-1).
             //
-            // RTF-2 (Card 3): the CLOCK gate now keys on a SEPARATE clock_iode.
-            // A standard SSR clock (iode == -1 on the wire) is referenced to the
-            // SAME broadcast baseline as its paired orbit, so inherit out.iode —
-            // this reproduces the pre-card behaviour EXACTLY (the old gate used
-            // out.iode for the clock too): standard orbit+clock stays gated on the
-            // orbit IODE, a standalone network clock stays permissive (-1).  The
-            // brdc_rts producer stamps clock->iode >= 0 (its own C0 baseline),
-            // which WINS so the consumer gates the clock on the producer's
-            // baseline, not the orbit's.  The orbit coherence echo travels on the
-            // clock record (Card 7).
+            // The clock gate keys on a separate clock_iode (RTF-2, Card 3).  A
+            // standard SSR clock (iode == -1 on the wire) is referenced to the same
+            // broadcast baseline as its paired orbit, so it inherits out.iode.  This
+            // keeps the behaviour of the earlier single gate on out.iode: a standard
+            // orbit+clock pair stays gated on the orbit IODE, and a standalone
+            // network clock stays permissive (-1).  The brdc_rts producer stamps
+            // clock->iode >= 0 (its own C0 baseline), which takes precedence, so the
+            // consumer gates that clock on the producer's baseline rather than the
+            // orbit's.  The orbit coherence echo travels on the clock record (Card 7).
             out.clock_iode    = (rec_copy.clock->iode >= 0) ? rec_copy.clock->iode : out.iode;
             out.orbit_iod_ssr = rec_copy.clock->orbit_iod_ssr;
             out.orbit_epoch   = rec_copy.clock->orbit_epoch;
-            // M4 (contract v2): carry the per-sat combined CODE-correction σ + code/phase
-            // correlation from the (network-produced) clock record.  0 for decoded
-            // clocks / when emit_combined_sigma is off (a combined-message satellite
-            // never carries them — the network producer pushes separate clock records).
+            // Per-satellite combined code-correction σ and code/phase correlation
+            // from the network-produced clock record (M4, contract v2).  Both are 0
+            // for decoded clocks and when emit_combined_sigma is off.  A satellite on
+            // a combined message never carries them, because the network producer
+            // pushes separate clock records.
             out.combined_code_sigma_m = rec_copy.clock->combined_code_sigma_m;
             out.code_phase_corr       = rec_copy.clock->code_phase_corr;
         }
@@ -237,11 +241,11 @@ double SsrCorrectionStore::getCodeBias(const std::string& sat,
     const auto& m = it->second.code_bias->bias_per_signal;
     const auto sit = m.find(rinex_obs_code);
     if (sit != m.end()) return sit->second;
-    // RTA-13: exact miss — is a same-band different-attribute sibling present?
-    // Count it either way (the mismatch stays visible even when the fallback
-    // resolves it); return the sibling's bias only under the opt-in CODE-domain
-    // fallback (the residual attribute DCB is absorbed by the receiver
-    // code-bias states downstream).
+    // Exact miss: look for a same-band sibling with a different tracking
+    // attribute (RTA-13).  A sibling is counted either way, so the mismatch stays
+    // visible even when the fallback resolves it.  Its bias is returned only under
+    // the opt-in code-domain fallback; the residual attribute DCB is then absorbed
+    // by the receiver code-bias states downstream.
     if (const auto sib = findBandSibling(m, rinex_obs_code); sib != m.end()) {
         countBiasAttrMismatch(sat, rinex_obs_code, 'C');
         if (code_bias_band_fallback_) return sib->second;
@@ -256,11 +260,11 @@ bool SsrCorrectionStore::hasCodeBias(const std::string& sat,
     if (it == by_sat_.end() || !it->second.code_bias) return false;
     const auto& m = it->second.code_bias->bias_per_signal;
     if (m.find(rinex_obs_code) != m.end()) return true;
-    // RTA-13: with the CODE-domain fallback armed, a same-band sibling COVERS
-    // this signal (must agree with getCodeBias so a covered signal is never
-    // both estimated and SSR-corrected).  No counting here — the presence
-    // check runs per state-allocation gate, not per applied row; getCodeBias
-    // owns the counter.
+    // With the code-domain fallback armed, a same-band sibling covers this
+    // signal (RTA-13).  This has to agree with getCodeBias, so that a covered
+    // signal is never both estimated and SSR-corrected.  Nothing is counted here:
+    // the presence check runs per state-allocation gate, not per applied row, and
+    // getCodeBias owns the counter.
     return code_bias_band_fallback_ && findBandSibling(m, rinex_obs_code) != m.end();
 }
 
@@ -304,7 +308,7 @@ std::optional<SsrSlantIono> SsrCorrectionStore::getSlantIono(const std::string& 
     return *it->second.slant_iono;
 }
 
-// --- A5: age-gated code/phase-bias getters (reuse the file-local freshEnough) ---
+// --- Age-gated code/phase-bias getters, using the file-local freshEnough (A5) ---
 double SsrCorrectionStore::getCodeBias(const std::string& sat,
                                        const std::string& rinex_obs_code,
                                        const GnssTime& query_time,
@@ -316,9 +320,9 @@ double SsrCorrectionStore::getCodeBias(const std::string& sat,
     const auto& m = it->second.code_bias->bias_per_signal;
     const auto sit = m.find(rinex_obs_code);
     if (sit != m.end()) return sit->second;
-    // RTA-13: exact miss on a FRESH record (a stale record is a staleness
-    // problem, not an attribute mismatch — not counted).  Same semantics as the
-    // no-time overload above.
+    // Exact miss on a fresh record (RTA-13).  A stale record returned 0 above and
+    // is not counted, because staleness is not an attribute mismatch.  Otherwise
+    // the semantics match the overload without a time argument above.
     if (const auto sib = findBandSibling(m, rinex_obs_code); sib != m.end()) {
         countBiasAttrMismatch(sat, rinex_obs_code, 'C');
         if (code_bias_band_fallback_) return sib->second;
@@ -338,7 +342,8 @@ SsrCorrectionStore::getPhaseBias(const std::string& sat,
     const auto& m = it->second.phase_bias->bias_per_signal;
     const auto sit = m.find(rinex_obs_code);
     if (sit != m.end()) return sit->second;
-    // RTA-13: PHASE never falls back (integer property) — count-only.
+    // Phase never falls back to a sibling, to preserve the integer property;
+    // the mismatch is only counted (RTA-13).
     if (findBandSibling(m, rinex_obs_code) != m.end())
         countBiasAttrMismatch(sat, rinex_obs_code, 'L');
     return std::nullopt;
@@ -368,8 +373,8 @@ bool SsrCorrectionStore::hasCodeBias(const std::string& sat,
     if (!freshEnough(it->second.code_bias->received_time, query_time, max_age_s)) return false;
     const auto& m = it->second.code_bias->bias_per_signal;
     if (m.find(rinex_obs_code) != m.end()) return true;
-    // RTA-13: fallback-armed sibling coverage — must agree with the aged
-    // getCodeBias (see the no-time overload for rationale).
+    // Sibling coverage with the fallback armed; has to agree with the age-gated
+    // getCodeBias (RTA-13; rationale at the overload without a time argument).
     return code_bias_band_fallback_ && findBandSibling(m, rinex_obs_code) != m.end();
 }
 
@@ -382,7 +387,8 @@ SsrCorrectionStore::getPhaseBias(const std::string& sat,
     const auto& m = it->second.phase_bias->bias_per_signal;
     const auto sit = m.find(rinex_obs_code);
     if (sit != m.end()) return sit->second;
-    // RTA-13: PHASE never falls back (integer property) — count-only.
+    // Phase never falls back to a sibling, to preserve the integer property;
+    // the mismatch is only counted (RTA-13).
     if (findBandSibling(m, rinex_obs_code) != m.end())
         countBiasAttrMismatch(sat, rinex_obs_code, 'L');
     return std::nullopt;
@@ -405,28 +411,28 @@ SsrCorrectionStore::biasAttributeMismatchCounts() const {
 }
 
 // ---------------------------------------------------------------------------
-// Card 7 (RTF-2): orbit-coherence echo verification
+// Orbit-coherence echo verification (Card 7, RTF-2)
 // ---------------------------------------------------------------------------
 
 SsrCorrectionStore::OrbitEchoVerdict SsrCorrectionStore::classifyOrbitEcho(
     const OrbitClockCorrection&                rec,
     const std::optional<OrbitClockCorrection>& applied,
     double                                     max_skew_s) {
-    // No echo on the clock record → nothing to verify.  Every standard-SSR /
-    // pre-Card-7 stream lands here (orbit_iod_ssr defaults -1), so the check
-    // is free on all existing paths.
+    // No echo on the clock record: nothing to verify.  Every standard SSR stream
+    // and every stream without the Card 7 echo returns here (orbit_iod_ssr
+    // defaults to -1), so the check costs nothing on those paths.
     if (!rec.has_clock || rec.orbit_iod_ssr < 0) return OrbitEchoVerdict::NotStamped;
-    // The producer estimated its clock against an RTS orbit; the consumer
-    // applies NO SSR orbit for this satellite at all → the orbit delta the
-    // clock absorbed part of is missing entirely.
+    // The producer estimated its clock against an RTS orbit, but the consumer
+    // applies no SSR orbit for this satellite, so the orbit delta that the clock
+    // partly absorbed is missing.
     if (!applied || !applied->has_orbit) return OrbitEchoVerdict::NoAppliedOrbit;
-    // Different orbit update identity (4-bit IOD-SSR — equality is all the
-    // wire supports; a wrap collision is caught by the epoch-skew clause).
+    // Different orbit update identity.  IOD-SSR is 4 bits and equality is all the
+    // wire supports; a wrap collision is caught by the epoch-skew clause.
     if (applied->applied_orbit_iod_ssr != rec.orbit_iod_ssr)
         return OrbitEchoVerdict::IodSsrMismatch;
-    // Same IOD-SSR: compare orbit content epochs, but ONLY when the budget is
-    // armed — with max_skew_s == 0 the epoch clause is off (the "default 0 =
-    // check off" contract; IOD identity above still counts).
+    // Same IOD-SSR: compare orbit content epochs, only when the budget is armed.
+    // With max_skew_s == 0 the epoch clause is off (the "default 0 = check off"
+    // contract); the IOD identity check above still applies.
     if (max_skew_s > 0.0
         && std::abs(secondsBetween(applied->orbit_epoch_time, rec.orbit_epoch))
                > max_skew_s)
@@ -533,8 +539,9 @@ std::optional<uint32_t> SsrCorrectionStore::getGenerationId() const {
 }
 
 NetworkProducerStatus::State NetworkProducerStatus::parseState(const std::string& token) {
-    // RTA-10 wire tokens (NetworkProductWriter::writeEpochStatus).  Unknown tokens
-    // from a NEWER producer surface as Unknown — forward-compatible, never fatal.
+    // Wire tokens written by NetworkProductWriter::writeEpochStatus (RTA-10).  A
+    // token from a newer producer that is not recognised maps to Unknown, which is
+    // forward-compatible and never fatal.
     if (token == "ok")              return State::Ok;
     if (token == "partial")         return State::Partial;
     if (token == "withheld_sigma0") return State::WithheldSigma0;
@@ -562,12 +569,12 @@ void SsrCorrectionStore::setProducerStatus(const NetworkProducerStatus& status) 
 
 std::optional<NetworkProducerStatus> SsrCorrectionStore::getProducerStatus() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return producer_status_;   // nullopt until a heartbeat is pushed (legacy content never reacts)
+    return producer_status_;   // nullopt until a heartbeat is pushed (content without heartbeats never triggers a reaction)
 }
 
 void SsrCorrectionStore::setDeclaredRoster(const NetworkSignalDeclaration& decl) {
     std::lock_guard<std::mutex> lock(mutex_);
-    declared_roster_ = decl;   // a declaration REPLACES the previous one wholesale
+    declared_roster_ = decl;   // a declaration replaces the previous one entirely
 }
 
 NetworkSignalDeclaration SsrCorrectionStore::declaredRoster() const {
@@ -595,8 +602,9 @@ SsrCorrectionStore::coverageFor(const std::vector<std::string>& sats,
         const auto it = by_sat_.find(sat);
         if (it == by_sat_.end()) continue;
         const SatRecord& rec = it->second;
-        // Orbit/clock are high-rate: gate on freshness (combined wins, as in
-        // getOrbitClock).  Biases update slowly — presence is enough.
+        // Orbit and clock are high-rate, so they are gated on freshness (a combined
+        // record takes precedence, as in getOrbitClock).  Biases update slowly, so
+        // presence is enough.
         const bool comb = rec.combined && freshEnough(rec.combined->received_time, time, max_age_s);
         if (comb || (rec.orbit && freshEnough(rec.orbit->received_time, time, max_age_s)))
             ++cov.orbit;
@@ -635,10 +643,10 @@ std::string SsrCorrectionStore::censusSummary() const {
 void SsrCorrectionStore::clear() {
     std::lock_guard<std::mutex> lock(mutex_);
     by_sat_.clear();
-    generation_id_ = 0;   // RTA-3: a cleared store carries no generation marker
-    producer_status_.reset();      // RTA-10: a cleared store carries no producer heartbeat
-    bias_attr_mismatch_.clear();   // RTA-13: mismatch tallies are per-run diagnostics
-    orbit_echo_mismatch_.clear();  // Card 7: ditto (the armed skew budget is CONFIG and survives)
+    generation_id_ = 0;   // a cleared store carries no generation marker (RTA-3)
+    producer_status_.reset();      // a cleared store carries no producer heartbeat (RTA-10)
+    bias_attr_mismatch_.clear();   // mismatch tallies are per-run diagnostics (RTA-13)
+    orbit_echo_mismatch_.clear();  // per-run diagnostics too; the armed skew budget is configuration and is kept (Card 7)
 }
 
 // ---------------------------------------------------------------------------

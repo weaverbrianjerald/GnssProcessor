@@ -3,23 +3,23 @@
  * @brief Unit tests for the Sun/Moon ECI frame double-count and its correction
  *        (estimation.enable_sun_frame_correction).
  *
- * `Planetary::sunMoonPosEci` evaluates its series with TROPICAL mean-longitude
+ * `Planetary::sunMoonPosEci` evaluates its series with tropical mean-longitude
  * rates (Sun 36000.770 deg/cy, Moon 481267.883 deg/cy; the sidereal rates are
- * 35999.373 and 481266.494) and rotates ecliptic->equatorial with the OF-DATE
- * mean obliquity, so its output is in the mean equinox and equator OF DATE.
- * Both ECI->ECEF chains then apply precession a SECOND time.  The delivered
+ * 35999.373 and 481266.494) and rotates ecliptic->equatorial with the of-date
+ * mean obliquity, so its output is in the mean equinox and equator of date.
+ * Both ECI->ECEF chains then apply precession a second time.  The delivered
  * ECEF Sun/Moon directions therefore carry a spurious rotation about the
- * ecliptic pole growing at ~50.3"/yr from J2000 -- 20.4' at 2024-05-08.
+ * ecliptic pole that grows at ~50.3"/yr from J2000 (20.4' at 2024-05-08).
  *
- * The oracle here is SOFA's iauEpv00 (Earth barycentric/heliocentric ephemeris,
- * ~1e-8 AU) rotated to ITRS with iauC2t00a.  It is fully vendored, so these
- * tests need no product files and no network.
+ * The oracle is SOFA's iauEpv00 (Earth barycentric/heliocentric ephemeris,
+ * ~1e-8 AU) rotated to ITRS with iauC2t00a.  SOFA is vendored, so these tests
+ * need no product files and no network.
  *
- * Note the DIRECTION of the guarantee: with the correction OFF the code is
- * expected to DISAGREE with the oracle by ~20.4'.  `LegacyPathCarriesTheDefect`
- * pins that disagreement deliberately -- it is a characterization test of the
- * inherited RTKLIB behaviour, not an endorsement of it.  If someone flips the
- * loader default, that test is the one that should fail first.
+ * With the correction off, the code is expected to disagree with the oracle by
+ * ~20.4'.  `LegacyPathCarriesTheDefect` asserts that disagreement on purpose: it
+ * characterizes the inherited RTKLIB behaviour and does not endorse it.  The test
+ * passes the flag to Planetary directly, so it does not depend on the loader
+ * default.
  */
 
 #include <gtest/gtest.h>
@@ -53,7 +53,7 @@ double angleArcMin(const Eigen::Vector3d& a, const Eigen::Vector3d& b) {
 /**
  * @brief Independent ECEF Sun direction from SOFA, for the same epoch.
  *
- * Geometric Earth->Sun direction (no aberration, no light-time -- matching what
+ * Geometric Earth->Sun direction (no aberration, no light-time, matching what
  * the code's series computes), taken as the negated heliocentric Earth position
  * from iauEpv00, then rotated ICRS->ITRS by iauC2t00a.  ERP is zero here so
  * UT1 == UTC and the pole is at the origin, matching a call made with an empty
@@ -92,7 +92,7 @@ Eigen::Vector3d codeSunDirEcef(const GnssTime& t, bool correct) {
     return sun.normalized();
 }
 
-/// 2024-05-08 12:00 UTC -- the IGS_Pasadena / DOY-129 fixture day.
+/// 2024-05-08 12:00 UTC, the IGS_Pasadena / DOY-129 fixture day.
 GnssTime fixtureEpoch() {
     return TimeUtils::gregorianToGpsTime(2024, 5, 8, 12, 0, 0.0);
 }
@@ -100,12 +100,12 @@ GnssTime fixtureEpoch() {
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// Byte-identity guard on the refactor: precessionIau1976 was extracted verbatim
-// out of eci2ecef, so it must reproduce the original inline expression EXACTLY
-// -- not approximately.  MSVC builds this tree at /fp:precise with no /arch:
-// flag (no reassociation, no FMA contraction), so bitwise equality is the
-// correct assertion; if it ever fails, the OFF path is no longer byte-identical
-// and invariant #6 is broken.
+// Byte-identity guard on the extraction: precessionIau1976 is the inline
+// expression of eci2ecef moved into a function, so it reproduces that expression
+// bit for bit.  MSVC builds this tree at /fp:precise with no /arch: flag (no
+// reassociation, no FMA contraction), so bitwise equality is the correct
+// assertion.  A failure means the off path is no longer byte-identical
+// (invariant #6).
 // ---------------------------------------------------------------------------
 
 TEST(PlanetarySunFrame, PrecessionExtractionIsBitwiseIdentical) {
@@ -115,7 +115,7 @@ TEST(PlanetarySunFrame, PrecessionExtractionIsBitwiseIdentical) {
         const double t2 = t_tt * t_tt;
         const double t3 = t2 * t_tt;
 
-        // The literal pre-refactor block from eci2ecef.
+        // The original inline block from eci2ecef.
         const double ze = (2306.2181 * t_tt + 0.30188 * t2 + 0.017998 * t3) * kAs2R;
         const double th = (2004.3109 * t_tt - 0.42665 * t2 - 0.041833 * t3) * kAs2R;
         const double z  = (2306.2181 * t_tt + 1.09468 * t2 + 0.018203 * t3) * kAs2R;
@@ -144,7 +144,7 @@ TEST(PlanetarySunFrame, CorrectedPathMatchesSofaEphemeris) {
 }
 
 // ---------------------------------------------------------------------------
-// Characterization: with the correction OFF the legacy path is ~20.4' out.
+// Characterization: with the correction off, the legacy path is ~20.4' out.
 // ---------------------------------------------------------------------------
 
 TEST(PlanetarySunFrame, LegacyPathCarriesTheDefect) {
@@ -222,7 +222,7 @@ TEST(PlanetarySunFrame, InertialVelocityInvertsTheEcefConversion) {
 }
 
 TEST(PlanetarySunFrame, BetaUsesTheInertialOrbitNormal) {
-    // Circular MEO orbit, 55 deg inclination, satellite at the ascending node --
+    // Circular MEO orbit, 55 deg inclination, satellite at the ascending node:
     // the phase where r x (omega x r) is fully perpendicular to h and the ECEF
     // normal error is largest.
     constexpr double kR = 2.656e7;
@@ -242,12 +242,12 @@ TEST(PlanetarySunFrame, BetaUsesTheInertialOrbitNormal) {
     EXPECT_NEAR(SatAttitude::computeBeta(r, v_ecef, sun, /*correct_velocity_frame=*/true),
                 90.0, 0.5);
 
-    // Gate OFF must reproduce the legacy (wrong-frame) answer, so the toggle is
-    // proven to actuate and the OFF path is proven unchanged.
+    // With the gate off, the result is the legacy (wrong-frame) answer, more than
+    // 20 deg from the truth; this shows the toggle actuates.
     EXPECT_GT(std::abs(SatAttitude::computeBeta(r, v_ecef, sun, false) - 90.0), 20.0);
 
-    // Guard the premise: had the raw ECEF velocity been used, the normal would
-    // have been badly wrong -- ~30 deg at this phase.
+    // Premise check: the normal formed from the raw ECEF velocity is off by
+    // ~30 deg at this phase.
     const Eigen::Vector3d n_ecef = r.cross(v_ecef).normalized();
     const double normal_err_deg =
         std::acos(std::clamp(n_true.dot(n_ecef), -1.0, 1.0)) * 180.0 / Constants::PI;

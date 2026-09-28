@@ -5,7 +5,7 @@
  * Measurement update, the two pseudo-observation constraints, ambiguity
  * resolution and the trace sweep.
  *
- * The constraints sit AFTER the update and BEFORE AR on purpose: both
+ * The constraints sit after the update and before AR on purpose: both
  * shrink the covariance the resolver reads (applyPseudoObservation updates
  * state AND covariance, which is what lets height recover � a value-only
  * clamp would not).
@@ -15,9 +15,9 @@
 #include "app/EpochUpdateSupport.hpp"
 #include "math/TimeUtils.hpp"
 #include "products/SsrCorrectionStore.hpp"
-#include "common/Constants.hpp"         // Card ALC: SPEED_OF_LIGHT
-#include "common/PppUtils.hpp"          // Card ALC: carrier wavelengths
-#include "filter/StateKeySchema.hpp"    // Card ALC: makeAmbiguityKey
+#include "common/Constants.hpp"         // SPEED_OF_LIGHT (Card ALC)
+#include "common/PppUtils.hpp"          // carrier wavelengths (Card ALC)
+#include "filter/StateKeySchema.hpp"    // makeAmbiguityKey (Card ALC)
 #include <algorithm>
 #include <cmath>
 #include <iterator>
@@ -37,10 +37,10 @@ void RealTimeEngine::runMeasurementUpdate(RtEpochContext& ctx) {
     EpochMeasurement& meas_update = ctx.meas_update;
     bool& update_applied = ctx.update_applied;
 
-    // Pass budget + forced-pivot-handover forwarding are shared with the
-    // post-processing driver via EpochUpdateSupport so the two paths can
-    // never diverge on them again (the divergence that once left real-time
-    // with no handover at all).
+    // The pass budget and the forced-pivot-handover forwarding are shared with
+    // the post-processing driver via EpochUpdateSupport, so the two paths
+    // cannot diverge on them (a divergence once left real-time with no
+    // handover at all).
     const int max_passes =
         computeRebuildPassBudget(*state_manager_, config_, modeled_obs);
 
@@ -52,8 +52,8 @@ void RealTimeEngine::runMeasurementUpdate(RtEpochContext& ctx) {
     if (soft_lli_) {
         auto held = soft_lli_->heldKeys();
         carry_excluded.insert(held.begin(), held.end());
-        // The held ambiguity STATES must also survive the measurement
-        // model's prune-on-first-miss for the duration of the outage —
+        // The held ambiguity states must also survive the measurement
+        // model's prune-on-first-miss for the duration of the outage;
         // deleting them would destroy the pre-gap state the bridge
         // repair restores.  Same source set as the exclusion above.
         meas_model_->setProtectedAmbiguityKeys(std::move(held));
@@ -84,8 +84,8 @@ void RealTimeEngine::runMeasurementUpdate(RtEpochContext& ctx) {
 
         // Re-inflate iono / sat-bias variances for any sat whose phase
         // ambiguities the KF fully reset this pass, so the reseed doesn't
-        // bake a stale partition.  Shared with the post-processing driver;
-        // previously absent on the real-time path (the known asymmetry).
+        // bake a stale partition.  Shared with the post-processing driver, so
+        // both paths re-inflate the same way.
         // No-op on a complete reset / when slip_state_reinflation is off.
         reinflateResetSatStates(*kalman_filter_, *state_manager_,
                                 *meas_model_, config_);
@@ -185,9 +185,10 @@ void RealTimeEngine::applyNetworkIonoPrior(RtEpochContext& ctx) {
             const auto si = store.getSlantIono(obs.satellite, current_time, iono_max_age);
             if (!si || !(si->sigma_m > 0.0)) continue;
             double sg = iw.std_scale * si->sigma_m;   // consumer-side tightening knob
-            // T3f: floor the tightened σ so std_scale < 1 cannot drive the supplied iono prior
+            // Floor the tightened σ so std_scale < 1 cannot drive the supplied iono prior
             // below the per-LOS representativeness floor (an over-tight prior locks the slant
-            // iono to an under-observed SH value).  Gated by the producer toggle ⇒ byte-identical off.
+            // iono to an under-observed SH value).  Gated by the producer toggle, so
+            // byte-identical when off (T3f).
             if (config_.getNetworkConfig().iono_supply_formal_sigma)
                 sg = std::max(iw.floor_m, sg);
             if (!(sg > 0.0)) continue;
@@ -240,9 +241,9 @@ void RealTimeEngine::resolveAmbiguities(RtEpochContext& ctx) {
     last_ar_result_ = AmbiguityResolution{};
     if (ambiguity_resolver_ && update_applied) {
         // Default: feed the MW-resolved WL integers (halves the LAMBDA search).
-        // Closed-loop network-bias validation: suppress them so AR runs PURE
-        // MLAMBDA on the KF float, which carries the consumed network phase bias
-        // — the MW WL is in the separate .BIA frame and would re-inject a
+        // Closed-loop network-bias validation: suppress them so AR runs pure
+        // MLAMBDA on the KF float, which carries the consumed network phase bias;
+        // the MW WL is in the separate .BIA frame and would re-inject a
         // conflicting WL datum (see setArIgnoreMwWl).
         const std::map<std::string, int>    no_wl_ambs;
         const std::map<std::string, double> no_wl_fracs;
@@ -252,9 +253,9 @@ void RealTimeEngine::resolveAmbiguities(RtEpochContext& ctx) {
                                                : mw_slip_detector_->getResolvedWlFractions();
         // Convert the detector's lock quality into the resolver's vocabulary so
         // the WL-only FFR gate can bound each arc's rounding failure rate.  The
-        // map is EMPTY when the MW feed is suppressed, and an empty map makes
-        // the gate reject every WL constraint — correct by construction: with no
-        // MW integers there is nothing for the WL-only path to assert anyway.
+        // map is empty when the MW feed is suppressed, and an empty map makes
+        // the gate reject every WL constraint, which is correct: with no MW
+        // integers there is nothing for the WL-only path to assert.
         std::map<std::string, WlArcQuality> wl_quality;
         if (!ar_ignore_mw_wl_) {
             for (const auto& [k, q] : mw_slip_detector_->getResolvedWlQuality())
@@ -294,11 +295,11 @@ void RealTimeEngine::writeEpochTraces(RtEpochContext& ctx) {
 
     ++epoch_count_;
 
-    // RTA-13: periodic obs-code attribute-mismatch visibility (one line every
-    // 300 processed epochs; silent when no mismatch was ever counted).
+    // Periodic obs-code attribute-mismatch summary (RTA-13): one line every
+    // 300 processed epochs; silent when no mismatch was ever counted.
     if (epoch_count_ % 300 == 0) {
         logBiasAttrMismatchSummary("periodic");
-        logOrbitEchoMismatchSummary("periodic");   // Card 7: same cadence, same silence rule
+        logOrbitEchoMismatchSummary("periodic");   // same cadence and silence rule (Card 7)
     }
 
     log->info("{}Epoch {}: pos=({:.3f},{:.3f},{:.3f}) clk={:.3f} zwd={:.4f} sats={}",
@@ -341,60 +342,61 @@ void RealTimeEngine::writeEpochTraces(RtEpochContext& ctx) {
 
 
 // ---------------------------------------------------------------------------
-// Card ALC: the consumer RE-VALIDATES its float ambiguities against their own
-// code level -- invariant #7's RE-COUPLING edge for cards CC and PBT.
+// Consumer re-validation of float ambiguities against their own code level
+// (card ALC): the re-coupling edge of invariant #7 for cards CC and PBT.
 // ---------------------------------------------------------------------------
 //
-// New code (not a relocation).  Cards CC and PBT both preserve an ambiguity
-// across a phase-bias product step; neither asks whether the preserved value is
-// still RIGHT.  PBT sec.7 measured the cost directly: over TOW 270900-273000 the
-// reset-only baseline moved its ambiguities 3.2416 m (cumulative |dAMB|) through
-// two mass resets and came out NEARER the truth, while the translated arm moved
-// 0.4489 m and came out 0.53 / 1.45 m worse at hours 4 / 5.  Those resets were
-// re-levelling accumulated ambiguity error FROM CODE, by accident.  This seam
-// does the same thing deliberately, with both edges instrumented.
+// New code, not relocated from the pre-cut source.  Cards CC and PBT both
+// preserve an ambiguity across a phase-bias product step; neither checks whether
+// the preserved value is still correct.  PBT sec.7 found that mass resets, by
+// re-levelling accumulated ambiguity error from code, left the reset-only arm
+// nearer the truth than the translated arm.  This seam performs that
+// re-levelling deliberately, with both edges instrumented.
 //
-// THE LEVELS COME FROM THE CONSUMER'S OWN CORRECTED OBSERVATIONS, never from a
-// re-read of the products.  ctx.meas_update.innovations holds the PRE-fit
-// innovation of every committed row, i.e. observed minus the predicted of
-// MeasurementModel.cpp:1640-1643 -- which is the point at which the satellite
-// clock (obs.modeled + the clock states), the satellite CODE bias and the
-// satellite PHASE bias (ssr_bias_term, MeasurementModel.cpp:1606-1630) have all
-// been applied.  Two classical combinations of the four innovations of a
-// dual-frequency satellite are therefore levels of the ambiguity error and of
-// nothing else (AmbLevelCheck.hpp derives both):
+// The levels come from the consumer's own corrected observations, never from a
+// re-read of the products.  ctx.meas_update.innovations holds the pre-fit
+// innovation of every committed row, i.e. observed minus the predicted
+// observable of MeasurementModel::buildJacobianRow, in which the satellite clock
+// (obs.modeled plus the clock states), the satellite code bias and the satellite
+// phase bias (ssr_bias_term) have all been applied.  Two classical combinations
+// of the four innovations of a dual-frequency satellite are therefore levels of
+// the ambiguity error (AmbLevelCheck.hpp derives both):
 //
 //   WL, cycles : [ (f1*ip1 - f2*ip2)/(f1-f2) - (f1*ic1 + f2*ic2)/(f1+f2) ]/lambda_WL
 //   IF, metres : (f1^2*(ip1-ic1) - f2^2*(ip2-ic2))/(f1^2-f2^2)
 //
-// Both are geometry-, clock-, troposphere- and (first-order) ionosphere-free, so
-// the receiver clock, the receiver phase clock and the slant-iono states cancel
-// and no receiver-common constant is left for the test to trip on.  Each is a
-// PAIRED per-epoch (level - state) difference, so the window's own sample sigma
-// is the noise of exactly the quantity tested.
+// Both are geometry-, troposphere- and (first-order) ionosphere-free, so the
+// receiver clock common to code and phase and the slant-iono states cancel.  A
+// phase-only receiver clock does not cancel, and neither do code or phase
+// correction errors, so a trip alone does not prove an ambiguity error.  Each is a
+// paired per-epoch (level - state) difference, so the window's own sample sigma
+// is the noise of the quantity tested.
 //
-// WINDOW CONTINUITY (ALC-ARC): StateManager assigns a new generation on birth,
-// reset/reseed request, translation and explicit recovery edits. Compare both
-// selected signals with the last sampled pair BEFORE pushing a sample. These
-// tokens survive reseeding and the measurement update, unlike reset variance,
-// which the update may already have contracted. They also survive missing pairs
-// and epochs without an update. An explicit satellite notification clears the
-// window immediately, so it cannot be lost at the next epoch boundary either.
-// A changed arc starts at sample 1 and needs window_ep fresh samples to be tested.
+// Window continuity (ALC-ARC): StateManager assigns a new generation on birth,
+// reset/reseed request, translation and explicit recovery edits.  Both selected
+// signals are compared with the last sampled pair before a sample is pushed.
+// These tokens survive reseeding and the measurement update, unlike reset
+// variance, which the update may already have contracted.  They also survive
+// missing pairs and epochs without an update.  An explicit satellite
+// notification clears the window immediately, so it cannot be lost at the next
+// epoch boundary either.  A changed arc starts at sample 1 and needs window_ep
+// fresh samples to be tested.
 //
-// The variance guard is retained as a conservative readiness check only. It does
-// not prove arc continuity or convergence; the generations establish continuity.
+// The variance guard is retained as a conservative readiness check only.  It
+// does not prove arc continuity or convergence; the generations establish
+// continuity.
 //
-// MODE.  `act` refloats BOTH of the satellite's ambiguities through the existing
+// Mode.  `act` refloats both of the satellite's ambiguities through the existing
 // first-sighting/reset path (the same StateManager::resetAmbiguity call, at the
-// same ambiguity_std, that reset_disc used before card CC).  `observe` writes
-// nothing at all -- it only counts and emits the AMB_LEVEL rows.
+// same ambiguity_std, that the reset_disc path in RealTimeEngineSsrBreaks.cpp
+// uses; see card CC).  `observe` writes nothing; it only counts and emits the
+// AMB_LEVEL rows.
 //
-// PLACEMENT.  After the update, the constraints and AR, before the CST harvest:
-// the innovations it reads are the epoch's committed ones, the epoch's own
-// position is NOT retroactively changed by the refloat (the value is unchanged;
-// only the variance is re-inflated, and the re-seed lands at the next epoch's
-// ensureRequiredStates), and the CST row for this epoch reports both the
+// Placement.  After the update, the constraints and AR, and before the CST
+// harvest.  The innovations it reads are the epoch's committed ones; the epoch's
+// own position is not changed retroactively by the refloat (the value is
+// unchanged, only the variance is re-inflated, and the re-seed lands at the next
+// epoch's ensureRequiredStates); and the CST row for this epoch reports both the
 // `refloat_level` event and the re-inflated amb_var.
 
 void RealTimeEngine::noteAmbLevelDisturbed_(const std::string& sat) {
@@ -423,7 +425,7 @@ void RealTimeEngine::checkAmbiguityLevel_(RtEpochContext& ctx) {
     auto log = log_manager_.getLogger("rt_engine");
     const std::string& epoch_prefix = ctx.epoch_prefix;
 
-    // Row-aligned (sat, signal) -> PRE-fit innovation, exactly the harvest
+    // Row-aligned (sat, signal) -> pre-fit innovation, the same harvest
     // traceConsumerSat_ makes (RealTimeEngineSsrDiag.cpp): BSSD / DD rows are
     // labelled "<sat_i>-<sat_p>" and are not a single-satellite quantity, so they
     // are skipped rather than attributed to one satellite.  A BSSD consumer
@@ -452,12 +454,12 @@ void RealTimeEngine::checkAmbiguityLevel_(RtEpochContext& ctx) {
         const std::string& sat = obs.satellite;
         if (sat.empty()) continue;
 
-        // ONE raw phase signal per BAND, chosen deterministically: the
-        // lexicographically smallest signal code of that band that carries BOTH a
+        // One raw phase signal per band, chosen deterministically: the
+        // lexicographically smallest signal code of that band that carries both a
         // phase and a paired code innovation this epoch ("L1W" -> "C1W").  A
         // satellite tracked on L1C + L1W + L2W therefore contributes the L1C/L2W
-        // pair, not an arbitrary one.  Bands beyond the two LOWEST present are
-        // ignored -- the combinations are two-frequency by construction.
+        // pair, not an arbitrary one.  Bands beyond the two lowest band digits
+        // present are ignored, since the combinations are two-frequency.
         std::map<char, std::string> band_sig;
         for (const auto& kv : obs.modeled) {
             const std::string& sig = kv.first;
@@ -528,7 +530,7 @@ void RealTimeEngine::checkAmbiguityLevel_(RtEpochContext& ctx) {
             sig1, sig2, amb_level_check_.config().k, v.wl_mean, v.wl_sigma,
             v.if_mean, v.if_sigma, act ? "act" : "observe");
 
-        // DECOUPLING edge: the test fired.  Emitted in BOTH modes.
+        // Decoupling edge: the test fired.  Emitted in both modes.
         amb_level_events_.push_back(AmbLevelEvent{
             sat, "trip", which, v.diff, v.sigma, v.n, detail });
         log->info("{}Ambiguity LEVEL check ({}): {} {} + {} |state-level| {:.4f} > {:.2f} x "
@@ -537,11 +539,11 @@ void RealTimeEngine::checkAmbiguityLevel_(RtEpochContext& ctx) {
 
         if (!act) continue;                   // observe: counted, nothing written
 
-        // RE-COUPLING edge: the response, through the EXISTING reset path --
-        // StateManager::resetAmbiguity (StateManager.cpp:1095), the same call and
-        // the same ambiguity_std that reset_disc used before card CC.  BOTH bands,
-        // because the tests are two-frequency combinations and neither one names
-        // which band carries the error.
+        // Re-coupling edge: the response goes through the existing reset path,
+        // StateManager::resetAmbiguity, with the same call and ambiguity_std as the
+        // reset_disc path (card CC).  Both bands are refloated, because the tests
+        // are two-frequency combinations and neither one identifies which band
+        // carries the error.
         const bool r1 = state_manager_->resetAmbiguity(amb1, reset_std);
         const bool r2 = state_manager_->resetAmbiguity(amb2, reset_std);
         amb_level_check_.noteRefloat();

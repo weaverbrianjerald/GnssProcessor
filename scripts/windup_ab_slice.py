@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""windup_ab_slice.py -- the SPEC_phase_windup_sign.md §8 item 1 decisive arm.
+"""windup_ab_slice.py: the SPEC_phase_windup_sign.md §8 item 1 decisive arm.
 
 Real-data A/B the sim structurally cannot provide (the sim injects wind-up via
 the same ``computePhaseWindUp`` it models with, so injected and modelled errors
@@ -12,13 +12,13 @@ independent SINEX/SIF truth:
     fixed_off    wu93 exe,     enable_phase_windup: false  (control twin)
 
 Pre-registered expectations if the sign was inverted (SPEC §8):
-  * shipped_on must be WORSE than shipped_off (modelling -phi is worse than
+  * shipped_on must be worse than shipped_off (modelling -phi is worse than
     not modelling at all);
-  * fixed_on must be BETTER than fixed_off (modelling +phi finally helps);
-  * shipped_off ~= fixed_off (the two binaries differ only in the wind-up
-    construction + product-frame plumbing, none of which is live with the
-    correction disabled on the user PPP path) -- this pair is the same-build
-    sanity gate that isolates the sign as the only mover.
+  * fixed_on must be better than fixed_off (modelling +phi finally helps);
+  * shipped_off is close to fixed_off (the two binaries differ only in the
+    wind-up construction and product-frame plumbing, none of which is live
+    with the correction disabled on the user PPP path); this pair is the
+    same-build sanity gate that isolates the sign as the only mover.
 
 Usage::
 

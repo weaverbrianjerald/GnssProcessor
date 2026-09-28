@@ -7,35 +7,36 @@
         [--manifest config/sim/simnet24_inject_fault.json.injection.json] \\
         [--latency-epochs 3] [--json out.json]
 
-WHAT THIS ANSWERS, AND WHAT IT DOES NOT.
+What this answers, and what it does not.
 
-It answers "does the response MECHANISM work" — the cheap sim half of G4.  It
-does NOT answer "does the event EXPRESS on this lineage", which is the field
-half and the known seeded-chain trap.  An injection PASS is therefore NECESSARY,
-NOT SUFFICIENT for promoting a knob: the field arms remain the graduation gate.
+It answers whether the response mechanism works: the cheap sim half of G4. It
+does not answer whether the event expresses on a given lineage, which is the
+field half and the known seeded-chain trap. An injection pass is therefore
+necessary, not sufficient, for promoting a knob: the field arms remain the
+graduation gate.
 
-THE MANDATORY NEGATIVE CONTROL (SPEC_synthetic_minimum_network §6, G-B):
+The mandatory negative control (SPEC_synthetic_minimum_network §6, G-B):
 
-    "an injected event that produces zero guard trips is a WIRING FAILURE, not a
+    "an injected event that produces zero guard trips is a wiring failure, not a
      quiet day.  The grader asserts this explicitly."
 
-That assertion is the whole reason this script exists rather than a human reading
-two log files, so it is a hard FAIL with its own exit code — the failure mode it
-guards is a run that completes cleanly, reports zero, and gets written up as "the
-guard did not catch it" when the guard was never wired.  Run
-scripts/simnet_injection_preflight.py on the producer config BEFORE spending the
+That assertion is the reason this script exists rather than a human reading two
+log files, so it is a hard fail with its own exit code: the failure mode it
+guards against is a run that completes cleanly, reports zero, and gets written
+up as a guard that did not catch the event when the guard was never wired. Run
+scripts/simnet_injection_preflight.py on the producer config before spending the
 compute; it separates "inert by construction" from "failed to detect" offline.
 
-WHY BOTH ARMS.  A fault arm alone cannot distinguish a detection from a detector
-that flags everything.  The null arm is the same fixture with the same seeds and
+Why both arms. A fault arm alone cannot distinguish a detection from a detector
+that flags everything. The null arm is the same fixture with the same seeds and
 no injected fault (scripted slips touch no RNG stream), so every flag it raises
-on truth-clean data is a FALSE ALARM, and the difference between the arms is the
-detector's actual yield.  §9.6 retracted a published recovery-floor table for
-exactly this reason: it was a window artifact visible only against the null arm.
+on truth-clean data is a false alarm, and the difference between the arms is the
+detector's actual yield. §9.6 retracted a published recovery-floor table for
+this reason: it was a window artifact visible only against the null arm.
 
-TRUTH COMES FROM THE FIXTURE, NOT THE PLAN.  The join key is the fault fixture's
-per-station `truth_slips.csv` rows with `source=scripted` — what the simulator
-actually applied, at its resolved tow.  The injection manifest is read only as a
+Truth comes from the fixture, not the plan. The join key is the fault fixture's
+per-station `truth_slips.csv` rows with `source=scripted`: what the simulator
+actually applied, at its resolved tow. The injection manifest is read only as a
 cross-check: a planned event missing from truth is a bench defect and is reported
 as one, never silently dropped from the denominator.
 """
@@ -54,7 +55,7 @@ if hasattr(sys.stdout, "reconfigure"):
 SLIP_TIERS = ("T0_mw_detect", "T1_if_slip")
 RAIM_TIERS = ("T2_within_epoch", "T3_raim", "T4_attrib")
 
-# Run-end counter lines are spdlog-only — no CSV sink exists for either family, so a
+# Run-end counter lines are spdlog-only: no CSV sink exists for either family, so a
 # bench has to scrape them.  Anchored on the message prefixes emitted by
 # NetworkTeardown.cpp (slip: :1599-1626, RAIM pool re-host: :583-632).
 COUNTER_PATTERNS = [
@@ -122,12 +123,12 @@ def injected_truth(fault_fixture):
 
 
 def observed_constellations(products_path, ev_rows):
-    """Which constellations the PRODUCER actually solved.
+    """Which constellations the producer actually solved.
 
-    A fixture can carry observations the producer never processes — the sim writes
+    A fixture can carry observations the producer never processes: the sim writes
     GPS+Galileo, and a GPS-only producer config silently ignores every E row.  An
     injected fault there is unobserved by construction: it lands in data nothing
-    looks at, and scoring it as a MISS manufactures exactly the false "the guard
+    looks at, and scoring it as a miss manufactures the same false "the guard
     failed to catch it" reading this bench exists to prevent.  It is the same
     error class as injecting at a carry the lineage has superseded, one layer out.
 
@@ -158,8 +159,8 @@ def match_detections(inj, ev_rows, interval_s, latency_epochs, null_rows=None):
     """For each injected slip, the earliest slip-tier event on the same (station,sat)
     at or after its tow, inside the latency window.
 
-    Station+satellite is the join; the SIGNAL is reported but not required, because a
-    wide-lane detector legitimately flags the band PAIR (detail = "L1C;L5Q") rather
+    Station+satellite is the join; the signal is reported but not required, because a
+    wide-lane detector legitimately flags the band pair (detail = "L1C;L5Q") rather
     than the single band that jumped.  Requiring a signal match would score a correct
     MW detection as a miss.
     """
@@ -172,9 +173,9 @@ def match_detections(inj, ev_rows, interval_s, latency_epochs, null_rows=None):
     for v in by_key.values():
         v.sort(key=lambda r: float(r["tow"]))
 
-    # The NULL arm's own flags at the same (station, sat, window).  The null arm is
-    # not quiet — it raises real false alarms on truth-clean data — so a fault-arm
-    # match that the null arm ALSO produces at the same key is not attributable to
+    # The null arm's own flags at the same (station, sat, window).  The null arm is
+    # not quiet: it raises real false alarms on truth-clean data, so a fault-arm
+    # match that the null arm also produces at the same key is not attributable to
     # the injection.  Without this correction the detection rate is inflated by the
     # detector's own false-alarm rate, which is the differential-grading mistake
     # SPEC_synthetic_minimum_network §9.6 retracted a headline table for.
@@ -309,7 +310,7 @@ def main():
                   f"{rate:>12.3e}{ia_s}{ratio:>10}")
 
     # ---- fault arm: detection -----------------------------------------------------
-    # ---- what the producer actually LOOKED at --------------------------------------
+    # ---- what the producer actually looked at --------------------------------------
     prod = args.products or os.path.join(args.fault_run, "products.txt")
     obs_const = observed_constellations(prod, fault_rows or [])
     unobserved = [e for e in inj if obs_const and e["sat"][0] not in obs_const]

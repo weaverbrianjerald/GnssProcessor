@@ -14,12 +14,12 @@
  *    amplitude/phase set in the SIF @b Up/East/North convention (all three
  *    components, unlike the radial-only EOT20 grid path).
  *  - Ocean pole tide (OPT): the six Desai (2002) load coefficients
- *    (real/imag for North, East, Up) — stored here in exactly the order
+ *    (real/imag for North, East, Up), stored here in the order
  *    @c GnssCorrections expects for @c opt_coeffs_.
  *  - Time-windowed antenna history (type, serial, ARP-minus-GRP ENU
  *    eccentricity, mounting orientation, @c DO_NOT_USE).
  *  - Time-windowed receiver history.
- *  - Time-windowed OCCUPATION solutions: ITRF coordinates + velocity +
+ *  - Time-windowed @c OCCUPATION solutions: ITRF coordinates + velocity +
  *    sigmas + the 6x6 coordinate/velocity covariance, all referred to the
  *    SIF @c REFERENCE_EPOCH (typically 2020.0) and @c REFERENCE_FRAME
  *    (typically ITRF2020).
@@ -34,8 +34,8 @@
  * metres, phases/orientation in degrees, velocities in metres/year,
  * covariances in metre^2 / metre^2-per-year / metre^2-per-year^2,
  * decay times and periods in years.  The loader performs the mm->m and
- * mm/y->m/y conversions declared in the SIF @c METADATA block so that
- * downstream code never has to think about SIF units again.
+ * mm/y->m/y conversions declared in the SIF @c METADATA block, so downstream
+ * code sees SI units only.
  */
 
 #include <Eigen/Dense>
@@ -83,8 +83,9 @@ namespace GnssProcessor {
     /**
      * @brief Time-windowed antenna installation.
      *
-     * Window bounds are decimal years (e.g. 2012.07); an open-ended SIF END of
-     * "9999-..." is stored as a large sentinel (>= 9000.0).
+     * Window bounds are decimal years (e.g. 2012.07).  An open-ended SIF END of
+     * "9999-..." is stored as the sentinel 9999.0 (the loader maps any year
+     * >= 9000 to it), so it compares later than any real epoch.
      */
     struct SifAntennaWindow {
         double start_year{ 0.0 };  ///< Window start [decimal year].
@@ -109,7 +110,7 @@ namespace GnssProcessor {
     };
 
     /**
-     * @brief Time-windowed ITRF coordinate solution (one OCCUPATION record).
+     * @brief Time-windowed ITRF coordinate solution (one @c OCCUPATION record).
      *
      * Coordinates and velocity are referred to the SIF @c REFERENCE_FRAME at
      * @c REFERENCE_EPOCH (see @c StationInfo::reference_epoch_year).  The 6x6
@@ -203,8 +204,10 @@ namespace GnssProcessor {
     /**
      * @brief Names of the 11 OTL constituents in BLQ order.
      *
-     * Matches @c OceanTideModel::OTL_CONSTITUENT_NAMES; the SIF keys use the
-     * upper-case spelling (MF, MM, SSA) which the loader maps onto these slots.
+     * Same order as @c OceanTideModel::OTL_CONSTITUENT_NAMES, but spelled as the
+     * SIF keys (upper-case MF, MM, SSA where OceanTideModel uses Mf, Mm, Ssa).
+     * The loader looks up each SIF constituent by these names and stores it in
+     * the matching slot of @c StationInfo::otl.
      */
     static constexpr std::array<const char*, 11> SIF_OTL_CONSTITUENTS = {
         "M2", "S2", "N2", "K2", "K1", "O1", "P1", "Q1", "MF", "MM", "SSA"

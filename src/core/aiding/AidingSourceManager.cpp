@@ -16,8 +16,8 @@ AidingSourceManager::AidingSourceManager(const GnssConfig& config,
                                          LogManager& log_manager) {
     sources_ = AidingSourceRegistry::createEnabled(config, log_manager);
 
-    // Recover the typed IMU handle — "polymorphic herd + one typed handle for
-    // the privileged source", exactly CycleSlipManager's asMelbourneWubbena().
+    // Recover the typed IMU handle (polymorphic source list plus one typed handle
+    // for the privileged source, as CycleSlipManager does with asMelbourneWubbena()).
     for (const auto& s : sources_) {
         if (auto* i = s->asImu()) { imu_ = i; break; }
     }
@@ -34,7 +34,7 @@ void AidingSourceManager::ingestSample(const AidingSample& sample) {
 MeasurementRows AidingSourceManager::collectMeasurement(const AidingEpochContext& ctx) {
     MeasurementRows rows;
     for (auto& s : sources_) {
-        if (s->reparameterizesGnssRows()) continue;  // column sources (TC-IMU) don't append rows
+        if (s->reparameterizesGnssRows()) continue;  // column sources (TC-IMU) do not append rows
         MeasurementRows r = s->contributeMeasurement(ctx);
         rows.insert(rows.end(),
                     std::make_move_iterator(r.begin()),

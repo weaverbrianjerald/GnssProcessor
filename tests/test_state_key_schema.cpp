@@ -3,13 +3,13 @@
  * @brief Unit tests for filter/StateKeySchema make/parse round-trips.
  *
  * StateKeySchema is the single source of truth for every dynamic state-vector
- * key format. CLAUDE.md flags it as critical: silent format drift here breaks
- * call sites in MeasurementModel, StateInitializer, StateManager,
- * AmbiguityResolver, and DdPivotManager. These tests pin down each format
- * exactly so an accidental delimiter change or empty-field bug fails fast.
+ * key format (CLAUDE.md).  A silent format change there breaks call sites in
+ * MeasurementModel, StateInitializer, StateManager, AmbiguityResolver and
+ * DdPivotManager.  These tests pin each format exactly, so an accidental
+ * delimiter change or empty-field bug fails fast.
  *
- * The header is intentionally header-only / all-inline, so this TU links
- * trivially without pulling any additional .cpp into gnss_tests.
+ * The header is header-only (all inline), so this TU links without pulling any
+ * additional .cpp into gnss_tests.
  */
 
 #include <gtest/gtest.h>
@@ -24,7 +24,7 @@ namespace {
 using namespace ::GnssProcessor::StateKeys;
 
 // ============================================================================
-// 1. PPP ambiguity keys — "<satellite>_<signal>"
+// 1. PPP ambiguity keys: "<satellite>_<signal>"
 // ============================================================================
 
 TEST(StateKeySchemaTest, AmbiguitySimpleRoundTrip) {
@@ -37,8 +37,8 @@ TEST(StateKeySchemaTest, AmbiguitySimpleRoundTrip) {
     EXPECT_EQ(parts->signal, "L1C");
 }
 
-// Iono-free combos embed the underscore inside `signal`. The parser MUST split
-// only on the first '_' so the IF token survives intact.
+// Iono-free combinations embed an underscore inside `signal`.  The parser splits
+// only on the first '_', so the IF token survives intact.
 TEST(StateKeySchemaTest, AmbiguityIonoFreeComboPreservesEmbeddedDelimiter) {
     const std::string key = makeAmbiguityKey("G01", "L1C_L5Q");
     EXPECT_EQ(key, "G01_L1C_L5Q");
@@ -57,7 +57,7 @@ TEST(StateKeySchemaTest, AmbiguityParseRejectsMalformed) {
 }
 
 // ============================================================================
-// 2. DD ambiguity keys — "DD|<cons>|<sat_i>|<code>|<pivot>"
+// 2. DD ambiguity keys: "DD|<cons>|<sat_i>|<code>|<pivot>"
 // ============================================================================
 
 TEST(StateKeySchemaTest, DdAmbiguityRoundTrip) {
@@ -94,7 +94,7 @@ TEST(StateKeySchemaTest, DdAmbiguityParseRejectsMalformed) {
 }
 
 // ============================================================================
-// 3. Per-satellite ionosphere keys — bare satellite ID
+// 3. Per-satellite ionosphere keys: bare satellite ID
 // ============================================================================
 
 TEST(StateKeySchemaTest, IonosphereKeyIsBareSatelliteId) {
@@ -103,7 +103,7 @@ TEST(StateKeySchemaTest, IonosphereKeyIsBareSatelliteId) {
 }
 
 // ============================================================================
-// 4. Receiver code-bias keys — IFB / DCB
+// 4. Receiver code-bias keys: IFB and DCB
 // ============================================================================
 
 TEST(StateKeySchemaTest, IfbKeyShape) {
@@ -137,9 +137,9 @@ TEST(StateKeySchemaTest, DcbKeyRoundTrip) {
     }
 }
 
-// parseIfbKey / parseDcbKey select ONLY receiver-common per-band code biases —
-// the columns a network common-mode pin / S-basis datum acts on.  They must
-// reject the per-slot GLONASS form (its own central-channel datum) and each
+// parseIfbKey and parseDcbKey select only receiver-common per-band code biases,
+// the columns a network common-mode pin or S-basis datum acts on.  They reject
+// the per-slot GLONASS form (which has its own central-channel datum) and each
 // other's shape, mirroring the isGlonassPerSlotIfbKey discriminator.
 TEST(StateKeySchemaTest, IfbDcbParseRejectsForeignAndMalformed) {
     EXPECT_FALSE(parseIfbKey(makeGlonassPerSlotIfbKey("GLONASS", '1', -4)).has_value());
@@ -157,7 +157,7 @@ TEST(StateKeySchemaTest, IfbDcbParseRejectsForeignAndMalformed) {
 }
 
 // ============================================================================
-// 4b. Per-FCN-slot GLONASS IFB keys — "GLONASS_IFB<band>_k<±slot>"
+// 4b. Per-FCN-slot GLONASS IFB keys: "GLONASS_IFB<band>_k<±slot>"
 // ============================================================================
 
 TEST(StateKeySchemaTest, GlonassPerSlotIfbKeyShape) {
@@ -179,12 +179,12 @@ TEST(StateKeySchemaTest, GlonassPerSlotIfbRoundTrip) {
     }
 }
 
-// THE load-bearing invariant for byte-identical flag-off behavior: the per-slot
-// predicate must NOT match any receiver-common code-bias key.  BssdTransform and
-// StateManager use isGlonassPerSlotIfbKey() to decide which code-bias columns
-// survive single differencing / keep process noise; a false positive on a
-// per-band IFB or DCB key would silently change the BSSD solution for
-// GPS/Galileo/BeiDou (and break the flag-off byte-identical guarantee).
+// The invariant behind byte-identical flag-off behavior: the per-slot predicate
+// matches no receiver-common code-bias key.  BssdTransform and StateManager use
+// isGlonassPerSlotIfbKey() to decide which code-bias columns survive single
+// differencing and keep process noise; a false positive on a per-band IFB or DCB
+// key would silently change the BSSD solution for GPS/Galileo/BeiDou and break
+// the flag-off byte-identity guarantee.
 TEST(StateKeySchemaTest, GlonassPerSlotIfbPredicateRejectsReceiverCommonKeys) {
     EXPECT_FALSE(isGlonassPerSlotIfbKey(makeIfbKey("GPS", '5')));       // GPS_IFB5
     EXPECT_FALSE(isGlonassPerSlotIfbKey(makeIfbKey("GPS", '2')));       // GPS_IFB2
@@ -192,7 +192,7 @@ TEST(StateKeySchemaTest, GlonassPerSlotIfbPredicateRejectsReceiverCommonKeys) {
     EXPECT_FALSE(isGlonassPerSlotIfbKey(makeIfbKey("GLONASS", '3')));   // per-band GLONASS_IFB3
     EXPECT_FALSE(isGlonassPerSlotIfbKey(makeDcbKey("GPS")));            // GPS_DCB
     EXPECT_FALSE(isGlonassPerSlotIfbKey(makeDcbKey("GLONASS")));        // GLONASS_DCB
-    // ...and it DOES match a genuine per-slot key.
+    // It does match a genuine per-slot key.
     EXPECT_TRUE(isGlonassPerSlotIfbKey(makeGlonassPerSlotIfbKey("GLONASS", '1', -4)));
 }
 
@@ -207,7 +207,7 @@ TEST(StateKeySchemaTest, GlonassPerSlotIfbParseRejectsMalformed) {
 }
 
 // ============================================================================
-// 5. Per-satellite signal-bias keys — "<satellite>|<signal>"
+// 5. Per-satellite signal-bias keys: "<satellite>|<signal>"
 // ============================================================================
 
 TEST(StateKeySchemaTest, SatBiasRoundTrip) {
@@ -238,7 +238,7 @@ TEST(StateKeySchemaTest, SatelliteFromSatBiasKeyHandlesLegacyKeys) {
 }
 
 // ============================================================================
-// 5b. Per-satellite signal PHASE-bias keys — "<satellite>|<signal>|PB"
+// 5b. Per-satellite signal phase-bias keys: "<satellite>|<signal>|PB"
 // ============================================================================
 
 TEST(StateKeySchemaTest, SatPhaseBiasRoundTrip) {
@@ -262,7 +262,7 @@ TEST(StateKeySchemaTest, SatPhaseBiasParseRejectsMalformed) {
     EXPECT_FALSE(parseSatPhaseBiasKey("|PB").has_value());       // No body
 }
 
-// The CODE-bias and PHASE-bias key namespaces must be provably disjoint: the
+// The code-bias and phase-bias key namespaces are disjoint: the
 // state lives in separate StateManager maps, but the trailing "|PB" guarantees
 // no helper mistakes one for the other.  In particular parseSatBiasKey is never
 // invoked on a phase-bias key in production (it would read "L1C|PB" as the
@@ -280,14 +280,14 @@ TEST(StateKeySchemaTest, SatPhaseBiasNamespaceDisjointFromCodeBias) {
     // A code-bias key never parses as a phase-bias key.
     EXPECT_FALSE(parseSatPhaseBiasKey(code).has_value());
 
-    // Satellite-prefix extraction is first-pipe robust on EITHER form.
+    // Satellite-prefix extraction splits on the first pipe, so it works on either form.
     EXPECT_EQ(satelliteFromSatBiasKey(phase), "G01");
     EXPECT_EQ(satelliteFromSatPhaseBiasKey(phase), "G01");
     EXPECT_EQ(satelliteFromSatPhaseBiasKey(code), "G01");
 }
 
 // ============================================================================
-// 5c. Per-satellite CLOCK keys — "<satellite>|SC" (PPP_RTK_Network)
+// 5c. Per-satellite clock keys: "<satellite>|SC" (PPP_RTK_Network)
 // ============================================================================
 
 TEST(StateKeySchemaTest, SatClockRoundTrip) {
@@ -330,7 +330,7 @@ TEST(StateKeySchemaTest, SatClockNamespaceDisjointFromBiasKeys) {
 }
 
 // ============================================================================
-// 6. System-time-offset keys — bare system name
+// 6. System-time-offset keys: bare system name
 // ============================================================================
 
 TEST(StateKeySchemaTest, SystemTimeOffsetKeyIsBareSystemName) {
@@ -339,7 +339,7 @@ TEST(StateKeySchemaTest, SystemTimeOffsetKeyIsBareSystemName) {
 }
 
 // ============================================================================
-// 7. BSSD pivot-seed keys — "<cons>|<band>"
+// 7. BSSD pivot-seed keys: "<cons>|<band>"
 // ============================================================================
 
 TEST(StateKeySchemaTest, PivotSeedKeyShape) {
@@ -349,7 +349,7 @@ TEST(StateKeySchemaTest, PivotSeedKeyShape) {
 }
 
 // ============================================================================
-// 1b. NL / WL ambiguity keys — "<sat>_NL_<band>" / "<sat>_WL_<band_a>_<band_b>"
+// 1b. NL and WL ambiguity keys: "<sat>_NL_<band>" and "<sat>_WL_<band_a>_<band_b>"
 // ============================================================================
 
 TEST(StateKeySchemaTest, NlAmbiguityRoundTrip) {
@@ -390,7 +390,7 @@ TEST(StateKeySchemaTest, WlAmbiguityRoundTripCanonicalOrder) {
 }
 
 TEST(StateKeySchemaTest, WlAmbiguityHandlesMultiCharSatId) {
-    // Galileo IDs are 3 chars; the parser must not assume satellite-length 3.
+    // A non-GPS satellite ID; the parser must not assume a fixed satellite-ID length.
     const std::string key = makeWlAmbiguityKey("E11", '1', '7');
     EXPECT_EQ(key, "E11_WL_1_7");
 
@@ -411,9 +411,9 @@ TEST(StateKeySchemaTest, WlAmbiguityRejectsMalformed) {
     EXPECT_FALSE(parseWlAmbiguityKey("G01_NL_1").has_value()); // NL key
 }
 
-// NL/WL parsers must not mis-classify per-band keys, and the per-band parser
-// remains a happy round-trip for legacy usage.  Tests guard against future
-// schema collisions when both bases coexist transiently in tooling.
+// The NL/WL predicates do not misclassify per-band keys, and the per-band parser
+// still round-trips for legacy use.  Guards against schema collisions when both
+// bases coexist in tooling.
 TEST(StateKeySchemaTest, NlWlVsPerBandDistinguishable) {
     const std::string nl = makeNlAmbiguityKey("G01", '1');
     const std::string wl = makeWlAmbiguityKey("G01", '1', '2');
@@ -429,10 +429,10 @@ TEST(StateKeySchemaTest, NlWlVsPerBandDistinguishable) {
 
     // A signal label that happens to contain "NL" (none in real RINEX) would
     // not collide because per-band signals start with 'L' or 'C', not "NL_".
-    // The per-band parser still accepts the NL/WL keys (it splits on the
-    // FIRST '_'), interpreting them as {sat="G01", signal="NL_1"} etc.  This
-    // is documented behavior — callers are expected to consult the basis
-    // before parsing, not rely on the per-band parser to reject.
+    // The per-band parser still accepts the NL/WL keys (it splits on the first
+    // '_'), reading them as {sat="G01", signal="NL_1"} and similar.  This is
+    // documented behavior: callers consult the basis before parsing instead of
+    // relying on the per-band parser to reject.
     auto pb_from_nl = parseAmbiguityKey(nl);
     ASSERT_TRUE(pb_from_nl.has_value());
     EXPECT_EQ(pb_from_nl->signal, "NL_1");
@@ -453,16 +453,15 @@ TEST(StateKeySchemaTest, CategoriesAreDistinguishable) {
     EXPECT_TRUE(isDdAmbiguityKey(dd));
     EXPECT_FALSE(isDdAmbiguityKey(sat));
 
-    // PPP ambiguity parser rejects DD keys (DD has '|' not '_' at position [2]).
-    // It will, however, find an underscore because the prefix is "DD" (no '_'),
-    // and DD keys contain no underscore — so parseAmbiguityKey returns nullopt.
+    // The PPP ambiguity parser rejects DD keys: a DD key uses '|' and contains
+    // no '_' at all, so parseAmbiguityKey finds no delimiter and returns nullopt.
     EXPECT_FALSE(parseAmbiguityKey(dd).has_value());
 
-    // SatBias parser uses '|', which DD also uses; but DD has 4 pipes and the
-    // SatBias parser splits on the FIRST pipe, so it interprets a DD key as
-    // {satellite="DD", signal="GPS|G05|L1|G01"}. That's "valid" by SatBias
-    // shape rules — assert this documented behavior so future maintainers
-    // know category-ambiguous keys are caller-policed, not parser-policed.
+    // The SatBias parser also splits on '|'.  A DD key has 4 pipes and the
+    // SatBias parser splits on the first one, so it reads a DD key as
+    // {satellite="DD", signal="GPS|G05|L1|G01"}, which is valid by SatBias shape
+    // rules.  The assertion documents that callers, not parsers, keep
+    // category-ambiguous keys apart.
     auto sat_from_dd = parseSatBiasKey(dd);
     ASSERT_TRUE(sat_from_dd.has_value());
     EXPECT_EQ(sat_from_dd->satellite, "DD");
@@ -499,10 +498,10 @@ TEST(StateKeySchema, VtecShKeyRoundTrip) {
     EXPECT_FALSE(isVtecShKey("SH"));
 }
 
-// Iono-2 dual-layer: the second shell keys under the DISTINCT "SH2" prefix.
-// Layer 0 output stays byte-identical to the pre-Iono-2 three-argument form
-// (the backward-compat contract for snapshots/traces), the two layers never
-// collide, and both satisfy the layer-agnostic isVtecShKey predicate.
+// Dual-layer ionosphere (Iono-2): the second shell keys under the distinct "SH2"
+// prefix.  Layer 0 output is byte-identical to the three-argument form (the
+// backward-compatibility contract for snapshots and traces), the two layers
+// never collide, and both satisfy the layer-agnostic isVtecShKey predicate.
 TEST(StateKeySchema, VtecShLayerKeyRoundTrip) {
     using namespace StateKeys;
     // Layer 0 is the legacy format, unchanged.
@@ -533,7 +532,7 @@ TEST(StateKeySchema, VtecShLayerKeyRoundTrip) {
     auto legacy = parseVtecShKey("SH|8|3|C");
     ASSERT_TRUE(legacy.has_value());
     EXPECT_EQ(legacy->layer, 0);
-    // Malformed layer-2 inputs rejected on the same rules as layer 0.
+    // Malformed layer-1 ("SH2") inputs are rejected on the same rules as layer 0.
     EXPECT_FALSE(parseVtecShKey("SH2|1|2").has_value());
     EXPECT_FALSE(parseVtecShKey("SH2|1|2|X").has_value());
     EXPECT_FALSE(parseVtecShKey("SH2|1|2|C|extra").has_value());

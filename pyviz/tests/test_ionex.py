@@ -1,4 +1,4 @@
-"""IONEX reader test -- parses the bundled CODE GIM if present.
+"""IONEX reader test: parses the bundled CODE GIM if present.
 
 The bundled fixture (``data/2024-129/products/*GIM.INX``) is .gitignored and only
 present after ``bootstrap_internal_data.py``; the test skips cleanly when it is

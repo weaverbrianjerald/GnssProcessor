@@ -2,11 +2,10 @@
  * @file CovarianceReReference.cpp
  * @brief Implementation of the shared covariance re-reference primitives.
  *
- * @c applyBssd is the verbatim transform previously inlined in
- * @c PivotManager::applyCovarianceReReference; @c enforcePsd is the verbatim
- * conditioning guard previously inlined in the DD handover path
- * (@c DdPivotManager).  Both behaviours are preserved exactly — only their home
- * moved, so the network producer can reuse them without copy-paste drift.
+ * @c applyBssd is the transform used by
+ * @c PivotManager::applyCovarianceReReference; @c enforcePsd is the conditioning
+ * guard used by the DD handover path (@c DdPivotManager).  Keeping one copy of
+ * each lets a network producer reuse them without a diverging duplicate.
  */
 
 #include "filter/CovarianceReReference.hpp"
@@ -40,19 +39,18 @@ void applyBssd(const std::vector<Eigen::Index>& group_indices,
 double enforcePsd(Eigen::MatrixXd& P,
                   LogManager& log_manager,
                   const std::string& context) {
-    // Symmetrize defensively, then check PSD via LDLT.  Symmetrization alone
-    // fixes asymmetry from FP rounding; it does NOT guarantee PSD if P was
-    // already ill-conditioned or a near-rank-deficient pivot row crept through.
-    // Log when the LDLT reports any non-positive pivot so the issue surfaces in
-    // logs rather than poisoning the filter silently.
+    // Symmetrize, then check definiteness via LDLT.  Symmetrization removes
+    // asymmetry from FP rounding; it does not make P PSD if P was already
+    // ill-conditioned or a near-rank-deficient pivot row came through.  Any
+    // non-positive LDLT pivot is logged and ridged below.
     //
-    // .eval() is load-bearing: the in-place form `P = 0.5 * (P + P.transpose())`
-    // ALIASES — element (i,j) depends on input (j,i), but Eigen overwrites in
+    // .eval() is required: the in-place form `P = 0.5 * (P + P.transpose())`
+    // aliases.  Element (i,j) depends on input (j,i), but Eigen overwrites in
     // storage order, so P(0,1) reads the already-symmetrized P(1,0) and the
-    // upper triangle is silently corrupted.  At DD/user scale the induced
-    // asymmetry is second-order small (P is already near-symmetric) so it was
-    // masked; across network-scale handovers it would accumulate.  Materializing
-    // the symmetric result into a temporary first makes the transform exact.
+    // upper triangle is wrong.  At DD/user scale the error is second-order (P is
+    // already near-symmetric); across network-scale handovers it would
+    // accumulate.  Evaluating the symmetric result into a temporary first makes
+    // the symmetrization exact.
     P = (0.5 * (P + P.transpose())).eval();
 
     Eigen::LDLT<Eigen::MatrixXd> ldlt(P);

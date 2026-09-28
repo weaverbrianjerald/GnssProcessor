@@ -1,30 +1,31 @@
 /**
  * @file test_gap_reentry_per_signal.cpp
- * @brief Card GRS: the gap re-entry tier keyed on the SIGNAL
+ * @brief The gap re-entry tier keyed on the signal, card GRS
  *        (docs/refound/GRS_gap_reentry_per_signal_2026-09-20.md §2.6).
  *
- * The defect under test is a BLIND SPOT, not a wrong number: the row-level
+ * The case under test is a gap the row-level tier cannot see.  The row-level
  * Card-G instrument keys on the raw row, the row is rebuilt every epoch from
- * whichever phase signals carry a matching code, and a satellite that keeps ONE
+ * whichever phase signals carry a matching code, and a satellite that keeps one
  * signal through a dropout keeps its row.  A receiver losing lock on the
  * semi-codeless L1/L2 phases while the civil L5 tracks through therefore
- * re-enters with an ADJACENT predecessor: no resumption, no detector on the
+ * re-enters with an adjacent predecessor: no resumption, no detector on the
  * return epoch, and the carried ambiguities fold across the break.
  *
- * Everything here exercises the PURE compute/qualify pass over synthetic
+ * Every case exercises the compute/qualify pass alone, over synthetic
  * @c PppObservation vectors: no station, no state manager, no solve.  The
- * geometry is the one @c test_network_slip_qc.cpp uses (same file-local
- * helpers, deliberately duplicated rather than shared so neither file's fixture
- * can be changed under the other):
+ * geometry is the one @c test_network_slip_qc.cpp uses (the same file-local
+ * helpers, duplicated rather than shared so that a change to one file's fixture
+ * does not affect the other):
  *
  *   L_i = (R − I_i)/λ_i + N_i  [cycles],   C_i = R + I_i  [m],
  *   I_i = I_1 (λ_i/λ_1)²
  *
- * under which the geometry-free PHASE difference between two signals is
+ * under which the geometry-free phase difference between two signals is
  *   φ_a − φ_b = (I_b − I_a) + λ_a N_a − λ_b N_b   [m]
- * and is CONSTANT while both ambiguities and the ionosphere are.  An injected
- * step of ΔN cycles on signal a therefore moves it by exactly ΔN·λ_a metres,
- * a designed margin against the empirical GF gate, not a derived one.
+ * and is constant while both ambiguities and the ionosphere are.  An injected
+ * step of ΔN cycles on signal a therefore moves it by exactly ΔN·λ_a metres.  The
+ * step sizes are chosen with a margin against the empirical GF gate; the margin is
+ * by design, not derived.
  */
 
 #include <gtest/gtest.h>
@@ -61,7 +62,7 @@ double ionoAt(double lambda_m) {
 }
 
 /// Append one band's raw phase (cycles) and matching code (metres).
-/// @p code_bias_m shifts the code only, which moves MW without touching GF.
+/// @p code_bias_m shifts the code only, which moves MW and leaves GF unchanged.
 void addBand(PppObservation& obs, const std::string& phase_sig, double lambda_m,
              double amb_cyc, double code_bias_m = 0.0) {
     const double iono = ionoAt(lambda_m);
@@ -97,7 +98,7 @@ std::vector<Band> triple(double n1, double n2, double n5) {
     return { { "L1C", kL1, n1 }, { "L2W", kL2, n2 }, { "L5Q", kL5, n5 } };
 }
 
-/// One station's compute + qualify passes, exactly as the run loop drives them.
+/// One station's compute and qualify passes, driven as the run loop drives them.
 struct PerSigHarness {
     LogManager                  log_manager;
     PppUtils                    utils{ log_manager };
@@ -108,8 +109,8 @@ struct PerSigHarness {
     long long                   epoch_idx{ 0 };
 
     PerSigHarness() {
-        // The real posture: the rider is a rider, so the row-level card is
-        // armed with it.  Individual tests turn the rider back off.
+        // The production posture: the per-signal tier is a rider on the row-level
+        // tier, which is armed with it.  Individual tests turn the rider off.
         params.gap_reentry             = true;
         params.gap_reentry_per_signal  = true;
     }
@@ -133,21 +134,21 @@ struct PerSigHarness {
     }
 };
 
-/// A satellite continuously tracked on all three bands.  The station's
-/// empirical GF scale has to come from somewhere, and a single-satellite epoch
-/// would let the event under test set its own gate.
+/// A satellite continuously tracked on all three bands.  The station's empirical
+/// GF scale is estimated from the epoch's rows, and in a single-satellite epoch the
+/// event under test would set its own gate.
 PppObservation ballast(const std::string& sat, double code_bias_m) {
     return makeObs(sat, triple(500.0, 380.0, 360.0), code_bias_m);
 }
 
 // ===========================================================================
-// The rider is a rider: OFF changes nothing
+// With the rider off, nothing changes
 // ===========================================================================
 
-// Rule 1 / invariant #6: with the knob off the qualify pass produces exactly
-// what it produced before the card: the row-level resumptions, no per-signal
-// list on any row, and no per-signal counters.  The SAME stream that fires the
-// tier in the next test is used, so this is a real control and not a quiet one.
+// Rule 1 / invariant #6: with the knob off the qualify pass produces the row-level
+// resumptions only, no per-signal list on any row, and no per-signal counters.  The
+// stream is the one that fires the tier in the next test, so the control is run on
+// an event the armed tier does report.
 TEST(GapReentryPerSignalQualify, RiderOffLeavesTheEpochUnchanged) {
     PerSigHarness on;
     PerSigHarness off;
@@ -177,8 +178,8 @@ TEST(GapReentryPerSignalQualify, RiderOffLeavesTheEpochUnchanged) {
     EXPECT_EQ(off.counters.gap_sig_unmeasurable, 0);
     EXPECT_EQ(off.counters.gap_sig.arcs, 0);
 
-    // …and the ROW is byte-identical in the parts every other consumer reads:
-    // the per-signal list is the only thing the knob adds.
+    // The row is byte-identical in the parts every other consumer reads: the
+    // per-signal list is the only thing the knob adds.
     ASSERT_EQ(on.epoch.rows.at(0).size(), off.epoch.rows.at(0).size());
     for (std::size_t r = 0; r < off.epoch.rows.at(0).size(); ++r) {
         const auto& a = on.epoch.rows.at(0)[r];
@@ -190,8 +191,8 @@ TEST(GapReentryPerSignalQualify, RiderOffLeavesTheEpochUnchanged) {
         EXPECT_DOUBLE_EQ(a.mw_m, b.mw_m);
         EXPECT_DOUBLE_EQ(a.gf_m, b.gf_m);
         EXPECT_DOUBLE_EQ(a.l1_c1_m, b.l1_c1_m);
-        EXPECT_TRUE(b.sigs.empty());     // nothing new is filled when OFF
-        EXPECT_FALSE(a.sigs.empty());    // …and it IS filled when ON
+        EXPECT_TRUE(b.sigs.empty());     // not filled when off
+        EXPECT_FALSE(a.sigs.empty());    // filled when on
     }
     // Both arms agree about the row-level tier, which the rider must not touch.
     EXPECT_EQ(on.counters.gap_resumptions, off.counters.gap_resumptions);
@@ -202,12 +203,12 @@ TEST(GapReentryPerSignalQualify, RiderOffLeavesTheEpochUnchanged) {
 // The field case: a primary-pair dropout with the third band tracking through
 // ===========================================================================
 
-// THE DEFECT, reproduced: L1C and L2W are absent for three processed epochs
-// while L5Q keeps the row alive, so the row-level tier sees an adjacent
-// predecessor and reports NOTHING.  The per-signal tier reports both returning
-// signals, measures each against the partner that tracked through, and grades
-// the injected 301-cycle L1C step as SHIFTED while the unslipped L2W stays
-// clean.  (BSHM00ISR / G14, TOW 268770 to 268860 is this shape.)
+// L1C and L2W are absent for three processed epochs while L5Q keeps the row alive,
+// so the row-level tier sees an adjacent predecessor and reports nothing.  The
+// per-signal tier reports both returning signals, measures each against the partner
+// that tracked through, and grades the injected 301-cycle L1C step as shifted while
+// the unslipped L2W stays clean.  (BSHM00ISR / G14, TOW 268770 to 268860 has this
+// shape.)
 TEST(GapReentryPerSignalQualify, PrimaryPairDropoutWithThirdBandThroughFiresBothSignals) {
     PerSigHarness h;
     constexpr double kStepCyc = 301.0;     // the field's measured L1C step
@@ -224,7 +225,7 @@ TEST(GapReentryPerSignalQualify, PrimaryPairDropoutWithThirdBandThroughFiresBoth
                 ballast("G03", wobble), ballast("G04", wobble) });
     }
 
-    // The row-level tier is BLIND here, which is the whole card.
+    // The row-level tier does not see this gap; that is the case the card covers.
     EXPECT_EQ(h.counters.gap_resumptions, 0);
     EXPECT_TRUE(h.epoch.resumptions.empty());
 
@@ -234,7 +235,7 @@ TEST(GapReentryPerSignalQualify, PrimaryPairDropoutWithThirdBandThroughFiresBoth
     ASSERT_NE(l1, nullptr);
     ASSERT_NE(l2, nullptr);
 
-    // Identity and the gap, in PROCESSED epochs: last seen at index 0, back at
+    // Identity and the gap, in processed epochs: last seen at index 0, back at
     // index 4, so three epochs were missed.
     EXPECT_EQ(l1->station, 0);
     EXPECT_EQ(l1->gap_epochs, 3);
@@ -263,8 +264,8 @@ TEST(GapReentryPerSignalQualify, PrimaryPairDropoutWithThirdBandThroughFiresBoth
     EXPECT_EQ(h.counters.gap_sig_partner_broken, 0);
 }
 
-// The same dropout with NO step: both signals still re-enter (the response's
-// population is the RE-ENTRY, and an unshifted one is bridged by design), and
+// The same dropout with no step: both signals still re-enter (the response's
+// population is the re-entry, and an unshifted one is bridged by design), and
 // neither is graded shifted.  Without this control the test above would pass on
 // a tier that flags every re-entry.
 TEST(GapReentryPerSignalQualify, UnsteppedPrimaryPairDropoutIsMeasuredAndClean) {
@@ -292,10 +293,10 @@ TEST(GapReentryPerSignalQualify, UnsteppedPrimaryPairDropoutIsMeasuredAndClean) 
     EXPECT_EQ(h.counters.gap_sig_shifted, 0);
 }
 
-// The mirror image: only the THIRD band drops out while the primary pair tracks
-// through.  Exactly one per-signal re-entry, witnessed by a primary-pair band.
-// This is the case a band-scoped response must NOT widen to the whole
-// satellite, because the two bands that tracked through keep their levels.
+// The mirror image: only the third band drops out while the primary pair tracks
+// through.  One per-signal re-entry, witnessed by a primary-pair band.  A
+// band-scoped response does not widen this case to the whole satellite, because
+// the two bands that tracked through keep their levels.
 TEST(GapReentryPerSignalQualify, ThirdBandOnlyDropoutFiresExactlyOneSignal) {
     PerSigHarness h;
     constexpr double kStepCyc = 7.0;
@@ -330,7 +331,7 @@ TEST(GapReentryPerSignalQualify, ThirdBandOnlyDropoutFiresExactlyOneSignal) {
 // The two populations are disjoint
 // ===========================================================================
 
-// A WHOLE-satellite gap is the row-level tier's case, and it must stay there:
+// A whole-satellite gap belongs to the row-level tier and stays there:
 // the per-signal tier skips any satellite that produced a resumption in the
 // same epoch, so one break is answered once.  Without the skip this stream
 // would be freed twice (once per band, and again for the row).
@@ -353,7 +354,7 @@ TEST(GapReentryPerSignalQualify, FullSatelliteGapStaysWithTheRowLevelTier) {
     ASSERT_EQ(h.epoch.resumptions.size(), 1u);
     EXPECT_EQ(h.epoch.resumptions.front().satellite, "G01");
     EXPECT_EQ(h.counters.gap_resumptions, 1);
-    // …and NOTHING from the per-signal tier for that satellite.
+    // Nothing from the per-signal tier for that satellite.
     EXPECT_TRUE(h.epoch.sig_resumptions.empty());
     EXPECT_EQ(h.counters.gap_sig_resumptions, 0);
 }
@@ -362,7 +363,7 @@ TEST(GapReentryPerSignalQualify, FullSatelliteGapStaysWithTheRowLevelTier) {
 // Absence of evidence
 // ===========================================================================
 
-// A signal seen for the FIRST time is not a re-entry: there is no pre-gap level
+// A signal seen for the first time is not a re-entry: there is no pre-gap level
 // to difference and nothing carried to protect.  Covers both shapes: a fresh
 // satellite, and a band that appears later on a satellite already tracked.
 TEST(GapReentryPerSignalQualify, FirstSightingIsNeverAReEntry) {
@@ -383,26 +384,26 @@ TEST(GapReentryPerSignalQualify, FirstSightingIsNeverAReEntry) {
     EXPECT_EQ(h.counters.gap_sig_resumptions, 0);
     EXPECT_EQ(h.counters.gap_sig_unmeasurable, 0);
 
-    // A one-epoch absence is a STEP, not a re-entry: the tier's bar is the same
-    // "≥ 1 missed processed epoch" the row-level one uses, so an adjacent
-    // predecessor is never a gap.
+    // Consecutive epochs are not a re-entry: the tier's bar is the same "≥ 1 missed
+    // processed epoch" the row-level one uses, so a signal seen at the previous
+    // epoch (an adjacent predecessor) is never a gap.
     h.run({ makeObs("G01", triple(100.0, 60.0, 40.0), 0.004),
             ballast("G03", 0.004), ballast("G04", 0.004) });
     EXPECT_TRUE(h.epoch.sig_resumptions.empty());
 }
 
-// No partner on both sides of the break ⇒ UNMEASURABLE, and the tier says so
-// rather than fabricating a level.  Here the satellite is single-band
-// throughout, so the returning signal has nothing to difference against.  This
-// is the population the rider frees BY DEFAULT
-// (gap_reentry_per_signal_unmeasurable), which is why it must be visible.
+// With no partner on both sides of the break the re-entry is unmeasurable, and the
+// tier reports it so rather than fabricating a level.  The returning signal has no
+// partner present on both sides of the gap to difference against.  This is the
+// population the rider frees by default (gap_reentry_per_signal_unmeasurable),
+// which is why it has to be visible.
 TEST(GapReentryPerSignalQualify, NoPartnerOnBothSidesIsUnmeasurable) {
     PerSigHarness h;
 
     const std::vector<std::vector<Band>> stream = {
         { { "L1C", kL1, 100.0 }, { "L2W", kL2, 60.0 } },
-        { { "L2W", kL2, 60.0 } },     // L1C gone AND L2W is the only witness…
-        {},                            // …which then goes too: no partner survives
+        { { "L2W", kL2, 60.0 } },     // L1C gone, L2W the only witness
+        {},                            // L2W gone too: no partner survives
         { { "L1C", kL1, 100.0 } } };   // L1C returns alone
     for (std::size_t k = 0; k < stream.size(); ++k) {
         const double wobble = 0.001 * static_cast<double>(k + 1);
@@ -411,12 +412,12 @@ TEST(GapReentryPerSignalQualify, NoPartnerOnBothSidesIsUnmeasurable) {
         h.run(ep);
     }
 
-    // The ROW went absent at index 2, so the row-level tier owns THAT break and
+    // The row went absent at index 2, so the row-level tier owns that break and
     // the per-signal tier stays silent for G01 (the disjointness rule again).
     EXPECT_EQ(h.counters.gap_resumptions, 1);
     EXPECT_TRUE(h.epoch.sig_resumptions.empty());
 
-    // Now the same shape WITHOUT the row ever going absent: L1C drops for two
+    // The same shape without the row ever going absent: L1C drops for two
     // epochs while L2W carries the row, and L2W is itself absent at the return
     // epoch, so the snapshot has no partner present now.
     PerSigHarness u;
@@ -444,10 +445,10 @@ TEST(GapReentryPerSignalQualify, NoPartnerOnBothSidesIsUnmeasurable) {
     EXPECT_EQ(u.counters.gap_sig_shifted, 0);
 }
 
-// The LLI of the RETURNING signal is carried, not the primary pair's.  On the
-// field case only the band that never dropped asserted loss of lock, so reading
-// the pair would attribute the receiver's verdict to the wrong band, and the
-// response's second gate reads exactly this field.
+// The LLI of the returning signal is carried, not the primary pair's.  In the field
+// case only the band that never dropped asserted loss of lock, so reading the pair
+// would attribute the receiver's flag to the wrong band; the response's second gate
+// reads this field.
 TEST(GapReentryPerSignalQualify, TheReturningSignalCarriesItsOwnLli) {
     PerSigHarness h;
 
@@ -476,12 +477,12 @@ TEST(GapReentryPerSignalQualify, TheReturningSignalCarriesItsOwnLli) {
 // The witness rule
 // ===========================================================================
 
-// A partner that did NOT track through the gap is the SECOND choice, and the
-// tier records that the level test rests on it: the partner's own break sits
-// inside the difference, so a shifted verdict there names the PAIR rather than
-// this signal.  Built so the ROW never goes absent (L5Q carries it through the
-// L1C/L2W dropout) while the only partner each returning signal has is the
-// other returning signal, because L5Q is gone by the time they come back.
+// A partner that did not track through the gap is the second choice, and the tier
+// records that the level test rests on it: the partner's own break sits inside the
+// difference, so a shifted verdict there names the pair rather than this signal.
+// The stream keeps the row present (L5Q carries it through the L1C/L2W dropout),
+// and the only partner each returning signal has is the other returning signal,
+// because L5Q is gone by the time they come back.
 TEST(GapReentryPerSignalQualify, SecondChoicePartnerIsRecordedAsNotThrough) {
     PerSigHarness h;
     constexpr double kStepCyc = 11.0;
@@ -514,9 +515,9 @@ TEST(GapReentryPerSignalQualify, SecondChoicePartnerIsRecordedAsNotThrough) {
     EXPECT_EQ(h.counters.gap_sig_partner_broken, 2);
 
     // The step is L2W's, but the pair-differenced level moves by the same
-    // amount with opposite signs, so BOTH read shifted, which is exactly why
-    // the second-choice case is counted separately instead of being graded as
-    // if it had named the guilty band.
+    // amount with opposite signs, so both read shifted.  This is why the
+    // second-choice case is counted separately instead of being graded as if it
+    // had named the stepped band.
     EXPECT_NEAR(l1->d_gf, -kStepCyc * kL2, 1e-6);
     EXPECT_NEAR(l2->d_gf,  kStepCyc * kL2, 1e-6);
     EXPECT_TRUE(l1->shifted);

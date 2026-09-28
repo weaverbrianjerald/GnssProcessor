@@ -17,7 +17,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <limits>          // F3 stationRegression cross gather: NaN for an out-of-range column
+#include <limits>          // NaN for an out-of-range column in the stationRegression cross gather (F3)
 #include <map>
 #include <sstream>
 #include <stdexcept>
@@ -64,12 +64,12 @@ void requireSymmetric(const Eigen::MatrixXd& m, const char* name) {
     }
 }
 
-/// Verify an LDLᵀ factorization is positive-definite.  Eigen's @c info() only
-/// flags non-finite input — LDLᵀ happily factorizes a singular / indefinite
-/// matrix and would then back-solve through a pseudo-inverse.  Catch a
-/// non-positive or vanishing relative pivot so a rank-deficient reduced system
-/// (an under-specified S-basis datum) errors loudly instead of silently
-/// emitting an under-determined solution.  @p context is thrown verbatim.
+/// Verify that an LDLᵀ factorization is positive-definite.  Eigen's @c info() does not
+/// reject a singular or indefinite matrix: LDLᵀ factorizes it, and a later solve goes
+/// through a pseudo-inverse.  A non-positive pivot, or a pivot below 1e-12 of the
+/// largest, therefore throws, so a rank-deficient reduced system (an under-specified
+/// S-basis datum) fails instead of returning an under-determined solution.  @p context
+/// is thrown verbatim.
 void requireFactorPd(const Eigen::LDLT<Eigen::MatrixXd>& ldlt,
                      const std::string& context) {
     bool ok = (ldlt.info() == Eigen::Success);
@@ -87,40 +87,40 @@ void requireFactorPd(const Eigen::LDLT<Eigen::MatrixXd>& ldlt,
 }
 
 // --- PD-safe invariant-DD fold (docs/SPEC_pd_safe_dd_fold.md §4) --------------
-// The DD-prior fold's middle inverse M = (Pᶻ+B)⁻¹ is where the corrupted-carry defect
-// lives: the [band-1; band-2] joint lane block is born near-singular (same-chord band
-// rows are near-duplicates through shared geometry — min eig 4.6e-6 vs 1.8e-2 for the
-// per-band blocks), and mixed operand scales (1e-4 mature .. 1e6 fresh) over K=686 GEMM
-// chains push its hidden tight eigenvalues through zero.  The LEGACY screen's response
-// is a SILENT permanent freeze (M:=0 forever, posterior == prior); the PD-safe screen
-// makes the arithmetic scale-following so the violations shrink to round-off dust,
-// repairs the dust it still finds, and COUNTS both.
+// The DD-prior fold inverts M = (Pᶻ+B)⁻¹, and a corrupted carry shows up there.  The
+// joint [band-1; band-2] lane block is near-singular at birth, because same-chord rows
+// of the two bands are near-duplicates through shared geometry.  Operand scales range
+// from 1e-4 (mature) to 1e6 (fresh), and rounding over long GEMM chains can push the
+// block's smallest eigenvalues through zero.  The legacy screen responds by freezing the
+// block (M = 0, posterior equals prior) with no counter.  The PD-safe screen equilibrates
+// the arithmetic so such violations shrink to round-off, repairs the round-off it still
+// finds, and counts both.
 //
-// Relative pivot floor — the @ref requireFactorPd constant, reused deliberately so the
-// DD fold's rank test and the shared-system rank test cannot drift apart.
+// Relative pivot floor.  Same value as the @ref requireFactorPd constant, so the DD
+// fold's rank test and the shared-system rank test agree.
 constexpr double kDdPivotRelTol = 1e-12;
-/// "This is not dust" bar for the INC-1c repair, relative to λmax.  SPEC §4(c) requires a
-/// clamp above this to SCREAM rather than be laundered; §5(a) says a block that "still
-/// cannot factor after (c)" is rebirthed and names a corrupt restored blob as a reachable
-/// trigger.  Both statements are only true together if a clamp this large is REFUSED —
-/// otherwise the eigen-clamp always succeeds, a −2.9e7 eigenvalue is silently rewritten to
-/// +1e-12·λmax, and §5(a)'s trigger is unreachable by construction.  So: dust is repaired
-/// and counted; anything above this bar is handed to the bounded, loud rebirth instead of
-/// being made to look healthy.
+/// Bound on the INC-1c eigenvalue repair, relative to λmax.  SPEC §4(c) requires a clamp
+/// above this bound to be reported rather than hidden, and §5(a) rebirths a block that
+/// still cannot factor after (c), naming a corrupt restored blob as a reachable trigger.
+/// Both hold only if a clamp this large is refused: otherwise the clamp always succeeds,
+/// any negative eigenvalue is rewritten to +1e-12·λmax, and the §5(a) trigger cannot be
+/// reached.  Clamps within the bound are repaired and counted; a larger clamp marks the
+/// block degenerate and leaves it to the bounded, logged rebirth.
 constexpr double kDdRepairLoudRel = 1e-6;
-/// Diagonal floor for the equilibration, RELATIVE to the largest |diagonal|.  A
-/// non-positive diagonal (precisely the corrupt-carry case this card exists for) would
-/// make an absolute floor produce a ~1e150 scale factor and overflow the scaled matrix;
-/// a relative floor keeps S finite so the PD screen — not an inf — makes the decision.
+/// Diagonal floor for the equilibration, relative to the largest |diagonal|.  With a
+/// non-positive diagonal (the corrupt-carry case), an absolute floor would give a scale
+/// factor near 1e150 and overflow the scaled matrix; a relative floor keeps S finite, so
+/// the PD screen makes the decision rather than an inf.
 constexpr double kDdEquilDiagFloorRel = 1e-16;
 
-/// Explicit symmetrized inverse from a COMPUTED LDLᵀ factor.  Verbatim the expressions
-/// that were inline in the serial fold before this card (standing invariant #6: the OFF
-/// path must round identically, so this is a relocation, not a rewrite).
+/// Explicit symmetrized inverse from a computed LDLᵀ factor.  The expressions are the
+/// ones the serial fold used inline, unchanged, so the legacy path rounds identically
+/// (standing invariant #6).
 ///
-/// @p station_threads > 1 (@c network.parallel_carry) splits the Identity columns across
-/// threads: LᵀDL x_j = e_j has no cross-column arithmetic, so the split is BYTE-IDENTICAL
-/// to the single solve for a given factor.  The factor itself stays serial.
+/// @p station_threads > 1 (@c network.parallel_carry) splits the identity columns across
+/// threads.  Each column solve A x_j = e_j through the shared factor has no cross-column
+/// arithmetic, so the split result is byte-identical to the single solve for a given
+/// factor.  The factorization itself stays serial.
 Eigen::MatrixXd inverseFromLdlt(const Eigen::LDLT<Eigen::MatrixXd>& ldlt, Eigen::Index K,
                                 int station_threads) {
     Eigen::MatrixXd M;
@@ -150,23 +150,23 @@ Eigen::MatrixXd inverseFromLdlt(const Eigen::LDLT<Eigen::MatrixXd>& ldlt, Eigen:
 
 /// One block's middle-inverse screen result (both arithmetic paths produce this shape).
 struct DdMiddleInverse {
-    Eigen::MatrixXd M;            ///< (Pᶻ+B)⁻¹, or K×K ZERO when the screen tripped (inert fold).
-    Eigen::MatrixXd Minv;         ///< the matrix M actually inverts — Pᶻ+B, post-repair if (c) fired.
+    Eigen::MatrixXd M;            ///< (Pᶻ+B)⁻¹, or K×K zero when the screen tripped (inert fold).
+    Eigen::MatrixXd Minv;         ///< the matrix M actually inverts: Pᶻ+B, post-repair if (c) fired.
     bool   degenerate{false};     ///< the screen tripped and nothing rescued it ⇒ M = 0.
-    double min_pivot_rel{0.0};    ///< d_min/d_max of the ORIGINAL (pre-repair) factor.
-    bool   repaired{false};       ///< INC-1c: an eigenvalue clamp was applied.
-    double repair_worst{0.0};     ///< INC-1c: |worst clamped eigenvalue| / λ_max.
+    double min_pivot_rel{0.0};    ///< d_min/d_max of the original (pre-repair) factor.
+    bool   repaired{false};       ///< an eigenvalue clamp was applied (INC-1c).
+    double repair_worst{0.0};     ///< |worst clamped eigenvalue| / λ_max (INC-1c).
 };
 
-/// LEGACY middle inverse — the pre-card arithmetic, unchanged.  The ONLY addition is the
-/// @c min_pivot_rel READ of the factor already computed (INC-0); the decision below is
-/// byte-for-byte the historical `info() != Success || vectorD().minCoeff() <= 0.0`.
+/// Legacy middle inverse: the arithmetic before the PD-safe screen, unchanged.  The one
+/// addition is a read of @c min_pivot_rel from the factor already computed (INC-0); the
+/// decision is still exactly `info() != Success || vectorD().minCoeff() <= 0.0`.
 DdMiddleInverse ddMiddleInverseLegacy(const Eigen::MatrixXd& PzB, Eigen::Index K,
                                       int station_threads) {
     DdMiddleInverse r;
     r.Minv = PzB;
-    Eigen::LDLT<Eigen::MatrixXd> ldlt(PzB);   // O(K³/3) factor — serial (byte-id floor)
-    if (ldlt.info() == Eigen::Success) {      // INC-0: pure read, no effect on the decision
+    Eigen::LDLT<Eigen::MatrixXd> ldlt(PzB);   // O(K³/3) factor, kept serial for byte-identity
+    if (ldlt.info() == Eigen::Success) {      // read only; does not affect the decision (INC-0)
         const Eigen::VectorXd d = ldlt.vectorD();
         const double dmax = d.cwiseAbs().maxCoeff();
         r.min_pivot_rel = (dmax > 0.0) ? (d.minCoeff() / dmax) : 0.0;
@@ -180,16 +180,17 @@ DdMiddleInverse ddMiddleInverseLegacy(const Eigen::MatrixXd& PzB, Eigen::Index K
     return r;
 }
 
-/// PD-SAFE middle inverse (@c network.carry_invariant_pd_safe) — SPEC §4(b)+(c).
+/// PD-safe middle inverse (@c network.carry_invariant_pd_safe), SPEC §4(b) and (c).
 ///
-/// (b) Equilibrate: S = diag(1/√max(A_ii, ε)) makes every pivot of Ã = S A S O(1), so
-///     the rank test `d_min ≥ 1e-12·d_max` is a statement about CONDITIONING rather than
-///     about the 1e10 spread between a mature (1e-4) and a fresh (1e6) row.  The unscale
-///     M = S Ã⁻¹ S is exact (A⁻¹ = S (S A S)⁻¹ S for diagonal S) — no approximation is
-///     introduced, only a different rounding path.
+/// (b) Equilibrate: S = diag(1/√max(A_ii, ε)) makes every pivot of Ã = S A S of order 1,
+///     so the rank test `d_min ≥ 1e-12·d_max` measures conditioning rather than the 1e10
+///     spread between a mature (1e-4) and a fresh (1e6) row.  The unscale M = S Ã⁻¹ S is
+///     exact (A⁻¹ = S (S A S)⁻¹ S for diagonal S); only the rounding path differs.
 /// (c) Repair: on a trip, clamp Ã's eigenvalues below 1e-12·λmax up to that floor and
-///     refactor.  Bounded and counted by construction; a clamp above 1e-6·λmax is a NEW
-///     bug and the caller WARNs on it rather than laundering it.
+///     refactor.  The repair is bounded and counted.  A clamp larger than
+///     kDdRepairLoudRel·λmax (1e-6) is refused rather than hidden: the block is returned
+///     degenerate with M = 0, @c repair_worst still records the clamp size for the
+///     caller's warning, and the install rebirths the block (INC-2a).
 DdMiddleInverse ddMiddleInversePdSafe(const Eigen::MatrixXd& PzB, Eigen::Index K,
                                       int station_threads) {
     DdMiddleInverse r;
@@ -218,11 +219,11 @@ DdMiddleInverse ddMiddleInversePdSafe(const Eigen::MatrixXd& PzB, Eigen::Index K
         return r;
     }
 
-    // ---- (c) repair backstop: eigenvalue clamp on the EQUILIBRATED matrix -------
+    // ---- (c) repair backstop: eigenvalue clamp on the equilibrated matrix -------
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(At);
     if (es.info() != Eigen::Success) {
         r.M = Eigen::MatrixXd::Zero(K, K);
-        r.degenerate = true;                 // INC-2a: the install rebirths this block
+        r.degenerate = true;                 // the install rebirths this block (INC-2a)
         return r;
     }
     Eigen::VectorXd lam = es.eigenvalues();
@@ -244,10 +245,9 @@ DdMiddleInverse ddMiddleInversePdSafe(const Eigen::MatrixXd& PzB, Eigen::Index K
     }
     r.repair_worst = worst / lmax;
     if (r.repair_worst > kDdRepairLoudRel) {
-        // NOT dust.  Repairing this would rewrite a genuinely broken block into one that
-        // LOOKS healthy — the single worst thing this card could do, because the whole
-        // defect it fixes was an unhealthy block that nothing could see.  Refuse, and let
-        // the bounded + counted + logged INC-2a rebirth handle it instead.
+        // Beyond round-off.  Clamping this would turn an indefinite block into one that
+        // passes the PD screen and conceal the condition the screen exists to report.
+        // Refuse it and leave the block to the bounded, counted and logged rebirth (INC-2a).
         r.M = Eigen::MatrixXd::Zero(K, K);
         r.degenerate = true;
         return r;
@@ -264,7 +264,7 @@ DdMiddleInverse ddMiddleInversePdSafe(const Eigen::MatrixXd& PzB, Eigen::Index K
         ok2 = (d2max > 0.0) && (d2.minCoeff() > 0.0)
               && (d2.minCoeff() >= kDdPivotRelTol * d2max);
     }
-    if (!ok2) {   // INC-2a: fail LOUDLY and boundedly — inert fold + install-side rebirth
+    if (!ok2) {   // inert fold; the install rebirths the block (INC-2a)
         r.M = Eigen::MatrixXd::Zero(K, K);
         r.degenerate = true;
         r.repaired = false;                  // the clamp did not rescue it; do not count it
@@ -274,7 +274,7 @@ DdMiddleInverse ddMiddleInversePdSafe(const Eigen::MatrixXd& PzB, Eigen::Index K
     r.M = s.asDiagonal() * Ainv * s.asDiagonal();
     r.M = (0.5 * (r.M + r.M.transpose())).eval();
     // Keep the D5 cache consistent with the matrix M actually inverts: Cov(v) reads
-    // fd.Minv, and handing it the PRE-repair (indefinite) Pᶻ+B would make the innovation
+    // fd.Minv, and handing it the pre-repair (indefinite) Pᶻ+B would make the innovation
     // covariance disagree with the fold that produced the innovation.
     const Eigen::VectorXd sinv = s.cwiseInverse();
     r.Minv = sinv.asDiagonal() * Arep * sinv.asDiagonal();
@@ -282,10 +282,10 @@ DdMiddleInverse ddMiddleInversePdSafe(const Eigen::MatrixXd& PzB, Eigen::Index K
     return r;
 }
 
-// --- Tier D0 section timers (network.trace_section_timers) -------------------
-// A zero-overhead-when-disabled RAII accumulator: when @p on is false it records
-// no timestamp and touches nothing (so an unarmed run makes NO clock reads and is
-// numerically byte-identical), and when true it adds its scope's wall-clock ms to
+// --- Section timers (network.trace_section_timers, tier D0) ------------------
+// RAII accumulator with no overhead when disabled.  With @p on false it takes no
+// timestamp and touches nothing, so an unarmed run makes no clock reads and is
+// numerically byte-identical; with @p on true it adds its scope's wall-clock ms to
 // @p acc on destruction.  Used only by the instrumented kernel primitives below.
 using PerfClock = std::chrono::steady_clock;
 
@@ -305,11 +305,11 @@ struct ScopedAccum {
     }
 };
 
-// parallel_carry: RAII un-pin of Eigen's internal threading around one dense GEMM
-// (the fold's GMGᵀ).  Restores the saved thread count on EVERY scope exit — including
-// a throw mid-GEMM — so no exit path leaves Eigen un-pinned for the next block's
-// OpenMP region (mirrors the driver-side CarryEigenScope).  Inert when @p on is
-// false: no Eigen thread-count call at all, so the default path is untouched.
+// RAII un-pin of Eigen's internal threading around one dense GEMM (the fold's GMGᵀ),
+// used under parallel_carry.  The saved thread count is restored on every scope exit,
+// including a throw mid-GEMM, so no exit path leaves Eigen un-pinned for the next
+// block's OpenMP region (same pattern as the driver-side CarryEigenScope).  With @p on
+// false it makes no Eigen thread-count call, so the default path is unchanged.
 struct ScopedEigenThreads {
     bool on;
     int  saved;
@@ -347,9 +347,9 @@ void NetworkNormalEquations::reset(Eigen::Index n_shared) {
     u_s_.setZero(n_shared);
     reduced_N_ss_.setZero(n_shared, n_shared);
     reduced_u_s_.setZero(n_shared);
-    // Retain the stations_ pool (its dense per-station buffers persist for reuse);
-    // just mark every slot inactive.  This is what eliminates the per-epoch
-    // allocate/free churn — addStation overwrites pooled slots in place.
+    // Keep the stations_ pool (its dense per-station buffers persist for reuse) and
+    // mark every slot inactive; addStation overwrites pooled slots in place, so there
+    // is no per-epoch allocate/free churn.
     n_active_ = 0;
     reduced_ = false;
     reduce_recompute_count_ = 0;
@@ -359,7 +359,7 @@ void NetworkNormalEquations::reset(Eigen::Index n_shared) {
     dd_priors_.clear();
     station_ddprior_.clear();
     ddprior_folded_ = false;
-    dd_fold_stats_ = DdFoldStats{};   // INC-0 (dd_fold_pd_safe_ is configuration — it survives)
+    dd_fold_stats_ = DdFoldStats{};   // dd_fold_pd_safe_ is configuration and survives (INC-0)
 }
 
 void NetworkNormalEquations::addSharedInfo(const Eigen::MatrixXd& delta_info,
@@ -370,18 +370,17 @@ void NetworkNormalEquations::addSharedInfo(const Eigen::MatrixXd& delta_info,
     }
     N_ss_ += delta_info;
     u_s_ += delta_rhs;
-    // Reduction-preserving fast path.  A shared-border increment carries through
-    // the Schur reduction UNCHANGED: the per-station subtrahends N_sr (N_rr)^{-1}
-    // N_rs depend only on N_sr / N_rr (never on N_ss_), so the reduced normals
-    // shift by exactly the same delta as the pre-reduction normals.  When the
-    // cached reduction is already current we therefore fold the delta straight
-    // into it and KEEP it current — sparing a full re-reduction (the expensive
-    // per-station loop) for a post-reduce prior such as the driver's D2
-    // carry-forward, which is applied AFTER the null-space gate's reduce() and
-    // before the solve.  Symmetrize the increment (0.5*(d + dᵀ)) so the update is
-    // exact for ANY symmetric delta, matching reduce()'s own symmetrization (a
-    // diagonal carry-forward prior is already bit-symmetric; a w·HᵀH constraint
-    // increment, in general, is not to the last bit).
+    // Reduction-preserving fast path.  A shared-border increment passes through the
+    // Schur reduction unchanged: the per-station subtrahends N_sr (N_rr)⁻¹ N_rs depend
+    // only on N_sr and N_rr, never on N_ss_, so the reduced normals shift by the same
+    // delta as the unreduced normals.  When the cached reduction is current, the delta
+    // is added to it directly and it stays current.  This avoids a full re-reduction
+    // (the expensive per-station loop) for a post-reduce prior such as the driver's D2
+    // carry-forward, which is applied after the null-space gate's reduce() and before
+    // the solve.  The increment is symmetrized (0.5·(d + dᵀ)) so the update is exact
+    // for any symmetric delta and matches reduce()'s own symmetrization (a diagonal
+    // carry-forward prior is already bit-symmetric; a w·HᵀH constraint increment in
+    // general is not, to the last bit).
     if (reduced_) {
         reduced_N_ss_ += 0.5 * (delta_info + delta_info.transpose());
         reduced_u_s_ += delta_rhs;
@@ -414,12 +413,12 @@ std::size_t NetworkNormalEquations::addStation(const Eigen::MatrixXd& N_ss_r,
     requireSymmetric(N_ss_r, "addStation: N_ss_r");
     requireSymmetric(N_rr_r, "addStation: N_rr_r");
 
-    // --- Card RF-PD-fix (network.station_prior_before_pd) ---------------------
-    // The station's own DIAGONAL prior rows, folded into N_rr / u_r BEFORE the
-    // factorization below, so the positive-definiteness test judges the SAME
-    // matrix the solve will use.  Validate EVERYTHING here — the addStationPrior
-    // contract, verbatim — because a throw must leave the border untouched, and
-    // this runs before the first mutation of anything shared.
+    // --- Station prior before the PD test (network.station_prior_before_pd, RF-PD-fix)
+    // The station's own diagonal prior rows are folded into N_rr / u_r before the
+    // factorization below, so the positive-definiteness test judges the matrix the
+    // solve will use.  The whole addStationPrior contract is validated here, because
+    // a throw must leave the border untouched and this runs before the first mutation
+    // of anything shared.
     const Eigen::Index n_pri = static_cast<Eigen::Index>(prior.cols.size());
     if (n_pri > 0) {
         if (prior.dNrr.size() != n_pri || prior.dur.size() != n_pri) {
@@ -442,37 +441,36 @@ std::size_t NetworkNormalEquations::addStation(const Eigen::MatrixXd& N_ss_r,
         }
     }
 
-    // Build and VALIDATE this station's local block BEFORE committing anything to
-    // the shared border.  addStation throws on a non-positive-definite local block
-    // (a station with an unobservable nuisance — e.g. a GPS-only station whose
-    // Galileo-ISB column is structurally zero), and the driver drops such a
-    // station.  A thrown station MUST leave N_ss_/u_s_ untouched: if we accumulated
-    // N_ss_r up front (before the throw) its shared contribution would stay in the
-    // border with NO compensating Schur term (the station is never pushed to
-    // stations_, so reduce() never subtracts its N_sr Nrr⁻¹ N_rs).  Its
-    // observations would then pin the shared parameters they touch with the
-    // receiver-clock absorption MISSING — a GPS-only station phantom-pins the GPS
-    // satellite-clock common-mode gauge, so the null-space rank gate sees one
-    // fewer free gauge than declared and WITHHOLDS every epoch (this was the global
-    // PPP-RTK network zero-emit: the two dropped GPS-only stations' bᵀWb summed to
-    // exactly the spurious GPS-common pin).
+    // Build and validate this station's local block before committing anything to the
+    // shared border.  addStation throws on a non-positive-definite local block (a
+    // station with an unobservable nuisance, e.g. a GPS-only station whose Galileo-ISB
+    // column is structurally zero), and the driver drops such a station.  A station
+    // that throws must leave N_ss_ and u_s_ untouched.  If N_ss_r were accumulated
+    // before the throw, its shared contribution would stay in the border with no
+    // compensating Schur term (the station never enters stations_, so reduce() never
+    // subtracts its N_sr Nrr⁻¹ N_rs).  Its observations would then pin the shared
+    // parameters they touch without the receiver-clock absorption: a GPS-only station
+    // pins the GPS satellite-clock common-mode gauge, the null-space rank gate sees one
+    // fewer free gauge than declared, and every epoch is withheld.  In the global
+    // PPP-RTK network this produced zero emission; the bᵀWb of the dropped GPS-only
+    // stations summed to the spurious GPS-common pin.
     //
-    // Build into a REUSED pool slot (its dense buffers persist across epochs — the
-    // Eigen .compute()/assignments below reuse the slot's storage when the size
-    // matches).  Grow the pool only on a new high-water station count.  A station
-    // that throws below leaves n_active_ unadvanced and N_ss_/u_s_ untouched, so
-    // its partially-written slot is simply overwritten by the next addStation —
-    // the same drop-on-singular-station semantics as the old push_back path.
+    // The station is built into a reused pool slot: its dense buffers persist across
+    // epochs, and the Eigen .compute() and assignments below reuse the slot's storage
+    // when the size matches.  The pool grows only on a new high-water station count.
+    // A station that throws below leaves n_active_ unadvanced and N_ss_/u_s_
+    // untouched, so its partially written slot is overwritten by the next addStation
+    // and the singular station leaves no trace.
     if (n_active_ >= stations_.size()) {
         stations_.emplace_back();
     }
     Station& st = stations_[n_active_];
     st.n_local = n_r;
 
-    // RF-PD-fix: fold the prior into a LOCAL COPY — never into the caller's block,
-    // which the driver still owns (its `R` is reused for the epoch's diagnostics).
-    // With an EMPTY prior no copy is taken and every line below reads the caller's
-    // N_rr_r exactly as before, so the OFF path is byte-identical.
+    // Fold the prior into a local copy, never into the caller's block, which the
+    // driver still owns (its `R` is reused for the epoch's diagnostics).  With an
+    // empty prior no copy is taken and every line below reads the caller's N_rr_r,
+    // so the off path is byte-identical (RF-PD-fix).
     Eigen::MatrixXd N_rr_pre;
     if (n_pri > 0) {
         N_rr_pre = N_rr_r;
@@ -484,32 +482,32 @@ std::size_t NetworkNormalEquations::addStation(const Eigen::MatrixXd& N_ss_r,
     const Eigen::MatrixXd& N_rr_use = (n_pri > 0) ? N_rr_pre : N_rr_r;
 
     if (n_r > 0) {
-        // Factorize the local block once; reused by reduce() and
-        // reconstructStation().  LDLᵀ is robust for the symmetric local normals;
-        // the caller folds in the station prior so the block is full-rank — either
-        // inside N_rr_r, or through `prior` (RF-PD-fix), which is already in
-        // N_rr_use here and therefore inside the PD test below.
+        // Factorize the local block once; reduce() and reconstructStation() reuse
+        // the factor.  LDLᵀ is robust for the symmetric local normals.  The caller
+        // folds in the station prior so the block is full-rank, either inside
+        // N_rr_r or through `prior` (RF-PD-fix), which is already in N_rr_use here
+        // and therefore inside the PD test below.
         st.Nrr_ldlt.compute(N_rr_use);
         if (st.Nrr_ldlt.info() != Eigen::Success) {
             fail("addStation: LDLᵀ factorization of N_rr_r failed (non-finite?)");
         }
-        // info()==Success only rules out non-finite input — LDLᵀ also factorizes
-        // singular / indefinite blocks and would then back-solve through a
-        // pseudo-inverse, corrupting the reduction and surfacing far downstream
-        // as a misleading "reduced datum" failure.  Catch a non-positive-definite
-        // local block here, where the diagnosis is unambiguous (the station's
-        // prior is too weak / a nuisance parameter is unobservable).
+        // info() == Success does not exclude a singular or indefinite block: LDLᵀ
+        // factorizes those too, and a back-solve through the resulting
+        // pseudo-inverse corrupts the reduction, which then surfaces downstream as a
+        // misleading "reduced datum" failure.  A non-positive-definite local block is
+        // caught here, where the cause is clear (the station's prior is too weak or a
+        // nuisance parameter is unobservable).
         const Eigen::VectorXd d = st.Nrr_ldlt.vectorD();
         const double d_min = d.minCoeff();
         const double d_max = d.cwiseAbs().maxCoeff();
-        // Reference scale for the relative rank test.  Legacy: the LARGEST pivot.
-        // Pin-aware (setStationPdMedianScale): the MEDIAN |pivot| — a deliberate
-        // huge-weight gauge-pin row in the block (the prioritized phase-datum
-        // anchor's 1e10 ambiguity pin) otherwise inflates the bar by ~10 orders
-        // and ejects a healthy marginal station whose weakest genuine parameter
-        // sits at a usable ~1e-3 (the TWTF/VOIM every-epoch non-PD class).  The
-        // median is robust to any minority of pin-scale pivots yet still catches
-        // a truly singular direction (a pivot many orders below block scale).
+        // Reference scale for the relative rank test.  Default: the largest pivot.
+        // Pin-aware (setStationPdMedianScale): the median |pivot|.  A deliberate
+        // large-weight gauge-pin row in the block (the prioritized phase-datum
+        // anchor's 1e10 ambiguity pin) raises the largest pivot by about 10 orders
+        // of magnitude, and the test would then eject a marginal station whose
+        // weakest genuine parameter sits at ~1e-3 (usable).  The median is robust
+        // to any minority of pin-scale pivots and still catches a singular
+        // direction (a pivot many orders below block scale).
         double d_ref = d_max;
         if (station_pd_median_scale_ && d.size() > 0) {
             Eigen::VectorXd a = d.cwiseAbs();
@@ -519,21 +517,20 @@ std::size_t NetworkNormalEquations::addStation(const Eigen::MatrixXd& N_ss_r,
             d_ref = v[v.size() / 2];
         }
         if (d_min <= 0.0 || d_min < 1e-12 * d_ref) {
-            // --- Card RF-PD: NAME the null direction (network.trace_station_pd_null) ---
-            // The message below reports a pivot MAGNITUDE and nothing else; the
-            // caller then drops the whole station on a number that identifies no
-            // parameter.  Armed, take one SelfAdjointEigenSolver read of the SAME
-            // block the test just rejected and stash its smallest eigenpair for the
-            // caller's catch.  Deliberately NOT the LDLᵀ pivot index: LDLᵀ permutes
-            // (transpositionsP), so pivot k is not local column k and reading it as
-            // one names the wrong parameter.  Only a REJECTED block pays the O(n³) —
-            // an accepted station never reaches here — and OFF the branch allocates
-            // nothing and calls nothing, so the rejection path is byte-identical.
+            // --- Null direction of a rejected block (network.trace_station_pd_null, RF-PD)
+            // The error message reports only a pivot magnitude, and the caller drops
+            // the whole station on a number that identifies no parameter.  When armed,
+            // one SelfAdjointEigenSolver pass over the block the test just rejected
+            // stores its smallest eigenpair for the caller's catch.  The LDLᵀ pivot
+            // index is not used: LDLᵀ permutes (transpositionsP), so pivot k is not
+            // local column k and would name the wrong parameter.  Only a rejected block
+            // pays the O(n³) cost, and with the knob off the branch allocates and calls
+            // nothing, so the rejection path is byte-identical.
             last_pd_failure_.valid = false;
             if (station_pd_null_trace_) {
                 Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(N_rr_use);
                 if (es.info() == Eigen::Success && es.eigenvalues().size() > 0) {
-                    const Eigen::VectorXd& ev = es.eigenvalues();   // ASCENDING
+                    const Eigen::VectorXd& ev = es.eigenvalues();   // ascending
                     const double ev_max = ev.cwiseAbs().maxCoeff();
                     const double cut    = 1e-12 * ev_max;
                     int n_below = 0;
@@ -560,15 +557,15 @@ std::size_t NetworkNormalEquations::addStation(const Eigen::MatrixXd& N_ss_r,
         }
     }
 
-    // Local block accepted — record it + commit this station's shared-border
-    // contribution (kept in lock-step with the Schur term reduce() will subtract).
+    // Local block accepted: record it and commit this station's shared-border
+    // contribution, kept in step with the Schur term reduce() will subtract.
     st.N_sr = N_sr_r;
     st.u_r = u_r_r;
-    // RF-PD-fix: the prior's RHS half.  N_sr is untouched (a diagonal local prior
-    // is reduction-orthogonal to the border — the addStationPrior rationale), and
-    // these are the SAME additions, onto the same base, in the same ascending
-    // column order addStationPrior would have made, so u_r is bit-identical to the
-    // prior-after result for a station both orders admit.
+    // The prior's RHS half (RF-PD-fix).  N_sr is untouched: a diagonal local prior is
+    // reduction-orthogonal to the border (the addStationPrior rationale).  These are
+    // the same additions, onto the same base, in the same ascending column order that
+    // addStationPrior would make, so u_r is bit-identical to the prior-after result
+    // for a station both orders admit.
     for (Eigen::Index i = 0; i < n_pri; ++i) {
         st.u_r(prior.cols[static_cast<std::size_t>(i)]) += prior.dur(i);
     }
@@ -583,7 +580,7 @@ std::size_t NetworkNormalEquations::addStationObservations(
     const Eigen::MatrixXd& A_s, const Eigen::MatrixXd& A_r,
     const Eigen::MatrixXd& W, const Eigen::VectorXd& y,
     const StationPrior& prior) {
-    ScopedAccum _perf(perf_timing_, &timers_.add_station_ms);  // D0 (assembly primitive)
+    ScopedAccum _perf(perf_timing_, &timers_.add_station_ms);  // assembly primitive timer (D0)
     if (perf_timing_) ++timers_.add_station_calls;
     const Eigen::Index m = A_s.rows();
     const Eigen::Index n_r = A_r.cols();
@@ -616,12 +613,12 @@ std::size_t NetworkNormalEquations::addStationObservations(
     const Eigen::MatrixXd& A_s, const Eigen::MatrixXd& A_r,
     const Eigen::VectorXd& w_diag, const Eigen::VectorXd& y,
     const StationPrior& prior) {
-    ScopedAccum _perf(perf_timing_, &timers_.add_station_ms);  // D0 (assembly primitive)
+    ScopedAccum _perf(perf_timing_, &timers_.add_station_ms);  // assembly primitive timer (D0)
     if (perf_timing_) ++timers_.add_station_calls;
     const Eigen::Index m = A_s.rows();
-    // Validate ALL dimensions before forming any product — the asDiagonal
-    // products below would otherwise trip a hard Eigen assertion (Debug crash /
-    // Release UB) on a mismatch instead of throwing a clean std::invalid_argument.
+    // Validate all dimensions before forming any product: on a mismatch the
+    // asDiagonal products below would trip a hard Eigen assertion (Debug crash,
+    // Release UB) instead of throwing std::invalid_argument.
     if (A_s.cols() != n_shared_) {
         fail("addStationObservations: A_s must have n_shared columns");
     }
@@ -667,7 +664,7 @@ void NetworkNormalEquations::addStationPrior(
     if (st.n_local == 0) {
         fail("addStationPrior: station has no local block to prior");
     }
-    // Validate EVERYTHING before mutating the cached factor: a rank-1 update is
+    // Validate everything before mutating the cached factor: a rank-1 update is
     // applied in place, so a throw partway through would leave N_rr half-updated.
     for (Eigen::Index i = 0; i < k; ++i) {
         const Eigen::Index c = local_cols[i];
@@ -677,20 +674,20 @@ void NetworkNormalEquations::addStationPrior(
         if (!(delta_Nrr_diag(i) >= 0.0)) {
             fail("addStationPrior: information increment must be non-negative");
         }
-        // A non-finite RHS increment would silently poison u_r (and thus the shared
-        // solve) without tripping any PD check — the rank-1 factor update is
-        // unaffected by u_r.  Reject it here, where "validate EVERYTHING before
-        // mutating" is the kernel's contract.
+        // A non-finite RHS increment would corrupt u_r (and so the shared solve)
+        // without tripping any PD check, because the rank-1 factor update does not
+        // involve u_r.  It is rejected here, under the kernel's contract that all
+        // input is validated before any mutation.
         if (!std::isfinite(delta_ur(i))) {
             fail("addStationPrior: RHS increment is not finite");
         }
     }
-    // Fold each diagonal increment Λ_c into N_rr via a rank-1 LDLᵀ update
-    // (N_rr ← N_rr + Λ_c·e_c·e_cᵀ), and accumulate the RHS η_c into u_r.  A
+    // Fold each diagonal increment Λ_c into N_rr by a rank-1 LDLᵀ update
+    // (N_rr ← N_rr + Λ_c·e_c·e_cᵀ) and accumulate the RHS η_c into u_r.  A
     // positive Λ_c keeps the factor positive-definite, so no PD re-check is
-    // needed; a zero Λ_c is skipped (a no-op column).  Iterate in the caller's
-    // (deterministic, ascending) order so the update sequence — and thus the
-    // ULP-level result — is reproducible.
+    // needed; a zero Λ_c is skipped (a no-op column).  The loop follows the
+    // caller's (deterministic, ascending) order, so the update sequence, and with
+    // it the ULP-level result, is reproducible.
     Eigen::VectorXd e_c = Eigen::VectorXd::Zero(st.n_local);
     bool any = false;
     for (Eigen::Index i = 0; i < k; ++i) {
@@ -711,29 +708,29 @@ void NetworkNormalEquations::addStationPrior(
 
 void NetworkNormalEquations::reduce(int n_threads) {
     // Idempotency guard: the reduced form is recomputed only when a mutation
-    // (addStation / addSharedInfo) has marked it stale.  addSharedInfo carries a
-    // shared-border delta through the reduction in place (keeping reduced_ true),
-    // so the common driver path — gate reduce() → D2 carry-forward addSharedInfo →
-    // solve() reduce() — runs the expensive per-station Schur loop ONCE, not twice.
+    // (addStation, addStationPrior, reset) has marked it stale.  addSharedInfo carries
+    // a shared-border delta through the reduction in place (reduced_ stays true), so
+    // the common driver path (gate reduce(), then the D2 carry-forward addSharedInfo,
+    // then the reduce() inside solve()) runs the expensive per-station Schur loop once.
     if (reduced_) {
         return;
     }
 
-    // D0: time only a REAL recompute (the idempotent no-op above already returned).
+    // Time only a real recompute; the no-op above has already returned (D0).
     ScopedAccum _perf(perf_timing_, &timers_.reduce_ms);
     if (perf_timing_) ++timers_.reduce_recomputes;
 
     // A recompute rebuilds the reduced system from scratch, so any previously
     // folded anchor-free sum-to-zero gauge (@ref foldReducedSumZeroGauges) is
-    // dropped from it — its cached (g,β,γ) would be stale for both the reduced
-    // normals and the constrained reconstruction.  Clear them; the driver
-    // re-folds after the reduce (mirrors the code-bias / clock-constraint
-    // re-apply on the within-epoch RAIM re-solve).
+    // dropped from it, and its cached (g, β, γ) would be stale for both the reduced
+    // normals and the constrained reconstruction.  The gauges are cleared here and
+    // the driver re-folds them after the reduce, as it re-applies the code-bias and
+    // clock constraints on the within-epoch RAIM re-solve.
     sumzero_gauges_.clear();
     station_sumzero_.clear();
     sumzero_folded_ = false;
-    // Same for the Card-4 DD priors (@ref foldReducedDdPriors): a rebuilt reduced
-    // system drops the folded G M Gᵀ; the driver re-folds after the reduce.
+    // Same for the invariant-carry DD priors (@ref foldReducedDdPriors, Card 4): a
+    // rebuilt reduced system drops the folded G M Gᵀ; the driver re-folds after the reduce.
     dd_priors_.clear();
     station_ddprior_.clear();
     ddprior_folded_ = false;
@@ -744,10 +741,10 @@ void NetworkNormalEquations::reduce(int n_threads) {
     reduced_u_s_ = u_s_;
 
     // Per-station elimination.  Each station's subtrahend N_sr (N_rr)^{-1} N_rs is
-    // independent (its own cached LDLᵀ factor, its own N_sr) — only the accumulation
+    // independent (its own cached LDLᵀ factor, its own N_sr); only the accumulation
     // into the shared border is a reduction.  The helper computes the two local
-    // solves; the serial path then FUSES the product into the running subtraction
-    // (bit-identical to the historical loop), while the optional parallel path
+    // solves.  The serial path fuses the product into the running subtraction
+    // (bit-identical to the original serial loop); the optional parallel path
     // accumulates per-thread partials and combines them deterministically.
     auto stationSolves = [&](std::size_t i, Eigen::MatrixXd& Nrr_inv_Nrs,
                              Eigen::VectorXd& Nrr_inv_ur) -> bool {
@@ -763,12 +760,12 @@ void NetworkNormalEquations::reduce(int n_threads) {
 
 #ifdef _OPENMP
     // Optional fan-out across stations.  The driver pins Eigen to a single thread
-    // for the epoch, so each station's dense kernels stay serial — no nested
-    // oversubscription.  Determinism: each thread owns a CONTIGUOUS station range
-    // summed in ascending index, and the per-thread partials are combined in
-    // ascending thread order, so the result is reproducible for a fixed thread
-    // count (differing from the serial fold only at ULP — a different summation
-    // grouping).  n_threads ≤ 1 takes the exact serial path below.
+    // for the epoch, so each station's dense kernels stay serial and there is no
+    // nested oversubscription.  Determinism: each thread owns a contiguous station
+    // range summed in ascending index, and the per-thread partials are combined in
+    // ascending thread order, so the result is reproducible for a fixed thread count.
+    // It differs from the serial fold at ULP level (a different summation grouping).
+    // n_threads ≤ 1 takes the exact serial path below.
     if (n_threads > 1 && n_active_ > 1) {
         const int nt = static_cast<int>(
             std::min<std::size_t>(static_cast<std::size_t>(n_threads), n_active_));
@@ -810,9 +807,9 @@ void NetworkNormalEquations::reduce(int n_threads) {
     } else
 #endif
     {
-        // Serial fold over the ACTIVE pool slots [0, n_active_) — slots beyond that
-        // are retained allocations from a previous (larger) epoch.  Fused
-        // product-subtract in ascending index — BIT-IDENTICAL to the historical loop.
+        // Serial fold over the active pool slots [0, n_active_); slots beyond that
+        // are retained allocations from a previous, larger epoch.  Fused
+        // product-subtract in ascending index, bit-identical to the original serial loop.
         Eigen::MatrixXd Nrr_inv_Nrs;
         Eigen::VectorXd Nrr_inv_ur;
         for (std::size_t i = 0; i < n_active_; ++i) {
@@ -824,8 +821,8 @@ void NetworkNormalEquations::reduce(int n_threads) {
     }
 
     // The Schur complement of a symmetric matrix is symmetric; enforce it
-    // explicitly to clean up floating-point asymmetry before the solve (avoids
-    // the aliasing pitfall — write into a temporary, then assign).
+    // explicitly to remove floating-point asymmetry before the solve.  The result
+    // is written into a temporary and then assigned, to avoid aliasing.
     reduced_N_ss_ = (0.5 * (reduced_N_ss_ + reduced_N_ss_.transpose())).eval();
 
     reduced_ = true;
@@ -839,7 +836,7 @@ void NetworkNormalEquations::foldReducedSumZeroGauges(
     }
     // Idempotent within one reduce: the fold mutates reduced_N_ss_ in place, and
     // both the null-space gate (via reducedSharedNormals) and the solve trigger it,
-    // so a second call must NOT double-add g gᵀ/β.  A reduce() recompute / reset()
+    // so a second call must not add g gᵀ/β again.  A reduce() recompute or reset()
     // clears the flag.
     if (sumzero_folded_) {
         return;
@@ -851,9 +848,9 @@ void NetworkNormalEquations::foldReducedSumZeroGauges(
         return;
     }
 
-    // Cache N_rr⁻¹ u_r per station lazily — a station appears in one gauge per
-    // (sat,signal) it tracks, so the u_r solve would otherwise repeat ~15×.  The
-    // per-column solve n_r = N_rr⁻¹ e_col is genuinely per (station,gauge).
+    // Cache N_rr⁻¹ u_r per station lazily: a station appears in one gauge per
+    // (sat, signal) it tracks, so the u_r solve would otherwise repeat ~15×.  The
+    // per-column solve n_r = N_rr⁻¹ e_col is genuinely per (station, gauge).
     std::vector<bool> have_ur(n_active_, false);
     std::vector<Eigen::VectorXd> nrr_inv_ur(n_active_);
 
@@ -881,7 +878,7 @@ void NetworkNormalEquations::foldReducedSumZeroGauges(
             gamma += nrr_inv_ur[si](col);                      // (N_rr⁻¹ u_r)_{col}
         }
         if (!(beta > 0.0) || !std::isfinite(beta) || !std::isfinite(gamma)) {
-            continue;  // degenerate gauge (no valid terms) — skip
+            continue;  // degenerate gauge (no valid terms): skip
         }
         // Schur-projected rank-1 fold: Ñ_ss += g gᵀ/β,  ũ_s += g γ/β.
         const double inv_beta = 1.0 / beta;
@@ -915,15 +912,15 @@ void NetworkNormalEquations::foldReducedDdPriors(
     dd_priors_.clear();
     station_ddprior_.assign(n_active_, {});
     ddprior_folded_ = true;
-    dd_fold_stats_ = DdFoldStats{};   // INC-0: per-FOLD, so a RAIM re-solve overwrites it
-    // INC-0: roll the per-block PD-screen reads up into the fold's diagnostics.  Invoked
-    // from BOTH fold paths (the deterministic-parallel one returns early) so the two can
-    // never disagree about what the epoch's screen saw.
+    dd_fold_stats_ = DdFoldStats{};   // per fold, so a RAIM re-solve overwrites it (INC-0)
+    // Roll the per-block PD-screen reads up into the fold's diagnostics (INC-0).  Both
+    // fold paths call this (the deterministic-parallel one returns early), so the two
+    // cannot disagree about what the epoch's screen saw.
     auto tallyDdFoldStats = [this]() {
         DdFoldStats st;
         for (const FoldedDdPrior& f : dd_priors_) {
             const Eigen::Index K = f.Pz.rows();
-            if (K == 0) continue;   // chordless slot — never reached a factorization
+            if (K == 0) continue;   // chordless slot; never reached a factorization
             ++st.blocks;
             st.rows += static_cast<long long>(K);
             if (f.degenerate) {
@@ -944,23 +941,23 @@ void NetworkNormalEquations::foldReducedDdPriors(
     }
 
     // ---- Deterministic-parallel fold (network.parallel_seam) --------------------
-    // Compute every block's per-(const,signal) algebra AND its rank-K Woodbury
-    // contribution (dN = G M Gᵀ, du = G M (z_free − ẑ)) into pre-sized per-block SLOTS
-    // in parallel, then ACCUMULATE the slots SERIALLY in block-index order below.  The
-    // per-block compute mirrors the serial fold that follows EXACTLY (same operations,
-    // same by_station sorted reduction order), and the serial accumulation order is
-    // identical, so the reduced system is BIT-IDENTICAL to the n_threads == 1 path
-    // regardless of thread count (unlike the FP-reassociating parallel_reduce).  The
-    // serial fold below (n_threads == 1, the default) is left completely UNTOUCHED —
-    // keep the two block-algebra bodies in lockstep.
+    // Every block's per-(const, signal) algebra and the operands of its rank-K Woodbury
+    // contribution (dN = G M Gᵀ, du = G M (z_free − ẑ)) are computed in parallel into
+    // pre-sized per-block slots; the contributions are then accumulated serially in
+    // block-index order below.  The per-block compute follows the serial fold exactly
+    // (same operations, same sorted by_station reduction order) and the accumulation
+    // order is the same, so the reduced system is bit-identical to the serial path
+    // (n_threads ≤ 1, with station_threads ≤ 1) for any thread count, unlike the
+    // FP-reassociating parallel_reduce.  The serial fold below (the default) does not
+    // depend on this path; keep the two block-algebra bodies in step.
     if (n_threads > 1) {
         const std::size_t NB = blocks.size();
 
-        // (0, serial) Validate every block up front so the ONLY throws stay on the
-        // serial thread (an exception escaping the OpenMP region is UB), and precompute
-        // N_rr⁻¹ u_r for every referenced station — this kills the cross-block cache
-        // race (the value is a deterministic per-station solve, so precomputing it is
-        // byte-identical to the serial path's lazy fill).
+        // (0, serial) Validate every block up front so all throws stay on the serial
+        // thread (an exception escaping the OpenMP region is UB), and precompute
+        // N_rr⁻¹ u_r for every referenced station.  This removes the cross-block cache
+        // race; the value is a deterministic per-station solve, so precomputing it is
+        // byte-identical to the serial path's lazy fill.
         std::vector<bool> have_ur(n_active_, false);
         std::vector<Eigen::VectorXd> nrr_inv_ur(n_active_);
         for (const auto& blk : blocks) {
@@ -986,24 +983,25 @@ void NetworkNormalEquations::foldReducedDdPriors(
             }
         }
 
-        // Per-block slots (separate vectors, using the fold's own private types the same
-        // way the serial path does — no local struct at function scope).  Each block
-        // writes ONLY its own index.  We store the per-block G / M / z_free (NOT the
-        // materialized G M Gᵀ product): the SERIAL merge below recomputes the product
-        // with the SAME fused Eigen expression the serial fold uses, so the += rounds
-        // BIT-IDENTICALLY.  (Pre-forming dN = (G M Gᵀ).eval() and adding it instead
-        // drifts by a ULP at large n_shared — Eigen's blocked GEMM rounds a beta=0
-        // product-then-add differently from the beta=1 fused accumulate; the network's
-        // ill-conditioning then amplifies that over the carry-forward epochs, exactly the
-        // parallel_reduce failure mode.  Only the per-station B/G/z_free solves and the
-        // K×K middle inverse — the block-local work — run in the parallel region.)
+        // Per-block slots (separate vectors, using the fold's own private types as the
+        // serial path does; no local struct at function scope).  Each block writes only
+        // its own index.  The slots hold the per-block G, M and z_free, not the
+        // materialized G M Gᵀ: the serial merge below recomputes the product with the
+        // same fused Eigen expression the serial fold uses, so the += rounds
+        // bit-identically.  Pre-forming dN = (G M Gᵀ).eval() and adding it instead
+        // drifts by a ULP at large n_shared, because Eigen's blocked GEMM rounds a
+        // beta = 0 product-then-add differently from the beta = 1 fused accumulate, and
+        // the network's ill-conditioning amplifies that over the carry-forward epochs
+        // (the parallel_reduce failure mode).  Only the block-local work (the
+        // per-station B/G/z_free solves and the K×K middle inverse) runs in the
+        // parallel region.
         std::vector<FoldedDdPrior>   fd_slot(NB);
         std::vector<std::vector<std::pair<std::size_t, std::vector<DdStationTerm>>>> terms_slot(NB);
         std::vector<char> has_merge(NB, 0);         // K > 0 ⇒ G/M/terms carry a contribution
 
-        // (1, PARALLEL over block index) The driver pins Eigen to one thread for the
-        // whole epoch, so these dense kernels do not nest-thread.  Each iteration writes
-        // ONLY its own slot index; nrr_inv_ur / stations_ are read-only here.  No throw
+        // (1, parallel over block index) The driver pins Eigen to one thread for the
+        // whole epoch, so these dense kernels do not nest threads.  Each iteration writes
+        // only its own slot index; nrr_inv_ur and stations_ are read-only here.  No throw
         // can escape (all validation ran serially above).
         #pragma omp parallel for schedule(dynamic) num_threads(n_threads)
         for (long long bi = 0; bi < static_cast<long long>(NB); ++bi) {
@@ -1037,12 +1035,12 @@ void NetworkNormalEquations::foldReducedDdPriors(
             }
             Eigen::MatrixXd PzB = blk.Pz + B;
             PzB = (0.5 * (PzB + PzB.transpose())).eval();
-            // PD-safe INC-1a: the DATA information B is what the PRODUCT-form posterior
-            // readback multiplies through (Pᶻ − PᶻMPᶻ ≡ PᶻMB); cached only when armed so
-            // the OFF path keeps its exact allocation footprint.
+            // The product-form posterior readback (Pᶻ − PᶻMPᶻ ≡ PᶻMB) multiplies through
+            // the data information B (PD-safe INC-1a).  B is cached only when armed, so
+            // the off path keeps its exact allocation footprint.
             if (dd_fold_pd_safe_) fd_slot[bidx].B = B;
-            // station_threads is deliberately 1 here: the WITHIN-block column split is a
-            // serial-fold-only option (the blocks already run one per thread).
+            // station_threads is 1 here on purpose: the within-block column split is a
+            // serial-fold option only (the blocks already run one per thread).
             DdMiddleInverse mi = dd_fold_pd_safe_
                                      ? ddMiddleInversePdSafe(PzB, K, 1)
                                      : ddMiddleInverseLegacy(PzB, K, 1);
@@ -1061,10 +1059,10 @@ void NetworkNormalEquations::foldReducedDdPriors(
             has_merge[bidx] = 1;
         }
 
-        // (2, SERIAL in block-index order) accumulate with the SAME fused Eigen
-        // expression the serial fold uses (@ref 691-692) — identical operands (the
-        // parallel-computed G / M / z_free are bit-identical to the serial fold's) AND
-        // identical += sequence ⇒ bit-identical reduced system.
+        // (2, serial in block-index order) Accumulate with the same fused Eigen
+        // expression as the serial fold's Woodbury step below.  The operands (the
+        // parallel-computed G, M and z_free) are bit-identical to the serial fold's and
+        // the += sequence is the same, so the reduced system is bit-identical.
         dd_priors_.reserve(NB);
         for (std::size_t b = 0; b < NB; ++b) {
             FoldedDdPrior& fd = fd_slot[b];
@@ -1083,7 +1081,7 @@ void NetworkNormalEquations::foldReducedDdPriors(
         return;
     }
 
-    // ---- Serial fold (n_threads == 1, the default; byte-identical OFF path) ------
+    // ---- Serial fold (n_threads ≤ 1, the default; the byte-identical off path) ---
     // Cache N_rr⁻¹ u_r per station (reused across every block/row that touches it).
     std::vector<bool> have_ur(n_active_, false);
     std::vector<Eigen::VectorXd> nrr_inv_ur(n_active_);
@@ -1093,7 +1091,7 @@ void NetworkNormalEquations::foldReducedDdPriors(
         if (blk.Pz.rows() != K || blk.Pz.cols() != K || blk.zhat.size() != K) {
             fail("foldReducedDdPriors: Pz/zhat dimension mismatch with the row count");
         }
-        // EVERY input block occupies exactly one slot (bidx == input index), so a
+        // Every input block occupies exactly one slot (bidx == input index), so a
         // chordless (K=0) or degenerate (non-PD) block stays index-aligned for the
         // z-store's per-block posterior readback (ddPriorPosteriorMean/numDdPriorBlocks).
         const std::size_t bidx = dd_priors_.size();
@@ -1124,12 +1122,12 @@ void NetworkNormalEquations::foldReducedDdPriors(
         Eigen::MatrixXd B = Eigen::MatrixXd::Zero(K, K);
         Eigen::MatrixXd G = Eigen::MatrixXd::Zero(n_shared_, K);
         Eigen::VectorXd z_free = Eigen::VectorXd::Zero(K);
-        {   // P0b: time the per-station reduction loop (the 44%-of-epoch dominant fold cost)
+        {   // section timer for the per-station reduction loop, the dominant fold cost (P0b)
             ScopedAccum _fl(perf_timing_, &timers_.fold_loop_ms);
-            // Flatten by_station (ascending station index — std::map order) and precompute
-            // N_rr⁻¹ u_r for every touched station SERIALLY (a deterministic per-station
-            // solve; hoisting it out of any parallel region kills the lazy-fill race and is
-            // byte-identical to the serial lazy fill).
+            // Flatten by_station (ascending station index, std::map order) and precompute
+            // N_rr⁻¹ u_r for every touched station serially.  The value is a deterministic
+            // per-station solve, so hoisting it out of any parallel region removes the
+            // lazy-fill race and is byte-identical to the serial lazy fill.
             std::vector<std::pair<std::size_t, const std::vector<DdStationTerm>*>> st_list;
             st_list.reserve(by_station.size());
             for (const auto& kv : by_station) {
@@ -1153,9 +1151,10 @@ void NetworkNormalEquations::foldReducedDdPriors(
             };
 #ifdef _OPENMP
             if (station_threads > 1 && st_list.size() > 1) {
-                // parallel_carry: per-thread partials over CONTIGUOUS station ranges, combined
-                // in ascending thread order (reproducible per thread-count, ULP-different from
-                // serial — the reduce()-style relaxation the toggle opts into).
+                // Under parallel_carry, per-thread partials over contiguous station ranges
+                // are combined in ascending thread order.  The result is reproducible for a
+                // given thread count and differs from serial at ULP level: the same
+                // relaxation as in reduce(), which the toggle opts into.
                 const int nt = static_cast<int>(std::min<std::size_t>(
                     static_cast<std::size_t>(station_threads), st_list.size()));
                 std::vector<Eigen::MatrixXd> Bp(nt, Eigen::MatrixXd::Zero(K, K));
@@ -1186,26 +1185,27 @@ void NetworkNormalEquations::foldReducedDdPriors(
             }
         }
 
-        // Middle inverse M = (Pᶻ + B)⁻¹ (PD: SPD prior + PSD B).  A degenerate block
-        // (non-PD, e.g. a malformed prior) folds INERTLY (M=0) — a no-op that keeps its
+        // Middle inverse M = (Pᶻ + B)⁻¹ (PD: SPD prior plus PSD B).  A degenerate block
+        // (non-PD, e.g. a malformed prior) folds inertly (M = 0): a no-op that keeps its
         // index slot rather than corrupting the reduced system or shifting the keys.
-        // PD-safe card: that inert branch is the SILENT PERMANENT FREEZE this card exists
-        // to end — it is now counted (INC-0), avoided where the violation is numerical
-        // (INC-1), and re-coupled by the install's block rebirth when it is not (INC-2a).
-        // The column-parallel inverse (parallel_carry) moved into @ref inverseFromLdlt.
+        // The inert branch freezes the block, so it is counted (INC-0), avoided under
+        // the PD-safe screen where the violation is numerical (INC-1), and re-coupled by
+        // the install's block rebirth where it is not (INC-2a).  The column-parallel
+        // inverse (parallel_carry) is in @ref inverseFromLdlt.
         Eigen::MatrixXd M;
-        {   // P0b: time the K×K middle inverse (LDLT factor + explicit inverse)
+        {   // section timer for the K×K middle inverse, LDLT factor plus explicit inverse (P0b)
             ScopedAccum _fm(perf_timing_, &timers_.fold_minv_ms);
             Eigen::MatrixXd PzB = blk.Pz + B;
             PzB = (0.5 * (PzB + PzB.transpose())).eval();
-            // PD-safe INC-1a: cache the DATA information B for the PRODUCT-form posterior
-            // (Pᶻ − PᶻMPᶻ ≡ PᶻMB).  Armed-only, so the OFF path's footprint is unchanged.
+            // Cache the data information B for the product-form posterior
+            // (Pᶻ − PᶻMPᶻ ≡ PᶻMB), PD-safe INC-1a.  Only when armed, so the off path's
+            // allocation footprint is unchanged.
             if (dd_fold_pd_safe_) fd.B = B;
             DdMiddleInverse mi = dd_fold_pd_safe_
                                      ? ddMiddleInversePdSafe(PzB, K, station_threads)
                                      : ddMiddleInverseLegacy(PzB, K, station_threads);
-            // D5: cache M⁻¹ = Pᶻ+B for the innovation covariance readout (post-repair
-            // when INC-1c fired, so Cov(v) and the fold agree).
+            // Cache M⁻¹ = Pᶻ+B for the D5 innovation covariance readout; post-repair
+            // when the INC-1c clamp fired, so Cov(v) and the fold agree.
             fd.Minv          = std::move(mi.Minv);
             fd.degenerate    = mi.degenerate;
             fd.min_pivot_rel = mi.min_pivot_rel;
@@ -1215,14 +1215,15 @@ void NetworkNormalEquations::foldReducedDdPriors(
         }
 
         // Joint rank-K Woodbury fold onto the reduced shared system (a no-op when M=0).
-        {   // P0b: time the Woodbury GMGᵀ fold.  parallel_carry: G·M·Gᵀ is a big dense GEMM
-            // (n_shared×K · K×K · K×n_shared) that DOES thread well under Eigen — un-pin Eigen
-            // locally so it fans across cores.  This step is NOT inside an OpenMP region (the
-            // per-station loop + column-solve regions closed above), so there is no nesting.
-            // The per-station reduction already relaxed this fold, so the GEMM reassociation
-            // introduces no NEW serial≡parallel break.  RAII-restored (ScopedEigenThreads)
-            // on every exit — including a throw — so the next block's OpenMP loop always
-            // runs Eigen-pinned again.
+        {   // Section timer for the Woodbury GMGᵀ fold (P0b).  Under parallel_carry, G·M·Gᵀ
+            // is a large dense GEMM (n_shared×K · K×K · K×n_shared) that threads well in
+            // Eigen, so Eigen is un-pinned locally to spread it across cores.  This step is
+            // outside any OpenMP region (the per-station loop and column-solve regions
+            // closed above), so there is no nesting.  parallel_carry already gives up serial
+            // bit-identity in the per-station reduction, so the GEMM reassociation adds no
+            // further serial/parallel difference.  ScopedEigenThreads restores the pin on
+            // every exit, including a throw, so the next block's OpenMP loop runs with
+            // Eigen pinned again.
             ScopedAccum _fg(perf_timing_, &timers_.fold_gmg_ms);
             ScopedEigenThreads _et(station_threads > 1, station_threads);
             reduced_N_ss_.noalias() += G * M * G.transpose();
@@ -1288,21 +1289,21 @@ Eigen::MatrixXd NetworkNormalEquations::ddPriorPosteriorCovariance(
         return Eigen::MatrixXd();            // chordless slot → empty
     }
     // Pᶻ_post = (Pᶻ − Pᶻ M Pᶻ) + (Pᶻ M Gᵀ) Σ_ss (G M Pᶻ).  An inert degenerate block
-    // has M=0 ⇒ Pᶻ_post = Pᶻ (the untouched prior — no information was folded).
+    // has M = 0 ⇒ Pᶻ_post = Pᶻ (the untouched prior; no information was folded).
     const Eigen::MatrixXd PzM = fd.Pz * fd.M;                 // Pᶻ M            (K×K)
     Eigen::MatrixXd cov;
     if (dd_fold_pd_safe_ && !fd.degenerate && fd.B.rows() == K && fd.B.cols() == K) {
-        // --- PD-safe INC-1a: the PRODUCT form of the same quantity ---------------
-        // Pᶻ − PᶻMPᶻ = PᶻM[(Pᶻ+B) − Pᶻ] = PᶻMB, EXACTLY.  The left form subtracts two
-        // 1e6-scale operands to land on a 1e-4-scale mature row — catastrophic
-        // cancellation that, over K=686 GEMM chains and the W·Pᶻ·Wᵀ integer
-        // re-expression, pushes the near-singular joint lane block's hidden tight
-        // eigenvalues through zero (measured between ep 2 and ep 122, 2026-08-02).
-        // The right form's operands follow the scale of the ANSWER: 1e-4·(1/B)·B.
+        // --- Product form of the same quantity (PD-safe INC-1a) ------------------
+        // Pᶻ − PᶻMPᶻ = PᶻM[(Pᶻ+B) − Pᶻ] = PᶻMB exactly.  The left form subtracts two
+        // operands of order 1e6 to produce a mature row of order 1e-4.  That
+        // cancellation, accumulated over long GEMM chains and the W·Pᶻ·Wᵀ integer
+        // re-expression, can push the smallest eigenvalues of the near-singular joint
+        // lane block through zero.  The right form's operands follow the scale of the
+        // result: 1e-4·(1/B)·B.
         //
-        // NOT applied to a degenerate block: with M forced to 0 the identity's premise
-        // (M = (Pᶻ+B)⁻¹) is false, and the inert-fold semantics — posterior == the
-        // untouched prior — are what the subtractive form still delivers.
+        // Not applied to a degenerate block: with M forced to 0 the identity's premise
+        // (M = (Pᶻ+B)⁻¹) is false, and the subtractive form still gives the inert-fold
+        // result (the posterior equals the untouched prior).
         cov = fd.Pz * (fd.M * fd.B);                          // Pᶻ M B          (K×K)
         cov = (0.5 * (cov + cov.transpose())).eval();         // sym(·): the exact symmetry
     } else {
@@ -1341,8 +1342,8 @@ void NetworkNormalEquations::ddPriorInnovation(
     // v = z_free − Gᵀ x_s − ẑ (== the `innov` of ddPriorPosteriorMean): the data-implied
     // DD given the solved shared estimate, minus the carried prior.
     v = fd.z_free - fd.G.transpose() * x_s - fd.zhat;
-    // Cov(v) = (Pᶻ + B) − Gᵀ Σ_ss G = M⁻¹ − Gᵀ Σ_ss G.  The MINUS of the border term is
-    // exact (x_s is prior-influenced); it makes Pᶻ M Cov(v) M Pᶻ = Pᶻ − Pᶻ⁺.
+    // Cov(v) = (Pᶻ + B) − Gᵀ Σ_ss G = M⁻¹ − Gᵀ Σ_ss G.  Subtracting the border term is
+    // exact (x_s is influenced by the prior); it gives Pᶻ M Cov(v) M Pᶻ = Pᶻ − Pᶻ⁺.
     cov_v = fd.Minv;
     if (n_shared_ > 0) {
         cov_v.noalias() -= fd.G.transpose() * cov_free_xs * fd.G;
@@ -1377,15 +1378,15 @@ Eigen::VectorXd NetworkNormalEquations::solveSharedConstrained(
         if (cov_out) *cov_out = Eigen::MatrixXd();
         return Eigen::VectorXd();
     }
-    // Factorize the datum-constrained reduced normals ONCE and reuse the factor for
-    // both the point solve and (optionally) the formal covariance — the inverse of
-    // the same matrix — so the caller need not refactor it.  The PD guard below is
-    // the single rank-deficiency safety net (an under-specified datum throws here).
+    // Factorize the datum-constrained reduced normals once and reuse the factor for
+    // the point solve and, optionally, the formal covariance (the inverse of the same
+    // matrix), so the caller need not refactor it.  The PD guard below is the single
+    // rank-deficiency safety net (an under-specified datum throws here).
     //
-    // D0: the factorization + point solve accrue to solve_ms; the explicit full
-    // inverse (the D1 selected-inverse lever's direct cost) accrues to
-    // cov_inverse_ms.  Two disjoint sub-timers, so the profiler sees how much of the
-    // "solve" is actually the covariance the consumers below then propagate.
+    // Timing (D0): the factorization and point solve accrue to solve_ms; the explicit
+    // full inverse (the direct cost that the D1 selected-inverse option addresses)
+    // accrues to cov_inverse_ms.  The two sub-timers are disjoint, so the profiler
+    // shows how much of the "solve" is the covariance the consumers then propagate.
     const bool pt = perf_timing_;
     if (pt) ++timers_.solve_calls;
     PerfClock::time_point t_fac;
@@ -1425,12 +1426,12 @@ Eigen::VectorXd NetworkNormalEquations::reconstructStation(
     Eigen::VectorXd x_r = st.Nrr_ldlt.solve(rhs);
 
     // Anchor-free sum-to-zero gauge correction (@ref foldReducedSumZeroGauges):
-    // the fold constrained the reduced solve, so the matching CONSTRAINED locals
+    // the fold constrained the reduced solve, so the matching constrained locals
     // are x_r −= n_r·(γ − gᵀ x_s)/β for each gauge this station is a term of
     // (n_r = N_rr⁻¹ e_col; γ − gᵀ x_s = the total unconstrained ambiguity sum).
-    // Touches only the gauge (common-shift) direction, so every estimable
-    // (between-receiver, between-satellite) quantity is unchanged.  Empty on the
-    // anchor / OFF path → byte-identical.
+    // Only the gauge (common-shift) direction changes, so every estimable
+    // (between-receiver, between-satellite) quantity is unchanged.  The list is
+    // empty on the anchor path and with the gauge off, which stay byte-identical.
     if (!station_sumzero_.empty()) {
         Eigen::VectorXd e = Eigen::VectorXd::Zero(st.n_local);
         for (const auto& [gidx, col] : station_sumzero_[station]) {
@@ -1443,10 +1444,11 @@ Eigen::VectorXd NetworkNormalEquations::reconstructStation(
         }
     }
 
-    // Card-4 DD-prior correction (@ref foldReducedDdPriors): the constrained locals
+    // DD-prior correction (@ref foldReducedDdPriors, Card 4): the constrained locals
     // are x_r −= N_rr⁻¹ C_{L,r}ᵀ κ, with κ = M(z_free − Gᵀ x_s − ẑ) shared across this
-    // station's terms of each block.  Touches only the DD (cycle) directions; empty
-    // on the OFF path → byte-identical to the pre-Card-4 reconstruction.
+    // station's terms of each block.  Only the DD (cycle) directions change.  With no
+    // DD priors folded the list is empty and the reconstruction is byte-identical to
+    // the one without the correction.
     if (station < station_ddprior_.size() && !station_ddprior_[station].empty()) {
         std::vector<Eigen::VectorXd> kappa(dd_priors_.size());
         std::vector<bool> have_kappa(dd_priors_.size(), false);
@@ -1468,9 +1470,9 @@ Eigen::VectorXd NetworkNormalEquations::reconstructStation(
 // Carry-aware covariance readback (docs/SPEC_carry_aware_covariance.md §5a).
 //
 // The fold is the Schur complement of  Ã⁻¹ = N_rr⁻¹ − Σ_b Y_b M_b Y_bᵀ  (Y_b = N_rr⁻¹C_bᵀ),
-// so the honest readback subtracts the SAME rank-K term the reduced shared normals were
-// already built from.  This is the single implementation of that term — every armed
-// readback routes through it, so the four can never drift apart.
+// so a consistent readback subtracts the same rank-K term the reduced shared normals
+// were built from.  This is the single implementation of that term; every armed
+// readback routes through it, so the four cannot diverge.
 // ---------------------------------------------------------------------------------
 void NetworkNormalEquations::carryCovCorrection(
     const std::vector<std::size_t>& sta, const std::vector<Eigen::VectorXd>& n,
@@ -1481,11 +1483,11 @@ void NetworkNormalEquations::carryCovCorrection(
     if (k == 0 || dd_priors_.empty()) {
         return;
     }
-    // ONE sparse pass over the requests fills every touched block's Y columns:
+    // One sparse pass over the requests fills every touched block's Y columns:
     //   Ycols_b(:, i) = C_{b, sta[i]} n_i   (zero column where block b misses station i).
-    // station_ddprior_ is exactly the (block, row, local_col, coeff) list the MEAN path
-    // walks in reconstructStation, so the two readbacks cannot disagree about which
-    // block owns which column.
+    // station_ddprior_ is the same (block, row, local_col, coeff) list that the mean path
+    // walks in reconstructStation, so the two readbacks agree on which block owns which
+    // column.
     std::vector<Eigen::MatrixXd> Ycols(dd_priors_.size());
     for (Eigen::Index i = 0; i < k; ++i) {
         const std::size_t s = sta[static_cast<std::size_t>(i)];
@@ -1499,8 +1501,8 @@ void NetworkNormalEquations::carryCovCorrection(
             Y(t.row, i) += t.coeff * n[static_cast<std::size_t>(i)](t.col);
         }
     }
-    // One GEMM per touched block.  A DEGENERATE block carries M = 0 (the parent card's
-    // inert fold), so it contributes exactly zero here without a branch.
+    // One GEMM per touched block.  A degenerate block carries M = 0 (the inert fold), so
+    // it contributes exactly zero here without a branch.
     for (std::size_t b = 0; b < dd_priors_.size(); ++b) {
         const Eigen::MatrixXd& Y = Ycols[b];
         if (Y.size() == 0) continue;
@@ -1534,7 +1536,7 @@ Eigen::MatrixXd NetworkNormalEquations::reconstructStationCovariance(
     if (!carry_aware || dd_priors_.empty()) {
         return cov;
     }
-    // Armed: the same quantity over Ã⁻¹.  Column i of N_rr⁻¹ IS n_i = N_rr⁻¹e_i, so the
+    // Armed: the same quantity over Ã⁻¹.  Column i of N_rr⁻¹ is n_i = N_rr⁻¹e_i, so the
     // whole-station form is the batched correction with one request per local column.
     std::vector<std::size_t>     sta(static_cast<std::size_t>(st.n_local), station);
     std::vector<Eigen::VectorXd> n(static_cast<std::size_t>(st.n_local));
@@ -1548,8 +1550,8 @@ Eigen::MatrixXd NetworkNormalEquations::reconstructStationCovariance(
     Eigen::MatrixXd out = Nrr_inv - local_corr;
     if (n_shared_ > 0) out.noalias() += Mreg * cov_free_xs * Mreg.transpose();
     out = (0.5 * (out + out.transpose())).eval();
-    // §5b: refuse, never clamp — and refuse WHOLESALE, so the returned matrix stays one
-    // consistent model rather than a mixture of two.
+    // Refuse rather than clamp, and refuse the whole matrix, so the returned matrix stays
+    // one consistent model rather than a mixture of two (§5b).
     long long bad = 0;
     for (Eigen::Index c = 0; c < st.n_local; ++c)
         if (!(out(c, c) > 0.0) || !std::isfinite(out(c, c))) ++bad;
@@ -1581,7 +1583,7 @@ Eigen::VectorXd NetworkNormalEquations::reconstructStationCovarianceDiag(
     // Per-column diagonal of Cov(x_r) = N_rr⁻¹ + M Cov_free Mᵀ, M = N_rr⁻¹ N_rs:
     //   (N_rr⁻¹)_{cc} = e_cᵀ N_rr⁻¹ e_c = n_c(c),   n_c = N_rr⁻¹ e_c
     //   (M Cov_free Mᵀ)_{cc} = m_cᵀ Cov_free m_c,   m_c = N_sr n_c  (row c of M, transposed)
-    // One local solve per requested column — no full N_rr⁻¹ (the serial-path cost).
+    // One local solve per requested column; no full N_rr⁻¹ is formed (the serial-path cost).
     const bool armed = carry_aware && !dd_priors_.empty();
     std::vector<Eigen::VectorXd> nvec;
     std::vector<std::size_t>     sta;
@@ -1610,9 +1612,10 @@ Eigen::VectorXd NetworkNormalEquations::reconstructStationCovarianceDiag(
     if (!armed) {
         return out;
     }
-    // Armed: the same per-column quantity over Ã⁻¹ — one batched correction for all k
-    // columns.  PER-COLUMN fallback here (unlike the matrix-valued forms): each variance
-    // is a standalone number, so refusing one does not make the others inconsistent.
+    // Armed: the same per-column quantity over Ã⁻¹, one batched correction for all k
+    // columns.  The fallback here is per column (unlike the matrix-valued forms): each
+    // variance is a standalone number, so refusing one does not make the others
+    // inconsistent.
     Eigen::MatrixXd local_corr, m_corr;
     carryCovCorrection(sta, nvec, local_corr, m_corr);
     ++carry_cov_stats_.calls;
@@ -1629,7 +1632,7 @@ Eigen::VectorXd NetworkNormalEquations::reconstructStationCovarianceDiag(
             out(i) = var;
             ++carry_cov_stats_.corrected_rows;
         } else {
-            ++carry_cov_stats_.nonpos_rows;   // §5b: refuse, never clamp — keep the blind value
+            ++carry_cov_stats_.nonpos_rows;   // refused, not clamped: carry-blind value kept (§5b)
         }
     }
     return out;
@@ -1648,10 +1651,10 @@ NetworkNormalEquations::stationRegression(std::size_t station,
     if (local_col < 0 || local_col >= st.n_local) {
         fail("stationRegression: local column out of range");
     }
-    // One local solve n_c = N_rr⁻¹ e_r delivers BOTH outputs (the same primitive
+    // One local solve n_c = N_rr⁻¹ e_r gives both outputs (the same primitive
     // reconstructStationCovarianceDiag uses per column):
-    //   cond_var = (N_rr⁻¹)_{rr} = n_c(r)                — pure conditional variance
-    //   row      = M_rᵀ = N_sr n_c = N_sr N_rr⁻¹ e_r     — regression on the border.
+    //   cond_var = (N_rr⁻¹)_{rr} = n_c(r)                pure conditional variance
+    //   row      = M_rᵀ = N_sr n_c = N_sr N_rr⁻¹ e_r     regression on the border
     StationRegression out;
     Eigen::VectorXd e_c = Eigen::VectorXd::Zero(st.n_local);
     e_c(local_col) = 1.0;
@@ -1660,10 +1663,11 @@ NetworkNormalEquations::stationRegression(std::size_t station,
     out.row = (n_shared_ > 0) ? Eigen::VectorXd(st.N_sr * n_c)   // N_sr N_rr⁻¹ e_r (n_shared)
                               : Eigen::VectorXd();
     if (!carry_aware || dd_priors_.empty()) {
-        // F3 (network.phase_leveling_local_block): the same n_c read at the station's
-        // other carried columns — (N_rr⁻¹)_{r c_j}, the conditional CROSS covariance.
-        // Plain-normals path only (the carry-aware correction below is per-column and
-        // would leave these uncorrected; the header says why that must not be mixed).
+        // Cross covariance for network.phase_leveling_local_block (F3): the same n_c read
+        // at the station's other carried columns gives (N_rr⁻¹)_{r c_j}, the conditional
+        // cross covariance.  Plain-normals path only: the carry-aware correction below is
+        // per column and would leave these uncorrected (the header explains why the two
+        // must not be mixed).
         if (cross_cols) {
             const Eigen::Index k = static_cast<Eigen::Index>(cross_cols->size());
             out.cross.resize(k);
@@ -1676,7 +1680,7 @@ NetworkNormalEquations::stationRegression(std::size_t station,
         }
         return out;
     }
-    // Armed: both outputs move to Ã⁻¹ TOGETHER — a pseudo-observation row whose
+    // Armed: both outputs move to Ã⁻¹ together.  A pseudo-observation row whose
     // coefficients came from one model and whose variance came from another would be
     // worse than either, so the refusal is joint.
     Eigen::MatrixXd local_corr, m_corr;
@@ -1686,7 +1690,7 @@ NetworkNormalEquations::stationRegression(std::size_t station,
     const double cond_var = out.cond_var - local_corr(0, 0);
     if (!(cond_var > 0.0) || !std::isfinite(cond_var)) {
         ++carry_cov_stats_.nonpos_rows;
-        return out;                                       // §5b: refuse, never clamp
+        return out;                                       // refuse rather than clamp (§5b)
     }
     tallyCarryRatio(cond_var, out.cond_var);
     ++carry_cov_stats_.corrected_rows;
@@ -1739,7 +1743,7 @@ Eigen::MatrixXd NetworkNormalEquations::jointConditionalCovariance(
         for (Eigen::Index b = a; b < k; ++b) {
             double v = (n_shared_ > 0) ? m[a].dot(cm[b]) : 0.0;  // m_aᵀ Cov_free m_b
             if (sta[a] == sta[b]) {
-                v += n[a](col[b]);  // (N_rr⁻¹)_{c_a,c_b} — same local space only
+                v += n[a](col[b]);  // (N_rr⁻¹)_{c_a,c_b}; same local space only
             }
             cov(a, b) = v;
             cov(b, a) = v;
@@ -1748,10 +1752,10 @@ Eigen::MatrixXd NetworkNormalEquations::jointConditionalCovariance(
     if (!carry_aware || dd_priors_.empty()) {
         return cov;
     }
-    // Armed: the same joint quantity over Ã⁻¹.  Note the local term now survives ACROSS
-    // stations — N_rr⁻¹ is block-diagonal, Ã⁻¹ is not, and a DD chord spans two stations
-    // by construction, so this cross-station term is the one that makes a between-station
-    // DD σ mean anything at all.
+    // Armed: the same joint quantity over Ã⁻¹.  The local term now survives across
+    // stations: N_rr⁻¹ is block-diagonal and Ã⁻¹ is not, and a DD chord spans two
+    // stations by construction, so this cross-station term is what gives a
+    // between-station DD σ its meaning.
     Eigen::MatrixXd local_corr, m_corr;
     carryCovCorrection(sta, n, local_corr, m_corr);
     ++carry_cov_stats_.calls;
@@ -1773,9 +1777,9 @@ Eigen::MatrixXd NetworkNormalEquations::jointConditionalCovariance(
             out(b, a) = v;
         }
     }
-    // §5b: refuse WHOLESALE.  A k×k matrix with some entries from Ã⁻¹ and some from
-    // N_rr⁻¹ is not the covariance of anything, and the DD variance gᵀQg its consumers
-    // form would silently mix the two models.
+    // Refuse the whole matrix, as §5b requires.  A k×k matrix with some entries from
+    // Ã⁻¹ and some from N_rr⁻¹ is not the covariance of anything, and the DD variance
+    // gᵀQg its consumers form would mix the two models with no indication.
     long long bad = 0;
     for (Eigen::Index a = 0; a < k; ++a)
         if (!(out(a, a) > 0.0) || !std::isfinite(out(a, a))) ++bad;
@@ -1867,10 +1871,10 @@ Eigen::MatrixXd NetworkNormalEquations::blockResidualCofactor(
     if (b == 0) {
         return Eigen::MatrixXd();
     }
-    // L_ij = a_iᵀ Cov(θ) a_j — rowRedundancy's leverage, evaluated OFF the diagonal
-    // too.  Same marginalization, same frame; the loop there is the i = j case of
-    // the two Gram products here.  Costs one N_rr solve for the b right-hand sides
-    // plus the (already cached) M = N_rr⁻¹ N_srᵀ.
+    // L_ij = a_iᵀ Cov(θ) a_j: rowRedundancy's leverage, evaluated off the diagonal
+    // as well.  Same marginalization, same frame; the loop there is the i = j case
+    // of the two Gram products here.  Costs one N_rr solve for the b right-hand
+    // sides plus one for M = N_rr⁻¹ N_srᵀ, both through the cached factor.
     Eigen::MatrixXd L;
     const bool has_local = st.n_local > 0;
     if (has_local) {
@@ -1886,10 +1890,11 @@ Eigen::MatrixXd NetworkNormalEquations::blockResidualCofactor(
     } else {
         L = Eigen::MatrixXd::Zero(b, b);
     }
-    // Q = P⁻¹ − L.  The two Gram products are symmetric in exact arithmetic only,
-    // and the consumer factorizes this matrix to form ẽᵀQ⁻¹ẽ — a half-ulp asymmetry
-    // there is a silently wrong quadratic form, not a diagnostic, so symmetrize.
-    // NOT clamped: a fully-leveraged block must come back singular (header note 1).
+    // Q = P⁻¹ − L.  The two Gram products are symmetric only in exact arithmetic,
+    // and the consumer factorizes this matrix to form ẽᵀQ⁻¹ẽ, where a half-ulp
+    // asymmetry gives a wrong quadratic form with no diagnostic; hence the
+    // symmetrization.  Not clamped: a fully leveraged block must come back singular
+    // (first @note in the header).
     Eigen::MatrixXd Q(b, b);
     for (Eigen::Index i = 0; i < b; ++i) {
         for (Eigen::Index j = i; j < b; ++j) {
@@ -1945,9 +1950,9 @@ Eigen::VectorXd NetworkNormalEquations::stationLocalPivots(std::size_t station) 
     if (st.n_local == 0) return Eigen::VectorXd();
     const Eigen::VectorXd d = st.Nrr_ldlt.vectorD();
     // Undo Eigen's symmetric pivoting.  Applying the transposition sequence to
-    // the identity labelling gives perm[k] = the ORIGINAL column sitting at
-    // permuted slot k (the same k-th/indices[k] swap order LDLT::solve uses), so
-    // the pivot D(k) belongs to original column perm[k].
+    // the identity labelling gives perm[k] = the original column at permuted
+    // slot k (the same k-th/indices[k] swap order LDLT::solve uses), so the
+    // pivot D(k) belongs to original column perm[k].
     const auto& tr = st.Nrr_ldlt.transpositionsP();
     std::vector<Eigen::Index> perm(static_cast<std::size_t>(st.n_local));
     for (Eigen::Index k = 0; k < st.n_local; ++k) perm[static_cast<std::size_t>(k)] = k;

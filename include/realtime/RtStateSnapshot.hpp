@@ -1,27 +1,28 @@
 /**
  * @file RtStateSnapshot.hpp
- * @brief RT-engine filter-state snapshot (the consumer-side warm start — the
- *        RTB-7 complement).
+ * @brief RT-engine filter-state snapshot: the consumer-side warm start, the
+ *        complement of the RTB-7 network snapshot.
  *
- * The network producer's RTB-7 snapshot deliberately excludes per-station
- * filter state; the consumer / user engine's own Kalman memory (position,
- * clock, ZWD, per-satellite iono, receiver biases, carrier AMBIGUITIES and the
- * full covariance) is exactly what re-converges for the first hours after
- * every restart.  This snapshot serializes that memory plus the engine's SSR
+ * The network producer's RTB-7 snapshot excludes per-station filter state by
+ * design.  The consumer / user engine's own Kalman memory (position, clock, ZWD,
+ * per-satellite iono, receiver biases, carrier ambiguities and the full
+ * covariance) is what otherwise re-converges for the first hours after every
+ * restart.  This snapshot serializes that memory plus the engine's SSR
  * continuity baselines (solution-generation id, phase/code-bias applied maps,
  * the StateManager's discontinuity-counter memory), so a resumed engine keeps
- * its datum-break DETECTORS armed against everything the producer did during
- * the outage — the invariant-#7 re-coupling edge is re-validated by the
- * engine's own existing reactions rather than by new machinery.
+ * its datum-break detectors armed against everything the producer did during
+ * the outage.  The invariant-#7 re-coupling edge is then re-validated by the
+ * engine's existing reactions, with no additional mechanism.
  *
- * Format: line-tagged text like the RTB-7 network snapshot — strict
- * full-consumption parses, an END,<count> truncation guard, atomic
- * temp-file + rename writes.  Doubles are written round-trip exact ("{:.17g}").
+ * Format: line-tagged text like the RTB-7 network snapshot, with strict
+ * full-consumption parses, an END,<count> truncation guard (the count of record
+ * lines between the header and END) and atomic temp-file + rename writes.
+ * Doubles are written round-trip exact ("{:.17g}").
  *
  *   # gnss_rt_state_snapshot v1
  *   M,week,tow,wall_utc,fingerprint_hex,core_size,state_size
  *   G,generation_id,epoch_count
- *   K,idx,kind,key            one per DYNAMIC state, ascending idx
+ *   K,idx,kind,key            one per dynamic state, ascending idx
  *   X,idx,value               one per state (core included)
  *   P,i,v0,...,vi             covariance lower-triangle row i
  *   D,key,counter             StateManager SSR disc-counter memory
@@ -29,13 +30,13 @@
  *   C,key,0|1                 A5 code-bias applied map
  *   END,n_lines
  *
- * Card CC (A) — deliberately NOT in v1: the consumer's last-APPLIED phase-bias
- * VALUE map (the declared-step carry's Δ baseline, @c PbDiscCarryLedger).  A
- * restored engine therefore has the A5 applied FLAGS but no applied VALUES, so
- * the first disc bump / freshness flip per key after a restore falls back to the
- * existing ambiguity RESET (counted as @c pb_disc_reset_first_sight) — the
- * conservative direction; every later event on that key is carried once the
- * first post-restore epoch has recorded the applied value.
+ * Not in v1 (card CC (A)): the consumer's last-applied phase-bias value map (the
+ * declared-step carry's Δ baseline, @c PbDiscCarryLedger).  A restored engine
+ * therefore has the A5 applied flags but no applied values, so the first disc
+ * bump or freshness flip per key after a restore falls back to the existing
+ * ambiguity reset (counted as @c pb_disc_reset_first_sight), which is the
+ * conservative direction.  Every later event on that key is carried, because the
+ * first post-restore epoch records the applied value.
  *
  * @see src/core/realtime/RealTimeEngineStateSnap.cpp (the engine seam that
  *      writes / stages / applies), docs/SPEC_synthetic_minimum_network.md §17.
@@ -60,7 +61,7 @@ struct RtStateSnapshot {
     int         snap_week{ 0 };
     double      snap_tow{ 0.0 };
     std::string wall_utc;               ///< Informational only.
-    uint64_t    fingerprint{ 0 };       ///< FNV-1a over the state-meaning config facts.
+    uint64_t    fingerprint{ 0 };       ///< FNV-1a over the config facts that fix what the state means.
     std::size_t core_size{ 0 };         ///< Fixed core block length at serialization.
     std::size_t state_size{ 0 };        ///< Total state length at serialization.
 
@@ -71,7 +72,7 @@ struct RtStateSnapshot {
     // --- K: dynamic layout (ascending index) ------------------------------
     struct DynState {
         std::size_t idx{ 0 };
-        std::string kind;               ///< ION/IONR/AMB/RXCB/SATB/SATPB/RXPB/SATCLK.
+        std::string kind;               ///< One of ION, IONR, AMB, RXCB, SATB, SATPB, RXPB, SATCLK.
         std::string key;                ///< The owning map's key, verbatim.
     };
     std::vector<DynState> dyn;
@@ -82,8 +83,8 @@ struct RtStateSnapshot {
 
     // --- D/F/C: SSR continuity baselines ----------------------------------
     std::map<std::string, int>  ssr_disc;          ///< "sat|signal" -> counter.
-    std::map<std::string, bool> phase_bias_applied; ///< A5 fresh/stale flip memory.
-    std::map<std::string, bool> code_bias_applied;  ///< A5 code analog.
+    std::map<std::string, bool> phase_bias_applied; ///< Fresh/stale flip memory for phase biases (A5).
+    std::map<std::string, bool> code_bias_applied;  ///< The code-bias counterpart (A5).
 };
 
 /// Serializer / strict parser / atomic file IO for @ref RtStateSnapshot.

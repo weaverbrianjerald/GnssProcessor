@@ -1,8 +1,8 @@
-"""Simulated-network theory panels — the formulations behind the report's numbers.
+"""Simulated-network theory panels: the formulations behind the report's numbers.
 
 Three text/math figures (matplotlib mathtext, fully offline) that make the report
 self-contained for teaching: the uncombined observation model and its rank
-defect, the S-basis THIS run realized (read off the product's S line, with the
+defect, the S-basis the run realized (read off the product's S line, with the
 wire-record contracts as estimable lumps), and the truth-projection grading
 method.  Everything quantitative is quoted from the run's ``simnet_grade.json``
 so the equations and the panels above them can never disagree about the datum.

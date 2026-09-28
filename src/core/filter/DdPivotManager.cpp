@@ -3,8 +3,7 @@
  * @brief Implementation of DD baseline pivot manager.
  *
  * Sticky-or-rerank selection plus the DD pivot-handover S-transform,
- * extracted from @c MeasurementModel.  The handover math is unchanged
- * from the previous inline implementation; only its home moved.
+ * extracted from @c MeasurementModel with the handover math unchanged.
  */
 
 #include "filter/DdPivotManager.hpp"
@@ -23,14 +22,14 @@ namespace GnssProcessor {
     }
 
     // ===================================================================
-    // selectPivots — sticky-or-rerank, with optional handover S-transform.
+    // selectPivots: sticky-or-rerank, with optional handover S-transform.
     // ===================================================================
     std::map<std::string, std::string> DdPivotManager::selectPivots(
         const CandidateMap& candidates,
         StateManager& state_manager)
     {
-        // Snapshot the previous epoch's sticky map so we can detect
-        // changes after this epoch's selection runs.
+        // Snapshot the previous epoch's sticky map; handleHandover compares
+        // it with this epoch's selection.
         const std::map<std::string, std::string> previous_pivots = sticky_;
 
         std::map<std::string, std::string> pivots;
@@ -49,11 +48,10 @@ namespace GnssProcessor {
 
             if (!forced && sticky_it != sticky_.end()
              && sats.find(sticky_it->second) != sats.end()) {
-                // Incumbent is still in the candidate set — keep it.
+                // Incumbent is still in the candidate set: keep it.
                 chosen = sticky_it->second;
             } else {
-                // Re-rank by SNR + small tiebreak on signal count.
-                // Same scoring as the legacy inline implementation.
+                // Re-rank by SNR plus a small tiebreak on signal count.
                 double best = -1.0;
                 for (const auto& [sat, info] : sats) {
                     if (excl && excl->count(sat)) continue;  // skip slipped / co-disturbed
@@ -85,7 +83,7 @@ namespace GnssProcessor {
     }
 
     // ===================================================================
-    // handleHandover — DD S-transformation for any pivot that changed.
+    // handleHandover: DD S-transformation for any pivot that changed.
     // ===================================================================
     void DdPivotManager::handleHandover(
         StateManager& state_manager,
@@ -97,7 +95,7 @@ namespace GnssProcessor {
         // Per (cons, code) group with a usable transform: the global
         // state indices of all DD ambiguities in the group, and the
         // position within that list of the row for the new pivot.
-        // Also retain the rename pairs so we can re-key after the math.
+        // The satellite names are kept for re-keying after the math.
         struct GroupTransform {
             std::string cons;
             std::string code;
@@ -141,9 +139,9 @@ namespace GnssProcessor {
                 }
                 if (new_pivot_pos < 0) {
                     // No DD ambiguity for the new pivot in this group's
-                    // old basis — can't transform.  Fall through; the
-                    // expected-keys prune will erase the stale rows and
-                    // the row builder will re-seed on the new pivot.
+                    // old basis, so no transform exists.  The group is
+                    // skipped; the expected-keys prune erases the stale
+                    // rows and the row builder re-seeds on the new pivot.
                     klog->info("DD pivot handover for {}|{} ({}-> {}): "
                                "no existing ambiguity for new pivot in this group; "
                                "falling back to reset-and-reseed",
@@ -184,7 +182,7 @@ namespace GnssProcessor {
         Eigen::VectorXd x = state_manager.getStateVector();
         Eigen::MatrixXd P = state_manager.getCovariance();
 
-        // Pass 1: row updates of P (and x) — produces P_1 = T·P.
+        // Pass 1: row updates of P (and x), giving P_1 = T·P.
         for (const auto& gt : transforms) {
             const int j = gt.indices[gt.new_pivot_pos];
             const Eigen::RowVectorXd row_j = P.row(j);  // copy
@@ -201,7 +199,7 @@ namespace GnssProcessor {
             }
         }
 
-        // Pass 2: column updates of P_1 — produces P_2 = P_1·Tᵀ = T·P·Tᵀ.
+        // Pass 2: column updates of P_1, giving P_2 = P_1·Tᵀ = T·P·Tᵀ.
         for (const auto& gt : transforms) {
             const int j = gt.indices[gt.new_pivot_pos];
             const Eigen::VectorXd col_j = P.col(j);  // copy after Pass 1
@@ -215,16 +213,16 @@ namespace GnssProcessor {
             }
         }
 
-        // Symmetrize + LDLT min-pivot PSD check + epsilon ridge, via the shared
-        // guard (also used by the network producer's pivot handover).  Behaviour
-        // is unchanged from the previous inline block; only its home moved.
+        // Symmetrize, check PSD by the LDLT minimum pivot, and add an epsilon
+        // ridge, through the shared guard in CovarianceReReference (this is its
+        // only caller today).
         CovReReference::enforcePsd(P, log_manager_, "DD pivot handover");
 
         state_manager.setStateVector(x);
         state_manager.setCovariance(P);
 
-        // Rename ambiguity keys.  State indices are unchanged — only
-        // the key strings move.
+        // Rename ambiguity keys.  State indices are unchanged; only the
+        // key strings move.  The new-pivot row becomes the old pivot's row.
         size_t total_renamed = 0;
         for (const auto& gt : transforms) {
             for (size_t k = 0; k < gt.indices.size(); ++k) {

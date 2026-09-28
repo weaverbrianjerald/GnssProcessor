@@ -1,20 +1,20 @@
-"""Truth-referenced position error — the exam's headline accuracy panel.
+"""Truth-referenced position error: the exam's headline accuracy panel.
 
 Joins ``truth_position.csv`` against the processor's ``state_trace.csv`` on the
-integer ``(week, tow-ms)`` grid (SPEC R5) and draws, about each epoch's *true*
+integer ``(week, tow-ms)`` grid (SPEC R5) and draws, about each epoch's true
 receiver point (unlike the self-referenced ``state`` viewer, which can only show
 error about its own median):
 
   (a) truth-referenced E / N / U + 3D error vs time, with the Verifier's
       convergence-skip boundary marked;
   (b) 3D error with the ``k·σ3D`` covariance envelope on a log y-axis, where
-      ``σ3D = sqrt(x_std² + y_std² + z_std²)`` (rotation-invariant — we do NOT
-      fabricate per-axis ENU σ from the diagonal-only trace);
+      ``σ3D = sqrt(x_std² + y_std² + z_std²)`` (rotation-invariant: no per-axis
+      ENU σ is fabricated from the diagonal-only trace);
   (c) the coverage ratio ``|err3D| / σ3D`` against the ``k`` reference line, with
-      the % of steady-state epochs inside 1/2/3σ (the float-PPP covariance-
-      optimism diagnostic, Part D).
+      the percentage of steady-state epochs inside 1/2/3σ (the float-PPP
+      covariance-optimism diagnostic, Part D).
 
-Storm window + cycle-slip epochs overlay every time series.
+Storm window and cycle-slip epochs overlay every time series.
 """
 
 from __future__ import annotations

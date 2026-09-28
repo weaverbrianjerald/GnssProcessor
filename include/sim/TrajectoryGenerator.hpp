@@ -8,7 +8,7 @@
  * and diagnostics) from a smooth analytic ENU kinematic model: a speed ramp to
  * cruise with a small surge, a slowly weaving heading (a curving search track),
  * and sea-state heave.  The horizontal track is integrated on a 1 s sub-grid and
- * sampled at the epoch interval; the recorded ECEF positions ARE the truth
+ * sampled at the epoch interval; the recorded ECEF positions are the truth
  * (self-consistent by construction).  Setting @c kinematic = false collapses the
  * model to a fixed point (the M2 static case).
  */
@@ -52,31 +52,32 @@ struct TrajectoryConfig {
     double heave_period_s{ 8.0 };
     /// Receiver clock: bias(t) = clock_bias0_s + clock_drift_sps*t + w(t), where w is a
     /// random walk of spectral density @c clock_rw_q_m2ps (m^2/s, converted to seconds
-    /// internally) accumulated over the epoch grid from @c clock_seed.  Drift 0 + q 0 =
-    /// the historical constant bias.  See SimConfig.hpp for the physical rationale.
+    /// internally) accumulated over the epoch grid from @c clock_seed.  Drift 0 and q 0
+    /// (the defaults) give a constant bias.  See SimConfig.hpp for the physical rationale.
     double clock_bias0_s{ 1.0e-4 };
     double clock_drift_sps{ 0.0 };
     double clock_rw_q_m2ps{ 0.0 };
     std::uint64_t clock_seed{ 20240315ULL ^ 0xC10CC0DEull };
 
-    /// Seconds of EXACT station-keeping at the start of the arc before any motion
-    /// begins (0 = disabled, the historical behaviour).  During the hold the
-    /// along-track distance stays at zero, so every epoch in the window resolves
-    /// to the identical start ECEF -- a genuine static segment a student can solve
-    /// as a fixed point.  The speed ramp-up (and, in landfall mode, the path-length
-    /// normalisation) start AFTER the hold, so the vessel still reaches the
-    /// destination exactly at the final epoch; it simply has less of the arc in
-    /// which to do it.  Applies to both the landfall and the analytic-weave model.
+    /// Seconds of exact station-keeping at the start of the arc before any motion
+    /// begins (0 = disabled, the default).  During the hold the along-track distance
+    /// and the heave stay at zero, so every epoch in the window resolves to the
+    /// identical start ECEF: a true static segment that can be solved as a fixed
+    /// point.  The speed ramp-up (and, in landfall mode, the path-length
+    /// normalisation) starts after the hold, so the vessel still reaches the
+    /// destination exactly at the final epoch, with less of the arc in which to do
+    /// it.  Applies to both the landfall and the analytic-weave model.
     double static_prefix_s{ 0.0 };
 
     // --- Optional "landfall" mode ------------------------------------------
-    // When BOTH dest_* are finite, the vessel drifts from (lat0,lon0) to the
-    // destination over the arc and *decelerates to a stop at grounding* (a SAR
-    // vessel running aground), landing exactly on the destination.  The default
-    // (NaN) disables it, so the analytic heading-weave model above runs and prior
-    // datasets stay byte-identical.  In landfall mode heading0/heading_amp/
-    // cruise_speed are unused: the along-track speed is derived so the integrated
-    // path length equals the true start->destination distance.
+    // When @c kinematic is true and both dest_* are finite, the vessel drifts from
+    // (lat0,lon0) to the destination over the arc and decelerates to a stop at
+    // grounding (a SAR vessel running aground), landing exactly on the destination.
+    // The default (NaN) disables it, so the analytic heading-weave model above runs
+    // and configurations without dest_* produce byte-identical output.  In landfall
+    // mode heading0/heading_amp/cruise_speed are unused: the along-track speed is
+    // derived so the integrated path length equals the true start->destination
+    // distance.
     double dest_lat_deg{ std::numeric_limits<double>::quiet_NaN() };
     double dest_lon_deg{ std::numeric_limits<double>::quiet_NaN() };
     double landfall_decel_frac{ 0.30 };      ///< fraction of the arc spent easing to grounding.

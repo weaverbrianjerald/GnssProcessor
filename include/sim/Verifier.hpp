@@ -8,10 +8,11 @@
  * (truth_position.csv + truth_scalars.csv) against the real @c gnss_processor run
  * traces (state_trace.csv + measurement_residuals.csv) on @c (week,tow_s) and
  * grades the recovered dual-frequency PPP solution against the DESIGN §10.3
- * tolerances — position accuracy, k-sigma covariance coverage, GPS->Galileo ISB,
- * ZWD, storm-window flatness, and a non-zero residual floor (the anti-circularity
- * check).  The same gates serve as the professor's self-consistency battery and
- * as the per-submission grading oracle.
+ * tolerances: position accuracy, GPS->Galileo ISB, ZWD, storm-window flatness, and
+ * two anti-circularity checks (the share of epochs with 3D error below 0.3 sigma,
+ * and a non-zero phase residual floor).  k-sigma covariance coverage is recorded
+ * as an informational check with no threshold.  The same gates serve as the
+ * simulator's self-consistency battery and as the per-submission grading oracle.
  */
 
 #include <filesystem>
@@ -32,8 +33,8 @@ struct VerifierConfig {
 /**
  * @brief One machine-readable gate outcome, recorded next to its report line.
  *
- * Populated in the SAME place the human report line is emitted, so the JSON
- * verdict and the printed verdict cannot drift.  @c value / @c gate are the
+ * Populated at the site that emits the human report line, so the JSON verdict
+ * and the printed verdict cannot diverge.  @c value / @c gate are the
  * quantity and its threshold (a tolerance-style gate stores the error as
  * @c value and the tolerance as @c gate); @c gate == 0 marks an informational
  * check with no threshold (e.g. coverage %).
@@ -66,7 +67,7 @@ public:
     /**
      * @brief Write @p res to @p path as verify_report.json (SPEC §4.6).
      *
-     * Additive/consumed by the pyviz dashboard; never re-graded.  Emits
+     * Additive output read by the pyviz dashboard; it does not re-grade.  Emits
      * @c {pass, failures, k_sigma, converge_skip, checks[], report_lines[]}.
      * Returns false only on a file-open error (non-fatal to the caller).
      */

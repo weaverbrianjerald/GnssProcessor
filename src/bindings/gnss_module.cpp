@@ -4,19 +4,19 @@
  *
  * Built by the `gnss_processor_module` CMake target and copied to
  * python/gnss_processor.pyd on every build (see CMakeLists.txt POST_BUILD).
- * The module name in PYBIND11_MODULE MUST stay `gnss_processor` so the init
- * symbol (PyInit_gnss_processor) matches that .pyd filename.
+ * The module name in PYBIND11_MODULE has to remain `gnss_processor`: Python
+ * locates the init symbol (PyInit_gnss_processor) by the .pyd filename.
  *
- * Current surface — intentionally minimal; grow it as real needs appear:
+ * The surface is deliberately minimal and grows as needs appear:
  *   - gnss_processor.__version__
  *   - gnss_processor.Llh                       geodetic lat/lon/height container
  *   - ecef_to_llh / llh_to_ecef                WGS84 geodetic <-> ECEF
  *   - ecef_to_enu / enu_to_ecef / enu_to_ecef_matrix   local topocentric ENU
  *
- * Adding more: pure/stateless helpers (like Coordinates) bind directly.
- * Stateful collaborators are heavier — e.g. RinexParser's constructor takes
- * (GnssConfig&, LogManager&, ProductParser&), so those would need bindings or
- * a convenience factory before RinexParser can be exposed here.
+ * Pure, stateless helpers (such as Coordinates) bind directly.  Stateful
+ * classes need more work: RinexParser's constructor takes (const GnssConfig&,
+ * LogManager&, ProductParser&), so those types need bindings, or a convenience
+ * factory is required, before RinexParser can be exposed here.
  */
 
 #include <pybind11/pybind11.h>

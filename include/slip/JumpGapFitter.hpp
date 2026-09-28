@@ -8,10 +8,10 @@
  * at the boundary together with the per-side slopes and a combined residual
  * RMS.  This is the non-causal kernel behind the smoother cycle-slip bridge:
  * given geometry-free or Melbourne-Wübbena series on both sides of a flagged
- * reset, it recovers the jump using future as well as past data — the offline
- * advantage a causal detector cannot exploit.  Mirrors the NGS M-PAGES
- * @c fitGap two-sided window fit (DbEdit.cpp), generalized to arbitrary
- * @f$(t, y)@f$ and carrying no GNSS knowledge whatsoever.
+ * reset, it recovers the jump from future as well as past data, which a causal
+ * detector cannot use.  Mirrors the NGS M-PAGES @c fitGap two-sided window fit
+ * (DbEdit.cpp), generalized to arbitrary @f$(t, y)@f$ and free of GNSS
+ * dependencies.
  *
  * Numerics: the time axis is centred on @f$ t_b @f$ before the normal-equation
  * solve, so the level at the boundary is simply the intercept @f$ a @f$ and the
@@ -27,9 +27,10 @@ namespace GnssProcessor {
 /**
  * @brief Stateless two-sided linear trend + step fitter.
  *
- * No GNSS dependencies — operates on raw @f$(t, y)@f$ pairs in any consistent
- * units (the bridge feeds seconds and metres).  A single instance is reusable
- * and thread-safe (only @c min_window_points is read-only state).
+ * No GNSS dependencies: operates on raw @f$(t, y)@f$ pairs in any consistent
+ * units (the bridge feeds seconds and metres).  A single instance is reusable.
+ * fitStep() is const and reads only @c min_window_points, so concurrent calls on
+ * one instance are safe while @c min_window_points is not being modified.
  */
 struct JumpGapFitter {
     /**
@@ -61,7 +62,7 @@ struct JumpGapFitter {
         int n_post{0};           ///< Post-side sample count used.
     };
 
-    /// Minimum samples required on EACH side; fewer ⇒ @c FitResult::ok = false.
+    /// Minimum samples required on each side; fewer ⇒ @c FitResult::ok = false.
     int min_window_points{4};
 
     /**
@@ -70,10 +71,13 @@ struct JumpGapFitter {
      * @param pre         Samples strictly before the boundary.
      * @param post        Samples at/after the boundary.
      * @param t_boundary_s Boundary epoch; the time axis is centred here.
-     * @return A populated @c FitResult.  @c ok is false if either window has
-     *         fewer than @c min_window_points samples, mismatched
-     *         @c t_s/@c y_m lengths, any non-finite input, or a degenerate
-     *         (zero time-spread) side that prevents a slope solve.
+     * @return A populated @c FitResult.  @c ok is false if @p t_boundary_s is
+     *         non-finite, or if either window has fewer than
+     *         @c min_window_points samples, mismatched @c t_s/@c y_m lengths or
+     *         any non-finite input.  A degenerate side (time spread too small to
+     *         resolve a slope, e.g. all samples at one epoch) does not fail: it
+     *         falls back to a constant fit (level = mean, slope 0), and @c ok
+     *         can still be true.
      */
     FitResult fitStep(const Window& pre, const Window& post,
                       double t_boundary_s) const;

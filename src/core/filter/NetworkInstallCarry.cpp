@@ -1,10 +1,10 @@
 /**
  * @file NetworkInstallCarry.cpp
- * @brief Implementation of @ref networkInstallCarry, the SB_INSTALL block relocated
- *        VERBATIM (dedent-8, zero substitution) out of Application::runNetwork at
- *        decomposition INC-9b (2026-07-22).  Byte-copy of the former if(carry_invariant)
- *        body; the alias preamble reconstructs nc/nmw/trace, the ctx.carry aliases and
- *        the wlAccumulate lambda so the code reads the original names.
+ * @brief Implementation of @ref networkInstallCarry, the SB_INSTALL block moved
+ *        unchanged out of Application::runNetwork (decomposition INC-9b).  The body is
+ *        the former if(carry_invariant) body; the alias preamble reconstructs
+ *        nc/nmw/trace, the ctx.carry aliases and the wlAccumulate lambda so the code
+ *        reads the original names.
  */
 
 #include "filter/NetworkInstallCarry.hpp"
@@ -77,7 +77,7 @@ void networkInstallCarry(
     F6Capture& mw_wl_f6) {
     // --- Alias preamble: reconstructs the run-TU aliases the relocated
     //     SB_INSTALL body reads (nc/nmw/trace, the ctx.carry aliases, and the
-    //     wlAccumulate lambda).  Byte-copies of the former runNetwork() lines. ----
+    //     wlAccumulate lambda).  Copies of the former runNetwork() lines. ----
     const auto& nc  = config_.getNetworkConfig();
     const auto& nmw = config_.getNetworkConfig().mw_wl;
     auto& trace = traces.trace;
@@ -99,8 +99,8 @@ void networkInstallCarry(
     auto& carry_innov_flags_total = ctx.carry.carry_innov_flags_total;
     auto& carry_innov_retaps_total = ctx.carry.carry_innov_retaps_total;
     auto& carry_innov_map_miss = ctx.carry.carry_innov_map_miss;
-    // Card 4 (M1) D5 v4: tag corroborated-FLAT flags so next epoch's carry-membership
-    // test can spare them.  The loader already forces it false without innov_gate.
+    // Tag corroborated-flat flags so next epoch's carry-membership test can spare
+    // them.  The loader already forces the knob false without innov_gate (Card 4 D5 v4).
     const bool retap_only =
         carry_innov_gate && config_.networkCarryInvariantInnovRetapOnly();
     auto wlAccumulate = [](WlCounters& a, const WlCounters& b) {
@@ -137,18 +137,18 @@ void networkInstallCarry(
         a.sib_abs_frac_sum    += b.sib_abs_frac_sum;
     };
 
-    // Card 4 (M1) D5 v3: hand the driver this epoch's CORROBORATION set before the install
-    // consumes it — the chords whose underlying arc the raw MW/GF observables measured as
-    // CONTINUOUS.  Built here because this is the one seam holding all three inputs at once:
-    // slip_qc (the raw verdicts, computed in PASS A before the solve), carry_arc_amb_key
-    // (the group→chord→ambiguity reverse map rebuilt with the blocks), and carry_driver.
+    // Hand the driver this epoch's corroboration set before the install consumes it: the
+    // chords whose underlying arc the raw MW/GF observables measured as continuous.  Built
+    // here because this seam holds all three inputs at once: slip_qc (the raw verdicts,
+    // computed in PASS A before the solve), carry_arc_amb_key (the group→chord→ambiguity
+    // reverse map rebuilt with the blocks), and carry_driver (Card 4 D5 v3).
     //
-    // MEMBERSHIP IS "MEASURED AND FLAT", NEVER "NO EVIDENCE" — verdict.measured must be true
-    // AND the (station, satellite) must be absent from epoch.stepped.  An unmeasured arc is
-    // deliberately left OUT so it still re-taps: suppressing on absence of evidence would
-    // silently disable the fine-slip response on exactly the arcs we know least about
-    // (standing invariant #1).  Same tri-state the network_d5_flags.csv `raw_stepped` column
-    // encodes, so the trace and the gate cannot disagree.
+    // Membership requires "measured and flat": verdict.measured is true and the
+    // (station, satellite) is absent from epoch.stepped.  An unmeasured arc is left out so
+    // it still re-taps; suppressing on absence of evidence would disable the fine-slip
+    // response on the arcs with the least information (standing invariant #1).  This is
+    // the same tri-state the network_d5_flags.csv `raw_stepped` column encodes, so the
+    // trace and the gate agree.
     if (carry_innov_gate && config_.networkCarryInvariantInnovCorroborate()
         && slip_qc.epoch.computed) {
         std::set<std::pair<int, ArcKey>> flat;
@@ -164,25 +164,25 @@ void networkInstallCarry(
                 const auto& vmap = slip_qc.epoch.verdict[static_cast<std::size_t>(chord.u)];
                 const auto vit = vmap.find(sat);
                 if (vit != vmap.end() && vit->second.measured)
-                    flat.insert({ group, chord });   // measured AND flat ⇒ suppressible
+                    flat.insert({ group, chord });   // measured and flat ⇒ suppressible
             }
         }
         carry_driver.setInnovFlatChords(std::move(flat));
     }
 
-    // RS-2b (network.resume_d5_warmup_ep, SPEC_event_harness §21.6): for the first K
-    // PROCESSED epochs after a warm resume the D5 gate is DIAGNOSTIC-ONLY.  Counted HERE —
-    // the single site the gate lives at — so a run that never installs a posterior never
-    // burns the window, exactly as the MW/LLI drain warm-up counts at its own single
-    // dispatch site.  The retire is the window's DECOUPLING edge (invariant #7) and is
-    // logged.  The flag is cleared on every other epoch, so a run that never resumes sets
-    // it false every epoch and the gate is byte-identical.
+    // Post-resume D5 warm-up (RS-2b; network.resume_d5_warmup_ep, SPEC_event_harness
+    // §21.6): for the first K processed epochs after a warm resume the D5 gate is
+    // diagnostic-only.  The window is counted here, at the gate's only site, so a run
+    // that never installs a posterior never consumes it, as the MW/LLI drain warm-up
+    // counts at its own dispatch site.  The retire, which re-arms the gate, is an edge in
+    // the sense of invariant #7 and is logged.  The flag is set false on every other epoch, so on a run that never
+    // resumes the gate is byte-identical.
     const bool d5_warmup_now = ctx.carry.resume_d5_warmup_left > 0;
     carry_driver.setInnovDiagnosticOnly(d5_warmup_now);
 
-    // parallel_carry: thread installPosterior's posterior-cov GEMMs.  Run it
-    // SERIAL-over-blocks (n_threads=1, its byte-identical-to-serial path) so Eigen's
-    // threading does not nest with the seam's per-block OpenMP.
+    // parallel_carry: thread installPosterior's posterior-cov GEMMs through Eigen, and run
+    // the install serial over blocks (block thread count 1, its byte-identical-to-serial
+    // path) so Eigen's threading does not nest with the seam's per-block OpenMP.
     try { CarryEigenScope es(carry_par, n_threads);
           carry_driver.installPosterior(est, x_s, plan.shared_datum,
                                         carry_par ? 1 : seam_threads); }
@@ -191,13 +191,12 @@ void networkInstallCarry(
                   "carry reset (refloats next epoch).", se.time.tow, ex.what());
         carry_driver.reset();
     }
-    // RS-2b: burn one epoch of the window and retire it.  AFTER the install on purpose —
-    // the retire line quotes d5_warmup_suppressed, which this very epoch's gate has just
-    // incremented, and logging it beforehand printed the count as of the PREVIOUS epoch
-    // (a K=1 window read "suppressed 0" while the run-end line correctly said 301).  An
-    // instrument that reports its own work one epoch late reads clean and lies —
-    // invariant #4.  Outside the try/catch so a failed install still burns the epoch: the
-    // window is a count of PROCESSED epochs, not of successful ones.
+    // Consume one epoch of the warm-up window and retire it when empty (RS-2b).  This
+    // runs after the install because the retire line quotes d5_warmup_suppressed, which
+    // this epoch's gate has just incremented; logged before the install, it would report
+    // the previous epoch's count (invariant #4).  It sits outside the try/catch so a
+    // failed install still consumes the epoch: the window counts processed epochs, not
+    // successful ones.
     if (d5_warmup_now) {
         ++ctx.counters.n_resume_d5_warmup_epochs;
         if (--ctx.carry.resume_d5_warmup_left == 0)
@@ -210,19 +209,17 @@ void networkInstallCarry(
     carry_prev_tow = se.time.tow;
 
     // === PD-safe invariant-DD fold (docs/SPEC_pd_safe_dd_fold.md) telemetry =======
-    // INC-0 is ALWAYS-ON and solve-neutral.  It exists because the fold's `M := 0`
-    // response to a non-PD Pᶻ+B had no counter, no log and no event: a block that went
-    // indefinite between epoch 2 and epoch 122 froze forever, its posterior pinned to its
-    // prior, while dd_sigma_cyc / the D5 gate / the AR probe all stayed carry-blind.
-    // Measured 2026-08-02 on `runs/churn_base` (63 sta, 3 h, DOY-129): 568 of 686 carried
-    // rows — 78 % of the state — were diffusing behind exactly that silence, in the
-    // control AND in every arm of the lineage.  Three weeks of campaigns were graded on
-    // that substrate.  Read here rather than in the kernel because this is the one seam
-    // that holds the ACCEPTED solve's fold, the block layout, the station roster and the
-    // trace sinks at once.
+    // Always on and solve-neutral (INC-0).  When Pᶻ+B is not PD, the fold responds with
+    // `M := 0`: the block takes no data and its posterior equals its prior, and without
+    // network.carry_invariant_pd_safe it stays frozen, while dd_sigma_cyc, the D5 gate
+    // and the AR probe do not see the carry.  This block gives that response counters,
+    // log lines and events.  It is read here rather than in the kernel because this seam
+    // holds the accepted solve's fold, the block layout, the station roster and the trace
+    // sinks at once.
     //
-    // Per-fold, not cumulative: a within-epoch RAIM re-solve re-folds and overwrites the
-    // kernel's stats, so what we read is always the accepted solve's screen.
+    // The kernel's stats are per fold, not cumulative: a within-epoch RAIM re-solve
+    // re-folds and overwrites them, so the values read here are always the accepted
+    // solve's screen.
     {
         const auto& fs  = est.ddFoldStats();
         auto&       cnt = ctx.counters;
@@ -239,16 +236,17 @@ void networkInstallCarry(
         cnt.ddfold_repairs      += fs.repairs;
         cnt.ddfold_repair_rows  += fs.repaired_rows;
         cnt.ddfold_repair_worst  = std::max(cnt.ddfold_repair_worst, fs.repair_worst);
-        // NOTE: no per-epoch stamp into ctx.carry.  The epoch-status columns are read
-        // straight off est.ddFoldStats() at both writer sites (NetworkStashStatus for an
-        // accepted epoch, NetworkSolveGlue for a withheld one) — see the rationale on
-        // NetworkCarryState.  This seam owns only the RUN-cumulative roll-up above, the
+        // No per-epoch value is stored in ctx.carry.  The epoch-status columns are read
+        // directly from est.ddFoldStats() at both writer sites (NetworkStashStatus for an
+        // accepted epoch, NetworkSolveGlue for a withheld one); see the rationale on
+        // NetworkCarryState.  This seam owns only the run-cumulative roll-up above, the
         // cross-epoch transition ledger below, and the events.
 
-        // INC-1c: a repair is HYGIENE only while it stays dust.  A clamp above 1e-6·λmax
-        // means the block was not merely rounding-damaged — that is a NEW bug and it must
-        // scream rather than be silently laundered into a PD matrix.  Warned once (the
-        // run-end summary carries the totals); the counter is the population.
+        // The eigenvalue repair is meant for rounding damage at the 1e-12 level.  A clamp
+        // above 1e-6·λmax means the block was damaged by something else, a defect that
+        // needs investigation, so it is reported instead of passing silently as a PD
+        // matrix.  Warned once (the run-end summary carries the totals); the counter
+        // holds the population (INC-1c).
         if (fs.repair_worst > 1e-6 && ++cnt.ddfold_repair_loud == 1)
             log->warn("Network (Card 4 PD-safe fold, INC-1c): a DD-fold eigenvalue REPAIR "
                       "clamped a magnitude of {:.3e}·λmax at TOW {:.1f} — far above the "
@@ -258,13 +256,13 @@ void networkInstallCarry(
                       "counted, not logged.)",
                       fs.repair_worst, se.time.tow);
 
-        // Invariant #7 — BOTH edges of the decoupling.  The healthy→degenerate edge is the
-        // DECOUPLING one (a block stops taking data); the degenerate→healthy edge is a
-        // spontaneous RE-COUPLING (the block factored again on its own, without a
-        // rebirth).  Warned on the TRANSITION only: a per-epoch line over 360 epochs
-        // teaches readers to ignore it, which is precisely how this defect stayed
-        // invisible.  Keyed by (group, first chord) — components merge and split, so no
-        // block index is stable across epochs, but a giant block keeps its leading chord.
+        // Log both edges of a degenerate DD-prior block (invariant #7): entry, when
+        // Pᶻ+B fails the PD screen and the block stops taking data, and exit, when
+        // its key leaves the degenerate set.  An exit means the block factors again
+        // or its component was re-formed; the key cannot tell which.  Logging only
+        // transitions keeps a long outage to two lines instead of one per epoch.
+        // Keys are (group, first chord): block indices change as components merge
+        // and split, and the first chord is stable enough to follow a block.
         std::set<std::string> ddfold_degen_now;
         const std::size_t ddfold_nb =
             std::min(carry_driver.numBlocks(), est.numDdPriorBlocks());
@@ -291,9 +289,9 @@ void networkInstallCarry(
                       b, grp, kk, c0.u, c0.v,
                       sta.empty() ? std::string{} : fmt::format(" / {}", sta),
                       se.time.tow, piv);
-            // The pivot also rides `detail` in exponential form: emitEvent renders the
-            // statistic column with {:.6f}, which turns a −2.9e-10 pivot — the entire
-            // point of the row — into "-0.000000".
+            // The pivot is also written into `detail` in exponential form: emitEvent
+            // renders the statistic column with {:.6f}, which would print a pivot such
+            // as −2.9e-10 as "-0.000000".
             traces.emitEvent(se.time, "DD_FOLD", "DD_FOLD_DEGENERATE", "", sta, piv,
                              1e-12, "freeze",
                              fmt::format("block={} group={} k={} chord={}-{} min_pivot={:.6e}",
@@ -314,9 +312,9 @@ void networkInstallCarry(
         }
         ctx.carry.ddfold_degen_prev.swap(ddfold_degen_now);
 
-        // INC-2a: the bounded, LOUD re-coupling — a block that could not be rescued is
-        // rebirthed (means kept, Pᶻ re-seeded diffuse) rather than frozen.  Empty unless
-        // network.carry_invariant_pd_safe.
+        // Bounded, logged re-coupling: a block that could not be repaired is rebirthed
+        // (means kept, Pᶻ re-seeded diffuse) instead of frozen.  The list is empty unless
+        // network.carry_invariant_pd_safe is on (INC-2a).
         for (const auto& rb : carry_driver.lastFoldRebirths()) {
             ++cnt.ddfold_rebirths;
             cnt.ddfold_rebirth_rows += rb.k;
@@ -341,25 +339,23 @@ void networkInstallCarry(
         }
     }
 
-    // D5 v2 σ̂₀ CLAMP VISIBILITY.  The gate's threshold is k·σ̂₀ and σ̂₀ reports 1.00× in FOUR
-    // distinct states, three of which mean the gate silently degraded to the raw formal (v1)
-    // test.  Log the TRANSITION, not the state (the INC-0 rule: a per-epoch line over 360
-    // epochs teaches readers to ignore it — which is exactly how the `churn_base2` lineage
-    // ran an entire campaign on a v1 gate while its run-end line said "calibration armed").
+    // Clamp state of the calibrated σ̂₀ of the D5 gate (D5 v2).  The gate's threshold is
+    // k·σ̂₀, and σ̂₀ reports 1.00× in four distinct states, three of which mean the gate
+    // has fallen back to the raw formal (v1) test without any other sign.  Log the
+    // transition, not the state, as for the degenerate-block ledger above: one line per
+    // change instead of one per epoch.
     {
         using Infl = NetworkInvariantCarryDriver::InflationState;
         const auto  st  = carry_driver.innovInflationStatus();
         const char* tag = NetworkInvariantCarryDriver::inflationStateName(st.state);
-        // `Off` is not a transition worth announcing — calibration was never armed, and
-        // every non-D5 network run would open with the line.  The counters still tally it,
-        // so the run-end summary can still distinguish "v1 by config" from "v2 that never
-        // engaged", which is the distinction that matters.
+        // `Off` is not announced: calibration was never armed, and every non-D5 network
+        // run would open with the line.  The counters still tally it, so the run-end
+        // summary can distinguish "v1 by config" from "v2 that never engaged".
         if (st.state != Infl::Off && ctx.carry.d5_calib_state_prev != tag) {
-            // Only the SILENT degradations warn.  Warm-up is expected and self-clearing at
-            // the start of every calibrated run, so warning on it would put a WARN on epoch
-            // 1 of every run and train readers to skip the line — the failure this
-            // instrument exists to end.  A run that never LEAVES warm-up is caught by the
-            // run-end summary instead.
+            // Only the degraded states (Floored, Capped) warn.  Warm-up is expected and
+            // clears itself at the start of every calibrated run, so a warning there would
+            // appear on epoch 1 of every run.  A run that never leaves warm-up is caught
+            // by the run-end summary instead.
             const bool degraded = (st.state == Infl::Floored || st.state == Infl::Capped);
             const std::string from = ctx.carry.d5_calib_state_prev.empty()
                 ? std::string{"(start)"} : ctx.carry.d5_calib_state_prev;
@@ -378,9 +374,10 @@ void networkInstallCarry(
         }
     }
 
-    // M5 card WL-1: fold the accepted build's WL eligibility tallies into the run
-    // totals (this install runs only for an accepted epoch; the last buildCarryDdPriors
-    // before the accepted solve set mw_wl_epoch).  Invariant #4: counters or it didn't happen.
+    // Fold the accepted build's WL eligibility tallies into the run totals (M5 card WL-1).
+    // This install runs only for an accepted epoch, and the last buildCarryDdPriors before
+    // the accepted solve set mw_wl_epoch.  The run totals are the ON-path telemetry
+    // (invariant #4).
     if (mw_wl_on) {
         mw_wl_run.cycles_seen       += mw_wl_epoch.cycles_seen;
         mw_wl_run.rows_built        += mw_wl_epoch.rows_built;
@@ -395,7 +392,7 @@ void networkInstallCarry(
 
         // --- F6 one-shot attribution write (log-only; docs/SPEC_mw_wl_card.md §14). ---
         // The accepted epoch's x_s is final here; add reconstructed_abs (the estimator's
-        // current WL DD over the same cycle) + the kernel WL-block innovation, then dump.
+        // current WL DD over the same cycle) and the kernel WL-block innovation, then dump.
         if (mw_wl_f6_dump && !mw_wl_f6.written && mw_wl_f6.pending
             && mw_wl_f6.tow == se.time.tow) {
             std::map<int, Eigen::VectorXd> xr_of;   // est_station -> local corrections
@@ -406,7 +403,7 @@ void networkInstallCarry(
                                   static_cast<std::size_t>(a.est_station), x_s); }
                         catch (...) { xr_of[a.est_station] = Eigen::VectorXd(); }
                     }
-            // Kernel innovation v = z_free − Gᵀx_s − ẑ.  ddPriorInnovation is BLOCK-scoped, so
+            // Kernel innovation v = z_free − Gᵀx_s − ẑ.  ddPriorInnovation is block-scoped, so
             // under f6_all_blocks each block gets its own request and each row indexes into
             // its own block's vector (rows of a block are contiguous in the capture).
             std::map<std::size_t, Eigen::VectorXd> v_of;
@@ -524,8 +521,8 @@ void networkInstallCarry(
             }
         }
     }
-    // M5 card WL-2 EWL lane: same accepted-install accumulation (invariant #4),
-    // per lane instance (UWL-1: one per tabled constellation when armed).
+    // EWL lane (M5 card WL-2): the same accepted-install accumulation (invariant #4),
+    // per lane instance (under UWL-1, one per tabled constellation when armed).
     if (ewl_on) {
         for (auto& lane : ewl_lanes) {
             lane.run.cycles_seen       += lane.epoch.cycles_seen;
@@ -544,13 +541,13 @@ void networkInstallCarry(
             lane.run.sum_R             += lane.epoch.sum_R;
         }
     }
-    // M5 card WL-2 WL lane (§3.3): apply the stashed inject plan against the FRESH
-    // posterior (this epoch's NL), THEN fold the run counters.  The plan was decided
-    // from DETECTOR statistics (§3.0.1) in the accepted build; here we read the carried
-    // lane value + NL sum and, only if the carry still disagrees with the WL integer by
-    // more than inject_disagree_min_cyc (self-limiting), set the lane difference to the
-    // integer while preserving the phase-determined sum.  injectCarriedChord marks each
-    // moved chord D5-exempt for the NEXT install (the §3.3 storm guard) internally.
+    // WL lane (M5 card WL-2, §3.3): apply the stashed inject plan against the fresh
+    // posterior (this epoch's NL), then fold the run counters.  The plan was decided from
+    // detector statistics (§3.0.1) in the accepted build.  Here the carried lane value
+    // and NL sum are read and, only if the carry still disagrees with the WL integer by
+    // more than inject_disagree_min_cyc (self-limiting), the lane difference is set to
+    // the integer while the phase-determined sum is preserved.  injectCarriedChord marks
+    // each moved chord D5-exempt for the next install (the §3.3 storm guard) internally.
     if (wl_inject_on || lane_fix_on) {
         for (const auto& pl : wl_inject_epoch) {
             double z1 = 0.0, v1 = 0.0, z2 = 0.0, v2 = 0.0;
@@ -558,7 +555,7 @@ void networkInstallCarry(
                     ? !carry_driver.carriedPairValue(pl.group_l1, pl.chord, z1, v1, z2, v2)
                     : (!carry_driver.carriedChordValue(pl.group_l1, pl.chord, z1, v1) ||
                        !carry_driver.carriedChordValue(pl.group_l2, pl.chord, z2, v2))) {
-                ++wl_run.skip_basis;   // not 1:1 across BOTH bands' carry bases — skip (§3.3)
+                ++wl_run.skip_basis;   // not 1:1 across both bands' carry bases: skip (§3.3)
                 if (uwl_on) ++wl_cons_run[pl.cons ? pl.cons : '?'].skip_basis;
                 continue;
             }
@@ -566,14 +563,15 @@ void networkInstallCarry(
             const double A2 = (z2 + pl.z_lin2) / pl.lambda2;
             const double lane = A1 - A2, s = A1 + A2;          // WL DD + preserved NL sum
             if (std::abs(pl.w - lane) <= nmw.inject_disagree_min_cyc)
-                continue;   // already lane-consistent (hold/fix row / prior inject) ⇒ no fight
+                continue;   // already lane-consistent (hold/fix row or prior inject): no edit
             const double A1p = 0.5 * (pl.w + s), A2p = 0.5 * (s - pl.w);
             const double sg1 = nmw.wl_fix_sigma_cyc * pl.lambda1;
             const double sg2 = nmw.wl_fix_sigma_cyc * pl.lambda2;
             bool moved = false;
             if (pl.pair) {
-                // WL-3 fallback: one joint edit, both bands, one D5 exemption (§3.3
-                // "should fire ~never in steady state — telemetry proves it").
+                // Joint pair block (WL-3): one joint edit, both bands, one D5 exemption.
+                // Per §3.3 this should almost never fire in steady state; the inject
+                // counters show whether it does.
                 moved = carry_driver.injectCarriedChordPair(
                     pl.group_l1, pl.chord,
                     A1p * pl.lambda1 - pl.z_lin1, sg1 * sg1,
@@ -595,21 +593,20 @@ void networkInstallCarry(
                          if (uwl_on) ++wl_cons_run[pl.cons ? pl.cons : '?'].skip_basis; }
         }
         // Accepted-install accumulation: the pooled epoch tallies (also the whole walk
-        // when the UWL card is off) plus, under UWL-1, the per-cons walk tallies —
-        // folded into BOTH the aggregate and the per-cons run totals.
+        // when the UWL card is off) plus, under UWL-1, the per-cons walk tallies, which
+        // are folded into both the aggregate and the per-cons run totals.
         wlAccumulate(wl_run, wl_epoch);
         for (const auto& [wcons, we] : wl_cons_epoch) {
             wlAccumulate(wl_run, we);
             wlAccumulate(wl_cons_run[wcons], we);
         }
 
-        // F-B lane trace: write every entry's POST-install carried lane + tags.
+        // Lane trace (F-B): write every entry's post-install carried lane and tags.
         if (mw_lane_trace && !lane_trace_epoch.empty()) {
             std::map<ArcKey, double> w_of;   // decided cycles' integer targets
             for (const auto& pl : wl_inject_epoch) w_of[pl.chord] = pl.w;
-            // Stream + header are owned by NetworkRunTraces (opened TRUNCATING once in
-            // openMwWlDumps).  This used to re-open the path per epoch in std::ios::app,
-            // which silently concatenated a re-run onto the previous run's rows.
+            // Stream and header are owned by NetworkRunTraces (opened once, truncating, in
+            // openMwWlDumps), so a re-run does not append to the previous run's rows.
             auto& ltf = traces.wl_lane_trace;
             if (ltf) {
                 for (const auto& e : lane_trace_epoch) {
@@ -651,10 +648,10 @@ void networkInstallCarry(
     carry_dropped_total   = cc.chords_dropped;
     carry_innov_flags_total  = cc.innov_flags;
     carry_innov_retaps_total = cc.innov_retaps;
-    // P1-1 (SPEC_day129_frame_guards): difference the RUN-CUMULATIVE driver
-    // counters into THIS epoch's churn, for the per-epoch trace columns.  Taken
-    // here — the one site that owns the cumulative copy — so the deltas can never
-    // disagree with the run-end totals.  Pure trace; nothing reads them back.
+    // Difference the run-cumulative driver counters into this epoch's churn for the
+    // per-epoch trace columns (P1-1, SPEC_day129_frame_guards).  Taken here, at the only
+    // site that owns the cumulative copy, so the deltas always agree with the run-end
+    // totals.  Trace only; nothing reads them back.
     ctx.carry.ep_chord_births  = cc.chords_born  - ctx.carry.carry_prev_born;
     ctx.carry.ep_slip_refloats = cc.slip_kills   - ctx.carry.carry_prev_slipkills;
     ctx.carry.ep_d5_flags      = cc.innov_flags  - ctx.carry.carry_prev_innov_flags;
@@ -663,16 +660,16 @@ void networkInstallCarry(
     ctx.carry.carry_prev_slipkills      = cc.slip_kills;
     ctx.carry.carry_prev_innov_flags    = cc.innov_flags;
     ctx.carry.carry_prev_innov_retaps   = cc.innov_retaps;
-    // D5: fold the post-solve innovation flags into the NEXT epoch's slip funnel.
+    // Fold the post-solve D5 innovation flags into the next epoch's slip funnel.
     // Each (group, chord) maps back to its (station, ambiguity) via the reverse map
     // built with this epoch's blocks; next epoch's buildCarryDdPriors excludes it from
     // the A_old membership so the affected cycle re-taps fresh (the C3c path).
     if (carry_innov_gate) {
-        // RS-2b: a trip the post-resume warm-up SUPPRESSED is a measurement, not a
-        // decision — it kept its carried prior, so marking its arc slipped here would
-        // refloat next epoch exactly the chord the window exists to hold, and the
-        // "diagnostic-only" claim would be false in the one place it matters.  The mask is
-        // index-aligned with lastInnovFlags() and empty whenever the window is closed.
+        // A trip that the post-resume warm-up suppressed is a measurement, not a decision:
+        // it kept its carried prior.  Marking its arc slipped here would refloat next
+        // epoch the chord the window exists to hold, so the warm-up would no longer be
+        // diagnostic-only (RS-2b).  The mask is index-aligned with lastInnovFlags() and
+        // empty whenever the window is closed.
         const auto& d5_warm = carry_driver.lastInnovWarmupSuppressed();
         const auto& d5_flag_list = carry_driver.lastInnovFlags();
         for (std::size_t fx = 0; fx < d5_flag_list.size(); ++fx) {
@@ -682,10 +679,10 @@ void networkInstallCarry(
             const auto ait = (git != carry_arc_amb_key.end())
                                  ? git->second.find(chord) : std::map<ArcKey, std::string>::const_iterator{};
             if (git == carry_arc_amb_key.end() || ait == git->second.end()) {
-                // A flagged chord that the reverse map (built with THIS epoch's blocks)
-                // cannot resolve should never happen — both come from the same
-                // buildCarryDdPriors.  Warn once so a wiring regression is not silent;
-                // the flag is dropped (safe: q_z + next-epoch detection are the backstop).
+                // A flagged chord that the reverse map (built with this epoch's blocks)
+                // cannot resolve is not expected, because both come from the same
+                // buildCarryDdPriors.  Warn once so a wiring regression is visible.  The
+                // flag is dropped, which is safe: q_z and next-epoch detection remain.
                 if (++carry_innov_map_miss == 1)
                     log->warn("Network[Card4 D5]: an innovation flag (group {}, arc {}→{}) did "
                               "not resolve to an ambiguity in the reverse map at TOW {:.1f} — "
@@ -694,36 +691,36 @@ void networkInstallCarry(
                               gk, chord.u, chord.v, se.time.tow);
                 continue;
             }
-            // The insert RESULT is the de-duplication signal the attribution
+            // The insert result is the de-duplication signal the attribution
             // needs: carry_innov_pending was cleared at this epoch's head
             // (the C3c drain), so `.second` is true exactly once per
             // (station, ambiguity) per epoch.  Under the WL-3 joint pair
-            // block the gate flags per band ROW, so the same (group, chord)
+            // block the gate flags per band row, so the same (group, chord)
             // arrives twice and only the first insert is a real re-tap.
             const bool first_this_epoch =
                 carry_innov_pending.insert({chord.u, ait->second}).second;
-            // Card 4 (M1) D5 v4 (network.carry_invariant_innov_retap_only): tag the flag
-            // with the SAME tri-state raw verdict the v3 corroboration gate consults, so
-            // next epoch's carry-membership test can tell "the arc did not step, this is
-            // model tension" from "the arc stepped, or nobody could look".
+            // Tag the flag with the same tri-state raw verdict the v3 corroboration gate
+            // consults, so next epoch's carry-membership test can tell "the arc did not
+            // step; this is model tension" from "the arc stepped, or there was no
+            // evidence" (Card 4 D5 v4, network.carry_invariant_innov_retap_only).
             //
-            // The funnel entry above is UNCONDITIONAL and stays that way — every side
-            // consumer (the Iono-2 v3k erase classifier, the WL-3 MW-row slip-skip, anchor
-            // hygiene, the PB emit filter, Card G's bridge classifier) keeps reading the
-            // union it always read.  This set only decides whether the arc is additionally
-            // excluded from next epoch's A_old membership, i.e. whether the DD the gate
-            // just re-tapped in-epoch is ALSO thrown away and refloated from nothing.
+            // The funnel entry above is unconditional: every side consumer (the Iono-2 v3k
+            // erase classifier, the WL-3 MW-row slip-skip, anchor hygiene, the PB emit
+            // filter, Card G's bridge classifier) reads the full union.  This set only
+            // decides whether the arc is also excluded from next epoch's A_old membership,
+            // i.e. whether the DD the gate just re-tapped in-epoch is also discarded and
+            // refloated from nothing.
             //
-            // MEASURED (tests/test_network_invariant_carry_driver.cpp, GATE 10b): after a
-            // REAL slip the refloat is what completes the reset — suppressing it leaves
-            // 0.48 cyc on the table, because the in-epoch reset moves only by the post-fit
-            // innovation v, which the fold's −GᵀΣG border term has already shrunk.  So
-            // membership here requires POSITIVE evidence of continuity, exactly as v3 does:
-            //   stepped           ⇒ absent ⇒ refloats (a real discontinuity)
-            //   measured and flat ⇒ PRESENT ⇒ keeps its carry (nothing to complete)
-            //   no evidence       ⇒ absent ⇒ refloats (arc start / gap / single band)
-            // Absence of evidence is never evidence of absence — standing invariant #1's
-            // response is narrowed to the diagnosed population, never removed.
+            // After a real slip the refloat completes the reset; suppressing it leaves
+            // 0.48 cyc of error, because the in-epoch reset moves only by the post-fit
+            // innovation v, which the fold's −GᵀΣG border term has already shrunk
+            // (tests/test_network_invariant_carry_driver.cpp, GATE 10b).  Membership here
+            // therefore requires positive evidence of continuity, as v3 does:
+            //   stepped           ⇒ absent  ⇒ refloats (a real discontinuity)
+            //   measured and flat ⇒ present ⇒ keeps its carry (nothing to complete)
+            //   no evidence       ⇒ absent  ⇒ refloats (arc start / gap / single band)
+            // The response of standing invariant #1 is narrowed to the diagnosed
+            // population, not removed.
             if (retap_only && slip_qc.epoch.computed && chord.u >= 0
                 && static_cast<std::size_t>(chord.u) < slip_qc.epoch.verdict.size()) {
                 if (const auto pk = StateKeys::parseAmbiguityKey(ait->second)) {
@@ -732,9 +729,9 @@ void networkInstallCarry(
                     if (vit != vmap.end() && vit->second.measured
                         && !slip_qc.epoch.stepped.count({chord.u, pk->satellite})) {
                         ctx.carry.carry_innov_pending_flat.insert({chord.u, ait->second});
-                        // WL-3 §3.4: the pair partner rides the same graph edge and the
-                        // same raw verdict, so it must be tagged with it — otherwise the
-                        // pair refloats on band 2 and the suppression is silently half-on.
+                        // The pair partner shares the graph edge and the raw verdict, so
+                        // it is tagged too; otherwise the pair would refloat on band 2 and
+                        // the suppression would apply to one band only (§3.4, WL-3).
                         if (lane_on) {
                             const auto g2 = carry_arc_amb_key2.find(gk);
                             if (g2 != carry_arc_amb_key2.end()) {
@@ -746,13 +743,12 @@ void networkInstallCarry(
                     }
                 }
             }
-            // Card G(c): make the D5 re-tap counter ATTRIBUTABLE.  The audit's
-            // 1 560 re-taps were un-decomposable — a raw-step coincidence test
-            // at the same (station, satellite, epoch) separates "the gate caught
-            // a real observable event" from "the gate is firing on model
-            // tension".  Instrumentation only; the flag is unchanged either way.
-            // Both units are counted: FLAG ROWS (continuity with the 2026-07-21
-            // headline) and distinct funnel ARCS (what actually re-taps).
+            // Attribute the D5 re-tap counter (Card G(c)): a raw-step coincidence test at
+            // the same (station, satellite, epoch) separates "the gate caught a real
+            // observable event" from "the gate is firing on model tension".
+            // Instrumentation only; the flag is unchanged either way.  Both units are
+            // counted: flag rows (the historical unit) and distinct funnel arcs (what
+            // actually re-taps).
             if (nc.slip_qc.gap_instrument) {
                 ++slip_qc.counters.d5_retaps;
                 if (first_this_epoch) ++slip_qc.counters.d5_retap_ambs;
@@ -762,8 +758,8 @@ void networkInstallCarry(
                         if (first_this_epoch) ++slip_qc.counters.d5_retap_ambs_stepped;
                     }
             }
-            // WL-3 §3.4: a pair chord's flag refloats BOTH bands next epoch (they
-            // share the graph edge) — feed the band-2 ambiguity into the funnel too.
+            // A pair chord's flag refloats both bands next epoch (they share the graph
+            // edge), so the band-2 ambiguity is fed into the funnel too (§3.4, WL-3).
             if (lane_on) {
                 const auto g2it = carry_arc_amb_key2.find(gk);
                 if (g2it != carry_arc_amb_key2.end()) {
@@ -774,37 +770,34 @@ void networkInstallCarry(
             }
         }
     }
-    // F-A attribution dump (log-only, network.mw_wl.d5_dump): one CSV row per D5
-    // flag with adjacency tags.  Uses the SAME reverse map as the funnel above.
+    // Attribution dump (F-A; log-only, network.mw_wl.d5_dump): one CSV row per D5
+    // flag with adjacency tags.  Uses the same reverse map as the funnel above.
     //
-    // Card D5-A/D2 (docs/SPEC_slip_qc_hardening.md §9.1): the trailing
-    // `raw_stepped` column is the CHEAP EXACT-EPOCH raw-step tag — did the
-    // receiver's own MW/GF level step at this (station, satellite) on this
-    // epoch?  It is deliberately TRI-STATE, not 0/1:
-    //   1     — this (station, sat) is in slip_qc.epoch.stepped (Card G's
+    // The trailing `raw_stepped` column is the exact-epoch raw-step tag (Card D5-A/D2,
+    // docs/SPEC_slip_qc_hardening.md §9.1): did the receiver's own MW/GF
+    // level step at this (station, satellite) on this epoch?  It is tri-state,
+    // not 0/1:
+    //   1     : this (station, sat) is in slip_qc.epoch.stepped (Card G's
     //           empirical per-station gate fired);
-    //   0     — a step COULD be formed (adjacent-epoch dual-band predecessor)
+    //   0     : a step could be formed (adjacent-epoch dual-band predecessor)
     //           and it was flat;
-    //   blank — no evidence at all (raw observables not computed this run, arc
+    //   blank : no evidence (raw observables not computed this run, arc
     //           start / gap / single-band, or the flag's ambiguity key did not
-    //           resolve).  Writing 0 there would be a false "no raw step"
-    //           claim on exactly the population D5-A exists to decompose;
-    //           absence of evidence is not evidence of absence.
-    // The ±1-epoch offline join in scripts/grade_slip_agreement.py --d5 stays
-    // the source of truth; this column is the zero-cost exact-epoch tag that
-    // makes network_d5_flags.csv self-contained.  Log-only either way: the
-    // solve never reads it.
+    //           resolve).  Writing 0 there would claim "no raw step" for the
+    //           population D5-A exists to decompose.
+    // The ±1-epoch offline join in scripts/grade_slip_agreement.py --d5 remains
+    // the reference; this column is a zero-cost exact-epoch tag that makes
+    // network_d5_flags.csv self-contained.  Log-only either way: the solve never
+    // reads it.
     if (mw_d5_dump && carry_innov_gate) {
         const auto& flags  = carry_driver.lastInnovFlags();
         const auto& sigmas = carry_driver.lastInnovFlagSigmas();
         const auto& terms  = carry_driver.lastInnovFlagTerms();
         const auto& warm_mask = carry_driver.lastInnovWarmupSuppressed();   // RS-2b
         if (!flags.empty()) {
-            // Stream + header are owned by NetworkRunTraces (opened TRUNCATING once in
-            // openMwWlDumps, under the SAME arming expression this block tests).  The
-            // former per-epoch std::ios::app re-open glued consecutive runs into one
-            // file — an A/B whose arms had been re-run unequal numbers of times showed
-            // a pure-artifact row-count divergence (hit for real, FC-1 INC-1, 2026-07-30).
+            // Stream and header are owned by NetworkRunTraces (opened once, truncating, in
+            // openMwWlDumps, under the arming expression this block tests), so repeated
+            // runs do not append to one file and A/B row counts stay comparable.
             auto& d5f = traces.d5_flags_trace;
             if (d5f) {
                 for (std::size_t fi = 0; fi < flags.size(); ++fi) {
@@ -822,9 +815,9 @@ void networkInstallCarry(
                         (chord.u >= 0 && chord.u < static_cast<int>(stations.size()))
                             ? stations[static_cast<std::size_t>(chord.u)].name
                             : std::string{};
-                    // D2 tri-state raw-step tag (see the banner above).  Reads
-                    // the SAME per-epoch evidence the run-end d5_retaps_stepped
-                    // counter uses, so the CSV and the counter cannot disagree.
+                    // Tri-state raw-step tag (D2; see the banner above).  Reads the
+                    // same per-epoch evidence the run-end d5_retaps_stepped counter
+                    // uses, so the CSV and the counter agree.
                     std::string raw_stepped;
                     if (slip_qc.epoch.computed && !sat.empty() && chord.u >= 0
                         && static_cast<std::size_t>(chord.u)
@@ -839,10 +832,10 @@ void networkInstallCarry(
                                 raw_stepped = "0";
                         }
                     }
-                    // Churn card (2026-08-02): the ALGEBRA behind std_innov, so the
-                    // Cov(v)-vs-wander question is answerable from this file alone.
-                    // Written blank rather than zero when the driver has no term for the
-                    // row — a fabricated 0.0 on ẑ or var_v would read as a measurement.
+                    // The terms behind std_innov (churn card), so the Cov(v)-vs-wander
+                    // question can be answered from this file alone.  Written blank
+                    // rather than zero when the driver has no term for the row, since
+                    // a 0.0 on ẑ or var_v would read as a measurement.
                     std::string t_zhat, t_v, t_var, t_s0, t_zpost;
                     if (fi < terms.size()) {
                         const auto& T = terms[fi];
@@ -854,7 +847,7 @@ void networkInstallCarry(
                     }
                     // This epoch's SH-constraint deweight weight for the station (the
                     // topology ledger's snapshot, taken pre-solve).  Blank without
-                    // network.trace_topology — the map is simply never filled there.
+                    // network.trace_topology, which is the only path that fills the map.
                     std::string t_dw;
                     if (const auto wit = ctx.carry.topo_prev_w.find(chord.u);
                         wit != ctx.carry.topo_prev_w.end())
@@ -870,17 +863,17 @@ void networkInstallCarry(
                         << raw_stepped << ','
                         << t_zhat << ',' << t_v << ',' << t_var << ','
                         << t_s0 << ',' << t_zpost << ',' << t_dw << ','
-                        // RS-2b: 1 = this trip was inside the post-resume D5 warm-up, so
-                        // it was COUNTED and nothing else — no re-tap, no funnel entry, no
-                        // refold.  Plain 0/1 rather than the raw_stepped tri-state: unlike
-                        // "did the receiver step", this one is never unknown, the driver
-                        // either suppressed the row or acted on it.
+                        // 1 = this trip was inside the post-resume D5 warm-up (RS-2b), so
+                        // it was only counted: no re-tap, no funnel entry, no refold.
+                        // Plain 0/1 rather than the raw_stepped tri-state, because this
+                        // value is never unknown: the driver either suppressed the row or
+                        // acted on it.
                         << (fi < warm_mask.size() && warm_mask[fi] ? 1 : 0) << '\n';
                 }
             }
         }
     }
-    if (mw_tagsets) {   // rotate: this epoch's applied injects tag NEXT install's flags
+    if (mw_tagsets) {   // rotate: this epoch's applied injects tag the next install's flags
         d5_inject_chords_prev.swap(d5_inject_chords_now);
         d5_inject_chords_now.clear();
     }

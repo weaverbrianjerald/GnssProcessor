@@ -1,7 +1,7 @@
-"""GRAPHIC cycle-slip-detector viewer -- the port of ``view_graphic_trace.m``
+"""GRAPHIC cycle-slip-detector viewer: the port of ``view_graphic_trace.m``
 (the ``plot_graphic_trace`` function therein).
 
-Reads ``graphic_slip_trace.csv`` as written by ``GraphicSlipDetector``.  Expected
+Reads ``graphic_slip_trace.csv`` as written by ``GraphicSlipDetector``. Expected
 header::
 
     week,tow_s,satellite,system,elevation_deg,
@@ -12,35 +12,35 @@ header::
 The GRAPHIC observable is the divergence-free code+phase average
 ``G = (P + L) / 2``; the detector watches the between-epoch difference
 ``dG = G(t) - G(t-1)`` against a robust (MAD-derived) per-arc threshold and flags
-a slip when ``|dG|`` breaches it.  This viewer reproduces the three MATLAB
-figures, one *tile per constellation*:
+a slip when ``|dG|`` breaches it. This viewer reproduces the three MATLAB
+figures, one tile per constellation:
 
-  1. **dG + threshold** -- ``dG`` as a translucent per-key scatter, with the
+  1. **dG + threshold**: ``dG`` as a translucent per-key scatter, with the
      ``±threshold`` envelope drawn as faint lines and detected slips marked with
      a heavy red ``x``.
-  2. **Detector diagnostics** -- two stacked rows: per-key MAD ``σ`` (top) and
-     per-key arc count (bottom), one column-tile per constellation.  Because the
+  2. **Detector diagnostics**: two stacked rows, per-key MAD ``σ`` (top) and
+     per-key arc count (bottom), one column-tile per constellation. Because the
      backend stacks axes vertically rather than in a 2-D tile grid, the tiles are
      emitted in reading order: all MAD-σ tiles first, then all arc-count tiles.
-  3. **Slip events** -- the estimated integer slip magnitude ``slip_cycles``
+  3. **Slip events**: the estimated integer slip magnitude ``slip_cycles``
      (``dN = round(2·dG / λ)``) at each flagged epoch, per key.
 
 Styling fidelity
-----------------
-Colour and marker are assigned exactly as the MATLAB ``key_style`` helper does:
+-----------------
+Colour and marker are assigned the same way as the MATLAB ``key_style`` helper:
 
-* Satellites are gathered as ``unique(categorical(T.satellite))`` -- i.e. the
-  sorted-unique satellite list -- and a palette of ``max(8, N)``
-  ``distinguishable_colors`` is built once.  A key ``"<SAT>_<SIGNAL>"`` takes the
+* Satellites are gathered as ``unique(categorical(T.satellite))``, i.e. the
+  sorted-unique satellite list, and a palette of ``max(8, N)``
+  ``distinguishable_colors`` is built once. A key ``"<SAT>_<SIGNAL>"`` takes the
   colour at the (mod-wrapped) index of its satellite within that sorted list.
-* The marker cycles through ``{o s d ^ v > < p h x +}`` by the *within-tile* key
+* The marker cycles through ``{o s d ^ v > < p h x +}`` by the within-tile key
   index (the MATLAB ``fallbackIdx``), so two keys in the same constellation tile
   get distinct markers even when they share a satellite colour.
 
 Sentinel handling matches MATLAB: ``mad_sigma_m`` / ``threshold_m`` values ``< 0``
-are mapped to NaN before plotting.  The constellation tile order follows the
+are mapped to NaN before plotting. The constellation tile order follows the
 ``categories(...)`` order of the ``system`` column (i.e. its sorted-unique
-values), so the produced figures track the MATLAB layout 1-for-1.
+values), so the produced figures track the MATLAB layout one for one.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ from ..figures import Axes, Figure, Legend, Scatter, Line, TextBox
 from .base import Viewer, ViewerResult
 from ..palettes import distinguishable_colors
 
-# MATLAB marker cycle (view_graphic_trace.m line 84).
+# MATLAB marker cycle (view_graphic_trace.m, line 84).
 _MARKERS = ["o", "s", "d", "^", "v", ">", "<", "p", "h", "x", "+"]
 
 
@@ -76,7 +76,7 @@ def _key_style(sat, sat_cats, colors, fallback_idx):
 
 
 def _lighten(color):
-    """MATLAB ``min(c + 0.4, 1.0)`` -- the faint threshold-envelope colour."""
+    """MATLAB ``min(c + 0.4, 1.0)``: the faint threshold-envelope colour."""
     return tuple(min(ch + 0.4, 1.0) for ch in color)
 
 
@@ -92,7 +92,7 @@ def build_graphic_trace(ctx) -> ViewerResult:
         "graphic_slip_trace.csv",
     )
 
-    # Numerics + sentinel (-1) -> NaN for MAD sigma / threshold.
+    # Numerics, then map the negative sentinel (-1 and below) to NaN for MAD sigma / threshold.
     for c in ("dg_m", "mad_sigma_m", "threshold_m", "arc_count",
               "slip_cycles", "is_slip"):
         if c in df.columns:

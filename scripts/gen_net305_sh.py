@@ -162,10 +162,10 @@ if __name__ == "__main__":
         build(deg, 900.0, "fix_smoke", datum, clk_sigma=0.3, a00_sigma=15.0)
     build(15, 3600.0, "fix_1h", datum, clk_sigma=0.3, a00_sigma=15.0)
 
-    # Tighter sat-clock anchor (σ = 0.05 m) — tests whether the residual clock
+    # Tighter sat-clock anchor (sigma = 0.05 m): tests whether the residual clock
     # spread is irreducible datum offset (uniform) or still-tameable per-sat scatter.
     build(15, 900.0, "fix2_smoke", datum, clk_sigma=0.05, a00_sigma=15.0)
-    # Tight clock anchor + tighter physical a00 bound (15 ± 5 TECU) — defence in depth.
+    # Tight clock anchor plus tighter physical a00 bound (15 ± 5 TECU): defense in depth.
     build(15, 900.0, "fix3_smoke", datum, clk_sigma=0.05, a00_sigma=5.0)
     # Strongly prior-dominated field (a00 15±3, Kaula scale 2 → σ_n=2/n) + tight clock.
     # Diagnostic: is the field controllable by its prior at all, or does corrupted
@@ -175,9 +175,9 @@ if __name__ == "__main__":
     # Elevation-mask 25° (vs 10°): removes the worst-mapping / most slip- and
     # multipath-prone low-elevation obs that dominate the a00 mapping-spread handle.
     # em25_smoke isolates the elevation effect at cold start (no clock anchor);
-    # em25_long is the CONVERGENCE test — 3 h so the slant-iono / GF-ambiguity can
-    # begin to separate — with the kept clock anchor (σ=0.3) and physical a00 bound.
+    # em25_long is the convergence test, 3 h so the slant-iono / GF-ambiguity can
+    # begin to separate, with the kept clock anchor (σ=0.3) and physical a00 bound.
     build(15, 900.0,   "em25_smoke", datum, elev_mask=25.0)
-    # Pure elevation-25 convergence test (no clock anchor / default priors) — does the
+    # Pure elevation-25 convergence test (no clock anchor / default priors): does the
     # already-physical cold-start field stay clean and refine the high degrees over 3 h?
     build(15, 10800.0, "em25_long",  datum, elev_mask=25.0)

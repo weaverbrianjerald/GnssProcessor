@@ -1,30 +1,33 @@
 #!/usr/bin/env python3
-"""FP-2 per-leg PROVENANCE verification — the checks a gate table cannot do.
+"""FP-2 per-leg provenance verification: the checks a gate table cannot make.
 
     python scripts/fp2_leg_verify.py [--runs C:/GnssProcessor/runs] [--prefix fp2]
                                      [--json out.json]
 
-The §20 / §22.7 gates grade NUMBERS.  Before any number is legal to read, each
-leg has to be shown to be the leg it claims to be, and each PIN/OFF pair has to
-differ in the four knobs and nothing else.  That is this script.  Invariant #4:
-these are counters, not the absence of a crash.
+The §20 / §22.7 gates grade numbers.  Before those numbers are read, each leg
+is checked to be the leg it claims to be, and each PIN/OFF pair is checked to
+differ in the four knobs and nothing else.  The checks read counters, not the
+absence of a crash (invariant #4).
 
 Per leg:
-  * exit code 0 and the wall time;
-  * NO ``COLD START`` anywhere in stdout (a leg that cold-started measures the
-    bed, not the event) and the RTB-7 WARM RESUME line's restored counts;
-  * 61 emitted epochs in the leg's own window (``emitted epoch`` lines) and the
-    run-end ``epochs emitted / skipped / withheld`` triple;
-  * the RS-8 canonical-signal restore and RS-9 rx-CB frame restore lines ON
-    (the harness arms every RS restore; an INERT one silently changes the seam);
-  * the four posture ARMED lines PRESENT on a ``_pin`` leg and ABSENT on an
-    ``_off`` leg — the knob is proved by the producer's own voice, never by the
-    config alone (a branch exe drops an unknown knob silently);
-  * ``leg_meta.json``'s recorded ``extra`` and event.
+  * exit code 0, and the wall time;
+  * no ``COLD START`` anywhere in stdout (a leg that cold-started measures the
+    bed, not the event), and the restored counts on the RTB-7 WARM RESUME line;
+  * 61 emitted epochs in the leg's own window, counted as distinct epochs of the
+    E records in products.txt and as rows of logs/closed_loop_trace.csv (the
+    ``emitted epoch`` log line follows health_interval_s and is not a counter),
+    plus the run-end ``epochs emitted / skipped / withheld`` triple;
+  * the RS-8 canonical-signal restore and RS-9 rx-CB frame restore lines reading
+    ON (the harness arms every RS restore; an inert one changes the seam without
+    any message);
+  * the four posture ARMED lines present on a ``_pin`` leg and absent on an
+    ``_off`` leg.  The knob is confirmed by the producer's own log, not by the
+    config alone, because a branch exe drops an unknown knob without a message;
+  * the ``extra`` block and event recorded in ``leg_meta.json``.
 
-Per PIN/OFF pair: a flattened ``leg.json`` diff, which must be exactly the four
-knobs plus the per-leg output paths (plus the injection block on an event leg,
-which is identical in both arms and therefore must NOT appear in the diff).
+Per PIN/OFF pair: a flattened ``leg.json`` diff, which is expected to hold only
+the four knobs and the per-leg output paths.  On an event leg the injection
+block is identical in both arms and so does not appear in the diff.
 """
 import argparse
 import json
@@ -102,9 +105,9 @@ def read_leg(legdir):
     m = re.search(r"n_emitted (\d+) \(carry stays warm\)", txt)
     r["resume_n_emitted"] = int(m.group(1)) if m else None
 
-    # The leg's OWN emitted-epoch count.  The "emitted epoch N" log line rides
-    # health_interval_s (6 of them in a 61-epoch leg), so it is NOT the counter;
-    # the products file's E records and the consumer trace rows are.
+    # The leg's own emitted-epoch count.  The "emitted epoch N" log line follows
+    # health_interval_s (6 of them in a 61-epoch leg), so it is not a counter; the
+    # E records of the products file and the consumer trace rows are.
     pp = os.path.join(legdir, "products.txt")
     r["product_epochs"] = (len(set(re.findall(r"^E,[^,]*,([0-9.]+)", open(
         pp, encoding="utf-8", errors="replace").read(), re.M)))
@@ -162,11 +165,11 @@ def read_leg(legdir):
     else:
         r["problems"].append("no leg_meta.json")
 
-    # Run-end clauses: the ON-path telemetry (invariant #4 — counters, not the
-    # absence of crashes).  Each is the producer's own last word on one knob.
+    # Run-end clauses are the ON-path telemetry (invariant #4: counters, not the
+    # absence of crashes).  Each is the producer's final report on one knob.
     r["clauses"] = {}
-    # ⚠ take the LAST match: the loader prints an ARMED banner with the same
-    # §-prefix at startup, and it is not the counter line.
+    # Take the last match: at startup the loader prints an ARMED banner with the
+    # same §-prefix, and that banner is not the counter line.
     for tag, pat in (("scope", r"Network \(common-band scope\): verdicts .*"),
                      ("pairs", r"Network \(IF-TD pairs \[[^\]]+\]\): .*"),
                      ("ref_arm", r"Network \(§22\.6 REF-FAN / IF-TD reference arm "

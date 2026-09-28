@@ -90,20 +90,22 @@
          * @brief Raise a marker (monument) ECEF coordinate to the antenna
          *        reference point using a RINEX antenna eccentricity.
          *
-         * The single source of truth for the `ANTENNA: DELTA H/E/N` convention.
-         * RINEX orders the eccentricity (H, E, N) = (Up, East, North) — note this
-         * is NOT the ENU order the rotation expects — and it is defined as the
-         * offset FROM the marker TO the antenna reference point (ARP) in the local
-         * topocentric frame at the marker.
+         * This function is the single definition of the `ANTENNA: DELTA H/E/N`
+         * convention.  RINEX orders the eccentricity (H, E, N) = (Up, East, North),
+         * which differs from the ENU order the rotation expects, and defines it as
+         * the offset from the marker to the antenna reference point (ARP) in the
+         * local topocentric frame at the marker.
          *
-         * Why this matters: published station coordinates (IGS SINEX/SSC, NGS SIF,
-         * a surveyed RINEX `APPROX POSITION XYZ`) reference the **monument**,
-         * whereas the estimator's position state is the **ARP** (`igs20.atx` PCO/PCV
-         * are defined relative to the ARP).  Mixing the two frames puts a constant
-         * bias, equal to the eccentricity, straight into the vertical — and 184 of
-         * the 305 stations in the bundled 2024-129 fixture set carry a nonzero
-         * eccentricity (up to 6.2 m).  A zero eccentricity makes this an exact
-         * no-op, so header-less streams and 0/0/0 stations are unaffected.
+         * Published station coordinates (IGS SINEX/SSC, NGS SIF, a surveyed RINEX
+         * `APPROX POSITION XYZ`) refer to the monument, whereas the estimator's
+         * position state is the ARP (`igs20.atx` PCO/PCV are defined relative to
+         * the ARP).  Mixing the two puts a constant bias equal to the eccentricity
+         * into the position (into the vertical, for a height-only eccentricity);
+         * 184 of the 305 stations in the bundled 2024-129 fixture set carry a
+         * nonzero eccentricity (up to 6.2 m).
+         * An eccentricity with norm ≤ 1e-6 m, or a non-finite marker position,
+         * returns the input unchanged, so header-less streams and 0/0/0 stations
+         * are bit-for-bit unaffected.
          *
          * @param marker_ecef Monument/marker ECEF position (meters).
          * @param delta_hen   RINEX `ANTENNA: DELTA H/E/N` eccentricity (meters),
@@ -117,12 +119,15 @@
         /**
          * @brief Reduce an antenna-reference-point ECEF coordinate back to the marker.
          *
-         * Inverse of @c markerToArp — use when an ARP-referenced estimate has to be
-         * compared against, or published in, the monument frame.  The local frame
-         * belongs at the marker (the unknown), so the implementation takes one
-         * fixed-point step; a single-shot rotation at the ARP would leave an
-         * O(|ecc|²/R) closure error (~4 um on a 6 m tower).  Round-trips with
-         * @c markerToArp below a picometre.
+         * Inverse of @c markerToArp, for comparing an ARP-referenced estimate with,
+         * or publishing it in, the monument frame.  The local frame is defined at
+         * the marker, which is the unknown, so the implementation takes one
+         * fixed-point step; a single rotation at the ARP would leave an
+         * O(|ecc|²/R) closure error from the horizontal components (zero for a
+         * height-only eccentricity, about 8 µm for a 6.2 m horizontal offset).
+         * The round trip with @c markerToArp closes below a picometre.  The same
+         * no-op threshold applies as in @c markerToArp (norm ≤ 1e-6 m, or a
+         * non-finite input).
          *
          * @param arp_ecef  Antenna reference point ECEF position (meters).
          * @param delta_hen RINEX `ANTENNA: DELTA H/E/N` eccentricity (meters), in

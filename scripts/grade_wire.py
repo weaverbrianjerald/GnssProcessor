@@ -1,33 +1,33 @@
 #!/usr/bin/env python3
-"""Grade the emitted phase-bias WIRE — but on a datum-invariant quantity.
+"""Grade the emitted phase-bias wire, but on a datum-invariant quantity.
 
 The producer writes the satellite phase-bias corrections it puts on the wire to
 ``<run>/logs/network_solution.csv`` (``kind`` = ``PB``, ``value_m`` = the emitted
-bias in metres, per satellite per signal).  The raw wire is DATUM-DEPENDENT: the
+bias in metres, per satellite per signal). The raw wire is datum-dependent: the
 whole per-(constellation,signal) frame rides the chain datum's fractional
-receiver phase bias, so ALL satellites in a constellation drift together by a few
-cycles per epoch.  That common-mode drift is BENIGN — it cancels in the user's
-between-satellite double difference — yet a naive step grader on the raw
-``value_m`` reports it as churn and mislabels a healthy frame "sick".
+receiver phase bias, so every satellite in a constellation drifts together by a
+few cycles per epoch. That common-mode drift is benign (it cancels in the
+user's between-satellite double difference), yet a naive step grader on the raw
+``value_m`` reports it as churn and mislabels a healthy frame as sick.
 
-This grader applies the Psychas single-realization mandate: it PIVOT-DIFFERENCES
-per (epoch, constellation, signal) FIRST — subtracting the per-epoch median bias
-across the satellites of that constellation+signal (the common-mode / frame
-level) — and then judges the epoch-to-epoch step of the residual.  The residual
+This grader applies the Psychas single-realization mandate: it pivot-differences
+per (epoch, constellation, signal) first, subtracting the per-epoch median bias
+across the satellites of that constellation+signal (the common-mode, or frame,
+level), and then judges the epoch-to-epoch step of the residual. The residual
 ``b_s - median_s'(b_s')`` is a between-satellite (single-difference) quantity:
 invariant to the common frame drift, but it still exposes a genuine per-satellite
-RE-LEVEL (an integer jump when the chain datum re-pins a satellite at a new
-station).  So the pivoted step isolates real re-levels from benign drift.
+re-level (an integer jump when the chain datum re-pins a satellite at a new
+station). So the pivoted step isolates real re-levels from benign drift.
 
-It reports the RAW step alongside the pivoted step so the common-mode inflation
+It reports the raw step alongside the pivoted step so the common-mode inflation
 the pivot removes is visible directly (the "majors drift 2-4 cyc/ep" observation
-collapses to ~0 after pivoting when the drift really is common-mode).
+collapses to about 0 after pivoting when the drift really is common-mode).
 
 Companion to ``grade_ddfrac.py`` (which grades the internal cross-station DD).
-This one grades the ACTUAL emitted product for EVERY emitted satellite, not just
-the DD-traced pairs — a complementary, wire-level instrument.
+This one grades the actual emitted product for every emitted satellite, not just
+the DD-traced pairs: a complementary, wire-level instrument.
 
-Epoch matching is tow-jitter / gap robust: samples are snapped to an inferred
+Epoch matching is tow-jitter and gap robust: samples are snapped to an inferred
 epoch grid and a step is counted only between epoch-adjacent samples (never
 across an arc gap).
 
@@ -35,9 +35,9 @@ Usage
 -----
     python scripts/grade_wire.py <run_dir> [tail_seconds=3600] [--min-sats N=4]
 
-``<run_dir>`` holds ``logs/network_solution.csv``.  Cycle conversion uses a
+``<run_dir>`` holds ``logs/network_solution.csv``. Cycle conversion uses a
 built-in GNSS frequency table; a satellite/signal with no known wavelength is
-reported in metres only.  GLONASS (FDMA) is skipped for the cycle metric.
+reported in metres only. GLONASS (FDMA) is skipped for the cycle metric.
 """
 import argparse
 import csv
@@ -111,15 +111,15 @@ def grade(rows, min_sats):
     raw = |Δv_s| between epoch-adjacent samples of each satellite s (the raw,
           undifferenced wire step).
     piv = |Δv_s − common(e)|, where common(e) = median over the satellites present
-          in BOTH epochs of that same Δv_s — the per-(epoch,const,signal) COMMON
-          frame drift.  Subtracting the common step is the between-satellite
-          (single-difference) operation done on the STEP, so it is datum-invariant
-          and — unlike differencing the absolute biases, which span hundreds of
-          cycles and whose cross-sat median jumps as the satellite set changes —
-          it is immune to the absolute bias level and to set composition.  A
-          benign common-mode drift then cancels (piv -> 0) while a genuine
-          per-satellite re-level survives.  Only transitions with >= min_sats
-          paired satellites contribute to piv (else the common estimate is thin).
+          in both epochs of that same Δv_s: the per-(epoch,const,signal) common
+          frame drift. Subtracting the common step is the between-satellite
+          (single-difference) operation done on the step, so it is datum-invariant.
+          Unlike differencing the absolute biases, which span hundreds of cycles
+          and whose cross-sat median jumps as the satellite set changes, it is
+          immune to the absolute bias level and to set composition. A benign
+          common-mode drift then cancels (piv -> 0) while a genuine per-satellite
+          re-level survives. Only transitions with >= min_sats paired satellites
+          contribute to piv (else the common estimate is thin).
     """
     if not rows:
         return {}, 1.0
@@ -141,10 +141,10 @@ def grade(rows, min_sats):
             for a, b in zip(es, es[1:]):
                 if b - a == 1:                # epoch-adjacent only (skip gaps)
                     trans[a].append((sat, series[b] - series[a]))
-        # RAW and PIVOT are pooled over the SAME transitions (>= min_sats paired
+        # Raw and pivot are pooled over the same transitions (>= min_sats paired
         # sats) so the reported "common-mode removed" ratio is a clean matched
-        # before/after — not RAW-over-all-transitions vs PIVOT-over-thick-ones
-        # (thin arc-edge transitions carry the largest steps and would inflate RAW).
+        # before/after, not raw-over-all-transitions vs pivot-over-thick-ones
+        # (thin arc-edge transitions carry the largest steps and would inflate raw).
         raw_steps, piv_steps = [], []
         for e, lst in trans.items():
             if len(lst) < min_sats:

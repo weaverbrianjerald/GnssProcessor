@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""fetch_sinex_subset.py -- freeze a small station subset out of a SINEX/SSC.
+"""fetch_sinex_subset.py: freeze a small station subset out of a SINEX/SSC.
 
 IGS / ITRF SINEX coordinate products are tens of MB (every global station). The
 test suite only needs a handful of stations, so this script copies just the
 ``SITE/ID``, ``SOLUTION/EPOCHS`` and ``SOLUTION/ESTIMATE`` rows for the requested
-4-character codes into a small ``.snx`` you can commit under
+4-character codes into a small ``.snx`` suitable for committing under
 ``data/static/sinex/``.
 
 ``--source`` is a local path (``.snx`` or ``.snx.gz``) or an ``http(s)`` URL.
@@ -42,7 +42,7 @@ def _read_source(source: str) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
-# Blocks we keep verbatim (only the rows whose station code is requested).
+# Blocks kept verbatim (only the rows whose station code is requested).
 _CODE_BLOCKS = ("SITE/ID", "SOLUTION/EPOCHS", "SOLUTION/ESTIMATE")
 
 

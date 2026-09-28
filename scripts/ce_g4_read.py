@@ -4,7 +4,7 @@
     python ce_g4_read.py <arm> [<arm> ...] [--tow 334020] [--eps 20]
 
 Per arm: the CLK_ANCHOR cta_decouple / cta_recouple rows in the window (the two edges of
-invariant #7), the epoch dispositions (emitted vs withheld — adapt-and-emit is the PASS
+invariant #7), the epoch dispositions (emitted vs withheld: adapt-and-emit is the pass
 condition, a withhold is the failure), and the consumer's 3D through the window.
 """
 import argparse

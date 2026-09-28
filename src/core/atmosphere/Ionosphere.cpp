@@ -10,23 +10,24 @@ namespace GnssProcessor {
 
     /**
      * @file Ionosphere.cpp
-     * @brief Ionospheric helper implementation: Klobuchar coefficient loading and ionospheric/tropospheric estimators.
+     * @brief Ionospheric helper implementation: Klobuchar coefficient loading and ionospheric delay estimators.
      *
-     * Implements loading of Klobuchar coefficients from RINEX/BRDC products and
-     * provides Klobuchar single-frequency delay computation and a simple
-     * initial zenith ionospheric delay estimate used for PPP initialization.
+     * Loads the GPS Klobuchar coefficients from the RINEX/BRDC navigation product
+     * and computes the Klobuchar single-frequency slant delay and a coarse zenith
+     * ionospheric delay used for PPP initialization.
      */
 
     /**
      * @brief Construct an Ionosphere helper.
      *
-     * Initializes geometry/model helpers and attempts to load Klobuchar
-     * coefficients via configured product paths.
+     * Initializes the geometry helper, takes the Klobuchar coefficients from
+     * ProductCache, and parses them from the configured RNX product when the
+     * cache holds none.
      *
      * @param config Read-only reference to configuration.
      * @param log_mgr Reference to LogManager for logging.
-     * @param parser ProductParser used to locate/parse auxiliary products.
-     * @param rinex RinexParser reference used by geometry/parser helpers.
+     * @param parser ProductParser; not used by this constructor.
+     * @param rinex RinexParser reference passed to the geometry helper.
      */
     Ionosphere::Ionosphere(const GnssConfig& config, LogManager& log_mgr, ProductParser& parser, const RinexParser& rinex)
         : log_manager_(log_mgr), config_(config),
@@ -45,11 +46,12 @@ namespace GnssProcessor {
     /**
      * @brief Load Klobuchar coefficients from configured RINEX/BRDC product.
      *
-     * Searches for the RNX product configured in `config_`, opens the file,
-     * scans the RINEX header for Klobuchar alpha (GPSA/GAL) and beta (GPSB)
-     * lines and stores eight coefficients (alpha[4], beta[4]) in
-     * `klobuchar_coeffs_`. If parsing fails or the file doesn't exist, the
-     * coefficient vector is left empty and warnings are logged.
+     * Opens the RNX product configured in `config_`, scans the RINEX header
+     * for the GPS Klobuchar alpha (GPSA) and beta (GPSB) lines and stores eight
+     * coefficients (alpha[4], beta[4]) in `klobuchar_coeffs_`. If the path is
+     * missing, the file cannot be opened, or the header does not yield exactly
+     * eight finite coefficients, the vector is left empty and a warning or
+     * error is logged.
      */
     void Ionosphere::loadKlobucharCoeffs() {
         klobuchar_coeffs_.clear();
@@ -78,21 +80,21 @@ namespace GnssProcessor {
                 continue;
             }
             if (in_header && line.find("IONOSPHERIC CORR") != std::string::npos) {
-                // RINEX inherits Fortran's 'D' exponent marker, and real files use both:
-                // IGS BRDC for 2024 DOY 129 writes "2.5146E-08" while DOY 131 writes
-                // "3.4459D-08".  operator>>(double) accepts only 'E', so without this
-                // normalisation a perfectly valid nav file yields ZERO coefficients and
-                // Klobuchar silently disappears.  (RinexNavParser::parseRinexDouble does
-                // the same for nav DATA records; the header path had been missed.)
+                // RINEX inherits Fortran's 'D' exponent marker, and IGS BRDC files use
+                // either 'E' ("2.5146E-08") or 'D' ("3.4459D-08").  operator>>(double)
+                // accepts only 'E', so 'D' is normalised to 'E' here; otherwise a valid
+                // nav file yields no coefficients and the Klobuchar model is not
+                // available.  RinexNavParser::parseRinexDouble does the same for the nav
+                // data records.
                 std::string norm = line;
                 for (char& c : norm)
                     if (c == 'D' || c == 'd') c = 'E';
                 std::istringstream iss(norm);
                 std::string type;
                 iss >> type;
-                // GPS Klobuchar α only.  A RINEX 3 "GAL" line is Galileo
-                // NeQuick-G (ai0..ai2), not Klobuchar α — see the matching
-                // note in ProductParser::parseKlobuchar.
+                // GPS Klobuchar α and β only.  A RINEX 3 "GAL" line holds Galileo
+                // NeQuick-G coefficients (ai0..ai2), not Klobuchar α; see the
+                // matching note in ProductParser::parseKlobuchar.
                 if (type == "GPSA") { // alpha
                     double a0, a1, a2, a3;
                     if (iss >> a0 >> a1 >> a2 >> a3) {
@@ -149,8 +151,8 @@ namespace GnssProcessor {
      * @brief Compute Klobuchar ionospheric delay for a single observation.
      *
      * Implements the standard Klobuchar model to estimate ionospheric delay
-     * for a single-frequency observation. The implementation expects
-     * `klobuchar_coeffs_` to contain 8 values (alpha[4], beta[4]).
+     * for a single-frequency observation. Precondition: `klobuchar_coeffs_`
+     * holds 8 values (alpha[4], beta[4]); the size is not checked here.
      *
      * @param time GNSS epoch (GPS week/tow).
      * @param rx_pos Receiver ECEF position in meters.
@@ -166,14 +168,12 @@ namespace GnssProcessor {
         double b0 = klobuchar_coeffs_[4], b1 = klobuchar_coeffs_[5], b2 = klobuchar_coeffs_[6], b3 = klobuchar_coeffs_[7];
 
         double t = fmod(time.tow, TimeUtils::SECONDS_IN_DAY);
-        // FIXED 2026-08-19: phi previously came from asin(z/|r|), which is the
-        // GEOCENTRIC latitude, while the comment -- and IS-GPS-200, which
-        // specifies the user geodetic latitude phi_u in semicircles -- call for
-        // the GEODETIC one.  The two differ by up to 0.192 deg at 45 deg latitude
-        // (~0.0011 semicircles into phi_m).  Route through the tree's single
-        // ellipsoid solver, as every other latitude consumer does; that also
-        // handles the p ~ 0 polar case the raw asin left as a NaN.  Longitude is
-        // identical in both conventions, so that line is only re-labelled.
+        // IS-GPS-200 specifies the user geodetic latitude phi_u (semicircles).  It
+        // comes from Coordinates::ecefToLlh, the ellipsoid solver used by every
+        // other latitude consumer, which also handles the polar case (p ~ 0).  The
+        // geocentric latitude asin(z/|r|) differs by up to 0.192 deg at 45 deg
+        // (about 0.0011 semicircles in phi_m).  Longitude is the same in both
+        // conventions.
         const Coordinates::Llh rx_llh = Coordinates::ecefToLlh(rx_pos);
         double phi = rx_llh.lat_rad * 180.0 / Constants::PI;    // Geodetic latitude (degrees)
         double lambda = rx_llh.lon_rad * 180.0 / Constants::PI; // Geodetic longitude (degrees)
@@ -216,9 +216,10 @@ namespace GnssProcessor {
     /**
      * @brief Compute a coarse initial ionospheric zenith delay for PPP initialization.
      *
-     * When Klobuchar coefficients are available this routine applies the
-     * Klobuchar model to produce a zenith delay (meters). If coefficients
-     * are missing a conservative default (5 meters) is returned.
+     * With 8 Klobuchar coefficients loaded, evaluates the Klobuchar vertical
+     * delay at L1 with the receiver itself as the pierce point (no obliquity
+     * factor, no pierce-point offset) and returns it in meters. Without them,
+     * returns a default of 5 meters.
      *
      * @param time GNSS epoch (GPS week/tow).
      * @param rx_pos Receiver ECEF position in meters.
@@ -234,14 +235,8 @@ namespace GnssProcessor {
         double b0 = klobuchar_coeffs_[4], b1 = klobuchar_coeffs_[5], b2 = klobuchar_coeffs_[6], b3 = klobuchar_coeffs_[7];
 
         double t = fmod(time.tow, TimeUtils::SECONDS_IN_DAY);
-        // FIXED 2026-08-19: phi previously came from asin(z/|r|), which is the
-        // GEOCENTRIC latitude, while the comment -- and IS-GPS-200, which
-        // specifies the user geodetic latitude phi_u in semicircles -- call for
-        // the GEODETIC one.  The two differ by up to 0.192 deg at 45 deg latitude
-        // (~0.0011 semicircles into phi_m).  Route through the tree's single
-        // ellipsoid solver, as every other latitude consumer does; that also
-        // handles the p ~ 0 polar case the raw asin left as a NaN.  Longitude is
-        // identical in both conventions, so that line is only re-labelled.
+        // Geodetic latitude from Coordinates::ecefToLlh, as IS-GPS-200 specifies;
+        // see the same note in computeKlobucharDelay.
         const Coordinates::Llh rx_llh = Coordinates::ecefToLlh(rx_pos);
         double phi = rx_llh.lat_rad * 180.0 / Constants::PI;    // Geodetic latitude (degrees)
         double lambda = rx_llh.lon_rad * 180.0 / Constants::PI; // Geodetic longitude (degrees)

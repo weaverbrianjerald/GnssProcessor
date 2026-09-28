@@ -1,27 +1,29 @@
 #!/usr/bin/env python3
-"""RTB-7(d) RS card BR-2 — branch-faithfulness instrument: diff two carry blobs.
+"""RTB-7(d) RS card BR-2, branch-faithfulness instrument: diff two carry blobs.
 
-Between-sat SD of CLK is an omnibus readout at the END of the station-layer →
-phase-conduit → clock chain; it cannot attribute.  The Card-4 carry blob IS the
+Between-sat SD of CLK is an omnibus readout at the end of the station-layer to
+phase-conduit to clock chain; it cannot attribute. The Card-4 carry blob is the
 branch, and a carried DD is both datum-invariant (a double difference) and
 integer-meaningful, so comparing blobs grades the thing the feature restores.
 
-**Id translation is the whole point.**  Vertex and group ids are assigned in
-first-seen order per run and stored per snapshot (`SV` / `GG` records), so two
-runs that saw satellites in a different order carry DIFFERENT ids for the SAME
-satellite.  Comparing raw ids is a silent mis-binding trap.  Every chord is
-therefore translated to ``(constellation, signal, rx_roster_index, sat_name)``
-using EACH FILE'S OWN maps before any comparison.  The receiver vertex is the
-station roster index (stable — roster order is inside the config fingerprint);
-the satellite vertex is whichever endpoint appears in that file's `SV` map.
+Id translation is central to this comparison. Vertex and group ids are
+assigned in first-seen order per run and stored per snapshot (`SV` / `GG`
+records), so two runs that saw satellites in a different order carry different
+ids for the same satellite. Comparing raw ids is a silent mis-binding trap.
+Every chord is therefore translated to
+``(constellation, signal, rx_roster_index, sat_name)`` using each file's own
+maps before any comparison. The receiver vertex is the station roster index
+(stable, since roster order is inside the config fingerprint); the satellite
+vertex is whichever endpoint appears in that file's `SV` map.
 
 Reports, per file pair:
   * n common chords, and set churn (only-in-A / only-in-B)
-  * |Δz| distribution in CYCLES (median / p95)
-  * **branch-agree**: fraction with |Δz| < tol  (same real-valued branch)
-  * **branch-flip**: count with |Δz - round(Δz)| < tol and round(Δz) != 0
-    (an integer-cycle jump — the branch moved to a different integer)
-Thresholds are CANDIDATE; the full distribution is printed so they can be judged.
+  * |Δz| distribution in cycles (median / p95)
+  * branch-agree: fraction with |Δz| < tol (same real-valued branch)
+  * branch-flip: count with |Δz - round(Δz)| < tol and round(Δz) != 0
+    (an integer-cycle jump: the branch moved to a different integer)
+Thresholds are provisional; the full distribution is printed so they can be
+judged.
 
 Usage:
     python scripts/diff_carry_blobs.py A.snap B.snap [--tol 0.05] [--top 10]
@@ -29,14 +31,14 @@ Usage:
 import argparse, sys
 from collections import defaultdict
 
-# Static GPS wavelengths (m) by band digit; enough for this card (GPS-only runs).
+# Static GPS wavelengths (m) by band digit: enough for this card (GPS-only runs).
 _C = 299792458.0
 _FREQ = {"1": 1575.42e6, "2": 1227.60e6, "5": 1176.45e6,
          "6": 1278.75e6, "7": 1207.14e6, "8": 1191.795e6}
 
 
 def lam_for(signal):
-    """Wavelength for a RINEX signal like 'L1C' / 'L2W' / '1C' — band digit rules."""
+    """Wavelength for a RINEX signal like 'L1C' / 'L2W' / '1C', by band digit."""
     for ch in signal:
         if ch in _FREQ:
             return _C / _FREQ[ch]
@@ -142,11 +144,11 @@ def main():
     d = [A[k] - B[k] for k in common]
     ad = [abs(x) for x in d]
     n = len(common)
-    # SAME-INTEGER is the branch instrument.  A carried DD is refined by data every
-    # epoch — with q_z=1e-4 m²/s over 30 s its own process noise is already
-    # sqrt(3e-3) = 55 mm ~ 0.29 L1 cycles per epoch — so a sub-0.05-cycle bar measures
-    # ESTIMATE PRECISION, not which integer the branch sits on.  Two runs are on the
-    # same branch iff their DDs round to the same integer.
+    # The same-integer count is the branch instrument. A carried DD is refined by
+    # data every epoch: with q_z=1e-4 m²/s over 30 s its own process noise is
+    # already sqrt(3e-3) = 55 mm, about 0.29 L1 cycles per epoch, so a sub-0.05-cycle
+    # bar measures estimate precision, not which integer the branch sits on. Two
+    # runs are on the same branch if and only if their DDs round to the same integer.
     same_int = sum(1 for x in d if round(x) == 0)
     agree = sum(1 for x in ad if x < args.tol)
     flip = sum(1 for x in d if abs(x - round(x)) < args.tol and round(x) != 0)

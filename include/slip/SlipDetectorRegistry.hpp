@@ -2,26 +2,28 @@
 
 /**
  * @file SlipDetectorRegistry.hpp
- * @brief Factory that constructs cycle-slip detectors by kind / from config.
+ * @brief Factory that constructs cycle-slip detectors by kind or from the config.
  *
- * The registry is the single place that knows how to build each concrete
- * @c ISlipDetector from the uniform @c (GnssConfig&, LogManager&) constructor
- * every detector shares.  It replaces the previous hard-coded ownership of a
- * lone @c MwSlipDetector inside @c CycleSlipManager with config-driven
- * selection of a detector set.
+ * The registry is the single place that builds each concrete user-side
+ * @c ISlipDetector from the @c (GnssConfig&, LogManager&) constructor that every
+ * detector shares; @c CycleSlipManager obtains its detector set from
+ * @c createEnabled.  Registered today: MW, GRAPHIC and EWL.
  *
  * Two layers:
- *   - @c create(kind, ...) — build one detector by kind, or nullptr if that
- *     kind is staged/unavailable in this build (GF / IF are not yet compiled).
- *   - @c createEnabled(config, ...) — build the ordered set the configuration
- *     selects (MW first as the primary, then auxiliaries), skipping kinds that
+ *   - @c create(kind, ...): build one detector by kind, or nullptr if no creator
+ *     is registered for that kind.  GF is staged (its .cpp is not compiled); IF is
+ *     compiled but built directly by the network path, not through the registry.
+ *   - @c createEnabled(config, ...): build the ordered set the configuration
+ *     selects (MW first as the primary, then the auxiliaries), skipping kinds that
  *     are disabled or unavailable and logging each decision.
  *
- * Adding a new detector means: implement @c ISlipDetector, add its
- * @c SlipDetectorKind, register it in the creator table (SlipDetectorRegistry.cpp),
- * add its config toggle to @c GnssConfig::CycleSlipConfig, and list its .cpp in
- * CMakeLists.txt.  No call sites change — @c CycleSlipManager picks it up
- * automatically.
+ * Adding a detector:
+ *   1. Implement @c ISlipDetector and add its @c SlipDetectorKind.
+ *   2. Register it in the creator table (SlipDetectorRegistry.cpp).
+ *   3. Add its config toggle to @c CycleSlipConfig and add the kind to the
+ *      selection list in @c createEnabled.
+ *   4. List its .cpp in CMakeLists.txt.
+ * No call site in @c CycleSlipManager changes.
  */
 
 #include "slip/ISlipDetector.hpp"
@@ -69,8 +71,9 @@ public:
      * @param kind        Detector to build.
      * @param config      Processing configuration.
      * @param log_manager Logging facility.
-     * @return The detector, or nullptr if @p kind is not available in this
-     *         build (e.g. staged GF / IF detectors excluded from compilation).
+     * @return The detector, or nullptr if no creator is registered for @p kind
+     *         (the staged, uncompiled GF detector, or the IF detector, which the
+     *         network path builds directly).
      */
     static std::unique_ptr<ISlipDetector> create(SlipDetectorKind kind,
                                                  const GnssConfig& config,
@@ -91,11 +94,11 @@ public:
     /**
      * @brief Build the config-selected detector set.
      *
-     * Order is deterministic: the MW detector first (when enabled — it is the
-     * primary and the source of WL integers for AR / pivots), then the
-     * auxiliary detectors in a fixed order.  A kind that is enabled in config
-     * but unavailable in this build is skipped with a warning (so a config
-     * referencing a staged detector degrades gracefully rather than failing).
+     * Order is deterministic: the MW detector first when enabled (it is the
+     * primary and the source of WL integers for AR and pivots), then the
+     * auxiliary detectors in a fixed order.  A kind that is enabled in the config
+     * but has no registered creator is skipped with a warning, so a config that
+     * selects a staged detector still runs instead of failing.
      *
      * @param config      Processing configuration (queried via getCycleSlipConfig()).
      * @param log_manager Logging facility.

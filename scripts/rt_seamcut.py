@@ -4,13 +4,13 @@
     python scripts/rt_seamcut.py            # write the .cpp files + the manifest
     python scripts/rt_seamcut.py --survey   # just print each block's bounds
 
-Rebuild of the network decomposition's seamcut.py mechanic: extract -> dedent by
-a measured depth -> assert min-indent -> prepend a mechanically-derived alias
-preamble -> write, with ONE canonical seam table generating both the .cpp bodies
-and the verifier manifest, so the two can never disagree about what was moved.
+Modeled on the network decomposition's seamcut.py mechanic: extract, dedent by
+a measured depth, assert minimum indent, prepend a mechanically derived alias
+preamble, then write. A single canonical seam table generates both the .cpp
+bodies and the verifier manifest, so the two cannot disagree about what moved.
 
-Line ranges are INCLUSIVE, 1-based, into runs/rtseam_goldens/pre/src/
-RealTimeEngine.cpp.frozen -- captured before any edit and never regenerated.
+Line ranges are inclusive and 1-based, into runs/rtseam_goldens/pre/src/
+RealTimeEngine.cpp.frozen, captured before any edit and never regenerated.
 """
 import argparse
 import json
@@ -45,15 +45,15 @@ ALIAS = {
 }
 
 # ---------------------------------------------------------------------------
-# THE canonical seam table.
-#   file    -- destination TU (basename under src/core/realtime/)
-#   ret     -- "void" or "bool"
-#   lines   -- [first, last] inclusive in the frozen source (the BODY only:
-#              a bare `{ ... }` scope contributes its interior, never its braces)
-#   aliases -- ALIAS keys, emitted in order as the preamble
-#   subs    -- {frozen_text: relocated_text}; normally EMPTY.  A non-empty map is
-#              a DECLARED non-verbatim edit and must be justified in `why`.
-#   doc     -- Doxygen brief for the definition site
+# The canonical seam table.
+#   file:    destination TU (basename under src/core/realtime/)
+#   ret:     "void" or "bool"
+#   lines:   [first, last] inclusive in the frozen source (the body only:
+#            a bare `{ ... }` scope contributes its interior, not its braces)
+#   aliases: ALIAS keys, emitted in order as the preamble
+#   subs:    {frozen_text: relocated_text}; normally empty. A non-empty map is
+#            a declared non-verbatim edit and must be justified in `why`.
+#   doc:     Doxygen brief for the definition site
 # ---------------------------------------------------------------------------
 SEAMS = [
     # --- RealTimeEngineAdmit.cpp -------------------------------------------
@@ -169,7 +169,7 @@ SEAMS = [
 
     # =====================================================================
     # Secondary cuts: initialize() and feedRtcmFrame().
-    # Same mechanic, different origin function -- hence the explicit `origin`
+    # Same mechanic, different origin function, hence the explicit `origin`
     # and `params` (these seams have no per-epoch context to thread).
     # =====================================================================
 
@@ -217,10 +217,10 @@ SEAMS = [
 
     # --- RealTimeEngineIngest.cpp (from feedRtcmFrame(), frozen 437-687) ---
     # The observation-buffering loop (456-501) and the ephemeris push (544-548)
-    # deliberately STAY in the driver TU: both call anonymous-namespace helpers
+    # stay in the driver TU: both call anonymous-namespace helpers
     # (isSystemActive, refreshGlonassSlots) that are file-local to
     # RealTimeEngine.cpp by design.  Moving them would mean hoisting those into
-    # a new internal header for 51 lines of gain -- not worth the coupling.
+    # a new internal header for 51 lines of gain, not worth the coupling.
     dict(file="RealTimeEngineIngest.cpp", func="ingestSsrRecords", ret="std::size_t",
          params="RtcmParser& parser, SsrAcceptPolicy accept",
          origin="RealTimeEngine::feedRtcmFrame", lines=[518, 542],
@@ -371,7 +371,7 @@ def main():
         if pre:
             lines += ["    " + p for p in pre] + [""]
         lines += ["    " + l if l else "" for l in body]
-        # `tail` is the declared trailing statement -- `return true` for a bool
+        # `tail` is the declared trailing statement: `return true` for a bool
         # gate whose body only ever returns false, or a value return for a seam
         # that hands a count back to the driver.
         tail = s.get("tail") or ("return true;" if s.get("trailing_return") else None)

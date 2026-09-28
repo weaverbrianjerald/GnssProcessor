@@ -1,114 +1,116 @@
 /**
  * @file test_phase_windup_sign.cpp
- * @brief Sign / effective-dipole gate for GnssCorrections::computePhaseWindUp.
+ * @brief Sign and effective-dipole gate for GnssCorrections::computePhaseWindUp.
  *
- * WHAT IS UNDER TEST
- * ------------------
- * The two effective-dipole lines in src/core/corrections/GnssCorrections.cpp
- * (:1944-1945).  For a right-handed antenna triad (x, y, z) and a unit LOS
+ * Under test
+ * ----------
+ * The two effective-dipole lines (Ds, satellite; Dr, receiver) in
+ * computePhaseWindUp, src/core/corrections/GnssCorrections.cpp.  For a
+ * right-handed antenna triad (x, y, z) and a unit LOS
  * k = (rx_pos - sat_pos).normalized(), the Wu et al. (1993) effective dipole is
  *
  *     D = x - k (k.x) - k x y                       <-- the model
  *
- * and BOTH triads this function builds are right-handed with their third axis
- * pointing along +k:
+ * and both triads the function builds are right-handed with their third axis on
+ * the +k side:
  *   - satellite: (ex, ey, ez), ez = -sat_pos.normalized() (geocentric nadir),
  *                ex x ey = ez;  eps_s = nadir angle  = angle(ez, k).
- *   - receiver:  x_r = NORTH, y_r = EAST, whose implied third axis is
- *                north x east = DOWN;  eps_r = zenith angle = angle(down, k).
+ *   - receiver:  x_r = north, y_r = east, whose implied third axis is
+ *                north x east = down;  eps_r = zenith angle = angle(down, k).
  *
- * The magnitudes are EXACT, with no small-angle step (proved in
+ * The magnitudes are exact, with no small-angle step (proved in
  * EffectiveDipoleMagnitudeIsOnePlusCosEps below):
  *
  *     | x - k(k.x) - k x y | = 1 + cos eps           <-- the model
  *     | x - k(k.x) + k x y | = 1 - cos eps           <-- what a "+" builds
  *
- * so a "+" sign does not perturb the dipole, it CANCELS the leading term: the
- * effective dipole VANISHES on boresight, where the antenna gain is maximal.
+ * so a "+" sign does not perturb the dipole; it cancels the leading term, and the
+ * effective dipole vanishes on boresight, where the antenna gain is maximal.
  * The two normalized directions are exact mirror images of each other about the
  * k x p axis, so the returned angle is the mirror of the modelled one.
  *
- * WHY THIS FILE EXISTS AND WHY IT IS SHAPED THIS WAY
- * --------------------------------------------------
- * 1. The magnitudes are NOT directly observable through the public API.  The
+ * Design of the cases
+ * -------------------
+ * 1. The magnitudes are not directly observable through the public API.  The
  *    function normalizes both dipoles before taking the angle
- *    (Ds_hat = Ds / Ds_norm), so |Ds| and |Dr| cancel out of the return value --
- *    EXCEPT where a magnitude collapses through the degenerate-dipole guard
+ *    (Ds_hat = Ds / Ds_norm), so |Ds| and |Dr| cancel out of the return value,
+ *    except where a magnitude collapses through the degenerate-dipole guard
  *
- *        if (Ds_norm < 1e-10 || Dr_norm < 1e-10) return 0.0;        // :1947
+ *        if (Ds_norm < 1e-10 || Dr_norm < 1e-10) return 0.0;
  *
- *    That guard is an OR over the two magnitudes.  So a geometry that drives
- *    exactly ONE eps to zero turns exactly ONE of the two lines into an
+ *    That guard is an OR over the two magnitudes.  A geometry that drives
+ *    exactly one eps to zero therefore makes exactly one of the two lines
  *    observable: the return either collapses to 0.0 (that line has the wrong
  *    sign) or stays at the modelled value (that line is right).  Two such
  *    geometries exist and they are independent:
- *       eps_s = 0  <=>  the receiver sits on the GEOCENTRIC ray through the
+ *       eps_s = 0  <=>  the receiver sits on the geocentric ray through the
  *                       satellite  -> SatelliteBoresightIsolatesSatelliteDipoleSign
- *       eps_r = 0  <=>  the satellite sits on the receiver's GEODETIC vertical
+ *       eps_r = 0  <=>  the satellite sits on the receiver's geodetic vertical
  *                       -> ReceiverZenithIsolatesReceiverDipoleSign
  *    They coincide only where the geodetic vertical is parallel to the
- *    geocentric radial (equator / poles), which is exactly why the equatorial
- *    sub-satellite case pins both lines at once but distinguishes NEITHER.
+ *    geocentric radial (equator, poles), which is why the equatorial
+ *    sub-satellite case pins both lines at once but distinguishes neither.
  *
- * 2. A HALF-FIX MUST FAIL.  Flipping only one of the two lines is worse than
- *    the shipped code: it converts a clean sign inversion (which a constant
+ * 2. A half-fix must fail.  Flipping only one of the two lines is worse than
+ *    flipping neither: it converts a clean sign inversion (which a constant
  *    ambiguity largely absorbs) into a phase error spread over a full cycle
  *    (median |error| ~ 0.29 cyc over 4000 random el >= 10 deg geometries).  A
- *    value assertion at a single geometry can pass a half-fix by luck -- the
- *    measured minimum over those 4000 geometries was 8e-5 cyc -- so the
- *    half-fix guard here is STRUCTURAL, not statistical: each of the two
- *    isolating cases pins ONE line's sign through its OWN dipole magnitude, and
- *    the two together admit only (-,-).  Measured behaviour of the four arms:
+ *    value assertion at a single geometry can pass a half-fix by chance (the
+ *    measured minimum over those 4000 geometries was 8e-5 cyc), so the
+ *    half-fix guard here is structural, not statistical: each of the two
+ *    isolating cases pins one line's sign through that line's own dipole
+ *    magnitude, and the two together admit only (-,-).  Measured behaviour of
+ *    the four arms (satellite sign, receiver sign):
  *
  *      arm            | SatelliteBoresight     | ReceiverZenith
  *      ---------------+------------------------+------------------------
- *      (+,+) shipped  | 0.0        FAIL        | 0.0        FAIL
+ *      (+,+) pre-fix  | 0.0        FAIL        | 0.0        FAIL
  *      (-,+) half-fix | +0.070646  FAIL        | 0.0        FAIL
  *      (+,-) half-fix | 0.0        FAIL        | -0.070633  FAIL
  *      (-,-) fixed    | -0.024501  pass        | -0.024514  pass
  *
- *    Both cases fail the wrong arms on VALUE as well as on the guard, so the
+ *    Both cases fail the wrong arms on value as well as on the guard, so the
  *    gate survives a future change to the 1e-10 threshold.  YawTurnIsMinusOne-
  *    Cycle is a third, independent handle on the satellite line alone: a
  *    receiver-only flip still yields +1 cyc/turn.
  *
- * 3. THE ORACLE IS INDEPENDENT OF THE EXPRESSION UNDER TEST.  Ref::windUp below
- *    builds the same two body triads (the triads are the model's INPUT, not the
+ * 3. The oracle is independent of the expression under test.  Ref::windUp below
+ *    builds the same two body triads (the triads are the model's input, not the
  *    defect) but forms the dipole from the algebraically equivalent closed form
  *
  *        D = (1 + k.z) x - (k + z)(k.x)
  *
- *    which contains no cross product with y at all and exhibits the (1 + cos
- *    eps) scale directly; it takes the angle in an explicit 2-D basis of the
- *    plane perpendicular to k rather than through the atan2 triple-product form
- *    the production code uses; and it DERIVES the receiver's third axis as
+ *    which contains no cross product with y and exhibits the (1 + cos eps)
+ *    scale directly.  It takes the angle in an explicit 2-D basis of the plane
+ *    perpendicular to k rather than through the atan2 triple-product form the
+ *    production code uses, and it derives the receiver's third axis as
  *    x_r x y_r instead of assuming "down".
  *
- * 4. NOTE FOR ANY FUTURE READER: phi_shipped is NOT exactly -phi_model.  The
- *    two mirror axes differ by the deflection between the receiver's geodetic
- *    vertical and the geocentric radial (up to 0.19 deg), amplified by
- *    1/sin(eps_r).  Measured over 20000 geometries at el >= 10 deg,
- *    |phi_shipped + phi_model| mod 1 cyc has median 5.6e-4 cyc, p90 1.4e-3 and
- *    max 5.4e-2 (worst near zenith).  Do NOT write a case that asserts
- *    "shipped == -reference"; assert against the reference itself.
+ * 4. phi_(+,+) is not exactly -phi_model.  The two mirror axes differ by the
+ *    deflection between the receiver's geodetic vertical and the geocentric
+ *    radial (up to 0.19 deg), amplified by 1/sin(eps_r).  Measured over 20000
+ *    geometries at el >= 10 deg, |phi_(+,+) + phi_model| mod 1 cyc has median
+ *    5.6e-4 cyc, p90 1.4e-3 and max 5.4e-2 (largest near zenith).  A case must
+ *    therefore assert against the reference itself, not "pre-fix == -reference".
  *
- * Every case constructs a FRESH GnssCorrections.  prev_windup_ is a mutable
+ * Every case constructs a fresh GnssCorrections.  prev_windup_ is a mutable
  * per-instance member written from the const computePhaseWindUp(), so any case
  * passing accumulate = true carries state across calls; sharing an instance
  * across cases would make the accumulated cases order-dependent.
  *
- * VERIFIED four-arm behaviour of this file (same build, only the two signs at
- * :1944-1945 differing; every number quoted in the case comments below is from
- * that run):
+ * Measured four-arm behaviour of cases 1-8 (same build, only the two dipole
+ * signs differing; every number quoted in the case comments below is from that
+ * run):
  *
- *     (+,+) shipped   7 of 8 FAIL
+ *     (+,+) pre-fix   7 of 8 FAIL
  *     (-,+) half-fix  7 of 8 FAIL
  *     (+,-) half-fix  7 of 8 FAIL
  *     (-,-) fixed     8 of 8 PASS
  *
  * The one case that passes in all four arms is EffectiveDipoleMagnitudeIs-
  * OnePlusCosEps, which by construction tests the algebra rather than the
- * production function.
+ * production function.  The two satellite-frame branch cases at the end of the
+ * file (case 9) are not part of that four-arm measurement.
  *
  * @see docs/SPEC_phase_windup_sign.md
  * @see test_site_displacement.cpp   sibling GnssCorrections geometry coverage
@@ -146,7 +148,7 @@ constexpr double kDeg       = Constants::PI / 180.0;
 // failure signal any case here carries (1.07e-2 m).
 constexpr double kMetreTol = 1e-9;
 
-// The degenerate-dipole guard at GnssCorrections.cpp:1947.
+// The degenerate-dipole guard in computePhaseWindUp (GnssCorrections.cpp).
 constexpr double kDipoleGuard = 1e-10;
 
 // ---------------------------------------------------------------------------
@@ -189,7 +191,7 @@ Vector3d sunAt(const Vector3d& sat_pos, double dx, double dy, double dz) {
 }
 
 // ---------------------------------------------------------------------------
-// Ref -- the independent oracle (see header note 3)
+// Ref: the independent oracle (see header note 3)
 // ---------------------------------------------------------------------------
 namespace Ref {
 
@@ -209,7 +211,7 @@ Vector3d dipole(const Vector3d& k, const Vector3d& x, const Vector3d& z) {
 }
 
 double angleAboutK(const Vector3d& k, const Vector3d& ds, const Vector3d& dr) {
-    // Explicit 2-D basis of the plane perpendicular to k -- NOT the
+    // Explicit 2-D basis of the plane perpendicular to k, instead of the
     // atan2(k . (Ds x Dr), Ds . Dr) triple-product form of the production code.
     const Vector3d seed = (std::abs(k.x()) > 0.9) ? Vector3d::UnitY() : Vector3d::UnitX();
     const Vector3d p = (seed - k * k.dot(seed)).normalized();
@@ -223,19 +225,19 @@ Result windUp(const Vector3d& rx_pos, const Vector3d& sat_pos,
               const Vector3d& sun_pos, double lambda = kLambda) {
     const Vector3d k = (rx_pos - sat_pos).normalized();
 
-    // Satellite yaw-steering triad -- the model's INPUT, reproduced as-is.
+    // Satellite yaw-steering triad: the model's input, reproduced as-is.
     const Vector3d ez = -sat_pos.normalized();
     Vector3d ey = ez.cross((sun_pos - sat_pos).normalized());
     ey.normalize();
     Vector3d ex = ey.cross(ez);
     ex.normalize();
 
-    // Receiver pair -- also the model's input.  The third axis is DERIVED from
-    // the pair the production code actually uses, never assumed to be "down".
+    // Receiver pair, also the model's input.  The third axis is derived from the
+    // pair the production code uses, not assumed to be "down".
     const Coordinates::Llh llh = Coordinates::ecefToLlh(rx_pos);
     const Vector3d xr = geodeticNorth(llh.lat_rad, llh.lon_rad);
     const Vector3d yr = geodeticEast(llh.lon_rad);
-    const Vector3d zr = xr.cross(yr);                       // north x east == DOWN
+    const Vector3d zr = xr.cross(yr);                       // north x east == down
 
     const Vector3d ds = dipole(k, ex, ez);
     const Vector3d dr = dipole(k, xr, zr);
@@ -254,12 +256,12 @@ Result windUp(const Vector3d& rx_pos, const Vector3d& sat_pos,
 // ---------------------------------------------------------------------------
 // 1. The identity that names the defect.
 //
-// This case tests the two ALGEBRAIC EXPRESSIONS, not the production function --
-// it is the statement of what a "+" line builds versus what the model asks for,
-// pinned over a sweep of eps and of the antenna's orientation about its own
-// third axis.  The production link is made by the cases that follow.  It also
-// shows the exact mechanism those cases exploit: at eps = 0 the "+" branch
-// falls BELOW the 1e-10 dipole guard while the model branch is 2.
+// This case tests the two algebraic expressions, not the production function:
+// what a "+" line builds against what the model asks for, pinned over a sweep of
+// eps and of the antenna's orientation about its own third axis.  The cases that
+// follow make the link to the production code.  It also shows the mechanism
+// those cases use: at eps = 0 the "+" branch falls below the 1e-10 dipole guard
+// while the model branch is 2.
 // ---------------------------------------------------------------------------
 TEST(PhaseWindUpSignTest, EffectiveDipoleMagnitudeIsOnePlusCosEps) {
     int checked = 0;
@@ -267,8 +269,8 @@ TEST(PhaseWindUpSignTest, EffectiveDipoleMagnitudeIsOnePlusCosEps) {
         const double eps = e * kDeg;
         for (int b = 0; b < 360; b += 15) {          // azimuth of k about z
             const double beta = b * kDeg;
-            // A right-handed triad (x, y, z) and a k at angle eps from z --
-            // the same relationship both real triads have with the LOS.
+            // A right-handed triad (x, y, z) and a k at angle eps from z: the
+            // same relationship both real triads have with the LOS.
             const Vector3d z = Vector3d::UnitZ();
             const Vector3d x = Vector3d::UnitX();
             const Vector3d y = z.cross(x);           // x x y == z  (right-handed)
@@ -278,7 +280,7 @@ TEST(PhaseWindUpSignTest, EffectiveDipoleMagnitudeIsOnePlusCosEps) {
 
             const Vector3d perp  = x - k * k.dot(x);
             const Vector3d d_neg = perp - k.cross(y);   // the model
-            const Vector3d d_pos = perp + k.cross(y);   // what :1944-1945 build
+            const Vector3d d_pos = perp + k.cross(y);   // what a "+" dipole line builds
 
             EXPECT_NEAR(d_neg.norm(), 1.0 + std::cos(eps), 5e-14)
                 << "eps=" << e << " beta=" << b;
@@ -291,8 +293,8 @@ TEST(PhaseWindUpSignTest, EffectiveDipoleMagnitudeIsOnePlusCosEps) {
     }
     EXPECT_EQ(checked, 35 * 24);
 
-    // Boresight: the model dipole is maximal (2); the "+" one is annihilated
-    // and lands below the production guard at GnssCorrections.cpp:1947.
+    // Boresight: the model dipole is maximal (2); the "+" one vanishes and lands
+    // below the production degenerate-dipole guard (GnssCorrections.cpp).
     {
         const Vector3d z = Vector3d::UnitZ();
         const Vector3d x = Vector3d::UnitX();
@@ -304,11 +306,11 @@ TEST(PhaseWindUpSignTest, EffectiveDipoleMagnitudeIsOnePlusCosEps) {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Equatorial sub-satellite point: eps_s == eps_r == 0 EXACTLY, and the whole
-// answer is available in closed form with no oracle at all.
+// 2. Equatorial sub-satellite point: eps_s == eps_r == 0 exactly, and the whole
+// answer is available in closed form without the oracle.
 //
 // Receiver at (0 N, 0 E, 0 m); satellite 26560 km straight up the X axis, so
-//   k = (-1, 0, 0) = ez = north x east   -- both eps vanish, both exactly.
+//   k = (-1, 0, 0) = ez = north x east   (both eps vanish exactly).
 // With the sun placed in the satellite's transverse plane the yaw-steering +x
 // axis is exactly the sun unit vector; put it 30 deg east of north, i.e.
 // ex = (0, sin30, cos30).  With the model dipoles Ds = 2 ex and Dr = 2 north,
@@ -316,10 +318,10 @@ TEST(PhaseWindUpSignTest, EffectiveDipoleMagnitudeIsOnePlusCosEps) {
 //
 //       phi = -(pi/6) * lambda / (2 pi) = -lambda/12 = -0.015857806067 m.
 //
-// This case pins the JOINT sign but distinguishes neither line: with either
-// line carrying "+", the corresponding dipole is annihilated and the guard
-// returns exactly 0.0.  It is therefore the cheapest full-fix gate and a
-// deliberate non-discriminator -- cases 3 and 4 do the isolation.
+// This case pins the joint sign but distinguishes neither line: with either
+// line carrying "+", the corresponding dipole vanishes and the guard returns
+// exactly 0.0.  It is the cheapest full-fix gate and deliberately does not
+// discriminate between the lines; cases 3 and 4 do the isolation.
 // ---------------------------------------------------------------------------
 TEST(PhaseWindUpSignTest, SubSatelliteBoresightMatchesClosedForm) {
     LogManager log_mgr;
@@ -343,22 +345,23 @@ TEST(PhaseWindUpSignTest, SubSatelliteBoresightMatchesClosedForm) {
 
     EXPECT_NEAR(phi, -kLambda / 12.0, 1e-12);
     EXPECT_NEAR(phi, ref.phi_m, kMetreTol);
-    // Redundant, but it is the statement that matters: an annihilated dipole
-    // trips the guard and the function returns exactly 0.0.
+    // Redundant with the checks above, but it states the failure mode directly:
+    // a vanished dipole trips the guard and the function returns exactly 0.0.
     EXPECT_GT(std::abs(phi), 1e-3);
 }
 
 // ---------------------------------------------------------------------------
-// 3. HALF-FIX GUARD, satellite line (GnssCorrections.cpp:1944).
+// 3. Half-fix guard, satellite line (the Ds line in GnssCorrections.cpp).
 //
-// Receiver at 45 N / 75 W on the ellipsoid; satellite placed on the GEOCENTRIC
-// ray through it, so k = -rx.normalized() = ez and eps_s = 0 EXACTLY, while
+// Receiver at 45 N / 75 W on the ellipsoid; satellite placed on the geocentric
+// ray through it, so k = -rx.normalized() = ez and eps_s = 0 exactly, while
 // eps_r = 0.192 deg (the geodetic-vs-geocentric vertical deflection at 45 deg).
 // Consequently
-//     |Ds| with "+" = 5.6e-17  -> BELOW the 1e-10 guard
-//     |Dr| with "+" = 5.6e-06  -> 5.6e4x ABOVE it, so the receiver line is
+//     |Ds| with "+" = 5.6e-17  -> below the 1e-10 guard
+//     |Dr| with "+" = 5.6e-06  -> 5.6e4x above it, so the receiver line is
 //                                 inert here
-// and the return is 0.0 if and only if :1944 carries the wrong sign.
+// and the return is 0.0 if and only if the Ds line carries the wrong sign.
+// (The assertion message below cites the Ds line by its pre-fix line number.)
 // Measured arms: (+,+) 0.0 | (-,+) +0.070646 | (+,-) 0.0 | (-,-) -0.024501 m.
 // The value assertion also catches the (-,+) arm, which the guard does not, so
 // the case does not depend on the 1e-10 threshold surviving unchanged.
@@ -373,7 +376,7 @@ TEST(PhaseWindUpSignTest, SatelliteBoresightIsolatesSatelliteDipoleSign) {
 
     const Ref::Result ref = Ref::windUp(rx_pos, sat_pos, sun_pos);
 
-    // Premise of the isolation: exactly ONE dipole is annihilated by a "+".
+    // Premise of the isolation: a "+" makes exactly one dipole vanish.
     ASSERT_LT(1.0 - std::cos(ref.eps_s_rad), kDipoleGuard);            // satellite
     ASSERT_GT(1.0 - std::cos(ref.eps_r_rad), 100.0 * kDipoleGuard);    // receiver
     ASSERT_NEAR(ref.ds_norm, 1.0 + std::cos(ref.eps_s_rad), 1e-12);
@@ -390,31 +393,31 @@ TEST(PhaseWindUpSignTest, SatelliteBoresightIsolatesSatelliteDipoleSign) {
 }
 
 // ---------------------------------------------------------------------------
-// 4. HALF-FIX GUARD, receiver line (GnssCorrections.cpp:1945).
+// 4. Half-fix guard, receiver line (the Dr line in GnssCorrections.cpp).
 //
 // Same site, but the satellite is placed 20200 km straight up the receiver's
-// GEODETIC vertical, so k = -up EXACTLY and eps_r = 0, while the satellite's
+// geodetic vertical, so k = -up exactly and eps_r = 0, while the satellite's
 // geocentric nadir misses the LOS by eps_s = 0.046 deg.  Consequently
-//     |Dr| with "+" = 1.1e-16  -> BELOW the 1e-10 guard
-//     |Ds| with "+" = 3.2e-07  -> 3.2e3x ABOVE it, so the satellite line is
+//     |Dr| with "+" = 1.1e-16  -> below the 1e-10 guard
+//     |Ds| with "+" = 3.2e-07  -> 3.2e3x above it, so the satellite line is
 //                                 inert here
-// and the return is 0.0 if and only if :1945 carries the wrong sign.
+// and the return is 0.0 if and only if the Dr line carries the wrong sign.
+// (The assertion message below cites the Dr line by its pre-fix line number.)
 // Measured arms: (+,+) 0.0 | (-,+) 0.0 | (+,-) -0.070633 | (-,-) -0.024514 m.
 //
-// Cases 3 and 4 TOGETHER are the half-fix gate: 3 admits only {(-,+), (-,-)},
+// Cases 3 and 4 together are the half-fix gate: 3 admits only {(-,+), (-,-)},
 // 4 admits only {(+,-), (-,-)}, and the intersection is {(-,-)}.  Neither can
-// be satisfied by touching the other's line, because the returned angle
-// normalizes both dipoles -- each dipole's magnitude is observable only through
-// its OWN collapse, and the guard is an OR that each geometry trips on exactly
-// one side.
+// be satisfied by changing the other's line: the returned angle normalizes both
+// dipoles, so each dipole's magnitude is observable only through its own
+// collapse, and each geometry trips the OR guard on exactly one side.
 // ---------------------------------------------------------------------------
 TEST(PhaseWindUpSignTest, ReceiverZenithIsolatesReceiverDipoleSign) {
     LogManager log_mgr;
     GnssCorrections gc(log_mgr);
 
     const Vector3d rx_pos = Coordinates::llhToEcef(45.0 * kDeg, -75.0 * kDeg, 0.0);
-    // Use the SAME lat/lon the production code will derive, so k = -up to the
-    // last bit rather than to the accuracy of a re-derivation.
+    // Use the lat/lon the production code derives, so k = -up to the last bit
+    // rather than to the accuracy of a re-derivation.
     const Coordinates::Llh llh = Coordinates::ecefToLlh(rx_pos);
     const Vector3d sat_pos = rx_pos + 20200000.0 * geodeticUp(llh.lat_rad, llh.lon_rad);
     const Vector3d sun_pos = sunAt(sat_pos, 0.6, 0.48, 0.64);
@@ -437,9 +440,9 @@ TEST(PhaseWindUpSignTest, ReceiverZenithIsolatesReceiverDipoleSign) {
 }
 
 // ---------------------------------------------------------------------------
-// 5. The SIGN of the returned metres at an ordinary, non-degenerate geometry.
+// 5. The sign of the returned metres at an ordinary, non-degenerate geometry.
 //
-// Boulder-ish site (40 N, 105 W, 1650 m), satellite at el 45 / az 120 on the
+// Site near Boulder (40 N, 105 W, 1650 m), satellite at el 45 / az 120 on the
 // 26560 km sphere, sun off the transverse plane.  Nadir 9.749167 deg, zenith
 // 45 deg exactly.  Independently computed reference:
 //
@@ -448,7 +451,7 @@ TEST(PhaseWindUpSignTest, ReceiverZenithIsolatesReceiverDipoleSign) {
 //     phi  = -0.005243974194 m  =  -0.027557270 cyc
 //
 // The four arms land at (+,+) +0.005489534 | (-,+) +0.026471638 |
-// (+,-) -0.026226078 | (-,-) -0.005243974 m.  Note the shipped arm is NOT the
+// (+,-) -0.026226078 | (-,-) -0.005243974 m.  The pre-fix (+,+) arm is not the
 // exact negative of the model (header note 4): +0.005490 vs +0.005244.  The
 // smallest failure signal here is 1.07e-2 m, seven orders above kMetreTol.
 // ---------------------------------------------------------------------------
@@ -472,7 +475,7 @@ TEST(PhaseWindUpSignTest, SignedMetresMatchIndependentReference) {
                                              sun_pos, Vector3d::Zero(), false);
 
     EXPECT_NEAR(phi, ref.phi_m, kMetreTol);
-    // Recorded literal, so the case still says something if the oracle is ever
+    // Recorded literal, so the case still checks a fixed value if the oracle is
     // edited.  Loose enough to absorb an ellipsoid-iteration epsilon, ~1e7
     // tighter than the smallest wrong-arm displacement.
     EXPECT_NEAR(phi, -0.005243974194, 1e-9);
@@ -484,13 +487,12 @@ TEST(PhaseWindUpSignTest, SignedMetresMatchIndependentReference) {
 //
 // Twelve deterministic geometries spanning nadir 1.2-13.4 deg and zenith
 // 5-75 deg.  For each row the oracle's own dipole magnitudes are pinned to
-// (1 + cos eps) -- that is the only way the magnitude claim can be carried
-// across a sweep, because the production function normalizes both dipoles
-// before it takes the angle and so cannot report a magnitude except through the
-// collapse that cases 3 and 4 exploit -- and the production value is then
-// pinned to the oracle.  Each row is required to be genuinely sign-sensitive
-// (|phi| well away from both 0 and 1/2 cycle), otherwise a row could pass a
-// sign flip for free.
+// (1 + cos eps), and the production value is then pinned to the oracle.  The
+// magnitude claim can be carried across a sweep only through the oracle: the
+// production function normalizes both dipoles before it takes the angle, so it
+// reports a magnitude only through the collapse that cases 3 and 4 use.  Each
+// row is required to be sign-sensitive (|phi| well away from both 0 and 1/2
+// cycle); otherwise a row could pass a sign flip.
 // ---------------------------------------------------------------------------
 TEST(PhaseWindUpSignTest, MatchesIndependentReferenceOverGeometrySweep) {
     struct Row {
@@ -558,22 +560,23 @@ TEST(PhaseWindUpSignTest, MatchesIndependentReferenceOverGeometrySweep) {
 //
 // Geometry frozen (40 N / 105 W, el 45 / az 120); the sun is walked once around
 // the satellite's ez (nadir) axis in 72 steps of 5 deg.  With the sun in the
-// satellite's transverse plane the yaw-steering +x axis IS the sun unit vector,
+// satellite's transverse plane the yaw-steering +x axis is the sun unit vector,
 // so this is exactly one right-handed yaw turn about the body +Z.  The modelled
 // dipole direction then advances by +theta in the plane perpendicular to k and
-// the wind-up (the signed angle FROM Ds TO Dr) retreats by the same amount:
+// the wind-up (the signed angle from Ds to Dr) retreats by the same amount:
 // exactly -1 cycle per turn, uniformly -1/72 cyc per step.
 //
 // Requires accumulate = true.  The epoch spacing is set by the accumulator
-// contract: 30 s is inside the 300 s continuity threshold (kMaxGapSeconds in
-// GnssCorrections.cpp), and the 5 deg step keeps the per-epoch change at
-// 1/72 cyc, far inside the +-1/2 cycle the unwrap can resolve.  The first call
-// SEEDS the accumulator and returns the raw atan2 angle, so the turn is
-// measured as (last - first).
+// contract: 30 s is inside the continuity horizon (the max_gap_s argument,
+// default 300 s, of computePhaseWindUp), and the 5 deg step keeps the per-epoch
+// change at 1/72 cyc, far inside the +-1/2 cycle the unwrap can resolve.  The
+// first call seeds the accumulator and returns the raw atan2 angle, so the turn
+// is measured as (last - first).
 //
-// This case pins the SATELLITE line alone: a receiver-only flip leaves the
-// (static) receiver dipole out of the turn, and both the shipped and the (+,-)
-// arms return +1.0000 cyc.  Measured: (+,+) +1 | (-,+) -1 | (+,-) +1 | (-,-) -1.
+// This case pins the satellite line alone: a receiver-only flip leaves the
+// (static) receiver dipole out of the turn, and both the pre-fix (+,+) and the
+// (+,-) arms return +1.0000 cyc.
+// Measured: (+,+) +1 | (-,+) -1 | (+,-) +1 | (-,-) -1.
 // ---------------------------------------------------------------------------
 TEST(PhaseWindUpSignTest, YawTurnIsMinusOneCycle) {
     LogManager log_mgr;
@@ -627,12 +630,12 @@ TEST(PhaseWindUpSignTest, YawTurnIsMinusOneCycle) {
 // ---------------------------------------------------------------------------
 // 8. Premise guard for case 7: the accumulator contract itself.
 //
-// Case 7 is only a yaw-turn measurement if 30 s steps actually unwrap and the
-// run is not silently restarting.  Walk 40 of the same 5 deg steps (the
-// accumulated value reaches -0.638 cyc, i.e. past the fractional half-cycle),
-// then repeat the LAST epoch's geometry on two different satellites: once 30 s
-// later (must CONTINUE, -0.638 cyc) and once 301 s later (must RESTART from the
-// raw atan2, +0.362 cyc, inside +-lambda/2).  If kMaxGapSeconds ever moves
+// Case 7 measures a yaw turn only if 30 s steps unwrap and the accumulator does
+// not restart.  Walk 40 of the same 5 deg steps (the accumulated value reaches
+// -0.638 cyc, past the fractional half-cycle), then repeat the last epoch's
+// geometry on two different satellites: once 30 s later (must continue,
+// -0.638 cyc) and once 301 s later (must restart from the raw atan2, +0.362 cyc,
+// inside +-lambda/2).  If the default max_gap_s of computePhaseWindUp moves
 // below 30 s, or the unwrap is removed, this fails before case 7 can report a
 // misleading turn count.
 // ---------------------------------------------------------------------------
@@ -685,18 +688,17 @@ TEST(PhaseWindUpSignTest, AccumulatorContinuityPremiseHolds) {
 }
 
 // ---------------------------------------------------------------------------
-// 9. THE OTHER TWO SATELLITE-FRAME BRANCHES.
+// 9. The other two satellite-frame branches.
 //
-// computePhaseWindUp builds x_s / y_s in THREE places, and cases 1-8 above only
-// ever reach the yaw-steering one.  The single unconditional MINUS at the Ds
-// line is legal only if all three branches agree on handedness relative to k,
-// i.e. all three satisfy x_s x y_s == ez (the geocentric nadir, ~ +k).  Two of
-// them did not, historically: the velocity fallback framed about z_s = -ez and
-// so carried the OPPOSITE handedness, which is why the shipped "+" happened to
-// be right THERE and wrong in the other two.  This case pins the invariant that
-// makes one hard-coded sign valid.
+// computePhaseWindUp builds x_s / y_s in three places, and cases 1-8 above reach
+// only the yaw-steering one.  The single unconditional minus on the Ds line is
+// valid only if all three branches agree on handedness relative to k, i.e. all
+// three satisfy x_s x y_s == ez (the geocentric nadir, ~ +k).  The pre-fix
+// velocity fallback was framed about z_s = -ez and had the opposite handedness,
+// so the pre-fix "+" was right on that branch and wrong on the other two.  These
+// two cases pin the invariant that makes one hard-coded sign valid.
 //
-// Neither branch is exotic:
+// Both branches are reachable in production:
 //   - orbit-normal is unconditionally live for the BeiDou-2 GEO PRN list
 //     (C01-C05, C59, C60);
 //   - the velocity fallback is the `else` of `sun_pos.norm() > 1e6`, reached
@@ -706,20 +708,21 @@ TEST(PhaseWindUpSignTest, OrbitNormalBranchSharesTheNadirHandedness) {
     LogManager log_mgr;
     GnssCorrections gc(log_mgr);
 
-    const double lat = 22.0 * kDeg, lon = 114.0 * kDeg;     // Hong Kong-ish, in BeiDou GEO view
+    const double lat = 22.0 * kDeg, lon = 114.0 * kDeg;     // near Hong Kong, in BeiDou GEO view
     const Vector3d rx_pos  = Coordinates::llhToEcef(lat, lon, 30.0);
     const Vector3d sat_pos = satelliteAt(rx_pos, lat, lon, 55.0, 200.0);
     // A velocity with a real out-of-plane component so r x v is well conditioned.
     const Vector3d sat_vel(-1200.0, 2900.0, 180.0);
 
-    // The oracle reproduces the branch's INPUT triad, then builds the dipole
+    // The oracle reproduces the branch's input triad, then builds the dipole
     // through the y-free closed form.  Orbit-normal: y_s = unit(r x v), then
-    // x_s = y_s x ez and y_s = ez x x_s -- so x_s x y_s == ez by construction.
+    // x_s = y_s x ez and y_s = ez x x_s, so x_s x y_s == ez by construction.
     const Vector3d ez = -sat_pos.normalized();
-    // The branch converts the incoming ECEF velocity to inertial before forming
-    // the orbit normal (SatAttitude::inertialVelocity); the oracle must match its
-    // INPUT triad, so it applies the same conversion.  What this test pins is the
-    // dipole handedness, which is independent of the velocity frame.
+    // With correct_velocity_frame = true (as passed below), the branch converts
+    // the incoming ECEF velocity to inertial before forming the orbit normal
+    // (SatAttitude::inertialVelocity); the oracle must match the branch's input
+    // triad, so it applies the same conversion.  The dipole handedness this test
+    // pins is independent of the velocity frame.
     Vector3d ys = sat_pos.cross(SatAttitude::inertialVelocity(sat_pos, sat_vel)).normalized();
     Vector3d xs = ys.cross(ez).normalized();
     ys = ez.cross(xs).normalized();
@@ -745,8 +748,8 @@ TEST(PhaseWindUpSignTest, OrbitNormalBranchSharesTheNadirHandedness) {
     EXPECT_NEAR(got, expect_m, kMetreTol);
 
     // A non-GEO BeiDou PRN must take the yaw-steering branch instead, and must
-    // therefore NOT agree with the orbit-normal oracle -- otherwise this case
-    // would pass even if the PRN gate were broken.
+    // therefore disagree with the orbit-normal oracle; otherwise this case would
+    // pass even if the PRN gate were broken.
     const Vector3d sun = sunAt(sat_pos, 0.4, 0.5, 0.77);
     const double yaw_expect = Ref::windUp(rx_pos, sat_pos, sun).phi_m;
     const double got_meo = gc.computePhaseWindUp("C21", System::BeiDou, rx_pos, sat_pos,
@@ -792,12 +795,12 @@ TEST(PhaseWindUpSignTest, VelocityFallbackBranchSharesTheNadirHandedness) {
                                              no_sun, sat_vel, false);
     EXPECT_NEAR(got, expect_m, kMetreTol);
 
-    // THE REFRAME GATE.  This branch used to be built about z_s = -ez and paired
-    // with a PLUS.  Reframing about +ez negates y_s and leaves x_s untouched, so
-    // the SATELLITE dipole is numerically unchanged by the combined
-    // reframe + sign edit.  Reconstruct the old frame explicitly and assert the
-    // old (frame, sign) pair reproduces the new Ds bit-for-bit.  If this fails,
-    // the reframe -- not the sign -- is wrong.
+    // Reframe gate.  The pre-fix branch was built about z_s = -ez and paired with
+    // a plus.  Reframing about +ez negates y_s and leaves x_s unchanged, so the
+    // satellite dipole is numerically unchanged by the combined reframe and sign
+    // edit.  Reconstruct the old frame explicitly and assert that the old
+    // (frame, sign) pair reproduces the new Ds to 1e-12.  If this fails, the
+    // reframe is wrong, not the sign.
     const Vector3d zs_old = -ez;
     Vector3d ys_old = sat_vel.normalized().cross(zs_old);
     ys_old.normalize();
@@ -808,9 +811,9 @@ TEST(PhaseWindUpSignTest, VelocityFallbackBranchSharesTheNadirHandedness) {
     EXPECT_LT((ds_old_plus - ds_new_minus).norm(), 1e-12)
         << "the velocity-fallback reframe moved Ds; it must be a numerical no-op";
 
-    // And the receiver line alone is what actually changed on this branch: the
-    // pre-fix code was in the half-fix state here (satellite right, receiver
-    // wrong), so the old whole-function result must differ from the new one.
+    // On this branch only the receiver line changed: the pre-fix code was in the
+    // half-fix state here (satellite right, receiver wrong), so the old
+    // whole-function result must differ from the new one.
     const Vector3d dr_old_plus = xr - k * k.dot(xr) + k.cross(geodeticEast(llh.lon_rad));
     const double old_m = Ref::angleAboutK(k, ds_old_plus, dr_old_plus) * kLambda / kTwoPi;
     EXPECT_GT(std::abs(old_m - got), 1e-4)

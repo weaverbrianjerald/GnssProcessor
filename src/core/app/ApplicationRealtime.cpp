@@ -3,12 +3,16 @@
  * @brief Implementation of Application::runRealTime (NTRIP / streaming pipeline).
  *
  * Multi-stream realtime: the primary stream feeds rover observations
- * (file-replay or NTRIP), and an optional corrections stream feeds RTCM
- * SSR (typically an IGS-RTS NTRIP mountpoint).  Both decode through the
- * same engine — observations buffer until an epoch boundary, SSR records
- * push into @c SsrCorrectionStore.  Streams are polled with a short
- * timeout so neither starves the other; the loop exits when every
- * configured stream is inactive (file EOF reached or NTRIP disconnected).
+ * (file replay, NTRIP or TCP; RTCM3 or SBF), an optional corrections stream
+ * feeds RTCM SSR (typically an IGS-RTS NTRIP mountpoint), and an optional
+ * ephemeris stream feeds RTCM broadcast navigation.  All decode through the
+ * same engine: observations buffer until an epoch boundary, SSR records push
+ * into @c SsrCorrectionStore.  Socket streams are polled with a short timeout
+ * and the sparse streams are serviced every iteration, so no stream starves
+ * another.  A network-product file tail can feed an owned store in addition.
+ * The loop exits when every configured stream is inactive (file EOF reached or
+ * client stopped), when the engine's maximum duration is reached, or on a stop
+ * request (Ctrl+C).
  */
 
 #include "app/Application.hpp"
@@ -52,19 +56,19 @@ namespace GnssProcessor {
 namespace {
 
 // Cooperative stop flag for the real-time poll loop.  A live TCP/NTRIP stream
-// never reaches EOF, so the only way to end the session is an interrupt; this
-// lets Ctrl+C unwind the loop normally (flush the final epoch, close trace
-// files, shut down logging) instead of hard-killing the process.  Set from an
-// async handler, so it must stay a plain atomic — nothing else.
+// never reaches EOF, so an interrupt is the only way to end the session; this
+// flag lets Ctrl+C unwind the loop normally (flush the final epoch, close trace
+// files, shut down logging) instead of killing the process.  It is set from an
+// async handler, so it must remain a plain atomic and nothing more.
 std::atomic<bool> g_stop_requested{ false };
 
 #ifdef _WIN32
 // Console control handler (runs on its own OS-spawned thread).  Catches Ctrl+C,
-// Ctrl+Break AND console-window close / logoff / shutdown — std::signal would
-// miss the close case, which is a common way to stop a console app and would
-// otherwise lose the trace tail.  Returning TRUE marks the event handled so the
-// default terminator doesn't fire; a SECOND Ctrl+C/Break (flag already set)
-// returns FALSE to let the default force-kill, preserving the usual escalation.
+// Ctrl+Break, and console-window close, logoff and shutdown.  std::signal does
+// not see the close case, a common way to stop a console app, which would lose
+// the trace tail.  Returning TRUE marks the event handled so the default
+// terminator does not fire; a second Ctrl+C/Break (flag already set) returns
+// FALSE so the default handler kills the process, the usual escalation.
 BOOL WINAPI realtimeConsoleHandler(DWORD ctrl_type) {
     switch (ctrl_type) {
     case CTRL_C_EVENT:
@@ -80,7 +84,7 @@ BOOL WINAPI realtimeConsoleHandler(DWORD ctrl_type) {
     }
 }
 #else
-// POSIX: the only async-signal-safe action is the atomic store.
+// POSIX: the handler performs one action, the atomic store, which is async-signal-safe.
 void realtimeSignalHandler(int /*sig*/) {
     g_stop_requested.store(true, std::memory_order_relaxed);
 }
@@ -105,12 +109,12 @@ void removeStopHandler() {
 }
 
 /**
- * @brief Uniform byte-stream source backing an RTCM3 framer.
+ * @brief Uniform byte-stream source backing an RTCM3 or SBF framer.
  *
- * Wraps either an @c std::ifstream (binary RTCM dump replay) or an
- * @c NtripClient.  The realtime loop holds one of these per logical
- * stream (rover obs + optional SSR corrections) and polls them
- * round-robin without ever blocking on a single source.
+ * Wraps an @c std::ifstream (binary dump replay), an @c NtripClient or a
+ * @c TcpClient.  The realtime loop holds one of these per logical stream
+ * (rover obs, optional SSR corrections, optional broadcast ephemeris) and
+ * polls them round-robin without blocking on a single source.
  */
 class RealtimeStream {
 public:
@@ -143,11 +147,11 @@ public:
     bool active() const {
         switch (kind_) {
         case Kind::File:  return !file_eof_;
-        // A socket source is active while its client is running, NOT only
-        // while momentarily connected: the client auto-reconnects internally,
-        // and at startup isConnected() is briefly false until the background
-        // thread dials in.  Gating on isConnected() here would let the poll
-        // loop exit before the first byte (0 epochs) or on any transient drop.
+        // A socket source is active while its client is running, whether or
+        // not it is connected at the moment: the client reconnects internally,
+        // and at startup isConnected() is false until the background thread
+        // dials in.  Gating on isConnected() would let the poll loop exit
+        // before the first byte (0 epochs) or on any transient drop.
         case Kind::Ntrip: return ntrip_ && ntrip_->isRunning();
         case Kind::Tcp:   return tcp_   && tcp_->isRunning();
         }
@@ -290,13 +294,13 @@ template <typename Framer, typename FeedFn>
 std::size_t pumpFrames(RealtimeStream& src, Framer& framer, FeedFn&& feed,
                        std::vector<uint8_t>& scratch, int timeout_ms,
                        std::size_t max_drain_bytes = (1u << 20)) {
-    // Bounded drain: empty whatever is already buffered this iteration instead of
-    // a single 4 KB chunk, so a high-rate obs stream can't accumulate a backlog
-    // faster than it is consumed (the root of the live-obs-lagging-corrections
-    // bug).  The FIRST read honours the caller's timeout; subsequent reads use
-    // timeout 0 so we drain only what's present without stalling the poll loop.
-    // max_drain_bytes caps one burst so the obs drain never monopolizes the
-    // iteration and starves the sparse SSR/nav streams.
+    // Bounded drain: read whatever is already buffered this iteration, not a
+    // single 4 KB chunk, so a high-rate obs stream cannot build a backlog faster
+    // than it is consumed (a backlog makes live observations lag the corrections).
+    // The first read honours the caller's timeout; later reads use timeout 0 and
+    // take only what is present, so the poll loop does not stall.
+    // max_drain_bytes caps one burst so the obs drain cannot occupy the whole
+    // iteration and starve the sparse SSR/nav streams.
     constexpr std::size_t kChunk = 4096;
     std::size_t handled = 0, drained = 0;
     int to = timeout_ms;
@@ -325,13 +329,13 @@ int Application::runRealTime() {
 
     const auto& rt_config = config_.getRealTimeConfig();
 
-    // --- RTA-6/RTA-7: standalone network-product consumer -------------------
+    // --- Standalone network-product consumer (RTA-6/RTA-7) --------------------
     // A non-empty realtime.network_products_path arms a live product-file tail
-    // feeding an OWNED SsrCorrectionStore injected into the engine.  The
+    // feeding an SsrCorrectionStore owned here and injected into the engine.  The
     // processing.network_consumer profile applies the shared consumer couplings
-    // (one source of truth with the closed-loop harness) BEFORE the engine is
-    // constructed so they shape the state vector.  Both default off — the
-    // realtime path is byte-identical without them.
+    // (the same source as the closed-loop harness) before the engine is
+    // constructed, so they shape the state vector.  Both default off; without
+    // them the realtime path is byte-identical.
     const std::string& net_products_path = rt_config.network_products_path;
     const auto& ncc = config_.getNetworkConsumerConfig();
     const bool consumer_profile_on = ncc.enable && !net_products_path.empty();
@@ -342,8 +346,8 @@ int Application::runRealTime() {
     if (consumer_profile_on)
         config_.applyNetworkConsumerProfile(log_manager_);
 
-    // T3d: one-shot honesty warnings for a file-tail consumer profile — some correction
-    // channels are only conditionally (σ) or never (in-process iono) present on the wire.
+    // One-time warnings for a file-tail consumer profile: some correction channels
+    // reach the wire only conditionally (σ) or not at all (in-process iono).  (T3d)
     if (consumer_profile_on) {
         if (config_.networkConsumePhaseBiasSigma())
             log->warn("Consumer: network.consume_phase_bias_sigma is on — the per-phase-bias σ "
@@ -356,7 +360,7 @@ int Application::runRealTime() {
                       "record, so a file-tail consumer cannot receive it (the setting is inert here).");
     }
 
-    // Declared BEFORE the engine so they outlive it (the engine holds a
+    // Declared before the engine so they outlive it (the engine holds a
     // non-owning pointer to the store via setSsrStore).
     std::unique_ptr<SsrCorrectionStore> network_store;
     std::unique_ptr<NetworkProductTail> product_tail;
@@ -369,27 +373,27 @@ int Application::runRealTime() {
 
     if (!net_products_path.empty()) {
         network_store = std::make_unique<SsrCorrectionStore>();
-        // RTA-13 (opt-in): arm the CODE-domain band-wise bias fallback on the
-        // OWNED store (the singleton is armed by RealTimeEngine::initialize).
+        // Opt-in: arm the code-domain band-wise bias fallback on the owned store
+        // (RealTimeEngine::initialize arms it on the singleton).  (RTA-13)
         if (config_.ssrBiasBandFallback())
             network_store->setCodeBiasBandFallback(true);
-        // Card 7 (opt-in): arm the orbit/clock coherence skew budget on the
-        // OWNED store — the network clock records this store serves carry the
-        // producer's orbit echo, so this is where the withhold policy lives.
+        // Opt-in: arm the orbit/clock coherence skew budget on the owned store.
+        // The network clock records this store serves carry the producer's orbit
+        // echo, so the withhold policy is applied here.  (Card 7)
         if (const double skew = ncc.orbit_clock_max_skew_s; skew > 0.0)
             network_store->setOrbitEchoMaxSkew(skew);
         // Start-of-file join: replaying the whole file so far reconstructs every
-        // discontinuity counter exactly (a fresh consumer start); a producer
-        // restart mid-session is handled by the tail's rotation reopen.
+        // discontinuity counter exactly (as for a fresh consumer start); a
+        // producer restart mid-session is handled by the tail's rotation reopen.
         product_tail  = std::make_unique<NetworkProductTail>(net_products_path);
         const bool consume_clock = consumer_profile_on ? ncc.clock : true;
         const bool consume_bias  = consumer_profile_on ? ncc.bias  : true;
-        // RTA-8(a): orbit-overlay routing.  Without the profile keep the legacy
-        // coupled routing (orbit rides with the clock — byte-identical).  With
-        // the profile, orbit_source selects: "external" (default) pins the
-        // orbit overlay on the singleton — the external RTS corrections stream
-        // — while clocks/biases come from the owned store; "network" points it
-        // at the owned store (future orbit-bearing product).
+        // Orbit-overlay routing (RTA-8(a)).  Without the profile the legacy
+        // coupled routing is kept (orbit follows the clock; byte-identical).  With
+        // the profile, orbit_source selects: "external" (default) pins the orbit
+        // overlay on the singleton, which the external RTS corrections stream
+        // fills, while clocks/biases come from the owned store; "network" points
+        // it at the owned store (for a future orbit-bearing product).
         RealTimeEngine::SsrOrbitSource orbit_source =
             RealTimeEngine::SsrOrbitSource::FollowClock;
         if (consumer_profile_on)
@@ -407,11 +411,11 @@ int Application::runRealTime() {
                              ? "owned store (network)"
                              : "singleton (external RTS)"),
                   consumer_profile_on ? "network_consumer" : "default flags");
-        // RTA-8(c): the classic misconfiguration — network clocks consumed while
-        // an unfiltered external corrections stream still pushes clock content
-        // into the singleton.  The singleton's clocks then shadow the network
-        // product wherever the singleton is consulted (bias-only clock mode, the
-        // obs↔SSR sync horizon, coverage census).  Filter the stream instead.
+        // Misconfiguration check (RTA-8(c)): network clocks are consumed while an
+        // unfiltered external corrections stream still pushes clock content into
+        // the singleton.  The singleton's clocks then shadow the network product
+        // wherever the singleton is consulted (bias-only clock mode, the obs↔SSR
+        // sync horizon, coverage census).  The remedy is to filter the stream.
         if (consumer_profile_on && ncc.orbit_source == "external"
             && rt_config.corrections.enabled && rt_config.corrections.accept == "all") {
             log->warn("Network-consumer profile is on with orbit_source=external, but the "
@@ -423,7 +427,7 @@ int Application::runRealTime() {
     }
     // Effective AR MW-WL suppression: the profile resolution when active
     // (explicit override, else the closed-loop-equivalent derivation), otherwise
-    // the standalone processing.ar_ignore_mw_wl key (default false — no change).
+    // the standalone processing.ar_ignore_mw_wl key (default false: no change).
     engine.setArIgnoreMwWl(consumer_profile_on ? config_.networkConsumerArIgnoreMwWl()
                                                : config_.arIgnoreMwWl());
 
@@ -439,9 +443,10 @@ int Application::runRealTime() {
     }
 
     // Optional third stream: dedicated broadcast ephemeris (nav) for an
-    // obs-only station that carries no 1019/1020/etc.  Routes to feedRtcmFrame
-    // like corrections — decoded nav lands in LiveEphemerisStore.  Without it,
-    // an obs-only primary yields 0 epochs (no orbit/clock baseline for SSR).
+    // obs-only station that carries no 1019/1020/etc.  It routes to
+    // feedRtcmFrame like corrections, and decoded nav lands in LiveEphemerisStore.
+    // Without it, an obs-only primary yields 0 epochs (no orbit/clock baseline
+    // for SSR).
     std::unique_ptr<RealtimeStream> ephemeris;
     if (rt_config.ephemeris.enabled) {
         ephemeris = openAuxRtcmStream("ephemeris", rt_config.ephemeris, log_manager_);
@@ -462,36 +467,37 @@ int Application::runRealTime() {
     RtcmStreamReader   eph_framer;
     std::vector<uint8_t> scratch;
 
-    // RTA-8(b): per-stream SSR ingest policies (parsed/validated at config load;
-    // the parse helper only translates the vetted string).  The primary stream
-    // is never filtered — it carries obs/nav, and any embedded SSR keeps the
-    // legacy unfiltered behaviour.
+    // Per-stream SSR ingest policies (RTA-8(b)), parsed and validated at config
+    // load; the parse helper only translates the vetted string.  The primary
+    // stream is not filtered: it carries obs/nav, and any SSR embedded in it
+    // keeps the legacy unfiltered behaviour.
     const auto corr_policy =
         RealTimeEngine::parseSsrAcceptPolicy(rt_config.corrections.accept);
     const auto eph_policy =
         RealTimeEngine::parseSsrAcceptPolicy(rt_config.ephemeris.accept);
 
-    // --- RTA-7(c): startup / per-change S-contract check ---------------------
+    // --- Startup / per-change S-contract check (RTA-7(c)) ---------------------
     // When the tail sees a contract (v2 header S line, or an RTA-5 re-broadcast
-    // after a mid-file join), cross-check it against the consumer's declared
-    // expectation and HARD-WARN (never abort) on mismatch — once per contract
-    // CHANGE, keyed on the convention fields (pivot-only refreshes are routine
-    // handovers, not contract changes).  The expectation is pivot-less (like
-    // the closed-loop per-receipt check): the FIRST received contract seeds it,
-    // overlaid with the profile's optional expect_* pins so a declared pin
-    // mismatches even on first receipt.  The check runs on EVERY consuming
-    // posture, not just under the network_consumer profile: the legacy
-    // default-flags tail (profile off) consumes clocks and biases all the same,
-    // and the wind-up model-revision pin below is a property of the BINARY, not
-    // of the operator profile — a pre-fix product must trip it on either path.
+    // after a mid-file join), it is cross-checked against the consumer's declared
+    // expectation.  A mismatch logs a warning and never aborts.  The check runs
+    // once per contract change, keyed on the contract fields in contractFp; the
+    // clock pivot is excluded, because a pivot-only refresh is a routine
+    // handover.  The expectation is pivot-less (like the closed-loop per-receipt
+    // check): the first received contract seeds it, overlaid with the profile's
+    // optional expect_* pins, so a declared pin mismatches even on first
+    // receipt.  The check runs on every consuming posture, with or without the
+    // network_consumer profile: the legacy default-flags tail (profile off)
+    // consumes clocks and biases as well, and the wind-up model-revision pin
+    // below is a property of the binary, not of the operator profile, so a
+    // pre-fix product must trip it on either path.
     SbasisContract contract_expectation;
     bool           have_contract_expectation = false;
     bool           warned_contract_absent    = false;
     std::string    last_contract_fp;
     auto contractFp = [](const SbasisContract& c) {
-        // RTA-12: the identity fields (frame/cepoch/atx/oref) are convention
-        // fields too — a producer restart with a different frame or ATX must
-        // count as a contract CHANGE and re-run the check.
+        // The identity fields (frame/cepoch/atx/oref) are part of the key, so a
+        // producer restart with a different frame or ATX counts as a contract
+        // change and re-runs the check.  (RTA-12)
         return fmt::format("{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
                            c.decl.reference_receiver_id, c.decl.bias_sign,
                            c.decl.windup_yaw_model_id,
@@ -506,7 +512,7 @@ int Application::runRealTime() {
     };
     auto checkConsumerContract = [&](const SbasisContract& file_contract) {
         const std::string fp = contractFp(file_contract);
-        if (fp == last_contract_fp) return;   // once per contract CHANGE
+        if (fp == last_contract_fp) return;   // once per contract change
         last_contract_fp = fp;
         if (!have_contract_expectation) {
             contract_expectation = file_contract;              // adopt the first receipt...
@@ -515,9 +521,9 @@ int Application::runRealTime() {
                 contract_expectation.decl.reference_receiver_id = ncc.expect_reference_receiver;
             if (!ncc.expect_apriori_product_id.empty())
                 contract_expectation.apriori_product_id = ncc.expect_apriori_product_id;
-            // RTA-12 identity pins: a declared expectation overrides the adopted
+            // Identity pins (RTA-12): a declared expectation overrides the adopted
             // first receipt, so a pinned frame/ATX/orbit-ref mismatches even on
-            // the very first contract (checkContract compares each only when the
+            // the first contract (checkContract compares each only when the
             // expectation is non-empty).
             if (!ncc.expect_frame_id.empty())
                 contract_expectation.frame_id = ncc.expect_frame_id;
@@ -525,15 +531,16 @@ int Application::runRealTime() {
                 contract_expectation.atx_id = ncc.expect_atx_id;
             if (!ncc.expect_orbit_ref.empty())
                 contract_expectation.orbit_ref = ncc.expect_orbit_ref;
-            // Wind-up model: pin to what THIS BINARY implements, never to the
+            // Wind-up model: pinned to what this binary implements, not to the
             // adopted receipt.  Every other field above is a config pin that
-            // falls back to the file's own value, which makes checkContract
-            // compare the string to itself — fine for conventions the operator
-            // chooses, useless for one the CODE fixes.  A pre-fix product
-            // (windup_id "nominal") absorbed +2*phi_wu into its satellite clocks
-            // and phase biases; consuming it with a corrected model is a silent
-            // phase-frame mismatch, and this line is the only thing that makes
-            // it audible.  See docs/SPEC_phase_windup_sign.md section 8 item 2.
+            // falls back to the file's own value, so checkContract compares that
+            // value with itself.  That is adequate for conventions the operator
+            // chooses and gives no check for one the code fixes.  A pre-fix
+            // product (windup_id "nominal") absorbed +2*phi_wu into its satellite
+            // clocks and phase biases; consuming it with the corrected model is a
+            // phase-frame mismatch with no other symptom, and this pin is the only
+            // check that reports it.  See docs/SPEC_phase_windup_sign.md section 8
+            // item 2.
             contract_expectation.decl.windup_yaw_model_id = kWindUpYawModelId;
             have_contract_expectation = true;
         }
@@ -558,24 +565,28 @@ int Application::runRealTime() {
     };
 
     // Install the Ctrl+C / termination handler so a live stream can be ended
-    // cleanly.  Reset the flag first in case runRealTime is ever re-entered.
+    // cleanly.  The flag is reset first in case runRealTime is re-entered.
     g_stop_requested.store(false, std::memory_order_relaxed);
     installStopHandler();
     log->info("Real-time session running — press Ctrl+C to stop");
 
     const auto wall_start = std::chrono::high_resolution_clock::now();
-    // RTA-6: last product-tail poll instant (throttles the file stat to ~5 Hz).
+    // Last product-tail poll instant; throttles the file stat to ~5 Hz.  (RTA-6)
     auto last_tail_poll = std::chrono::steady_clock::now() - std::chrono::seconds(1);
-    // RTA-10: content-epoch key (week·604800+tow) of the last producer heartbeat pushed
-    // into the owned store, so each H record is forwarded exactly once (-1 = none yet).
+    // Content-epoch key (week·604800+tow) of the last producer heartbeat pushed
+    // into the owned store, so each H record is forwarded once (-1 = none yet).
+    // (RTA-10)
     double last_status_pushed_s = -1.0;
 
-    // Single-threaded multi-source poll loop.  Each iteration drains a
-    // chunk from each active source, frames it, and dispatches frames
-    // to the engine.  When neither source produces any bytes this turn
-    // we yield briefly to avoid a busy spin (file replay: streams are
-    // exhausted; NTRIP/TCP: tryRead has already waited internally).  A
-    // stop request (Ctrl+C) breaks the loop so the flush/stop below runs.
+    // Single-threaded multi-source poll loop.  Each iteration drains each
+    // active source (the primary up to pumpFrames' byte budget, the
+    // corrections and ephemeris streams one 4 KB chunk), frames the bytes, and
+    // dispatches the frames to the engine, then polls the product tail.  When
+    // no frame and no product record was handled this iteration, the loop
+    // sleeps 1 ms to avoid a busy spin (file replay: streams are exhausted;
+    // NTRIP/TCP: tryRead has already waited internally).  A stop request
+    // (Ctrl+C) or the engine's maximum duration ends the loop so the flush/stop
+    // below runs.
     while (!g_stop_requested.load(std::memory_order_relaxed)
            && !engine.maxDurationReached()
            && (primary->active() || (corrections && corrections->active())
@@ -584,16 +595,16 @@ int Application::runRealTime() {
 
         if (primary->active()) {
             // File replay polls with no extra delay (read returns
-            // immediately on EOF); sockets poll with a short timeout so the
-            // corrections side gets serviced.
+            // immediately on EOF); sockets poll with a short timeout (50 ms)
+            // so the other streams get serviced.
             const int timeout_ms = (rt_config.input_type == "file") ? 0 : 50;
             if (primary_sbf) {
                 produced += pumpFrames(*primary, primary_sbf_framer,
                     [&](const std::vector<uint8_t>& f) { engine.feedSbfFrame(f); },
                     scratch, timeout_ms);
             } else {
-                // RTB-1(b): forward the framer-boundary receipt stamp so the
-                // engine can account sub-second receive→process latency.
+                // Forward the framer-boundary receipt stamp so the engine can
+                // account sub-second receive→process latency.  (RTB-1(b))
                 produced += pumpFrames(*primary, primary_rtcm,
                     [&](const std::vector<uint8_t>& f) {
                         engine.feedRtcmFrame(f, RealTimeEngine::SsrAcceptPolicy::All,
@@ -604,10 +615,10 @@ int Application::runRealTime() {
         }
         if (corrections && corrections->active()) {
             const int timeout_ms = (rt_config.corrections.input_type == "file") ? 0 : 50;
-            // Single-chunk (max_drain_bytes=4096): SSR is sparse but critical;
-            // serviced every iteration, never throttled by the obs drain.
-            // RTA-8(b): frames from THIS stream carry its ingest accept policy.
-            // RTB-1(b): plus the framer-boundary receipt stamp.
+            // Single chunk (max_drain_bytes=4096): SSR is sparse but required;
+            // it is serviced every iteration and not throttled by the obs drain.
+            // Frames from this stream carry its ingest accept policy (RTA-8(b))
+            // and the framer-boundary receipt stamp (RTB-1(b)).
             produced += pumpFrames(*corrections, corr_framer,
                 [&](const std::vector<uint8_t>& f) {
                     engine.feedRtcmFrame(f, corr_policy, corr_framer.lastFrameReceipt());
@@ -616,19 +627,20 @@ int Application::runRealTime() {
         }
         if (ephemeris && ephemeris->active()) {
             const int timeout_ms = (rt_config.ephemeris.input_type == "file") ? 0 : 50;
-            // Single-chunk like corrections: broadcast nav is sparse; serviced
-            // every iteration so the obs drain never starves it.
+            // Single chunk, as for corrections: broadcast nav is sparse and is
+            // serviced every iteration so the obs drain cannot starve it.
             produced += pumpFrames(*ephemeris, eph_framer,
                 [&](const std::vector<uint8_t>& f) {
                     engine.feedRtcmFrame(f, eph_policy, eph_framer.lastFrameReceipt());
                 },
                 scratch, timeout_ms, 4096);
         }
-        // RTA-6: poll the live network-product tail.  Throttled to ~5 Hz — the
-        // product cadence is seconds, and a hot file-replay loop must not stat
-        // the file thousands of times a second.  New epochs go into the owned
-        // store, then the engine's obs↔SSR hold buffer is woken exactly like an
-        // RTCM SSR push would (notifyProductsAdvanced -> drainHeldObs).
+        // Poll the live network-product tail (RTA-6), throttled to ~5 Hz (200 ms):
+        // the product cadence is seconds, and a fast file-replay loop would
+        // otherwise stat the file thousands of times a second.  New epochs go
+        // into the owned store, then the engine's obs↔SSR hold buffer is woken
+        // as an RTCM SSR push would wake it (notifyProductsAdvanced ->
+        // drainHeldObs).
         if (product_tail) {
             const auto now = std::chrono::steady_clock::now();
             if (now - last_tail_poll >= std::chrono::milliseconds(200)) {
@@ -639,16 +651,16 @@ int Application::runRealTime() {
                     log->debug("Network products: {} new epoch(s) from tail "
                                "(store size {}).",
                                new_products.size(), network_store->size());
-                    engine.notifyProductsAdvanced();   // RTA-6(d): product-arrival wake
+                    engine.notifyProductsAdvanced();   // product-arrival wake (RTA-6(d))
                     for (const auto& rec : new_products)
                         if (rec.contract_refresh.present)
                             checkConsumerContract(rec.contract_refresh);
                     // A v1 / S-less wire never reaches checkConsumerContract, so
-                    // its conventions — the wind-up model revision above all —
-                    // would silently default-match.  Say so exactly once: a
-                    // pre-fix product (windup_id "nominal", +2*phi_wu absorbed
-                    // into its clocks and phase biases) is indistinguishable on
-                    // such a wire.  See docs/SPEC_phase_windup_sign.md §8.
+                    // its conventions, the wind-up model revision in particular,
+                    // are never checked.  One warning is logged: a pre-fix
+                    // product (windup_id "nominal", +2*phi_wu absorbed into its
+                    // clocks and phase biases) cannot be told apart on such a
+                    // wire.  See docs/SPEC_phase_windup_sign.md §8.
                     if (last_contract_fp.empty() && !warned_contract_absent) {
                         warned_contract_absent = true;
                         log->warn("Network products: stream carries no S-basis "
@@ -660,13 +672,13 @@ int Application::runRealTime() {
                                   "checkable.", kWindUpYawModelId);
                     }
                 }
-                // RTA-10: forward the producer's epoch-status heartbeat (H record) into
-                // the owned store.  Read the tail's latest-status surface — NOT the
-                // per-record field — because a fully WITHHELD epoch's H completes no
-                // product record (new_products can be empty while the producer is
-                // withholding, which is exactly when the consumer must hear about it).
-                // Keyed on the heartbeat's content epoch so each H is pushed once; the
-                // engine logs one-shot status TRANSITIONS from the store surface.
+                // Forward the producer's epoch-status heartbeat (H record) into the
+                // owned store (RTA-10).  The tail's latest-status surface is read
+                // rather than the per-record field, because the H of a fully withheld
+                // epoch completes no product record: new_products can be empty while
+                // the producer is withholding, which is when the consumer needs the
+                // status.  Keyed on the heartbeat's content epoch so each H is pushed
+                // once; the engine logs one line per status transition from the store.
                 if (const auto hst = product_tail->lastStatus()) {
                     const double hkey = hst->time.week * 604800.0 + hst->time.tow;
                     if (hkey != last_status_pushed_s) {
@@ -681,10 +693,11 @@ int Application::runRealTime() {
         }
     }
 
-    // Either a stream went inactive (file EOF / disconnect) or the user asked
-    // to stop.  Restore the default signal disposition (a second Ctrl+C during
-    // teardown then force-kills) and submit the final buffered epoch before
-    // tearing down so the last observations and trace rows aren't lost.
+    // Every stream went inactive (file EOF / client stopped), the maximum
+    // duration was reached, or a stop was requested.  Restore the default signal
+    // disposition (a second Ctrl+C during teardown then kills the process) and
+    // submit the final buffered epoch before teardown so the last observations
+    // and trace rows are kept.
     removeStopHandler();
     if (g_stop_requested.load(std::memory_order_relaxed))
         log->info("Stop requested (Ctrl+C) — flushing and shutting down cleanly");

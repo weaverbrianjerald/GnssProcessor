@@ -2,28 +2,29 @@
  * @file test_pd_safe_fold.cpp
  * @brief Gates for the PD-safe invariant-DD fold (docs/SPEC_pd_safe_dd_fold.md).
  *
- * The defect this card fixes was NOT a design error — the invariant-carry recursion is
- * correct and its healthy small blocks reach σ = 2.7 cm = 0.14 L1 cycles over 3 h through
- * the SAME code.  The arithmetic was wrong: the giant [band-1; band-2] joint lane block is
- * born near-singular (same-chord band rows are near-duplicates through shared geometry),
- * and the subtractive posterior @f$P^z-P^zMP^z@f$ over mixed 1e-4..1e6 operand scales and
- * K=686 GEMM chains pushed its hidden tight eigenvalues through zero.  The fold's response
- * — @c M:=0 — was SILENT and PERMANENT: 568 of 686 carried rows, 78 % of the state, were
- * measured diffusing behind it (2026-08-02, `runs/churn_base`, 63 sta / 3 h / DOY-129).
+ * The invariant-carry recursion is correct in design: its small well-conditioned blocks
+ * reach σ = 2.7 cm = 0.14 L1 cycles over 3 h through the same code.  The fault is in the
+ * arithmetic.  The large [band-1; band-2] joint lane block is born near-singular
+ * (same-chord band rows are near-duplicates through shared geometry), and the subtractive
+ * posterior @f$P^z-P^zMP^z@f$ over mixed 1e-4..1e6 operand scales and K=686 GEMM chains
+ * pushes its hidden tight eigenvalues through zero.  The legacy fold then sets @c M:=0,
+ * without a log line and for the rest of the run; on a 63-station 3 h DOY-129 run, 568 of
+ * 686 carried rows diffused behind it.
  *
  * Suite name @c PdSafeFoldTest is owned solely by this file (suite-hygiene rule: one
- * suite, one file).  The config-knob default-OFF gate lives with the other network config
+ * suite, one file).  The config-knob default-off gate lives with the other network config
  * cases in tests/test_codebias_network_config.cpp for the same reason.
  *
  * The gates, in SPEC §6 order:
- *  1. @c ProductFormEqualsSubtractionWellConditioned — (a) is the SAME quantity.
- *  2. @c MixedScaleLanePairStaysPd  — THE falsifier: the legacy path must REPRODUCE the
- *     disease (if it ever stops, the toy no longer models the field and must be
- *     re-derived) and the PD-safe path must not.
- *  3. @c EquilibratedPivotIsScaleRelative — what (b) actually buys.
- *  4. @c DegenerateBlockRebirthsLoudly — invariant #7's re-coupling edge, end to end.
- *  5. @c RestoreGuardRebirthsCorruptBlob — INC-2c, both arms.
- *  6. @c OffPathIsUnchangedAndInertSemanticsHold — invariant #6 + the always-on INC-0.
+ *  1. @c ProductFormEqualsSubtractionWellConditioned: the product form (a) is the same
+ *     quantity as the subtraction.
+ *  2. @c MixedScaleLanePairStaysPd: the falsifier.  The legacy path reproduces the
+ *     defect (if it stops doing so, the toy no longer models the field and is
+ *     re-derived) and the PD-safe path does not.
+ *  3. @c EquilibratedPivotIsScaleRelative: what the equilibration (b) provides.
+ *  4. @c DegenerateBlockRebirthsLoudly: invariant #7's re-coupling edge, end to end.
+ *  5. @c RestoreGuardRebirthsCorruptBlob: INC-2c, both arms.
+ *  6. @c OffPathIsUnchangedAndInertSemanticsHold: invariant #6 plus the always-on INC-0.
  */
 
 #include <gtest/gtest.h>
@@ -47,16 +48,16 @@ namespace {
 using Term = NetworkNormalEquations::DdPriorBlock::Term;
 
 // ---------------------------------------------------------------------------
-// Kernel fixture: a DECOUPLED one-station system.
+// Kernel fixture: a decoupled one-station system.
 //
-// n_shared = 1 with a pure prior and a station whose N_sr is ZERO, so the fold's
-// G = Σ_r N_sr N_rr⁻¹ C_rᵀ vanishes identically.  That kills the posterior's
-// shared-coupling term (P^zMG^ᵀ)Σ(P^zMG^ᵀ)ᵀ, leaving EXACTLY the quantity under test:
+// n_shared = 1 with a pure prior and a station whose N_sr is zero, so the fold's
+// G = Σ_r N_sr N_rr⁻¹ C_rᵀ vanishes identically.  That removes the posterior's
+// shared-coupling term (P^zMG^ᵀ)Σ(P^zMG^ᵀ)ᵀ and leaves the quantity under test:
 //
 //     P⁺ = P − P(P+B)⁻¹P      (legacy)   ≡   sym(P (P+B)⁻¹ B)      (product form)
 //
-// with B = C N_rr⁻¹ Cᵀ reproducible in the test.  That is what makes an independent
-// long-double reference recursion possible at all.
+// with B = C N_rr⁻¹ Cᵀ reproducible in the test.  This makes an independent reference
+// recursion possible (posteriorOracle below).
 // ---------------------------------------------------------------------------
 struct DecoupledFold {
     Eigen::MatrixXd N_rr;                     ///< the station's local normals (SPD)
@@ -74,7 +75,7 @@ Eigen::MatrixXd makeSpd(std::mt19937& gen, Eigen::Index n) {
     return M * M.transpose() + double(n) * Eigen::MatrixXd::Identity(n, n);
 }
 
-/// Fold ONE block through the real kernel and return its posterior covariance.
+/// Fold one block through the production kernel and return its posterior covariance.
 /// @p pd_safe selects the arithmetic; @p degenerate / @p min_pivot report the PD screen.
 Eigen::MatrixXd foldOnce(const DecoupledFold& f, const Eigen::MatrixXd& Pz,
                          bool pd_safe, bool* degenerate = nullptr,
@@ -99,15 +100,15 @@ Eigen::MatrixXd foldOnce(const DecoupledFold& f, const Eigen::MatrixXd& Pz,
     return neq.ddPriorPosteriorCovariance(0, Eigen::MatrixXd::Zero(1, 1));
 }
 
-/// Independent oracle for the DD posterior covariance: the DENSE AUGMENTED SOLVE the
-/// neighbouring kernel suite grades against —
+/// Independent oracle for the DD posterior covariance: the dense augmented solve the
+/// neighbouring kernel suite grades against,
 /// @f$\Sigma_z = C\,(N_{rr} + C^\top P^{-1} C)^{-1} C^\top@f$.
 ///
-/// It is independent by ALGEBRAIC PATH, which is what matters here: it never forms
+/// It is independent by algebraic path, which is what matters here: it never forms
 /// @f$P - P(\cdot)P@f$, so it does not share the subtractive form's cancellation, and it
-/// touches no fold code.  An "extended precision" reference is NOT available on this
-/// platform — MSVC's @c long double is 53-bit, the same as @c double — so a higher-mantissa
-/// evaluation of the SAME expression would grade the two doubles against a reference with
+/// touches no fold code.  An extended-precision reference is not available on this
+/// platform (MSVC's @c long double is 53-bit, the same as @c double), so a higher-mantissa
+/// evaluation of the same expression would grade the two doubles against a reference with
 /// no more headroom than they have.
 Eigen::MatrixXd posteriorOracle(const DecoupledFold& f, const Eigen::MatrixXd& P) {
     const Eigen::LLT<Eigen::MatrixXd> Pllt(P);
@@ -121,7 +122,7 @@ double minEig(const Eigen::MatrixXd& A) {
     return es.eigenvalues().minCoeff();
 }
 
-/// Smallest eigenvalue of the CORRELATION-normalized matrix D^-1/2 A D^-1/2 (D = diag A).
+/// Smallest eigenvalue of the correlation-normalized matrix D^-1/2 A D^-1/2 (D = diag A).
 /// Positive-definiteness must be graded scale-free here: a covariance carrying a 1e10
 /// variance spread has an eigensolver round-off floor of ~1e-10 in absolute terms, so an
 /// absolute `minEig > 0` test measures the eigensolver, not the matrix.  Returns −1 for a
@@ -133,11 +134,11 @@ double minEigNormalized(const Eigen::MatrixXd& A) {
     return minEig(s.asDiagonal() * A * s.asDiagonal());
 }
 
-/// The joint LANE-PAIR shape that is the structural hazard: K = 2·Nc rows laid out
+/// The joint lane-pair shape that is the structural hazard: K = 2·Nc rows laid out
 /// [band-1 (Nc rows); band-2 (Nc rows)], row i and row Nc+i being the two bands of chord
-/// i.  The two band rows of a chord touch the SAME local columns with coefficients that
-/// differ by @p band_eps — near-duplicates through shared geometry, exactly the field
-/// shape (min eig 4.6e-6 at ep0001 vs 1.8e-2 for the per-band blocks).
+/// i.  The two band rows of a chord touch the same local columns with coefficients that
+/// differ by @p band_eps: near-duplicates through shared geometry, as in the field (min
+/// eig 4.6e-6 at the first epoch against 1.8e-2 for the per-band blocks).
 DecoupledFold makeLanePairFold(std::mt19937& gen, int n_chords, double band_eps) {
     const Eigen::Index Nc = n_chords;
     const Eigen::Index K = 2 * Nc;
@@ -151,7 +152,7 @@ DecoupledFold makeLanePairFold(std::mt19937& gen, int n_chords, double band_eps)
         // band 1
         f.C(i, c0) = +1.0;              f.C(i, c1) = -1.0;
         f.rows[static_cast<std::size_t>(i)] = {Term{0, c0, +1.0}, Term{0, c1, -1.0}};
-        // band 2 — the same geometric direction, perturbed by band_eps
+        // band 2: the same geometric direction, perturbed by band_eps
         const double a = 1.0 + band_eps, b = -1.0 + band_eps;
         f.C(Nc + i, c0) = a;            f.C(Nc + i, c1) = b;
         f.C(Nc + i, Nc + i) = band_eps;
@@ -161,10 +162,10 @@ DecoupledFold makeLanePairFold(std::mt19937& gen, int n_chords, double band_eps)
     return f;
 }
 
-/// The matching MIXED-SCALE prior: per chord a 2×2 [band-1; band-2] sub-block correlated
+/// The matching mixed-scale prior: per chord a 2×2 [band-1; band-2] sub-block correlated
 /// at @p rho, mature chords at @p var_mature and fresh ones at @p var_fresh (the
-/// 1e-4 .. 1e6 spread a live epoch actually carries), plus a mild dense background so the
-/// block is genuinely joint rather than block-diagonal.
+/// 1e-4 .. 1e6 spread a live epoch carries), plus a mild dense background so the block is
+/// joint rather than block-diagonal.
 Eigen::MatrixXd makeMixedScalePrior(int n_chords, double var_mature, double var_fresh,
                                     double rho, double background) {
     const Eigen::Index Nc = n_chords;
@@ -258,7 +259,7 @@ makeGroup(const Net& n, const std::vector<std::size_t>& ids, int p, int q) {
 }
 
 /// One driven epoch under star(p,q).  Reports the fold's PD verdict for block 0 so the
-/// gate can assert the DISEASE was reproduced, not merely that nothing crashed.
+/// gate can assert the defect was reproduced, not merely that nothing crashed.
 struct EpochOut {
     std::vector<Eigen::VectorXd> xr;
     bool   block0_degenerate{false};
@@ -300,8 +301,8 @@ double estimableDD(const std::vector<Eigen::VectorXd>& xr, int r, int s, int r0,
          + xr[static_cast<std::size_t>(r0)](col.z[s0]);
 }
 
-/// Solve one epoch with NO DD carry at all — the data-only tap-off a rebirthed block's
-/// diffuse prior must reproduce (the GATE-10c pattern).
+/// Solve one epoch with no DD carry at all: the data-only tap-off a rebirthed block's
+/// diffuse prior should reproduce (the GATE-10c pattern).
 double solveNoCarryDD(const Net& n, int p, int q) {
     const std::string sig = "L1";
     NetworkEstimator est;
@@ -345,13 +346,13 @@ std::vector<ArcKey> seedCarry(NetworkInvariantCarryDriver& drv, int R, int S,
 }  // namespace
 
 // ===========================================================================
-// SPEC §6.1 — the product form is the SAME quantity, not an approximation.
+// SPEC §6.1: the product form is the same quantity, not an approximation.
 // ===========================================================================
 TEST(PdSafeFoldTest, ProductFormEqualsSubtractionWellConditioned) {
     std::mt19937 gen(20260803);
     const DecoupledFold f = makeLanePairFold(gen, /*n_chords=*/6, /*band_eps=*/0.25);
-    // A BENIGN prior: one scale, mild correlation — the regime where the subtractive form
-    // is perfectly well behaved and the two must therefore agree to round-off.
+    // A benign prior (one scale, mild correlation): the regime where the subtractive form
+    // is well behaved, so the two forms agree to round-off.
     const Eigen::MatrixXd Pz =
         makeMixedScalePrior(6, /*var_mature=*/0.05, /*var_fresh=*/0.05,
                             /*rho=*/0.3, /*background=*/0.05);
@@ -369,30 +370,30 @@ TEST(PdSafeFoldTest, ProductFormEqualsSubtractionWellConditioned) {
         << "Pᶻ − PᶻMPᶻ ≡ PᶻMB is an EXACT identity; on a well-conditioned block the two "
            "roundings must agree to ~1e-9 relative.  A larger gap means the product form "
            "is not the quantity the SPEC claims it is.\noff=\n" << off << "\non=\n" << on;
-    // The posterior must genuinely shrink the prior — otherwise the comparison above is
-    // vacuous (two identical copies of an untouched Pᶻ agree trivially).
+    // The posterior shrinks the prior; otherwise the comparison above would be vacuous
+    // (two identical copies of an untouched Pᶻ agree trivially).
     EXPECT_LT(on.trace(), Pz.trace())
         << "the fold folded no information — the fixture is not exercising anything";
 }
 
 // ===========================================================================
-// SPEC §6.2 — THE falsifier pair.  The legacy recursion must REPRODUCE the disease;
-// if this ever stops failing, the toy no longer models the field and must be re-derived
-// (SPEC §6.2 says so in as many words).  The PD-safe recursion must not.
+// SPEC §6.2: the falsifier pair.  The legacy recursion reproduces the defect and the
+// PD-safe recursion does not.  If the legacy arm stops failing, the toy no longer models
+// the field and is re-derived (SPEC §6.2 states this rule).
 // ===========================================================================
 TEST(PdSafeFoldTest, MixedScaleLanePairStaysPd) {
     std::mt19937 gen(20260802);
     const int NC = 20;                       // 20 chords ⇒ K = 40 rows, the SPEC's shape
     // band_eps = 1e-3: the two band rows of a chord differ by ~1 part in 1e3, so their
-    // DIFFERENCE (the lane) is determined to ~mm while each band alone is metre-level —
-    // the field's own near-duplicate geometry.  Pushing it to 1e-5 makes the lane
-    // 10 µm-precise, which drives cond(Pᶻ) past 1e12 within two epochs on ANY arithmetic
-    // and would be testing the toy, not the fold.
+    // difference (the lane) is determined to ~mm while each band alone is metre-level,
+    // matching the field's near-duplicate geometry.  At 1e-5 the lane is 10 µm-precise,
+    // which drives cond(Pᶻ) past 1e12 within two epochs on any arithmetic, so the test
+    // would exercise the toy rather than the fold.
     const DecoupledFold f0 = makeLanePairFold(gen, NC, /*band_eps=*/1e-3);
     // rho = 1 − 1e-6, not 1 − 1e-9: at 1e-9 the seed's own tight direction is already
-    // below double round-off against the 0.002 background and the SEED fails the PD check,
-    // which would test the constructor rather than the recursion.  1e-6 is still far
-    // tighter than anything a healthy block carries and reproduces the defect.
+    // below double round-off against the 0.002 background and the seed itself fails the PD
+    // check, which would test the constructor rather than the recursion.  1e-6 is still
+    // far tighter than anything a well-conditioned block carries and reproduces the defect.
     const Eigen::MatrixXd Pz0 =
         makeMixedScalePrior(NC, /*var_mature=*/1e-4, /*var_fresh=*/1e6,
                             /*rho=*/1.0 - 1e-6, /*background=*/0.002);
@@ -407,19 +408,19 @@ TEST(PdSafeFoldTest, MixedScaleLanePairStaysPd) {
     bool safe_degenerate_seen   = false;
     int  legacy_first_indefinite = -1;
 
-    // The driver's q_z time update, applied to every arm exactly as beginEpoch does.  It
-    // is NOT optional garnish: with q_z = 0 the DD variance falls like 1/n and after a few
-    // hundred epochs the covariance is numerically singular on ANY arithmetic — including
-    // the oracle, which returns NaN.  The lineage this card is graded on runs q_z = 1e-4
-    // m²/s, so a bounded random walk is the honest regime; 1e-6 m² per epoch is a ~1 mm
-    // step, small against the 1e-4 mature scale and large enough to floor the spectrum.
+    // The driver's q_z time update, applied to every arm as beginEpoch does.  It is
+    // required: with q_z = 0 the DD variance falls like 1/n and after a few hundred epochs
+    // the covariance is numerically singular on any arithmetic, including the oracle,
+    // which returns NaN.  The lineage the card is graded on runs q_z = 1e-4 m²/s, so a
+    // bounded random walk is the realistic regime; 1e-6 m² per epoch is a ~1 mm step,
+    // small against the 1e-4 mature scale and large enough to floor the spectrum.
     constexpr double kQz = 1e-6;
-    // SPEC §6.2 asks for 500 cycles.  200 is used instead, deliberately and with the
-    // measurement to back it: the legacy path goes indefinite AND trips its own PD screen
-    // on the FIRST cycle, ending 111× (relative!) away from the oracle, so cycles 200-500
-    // add no discrimination — while 500 cycles cost ~14 s of a ~64 s Debug suite for one
-    // case.  What the remaining cycles are for is the PD-safe arm's SUSTAINED hold, and
-    // 200 folds of a 40-row block is ample for that.  Raise it if the fixture ever changes.
+    // SPEC §6.2 asks for 500 cycles; 200 are used.  The legacy path goes indefinite and
+    // trips its own PD screen on the first cycle, ending 111× (relative) away from the
+    // oracle, so cycles 200-500 add no discrimination, while 500 cycles cost ~14 s of a
+    // ~64 s Debug suite for one case.  The remaining cycles test the PD-safe arm's
+    // sustained hold, and 200 folds of a 40-row block suffice for that.  Raise the count
+    // if the fixture changes.
     constexpr int kEpochs = 200;
     for (int ep = 0; ep < kEpochs; ++ep) {
         // "Noisy data": the station's normals breathe epoch to epoch, so B is never the
@@ -441,12 +442,12 @@ TEST(PdSafeFoldTest, MixedScaleLanePairStaysPd) {
         P_safe.diagonal().array()   += kQz;
         P_ref.diagonal().array()    += kQz;
 
-        // Graded on the CORRELATION-normalized spectrum: with a 1e10 variance spread an
+        // Graded on the correlation-normalized spectrum: with a 1e10 variance spread an
         // absolute min-eig test measures the eigensolver's round-off floor, not the matrix.
-        // Sampled every kEigStride epochs (plus the last) — two 40×40 eigendecompositions
+        // Sampled every kEigStride epochs (plus the last): two 40×40 eigendecompositions
         // per epoch dominate this gate's Debug runtime, and neither failure mode is
-        // transient: an indefinite carry stays indefinite (its posterior is its prior),
-        // and `*_degenerate_seen` is checked EVERY epoch at zero cost regardless.
+        // transient.  An indefinite carry stays indefinite (its posterior is its prior),
+        // and `*_degenerate_seen` is checked every epoch at no cost.
         constexpr int kEigStride = 10;
         if (ep % kEigStride == 0 || ep == kEpochs - 1) {
             const double me_l = minEigNormalized(P_legacy);
@@ -457,8 +458,8 @@ TEST(PdSafeFoldTest, MixedScaleLanePairStaysPd) {
         }
     }
 
-    // (i) The disease reproduces.  Either the carried covariance itself went indefinite,
-    //     or the fold's own PD screen tripped — both are the same failure.
+    // (i) The defect reproduces.  Either the carried covariance itself went indefinite,
+    //     or the fold's own PD screen tripped; both are the same failure.
     EXPECT_TRUE(legacy_first_indefinite >= 0 || legacy_degenerate_seen)
         << "THE LEGACY PATH DID NOT FAIL.  This toy exists to model the field defect "
            "(min eig 4.6e-6 born, indefinite by ep 122, 78 % of the carry frozen).  If it "
@@ -477,7 +478,7 @@ TEST(PdSafeFoldTest, MixedScaleLanePairStaysPd) {
            "rebirth here would make the min-eig assertion above pass vacuously on a "
            "FROZEN covariance (an inert fold's posterior is its prior)";
 
-    // (iii) …and it tracks the independent oracle far better than the legacy path.
+    // (iii) It tracks the independent oracle far better than the legacy path.
     const double ref_scale = P_ref.cwiseAbs().maxCoeff();
     ASSERT_GT(ref_scale, 0.0);
     const double err_safe   = (P_safe   - P_ref).cwiseAbs().maxCoeff() / ref_scale;
@@ -490,25 +491,25 @@ TEST(PdSafeFoldTest, MixedScaleLanePairStaysPd) {
         << "PD-safe posterior drifted from the oracle by " << err_safe
         << " relative over " << kEpochs << " epochs";
     EXPECT_EQ(K, 2 * NC);
-    // Measured 2026-08-03 on this fixture: legacy goes indefinite at cycle 0, trips its
-    // own PD screen, and lands err_legacy = 1.1e+02 RELATIVE from the oracle; PD-safe
-    // holds normalized min-eig 1.5e-4 with err_safe = 1.6e-09.  Those are five orders of
-    // separation on the invariant and eleven on the value — if a future edit narrows that
-    // gap, the fold changed, not the fixture.
+    // Measured on this fixture: legacy goes indefinite at cycle 0, trips its own PD
+    // screen, and ends err_legacy = 1.1e+02 (relative) from the oracle; PD-safe holds
+    // normalized min-eig 1.5e-4 with err_safe = 1.6e-09.  That is about five orders of
+    // separation on the invariant and eleven on the value.  If an edit narrows that gap,
+    // the fold changed, not the fixture.
 }
 
 // ===========================================================================
-// SPEC §6.3 — what the equilibration actually buys.  The pivot test becomes a statement
-// about CONDITIONING instead of about the 1e10 spread between a mature and a fresh row.
+// SPEC §6.3: what the equilibration provides.  The pivot test becomes a statement about
+// conditioning instead of about the 1e10 spread between a mature and a fresh row.
 // ===========================================================================
 TEST(PdSafeFoldTest, EquilibratedPivotIsScaleRelative) {
     std::mt19937 gen(4242);
     const int NC = 8;
     const DecoupledFold f = makeLanePairFold(gen, NC, /*band_eps=*/0.2);
 
-    // Three priors with an IDENTICAL well-conditioned correlation structure and a
-    // widening mature/fresh variance spread.  The equilibrated pivot must barely move;
-    // the plain one must collapse in proportion to the spread.
+    // Three priors with an identical well-conditioned correlation structure and a
+    // widening mature/fresh variance spread.  The equilibrated pivot barely moves; the
+    // plain one collapses in proportion to the spread.
     const double spreads[3] = {1e2, 1e6, 1e10};
     double piv_safe[3] = {0, 0, 0}, piv_legacy[3] = {0, 0, 0};
     double err_safe[3] = {0, 0, 0}, err_legacy[3] = {0, 0, 0};
@@ -525,7 +526,7 @@ TEST(PdSafeFoldTest, EquilibratedPivotIsScaleRelative) {
             foldOnce(f, Pz, /*pd_safe=*/true,  &d_on,  &piv_safe[i]);
         EXPECT_FALSE(d_off) << "spread " << spreads[i];
         EXPECT_FALSE(d_on)  << "spread " << spreads[i];
-        // Both compute the same real number; the question is which ROUNDING survives the
+        // Both compute the same real number; the question is which rounding survives the
         // spread.  Graded against the augmented-solve oracle, which reaches the same
         // quantity down a different algebraic path with no cancellation of 1e10-scale
         // operands.
@@ -540,8 +541,8 @@ TEST(PdSafeFoldTest, EquilibratedPivotIsScaleRelative) {
             << " legacy=" << err_legacy[i];
     }
     // At a benign spread the two roundings are indistinguishable; at 1e10 the subtractive
-    // form has burned its digits and they visibly part company.  That divergence IS the
-    // defect, measured — not a tolerance to be widened.
+    // form has lost its significant digits and the two diverge.  That divergence is the
+    // defect, measured, and not a tolerance to widen.
     EXPECT_LT(err_safe[0], 1e-10) << "benign spread: both forms should be exact-ish";
     EXPECT_LT(err_safe[2], 1e-8)
         << "the equilibrated + product form must still track the oracle at a 1e10 spread; "
@@ -566,18 +567,18 @@ TEST(PdSafeFoldTest, EquilibratedPivotIsScaleRelative) {
 }
 
 // ===========================================================================
-// SPEC §6.4 — invariant #7's re-coupling edge, end to end: the fold is inert, the
-// counters fire, the install rebirths, and the NEXT epoch's carried value is the
-// data-only tap-off (the GATE-10c pattern).
+// SPEC §6.4: invariant #7's re-coupling edge, end to end.  The fold is inert, the
+// counters fire, the install rebirths the block, and the next epoch's carried value is
+// the data-only tap-off (the GATE-10c pattern).
 // ===========================================================================
 TEST(PdSafeFoldTest, DegenerateBlockRebirthsLoudly) {
     const int R = 4, S = 5;
     const Net net = makeNet(20260803u, R, S);
     const Eigen::Index K = static_cast<Eigen::Index>((R - 1) * (S - 1));
 
-    // A carried block no amount of data information can rescue: one eigenvalue at −1e6
-    // against a B of order 1.  This is the shape the corrupt field snapshots actually
-    // hold (−2.9e7 m² diagonals, +4.7e6 entries above the 1e6 diffuse prior).
+    // A carried block that no amount of data information can rescue: one eigenvalue at
+    // −1e6 against a B of order 1.  Corrupt field snapshots have this shape (−2.9e7 m²
+    // diagonals, +4.7e6 entries above the 1e6 diffuse prior).
     Eigen::MatrixXd bad = Eigen::MatrixXd::Identity(K, K) * 1e-2;
     bad(0, 0) = -1.0e6;
 
@@ -594,7 +595,7 @@ TEST(PdSafeFoldTest, DegenerateBlockRebirthsLoudly) {
            "rest of this gate is testing nothing";
     EXPECT_EQ(e1.degen_blocks, 1) << "INC-0 must COUNT the inert fold (invariant #4)";
 
-    // INC-2a: the re-coupling edge fired, with an identity payload for the event.
+    // The re-coupling edge fired, with an identity payload for the event (INC-2a).
     ASSERT_EQ(drv.lastFoldRebirths().size(), 1u)
         << "a block that could not be rescued must be REBIRTHED, not left frozen";
     const auto& rb = drv.lastFoldRebirths().front();
@@ -612,19 +613,20 @@ TEST(PdSafeFoldTest, DegenerateBlockRebirthsLoudly) {
                "declared unusable";
     }
 
-    // …and next epoch the diffuse prior takes the DATA-ONLY tap-off.
+    // Next epoch the diffuse prior takes the data-only tap-off.
     const EpochOut e2 = driveEpoch(drv, net, 0, 0, 30.0, /*pd_safe=*/true);
     EXPECT_FALSE(e2.block0_degenerate) << "the rebirthed block must factor again";
-    // Tolerance is O(B / fresh_prior_var), not zero: a rebirthed block gets the DIFFUSE
+    // Tolerance is O(B / fresh_prior_var), not zero: a rebirthed block gets the diffuse
     // prior (1e6), not the exact zero-information tap-off, so the seed means still pull by
-    // ~|z_seed − z_data|·B/1e6 — the same O(B/fresh_prior_var) residual the driver header
-    // documents for every fresh chord.  What is being asserted is that the block returned
-    // to the DATA, not that it landed exactly on it.
+    // ~|z_seed − z_data|·B/1e6, the same O(B/fresh_prior_var) residual the driver header
+    // documents for every fresh chord.  The assertion is that the block returned to the
+    // data, not that it landed exactly on it.
     EXPECT_NEAR(estimableDD(e2.xr, 2, 3, 0, 0), solveNoCarryDD(net, 0, 0), 1e-3)
         << "one bounded epoch of information lost, then the block re-earns its value from "
            "data — exactly the semantics a chord birth already has";
 
-    // Negative control: with the knob OFF the SAME block freezes silently and forever.
+    // Negative control: with the knob off the same block freezes, with no rebirth, and
+    // stays frozen.
     NetworkInvariantCarryDriver::Config off_cfg;   // pd_safe defaults false
     NetworkInvariantCarryDriver off(off_cfg);
     Eigen::VectorXd z2;
@@ -639,8 +641,8 @@ TEST(PdSafeFoldTest, DegenerateBlockRebirthsLoudly) {
 }
 
 // ===========================================================================
-// SPEC §6.5 — INC-2c.  Every carry blob on disk predates this card and can hold the
-// corrupt block; a warm resume must not re-import it into a fixed build.
+// SPEC §6.5 (INC-2c).  A carry blob written by the legacy fold can hold the corrupt
+// block; a warm resume must not re-import it into a build with the fix armed.
 // ===========================================================================
 TEST(PdSafeFoldTest, RestoreGuardRebirthsCorruptBlob) {
     const int R = 3, S = 3;
@@ -654,7 +656,7 @@ TEST(PdSafeFoldTest, RestoreGuardRebirthsCorruptBlob) {
     std::ostringstream blob;
     writer.serializeCarry(blob, /*diagonal_only=*/false);
 
-    // ARM: the guard rebirths the block — means kept, covariance re-seeded diffuse.
+    // Armed: the guard rebirths the block (means kept, covariance re-seeded diffuse).
     NetworkInvariantCarryDriver::Config on_cfg;
     on_cfg.pd_safe = true;
     NetworkInvariantCarryDriver on(on_cfg);
@@ -673,9 +675,9 @@ TEST(PdSafeFoldTest, RestoreGuardRebirthsCorruptBlob) {
         EXPECT_DOUBLE_EQ(var, on_cfg.fresh_prior_var);
     }
 
-    // DISARMED: the legacy byte-path is intact — the blob restores verbatim, corruption
-    // and all.  (That is the pre-card behaviour, and it is what makes the OFF arm of the
-    // §7 A/B a true control.)
+    // Disarmed: the legacy byte path is intact and the blob restores verbatim, corruption
+    // included.  This keeps the legacy behaviour and makes the off arm of the §7 A/B a
+    // true control.
     NetworkInvariantCarryDriver off;
     {
         std::istringstream is(blob.str());
@@ -690,7 +692,7 @@ TEST(PdSafeFoldTest, RestoreGuardRebirthsCorruptBlob) {
             << "OFF must restore the blob VERBATIM — negative variance included";
     }
 
-    // A HEALTHY blob is untouched by the guard under either setting.
+    // The guard leaves a well-conditioned blob untouched.
     NetworkInvariantCarryDriver healthy_writer;
     Eigen::MatrixXd good = Eigen::MatrixXd::Identity(K, K) * 3.0;
     for (Eigen::Index i = 0; i + 1 < K; ++i) { good(i, i + 1) = 0.4; good(i + 1, i) = 0.4; }
@@ -713,8 +715,8 @@ TEST(PdSafeFoldTest, RestoreGuardRebirthsCorruptBlob) {
 }
 
 // ===========================================================================
-// SPEC §6.6 — standing invariant #6 (the OFF path is unchanged) plus the always-on
-// INC-0 contract (the counters observe, they do not act).
+// SPEC §6.6: invariant #6 (the off path is unchanged) plus the always-on INC-0
+// contract (the counters observe; they do not act).
 // ===========================================================================
 TEST(PdSafeFoldTest, OffPathIsUnchangedAndInertSemanticsHold) {
     std::mt19937 gen(777);
@@ -723,7 +725,7 @@ TEST(PdSafeFoldTest, OffPathIsUnchangedAndInertSemanticsHold) {
         makeMixedScalePrior(5, /*var_mature=*/0.02, /*var_fresh=*/0.2,
                             /*rho=*/0.25, /*background=*/0.05);
 
-    // (a) the knob defaults OFF.
+    // (a) the knob defaults to off.
     {
         NetworkNormalEquations neq(1);
         EXPECT_FALSE(neq.ddFoldPdSafe()) << "new work is default-OFF (invariant #6)";
@@ -731,7 +733,7 @@ TEST(PdSafeFoldTest, OffPathIsUnchangedAndInertSemanticsHold) {
         EXPECT_FALSE(est.ddFoldPdSafe());
     }
 
-    // (b) "knob absent" and "knob explicitly false" are BIT-identical, including under
+    // (b) "knob absent" and "knob explicitly false" are bit-identical, including under
     //     the parallel_carry within-block column split the serial fold opts into.
     const Eigen::MatrixXd implicit_off = foldOnce(f, Pz, /*pd_safe=*/false);
     NetworkNormalEquations bare(1);   // never touched setDdFoldPdSafe
@@ -754,8 +756,9 @@ TEST(PdSafeFoldTest, OffPathIsUnchangedAndInertSemanticsHold) {
         << "the column-split inverse (parallel_carry) relocated into inverseFromLdlt must "
            "stay byte-identical to the single solve";
 
-    // (c) INC-0 is always-on and SOLVE-NEUTRAL: it observes the same factor the fold
-    //     already computed, so a healthy block reports a healthy pivot and nothing else.
+    // (c) INC-0 is always on and solve-neutral: it observes the same factor the fold
+    //     already computed, so a well-conditioned block reports a relative pivot in
+    //     (0, 1], no degeneracy and no repair.
     {
         NetworkNormalEquations neq(1);
         neq.addSharedInfo(Eigen::MatrixXd::Identity(1, 1), Eigen::VectorXd::Zero(1));
@@ -773,9 +776,9 @@ TEST(PdSafeFoldTest, OffPathIsUnchangedAndInertSemanticsHold) {
         EXPECT_LE(st.min_pivot_rel, 1.0);
     }
 
-    // (d) the degenerate branch keeps its historical semantics on the OFF path: inert
-    //     fold, index-stable slot, posterior EXACTLY the untouched prior — and it is now
-    //     COUNTED, which is the whole of INC-0.
+    // (d) the degenerate branch keeps its legacy semantics on the off path: inert fold,
+    //     index-stable slot, posterior exactly the untouched prior.  It is also counted,
+    //     which is all INC-0 adds.
     {
         NetworkNormalEquations neq(1);
         neq.addSharedInfo(Eigen::MatrixXd::Identity(1, 1), Eigen::VectorXd::Zero(1));

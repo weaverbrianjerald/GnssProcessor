@@ -1,28 +1,27 @@
 /**
  * @file test_channel_mode_all.cpp
- * @brief Contract tests for `processing.channel_mode: all` made CORRECT on the
- *        network path (card SID phase 6b,
- *        docs/refound/SID_signal_identity_2026-09-22.md).
+ * @brief Contract tests for `processing.channel_mode: all` on the network path
+ *        (card SID phase 6b, docs/refound/SID_signal_identity_2026-09-22.md).
  *
- * Under the widening every ADMITTED code and phase attribute of every selected
- * band is modelled at every station.  The widening SUBSUMES card SCC (the second
+ * Under the widening, every admitted code and phase attribute of every selected
+ * band is modelled at every station.  The widening subsumes card SCC (the second
  * code channel) and card SID phase 6a (the second phase channel) instead of being
  * refused beside them: their allow-lists are ignored, their sigma scales apply to
  * every non-canonical code row and non-canonical phase row, and the rows enter
  * through the same two sets so every downstream consumer keeps working.
  *
- * What is pinned here — the pure kernels, the roster and the loader, i.e.
- * everything a defect could hide in that does not need a network solve:
+ * What is pinned here: the pure kernels, the roster and the loader, i.e. every
+ * part that can be tested without a network solve:
  *
- *   (a) the EXTRA-CHANNEL predicate: a signal is extra exactly when its band's
+ *   (a) the extra-channel predicate: a signal is extra exactly when its band's
  *       latched signal of the same type is known, present and different;
- *   (b) the WIDENING's admitted set: every band digit, both observation types, the
+ *   (b) the widening's admitted set: every band digit, both observation types, the
  *       network coverage allow-list respected, a channel absent from the priority
  *       list admitted all the same, and nothing on an unselected band;
- *   (c) the ROSTER under the widening: `modelled_extra` and `companion_code` filled
+ *   (c) the roster under the widening: `modelled_extra` and `companion_code` filled
  *       on every band from the tracked attributes, the modelled roles untouched,
  *       and an extra channel not reported as an excluded signal;
- *   (d) the LOADER: the two refusals replaced by SUBSUMPTION (both knobs stay
+ *   (d) the loader: subsumption in place of the two refusals (both knobs stay
  *       armed and their resolved row predicates answer true), the float-vehicle
  *       interlock clamping the mode back to single, and the consumer override
  *       (`network.closed_loop.channel_mode`, default single).
@@ -91,7 +90,7 @@ std::string networkConfig(const std::string& network_extra,
 
 /// The network block the widening's own interlock needs (the float vehicle with a
 /// held basis), plus the vehicle's own prerequisites, which the loader checks
-/// first and which would otherwise fail the load underneath us.
+/// first; without them the load itself would fail.
 const char* kVehicle =
     "    \"ambiguity_vehicle\": \"float_kf\",\n"
     "    \"phase_leveling\": true,\n"
@@ -124,7 +123,7 @@ bool hasCompanion(const BandRoster& br, const std::string& sig) {
 }  // namespace
 
 // --------------------------------------------------------------------------
-// (a) the EXTRA-CHANNEL predicate
+// (a) the extra-channel predicate
 // --------------------------------------------------------------------------
 
 TEST(ChannelModeAllTest, ASignalThatIsNotTheLatchedOneOfItsBandIsExtra) {
@@ -138,12 +137,12 @@ TEST(ChannelModeAllTest, TheLatchedSignalIsNeverExtraToItself) {
 
 TEST(ChannelModeAllTest, AnUndecidedLatchAnswersFalseRatherThanPromoting) {
     // The "change nothing" contract every latch reader keeps: with no canonical
-    // decided, nothing is SECOND to anything.
+    // decided, no signal is second to another.
     EXPECT_FALSE(channelAllIsExtra("L1C", "", true));
 }
 
 TEST(ChannelModeAllTest, AnAbsentCanonicalMakesThisTheFallbackNotASecond) {
-    // The band's canonical row must be present this epoch, which is the same clause
+    // The band's canonical row has to be present this epoch, the same clause
     // cards SCC and SID phase 6a apply; without it the row is the fallback case.
     EXPECT_FALSE(channelAllIsExtra("L1C", "L1W", false));
 }
@@ -153,7 +152,7 @@ TEST(ChannelModeAllTest, ASignalOfAnotherBandIsNotExtraToThisCanonical) {
 }
 
 // --------------------------------------------------------------------------
-// (b) the WIDENING's admitted set
+// (b) the widening's admitted set
 // --------------------------------------------------------------------------
 
 TEST(ChannelModeAllTest, AddsEveryOtherAttributeOfEverySelectedBand) {
@@ -175,8 +174,8 @@ TEST(ChannelModeAllTest, WidensTheCHANNELDimensionAndNeverTheBAND) {
 
 TEST(ChannelModeAllTest, AChannelAbsentFromThePriorityListStillEntersWhenAdmitted) {
     // The X channels are not in the working bases' GPS priority list, so the latch
-    // can never choose one; the widening admits them all the same, which is
-    // precisely what makes band 2 the population card RF-0f's knob decides.
+    // can never choose one; the widening admits them all the same, which is what
+    // makes band 2 the population that the knob of card RF-0f decides.
     const std::vector<std::string> keys{ "C2W", "C2X", "L2W", "L2X" };
     const auto got = channelAllExtraChannels(
         keys, { '2' }, { { '2', "C2W" } }, { { '2', "L2W" } }, nullptr);
@@ -206,7 +205,7 @@ TEST(ChannelModeAllTest, AnUndecidedBandContributesNothingRatherThanEverything) 
 }
 
 // --------------------------------------------------------------------------
-// (c) the ROSTER under the widening
+// (c) the roster under the widening
 // --------------------------------------------------------------------------
 
 TEST(ChannelModeAllTest, TheRosterCarriesExtraPhasesAndCodesOnEveryBand) {
@@ -221,7 +220,7 @@ TEST(ChannelModeAllTest, TheRosterCarriesExtraPhasesAndCodesOnEveryBand) {
     EXPECT_TRUE(hasCompanion(on.at('1'), "C1C"));
     EXPECT_TRUE(hasExtra(on.at('2'), "L2X"));       // band 2 is phase 6b's own half
     EXPECT_TRUE(hasCompanion(on.at('2'), "C2X"));
-    // The MODELLED roles are the latch's and are untouched: phase 2's tracker and
+    // The modelled roles are the latch's and are untouched: phase 2's tracker and
     // every phase-3 population read them.
     EXPECT_EQ(on.at('1').modelled_phase, "L1W");
     EXPECT_EQ(on.at('2').modelled_code, "C2W");
@@ -268,7 +267,7 @@ TEST(ChannelModeAllTest, AnExtraChannelIsNotReportedAsAnExcludedSignal) {
 }
 
 // --------------------------------------------------------------------------
-// (d) the LOADER: subsumption, the interlock, the consumer override
+// (d) the loader: subsumption, the interlock, the consumer override
 // --------------------------------------------------------------------------
 
 TEST(ChannelModeAllTest, DefaultsToSingleOnTheNetworkPath) {
@@ -289,8 +288,8 @@ TEST(ChannelModeAllTest, ArmsOnTheFloatVehicleWithTheHeldBasis) {
     GnssConfig cfg;
     ASSERT_TRUE(cfg.loadFromJson(p, log));
     EXPECT_TRUE(cfg.networkChannelModeAll());
-    // Both row predicates answer true through the SUBSUMPTION, with neither card's
-    // own knob set: that is what makes one predicate serve both mechanisms.
+    // Both row predicates answer true through the subsumption, with neither card's
+    // own knob set; that lets one predicate serve both mechanisms.
     EXPECT_TRUE(cfg.networkSecondCodeRowsActive());
     EXPECT_TRUE(cfg.networkSecondPhaseRowsActive());
     EXPECT_FALSE(cfg.networkSecondCodeChannel());
@@ -300,8 +299,8 @@ TEST(ChannelModeAllTest, ArmsOnTheFloatVehicleWithTheHeldBasis) {
 
 TEST(ChannelModeAllTest, IsClampedToSingleOnTheLevelingVehicle) {
     // Every extra phase channel would create its own zero-q level with no wired
-    // event response, which is standing invariant #1 and card SID phase 6a's own
-    // interlock said about ONE extra channel.
+    // event response, against standing invariant #1; card SID phase 6a's own
+    // interlock applies the same rule to a single extra channel.
     LogManager log;
     const fs::path p = writeTempConfig("level", networkConfig("", kChanAll));
     GnssConfig cfg;
@@ -324,7 +323,7 @@ TEST(ChannelModeAllTest, SubsumesTheSecondCodeChannelInsteadOfRefusingIt) {
     EXPECT_TRUE(cfg.networkChannelModeAll());
     EXPECT_TRUE(cfg.networkSecondCodeChannel());        // armed, not disarmed
     EXPECT_TRUE(cfg.networkSecondCodeRowsActive());
-    // The SCALE is what still reads under the subsumption; the allow-list does not.
+    // The scale is still read under the subsumption; the allow-list is not.
     EXPECT_DOUBLE_EQ(cfg.networkSecondCodeSigmaScale(), 10.0);
     std::error_code ec; fs::remove(p, ec);
 }
@@ -346,8 +345,8 @@ TEST(ChannelModeAllTest, SubsumesTheSecondPhaseChannelInsteadOfRefusingIt) {
 }
 
 TEST(ChannelModeAllTest, TheConsumerKeepsItsOwnChannelModeByDefault) {
-    // R6: a producer at `all` does not widen the held-out consumer unless asked,
-    // so an arm of the producer's widening moves the WIRE alone.
+    // A producer at `all` does not widen the held-out consumer unless asked, so an
+    // arm of the producer's widening moves only the wire (R6).
     LogManager log;
     const fs::path p = writeTempConfig("cons", networkConfig(kVehicle, kChanAll));
     GnssConfig cfg;

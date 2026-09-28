@@ -1,11 +1,10 @@
 /**
  * @file NetworkStreamAligner.cpp
- * @brief RTF-3 wait-budget aligner + bounded epoch queue (implementation).
+ * @brief Wait-budget aligner and bounded epoch queue, implementation (RTF-3).
  *
- * See the header for the dispatch semantics.  Everything here is deliberately
- * clock-injected and transport-free; the only time source is the caller's
- * @c steady_clock instants, so the whole dispatch policy is exercised by unit
- * tests without a single sleep.
+ * See the header for the dispatch semantics.  Everything here is clock-injected
+ * and transport-free; the only time source is the caller's @c steady_clock
+ * instants, so unit tests exercise the whole dispatch policy without sleeping.
  */
 #include "realtime/NetworkStreamAligner.hpp"
 
@@ -33,9 +32,9 @@ void NetworkStreamAligner::add(const std::string& station, const GnssTime& t,
                                std::chrono::steady_clock::time_point now) {
     if (obs.empty()) return;
     const std::int64_t key = keyOf(t);
-    // Monotonic floor: this epoch already left (dispatched or gate-dropped) —
-    // a late merge would hand the solve a second, conflicting realisation of a
-    // consumed epoch.  Count and discard.
+    // Monotonic floor: this epoch already left (dispatched, gate-dropped or
+    // evicted).  A late merge would hand the solve a second, conflicting
+    // realisation of a consumed epoch, so the batch is counted and discarded.
     if (key <= last_dispatched_key_) {
         ++c_.late_arrivals_dropped;
         return;
@@ -47,9 +46,9 @@ void NetworkStreamAligner::add(const std::string& station, const GnssTime& t,
         b.deadline = now + std::chrono::microseconds(
                          static_cast<std::int64_t>(cfg_.wait_budget_s * 1e6));
         it = pending_.emplace(key, std::move(b)).first;
-        // Pending cap: evict the OLDEST bucket (stalest content — the
-        // skip-to-latest doctrine) and advance the floor so its stragglers
-        // count late instead of re-minting the bucket.
+        // Pending cap: evict the oldest bucket (stalest content, per the
+        // skip-to-latest rule) and advance the floor so its stragglers count
+        // late instead of re-creating the bucket.
         if (pending_.size() > static_cast<std::size_t>(cfg_.max_pending_epochs)) {
             auto oldest = pending_.begin();
             if (oldest->first != key) {   // never evict the bucket just minted
@@ -71,10 +70,10 @@ void NetworkStreamAligner::add(const std::string& station, const GnssTime& t,
     if (inserted) {
         slot->second = std::move(obs);
     } else {
-        // Merge-append: an MSM epoch spans one frame PER CONSTELLATION at the
+        // Merge-append: an MSM epoch spans one frame per constellation at the
         // same tow, so later frames extend the station's batch.  Replace
-        // semantics here would silently drop every constellation but the last
-        // — the multi-GNSS analogue of the phantom-station defect.
+        // semantics would drop every constellation but the last without notice
+        // (the multi-GNSS analogue of the phantom-station defect).
         ++c_.station_batch_merges;
         slot->second.insert(slot->second.end(),
                             std::make_move_iterator(obs.begin()),
@@ -106,9 +105,9 @@ NetworkStreamAligner::collectReady(std::chrono::steady_clock::time_point now) {
     std::vector<SyncedEpoch> out;
     while (!pending_.empty()) {
         auto it = pending_.begin();
-        // Deadline-only dispatch (no "all lanes present" fast path — see the
-        // header: presence is per-FRAME, not per-complete-epoch, so an early
-        // dispatch would tear multi-constellation epochs).  Head-of-line
+        // Deadline-only dispatch, with no "all lanes present" fast path (see the
+        // header): presence is per frame, not per complete epoch, so an early
+        // dispatch would split multi-constellation epochs.  Head-of-line
         // discipline keeps the emitted sequence monotonic without a reorder
         // buffer: the walk stops at the first still-waiting bucket.
         if (now < it->second.deadline) break;
@@ -140,7 +139,7 @@ std::size_t SyncedEpochQueue::push(SyncedEpoch&& se) {
         std::lock_guard<std::mutex> lk(m_);
         if (closed_) return 0;   // producer raced a close: drop silently (terminal anyway)
         while (q_.size() >= depth_) {
-            q_.pop_front();      // whole-epoch drop-oldest — never bytes
+            q_.pop_front();      // whole-epoch drop-oldest, never bytes
             ++dropped_;
             ++n_dropped;
         }

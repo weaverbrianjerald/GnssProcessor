@@ -5,9 +5,9 @@ Companion to ``adm_make_arms.py``.  Reads only committed artifacts
 (``network_events.csv``, ``network_epoch_status.csv``, ``main_log.log``) so a
 verdict can be re-derived later without the run still being warm.
 
-Like ``pc_gate_verdict.py`` this REFUSES to grade a run that is still writing:
-the producer's run-end telemetry block is the exit marker, and grading a
-mid-flight run produced false verdicts on the prefit card before that guard
+Like ``pc_gate_verdict.py`` this refuses to grade a run that is still writing:
+the producer's run-end telemetry block is the exit marker. Grading a
+mid-flight run produced false verdicts on the prefit card before this guard
 existed.
 
 Usage::
@@ -30,7 +30,7 @@ KNOWN = [
     ("BSHM00ISR", "G07", 327030.0, 1.98e5),
     ("BSHM00ISR", "G16", 327210.0, 9.75e4),
 ]
-# The single-band INNOCENCE control: also C1C-only at BSHM, and healthy.
+# Control channel: also C1C-only at BSHM, but nominal, so it must never be rejected.
 CONTROL = ("BSHM00ISR", "G21")
 
 
@@ -83,7 +83,7 @@ def a00_at(run: Path, tow: float) -> float | None:
 
 
 def grade_birth(tag: str = "birth") -> int:
-    """§7 gate 2 — the KNOWN-ANSWER birth gate."""
+    """Birth gate graded against a known answer (§7 gate 2)."""
     run = RUNS / f"ft63_adm_{tag}"
     if not run.is_dir():
         print(f"gate 2 birth : SKIP (no {run})")
@@ -111,7 +111,7 @@ def grade_birth(tag: str = "birth") -> int:
             ok = False
         print(f"  {verdict}   {sta}/{sat} @ {tow:.0f}: {hit[0]['event']} "
               f"z={z:.4g} (spec {z_exp:.4g}, {rel*100:.1f}% off)")
-    # The innocence control: G21@BSHM is ALSO C1C-only and must NEVER be rejected.
+    # Control: G21@BSHM is also C1C-only and must never be rejected.
     bad = [e for e in ev if e["station"] == CONTROL[0] and e["sat"] == CONTROL[1]
            and e["event"].startswith("adm_reject")]
     print(f"  {'OK ' if not bad else 'FAIL'}   control {CONTROL[0]}/{CONTROL[1]} "
@@ -126,7 +126,7 @@ def grade_birth(tag: str = "birth") -> int:
 
 
 def grade_sweep() -> int:
-    """§7 gate 4 — the bound sweep.  The reject SET must be identical."""
+    """Bound sweep: the rejected set must stay identical across bounds (§7 gate 4)."""
     sets = {}
     for tag, bound in (("b300", 300), ("birth", 1000), ("b3k", 3000)):
         run = RUNS / f"ft63_adm_{tag}"
@@ -146,7 +146,7 @@ def grade_sweep() -> int:
 
 
 def grade_break() -> int:
-    """§7 gate 3 — the era-2 break gate + the 329190 free experiment."""
+    """Era-2 break gate and the TOW 329190 free experiment (§7 gate 3)."""
     on, off = RUNS / "ft63_adm_break", RUNS / "ft63_adm_breakoff"
     if not (on.is_dir() and finished(on)):
         print("gate 3 break : SKIP (arm absent or still writing)")

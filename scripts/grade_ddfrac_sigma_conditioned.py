@@ -1,58 +1,59 @@
 #!/usr/bin/env python3
-"""Condition the DD fractional part on its FORMAL sigma — the payoff test of
+"""Condition the DD fractional part on its formal sigma: the payoff test of
 ``docs/SPEC_carry_aware_covariance.md``.
 
-WHY THIS SCRIPT EXISTS
-----------------------
+Why this script exists
+-----------------------
 ``docs/RUNQUEUE_pdfix_reask.md`` P6(b) is the strongest negative result in the
-whole DOY-129 campaign: six hours on a working fold, 55-epoch chord lifetimes,
-and ``med|frac|`` dead flat at 0.246-0.254 — the uniform-distribution value — in
-every hour and every age bin, reproduced on GPS+Galileo by P4.  It is recorded
-as "the DD integer information is NOT PRESENT at this cadence/geometry".
+DOY-129 campaign: six hours on a working fold, 55-epoch chord lifetimes, and
+``med|frac|`` flat at 0.246-0.254 (the uniform-distribution value) in every
+hour and every age bin, reproduced on GPS+Galileo by P4. It is recorded as
+"the DD integer information is not present at this cadence/geometry".
 
-**That conclusion is not decidable from ``med|frac|`` alone.**  Wrap a Gaussian
-of sigma = 0.3 cyc around the unit circle and its fractional part is already
-indistinguishable from uniform, whatever the underlying truth.  So
-``med|frac| = 0.25`` separates
+That conclusion cannot be read off ``med|frac|`` alone. A Gaussian of sigma
+= 0.3 cyc wrapped around the unit circle already looks uniform regardless of
+the underlying truth, so ``med|frac| = 0.25`` is consistent with both
 
-    (a) "no integer information exists"                        from
-    (b) "integer information exists but this estimator's DD uncertainty
-         is too large to expose it"
+    (a) no integer information exists, and
+    (b) integer information exists but this estimator's DD uncertainty is
+        too large to expose it,
 
-ONLY when read against a valid sigma_DD.  Until the carry-aware readback landed
-there was no such sigma: ``dd_sigma_cyc`` came from a covariance that did not
-contain the carry (it sat pinned near 3.9 cyc for the entire campaign, and
-``scripts/grade_pdfix_arms.py`` excludes it ON PURPOSE).
+and separates them only when read against a valid sigma_DD. Before the
+carry-aware readback landed there was no such sigma: ``dd_sigma_cyc`` came
+from a covariance that did not contain the carry (it sat pinned near 3.9 cyc
+for the whole campaign, and ``scripts/grade_pdfix_arms.py`` excludes it for
+that reason).
 
-This script does the conditioning.  It bins the DDs by ``dd_sigma_cyc`` and
-reports ``med|frac|``, ``P(<0.1)`` and the circular resultant per bin.  On the
-tight bins those statistics finally MEAN something:
+This script does the conditioning. It bins the DDs by ``dd_sigma_cyc`` and
+reports ``med|frac|``, ``P(<0.1)`` and the circular resultant per bin. On the
+tight bins those statistics become informative:
 
-* uniform on a bin where sigma << 0.25 cyc  =>  (a).  A genuine, quantified
-  negative: the estimator could have resolved integer structure and there was
-  none.
-* pile-up appearing as sigma falls           =>  (b).  The six-hour null was a
-  statement about the ESTIMATOR, not about the geometry, and the whole
-  integer-information axis re-opens.
+* uniform on a bin where sigma is well under 0.25 cyc supports (a): a
+  quantified negative, since the estimator could have resolved integer
+  structure and did not.
+* pile-up appearing as sigma falls supports (b): the six-hour null was a
+  statement about the estimator, not the geometry, and the integer-information
+  question reopens.
 
-READ THE MODE COLUMN FIRST
---------------------------
-``network_dd_fractional.csv`` carries ``sigma_carry_aware`` (0/1) precisely so
-this script can refuse to draw the conclusion from a blind sigma.  A run whose
-rows are all 0 gets its bins printed and its verdict WITHHELD — that is the
-point of the card, and silently conditioning on a carry-blind sigma would be the
-same class of mistake the parent card (SPEC_pd_safe_dd_fold.md section 11) was
-written to end.  A file without the column at all is a pre-card exe: same
-treatment.
+Read the mode column first
+---------------------------
+``network_dd_fractional.csv`` carries ``sigma_carry_aware`` (0/1) so this
+script can refuse to draw a conclusion from a blind sigma. A run whose rows
+are all 0 gets its bins printed and its verdict withheld: that is the point
+of the card, since conditioning on a carry-blind sigma would repeat the
+mistake that the parent card (SPEC_pd_safe_dd_fold.md section 11) exists to
+prevent. A file without the column at all gets the same treatment, as a
+pre-card executable.
 
 Usage
 -----
     python scripts/grade_ddfrac_sigma_conditioned.py <run_dir> [tail_seconds=3600]
     python scripts/grade_ddfrac_sigma_conditioned.py <run_a> <run_b> [tail_seconds]
 
-With two run dirs it prints them side by side — the intended use is
-``cacov_off`` vs ``cacov_on``, where the SOLVE is byte-identical by construction
-so every difference in this table is attributable to the readback alone.
+With two run dirs it prints them side by side. The intended use is
+``cacov_off`` vs ``cacov_on``, where the solve is byte-identical by
+construction, so every difference in the table is attributable to the
+covariance readback alone.
 """
 
 from __future__ import annotations

@@ -1,17 +1,17 @@
-"""Per-satellite phase-ambiguity LOCKTIME strip viewer -- the port of
-``view_ambiguity_locktime.m``.
+"""Per-satellite phase-ambiguity locktime strip viewer (port of
+``view_ambiguity_locktime.m``).
 
-How long (minutes) each carrier-phase ambiguity has held since it was last
-(re)initialized.  Styled after the shared (satellite x epoch) strip renderer:
-one figure per constellation, one tile per phase signal, cells coloured by
-locktime.  Fresh resets render at the dark/low end of ``viridis`` (salient
-against the background); mature locks recede to the bright/high end -- so a
-cycle-slip / outlier path that resets ambiguities too often paints the strip
-with hot stripes, while a healthy run is long cool sweeps.
+Shows how long (minutes) each carrier-phase ambiguity has held since it was
+last (re)initialized.  Layout follows the shared (satellite x epoch) strip
+renderer: one figure per constellation, one tile per phase signal, cells
+coloured by locktime.  Fresh resets render at the dark (low) end of
+``viridis`` and mature locks at the bright (high) end, so a cycle-slip or
+outlier path that resets ambiguities too often shows as dark stripes, and a
+run without spurious resets shows long bright sweeps.
 
-WHY THIS IS RECONSTRUCTED FROM STATE, NOT FROM THE SLIP TRACES
--------------------------------------------------------------
-An ambiguity is reinitialized by TWO independent code paths:
+Why resets are reconstructed from state and not only from the slip traces
+-------------------------------------------------------------------------
+An ambiguity is reinitialized by two independent code paths:
 
   (1) the cycle-slip pipeline (MwSlipDetector / TurboEdit ->
       ``CycleSlipManager::resetAmbiguityBssdAware`` ->
@@ -19,67 +19,67 @@ An ambiguity is reinitialized by TWO independent code paths:
   (2) the Kalman filter's post-fit measurement-residual outlier check
       (``KalmanFilter::handlePhaseOutlier``), which fires with no slip flag.
 
-Reconstructing resets from ``mwwl_trace`` / ``turbo_edit_trace`` alone would
-SILENTLY MISS every KF-driven reset.  BOTH paths do the identical covariance
-surgery ``P.row(i)=0; P.col(i)=0; P(i,i)=reset_std^2``, so within an arc
-(ambiguities carry ~no process noise, variance monotonically non-increasing)
-a meaningful ``std_m`` up-step is unambiguously a reinitialization.  But the
-converse is FALSE (measured on the exam hero run, 2026-08-31):
-``logAmbiguities`` writes the POST-update state, and in a converged filter
-(position/clock/tropo already cm-tight) the same epoch's phase re-pins a
-freshly reset ambiguity to ~cm, so the surgery often never surfaces in the
-logged sigma at all -- 38 of that run's 43 injected slips left no up-step,
-and the 5 that did log the raw reset sigma collapsed back within an epoch,
-which is exactly the bridge hold-and-restore signature (below) and was
-mis-held as "lock continuous".  Resets are therefore reconstructed from the
-UNION of two sources:
+Resets reconstructed from ``mwwl_trace`` / ``turbo_edit_trace`` alone would
+miss every KF-driven reset.  Both paths apply the same covariance update
+``P.row(i)=0; P.col(i)=0; P(i,i)=reset_std^2``, and within an arc the
+ambiguity variance does not increase (ambiguities carry almost no process
+noise), so a meaningful ``std_m`` up-step is a reinitialization.  The
+converse does not hold: ``logAmbiguities`` writes the post-update state, and
+in a converged filter (position, clock and troposphere already at cm level)
+the same epoch's phase pulls a freshly reset ambiguity back to cm level, so
+the reset often does not appear in the logged sigma at all.  On one
+converged run, 38 of 43 injected slips left no up-step, and the 5 that did
+collapsed back within an epoch, which matches the bridge hold-and-restore
+signature (below) and was classified as continuous lock.  Resets are
+therefore reconstructed from the union of two sources:
 
-  (a) the ``std_m`` reinflation heuristic -- still the only witness of
-      KF post-fit resets, and of everything in logs that predate the slip
+  (a) the ``std_m`` reinflation heuristic, which is the only witness of
+      KF post-fit resets and of resets in logs that predate the slip
       traces; and
   (b) slip / LLI flags gathered by ``_load_slip_events``.  A detector slip
-      (``is_slip`` / TurboEdit flag) is HARD evidence: the slip pipeline
+      (``is_slip`` / TurboEdit flag) is hard evidence: the slip pipeline
       resets, so the epoch forces an in-arc reset on every ambiguity of that
       satellite and is never eligible for the bridge classification.  A
-      receiver LLI flag (``is_lli``) is SOFT: it forces a reset only when no
+      receiver LLI flag (``is_lli``) is soft: it forces a reset only when no
       hold-and-restore signature is present, so a ``turbo_edit_bridge_lli``
-      hold that genuinely restores its snapshot still renders as type 3.
-      Consecutive flagged epochs collapse to ONE reset (MW flags persist for
-      several epochs after a hit).
+      hold that restores its snapshot still renders as type 3.
+      Consecutive flagged epochs collapse to one reset (MW flags persist for
+      several epochs after a slip).
 
-(A covariance-preserving cycle-slip REPAIR shifts ``value_m`` but NOT
-``std_m`` and raises no detector flag -- correctly NOT counted as a locktime
-reset, because arc continuity is preserved.)
+A covariance-preserving cycle-slip repair shifts ``value_m`` but not
+``std_m`` and raises no detector flag.  It is not counted as a locktime
+reset, because arc continuity is preserved.
 
 Reset taxonomy reconstructed per (satellite, signal) series:
 
 * **arc-start** (type 1) : first appearance, or reacquisition after a time gap
-  (a rising/setting satellite -- expected, not pathological).
+  (a rising or setting satellite; expected).
 * **in-arc reset** (type 2) : a std reinflation mid-arc, or a detector slip /
-  LLI flag at this epoch (union rule above) -- the diagnostic of interest.
-  Optionally classified by source:
+  LLI flag at this epoch (union rule above).  This is the diagnostic of
+  interest.  Optionally classified by source:
 
-    - ``slip`` -- a slip flag exists for this sat near this epoch in
+    - ``slip``: a slip flag exists for this sat near this epoch in
       ``mwwl_trace`` / ``turbo_edit_trace``,
-    - ``kf``   -- no slip flag -> KF post-fit residual reset.
+    - ``kf``: no slip flag, so a KF post-fit residual reset.
 
 * **bridge held** (type 3) : a soft-LLI gap hold (``turbo_edit_bridge_lli``)
-  whose live state parks at the reset sigma but is then RESTORED to the
+  whose live state sits at the reset sigma and is then restored to the
   pre-gap snapshot + dN*lambda by the bridge repair.  Lock is logically
-  continuous -- locktime keeps counting, and the event is marked with a
-  triangle, not a reset.  A hold that TIMES OUT never restores and remains a
-  true in-arc reset.
+  continuous: locktime keeps counting, and the event is marked with a
+  triangle, not a reset.  A hold that times out never restores and remains
+  an in-arc reset.
 
-Markers overlaid on the strip: a circle for a slip-driven reset, an x (magenta)
-for a non-slip reset (KF residual / hold timeout), and a triangle (green) for a
-bridge hold+repair (lock continuous, not a reset).
+Markers overlaid on the strip: a circle for a slip-driven reset, an x
+(magenta) for a non-slip reset (KF residual / hold timeout), a + for an
+unclassified reset (source classification off or no slip traces), and a
+triangle (green) for a bridge hold+repair (lock continuous, not a reset).
 
 Content switch ``plot_value`` (kwarg, MATLAB default ``'locktime'``):
-  * ``'locktime'`` : minutes since last (re)init (PRIMARY -- reset diagnostic),
+  * ``'locktime'`` : minutes since last (re)init (primary reset diagnostic),
     capped at ``cap_minutes`` (20), viridis (fresh = dark);
-  * ``'std'``      : ambiguity std (m) -- the raw reinflation signal itself, a
+  * ``'std'``      : ambiguity std (m), the raw reinflation signal, as a
     cross-check that the locktime resets are real; capped at ``std_cap_m``
-    (0.60), viridis reversed (high sigma = dark, salient).
+    (0.60), viridis reversed (high sigma = dark).
 
 Expected CSV header (``TraceLogger::logAmbiguities``):
     ``week,tow_s,key,value_m,std_m``   (key = ``"<sat>_<signal>"``).
@@ -94,8 +94,8 @@ from ..io import GPS_EPOCH, add_utc, load_trace, require_cols
 from ..strip import build_sat_epoch_strip
 from .base import Viewer, ViewerResult
 
-# Reset-detection parameters, faithful to the C++ covariance surgery (mirrors
-# the MATLAB ``resetParams`` struct one-for-one).
+# Reset-detection parameters for the C++ reset covariance update; one-for-one
+# with the MATLAB ``resetParams`` struct.
 _REL_FACTOR = 1.5       # std(i) / std(i-1) ratio trigger
 _ABS_JUMP_M = 0.10      # std(i) - std(i-1) absolute trigger (m)
 _MIN_RESET_STD = 0.05   # ignore sub-floor jitter in deep convergence
@@ -129,7 +129,7 @@ def _reconstruct_locktime(tsec: np.ndarray, stdv: np.ndarray,
     series plus the detector flags (module docstring, union rule).
     ``resetType``: 0 continuing, 1 arc-start (init/reacquire), 2 in-arc reset,
     3 bridge-held span (soft-LLI hold restored by a snapshot + dN*lambda
-    repair -- locktime CONTINUES across it).  ``tsec`` must be ascending
+    repair; locktime continues across it).  ``tsec`` must be ascending
     (seconds, arc-relative); ``stdv`` the matching std (m).
 
     ``slip_mask`` / ``lli_mask`` (optional bool arrays, same length): True
@@ -153,8 +153,8 @@ def _reconstruct_locktime(tsec: np.ndarray, stdv: np.ndarray,
                  else np.asarray(slip_mask, bool))
     lli_mask = (np.zeros(n, bool) if lli_mask is None
                 else np.asarray(lli_mask, bool))
-    # One physical event = one reset: only the FIRST sample of a consecutive
-    # flagged run fires (MW keeps flagging for several epochs after a hit).
+    # One physical event = one reset: only the first sample of a consecutive
+    # flagged run fires (MW keeps flagging for several epochs after a slip).
     any_mask = slip_mask | lli_mask
     new_event = any_mask & ~np.concatenate(([False], any_mask[:-1]))
     force_hard = new_event & slip_mask       # detector slip: never a bridge
@@ -192,14 +192,14 @@ def _reconstruct_locktime(tsec: np.ndarray, stdv: np.ndarray,
             lock_sec[i] = 0.0
             i += 1
         elif reinfl or former_pivot or force_hard[i] or force_soft[i]:
-            # Reinflation: bridged hold-and-restore, or a true reset?  A
-            # soft-LLI bridge repair RESTORES the pre-hold sigma in one step
-            # within the hold cap; scan ahead for that signature.  (formerPivot
-            # spans are excluded -- a pivot's pre-event sigma is 0, so "restore
-            # to pre-hold sigma" is undefined.  A detector-slip sample is
-            # excluded too: the slip pipeline reset the state, and a fresh
-            # ambiguity's one-epoch re-pin in a converged filter is sigma-
-            # indistinguishable from a snapshot restore.)
+            # Distinguish a bridged hold-and-restore from a reset.  A soft-LLI
+            # bridge repair restores the pre-hold sigma in one step within the
+            # hold cap; scan ahead for that signature.  Former-pivot spans are
+            # excluded (a pivot's pre-event sigma is 0, so "restore to pre-hold
+            # sigma" is undefined), and so are detector-slip samples: the slip
+            # pipeline reset the state, and in a converged filter a fresh
+            # ambiguity's one-epoch pull-back cannot be told apart from a
+            # snapshot restore by sigma alone.
             j = 0
             if reinfl and s0 > _PIVOT_STD and not force_hard[i]:
                 k = i + 1
@@ -286,7 +286,10 @@ def _load_slip_events(ctx) -> pd.DataFrame:
                              "utc": pd.Series(dtype="datetime64[ns]"),
                              "kind": pd.Series(dtype=str)})
     ev = pd.concat(frames, ignore_index=True)
-    # A row flagged both ways keeps the HARD kind ("lli" sorts after "slip").
+    # A (satellite, utc) flagged both ways keeps the kind that sorts first.
+    # "lli" sorts before "slip", so the soft kind is kept, although the intent
+    # is to keep the hard kind; a slip coinciding with an LLI flag is then
+    # treated as bridge-eligible.
     ev = ev.sort_values(["satellite", "utc", "kind"], kind="mergesort")
     return ev.drop_duplicates(subset=["satellite", "utc"]).reset_index(drop=True)
 
@@ -313,7 +316,7 @@ def build_ambiguity_locktime(
     df["value_m"] = pd.to_numeric(df["value_m"], errors="coerce")
     df["std_m"] = pd.to_numeric(df["std_m"], errors="coerce")
 
-    # --- Parse key -> satellite + signal (split on FIRST underscore) ---
+    # --- Parse key -> satellite + signal (split on the first underscore) ---
     key = df["key"].astype(str)
     sat = key.str.split("_", n=1).str[0]
     sig = key.str.split("_", n=1).str[1]
@@ -330,15 +333,15 @@ def build_ambiguity_locktime(
     # GPS time axis (trace files carry pure GPS time).
     df = add_utc(df)
 
-    # --- De-duplicate (key, epoch): keep LAST (post-relinearization) row ---
+    # --- De-duplicate (key, epoch): keep the last (post-relinearization) row ---
     df = df.sort_values(["key", "utc"], kind="mergesort").reset_index(drop=True)
     n_before = len(df)
     df = df.drop_duplicates(subset=["key", "utc"], keep="last").reset_index(drop=True)
     n_dropped = n_before - len(df)
 
     # --- Slip / LLI events from the detector traces -----------------------
-    # These force resets during reconstruction (union rule, module docstring)
-    # AND classify reset sources further down -- loaded once for both.
+    # Loaded once and used twice: to force resets during reconstruction
+    # (union rule, module docstring) and to classify reset sources below.
     slip_events = _load_slip_events(ctx)
     win_ns = int(_CLASSIFY_WINDOW_S * 1e9)
     ev_by_sat = {}
@@ -486,8 +489,8 @@ def build_ambiguity_locktime(
         sys_order=_SYS_ORDER,
         markers=markers,
         marker_styles=marker_styles,
-        # One facet per constellation but ~a couple dozen satellite ROWS in it:
-        # the multi-facet default (1.75) crushes the strip to ~3 in.
+        # One facet per constellation holds a few dozen satellite rows; the
+        # multi-facet default (1.75) would shrink the strip to about 3 in.
         facet_height=7.0,
     )
 
@@ -550,7 +553,7 @@ def _summary(df: pd.DataFrame, n_dropped: int, do_classify: bool) -> str:
             lines.append(f"{sys_name:<9} {sig:<6} {len(sub):>6d} {n_r:>8d} "
                          f"{rst_hr:>8.2f} {mean_surv:>9.1f}m {min_surv:>8.2f}m")
 
-    # Loudest offenders: satellites with the most in-arc resets.
+    # Satellite/signal pairs with the most in-arc resets (top 10).
     rs = df[df["resetType"].to_numpy() == 2]
     if not rs.empty:
         cnt = (rs.groupby(["satellite", "signal"]).size()

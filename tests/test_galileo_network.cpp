@@ -9,9 +9,9 @@
  *    constellation: T_GD on a GPS (L1, L2) pair, BGD(E1, E5a) on a Galileo
  *    (E1, E5a) pair, zero with its own counter on a pair no latched group delay
  *    describes;
- *  - the time-linked extra-channel anchor, which must assert the target the PAIR was
- *    pinned at (before the card a Galileo C5X column was anchored at c*BGD while its
- *    (C1C, C5Q) pair sat at zero);
+ *  - the time-linked extra-channel anchor, which asserts the target its pin pair was
+ *    pinned at (a Galileo C5X column is anchored at the same value as its (C1C, C5Q)
+ *    pair, c*BGD or zero);
  *  - the pin rows of a Galileo satellite tracked by both channel families: the
  *    ionosphere-free and geometry-free pins on (C1C, C5Q), C5X cross-band at the same
  *    target, C1X free with its channel level row;
@@ -196,7 +196,7 @@ const char* kGpsGalPriorities =
 }  // namespace
 
 // ===========================================================================
-// R3 (i): the broadcast group delay rule, per constellation
+// The broadcast group delay rule, per constellation (R3 (i))
 // ===========================================================================
 
 // The rule is the navigation message's: T_GD describes a GPS (L1, L2) pair, and
@@ -265,7 +265,7 @@ TEST(GalileoNetworkTest, GalileoPairPinnedAtTheBroadcastGroupDelay) {
 
     EXPECT_EQ(rows.n_sat_gf_rows, 5);
     EXPECT_EQ(rows.n_sat_gf_tgd_hits, 5);
-    EXPECT_EQ(rows.n_sat_gf_pair_not_l1l2, 0);   // the Galileo pairs are no longer fallbacks
+    EXPECT_EQ(rows.n_sat_gf_pair_not_l1l2, 0);   // the Galileo pairs are hits, not fallbacks
     EXPECT_EQ(rows.n_sat_gf_tgd_missing, 0);
     EXPECT_EQ(rows.n_sat_gf_anchored, 5);        // first sighting: every row absolute
 
@@ -313,15 +313,15 @@ TEST(GalileoNetworkTest, GalileoPairPinnedAtTheBroadcastGroupDelay) {
 }
 
 // ===========================================================================
-// R3 (ii): the extra-channel anchor asserts the pair's target
+// The extra-channel anchor asserts the pair's target (R3 (ii))
 // ===========================================================================
 
-// THE DEFECT THE CARD CLOSES.  A Galileo satellite tracked by both families registers
-// C1C, C5Q, C1X and C5X.  Its pin pair is (C1C, C5Q); C5X is a cross-band extra, pinned
-// through its geometry-free combination against C1C.  At a first sighting under the time
-// link the extra row is ANCHORED, and the anchor must be the target the pair was pinned
-// at: c*BGD on both rows, which asserts C5X - C5Q = 0 (the counted RF-0d assertion) and
-// nothing larger.  C1X is a same-band extra and gets no pin at all.
+// A Galileo satellite tracked by both families registers C1C, C5Q, C1X and C5X.  Its pin
+// pair is (C1C, C5Q); C5X is a cross-band extra, pinned through its geometry-free
+// combination against C1C.  At a first sighting under the time link the extra row is
+// anchored, and the anchor is the target the pair was pinned at: c*BGD on both rows,
+// which asserts C5X - C5Q = 0 (the counted RF-0d assertion) and nothing larger.  C1X is
+// a same-band extra and gets no pin row, only its channel level row.
 TEST(GalileoNetworkTest, PinRowsForASatelliteTrackedByBothFamilies) {
     NetworkEstimator est;
     const auto keys = registerRoster(est, { "E11" }, { "C1C", "C5Q", "C1X", "C5X" });
@@ -351,7 +351,7 @@ TEST(GalileoNetworkTest, PinRowsForASatelliteTrackedByBothFamilies) {
         }
         if (std::abs(rows.H(r, c1c) + inv) < 1e-9 && std::abs(rows.H(r, c5x) - inv) < 1e-9) {
             x_found = true;
-            // THE FIX: the same c*BGD as the pair, never a different value.
+            // The same c*BGD as the pair.
             EXPECT_DOUBLE_EQ(rows.z(r), 1.25);
         }
     }
@@ -376,9 +376,9 @@ TEST(GalileoNetworkTest, PinRowsForASatelliteTrackedByBothFamilies) {
     EXPECT_EQ(e.anchored, 2);
 }
 
-// Where the pair has NO group delay, the extra channel is anchored at zero with it: the
-// anchor never reads the latched value on its own.  Before the card this row carried the
-// latched value while its pair sat at zero.
+// Where the pair has no group delay, the extra channel is anchored at zero with it: the
+// anchor does not read the latched value on its own, so the extra row cannot carry the
+// latched value while its pair sits at zero.
 TEST(GalileoNetworkTest, ExtraAnchorFollowsAPairWithoutAGroupDelay) {
     NetworkEstimator est;
     const auto keys = registerRoster(est, { "E30" }, { "C1C", "C7Q", "C7X" });
@@ -413,12 +413,12 @@ TEST(GalileoNetworkTest, GpsExtraAnchorIsUnchanged) {
 }
 
 // ===========================================================================
-// R1: the loader's Galileo admission consistency check
+// The loader's Galileo admission consistency check (R1)
 // ===========================================================================
 
-// Card OWD (O4): the network admits observations by processing.active_systems, so a
-// Galileo list without Galileo active is IGNORED with a warning (card GAL refused it); the
-// warning text is asserted in test_active_system_admission.cpp.
+// The network admits observations by processing.active_systems, so a Galileo signal list
+// without Galileo active loads, is ignored, and logs a warning; the warning text is
+// asserted in test_active_system_admission.cpp (card OWD, O4).
 TEST(GalileoNetworkTest, GalileoListWithoutGalileoActiveIsIgnored) {
     LogManager log;
     const fs::path p = writeTempConfig("ignored",
@@ -461,7 +461,7 @@ TEST(GalileoNetworkTest, GpsOnlyIsNotMultiGnss) {
 }
 
 // ===========================================================================
-// R2: the inter-system bias, one state per station per non-GPS active system
+// The inter-system bias, one state per station per non-GPS active system (R2)
 // ===========================================================================
 
 TEST(GalileoNetworkTest, InterSystemBiasAllocatedPerStationForGalileoOnly) {
@@ -505,7 +505,7 @@ TEST(GalileoNetworkTest, NonGpsOnlyStationEpochPredicate) {
 }
 
 // ===========================================================================
-// R5: the products wire carries Galileo C, B and P records on the satellite id
+// The products wire carries Galileo C, B and P records on the satellite id (R5)
 // ===========================================================================
 
 TEST(GalileoNetworkTest, ProductsRoundTripGalileoRecords) {
@@ -606,11 +606,11 @@ std::vector<ClockData> clockSeries(const std::string& sat, double bias_s) {
 }
 }  // namespace
 
-// The bound was 1 ms, which every GPS satellite clock satisfies (they are steered to
-// within 1 ms of system time) and three DOY-129 Galileo clocks did not: E05 +4.75 ms,
-// E11 +2.91 ms, E12 -1.03 ms.  Every node of those satellites was refused, the
-// interpolation returned 0 and the satellite was modelled against a ZERO clock.  The
-// bound now rejects only the non-physical (the SP3 bad-clock sentinel is about 1 s).
+// GPS satellite clocks are steered to within 1 ms of system time; Galileo clocks are not,
+// and three DOY-129 values exceed 1 ms: E05 +4.75 ms, E11 +2.91 ms, E12 -1.03 ms.  A 1 ms
+// bound refuses every node of such a satellite, so the interpolation returns 0 and the
+// satellite is modelled against a zero clock.  The bound rejects only non-physical
+// values (the SP3 bad-clock sentinel is about 1 s).
 TEST(GalileoNetworkTest, MillisecondSatelliteClockIsInterpolated) {
     LogManager log;
     const GnssTime mid{ 2313, 259215.0 };

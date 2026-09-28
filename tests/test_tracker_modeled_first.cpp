@@ -1,26 +1,26 @@
 /**
  * @file test_tracker_modeled_first.cpp
- * @brief Card GRK: the arc-level tracker's band signal taken from the station's
- *        canonical LATCH
- *        (docs/refound/GRK_gap_reentry_key_mismatch_2026-09-22.md section 3).
+ * @brief The arc-level tracker's band signal taken from the station's canonical
+ *        latch (card GRK,
+ *        docs/refound/GRK_gap_reentry_key_mismatch_2026-09-22.md section 3).
  *
- * The defect under test is a KEY MISMATCH, not a wrong number.  The arc-level
+ * The case under test is a key mismatch, not a wrong number.  The arc-level
  * tracker builds its primary pair from `raw_observed` as the lexically lowest
  * phase per band that has a matching code, so a station reporting L1C and L1W
  * tracks band 1 as L1C.  The carried ambiguity at that station is keyed on the
- * station's CANONICAL band-1 signal, which the priority latch makes L1W, so the
- * gap re-entry response looks the carry up under L1C, finds nothing, and the
- * stale band-1 level folds across the break.
+ * station's canonical band-1 signal, which the priority latch makes L1W.  The
+ * gap re-entry response then looks the carry up under L1C, finds nothing, and
+ * the stale band-1 level folds across the break.
  *
- * Two halves are exercised here, both over synthetic values with no station, no
- * state manager and no solve:
+ * Two parts are exercised, both over synthetic values with no station, no state
+ * manager and no solve:
  *
- *  - the SELECTION rule in `networkComputeRawObservables`, driven with a latch
- *    lookup exactly as the run loop binds one over the stations' PppModels.  The
- *    source is the LATCH and not the epoch's admitted row set
- *    (`PppObservation::observed`), because a returning arc's phase can be
- *    withheld from the admitted set for its first epochs, which is precisely the
- *    re-entry epoch the tracker has to name correctly;
+ *  - the selection rule in `networkComputeRawObservables`, driven with a latch
+ *    lookup bound the way the run loop binds one over the stations' PppModels.
+ *    The source is the latch and not the epoch's admitted row set
+ *    (`PppObservation::observed`): a returning arc's phase can be withheld from
+ *    the admitted set for its first epochs, and that is the re-entry epoch the
+ *    tracker has to name correctly;
  *  - the `gap_reentry_unreachable` counter in `networkSlipDrainGapReentry`,
  *    which counts only the arcs the response could have acted on.
  */
@@ -83,10 +83,10 @@ struct Raw {
 };
 
 /// A GPS satellite reporting @p raw, with @p admitted naming the signals the
-/// epoch's ADMITTED row set carries (@c PppObservation::observed).  Deliberately
-/// independent of the LATCH the harness holds: the admitted set is per epoch and
-/// a returning arc's phase can be missing from it, which is the case the tracker
-/// must still name correctly.
+/// epoch's admitted row set carries (@c PppObservation::observed).  Independent
+/// of the latch the harness holds: the admitted set is per epoch and a returning
+/// arc's phase can be missing from it, which is the case the tracker must still
+/// name correctly.
 PppObservation makeObs(const std::string& sat, const std::vector<Raw>& raw,
                        const std::vector<std::string>& admitted) {
     PppObservation obs{};
@@ -109,7 +109,7 @@ PppObservation makeObs(const std::string& sat, const std::vector<Raw>& raw,
 }
 
 /// One station's compute pass, driven the way the run loop drives it, with the
-/// station's canonical PHASE latch supplied as the run loop supplies it.
+/// station's canonical phase latch supplied as the run loop supplies it.
 struct TrackerHarness {
     LogManager     log_manager;
     PppUtils       utils{ log_manager };
@@ -160,9 +160,9 @@ std::map<char, std::string> wLatch() { return { { '1', "L1W" }, { '2', "L2W" } }
 // (a) OFF: the existing lexical rule, pinned
 // ===========================================================================
 
-// Byte-identity control (standing invariant #6).  With the knob off a station
-// reporting L1C and L1W tracks band 1 as L1C, whatever it latched, which is the
-// defect this card names and the behaviour every pre-card run has.
+// Byte-identity control (standing invariant #6).  With the knob off, a station
+// reporting L1C and L1W tracks band 1 as L1C whatever it latched: the mismatch
+// card GRK names, and the behaviour of the unarmed path.
 TEST(TrackerModeledFirstTest, OffTracksTheLexicallyLowestBandOneSignal) {
     TrackerHarness h;
     h.latch = wLatch();
@@ -194,15 +194,15 @@ TEST(TrackerModeledFirstTest, OnTracksTheLatchedBandOneSignal) {
     EXPECT_TRUE(r->dual);
 }
 
-// THE SOURCE IS THE LATCH, NOT THE EPOCH'S ADMITTED ROW SET.  A returning arc's
-// phase can be withheld from the admitted set for its first epochs by the
-// admission and readmit machinery, and that is exactly the re-entry epoch the
-// tracker has to name correctly: here L1W is reported with its code but absent
-// from the admitted set, and it must still be chosen.
+// The source is the latch, not the epoch's admitted row set.  Admission and
+// readmission can withhold a returning arc's phase from the admitted set for its
+// first epochs, and that is the re-entry epoch the tracker has to name correctly.
+// Here L1W is reported with its code but absent from the admitted set, and it is
+// still chosen.
 TEST(TrackerModeledFirstTest, OnUsesTheLatchEvenWhenTheAdmittedRowSetOmitsIt) {
     TrackerHarness h;
     h.latch = wLatch();
-    // The admitted set carries the FALLBACK band-1 signal only.
+    // The admitted set carries only the fallback band-1 signal.
     const PppObservation obs = makeObs("G13", bothBand1Codes(), { "L1C", "L2W" });
     ASSERT_EQ(obs.observed.count("L1W"), 0u);
     ASSERT_EQ(obs.raw_observed.count("L1W"), 1u);
@@ -212,17 +212,17 @@ TEST(TrackerModeledFirstTest, OnUsesTheLatchEvenWhenTheAdmittedRowSetOmitsIt) {
     ASSERT_NE(r, nullptr);
     EXPECT_EQ(r->sig1, "L1W");
     EXPECT_EQ(r->sig2, "L2W");
-    // …and the OFF arm on the same observation still reads the cell as a
-    // mismatch, so the counter is not measuring the admitted set either.
+    // The off arm on the same observation still reads the cell as a mismatch,
+    // so the counter does not measure the admitted set either.
     TrackerHarness off;
     off.latch = wLatch();
     off.run({ obs }, /*modeled_first=*/false);
     EXPECT_EQ(off.counters.gap_tracker_key_mismatch, 1);
 }
 
-// (c) The rule FOLLOWS the latch; it is not a fixed preference for the
+// (c) The rule follows the latch; it is not a fixed preference for the
 // semi-codeless signal.  The same raw stream at a station latched on L1C tracks
-// L1C armed, and the two arms then agree.
+// L1C when armed, and the two arms then agree.
 TEST(TrackerModeledFirstTest, OnFollowsTheLatchRatherThanAFixedPreference) {
     TrackerHarness on;
     TrackerHarness off;
@@ -245,7 +245,7 @@ TEST(TrackerModeledFirstTest, OnFollowsTheLatchRatherThanAFixedPreference) {
     EXPECT_EQ(off.counters.gap_tracker_key_mismatch, 0);
 }
 
-// (d) A band the latch does NOT name keeps the lexical pick.  The dual posture's
+// (d) A band the latch does not name keeps the lexical pick.  The dual posture's
 // band 5 is present in raw_observed and absent from the latch, and the fallback
 // is what keeps the pair formable there.
 TEST(TrackerModeledFirstTest, OnFallsBackToTheLexicalRuleOnAnUnlatchedBand) {
@@ -268,8 +268,8 @@ TEST(TrackerModeledFirstTest, OnFallsBackToTheLexicalRuleOnAnUnlatchedBand) {
 }
 
 // (e) The counter reads 1 in case (a) and 0 in case (b), on the same stream.
-// It is the population the response cannot reach, so it has to be readable
-// from an OFF run (standing invariant #4) and has to vanish when armed.
+// It counts the population the response cannot reach, so it is readable from an
+// unarmed run (standing invariant #4) and reads 0 when armed.
 TEST(TrackerModeledFirstTest, MismatchCounterCountsTheOffCellAndNotTheOnOne) {
     TrackerHarness off;
     TrackerHarness on;
@@ -283,10 +283,10 @@ TEST(TrackerModeledFirstTest, MismatchCounterCountsTheOffCellAndNotTheOnOne) {
     EXPECT_EQ(on.counters.gap_tracker_key_mismatch, 0);
 }
 
-// The counter is knob-INDEPENDENT telemetry, so it must also accumulate over
-// epochs and over satellites rather than reporting one cell per run.  The latch
-// is per STATION, so a satellite that does not report the latched band-1 signal
-// contributes no cell at all, which is what separates this from a row count.
+// The counter is knob-independent telemetry and accumulates over epochs and
+// satellites rather than reporting one cell per run.  The latch is per station,
+// so a satellite that does not report the latched band-1 signal contributes no
+// cell at all; that separates the counter from a row count.
 TEST(TrackerModeledFirstTest, MismatchCounterAccumulatesPerSatelliteAndEpoch) {
     TrackerHarness off;
     off.latch = wLatch();
@@ -301,7 +301,7 @@ TEST(TrackerModeledFirstTest, MismatchCounterAccumulatesPerSatelliteAndEpoch) {
     EXPECT_EQ(off.counters.gap_tracker_key_mismatch, 4);
 }
 
-// The knob decides the SIGNAL, never the BANDS: the pair is the two lowest
+// The knob decides the signal, not the bands: the pair is the two lowest
 // distinct bands in both arms, and every other field of the row is formed from
 // the chosen signals alone.
 TEST(TrackerModeledFirstTest, TheBandPairIsTheSameInBothArms) {
@@ -346,10 +346,10 @@ TEST(TrackerModeledFirstTest, ALatchedPhaseWithoutACodeIsNotChosen) {
     EXPECT_EQ(h.counters.gap_tracker_key_mismatch, 0);
 }
 
-// No lookup bound at all (the pre-card call shape) leaves the tracker on the
-// lexical rule in BOTH knob states and the counter at 0.  An OFF field run whose
-// mismatch count reads 0 on a mixed-signal network is therefore this, not a
-// quiet network: standing invariant #4 in its own test.
+// With no lookup bound (the call shape without a latch), the tracker stays on
+// the lexical rule in both knob states and the counter stays at 0.  An unarmed
+// field run whose mismatch count reads 0 on a mixed-signal network is therefore
+// unwired, not quiet (standing invariant #4).
 TEST(TrackerModeledFirstTest, NoLatchLookupLeavesTheLexicalRule) {
     TrackerHarness h;
     h.bind_latch = false;
@@ -363,7 +363,7 @@ TEST(TrackerModeledFirstTest, NoLatchLookupLeavesTheLexicalRule) {
 }
 
 // The counters sink is optional: a caller that passes none still gets the
-// selection rule, which is what keeps every pre-card call site compiling.
+// selection rule, so call sites that pass no counters still compile.
 TEST(TrackerModeledFirstTest, TheCountersSinkIsOptional) {
     LogManager   log_manager;
     PppUtils     utils{ log_manager };
@@ -384,11 +384,11 @@ TEST(TrackerModeledFirstTest, TheCountersSinkIsOptional) {
 }
 
 // ===========================================================================
-// gap_reentry_unreachable: the carried signal must be TRACKED this epoch
+// gap_reentry_unreachable: the carried signal is tracked this epoch
 // ===========================================================================
 
 /// One station, one satellite, one shifted re-entry on the tracker's signals,
-/// with the leveling carry keyed on DIFFERENT signals of the same two bands.
+/// with the leveling carry keyed on other signals of the same two bands.
 /// Nothing is opened for writing: the traces object is constructed over a
 /// scratch path and its event stream stays closed, so emitEvent is a no-op.
 struct UnreachableHarness {
@@ -419,7 +419,7 @@ struct UnreachableHarness {
         se.time = GnssTime{ 2313, 270390.0 };
         raw.reset(1);
         params.gap_reentry = true;
-        // The CARRIED keys: the station's canonical signals, which are not the
+        // The carried keys: the station's canonical signals, which are not the
         // ones the tracker named on the return epoch.
         addCarry("L1C");
         addCarry("L2W");
@@ -455,7 +455,7 @@ struct UnreachableHarness {
         }
         raw.rows.at(0).push_back(std::move(r));
     }
-    /// A PER-SIGNAL return of @p signal while the satellite's row survived, with
+    /// A per-signal return of @p signal while the satellite's row survived, with
     /// @p tracked_now the signals present this epoch.
     void addSigResumption(const std::string& signal, const std::string& partner,
                           const std::vector<std::string>& tracked_now) {
@@ -501,13 +501,13 @@ struct UnreachableHarness {
     }
 };
 
-// The refinement, both directions on one fixture.  ABSENT: the station tracks
-// only L1L / L2L / L5Q this epoch, so the carried L1C / L2W arcs have no row at
-// all and their return is the per-signal tier's business, not a response this
-// tier declined to make.  PRESENT: L1C is tracked with its matching code
-// alongside L1L, so the PASS-B inject will fold that carry across the break
-// while the response looks the band up under L1L and finds nothing.  Both arms
-// have the same two no-carry arcs, so only the unreachable count moves.
+// Both directions on one fixture.  Absent: the station tracks only L1L / L2L /
+// L5Q this epoch, so the carried L1C / L2W arcs have no row at all and their
+// return belongs to the per-signal tier, not to a response this tier declined.
+// Present: L1C is tracked with its matching code alongside L1L, so the PASS-B
+// inject folds that carry across the break while the response looks the band
+// up under L1L and finds nothing.  Both arms have the same two no-carry arcs, so
+// only the unreachable count differs.
 TEST(TrackerModeledFirstTest, UnreachableCountsOnlyATrackedCarriedSignal) {
     UnreachableHarness absent;
     absent.addResumption({ "L1L", "L2L", "L5Q" });
@@ -523,9 +523,10 @@ TEST(TrackerModeledFirstTest, UnreachableCountsOnlyATrackedCarriedSignal) {
     EXPECT_EQ(present.counters.gap_reentry_unreachable, 1);
 }
 
-// The presence list is OPTIONAL: a posture without the per-signal tier gives the
+// The presence list is optional: a posture without the per-signal tier gives the
 // responder no signal set, and the counter then keeps its broader definition
-// rather than silently reporting zero.  Same fixture with no per-signal list.
+// (every no-carry arc) rather than reporting zero.  Same fixture with no
+// per-signal list.
 TEST(TrackerModeledFirstTest, NoPerSignalListKeepsTheBroaderUnreachableCount) {
     UnreachableHarness h;
     h.addResumption({});          // row present, per-signal list empty
@@ -534,12 +535,11 @@ TEST(TrackerModeledFirstTest, NoPerSignalListKeepsTheBroaderUnreachableCount) {
     EXPECT_EQ(h.counters.gap_reentry_unreachable, 2);
 }
 
-// The PER-SIGNAL tier never feeds the counter.  Its key IS the returning signal,
+// The per-signal tier never feeds the counter.  Its key is the returning signal,
 // so the tracker and the carry cannot name the band differently there.  A return
-// on L2L at a station carrying L2W finds no carry for the honest reason, and the
-// modelled L2W carry it would otherwise be scored against tracked THROUGH this
-// break: 40 such returns on the 6 h field arm, and none of them is this card's
-// class.
+// on L2L at a station carrying L2W correctly finds no carry under L2L, and the
+// modelled L2W carry it would otherwise be scored against was tracked through
+// the break, so the case is not the key mismatch of card GRK.
 TEST(TrackerModeledFirstTest, PerSignalTierNeverFeedsTheUnreachableCount) {
     UnreachableHarness h;
     // The carried, modelled band-2 signal is L2W, and it is tracked right now.
@@ -549,8 +549,8 @@ TEST(TrackerModeledFirstTest, PerSignalTierNeverFeedsTheUnreachableCount) {
     EXPECT_EQ(h.counters.gap_sig.no_carry, 1);   // no carry under L2L: correct
     EXPECT_EQ(h.counters.gap_reentry_unreachable, 0);
 
-    // The row-level tier on the SAME shape does count it, which is what makes
-    // the exclusion a tier rule rather than a silenced counter.
+    // The row-level tier on the same shape does count it, so the exclusion is a
+    // tier rule rather than a silenced counter.
     UnreachableHarness row;
     row.addResumption({ "L1C", "L1L", "L2L" });
     row.run();

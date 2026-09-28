@@ -2,10 +2,10 @@
  * @file ApplicationBaseline.cpp
  * @brief Implementation of Application::runBaseline (DD baseline processing).
  *
- * Extracted from Application.cpp to keep the per-mode processing
- * pipelines in dedicated translation units.  The class definition,
- * constructor, shared helpers, and the PPP/PPP-RTK
- * @c Application::run() entry point still live in Application.cpp.
+ * Kept apart from Application.cpp so that each processing mode has its
+ * own translation unit.  The constructor, the shared helpers and the
+ * PPP/PPP-RTK @c Application::run() entry point are in Application.cpp;
+ * the class is declared in app/Application.hpp.
  */
 
 #include "app/Application.hpp"
@@ -42,19 +42,17 @@ int Application::runBaseline() {
         is_multi ? "Baseline-Multi" : "Baseline-Single");
 
     // --- Phase 0: PathResolver pass --------------------------------
-    // Baseline mode bypasses run()'s resolveData() call (the dispatch
-    // happens before that step), so we run the resolver here.  In
-    // internal mode this fills in any missing baseline.{reference,rovers}
-    // .rinex_path from the bundled data/observations/ tree by station-
-    // name match.  In production mode it downloads navigation + products
-    // (using the reference station's RINEX as the date anchor — the
-    // current ProductResolver builds URLs from year/doy, not from the
-    // baseline obs files themselves).
+    // Baseline mode is dispatched before run()'s resolveData() call, so
+    // the resolver runs here.  In internal mode it fills in any missing
+    // baseline.{reference,rovers}.rinex_path by station-name match under
+    // <data root>/<YYYY-DOY>/obs/<station>/.  In production mode it
+    // downloads navigation + products; ProductResolver builds the URLs
+    // from data_download year/doy, not from the baseline obs files.
     if (config_.isProductionDataSource() && config_.getDownloadConfig().enabled
         && !bc_initial.reference.rinex_path.empty()) {
-        // Same hack as before: point the observation_path slot at the
-        // reference station so any future date-inference logic in
-        // ProductResolver picks the right day.
+        // Point the observation_path slot at the reference station, so any
+        // date inference that reads observation_path uses the reference
+        // station's day.  ProductResolver itself does not read it.
         config_.setObservationPath(bc_initial.reference.rinex_path);
     }
     if (!resolveData()) {
@@ -77,12 +75,11 @@ int Application::runBaseline() {
             rv.has_position ? " (a-priori position supplied)" : "");
     }
 
-    // Hard-fail early if PathResolver could not produce a usable set
-    // of inputs.  These checks moved here from loadBaselineSection_:
-    // the config loader can no longer reject empty rinex_path because
-    // PathResolver is the legitimate source of those values in
-    // internal mode.  Failing here, after resolution, gives a clear
-    // diagnosis with the resolved-or-empty path quoted in the message.
+    // Fail early if PathResolver could not produce a usable set of
+    // inputs.  The config loader (loadBaselineSection_) cannot reject an
+    // empty rinex_path, because in internal mode PathResolver supplies
+    // those values.  Checking here, after resolution, lets the message
+    // quote the resolved (or empty) path.
     if (bc.reference.rinex_path.empty()) {
         log->error("Baseline: reference station '{}' has no rinex_path "
                    "after resolution. In internal mode the resolver scans "
@@ -108,11 +105,13 @@ int Application::runBaseline() {
     }
 
     // --- Phase 1: multi-station RINEX ingestion + epoch alignment (slice 2) ---
-    // Baseline mode dispatches before loadInputData() (which is the normal
+    // Baseline mode is dispatched before loadInputData() (the normal
     // creation site for product_parser_), so construct one here.  Products
-    // are loaded below; the DD processing cancels satellite-side errors,
-    // so precise orbits/clocks/biases aren't strictly required for short
-    // baselines but broadcast nav IS needed for satellite position lookup.
+    // are loaded below.  DD cancels satellite clocks and biases, so precise
+    // clock and bias products are not needed on short baselines, but the
+    // satellite positions come from SP3 orbits: ProductParser fills its
+    // orbit list only from SP3, and the broadcast navigation file does not
+    // supply positions on this path.
     if (!product_parser_) {
         product_parser_ = std::make_unique<ProductParser>(config_, log_manager_);
     }
@@ -136,10 +135,11 @@ int Application::runBaseline() {
               synced.size());
 
     // --- Phase 2: Load products + product cache for geometry (slice 5) ---
-    // Broadcast nav (config's navigation_path) is required to compute
-    // satellite positions at observation times.  Precise products (SP3,
-    // CLK, BIA) are not strictly needed for short-baseline DD — satellite
-    // clocks and biases cancel between receivers — but loading them is
+    // Satellite positions at observation times come from the product
+    // cache's orbits, which are SP3 only, so an SP3 file covering the
+    // observations is required (getOrbitCount() == 0 fails below).  CLK
+    // and BIA products are not needed for short-baseline DD (satellite
+    // clocks and biases cancel between receivers), but loading them is
     // harmless if present.
     product_parser_->loadProducts();
     auto& product_cache = ProductCache::getInstance();
@@ -156,14 +156,16 @@ int Application::runBaseline() {
     }
 
     // ===================================================================
-    // SHARED REFERENCE STATION SETUP (once, outside the rover loop)
+    // Shared reference-station setup (once, outside the rover loop)
     //
     // BaselineMulti uses a star topology: each rover is processed
     // independently against the same master reference.  The reference's
     // PppModel state, ECEF, and MW arc detector are constructed once
     // here; their per-rover state (ref_ppp_state_ values, mw_ref running
-    // statistics) is RESET at the top of each rover iteration so the
-    // sequential loop sees a clean reference each time.
+    // statistics) is reset at the top of each rover iteration so the
+    // sequential loop sees a clean reference each time.  The configured
+    // reference ECEF is used as given, as the antenna reference point
+    // (ARP); no marker-to-ARP reduction is applied to it.
     // ===================================================================
     const RinexParser* ref_parser = sync.parserOf(bc.reference.name);
     if (!ref_parser) {
@@ -184,11 +186,11 @@ int Application::runBaseline() {
 
     // Optional GIM-backed higher-order ionosphere correction.  Baseline
     // (DD) processing differences the higher-order term between rover
-    // and reference, so the practical benefit is tiny on short baselines —
-    // expose the wiring for consistency with PPP/PPP-RTK and for long
-    // baselines where I₂ stops cancelling cleanly.  The same gim_
-    // instance is shared by ref and per-rover PppModels (set on the
-    // rover model where it's constructed inside the rover loop).
+    // and reference, so the benefit is small on short baselines; the
+    // wiring exists for consistency with PPP/PPP-RTK and for long
+    // baselines where I₂ no longer cancels.  The same gim_ instance is
+    // shared by the reference and per-rover PppModels (set on the rover
+    // model where it is constructed inside the rover loop).
     if (config_.getModelCorrections().enable_higher_order_ionosphere && !gim_) {
         gim_ = std::make_unique<GlobalIonosphereMap>(
             config_.getProductPath("INX").string(), log_manager_);
@@ -217,22 +219,21 @@ int Application::runBaseline() {
 
     // Lambda: convert a station's epoch RINEX observations into the
     // minimum PppObservation subset the MW detector needs.  MW itself
-    // is a raw code+phase combination — geometry (sat_pos, LOS, range,
-    // tropo, etc.) is irrelevant — but @c MwSlipDetector::detectLargeMwResets
+    // is a raw code+phase combination and needs no geometry (sat_pos,
+    // LOS, range, tropo), but @c MwSlipDetector::detectLargeMwResets
     // gates each observation by @c obs.elevation against the configured
-    // elevation mask, so populating elevation is required or every obs
-    // is silently skipped.  We use the PppModel's orbit interpolator
-    // (already loaded from product or broadcast sources) to get sat
-    // position at the receive epoch and compute topocentric elevation
-    // against the station's static a-priori ECEF.  An unresolvable
-    // satellite leaves elevation at zero and the mask drops it — the
-    // same outcome the legacy code path produced for missing orbits.
-    // Populating both @c observed and @c raw_observed lets either
-    // @c MwFrequencyMode (Mirror or Dual/Triple/All) work.  Observations from systems not
-    // in @c active_systems are dropped here so the MW detector never
-    // sees them.  Stateless and shared across all rovers; per-rover /
-    // per-reference Geometry handle and active_set are supplied at the
-    // call site.
+    // elevation mask, so elevation must be populated or every obs is
+    // silently skipped.  The PppModel's orbit interpolator (the product
+    // cache orbits) gives the sat position at the receive epoch, and the
+    // topocentric elevation is computed against the given receiver ECEF
+    // (the reference's configured position, or the rover's current state
+    // estimate).  An unresolvable satellite keeps elevation zero and the
+    // mask drops it.  Populating both @c observed and @c raw_observed
+    // lets either @c MwFrequencyMode (Mirror or Dual/Triple/All) work.
+    // Observations from systems not in @c active_systems are dropped here
+    // so the MW detector never sees them.  Stateless and shared across all
+    // rovers; the per-rover / per-reference Geometry handle, receiver
+    // position and active_set are supplied at the call site.
     auto toMinimalPppObs = [](const std::vector<RinexObservation>& rin_obs,
                               const Eigen::Vector3d& rx_pos,
                               const Model::Geometry& geom,
@@ -278,12 +279,12 @@ int Application::runBaseline() {
               bc.rovers.size(), bc.reference.name);
 
     // ===================================================================
-    // PER-ROVER LOOP
+    // Per-rover loop
     //
-    // Sequential processing: each rover gets a freshly-built filter,
+    // Sequential processing: each rover gets a newly built filter,
     // measurement model, MW detector, and AR resolver.  Trace files for
-    // multi-rover runs land in log_dir_ / "rover_<name>" subdirectories
-    // so they don't collide; single-rover runs keep the legacy
+    // multi-rover runs go to log_dir_ / "rover_<name>" subdirectories
+    // so they do not collide; single-rover runs keep the legacy
     // log_dir_ / "baseline_trace.csv" path for backward compatibility.
     // The shared reference resources above are reset between rovers.
     // ===================================================================
@@ -300,11 +301,11 @@ int Application::runBaseline() {
             rover_idx + 1, bc.rovers.size(), rover_name);
 
         // Reset shared reference state for this rover.  Without this the
-        // second rover's MW detector inherits arc statistics from the
-        // first rover's run, the ref_ppp_state_ epoch points at the last
-        // processed epoch from the previous rover, and the sticky DD
-        // pivot manager retains stale entries.  Each rover must start
-        // from the same well-defined reference state.
+        // second rover's reference MW detector would inherit arc statistics
+        // from the first rover's run and the ref_ppp_state_ epoch would
+        // point at the previous rover's last processed epoch.  (The sticky
+        // DD pivots live in meas_model_, which is rebuilt per rover below.)
+        // Each rover starts from the same well-defined reference state.
         ref_ppp_state_.position = ref_pos;
         ref_ppp_state_.clock_bias = 0.0;
         ref_ppp_state_.troposphere_zwd = 0.0;
@@ -319,14 +320,14 @@ int Application::runBaseline() {
             continue;
         }
 
-        // Zero-overlap guard: count synced epochs where BOTH this rover and the
+        // Zero-overlap guard: count synced epochs where both this rover and the
         // reference are present.  If zero, the two RINEX files do not overlap
         // within epoch_sync_tolerance_s (disjoint time windows, a sample-rate
-        // mismatch, or clock-steered epoch tags).  Without this, the epoch loop
-        // runs to completion with both_present always false: n_with_dd stays 0,
-        // the 20-epoch early-abort (gated on n_with_dd==20) never fires, and the
-        // run ends with a silent "0/0" instead of a clear diagnosis.  Skip the
-        // rover loudly here instead.
+        // mismatch, or clock-steered epoch tags).  Without this check the epoch
+        // loop runs to completion with both_present always false: n_with_dd
+        // stays 0, the 20-epoch early-abort (gated on n_with_dd==20) is never
+        // reached, and the run ends with an unexplained "0/0".  The rover is
+        // skipped here with an error instead.
         {
             size_t overlap = 0;
             for (const auto& se : synced) {
@@ -389,9 +390,9 @@ int Application::runBaseline() {
         }
 
         // MeasurementModel stores non-owning references to state_manager_
-        // and ppp_model_ — must be constructed AFTER both unique_ptrs
-        // above point at their final instances.  KalmanFilter likewise
-        // captures references; constructed last.
+        // and ppp_model_, so it is constructed after both unique_ptrs
+        // above point at their final instances.  KalmanFilter also
+        // captures references and is constructed last.
         meas_model_ = std::make_unique<MeasurementModel>(
             *state_manager_, *ppp_model_, config_, log_manager_);
         kalman_filter_ = std::make_unique<KalmanFilter>(
@@ -458,7 +459,7 @@ int Application::runBaseline() {
                 rover_name);
         }
 
-        // Per-rover MW detector — fresh arc state per rover.
+        // Per-rover MW detector: new arc state for each rover.
         MwSlipDetector mw_rov(config_, log_manager_);
 
         // Per-rover ambiguity erasure lambda.  Captures state_manager_
@@ -493,8 +494,8 @@ int Application::runBaseline() {
             }
         }
 
-        // Per-rover counters — declared inside the loop iteration so
-        // each rover sees fresh stats and a fresh end-of-rover summary.
+        // Per-rover counters, declared inside the loop iteration so each
+        // rover starts with zeroed stats and gets its own end-of-rover summary.
         size_t n_with_dd = 0;
         size_t total_dd_obs = 0;
         size_t total_code_dd = 0, total_phase_dd = 0, total_doppler_dd = 0;
@@ -503,9 +504,9 @@ int Application::runBaseline() {
         std::map<std::string, size_t> pivot_counts;
         std::map<std::string, size_t> constellation_dd;
 
-        // Per-obs-type residual accumulators.  Mixing code (meters),
-        // phase (meters but offset by λ·N), and Doppler (Hz) into one
-        // aggregate produces nonsense statistics.
+        // Per-obs-type residual accumulators.  Code (meters), phase
+        // (meters, offset by λ·N) and Doppler (Hz) are kept apart because
+        // one aggregate over all three has no meaning.
         struct ResStats { double sum{ 0.0 }, sq_sum{ 0.0 }, abs_max{ 0.0 }; size_t count{ 0 }; };
         ResStats res_code, res_phase, res_doppler;
 
@@ -520,11 +521,6 @@ int Application::runBaseline() {
 
         size_t n_slips_ref = 0, n_slips_rov = 0, n_amb_resets = 0;
 
-        // Note: the epoch loop body below is intentionally left at the
-        // historical 8-space indent rather than being re-indented to
-        // 12-space (inside the rover loop).  The diff stays focused on
-        // the structural multi-rover wrapping rather than cosmetic
-        // re-indentation; a future pass can reflow if desired.
         for (const auto& se : synced) {
             // Tag every log line emitted during this epoch with its
             // RINEX-aligned TOW.  The thread-local context is consumed
@@ -550,9 +546,9 @@ int Application::runBaseline() {
 
             // --- Station presence + dt =====================================
             // Compute station presence and dt up front so hard-gap detection
-            // can run BEFORE the MW slip check (which assumes consecutive-
+            // can run before the MW slip check (which assumes consecutive-
             // epoch arc continuity).  prev_tow only updates on processed
-            // epochs further down, so dt correctly spans any silent interval.
+            // epochs further down, so dt spans any silent interval.
             auto rov_it = se.by_station.find(rover_name);
             auto ref_it = se.by_station.find(bc.reference.name);
             const bool both_present = (rov_it != se.by_station.end()
@@ -565,13 +561,13 @@ int Application::runBaseline() {
             // When dt exceeds the configured tolerance, neither pre-gap DD
             // ambiguity floats nor pre-gap MW arc statistics are reliable
             // for the post-gap arcs.  Drop them all and let the next epoch
-            // re-seed cleanly rather than relying on the per-event recovery
-            // path (MW slip detector + phase outlier handler) to mop up.
-            // Gated on @c both_present so partial-station epochs don't
-            // trigger a reset before we have full data to seed against;
-            // prev_tow stays put through the partial epoch and the gap will
-            // re-fire on the next full epoch.  Default tolerance of 60 s
-            // covers typical 1-Hz / 30-s missions; set
+            // re-seed, instead of leaving the cleanup to the per-event
+            // recovery path (MW slip detector + phase outlier handler).
+            // Gated on @c both_present so a partial-station epoch does not
+            // trigger a reset before full data is available to seed against;
+            // prev_tow does not advance through the partial epoch, so the gap
+            // fires again on the next full epoch.  The default tolerance of
+            // 60 s covers typical 1-Hz / 30-s missions; set
             // processing.data_gap_tolerance_s in the config to override.
             constexpr double kDefaultDataGapToleranceSec = 60.0;
             const double gap_tol = (config_.getDataGapTolerance() > 0.0)
@@ -601,26 +597,27 @@ int Application::runBaseline() {
                 log->info("Baseline: hard-gap reset complete — dropped {} DD ambiguity state(s)",
                     to_drop.size());
 
-                // Layer on the mode-aware position/covariance policy.  The
+                // Add the dynamics-mode position/covariance policy.  The
                 // baseline-specific reset above handled DD-keyed state
-                // (ambiguities, DD pivots, MW arcs); handleGap covers what
-                // it doesn't touch: position cross-covariances and (for
-                // kinematic-no-IMU) position reseeding.  Baseline mode has
-                // no clock / iono / sat-bias / BSSD-pivot state, so the
-                // corresponding helpers inside handleGap are no-ops by
-                // construction.  No WLS is run in baseline mode, so we
-                // pass an empty WlsResult — handleGap warns and leaves
-                // the position VALUE alone, only inflating the variance.
+                // (ambiguities, DD pivots, MW arcs); handleGap covers the
+                // position: it zeroes position cross-covariances and, on a
+                // long static gap or in KinematicNoImu mode, inflates the
+                // position variance (KinematicNoImu also resets velocity).
+                // Baseline mode has no clock / iono / sat-bias / BSSD-pivot
+                // state, so the corresponding helpers inside handleGap are
+                // no-ops.  No WLS runs in baseline mode, so an empty
+                // WlsResult is passed; in KinematicNoImu mode handleGap then
+                // warns and leaves the position value unchanged.
                 const bool long_gap = dt > config_.getLongGapTolerance();
                 handleGap(dt, long_gap, /*epoch_prefix=*/"", WlsResult{});
             }
 
             // --- MW pre-filter slip check on both stations -----------------
-            // Run before DD build so a slipped satellite's DD ambiguity
-            // states are erased before the filter update sees them.  Now
-            // safe across hard gaps because the gap reset above has cleared
-            // pre-gap arc statistics; MW starts a fresh arc on this epoch
-            // and won't false-positive on the post-gap signal levels.
+            // Run before the DD build so a slipped satellite's DD ambiguity
+            // states are erased before the filter update sees them.  Safe
+            // across hard gaps: the gap reset above has cleared the pre-gap
+            // arc statistics, so MW starts a new arc on this epoch and does
+            // not flag the post-gap signal levels as a slip.
             {
                 auto it_ref = se.by_station.find(bc.reference.name);
                 auto it_rov = se.by_station.find(rover_name);
@@ -682,8 +679,9 @@ int Application::runBaseline() {
 
             // Sync rover and reference PppStates for computeModels().  Rover
             // position comes from StateManager (post-predict); reference is
-            // fixed at the configured ECEF.  Clock/tropo/iono are zero —
-            // baseline mode doesn't estimate them and they cancel in DD.
+            // fixed at the configured ECEF.  Clock and tropo are zero:
+            // baseline mode does not estimate clock/tropo/iono, and they
+            // cancel in DD.
             ppp_state_.position = state_manager_->getStateVector().head<3>();
             ppp_state_.clock_bias = 0.0;
             ppp_state_.troposphere_zwd = 0.0;
@@ -705,16 +703,16 @@ int Application::runBaseline() {
             ++n_with_dd;
             ++n_geom_ok;
 
-            // Aggregate per-obs-type DD residual diagnostics (using the
-            // adapter-built innovations below — filled in after em is built).
+            // Per-obs-type DD residual diagnostics are accumulated after the
+            // commit below, from the innovations of the committed pass.
 
             // DD measurement via the unified MeasurementModel overload.
             // Per-epoch rebuild loop: on NeedsMeasurementRebuild the carry
-            // set grows with whatever rows the KF outlier handlers flagged,
-            // and the next pass re-builds with those rows excluded.  This
-            // mirrors the PPP path's rebuild logic at run() ~line 425.  AR
-            // and trace logging run only on the final committed pass.  Cap
-            // by max_passes so a pathological epoch can't loop forever.
+            // set takes the rows the KF outlier handlers flagged, and the
+            // next pass rebuilds with those rows excluded.  This mirrors the
+            // PPP path's rebuild loop in Application.cpp.  AR and trace
+            // logging run only on the final committed pass.  max_passes caps
+            // the loop so a pathological epoch cannot loop forever.
             static bool baseline_first_epoch_log = true;
             if (baseline_first_epoch_log) {
                 log->info("Baseline: about to call computeMeasurementUpdate (rov={}, ref={}, state_size={})",
@@ -722,9 +720,9 @@ int Application::runBaseline() {
                 log->flush();
             }
 
-            // Pass budget — shared with the PPP and real-time drivers
-            // (computeRebuildPassBudget) so the sizing can't drift; the rover's
-            // modeled obs supply the measurement count for the DD baseline.
+            // Pass budget, shared with the PPP and real-time drivers
+            // (computeRebuildPassBudget) so the sizing cannot diverge; the
+            // rover's modeled obs supply the measurement count for the DD baseline.
             const int max_passes =
                 computeRebuildPassBudget(*state_manager_, config_, rov_modeled);
 
@@ -745,7 +743,7 @@ int Application::runBaseline() {
 
             EpochMeasurement em;
             std::set<std::string> carry_excluded;
-            size_t built_count = 0;   // rows from the FIRST pass before any KF rejection
+            size_t built_count = 0;   // rows from the first pass, before any KF rejection
             size_t applied = 0;   // rows actually committed to the state (0 if nothing applied)
             bool committed = false;
             bool epoch_failed = false;
@@ -800,12 +798,12 @@ int Application::runBaseline() {
                 const auto result = kalman_filter_->update(em);
 
                 // Consume the KF's coherent-pivot-slip request, if any.  The
-                // detector keys on the "sat_i-pivot" DD ids and DOES fire in
+                // detector keys on the "sat_i-pivot" DD ids and does fire in
                 // baseline mode, but there is no SD-PivotManager path here to
-                // drain it (forwardKfPivotHandovers is only wired into the PPP /
-                // real-time drivers).  Left undrained, requested_pivot_handovers_
-                // accumulates for the rover's lifetime and permanently mutes the
-                // cross-band detectors after the first fire.  Drain all three
+                // drain it (forwardKfPivotHandovers is wired only into the PPP /
+                // real-time drivers).  If not drained, requested_pivot_handovers_
+                // accumulates for the rover's lifetime and mutes the cross-band
+                // detectors for good after the first fire.  Drain all three
                 // lockstep accumulators and force a DD pivot re-rank on each
                 // flagged constellation, excluding the KF's replacement-exclusion
                 // sats so the re-rank lands on a clean pivot and existing DD
@@ -845,7 +843,7 @@ int Application::runBaseline() {
                     carry_excluded = em.excluded_measurements;
                     log->debug("Baseline: KF requested rebuild at pass {} (carry now {} excluded)",
                         pass, carry_excluded.size());
-                    // Continue loop — next pass excludes the flagged rows.
+                    // Continue the loop; the next pass excludes the flagged rows.
                 }
                 else {  // Skipped
                     log->debug("Baseline: KF skipped epoch at pass {}", pass);
@@ -856,9 +854,9 @@ int Application::runBaseline() {
 
             if (committed) {
                 // --- Post-Applied diagnostics on the surviving rows ---
-                // Stats reflect what was actually committed to the state
-                // (built - excluded).  Diff between built_count and applied
-                // is the row(s) the KF outlier handlers peeled off.
+                // Stats reflect what was committed to the state (built -
+                // excluded).  The difference between built_count and applied
+                // is the rows the KF outlier handlers removed.
                 for (Eigen::Index i = 0; i < em.innovations.size(); ++i) {
                     const double r = em.innovations(i);
                     if (!std::isfinite(r)) continue;
@@ -918,11 +916,13 @@ int Application::runBaseline() {
                 }
             }
 
-            // Early-abort diagnostic: if the first 20 epochs with DD observations
-            // produce zero filter updates AND zero valid geometry rows, the
-            // most common cause is a navigation/orbit file that doesn't cover
-            // the observation time window.  Fail loudly rather than running a
-            // silent 24-hour loop that produces no solution.
+            // Early-abort diagnostic, meant to stop a run whose first 20 epochs
+            // with DD observations produce zero filter updates and zero valid
+            // geometry rows; the usual cause is an orbit (SP3) product that
+            // does not cover the observation window.  It exits with an error
+            // instead of running a full day with no solution.  As written the
+            // condition cannot hold: n_geom_ok is incremented together with
+            // n_with_dd above, so n_geom_ok is 20 whenever n_with_dd is 20.
             if (n_with_dd == 20 && n_updates == 0 && n_geom_ok == 0) {
                 log->error(
                     "Baseline: after 20 DD epochs, zero filter updates applied and zero valid "
@@ -1035,10 +1035,10 @@ int Application::runBaseline() {
 
     } // end per-rover loop
 
-    // If no rover overlapped the reference on any epoch, that's a hard failure
-    // for the whole run (not just a per-rover skip) — surface it as a nonzero
-    // exit so callers and scripts don't mistake a silent no-solution run for
-    // success.  Per-rover diagnostics were already logged above.
+    // If no rover overlapped the reference on any epoch, the whole run fails
+    // (not only a per-rover skip): return nonzero so callers and scripts do
+    // not take a run with no solution for success.  Per-rover diagnostics
+    // were already logged above.
     if (rovers_with_data == 0) {
         log->error("Baseline: no rover overlapped the reference on any synced epoch; "
                    "no solution produced. See per-rover errors above for the cause "
@@ -1047,7 +1047,7 @@ int Application::runBaseline() {
     }
 
     // ===================================================================
-    // AGGREGATE SUMMARY (multi-rover only adds value here)
+    // Aggregate summary (multi-rover runs only)
     // ===================================================================
     if (multi_rover) {
         log->info("Baseline-Multi aggregate summary:");

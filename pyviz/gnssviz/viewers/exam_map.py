@@ -1,13 +1,13 @@
-"""Geographic context — where the SAR vessel is, on a coastline map.
+"""Geographic context: where the SAR vessel is, on a coastline map.
 
-A *context* companion to :mod:`exam_track` (which shows the cm–dm accuracy in a
+A *context* companion to :mod:`exam_track` (which shows the cm-dm accuracy in a
 local ENU plan view): this plots the truth trajectory in geographic lat/lon over
-the vendored Natural-Earth coastline, so a grader sees the scenario concretely —
+the vendored Natural-Earth coastline, so a grader sees the scenario concretely,
 a vessel adrift in the South Pacific near Fiji.
 
-  1. **World context** — the whole coastline with a marker at the vessel's mean
+  1. **World context**: the whole coastline with a marker at the vessel's mean
      position (the ~10 km track is a dot at world scale; the marker says *where*).
-  2. **Regional zoom** — a **satellite-imagery basemap** of the Fiji region + the
+  2. **Regional zoom**: a **satellite-imagery basemap** of the Fiji region plus the
      truth track near the vessel, with start/end markers and the storm-window
      segment highlighted.  The imagery is vendored offline
      (:mod:`gnssviz.basemap`, ``scripts/fetch_satellite.py``); when it is
@@ -18,9 +18,9 @@ Deliberately not a map *projection*: it draws on an ordinary axes with
 plotly dashboard can't render).  The satellite raster is EPSG:4326 (plate
 carrée), so lon/lat map linearly to x/y and it aligns with the track.  Because the
 scenario sits on the ±180° dateline (Fiji spans it), the regional panel uses a
-**0–360° longitude** convention so the land is contiguous instead of split across
+**0-360° longitude** convention so the land is contiguous instead of split across
 both map edges.  The ~10 km vessel motion is invisible against country outlines,
-so truth vs recovered is NOT shown here — that stays in ``exam_track``.
+so truth vs recovered is not shown here; that stays in ``exam_track``.
 """
 
 from __future__ import annotations
@@ -49,8 +49,8 @@ def _rings_in_extent(clon, clat, x0, x1, y0, y1):
     """Coastline rings whose bounding box overlaps the map extent, NaN-separated.
 
     Fills only nearby land (e.g. the Fiji islands), dropping distant continents
-    entirely — so their open-arc closing lines can never cross the view.  Call
-    with the SAME lon convention as the extent (0–360° here, so a dateline-spanning
+    entirely, so their open-arc closing lines can never cross the view.  Call
+    with the same lon convention as the extent (0-360° here, so a dateline-spanning
     island reads as one contiguous ring).  A small local island force-closes cleanly.
     """
     x = np.asarray(clon, float)
@@ -95,7 +95,7 @@ def _error_region(ctx, ax, lat, lon360, used_imagery):
     """Append the filled 95% cross-track error region; return the exaggeration.
 
     Returns ``None`` when it cannot be drawn (no ``state_trace.csv``, no epoch
-    overlap, or a trace without the off-diagonal covariance columns) — in which
+    overlap, or a trace without the off-diagonal covariance columns), in which
     case the panel is exactly what it was before, a context map with no bound.
     """
     if not ctx.has_data("state_trace.csv"):
@@ -174,8 +174,8 @@ def build_exam_map(ctx) -> ViewerResult:
     figures = []
 
     # --- Figure 1: world context (signed lon), coastline + vessel marker -------
-    # World panel is a clean coastline OUTLINE (not filled): the 110 m coastline's
-    # ~13 open continent arcs would force-close into cross-map slivers if filled.
+    # World panel is a clean coastline outline (not filled): the 110 m coastline's
+    # open continent arcs would force-close into cross-map slivers if filled.
     # The filled land/ocean basemap is the regional panel below (its closed island
     # rings fill cleanly, and any stray closing line lies outside the extent).
     axw = Axes(title="Vessel location — world context", xlabel="Longitude (°)",
@@ -191,13 +191,14 @@ def build_exam_map(ctx) -> ViewerResult:
                               label="SAR vessel"))
     figures.append(Figure(name="World context", axes=[axw], width=12, height=6.2))
 
-    # --- Figure 2: regional zoom (0–360° lon, dateline-safe) -------------------
-    # Pad PROPORTIONALLY to the track, not by a fixed 3° (~333 km): that framed a
-    # 1.3°×0.9° track inside a 7.3°×6.9° box, so the trajectory — the subject of
-    # the panel — occupied under a fifth of it.  12% of the larger span keeps the
-    # track dominant while leaving room for the markers and the legend.  Floored so
-    # a near-stationary instance still gets a sane window, and the vendored imagery
-    # is 0.0067°/px (~715 m), so much tighter than this would visibly upscale.
+    # --- Figure 2: regional zoom (0-360° lon, dateline-safe) -------------------
+    # Pad proportionally to the track, not by a fixed 3° (~333 km): a fixed pad
+    # can frame a 1.3°x0.9° track inside a 7.3°x6.9° box, so the track occupies
+    # under a fifth of the panel.  12% of the larger span keeps the track
+    # dominant while leaving room for the markers and the legend.  Floored so a
+    # near-stationary instance still gets a sane window, and the vendored
+    # imagery is 0.0067°/px (~715 m), so much tighter than this would visibly
+    # upscale.
     span_deg = max(float(lon360.max() - lon360.min()), float(lat.max() - lat.min()))
     pad = max(0.12 * span_deg, 0.05)
     x0, x1 = float(lon360.min()) - pad, float(lon360.max()) + pad
@@ -207,7 +208,7 @@ def build_exam_map(ctx) -> ViewerResult:
                x_is_datetime=False, aspect_equal=True, grid=True,
                legend=Legend(loc="best"), facecolor=_C_OCEAN,
                xlim=(x0, x1), ylim=(y0, y1))
-    # Basemap: prefer vendored SATELLITE IMAGERY (offline), else the filled
+    # Basemap: prefer vendored satellite imagery (offline), else the filled
     # land/ocean coastline.  Both sit at zorder 0, under the track and markers.
     basemap = load_basemap()
     used_imagery = basemap is not None and extent_overlaps(basemap.extent, x0, x1, y0, y1)
@@ -228,11 +229,11 @@ def build_exam_map(ctx) -> ViewerResult:
     track_width = 2.0 if used_imagery else 1.6
     mask = _storm_mask(ctx, truth.iloc[np.flatnonzero(ok)])
 
-    # Filled 95% error region around the recovered trajectory, drawn UNDER the
+    # Filled 95% error region around the recovered trajectory, drawn under the
     # track.  Geographic scale forces the same exaggeration the plan view needs
     # (a ~1 cm bound against a >1° extent is ~1 part in 1e7); the factor is stated
-    # in the legend and the axes title.  Skipped entirely when the trace predates
-    # the off-diagonal covariance columns — see ec.enu_cov2.
+    # in the legend and the axes title.  Skipped entirely when the trace lacks
+    # the off-diagonal covariance columns, see ec.enu_cov2.
     exag = _error_region(ctx, axr, lat, lon360, used_imagery)
 
     axr.traces.append(Line(x=lon360, y=lat, color=track_color, width=track_width,
@@ -259,7 +260,7 @@ def build_exam_map(ctx) -> ViewerResult:
         axr.title = (f"SAR vessel track + 95% error region "
                      f"(region EXAGGERATED {exag:,.0f}×; track is to scale)")
     if used_imagery:
-        # Required imagery credit — a small corner chip over the ocean.
+        # Required imagery credit: a small corner chip over the ocean.
         axr.traces.append(TextBox(x=0.99, y=0.015, text=f"Imagery: {basemap.attribution}",
                                   color=(0.15, 0.15, 0.15), ha="right", va="bottom",
                                   boxed=True, fontsize=6.5, zorder=7))
@@ -274,7 +275,7 @@ def build_exam_map(ctx) -> ViewerResult:
 
 
 def _summary(lat, lon360, mean_lon_signed, mean_lon360, crosses) -> str:
-    # Ground-track length in the CONTIGUOUS 0–360 lon (signed lon jumps at ±180).
+    # Ground-track length in the contiguous 0-360 lon (signed lon jumps at ±180).
     latm = np.radians(np.mean(lat))
     dx = np.diff(lon360) * 111320.0 * np.cos(latm)
     dy = np.diff(lat) * 110540.0

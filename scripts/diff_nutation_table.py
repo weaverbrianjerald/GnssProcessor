@@ -4,9 +4,9 @@ GnssProcessor (src/core/model/Planetary.cpp) and cssrlib
 (reference_software/cssrlib/src/cssrlib/peph.py).
 
 Both are ports of the same RTKLIB table, so they should be identical to
-the digit.  Any row that differs is either a transcription bug in one of
-them or a deliberate revision — either way worth surfacing.  This is the
-kind of artifact eyeballing can't be trusted on.
+the digit.  A differing row is either a transcription error in one of them
+or a deliberate revision; either way it needs to be surfaced.  Manual
+inspection is not reliable for this comparison.
 """
 
 from __future__ import annotations

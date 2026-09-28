@@ -1,20 +1,20 @@
-"""Network per-sat anchor / carry / data information viewer -- the lock-in probe.
+"""Network per-sat anchor / carry / data information viewer: the lock-in probe.
 
-Reads ``network_anchor_info.csv`` (the NETWORK producer's per-epoch, per-sat
+Reads ``network_anchor_info.csv`` (the network producer's per-epoch, per-sat
 decomposition of the satellite-clock information into its **anchor** (datum pin),
 **carry** (prior carried across epochs), and **data** (fresh measurement)
-contributions).  When the carried prior comes to dominate a satellite -- carry
-fraction pinned near 1 while the fresh-data fraction starves -- that clock has
-"locked in": it stops responding to new observations, the signature we chase in
-the armed-validation runs.
+contributions).  When the carried prior comes to dominate a satellite, with the
+carry fraction pinned near 1 while the fresh-data fraction starves, that clock
+has locked in: it stops responding to new observations, the signature tracked
+in the armed-validation runs.
 
 Columns
 -------
 ``week, tow, sat, anchor_info, carry_info, data_info, total_info,
 anchor_frac_data, carry_frac, frac, is_pivot``
 
-The pivot satellite carries the datum PIN, which inflates its ``data_info`` /
-``anchor_frac_data``.  Rows with ``is_pivot == 1`` are therefore EXCLUDED from
+The pivot satellite carries the datum pin, which inflates its ``data_info`` /
+``anchor_frac_data``.  Rows with ``is_pivot == 1`` are therefore excluded from
 the strips, the worst-sat pick, and every stat (the exclusion is noted in the
 summary and figure subtitles).
 
@@ -76,7 +76,7 @@ def build_network_anchor_info(ctx) -> ViewerResult:
         df[c] = df[c].astype(float)
     df = add_utc(df)
 
-    # EXCLUDE pivot rows from every stat -- the datum pin inflates data_info.
+    # Exclude pivot rows from every stat: the datum pin inflates data_info.
     n_pivot_rows = int((df["is_pivot"] > 0.5).sum())
     df = df[df["is_pivot"] <= 0.5]
     if df.empty:
@@ -222,7 +222,7 @@ def _summary(df, n_pivot_rows) -> str:
 
 
 def _locked_in(df):
-    """Sats with carry_frac > 0.9 for >= 10 CONSECUTIVE epochs (by time order)."""
+    """Sats with carry_frac > 0.9 for >= 10 consecutive epochs (by time order)."""
     out = []
     for sat, sub in df.groupby("sat"):
         sub = sub.sort_values("utc")

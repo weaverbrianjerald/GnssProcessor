@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""simnet_sat_clock_census.py -- STABILITY target 3: per-sat settled clock tails.
+"""simnet_sat_clock_census.py: STABILITY target 3, per-sat settled clock tails.
 
-The 12 h quiet bed shows metre-class SETTLED clock tails on a few satellites
+The 12 h quiet bed shows metre-class settled clock tails on a few satellites
 (G25/G26/G12 reported, fixture-common to both datum arms, never root-caused).
 This is the instrument-first census: per-satellite settled clock error joined
 against coverage (how many stations truth-see the sat) and wire presence
-(emitted vs truth-visible -- contiguous not-emitted-while-visible windows are
+(emitted vs truth-visible; contiguous not-emitted-while-visible windows are
 the eclipse-exclusion signature: the producer arms
 exclude_eclipsing_satellites and logs no per-event line), plus the producer's
 own URA sigma (is the tail flagged or silent?).
 
-Datum handling: on this null-truth bed the emitted C record IS the error in
+Datum handling: on this null-truth bed the emitted C record is the error in
 the producer's own frame (grade_clock's null test).  The per-sat tail metric
-is the per-epoch per-constellation MEDIAN-demeaned residual d_sat(t) --
-robust common-mode removal, so a wandering datum level cannot masquerade as a
+is the per-epoch per-constellation median-demeaned residual d_sat(t): robust
+common-mode removal, so a wandering datum level cannot masquerade as a
 per-sat tail and the metric is comparable across datum postures.  Pivot rows
 (pinned 0) are excluded.
 

@@ -4,12 +4,12 @@
  *
  * Per RINEX 3.0x §6, missing observations are written "as 0.0 or blanks"; some
  * receivers (Trimble ALLOY on DOY-129: GOPE/GOP6) write literal 0.0 phase
- * fields alongside valid code for weak-signal tracking.  The 2.x branch has
- * always skipped zeros; the 3.x branch historically ingested them as real
- * 0-cycle phases.  The guard (@c processing.rinex_skip_zero_values) makes the
- * 3.x branch match the standard; default OFF preserves legacy byte-identity.
+ * fields alongside valid code for weak-signal tracking.  The 2.x branch skips
+ * zeros; the 3.x branch ingests them as real 0-cycle phases unless the guard
+ * (@c processing.rinex_skip_zero_values) is on, which makes it match the
+ * standard.  The guard is off by default, so legacy output stays byte-identical.
  *
- * Suite: RinexZeroSentinelTest (one suite per file — ownership rule).
+ * Suite: RinexZeroSentinelTest (one suite per file, per the ownership rule).
  */
 
 #include <gtest/gtest.h>
@@ -30,8 +30,8 @@ namespace {
 
 /// Minimal RINEX 3.04 observation file: two GPS satellites, two epochs.
 /// G05 carries a written-0.0 L1C (missing-phase sentinel) with valid C1C;
-/// G07 is fully valid.  Observation slots are EXACTLY 16 chars (F14.3 value +
-/// LLI + SNR), built programmatically so the column math cannot drift.
+/// G07 is fully valid.  Observation slots are 16 chars wide (F14.3 value + LLI +
+/// SNR), built programmatically so the column positions stay correct.
 std::filesystem::path writeFixture(const std::filesystem::path& dir) {
     const auto path = dir / "zero_sentinel_G_30S_MO.rnx";
     auto fld = [](double v) {
@@ -108,7 +108,7 @@ TEST(RinexZeroSentinelTest, LegacyPathIngestsWrittenZeros) {
     ASSERT_TRUE(rp.parse());
     const auto* g05 = findObs(rp.getObservations(), "G05", 0);
     ASSERT_NE(g05, nullptr);
-    // Legacy: the written 0.0 arrives as a real measurement (the defect record).
+    // Guard off: the written 0.0 arrives as a real measurement (the defect).
     ASSERT_TRUE(g05->measurements.count("L1C"));
     EXPECT_EQ(g05->measurements.at("L1C"), 0.0);
     EXPECT_TRUE(g05->measurements.count("C1C"));

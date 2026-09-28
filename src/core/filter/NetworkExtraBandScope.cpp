@@ -20,7 +20,7 @@ NetworkPinBands networkPinBandsFor(char system_char) {
     out.band1 = ref.sig1[1];
     out.band2 = ref.sig2[1];
     // A degenerate pair (same band twice, or a malformed code) is reported as
-    // INVALID rather than half-resolved: valid() is what every consumer gates on.
+    // invalid, not half-resolved: every consumer gates on valid().
     return out;
 }
 

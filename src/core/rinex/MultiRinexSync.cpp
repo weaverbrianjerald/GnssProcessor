@@ -5,7 +5,7 @@
 
 #include "rinex/MultiRinexSync.hpp"
 #include "math/TimeUtils.hpp"
-#include "common/PppUtils.hpp"   // card OWD: system names for retainSystems
+#include "common/PppUtils.hpp"   // system names for retainSystems (card OWD)
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -13,9 +13,9 @@
 #include <utility>
 #include <vector>
 #ifdef _OPENMP
-#include <omp.h>       // omp_get_max_threads — per-station RINEX parse parallelism
+#include <omp.h>       // omp_get_max_threads, for per-station RINEX parse parallelism
 #endif
-#include <Eigen/Core>  // Eigen::nbThreads / setNbThreads — pin to 1 inside the region
+#include <Eigen/Core>  // Eigen::nbThreads / setNbThreads: pinned to 1 inside the parallel region
 
 namespace GnssProcessor {
 
@@ -67,13 +67,13 @@ namespace GnssProcessor {
         // Gather stable per-station handles into an index-ordered vector.
         //
         // std::map is not random-access, so an OpenMP `parallel for` (which
-        // needs an integer loop counter) cannot iterate it directly.  We
-        // snapshot a {name, StationData*} pair per entry in map order.  The
-        // node addresses are stable for the lifetime of stations_ (std::map
-        // never relocates nodes), so each worker may freely mutate the
-        // StationData it is handed without touching the map.  The index order
-        // is the map's key order — exactly the deterministic order the
-        // post-parse summary must preserve.
+        // needs an integer loop counter) cannot iterate it directly.  A
+        // {name, StationData*} pair is taken per entry in map order.  Node
+        // addresses are stable for the lifetime of stations_ (std::map never
+        // relocates nodes), so each worker may mutate the StationData it is
+        // handed without touching the map.  The index order is the map's key
+        // order, which is the deterministic order the post-parse summary
+        // preserves.
         // ------------------------------------------------------------------
         struct Item { const std::string* name; StationData* sd; };
         std::vector<Item> items;
@@ -82,11 +82,11 @@ namespace GnssProcessor {
         const int n_sta_total = static_cast<int>(items.size());
 
         // ------------------------------------------------------------------
-        // Parallel-on decision + worker-thread count.
+        // Parallel-on decision and worker-thread count.
         //
         // Mirrors the network producer's per-station gate
-        // (ApplicationNetwork.cpp) so ingestion shares one parallelism story
-        // with the solve: parallelize only when the operator enabled it, the
+        // (ApplicationNetworkSetup.cpp), so ingestion and the solve follow one
+        // parallelism rule: parallelize only when the operator enabled it, the
         // roster strictly exceeds the min-station threshold, and the hardware
         // offers more than one thread.  base_config_ already carries the
         // NetworkConfig knobs, so no extra plumbing is required.
@@ -119,34 +119,35 @@ namespace GnssProcessor {
         }
 
         // ------------------------------------------------------------------
-        // Logger prewarm — the one shared-mutable hazard on the parse path.
+        // Logger prewarm: the one shared mutable state on the parse path.
         //
-        // RinexParser re-fetches getLogger("rinex_parser") (uncached) on every
-        // log line.  getLogger()'s first-touch CREATE mutates the shared
-        // loggers_ map, while the existing-logger fetch is a lock-free find; a
-        // find racing that insert is UB (LogManager.cpp documents the prewarm
-        // contract).  Creating "rinex_parser" single-threaded now guarantees
-        // only the lock-free fast path runs inside the region.  ("main_log" is
-        // already warm — fetched above; "product_parser", touched only in the
-        // parse-exception catch, is created at ProductParser construction.)
+        // RinexParser fetches getLogger("rinex_parser") anew (uncached) on
+        // every log line.  The first getLogger() call for a name creates the
+        // logger and inserts it into the shared loggers_ map, while a fetch of
+        // an existing logger is a lock-free find; a find racing that insert is
+        // undefined behaviour (LogManager.cpp documents the prewarm contract).
+        // Creating "rinex_parser" here, single-threaded, ensures that only the
+        // lock-free path runs inside the region.  "main_log" is already warm
+        // (fetched above); "product_parser", touched only in the parse-exception
+        // catch, is created at ProductParser construction.
         // ------------------------------------------------------------------
         if (parallel_on) (void)log_manager_.getLogger("rinex_parser");
 
-        // RINEX parsing does not exercise Eigen, so pinning is defensive: keep
+        // RINEX parsing does not use Eigen, so the pin is defensive: it keeps
         // any incidental Eigen call from spawning nested threads that
         // oversubscribe the station pool.  Guarded on parallel_on so the serial
-        // path is byte-identical to the pre-parallel code.
+        // path is byte-identical to the loader without parallelism.
         const int eigen_threads_saved = Eigen::nbThreads();
         if (parallel_on) Eigen::setNbThreads(1);
 
         // ------------------------------------------------------------------
         // Per-station result slots (indexed, never push_back).
         //
-        // Each worker writes ONLY its own slot i, capturing every datum the
+        // Each worker writes only its own slot i, capturing every value the
         // deterministic post-region summary needs, so the parallel body emits
-        // NO logs and touches NO shared state.  `ok` is a plain bool in a POD
-        // (NOT a std::vector<bool>, whose packed bits would race on adjacent
-        // writes).
+        // no logs and touches no shared state.  `ok` is a plain bool in a POD
+        // rather than an element of std::vector<bool>, whose packed bits would
+        // race on adjacent writes.
         // ------------------------------------------------------------------
         struct Slot {
             bool        ok{ false };       ///< parse() succeeded.
@@ -159,20 +160,21 @@ namespace GnssProcessor {
         };
         std::vector<Slot> slots(static_cast<std::size_t>(n_sta_total));
 
-        // Wall-clock the parse region only (not product load / synchronize) so
-        // the reported number isolates ingestion cost — and is directly
-        // comparable parallel-vs-serial, since the gate that serializes the
-        // later epoch loop does not affect this bracket.
+        // Wall-clock the parse region only (not product load or synchronize) so
+        // the reported number isolates ingestion cost and is directly comparable
+        // between parallel and serial runs; the gate that serializes the later
+        // epoch loop does not affect this bracket.
         const auto t_parse_start = std::chrono::steady_clock::now();
 
         // ------------------------------------------------------------------
-        // PARALLEL PRODUCE — pure per-station compute into the owned slot.
+        // Parallel produce: pure per-station compute into the owned slot.
         //
-        // Standard pragma form for this codebase: parallel for +
-        // schedule(dynamic) (station files vary widely in size) + num_threads
-        // bound to the cap + if(parallel_on) so the SAME loop runs serially
-        // below the gate with no separate branch.  Every exception is caught
-        // here — letting one escape an OpenMP structured block is UB.
+        // Standard pragma form for this codebase: parallel for, with
+        // schedule(dynamic) (station files vary widely in size), num_threads
+        // bound to the cap, and if(parallel_on) so the same loop runs serially
+        // below the gate without a separate branch.  Every exception is caught
+        // here, because an exception escaping an OpenMP structured block is
+        // undefined behaviour.
         // ------------------------------------------------------------------
 #pragma omp parallel for schedule(dynamic) num_threads(n_threads) if(parallel_on)
         for (int i = 0; i < n_sta_total; ++i) {
@@ -182,7 +184,7 @@ namespace GnssProcessor {
             try {
                 sd->parser->setMaxObservationSpanSeconds(parse_window_s_);
                 if (sd->parser->parse()) {
-                    sd->loaded = true;  // worker mutates ONLY its own StationData.
+                    sd->loaded = true;  // each worker mutates only its own StationData.
                     const auto& h = sd->parser->getHeader();
                     r.ok        = true;
                     r.obs_count = sd->parser->getObservations().size();
@@ -206,10 +208,10 @@ namespace GnssProcessor {
                   n_sta_total, parse_s, parallel_on ? "parallel" : "serial");
 
         // ------------------------------------------------------------------
-        // SERIAL DRAIN — emit every log line in deterministic map order and
-        // fold the aggregate result.  Reproduces the EXACT pre-parallel log
-        // lines, just relocated out of the worker so ordering is
-        // thread-count-invariant.
+        // Serial drain: emit every log line in deterministic map order and
+        // fold the aggregate result.  The log lines are those of the serial
+        // loader, emitted after the region so their order does not depend on
+        // the thread count.
         // ------------------------------------------------------------------
         bool ok = true;
         for (int i = 0; i < n_sta_total; ++i) {
@@ -297,8 +299,8 @@ namespace GnssProcessor {
             if (!sd.loaded) {
                 // A failed station is skipped, not fatal: a large roster should
                 // still align on the stations that did load.  The reference is
-                // guarded explicitly below (its absence from per_station is the
-                // genuine fatal case — no schedule can be built without it).
+                // checked explicitly below: its absence from per_station is fatal,
+                // because the schedule is built from its epochs.
                 log->warn("MultiRinexSync::synchronize(): station '{}' not loaded; "
                           "excluding it from the aligned schedule", name);
                 continue;

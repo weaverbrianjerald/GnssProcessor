@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Grade the §12 known-answer gates of docs/SPEC_prefit_census_observability.md.
 
-Every check is a KNOWN ANSWER from the standing FT63 leg-19 replay
+Every check is a known answer from the standing FT63 leg-19 replay
 (``runs/ft63_leg19_rhsat`` / ``runs/ft63_leg19_base``): the era-2 break at
 TOW 329160, the parked (BSHM00ISR, G07) code cell that fed it, the clean 1 ms
-URUM00CHN receiver-clock step at 329340 that must NOT fire the census, and the
+URUM00CHN receiver-clock step at 329340 that must not fire the census, and the
 attribution baseline (BSHM obs_code C00 0.002 -> +6493, closure 5e-11).
 
 Usage::
@@ -55,10 +55,10 @@ def runlog(run: str) -> str:
     return p.read_text(encoding="utf-8", errors="replace") if p.exists() else ""
 
 
-# The producer's last line of a normal exit.  Grading a run that is still writing
+# The producer's last line of a normal exit. Grading a run that is still writing
 # compares a truncated CSV against a complete one and reports a byte difference
-# that is pure harness artifact — measured, on this very sweep, as four false
-# FAILs.  Every gate checks this first.
+# that is pure harness artifact: measured, on this sweep, as four false FAILs.
+# Every gate checks this first.
 _DONE_MARKER = "shared satellite product accumulated"
 
 
@@ -251,9 +251,9 @@ def gate6_birth(arm: str = "ft63_leg19_pc_birth18") -> None:
         f"({'births counted' if births else 'ZERO births = MISWIRE, not a quiet network'})")
     ev = [e for e in events(arm) if e.get("event") == "seed_birth_exceedance"]
     # A phase birth is seeded to y ~ 0 by construction, so its "exceedance" is
-    # just the station's own phase level and says NOTHING about the seed.  Only a
-    # CODE-class birth can answer the question, so the verdict is reported on that
-    # subset — a fire count alone would read as a defect when it is arithmetic.
+    # just the station's own phase level and says nothing about the seed. Only a
+    # code-class birth can answer the question, so the verdict is reported on that
+    # subset: a fire count alone would read as a defect when it is arithmetic.
     code = [e for e in ev if "class=obs_code" in (e.get("detail") or "")]
     other = [e for e in ev if e not in code]
     if code:

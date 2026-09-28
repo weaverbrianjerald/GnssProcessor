@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""Per-LOS ionosphere interaction grade — the SPEC_t3_null_derivation §7.8 decomposition,
+"""Per-LOS ionosphere interaction grade: the SPEC_t3_null_derivation §7.8 decomposition,
 promoted from the scratch join that produced the 0.764 m number (QUEUE item 8).
 
-Joins the producer's network_ionosphere.csv (column `iono_total_m` = x_lin + x_r —
-the ONLY gradable column; `iono_m` is the seed-less correction, ~11% of the quantity)
-against each station's truth_atmo.csv `I_L1_m` (already SLANT — never multiply by
-obliquity), then removes the datum-class lumps per standing invariant #5:
+Joins the producer's network_ionosphere.csv (column `iono_total_m` = x_lin + x_r,
+the only gradable column; `iono_m` is the seed-less correction, about 11% of the
+quantity) against each station's truth_atmo.csv `I_L1_m` (already slant: never
+multiply by obliquity), then removes the datum-class lumps per standing invariant #5:
 
     e(sta, sat, t) = mu + a(sta) + b(sat) + r(sta, sat, t)
 
-a(sta) is rx-DCB-class, b(sat) is sat-DCB-class, and only the INTERACTION r is a
-defect channel.  Fitted by alternating means over the settled window (default:
-tow >= tow0 + 1800 s — the level channel's ignition budget; a shorter window grades
+a(sta) is rx-DCB-class, b(sat) is sat-DCB-class, and only the interaction r is a
+defect channel. Fitted by alternating means over the settled window (default:
+tow >= tow0 + 1800 s, the level channel's ignition budget; a shorter window grades
 convergence, not the null).
 
 Traps defended (each produced a wrong answer once):
-  * join on integer-quantized tow — the trace carries %.3f, product rows carry float dust
+  * join on integer-quantized tow: the trace carries %.3f, product rows carry float dust
   * settled window only; report the window in the same sentence as the number
   * blank/absent means did-not-run, never 0
   * per-station truth lives in <fixture>/<STA>/truth_atmo.csv (files, not a station column)
@@ -34,18 +34,19 @@ import sys
 from collections import defaultdict
 
 # GPS L1/L2 GF factor: P1 - P2 = I1*(1 - mu) + (d1 - d2), mu = (f1/f2)^2.
-# d_GF = (d1 - d2)/(1 - mu) is the receiver bias the L1 iono absorbs.  The SIGN
-# is measured by the reported slope, never asserted (two conventions bit once).
+# d_GF = (d1 - d2)/(1 - mu) is the receiver bias the L1 iono absorbs. The sign
+# is measured from the reported slope, never asserted: the two sign conventions
+# are easy to mix up.
 F1, F2 = 1575.42e6, 1227.60e6
 MU12 = (F1 / F2) ** 2
 
 
 def load_rx_gf_truth(fixture_dir, c1="C1C", c2="C2W"):
     """Per-station receiver GF bias (L1 metres) from truth_rx_bias.csv, demeaned
-    over the fleet.  Contract §B.4's d-bar_r,GF is the fleet-mean functional; the
-    per-station DEVIATION from it is what the rx-DCB states should hold, so the
-    fitted iono lump a(sta) tracking this deviation (report the measured slope)
-    grades the realized Table-8 split."""
+    over the fleet. Contract §B.4's d-bar_r,GF is the fleet-mean functional; the
+    per-station deviation from it is what the rx-DCB states should hold, so
+    whether the fitted iono lump a(sta) tracks this deviation (report the
+    measured slope) grades the realized Table-8 split."""
     gf = {}
     for name in sorted(os.listdir(fixture_dir)):
         p = os.path.join(fixture_dir, name, "truth_rx_bias.csv")
@@ -210,12 +211,13 @@ def main():
     print(f"INTERACTION rms {rms:.4f} m  (by station: {sta_rms[lo_sta]:.3f} [{lo_sta}] "
           f".. {sta_rms[hi_sta]:.3f} [{hi_sta}])")
 
-    # Table-8 split check (contract §B.4 (b), REPORT form): does the fitted iono
-    # station lump a(sta) track the demeaned truth rx GF bias?  A clean Table-8
-    # realization keeps the per-station GF deviation in the rx-DCB states, so
-    # slope ~0 with small a(sta) is CLEAN, |slope| ~1 with a(sta) ~ the GF truth
-    # means the iono absorbed the per-station split; anything else is the level
-    # exchange wandering.  The slope is MEASURED, never asserted (sign rule).
+    # Table-8 split check (contract §B.4 (b), report form): whether the fitted iono
+    # station lump a(sta) tracks the demeaned truth rx GF bias. A clean Table-8
+    # realization keeps the per-station GF deviation in the rx-DCB states, so a
+    # slope near 0 with small a(sta) is the clean case; a slope near 1 with a(sta)
+    # close to the GF truth means the iono absorbed the per-station split; anything
+    # else reflects the level exchange wandering. The slope is measured, never
+    # asserted.
     gf = load_rx_gf_truth(args.fixture_dir)
     common = sorted(set(gf) & set(a))
     if len(common) >= 3:

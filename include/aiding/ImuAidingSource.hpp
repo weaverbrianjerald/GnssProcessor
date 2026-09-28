@@ -4,25 +4,25 @@
  * @file ImuAidingSource.hpp
  * @brief IMU as the first client of the aiding-source abstraction.
  *
- * @c ImuAidingSource WRAPS (does not replace) the existing @c ImuIntegrator,
- * exposing the IMU as an @c IAidingSource so the four legacy IMU touch-points
- * (StateManager carve-out, KalmanFilter::predictImu, the MeasurementModel TC
- * Jacobian branch, and Application::run construction) collapse onto one
- * polymorphic seam.  It is the privileged source the @c AidingSourceManager
- * recovers via @c asImu() (the no-RTTI typed-handle pattern
+ * @c ImuAidingSource wraps the existing @c ImuIntegrator (it does not replace it)
+ * and exposes the IMU as an @c IAidingSource, so the four IMU-specific touch-points
+ * (the StateManager carve-out, KalmanFilter::predictImu, the MeasurementModel TC
+ * Jacobian branch, and the construction in Application::run) reduce to one
+ * polymorphic seam.  It is the privileged source that @c AidingSourceManager
+ * recovers via @c asImu() (the no-RTTI typed-handle pattern that
  * @c CycleSlipManager uses for its MW detector).
  *
  * State-vector discipline: the IMU error states (attitude / accel-bias /
  * gyro-bias) live in StateManager's existing core carve-out; @c reserveStates
- * only DESCRIBES those offsets (no allocation).  The nominal body-to-ECEF
- * attitude (C_b_e_) is NOT owned here — it stays in its single owner (the
- * KalmanFilter), which this source reads/writes through the @c attachFilter
- * handle.  StateManager index resolution is done LIVE each epoch (no cached
- * indices), per the design.
+ * only describes those offsets and allocates nothing.  The nominal body-to-ECEF
+ * attitude (C_b_e_) is not owned here: its single owner is the KalmanFilter,
+ * which this source reads and writes through the @c attachFilter handle.
+ * StateManager indices are resolved live each epoch (no cached indices), per the
+ * design.
  *
  * Migration staging (docs/aiding_source_abstraction_design.md, "IMU migration
- * plan"): the contributions implemented here are now the live path via
- * predictAided / collectPredict; the legacy predictImu is retired.
+ * plan"): the contributions implemented here are the live path via
+ * predictAided / collectPredict; KalmanFilter::predictImu has no remaining callers.
  */
 
 #include "aiding/IAidingSource.hpp"
@@ -37,9 +37,9 @@
 
 namespace GnssProcessor {
 
-class StateManager;     // forward decl — index host (stashed via reserveStates)
-class KalmanFilter;     // forward decl — nominal-attitude owner (handle via attachFilter)
-class MeasurementModel; // forward decl — TC Jacobian sink (applyTcJacobianInputs)
+class StateManager;     // forward decl: index host (stored via reserveStates)
+class KalmanFilter;     // forward decl: nominal-attitude owner (handle via attachFilter)
+class MeasurementModel; // forward decl: TC Jacobian sink (applyTcJacobianInputs)
 
 /**
  * @class ImuAidingSource
@@ -50,9 +50,9 @@ public:
     /**
      * @brief Construct and wrap an @c ImuIntegrator.
      *
-     * Mirrors the legacy Application::run wiring: builds the integrator and,
-     * if an IMU file is configured, loads it.  A load failure leaves
-     * @c hasData()==false — the existing graceful GNSS-only fallback.
+     * Follows the Application::run wiring: builds the integrator and, if an IMU
+     * file is configured, loads it.  A load failure leaves @c hasData()==false,
+     * which falls back to GNSS-only processing.
      *
      * @param config      Global configuration (IMU noise params, coupling mode).
      * @param log_manager Logging facility.
@@ -63,19 +63,19 @@ public:
     AidingSourceKind kind() const override { return AidingSourceKind::Imu; }
     std::string name() const override { return "IMU (INS error-state aiding)"; }
 
-    // ---- (a) STATE -------------------------------------------------------
+    // ---- (a) state -------------------------------------------------------
     /**
      * @brief Describe the existing core IMU error-state offsets.
      *
-     * Tier-1: stashes @p sm for live per-epoch index resolution and returns a
-     * descriptor over the contiguous attitude/accel-bias/gyro-bias block
-     * StateManager already reserved under its @c enableImu() carve-out — it
-     * allocates nothing (bit-for-bit identical state layout).  Returns
+     * Tier 1: stores @p sm for live per-epoch index resolution and returns a
+     * descriptor over the contiguous attitude/accel-bias/gyro-bias block that
+     * StateManager already reserved under its @c enableImu() carve-out.  It
+     * allocates nothing, so the state layout is bit-for-bit unchanged.  Returns
      * std::nullopt if IMU error states are not present.
      */
     std::optional<StateBlockSpec> reserveStates(StateManager& sm) override;
 
-    // ---- (b) PREDICT -----------------------------------------------------
+    // ---- (b) predict -----------------------------------------------------
     /**
      * @brief Run strapdown mechanization and map its 15x15 Phi/Q onto the ins_map.
      *
@@ -88,7 +88,7 @@ public:
      */
     PredictContribution contributePredict(const AidingEpochContext& ctx) override;
 
-    // ---- (c) MEASUREMENT -------------------------------------------------
+    // ---- (c) measurement -------------------------------------------------
     /// @brief TC-IMU re-parameterizes GNSS rows (column-write seam) under tight coupling.
     bool reparameterizesGnssRows() const override { return tightly_coupled_; }
 
@@ -109,18 +109,18 @@ public:
 
     bool hasData() const override { return integrator_ && integrator_->hasData(); }
 
-    /// @brief The IMU bridges full GNSS outages (INS dead-reckon) — the faithful
-    ///        replacement for the legacy @c enableImu() gap/MW-tolerance queries.
+    /// @brief The IMU bridges full GNSS outages (INS dead-reckoning); this replaces
+    ///        the earlier @c enableImu() queries for gap and MW tolerance.
     bool bridgesGaps() const override { return true; }
 
     ImuAidingSource* asImu() override { return this; }
 
-    // ---- IMU-specific rich API (recovered via asImu()) -------------------
+    // ---- IMU-specific API (recovered via asImu()) ------------------------
 
     /**
      * @brief Attach the owner of the nominal attitude (the KalmanFilter).
      *
-     * The IMU reads/writes C_b_e_ through this owner — it does NOT own the
+     * The IMU reads and writes C_b_e_ through this owner and does not own the
      * nominal attitude itself (state-vector discipline: one off-vector owner).
      */
     void attachFilter(KalmanFilter& filter) { filter_ = &filter; }
@@ -132,9 +132,9 @@ public:
      * the gravity-subtracted body specific force from the live state, and calls
      * @c MeasurementModel::setImuState so the Doppler rows carry attitude-error
      * and accelerometer-bias partials.  No-op unless tightly coupled with data
-     * and the StateManager/owner handles are attached.  This relocates the
-     * computation that previously lived (twice) in Application::run; the
-     * setImuState arithmetic and the model's partials are unchanged.
+     * and the StateManager/owner handles are attached.  The computation was moved
+     * here from its two copies in Application::run; the setImuState arithmetic and
+     * the model's partials are unchanged.
      */
     void applyTcJacobianInputs(MeasurementModel& model) const;
 
@@ -152,9 +152,10 @@ private:
      *
      * Pure: copies the 15x15 Phi/Q_ins and the @p ins_map into the
      * contribution and builds the nominal write-backs (pos always; vel and
-     * attitude-zero when their ins_map slots are valid) — replicating
-     * predictImu's x updates exactly.  Sets @c requires_naive_relinearization
-     * from the cached coupling mode.  Expects the canonical 15-slot INS map.
+     * attitude-zero when their ins_map slots are valid), matching predictImu's
+     * x updates exactly.  Sets @c requires_naive_relinearization from the
+     * cached coupling mode.  Expects the canonical 15-slot INS map; any other
+     * size returns an invalid contribution.
      */
     PredictContribution mapPredictionToContribution(
         const ImuPrediction& pred, const std::vector<std::size_t>& ins_map) const;
@@ -167,7 +168,7 @@ private:
     LogManager& log_manager_;
     std::unique_ptr<ImuIntegrator> integrator_;
     bool tightly_coupled_{ false };       ///< Cached config_.tightlyCoupledImu() (routes the TC column seam / naive IEKF).
-    StateManager* state_manager_{ nullptr }; ///< Stashed in reserveStates for live index resolution (non-owning).
+    StateManager* state_manager_{ nullptr }; ///< Stored in reserveStates for live index resolution (non-owning).
     KalmanFilter* filter_{ nullptr };        ///< Nominal-attitude owner handle (non-owning; via attachFilter).
 };
 

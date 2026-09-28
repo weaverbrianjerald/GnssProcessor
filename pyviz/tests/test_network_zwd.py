@@ -1,8 +1,8 @@
 """Build-time tests for the network per-station ZWD viewer (synthetic CSVs).
 
-Exercises ``build_network_zwd`` against stub ``network_zwd.csv`` traces -- the
+Exercises ``build_network_zwd`` against stub ``network_zwd.csv`` traces: the
 sigma-sharpening (carried) two-station fixture, the station ranking, and the
-:class:`ViewerSkip` paths (absent / header-only) -- without rendering.
+:class:`ViewerSkip` paths (absent, header-only), without rendering.
 """
 import pytest
 
@@ -51,8 +51,8 @@ def test_network_zwd_carried_shading_and_sharpening(tmp_path):
     assert any(isinstance(t, Band) for t in ax_sig.traces)
     assert any(isinstance(t, Stem) for t in ax_sig.traces)
     # Sigma sharpening: STA_B's carried σ (0.005) is smaller than its
-    # un-carried σ (0.018) and than STA_A's σ (0.020) -- so STA_B ranks BEST
-    # (last, smallest last-30-min median σ) and STA_A ranks WORST (first).
+    # un-carried σ (0.018) and than STA_A's σ (0.020), so STA_B ranks best
+    # (last, smallest last-30-min median σ) and STA_A ranks worst (first).
     summary = res.summary
     assert "worst STA_A" in summary
     # carried fraction of the whole trace is > 0 (STA_B carried half its epochs).

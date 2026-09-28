@@ -16,22 +16,21 @@ namespace GnssProcessor {
     /**
      * @brief Result of a GIM slant-delay query.
      *
-     * Beyond the standard @c delay_m / @c std_m returned for first-order
-     * ionosphere weighting, the query also exposes the underlying
-     * @c stec_tecu (absolute slant TEC) and the ionospheric pierce point
-     * (@c ipp_lat_rad / @c ipp_lon_rad / @c ipp_height_m).  Both are
-     * consumed by @c HigherOrderIonosphere to compute the B·cos(θ_B) and
-     * STEC² terms — same geometry as the first-order delay, so the
-     * higher-order correction shares any spatial / temporal interpolation
-     * choices the GIM has already made.
+     * Besides @c delay_m / @c std_m, used for first-order ionosphere
+     * weighting, the query exposes the underlying @c stec_tecu (absolute
+     * slant TEC) and the ionospheric pierce point (@c ipp_lat_rad /
+     * @c ipp_lon_rad / @c ipp_radius_m).  @c HigherOrderIonosphere uses
+     * them to compute the B·cos(θ_B) and STEC² terms on the same geometry
+     * as the first-order delay, so the higher-order correction inherits the
+     * GIM's spatial and temporal interpolation.
      */
     struct GimQuery {
         double delay_m       = 0.0;   ///< Slant ionospheric delay at the requested frequency (m).
-        double std_m         = 0.0;   ///< 1-sigma uncertainty of @c delay_m (m), from the IONEX RMS map.
+        double std_m         = 0.0;   ///< 1-sigma uncertainty of @c delay_m (m), from the IONEX RMS map (3 TECU where none is usable).
         double stec_tecu     = 0.0;   ///< Absolute slant TEC at the pierce point (TECU = 10^16 el/m²).
         double ipp_lat_rad   = 0.0;   ///< Latitude of the IPP on the IONEX shell (rad).  Copied
-                                      ///< verbatim from @c IppGeometry::ipp_lat_rad — read the
-                                      ///< convention note there; it is NOT plain geodetic.
+                                      ///< from @c IppGeometry::ipp_lat_rad; it is not plain
+                                      ///< geodetic latitude (see the convention note there).
         double ipp_lon_rad   = 0.0;   ///< Longitude of the IPP on the IONEX shell (rad).
         double ipp_radius_m  = 0.0;   ///< IPP distance from geocentre (m) = IONEX base radius + shell height.
         bool   valid         = false; ///< False when the GIM has no usable value for this line of sight.
@@ -65,9 +64,10 @@ namespace GnssProcessor {
         /**
          * @brief Read-only access to the parsed IONEX content.
          *
-         * Exposed so callers can inspect the map-epoch span before querying: epochs
-         * outside it are silently CLAMPED to the endpoint map (and still longitude-
-         * rotated), so a caller that must not extrapolate has to check the span itself.
+         * Exposed so callers can inspect the map-epoch span before querying.  A query
+         * epoch outside the span is clamped to the endpoint map without any warning
+         * (the longitude is still rotated), so a caller that must not extrapolate
+         * checks the span itself.
          */
         const IonexData& data() const { return data_; }
 

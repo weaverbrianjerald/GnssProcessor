@@ -6,8 +6,8 @@
  * Two rows of the (L1,L2) ambiguity plane can observe the narrow-lane integer
  * N_1 once the widelane WL = N_1 − N_2 is known:
  *
- *   - the NARROWLANE row @f$(f_1,f_2)/(f_1+f_2)@f$ (legacy default), and
- *   - the exact IONO-FREE row @f$(f_1^2,-f_2^2)/(f_1^2-f_2^2)@f$
+ *   - the narrowlane row @f$(f_1,f_2)/(f_1+f_2)@f$ (legacy default), and
+ *   - the exact iono-free row @f$(f_1^2,-f_2^2)/(f_1^2-f_2^2)@f$
  *     (@c estimation.ambiguity_resolution.nl_iono_free_row).
  *
  * The reference here is exact algebra, not an external vector: the iono-free
@@ -54,7 +54,7 @@ double lam(double f) { return Constants::SPEED_OF_LIGHT / f; }
 double reduced(const NlRowTestAccess::Coefs& c,
                double n1, double n2, double iono_l1_m = 0.0) {
     const double alpha2 = (kF1 / kF2) * (kF1 / kF2);
-    // DD ambiguity states are carried in METRES; an unmodelled slant-iono error
+    // DD ambiguity states are carried in metres; an unmodelled slant-iono error
     // is absorbed into them with the ionospheric signature (+1, +alpha2).
     const double dd1 = lam(kF1) * n1 + iono_l1_m;
     const double dd2 = lam(kF2) * n2 + iono_l1_m * alpha2;
@@ -96,10 +96,10 @@ TEST(NlSearchRowTest, BackTransformRecoversBothBandAmbiguities) {
 }
 
 TEST(NlSearchRowTest, NarrowlaneRowIsBitIdenticalToLegacyExpressions) {
-    // Standing invariant #6: with nl_iono_free_row OFF the path must be
-    // BIT-identical, not merely algebraically equal.  These are verbatim the
-    // expressions that were inline in resolveWlConstrained before the search
-    // functional was factored out — EXPECT_EQ, not EXPECT_NEAR, is the point.
+    // Standing invariant #6: with nl_iono_free_row off the path is bit-identical,
+    // not only algebraically equal.  The expected values are the expressions that
+    // resolveWlConstrained used inline before the search functional was factored
+    // out, compared with EXPECT_EQ rather than EXPECT_NEAR.
     const double f1 = kF1, f2 = kF2;
     const double lam1 = lam(f1), lam2 = lam(f2);
     const double f_sum = f1 + f2;
@@ -111,7 +111,7 @@ TEST(NlSearchRowTest, NarrowlaneRowIsBitIdenticalToLegacyExpressions) {
 }
 
 TEST(NlSearchRowTest, BtCoefIsShiftMinusOne) {
-    // N_2 = N_1 − WL forces this relation for ANY valid row.
+    // N_2 = N_1 − WL forces this relation for any valid row.
     const double l1 = lam(kF1), l2 = lam(kF2);
     for (const bool iono_free : {false, true}) {
         const auto c = NlRowTestAccess::row(kF1, kF2, l1, l2, iono_free);
@@ -129,8 +129,8 @@ TEST(NlSearchRowTest, IonoFreeRowIsInsensitiveToSlantIono) {
     const int n1 = 11, wl = -4, n2 = n1 - wl;
 
     const double clean = reduced(c_if, n1, n2, 0.0);
-    // 1 TECU = 0.16237 m of L1 delay.  Inject 5 TECU — far beyond anything the
-    // fix would tolerate on the narrowlane row.
+    // 1 TECU = 0.16237 m of L1 delay.  The injected 0.5, 5 and 50 TECU reach far
+    // beyond anything a fix would tolerate on the narrowlane row.
     for (const double tecu : {0.5, 5.0, 50.0}) {
         const double perturbed = reduced(c_if, n1, n2, tecu * 0.16237);
         EXPECT_NEAR(perturbed, clean, 1e-9)
@@ -162,20 +162,20 @@ TEST(NlSearchRowTest, IonoFreeRowAmplifiesWidelaneErrorByFrequencyRatio) {
     EXPECT_NEAR(expected, 8.0587, 1e-3);
 
     // A 1-cycle widelane error displaces the N_1 target by |shift|.
-    EXPECT_NEAR(std::abs(c_nl.shift), kF2 / (kF1 + kF2), 1e-12);   // 0.4379
-    EXPECT_NEAR(std::abs(c_if.shift), kF2 / (kF1 - kF2), 1e-12);   // 3.5296
+    EXPECT_NEAR(std::abs(c_nl.shift), kF2 / (kF1 + kF2), 1e-12);   // 0.4380
+    EXPECT_NEAR(std::abs(c_if.shift), kF2 / (kF1 - kF2), 1e-12);   // 3.5294
     EXPECT_NEAR(std::abs(c_if.shift) / std::abs(c_nl.shift), expected, 1e-9);
 
-    // The row norm — hence the searched sigma — scales by the same factor.
+    // The row norm, and with it the searched sigma, scales by the same factor.
     const double norm_nl = std::hypot(c_nl.t_1, c_nl.t_2);
     const double norm_if = std::hypot(c_if.t_1, c_if.t_2);
     EXPECT_NEAR(norm_if / norm_nl, expected, 1e-9);
 }
 
 TEST(NlSearchRowTest, IonoFreeRowSumsToNarrowlaneWavelength) {
-    // c_IF1·lam1 + c_IF2·lam2 = c/(f1+f2) = lambda_NL, exactly.  This is why
-    // the WL-conditioned N_1 step has a 10.70 cm wavelength rather than the
-    // 3.59 cm of the unconditioned iono-free 2-D lattice.
+    // c_IF1·lam1 + c_IF2·lam2 = c/(f1+f2) = lambda_NL, exactly.  For this reason
+    // the WL-conditioned N_1 step has a 10.70 cm wavelength rather than the 6.3 mm
+    // step of the unconditioned iono-free combination of integer (N_1, N_2).
     const double l1 = lam(kF1), l2 = lam(kF2);
     const auto c_if = NlRowTestAccess::row(kF1, kF2, l1, l2, true);
     const double lambda_nl = Constants::SPEED_OF_LIGHT / (kF1 + kF2);
@@ -185,8 +185,8 @@ TEST(NlSearchRowTest, IonoFreeRowSumsToNarrowlaneWavelength) {
 }
 
 // ---------------------------------------------------------------------------
-// Cross-constellation sanity — the guard threshold separates real widelane
-// pairs from the intra-E5 pair that would explode.
+// Cross-constellation check: the guard threshold separates real widelane pairs
+// from the intra-E5 pair, whose amplification is about 78.
 // ---------------------------------------------------------------------------
 
 TEST(NlSearchRowTest, AmplificationSeparatesWidelanePairsFromIntraE5) {

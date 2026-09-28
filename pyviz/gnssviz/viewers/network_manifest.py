@@ -1,24 +1,24 @@
 """Network run-provenance manifest viewer (summary-only).
 
-Parses ``network_run_manifest.json`` -- the PPP-RTK NETWORK producer's
-run-provenance sidecar -- and surfaces it as a prominent plain-text block in the
-report.  Unlike the per-epoch trace CSVs, the manifest is **JSONL**: a small
+Parses ``network_run_manifest.json``, the PPP-RTK network producer's
+run-provenance sidecar, and surfaces it as a prominent plain-text block in the
+report.  Unlike the per-epoch trace CSVs, the manifest is JSONL: a small
 number of newline-delimited JSON objects, one per line, each ``json.loads``-able
 on its own.  Two records are expected:
 
-  * ``startup`` -- written when the network run begins: ``written_utc``,
+  * ``startup``, written when the network run begins: ``written_utc``,
     ``config_path``, ``config_hash_fnv1a64`` (hex FNV-1a of the config file),
-    ``build`` info, and a big ``network`` object of the run's toggles / knobs.
-  * ``complete`` -- written when the run finishes: the epoch tallies
+    ``build`` info, and a big ``network`` object of the run's toggles and knobs.
+  * ``complete``, written when the run finishes: the epoch tallies
     (``n_synced``, ``n_emitted``, ``n_skipped``, ``n_gate_withheld``,
     ``n_sigma0_withheld``) and wall-clock ``loop_ms``.
 
-This is the "what exactly was run, and how did the whole run turn out?" view --
-the config hash is the reproducibility fingerprint that ties a report to the
-exact config that produced it, and the completion counts are the run-level
-accounting behind the per-epoch health traces.
+This view reports what was run and how the run turned out overall: the config
+hash is the reproducibility fingerprint that ties a report to the exact config
+that produced it, and the completion counts are the run-level accounting
+behind the per-epoch health traces.
 
-The viewer produces **no figures** -- the report renders its ``summary`` block
+The viewer produces no figures; the report renders its ``summary`` block
 verbatim inside a ``<pre>``.  It declares ``required_csvs=()`` (so the driver's
 presence check is vacuous) and instead raises :class:`ViewerSkip` itself when the
 manifest file is absent, matching the ``network_map`` precedent for

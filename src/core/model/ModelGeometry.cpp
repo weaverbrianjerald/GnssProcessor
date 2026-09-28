@@ -34,8 +34,7 @@ namespace GnssProcessor {
 
     namespace Model {
 
-        // (Unused anonymous-namespace interpolation helpers removed;
-        //  all interpolation now goes through Interpolate:: class methods.)
+        // All interpolation goes through the Interpolate:: class methods.
 
         // =================================================================
         // Construction / product loading
@@ -60,8 +59,8 @@ namespace GnssProcessor {
             erps_(cache.getErpsShared()),
             klobuchar_coeffs_(cache.getKlobucharCoeffs())
         {
-            // orbits_/clocks_/antennas_/biases_/erps_ now reference the shared
-            // ProductCache copy via shared_ptr<const> — nothing is duplicated.
+            // orbits_/clocks_/antennas_/biases_/erps_ reference the shared
+            // ProductCache copy through shared_ptr<const>; nothing is duplicated.
 
             log_manager_.getLogger("geometry")->info(
                 "Geometry model initialized: {} orbits, {} clocks, elev_mask={:.1f} deg", orbits_->size(), clocks_->size(), elevation_threshold_
@@ -81,8 +80,8 @@ namespace GnssProcessor {
             orbit_index_.clear();
 
             // Build orbit index: satellite -> vector of pointers to OrbitData.
-            // The index stores raw pointers INTO the shared orbits_ vector; safe
-            // because this Geometry holds a shared_ptr<const> keeping it alive.
+            // The index stores raw pointers into the shared orbits_ vector, which
+            // stays alive because this Geometry holds a shared_ptr<const> to it.
             for (const OrbitData& od : *orbits_) {
                 if (od.satellite.empty()) continue;
                 orbit_index_[od.satellite].push_back(&od);
@@ -98,33 +97,36 @@ namespace GnssProcessor {
 
             log_manager_.getLogger("geometry")->info("Built orbit index for {} satellites", orbit_index_.size());
 
-            // Ocean tidal loading: precedence is BLQ → EOT20 grid → safe-zero.
-            //   1. If a BLQ file is configured AND the station name is found in
-            //      it, use the station-specific Onsala coefficients (highest
-            //      fidelity, includes horizontal components).
-            //   2. Else if EOT20_load.nc is available, synthesize per-station
+            // Ocean tidal loading source precedence: SIF → BLQ → EOT20 grid → zero.
+            //   1. If station info is enabled and the SIF entry for the marker
+            //      carries OTL, use its 3-component FES2014b coefficients.
+            //   2. Else, if a BLQ file is configured and the station name is
+            //      found in it, use the station-specific Onsala coefficients
+            //      (includes horizontal components).
+            //   3. Else, if EOT20_load.nc is available, synthesize per-station
             //      radial coefficients from the global load grid by bilinear
             //      interpolation at the receiver's a priori ECEF position.
-            //   3. Else OceanTideModel falls back to a zero displacement (the
-            //      previous latitude-scaled approximate model was phase-blind
-            //      and could inject a biased oscillation into the up channel).
-            // Skip the load entirely when OTL is disabled — avoids a misleading
-            // "loaded coefficients" log line when the per-epoch site won't use them.
+            //   4. Else OceanTideModel applies zero displacement.  A
+            //      latitude-scaled approximation is not used: it is phase-blind
+            //      and can inject a biased oscillation into the up component.
+            // With OTL disabled the coefficient load is skipped, so no
+            // "loaded coefficients" line is logged for a correction that is not applied.
             auto log = log_manager_.getLogger("geometry");
 
-            // Atmospheric pressure loading (S1/S2 thermal tide) — loaded
+            // Atmospheric pressure loading (S1/S2 thermal tide) is loaded
             // independently of OTL into the same Geometry-owned corrections_
-            // instance that applies it per-epoch.  Date-independent static asset
-            // (like the opole grid): explicit files.atm_tide_grid_path wins, else
-            // <internal_data_root>/static/apl/.  Scoped so its station ECEF does
-            // not collide with the OTL station_ecef below.  Default-off keeps
-            // runs byte-identical until a grid is supplied and the flag flipped.
+            // instance that applies it per epoch.  The grid is a date-independent
+            // static asset (like the opole grid): an explicit
+            // files.atm_tide_grid_path wins, else <internal_data_root>/static/apl/.
+            // The block is scoped so its station ECEF does not collide with the
+            // OTL station_ecef below.  Off by default; the output stays
+            // byte-identical until the flag is on and a grid is supplied.
             if (config_.getModelCorrections().enable_atmospheric_loading) {
                 const Eigen::Vector3d apl_ecef = rinex_parser_.getApproxPositionXyz();
                 std::filesystem::path apl_grid = config_.getAtmTideGridPath();
                 if (apl_grid.empty()) {
                     apl_grid = config_.getInternalDataRoot() / "static" / "apl"
-                             / "s1_s2_load_cm.dat";   // PROVISIONAL filename — pin to the supplied product
+                             / "s1_s2_load_cm.dat";   // provisional filename; pin to the supplied product
                 }
                 if (apl_ecef.allFinite() && apl_ecef.norm() > 1e6
                     && std::filesystem::exists(apl_grid)) {
@@ -259,15 +261,14 @@ namespace GnssProcessor {
             }
 
             // RAWOBS diagnostic (trace, "geometry"): every raw decoded code
-            // pseudorange per satellite BEFORE any IF combination, with its
-            // implied light-millisecond rough range (pr / c·1e-3).  A healthy
-            // MEO GPS pseudorange is ~1.9e7–2.7e7 m ≈ 64–87 light-ms, and the
-            // codes for one satellite must agree to within the ionospheric
-            // delay (~tens of m).  Pair this against the geometric "range="
-            // line below (computed at the known a-priori) to catch a corrupt
-            // MSM-decoded pseudorange — motivated by the live IGS-station MSM
-            // path producing ~hundreds-of-km per-satellite closure errors that
-            // the geometry and clock paths were exhaustively cleared of.
+            // pseudorange per satellite before any IF combination, with its
+            // implied rough range in light-milliseconds (pr / (c·1e-3)).  A
+            // plausible MEO GPS pseudorange is about 1.9e7–2.7e7 m, i.e. about
+            // 63–90 light-ms, and the codes of one satellite agree to within the
+            // ionospheric delay (tens of metres).  Comparing these lines with
+            // the geometric "range=" line below (computed at the a priori
+            // position) identifies a corrupt MSM-decoded pseudorange, which
+            // shows up as a per-satellite closure error of hundreds of km.
             if (log->should_log(spdlog::level::trace)) {
                 for (const auto& [k, v] : code_obs)
                     log->trace("RAWOBS {} {} tow={:.3f}: pr={:.3f} m ({:.2f} light-ms)",
@@ -282,12 +283,11 @@ namespace GnssProcessor {
             //
             //   P_IF = (f1²·P1 − f2²·P2) / (f1² − f2²)
             //
-            // The IF combination cancels the first-order ionospheric delay
-            // exactly, leaving only (tropo + code noise + residual bias) as
-            // the non-geometric content of the pseudorange.  Driving the
-            // (I+ε)/c residual in t_em from ~30-90 ns to ~ns level (sub-μm
-            // satellite displacement) is the whole purpose of using IF here
-            // for the emission-time seed.
+            // The IF combination cancels the first-order ionospheric delay,
+            // leaving troposphere, code noise and residual bias as the
+            // non-geometric content of the pseudorange.  The emission-time
+            // seed uses IF to reduce the (I+ε)/c error in t_em from about
+            // 30–90 ns to the ns level (sub-μm satellite displacement).
             PppUtils utils(log_manager_);
             auto buildIf = [&](const std::string& sig1, const std::string& sig2,
                                bool apply_bias, double& if_pr) -> bool {
@@ -311,16 +311,17 @@ namespace GnssProcessor {
                         p2 -= corrections_.getBiasCorrection(obs.satellite, sig2, obs.time);
                 }
 
-                // Geometry-free plausibility gate.  For CODE the lower-frequency
-                // signal carries MORE ionospheric delay, so P(low-freq) must exceed
-                // P(high-freq) to within a small DCB margin — i.e. (P_hi − P_lo) is
-                // negative-ish, never strongly positive.  A decoded pair that
-                // inverts this (e.g. a live IGS-station MSM frame where G05's C2W
-                // sat 124 m BELOW C1W) is physically impossible; amplified ~2.5× by
-                // the IF combination it poisons the emission-time seed, the WLS and
-                // the filter (one such satellite dragged the standalone WLS ~600 km
-                // off with 119 km RMS).  Reject so extractPseudorange falls through
-                // to the next pair / single-frequency rather than combining garbage.
+                // Geometry-free plausibility gate.  On code, the lower-frequency
+                // signal carries more ionospheric delay, so P(low-freq) exceeds
+                // P(high-freq) up to a small DCB margin: (P_hi − P_lo) is near zero
+                // or negative, never strongly positive.  A decoded pair that
+                // inverts this (for example a corrupt MSM frame with C2W 124 m
+                // below C1W) is physically impossible.  The IF combination
+                // amplifies the error about 2.5×, and it then corrupts the
+                // emission-time seed, the WLS and the filter (one such satellite
+                // can move the standalone WLS by hundreds of km).  The pair is
+                // rejected so extractPseudorange falls through to the next pair
+                // or to single frequency.
                 constexpr double kMaxGeomFreeMeters = 30.0;  // DCB+noise headroom; iono only makes GF more negative
                 const double p_hi = (f1 > f2) ? p1 : p2;     // higher-frequency code
                 const double p_lo = (f1 > f2) ? p2 : p1;     // lower-frequency code
@@ -340,15 +341,14 @@ namespace GnssProcessor {
                 return true;
             };
 
-            // ===== PRIORITY 1: clock-reference-aligned IF pair =====
+            // ===== Priority 1: clock-reference-aligned IF pair =====
             // The precise clock product δt_s is calibrated against a specific
             // signal pair per system (e.g. C1W+C2W for IGS Final GPS, parsed
             // from the BIA DESCRIPTION block into ProductCache::clock_ref_
             // signals_).  When the emission-time seed uses the IF combination
-            // of those exact signals, the (c·δt_s) term cancels EXACTLY
-            // against sat_clk in Step 3 of computeEmissionState — no DCB
-            // adjustment is needed and any per-signal bias is structurally
-            // absent.  This is the cleanest possible path.
+            // of those signals, the (c·δt_s) term cancels exactly against
+            // sat_clk in Step 3 of computeEmissionState: no DCB adjustment is
+            // needed and no per-signal bias enters.  This path is preferred.
             {
                 const auto& clock_refs = product_cache_.getClockRefSignals();
                 const char sys_char = obs.satellite.empty() ? '\0' : obs.satellite[0];
@@ -369,9 +369,9 @@ namespace GnssProcessor {
                 }
             }
 
-            // ===== PRIORITY 2: bias-aligned IF pair (DCB applied) =====
+            // ===== Priority 2: bias-aligned IF pair (DCB applied) =====
             // Walk the configured signal priority list and pick the first
-            // pair on different bands where BOTH signals have BIA coverage.
+            // pair on different bands where both signals have BIA coverage.
             // Applying DCBs brings each raw pseudorange onto the clock-
             // reference scale before combining, so any per-signal bias
             // collapses into combination noise instead of an uncancelled
@@ -412,14 +412,13 @@ namespace GnssProcessor {
                 }
             }
 
-            // ===== PRIORITY 3: best-effort IF pair (no BIA filter) =====
-            // Same priority walk as Priority 2 but without requiring BIA
-            // coverage.  Used when the satellite has no usable BIA entries
-            // (typical for some MGEX sats with sparse bias coverage).
-            // Uncancelled per-signal bias introduces up to a few meters of
-            // offset in the IF (~10 ns t_em error → ~40 μm sat displacement)
-            // — well below the KF noise floor but the best we can do
-            // without bias coverage.  This is the pre-existing behavior.
+            // ===== Priority 3: best-effort IF pair (no BIA filter) =====
+            // Same priority walk as Priority 2 without requiring BIA coverage.
+            // Used when the satellite has no usable BIA entries (typical for
+            // some MGEX satellites with sparse bias coverage).  The uncancelled
+            // per-signal bias puts up to a few metres of offset in the IF
+            // (about 10 ns of t_em error, about 40 μm of satellite
+            // displacement), which is below the KF noise floor.
             if (code_obs.size() >= 2) {
                 const std::string sys_str = PppUtils::getSystemString(obs.system);
                 auto prio_it = signal_priorities_.find(sys_str);
@@ -455,14 +454,14 @@ namespace GnssProcessor {
                 }
             }
 
-            // ===== FALLBACK: first valid single-frequency pseudorange =====
-            // Carries full iono delay → ~30-90 ns t_em error → ~100-400 μm
-            // satellite displacement at the seed.  Used only when no IF
-            // pair can be formed (e.g. GEO sats with single-band coverage
-            // in the obs set, or constellations where signal_mode excludes
-            // both bands).  Step 3 + Step 5 of computeEmissionState still
-            // get the receiver-clock and satellite-clock cancellation right
-            // — only the iono residual is uncancelled here.
+            // ===== Fallback: first valid single-frequency pseudorange =====
+            // Carries the full ionospheric delay: about 30–90 ns of t_em error,
+            // about 100–400 μm of satellite displacement at the seed.  Used
+            // when no IF pair can be formed (for example GEO satellites with
+            // single-band coverage in the obs set, or constellations where
+            // signal_mode excludes both bands).  Steps 3 and 5 of
+            // computeEmissionState still cancel the receiver and satellite
+            // clocks; only the ionospheric residual remains.
             pseudorange = code_obs.front().second;
             sig1_out = code_obs.front().first;
             sig2_out.clear();
@@ -494,10 +493,10 @@ namespace GnssProcessor {
             // Step 2: Satellite clock at approximate emission time
             double sat_clk = corrections_.getSatelliteClockCorrection(obs.satellite, emission_time);
             if (std::abs(sat_clk) < 1e-12) {
-                // Warn once per satellite per session. The "no clock product"
-                // condition is essentially static within a daily run (typical
-                // for BeiDou GEOs absent from MGEX clock products), so the
-                // duplicate-per-epoch firehose is pure noise.
+                // Warn once per satellite per session.  A missing clock
+                // product is static within a daily run (typical for BeiDou
+                // GEOs absent from MGEX clock products), so a per-epoch
+                // warning would repeat the same line.
                 if (sats_warned_no_clock_.insert(obs.satellite).second) {
                     log_manager_.getLogger("geometry")->warn(
                         "Satellite {} has zero/invalid clock product; observations from this satellite will be skipped this session",
@@ -509,19 +508,19 @@ namespace GnssProcessor {
 
             // Step 3: Corrected GPS transmission time.
             //
-            // Critical: we use the PSEUDORANGE here (not the geometric range)
-            // so that the receiver clock bias δt_r cancels.  obs.time.tow is
-            // the receiver's local clock time = t_rcv^GPS + δt_r, and the
+            // The pseudorange (not the geometric range) is used here so that
+            // the receiver clock bias δt_r cancels.  obs.time.tow is the
+            // receiver's local clock time t_rcv^GPS + δt_r, and the
             // pseudorange contains +c·δt_r, so subtracting P/c removes δt_r
-            // without ever needing to know its value.  Subtracting sat_clk
-            // then removes the satellite clock bias δt_s.  The residual
-            // error is (I+T+ε)/c ≈ 30-60 ns ≈ sub-mm satellite displacement,
-            // already below any precision threshold that matters for PPP.
+            // without knowing its value.  Subtracting sat_clk then removes the
+            // satellite clock bias δt_s.  The residual error is
+            // (I+T+ε)/c ≈ 30–60 ns, a sub-mm satellite displacement, below
+            // any precision threshold relevant to PPP.
             //
-            // DO NOT replace this with a "true" iteration using the geometric
-            // range — that re-introduces an uncancelled δt_r that drives a
+            // Do not replace this with a light-time iteration on the geometric
+            // range: that reintroduces an uncancelled δt_r, which forms a
             // positive-feedback loop through the Kalman filter's receiver
-            // clock estimate, causing severe outliers and instability.
+            // clock estimate and produces severe outliers and instability.
             emission_time = obs.time;
             emission_time.tow -= (tof + sat_clk);
             if (emission_time.tow < 0) {
@@ -597,8 +596,8 @@ namespace GnssProcessor {
             bool broadcast_grade = false;
 
             // Reject user-configured excluded satellites (e.g. E14/E18 eccentric orbit).
-            // Categorised as NoModel: the user has told us not to model this
-            // satellite, which functionally is a modelling refusal.
+            // Categorised as NoModel: the configuration excludes the satellite
+            // from modelling.
             if (config_.isSatelliteExcluded(obs.satellite)) {
                 drop_reason = DropReason::NoModel;
                 return false;
@@ -612,9 +611,9 @@ namespace GnssProcessor {
             if (rx_pos.norm() < 1e3 || !rx_pos.allFinite()) {
                 log_manager_.getLogger("geometry")->warn("Invalid receiver position for {} at TOW {:.3f}",
                     obs.satellite, obs.time.tow);
-                // Pathological: receiver isn't initialised yet.  Charge to
-                // NoModel since it isn't a per-sat issue per se but does
-                // mean we can't model this observation.
+                // The receiver position is not initialised.  Charged to
+                // NoModel: the cause is not per-satellite, but no observation
+                // can be modelled (every satellite is rejected this epoch).
                 drop_reason = DropReason::NoModel;
                 return false;
             }
@@ -644,10 +643,12 @@ namespace GnssProcessor {
 
             // --- Earth rotation + receiver-frame geometry (lambda reused
             //     for seed and refined passes) ---
-            // Applies the Sagnac-equivalent rotation of sat_pos_em into the
-            // reception-time ECEF frame, then computes range, LOS unit
-            // vector, elevation, and azimuth — all the receiver-frame
-            // quantities the refinement and downstream corrections need.
+            // Rotates sat_pos_em about the z axis by ωE·τ (τ = geometric
+            // time of flight) into the reception-time ECEF frame (the
+            // Sagnac-equivalent rotation), then computes range, the
+            // receiver→satellite LOS unit vector (sat_pos − rx_pos)/range,
+            // elevation and azimuth: the receiver-frame quantities the
+            // refinement and downstream corrections need.
             auto rotateAndComputeTopo = [&](const Eigen::Vector3d& s_em) {
                 const double geom_tof = (s_em - rx_pos).norm() / c;
                 const double theta = omegaE * geom_tof;
@@ -666,11 +667,11 @@ namespace GnssProcessor {
             rotateAndComputeTopo(sat_pos_em);
 
             // --- Elevation mask check (seed) ---
-            // The refinement below may shift elevation by sub-degree
-            // (refined t_em differs from seed t_em by tens of ns → sat_pos
-            // shifts by ~100 μm → elev shifts by ~arcsecond), so the gate
-            // is essentially invariant to the refinement.  We re-check
-            // after refinement only as a safety net for borderline sats.
+            // The refinement below shifts elevation by far less than a degree
+            // (refined t_em differs from seed t_em by tens of ns, sat_pos by
+            // about 100 μm), so the gate is essentially invariant to the
+            // refinement.  The check after refinement only catches
+            // satellites at the mask boundary.
             if (elevation < elevation_threshold_) {
                 log_manager_.getLogger("geometry")->debug(
                     "Satellite {} below elevation threshold (seed): {:.3f} deg < {:.3f} deg",
@@ -680,15 +681,14 @@ namespace GnssProcessor {
             }
 
             // --- Eclipse exclusion (seed) ---
-            // Drop satellites in Earth's umbral shadow when the user has
-            // opted in via processing.exclude_eclipsing_satellites.  Yaw
-            // attitude during eclipse and post-shadow recovery is block-
-            // specific and not modelled here; with no yaw-input data the
-            // antenna PCO/PCV and phase windup become unreliable for these
-            // satellites.  The geometric shadow test is sub-meter sensitive
-            // to sat_pos, so the seed-pass position is sufficient — the
-            // sub-degree refinement-induced shift cannot flip an eclipsing
-            // satellite to non-eclipsing or vice versa.
+            // Drop satellites in Earth's umbral shadow when
+            // processing.exclude_eclipsing_satellites is on.  Yaw attitude
+            // during eclipse and post-shadow recovery is block-specific and
+            // not modelled here; without yaw input the antenna PCO/PCV and
+            // phase wind-up are unreliable for these satellites.  The shadow
+            // test is sensitive to sat_pos only at the sub-metre level, so
+            // the seed-pass position suffices: the refinement shifts sat_pos
+            // by about 100 μm, which cannot change the eclipse state.
             if (config_.excludeEclipsingSatellites()) {
                 ensureSunMoonCached(obs.time);
                 if (Planetary::isSatelliteEclipsing(sat_pos, cached_sun_pos_,
@@ -704,27 +704,27 @@ namespace GnssProcessor {
             // --- Emission-time refinement: slant tropo + IF-combined ATX ---
             //
             // Gated by @c model_corrections.refine_emission_time (default
-            // true).  When disabled, the function exits with the seed-pass
-            // emission state and behaves as the pre-refinement single-pass
-            // pipeline did — useful for A/B comparison or when isolating
-            // artifacts that may be sensitive to second-pass logic.
+            // true).  When disabled, the seed-pass emission state is kept and
+            // the geometry is single-pass, which serves A/B comparison and the
+            // isolation of effects that depend on the second pass.
             //
-            // Subtract from the seed pseudorange:
-            //   (a) the slant tropospheric hydrostatic delay (ZHD × mf_d),
-            //       which removes ~2-13 m of T from the seed (zenith → 10°)
+            // From the seed pseudorange, subtract:
+            //   (a) the slant hydrostatic tropospheric delay (ZHD × mf_d),
+            //       about 2–13 m from zenith to 10° elevation;
             //   (b) the IF-combined satellite + receiver ATX LOS projection
-            //       (PCO + PCV; no wind-up since these are code signals),
-            //       which removes ~1-7 m of antenna-phase-center offset
-            //       (sat PCO 0.5-2.5 m, IF amplification ~3×)
+            //       (PCO + PCV; no wind-up, since these are code signals),
+            //       about 1–7 m (satellite PCO 0.5–2.5 m, IF amplification
+            //       about 3×);
+            // and add the periodic relativistic term (c) described below.
             //
-            // Then re-run computeEmissionState with the cleaner pseudorange.
-            // This drives the t_em residual from (T + ATX + ε)/c ≈ tens of
-            // ns down to ε/c ≈ ns — sub-μm satellite displacement.
+            // computeEmissionState then runs again with the refined
+            // pseudorange, reducing the t_em error from (T + ATX + ε)/c, tens
+            // of ns, to about ε/c, a few ns (sub-μm satellite displacement).
             //
             // The ATX call uses (sat_pos, sat_vel_em, elevation, azimuth)
-            // from the seed pass; the refinement-induced changes to these
-            // are sub-percent and below the ATX/tropo derivative scale, so
-            // a single refinement pass is sufficient (no iteration needed).
+            // from the seed pass.  The refinement changes these by less than
+            // a percent, below the scale on which ATX and troposphere vary,
+            // so one refinement pass suffices (no iteration).
             if (config_.getModelCorrections().refine_emission_time) {
                 double mf_d_seed = 1.0;
                 double mf_w_seed = 1.0;
@@ -762,34 +762,33 @@ namespace GnssProcessor {
                             pco_los_seed = atx_1;
                         }
                     } else {
-                        // Single-frequency fallback in extractPseudorange —
+                        // Single-frequency fallback in extractPseudorange:
                         // apply that signal's ATX directly.
                         pco_los_seed = atx_1;
                     }
                 }
 
-                // Periodic relativistic clock correction `dtr = −2(r·v)/c²`.
+                // (c) Periodic relativistic clock correction `dtr = −2(r·v)/c²`.
                 //
                 // By IGS convention the CLK product carries only the constant
-                // + drift terms of δt_s — the periodic relativistic term is
+                // and drift terms of δt_s; the periodic relativistic term is
                 // computed separately and applied downstream in the observation
-                // model.  That means the seed pseudorange contains an
-                // uncancelled `−c·dtr` contribution (sign: dtr is negative
-                // near satellite perigee, positive near apogee).  Without
-                // accounting for it here, the seed t_em is biased by exactly
-                // `+dtr` — up to ~14 m / 47 ns for GPS at peak eccentricity,
-                // typically 3-7 m / 10-20 ns for IIR/IIF.
+                // model.  The seed pseudorange therefore contains an
+                // uncancelled `−c·dtr` contribution (dtr is zero at perigee and
+                // apogee, negative from perigee to apogee where r·v > 0, and
+                // positive from apogee to perigee).  Left in, it biases the seed
+                // t_em by `+dtr`: up to about 14 m / 47 ns for GPS at the
+                // largest eccentricity, typically 3–7 m / 10–20 ns for IIR/IIF.
                 //
-                // The seed pseudorange contains `−c·dtr`, so removing it means
-                // adding `+c·dtr` (equivalently: subtracting `−c·dtr`).  Note
-                // the sign is opposite the tropo/ATX terms, which is correct —
-                // those enter the pseudorange with positive sign whereas the
-                // relativistic clock effect enters with negative sign via the
-                // `−c·δt_s` term.
+                // Removing `−c·dtr` from the pseudorange means adding `+c·dtr`.
+                // The sign is opposite to that of the tropo/ATX terms because
+                // those enter the pseudorange with positive sign, whereas the
+                // relativistic clock effect enters with negative sign through
+                // the `−c·δt_s` term.
                 //
-                // dtr is recomputed downstream against the REFINED sat state
-                // for the actual observation-model contribution; the value
-                // computed here is purely for the seed-refinement subtraction.
+                // dtr is recomputed downstream from the refined satellite state
+                // for the observation-model contribution; the value computed
+                // here serves only the seed refinement.
                 double dtr_los_seed = 0.0;
                 if (config_.getModelCorrections().enable_relativistic_correction) {
                     const double dtr_seed_s = corrections_.computeRelativisticCorrection(
@@ -850,7 +849,7 @@ namespace GnssProcessor {
                 ? corrections_.computeShapiroDelay(obs.satellite, rx_pos, sat_pos)
                 : 0.0;
 
-            // Sagnac (diagnostic — implicitly included via Earth rotation of sat_pos)
+            // Sagnac (diagnostic only: the effect is already in sat_pos through the Earth rotation)
             sagnac_corr = (omegaE / c) * (sat_pos_em.x() * rx_pos.y() - sat_pos_em.y() * rx_pos.x());
 
             // Ocean tidal loading (site displacement projected onto LOS)
@@ -862,8 +861,8 @@ namespace GnssProcessor {
             // Atmospheric pressure loading (S1/S2 thermal tide; site displacement
             // projected onto LOS).  Same sign convention as OTL/solid-tide: a
             // station displacement toward the satellite shortens the range, and
-            // .dot(-los) (sat->rx) handles the sign automatically.  Zero unless
-            // enabled AND per-station S1/S2 coefficients are loaded.
+            // .dot(-los) (sat->rx) gives that sign.  Zero unless the correction
+            // is enabled and per-station S1/S2 coefficients are loaded.
             Eigen::Vector3d apl_ecef = config_.getModelCorrections().enable_atmospheric_loading
                 ? corrections_.computeAtmosphericTideDisplacement(rx_pos, obs.time)
                 : Eigen::Vector3d::Zero();
@@ -900,9 +899,12 @@ namespace GnssProcessor {
         /**
          * @brief Compute satellite position and velocity via Neville interpolation.
          *
-         * Selects the IGS_POINTS nearest orbit nodes, validates for gaps and
-         * extrapolation, then evaluates position and velocity via Neville's
-         * algorithm with nodes sorted by distance from the query point.
+         * Selects IGS_POINTS consecutive orbit nodes centred on the bracket that
+         * contains the query epoch, checks for gaps and extrapolation, rotates
+         * the nodes into the ECEF frame of the query epoch, then evaluates
+         * position and velocity with Neville's algorithm (nodes sorted by
+         * distance from the query point) or, when trig SP3 interpolation is
+         * enabled, with a sidereal-trig SVD fit.
          */
         std::pair<Eigen::Vector3d, Eigen::Vector3d> Geometry::getSatellitePV(
             const std::string& satellite, const GnssTime& time) const
@@ -922,20 +924,20 @@ namespace GnssProcessor {
 
             // Broadcast (live) ephemeris fallback: decode the satellite PV from
             // the receiver's RTCM/SBF nav stream and overlay the IODE-gated SSR
-            // orbit correction — the same path the SP3 branch uses below.
-            // Factored into a lambda so it serves EVERY case where the loaded
-            // SP3 cannot describe this query epoch: (a) no SP3 entry at all,
-            // (b) too few valid nodes, and (c) the query epoch lies outside the
-            // SP3's time coverage (a stale fixture shadowing today's live PRNs
-            // in real-time rooftop mode).  In post-processing the live store is
-            // empty (only RealTimeEngine ever inserts), so this returns nullopt
-            // and the SP3 path runs exactly as before.
+            // orbit correction, as the SP3 branch below does.  The lambda
+            // serves each case where the loaded SP3 cannot describe the query
+            // epoch: (a) no SP3 entry, (b) too few valid nodes, and (c) the
+            // query epoch outside the SP3's time coverage (for example a stale
+            // fixture in real-time mode).  The live store is filled by
+            // RealTimeEngine and, under network brdc_rts, by the network epoch
+            // loop (ApplicationNetwork.cpp).  In other post-processing runs it is
+            // empty, so this returns nullopt and the SP3 path runs unchanged.
             auto liveFallback = [&]() -> std::optional<std::pair<Eigen::Vector3d, Eigen::Vector3d>> {
-                // Fetch the SSR first so the broadcast PV is taken from the
-                // ephemeris VERSION the orbit delta was computed for (iode_ssr):
-                // across a cutover the receiver may be a version ahead of the SSR
-                // stream, so re-reference to the retained previous record instead
-                // of dropping the satellite to broadcast-grade.
+                // Fetch the SSR first so the broadcast PV is computed from the
+                // ephemeris version the orbit delta refers to (iode_ssr).  Across
+                // an ephemeris cutover the receiver can be one version ahead of
+                // the SSR stream; the store then uses the retained previous
+                // record instead of dropping the satellite to broadcast grade.
                 const auto ssr = ssrStore().getOrbitClock(satellite, time, config_.getSsrMaxAge());
                 const int ssr_iode = (ssr && ssr->has_orbit) ? ssr->iode : -1;
                 auto bc = LiveEphemerisStore::getInstance()
@@ -953,10 +955,11 @@ namespace GnssProcessor {
                     applied_apc =
                         (ssr->orbit_reference_point == SsrReferencePoint::APC);
                 }
-                // RTB-5(c): record whether THIS query's applied overlay was
+                // Record whether the overlay applied for this query was
                 // APC-referenced, so PppModel can skip the satellite-PCO term.
-                // Only while the toggle is armed — the default path stays
-                // byte-identical and never touches the map.
+                // Recorded only while honor_ssr_reference_point is on; with it
+                // off the map is never touched and the output is byte-identical
+                // (RTB-5(c)).
                 if (config_.getRealTimeConfig().honor_ssr_reference_point) {
                     ssr_orbit_apc_applied_[satellite] = applied_apc;
                 }
@@ -994,7 +997,7 @@ namespace GnssProcessor {
             }
             const double MAX_SPAN = sp3_interval * (IGS_POINTS - 1) + 1.0;
 
-            // === STEP 1: Collect ALL valid nodes for this satellite ===
+            // === Step 1: collect all valid nodes for this satellite ===
             // Precompute continuous GPS seconds for each orbit node to avoid
             // redundant recomputation inside sort comparators.
             struct NodeEntry {
@@ -1021,17 +1024,16 @@ namespace GnssProcessor {
 
             // === Coverage gate (stale-SP3 shadowing) ===
             // valid_nodes is in ascending epoch order (sat_orbits was sorted in
-            // loadData()).  If the query epoch lies outside the loaded SP3's time
+            // loadData()).  If the query epoch falls outside the loaded SP3's time
             // span by more than one node interval, the SP3 does not describe this
-            // epoch — typically a stale fixture shadowing today's live PRNs in
-            // real-time rooftop mode.  Prefer the broadcast ephemeris (which IS
-            // current) over extrapolating a years-stale polynomial into a
-            // position the norm-gate below would only reject.  The one-interval
-            // tolerance is strictly more permissive than the half-interval
-            // extrapolation guard further down, so no legitimate post-processing
-            // edge is newly diverted here; and in post-processing the live store
-            // is empty, so liveFallback() returns nullopt and the existing SP3
-            // path (including its own gap/extrapolation handling) runs unchanged.
+            // epoch (typically a stale fixture in real-time mode).  The current
+            // broadcast ephemeris is then preferred over extrapolating a stale
+            // polynomial to a position the norm gate below would reject.  The
+            // one-interval tolerance is wider than the half-interval
+            // extrapolation warning further down, so a query near the edge of
+            // valid SP3 coverage is not diverted.  In post-processing the live
+            // store is empty, liveFallback() returns nullopt, and the SP3 path
+            // (with its own gap and extrapolation handling) runs unchanged.
             {
                 const double t_cov_first = valid_nodes.front().t;
                 const double t_cov_last  = valid_nodes.back().t;
@@ -1046,20 +1048,21 @@ namespace GnssProcessor {
                 }
             }
 
-            // === STEP 2: Bracket-centered window selection ===
+            // === Step 2: bracket-centred window selection ===
             // Find the bracket [x_a, x_{a+1}] containing t_query, then pick the
-            // IGS_POINTS consecutive nodes anchored on it (half_before nodes
-            // left of the bracket, the bracket itself, the rest right).  The
-            // window shifts by exactly one node when t_query crosses an SP3
-            // epoch — and at that instant t_query lies on a node shared by
-            // both windows, so the Neville polynomial value is identical for
-            // both.  Position is continuous across the swap.
+            // IGS_POINTS consecutive nodes anchored on it: (width − 1)/2 nodes
+            // before the bracket's lower node, that node, and the remaining
+            // nodes after it, shifted inward at the data boundaries.  The window
+            // shifts by one node when t_query crosses an SP3 epoch; at that
+            // instant t_query coincides with a node shared by both windows, so both
+            // Neville polynomials return the node value and the position is
+            // continuous across the swap.
             //
-            // Selecting by nearest-N distance instead swaps a node at the
+            // Selecting the nearest N nodes instead swaps a node at the
             // midpoint between SP3 epochs (every 900/2 s for IGS Final), where
-            // the two polynomials disagree by a few mm — producing the
-            // well-known synchronous-across-constellation 15-min sawtooth in
-            // PPP position.
+            // the two polynomials disagree by a few mm.  That produces a
+            // 15-min sawtooth in PPP position, synchronous across the
+            // constellation.
             const size_t n_total = valid_nodes.size();
             const size_t n_win = std::min(IGS_POINTS, n_total);
 
@@ -1094,7 +1097,7 @@ namespace GnssProcessor {
             std::vector<NodeEntry> nodes(valid_nodes.begin() + win_start,
                                          valid_nodes.begin() + win_end);
 
-            // === STEP 3: Extrapolation and gap checks (chronological order) ===
+            // === Step 3: extrapolation and gap checks (chronological order) ===
             const double t_first = nodes.front().t;
             const double t_last  = nodes.back().t;
 
@@ -1126,7 +1129,7 @@ namespace GnssProcessor {
                 }
             }
 
-            // === STEP 4: Build interpolation arrays sorted by distance from query ===
+            // === Step 4: build interpolation arrays sorted by distance from query ===
             // Neville's algorithm converges best when nodes are ordered nearest-first.
             const size_t n = nodes.size();
 
@@ -1137,17 +1140,18 @@ namespace GnssProcessor {
 
             // Earth-rotation pre-correction (RTKLIB / cssrlib / IGS convention):
             // rotate each SP3 node's (X, Y) into the ECEF frame at @c t_query
-            // before interpolating.  Without this step the polynomial is fitting
-            // a function that carries the sidereal ω-frequency oscillation of
-            // ECEF relative to the satellite's inertial trajectory, and a degree-
-            // 10 fit can't capture that perfectly — the residual is sub-mm in the
-            // window interior but grows to ~mm near SP3 boundaries.  With the
-            // pre-correction the polynomial fits a near-inertial smooth function.
+            // before interpolating.  Without this step the polynomial fits a
+            // function that carries the sidereal ω-frequency rotation of ECEF
+            // relative to the satellite's inertial trajectory, which a degree-10
+            // fit does not capture exactly: the residual is sub-mm in the window
+            // interior and grows to about 1 mm near the SP3 boundaries.  With the
+            // pre-correction the polynomial fits a smooth, near-inertial function.
             //
-            // The rotation: ECEF(t_query) = R_z(ω·(t_node − t_query)) · ECEF(t_node).
-            // Evaluated at t = t_query the rotation angle is 0, so the
-            // interpolated value is directly the ECEF position at the query
-            // epoch — no post-rotation needed.
+            // The rotation: ECEF(t_query) = R_z(ω·(t_node − t_query)) · ECEF(t_node),
+            // with R_z the counter-clockwise rotation [cos −sin; sin cos] in (X, Y).
+            // All nodes are then expressed in the ECEF frame of t_query, so the
+            // value interpolated at t_query is the ECEF position at the query
+            // epoch with no post-rotation.
             const double omegaE_interp = Constants::EARTH_ANGULAR_VELOCITY;
             std::vector<double> x(n);
             std::vector<double> yx(n), yy(n), yz(n);
@@ -1168,12 +1172,12 @@ namespace GnssProcessor {
             Eigen::Vector3d vel = Eigen::Vector3d::Zero();
 
             // Neville's algorithm: simultaneous position and velocity interpolation.
-            // The polynomial derivative at t_query gives the velocity in the
-            // ECEF-at-t_query frame, which is an inertial frame snapshot — so
-            // the raw derivative is the satellite's INERTIAL velocity.
-            // Downstream consumers (Doppler line-of-sight rate, BeiDou orbit-
-            // normal yaw, relativistic r·v) expect ECEF-frame velocity; recover
-            // it via  v_ecef = v_inertial − ω × pos, i.e. for ω = (0,0,ω):
+            // The polynomial derivative at t_query is taken in the ECEF frame
+            // frozen at t_query, which does not rotate, so the raw derivative is
+            // the satellite's inertial velocity.  Downstream consumers (Doppler
+            // line-of-sight rate, BeiDou orbit-normal yaw, relativistic r·v)
+            // expect ECEF-frame velocity, recovered as
+            // v_ecef = v_inertial − ω × pos, i.e. for ω = (0,0,ω):
             //   v_ecef.x = v_inertial.x + ω · pos.y
             //   v_ecef.y = v_inertial.y − ω · pos.x
             //   v_ecef.z = v_inertial.z
@@ -1183,18 +1187,18 @@ namespace GnssProcessor {
             try {
                 double px, vx, py, vy, pz, vz;
                 if (config_.enableTrigSp3Interp()) {
-                    // Sidereal-trig SVD fit on the SAME derotated channels and time
-                    // base the Neville path uses (yx/yy/yz vs continuous GPS seconds
-                    // x).  The window is up to IGS_POINTS nodes, so with a 9-term
-                    // basis this is an N-point LEAST-SQUARES SMOOTHER (does NOT pass
-                    // through the nodes for N>9) — a deliberate divergence from the
-                    // M-PAGES 9-point exact fit, kept so the trig branch reuses the
-                    // existing derotated window verbatim (see trigSvdInterp doc).
-                    // Per-node sigmas come from the SP3 '++' accuracy codes; those
-                    // are a single value per satellite, so the sigma set is uniform
-                    // and the fit is effectively unweighted — matching M-PAGES,
-                    // whose per-satellite SVsig is likewise inert.  An empty vector
-                    // forces the unweighted fast path.
+                    // Sidereal-trig SVD fit on the same derotated channels and time
+                    // base as the Neville path (yx/yy/yz against continuous GPS
+                    // seconds x).  The window holds up to IGS_POINTS nodes, so with
+                    // a 9-term basis this is an N-point least-squares smoother that
+                    // does not pass through the nodes for N > 9.  This differs on
+                    // purpose from the M-PAGES 9-point exact fit, so that the trig
+                    // branch reuses the derotated window unchanged (see the
+                    // trigSvdInterp doc).  Per-node sigmas come from the SP3 '++'
+                    // accuracy codes; those hold one value per satellite, so the
+                    // sigma set is uniform and the fit is effectively unweighted,
+                    // as in M-PAGES, whose per-satellite SVsig has no effect either.
+                    // An empty vector selects the unweighted fast path.
                     std::vector<double> sig;
                     sig.reserve(n);
                     bool any_sigma = false;
@@ -1248,15 +1252,13 @@ namespace GnssProcessor {
                 vel = Eigen::Vector3d::Zero();
             }
 
-            // Apply SSR orbit correction if a fresh record is available
-            // AND the SSR's IODE matches the broadcast-nav baseline our
-            // closest interpolation node was generated from.  When the
-            // baseline has no IODE (SP3-derived: iode=-1) the gate is
-            // permissive — the comparison no-ops, preserving the existing
-            // post-processing behaviour.  Once a broadcast-nav parser
-            // populates iode on OrbitData, the gate becomes meaningful
-            // and rejects corrections that would land on the wrong
-            // ephemeris baseline.
+            // Apply the SSR orbit correction if a fresh record is available
+            // and the SSR's IODE matches the broadcast-nav baseline of the
+            // orbit node closest in time to the query.  When the baseline has
+            // no IODE (SP3-derived: iode=-1) the gate passes every record, so
+            // post-processing behaviour is unchanged.  When OrbitData carries
+            // an iode from a broadcast-nav source, the gate rejects
+            // corrections referenced to a different ephemeris.
             int brdc_iode = -1;
             {
                 const auto it_idx = orbit_index_.find(satellite);
@@ -1285,8 +1287,9 @@ namespace GnssProcessor {
                     applied_apc =
                         (ssr->orbit_reference_point == SsrReferencePoint::APC);
                 }
-                // RTB-5(c): as in liveFallback — record only while the toggle
-                // is armed (byte-identical, allocation-free otherwise).
+                // As in liveFallback: recorded only while
+                // honor_ssr_reference_point is on; with it off the path is
+                // byte-identical and allocation-free (RTB-5(c)).
                 if (config_.getRealTimeConfig().honor_ssr_reference_point) {
                     ssr_orbit_apc_applied_[satellite] = applied_apc;
                 }
@@ -1315,10 +1318,10 @@ namespace GnssProcessor {
 
         Topocentric Geometry::computeTopocentric(const Eigen::Vector3d& rx_pos_ecef,
             const Eigen::Vector3d& sat_pos_ecef) {
-            // Pure geometry — static, no logger dependency.  Degenerate inputs
-            // (satellite essentially at the receiver, or an uninitialized
+            // Pure geometry: static, no logger dependency.  Degenerate inputs
+            // (satellite within 1 m of the receiver, or an uninitialised
             // receiver at the Earth's centre) return a zeroed Topocentric,
-            // which the caller reads as elevation 0 (below any mask).
+            // which the caller reads as elevation 0 (below any positive mask).
             Topocentric out;
 
             Eigen::Vector3d delta = sat_pos_ecef - rx_pos_ecef;

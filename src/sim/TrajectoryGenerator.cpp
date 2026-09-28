@@ -44,13 +44,13 @@ TrajectoryGenerator::TrajectoryGenerator(const TrajectoryConfig& c) {
                                  : 1.0;
             return tf + (1.0 - tf) * d;                        // floor at tf (0 = dead stop; >0 = still creeping)
         };
-        // Station-keeping prefix: the shape is IDENTICALLY zero for the first
-        // `static_prefix_s`, so `along` never advances and every epoch in the
-        // window maps to the same lat/lon => an exactly static segment.  The
-        // 300 s ramp-up is measured from the END of the hold, and because the
+        // Station-keeping prefix: the shape is identically zero for the first
+        // `static_prefix_s`, so `along` does not advance and every epoch in the
+        // window maps to the same lat/lon, giving an exactly static segment.  The
+        // 300 s ramp-up is measured from the end of the hold, and because the
         // normalisation sum S below integrates this same shape, the path length
         // still comes out exactly L (the vessel reaches the destination at the
-        // last epoch, just travelling slightly faster for the rest of the arc).
+        // last epoch, travelling slightly faster for the rest of the arc).
         const double hold = std::max(0.0, c.static_prefix_s);
         auto shape = [&](double tt) {                          // speed shape in [0,1]
             if (tt < hold) return 0.0;
@@ -71,16 +71,16 @@ TrajectoryGenerator::TrajectoryGenerator(const TrajectoryConfig& c) {
         double S = 0.0;
         for (long k = 0; k < total_steps; ++k) S += shape(k * sub) * sub;
 
-        // Every landfall path is interpolated GEODETICALLY at height h0 so the
-        // vessel stays on the sea surface (a flat ENU tangent plane would bow
-        // ~L^2/(2R), hundreds of m, off the ellipsoid over a multi-km arc).
+        // Every landfall path is interpolated geodetically at height h0 so the
+        // vessel stays on the sea surface (a flat ENU tangent plane departs from the
+        // ellipsoid by ~L^2/(2R): about 8 m at L = 10 km, about 200 m at L = 50 km).
         std::vector<double> tEp;
         std::vector<Eigen::Vector3d> rEp;
 
         if (!c.waypoints.empty()) {
             // --- Meandering path: a smooth Catmull-Rom spline through waypoints. ---
             // Control points start -> waypoints... -> dest; longitudes unwrapped so a
-            // +/-180 dateline crossing stays continuous.  The spline passes THROUGH
+            // +/-180 dateline crossing stays continuous.  The spline passes through
             // every control point, so start and dest (grounding) are hit exactly.
             std::vector<double> clat{ c.lat0_deg }, clon{ c.lon0_deg };
             auto unwrap = [](double lon, double ref) {
@@ -154,8 +154,8 @@ TrajectoryGenerator::TrajectoryGenerator(const TrajectoryConfig& c) {
             const double uE = (L > 0.0) ? aE / L : 0.0, uN = (L > 0.0) ? aN / L : 1.0;
             const double pE = uN, pN = -uE;                    // cross-track unit
             const double Vmax = (S > 0.0) ? L / S : 0.0;
-            // Cross-track meander, sin^2(pi*tau) envelope: zero VALUE and SLOPE at
-            // both ends => the track starts and grounds exactly on-axis.
+            // Cross-track meander with a sin^2(pi*tau) envelope: zero value and slope
+            // at both ends, so the track starts and grounds exactly on-axis.
             auto crossOff = [&](double tt) {
                 const double e = std::sin(Constants::PI * tt / T);
                 return c.approach_weave_amp_m
@@ -198,7 +198,7 @@ TrajectoryGenerator::TrajectoryGenerator(const TrajectoryConfig& c) {
             st.h_m = llh.h_m;
             const Eigen::Vector3d off = enu2ecef.transpose() * (st.ecef - r0);
             st.east_m = off.x(); st.north_m = off.y(); st.up_m = off.z();
-            // Heading/speed from horizontal velocity in the LOCAL ENU frame.
+            // Heading/speed from horizontal velocity in the local ENU frame at this epoch.
             const Eigen::Matrix3d e2e = Coordinates::enuToEcefMatrix(llh.lat_rad, llh.lon_rad);
             const Eigen::Vector3d venu = e2e.transpose() * v;
             st.speed_mps = std::hypot(venu.x(), venu.y());
@@ -270,19 +270,19 @@ TrajectoryGenerator::TrajectoryGenerator(const TrajectoryConfig& c) {
 //  bias(t) = clock_bias0_s + clock_drift_sps*t   (set at record time, above)
 //            + w_k, with w_0 = 0 and w_k = w_{k-1} + N(0, sqrt(q*dt)) metres/c.
 //
-//  White frequency noise integrates to a random-walk phase, which is the standard
-//  quartz-oscillator model and exactly the process a PPP filter's clock state assumes
-//  — hence the m^2/s spectral density, the same unit as `process_noise.clock_bias_q`.
-//  The FIRST epoch is deliberately undisturbed so clock_bias0_s remains the literal
-//  truth at the start of the arc (the value the answer key and the header a priori
-//  quote), and q = 0 makes the whole function a no-op with NO draw from the stream —
-//  the byte-identity guarantee for every dataset generated before this knob existed.
+//  White frequency noise integrates to a random-walk phase, the standard
+//  quartz-oscillator model and the process a PPP filter's clock state assumes; hence
+//  the m^2/s spectral density, the same unit as `process_noise.clock_bias_q`.
+//  The first epoch is left undisturbed so clock_bias0_s is the exact truth at the
+//  start of the arc (the value the answer key and the header a priori quote).  q = 0
+//  makes the function a no-op with no draw from the stream, so datasets generated
+//  before this knob existed stay byte-identical.
 // ---------------------------------------------------------------------------
 void TrajectoryGenerator::applyClockRandomWalk(const TrajectoryConfig& c) {
     if (!(c.clock_rw_q_m2ps > 0.0) || states_.empty()) return;
 
     const double dt = std::max(c.interval_s, 0.0);
-    // sqrt(q*dt) is METRES of range; the truth clock is stored in seconds.
+    // sqrt(q*dt) is in metres of range; the truth clock is stored in seconds.
     const double step_s = std::sqrt(c.clock_rw_q_m2ps * dt) / Constants::SPEED_OF_LIGHT;
 
     std::mt19937_64 rng(c.clock_seed);

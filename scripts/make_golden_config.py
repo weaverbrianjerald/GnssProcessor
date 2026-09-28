@@ -1,29 +1,29 @@
 #!/usr/bin/env python3
-"""make_golden_config.py -- generate and VERIFY the golden network configs.
+"""make_golden_config.py -- generate and verify the golden network configs.
 
-WHY.  The project ships new work default-OFF and byte-identity-gated, and the promotion
+Why: the project ships new work default-off and byte-identity-gated, and the promotion
 ledger (docs/CONFIG_promotion_ledger.{md,json}) records which knobs are validated and in
-what regime -- but nothing turned that record into an executable posture, so validated
-knobs kept being re-discovered one wasted run at a time.  The goldens ARE the standard
-armed set made executable; every new arm should be a copy of a golden with ONLY the knob
+what regime, but nothing turned that record into an executable posture, so validated
+knobs kept being re-discovered one wasted run at a time. The goldens are the standard
+armed set made executable; every new arm should be a copy of a golden with only the knob
 under test and the run paths changed.
 
-WHAT.  config/golden/golden_manifest.json lists one entry per lineage:
+What: config/golden/golden_manifest.json lists one entry per lineage:
 
     base         a shipped config (its "extends" chain is flattened base-first, child wins,
-                 exactly as the loader does -- scripts/gnss_config_chain.py)
+                 exactly as the loader does; scripts/gnss_config_chain.py)
     pins/values  knobs set on top of the base (dotted keys)
     unset        keys removed (e.g. retired hand-tunings that a promoted gate supersedes)
-    exceptions   ledger recommendations that are DELIBERATELY left unarmed, each with the
+    exceptions   ledger recommendations that are deliberately left unarmed, each with the
                  reason (the verify step accepts exactly these and nothing else)
 
-GENERATE (default) writes each golden as a FLAT config (no extends) with a provenance
-comment, rewrites the run paths under runs/<name>/, then VERIFIES.
+Generate (default) writes each golden as a flat config (no extends) with a provenance
+comment, rewrites the run paths under runs/<name>/, then verifies.
 
-VERIFY (--verify, also run after generate) evaluates every RECOMMEND_ON / RECOMMEND_SCOPED
-ledger row against the golden with the SAME regime + armed_when logic the offline checker
-and the loader use (scripts/config_posture_check.py).  Any in-regime recommendation that is
-unarmed and not in the golden's exceptions is a FAILURE (exit 1) -- so a ledger row added by a
+Verify (--verify, also run after generate) evaluates every RECOMMEND_ON / RECOMMEND_SCOPED
+ledger row against the golden with the same regime and armed_when logic the offline checker
+and the loader use (scripts/config_posture_check.py). Any in-regime recommendation that is
+unarmed and not in the golden's exceptions is a failure (exit 1), so a ledger row added by a
 future card that the goldens do not carry fails the next verify, which is the promotion step.
 It also fails if a pinned knob does not read back, or if an exception names a knob that is
 armed (a stale exception).
@@ -74,9 +74,9 @@ def _unset_dotted(d, key):
     return cur.pop(parts[-1], None) is not None if isinstance(cur, dict) else False
 
 
-#: OUTPUT-side keys whose runs/<dir>/ component is re-pointed at the golden's own run dir.
+#: Output-side keys whose runs/<dir>/ component is re-pointed at the golden's own run dir.
 #: Input paths (rinex_path, the fixture roster, internal_data_root, replay_products_path) are
-#: NEVER rewritten -- the first generator did, and the sim golden then failed to parse every
+#: never rewritten: an earlier generator did, and the sim golden then failed to parse every
 #: station's RINEX (it looked for the fixture under runs/<golden>/).
 OUTPUT_PATH_KEYS = ("product_output_path", "state_snapshot_path")
 

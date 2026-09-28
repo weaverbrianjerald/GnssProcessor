@@ -1,74 +1,74 @@
 #!/usr/bin/env python3
 """Characterize a network null-space "storm": decompose the below-cutoff
-near-null directions of the shared border by CLASS, constellation and culprit
-satellite, so a rank-gate/datum change is judged by what it moved rather than by
-a raw count.
+near-null directions of the shared border by class, constellation and culprit
+satellite, so that a rank-gate or datum change is judged by what it moved rather
+than by a raw count.
 
 The producer's null-space rank gate withholds a whole epoch when the number of
 (relatively) zero eigenvalues of the reduced shared normals differs from the
-declared S-basis dimension.  When that fires, the raw count is nearly useless on
-its own: the below-cutoff population is FOUR different things with FOUR different
-owners, and two of them move in opposite directions under the same change.
+declared S-basis dimension.  When that happens, the raw count says little on
+its own: the below-cutoff population consists of four different classes with
+four different owners, and two of them move in opposite directions under the
+same change.
 
-  declared clock gauges     pure CLK| directions, ev ~1e-9 abs.  EXPECTED.
-  sparse-code confounds     1-2-station (sat,signal) code.  GENUINELY null
-                            (~1e-11 abs) — no gate value can clear them; the
-                            W6 admission census + phase co-gate own them.
-  weak-but-real families    observable but weak (~1e-3 abs), MISCOUNTED by a
+  declared clock gauges     pure CLK| directions, ev ~1e-9 abs.  Expected.
+  sparse-code confounds     1-2-station (sat,signal) code.  Truly null
+                            (~1e-11 abs): no gate value can clear them; the
+                            W6 admission census and the phase co-gate own them.
+  weak-but-real families    observable but weak (~1e-3 abs), miscounted by a
                             single relative cutoff.  Gate calibration owns them
                             (network.rank_gate_tol).
   deep phase orphans        admitted thin signals with no reachable ambiguity
                             anchor.  The prioritized drop-and-heal owns them.
 
-Two arms whose totals are 22 and 33 per dump can therefore be BETTER, not worse,
-if the 33 traded true nulls for weak-real ones.  Every table below is
-class-decomposed for exactly that reason.
+Of two arms with 22 and 33 directions per dump, the one with 33 can therefore be
+the better one, if it traded true nulls for weak-real ones.  Every table below is
+class-decomposed for that reason.
 
-WHY THE UNITS ARE LABELLED EVERYWHERE
--------------------------------------
-The spectrum dump is BUDGET-LATCHED (the producer dumps only the first N gate
-evaluations of a run, N = 6 today).  "135 directions" and "22 directions per
-dump" are the SAME measurement in two units, and mixing them silently is the
-documented anti-pattern this tool exists to end.  Every printed count carries
-its unit, and an arm-vs-arm table uses ONE unit for the whole table (--unit).
+Units
+-----
+The spectrum dump is budget-latched (the producer dumps only the first N gate
+evaluations of a run, N = 6 at the time of writing).  "135 directions" across 6
+dumps and "22 directions per dump" are the same measurement in two units, so every
+printed count carries its unit, and an arm-vs-arm table uses one unit for the whole
+table (--unit).
 
 Sources
 -------
-(1) ``network_estimability.csv`` — the Card-DG machine-readable dump.  Preferred
+(1) ``network_estimability.csv``, the Card-DG machine-readable dump.  Preferred
     when present: exact values, no text parsing, and it carries the RUN record
-    with run-wide gate telemetry the log does not have.
-(2) ``main_log.log`` (or any stdout capture) — the ``Network[estimability]:``
-    WARN lines.  The ONLY source for archived runs, because LogManager DELETES
-    the log directory's *.log on every start, so historical evidence survives
-    only as console captures.  This fallback must keep working.
+    with run-wide gate telemetry that the log does not have.
+(2) ``main_log.log`` (or any stdout capture): the ``Network[estimability]:``
+    WARN lines.  This is the only source for archived runs, because LogManager
+    deletes the log directory's *.log on every start, so historical evidence
+    survives only as console captures.  This fallback has to keep working.
 
 An input may be a run directory (``<run>/logs/`` is searched too), a log
-directory, or a plain file — the storm archives are loose ``.log`` captures.
+directory, or a plain file (the storm archives are loose ``.log`` captures).
 
 Sections
 --------
-(a) SOURCE + census: dumps found, directions below cutoff, both units.
-(b) CLASS decomposition: the family signature of each direction's significant
+(a) Source and census: dumps found, directions below cutoff, both units.
+(b) Class decomposition: the family signature of each direction's significant
     components (``pure_CB`` / ``pure_PB`` / ``pure_CLK`` / ``CB+PB`` / ...).
     This is the table that decides whether a change helped.
-(c) EIGENVALUE structure: per-decade histogram plus the gap bands, which is
-    where a calibration value is READ OFF (a cutoff must sit >= 2 decades above
-    the gauge depth and >= 2 decades below the weakest-real layer).
-(d) CONSTELLATION signature and per-satellite culprits.
-(e) WITHHOLD disposition — read from the log even when the spectrum came from
+(c) Eigenvalue structure: per-decade histogram plus the gap bands, from which a
+    calibration value is read off (a cutoff must sit >= 2 decades above the
+    gauge depth and >= 2 decades below the weakest-real layer).
+(d) Constellation signature and per-satellite culprits.
+(e) Withhold disposition, read from the log even when the spectrum came from
     the CSV (a run directory hands back both).
-(f) ARM-vs-ARM diff when two inputs are given.
+(f) Arm-vs-arm diff when two inputs are given.
 
-A NOTE ON TWO NUMBERS THAT LOOK COMPARABLE AND ARE NOT: the dump's
-``N ev<cutoff`` and the withhold line's ``observed M``.  On ARCHIVED logs these
-are different quantities — the withhold message reported the POST-heal re-gate,
-i.e. what survived after the drop-and-heal folded its soft anchors.  Measured on
-the 305 control arm at TOW 259200: dump 22, withhold 14, identical cutoff.
-Current producers report the FIRST gate evaluation (pre-heal) on that line, and
-this tool reads it, so the confound is gone going forward — but the two are
-still produced by different code paths at different points in the epoch and have
-never been shown equal on real data, so this tool STILL does not cross-validate
-or sum them.  Treat a mismatch as a question, not a bug.
+Two numbers that look comparable are not: the dump's ``N ev<cutoff`` and the
+withhold line's ``observed M``.  On archived logs they are different
+quantities: the withhold message reported the post-heal re-gate, i.e. what
+remained after the drop-and-heal folded its soft anchors (on the 305 control arm
+at TOW 259200: dump 22, withhold 14, same cutoff).  Current producers report the
+first gate evaluation (pre-heal) on that line, and this tool reads it; the two
+numbers are still produced by different code paths at different points in the
+epoch and have not been shown equal on real data, so this tool does not
+cross-validate or sum them.  A mismatch is a question, not necessarily a bug.
 
 Usage
 -----
@@ -80,14 +80,15 @@ Usage
 
 Cross-check
 -----------
-``--cross-check`` re-derives the 2026-07-22 CB-ADM investigation's recorded
-control-arm numbers from the archived log and reports each as PASS/FAIL.  A
-disagreement means either the emitter's label formats moved or the classifier
-drifted — the arithmetic here has no free parameters beyond --sig and the band
-edges.  Oracle (control arm, ``_maxnet_305_gpsgalbds_d15_5ep_ctl.json``):
-135 directions across 6 dumps; constellation BeiDou 123 / Galileo 6 / GPS 6;
-families CB+PB 98, pure-CLK 16, CB+CLK+PB 13, pure-CB 7, CLK+PB 1; 118 of 135
-involve a CB| component; top culprits C06 71, C13 68, C29 53, C16 49.
+``--cross-check`` re-derives the recorded control-arm numbers of the 2026-07-22
+CB-ADM investigation (docs/SPEC_cb_admission_card.md §10.6) from the first input
+and reports each as PASS/FAIL.  A disagreement means either the emitter's label
+formats moved or the classifier changed; the arithmetic here has no free
+parameters beyond --sig and the band edges.  Oracle (control arm,
+``_maxnet_305_gpsgalbds_d15_5ep_ctl.json``): 135 directions across 6 dumps;
+constellation BeiDou 123 / Galileo 6 / GPS 6; families CB+PB 98, pure-CLK 16,
+CB+CLK+PB 13, pure-CB 7, CLK+PB 1; 118 of 135 involve a CB| component; top
+culprits C06 71, C13 68, C29 53, C16 49.
 
 Exit codes: 0 = report produced; 1 = no usable input found (nothing analyzed);
 2 = --cross-check requested and at least one oracle value disagreed.
@@ -105,23 +106,23 @@ import sys
 
 # A component's weight must reach this to count toward a direction's family /
 # constellation signature.  0.10 is the value the CB-ADM investigation used; the
-# published oracle numbers are only reproducible at this threshold.
+# published oracle numbers reproduce only at this threshold.
 SIG_DEFAULT = 0.10
 
-# The families the producer's column descriptors can carry.  Authoritative list,
-# read off the emitter (ApplicationNetworkAssembly column registration):
+# The families the producer's column descriptors can carry, as read off the
+# emitter (ApplicationNetworkAssembly column registration):
 #   "CLK|sat"  "PB|sat|sig"  "CB|sat|sig"  "SH|n|m|trig"  "SH2|n|m|trig"
-# plus the "colN" fallback for an unlabeled column.  Anything else is a NEW
-# label format and is reported as such rather than silently dropped.
+# plus the "colN" fallback for an unlabeled column.  Anything else is an
+# unknown label format and is reported as such rather than dropped.
 KNOWN_FAMILIES = ('CLK', 'PB', 'CB', 'SH', 'SH2')
 
 # Band edges (absolute eigenvalue) for the gap read-off in section (c).  The
 # defaults are the decades the 305-station spectrum separates into.
 BANDS_DEFAULT = (1e-3, 1e-6, 1e-9)
 
-# The dump prints `below + 2` directions -- two ABOVE the cutoff, as context.
-# Every census here filters on the dump's OWN cutoff instead of trusting the row
-# count, and instead of any hard-coded cutoff value (it differs between arms).
+# The dump prints `below + 2` directions: two above the cutoff, as context.
+# Every census here filters on the dump's own cutoff (Dump.below) instead of
+# trusting the row count or a hard-coded cutoff value (it differs between arms).
 CONSTELLATION_NAMES = {'G': 'GPS', 'R': 'GLONASS', 'E': 'Galileo', 'C': 'BeiDou',
                        'J': 'QZSS', 'S': 'SBAS', 'I': 'IRNSS'}
 
@@ -132,19 +133,19 @@ _RE_HDR = re.compile(
 _RE_DIR = re.compile(
     r'Network\[estimability\]:\s+ev=([-\d.eE+]+)\s+dir spanned by \[([^\]]*)\]')
 # The withhold WARN.  Current producers emit one line per withheld epoch on
-# EVERY route (heal failed, re-gate failed, or heal anchored nothing and never
-# re-gated).  Pre-fix producers emitted a warn ONLY when the inner heal/re-gate
-# threw, so a heal that anchored 0 columns left the epoch invisible in the log
-# -- the legacy pattern is kept so archived run logs still parse, with the
-# caveat that their withhold census is a LOWER BOUND (the run-end
-# "withheld N epoch(s)" counter is the authority for those).
+# every route (heal failed, re-gate failed, or heal anchored nothing and never
+# re-gated).  Older producers emitted a warn only when the inner heal/re-gate
+# threw, so an epoch whose heal anchored 0 columns has no line in their logs.
+# The legacy pattern is kept so archived run logs still parse; their withhold
+# census is a lower bound (the run-end "withheld N epoch(s)" counter is the
+# authority for those).
 _RE_WITHHOLD_TOW = re.compile(
     r'observability gate at TOW\s+([-\d.eE+]+)\s+withheld product')
 _RE_WITHHOLD_TOW_LEGACY = re.compile(r'TOW\s+([-\d.eE+]+)\s+drop-and-heal failed')
-# First match on the line is the FIRST gate evaluation: current lines lead with
-# "First gate: <exception>" and only then append the heal-failure text, and
-# legacy lines carry the re-gate exception alone.  So this reads the pre-heal
-# count on a current log and the post-heal count on an archived one.
+# The first match on the line is the first gate evaluation: current lines lead
+# with "First gate: <exception>" and only then append the heal-failure text, and
+# legacy lines carry the re-gate exception alone.  This reads the pre-heal count
+# on a current log and the post-heal count on an archived one.
 _RE_WITHHOLD_OBS = re.compile(r'observed\s+(\d+)\s+\(near-\)zero')
 
 
@@ -168,8 +169,9 @@ def parse_label(label):
     """Split one column descriptor into (family, sat, signal).
 
     Returns family='col' for the unlabeled fallback and family='?' for anything
-    the emitter is not known to produce -- surfaced in the report rather than
-    dropped, because a silently-unclassified direction reads as "clean".
+    the emitter is not known to produce.  Unknown labels are surfaced in the
+    report rather than dropped, because an unclassified direction would otherwise
+    read as "clean".
     """
     label = label.strip()
     if not label:
@@ -180,7 +182,7 @@ def parse_label(label):
     fam = parts[0]
     if fam not in KNOWN_FAMILIES:
         return ('?', None, None)
-    if fam in ('SH', 'SH2'):          # SH|n|m|trig -- a field, not a satellite
+    if fam in ('SH', 'SH2'):          # SH|n|m|trig: a field, not a satellite
         return (fam, None, None)
     sat = parts[1].replace(' ', '') if len(parts) > 1 else None
     sig = parts[2] if len(parts) > 2 else None
@@ -220,12 +222,12 @@ class Dump(object):
         self.declared_dim = declared_dim
         self.ev_max = ev_max
         self.cutoff = cutoff
-        self.n_below = n_below          # as REPORTED by the producer
-        self.dirs = []                  # [(ev, components)] -- ALL reported rows
+        self.n_below = n_below          # as reported by the producer
+        self.dirs = []                  # [(ev, components)], all reported rows
 
     @property
     def below(self):
-        """The rows genuinely below THIS dump's cutoff (the +2 context removed)."""
+        """The rows below this dump's cutoff (the +2 context rows removed)."""
         return [(ev, comps) for ev, comps in self.dirs if ev < self.cutoff]
 
 
@@ -339,9 +341,9 @@ def find_log(path):
 def resolve_input(path):
     """Return (kind, spectrum_path, log_path) for a run dir, log dir, or file.
 
-    The CSV wins for the SPECTRUM (exact values, no text parsing) but carries no
-    per-epoch withhold lines, so a run dir that has both hands back the log as
-    well — section (e) then works on either source.
+    The CSV is preferred for the spectrum (exact values, no text parsing) but
+    carries no per-epoch withhold lines, so a run dir that has both hands back the
+    log as well; section (e) then works on either source.
     """
     log_p = find_log(path)
     if os.path.isfile(path):
@@ -375,7 +377,7 @@ def scavenge_withholds(arm, log_path):
 # classification
 # ---------------------------------------------------------------------------
 def signature(comps, sig):
-    """The '+'-joined FAMILY signature of a direction's significant components."""
+    """The '+'-joined family signature of a direction's significant components."""
     fams = sorted({c[0] for c in comps if c[3] >= sig})
     if not fams:
         return 'none'
@@ -385,15 +387,15 @@ def signature(comps, sig):
 
 
 def const_signature(comps, sig):
-    """The '+'-joined CONSTELLATION signature (satellite-bearing families only)."""
+    """The '+'-joined constellation signature (satellite-bearing families only)."""
     cs = sorted({c[1][0] for c in comps if c[3] >= sig and c[1]})
     return '+'.join(cs) if cs else 'none'
 
 
 def decade(ev):
     """Histogram bin label for one eigenvalue (<=0 is its own bin: the reduced
-    normals are only positive-SEMIdefinite, so a rounding-negative gauge is
-    normal and must not be dropped by a log10)."""
+    normals are only positive semidefinite, so a rounding-negative gauge is
+    expected and must not be dropped by a log10)."""
     if ev <= 0.0:
         return '<=0'
     e = int(math.floor(math.log10(ev)))
@@ -411,7 +413,7 @@ def band(ev, bands):
 
 
 def analyze(arm, sig, bands):
-    """Everything section (b)-(d) prints, in BOTH units, for one arm."""
+    """Everything sections (b)-(d) print, in both units, for one arm."""
     rows = arm.all_below()
     n_dumps = max(arm.n_dumps, 1)
     r = {
@@ -428,10 +430,10 @@ def analyze(arm, sig, bands):
         'reported_below_per_dump': [d.n_below for d in arm.dumps],
         'run': arm.run,
     }
-    # Consistency guard: the producer's own N ev<cutoff vs what we re-derived
-    # from the printed rows.  They can differ ONLY if the dump was truncated
-    # (it prints below+2 rows, so it cannot be) -- a mismatch means the parser
-    # missed rows, which would silently deflate every table below.
+    # Consistency guard: the producer's own N ev<cutoff against the count
+    # re-derived from the printed rows.  They could differ only if the dump were
+    # truncated, and it prints below+2 rows, so a mismatch means the parser
+    # missed rows, which would deflate every table below.
     mismatch = [(d.tow, d.n_below, len(d.below)) for d in arm.dumps
                 if d.n_below != len(d.below)]
     r['parse_mismatch'] = mismatch
@@ -627,8 +629,8 @@ def _class_note(k):
 
 
 def _placement_hint(r, args):
-    """Print the DG3 placement read-off: the three numbers a non-default
-    network.rank_gate_tol must be justified by, plus what would SURVIVE it."""
+    """Print the DG3 placement read-off: the three numbers that justify a
+    non-default network.rank_gate_tol, plus what would remain below it."""
     pl = r.get('placement') or {}
     gd, wf = pl.get('gauge_depth_abs'), pl.get('weak_real_floor_abs')
     print('    DG3 placement read-off (the three numbers an armed tolerance must '
@@ -661,9 +663,9 @@ def _placement_hint(r, args):
     if decades < 4.0:
         print('      !! WARNING: under 4 decades leaves less than 2 decades of '
               'margin per side — DG3 does not authorize arming a value here.')
-    # The falsifier prediction: DG clears the weak-real layer, but anything
-    # genuinely null stays below ANY positive cutoff.  Say so up front so the
-    # armed run is judged on the census SHIFT, not on whether it emitted.
+    # The falsifier prediction: DG clears the weak-real layer, but anything truly
+    # null stays below any positive cutoff.  Printing it up front lets the armed
+    # run be judged on the census shift, not on whether it emitted.
     rem = pl.get('remaining_below_proposed', {})
     n_rem = sum(rem.values())
     print('      at that cutoff, %d direction(s) %s would REMAIN below it:'
@@ -683,16 +685,19 @@ def _placement_hint(r, args):
 def compute_placement(arm, r, sig, bands):
     """Derive DG3's placement inputs from the measured spectrum.
 
-    gauge depth      = max |ev| over the DECLARED gauges, identified by class
+    gauge depth      = max |ev| over the declared gauges, identified by class
                        (pure_CLK).  |ev| because the reduced normals are only
-                       positive-SEMIdefinite: a rounding-negative gauge is normal.
-    weak-real floor  = min ev among below-cutoff directions in the TOP band
-                       (>= bands[0]) — the weak-but-real layer as the operator's
-                       own band edge defines it.
-    remaining        = what would still be below a mid-gap cutoff, BY CLASS.  A
-                       genuinely null direction is null at every positive cutoff,
-                       so this is the honest prediction of whether calibration
-                       alone can make the arm emit.
+                       positive semidefinite: a rounding-negative gauge is expected.
+    weak-real floor  = min ev among below-cutoff directions in the top band
+                       (>= bands[0]), i.e. the weak-but-real layer as the
+                       operator's own band edge defines it.
+    remaining        = what would still be below the mid-gap cutoff
+                       sqrt(gauge depth * weak-real floor), by class.  A truly
+                       null direction is null at every positive cutoff, so this
+                       predicts whether calibration alone can make the arm emit.
+
+    The proposed rank_gate_tol is that cutoff divided by max(lambda_max, 1).
+    Stores the result in r['placement'].
     """
     gauge, top_band = [], []
     for _d, ev, comps in arm.all_below():
@@ -775,7 +780,7 @@ def _diff_row(name, a, b, na, nb, u):
 
 
 # ---------------------------------------------------------------------------
-# A4 cross-check
+# Cross-check against the recorded control-arm numbers (A4)
 # ---------------------------------------------------------------------------
 ORACLE = {
     'source': 'docs/SPEC_cb_admission_card.md §10.6, 305 CONTROL arm '

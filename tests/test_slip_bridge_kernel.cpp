@@ -1,14 +1,17 @@
 /**
  * @file test_slip_bridge_kernel.cpp
- * @brief Unit tests for SlipBridgeKernel::recover — the non-causal GF+MW
+ * @brief Unit tests for SlipBridgeKernel::recover, the non-causal GF+MW
  *        cycle-slip integer attribution.
  *
- * These integer-injection cases are the primary guard against the two
- * documented arithmetic traps: the asymmetric PppUtils arg order
- * (getFrequency(sig,sys,sat) vs getWavelength(sys,sig,sat)) and the
- * lambda1-in-numerator term in the dN2 inversion.  Synthetic GF/MW steps are
- * built from the SAME GPS frequencies the kernel looks up, so a correct
- * recovery is an exact integer match AND a sane wide-lane wavelength.
+ * These integer-injection cases are the main guard against two known arithmetic
+ * traps: the asymmetric PppUtils argument order (getFrequency(sig,sys,sat)
+ * against getWavelength(sys,sig,sat)) and the lambda1 term in the numerator of
+ * the dN2 inversion.  Synthetic GF/MW steps are built from the same GPS
+ * frequencies the kernel looks up, so a correct recovery gives an exact integer
+ * match and the expected wide-lane wavelength.
+ *
+ * SlipBridgeKernel has no production caller; only this test calls it
+ * (processing.enable_noncausal_slip_bridge is parsed, but its getter is never read).
  */
 #include <gtest/gtest.h>
 
@@ -81,7 +84,7 @@ TEST(SlipBridgeKernel, RecoversNegativeAndEqualSlips) {
     SlipBridgeKernel kernel(ppp);
     JumpGapFitter fitter;
 
-    // Equal slip on both bands (dN_wl = 0) — the MW blind spot GF must catch.
+    // Equal slip on both bands (dN_wl = 0): invisible to MW, so GF has to catch it.
     auto w = makeInjected(ppp, /*dN1=*/-3, /*dN2=*/-3);
     auto r = kernel.recover(w, "G01", System::GPS, "L1C", "L2W", fitter);
     ASSERT_TRUE(r.ok);
@@ -97,7 +100,7 @@ TEST(SlipBridgeKernel, OrderIndependentForReversedSignalArgs) {
     JumpGapFitter fitter;
 
     const auto w = makeInjected(ppp, 2, 1);  // built hi-first
-    // Pass the pair reversed (lo first) — kernel must reorder hi-first.
+    // Pass the pair reversed (lo first); the kernel reorders it hi-first.
     const auto r = kernel.recover(w, "G01", System::GPS, "L2W", "L1C", fitter);
 
     ASSERT_TRUE(r.ok);
@@ -116,7 +119,7 @@ TEST(SlipBridgeKernel, RejectsNonIntegerStep) {
     const double f2 = ppp.getFrequency("L2W", System::GPS, "G01");
     const double lam1 = ppp.getWavelength(System::GPS, "L1C", "G01");
     const double lam2 = ppp.getWavelength(System::GPS, "L2W", "G01");
-    // Force dN2_real = 1.5 (frac 0.5 > 0.30) with dN_wl = 1.
+    // Force dN2_real = 1.5 (frac 0.5 > the default 0.30 acceptance) with dN_wl = 1.
     const double half_gf = 1.5 * (lam1 - lam2) + lam1 * 1.0;
     (void)f1; (void)f2;
 
@@ -133,7 +136,7 @@ TEST(SlipBridgeKernel, RejectsDegenerateSameBand) {
     JumpGapFitter fitter;
 
     const auto w = makeInjected(ppp, 2, 1);
-    // Same-band pair ⇒ GF degenerate ⇒ recovery must fail.
+    // A same-band pair makes GF degenerate, so recovery fails.
     const auto r = kernel.recover(w, "G01", System::GPS, "L1C", "L1W", fitter);
     EXPECT_FALSE(r.ok);
 }

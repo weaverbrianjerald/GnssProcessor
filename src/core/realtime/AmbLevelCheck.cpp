@@ -1,6 +1,6 @@
 /**
  * @file AmbLevelCheck.cpp
- * @brief Card ALC: implementation of the windowed code-level re-validation.
+ * @brief Implementation of the windowed code-level re-validation (card ALC).
  *
  * See AmbLevelCheck.hpp for the statistic, the test and the restart contract.
  */
@@ -45,7 +45,7 @@ void AmbLevelCheck::moments(const std::deque<double>& v, double floor,
     if (n < 2) return;
     double ss = 0.0;
     for (double x : v) { const double d = x - mean; ss += d * d; }
-    // Sample sigma (n-1), then the sigma OF THE MEAN, then the floor.
+    // Sample sigma (n-1), then the standard error of the mean, then the floor.
     const double s_sample = std::sqrt(ss / static_cast<double>(n - 1));
     const double s_mean   = s_sample / std::sqrt(static_cast<double>(n));
     sigma = (s_mean > floor) ? s_mean : floor;
@@ -86,9 +86,9 @@ AmbLevelCheck::Verdict AmbLevelCheck::push(const std::string& sat,
         ++ctr_.trips_if;
     }
 
-    // A trip clears the window in BOTH modes (class banner): in `act` it is
-    // redundant with the refloat's variance re-inflation, in `observe` it is what
-    // makes the census count distinct trip EVENTS.
+    // A trip clears the window in both modes (class banner).  In `act` the clear
+    // is redundant with the restart that follows the refloat; in `observe` it
+    // makes the counters record distinct trip events.
     if (v.test != Test::None) { w.wl.clear(); w.ifd.clear(); }
     return v;
 }

@@ -21,7 +21,7 @@
 namespace GnssProcessor {
 
 /**
- * @brief RTB-1(c) leap-second override + the two opt-in process-wide SSR store policies (RTA-13 code-bias band fallback, Card 7 orbit/clock skew budget).  Must run before any stream thread decodes a frame.
+ * @brief Applies the configured leap-second override (RTB-1(c)) and the two opt-in process-wide SSR store policies: the code-bias band fallback (RTA-13) and the orbit/clock skew budget (Card 7).  Must run before any stream thread decodes a frame.
  *
  * Relocated verbatim from the pre-cut RealTimeEngine::initialize
  * (frozen lines 98-130); see scripts/rt_seam_verify.py.
@@ -29,20 +29,20 @@ namespace GnssProcessor {
 void RealTimeEngine::armSsrStoreOptions() {
     auto log = log_manager_.getLogger("rt_engine");
 
-    // RTB-1(c): apply the configured GPS-UTC leap-second count to the RT
-    // wall-clock→GPS conversion (nowContinuousGpsSeconds) — the host-clock
-    // anchor of the RTCM decode paths (cold-start week promotion, GLONASS day
-    // resolution) and the obs-lag measurement.  Default equals the compiled
-    // TimeUtils::LEAP_SECONDS, so an unconfigured run is a no-op.  Set BEFORE
-    // any stream thread decodes a frame.  Nav-derived leap seconds (LNAV
-    // ΔtLS) are the RTF-scale follow-on.
+    // Apply the configured GPS-UTC leap-second count to the real-time
+    // wall-clock-to-GPS conversion (nowContinuousGpsSeconds).  That conversion is
+    // the host-clock anchor of the RTCM decode paths (cold-start week promotion,
+    // GLONASS day resolution) and of the obs-lag measurement.  The default equals
+    // the compiled TimeUtils::LEAP_SECONDS, so an unconfigured run is unchanged.
+    // Set before any stream thread decodes a frame.  Leap seconds from navigation
+    // data (LNAV ΔtLS) are not used yet (RTF-scale follow-on).  (RTB-1(c))
     TimeUtils::setLeapSecondsOverride(
         static_cast<double>(config_.getRealTimeConfig().leap_seconds));
 
-    // RTA-13 (opt-in): arm the CODE-domain band-wise bias fallback on the
-    // process-wide store for the live-stream path.  An injected OWNED store is
-    // armed by its owner (Application::runRealTime) at creation.  Default off —
-    // the store is untouched and every lookup byte-identical.
+    // Opt-in: arm the band-wise code-bias fallback on the process-wide store for
+    // the live-stream path.  An injected store owned by Application::runRealTime
+    // is armed there at creation.  Off by default; the store is untouched and
+    // every lookup byte-identical.  (RTA-13)
     if (config_.ssrBiasBandFallback()) {
         SsrCorrectionStore::getInstance().setCodeBiasBandFallback(true);
         log->info("SSR code-bias band fallback ON (processing.ssr_bias_band_fallback): an "
@@ -50,10 +50,10 @@ void RealTimeEngine::armSsrStoreOptions() {
                   "attribute DCB absorbed by receiver code-bias states); PHASE never falls back.");
     }
 
-    // Card 7 (opt-in, same pattern): arm the orbit/clock coherence skew budget
-    // on the process-wide store.  An injected OWNED store is armed by its owner
-    // (Application::runRealTime) at creation.  Default 0 — the store is
-    // untouched and clock application byte-identical.
+    // Opt-in, same pattern: arm the orbit/clock coherence skew budget on the
+    // process-wide store.  An injected store owned by Application::runRealTime is
+    // armed there at creation.  The default 0 leaves the store untouched and clock
+    // application byte-identical.  (Card 7)
     if (const double skew = config_.getNetworkConsumerConfig().orbit_clock_max_skew_s;
         skew > 0.0) {
         SsrCorrectionStore::getInstance().setOrbitEchoMaxSkew(skew);
@@ -78,10 +78,10 @@ bool RealTimeEngine::initProducts() {
     // not precise SP3/CLK, so those are skipped below.
     product_parser_ = std::make_unique<ProductParser>(config_, log_manager_);
 
-    // RinexParser is still needed as a structural dependency of PppModel for
-    // header metadata (antenna type, approximate position).  In real-time mode
-    // we construct it but parsing the observation file is optional  if one is
-    // configured we parse it to seed the header, otherwise we set defaults.
+    // PppModel still depends on RinexParser for header metadata (antenna type,
+    // approximate position).  In real-time mode the parser is constructed, and
+    // parsing the observation file is optional: a configured file is parsed to
+    // seed the header, otherwise defaults are used.
     rinex_parser_ = std::make_unique<RinexParser>(config_, log_manager_, *product_parser_);
 
     std::filesystem::path obs_path = config_.getObservationPath();
@@ -94,8 +94,8 @@ bool RealTimeEngine::initProducts() {
     // Live SBF/RTCM streams carry no RINEX ANT # / TYPE record.  Seed the
     // receiver antenna type from config when the header is empty so the
     // receiver ATX entry can be matched (PCO/PCV + the require_atx_coverage
-    // gate).  The RINEX header (post-processing) always wins — this only
-    // fills a genuinely-empty field.  This is the single injection seam;
+    // gate).  A RINEX header value (post-processing) always wins: this only
+    // fills an empty field.  This is the only injection site;
     // Application::run() (post-processing) never calls setReceiverAntennaType.
     if (rinex_parser_->getReceiverAntennaType().empty()) {
         const std::string& ov = config_.getModelCorrections().receiver_antenna_type_override;
@@ -106,12 +106,13 @@ bool RealTimeEngine::initProducts() {
     }
 
     // Load products.  Skip precise SP3/CLK when a live broadcast+SSR source
-    // supplants them (SSR corrections enabled and/or a live socket primary);
+    // replaces them (SSR corrections enabled and/or a live socket primary);
     // a real-time *file* replay with no corrections still loads them so a
-    // historical run can use precise products.  RTB-4: orbit and clock are gated
-    // independently so a "precise (ultra-rapid) orbits + network clocks" config
-    // loads SP3 but skips the precise CLK.  With use_precise_orbits=false (default)
-    // both gates equal realtimeUsesLiveOrbitClockSource() — byte-identical.
+    // historical run can use precise products.  Orbit and clock are gated
+    // independently, so a "precise (ultra-rapid) orbits + network clocks" config
+    // loads SP3 but skips the precise CLK (RTB-4).  With use_precise_orbits=false
+    // (default) both gates equal realtimeUsesLiveOrbitClockSource(), which is
+    // byte-identical to a single gate.
     const bool skip_orbit = config_.realtimeUsesLiveOrbitSource();
     const bool skip_clock = config_.realtimeUsesLiveOrbitClockSource();
     product_parser_->loadProducts(!skip_orbit, !skip_clock);
@@ -156,10 +157,10 @@ void RealTimeEngine::initStateManagerAndApriori() {
     }
     if (valid_pos && approx_pos != std::array<double, 3>{0.0, 0.0, 0.0}) {
         // ARP, not the marker: the state vector (and the ATX PCO/PCV applied to it)
-        // is antenna-referenced, while APPROX POSITION XYZ is the monument.  Matters
-        // for the file-fed closed-loop consumer, whose RINEX header carries a real
-        // eccentricity; a live SBF/RTCM stream has neither field, so markerToArp is
-        // an exact no-op there.
+        // is antenna-referenced, while APPROX POSITION XYZ is the monument.  This
+        // matters for the file-fed closed-loop consumer, whose RINEX header carries
+        // a real eccentricity; a live SBF/RTCM stream has neither field, so
+        // markerToArp is an exact no-op there.
         initial_position_ = rinex_parser_->getArpPositionXyz();
         const Eigen::Vector3d hen = rinex_parser_->getAntennaDeltaHen();
         if (hen.norm() > 1e-6)
@@ -168,10 +169,12 @@ void RealTimeEngine::initStateManagerAndApriori() {
                       hen(0), hen(1), hen(2),
                       initial_position_.x(), initial_position_.y(), initial_position_.z());
     }
-    // NOTE: the seed is applied to ppp_state_ AFTER initializeState() below, not
-    // here.  initializeState() + syncPppStateToStateVector() run later in this
-    // function and would clobber any early state-vector write with ppp_state_'s
-    // zero position (a live SBF/RTCM stream carries no RINEX APPROX POSITION).
+    // The seed is not written to the state here.  seedInitialState(), which runs
+    // after initProcessingComponents(), calls PppModel::initializeState() and
+    // syncPppStateToStateVector(); those would overwrite any earlier state-vector
+    // write with ppp_state_'s zero position (a live SBF/RTCM stream carries no
+    // RINEX APPROX POSITION), so seedInitialState() applies initial_position_ after
+    // them.
 }
 
 /**
@@ -189,45 +192,43 @@ void RealTimeEngine::initProcessingComponents() {
     kalman_filter_   = std::make_unique<KalmanFilter>(*state_manager_, config_, log_manager_, *ppp_model_);
 
     // Aiding sources (GNSS/INS coupling).  Same manager type as Application::run,
-    // so real-time and post-processing share ONE predict path (predictAided).
+    // so real-time and post-processing share one predict path (predictAided).
     // For a GNSS-only stream the set is empty and predictAided delegates to
-    // predict(dt), byte-identical to before.  RT IMU samples arrive via
-    // feedImuSample.
+    // predict(dt), byte-identical to a plain predict.  Real-time IMU samples
+    // arrive via feedImuSample.
     aiding_manager_  = std::make_unique<AidingSourceManager>(config_, log_manager_);
-    aiding_manager_->reserveAllStates(*state_manager_);   // every source stashes StateManager / reserves blocks
+    aiding_manager_->reserveAllStates(*state_manager_);   // every source stores the StateManager / reserves its blocks
     if (auto* imu = aiding_manager_->imu())
-        imu->attachFilter(*kalman_filter_);    // IMU-only: nominal-attitude owner handle (C_b_e_)
+        imu->attachFilter(*kalman_filter_);    // IMU only: handle to the nominal-attitude owner (C_b_e_)
 
     wls_estimator_   = std::make_unique<WlsEstimator>(config_, *state_manager_, log_manager_);
     mw_slip_detector_  = std::make_unique<MwSlipDetector>(config_, log_manager_);
 
     // TurboEdit MW+GF joint slip repair (high-rate only).  The real-time path
     // streams at the receiver's native rate (typically 1 Hz), so the geometry-
-    // free jump used to split a dual-frequency slip per signal is valid here.
+    // free jump that splits a dual-frequency slip per signal is valid here.
     if (config_.getCycleSlipConfig().turbo_edit) {
         turbo_edit_resolver_ = std::make_unique<TurboEditResolver>(config_, log_manager_);
-        // Tighten the GF-arc gap tolerance to ~1.5× the nominal cadence,
-        // mirroring CycleSlipManager::setSampleInterval on the
-        // post-processing side.  Left at the resolver's 120 s default, a
-        // 2–120 s stream outage (NTRIP/TCP hiccup) bridges the second
-        // difference: TD2 then mixes a gap-length leg with 1 s legs and
-        // carries the un-cancelled ionospheric drift across the outage,
-        // either mass-resetting converged ambiguities (IVI trip) or
-        // aliasing into a false integer repair.  A live stream has no
-        // RINEX INTERVAL header, so use the configured rate and fall back
-        // to the 1 Hz high-rate design assumption (TurboEdit is
-        // high-rate-only by design).
+        // Tighten the GF-arc gap tolerance to 1.5× the nominal cadence, as
+        // CycleSlipManager::setSampleInterval does on the post-processing side.
+        // At the resolver's 120 s default, a 2–120 s stream outage (NTRIP/TCP
+        // interruption) is bridged by the second difference: TD2 then mixes a
+        // gap-length leg with 1 s legs and carries the uncancelled ionospheric
+        // drift across the outage, which either mass-resets converged ambiguities
+        // (IVI trip) or aliases into a false integer repair.  A live stream has
+        // no RINEX INTERVAL header, so the configured rate is used, falling back
+        // to 1 Hz (TurboEdit is designed for high-rate data only).
         const double rate_s = config_.getGnssRate() > 0.0 ? config_.getGnssRate() : 1.0;
         turbo_edit_resolver_->setMaxGapSeconds(rate_s * 1.5);
         log->info("Real-time TurboEdit MW+GF joint cycle-slip repair ENABLED "
                   "(GF-arc gap tolerance {:.1f} s).", rate_s * 1.5);
 
         // Soft-LLI gap bridge (shared with the post-processing path): hold an
-        // AR-capable dual-frequency sat's ambiguities across a short receiver
-        // LLI gap and let the bridge integer-repair them instead of an
-        // immediate reset.  Inert unless turbo_edit_bridge_lli.  A live stream
-        // has no interval header, so seed the declared rate (the high-rate
-        // gate else falls back to the measured epoch spacing).
+        // AR-capable dual-frequency satellite's ambiguities across a short
+        // receiver LLI gap and let the bridge integer-repair them instead of
+        // resetting at once.  Inert unless turbo_edit_bridge_lli.  A live stream
+        // has no interval header, so the declared rate is seeded; otherwise the
+        // high-rate gate falls back to the measured epoch spacing.
         soft_lli_ = std::make_unique<SoftLliBridge>(config_, log_manager_);
         soft_lli_->setSampleInterval(rate_s);
         if (config_.getCycleSlipConfig().turbo_edit_bridge_lli)
@@ -236,12 +237,11 @@ void RealTimeEngine::initProcessingComponents() {
                       config_.getCycleSlipConfig().turbo_edit_max_gap_s);
     }
 
-    // Higher-order ionosphere is not yet wired into the real-time path:
-    // the engine relies on RTCM SSR for ionospheric content, not on an
-    // IONEX GIM, and an SSR-to-STEC adapter for HigherOrderIonosphere has
-    // not been written.  Surface this clearly so a user who enabled
-    // higher-order globally doesn't silently get the first-order-only
-    // pipeline at runtime.
+    // Higher-order ionosphere is not wired into the real-time path: the engine
+    // takes its ionospheric content from RTCM SSR, not from an IONEX GIM, and no
+    // SSR-to-STEC adapter for HigherOrderIonosphere exists.  The warning keeps a
+    // globally enabled higher-order flag from running the first-order-only
+    // pipeline without notice.
     if (config_.getModelCorrections().enable_higher_order_ionosphere) {
         log_manager_.getLogger("ionosphere")->warn(
             "Real-time mode: higher_order_ionosphere is enabled but unsupported "
@@ -249,11 +249,11 @@ void RealTimeEngine::initProcessingComponents() {
             "skipped.  Disable the flag in real-time configs to avoid this warning.");
     }
 
-    // GIM ionosphere-weighting (PPP-RTK soft iono constraint) is a
-    // post-processing-only feature: the pseudo-observation that pulls each
-    // per-sat slant-iono state toward the GIM lives in Application::run and is
-    // not wired into the streaming path (the RTCM stream carries no IONEX/VTEC).
-    // Warn so an enabled flag isn't a silent no-op at runtime.
+    // GIM ionosphere weighting (PPP-RTK soft iono constraint) is post-processing
+    // only: the pseudo-observation that pulls each per-satellite slant-iono state
+    // toward the GIM lives in Application::run and is not wired into the
+    // streaming path (the RTCM stream carries no IONEX/VTEC).  The warning keeps
+    // an enabled flag from being a silent no-op.
     if (config_.getIonosphereWeightingConfig().enabled) {
         log_manager_.getLogger("ionosphere")->warn(
             "Real-time mode: ionosphere_weighting is enabled but unsupported in "
@@ -261,10 +261,11 @@ void RealTimeEngine::initProcessingComponents() {
             "applied.  Disable the flag in real-time configs to avoid this warning.");
     }
 
-    // Adaptive ionospheric process noise (IonoVariabilityMonitor) is only
-    // constructed and driven in Application::run; the real-time engine never
-    // builds the monitor, so the per-sat iono process noise stays static at
-    // process_noise.ionosphere.  Warn so an enabled flag isn't a silent no-op.
+    // Adaptive ionospheric process noise (IonoVariabilityMonitor) is constructed
+    // and driven only in Application::run; the real-time engine never builds the
+    // monitor, so the per-satellite iono process noise stays at
+    // process_noise.ionosphere.  The warning keeps an enabled flag from being a
+    // silent no-op.
     if (config_.getAdaptiveIonoQConfig().enabled) {
         log_manager_.getLogger("ionosphere")->warn(
             "Real-time mode: adaptive_iono_process_noise is enabled but not wired "
@@ -287,9 +288,9 @@ void RealTimeEngine::initProcessingComponents() {
 void RealTimeEngine::initAmbiguityResolver() {
     auto log = log_manager_.getLogger("rt_engine");
 
-    // Integer ambiguity resolution (MLAMBDA) — same configuration surface as
-    // the post-processing path (Application::run).  The WL feed comes from the
-    // MW slip detector; no CycleSlipManager is required in the realtime path.
+    // Integer ambiguity resolution (MLAMBDA), with the same configuration surface
+    // as the post-processing path (Application::run).  The WL feed comes from the
+    // MW slip detector; the real-time path needs no CycleSlipManager.
     if (config_.getArMode() > 0) {
         AmbiguityResolverConfig ar_config;
         ar_config.ar_mode               = config_.getArMode();
@@ -331,9 +332,10 @@ void RealTimeEngine::seedInitialState() {
     // position or the RINEX APPROX POSITION; a live SBF/RTCM stream has neither,
     // so it leaves the position at zero.  Without a finite a-priori the first
     // computeModels() rejects every satellite on the rx_pos.norm() < 1e3 sanity
-    // check, so WLS never runs and the filter can never bootstrap.  Fall back to
-    // the coarse Earth-centred seed computed above; WLS refines it to metres on
-    // the first epoch with enough satellites.
+    // check, so WLS never runs and the filter cannot bootstrap.  Fall back to
+    // the coarse seed initial_position_ set by initStateManagerAndApriori()
+    // (Earth-centred unless the RINEX header gave a position); WLS refines it to
+    // metres on the first epoch with enough satellites.
     if (ppp_state_.position.norm() < 1e3 || !ppp_state_.position.allFinite()) {
         ppp_state_.position = initial_position_;
         log->info("Seeded a-priori position from Earth-centred fallback "
@@ -344,7 +346,7 @@ void RealTimeEngine::seedInitialState() {
 }
 
 /**
- * @brief TraceLogger, the L10 SSR-consumer trace and the slip-detector traces.
+ * @brief TraceLogger, the SSR-consumer trace (L10) and the slip-detector traces.
  *
  * Relocated verbatim from the pre-cut RealTimeEngine::initialize
  * (frozen lines 349-373); see scripts/rt_seam_verify.py.
@@ -357,8 +359,9 @@ void RealTimeEngine::initTraceLoggers() {
     const auto& logging_cfg = config_.getLoggingConfig();
     trace_logger_ = std::make_unique<TraceLogger>(log_manager_, log_dir, is_ppp_rtk, logging_cfg);
 
-    // L10: consumer-side SSR-application trace (network.trace_ssr_consumer).  Same "logs"
-    // dir as the producer traces (the two hardcoded log dirs coincide in the closed loop).
+    // Consumer-side SSR-application trace (network.trace_ssr_consumer, L10).  It
+    // uses the same "logs" dir as the producer traces; both dirs are hard-coded,
+    // so in the closed loop they coincide.
     if (config_.getNetworkConfig().trace_ssr_consumer) {
         std::error_code ec;
         std::filesystem::create_directories(log_dir, ec);

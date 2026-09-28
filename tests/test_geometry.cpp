@@ -4,13 +4,13 @@
  *        range / topocentric and WlsEstimator::predictObs.
  *
  * `computeGeometricRange` and `computeTopocentric` are pure functions of their
- * ECEF arguments (no product/orbit state), so they are now static and tested
+ * ECEF arguments (no product/orbit state), so they are static and tested
  * directly.  `WlsEstimator::predictObs` is a private static reached through the
  * befriended `WlsEstimatorTestAccess` shim (same pattern as the MLAMBDA suite).
  *
  * Expected values are analytic.  A receiver on the equator at the prime
  * meridian sits at ECEF (a, 0, 0), where the local ENU axes are East = +Y,
- * North = +Z, Up = +X — so satellites placed along those ECEF axes produce
+ * North = +Z, Up = +X, so satellites placed along those ECEF axes produce
  * exact elevation/azimuth.
  */
 

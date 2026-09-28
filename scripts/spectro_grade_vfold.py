@@ -1,29 +1,31 @@
 #!/usr/bin/env python3
-"""Grade the S2 VIRTUAL FOLD — the between-leg state delta per state class.
+"""Grade the S2 virtual fold: the between-leg state delta per state class.
 
 docs/SPEC_lane_spectrometer.md §4 / §12.4.  Reads the four legs emitted by
 ``scripts/spectro_make_vfold.py`` (``ctl`` / ``off`` / ``on`` / ``inert``) and reports:
 
- 1. VALIDITY, before any number is interpreted:
-    * ``off`` vs ``inert`` must be byte-identical on every artifact — the only test that
-      the fixed-row branch is inert when its gate does not admit anything.  A difference
-      here means the branch is load-bearing even when it fixes nothing, and every
-      other number below is contaminated.
-    * the DATUM (the gauge-pin set from ``network_phase_anchor.csv``) must be identical
+ 1. Validity, before any number is interpreted:
+    * ``off`` vs ``inert`` must be byte-identical on every artifact.  This is the only
+      test that the fixed-row branch is inert when its gate admits nothing; a difference
+      means the branch changes the solution even when it fixes nothing, and every other
+      number below is contaminated.
+    * the datum (the gauge-pin set from ``network_phase_anchor.csv``) must be identical
       between the legs being differenced.  A between-leg Delta_x is only meaningful in a
-      COMMON datum; if the fold flipped an observability / PD gate the pin set moves and
+      common datum; if the fold flipped an observability / PD gate, the pin set moves and
       the delta is a frame change, not a redistribution (standing invariant #5).
-    * the legs must share bit-identical LEADING epochs (no rows exist before the arcs
-      mature), which is what makes the first folding epoch an exact single-epoch read.
- 2. The graded epoch: the FIRST with ``fixed=1`` rows in ``network_sd_ewl.csv``.
- 3. Delta per state class at that epoch — satellite CLOCK / phase bias (PB) / code bias
-    (CB) from ``network_solution.csv``, SH-VTEC coefficients from
-    ``network_vtec_sh.csv``, ZWD from ``network_zwd.csv`` — each reported BOTH raw and
-    de-medianed per constellation.  The de-medianed column is the datum-invariant one:
-    a whole-constellation common mode is a frame shift the emitted product absorbs,
-    while the SPREAD around it is the redistribution S2 exists to measure.
+    * the legs must share bit-identical leading epochs (no rows exist before the arcs
+      mature), which makes the first folding epoch an exact single-epoch read.  This
+      precondition is not checked here.
+ 2. The graded epoch: the first with ``fixed=1`` rows in ``network_sd_ewl.csv`` of the
+    ``on`` leg.
+ 3. Delta per state class at that epoch: satellite clock (CLK), phase bias (PB) and code
+    bias (CB) from ``network_solution.csv``, SH-VTEC coefficients from
+    ``network_vtec_sh.csv``, ZWD from ``network_zwd.csv``.  Solution classes are
+    reported both raw and de-medianed per constellation.  The de-medianed column is the
+    datum-invariant one: a whole-constellation common mode is a frame shift the emitted
+    product absorbs, while the spread around it is the redistribution S2 measures.
  4. Post-fit redistribution (``network_pf_keyed.csv`` sigma0) and the row/integer
-    counters, so a null result can be told apart from a null EXECUTION.
+    counters, so a null result can be told apart from a null execution.
 
 Prediction to test, from the row algebra: the PB columns move first, because a
 satellite's phase-bias leverage in the row is +24.00/-23.00 (GPS) or +39.33/-38.33
@@ -69,10 +71,10 @@ def artifact_compare(root, a, b, label):
     """Per-file sha comparison of two legs' logs.  Wall-clock artifacts are named and
     excluded from the verdict rather than silently skipped."""
     WALL = {'network_run_summary.csv', 'network_service_health.csv'}
-    # Log-only by construction, so a difference here is NOT contamination: the sd_ewl row
+    # Log-only by construction, so a difference here is not contamination: the sd_ewl row
     # trace gains three columns when fix_enable is armed (an armed-only header, so an
     # increment-1 artifact set stays byte-identical), and the AR decision trace exists
-    # ONLY when it is armed.  Neither is read by the solve.
+    # only when it is armed.  The solve reads neither.
     TRACE_ONLY = {'network_sd_ewl.csv', 'network_sd_ewl_ar.csv'}
     da, db = logdir(root, a), logdir(root, b)
     if not os.path.isdir(da) or not os.path.isdir(db):
@@ -108,7 +110,7 @@ def artifact_compare(root, a, b, label):
 
 
 def first_fixed_epoch(root, leg):
-    """(week, tow) of the first epoch whose sd_ewl trace folded a FIXED row."""
+    """(week, tow) of the first epoch whose sd_ewl trace folded a fixed row, else (None, None)."""
     p = os.path.join(logdir(root, leg), 'network_sd_ewl.csv')
     for r in read_rows(p):
         if r.get('fixed') == '1':

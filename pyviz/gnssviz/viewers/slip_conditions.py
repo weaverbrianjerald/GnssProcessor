@@ -1,32 +1,32 @@
-"""Slip-condition exhibits viewer -- the port of ``view_slip_conditions.m``.
+"""Slip-condition exhibits viewer: the port of ``view_slip_conditions.m``.
 
 Demonstrates the four Melbourne-Wubbena (MW) x geometry-free (GF) cycle-slip
-detection conditions on real data, as joint four-panel exhibits.  It merges the
+detection conditions on real data, as joint four-panel exhibits. It merges the
 example-figure machinery of the MW wide-lane viewer (``mwwl_trace.csv``) and the
-TurboEdit GF TD2 viewer (``turbo_edit_trace.csv``) keyed on the SAME
+TurboEdit GF TD2 viewer (``turbo_edit_trace.csv``) keyed on the same
 ``(satellite, signal-pair, epoch)`` so the two detectors are read side by side.
 
-The 2x2 conditions (each detector's OWN gate decides "detected"):
-  1. MW detected, GF stable   -- WL/code step the phase-GF doesn't see
-  2. MW stable,  GF detected   -- e.g. ``dN1=dN2`` (WL unchanged, GF jumps)
-  3. MW stable,  GF stable     -- clean control window
-  4. MW detected, GF detected  -- unambiguous dual-detector slip
+The 2x2 conditions (each detector's own gate decides "detected"):
+  1. MW detected, GF stable   : WL/code step the phase-GF doesn't see
+  2. MW stable,  GF detected   : e.g. ``dN1=dN2`` (WL unchanged, GF jumps)
+  3. MW stable,  GF stable     : clean control window
+  4. MW detected, GF detected  : unambiguous dual-detector slip
 
 * "MW detected" == ``mwwl_trace.is_slip == 1`` (``|dev_active|/threshold > 1``).
 * "GF detected" == ``turbo_edit_trace.gf_flagged == 1`` (``|TD2|/thresh > 1``,
   past the anti-echo cooldown).
 
-These are the two DETECTORS' decisions.  ``turbo_edit``'s internal ``mw_flagged``
-is NOT used for classification: it fires on sub-threshold MW wiggle
-(``is_slip=0``) and would mislabel a real MW detection as "stable".
+These are the two detectors' own decisions. ``turbo_edit``'s internal
+``mw_flagged`` is not used for classification: it fires on sub-threshold MW
+wiggle (``is_slip=0``) and would mislabel a real MW detection as "stable".
 
 Events are formed by clustering MW and GF flags on the same ``(sat, pair)`` that
-fall within ``cluster_win_s`` of each other -- the two detectors typically fire
-an epoch or two apart on the same physical slip and must be counted as ONE event
-to land in condition 4.
+fall within ``cluster_win_s`` of each other: the two detectors typically fire
+an epoch or two apart on the same physical slip and must be counted as one
+event to land in condition 4.
 
 Each exhibit is a four-panel figure (rendered as a vertical stack, since the
-backend lays axes out top-to-bottom rather than in a 2x2 grid -- the closest
+backend lays axes out top-to-bottom rather than in a 2x2 grid: the closest
 available layout to the MATLAB ``tiledlayout(2,2)``):
 
 * MW raw wide-lane + reference levels
@@ -35,7 +35,7 @@ available layout to the MATLAB ``tiledlayout(2,2)``):
 * GF second time-difference (TD2) vs +/- threshold
 
 with the slip epoch starred, a dotted detection epoch line, and a solid
-action-coloured line at the resolved-action epoch.  The figure title carries the
+action-coloured line at the resolved-action epoch. The figure title carries the
 condition label / sat / pair / epoch and the MW & GF detection statistics and the
 resolved TurboEdit action (matching the MATLAB ``title`` / ``subtitle``).
 """
@@ -235,7 +235,7 @@ def _pick_distinct_sat(cand: list, n: int) -> list:
 
 
 def _sample_clean_windows(Tmw, Tte, mwSlip, gfFlag, window_s, n, avoid_sats) -> list:
-    """Pick (sat,pair) mid-arc epochs where NEITHER detector fires within
+    """Pick (sat,pair) mid-arc epochs where neither detector fires within
     +/- window_s, preferring sats not already used and with data in both
     traces.  Returns a list (possibly shorter than n)."""
     clean: list = []

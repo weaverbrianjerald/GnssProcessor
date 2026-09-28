@@ -2,13 +2,13 @@
  * @file test_network_streaming.cpp
  * @brief RTF-3 multi-station streaming front-end: wait-budget aligner dispatch
  *        semantics, epoch-granular queue backpressure, framer-boundary station
- *        identity (+ RTB-3 LLI derivation), and the network.streaming config
- *        contract.
+ *        identity (with the RTB-3 LLI derivation), and the network.streaming
+ *        config contract.
  *
- * The aligner and queue are clock-injected and transport-free, so every
- * dispatch rule is exercised here without sockets or sleeps.  The decode tail
- * is covered through NetworkStreamFrontEnd::tagAndGroup (static, pure) — the
- * exact code the ingest loop runs between the per-lane parser and the aligner.
+ * The aligner and queue take the clock as an argument and have no transport, so
+ * every dispatch rule is exercised here without sockets or sleeps.  The decode
+ * tail is covered through NetworkStreamFrontEnd::tagAndGroup (static, pure), the
+ * code the ingest loop runs between the per-lane parser and the aligner.
  */
 
 #include <gtest/gtest.h>
@@ -102,11 +102,11 @@ std::string networkConfig(const std::string& streaming_extra,
 } // namespace
 
 // ===========================================================================
-// NetworkStreamAlignerTest — wait-budget dispatch semantics
+// NetworkStreamAlignerTest: wait-budget dispatch semantics
 // ===========================================================================
 
-// An epoch dispatches at first-arrival + wait budget with whoever arrived —
-// not before, and stations that reported are all in by_station.
+// An epoch dispatches at first arrival + wait budget, not before, with every
+// station that reported by then in by_station.
 TEST(NetworkStreamAlignerTest, DispatchesAtWaitBudgetWithArrivals) {
     NetworkStreamAligner a(alignerCfg(0.5), /*n_expected_lanes=*/3);
     const auto t0 = steady::now();
@@ -126,8 +126,8 @@ TEST(NetworkStreamAlignerTest, DispatchesAtWaitBudgetWithArrivals) {
     EXPECT_EQ(a.counters().dispatched_full, 0u);
 }
 
-// A second batch from the SAME station for the same epoch merges (an MSM epoch
-// spans one frame per constellation) — replace semantics would drop content.
+// A second batch from the same station for the same epoch is merged, not
+// replaced: an MSM epoch spans one frame per constellation.
 TEST(NetworkStreamAlignerTest, MergesMultiFrameSameStationBatches) {
     NetworkStreamAligner a(alignerCfg(0.2), 2);
     const auto t0 = steady::now();
@@ -190,8 +190,8 @@ TEST(NetworkStreamAlignerTest, LateArrivalDropped) {
 TEST(NetworkStreamAlignerTest, MonotonicHeadOfLine) {
     NetworkStreamAligner a(alignerCfg(0.5), 2);
     const auto t0 = steady::now();
-    // Younger epoch (tow 101) arrives FIRST (deadline t0+500ms), older epoch
-    // (tow 100) arrives late (deadline t0+700ms).
+    // The younger epoch (tow 101) arrives first (deadline t0+500ms), the older
+    // epoch (tow 100) later (deadline t0+700ms).
     a.add("OSLO", GnssTime{ 2312, 101.0 }, oneObs("G01", 2312, 101.0), t0);
     a.add("OSLO", GnssTime{ 2312, 100.0 }, oneObs("G01", 2312, 100.0), t0 + ms(200));
 
@@ -205,7 +205,7 @@ TEST(NetworkStreamAlignerTest, MonotonicHeadOfLine) {
     EXPECT_DOUBLE_EQ(ready[1].time.tow, 101.0);
 }
 
-// The pending cap evicts the OLDEST bucket and its stragglers count late.
+// The pending cap evicts the oldest bucket, and its stragglers count as late.
 TEST(NetworkStreamAlignerTest, StaleBucketEvictionAdvancesFloor) {
     auto cfg = alignerCfg(30.0);   // huge budget: nothing expires during the test
     cfg.max_pending_epochs = 2;
@@ -236,10 +236,10 @@ TEST(NetworkStreamAlignerTest, FlushDrainsTail) {
 }
 
 // ===========================================================================
-// SyncedEpochQueueTest — epoch-granular backpressure
+// SyncedEpochQueueTest: epoch-granular backpressure
 // ===========================================================================
 
-// Overflow drops the OLDEST whole epoch; the freshest epochs survive.
+// Overflow drops the oldest whole epoch; the newest epochs are kept.
 TEST(SyncedEpochQueueTest, DropOldestOnOverflow) {
     SyncedEpochQueue q(2);
     EXPECT_EQ(q.push(makeEpoch(100.0)), 0u);
@@ -277,10 +277,10 @@ TEST(SyncedEpochQueueTest, CloseDrainsThenTerminal) {
 }
 
 // ===========================================================================
-// NetworkStreamFrontEndDecodeTest — identity at the framer boundary
+// NetworkStreamFrontEndDecodeTest: identity at the framer boundary
 // ===========================================================================
 
-// Every decoded observation is stamped with the LANE's roster station name,
+// Every decoded observation is stamped with the lane's roster station name,
 // and a drain spanning an epoch boundary groups into per-time batches.
 TEST(NetworkStreamFrontEndDecodeTest, TagsIdentityAndGroupsEpochs) {
     std::vector<RinexObservation> obs;
@@ -299,8 +299,8 @@ TEST(NetworkStreamFrontEndDecodeTest, TagsIdentityAndGroupsEpochs) {
         for (const auto& o : b) EXPECT_EQ(o.receiver_id, "OSLO");
 }
 
-// RTB-3 reuse: the LLI 0x1 bit derives from a lock-time REGRESSION, tracked
-// per (station, sat, signal) — two lanes' histories never cross-talk.
+// The LLI 0x1 bit is derived from a lock-time decrease (RTB-3 logic reused),
+// tracked per (station, sat, signal), so two lanes' histories stay separate.
 TEST(NetworkStreamFrontEndDecodeTest, DerivesLliPerStationHistories) {
     LockTimeTracker tracker;
 
@@ -310,29 +310,29 @@ TEST(NetworkStreamFrontEndDecodeTest, DerivesLliPerStationHistories) {
         return std::vector<RinexObservation>{ o };
     };
 
-    // OSLO epoch 1: fresh key, healthy lock — no flag.
+    // OSLO epoch 1: new key, long lock time; no flag.
     auto b1 = NetworkStreamFrontEnd::tagAndGroup(obsWithLock(100.0, 5000.0),
                                                  "OSLO", &tracker, true);
     ASSERT_EQ(b1.size(), 1u);
     EXPECT_EQ(b1[0].second[0].lli_flags["L1C"] & 0x1, 0);
 
-    // BONN epoch 1: same satellite, separate station key — still fresh, no flag.
+    // BONN epoch 1: same satellite, separate station key, also new; no flag.
     auto b2 = NetworkStreamFrontEnd::tagAndGroup(obsWithLock(100.0, 7000.0),
                                                  "BONN", &tracker, true);
     EXPECT_EQ(b2[0].second[0].lli_flags["L1C"] & 0x1, 0);
 
-    // OSLO epoch 2: lock time DROPPED (5000 → 100 ms): tracking restarted —
-    // the LLI 0x1 bit must be set, on OSLO's copy only.
+    // OSLO epoch 2: lock time decreased (5000 → 100 ms), so tracking restarted;
+    // the LLI 0x1 bit is set, on OSLO's copy only.
     auto b3 = NetworkStreamFrontEnd::tagAndGroup(obsWithLock(101.0, 100.0),
                                                  "OSLO", &tracker, true);
     EXPECT_EQ(b3[0].second[0].lli_flags["L1C"] & 0x1, 1);
 
-    // BONN epoch 2: lock kept growing — no flag (histories are per station).
+    // BONN epoch 2: lock time kept growing; no flag (histories are per station).
     auto b4 = NetworkStreamFrontEnd::tagAndGroup(obsWithLock(101.0, 8000.0),
                                                  "BONN", &tracker, true);
     EXPECT_EQ(b4[0].second[0].lli_flags["L1C"] & 0x1, 0);
 
-    // Derivation disarmed: the same regression leaves the flag untouched.
+    // Derivation disarmed: the same decrease leaves the flag untouched.
     LockTimeTracker fresh;
     auto c1 = NetworkStreamFrontEnd::tagAndGroup(obsWithLock(100.0, 5000.0),
                                                  "OSLO", &fresh, false);
@@ -342,11 +342,11 @@ TEST(NetworkStreamFrontEndDecodeTest, DerivesLliPerStationHistories) {
 }
 
 // ===========================================================================
-// NetworkStreamingConfigTest — the network.streaming config contract
+// NetworkStreamingConfigTest: the network.streaming config contract
 // ===========================================================================
 
-// Absent block: streaming stays OFF and no station carries a transport — the
-// batch path's config surface is untouched (structural byte-identity).
+// Absent block: streaming stays off and no station carries a transport, so the
+// batch path's config surface is unchanged (structural byte-identity).
 TEST(NetworkStreamingConfigTest, DefaultsOffWithNoTransports) {
     LogManager log;
     const fs::path p =
@@ -359,7 +359,7 @@ TEST(NetworkStreamingConfigTest, DefaultsOffWithNoTransports) {
     fs::remove(p);
 }
 
-// Armed block: values parse, out-of-range values clamp loudly, and the two
+// Armed block: values parse, out-of-range values clamp with a warning, and the two
 // station transports land on their stations.
 TEST(NetworkStreamingConfigTest, ParsesTransportsAndClamps) {
     LogManager log;
@@ -407,7 +407,7 @@ TEST(NetworkStreamingConfigTest, ParsesTransportsAndClamps) {
 }
 
 // Inert-arming refusal (invariant #4): streaming armed with zero transports
-// would run zero lanes and log cleanly — the load must FAIL, not warn.
+// would run zero lanes and log cleanly, so the load fails instead of warning.
 TEST(NetworkStreamingConfigTest, RefusesArmedWithZeroTransports) {
     LogManager log;
     const std::string streaming = "    \"streaming\": { \"enable\": true },\n";
@@ -418,9 +418,9 @@ TEST(NetworkStreamingConfigTest, RefusesArmedWithZeroTransports) {
     fs::remove(p);
 }
 
-// OFF-path pass-through: an unarmed streaming block's out-of-range values are
-// NOT clamped (the clamps are gated on the master, so an OFF config round-trips
-// verbatim — the structural byte-identity discipline for defaults-off work).
+// Off-path pass-through: an unarmed streaming block's out-of-range values are
+// not clamped.  The clamps are gated on the master switch, so an off config
+// round-trips verbatim (structural byte-identity for default-off work).
 TEST(NetworkStreamingConfigTest, OffPathValuesPassThroughUnclamped) {
     LogManager log;
     const std::string streaming =

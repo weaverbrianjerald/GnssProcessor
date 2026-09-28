@@ -82,7 +82,7 @@ bool RinexObsWriter::open(const std::filesystem::path& path, const ObsHeaderSpec
 void RinexObsWriter::writeHeader() {
     auto emit = [&](const Line60& l, const char* label) { out_ << l.b << label << "\n"; };
 
-    { // RINEX VERSION / TYPE — version F9.2 @ col 0; "OBSERVATION DATA" @ 20; system 'M' @ 40
+    { // RINEX VERSION / TYPE: version F9.2 @ col 0; "OBSERVATION DATA" @ 20; system 'M' @ 40
         Line60 l;
         l.put(0, fmtF(hdr_.version, 9, 2));
         l.put(20, "OBSERVATION DATA");
@@ -158,7 +158,7 @@ void RinexObsWriter::writeHeader() {
         l.put(0, fmtF(hdr_.interval_s, 10, 3));
         emit(l, "INTERVAL");
     }
-    { // TIME OF FIRST OBS — GPS-scale calendar so HH:MM:SS lands on the TOW grid
+    { // TIME OF FIRST OBS: GPS-scale calendar so HH:MM:SS lands on the TOW grid
         int y, m, d, h, mi;
         double s;
         calendarFields(hdr_.time_of_first_obs, y, m, d, h, mi, s);

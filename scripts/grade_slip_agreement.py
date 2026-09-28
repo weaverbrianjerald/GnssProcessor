@@ -1,82 +1,82 @@
 #!/usr/bin/env python3
-"""Grade the network slip layer by CROSS-CHECKING its two detectors against each
+"""Grade the network slip layer by cross-checking its two detectors against each
 other and against the raw observables.
 
 The network producer runs two independent coarse-slip detectors over the same
 epochs: the T1 IF-phase time-difference detector (``network.cycle_slip.if_phase_td``
 -> ``network_if_slip.csv`` samples + ``T1_if_slip`` events) and the T0 MW / LLI
-detector (``T0_mw_detect`` events).  Neither is ground truth.  This grader is the
-instrument that says which flags to BELIEVE: it adjudicates every IF flag against
-the raw MW / GF / LLI series the producer itself logged, and sweeps the raw series
-in reverse for steps the IF detector never flagged.
+detector (``T0_mw_detect`` events).  Neither is ground truth.  This grader decides
+which flags are supported: it checks every IF flag against the raw MW / GF / LLI
+series that the producer logged, and sweeps the raw series in reverse for steps
+the IF detector did not flag.
 
-It is pure post-processing over the run's CSV logs -- it never needs the binary.
+It is post-processing over the run's CSV logs only; the binary is not needed.
 
-WHY ADJUDICATE, NOT COUNT
--------------------------
-A slip detector's flag count is meaningless on its own: an all-quiet run and a
-100%-suppressed run both read "clean".  What matters is (i) do the two detectors
-fire on the same (station, sat, epoch), (ii) does the RAW observable actually
-step where a detector fired, and (iii) does the raw observable step anywhere a
-detector stayed silent.  (i) is section (b), (ii) section (e), (iii) section (f).
-An IF flag with no raw support is a false positive; a >3-cycle raw MW step with
-no IF flag is a miss -- unless it is a gap-coincident re-acquisition arc, which
-is why the miss list prints the step size (a 40-cycle "miss" is a new arc, not a
-missed slip).
+Why adjudicate rather than count
+--------------------------------
+A slip detector's flag count means nothing on its own: an all-quiet run and a
+100%-suppressed run both read "clean".  The questions are (i) whether the two
+detectors fire on the same (station, sat, epoch), (ii) whether the raw observable
+steps where a detector fired, and (iii) whether the raw observable steps where no
+detector fired.  (i) is section (b), (ii) section (e), (iii) section (f).  An IF
+flag with no raw support is a false positive; a >3-cycle raw MW step with no IF
+flag is a miss, unless it is a gap-coincident re-acquisition arc.  For that reason
+the miss list prints the step size (a 40-cycle "miss" is a new arc, not a missed
+slip).
 
 Sections
 --------
-(a) EVENT COUNTS -- ``network_events.csv`` by tier / event / action.  ``action``
-    is ``refloat`` (the estimator was told), ``diagnostic`` (logged only -- cold
-    run / warm-gate), or ``suppressed`` (a credibility / corroboration gate threw
-    the flag away).  Counters are broken out by action because a tier that is
-    100% ``diagnostic`` is INERT on the ON path no matter how healthy the flag
-    population looks (standing invariant 4: run-end counters are the telemetry).
-(b) IF <-> MW/LLI AGREEMENT -- matched on (station, sat) with a +/-1-epoch
+(a) Event counts: ``network_events.csv`` by tier / event / action.  ``action``
+    is ``refloat`` (the estimator was told), ``diagnostic`` (logged only: cold
+    run or warm gate), or ``suppressed`` (a credibility / corroboration gate
+    discarded the flag).  Counts are broken out by action because a tier that is
+    100% ``diagnostic`` is inert on the ON path however the flag population looks
+    (standing invariant 4: run-end counters are the telemetry).
+(b) IF <-> MW/LLI agreement: matched on (station, sat) with a +/-1-epoch
     tolerance (``--epoch-tol``) over the sorted unique (week, tow) epochs of the
     events file.  Reports IF matched / IF-only / MW-only and the match rate.  A
-    low match rate is NOT automatically a defect (the two detectors have
-    different sensitivity floors and MW is often warm-gated); read it together
-    with (e).
-(c) BUNCHING CHECK -- events per epoch, plus the top-N stations and satellites.
-    A healthy detector spreads flags thinly across epochs, stations and sats; a
-    broken one bunches (one epoch holding most of the run's flags = a network-wide
-    re-level or a datum event masquerading as N slips; one station holding them =
-    a receiver-local family, not a constellation event).
-(d) DECISIVE MARGIN -- from ``network_if_slip.csv``: opportunities, flags, flag
-    rate, and the distribution of ``abs_dev_m / thr_m`` over FLAGGED rows.  A
-    healthy detector fires DECISIVELY (median margin well above 1); a population
-    piled at ~1.0 is threshold-grazing and will chatter under any re-tuning.
-(e) RAW ADJUDICATION -- every ``T1_if_slip`` event (both ``if_slip`` and
+    low match rate is not by itself a defect (the two detectors have different
+    sensitivity floors, and MW is often warm-gated); read it together with (e).
+(c) Bunching check: events per epoch, plus the top-N stations and satellites.
+    A working detector spreads flags thinly across epochs, stations and sats.
+    Bunching indicates a problem: one epoch holding most of the run's flags is a
+    network-wide re-level or a datum event appearing as N slips; one station
+    holding them is a receiver-local family, not a constellation event.
+(d) Decisive margin: from ``network_if_slip.csv``, the opportunities, flags, flag
+    rate, and the distribution of ``abs_dev_m / thr_m`` over flagged rows.  A
+    working detector fires with a clear margin (median well above 1); a population
+    piled near 1.0 is grazing the threshold and will chatter under any re-tuning.
+(e) Raw adjudication: every ``T1_if_slip`` event (both ``if_slip`` and
     ``refsat_reset``) is looked up in ``network_slip_raw.csv``, which logs
-    ABSOLUTE MW / GF / L1-C1 per (station, sat) per epoch.  Adjacent-epoch
+    absolute MW / GF / L1-C1 per (station, sat) per epoch.  Adjacent-epoch
     differencing gives the step; a flag is
       ``supported``   -- |dMW| > ``--mw-gate-cyc`` WL cycles, or |dGF| >
                          ``--gf-gate-m``, or an LLI bit set, within +/-tol;
-      ``unsupported`` -- the series is there and flat by all three tests;
+      ``unsupported`` -- the series is present and flat by all three tests;
       ``no-series``   -- nothing logged for that (station, sat) near that epoch
                          (also covers arc-start epochs, where no step exists).
-    Unsupported flags are grouped by (station, sat): that grouping is the
-    false-positive-FAMILY view -- one station x one sat repeating is a
+    Unsupported flags are grouped by (station, sat), which gives the
+    false-positive family view: one station x one sat repeating is a
     receiver/refsat artifact, scattered singletons are threshold noise.
-(f) REVERSE SWEEP -- independent of any flag, scan the raw series for |dMW|
-    above each of ``--reverse-gates`` WL cycles and ask how many were IF-flagged.
-    Misses are printed with their |dMW| so gap-coincident re-acquisition (huge
-    step, new arc) is distinguishable from a genuine missed slip (2-5 cycles).
-(g) D5 RE-TAP ATTRIBUTION -- ``network_d5_flags.csv`` (the Card-4 D5 fine-slip
-    innovation gate's per-flag dump, ``network.mw_wl.d5_dump``) joined against
-    the same raw series.  Card D5-A of docs/SPEC_slip_qc_hardening.md §9.1: the D5
-    gate re-taps carried DD chords, and each re-tap DISCARDS accumulated
-    double-difference information, so a gate firing on model tension rather
-    than on observable events is a silent, continuous loss on the NL critical
-    path.  The 2026-07-21 hardening measured 1 689 re-taps of which 50 (3.0%)
-    coincided with a raw MW/GF step -- this section is the decomposition that
-    says WHICH of the two explanations that supports: raw-step coincidence
-    (exact-epoch tag + independent +/-tol join), the ``std_innov`` distribution
-    against the k*sigma0 gate, the top (station, sat) families with their
-    CONSECUTIVE-run lengths (impulsive vs sustained tension), the elevation
-    profile (is the tension geometry-structured?), and the warm/cold split.
-(h) RUN-END COUNTERS -- best-effort verbatim echo of the ``Network (...)`` slip
+(f) Reverse sweep: independent of any flag, the raw series is scanned for |dMW|
+    above each of ``--reverse-gates`` WL cycles, and the number that were
+    IF-flagged is reported.  Misses are printed with their |dMW| so that
+    gap-coincident re-acquisition (large step, new arc) can be told apart from a
+    missed slip (2-5 cycles).
+(g) D5 re-tap attribution: ``network_d5_flags.csv`` (the per-flag dump of the
+    Card-4 D5 fine-slip innovation gate, ``network.mw_wl.d5_dump``) joined against
+    the same raw series (docs/SPEC_slip_qc_hardening.md §9.1, card D5-A).  The D5
+    gate re-taps carried DD chords, and each re-tap discards accumulated
+    double-difference information, so a gate that fires on model tension rather
+    than on observable events is a continuous, unreported loss on the NL critical
+    path.  The hardening pass measured 1 689 re-taps, of which 50 (3.0%)
+    coincided with a raw MW/GF step.  This section decomposes the re-taps to show
+    which explanation they support: raw-step coincidence (exact-epoch tag plus an
+    independent +/-tol join), the ``std_innov`` distribution against the
+    k*sigma0 gate, the top (station, sat) families with their consecutive-run
+    lengths (impulsive vs sustained tension), the elevation profile (whether the
+    tension is geometry-structured), and the warm/cold split.
+(h) Run-end counters: a best-effort verbatim echo of the ``Network (...)`` slip
     counter lines from ``main_log.log``, if present.
 
 Every input file is optional: a missing one prints a "file not found, section
@@ -87,19 +87,20 @@ Usage
     python scripts/grade_slip_agreement.py [logdir] [--json out.json]
 
 ``logdir`` defaults to ``build/x64-Release/logs`` resolved against the repo root
-(this script's parent), i.e. the standard Release run output.  Field runs are
-Release-only; grading a Debug log dir is a category error.
+(the parent of this script), i.e. the standard Release run output.  Field runs
+use the Release build only, so a Debug log dir is not a valid input.
 
 Cross-check
 -----------
-The section totals were cross-checked once, at port time, against the 2026-07-21
-IF-TD vs MW slip-agreement audit (150-sta all-freq run): 8717 IF-TD samples ->
-32 flags (0.367%) and 17 ``refsat_reset`` events in sections (a)/(d); 30 of the
-49 ``T1_if_slip`` flags raw-confirmed and 14 unsupported in section (e); and 57
-reverse candidates at |dMW| > 3 cyc of which 39 were IF-flagged in section (f).
-Re-deriving those from a re-run of the same config is the regression test for
-this script: a disagreement means either the log schema moved or the gates were
-retuned -- the arithmetic here has no free parameters beyond the CLI defaults.
+The section totals were cross-checked once, when the script was ported, against
+the 2026-07-21 IF-TD vs MW slip-agreement audit (150-sta all-freq run): 8717
+IF-TD samples -> 32 flags (0.367%) and 17 ``refsat_reset`` events in sections
+(a)/(d); 30 of the 49 ``T1_if_slip`` flags raw-confirmed and 14 unsupported in
+section (e); and 57 reverse candidates at |dMW| > 3 cyc, of which 39 were
+IF-flagged, in section (f).  Reproducing those figures from a re-run of the same
+config is the regression test for this script.  A disagreement means either the
+log schema changed or the gates were retuned; the arithmetic here has no free
+parameters beyond the CLI defaults.
 
 Exit codes: 0 = report produced; 1 = no input file found (nothing graded).
 """
@@ -127,11 +128,11 @@ ACTIONS = ('refloat', 'diagnostic', 'suppressed')
 # GPS L1/L2 widelane wavelength c/(f1-f2); overridable for other lane pairs.
 LAMBDA_WL_DEFAULT = 0.8619
 
-# main_log lines that mention "Network (" and "slip" but are per-epoch TIMING
-# chatter (slip-scans=... ms), not run-end counters.
-# 'lane observatory' also matches the SPEC filename token 'slip' via
-# SPEC_lane_slip_response and would displace a genuine slip counter from the
-# tail window; it is a lane-integer instrument, not a slip counter.
+# main_log lines that mention "Network (" and "slip" but are per-epoch timing
+# lines (slip-scans=... ms), not run-end counters.
+# 'lane observatory' lines also contain 'slip' through the spec filename
+# SPEC_lane_slip_response and would push a real slip counter out of the tail
+# window; they belong to a lane-integer instrument, not a slip counter.
 _TIMING_NOISE = ('other-net ms', ' ms (', 'lane observatory')
 
 
@@ -155,16 +156,16 @@ def _i(x, default=None):
 def _s(row, key, default=''):
     """String cell, never None.
 
-    csv.DictReader back-fills MISSING trailing fields with None, which a log
-    being written concurrently produces on its last (truncated) line -- and a
-    None mixed into a Counter key blows up the first sort.  Everything that
-    reads a text column goes through here."""
+    csv.DictReader back-fills missing trailing fields with None, which happens on
+    the last (truncated) line of a log that is still being written, and a None in
+    a Counter key makes the first sort raise.  Every read of a text column goes
+    through this helper."""
     v = row.get(key)
     return default if v is None else str(v).strip()
 
 
 def _pct(sorted_vals, q):
-    """Linear-interpolated percentile of an ALREADY-SORTED list; q in [0, 100]."""
+    """Linear-interpolated percentile of a list that is already sorted; q in [0, 100]."""
     if not sorted_vals:
         return float('nan')
     if len(sorted_vals) == 1:
@@ -204,9 +205,9 @@ def ep_key(row):
 class EpochGrid:
     """Sorted (week, tow) epoch list -> integer index.
 
-    Sorting the (week, tow) TUPLE is rollover-safe (week increments before tow
+    Sorting the (week, tow) tuple is rollover-safe (week increments before tow
     wraps), so index adjacency means "the next epoch of the run" across a week
-    boundary.  `nearest` maps an epoch key from a DIFFERENT file onto this grid
+    boundary.  `nearest` maps an epoch key from another file onto this grid
     (product tow carries ~1e-5 s jitter, and the two files need not share an
     epoch set)."""
 
@@ -468,17 +469,17 @@ def section_samples(if_rows, summary):
 
 
 # ---------------------------------------------------------------------------
-# raw series: adjacent-epoch steps of the ABSOLUTE MW / GF logs
+# raw series: adjacent-epoch steps of the absolute MW / GF logs
 # ---------------------------------------------------------------------------
 def build_raw_steps(raw_rows):
     """(station, sat) -> {epoch_idx: {'lli': bool, 'dmw': float|None, 'dgf': float|None,
     'elev': float|None}}.
 
-    ``network_slip_raw.csv`` logs ABSOLUTE MW / GF (metres) per epoch, so the
-    step is a difference.  Following grade_ddfrac's discipline a step is taken
-    only between EPOCH-ADJACENT samples -- never across a gap, where a "step"
-    would just be the arc restarting.  The step is attributed to the LATER epoch
-    (the epoch the jump lands on, which is where the detector fires)."""
+    ``network_slip_raw.csv`` logs absolute MW / GF (metres) per epoch, so the
+    step is a difference.  As in grade_ddfrac, a step is taken only between
+    epoch-adjacent samples and never across a gap, where a "step" would only be
+    the arc restarting.  The step is attributed to the later epoch (the epoch the
+    jump lands on, which is where the detector fires)."""
     grid = EpochGrid(ep_key(r) for r in raw_rows)
     lli_ok = any(('lli1' in r or 'lli2' in r) for r in raw_rows[:1])
     per_key = defaultdict(dict)          # (sta,sat) -> idx -> (mw, gf, lli, elev)
@@ -495,9 +496,9 @@ def build_raw_steps(raw_rows):
         out = {}
         for i in idxs:
             mw, gf, lli, elev = ser[i]
-            # `elev` rides along for section (g): a re-tap population that
-            # concentrates at low elevation is geometry/iono-structured tension,
-            # which is a different card from one that is flat in elevation.
+            # `elev` is kept for section (g): a re-tap population concentrated at
+            # low elevation indicates geometry/iono-structured tension, which needs
+            # a different fix from one that is flat in elevation.
             out[i] = {'lli': lli, 'dmw': None, 'dgf': None, 'elev': elev}
         for a, b in zip(idxs, idxs[1:]):
             if b - a != 1:
@@ -542,9 +543,9 @@ def section_adjudicate(ev_rows, raw_rows, grid, steps, lli_ok, tol, lam, mw_cyc,
             per_event[ev]['no-series'] += 1
             continue
         hit = []
-        # "testable" = at least one of the three tests had data to say NO with.
-        # An arc-start epoch has a row but no step; with no LLI columns either,
-        # that is no-series (untested), not a clean bill of health.
+        # "testable" means at least one of the three tests had data to reject with.
+        # An arc-start epoch has a row but no step; with no LLI columns either, it
+        # counts as no-series (untested), not as unsupported.
         testable = lli_ok
         for w in window:
             if w['dmw'] is not None:
@@ -663,37 +664,36 @@ def section_reverse(ev_rows, raw_rows, grid, steps, tol, lam, gates, top, summar
 # ---------------------------------------------------------------------------
 # (g) D5 re-tap attribution  [network_d5_flags.csv]
 # ---------------------------------------------------------------------------
-# Column order of the producer's dump, oldest first.  Used ONLY to recover a
-# segment whose header line is not in the file (see read_d5_segments): runs up to
-# 2026-07-30 opened the dump in APPEND mode and wrote its header only when the
-# file was empty, so a log dir reused across runs holds several runs' rows under a
-# single header -- and, since the Card D5-A `raw_stepped` column was appended,
-# under a header that may be one column short of the rows below it.
+# Column order of the producer's dump, oldest schema first.  Used only to recover a
+# segment whose header line is not in the file (see read_d5_segments).  Producer
+# builds up to 2026-07-30 opened the dump in append mode and wrote the header only
+# when the file was empty, so a log dir reused across runs holds several runs' rows
+# under one header; after the `raw_stepped` column (card D5-A) was appended, that
+# header can be one column short of the rows below it.
 D5_COLS_V1 = ('week', 'tow', 'group', 'chord_u', 'chord_v', 'station', 'amb_key',
               'std_innov', 'ewl_stasat', 'hold_chord', 'injected_prev')
 D5_COLS_V2 = D5_COLS_V1 + ('raw_stepped',)
 
 
 def read_d5_segments(path, label='network_d5_flags.csv'):
-    """Parse the D5 flag dump into per-RUN segments (list of list-of-dict).
+    """Parse the D5 flag dump into per-run segments (list of list-of-dict).
 
-    Segmentation is a reader for ARCHIVED runs.  Until 2026-07-30 the producer
+    Segmentation exists for archived runs.  Until 2026-07-30 the producer
     re-opened ``network_d5_flags.csv`` per epoch in ``std::ios::app`` and never
     truncated it, so a log directory that was not wiped between runs accumulated
-    several runs in one file -- while the run-end counters a caller cross-checks
-    against describe only the LAST of them.  Grading the whole file against those
-    counters would manufacture a disagreement out of perfectly good data, so the
-    rows are split into segments.  The producer now owns the stream in
-    NetworkRunTraces and opens it truncating once per run (a re-run REPLACES the
-    file), so a current run yields exactly one segment and this all reduces to a
-    no-op -- but old log dirs are still graded, and a multi-run file must not be
-    silently read as one long run.  Splits are made where:
+    several runs in one file, while the run-end counters that a caller
+    cross-checks against describe only the last of them.  Grading the whole file
+    against those counters would report a disagreement where the data are fine,
+    so the rows are split into segments.  The producer now owns the stream in
+    NetworkRunTraces and opens it truncating once per run (a re-run replaces the
+    file), so a current run yields exactly one segment and the split is a no-op.
+    Old log dirs are still graded, and a multi-run file is not read as one long
+    run.  Splits are made where:
 
       * a header line ('week,...') starts a new segment and (re)defines the
-        columns -- this is also how the pre/post ``raw_stepped`` schema change is
-        absorbed;
-      * a row whose (week, tow) goes BACKWARDS relative to the segment's maximum
-        starts a new segment: epochs only ever advance within a run;
+        columns; this also handles the pre/post ``raw_stepped`` schema change;
+      * a row whose (week, tow) goes backwards relative to the segment's maximum
+        starts a new segment, since epochs only advance within a run;
       * a row whose field count differs from the current column map starts a new
         segment, its columns inferred by width (the schema-change case in a file
         with no second header).
@@ -748,18 +748,18 @@ def read_d5_segments(path, label='network_d5_flags.csv'):
 def parse_run_end_d5(path):
     """Best-effort scrape of the D5 numbers the producer printed at run end.
 
-    Three independent lines, all optional: the Card-G attribution pair (which
-    the section cross-checks its own join against), the gate's own flag/re-tap
-    totals with k, and the D5-v2 LS-VCE calibration's FINAL sigma0 inflation
-    (the gate threshold is k*sigma0 formal-sigma).  Scraping beats asking the
-    user to retype them, and a disagreement between these and the CSV is itself
-    a finding -- see the notes printed by the section."""
+    Three independent lines, all optional: the Card-G attribution pair (against
+    which the section cross-checks its own join), the gate's flag/re-tap totals
+    with k, and the final sigma0 inflation of the D5-v2 LS-VCE calibration (the
+    gate threshold is k*sigma0 formal-sigma).  Reading them from the log avoids
+    retyping them, and a disagreement between these and the CSV is itself a
+    finding; see the notes printed by the section."""
     out = {}
     if not os.path.exists(path):
         return out
     # Two accepted shapes for the Card-G attribution line: the current one, which
-    # states BOTH units (flag rows and distinct funnel arcs), and the pre-2026-07-22
-    # one, which stated only rows.  Archived runs must keep grading.
+    # states both units (flag rows and distinct funnel arcs), and the pre-2026-07-22
+    # one, which stated only rows.  The second keeps archived runs gradeable.
     pats = (
         ('retaps', 'retaps_stepped',
          re.compile(r'D5 attribution:\s*(\d+)\s*FLAG ROW\(s\) of which\s*(\d+)\s*coincident')),
@@ -790,7 +790,7 @@ def parse_run_end_d5(path):
 
 
 def _runs(sorted_idx):
-    """Longest run of CONSECUTIVE epoch indices in a sorted unique list."""
+    """Longest run of consecutive epoch indices in a sorted unique list."""
     best = run = 1 if sorted_idx else 0
     for a, b in zip(sorted_idx, sorted_idx[1:]):
         run = run + 1 if b - a == 1 else 1
@@ -799,13 +799,13 @@ def _runs(sorted_idx):
 
 
 def warm_boundary(if_rows, grid, pl_warmup):
-    """First epoch index at which the phase-leveling carry is WARM.
+    """First epoch index at which the phase-leveling carry is warm.
 
-    Preferred source is the producer's own ``carry_warm`` column in
-    ``network_if_slip.csv`` -- it is the exact flag the run used, so no
-    re-derivation of `pl_warmup` from config can drift away from it.  Falls back
-    to the ``--pl-warmup`` count (epochs), then to None (split not reported:
-    guessing a boundary would silently mislabel the whole population)."""
+    The preferred source is the producer's ``carry_warm`` column in
+    ``network_if_slip.csv``: it is the flag the run used, so it cannot disagree
+    with the run the way a re-derivation of `pl_warmup` from config can.  Falls
+    back to the ``--pl-warmup`` count (epochs), then to None (split not reported,
+    because a guessed boundary would mislabel the whole population)."""
     all_cold = False
     if if_rows:
         has_col = any('carry_warm' in r for r in if_rows[:1])
@@ -814,7 +814,7 @@ def warm_boundary(if_rows, grid, pl_warmup):
         warm = [i for i in warm if i is not None]
         if warm:
             return min(warm), 'carry_warm column of network_if_slip.csv'
-        all_cold = has_col          # column present, never 1 -> the RUN is cold
+        all_cold = has_col          # column present, never 1 -> the whole run is cold
     if pl_warmup is not None and pl_warmup >= 0:
         return int(pl_warmup), '--pl-warmup (config value, supplied by the caller)'
     return None, ('the whole run is COLD (carry_warm never 1 in network_if_slip.csv)'
@@ -823,8 +823,8 @@ def warm_boundary(if_rows, grid, pl_warmup):
 
 def section_d5(segments, seg_note, seg_sel, grid, steps, if_rows,
                tol, lam, mw_cyc, gf_m, top, pl_warmup, run_end, summary):
-    # The section header is printed by the caller BEFORE the file is read, so a
-    # missing dump prints its skip note under the right heading.
+    # The caller prints the section header before the file is read, so a missing
+    # dump prints its skip note under the right heading.
     if not segments:
         summary['d5'] = None
         return
@@ -835,7 +835,7 @@ def section_d5(segments, seg_note, seg_sel, grid, steps, if_rows,
         if seg_sel == 'last':
             idx = len(segments) - 1
         else:
-            try:                          # a typo must not kill the rest of the report
+            try:                          # a bad value must not end the report
                 idx = max(0, min(int(seg_sel), len(segments) - 1))
             except (TypeError, ValueError):
                 print('  [warn] --d5-segment %r is not last|all|N — grading the last segment'
@@ -848,10 +848,10 @@ def section_d5(segments, seg_note, seg_sel, grid, steps, if_rows,
         summary['d5'] = None
         return
 
-    # The reference epoch grid is the RAW one when available: it holds every
-    # PROCESSED epoch, so a consecutive-run length is measured in epochs the
-    # estimator actually saw.  The D5 file alone only holds epochs that flagged,
-    # which would make every isolated flag look like a run of one and every
+    # The reference epoch grid is the raw one when available: it holds every
+    # processed epoch, so a consecutive-run length is measured in epochs the
+    # estimator saw.  The D5 file alone holds only the epochs that flagged, which
+    # would make every isolated flag look like a run of one and every
     # second-epoch flag look consecutive.
     d5_grid = EpochGrid(ep_key(r) for r in rows)
     ref_grid, grid_src = ((grid, 'network_slip_raw.csv (processed epochs)')
@@ -862,8 +862,8 @@ def section_d5(segments, seg_note, seg_sel, grid, steps, if_rows,
 
     # --- population + per-row attribution ---------------------------------
     n = len(rows)
-    # ANY row, not just the first: under --d5-segment all a pre-D5-A segment can
-    # precede a post-D5-A one, and the census must not vanish because of the order.
+    # Any row, not only the first: under --d5-segment all, a pre-D5-A segment can
+    # precede a post-D5-A one, and the census must not depend on that order.
     have_col = any('raw_stepped' in r for r in rows)
     col_ct = Counter()                    # exact-epoch producer tag
     join_ct = Counter()                   # independent +/-tol offline join
@@ -921,11 +921,11 @@ def section_d5(segments, seg_note, seg_sel, grid, steps, if_rows,
             if hit:
                 witness['+'.join(sorted(set(hit)))] += 1
         join_ct[verdict] += 1
-        # Bucket by VERDICT, never by negation: a 'no-series' row carries no raw
-        # evidence at all, and folding it into the flat population would make the
-        # stepped-vs-flat comparison — the statistic Card D5-A reads to decide
-        # whether an invisible slip class exists — a comparison against
-        # "flat + unknown".
+        # Bucket by verdict, not by negation: a 'no-series' row carries no raw
+        # evidence, and folding it into the flat population would turn the
+        # stepped-vs-flat comparison into a comparison against "flat + unknown".
+        # That comparison is the statistic card D5-A reads to decide whether a
+        # slip class exists that the raw observables do not show.
         if v is not None:
             if verdict == 'stepped':
                 innov_step.append(v)
@@ -963,13 +963,13 @@ def section_d5(segments, seg_note, seg_sel, grid, steps, if_rows,
     if witness:
         print('    witnessed by: ' + ', '.join('%s=%d' % kv for kv in witness.most_common()))
     if have_col and col_ct.get('1', 0) != st:
-        # The two numbers answer DIFFERENT questions and are both wanted.  The
-        # producer's tag is the exact epoch judged by the EMPIRICAL per-station
-        # gate max(k*sigma_hat, physical floor); this join is +/-tol epochs judged
-        # by the audit's FIXED gates and additionally accepts a bare LLI bit.  So
-        # the join is the permissive bound and the tag the strict one; a large
-        # spread between them is a statement about the raw noise floor at those
-        # stations, not a disagreement about the data.
+        # The two numbers answer different questions and both are reported.  The
+        # producer's tag judges the exact epoch with the empirical per-station
+        # gate max(k*sigma_hat, physical floor); this join judges +/-tol epochs
+        # with the audit's fixed gates and also accepts a bare LLI bit.  The join
+        # is therefore the permissive bound and the tag the strict one; a large
+        # spread between them reflects the raw noise floor at those stations, not
+        # a disagreement about the data.
         print('    NOTE: producer tag %d vs join %d — different questions: exact-epoch EMPIRICAL '
               'per-station gate vs +/-%d-epoch FIXED audit gates incl. a bare LLI bit. Read the '
               'tag as the strict floor and the join as the permissive ceiling.'
@@ -1131,15 +1131,15 @@ def section_counters(path, summary):
         return
     if not lines:
         print('  no "Network (... slip ...)" counter lines found')
-    for line in lines[-12:]:              # run-end counters are the LAST matches
+    for line in lines[-12:]:              # run-end counters are the last matches
         print('  ' + line)
     summary['counters'] = lines[-12:]
 
 
 # ---------------------------------------------------------------------------
 def main(argv=None):
-    # Counter lines carry non-ASCII (sigma, Delta) the cp1252 console cannot
-    # encode; force UTF-8 so the report never dies on content.
+    # Counter lines carry non-ASCII (sigma, Delta) that a cp1252 console cannot
+    # encode; force UTF-8 so printing them cannot abort the report.
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.reconfigure(encoding='utf-8', errors='replace')
@@ -1241,10 +1241,10 @@ def main(argv=None):
             print('\n[warn] could not write %s: %s' % (a.json_out, e))
 
     # `d5_segs` counts as a graded input: network.mw_wl.d5_dump is an opt-in
-    # INDEPENDENT of the trace flags, so a log dir holding only the D5 dump is a
-    # real, fully-graded configuration — reporting "nothing graded" (and exiting
-    # 1) after printing a complete section (g) would be false, and any harness
-    # keying off the exit status would call a good run a failure.
+    # independent of the trace flags, so a log dir holding only the D5 dump is a
+    # valid, fully graded configuration.  Reporting "nothing graded" (and exiting
+    # 1) after printing a complete section (g) would be wrong, and a harness that
+    # keys off the exit status would call a good run a failure.
     if ev_rows is None and if_rows is None and raw_rows is None and not d5_segs:
         print('\nnothing graded: no input file found under %s' % a.logdir)
         return 1

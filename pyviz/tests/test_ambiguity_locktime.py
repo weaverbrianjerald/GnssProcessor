@@ -1,11 +1,11 @@
 """Locktime reconstruction: the sigma-heuristic + detector-flag union rule.
 
-Background (viewer docstring, measured on the exam hero run 2026-08-31): the
-ambiguity trace logs POST-update sigma, so in a converged filter a slip reset
-often shows NO reinflation at all -- and the few that log the raw reset sigma
-collapse back within an epoch, which is exactly the bridge hold-and-restore
-signature.  Resets must therefore also be forced by the detector slip / LLI
-flags, without defeating the genuine bridge-hold rendering for LLI holds.
+The ambiguity trace logs post-update sigma (viewer docstring; measured on the
+exam hero run 2026-08-31), so in a converged filter a slip reset often shows no
+reinflation at all, and the few that log the raw reset sigma collapse back
+within an epoch, matching the bridge hold-and-restore signature. Resets must
+therefore also be forced by the detector slip / LLI flags, without defeating
+the genuine bridge-hold rendering for LLI holds.
 """
 import numpy as np
 import pandas as pd
@@ -48,8 +48,8 @@ def test_persisted_flags_collapse_to_one_reset():
 
 
 def test_flagged_sigma_spike_is_reset_not_bridge():
-    # The 1000-sigma park + one-epoch collapse matches the bridge-restore
-    # signature; with a slip flag it must be a RESET (the hero's 5 mis-held).
+    # The 1000-sigma park plus one-epoch collapse matches the bridge-restore
+    # signature; with a slip flag it must be a reset (the hero's 5 mis-held).
     t, s = _series(10)
     s[5] = 1000.0
     mask = np.zeros(10, bool)
@@ -61,7 +61,7 @@ def test_flagged_sigma_spike_is_reset_not_bridge():
 
 def test_unflagged_spike_with_restore_still_bridges():
     # Regression: the soft-LLI hold-and-restore rendering survives unchanged
-    # when NO detector flag coincides.
+    # when no detector flag coincides.
     t, s = _series(10)
     s[5] = 1000.0
     lock, rt = _reconstruct_locktime(t, s)
@@ -81,7 +81,7 @@ def test_lli_flag_resets_when_no_hold_signature():
 
 def test_lli_flag_keeps_bridge_when_hold_restores():
     # A genuine turbo_edit_bridge_lli hold: parked sigma restored next epoch.
-    # LLI is SOFT evidence -- the bridge classification must win.
+    # LLI is soft evidence, so the bridge classification must win.
     t, s = _series(10)
     s[5] = 1000.0
     mask = np.zeros(10, bool)
@@ -139,8 +139,8 @@ def test_builder_counts_flag_driven_reset(tmp_path):
     res = build_ambiguity_locktime(TraceContext(_write_fixture(tmp_path)))
     assert "In-arc resets: 1 total" in res.summary
     assert "slip-driven 1" in res.summary
-    # Single-facet strip with many satellite rows: must NOT be sized by the
-    # multi-facet default (1.75*1+1.5 = 3.25 in -- too short to read).
+    # Single-facet strip with many satellite rows: must not be sized by the
+    # multi-facet default (1.75*1+1.5 = 3.25 in, too short to read).
     assert all(f.height >= 8.0 for f in res.figures)
 
 

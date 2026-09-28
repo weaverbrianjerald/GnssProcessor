@@ -2,15 +2,14 @@
  * @file test_network_process_noise_config.cpp
  * @brief Config-contract tests for the scoped @c network.process_noise table.
  *
- * The table is a single authoring surface over the twelve time-linked
- * network-owned process-noise rates that were previously spelled across five
- * config sections.  It is ALWAYS live — there is no master enable — so the
- * property that makes it safe is not a default-OFF toggle but an equality:
- * every class's fallback equals the legacy key's own default.  These tests lock
- * that equality (@ref NetworkProcessNoiseConfig.StockConfigResolvesToLegacyDefaults
- * is the byte-identity guard), the precedence rule, and the loader's rejection
- * of the three ways a q table gets silently mis-authored — an unknown class, a
- * negative rate, and a quoted number.
+ * The table is one authoring surface over the twelve time-linked network-owned
+ * process-noise rates whose legacy keys are spread across five config sections.
+ * It is always live (there is no master enable), so its safety rests on an
+ * equality rather than a default-off toggle: every class's fallback equals the
+ * legacy key's own default.  These tests lock that equality
+ * (@ref NetworkProcessNoiseConfig.StockConfigResolvesToLegacyDefaults is the
+ * byte-identity guard), the precedence rule, and the loader's rejection of three
+ * silent authoring errors: an unknown class, a negative rate, and a quoted number.
  */
 
 #include <gtest/gtest.h>
@@ -71,7 +70,7 @@ std::string networkConfig(const std::string& extra = "",
               : ::testing::AssertionFailure() << "loadFromJson failed for tag " << tag;
 }
 
-// Load @p body expecting the loader to REJECT it.
+// Load @p body, expecting the loader to reject it.
 bool loadFails(const std::string& tag, const std::string& body) {
     LogManager log;
     GnssConfig cfg;
@@ -83,12 +82,11 @@ bool loadFails(const std::string& tag, const std::string& body) {
 
 } // namespace
 
-// THE byte-identity guard.  A config with no network.process_noise block must
-// resolve every class to its descriptor fallback, and every fallback must be
-// the legacy key's own default — which is what makes an always-live table
-// produce today's numbers exactly.  If someone edits a fallback without editing
-// the legacy default beside it (or vice versa), this fails and the silent field
-// result change is caught at build time instead of in a graded run.
+// Byte-identity guard.  A config with no network.process_noise block resolves every
+// class to its descriptor fallback, and every fallback equals the legacy key's own
+// default, so the always-live table reproduces the legacy rates exactly.  Editing a
+// fallback without the legacy default beside it (or the reverse) fails this test,
+// which catches the change in the unit suite instead of in a graded run.
 TEST(NetworkProcessNoiseConfig, StockConfigResolvesToLegacyDefaults) {
     LogManager log; GnssConfig cfg;
     ASSERT_TRUE(loadOk("stock", networkConfig(), cfg, log));
@@ -117,9 +115,9 @@ TEST(NetworkProcessNoiseConfig, StockConfigResolvesToLegacyDefaults) {
     EXPECT_DOUBLE_EQ(cfg.networkIonoCarryQ(),         1e-4);
 }
 
-// A table entry must reach the canonical member the estimator reads.  Covers
-// both wiring routes: classes whose legacy key lives in an EARLIER section
-// (write-through) and classes parsed LATER in the network section (jval default).
+// A table entry reaches the canonical member the estimator reads.  Covers both
+// wiring routes: classes whose legacy key lives in an earlier section (write-through)
+// and classes parsed later in the network section (jval default).
 TEST(NetworkProcessNoiseConfig, TableEntryReachesCanonicalMember) {
     LogManager log; GnssConfig cfg;
     ASSERT_TRUE(loadOk("table", networkConfig(
@@ -145,9 +143,9 @@ TEST(NetworkProcessNoiseConfig, TableEntryReachesCanonicalMember) {
     EXPECT_EQ(pn.source(NetworkQClass::SatPhaseBias), Src::Default);
 }
 
-// Precedence: an explicitly-set legacy key beats the table.  This is what keeps
-// every pre-existing config — the archived campaign set and the golden-0729
-// posture configs among them — behaving exactly as before.
+// Precedence: an explicitly set legacy key beats the table, so every config that
+// sets the legacy keys (the archived campaign set and the golden-0729 posture
+// configs among them) resolves to the same rates as before the table existed.
 TEST(NetworkProcessNoiseConfig, ExplicitLegacyKeyBeatsTable) {
     LogManager log; GnssConfig cfg;
     ASSERT_TRUE(loadOk("prec", networkConfig(
@@ -181,12 +179,12 @@ TEST(NetworkProcessNoiseConfig, LegacyOnlyConfigStillHonoured) {
     EXPECT_EQ(pn.source(NetworkQClass::LevelingAmbiguity), Src::Legacy);
 }
 
-// The slant-iono carry class (the twelfth) must report the rate the estimator
-// reads, through every precedence rung.  finalizeNetworkProcessNoise_ once
-// re-read only the first eleven classes, so an explicit network.iono_carry_q
-// reached networkIonoCarryQ() while the table, and with it the run manifest
-// and the process-noise log line, kept the fallback labelled Default (or the
-// shadowed table value labelled Table when both keys were set).
+// The slant-iono carry class (the twelfth) reports the rate the estimator reads,
+// through every precedence rung.  finalizeNetworkProcessNoise_ re-reads all twelve
+// classes; if it skipped this one, an explicit network.iono_carry_q would reach
+// networkIonoCarryQ() while the table, the run manifest and the process-noise log
+// line kept the fallback labelled Default (or, with both keys set, the shadowed
+// table value labelled Table).
 TEST(NetworkProcessNoiseConfig, IonoCarryReportsResolvedRate) {
     struct Case { const char* tag; const char* extra; double q; Src src; };
     const Case cases[] = {
@@ -207,10 +205,10 @@ TEST(NetworkProcessNoiseConfig, IonoCarryReportsResolvedRate) {
     }
 }
 
-// Ordering trap: network.ura_staleness_q2 DEFAULTS to clock_model_q2 and is
-// captured after it, so a table-supplied sat_clock_rwfm must propagate into the
-// derived consumer knob.  This is why the table resolves at the TOP of the
-// network section rather than at the end.
+// Ordering constraint: network.ura_staleness_q2 defaults to clock_model_q2 and is
+// captured after it, so a table-supplied sat_clock_rwfm propagates into the derived
+// consumer knob.  For this reason the table resolves at the top of the network
+// section rather than at the end.
 TEST(NetworkProcessNoiseConfig, DerivedUraStalenessInheritsTableClockQ2) {
     LogManager log; GnssConfig cfg;
     ASSERT_TRUE(loadOk("derived", networkConfig(
@@ -220,9 +218,9 @@ TEST(NetworkProcessNoiseConfig, DerivedUraStalenessInheritsTableClockQ2) {
     EXPECT_DOUBLE_EQ(cfg.networkUraStalenessQ2(), 2.5e-7);  // inherited, not 1.5e-7
 }
 
-// A misspelled class must be a hard load error.  Silently ignoring it would
-// produce a run that looks armed and is inert — the failure mode run-end
-// telemetry exists to catch, caught here instead at config load.
+// A misspelled class is a hard load error.  Ignoring it would produce a run that
+// looks armed and is inert; the load error catches that at config load instead of
+// through run-end telemetry.
 TEST(NetworkProcessNoiseConfig, UnknownClassIsRejected) {
     EXPECT_TRUE(loadFails("unknown", networkConfig(
         "    \"process_noise\": { \"sat_clk\": 5e-3 },\n")));
@@ -256,8 +254,8 @@ TEST(NetworkProcessNoiseConfig, ZeroLayer2VtecQIsRestored) {
     EXPECT_GT(cfg.getGlobalVtecShConfig().layer2_q_per_degree, 0.0);
 }
 
-// The descriptor table is the single source of truth for the loader, the ON
-// summary line and the manifest writer; a duplicate or empty name would make one
+// The descriptor table is the single source of truth for the loader, the summary
+// line and the manifest writer; a duplicate or empty name would make one
 // of those three silently address the wrong class.
 TEST(NetworkProcessNoiseConfig, DescriptorTableIsWellFormed) {
     for (std::size_t i = 0; i < kNetworkQClassCount; ++i) {

@@ -3,11 +3,11 @@
 Input: logs/network_wl_lane_trace.csv from a run with network.mw_wl.lane_trace=true
 (one row per primary cycle per epoch: post-install carried WL lane + frac + tags).
 
-A chord joins the CONSTRAINED population the first epoch it is held or injected and
-stays there (the carry holds the lane between events).  Everything else is CONTROL —
+A chord joins the constrained population the first epoch it is held or injected and
+stays there (the carry holds the lane between events). Everything else is control:
 the same run, same epochs, same estimator, differing only in whether the WL cascade
-touched the cycle.  PASS criterion (SPEC_ewl_wl_cascade_card §7): constrained circR
-integer-clustered ≫ control.
+touched the cycle. PASS criterion (SPEC_ewl_wl_cascade_card §7): constrained circR
+integer-clustered much higher than control.
 
 Usage: python grade_lane_trace.py <path/to/network_wl_lane_trace.csv>
 """

@@ -28,11 +28,11 @@ std::string satOf(const MwSlipResult& sr) {
     return (p != std::string::npos) ? sr.amb_key.substr(0, p) : sr.amb_key;
 }
 
-/// Elevation shaping for the cross-sat TD2 pool: 1/sin(el), clamped at 10°
-/// so a near-horizon arc cannot blow up the weight.  Mirrors the MW
-/// detector's mwElevationWeight — the pool stores zenith-normalized values
-/// and the floor re-expands them to the consuming arc's elevation, so the
-/// elevation SHAPES the floor while its magnitude stays data-driven.
+/// Elevation shaping for the cross-sat TD2 pool: 1/sin(el), with el clamped at
+/// 10° so a near-horizon arc cannot produce an unbounded weight.  Mirrors the MW
+/// detector's mwElevationWeight.  The pool stores zenith-normalized values and
+/// the floor re-expands them to the consuming arc's elevation, so elevation sets
+/// the shape of the floor while its magnitude stays data-driven.
 double gfElevWeight(double elev_deg) {
     constexpr double kMinElevDeg = 10.0;
     constexpr double kDegToRad   = 0.017453292519943295;
@@ -43,8 +43,8 @@ double gfElevWeight(double elev_deg) {
 
 /// Receiver-declared loss of lock on either phase signal of a pair.
 /// Mirrors MwSlipDetector::hasAnyPhaseLockLoss's `lli != 0` convention.
-/// A set LLI is corroboration that integer continuity broke — the
-/// code-domain veto must stand down (the caller's LLI mandate governs).
+/// A set LLI corroborates that integer continuity broke, so the code-domain
+/// veto does not apply; the caller's LLI handling governs.
 bool pairHasLockLoss(const PppObservation& obs,
                      const std::string& sig1, const std::string& sig2) {
     const auto set = [&obs](const std::string& sig) {
@@ -68,10 +68,9 @@ TurboEditResolver::TurboEditResolver(const GnssConfig& config, LogManager& log_m
       mw_only_veto_(config.getCycleSlipConfig().turbo_edit_mw_only_veto),
       bridge_max_gap_s_(config.getCycleSlipConfig().turbo_edit_max_gap_s),
       wl_settle_max_s_(config.getCycleSlipConfig().turbo_edit_wl_settle_max_s),
-      // The deferral parks a still-slipped ambiguity for tens of seconds —
-      // safe only while the caller's soft-LLI holds keep its phase
-      // measurements out of the filter, so it requires the bridge_lli
-      // machinery to be on.
+      // The deferral parks a still-slipped ambiguity for tens of seconds.
+      // That is safe only while the caller's soft-LLI holds keep its phase
+      // measurements out of the filter, so it requires turbo_edit_bridge_lli.
       wl_settle_enabled_(config.getCycleSlipConfig().turbo_edit_bridge_lli &&
                          config.getCycleSlipConfig().turbo_edit_wl_settle_max_s > 0.0 &&
                          config.getCycleSlipConfig().turbo_edit_max_gap_s > 0.0) {
@@ -202,10 +201,10 @@ double TurboEditResolver::computeMadSigma(const std::deque<double>& window) {
 double TurboEditResolver::effectiveSigma(const GfArc& arc,
                                          const std::string& arc_key,
                                          double elev_deg) const {
-    // Same mature-own-MAD / warmup-cross-sat split as the detection
-    // threshold (computeAdaptiveThreshold), but returning the raw σ — the
-    // rate-adaptive gates compare it against lattice geometry, not against
-    // a kσ detection multiple.
+    // Same split as the detection threshold (computeAdaptiveThreshold): the
+    // arc's own MAD once mature, the cross-sat σ during warmup.  Returns the
+    // raw σ, because the rate-adaptive gates compare it against lattice
+    // geometry rather than against a kσ detection multiple.
     const double own = computeMadSigma(arc.diff_window);
     if (std::isfinite(own)) return own;
     return xsatSigmaFloor(arc_key, elev_deg);
@@ -225,24 +224,23 @@ double TurboEditResolver::computeAdaptiveThreshold(const GfArc& arc,
                                                    const std::string& arc_key,
                                                    double elev_deg,
                                                    double* out_unfloored) const {
-    // MATURE: the arc's own MAD governs; cross-sat σ is warmup-only.
+    // Mature arc: its own MAD governs; the cross-sat σ is used only in warmup.
     const double sigma = computeMadSigma(arc.diff_window);
     if (std::isfinite(sigma)) {
         if (out_unfloored) *out_unfloored = sigma_multiplier_ * sigma;
         return std::max(sigma_multiplier_ * sigma, kMinThresholdM);
     }
 
-    // WARMUP: borrow the constellation's TD2 noise scale so fresh arcs
-    // (true cold start, post-gap, post-slip) carry a finite, statistically
-    // grounded gate from their FIRST TD2.  On quiet data k×σ_xsat sits
-    // under the quantum floor and the floor governs — the degenerate case
-    // is correct because the smallest GF event is |λ1−λ2| ≈ 5.4 cm; the
-    // pool earns its keep by LIFTING fresh-arc gates during iono activity
-    // or on noisy receivers, where the bare floor would false-flag → reset.
-    // The breadth cascade (band-pair → constellation → global non-GLONASS)
-    // means the bare floor gates alone only at the true cold start (first
-    // ~2 epochs of a run) and for GLONASS when its own tiers are thin —
-    // quantum-limited, never NaN.
+    // Warmup: borrow the cross-sat TD2 noise scale so a fresh arc (cold start,
+    // after a gap, after a slip) has a finite, statistically based gate from
+    // its first TD2.  On quiet data k×σ_xsat falls below the quantum floor and
+    // the floor governs, which is correct because the smallest GF event is
+    // |λ1−λ2| ≈ 5.4 cm (GPS L1/L2).  The pool matters when it raises fresh-arc
+    // gates during ionospheric activity or on noisy receivers, where the bare
+    // floor would raise false flags and resets.  With the cascade (band-pair,
+    // constellation, global non-GLONASS), the bare floor gates alone only at
+    // the cold start (the first ~2 epochs of a run) and for GLONASS when its
+    // own tiers are thin.  The result is floor-limited and never NaN.
     const double xsat = xsatSigmaFloor(arc_key, elev_deg);
     if (std::isfinite(xsat)) {
         if (out_unfloored) *out_unfloored = sigma_multiplier_ * xsat;
@@ -293,23 +291,23 @@ double TurboEditResolver::xsatSigmaFloor(const std::string& arc_key,
 }
 
 void TurboEditResolver::finalizeXsatSigmas() {
-    // EWMA blend per tier; the first finite MAD bootstraps.  Tiers update
-    // only when the epoch's pool clears kMinXsatSamples — otherwise the
-    // previous value persists (a thin cross-section must not whip the
-    // floor around).  Mirrors MwSlipDetector::finalizeCrossSatSigmas,
-    // including the tier-3 global non-GLONASS fallback: a constellation
-    // with 1-2 visible sats never clears kMinXsatSamples in its own tiers
-    // and would otherwise sit at the bare quantum floor for the whole run.
+    // EWMA blend per tier; the first finite MAD initializes it.  A tier
+    // updates only when the epoch's pool reaches kMinXsatSamples; otherwise
+    // the previous value persists, so a thin cross-section cannot swing the
+    // floor.  Mirrors MwSlipDetector::finalizeCrossSatSigmas, including the
+    // tier-3 global non-GLONASS fallback: a constellation with 1-2 visible
+    // satellites never reaches kMinXsatSamples in its own tiers and would
+    // otherwise stay at the bare quantum floor for the whole run.
     const auto blend = [](double prev, double raw) {
         return std::isfinite(prev)
                    ? kXsatEwmaAlpha * raw + (1.0 - kXsatEwmaAlpha) * prev
                    : raw;
     };
     // Narrow-spacing pairs (intra-E5/B2 family: both bands in {L5,L7,L8})
-    // have sub-mm TD2 noise — an order below the cm-scale wide pairs.
-    // They keep their own tier-1 group but are excluded from the coarse
-    // tiers, which would otherwise be dragged toward the small end and
-    // dilute the lift those tiers exist to provide.
+    // have sub-mm TD2 noise, an order of magnitude below the cm-scale wide
+    // pairs.  They keep their own tier-1 group but are excluded from the
+    // coarse tiers, which they would otherwise pull toward the small end,
+    // reducing the lift those tiers provide.
     const auto isNarrowPair = [](const std::string& gkey) {
         // gkey = "<cons>_<b1>_<b2>", bands are 2 chars ("L5"/"L7"/"L8").
         if (gkey.size() != 7) return false;
@@ -366,7 +364,7 @@ double TurboEditResolver::computeIvi(const std::vector<double>& constellation_td
 }
 
 // =====================================================================
-// resolve() — two-pass joint solve
+// resolve(): two-pass joint solve
 // =====================================================================
 
 TurboEditResolver::EpochResolution TurboEditResolver::resolve(
@@ -411,9 +409,9 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
     struct MwFlag {
         int    dN_wl{ 0 };
         bool   known{ false };
-        /// Float WL-step estimate (cycles, ZD frame) — candidate selector
-        /// for the gap-bridge solve when the integer is withheld (e.g. the
-        /// locked-arc TD-confirmation path).  NaN when unavailable.
+        /// Float WL-step estimate (cycles, ZD frame).  Selects candidates for
+        /// the gap-bridge solve when the integer is withheld (for example on
+        /// the locked-arc TD-confirmation path).  NaN when unavailable.
         double wl_float{ std::numeric_limits<double>::quiet_NaN() };
     };
     std::map<std::string, MwFlag> mw_by_pair;
@@ -436,7 +434,7 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
         double thresh{ std::numeric_limits<double>::quiet_NaN() };
         double thresh_unfloored{ std::numeric_limits<double>::quiet_NaN() };  // kσ·MAD, no floor (trace diagnostic)
         bool   gf_exceeds{ false };  // |TD2| > thresh (outlier, ignoring cooldown)
-        /// True when @c td2 is NOT a TD2 but the drift-corrected ACROSS-GAP
+        /// True when @c td2 holds not a TD2 but the drift-corrected across-gap
         /// jump from a stashed pre-gap level (see the header's gap-bridge
         /// note); @c gap_s is the span back to the stashed reference.
         bool   bridged{ false };
@@ -488,10 +486,10 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
             //      2nd-order time difference would be malformed.  An exact
             //      timestamp comparison makes this rate-agnostic (works at 1 Hz
             //      or 10 Hz) without depending on max_gap_seconds_.
-            // No count>0 requirement: a post-slip arc carries count==0 with
-            // a preserved MAD window and a STAMPED last_epoch_s — the
-            // absolute-gap trigger must stay armed so a long dropout after
-            // the slip expires that preserved calibration on return.
+            // Trigger (a) has no count>0 requirement: a post-slip arc has
+            // count==0 with a preserved MAD window and a stamped last_epoch_s,
+            // and the absolute-gap trigger stays armed so that a long dropout
+            // after the slip expires the preserved calibration on return.
             // (Brand-new arcs have last_epoch_s == 0 and are unaffected.)
             const bool absolute_gap =
                 arc.last_epoch_s > 0.0 &&
@@ -499,17 +497,17 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
             const bool skipped_prev_epoch =
                 arc.count > 0 && arc.last_epoch_s > 0.0 && prev_epoch_s_ > 0.0 &&
                 arc.last_epoch_s < prev_epoch_s_ - 1e-6;
-            // Gap bridge: a chain break within turbo_edit_max_gap_s stashes
-            // the pre-gap level (count >= 2 — a level confirmed by at least
+            // Gap bridge: a chain break within turbo_edit_max_gap_s stashes the
+            // pre-gap level (requires count >= 2, a level confirmed by at least
             // one consecutive pair) so the across-gap jump can adjudicate
-            // post-gap MW flags, and PRESERVES the MAD calibration window —
+            // post-gap MW flags.  It also preserves the MAD calibration window:
             // a 15 s gap changes the arc's TD2 noise no more than the 1.5 s
-            // gaps the partial reset already tolerates.  Beyond the cap the
-            // pre-existing two-tier behavior governs: absolute gap → full
-            // wipe; per-signal dropout inside max_gap_seconds_ → partial
-            // reset.  A break during warm-up (count < 2) cannot stash and
-            // also voids any older bridge — bridges do not compound across
-            // repeated breaks.
+            // gaps (max_gap_seconds_ = 1.5 × interval at 1 Hz) that the partial
+            // reset already tolerates.  Beyond the cap the two-tier behavior
+            // governs: an absolute gap wipes the arc; a per-signal dropout
+            // inside max_gap_seconds_ gets a partial reset.  A break during
+            // warm-up (count < 2) cannot stash and also voids any older bridge,
+            // so bridges do not compound across repeated breaks.
             const double gap_span_s =
                 (arc.last_epoch_s > 0.0) ? (epoch_s - arc.last_epoch_s) : 0.0;
             const bool bridgeable =
@@ -536,36 +534,36 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
             } else if (absolute_gap) {
                 arc = GfArc{};
             } else if (skipped_prev_epoch) {
-                // PARTIAL reset: the TD2 chain is non-consecutive and must
-                // re-seed (prev_gf / prev_prev_gf reference non-adjacent
-                // epochs), but the MAD window is CALIBRATION, not chain
-                // state — the TD2 noise level is a slowly varying property
-                // of the arc (elevation / tracking / multipath) that a gap
-                // inside max_gap_seconds_ does not invalidate.  Wiping it
-                // with the chain cost 5 extra blind epochs (NaN threshold)
-                // after every short dropout — precisely the epochs where
-                // post-gap slips need a live GF gate.  Preserving it
-                // introduces NO cross-gap differencing: the chain re-seed
-                // keeps the first post-gap TD2 built from post-gap samples
-                // only; the preserved window merely calibrates the gate
-                // that tests it.  Cooldown clears — a pre-gap slip's TD2
+                // Partial reset: the TD2 chain is non-consecutive and re-seeds
+                // (prev_gf / prev_prev_gf reference non-adjacent epochs), but
+                // the MAD window is calibration, not chain state.  The TD2
+                // noise level is a slowly varying property of the arc
+                // (elevation, tracking, multipath) that a gap inside
+                // max_gap_seconds_ does not invalidate.  Wiping it with the
+                // chain would leave kMinEpochsForAdaptive (5) extra epochs
+                // without a MAD threshold after every short dropout, which
+                // are the epochs where post-gap slips need a live GF gate.
+                // Keeping it adds no cross-gap differencing: the re-seeded
+                // chain builds the first post-gap TD2 from post-gap samples
+                // only, and the preserved window only calibrates the gate that
+                // tests it.  Cooldown clears, because a pre-gap slip's TD2
                 // echo cannot form across a re-seeded chain.
                 arc.prev_gf            = 0.0;
                 arc.prev_prev_gf       = 0.0;
                 arc.count              = 0;
                 arc.last_epoch_s       = 0.0;
                 arc.cooldown_remaining = 0;
-                // Reachable with bridging only when the gap exceeded the
-                // bridge cap — the stale level must not bridge it.
+                // With bridging on, this branch is reached only when the gap
+                // exceeded the bridge cap, so the stale level is invalidated.
                 arc.bridge_valid   = false;
                 arc.rate_ewma_mps  = std::numeric_limits<double>::quiet_NaN();
                 arc.last_spacing_s = 0.0;
             }
 
-            // Warm-up epochs (count < 2): no TD2 yet.  With a fresh bridge
-            // the pair is CACHED against the drift-corrected ACROSS-GAP jump
-            // instead (pass 2 adjudicates and owns the chain roll, exactly
-            // as for normal cached rows); otherwise roll forward inline.
+            // Warm-up epochs (count < 2): no TD2 yet.  With a fresh bridge the
+            // pair is cached against the drift-corrected across-gap jump
+            // instead (pass 2 adjudicates it and rolls the chain, as for
+            // normal cached rows); otherwise the chain rolls forward inline.
             if (arc.count < 2) {
                 bool cached_bridged = false;
                 if (arc.bridge_valid) {
@@ -575,7 +573,7 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
                             std::isfinite(arc.bridge_rate_mps)
                                 ? arc.bridge_rate_mps * span_s : 0.0;
                         const double dgf_gap = gf - arc.bridge_gf - drift;
-                        // Gate from the PRESERVED calibration, widened by the
+                        // Gate from the preserved calibration, widened by the
                         // random-walk factor √(Δt/dt₀): the arc's own
                         // per-interval variability extrapolated over the gap.
                         double thresh_unfloored =
@@ -587,9 +585,9 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
                                 ? std::sqrt(span_s / arc.bridge_dt0_s) : 1.0;
                         const bool exceeds = std::isfinite(base) &&
                                              std::abs(dgf_gap) > base * widen;
-                        // Bridged rows feed NEITHER the IVI pool nor the
+                        // Bridged rows feed neither the IVI pool nor the
                         // cross-sat TD2 pool: the across-gap jump is not a
-                        // TD2 sample and would poison both statistics.
+                        // TD2 sample and would bias both statistics.
                         cache.push_back({ &obs, key, pr.phase1, pr.phase2, gf,
                                           dgf_gap, lam1, lam2,
                                           base * widen, thresh_unfloored * widen,
@@ -625,17 +623,17 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
                                                            &thresh_unfloored);
             const bool gf_exceeds = std::isfinite(thresh) && std::abs(td2) > thresh;
 
-            // The chain owns a TD2 again — but the pre-gap stash stays valid
+            // The chain has a TD2 again, but the pre-gap stash stays valid
             // (time-bounded) until consumed or expired.  The MW locked-arc
-            // TD-confirmation path delivers its across-gap flag one-plus
-            // epochs AFTER the chain re-owns a TD2; that flag must be
-            // adjudicated against the across-gap jump, because the rebuilt
-            // chain's TD2 is blind to it by construction (a flat post-gap
-            // TD2 would hand a genuine re-lock slip to the MW-only veto as
-            // a "code event").  Pass 2 re-routes such late MW flags back to
-            // the stash; expiry is the cap measured from the pre-gap
-            // level's epoch — extended by the WL-settle window while a
-            // deferred adjudication is waiting on the post-restart MW mean.
+            // TD-confirmation path delivers its across-gap flag one or more
+            // epochs after the chain regains a TD2.  That flag is adjudicated
+            // against the across-gap jump, because the rebuilt chain's TD2
+            // cannot see it by construction (a flat post-gap TD2 would pass a
+            // genuine re-lock slip to the MW-only veto as a "code event").
+            // Pass 2 routes such late MW flags back to the stash.  The stash
+            // expires at the cap, measured from the pre-gap level's epoch,
+            // extended by the WL-settle window (turbo_edit_wl_settle_max_s)
+            // while a deferred adjudication waits on the post-restart MW mean.
             {
                 const double stash_cap = arc.wl_settle_pending
                     ? bridge_max_gap_s_ + wl_settle_max_s_
@@ -651,10 +649,10 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
                               thresh, thresh_unfloored, gf_exceeds });
             cons_td2[obs.satellite[0]].push_back(td2);
 
-            // Cross-sat TD2 noise pool (warmup floor source): zenith-
-            // normalize so the pooled MAD is a homoscedastic estimate
-            // (xsatSigmaFloor re-expands per arc), and exclude exceeding
-            // samples — a slip TD2 is a discrete event, not noise.
+            // Cross-sat TD2 noise pool (source of the warmup floor): samples
+            // are zenith-normalized so the pooled MAD is a homoscedastic
+            // estimate (xsatSigmaFloor re-expands per arc).  Exceeding samples
+            // are excluded, because a slip TD2 is a discrete event, not noise.
             if (!gf_exceeds) {
                 const std::string gkey = xsatGroupKey(key);
                 if (!gkey.empty())
@@ -674,23 +672,23 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
     out.max_ivi = max_ivi;
     out.iono_stable = (max_ivi < kIviThreshold);
 
-    // (No high-rate affirmation: GF trust is evidence-gated per arc — the
+    // (No high-rate affirmation: GF trust is evidence-gated per arc.  The
     // split-capability gate and the veto zero-gate cap scale with the
     // measured TD2 noise, which the un-cancelled coarse-rate iono residual
-    // honestly inflates.  A 30 s file therefore demotes itself exactly as
-    // far as its own noise demands, with or without an INTERVAL header.)
+    // inflates.  A 30 s file is therefore demoted as far as its own noise
+    // requires, with or without an INTERVAL header.)
 
     // --- Pass 2: flag (MW ∪ GF-only), joint solve, update arc ---
     // Per-(sat, signal) integer candidates, reconciled across a sat's pairs.
     std::map<std::string, std::map<std::string, int>>    cand;
     std::map<std::string, std::map<std::string, double>> cand_lambda;
     std::map<std::string, std::map<std::string, double>> cand_frac;
-    // Bridged-moot markers: the staged integer is the signal's TRUE
-    // across-gap slip (so cross-pair consistency checks remain honest), but
-    // the signal missed an epoch during the gap — its ambiguity was pruned
-    // and reseeded, the slip is already absorbed, and emission diverts it
-    // from repairs to EpochResolution::moot_signals (mandate suppression,
-    // no state action).
+    // Bridged-moot markers: the staged integer is the signal's true
+    // across-gap slip (so cross-pair consistency checks stay valid), but the
+    // signal missed an epoch during the gap.  Its ambiguity was pruned and
+    // reseeded and already absorbs the slip, so emission moves it from
+    // repairs to EpochResolution::moot_signals (mandate suppression, no state
+    // action).
     std::map<std::string, std::set<std::string>> cand_moot;
     std::set<std::string> conflict_sats;
 
@@ -702,19 +700,19 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
     // --- Sibling-pair zero affirmation (gap-bridge constraint) -----------
     // The GF equation is degenerate along the null-line lattice: bridged
     // candidates k and k±2 can fit the same across-gap jump within mm, and
-    // only the (code-noise-biased at re-acquisition) MW evidence separates
-    // them.  But a satellite's OTHER GF arc often carries the missing
-    // information for free: an arc that (a) has cross-frequency leverage,
-    // (b) stayed chain-CONTINUOUS through the bridged interval (no break —
-    // so there was no blind gap; a slip on either signal at any epoch of
-    // the interval would have flagged its TD2), (c) is calibration-mature,
-    // and (d) carries no current exceedance or cooldown, AFFIRMS dN = 0
-    // for BOTH of its signals.  Field case: G03's L1C/L2L chain ran flat
-    // and unbroken through the L2W outage, affirming dN(L1C) = 0 — which
-    // selects k = +28 / (0, −28) over the float-favored k = +26 /
-    // (−9, −35).  Residual risk: a simultaneous null-line pair ON the
-    // sibling itself is GF-invisible — the same documented exposure as the
-    // code-event veto, backstopped by the KF innovation gate.
+    // only the MW evidence (biased by code noise at re-acquisition) separates
+    // them.  Another GF arc of the same satellite often carries the missing
+    // information.  An arc that (a) has cross-frequency leverage, (b) stayed
+    // chain-continuous through the bridged interval (no break, so no blind
+    // gap; a slip on either signal at any epoch of the interval would have
+    // flagged its TD2), (c) is calibration-mature, and (d) has no current
+    // exceedance or cooldown affirms dN = 0 for both of its signals.
+    // Example: an L1C/L2L chain that runs unbroken through an L2W outage
+    // affirms dN(L1C) = 0, which selects k = +28, (0, −28) over the
+    // float-favored k = +26, (−9, −35).  Residual risk: a simultaneous
+    // null-line pair on the sibling itself is invisible to GF, the same
+    // documented exposure as the code-event veto, backstopped by the KF
+    // innovation gate.
     auto affirmedZeroSignals = [&](const std::string& sat,
                                    const std::string& exclude_key,
                                    double ref_epoch_s) -> std::set<std::string> {
@@ -773,23 +771,21 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
         const bool flagged    = mw_flagged || gf_flagged;
 
         // --- Late across-gap re-route -----------------------------------
-        // The chain already owns its own TD2 (row not bridged) but the
-        // pre-gap stash is still alive, and either (a) MW — whose
-        // locked-arc TD confirmation lags the chain rebuild by one-plus
-        // epochs — has only NOW delivered its across-gap flag, or (b) a
-        // WL-settle deferral is pending on this pair and must be
-        // re-evaluated.  The rebuilt chain's TD2 is blind to the
-        // across-gap jump by construction, so a flat TD2 here is NOT "GF
-        // affirmatively stable": evaluated as-is, the MW-only veto would
-        // misclassify a genuine re-lock slip as a code event (observed:
-        // G03 +6.84 m / −28·λ₂ across a 2-epoch dropout, flag at gap+3).
-        // Re-route the row to the drift-corrected across-gap jump and let
-        // the standard bridged adjudication run.  Gated on the chain's own
-        // TD2 NOT exceeding — a same-epoch slip the chain can see itself
-        // is the chain's to adjudicate (for a pending deferral that new
-        // event also ABORTS the wait: the level reference is no longer the
-        // only unknown, so the satellite demotes to the conservative
-        // reset).
+        // The chain already has its own TD2 (row not bridged) but the pre-gap
+        // stash is still valid, and either (a) MW, whose locked-arc TD
+        // confirmation lags the chain rebuild by one or more epochs, has only
+        // now delivered its across-gap flag, or (b) a WL-settle deferral is
+        // pending on this pair and is re-evaluated.  The rebuilt chain's TD2
+        // cannot see the across-gap jump by construction, so a flat TD2 here
+        // does not affirm GF stability; evaluated as-is, the MW-only veto
+        // would classify a genuine re-lock slip (for example −28·λ₂ = 6.84 m
+        // across a 2-epoch dropout) as a code event.  The row is re-routed to
+        // the drift-corrected across-gap jump and the standard bridged
+        // adjudication runs.  This applies only when the chain's own TD2 does
+        // not exceed its gate: a same-epoch slip the chain can see is
+        // adjudicated by the chain.  For a pending deferral, such a new event
+        // also aborts the wait (the level reference is no longer the only
+        // unknown), and the satellite is demoted to the conservative reset.
         if (!pe.bridged && (mw_flagged || arc.wl_settle_pending) &&
             arc.bridge_valid) {
             const double span_s    = epoch_now_s - arc.bridge_epoch_s;
@@ -850,12 +846,12 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
         if (pe.bridged) {
             // === Gap-bridge adjudication (see the header's bridge note) ===
             // Only MW flags (or an in-progress WL-settle deferral) are
-            // adjudicated across a gap: a GF-only bridged exceedance has no
-            // affirmable MW-clean evidence across a re-acquisition and
-            // carries no mandate to suppress — it stays under the KF
-            // innovation backstop exactly as before the bridge existed.
-            // An untrusted or uninformed bridge likewise leaves the MW
-            // mandate to the caller (the pre-bridge outcome).
+            // adjudicated across a gap.  A GF-only bridged exceedance has no
+            // affirmable MW-clean evidence across a re-acquisition and no
+            // mandate to suppress, so it stays under the KF innovation
+            // backstop, as it would without the bridge.  An untrusted or
+            // uninformed bridge likewise leaves the MW mandate to the caller,
+            // the same outcome as without the bridge.
             if (mw_flagged || arc.wl_settle_pending) {
                 if (mw_flagged) {
                     dN_wl_trace    = mwit->second.known ? mwit->second.dN_wl : 0;
@@ -876,11 +872,11 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
                     const double zero_gate =
                         kCodeEventZeroSigma * mad_sigma * widen;
                     // Rate-adaptive evidence over the gap: the σ the split
-                    // must round against is the arc's own, extrapolated by
-                    // the same random-walk factor as the gates; the zero
-                    // affirmation additionally demands lattice
-                    // discrimination (UN-widened cap — the lattice does not
-                    // stretch with the gap).
+                    // rounds against is the arc's own, extrapolated by the
+                    // same random-walk factor as the gates.  The zero
+                    // affirmation also requires lattice discrimination, with
+                    // a cap that is not widened, because the lattice does not
+                    // stretch with the gap.
                     const double sigma_bridge = mad_sigma * widen;
                     sigma_trace = sigma_bridge;
                     const double zero_cap =
@@ -889,9 +885,9 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
                         std::isfinite(zero_gate) &&
                         zero_gate > 0.0 && zero_gate <= zero_cap &&
                         std::abs(pe.td2) <= zero_gate) {
-                        // Flat ACROSS the gap: the level provably did not
-                        // move, so the MW step lives in the code observable
-                        // (re-acquisition DLL transient) — code event.
+                        // Flat across the gap: the GF level did not move, so
+                        // the MW step is in the code observable (a
+                        // re-acquisition DLL transient); a code event.
                         stage(pe.sig1, 0, pe.lambda1, 0.0);
                         stage(pe.sig2, 0, pe.lambda2, 0.0);
                         out.code_events.push_back({ sat, pe.sig1, pe.sig2,
@@ -908,14 +904,13 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
                         actioned = true;
                     } else if (!splitCapable(sigma_bridge, denom)) {
                         // Across-gap evidence too coarse to attribute
-                        // per-signal integers (the gap-widened σ exceeds
-                        // the split gate — coarse rate, long span, or a
-                        // noisy arc).  A pending WL-settle deferral can
-                        // never resolve against a gate that only widens
-                        // with the wait, so it aborts to the conservative
-                        // reset; otherwise the resolver stays silent and
-                        // the caller's MW mandate fires — the pre-bridge
-                        // outcome.
+                        // per-signal integers (the gap-widened σ exceeds the
+                        // split gate: coarse rate, long span, or a noisy
+                        // arc).  A pending WL-settle deferral cannot resolve
+                        // against a gate that only widens with the wait, so
+                        // it aborts to the conservative reset.  Otherwise the
+                        // resolver takes no action and the caller's MW
+                        // mandate fires, as it would without the bridge.
                         if (arc.wl_settle_pending) {
                             log->warn("TurboEdit WL-settle deferral ABORTED "
                                       "for {} {}/{}: bridged GF σ={:.4f} m "
@@ -940,21 +935,22 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
                         }
                     } else {
                         // Across-gap attribution.  WL candidate sources, in
-                        // trust order: (1) the published MW integer; (2) at
-                        // the flag epoch, round(float) ± kBridgeKWindow from
-                        // the instantaneous re-acquisition float (NL-code-
-                        // biased by up to several cycles — the wide window
-                        // admits that bias instead of letting it make a
-                        // wrong candidate window-relatively "unique");
-                        // (3) on deferral epochs, the same window around the
-                        // SETTLED across-gap estimate (post-restart MW Hatch
-                        // mean − stashed pre-jump level), consumed only once
-                        // confidently roundable.  The GF equation alone is
-                        // degenerate along the null-line lattice ((0,−3) and
-                        // (9,4) both fit +0.735 m at mm level; only k
-                        // separates them), so a UNIQUE candidate is demanded
-                        // after the fractional, GF-separation, and
-                        // sibling-affirmation gates.
+                        // order of trust: (1) the published MW integer; (2) at
+                        // the flag epoch, round(float) ± kBridgeKWindow (3)
+                        // from the instantaneous re-acquisition float, which
+                        // NL code bias can offset by several cycles (the wide
+                        // window admits that bias instead of letting it make
+                        // a wrong candidate unique within a narrow window);
+                        // (3) on deferral epochs, the settled across-gap
+                        // estimate (post-restart MW Hatch mean minus the
+                        // stashed pre-jump level), used only once it is
+                        // confidently roundable, and taken as its rounded
+                        // integer alone (no window; see below).  The GF
+                        // equation alone is degenerate along the null-line
+                        // lattice ((0,−3) and (9,4) fit +0.733 and +0.736 m
+                        // for GPS L1/L2; only k separates them), so a unique
+                        // candidate is required after the fractional,
+                        // GF-separation and sibling-affirmation gates.
                         std::vector<int> k_cands;
                         bool k_published = false;
                         bool k_settled   = false;
@@ -962,12 +958,12 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
                             k_cands.push_back(mwit->second.dN_wl);
                             k_published = true;
                         } else if (arc.wl_settle_pending) {
-                            // Deferral epoch: only the SETTLED across-gap
-                            // estimate is consulted, and — being confidently
-                            // roundable by the settle criterion — it selects
-                            // its rounded integer DIRECTLY.  Re-widening a
-                            // window around it would re-admit the very
-                            // lattice ambiguity the wait was resolving.
+                            // Deferral epoch: only the settled across-gap
+                            // estimate is consulted.  It is confidently
+                            // roundable by the settle criterion, so it selects
+                            // its rounded integer directly; a window around it
+                            // would re-admit the lattice ambiguity that the
+                            // wait resolves.
                             const auto evit = wl_gap_evidence.find(pe.key);
                             if (evit != wl_gap_evidence.end() &&
                                 evit->second.stable) {
@@ -998,7 +994,7 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
                         }
                         // Sibling-pair affirmation: signals of this sat's
                         // continuous, unflagged cross-frequency arcs are
-                        // affirmed unslipped — candidates that demand a
+                        // affirmed unslipped; candidates that require a
                         // nonzero integer on an affirmed signal are pruned.
                         const std::set<std::string> affirmed =
                             affirmedZeroSignals(sat, pe.key, arc.bridge_epoch_s);
@@ -1014,14 +1010,14 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
                             const int    d1 = d2 + k;
                             const bool sane = std::abs(d1) <= kMaxSlipCycles &&
                                               std::abs(d2) <= kMaxSlipCycles;
-                            // GF-separation guard: the pair's own predicted
-                            // jump must be distinguishable from "no jump",
-                            // else a marginal noise exceedance of the zero
-                            // gate would "attribute" a null-line pair —
-                            // (9,7) predicts 3.2 mm — and mint a 9-cycle
-                            // repair onto a continuous signal from pure
-                            // noise.  An inseparable-only candidate set
-                            // falls through to the conservative reset.
+                            // GF-separation guard: the candidate's predicted
+                            // jump must exceed the zero gate.  Otherwise a
+                            // marginal noise exceedance of the zero gate could
+                            // be attributed to a null-line pair ((9,7) predicts
+                            // 3.2 mm for GPS L1/L2) and produce a 9-cycle
+                            // repair on a continuous signal from noise alone.
+                            // A candidate set with no separable member falls
+                            // through to the conservative reset.
                             const bool gf_separated =
                                 std::abs(pe.lambda1 * static_cast<double>(d1) -
                                          pe.lambda2 * static_cast<double>(d2)) > zero_gate;
@@ -1055,21 +1051,22 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
                             frac2 = best_frac;
                             dN_wl_trace = best_k;
                             // Dispatch per signal by observation-domain
-                            // continuity: observed through every gap epoch →
-                            // ambiguity survived → genuine integer repair;
-                            // missed an epoch → pruned-and-reseeded → moot.
+                            // continuity: a signal observed through every gap
+                            // epoch kept its ambiguity and gets an integer
+                            // repair; a signal that missed an epoch was pruned
+                            // and reseeded, so its slip is moot.
                             bool any_repair = false;
                             auto dispatch = [&](const std::string& sig, int dN,
                                                 double lam) {
                                 stage(sig, dN, lam, frac2);
                                 if (dN == 0) return;
                                 const std::string sigkey = sat + "_" + sig;
-                                // A signal the caller is HOLDING across an LLI
-                                // gap is continuous by assertion: the hold
-                                // preserved its pre-gap value, so the
-                                // across-gap integer is a real repair, not an
-                                // already-absorbed reseed.  Otherwise fall
-                                // back to observation-domain continuity.
+                                // A signal the caller holds across an LLI gap
+                                // counts as continuous: the hold preserved its
+                                // pre-gap value, so the across-gap integer is a
+                                // real repair, not an already-absorbed reseed.
+                                // Other signals use observation-domain
+                                // continuity.
                                 const auto cs = sig_continuous_since_s_.find(sigkey);
                                 const bool continuous =
                                     held_across_lli_.count(sigkey) > 0 ||
@@ -1095,14 +1092,14 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
                         } else if (wl_settle_enabled_ && !k_published &&
                                    !k_settled) {
                             // Float-derived evidence is absent, not yet
-                            // settled, or still ambiguous (n_acceptable ≥ 2
-                            // — candidates separated by a null-line pair).
-                            // Guessing mints a confident wrong repair (the
-                            // field event applied (−9, −35) when the truth
-                            // was (0, −28)); instead DEFER while the
+                            // settled, or still ambiguous (n_acceptable ≥ 2:
+                            // candidates separated by a null-line pair).  A
+                            // guess can produce a confident wrong repair (for
+                            // example (−9, −35) against a true (0, −28)), so
+                            // the adjudication is deferred while the
                             // post-restart MW mean settles, bounded by the
                             // configured cap.  The caller keeps the holds
-                            // alive and suppresses the MW mandate via
+                            // active and suppresses the MW mandate via
                             // out.pending_sats.
                             if (!arc.wl_settle_pending) {
                                 arc.wl_settle_pending = true;
@@ -1132,27 +1129,27 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
                             } else {
                                 out.pending_sats.insert(sat);
                                 action = "defer";
-                                // NOT actioned: the stash and the held marks
-                                // survive to the next epoch's re-evaluation.
+                                // Not actioned: the stash and the held marks
+                                // persist to the next epoch's re-evaluation.
                             }
                         } else if (!k_cands.empty()) {
                             // Active failure: the across-gap jump fits no
-                            // candidate, or two, and deferral is unavailable
-                            // — conservative reset.
+                            // candidate, or more than one, and deferral is
+                            // unavailable; conservative reset.
                             out.reset_sats.insert(sat);
                             did_slip = true;
                             action = "reset";
                             actioned = true;
                         }
                         // k_cands empty (no deferral): no WL information at
-                        // all — silent; the caller's own mandate fires
-                        // (the pre-bridge outcome).
+                        // all.  The resolver takes no action and the caller's
+                        // own mandate fires, as it would without the bridge.
                     }
                 }
                 // An untrusted epoch (IVI burst, LLI on the pair) while a
-                // deferral is pending neither adjudicates nor abandons it:
-                // keep the caller suppressing until trust returns or the
-                // timeout fires.
+                // deferral is pending neither adjudicates nor abandons it: the
+                // caller keeps suppressing until trust returns or the timeout
+                // fires.
                 if (!actioned && arc.wl_settle_pending) {
                     out.pending_sats.insert(sat);
                     action = "defer";
@@ -1175,15 +1172,16 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
                 if (mwit->second.known) dN_wl = mwit->second.dN_wl;
                 else                    wl_known = false;  // MW slip with no integer → can't split
             } else if (mw_clean_pairs.count(pe.key) == 0) {
-                // GF-only flag WITHOUT affirmative MW-clean evidence for the
-                // pair this epoch.  MW silence is not proof of ΔN_WL = 0: a
+                // GF-only flag without affirmative MW-clean evidence for the
+                // pair this epoch.  MW silence does not prove ΔN_WL = 0: a
                 // wl-locked arc absorbs a real slip into Welford without
-                // emitting a result, and an immature (post-gap / cold-start)
-                // arc could not have flagged at all.  Forcing ΔN_WL = 0 in
-                // those states aliases unequal slips into confident wrong
-                // dual-signal repairs (λ1/(λ1−λ2) ≈ −3.53 lands even ΔN_WL
-                // values at frac ≈ 0.06–0.18, inside kMaxFractional).
-                // Treat the wide-lane as unknown → reset fallback below.
+                // emitting a result, and an immature (post-gap, cold-start)
+                // arc cannot flag at all.  Forcing ΔN_WL = 0 in those states
+                // aliases unequal slips into confident wrong dual-signal
+                // repairs (GPS L1/L2: λ1/(λ1−λ2) ≈ −3.53 puts ΔN_WL = ±2, ±4,
+                // ±6 at frac ≈ 0.06, 0.12, 0.18, inside kMaxFractional).  The
+                // wide-lane is treated as unknown, which leads to the reset
+                // fallback below.
                 wl_known = false;
             }  // else GF-only with MW affirmatively clean → ΔN_WL = 0 holds
             dN_wl_trace = dN_wl;
@@ -1192,38 +1190,37 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
             const double denom = pe.lambda1 - pe.lambda2;
 
             // --- MW-only code-domain veto (GF-stable non-slip) -----------
-            // MW flagged the pair but the GF jump is affirmatively ZERO:
-            // |TD2| within the arc's OWN measured noise (kCodeEventZeroSigma
-            // × MAD — tighter than the detection gate, and tighter than the
-            // kMinThresholdM quantum floor on quiet arcs, so a genuine
-            // (4,3)-class GF jump of ~2.9 cm still reaches the joint solve
-            // below).  With the phase provably still, no plausible integer
-            // pair fits the MW step (see the header's null-line geometry)
-            // and the event is classified as a code-domain artifact: both
-            // signals are adjudicated clean, the caller skips the phase
-            // reset, and the KF phase innovation (standardized residual
-            // gate) backstops the residual null-line-pair risk.
-            // Eligibility demands every trust gate the GF evidence rests
-            // on: a DISCRIMINATION-CAPABLE zero gate (3.5σ at or below
-            // kVetoZeroGateMaxLambdaFrac × |λ1−λ2| — at coarse rates the
-            // un-cancelled iono residual inflates the MAD until "zero" can
-            // no longer be told from a small slip or a near-null-line pair,
-            // and the veto must stand down rather than swallow them),
-            // IVI-stable constellation, mature arc MAD (a warmup arc cannot
-            // affirm zero), no post-slip cooldown echo, and no
-            // receiver-declared loss of lock on either signal (LLI is
-            // corroboration the slip is real — the caller's LLI mandate
-            // must govern unimpeded).
-            // wl_known is deliberately NOT required: a non-integer MW
-            // excursion with a still phase is, if anything, more code-like.
+            // MW flagged the pair but the GF jump is affirmatively zero: |TD2|
+            // lies within the arc's own measured noise (kCodeEventZeroSigma ×
+            // MAD, tighter than the detection gate and, on quiet arcs, tighter
+            // than the kMinThresholdM quantum floor, so a genuine (4,3)-class
+            // GF jump of ~2.9 cm for GPS L1/L2 still reaches the joint solve
+            // below).  With the phase still, no plausible integer pair fits
+            // the MW step (see the header's null-line geometry), and the
+            // event is classified as a code-domain artifact: both signals are
+            // adjudicated clean, the caller skips the phase reset, and the KF
+            // phase innovation (standardized residual gate) backstops the
+            // remaining null-line-pair risk.
+            // Eligibility requires every trust gate the GF evidence rests on:
+            // a zero gate that can discriminate (3.5σ at or below
+            // kVetoZeroGateMaxLambdaFrac × |λ1−λ2|; at coarse rates the
+            // un-cancelled iono residual inflates the MAD until "zero" cannot
+            // be told apart from a small slip or a near-null-line pair, and
+            // the veto then does not apply), an IVI-stable constellation, a
+            // mature arc MAD (a warmup arc cannot affirm zero), no post-slip
+            // cooldown echo, and no receiver-declared loss of lock on either
+            // signal (an LLI corroborates the slip, and the caller's LLI
+            // mandate governs).
+            // wl_known is not required: a non-integer MW excursion with a
+            // still phase is, if anything, more code-like.
             bool code_event = false;
             if (mw_only_veto_ && mw_flagged && !pe.gf_exceeds &&
                 arc.cooldown_remaining == 0 && iono_stable_cons &&
                 !pairHasLockLoss(*pe.obs, pe.sig1, pe.sig2)) {
-                // Affirming zero demands a tighter MAD maturity than mere
-                // detection (kCodeEventMinMadSamples > kMinEpochsForAdaptive):
-                // a 5-sample MAD has too much estimator variance to underwrite
-                // a state-preserving decision.
+                // Affirming zero requires more MAD maturity than detection
+                // (kCodeEventMinMadSamples > kMinEpochsForAdaptive): a 5-sample
+                // MAD has too much estimator variance to support a
+                // state-preserving decision.
                 const double mad_sigma =
                     (arc.diff_window.size() >= kCodeEventMinMadSamples)
                         ? computeMadSigma(arc.diff_window)
@@ -1236,8 +1233,8 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
                     std::abs(pe.td2) <= zero_gate) {
                     code_event = true;
                     // Diagnostics only: the null-line pair the measured GF
-                    // would imply — traced so the implausible magnitude
-                    // ((9,7), (4,3), ...) is visible, never applied.
+                    // would imply, traced so the implausible magnitude
+                    // ((9,7), (4,3), ...) is visible; it is never applied.
                     if (wl_known && std::abs(denom) >= 1e-6) {
                         const double dN2_f =
                             (pe.td2 - pe.lambda1 * static_cast<double>(dN_wl)) / denom;
@@ -1258,7 +1255,7 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
                               sat, pe.sig1, pe.sig2, dN_wl,
                               wl_known ? "" : ", integer unknown",
                               pe.td2, zero_gate, dN1, dN2);
-                    // did_slip stays false: the GF chain did not jump — it
+                    // did_slip stays false: the GF chain did not jump.  It
                     // keeps rolling so the next epoch's veto (a persistent
                     // code excursion re-flags after the MW arc restarts at
                     // the new level) rests on live evidence, and the clean
@@ -1271,15 +1268,15 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
             if (code_event) {
                 // Handled above.
             } else if (!mw_flagged && !split_capable) {
-                // GF-only exceedance on a split-INCAPABLE arc (the
+                // GF-only exceedance on an arc that is not split-capable (the
                 // coarse-rate iono residual at lattice scale, or a noisy
-                // arc): not attributable to per-signal integers, and
-                // carrying no MW mandate to honor — IGNORED.  Resetting
-                // here would convert every coarse-rate iono transient into
-                // a precision-destroying reset; a genuine equal slip's
-                // |dN·λ| ≥ 19 cm phase-innovation signature is the KF
-                // residual backstop's to catch.  The arc keeps rolling and
-                // the exceeding TD2 stays out of the MAD window as usual.
+                // arc): not attributable to per-signal integers and with no
+                // MW mandate to honor, so it is ignored.  A reset here would
+                // turn every coarse-rate iono transient into a reset that
+                // discards converged ambiguities; a genuine equal slip, with
+                // a phase-innovation signature of |dN·λ| ≥ 19 cm, is left to
+                // the KF residual backstop.  The arc keeps rolling and the
+                // exceeding TD2 stays out of the MAD window as usual.
                 action = "coarse_gf";
                 log->info("TurboEdit {} {}/{}: GF-only exceedance "
                           "(|TD2|={:.4f} m) on a split-incapable arc "
@@ -1293,9 +1290,9 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
                 did_slip = true;
                 action = "reset";
             } else if (!split_capable) {
-                // MW mandate stands but the GF evidence cannot split it
-                // into per-signal integers (rate-adaptive gate) — the
-                // conservative pre-TurboEdit reset.
+                // The MW mandate stands but the GF evidence cannot split it
+                // into per-signal integers (rate-adaptive gate): conservative
+                // reset, as without TurboEdit.
                 out.reset_sats.insert(sat);
                 did_slip = true;
                 action = "reset";
@@ -1320,7 +1317,7 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
                     did_slip = true;
                     action = "repair";
                 } else if (dN1 == 0 && dN2 == 0) {
-                    // Resolved to "no slip" (e.g. GF-only false alarm) — leave arc rolling.
+                    // Resolved to "no slip" (e.g. GF-only false alarm); the arc keeps rolling.
                     action = "none";
                 } else {
                     out.reset_sats.insert(sat);
@@ -1359,39 +1356,40 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
 
         // Arc update.
         if (did_slip) {
-            // Chain re-seeds; the MAD window is PRESERVED — same
-            // calibration-vs-chain split as the short-gap partial reset.
+            // The chain re-seeds; the MAD window is preserved (the same
+            // calibration-versus-chain split as the short-gap partial reset).
             // The level jump does not change the TD2 noise, and the window
-            // only ever held clean (non-exceeding) TD2s, so wiping it cost
-            // 5 blind-threshold epochs after every slip for no statistical
-            // reason.  With the window intact, post-slip epochs re-arm at
-            // the arc's own calibration; the cross-sat floor covers only
-            // genuinely fresh arcs.
+            // holds only clean (non-exceeding) TD2s, so wiping it would cost
+            // kMinEpochsForAdaptive (5) epochs without the arc's own threshold
+            // after every slip, with no statistical reason.  With the window
+            // intact, post-slip epochs re-arm at the arc's own calibration;
+            // the cross-sat floor covers only genuinely fresh arcs.
             //
-            // last_epoch_s is STAMPED (not zeroed) precisely because the
-            // window survives: it is the gap clock that lets the
-            // absolute-gap trigger expire the preserved calibration.  If a
-            // satellite slips, then sets, and rises hours later, the
-            // stamped time makes absolute_gap fire on return and perform
-            // the full wipe — without it (count==0 AND last_epoch_s==0
-            // disarm both gap triggers) an hours-stale MAD would govern
-            // the mature branch at a different elevation/multipath regime.
+            // last_epoch_s is stamped (not zeroed) because the window
+            // survives: it is the gap clock that lets the absolute-gap
+            // trigger expire the preserved calibration.  If a satellite
+            // slips, sets, and rises hours later, the stamped time makes
+            // absolute_gap fire on return and wipe the arc.  Without it
+            // (count==0 and last_epoch_s==0 disarm both gap triggers), an
+            // hours-old MAD would govern the mature branch in a different
+            // elevation and multipath regime.
             arc.prev_gf = 0.0; arc.prev_prev_gf = 0.0;
             arc.count = 0;
             arc.last_epoch_s = epoch_now_s;
             arc.cooldown_remaining = kCooldownEpochs;  // suppress the TD2 echo next epoch
         } else {
-            // Only feed clean (non-outlier) TD2 into the MAD window so a
-            // suppressed exceedance can't inflate the threshold; a bridged
-            // value is an across-gap jump, not a TD2 sample — never admitted.
+            // Only clean (non-outlier) TD2s enter the MAD window, so a
+            // suppressed exceedance cannot inflate the threshold.  A bridged
+            // value is an across-gap jump, not a TD2 sample, and is never
+            // admitted.
             if (!pe.gf_exceeds && !pe.bridged) {
                 arc.diff_window.push_back(pe.td2);
                 if (arc.diff_window.size() > kGfWindowSize) arc.diff_window.pop_front();
             }
             const double ep_s = TimeUtils::continuousGpsSeconds(pe.obs->time);
-            // GF-rate EWMA (gap-bridge drift correction): consecutive
-            // epochs only — any chain break already re-seeded in pass 1, so
-            // an arc reaching here with count >= 1 is consecutive.
+            // GF-rate EWMA (gap-bridge drift correction), consecutive epochs
+            // only.  Any chain break already re-seeded in pass 1, so an arc
+            // that reaches this point with count >= 1 is consecutive.
             if (arc.count >= 1 && arc.last_epoch_s > 0.0 && ep_s > arc.last_epoch_s) {
                 const double dt = ep_s - arc.last_epoch_s;
                 const double rate = (pe.gf - arc.prev_gf) / dt;
@@ -1418,15 +1416,15 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
         for (const auto& [sig, dN] : sigmap) {
             if (dN == 0) {
                 // Adjudicated by a confident joint solve: this signal did
-                // NOT slip.  Reported so the caller can spare it from its
+                // not slip.  Reported so the caller can exempt it from its
                 // own (pair-granular) reset mandates.
                 out.clean_signals[sat].insert(sig);
                 continue;
             }
             if (moot_it != cand_moot.end() && moot_it->second.count(sig)) {
                 // Bridged attribution on a signal that was reseeded during
-                // the gap: the slip is already absorbed by the fresh seed —
-                // suppress the mandate, mutate nothing.
+                // the gap: the fresh seed already absorbs the slip, so the
+                // mandate is suppressed and no state changes.
                 out.moot_signals[sat].insert(sig);
                 continue;
             }
@@ -1441,12 +1439,11 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
     }
 
     // Withdraw code events for satellites that ended the epoch in
-    // reset_sats (another pair demanded a reset, or a staged-integer
-    // conflict demoted the sat).  Contradictory evidence must resolve to
-    // the conservative outcome ATOMICALLY per satellite — mirroring the
-    // emission loop above, which already suppresses such a sat's
-    // clean_signals — otherwise the caller would skip the very reset
-    // mandate this resolution just issued.
+    // reset_sats (another pair required a reset, or a staged-integer
+    // conflict demoted the sat).  Contradictory evidence resolves to the
+    // conservative outcome atomically per satellite, as in the emission loop
+    // above, which already suppresses such a sat's clean_signals.  Otherwise
+    // the caller would skip the reset mandate this resolution just issued.
     if (!out.code_events.empty() && !out.reset_sats.empty()) {
         out.code_events.erase(
             std::remove_if(out.code_events.begin(), out.code_events.end(),
@@ -1456,10 +1453,10 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
             out.code_events.end());
     }
 
-    // A satellite another pair demoted to reset must not simultaneously ask
-    // the caller to suppress its mandates: withdraw the pending adjudication
-    // (the reset wins; the arcs — and the pending flag with them — die in
-    // the caller's resetSatellite forwarding).
+    // A satellite that another pair demoted to reset does not also ask the
+    // caller to suppress its mandates: its pending adjudication is withdrawn.
+    // The reset takes precedence; the arcs, and the pending flag with them,
+    // are erased when the caller forwards resetSatellite.
     if (!out.pending_sats.empty()) {
         for (auto it = out.pending_sats.begin(); it != out.pending_sats.end(); )
             it = out.reset_sats.count(*it) ? out.pending_sats.erase(it)
@@ -1478,8 +1475,8 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
     }
 
     // Fold this epoch's TD2 noise pool into the EWMA cross-sat tiers for the
-    // NEXT epoch's warmup floors (one-epoch lag by construction — the pool
-    // isn't complete until every pair has been processed).
+    // next epoch's warmup floors (a one-epoch lag by construction: the pool
+    // is not complete until every pair has been processed).
     finalizeXsatSigmas();
 
     // Advance the previous-epoch marker so the next call can detect per-signal
@@ -1489,9 +1486,9 @@ TurboEditResolver::EpochResolution TurboEditResolver::resolve(
 
     // Per-epoch flush so the trace survives non-graceful termination.  This
     // stream writes far fewer bytes per epoch than mwwl_trace.csv, so its
-    // buffer spans MANY epochs — without an explicit flush, a killed run
-    // loses a multi-epoch tail and the file ends mid-row, desynchronized
-    // from the MW trace by however much data each buffer happened to hold.
+    // buffer spans many epochs.  Without an explicit flush, a killed run
+    // loses a multi-epoch tail and the file ends mid-row, out of step with
+    // the MW trace by however much data each buffer held.
     if (trace_file_.is_open()) trace_file_.flush();
 
     return out;

@@ -1,29 +1,32 @@
 #pragma once
 /**
  * @file NetworkSolveGlue.hpp
- * @brief The per-epoch SOLVE GLUE of the PPP-RTK network producer — the S-basis datum
- *        build + null-space gate, the estimator solve, the within-epoch RAIM adaptation
- *        (assess / drop-culprit / re-solve), and the observability / σ̂0 withhold gates —
- *        relocated VERBATIM out of Application::runNetwork at decomposition INC-9b
- *        (2026-07-22).  The estimation math is byte-copied; only the plumbing changes.
+ * @brief The per-epoch solve glue of the PPP-RTK network producer: the S-basis datum
+ *        build and null-space gate, the estimator solve, the within-epoch RAIM
+ *        adaptation (assess, drop culprit, re-solve), and the observability and σ̂0
+ *        withhold gates.  Moved out of Application::runNetwork at decomposition INC-9b
+ *        with the estimation math unchanged; only the plumbing differs.
  *
- * Two structural adaptations of the pure-relocation pattern (both proven earlier in the
- * series), because this block is neither self-contained nor straight-line:
+ * The block is neither self-contained nor straight-line, so it uses two adaptations of
+ * the plain relocation pattern (both used earlier in the decomposition series):
  *
- *  1. **EpochAction (INC-7).** The block's four epoch-skip `continue`s (datum-build
- *     failure, observability-gate withhold, solve failure, σ̂0-withhold escape-hatch)
- *     become `result.action = EpochAction::SkipEpoch; return result;`; the per-skip
- *     bookkeeping (n_skipped / emitEpochStatus / product-status / prev_week,prev_tow)
- *     stays verbatim in-body.  The caller does `if (action == SkipEpoch) continue;`
- *     BEFORE subEnd(SB_SOLVEGLUE), preserving the original subEnd-bypass semantics.
- *  2. **Result struct (INC-11pre).** The 18 loop-body locals the block PRODUCES and the
- *     downstream seams (RAIM / ClockQc / SolPrep / EmitStore) CONSUME cross the seam
- *     boundary via @ref NetworkSolveGlueResult (std::move epilogue); the caller
- *     re-aliases each with `auto& x = sg_.x;` so downstream code is untouched.
+ *  1. **EpochAction (INC-7).** The four sites where the driver loop skipped the epoch
+ *     with `continue` (datum-build failure, observability-gate withhold, solve failure,
+ *     σ̂0-withhold escape hatch) set `result.action = EpochAction::SkipEpoch` and
+ *     return.  The per-skip bookkeeping (n_skipped, emitEpochStatus, product status,
+ *     prev_week / prev_tow) stays in the body.  On SkipEpoch the caller returns
+ *     `LoopSignal::Next` before subEnd(SB_SOLVEGLUE), which keeps the original
+ *     `continue`'s bypass of subEnd.
+ *  2. **Result struct (INC-11pre).** The 18 loop-body locals that the block produces
+ *     and the downstream seams (RAIM, ClockQc, SolPrep, EmitStore) consume cross the
+ *     seam boundary in @ref NetworkSolveGlueResult (moved in at the end of the body);
+ *     the caller re-aliases each with `auto& x = sg_.x;`, so downstream code is
+ *     unchanged.
  *
- * The two build lambdas (buildEnsembleGauges / buildCarryDdPriors) are passed as
+ * The two build lambdas (buildEnsembleGauges, buildCarryDdPriors) are passed as
  * std::function so the within-epoch re-solve re-invokes them with byte-identical
- * capture semantics.  Owns NO state; every carry object is a reference into ctx.
+ * capture semantics.  The seam owns no state; every carry object is a reference into
+ * ctx.
  */
 
 #include "filter/NetworkEstimator.hpp"   // NetworkEstimator (+ PerConstSigma0)
@@ -55,7 +58,7 @@ struct NetworkRunTraces;
 /**
  * @brief The 18 loop-body locals SB_SOLVEGLUE produces that downstream epoch seams
  *        consume, plus the epoch disposition.  On a SkipEpoch return the value fields
- *        are default (the caller `continue`s before reading them).
+ *        are default (the caller ends the epoch before reading them).
  */
 struct NetworkSolveGlueResult {
     Eigen::VectorXd                                  x_s;
@@ -80,8 +83,8 @@ struct NetworkSolveGlueResult {
 };
 
 /**
- * @brief Run the datum build + solve + within-epoch RAIM adaptation for this epoch.
- * @see the file banner for the EpochAction / result-struct contract.  @p buildEnsembleGauges
+ * @brief Run the datum build, solve and within-epoch RAIM adaptation for this epoch.
+ * @see the file banner for the EpochAction and result-struct contract.  @p buildEnsembleGauges
  *      and @p buildCarryDdPriors are the run-TU wrapper lambdas (re-invoked on re-solve).
  */
 NetworkSolveGlueResult networkSolveGlue(

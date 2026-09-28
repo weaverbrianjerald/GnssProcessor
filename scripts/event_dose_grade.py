@@ -1,108 +1,110 @@
 #!/usr/bin/env python3
-"""EVENT HARNESS — the slip-DOSE grader (Study 4, docs/SPEC_event_harness.md §12).
+"""Event harness: the slip-dose grader (Study 4, docs/SPEC_event_harness.md §12).
 
-``scripts/event_grade.py`` prices ONE event on ONE arc; ``event_frame_grade.py``
-prices what that one event did to the station the arc belongs to.  A DOSE leg
-(``scripts/ev_dose_legs.py``) injects a SCHEDULE instead — tens to hundreds of true
-slips over a 240-epoch leg, on one station or the whole roster — so the question
-stops being "what did the event cost" and becomes "does a converged network stay
-converged under the campaign's slip rate, and which station channel goes first".
-That needs a grader that folds EVERY injected delta into the truth and reports
-per-station TRAJECTORIES rather than one arc's aftermath.
+``scripts/event_grade.py`` prices one event on one arc; ``event_frame_grade.py``
+prices what that one event did to the station the arc belongs to.  A dose leg
+(``scripts/ev_dose_legs.py``) injects a schedule instead: tens to hundreds of true
+slips over a 240-epoch leg, on one station or the whole roster.  The question is
+then whether a converged network stays converged under the campaign's slip rate,
+and which station channel degrades first.  That needs a grader that folds every
+injected delta into the truth and reports per-station trajectories rather than
+one arc's aftermath.
 
     python scripts/event_dose_grade.py runs/evleg_<dose> --null runs/evleg_<null> \
         --fixture C:/GnssProcessor/runs/simnet60_quiet_wu93_24h \
         [--stations S21000SIM,...] [--bin 20] [--pre 0] [--post N] [--ref-free]         [--json out.json]
 
-The epoch axis is the LEG's own: k = 0 is ``leg_meta['first_tow']``, the first
+The epoch axis is the leg's own: k = 0 is ``leg_meta['first_tow']``, the first
 processed epoch, because a dose leg has no single event tow to hang an axis on.
 (The single-event graders count from the event; on a leg whose schedule holds one
 slip at ``ep``, this grader's +k is their +(k - ep).)  The schedule is read from
 ``leg_meta['events']`` when the generator wrote one, else from the leg config's
 ``network.inject.events``; only ``kind == "slip"`` events fold into the truth.
 
-Both legs resume from the SAME snapshot with the SAME config except for
-``network.inject``, so the DIFF column (event - null) cancels the warm-resume
+Both legs resume from the same snapshot with the same config except for
+``network.inject``, so the diff column (event - null) cancels the warm-resume
 seam transient, the bed and the posture, leaving the dose's own signature.
 
-Channels — per relative epoch, for each DOSED station, for the BYSTANDER POOL
+Channels, per relative epoch, for each dosed station and for the bystander pool
 (every other station in the traces), event leg and null leg, then the diff:
 
   lvl_all    median over the station's arcs of |DD level error| in cycles, where an
              arc is a (sat, band) present in ``logs/network_dd_fractional.csv`` and
              its per-epoch value is the chord-median over the chords that touch the
              station (the ``station_level_errors`` reduction of event_frame_grade.py).
-             The truth carries the CUMULATIVE injected delta of every scheduled slip
+             The truth carries the cumulative injected delta of every scheduled slip
              on that (station, sat, signal) up to the epoch, so a perfectly
              responding producer reads ~0 on every arc and an unresponsive one reads
              the dose.  ``lvl_p90`` is the 90th percentile of the same population,
              ``n_off`` the arcs over 0.5 cyc, ``n_arcs`` the population size, and
              ``L1C/L2W/L5Q/L7Q`` the same median split by band.
-             ⚠ the DD trace carries ONE reference satellite and its error is in
-             every chord (SPEC_amb_iono §6.12).  The DIFF cancels it only to the
-             extent the two legs share it — and on a DOSE leg they do not, because
-             the reference satellite's own arcs are slipped and re-levelled at many
-             stations, so its error lands in every chord of the event leg and in
-             none of the null's.  ``--ref-free`` removes it with the re-referencing
-             of scripts/simnet_dd_reref.py (per (ref_sat, sta_a, sta_b, signal)
-             group of >= 3 satellites, u_i = e_i - median_i e_i, applied to the raw
-             chords BEFORE the per-station reduction).  It changes every lvl_*
-             channel, the per-band split and the PER-SLIP residual; zwd / clk / ion /
-             cons / wire are station-frame and untouched.  Default is AS-TRACED.
-  lvl_inj    the same median over the SCHEDULE's own SLIPPED arcs only, each counted
+             The DD trace carries one reference satellite and its error is in every
+             chord (SPEC_amb_iono §6.12).  The diff cancels it only to the extent
+             the two legs share it, and on a dose leg they do not: the reference
+             satellite's own arcs are slipped and re-levelled at many stations, so
+             its error lands in every chord of the event leg and in none of the
+             null's.  ``--ref-free`` removes it with the re-referencing of
+             scripts/simnet_dd_reref.py (per (ref_sat, sta_a, sta_b, signal) group of
+             >= 3 satellites, u_i = e_i - median_i e_i, applied to the raw chords
+             before the per-station reduction).  It changes every lvl_* channel, the
+             per-band split and the per-slip residual; zwd / clk / ion / cons / wire
+             are station-frame and untouched.  The default is as-traced.
+  lvl_inj    the same median over the schedule's own slipped arcs only, each counted
              from its first injected slip onward.  The station's remaining arcs split
-             in TWO, because a detector refloat frees the whole satellite, not the
-             slipped band (one L1C slip fires the MW pair L1C;L5Q and the IF-TD pair
-             L1C;L2W, i.e. all three bands):
-               ``isb`` (lvl_injsat_otherbands) — the NON-slipped bands of a dosed
+             in two, because a detector refloat frees the whole satellite, not only
+             the slipped band (one L1C slip fires the MW pair L1C;L5Q and the IF-TD
+             pair L1C;L2W, i.e. all three bands):
+               ``isb`` (lvl_injsat_otherbands): the non-slipped bands of a dosed
                         satellite at that station, from that satellite's first slip.
                         Response collateral, not a control.
-               ``oth`` — arcs on satellites the schedule never touched at that
+               ``oth``: arcs on satellites the schedule never touched at that
                         station.  This is the clean control: "did the station drift".
-             An arc of a dosed satellite BEFORE its first slip is in none of the
+             An arc of a dosed satellite before its first slip is in none of the
              three (it is not yet dosed, and putting it in ``oth`` would contaminate
              the control half).
   zwd        ZWD error vs ``truth_tropo.csv``, metres; pool = rms over stations.
-  clk        receiver-clock CONTRAST error, ``network_rx_states.csv`` (kind=CLK)
-             minus ``truth_clock.csv`` minus the per-epoch network mean — the
+  clk        receiver-clock contrast error, ``network_rx_states.csv`` (kind=CLK)
+             minus ``truth_clock.csv`` minus the per-epoch network mean.  The
              network-common half is the receiver-clock datum and is not a station
              property (standing invariant #5).  Pool = rms over stations.
-  ion        rms over the station's LOS of ``iono_total_m`` (the ABSOLUTE column)
+  ion        rms over the station's LOS of ``iono_total_m`` (the absolute column)
              minus ``truth_atmo.csv`` ``I_L1_m``, metres.  Pool = rms over stations.
-  cons       the closed-loop consumer's 3D error, ``closed_loop_trace.csv`` —
+  cons       the closed-loop consumer's 3D error, ``closed_loop_trace.csv``;
              network-wide, one series.
   wire       rms across satellites of the emitted satellite-clock difference
              (event - null) after its per-epoch mean is removed: the datum-free
              half of what the dose did to the product.
-  qc         ``logs/network_events.csv`` rows for the station, split into rows ON an
+  qc         ``logs/network_events.csv`` rows for the station, split into rows on an
              injected arc (station+sat is in the schedule, at or after its tow) and
              rows on the station's other arcs, with a whole-leg census keyed by
-             (tier, event, action) and classed INJECT / T4 / T3 / RAIM / DETECT.
+             (tier, event, action) and classed INJECT / T4 / T3 / RAIM / DETECT
+             (anything else is "other").
 
 Two blocks follow the tables, and they are what a dose leg is read for:
 
-  PER-SLIP RESIDUAL   one row per injected slip: the SIGNED level diff (event -
+  PER-SLIP RESIDUAL   one row per injected slip: the signed level diff (event -
              null) of the slipped arc at +1, +2, +5, +10, +20, +30, +45 epochs after
              that slip's own tow, plus the detector rows on its (station, satellite)
              within +0..+3 with their detail field.  This is the price of each slip.
   COVERAGE   per dosed station, epochs with DD chords per constellation, and per
-             injected arc whether it was measurable AT ALL.  The trace differences
-             against ONE reference satellite per constellation and a chord exists
+             injected arc whether it was measurable at all.  The trace differences
+             against one reference satellite per constellation and a chord exists
              only while the station sees it, so an arc can be absent from every
-             level median rather than zero in it — which is why the level channels
-             are coverage-limited while zwd / clk / ion / cons / wire are
+             level median rather than zero in it.  The level channels are therefore
+             coverage-limited, while zwd / clk / ion / cons / wire are
              trace-complete.
 
-Folding is EVENT-LEG ONLY: the null leg carries no slip, so its truth is the
-fixture's unfolded truth and the per-arc diff is
+Folding applies to the event leg only: the null leg carries no slip, so its truth
+is the fixture's unfolded truth and the per-arc diff is
 ``(dd_event - truth_folded) - (dd_null - truth_unfolded)``.  Folding the null too
 would make the diff read the injected delta itself instead of the residual.
 
-Reductions: the binned table medians the continuous channels within each bin and
-medians the per-epoch population counts (``n_arcs``, ``n_off``), but SUMS the QC
-counts — events are sparse and their median is 0 by construction.
+Reductions: the binned table takes the median of the continuous channels within
+each bin and the median of the per-epoch population counts (``n_arcs``,
+``n_off``), but sums the QC counts, because events are sparse and their median is
+0 by construction.
 
-Nothing here is a verdict.  It is an instrument; the verdict is the operator's.
+The output is an instrument reading, not a verdict; the verdict is the operator's.
 """
 import argparse
 import bisect
@@ -129,14 +131,14 @@ _MISS = object()
 
 # ---------------------------------------------------------------------------
 # The per-station channels below (`zwd_all`, `rx_clock_all`, `iono_all`) are the
-# ALL-STATION single-pass forms of event_grade.zwd_error (:161) and
-# event_frame_grade.rx_clock_contrast (:148) / los_iono_error (:198).  The
-# definitions are unchanged; only the loop is inverted.  A dose leg grades up to
-# the whole roster, and the single-station helpers re-read the trace (and, for the
-# clock, every station's truth) once per station — los_iono_error once per
-# (station, satellite) over a 16 MB trace — which is minutes, not seconds, at
-# roster scale.  Truth files are cached per (fixture, station) because both legs
-# of the A/B read the same fixture.
+# all-station single-pass forms of event_grade.zwd_error and
+# event_frame_grade.rx_clock_contrast / los_iono_error.  The definitions are
+# unchanged; only the loop is inverted.  A dose leg grades up to the whole roster,
+# and the single-station helpers re-read the trace (and, for the clock, every
+# station's truth) once per station, and los_iono_error once per (station,
+# satellite) over a 16 MB trace, which takes minutes rather than seconds at roster
+# scale.  Truth files are cached per (fixture, station) because both legs of the
+# A/B read the same fixture.
 # ---------------------------------------------------------------------------
 _TRUTH_ATMO = {}
 
@@ -182,11 +184,11 @@ def truth_atmo(fixture, sta, lo_tow, hi_tow):
 
 # ------------------------------------------------------------------ schedule
 def load_schedule(legdir, t0):
-    """(events, source, error) — the leg's injected schedule, each event carrying `ep`.
+    """(events, source, error): the leg's injected schedule, each event carrying `ep`.
 
     ``leg_meta['events']`` is what scripts/ev_dose_legs.py records; a leg built by
-    scripts/event_leg.py alone has no such key, so the leg CONFIG's
-    ``network.inject.events`` is the fallback.  A null leg has neither.
+    scripts/event_leg.py alone has no such key, so the leg config's
+    ``network.inject.events`` (leg.json) is the fallback.  A null leg has neither.
     """
     meta = leg_meta(legdir)
     evs, src = meta.get("events"), "leg_meta.json['events']"
@@ -219,15 +221,15 @@ def load_schedule(legdir, t0):
 
 
 def build_fold(events):
-    """(fold, inj_tow, sat_tow) — the truth folding table and the two onset maps.
+    """(fold, inj_tow, sat_tow): the truth folding table and the two onset maps.
 
     ``fold[(sta, sat, sig)] = (tows, cum)`` with ``cum[i]`` the sum of the first i
-    deltas, so the delta carried at a row tow is ``cum[bisect_right(tows, tow+0.25)]``
-    — the half-epoch guard event_grade.py uses on its single event.  ``inj_tow`` is
-    each SLIPPED arc's first slip; ``sat_tow[(sta, sat)]`` the first slip anywhere on
-    that satellite at that station, because a detector refloat frees the satellite's
-    OTHER bands too (one L1C slip fires the MW pair L1C;L5Q and the IF-TD pair
-    L1C;L2W), so those bands are not a clean control either.
+    deltas, so the delta carried at a row tow is ``cum[bisect_right(tows, tow+0.25)]``,
+    with the same 0.25 s tolerance event_grade.py applies to its single event.
+    ``inj_tow`` is each slipped arc's first slip; ``sat_tow[(sta, sat)]`` the first
+    slip anywhere on that satellite at that station, because a detector refloat
+    frees the satellite's other bands too (one L1C slip fires the MW pair L1C;L5Q
+    and the IF-TD pair L1C;L2W), so those bands are not a clean control either.
     """
     per = defaultdict(list)
     for e in events:
@@ -262,21 +264,21 @@ def dd_levels(legdir, fixture, t0, lo, hi, fold, inj_tow, sat_tow, keep_signed,
     Each epoch's chords are reduced as they are read and the raw lists dropped, so
     the memory is one epoch of chords no matter how long the leg is.
 
-    ⚠ COVERAGE: the trace differences every satellite against ONE reference per
+    Coverage: the trace differences every satellite against one reference per
     constellation and a chord exists only for a station pair that both see it, so a
     station can have chords on one constellation and none on the other, and an arc
-    can vanish mid-leg.  The returned coverage map is what keeps an unmeasurable arc
-    from dropping silently out of a median.
+    can vanish mid-leg.  The returned coverage map keeps an unmeasurable arc from
+    dropping unnoticed out of a median.
 
-    ``ref_free`` applies the SPEC_amb_iono §6.12 re-referencing BEFORE the chords are
-    reduced, exactly as scripts/simnet_dd_reref.py and simnet_amb_integer.py
-    ``--ref-free`` do it: the epoch's chords are grouped by (ref_sat, sta_a, sta_b,
+    ``ref_free`` applies the SPEC_amb_iono §6.12 re-referencing before the chords are
+    reduced, in the same way as scripts/simnet_dd_reref.py and simnet_amb_integer.py
+    ``--ref-free``: the epoch's chords are grouped by (ref_sat, sta_a, sta_b,
     signal); a group of at least 3 satellites gives ``c = median_i e_i`` and every
     chord becomes ``u_i = e_i - c``; groups with fewer than 3 satellites are skipped
     and counted.  Since ``e_i = s_i - s_ref``, the reference satellite's own
-    between-station error is common to the group and cancels — which matters on a
-    DOSE leg, where the reference's own arcs are slipped and re-levelled at many
-    stations, so it no longer cancels in the event - null difference either.
+    between-station error is common to the group and cancels.  This matters on a
+    dose leg, where the reference's own arcs are slipped and re-levelled at many
+    stations, so its error does not cancel in the event - null difference either.
     """
     path = os.path.join(legdir, "logs", "network_dd_fractional.csv")
     if not os.path.isfile(path):
@@ -430,7 +432,7 @@ def dd_levels(legdir, fixture, t0, lo, hi, fold, inj_tow, sat_tow, keep_signed,
 
 # -------------------------------------------------------- per-station states
 def zwd_all(legdir, fixture, t0, lo, hi):
-    """{sta: {rel_ep: ZWD error, m}} — the all-station form of zwd_error."""
+    """{sta: {rel_ep: ZWD error, m}}, the all-station form of zwd_error."""
     p = os.path.join(legdir, "logs", "network_zwd.csv")
     if not os.path.isfile(p):
         return {}, "no network_zwd.csv (arm network.trace_zwd)"
@@ -466,7 +468,7 @@ def zwd_all(legdir, fixture, t0, lo, hi):
 
 
 def rx_clock_all(legdir, fixture, t0, lo, hi):
-    """{sta: {rel_ep: clock CONTRAST error, m}} — all-station rx_clock_contrast."""
+    """{sta: {rel_ep: clock contrast error, m}}, the all-station rx_clock_contrast."""
     p = os.path.join(legdir, "logs", "network_rx_states.csv")
     if not os.path.isfile(p):
         return {}, "no network_rx_states.csv (arm network.trace_rx_states)"
@@ -508,7 +510,7 @@ def rx_clock_all(legdir, fixture, t0, lo, hi):
 
 
 def iono_all(legdir, fixture, t0, lo, hi):
-    """{sta: {rel_ep: rms over LOS of slant-iono error, m}} — all-station los_iono_error."""
+    """{sta: {rel_ep: rms over LOS of slant-iono error, m}}, the all-station los_iono_error."""
     p = os.path.join(legdir, "logs", "network_ionosphere.csv")
     if not os.path.isfile(p):
         return {}, "no network_ionosphere.csv (arm network.trace_ionosphere)"
@@ -564,7 +566,7 @@ def qc_all(legdir, t0, lo, hi, inj_sat):
     injected arc" when its (station, sat) is in that map at or after the tow.
     Returns ({sta: {'inj'|'oth': {rel_ep: count}}},
              {sta: {(tier, ev, act): [inj, oth]}},
-             {(sta, sat): [(rel_ep, tier, event, action, detail), ...]}, err) — the
+             {(sta, sat): [(rel_ep, tier, event, action, detail), ...]}, err).  The
     third map is the per-slip detector readout and is kept only for the schedule's
     own (station, satellite) pairs.
     """

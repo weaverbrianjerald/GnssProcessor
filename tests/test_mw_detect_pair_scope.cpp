@@ -4,28 +4,29 @@
  *        docs/refound/L5P_l5_phase_posture_2026-09-21.md knob A).
  *
  * The network's Melbourne-Wubbena detector forms one pair per distinct band pair
- * of a satellite's arc.  On the three-band lineage of card B5D two of those three
- * pairs carry band 5, and they produced 55 of the 66 `mw_wl_slip` detections of
- * `runs/_rap_b5_tri`.  `primary` forms only the pair whose two signals both sit
- * on the constellation's ionosphere-free pin bands, which on a lineage that
- * latches one signal per band is the station's latched band-1 / band-2 pair.
+ * of a satellite's arc.  On a three-band lineage (card B5D) two of the three pairs
+ * carry band 5, and those pairs account for most `mw_wl_slip` detections.
+ * `primary` forms only the pair whose two signals both sit on the constellation's
+ * ionosphere-free pin bands; on a lineage that latches one signal per band, that
+ * is the station's latched band-1 / band-2 pair.
  *
- * What is pinned here:
+ * Contract checked here:
  *   (a) @c networkMwPairInPrimaryScope admits the pin pair in either signal order
  *       and refuses any pair carrying a band outside it;
- *   (b) an UNRESOLVED pin pair admits every pair — the scope cannot be applied
- *       without knowing the pin bands, and silencing the detector would be a
- *       different (and worse) change than narrowing it;
- *   (c) the tracking ATTRIBUTE is never part of the test: the scope is a BAND
- *       decision, so L1C/L2W and L1W/L2W are both the primary pair;
+ *   (b) an unresolved (or degenerate) pin pair admits every pair: the scope
+ *       cannot be applied without the pin bands, and dropping every pair would
+ *       silence the detector instead of narrowing it;
+ *   (c) the tracking attribute plays no part: the scope is a band decision, so
+ *       L1C/L2W and L1W/L2W are both the primary pair;
  *   (d) a Galileo-shaped pin pair (bands 1 and 5) scopes to E1/E5a and refuses
- *       the band-7 pairs, i.e. nothing here assumes "band 5 is the extra one";
- *   (e) malformed codes are never acted on.
+ *       the band-7 and band-2 pairs, so nothing assumes band 5 is the extra one;
+ *   (e) a malformed signal code is admitted, so the scope never drops a pair it
+ *       cannot parse.
  *
- * The predicate is pure — no config, no logger, no product cache — so these cases
- * carry no fixture.  That a run actually applies it is the run's own
+ * The predicate is pure (no config, logger or product cache), so these cases need
+ * no fixture.  Whether a run applies it is shown by the run's
  * "card L5P, MW pair scope" run-end line and the `mw_wl_slip` event population,
- * graded on the arms, not here.
+ * which are graded on the run arms, not here.
  */
 #include <gtest/gtest.h>
 
@@ -57,19 +58,19 @@ TEST(MwDetectPairScope, AdmitsThePinPairInEitherOrder) {
 }
 
 TEST(MwDetectPairScope, RefusesEveryPairCarryingAnExtraBand) {
-    // The two band-5 pairs of the three-band arc, in the exact shapes the base
-    // run's detections name (L2W;L5Q, L2W;L5X, L1C;L5Q, L1W;L5X).
+    // The two band-5 pairs of the three-band arc, in the signal combinations that
+    // appear in detection records (L2W;L5Q, L2W;L5X, L1C;L5Q, L1W;L5X).
     EXPECT_FALSE(networkMwPairInPrimaryScope("L1C", "L5Q", kGps));
     EXPECT_FALSE(networkMwPairInPrimaryScope("L2W", "L5Q", kGps));
     EXPECT_FALSE(networkMwPairInPrimaryScope("L2W", "L5X", kGps));
     EXPECT_FALSE(networkMwPairInPrimaryScope("L1W", "L5X", kGps));
-    // And with the extra band FIRST, so the test is not order-dependent.
+    // The extra band listed first, to show the result does not depend on order.
     EXPECT_FALSE(networkMwPairInPrimaryScope("L5Q", "L1C", kGps));
 }
 
 TEST(MwDetectPairScope, RefusesAPairWithBothSignalsOffThePinBands) {
-    // Not reachable on a GPS L1/L2/L5 arc, but the rule must not admit it by
-    // accident on a constellation with four tracked bands.
+    // Not reachable on a GPS L1/L2/L5 arc; on a constellation with four tracked
+    // bands the rule still refuses it.
     EXPECT_FALSE(networkMwPairInPrimaryScope("L5Q", "L7Q", kGps));
 }
 
@@ -84,8 +85,8 @@ TEST(MwDetectPairScope, UnresolvedPinAdmitsEveryPair) {
 }
 
 TEST(MwDetectPairScope, ADegeneratePinPairIsTreatedAsUnresolved) {
-    // Both clock-reference signals on the same band is not a pin PAIR; the
-    // predicate must not then read "band 2 is extra".
+    // Two clock-reference signals on the same band do not form a pin pair, so the
+    // predicate treats the pin as unresolved rather than reading band 2 as extra.
     constexpr NetworkPinBands same{ '1', '1' };
     EXPECT_FALSE(same.valid());
     EXPECT_TRUE(networkMwPairInPrimaryScope("L1C", "L2W", same));
@@ -107,8 +108,8 @@ TEST(MwDetectPairScope, AGalileoShapedPinPairScopesToItsOwnBands) {
     EXPECT_TRUE(networkMwPairInPrimaryScope("L1C", "L5Q", kGal));   // E1 / E5a
     EXPECT_FALSE(networkMwPairInPrimaryScope("L1C", "L7Q", kGal));  // E1 / E5b
     EXPECT_FALSE(networkMwPairInPrimaryScope("L5Q", "L7Q", kGal));
-    // Band 2 is the extra one here, which is the case a band-5 hard-coding
-    // would get exactly backwards.
+    // Band 2 is the extra band here; a rule that hard-coded band 5 as the extra
+    // band would admit this pair.
     EXPECT_FALSE(networkMwPairInPrimaryScope("L1C", "L2W", kGal));
 }
 

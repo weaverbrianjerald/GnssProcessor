@@ -1,6 +1,6 @@
 /**
  * @file test_network_second_code_scope.cpp
- * @brief Contract tests for the SECOND CODE CHANNEL (card SCC,
+ * @brief Contract tests for the second code channel (card SCC,
  *        docs/refound/SCC_second_code_channel_2026-09-21.md).
  *
  * With `network.second_code_channel` a network station contributes, as code-only
@@ -8,29 +8,30 @@
  * latch selected, so the C1C and C1W satellite code-bias families stop competing
  * for the same 59 stations.
  *
- * What is pinned here — the PURE kernels and the loader, i.e. everything a defect
- * could hide in that does not need a network solve:
+ * Covered here are the pure kernels and the loader, that is, everything that can
+ * be tested without a network solve:
  *
- *   (a) the ALLOW-LIST grammar: a 3-character code type on band 1, and nothing
- *       else.  A band-2 entry is refused BY THIS CARD (it would make the
- *       `network.sat_isc_state` bridging roster non-empty for the first time) and
- *       a phase type is a different card altogether;
- *   (b) COMPANION SELECTION: allow-list order, no duplicates, never the selected
- *       code itself, never a code the station does not report, and EMPTY when the
+ *   (a) the allow-list grammar: a 3-character code type on band 1, and nothing
+ *       else.  This card refuses a band-2 entry (it would make the
+ *       `network.sat_isc_state` bridging roster non-empty for the first time),
+ *       and a phase type belongs to a different card;
+ *   (b) companion selection: allow-list order, no duplicates, never the selected
+ *       code itself, never a code the station does not report, and empty when the
  *       band has no selected code (that is the fallback case, not a companion);
- *   (c) the CELL EDGES of standing invariant #7, including the one the invariant
- *       was written for: a station that drops out entirely CLOSES its cells, so
+ *   (c) the cell edges of standing invariant #7, including the case the invariant
+ *       was written for: a station that drops out entirely closes its cells, so
  *       its return reads as a re-coupling rather than as a first sighting;
- *   (d) the receiver inter-signal KEY, with its NEGATIVE PARSER PINS.  The key
- *       must match neither `parseIfbKey` nor `parseDcbKey` nor
- *       `isGlonassPerSlotIfbKey`: `Application::networkSplitStation_` DROPS every
+ *   (d) the receiver inter-signal key, with its negative parser pins.  The key
+ *       must match none of `parseIfbKey`, `parseDcbKey` and
+ *       `isGlonassPerSlotIfbKey`: `Application::networkSplitStation_` drops every
  *       receiver column whose key contains "_IFB", and the receiver code-bias
  *       zero-mean datum prior is gated on `parseDcbKey` and must not act on this
  *       state (R2: it carries no zero-mean prior);
- *   (e) the LOADER contract: default OFF, the default allow-list, a refused entry
- *       dropped and named, the sigma scale's floor of 1, the two interlocks
- *       (channel_mode `all`, and `carry_rx_code_bias`), and the closed-loop
- *       consumer pinned OFF.
+ *   (e) the loader contract: default off, the default allow-list, a refused entry
+ *       dropped and named, the sigma scale's floor of 1, the `carry_rx_code_bias`
+ *       interlock, the disarm on fewer than two admitted codes, the subsumption
+ *       by channel_mode `all` (card SID phase 6b), and the closed-loop consumer
+ *       pinned off.
  *
  * The mechanism itself (which rows enter the solve, which columns reach two
  * stations) is graded on the arms by gates G0 to G2 of the card.
@@ -90,10 +91,10 @@ std::string networkConfig(const std::string& network_extra) {
         "}\n";
 }
 
-/// The network block that satisfies BOTH interlocks, so a test can vary one knob
-/// at a time without the loader disarming the card for an unrelated reason.
+/// The network block that satisfies the card's interlocks, so a test can vary one
+/// knob at a time without the loader disarming the card for an unrelated reason.
 /// `carry_rx_code_bias` itself needs `code_datum_time_linked`, which the loader
-/// checks first and which would otherwise force the carry off underneath us.
+/// checks first; without it the loader forces the carry off.
 const char* kArmable =
     "    \"second_code_channel\": true,\n"
     "    \"carry_rx_code_bias\": true,\n"
@@ -110,7 +111,7 @@ TEST(NetworkSecondCodeScope, AdmitsABandOneCodeType) {
     EXPECT_TRUE(secondCodeAllowEntryValid("C1C", &why));
     EXPECT_TRUE(why.empty());
     EXPECT_TRUE(secondCodeAllowEntryValid("C1W", &why));
-    EXPECT_TRUE(secondCodeAllowEntryValid("C1X", &why));   // admitted only if LISTED
+    EXPECT_TRUE(secondCodeAllowEntryValid("C1X", &why));   // admitted only if listed
     EXPECT_TRUE(secondCodeAllowEntryValid("C1L", &why));
     EXPECT_TRUE(secondCodeAllowEntryValid("C1P", nullptr));  // the out-param is optional
 }
@@ -124,9 +125,9 @@ TEST(NetworkSecondCodeScope, RefusesAPhaseTypeBecauseThatIsADifferentCard) {
 }
 
 TEST(NetworkSecondCodeScope, RefusesAnyBandOtherThanOne) {
-    // Band 2 is deferred BY THIS CARD, not unsupported in principle: it would
-    // make the network.sat_isc_state bridging roster non-empty for the first
-    // time (card SCC section 4).
+    // This card defers band 2; it is not unsupported in principle.  A band-2
+    // entry would make the network.sat_isc_state bridging roster non-empty for
+    // the first time (card SCC section 4).
     std::string why;
     EXPECT_FALSE(secondCodeAllowEntryValid("C2W", &why));
     EXPECT_FALSE(why.empty());
@@ -155,9 +156,8 @@ TEST(NetworkSecondCodeScope, PicksTheAllowListedCodeThatIsNotTheSelectedOne) {
 }
 
 TEST(NetworkSecondCodeScope, AStationThatReportsOnlyItsCanonicalCodeContributesNothing) {
-    // 18 of the 59 field stations are this case, and every simulated file is —
-    // which is why the sim bed needs the cloned second code (R9) to exercise
-    // the card at all.
+    // 18 of the 59 field stations are this case, and so is every simulated file,
+    // so the sim bed needs the cloned second code (R9) to exercise the card.
     const std::set<std::string> reported{ "C1C", "C2W" };
     EXPECT_TRUE(secondCodeCompanions(reported, "C1C", kDefaultList).empty());
 }
@@ -179,7 +179,7 @@ TEST(NetworkSecondCodeScope, ARepeatedAllowListEntryIsNotARepeatedRow) {
 }
 
 TEST(NetworkSecondCodeScope, NoSelectedCodeMeansNoCompanionBecauseThatIsTheFallbackCase) {
-    // A lone allow-listed code with no canonical beside it is the FALLBACK case:
+    // A lone allow-listed code with no canonical beside it is the fallback case:
     // the receiver side still routes it through the inter-signal state (R2), but
     // it is not a companion and the run counts it separately.
     const std::set<std::string> reported{ "C1W", "C2W" };
@@ -192,7 +192,7 @@ TEST(NetworkSecondCodeScope, AnEmptyAllowListMakesTheMechanismInertRatherThanWid
 }
 
 // --------------------------------------------------------------------------
-// (c) the cell edges — standing invariant #7
+// (c) the cell edges (standing invariant #7)
 // --------------------------------------------------------------------------
 
 TEST(NetworkSecondCodeScope, ReportsBothEdgesOfTheOpenCellSet) {
@@ -213,8 +213,8 @@ TEST(NetworkSecondCodeScope, AStationDroppingOutClosesEveryCellItHeld) {
 }
 
 TEST(NetworkSecondCodeScope, AReturnAfterADropoutIsAnOpeningNotSilence) {
-    // The exact failure standing invariant #7 names: a station with zero rows
-    // drops out of the map and its return must read as a RE-COUPLING edge.
+    // The failure standing invariant #7 names: a station with zero rows drops
+    // out of the map, and its return must read as a re-coupling edge.
     std::vector<std::string> opened, closed;
     secondCodeCellEdges({}, { "G01|C1W" }, &opened, &closed);
     EXPECT_EQ(opened, std::vector<std::string>({ "G01|C1W" }));
@@ -225,7 +225,7 @@ TEST(NetworkSecondCodeScope, AnUnchangedCellSetHasNoEdges) {
     const std::set<std::string> same{ "G01|C1W", "G02|C1W" };
     std::vector<std::string> opened{ "stale" }, closed{ "stale" };
     secondCodeCellEdges(same, same, &opened, &closed);
-    EXPECT_TRUE(opened.empty());    // the outputs are CLEARED, not appended to
+    EXPECT_TRUE(opened.empty());    // the outputs are cleared, not appended to
     EXPECT_TRUE(closed.empty());
 }
 
@@ -254,10 +254,10 @@ TEST(NetworkSecondCodeScope, TheIscKeyRoundTrips) {
 }
 
 TEST(NetworkSecondCodeScope, TheIscKeyIsRefusedByEveryOtherReceiverBiasParser) {
-    // THE LOAD-BEARING PIN.  networkSplitStation_ drops every receiver column
-    // whose key contains "_IFB", and the receiver code-bias zero-mean datum
-    // prior is gated on parseDcbKey — the inter-signal state must survive the
-    // first and be skipped by the second (R2).
+    // networkSplitStation_ drops every receiver column whose key contains
+    // "_IFB", and the receiver code-bias zero-mean datum prior is gated on
+    // parseDcbKey.  The inter-signal state must survive the first and be skipped
+    // by the second (R2); the rest of the card depends on this pin.
     namespace K = GnssProcessor::StateKeys;
     const std::string key = K::makeReceiverIscKey("GPS", "C1W");
     EXPECT_EQ(key.find("_IFB"), std::string::npos);
@@ -330,10 +330,10 @@ TEST(NetworkSecondCodeScope, IsDisarmedWithoutTheReceiverCodeBiasCarry) {
 }
 
 TEST(NetworkSecondCodeScope, IsSubsumedByChannelModeAllRatherThanRefused) {
-    // Card SID phase 6b replaced this card's channel_mode refusal with SUBSUMPTION.
-    // This posture is the LEVELING vehicle, so the widening's own interlock clamps
-    // the mode back to single and the card is then armed in its ordinary form: the
-    // two statements together are the whole contract change.
+    // Under channel_mode `all` the card is subsumed rather than refused (card SID
+    // phase 6b).  This posture is the leveling vehicle, so the widening's own
+    // interlock clamps the mode back to single and the card is then armed in its
+    // ordinary form; the two assertions below cover that contract.
     LogManager log;
     const fs::path p = writeTempConfig("chanall",
         std::string("{\n") +
@@ -420,7 +420,7 @@ TEST(NetworkSecondCodeScope, ParsesALegalSigmaScale) {
 }
 
 TEST(NetworkSecondCodeScope, TheClosedLoopConsumerIsPinnedOff) {
-    // The card is a PRODUCER-side mechanism: it exists so the satellite families
+    // The card is a producer-side mechanism: it exists so the satellite families
     // share the network's stations, and a consumer is one station with no family
     // to support (R6).
     LogManager log;

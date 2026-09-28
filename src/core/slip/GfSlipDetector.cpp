@@ -7,7 +7,7 @@
  *  - Signal helpers
  *  - GF computation
  *  - Statistics / threshold / IVI
- *  - Core detection logic  (two-pass: collect TD2 ? assess IVI ? flag slips)
+ *  - Core detection logic  (two-pass: collect TD2 → assess IVI → flag slips)
  *  - External reset
  */
 
@@ -391,8 +391,9 @@ namespace GnssProcessor {
                     std::abs(ad.td2_gf), ad.thresh, reason, ivi);
             }
 
-            // Update running statistics (even for suppressed exceedances:
-            // do NOT add outlier TD2 values to the window to avoid threshold inflation)
+            // Update running statistics, also for suppressed exceedances.  An
+            // exceeding TD2 value is not added to the window, so outliers do not
+            // inflate the threshold.
             if (!ad.exceeds_thresh) {
                 stats.diff_window.push_back(ad.td2_gf);
                 if (stats.diff_window.size() > kGfWindowSize)

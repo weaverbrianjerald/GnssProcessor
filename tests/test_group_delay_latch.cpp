@@ -1,14 +1,14 @@
 /**
  * @file test_group_delay_latch.cpp
- * @brief Card OWD (O3): the broadcast group delay latched over the processing window.
+ * @brief The broadcast group delay latched over the processing window (card OWD, O3).
  *
- * The RF-0c latch kept the FIRST navigation record's group delay per satellite for the
- * whole run.  The rule is now: the low median of the group delays of the satellite's
- * healthy records whose clock reference epoch lies in the run's processing window,
- * Galileo's F/NAV (E1, E5a) records preferred when present; a satellite with no such
- * record takes the healthy record in force at the window start; a satellite with no
- * healthy record at all is latched by the same rule over all its records; zeros are real
- * values.  Also here: the RINEX parser keeps the Galileo data-source word the rule reads.
+ * Each satellite's group delay is latched for the run (replacing the RF-0c latch, which
+ * took the first navigation record) as the low median of the group delays of its healthy
+ * records whose clock reference epoch lies in the run's processing window, with Galileo's
+ * F/NAV (E1, E5a) records preferred when present.  A satellite with no such record takes
+ * the healthy record in force at the window start; a satellite with no healthy record at
+ * all is latched by the same rule over all its records; zeros are real values.  Also
+ * tested: the RINEX parser keeps the Galileo data-source word the rule reads.
  */
 #include <gtest/gtest.h>
 
@@ -133,8 +133,8 @@ TEST(GroupDelayLatch, LowMedianIsABroadcastValue) {
 }
 
 // The same broadcast value printed with different last digits (a merged file: G02 on DOY 129)
-// keeps the FIRST record's exact bits, so an unchanged datum is unchanged to the bit; a real
-// step (one broadcast quantum and more) is taken.
+// keeps the first record's exact bits, so an unchanged datum is unchanged to the bit; a real
+// step (one broadcast quantum or more) is taken.
 TEST(GroupDelayLatch, RepresentationNoiseKeepsTheFirstRecordsBits) {
     const double first = -1.769512891770e-08, other = -1.769512891769e-08;
     std::vector<BroadcastEphemeris> nav = {rec("G02", kDay - 16.0, 0.0)};

@@ -30,7 +30,9 @@ namespace GnssProcessor {
         // Number of whitespace-separated columns per data row in gpt3_5.grd.
         constexpr int N_COLS = 64;
         // Pressure reduction: P(h) = P(Hs) * (1 - K_PRES * dh_m)^EXP_PRES.
-        // K_PRES = g·M/(R·T_std) ≈ 6.5e-3 / 288.15 ≈ 2.2557e-5 (per metre).
+        // K_PRES = L/T_std = 6.5e-3 / 288.15 ≈ 2.2557e-5 per metre (lapse rate L over
+        // standard temperature), used rounded to 2.26e-5.  EXP_PRES = 5.225 stands for
+        // g·M/(R·L), which evaluates to about 5.256 with standard-atmosphere constants.
         constexpr double K_PRES = 0.0000226;
         constexpr double EXP_PRES = 5.225;
         // Temperature lapse uses dT [K/km] applied to dh [m] × 1e-3.
@@ -140,8 +142,8 @@ namespace GnssProcessor {
 
         // Per-corner reduction: harmonic eval of P/T/dT/a_h/a_w followed by
         // barometric / lapse extrapolation from grid Hs to station h_ortho.
-        // a_h/a_w have no height dependence — VMF separates the height
-        // correction into the mapping function itself.
+        // a_h/a_w have no height reduction: VMF puts the height correction into
+        // the mapping function itself.
         struct CornerVals { double P_mbar, T_K, a_h, a_w; };
         auto reduce = [&](const Cell& c) -> CornerVals {
             const double p_grid_Pa  = harmonic(c.p,  doy);

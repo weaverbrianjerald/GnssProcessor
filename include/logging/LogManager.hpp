@@ -19,8 +19,8 @@ namespace GnssProcessor {
      * @file include/logging/LogManager.hpp
      * @brief Lightweight logging manager wrapper around spdlog for the GnssProcessor project.
      *
-     * Provides initialization of log directory, creation and retrieval of module-specific loggers,
-     * runtime log level changes and graceful shutdown/flush of logging sinks.
+     * Prepares the log directory, creates and retrieves module-specific loggers, changes
+     * log levels at runtime, and flushes and drops the loggers on shutdown.
      */
 
     /**
@@ -40,16 +40,16 @@ namespace GnssProcessor {
         Error,
         /// Critical (fatal) messages.
         Critical,
-        /// Disabled — emit nothing. Used to silence individual loggers via per-logger overrides.
+        /// Disabled: emit nothing. Silences individual loggers via per-logger overrides.
         Off
     };
 
     /**
      * @brief Parse a LogLevel from a JSON-friendly string.
      *
-     * Accepts case-insensitive: "trace", "debug", "info", "warn"/"warning",
-     * "error"/"err", "critical"/"crit", "off". Unknown strings throw
-     * @c std::invalid_argument so the config loader can warn the user.
+     * Accepts, case-insensitively: "trace", "debug", "info", "warn"/"warning",
+     * "error"/"err", "critical"/"crit", "off"/"none"/"disabled". Unknown strings throw
+     * @c std::invalid_argument so the config loader can warn about them.
      *
      * @param s Level name from the JSON config.
      * @return Corresponding LogLevel.
@@ -65,34 +65,39 @@ namespace GnssProcessor {
      * - Call initialize() once at application startup with a log directory and desired level.
      * - Use getLogger("module_name") to retrieve or create module-specific loggers.
      * - Call setLogLevel() to change logging verbosity at runtime.
-     * - Call shutdown() during application shutdown to flush and stop all sinks.
+     * - Call shutdown() during application shutdown to flush and drop all loggers.
      */
     class LogManager {
     public:
         /**
          * @brief Default constructor.
          *
-         * Constructs a LogManager instance; no initialization of spdlog sinks/loggers is performed
-         * until initialize() is called.
+         * Constructs a LogManager instance; no spdlog sinks or loggers are created until
+         * initialize() is called.
          */
         LogManager();
 
         /**
          * @brief Initialize logging subsystem.
          *
-         * Creates the default logger (\"gnss_processor\") and any requested module loggers as rotating
-         * file sinks inside @p log_dir. Also sets the logging level.
+         * Creates @p log_dir if needed and removes the stale @c .log files in it, installs
+         * the GPS-time formatter on the spdlog registry, and registers the default logger
+         * (\"gnss_processor\"), which is console-only.  Module loggers with rotating file
+         * sinks in @p log_dir are created later, on first getLogger(name).  A second call
+         * on an initialized instance calls spdlog::drop_all() and starts over; that also
+         * clears spdlog's default logger, so spdlog::default_logger() is null afterwards.
          *
          * @param log_dir Filesystem directory where log files will be written. The directory will be
          *                used as the base path for rotating log files.
          * @param level  Initial logging level to apply to all created loggers.
-         * @return true if initialization succeeded (sinks and default logger created), false on failure.
+         * @return true if initialization succeeded (default logger created and registered),
+         *         false if it fell back to a console-only logger after an exception.
          *
-         * @note Never throws. Log-directory preparation (create + stale-.log
+         * @note Never throws. Log-directory preparation (create and stale-.log
          *       scrub) is best-effort via the @c error_code overloads, and any
          *       remaining exception degrades to a console-only logger with a
-         *       @c false return. Callers must not be aborted by a logging-setup
-         *       failure — on Windows a concurrently-running process holding a
+         *       @c false return. A logging-setup failure does not abort the
+         *       caller; on Windows a concurrently running process holding a
          *       @c .log open makes the scrub's @c remove() fail routinely.
          */
         bool initialize(const std::filesystem::path& log_dir, LogLevel level);
@@ -100,8 +105,8 @@ namespace GnssProcessor {
         /**
          * @brief Set the global log level for all managed loggers.
          *
-         * This will update the level on every logger stored in the manager so that logging
-         * verbosity changes take effect immediately.
+         * Updates the level on every logger stored in the manager so the change takes
+         * effect immediately.  A no-op before initialize().
          *
          * @param level New logging level to apply.
          */
@@ -110,7 +115,9 @@ namespace GnssProcessor {
         /**
          * @brief Shutdown logging and flush all sinks.
          *
-         * Flushes and stops all spdlog sinks and clears internal logger references. After calling
+         * Flushes every managed logger, calls spdlog::drop_all() (which also clears
+         * spdlog's default logger, so spdlog::default_logger() is null afterwards) and
+         * clears the internal logger references. After
          * shutdown(), initialize() can be called again to recreate loggers.
          */
         void shutdown();
@@ -120,13 +127,12 @@ namespace GnssProcessor {
          *
          * The default logger is named \"gnss_processor\" and is created during initialize().
          *
-         * Before initialize() the default logger does not exist; a transient
-         * console-only logger is returned instead — mirroring the named
-         * getLogger(name) overload's uninitialized fallback — so call sites
-         * that may legitimately run before logging is configured (most
-         * notably GnssConfig::loadFromJson, whose catch handler logs through
-         * this accessor) degrade to console output rather than throwing
-         * std::out_of_range out of the very handler that wanted to log.
+         * Before initialize() (and after shutdown()) the default logger does not exist,
+         * and a transient console-only logger is returned instead, as the named
+         * getLogger(name) overload does when uninitialized.  Call sites that can run
+         * before logging is configured (for example GnssConfig::loadFromJson, whose
+         * catch handler logs through this accessor) then log to the console instead of
+         * throwing std::out_of_range from the handler that is trying to log.
          *
          * @return shared_ptr to the default spdlog::logger instance, or a
          *         transient console-only logger when initialize() has not run.
@@ -137,9 +143,11 @@ namespace GnssProcessor {
          * @brief Retrieve or create a module-specific logger.
          *
          * If a logger with @p logger_name already exists it is returned. Otherwise a new logger
-         * is created (using the same sink configuration as the default logger), stored and returned.
-         * If the logger name is in the disabled set, it is created at spdlog::level::off so that
-         * no messages are written to its file.
+         * is created with a rotating file sink (@c <log_dir>/<logger_name>.log, 5 MB, 3 files)
+         * and a console sink, stored and returned.  Its level is off if the name is in the
+         * disabled set, else its per-logger override, else the global level.  If the file
+         * sink cannot be created, the default logger is returned.  Before initialize(), a
+         * transient console-only logger with the requested name is returned.
          *
          * @param logger_name Name of the logger/module (e.g., \"gnss_processor.core\").
          * @return shared_ptr to the requested spdlog::logger.
@@ -150,8 +158,8 @@ namespace GnssProcessor {
          * @brief Mark a set of logger names as disabled.
          *
          * Disabled loggers are created with level=off so their .log files
-         * remain empty.  Call this before the first getLogger() call for
-         * best effect; loggers already created are retroactively silenced.
+         * remain empty.  Loggers already created are set to off immediately,
+         * so the call works before or after the first getLogger().
          *
          * @param names Set of logger names to disable.
          */
@@ -160,9 +168,9 @@ namespace GnssProcessor {
         /**
          * @brief Replace a named logger's sinks with a GatedSink wrapper.
          *
-         * The GatedSink forwards messages in Passthrough mode, buffers them
-         * in Buffer mode. Used by KalmanFilter to suppress intermediate
-         * rebuild-pass output without touching call sites. Idempotent —
+         * The GatedSink forwards messages in Passthrough mode and buffers them
+         * in Buffer mode. KalmanFilter uses it to suppress intermediate
+         * rebuild-pass output without touching call sites. Idempotent:
          * calling it twice on the same logger returns the same wrapper.
          * Must be called after the logger has been created.
          *
@@ -179,29 +187,31 @@ namespace GnssProcessor {
          * at which that logger should emit. Loggers not listed continue to
          * use the global level passed to @c initialize(). Disabled loggers
          * (via @c setDisabledLoggers) take precedence over any override
-         * here. Loggers already created are updated immediately; not-yet-
-         * created loggers will pick up their override when first requested.
+         * here. Loggers already created are updated immediately; loggers
+         * not yet created pick up their override when first requested.
          *
          * @param levels Map of logger name → LogLevel.
          */
         void setLoggerLevels(const std::map<std::string, LogLevel>& levels);
 
         /**
-         * @brief Set the GNSS epoch time used for the [tow=...] field in
+         * @brief Set the GNSS epoch time printed in the epoch field (%E) of
          *        every subsequent log message on the calling thread.
          *
          * Set this at the top of each per-epoch processing iteration so
-         * log lines emitted during that epoch carry a TOW that aligns
-         * with the RINEX cadence (e.g. tow=30.000, 60.000).  The value
-         * is thread-local; worker threads see their own setting.  Until
-         * the first call, log lines emit @c "tow=---------" as a
-         * placeholder for boot-time / pre-epoch messages.
+         * log lines emitted during that epoch carry the epoch's week, TOW
+         * and GPS-scale calendar time, aligned with the RINEX cadence
+         * (e.g. tow 30.000, 60.000).  The value is thread-local; each
+         * worker thread sees its own setting.  Until the first call, the
+         * field prints a placeholder of matching width
+         * (@c "----, --------- (---------- --:--:------)") for boot-time
+         * and pre-epoch messages.
          */
         static void setCurrentEpochTime(const GnssTime& t);
 
         /**
-         * @brief Clear the current epoch time so subsequent log
-         *        messages emit the @c "tow=---------" placeholder.
+         * @brief Clear the calling thread's epoch time so subsequent log
+         *        messages print the placeholder in the epoch field.
          */
         static void clearCurrentEpochTime();
 
@@ -209,12 +219,12 @@ namespace GnssProcessor {
         /// Map of logger name to spdlog logger instance.
         std::map<std::string, std::shared_ptr<spdlog::logger>> loggers_;
 
-        /// Serializes lazy logger CREATION in getLogger().  The fetch of an
+        /// Serializes lazy logger creation in getLogger().  The fetch of an
         /// already-created logger is lock-free (std::map::find is data-race-safe
-        /// for concurrent readers); only the first-touch create path locks.  This
-        /// lets the PPP-RTK network producer fetch loggers from its per-station
-        /// worker threads safely (it prewarms every reachable logger first, so no
-        /// insert ever races a concurrent fetch inside a parallel region).
+        /// for concurrent readers); only the first-touch create path locks.  The
+        /// PPP-RTK network producer fetches loggers from its per-station worker
+        /// threads; it prewarms every reachable logger first, so no insert races
+        /// a concurrent fetch inside a parallel region.
         std::mutex logger_create_mutex_;
 
         /// Directory where log files are stored.
@@ -241,15 +251,17 @@ namespace GnssProcessor {
         spdlog::level::level_enum toSpdlogLevel(LogLevel level) const;
 
         /**
-         * @brief Build a pattern_formatter that uses GPS time for the %* flag.
+         * @brief Build the pattern_formatter used by every managed logger.
          *
-         * The returned formatter replaces the '%*' custom flag with the
-         * message timestamp shifted by the GPS�UTC leap-second offset so
-         * that log timestamps align with RINEX GPS epoch times.
+         * Pattern @c "[%E] [%n] [%^%l%$] %v".  The custom flag @c %E prints the
+         * calling thread's current epoch (see setCurrentEpochTime()) as week, TOW
+         * and GPS-scale calendar time, with no leap-second subtraction, so log lines
+         * align with RINEX GPS epoch times.  It does not use the message's wall-clock
+         * timestamp.
          */
         std::unique_ptr<spdlog::pattern_formatter> makeGpsFormatter() const;
 
-        /// GPS�UTC offset in seconds (currently 18).
+        /// GPS−UTC offset in seconds (currently 18).  Not read by the formatter.
         int gps_utc_offset_s_{ 18 };
     };
 

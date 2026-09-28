@@ -1,40 +1,41 @@
 #pragma once
 /**
  * @file NetworkChannelAll.hpp
- * @brief Card SID phase 6b: `processing.channel_mode: all` made CORRECT on the
- *        network path, and the telemetry that says what it did
- *        (docs/refound/SID_signal_identity_2026-09-22.md).
+ * @brief `processing.channel_mode: all` on the network path and its telemetry,
+ *        card SID phase 6b (docs/refound/SID_signal_identity_2026-09-22.md).
  *
- * ### The mechanism, in one paragraph
+ * ### Mechanism
  *
- * The widening in @c PppModel::selectUncombinedSignals is the ONE entry: every
- * ADMITTED code and phase attribute of every selected band becomes its own row at
- * every station.  It SUBSUMES card SCC (the second code channel) and card SID
- * phase 6a (the second phase channel) rather than being refused beside them: the
- * rows it adds are reported through the same two sets those cards fill
+ * The widening in @c PppModel::selectUncombinedSignals is the single entry point:
+ * every admitted code and phase attribute of every selected band becomes its own
+ * row at every station.  It subsumes card SCC (the second code channel) and card
+ * SID phase 6a (the second phase channel) instead of being refused beside them:
+ * the rows it adds are reported through the same two sets those cards fill
  * (@c PppObservation::companion_codes and @c second_phases), so the receiver
  * inter-signal code state, the two sigma scales, the Melbourne-Wubbena guard, the
- * cell telemetry and both edges of standing invariant 7 keep working unchanged.
- * Their allow-lists are ignored; their sigma scales apply to every non-canonical
- * code row and non-canonical phase row respectively.
+ * cell telemetry and both edges of standing invariant 7 work unchanged.  Their
+ * allow-lists are ignored; their sigma scales apply to every non-canonical code
+ * row and every non-canonical phase row respectively.
  *
- * Three things the widening alone does not settle, and where they live:
+ * Three questions the widening alone does not settle, and where they are handled:
  *
- *  - the RECEIVER inter-signal code bias of an extra code on ANY band, in
- *    @c StateInitializer::resolveReceiverBias (card SCC's state, its band-1
+ *  - the receiver inter-signal code bias of an extra code on any band, in
+ *    @c StateInitializer::resolveReceiverBias (card SCC's state, with its band-1
  *    restriction and its allow-list dropped under the widening);
- *  - the SATELLITE inter-signal correction of a band-2-or-above extra code, which
- *    card RF-0f's @c network.sat_isc_state frees where a station bridges both
- *    signals of that satellite.  Under the widening every station bridges, so the
- *    knob stops being inert and the run must say whether it is armed;
- *  - the row-level gap re-entry response, which keys on the tracker's ONE phase
+ *  - the satellite inter-signal correction of an extra code on band 2 or above,
+ *    which card RF-0f's @c network.sat_isc_state frees where a station bridges
+ *    both signals of that satellite.  Under the widening every station bridges,
+ *    so the knob acts on every widened station, and the run-end readout states
+ *    whether it is armed;
+ *  - the row-level gap re-entry response, which keys on the tracker's single phase
  *    per band, in @c networkSlipDrainGapReentry.
  *
- * ### What this file owns
+ * ### Contents of this file
  *
- * The FAMILY CENSUS and the CROSS-CHANNEL EXPOSURE, both measure-only.  Nothing
- * here touches the solve, the wire or any graded trace; every function returns
- * immediately when the widening is not active.
+ * The family census and the cross-channel exposure, both measure-only.  Nothing
+ * here touches the solve, the wire or any graded trace.  The epoch fold returns
+ * immediately unless the widening or a second constellation is active; the
+ * run-end readout returns immediately unless the widening is active.
  */
 
 #include <map>
@@ -55,54 +56,54 @@ namespace GnssProcessor {
     /**
      * @brief One (constellation, signal) row of the phase-6b family census.
      *
-     * Peaks rather than sums, because the question the card owes an answer to is
-     * how wide a family GOT, not how many epochs it lived.
+     * The station and column fields are peaks, not sums: they record how wide a
+     * family became, not how many epochs it lasted.
      */
     struct ChannelAllFamilyRow {
         long long sta_tracking{ 0 };   ///< peak stations reporting the signal in one epoch.
         long long sta_modelling{ 0 };  ///< peak stations carrying a row for it in one epoch.
         long long columns{ 0 };        ///< peak distinct satellites carrying it in one epoch.
         long long rows_canonical{ 0 }; ///< row-epochs where it was that station's latched signal.
-        long long rows_extra{ 0 };     ///< row-epochs where it was an EXTRA channel.
+        long long rows_extra{ 0 };     ///< row-epochs where it was an extra channel.
     };
 
     /**
      * @brief Run-scope counters of the widening.  Lives in @c NetworkServiceCounters.
      *
-     * Every class carries its own denominator so a zero can be read: a zero with a
-     * zero denominator is dead wiring, and the run-end table says so in those words
-     * (standing invariant 4).
+     * Every class carries its own denominator so that a zero can be interpreted: a
+     * zero with a zero denominator is dead wiring, and the run-end table reports it
+     * as such (standing invariant 4).
      */
     struct NetworkChannelAllCounters {
         long long epochs{ 0 };                 ///< epochs the fold ran (denominator).
         /// "<constellation>|<signal>" -> the census row.
         std::map<std::string, ChannelAllFamilyRow> family;
-        /// Cell-epochs (station, satellite, band) carrying MORE THAN ONE modelled
-        /// PHASE.  This is the CROSS-CHANNEL EXPOSURE of R5: a screen keyed on
-        /// "SAT|<band>" or on (station, satellite) acts on every channel of such a
-        /// cell, so the count is the population those screens cannot separate.
+        /// Cell-epochs (station, satellite, band) carrying more than one modelled
+        /// phase: the cross-channel exposure of R5.  A screen keyed on "SAT|<band>"
+        /// or on (station, satellite) acts on every channel of such a cell, so the
+        /// count is the population those screens cannot separate.
         long long xchan_phase_cells{ 0 };
-        long long xchan_code_cells{ 0 };       ///< the same for CODE attributes.
+        long long xchan_code_cells{ 0 };       ///< the same for code attributes.
         long long xchan_cells_total{ 0 };      ///< (station, satellite, band) cell-epochs seen (denominator).
         /// Stations holding at least one receiver inter-signal code state, summed
-        /// over epochs, and the peak count of distinct SIGNALS those states name.
+        /// over epochs, and the peak count of distinct signals those states name.
         long long isc_station_epochs{ 0 };
         long long isc_signals_max{ 0 };
-        /// Peak distinct band digits carrying an extra CODE channel in one epoch, and
-        /// the peak over band digits at or above 2 — the population whose satellite
+        /// Peak distinct band digits carrying an extra code channel in one epoch, and
+        /// the same peak over band digits 2 and above: the population whose satellite
         /// inter-signal correction card RF-0f's knob decides.
         long long extra_code_bands_max{ 0 };
         long long extra_code_bands_ge2_max{ 0 };
     };
 
     /**
-     * @brief PURE: is @p signal an EXTRA channel of its band at this station?
+     * @brief Pure: is @p signal an extra channel of its band at this station?
      *
-     * The one definition the widening, the receiver side and the census all share: a
-     * signal is extra exactly when its band's LATCHED signal of the same observation
-     * type is known, is present in the same record, and is not this signal.  An
-     * undecided latch answers false, which is the "change nothing" contract every
-     * latch reader keeps.
+     * The single definition shared by the widening, the receiver side and the
+     * census: a signal is extra when its band's latched signal of the same
+     * observation type is known, is present in the same record, and is not this
+     * signal.  An undecided latch answers false, which keeps the "change nothing"
+     * contract every latch reader follows.
      *
      * @param signal    The RINEX observation key under test, e.g. "C2X".
      * @param canonical The band's latched signal of the same type, or empty.
@@ -113,7 +114,7 @@ namespace GnssProcessor {
                            bool canonical_present);
 
     /**
-     * @brief PURE: the extra channels the widening adds for one record.
+     * @brief Pure: the extra channels the widening adds for one record.
      *
      * Reproduces @c PppModel::selectUncombinedSignals' widening decision over one
      * observation's key set, so the unit suite can pin it without a model: every
@@ -135,17 +136,18 @@ namespace GnssProcessor {
         const std::vector<std::string>* allowed);
 
     /**
-     * @brief Fold one epoch into the census.  No-op when the widening is not active.
+     * @brief Fold one epoch into the census.  No-op unless the widening or a second
+     *        constellation (@c networkMultiGnssActive, card GAL) is active.
      *
      * Called from the driver after @c present[] is final and after the per-epoch
-     * second-code and second-phase bookkeeping has republished its cell sets, which
-     * is where @c PppObservation::companion_codes / @c second_phases and the
+     * second-code and second-phase bookkeeping has republished its cell sets; at
+     * that point @c PppObservation::companion_codes / @c second_phases and the
      * stations' own state maps are all current.
      *
      * @param ctx      Run context (the counters).
      * @param config_  The run's configuration.
      * @param stations The producer's stations.
-     * @param modeled  Per-station MODELLED observations of this epoch.
+     * @param modeled  Per-station modelled observations of this epoch.
      * @param present  Per-station PASS-A presence.
      */
     void networkChannelAllEpoch(NetworkRunContext& ctx, const GnssConfig& config_,

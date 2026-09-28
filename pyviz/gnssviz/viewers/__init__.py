@@ -1,7 +1,7 @@
 """Viewer registry.
 
 Each viewer module exposes a module-level ``viewer`` (:class:`.base.Viewer`).
-``REGISTRY`` is the ordered list the driver dispatches over -- the Python
+``REGISTRY`` is the ordered list the driver dispatches over, the Python
 analogue of the ``REG`` table in ``view_all.m``.  Add a new viewer by importing
 its ``viewer`` here and appending it to ``REGISTRY``.
 """
@@ -55,7 +55,7 @@ from .slip_conditions import viewer as _slip_conditions
 from .graphic_trace import viewer as _graphic_trace
 from .gf_trace import viewer as _gf_trace
 from .if_slip_trace import viewer as _if_slip_trace
-# Network-level (PPP-RTK NETWORK producer)
+# Network-level (PPP-RTK network producer)
 from .network_map import viewer as _network_map
 from .network_iono_map import viewer as _network_iono_map
 from .network_health import viewer as _network_health
@@ -80,7 +80,7 @@ REGISTRY = [
     # without a reference; exam runs never bind one, so the two never collide).
     _rt_scorecard,
     # Exam / simulator truth (lead the dashboard; each auto-skips without a truth dir)
-    # Part B (SPP reference, truth-only) leads Part C (PPP vs truth) — student order.
+    # Part B (SPP reference, truth-only) leads Part C (PPP vs truth): student order.
     _exam_scorecard, _exam_spp_reference, _exam_static_window,
     _exam_position_truth, _exam_truth_lines, _exam_track, _exam_map,
     _exam_visibility, _exam_iono_truth, _exam_otl_truth,

@@ -6,9 +6,10 @@
  *
  * This header declares the `WlsResult` container and the `WlsEstimator` class which
  * perform a weighted least-squares estimation over a set of `PppObservation` at a
- * given epoch. The estimator is configured via `GnssConfig` and uses `StateManager`
- * for accessing/augmenting filter states. Logging is performed through `LogManager`
- * and optional trace records via `WlsLogger`.
+ * given epoch. The estimator is configured via `GnssConfig` and reads its seed state
+ * (position, clock, zenith troposphere) from `StateManager`; it does not write
+ * filter states. Logging is performed through `LogManager` and optional trace
+ * records via `WlsLogger`.
  */
 
 #include "config/GnssConfig.hpp"
@@ -31,7 +32,7 @@ namespace GnssProcessor {
  * number of iterations performed by any iterative solver used.
  */
 struct WlsResult {
-    Eigen::VectorXd state;              /**< Estimated state vector (meters and other state units). */
+    Eigen::VectorXd state;              /**< Estimated state vector: position (3), clock, zenith wet tropo (all meters). */
     Eigen::MatrixXd covariance;         /**< Estimated state covariance matrix. */
     double rms = std::numeric_limits<double>::infinity();    /**< Root-mean-square of residuals. */
     double max_abs = std::numeric_limits<double>::infinity();/**< Maximum absolute residual. */
@@ -50,9 +51,9 @@ struct WlsResult {
  * @class WlsEstimator
  * @brief Performs a weighted least-squares solution for a single epoch.
  *
- * The estimator uses configuration parameters from `GnssConfig` and may read
- * or update state information via `StateManager`. Diagnostic and trace logging
- * is performed through `LogManager` and `WlsLogger`.
+ * The estimator uses configuration parameters from `GnssConfig` and reads its
+ * seed state via `StateManager` (read-only). Diagnostic and trace logging is
+ * performed through `LogManager` and `WlsLogger`.
  */
 class WlsEstimator {
 public:
@@ -63,7 +64,7 @@ public:
      * manager; it does not take ownership of those objects.
      *
      * @param config Reference to global GNSS processing configuration.
-     * @param state_manager Reference to the StateManager used for state access/updates.
+     * @param state_manager Reference to the StateManager that supplies the seed state.
      * @param log_manager Reference to the LogManager for logging.
      */
     WlsEstimator(const GnssConfig& config, StateManager& state_manager, LogManager& log_manager);
@@ -89,7 +90,7 @@ private:
     friend struct WlsEstimatorTestAccess;
 
     const GnssConfig& config_;      /**< Reference to configuration parameters. */
-    StateManager& state_manager_;   /**< Reference to the StateManager for state queries/updates. */
+    StateManager& state_manager_;   /**< Reference to the StateManager for state queries (read-only). */
     LogManager& log_manager_;       /**< Reference to LogManager for logging. */
     std::unique_ptr<WlsLogger> wls_logger_; /**< Optional WLS logger: created only when debug logging is enabled. */
 

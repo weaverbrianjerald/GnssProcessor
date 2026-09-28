@@ -39,7 +39,7 @@ namespace sim {
  *
  * Field defaults produce a self-consistent kinematic marine receiver header.
  * @c obs_types is an ordered list of (system-letter, codes) pairs; the code
- * order is binding — it defines the per-satellite field order on every epoch.
+ * order is binding: it defines the per-satellite field order on every epoch.
  */
 struct ObsHeaderSpec {
     double version{ 3.04 };                       ///< RINEX version (>=3.0 selects the v3 parser branch).
@@ -69,7 +69,7 @@ struct ObsHeaderSpec {
  * @brief One satellite's observations at a single epoch.
  *
  * @c values maps a RINEX-3 observation code to its value: code observations
- * (`C...`) in metres, carrier-phase observations (`L...`) in CYCLES (already
+ * (`C...`) in metres, carrier-phase observations (`L...`) in cycles (already
  * divided by the carrier wavelength).  @c lli optionally carries a loss-of-lock
  * indicator per code; an absent entry (or value <= 0) writes a blank LLI column.
  */

@@ -1,7 +1,7 @@
 /**
  * @file PbStepTranslateLedger.cpp
- * @brief Card PBT (A): translate-vs-skip-vs-refuse for a phase-bias product step.
- *        See the header for the algebra, the scope and the refusal branches.
+ * @brief Translate / skip / refuse decision for a phase-bias product step (card
+ *        PBT (A)).  The header holds the algebra, the scope and the refusal branches.
  */
 
 #include "realtime/PbStepTranslateLedger.hpp"
@@ -36,11 +36,11 @@ PbStepTranslateLedger::react(StateManager& sm, const std::string& key,
     ++ctr_.cells;
     if (declared) ++ctr_.declared_seen;
 
-    // A DECLARED cell this ledger cannot translate falls back to the EXISTING
-    // reset — the same StateManager call the pre-card reaction makes, so the
-    // fallback is the old behaviour to the byte.  An UNDECLARED cell never
-    // resets: the pre-card path did nothing there, and a reset on every
-    // sub-threshold move would be a new (and harmful) reaction.
+    // A declared cell this ledger cannot translate falls back to the existing
+    // reset: the same StateManager call resetOnPhaseBiasDisc makes, so the fallback
+    // reproduces that reaction exactly.  An undeclared cell is never reset: the
+    // reset path does nothing there, and resetting on every such move would add a
+    // new, harmful reaction.
     auto refuse = [&](Action why, uint64_t& ctr) {
         if (declared) {
             ++ctr;
@@ -53,10 +53,10 @@ PbStepTranslateLedger::react(StateManager& sm, const std::string& key,
         return d;
     };
 
-    // (1) No usable (k−1, k) pair.  First sighting / re-admission, or either side
-    //     without an applied phase bias (the A5 freshness edge) — there is no Δ
-    //     that the ambiguity should absorb, so the existing first-sighting / flip
-    //     logic owns it.
+    // (1) No usable (k−1, k) pair: first sighting or re-admission, or either side
+    //     without an applied phase bias (the A5 freshness edge).  There is no Δ for
+    //     the ambiguity to absorb; a declared cell takes the existing first-sighting
+    //     / flip reset, an undeclared one is only counted.
     const auto prev = applied_.find(key);
     if (prev == applied_.end() || !prev->second.applied || !applied_now) {
         if (declared) {
@@ -73,9 +73,9 @@ PbStepTranslateLedger::react(StateManager& sm, const std::string& key,
     // (2) The step itself.
     d.delta_m = applied_now_m - prev->second.value_m;
     if (!(std::abs(d.delta_m) > eps_m)) {
-        // Below the band the filter absorbs it as noise — and a DECLARED cell
-        // whose product did not move (the EMPTY declaration, CST §7.1) costs
-        // nothing instead of an arc.
+        // Inside the band the filter absorbs the move as noise, and a declared cell
+        // whose product did not move (the empty declaration, CST §7.1) costs nothing
+        // instead of a reset that starts a new arc.
         ++ctr_.skipped_eps;
         if (declared) ++ctr_.skipped_eps_declared;
         d.action = Action::SkippedEps;

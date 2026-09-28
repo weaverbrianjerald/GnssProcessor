@@ -3,14 +3,14 @@
 Point it at the log folder of a *running* GnssProcessor (post-processing writing
 growing CSV traces, or the real-time engine streaming).  The page polls a cheap
 ``/status`` token; when it changes it fetches ``/update`` and patches each figure
-*in place* (Plotly ``react`` / image swap) -- no full-page reload, so zoom/pan
+*in place* (Plotly ``react`` / image swap), with no full-page reload, so zoom/pan
 survive and there is no flicker.
 
 Two efficiency layers keep it cheap even with large traces:
-  * **per-viewer change detection** -- a viewer is only re-built/re-rendered when
-    one of *its* trace CSVs changes, so a 20 MB ``mwwl_trace.csv`` update never
-    re-renders the unrelated state / DOP panels;
-  * **token-gated polling** -- nothing is rendered while the data is idle.
+  * **per-viewer change detection**: a viewer is only re-built and re-rendered
+    when one of *its* trace CSVs changes, so a 20 MB ``mwwl_trace.csv`` update
+    never re-renders the unrelated state / DOP panels;
+  * **token-gated polling**: nothing is rendered while the data is idle.
 
 Backend-agnostic: the same viewers and :class:`Figure` specs drive the live and
 the offline reports; the plotly backend (default here) makes it interactive,
@@ -51,10 +51,10 @@ class LiveDashboard:
 
     # ------------------------------------------------------------------ #
     def data_token(self) -> str:
-        """Change token over ONLY the CSVs the rendered viewers consume.
+        """Change token over the CSVs the rendered viewers consume, not every CSV.
 
-        Scoping to the active (``only``-filtered) viewers' ``required_csvs`` --
-        rather than every CSV in the folder -- means an idle / excluded trace
+        Scoping to the active (``only``-filtered) viewers' ``required_csvs``,
+        rather than every CSV in the folder, means an idle or excluded trace
         (e.g. a 20 MB ``mwwl_trace.csv`` still being written but not rendered)
         does not advance the token and trigger needless ``/update`` fetches.
         """
@@ -127,8 +127,8 @@ class LiveDashboard:
             "token": token,
             "ids": [f["id"] for f in figs],
             "figs": figs,
-            # Every rendered section (incl. empty) so the client can CLEAR a
-            # summary that went away, not just set ones that are present.
+            # Every rendered section, including empty ones, so the client can
+            # clear a summary that went away, not just set ones that are present.
             "summaries": {s["viewer"]: (s["summary"] or "") for s in sections},
         }
 

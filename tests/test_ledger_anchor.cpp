@@ -1,18 +1,18 @@
 /**
  * @file test_ledger_anchor.cpp
- * @brief Card SID phase 4b: the anchor election's RE-ENTRY rule
+ * @brief The anchor election's re-entry rule, card SID phase 4b
  *        (@c network.ledger_anchor, docs/refound/SID_signal_identity_2026-09-22.md).
  *
  * The election decides "first sighting or return" by one test: whether the key had
  * an incumbent at the previous epoch.  A family the coverage gate dropped loses its
  * incumbent at the drop edge, so its return reads as a birth however continuously
- * its arcs tracked through the gated era.  Phase 4b replaces that test for exactly
- * one population: a family a DROP EDGE erased, returning with the previous
- * incumbent's arc at the SAME admitted generation.
+ * its arcs tracked through the gated era.  Phase 4b replaces that test for one
+ * population only: a family a drop edge erased, returning with the previous
+ * incumbent's arc at the same admitted generation.
  *
- * The rule itself lives in @c anchorReentryClassify, a pure function over the
- * ledger and the drop memo, so it can be stated here without a station, a model or
- * a solve.  What the election adds on top is its own eligibility (does the station
+ * The rule itself lives in @c anchorReentryClassify, a function without side effects
+ * over the ledger and the drop memo, so it can be stated here without a station, a
+ * model or a solve.  What the election adds on top is its own eligibility (does the station
  * still track the key, is it banned, does it pass the hygiene and basis rules), and
  * that composition is what the election's own suites and the armed A/B cover.
  */
@@ -36,13 +36,13 @@ ArcLedger::Key K(int sta, const char* sat, const char* sig) {
     return ArcLedger::Key{ sta, std::string(sat), std::string(sig) };
 }
 
-/// Advance the ADMITTED side by one epoch over the listed arcs.  The raw side is
+/// Advance the admitted side by one epoch over the listed arcs.  The raw side is
 /// driven alongside so an arc is never admitted without having been observed,
 /// which is the producer's own ordering.
 void admit(ArcLedger& led, long long ep, const std::vector<ArcLedger::Key>& arcs) {
-    // Every station keeps ONE arc of a satellite no test queries.  The ledger
-    // freezes the arcs of a station that contributed nothing (a station outage must
-    // not manufacture a gap at every one of its arcs), so without a keeper a test
+    // Every station keeps one arc of a satellite no test queries.  The ledger
+    // freezes the arcs of a station that contributed nothing (so a station outage
+    // does not create a gap at every one of its arcs), and without a keeper a test
     // that drops a station's only arc would exercise the freeze rather than the gap.
     std::vector<ArcLedger::Key> all = arcs;
     for (int sta = 0; sta < 3; ++sta) all.push_back(K(sta, "G99", "L9X"));
@@ -94,7 +94,7 @@ TEST(LedgerAnchorTest, SameGenerationReturnRestoresTheIncumbent) {
 
 TEST(LedgerAnchorTest, NewGenerationReturnElectsFresh) {
     // The incumbent's arc died and was re-born inside the gated era, so its carry
-    // means something else now: the election must proceed exactly as today.
+    // means something else now: the election proceeds as it would without the rule.
     ArcLedger led;
     led.configure(/*horizon_s=*/60.0, kArcLedgerForgetEp);   // short, so the gap kills
     const auto a = K(0, "G30", "L1W");
@@ -140,8 +140,8 @@ TEST(LedgerAnchorTest, AGappedIncumbentIsNotARestoreTarget) {
 }
 
 TEST(LedgerAnchorTest, NoDropMemoIsNoMemoryAndNotARestore) {
-    // Every OTHER first sighting on the run — a genuine rise, a bridge exit, the
-    // first epoch — has no memo and must be left to today's election untouched.
+    // Every other first sighting on the run (a genuine rise, a bridge exit, the
+    // first epoch) has no memo and is left to the unchanged election.
     ArcLedger led;
     led.configure(3900.0, kArcLedgerForgetEp);
     const auto a = K(0, "G30", "L1W");
@@ -178,7 +178,7 @@ TEST(LedgerAnchorTest, AnUnknownIncumbentStationIsNotRestored) {
 }
 
 TEST(LedgerAnchorTest, ASecondDropReplacesTheMemoRatherThanMergingIt) {
-    // The question a return answers is about the LAST era the family was anchored
+    // The question a return answers is about the last era the family was anchored
     // in.  Merging two eras would let an arc that died between them read as
     // continuous, which is the failure the generation test exists to prevent.
     ArcLedger led;
@@ -230,7 +230,7 @@ TEST(LedgerAnchorTest, FamilyCensusSplitsTrackingGapAndDead) {
 }
 
 // ---------------------------------------------------------------------------
-// B2: the age the container becomes a reader of
+// The ledger arc age, which the container reads (B2)
 // ---------------------------------------------------------------------------
 
 TEST(LedgerAnchorTest, LedgerArcAgeCountsTheAdmittedTrackingRun) {
@@ -251,8 +251,8 @@ TEST(LedgerAnchorTest, LedgerArcAgeCountsTheAdmittedTrackingRun) {
     admit(led, 9, { a, b });
     EXPECT_EQ(anchorLedgerArcAge(led, a, 9), 1);
 
-    // An arc the ledger cannot answer for has NO age, which is a different
-    // statement from age zero and has to stay separable.
+    // An arc the ledger has no record of has no age (-1), which is a different
+    // statement from age zero and stays separable from it.
     EXPECT_EQ(anchorLedgerArcAge(led, K(0, "G99", "L1W"), 9), -1);
 }
 

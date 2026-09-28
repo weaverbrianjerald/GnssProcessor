@@ -5,7 +5,7 @@ say) builds one :class:`Figure` per frame and returns them wrapped in an
 :class:`Animation` on its :class:`~gnssviz.viewers.base.ViewerResult`.  Rendering
 stays the backend's job: :func:`render_gif` draws each frame through the same
 :class:`~gnssviz.backends.base.Backend` the static figures use, then assembles a
-looping GIF with Pillow (already a matplotlib dependency — no new requirement).
+looping GIF with Pillow (already a matplotlib dependency, so no new requirement).
 
 The :class:`Figure` contract is untouched: an animation is *N* ordinary figures,
 not a new figure kind, so every existing trace/axes/projection works inside a

@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 """Generate the overnight follow-on arm configs for the FT63 convergence lineage.
 
-Every arm is derived from the validated `_ft63_24h_conv.json` posture so the
-only variable in each is the thing being tested.  Run AFTER `runs/ft63_24h_conv`
-finishes -- the two resume arms read that run's hourly warm-start entries.
+Every arm is derived from the validated `_ft63_24h_conv.json` posture, so the
+only variable in each is the thing being tested.  Run this after
+`runs/ft63_24h_conv` finishes: the two resume arms read that run's hourly
+warm-start entries.
 
     python scripts/overnight_make_arms.py            # all arms
     python scripts/overnight_make_arms.py --resume-only
@@ -13,23 +14,24 @@ Arms
 ft63_warm12 / ft63_cold12
     Warm-start convergence.  Same 1 h window, same config, one seeded from the
     hour-12 snapshot and one cold.  `state_snapshot_require` is armed on the
-    warm arm so a fingerprint/age failure ABORTS instead of silently
-    cold-starting (standing invariant #4 -- a silent cold start reads as a
-    clean resume).
+    warm arm so a fingerprint/age failure aborts the run instead of silently
+    cold-starting (standing invariant #4: a silent cold start reads as a clean
+    resume).
 ft63_l2off
     Dual-layer ionosphere.  layer2_max_degree 4 -> 0 (single 450 km shell),
     3 h cold; the control is the first 3 h of the 24h run.  Cold by necessity:
     layer2_max_degree is inside the warm-resume fingerprint.
 ft63_gg12h
     Multi-GNSS.  GPS+Galileo, all/all, 12 h (covers era-1 at 07:32).  Explicit
-    Galileo `signal_priorities` are mandatory -- without them the multi-GNSS
+    Galileo `signal_priorities` are mandatory; without them the multi-GNSS
     drop is silent.  Also the first exercise of the admission screen on an
     all/all config, the regime where the median-over-observables inversion
     lived before it was fixed.
 net305_screen
-    Scale.  The full 305-station roster, GPS-only, 20 epochs: does the screen
-    stay BSHM-only at 5x the roster, and does ignition survive?  NOT a
-    convergence run -- 305 sta costs ~3-4 min/epoch, so a day is ~1 week.
+    Scale.  The full 305-station roster, GPS-only, 20 epochs: checks whether
+    the screen stays BSHM-only at 5x the roster and whether ignition survives.
+    Not a convergence run: 305 stations cost about 3 to 4 min/epoch, so a day
+    of data takes about a week to run.
 """
 import argparse
 import json
@@ -69,7 +71,7 @@ def write(name, cfg, snapshot=True):
 
 
 def emitted_tows():
-    """TOW of each EMITTED epoch of the parent run, in order.
+    """TOW of each emitted epoch of the parent run, in order.
 
     The history snapshots are named `.ep<n_emitted>`, so index i (1-based) of
     this list is the epoch that snapshot describes.  Deriving it from the
@@ -107,7 +109,7 @@ def resume_arms(target_h=12.0):
     hours = (tsnap - t0) / 3600.0
     print(f"  seed: {snaps[idx].name}  ep{idx}  TOW {tsnap:.0f}  = {hours:.3f} h into the run")
 
-    # Resume begins at the epoch AFTER the snapshot: offset past it by a half
+    # Resume begins at the epoch after the snapshot: offset past it by a half
     # epoch so the strict-< fast-forward gate cannot re-consume the snapped one.
     offset = hours + HALF_EPOCH_H
 
@@ -157,8 +159,8 @@ def cold_arms():
     c["processing"]["max_duration_s"] = 600.0
     c["network"]["max_duration_s"] = 600.0
     c["network"]["stations"] = src["network"]["stations"]
-    # The promotion ledger's own cautionary example: validated at 50 sta,
-    # NET-HARMFUL at 305 (short-baseline wrong-integer 0.0% -> 12.5%).
+    # The promotion ledger's own cautionary example: validated at 50 stations,
+    # net-harmful at 305 (short-baseline wrong-integer rate 0.0% -> 12.5%).
     c["network"]["mw_wl"]["bridge_sample_debias"] = False
     c["network"]["state_snapshot_interval_s"] = 300.0
     write("net305_screen", c)

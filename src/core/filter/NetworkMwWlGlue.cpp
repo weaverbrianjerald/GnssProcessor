@@ -1,10 +1,10 @@
 /**
  * @file NetworkMwWlGlue.cpp
- * @brief Verbatim body of networkMwWlInject (decomposition INC-13, 2026-07-23) — the
- *        second `if (mw_mach_on)` block of networkBuildCarryDdPriors, relocated
- *        dedent-4 with ZERO substitutions.  The alias preamble byte-copies the run-TU /
- *        caller aliases the body reads; the `if (mw_mach_on)` guard stays at the call
- *        site.  See NetworkMwWlGlue.hpp for the concern boundary.
+ * @brief Body of networkMwWlInject: the second `if (mw_mach_on)` block of
+ *        networkBuildCarryDdPriors, relocated with a 4-column dedent and no substitutions
+ *        (decomposition INC-13).  The alias preamble copies the run-TU and caller aliases
+ *        the body reads; the `if (mw_mach_on)` guard stays at the call site.  See
+ *        NetworkMwWlGlue.hpp for the concern boundary.
  */
 #include "filter/NetworkMwWlGlue.hpp"
 
@@ -86,15 +86,15 @@ void networkMwWlInject(
     auto& d5_hold_chords = ctx.carry.d5_hold_chords;
     auto& n_loop_epochs = ctx.counters.n_loop_epochs;
 
-    // Both lanes read the PURE carry blocks (not each other's appended rows), so
-    // collect their outputs here and append after both build.  The WL bridge lane
-    // adds a third block set (integer-hard hold rows on the (1,2) columns).
+    // Both lanes read the pure carry blocks, not each other's appended rows, so their
+    // outputs are collected here and appended after both have been built.  The WL bridge
+    // lane adds a third block set (integer-hard hold rows on the (1,2) columns).
     std::vector<NetworkNormalEquations::DdPriorBlock> wl_out, ewl_out, wl_hold_out;
-    std::vector<NetworkMwWlLayer::FixedEwlRow> ewl_fixed;   // WL-2 §3.4 bridge input
-    // Increment 5: per-entry top-rung tag, parallel to ewl_fixed ('\0' on the
-    // legacy single lane; the lane's b_top / b_top2 digit under the UWL card).
+    std::vector<NetworkMwWlLayer::FixedEwlRow> ewl_fixed;   // bridge input (WL-2 §3.4)
+    // Per-entry top-rung tag, parallel to ewl_fixed: '\0' on the legacy single lane, the
+    // lane's b_top or b_top2 digit under the UWL card (Increment 5).
     std::vector<char> ewl_fixed_top;
-  if (mw_wl_on) {   // --- WL-1 float lane (primary L1/L2 pair) ---
+  if (mw_wl_on) {   // --- float lane on the primary L1/L2 pair (WL-1) ---
     mw_wl_epoch = NetworkMwWlLayer::Counters{};   // per-build; the last build before the accepted solve wins
     auto resolver = [&](std::size_t est_station, Eigen::Index local_col,
                         NetworkMwWlLayer::ArcData& out) -> bool {
@@ -145,23 +145,23 @@ void networkMwWlInject(
         return true;
     };
     auto wl_blocks = mw_wl_layer.build(blocks, resolver, mw_wl_epoch);
-    // --- F6 attribution capture: the FIRST arming epoch's WL rows (log-only). ---
-    // Re-resolve each cycle arc (resolver + revmap in scope here) to record the
-    // per-arc MW̄/x_lin and the row aggregates z_MW/z_lin/z_corr; the post-solve
-    // site adds reconstructed_abs + the kernel innovation.  The last build before
-    // the accepted solve wins (tow-matched at the write site).
+    // --- Attribution capture (F6): WL rows of the first epoch that has any (log-only). ---
+    // Each cycle arc is re-resolved (resolver and revmap are in scope here) to record the
+    // per-arc MW̄ and x_lin and the row aggregates z_MW, z_lin and z_corr; the post-solve
+    // site adds reconstructed_abs and the kernel innovation.  The last build before the
+    // accepted solve wins (matched on tow at the write site).
     if (mw_wl_f6_dump && !mw_wl_f6.written && !wl_blocks.empty()) {
-        const std::size_t Nc = blocks.size();      // WL blocks append AFTER the carry blocks
+        const std::size_t Nc = blocks.size();      // WL blocks are appended after the carry blocks
         mw_wl_f6.rows.clear();
         mw_wl_f6.row_block.clear();
         mw_wl_f6.week           = se.time.week;
         mw_wl_f6.tow            = se.time.tow;
         mw_wl_f6.loop_epoch     = static_cast<int>(n_loop_epochs);
         mw_wl_f6.wl_block_index = Nc;              // first WL block's index in `blocks`
-        // Row budget.  The historical dump sampled min(rows, 8) of wl_blocks.front() ONLY —
-        // a fixed-size SAMPLE, not a population (its size says nothing about how many cycles
-        // the layer built).  f6_max_rows <= 0 lifts the cap; f6_all_blocks walks every WL
-        // block.  Both default to the legacy shape, so an unset config dumps byte-identically.
+        // Row budget.  The default dump takes min(rows, 8) rows of wl_blocks.front() alone:
+        // a fixed-size sample, not a population, so its size says nothing about how many
+        // cycles the layer built.  f6_max_rows <= 0 lifts the cap; f6_all_blocks walks every
+        // WL block.  The defaults (8, false) keep the single-block sample byte for byte.
         const std::size_t cap = (nmw.f6_max_rows <= 0)
             ? std::numeric_limits<std::size_t>::max()
             : static_cast<std::size_t>(nmw.f6_max_rows);
@@ -213,19 +213,19 @@ void networkMwWlInject(
     wl_out = std::move(wl_blocks);
   }  // --- end WL-1 float lane ---
 
-  if (ewl_on) {   // --- WL-2 EWL lane: (band2, band-top) pair, FFR statistic-gated fix ---
+  if (ewl_on) {   // --- EWL lane (WL-2): (band2, band-top) pair, fix gated on the FFR statistic ---
     for (auto& lane : ewl_lanes) lane.epoch = NetworkMwWlLayer::Counters{};
-    // Same eligibility as WL-1 (a primary-sig1 cycle), but the row is the top-tier
-    // DD on the SAME (rx,sat) arcs, pairing the estimator's primary sig2 (channel
+    // Same eligibility as WL-1 (a primary-sig1 cycle), but the row is the top-tier DD
+    // on the same (rx,sat) arcs, pairing the estimator's primary sig2 (channel
     // discipline) with the constellation's top band: GPS EWL (L2,L5); Galileo UWL
-    // (E5b|E5,E5a) under the armed card.  (hi,lo) is ordered by ACTUAL frequency —
-    // GPS's shared band is the pair's HIGH side, Galileo's its LOW side — so the
-    // MW statistic keys (sat, hi, lo) and λ_top stays positive (UWL-1 §2).  The
-    // top band is uncarried (excluded above) so the rows win with no fight.
-    // Increment 5: the lane instance under construction selects which top-rung
-    // map its resolver reads — band_top_of for the preferred (and every
-    // single-top) instance, band_top2_of for the fallback instance.  Set per
-    // lane in the build loop below; single-top shapes never repoint it.
+    // (E5b|E5, E5a) under the UWL card.  (hi,lo) is ordered by actual frequency (GPS's
+    // shared band is the pair's high side, Galileo's its low side), so the MW statistic
+    // keys (sat, hi, lo) and λ_top stays positive (UWL-1 §2).  The top band is not
+    // carried (the census block excludes it), so no carried column competes with these rows.
+    // The lane instance under construction selects the top-rung map its resolver reads:
+    // band_top_of for the preferred instance and every single-top instance, band_top2_of
+    // for the fallback instance.  It is set per lane in the build loop below; single-top
+    // shapes never repoint it (Increment 5).
     const auto* ewl_top_map = &band_top_of;
     auto ewl_resolver = [&](std::size_t est_station, Eigen::Index local_col,
                             NetworkMwWlLayer::ArcData& out) -> bool {
@@ -268,10 +268,11 @@ void networkMwWlInject(
             out.mw_count      = static_cast<long long>(zd.count);
             out.lambda_wl     = zd.lambda_wl;              // = λ_top = c/(f_hi − f_lo)
             out.bia_corrected = zd.bia_corrected;
-            // UWL-1 §3.3 cold fix: when the LAGGED statistic is immature, serve the
-            // UNLAGGED n≥1 cold read — DECISION-ONLY, and only on tiers whose λ
-            // earns it (the floor excludes GPS's 5.861 m EWL).  At n=1 the Welford
-            // variance does not exist; substitute the a-priori per-sample σ.
+            // Cold fix (UWL-1 §3.3): when the lagged statistic is immature, serve the
+            // unlagged n≥1 cold read.  It feeds the decision only, and only on tiers with
+            // λ ≥ uwl_cold_min_lambda_m (the floor excludes the 5.861 m GPS EWL).  At n=1
+            // the Welford variance does not exist; the a-priori per-sample σ
+            // (uwl_cold_sigma_m) is substituted.
             if (uwl_cold_on && stations[rv.rx].mw_slip
                 && (!zd.valid
                     || zd.count < static_cast<std::size_t>(ewl_cfg.min_arc_epochs))) {
@@ -306,10 +307,10 @@ void networkMwWlInject(
     ewl_fixed.clear();
     ewl_fixed_top.clear();
     for (auto& lane : ewl_lanes) {
-        // Increment 5: the fallback instance ('7' under a dual tier) resolves
-        // against band_top2_of; everything else keeps band_top_of.  The tag
-        // rides along per fixed row so the WL walk reads the SAME rung's
-        // bridge/cold arcs the decision came from.
+        // The fallback instance ('7' under a dual tier) resolves against band_top2_of;
+        // every other instance keeps band_top_of.  The tag travels with each fixed row
+        // so the WL walk reads the bridge and cold arcs of the rung the decision came
+        // from (Increment 5).
         const bool is_top2 = uwl_dual_on && lane.top != '\0'
             && [&] {
                    const auto t = mwLaneTierOf(lane.cons, nmw.uwl_gal_top_band,
@@ -324,7 +325,7 @@ void networkMwWlInject(
         ewl_fixed_top.insert(ewl_fixed_top.end(), lane_fixed.size(), lane.top);
     }
     ewl_top_map = &band_top_of;   // leave the pointer in its legacy state
-    if (mw_d5_dump) {   // F-A dump: the (station,sat) pairs EWL-FIXED cycles touch
+    if (mw_d5_dump) {   // F-A dump: the (station,sat) pairs touched by EWL-fixed cycles
         d5_ewl_stasat.clear();
         for (const auto& fx : ewl_fixed)
             for (const auto& t : blocks[fx.block].rows[fx.row]) {
@@ -340,25 +341,26 @@ void networkMwWlInject(
   if (wl_inject_on || lane_on) {
       wl_inject_epoch.clear();
       wl_epoch = WlCounters{};
-      wl_cons_epoch.clear();   // UWL-1 per-cons walk tallies
+      wl_cons_epoch.clear();   // per-constellation walk tallies (UWL-1)
   }
   if (mw_tagsets) d5_hold_chords.clear();
 
   if (lane_meas_on) {
-    // --- WL-3 §3.2: per-epoch MW(1,2) lane increments on EVERY eligible pair
-    // chord — the carried block becomes the code-coherence accumulator.  Each
-    // arc contributes its detector-LAGGED raw sample exactly once (the Welford
-    // mean stays decision-side); a cycle with an immature/stale/mixed-frame arc,
-    // a this-epoch slip (its lagged sample is pre-slip), or a quarantined
-    // linearization is skipped for the epoch.  Serial in (block, chord) order —
-    // the §8.2 deterministic seam (runs before the bridge/fix walk below).
+    // --- Per-epoch MW(1,2) lane increments on every eligible pair chord (WL-3 §3.2);
+    // the carried block becomes the code-coherence accumulator.  Each arc contributes
+    // its detector-lagged raw sample exactly once (the Welford mean stays on the
+    // decision side).  A cycle is skipped for the epoch when an arc is immature, stale
+    // or of mixed frame, slipped or was dropped this epoch (its lagged sample predates
+    // the slip), or has a quarantined linearization.  Chords run in (block, chord)
+    // order, the §8.2 deterministic seam, before the bridge and fix walk below.
     constexpr double kLaneMwSigmaFloorCyc = 0.2;   // young-arc Welford collapse guard
-    // LF-1 INC-4 (§3.5): each joint block's MW folds are independent (no shared Pᶻ)
-    // and stay in-order within the block, so fanning OVER blocks is BYTE-IDENTICAL to
-    // serial — per-block counter deltas sum order-independently, and Eigen is re-pinned
-    // to 1 inside the region (the pcarry un-pin stays OUTSIDE — the dev300s nesting
-    // trap).  The per-op driver timer is silenced for the parallel pass (it would race
-    // a single double); the app-side row counts stay exact via the per-block deltas.
+    // Each joint block's MW folds are independent (no shared Pᶻ) and stay in order
+    // within the block, so fanning out over blocks is byte-identical to the serial loop:
+    // the per-block counter deltas sum independently of order, and Eigen is pinned to one
+    // thread inside the region (the pcarry un-pin stays outside it, which avoids the
+    // nested parallelism seen on the dev300s tier).  The per-op driver timer is disabled
+    // for the parallel pass because concurrent updates would race on a single double;
+    // the app-side row counts stay exact through the per-block deltas (LF-1 INC-4 §3.5)
     const long long mw_nb = static_cast<long long>(carry_driver.numBlocks());
     std::vector<WlCounters> mw_pb(static_cast<std::size_t>(std::max<long long>(0, mw_nb)));
     const bool mw_par        = lane_parallel_components && n_threads > 1;
@@ -375,8 +377,9 @@ void networkMwWlInject(
             if (k >= blocks[b].rows.size()) break;
             const auto& terms = blocks[b].rows[k];   // band-1 cycle terms
             if (terms.empty()) continue;
-            // LF-1 INC-2: a committed-pinned lane (σ=0.01) does not move under an MW
-            // increment (σ≈0.06-0.2) — skip the O(K²) downdate.  No-op when OFF.
+            // A lane pinned by a committed fix (σ=0.01) barely moves under an MW increment
+            // (σ≈0.06-0.2), so the O(K²) downdate is skipped.  Never taken with
+            // skip_pinned_increments off (LF-1 INC-2).
             if (carry_driver.laneIncrementSkippable(b, k)) {
                 ++mwc.lane_pinned_skips; continue;
             }
@@ -396,8 +399,9 @@ void networkMwWlInject(
                     ok = false; break;
                 }
                 const PP& pp = pit->second;
-                // A slip re-tapped this chord this epoch — the lagged (pre-slip)
-                // sample would poison the fresh lane; skip for one epoch.
+                // A slip or a within-epoch RAIM drop re-tapped this chord this epoch; the
+                // lagged sample predates it and would corrupt the fresh lane, so the
+                // chord is skipped for one epoch.
                 bool slipped = carry_slipped_ambs.count(
                                    { rv.rx, StateKeys::makeAmbiguityKey(rv.sat, pp.sig1) })
                             || carry_slipped_ambs.count(
@@ -451,24 +455,25 @@ void networkMwWlInject(
   }
 
   if ((wl_inject_on || lane_fix_on || lane_bridge_on) && !ewl_fixed.empty()) {
-    // --- WL-2 WL lane: phase bridge → WL integer → hold row + inject plan (§3.3/§3.4) ---
-    // For each FFR-fixed EWL cycle, bridge phase-only from the fixed N_EWL to a fast
-    // WL integer w = [Σc·GF_b + λ_EWL·N_EWL]/λ_WL, cross-check the plain MW(1,2), and
-    // either FOLD an integer-hard hold row (carry already lane-consistent ⇒ innovation
-    // ~0, no fight) or STASH an inject (carry moves to w post-solve, NL preserved).
-    // sat_vertex → satellite label (reverse of carry_sat_vertex) to map a chord's
-    // ArcKey.v back to its satellite (for the primary-pair + group-id lookups).
+    // --- WL lane (WL-2): phase bridge → WL integer → hold row and inject plan (§3.3/§3.4) ---
+    // For each FFR-fixed EWL cycle, bridge phase-only from the fixed N_EWL to a fast WL
+    // integer w = [Σc·GF_b + λ_EWL·N_EWL]/λ_WL, cross-check it against the plain MW(1,2),
+    // and either fold an integer-hard hold row (the carry already agrees with the lane,
+    // so the innovation is about 0) or stash an inject (the carry moves to w post-solve,
+    // NL preserved).  With lane_fix_on, the lane fix below replaces both.
+    // sat_of_vertex maps a chord's ArcKey.v back to its satellite label (the reverse of
+    // carry_sat_vertex) for the primary-pair and group-id lookups.
     std::map<int, std::string> sat_of_vertex;
     for (const auto& [s, v] : carry_sat_vertex) sat_of_vertex[v] = s;
     // Group hold rows by their source carry block so shared (1,2) columns fold jointly.
     std::map<std::size_t, std::size_t> hold_block_of;   // carry block b → wl_hold_out index
-    // Increment 5 (uwl_dual_top): a (block,row) decided by the PREFERRED rung
-    // is consumed — the fallback rung's entry for the same row dedupes (the
-    // preferred instance's entries precede it in ewl_fixed by construction).
-    // A preferred entry that FAILS a gate does NOT consume, so the fallback
-    // proceeds the same epoch (including a sibling-gate block — the demotion
-    // is free).  The lane bridge increment is separately once-per-row: both
-    // rungs' bridges measure the same lane and must not double-fold.
+    // Dual top tier (uwl_dual_top, Increment 5): a (block,row) decided by the preferred
+    // rung is consumed, and the fallback rung's entry for the same row is deduplicated
+    // (the preferred instance's entries precede the fallback's in ewl_fixed by
+    // construction).  A preferred entry that fails a gate does not consume the row, so
+    // the fallback proceeds in the same epoch; a block by the sibling gate therefore
+    // demotes the cycle at no cost.  The lane bridge increment is separately limited to
+    // once per row: both rungs' bridges measure the same lane and must not both fold.
     std::set<std::pair<std::size_t, std::size_t>> walk_decided, lane_incr_done;
 
     for (std::size_t fxi = 0; fxi < ewl_fixed.size(); ++fxi) {
@@ -482,17 +487,17 @@ void networkMwWlInject(
             ++wl_epoch.rows_seen; continue;   // defensive; stays pooled
         }
         const ArcKey chord = chords_b[fx.row];
-        // UWL-1: resolve the chord's constellation up front — the walk tallies
-        // per-cons under the armed card (wc == wl_epoch otherwise, bit-identical).
+        // Resolve the chord's constellation up front: under the UWL card the walk tallies
+        // per constellation; otherwise wc is wl_epoch, bit-identical (UWL-1).
         const auto svit0 = sat_of_vertex.find(chord.v);
         const std::string sat_lbl =
             svit0 != sat_of_vertex.end() ? svit0->second : std::string{};
         const char ccons = sat_lbl.empty() ? '?' : sat_lbl.front();
         WlCounters& wc = uwl_on ? wl_cons_epoch[ccons] : wl_epoch;
         ++wc.rows_seen;
-        // Increment 5: resolve the chord constellation's tier once — which rung
-        // this entry came from, which top map its bridge reads, and whether an
-        // untaken sibling exists for the closure statistic.
+        // Resolve the tier of the chord's constellation once: which rung this entry came
+        // from, which top map its bridge reads, and whether an untaken sibling exists for
+        // the closure statistic (Increment 5).
         const auto ctier = uwl_on
             ? mwLaneTierOf(ccons, nmw.uwl_gal_top_band, nmw.uwl_mid_enable,
                            nmw.uwl_dual_top)
@@ -514,31 +519,31 @@ void networkMwWlInject(
         double sum_gf = 0.0, R_bridge = 0.0;          // Σc·GF_b (m), Σc²·var/λ_wl² (cyc²)
         double z_mw12 = 0.0, R_mw12 = 0.0;            // plain MW(1,2) DD (cyc) + var
         double z_lin1 = 0.0, z_lin2 = 0.0;            // Σc·x_lin per band (m)
-        double iono_dd = 0.0, iono_co = 0.0;         // §3.4 v2 de-bias: Σc·Î₁ (m), C_iono
+        double iono_dd = 0.0, iono_co = 0.0;         // de-bias (§3.4 v2): Σc·Î₁ (m), C_iono
         double lam_wl = 0.0, lam_ewl = 0.0, lam1 = 0.0, lam2 = 0.0;
         bool   ok = true, mw12_ok = true, quarantined = false, iono_ok = true;
-        // E6 mid hop (uwl_mid_enable): hop-hi (mid lane vs top lane) + hop-lo
-        // (WL lane vs mid lane) accumulators, plus the MW(6,5) closure for the
-        // intermediate integer.  mid_ok stays true only if EVERY arc serves both
-        // hop bridges mature (else the cycle falls back to the direct hop).
+        // Mid hop through E6 (uwl_mid_enable): accumulators for hop-hi (mid lane against
+        // top lane) and hop-lo (WL lane against mid lane), plus the MW(6,5) closure for
+        // the intermediate integer.  mid_ok stays true only if every arc serves both hop
+        // bridges mature; otherwise the cycle falls back to the direct hop.
         bool   mid_ok = uwl_mid_on;
         double sum_gf_hi = 0.0, R_hi = 0.0;           // Σc·GF_hop-hi (m), Σc²·var/λ_mid² (cyc²)
         double sum_gf_lo = 0.0, R_lo = 0.0;           // Σc·GF_hop-lo (m), Σc²·var/λ_wl² (cyc²)
         double iono_co_hi = 0.0, iono_co_lo = 0.0, lam_mid = 0.0;
         double z_mw65 = 0.0, R_mw65 = 0.0;            // MW(mid,b2) closure DD (mid cyc) + var
         bool   mw65_ok = true;
-        // Increment 5 sibling closure: the untaken {7,8} rung's MW statistic as
-        // a DD over the same cycle.  Measured on every dual-tier decision; the
-        // hard gate is separate (uwl_sib_gate).  Any arc without the sibling
-        // band / a valid MW arc drops the check (counted sib_unavail).
+        // Sibling closure (Increment 5): the MW statistic of the untaken {7,8} rung as a
+        // DD over the same cycle.  It is measured on every dual-tier decision; the hard
+        // gate is separate (uwl_sib_gate).  An arc without the sibling band or a valid MW
+        // arc drops the check (counted in sib_unavail).
         bool   sib_ok = dual_cons;
         double z_sib = 0.0, R_sib = 0.0, lam_sib = 0.0;
-        // WL-3 §3.2 bridge lane increment: the LAGGED RAW GF_b DD (once-only,
-        // phase-precision) accumulated alongside the Welford DECISION statistic.
+        // Bridge lane increment of WL-3 §3.2: the lagged raw GF_b DD (used once, phase
+        // precision), accumulated alongside the Welford decision statistic.
         double sum_gf_raw = 0.0, R_gf_raw = 0.0;      // Σc·GF_b_raw (m), Σc²·var/λ_wl² (cyc²)
         double raw_stamp = 0.0;
         bool   raw_ok = lane_bridge_on, raw_have_stamp = false;
-        bool   bridge_cold = false;   // UWL-1 §3.3: any arc served by the cold bridge
+        bool   bridge_cold = false;   // any arc served by the cold bridge (UWL-1 §3.3)
         for (const auto& t : terms) {
             const auto rit = revmap.find({ static_cast<int>(t.station),
                                            static_cast<int>(t.local_col) });
@@ -556,10 +561,11 @@ void networkMwWlInject(
                 static_cast<std::size_t>(std::max(2, ewl_cfg.min_arc_epochs));
             if (uwl_cold_on && stations[rv.rx].mw_slip
                 && (!brg.valid || brg.count < brg_need)) {
-                // UWL-1 §3.3: post-slip the LAGGED bridge trails by one epoch; the
-                // UNLAGGED cold serve (n≥2) re-pins one epoch earlier.  DECISION-
-                // ONLY — the lane increment below stays on the lagged arcBridgeLast,
-                // and the λ floor keeps this a top-tier (Galileo) privilege.
+                // After a slip the lagged bridge trails by one epoch; the unlagged cold
+                // serve (n≥2) re-pins one epoch earlier.  It feeds the decision only: the
+                // lane increment below stays on the lagged arcBridgeLast, and the λ floor
+                // (uwl_cold_min_lambda_m) restricts it to the top tier, i.e. Galileo
+                // (UWL-1 §3.3).
                 const auto bc = stations[rv.rx].mw_slip->arcBridgeCold(
                                     rv.sat, pp.sig1, pp.sig2, b5->second.first);
                 if (bc.valid && bc.count >= brg_need
@@ -578,10 +584,11 @@ void networkMwWlInject(
             const double coeff = t.coeff;
             sum_gf   += coeff * brg.gf_mean_m;
             R_bridge += coeff * coeff * brg.var_of_mean_m2 / (brg.lambda_wl * brg.lambda_wl);
-            // E6 mid hop: read this arc's two hop bridges (lagged; the cold
-            // serve stays a direct-hop privilege) + the MW(mid,b2) closure.
-            // Any missing/immature piece drops the WHOLE cycle to the direct
-            // hop (λ_mid must be uniform across the cycle's arcs).
+            // Mid hop (E6): read this arc's two hop bridges (lagged; the cold serve is
+            // reserved for the direct hop) and the MW(mid,b2) closure.  A missing or
+            // immature hop bridge drops the whole cycle to the direct hop (λ_mid must be
+            // uniform across the cycle's arcs); a missing closure read only clears
+            // mw65_ok, which skips the closure check.
             if (mid_ok) {
                 const auto b6 = band_mid_of.find({ rv.rx, rv.sat });
                 MwSlipDetector::MwBridgeMean bh, blo;
@@ -618,9 +625,9 @@ void networkMwWlInject(
                     }
                 }
             }
-            // Increment 5: this arc's untaken-sibling MW read (7-fx → the '8'
-            // rung's (8,5) statistic, 8-fx → the finer (7,5) one).  Ordered
-            // (hi,lo) by actual frequency like every MW key.
+            // This arc's MW read for the untaken sibling (Increment 5): a fix from the '7'
+            // rung reads the '8' rung's (8,5) statistic, a fix from the '8' rung the finer
+            // (7,5) one.  Ordered (hi,lo) by actual frequency like every MW key.
             if (sib_ok) {
                 const auto bs = sib_top_map.find({ rv.rx, rv.sat });
                 MwSlipDetector::MwArcZdMean mws;
@@ -642,7 +649,7 @@ void networkMwWlInject(
                     sib_ok = false;
                 }
             }
-            if (raw_ok) {   // WL-3: the raw lagged sample (skip on slip/stale/immature)
+            if (raw_ok) {   // raw lagged sample (WL-3); skipped on slip, stale or immature
                 bool slipped = carry_slipped_ambs.count(
                                    { rv.rx, StateKeys::makeAmbiguityKey(rv.sat, pp.sig1) })
                             || carry_slipped_ambs.count(
@@ -663,7 +670,7 @@ void networkMwWlInject(
                 } else if (!raw_have_stamp) {
                     raw_stamp = bl.epoch_s; raw_have_stamp = true;
                 } else if (std::abs(bl.epoch_s - raw_stamp) > 0.1) {
-                    raw_ok = false;   // mixed epochs — the DD is not any epoch's
+                    raw_ok = false;   // mixed epochs: the DD belongs to no single epoch
                 }
                 if (raw_ok) {
                     sum_gf_raw += coeff * bl.gf_m;
@@ -671,14 +678,15 @@ void networkMwWlInject(
                                   / (bl.lambda_wl * bl.lambda_wl);
                 }
             }
-            // §3.4 v2 iono de-bias: subtract the network's own slant-iono estimate DD.
-            // (We do NOT price the local MARGINAL iono variance into the σ-guard: it is
-            // dominated by the ABSOLUTE / common-mode iono uncertainty that CANCELS in a
-            // closed DD cycle, so Σc²·var grossly over-states the true DD-iono error and
-            // would gate the bridge past its ep~4-6 advantage.  The DD-iono ESTIMATE
-            // error — small, since common-mode cancels — surfaces directly in |frac| and
-            // is caught by the FFR gate; the iono-free MW(1,2) closure is the backstop.
-            // The exact joint-DD-iono covariance / iono-column fold is a v3 refinement.)
+            // Iono de-bias (§3.4 v2): subtract the DD of the network's own slant-iono
+            // estimate.  The local marginal iono variance is left out of the σ guard: it
+            // is dominated by the absolute (common-mode) iono uncertainty, which cancels
+            // in a closed DD cycle, so Σc²·var would grossly overstate the DD-iono error
+            // and gate the bridge out of its advantage (a decision by epoch ~4–6).  The
+            // DD-iono estimate error, small because the common mode cancels, shows up
+            // directly in |frac| and is caught by the FFR gate; the iono-free MW(1,2)
+            // closure is the backstop.  The exact joint DD-iono covariance (an iono-column
+            // fold) is left to a v3 refinement.
             const auto iit = iono_of.find({ rv.rx, rv.sat });
             if (iit == iono_of.end()) { iono_ok = false; break; }
             iono_dd += coeff * iit->second;
@@ -707,17 +715,18 @@ void networkMwWlInject(
         if (!ok || !(lam_wl > 0.0)) { ++wc.skip_bridge_missing; continue; }
         if (!iono_ok)  { ++wc.skip_no_iono; continue; }  // no iono estimate ⇒ can't de-bias
 
-        // --- WL-3 §3.2: fold the per-epoch BRIDGE lane increment (raw lagged GF_b
-        // DD, iono-de-biased, honest per-sample R) — BEFORE the FFR decision gates,
-        // because the continuous lane tightening is wanted even on epochs where the
-        // integer decision is withheld.  Once-only: the raw sample enters here and
-        // nowhere else; the Welford mean below stays decision-side.
-        // Increment 5: both rungs' bridges measure the SAME lane — at most one
-        // bridge increment folds per (block,row) per build (a failed preferred
-        // attempt does not consume, so the fallback may still tighten).
+        // --- Fold the per-epoch bridge lane increment (WL-3 §3.2): the raw lagged GF_b
+        // DD, iono de-biased, with its per-sample R.  It is folded before the FFR decision
+        // gates because the continuous lane tightening is wanted even on epochs where the
+        // integer decision is withheld.  The raw sample enters here and nowhere else; the
+        // Welford mean below stays on the decision side.
+        // Both rungs' bridges measure the same lane, so at most one bridge increment
+        // folds per (block,row) per build; a failed preferred attempt does not consume
+        // the row, so the fallback may still tighten it (Increment 5).
         if (lane_bridge_on
             && !(dual_cons && lane_incr_done.count({ fx.block, fx.row }))
-            // LF-1 INC-2: a committed-pinned lane skips its bridge increment (no-op OFF).
+            // A lane pinned by a committed fix skips its bridge increment; never taken
+            // with skip_pinned_increments off (LF-1 INC-2).
             && carry_driver.laneIncrementSkippable(fx.block, fx.row)) {
             ++wc.lane_pinned_skips;
         } else if (lane_bridge_on
@@ -741,23 +750,25 @@ void networkMwWlInject(
             }
         }
 
-        // z_WL^bridge = [Σc·GF_b − C_iono·Σc·Î₁ + λ_EWL·N_EWL]/λ_WL (cyc); FFR on the
-        // iono-de-biased DETECTOR stat (decision source, never the posterior).  The
-        // de-bias removes the integer-valued differential-iono bias (the v1
-        // falsification); the residual DD-iono ESTIMATE error surfaces in |frac|.
+        // z_WL^bridge = [Σc·GF_b − C_iono·Σc·Î₁ + λ_EWL·N_EWL]/λ_WL (cyc).  The FFR test
+        // runs on the iono de-biased detector statistic (the decision source, never the
+        // posterior).  The de-bias removes the integer-valued differential-iono bias that
+        // falsified v1; the remaining DD-iono estimate error shows up in |frac|.
         const double sigma_direct = std::sqrt(std::max(R_bridge, 0.0));   // Welford phase noise
-        // Per-sample de-bias armed ⇒ sum_gf is already iono-free frame-by-
-        // frame; the read-time subtraction is DISABLED (never subtract twice).
+        // With the per-sample de-bias on (bridge_debias_on), sum_gf is already iono-free
+        // frame by frame, so the read-time subtraction is disabled to avoid subtracting twice.
         const double z_wl_direct  = (sum_gf
                                      - (bridge_debias_on ? 0.0 : iono_co * iono_dd)
                                      + lam_ewl * static_cast<double>(fx.integer)) / lam_wl;
 
-        // --- E6 mid hop: chain top → mid → WL.  Hop-hi determines the mid-rung
-        // integer m = round([Σc·GF_hi − C_hi·Σc·Î₁ + λ_TOP·N_TOP]/λ_MID) under its
-        // own FFR gates + the MW(mid,b2) closure; hop-lo then re-expresses the WL
-        // statistic against the ROUNDED m — stripping the top hop's λ_TOP-scale
-        // phase/iono amplification (~3.3× smaller λ multiplier at λ_MID 2.931 m).
-        // Any failure falls back to the direct hop (counted, never silent).
+        // --- Mid hop through E6: chain top → mid → WL.  Hop-hi determines the mid-rung
+        // integer m = round([Σc·GF_hi − C_hi·Σc·Î₁ + λ_TOP·N_TOP]/λ_MID) under its own FFR
+        // gates and the MW(mid,b2) closure; hop-lo then re-expresses the WL statistic
+        // against the rounded m, which removes the top hop's λ_TOP-scale phase and iono
+        // amplification (a λ multiplier about 3.3× smaller at λ_MID 2.931 m).  A failed
+        // mid fix or closure falls back to the direct hop and is counted (mid_fallback,
+        // mid_closure); a cycle without mature hop bridges (mid_ok false) takes the
+        // direct hop without a count.
         double z_wl = z_wl_direct, sigma_bridge = sigma_direct;
         bool   used_mid = false;
         if (mid_ok && lam_mid > 0.0) {
@@ -789,8 +800,8 @@ void networkMwWlInject(
         const double w = std::round(z_wl);
         if (!(sigma_bridge < nmw.wl_fix_sigma_cyc &&
               std::abs(z_wl - w) < nmw.wl_fix_frac_cyc)) { ++wc.skip_not_fixed; continue; }
-        // Wrong-integer backstop: if the DIRECT hop is ALSO FFR-credible on its own
-        // and rounds to a different integer, decide neither (counted).
+        // Wrong-integer backstop: if the direct hop also passes the FFR gates on its own
+        // and rounds to a different integer, neither is decided (counted in mid_disagree).
         if (used_mid) {
             const double wd = std::round(z_wl_direct);
             if (sigma_direct < nmw.wl_fix_sigma_cyc
@@ -798,24 +809,24 @@ void networkMwWlInject(
                 && wd != w) { ++wc.mid_disagree; continue; }
         }
 
-        // Closure: the plain MW(1,2) DD must agree with w within its own σ (free
-        // integrity check).  Blocked only when MW(1,2) is present AND clearly off.
-        // NOTE (UWL-1 §3.3): in a post-slip cold window the primary-pair MW arc has
-        // usually reset too (mw12_ok=false ⇒ not blocked) — a cold decision is
-        // frac-gated + D5-backstopped + re-decided idempotently as stats mature.
+        // Closure: the plain MW(1,2) DD must agree with w within its own σ (a free
+        // integrity check).  A cycle is blocked only when MW(1,2) is present and clearly
+        // off.  In a post-slip cold window the primary-pair MW arc has usually reset as
+        // well (mw12_ok false, so no block); a cold decision is instead gated on |frac|,
+        // backed by D5, and re-decided idempotently as the statistics mature (UWL-1 §3.3).
         if (mw12_ok) {
             const double tol = 0.5 + 3.0 * std::sqrt(std::max(R_mw12, 0.0));
             if (std::abs(z_mw12 - w) > tol) { ++wc.skip_closure; continue; }
         }
 
-        // --- Increment 5 sibling closure (§1b): the untaken rung's statistic
-        // must sit on N_top·λ_top/λ_sib.  8-fx → z(7,5) vs 2·N₈ (the FINER
-        // sibling: a ±1 error in N₈ moves the residual by 2 — strongly
-        // detectable); 7-fx → z(8,5) vs N₇/2 (an odd N₇ makes the target
-        // half-integer — the AltBOC-coherence parity, visible in |frac|).
-        // MEASURED on every dual decision; the hard gate blocks only a
-        // ≥1-sibling-cycle disagreement and DEMOTES the cycle to the fallback
-        // rung (the fallback entry follows in ewl_fixed and is not deduped,
+        // --- Sibling closure (Increment 5, §1b): the untaken rung's statistic must sit on
+        // N_top·λ_top/λ_sib.  A fix from '8' checks z(7,5) against 2·N₈ (the finer
+        // sibling: a ±1 error in N₈ moves the residual by 2, which is readily detected);
+        // a fix from '7' checks z(8,5) against N₇/2 (an odd N₇ makes the target
+        // half-integer, the AltBOC-coherence parity, visible in |frac|).  The statistic is
+        // measured on every dual decision.  The hard gate (uwl_sib_gate) blocks only a
+        // disagreement beyond 0.5 + 3σ sibling cycles and so demotes the cycle to the
+        // fallback rung (the fallback entry follows in ewl_fixed and is not deduplicated,
         // because a blocked decision never consumes the row).
         if (dual_cons) {
             if (sib_ok && lam_sib > 0.0 && lam_ewl > 0.0) {
@@ -851,13 +862,13 @@ void networkMwWlInject(
         if (pcit == primary.end() || !pcit->second.ok) { ++wc.skip_basis; continue; }
 
         if (lane_fix_on) {
-            // --- WL-3 §3.3: the FFR fix on the PAIR block — an information-
-            // idempotent lane-coordinate SET applied every DECIDED epoch (recenter
-            // + recollapse; a one-shot fold-on-change measured out — the decided
-            // lane drifts back to MW quality under q + noisy increments), plus the
-            // pair inject-fallback plan (applied post-solve only if the carry still
-            // disagrees by > inject_disagree_min_cyc; ≈0 in steady state — the
-            // retirement telemetry proves it).
+            // --- FFR fix on the pair block (WL-3 §3.3): an information-idempotent
+            // lane-coordinate set (recenter and recollapse) applied on every decided
+            // epoch.  A one-shot fold on change is not enough: the decided lane drifts
+            // back to MW quality under q and the noisy increments.  The pair inject
+            // fallback plan is stashed as well; it is applied post-solve only if the carry
+            // still disagrees by more than inject_disagree_min_cyc, which the retirement
+            // telemetry shows is about 0 in steady state.
             const auto pgit = carry_group_id.find(
                 { cons, pcit->second.sig1 + "+" + pcit->second.sig2 });
             if (pgit == carry_group_id.end()) { ++wc.skip_basis; continue; }
@@ -893,9 +904,10 @@ void networkMwWlInject(
         }
         const int group_l1 = g1it->second, group_l2 = g2it->second;
 
-        // Pre-solve carried lane value (for the hold-row gate): fold the integer-hard
-        // hold row ONLY when the carry already agrees (innovation ~0 ⇒ no F6 fight);
-        // otherwise skip it this epoch and let the post-solve inject move the value.
+        // Pre-solve carried lane value, for the hold-row gate: the integer-hard hold row
+        // is folded only when the carry already agrees within inject_disagree_min_cyc
+        // (innovation about 0, so the row does not contend with the stiff carry as in F6);
+        // otherwise it is skipped this epoch and the post-solve inject moves the value.
         double z1p = 0.0, v1p = 0.0, z2p = 0.0, v2p = 0.0;
         const bool have_l1 = carry_driver.carriedChordValue(group_l1, chord, z1p, v1p);
         const bool have_l2 = carry_driver.carriedChordValue(group_l2, chord, z2p, v2p);
@@ -949,7 +961,7 @@ void networkMwWlInject(
                 if (mw_tagsets) d5_hold_chords.insert(chord);
             }
         }
-        // Stash the inject plan (applied post-solve against the FRESH posterior).  The
+        // Stash the inject plan (applied post-solve against the fresh posterior).  The
         // 1:1-basis requirement is re-checked there (both bands must carry the chord).
         WlInjectPlan pl;
         pl.group_l1 = group_l1; pl.group_l2 = group_l2; pl.chord = chord;
@@ -960,7 +972,7 @@ void networkMwWlInject(
     }
   }  // --- end WL-2 WL lane ---
 
-  if (mw_lane_trace) {   // F-B: lane-trace entries for EVERY resolvable primary cycle
+  if (mw_lane_trace) {   // lane-trace entries for every resolvable primary cycle (F-B)
     lane_trace_epoch.clear();
     std::map<int, std::string> sat_of_v;
     for (const auto& [s, v] : carry_sat_vertex) sat_of_v[v] = s;
@@ -998,8 +1010,8 @@ void networkMwWlInject(
             const auto pcit = primary.find({ e.chord.u, e.sat });
             if (pcit == primary.end() || !pcit->second.ok) continue;
             if (lane_on) {
-                // WL-3: both bands live in ONE pair group; the write site reads
-                // the joint block via carriedPairValue (g1 == g2 marks it).
+                // With the lane layer (WL-3) both bands live in one pair group; the write
+                // site reads the joint block through carriedPairValue (g1 == g2 marks it).
                 const auto pgit = carry_group_id.find(
                     { cons, pcit->second.sig1 + "+" + pcit->second.sig2 });
                 if (pgit == carry_group_id.end()) continue;
@@ -1014,7 +1026,7 @@ void networkMwWlInject(
         }
     }
   }
-    for (auto& wb : wl_out)      blocks.push_back(std::move(wb));   // WL-1 first ([Nc, Nc+n_wl))
+    for (auto& wb : wl_out)      blocks.push_back(std::move(wb));   // first the WL-1 rows, at [Nc, Nc+n_wl)
     if (nmw.ewl_fold_rows)                                          // F-A discriminant: false ⇒
         for (auto& wb : ewl_out) blocks.push_back(std::move(wb));   // decide/expose but fold nothing
     for (auto& wb : wl_hold_out) blocks.push_back(std::move(wb));   // then WL hold rows

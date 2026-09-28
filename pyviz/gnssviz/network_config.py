@@ -1,14 +1,14 @@
 """Network station roster: where the worldmap gets station id / lat-lon / role.
 
-A PPP-RTK NETWORK run identifies stations by ECEF only — positions live in the
+A PPP-RTK network run identifies stations by ECEF only: positions live in the
 run config JSON (``network.stations[].position_ecef``, the held-out consumer in
 ``network.closed_loop.station``) and, when ``network.trace_stations`` is on, in a
 ``network_stations.csv`` roster the producer writes alongside the other traces.
 
 This module turns either source into a list of :class:`Station` records with
-geodetic lat/lon (via :func:`gnssviz.geodesy.ecef_to_lla`) and a *role* —
+geodetic lat/lon (via :func:`gnssviz.geodesy.ecef_to_lla`) and a *role*:
 ``"datum"`` (the clock-datum pivot), ``"network"`` (an estimating peer), or
-``"held_out"`` (the closed-loop consumer / user station, NOT in the solve).  The
+``"held_out"`` (the closed-loop consumer / user station, not in the solve).  The
 roster CSV is preferred when present (it reflects the stations that actually
 loaded); the config JSON is the fallback (and the only source before a run).
 """

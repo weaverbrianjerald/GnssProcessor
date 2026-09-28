@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-"""EVENT HARNESS Study 1 — the erase-vs-refloat summary table.
+"""Event harness study 1: the erase-vs-refloat summary table.
 
 Runs ``scripts/event_grade.py --json`` for every leg of the matrix against the
-single NULL leg, then reduces each leg to one row:
+single null leg, then reduces each leg to one row:
 
     peak |e| (cyc) | |e| at +14 / +30 / +45 | floor mean +14..+45 |
     ZWD peak (mm)  | iono error for the target sat at +45 (m) |
     T4/T3 re-flags on the arc within 45 ep | consumer 3D peak (m)
 
-``lvl`` is the injected arc's chord-median DD level error, EVENT MINUS NULL
-(the grader's ``lvl_diff``) — the DD trace's single reference satellite cancels
+``lvl`` is the injected arc's chord-median DD level error, event minus null
+(the grader's ``lvl_diff``). The DD trace's single reference satellite cancels
 in the difference wherever the two legs share it, which they do on a quiet bed.
 
 The iono column is read straight from ``logs/network_ionosphere.csv``
-(``iono_total_m`` = x_lin + x_r) as event − null for the injected (station,
-satellite), median over the LOSs of that satellite at that station.  Absolute
+(``iono_total_m`` = x_lin + x_r) as event minus null for the injected (station,
+satellite), median over the LOSs of that satellite at that station. Absolute
 slant iono from that trace is frame-broken (CLAUDE.md), but a same-snapshot
-event − null difference is not: both legs seeded the state identically.
+event minus null difference is not, since both legs seeded the state identically.
 """
 import argparse
 import csv
@@ -59,7 +59,7 @@ def iono_series(legdir, sta, sat):
 
 
 def qc_reflags(res, lo=1, hi=45):
-    """T3/T4 rows on the arc AFTER the injected event, event leg only."""
+    """T3/T4 rows on the arc after the injected event, event leg only."""
     n = 0
     tiers = []
     for k, rows in (res.get("qc") or {}).items():
@@ -91,7 +91,7 @@ MATRIX = [
     ("arc3 erase",      "evleg_s3_erase",   "S40000SIM", "G31"),
     ("arc3 no_reseed",  "evleg_s3_noreseed", "S40000SIM", "G31"),
     ("arc3 free_epoch", "evleg_s3_free",    "S40000SIM", "G31"),
-    # rung 2 — the SAME actions restricted to 2 of the 3 bands
+    # rung 2: the same actions restricted to 2 of the 3 bands
     ("arc1 erase L1L2", "evleg_s1_erase_l12", "S21000SIM", "G10"),
     ("arc1 free  L1L2", "evleg_s1_free_l12", "S21000SIM", "G10"),
     ("arc2 free  L1L2", "evleg_s2_free_l12", "S50000SIM", "G31"),

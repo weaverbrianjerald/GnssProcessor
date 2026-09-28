@@ -267,7 +267,7 @@ def test_compare_scorecard_contains_worst_sat(tmp_path):
     _closed_loop(b, err_scale=0.5)
     res = compare_scorecard(pair)
     assert len(res.figures) == 1
-    # the network-clock roll-up puts the worst-sat NAME into the scorecard text.
+    # the network-clock roll-up puts the worst-sat name into the scorecard text.
     assert "E11" in res.summary
     # a comparator with no data is recorded as skipped, not crashed.
     assert "skipped" in res.summary
@@ -300,7 +300,7 @@ def test_run_comparators_only_subset(tmp_path):
 
 
 def test_comparators_registry_excludes_viewers_registry():
-    # comparators are their own list -- NOT the single-ctx viewers REGISTRY.
+    # comparators are their own list, not the single-ctx viewers REGISTRY.
     from gnssviz.viewers import REGISTRY
     reg_names = {v.name for v in REGISTRY}
     for c in COMPARATORS:

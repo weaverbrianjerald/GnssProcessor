@@ -3,14 +3,16 @@
  * @brief SBF signal-number and SVID tables.
  *
  * Signal numbering per Septentrio SBF Reference Guide (mosaic-X5 v4.8.0,
- * §4.1.10), verified against pysbf2.  Only GPS/Galileo/BeiDou (the active
- * constellations) need be exact for the current pipeline; QZSS/GLONASS/SBAS
- * are mapped for completeness but filtered out upstream by active_systems.
+ * §4.1.10), verified against pysbf2.  Only the GPS, Galileo and BeiDou entries
+ * (the active constellations) have to be exact for the current pipeline; QZSS,
+ * GLONASS and SBAS are mapped for completeness and filtered out upstream by
+ * active_systems.
  *
- * NOTE (validate against a real capture): RINEX tracking-mode letters for a
- * few signals are firmware/convention dependent (e.g. GAL E5b "7Q" vs "7X",
- * BDS B2I "7I" vs "7Q").  These are the SBF-guide defaults; cross-check the
- * receiver's own RINEX obs codes if a signal's biases/ATX look off.
+ * Not yet validated against a real capture: the RINEX tracking-mode letters of
+ * a few signals depend on firmware and convention (e.g. GAL E5b "7Q" vs "7X",
+ * BDS B2I "7I" vs "7Q").  The table uses the SBF-guide defaults; if a signal's
+ * biases or ATX corrections look wrong, compare against the receiver's own
+ * RINEX observation codes.
  */
 
 #include "sbf/SbfSignalMap.hpp"

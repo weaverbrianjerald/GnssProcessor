@@ -1,6 +1,7 @@
 /**
  * @file test_amb_level_band_scope.cpp
- * @brief ALC-BAND: dependency witnesses for existing and proposed observables.
+ * @brief Dependency witnesses for the existing and proposed ambiguity-level
+ *        observables (card ALC-BAND).
  *
  * The band-level formulas below are test-only design probes, not a new monitor.
  * Production WL/IF helpers provide the independently checked existing basis.
@@ -29,7 +30,7 @@ std::array<double, 2> paired(const Rows& r) {
 }
 
 std::array<double, 2> bandLevels(const Rows& r) {
-    // Each level needs its own phase AND both simultaneous codes.
+    // Each band level needs its own phase and both same-epoch codes.
     return {r.p1 - (q + 1) / (q - 1) * r.c1 + 2 / (q - 1) * r.c2,
             r.p2 - 2 * q / (q - 1) * r.c1 + (q + 1) / (q - 1) * r.c2};
 }

@@ -1,69 +1,67 @@
 /**
  * @file test_eq34_consumer_integer.cpp
- * @brief Card 3 / Eq-34 acceptance harness: a synthetic KNOWN-INTEGER product
- *        driven through the REAL consumer-side chain proves end-to-end that an
- *        integer-consistent satellite phase-bias frame lets a held-out PPP-RTK
- *        user recover integer double-difference ambiguities and that MLAMBDA
- *        actually executes (docs/HANDOFF_eq34_datum_card3.md, "Falsifier" #1 —
- *        that doc was pruned 2026-07-28 in commit a8f044f and is recoverable at
- *        39b263a; it was NOT attic'd, so the path does not resolve in-tree).
+ * @brief Eq-34 acceptance harness (card 3): a synthetic product with known integers,
+ *        driven through the production consumer chain, shows that an
+ *        integer-consistent satellite phase-bias frame lets a held-out PPP-RTK user
+ *        recover integer double-difference ambiguities and that MLAMBDA executes
+ *        (docs/HANDOFF_eq34_datum_card3.md, "Falsifier" #1).  That document was
+ *        removed in commit a8f044f and is recoverable at 39b263a; the path does not
+ *        resolve in the tree.
  *
- * THE CLAIM UNDER TEST (S-system theory reference §6 / Odijk Eq. 34): a user
- * receiving emitted satellite phase biases  δ̃_s = b_s + ref_s  can fix integer
- * DDs IFF the datum references have integer between-satellite differences,
- * ref_s − ref_p ∈ λℤ, for every pair.  A COMMON fractional offset δ_σ riding
- * every bias of one signal is legal — it cancels in the user's between-
- * satellite difference exactly like the user's own receiver bias δ_{u,σ}.
+ * Claim under test (S-system theory reference §6, Odijk Eq. 34): a user receiving
+ * emitted satellite phase biases  δ̃_s = b_s + ref_s  can fix integer DDs if and only
+ * if the datum references have integer between-satellite differences,
+ * ref_s − ref_p ∈ λℤ, for every pair.  A fractional offset δ_σ common to every bias
+ * of one signal is allowed: it cancels in the user's between-satellite difference in
+ * the same way as the user's own receiver bias δ_{u,σ}.
  *
- * CHAIN EXERCISED (every stage is production code, not a reimplementation):
- *   1. @c NetworkProductWriter — v2 product file with the S-basis contract
- *      declaring @c AmbDatum::SingleReceiverChain (Card 3, D5) + E/C/B/P
- *      records carrying the synthetic integer frame.
- *   2. @c NetworkProductReader::read — the real parse, contract included.
- *   3. @c NetworkProductReader::makeReplayEmitter + @c replay — the real
- *      consumer store-routing path (discontinuity counters included), into an
- *      OWNED @c SsrCorrectionStore (never the singleton; see
- *      tests/test_ssr_store_injection.cpp for the DI-seam contract).
- *   4. @c SsrCorrectionStore::getPhaseBias — the EXACT lookup
- *      @c MeasurementModel uses for the SSR phase-bias term, applied with the
- *      SAME sign convention (kSsrPhaseBiasSign = +1: the bias is ADDED to the
- *      predicted observable, so the float ambiguity absorbs
- *      observed − predicted; src/core/measurement/MeasurementModel.cpp,
- *      "SSR satellite biases (PPP-RTK)" block).
- *   5. @c StateManager + @c AmbiguityResolver::resolve — the real DD
- *      formation (per-(constellation,signal) highest-elevation pivot,
- *      @c buildDdPairs) and the real MLAMBDA search + ratio / bootstrap /
- *      per-pair-fraction acceptance battery.
+ * Chain exercised (every stage is production code, not a reimplementation):
+ *   1. @c NetworkProductWriter: v2 product file with the S-basis contract declaring
+ *      @c AmbDatum::SingleReceiverChain (card 3, D5), plus E/C/B/P records carrying
+ *      the synthetic integer frame.
+ *   2. @c NetworkProductReader::read: the production parse, contract included.
+ *   3. @c NetworkProductReader::makeReplayEmitter + @c replay: the consumer
+ *      store-routing path (discontinuity counters included), into a test-owned
+ *      @c SsrCorrectionStore, not the singleton (see tests/test_ssr_store_injection.cpp
+ *      for the injection-seam contract).
+ *   4. @c SsrCorrectionStore::getPhaseBias: the lookup @c MeasurementModel uses for
+ *      the SSR phase-bias term, applied with the same sign convention
+ *      (kSsrPhaseBiasSign = +1: the bias is added to the predicted observable, so
+ *      the float ambiguity absorbs observed − predicted;
+ *      src/core/measurement/MeasurementModel.cpp, "SSR satellite biases (PPP-RTK)"
+ *      block).
+ *   5. @c StateManager + @c AmbiguityResolver::resolve: the production DD formation
+ *      (per-(constellation, signal) highest-elevation pivot, @c buildDdPairs) and the
+ *      MLAMBDA search with the ratio / bootstrap / per-pair-fraction acceptance
+ *      battery.
  *
- * NOT exercised: @c MeasurementModel's full row assembly (it needs the
- * ProductCache / RinexParser construction chain — the same "too heavy for the
- * unit tier" boundary documented in tests/test_filter_core.cpp).  The float
- * ambiguities are formed here from the store lookup + the documented sign
- * convention instead; the sign convention itself is pinned by the comment
- * cited above and by the closed-loop field harness.
+ * Not exercised: @c MeasurementModel's full row assembly, which needs the
+ * ProductCache / RinexParser construction chain (the same unit-tier boundary as in
+ * tests/test_filter_core.cpp).  The float ambiguities are formed here from the store
+ * lookup and the documented sign convention; the sign convention itself is fixed by
+ * the comment cited above and by the closed-loop field harness.
  *
- * ACCEPTANCE SEMANTICS (the C7-misread guard): "MLAMBDA executed" means
- * @c gate_reason == 0 AND @c ratio > 0.  A ratio of exactly 0.00 is the
- * early-return sentinel of the pre-MLAMBDA gates (ar_mode / min_epochs /
- * position-σ / no-candidates — @c AmbiguityResolution::gate_reason) and MUST
- * NEVER be read as "the search ran and rejected".  A dedicated test pins that
- * sentinel co-occurrence so the harness (and any grader built on it) cannot
- * regress into the misread.
+ * Acceptance semantics (guard against the C7 misreading): "MLAMBDA executed" means
+ * @c gate_reason == 0 and @c ratio > 0.  A ratio of exactly 0.00 is the early-return
+ * sentinel of the pre-MLAMBDA gates (ar_mode / min_epochs / position-σ /
+ * no-candidates, @c AmbiguityResolution::gate_reason) and does not mean "the search
+ * ran and rejected".  A dedicated test pins that sentinel co-occurrence so that the
+ * harness, and any grader built on it, keeps the distinction.
  *
- * FRAME REQUIREMENTS COVERED (harness spec):
+ * Frame requirements covered (harness spec):
  *   - two constellations (GPS ×5 sats, Galileo ×4 sats), two signals each
- *     (GPS L1C/L2W, Galileo L1C/L5Q) → four independent DD groups, 14 DDs;
- *   - a common fractional offset δ_σ on ALL biases of each signal (the L1C
- *     offset is shared across BOTH constellations) — the per-satellite float
- *     ambiguities are provably NON-integer while their DDs are integer, so
- *     the test demonstrates the cancellation is real work, not a triviality;
- *   - one deliberately NON-integer bias pair (G05 L1C, +0.37 cycles) as the
- *     negative control: its DD fraction lands far from integer and the
- *     resolver's acceptance battery refuses the fix.
+ *     (GPS L1C/L2W, Galileo L1C/L5Q), giving four independent DD groups and 14 DDs;
+ *   - a common fractional offset δ_σ on all biases of each signal (the L1C offset is
+ *     shared by both constellations).  The per-satellite float ambiguities are
+ *     non-integer while their DDs are integer, so the test shows that the
+ *     cancellation does real work;
+ *   - one deliberately non-integer bias pair (G05 L1C, +0.37 cycles) as the negative
+ *     control: its DD fraction lands far from an integer and the resolver's
+ *     acceptance battery refuses the fix.
  *
- * This harness doubles as the acceptance gate for the later producer self-AR
- * build (memory project_network_ar_producer_scope): integers to re-pin only
- * exist in an integer-consistent frame, which is exactly what it certifies.
+ * The harness is also the acceptance gate for the later producer self-AR build
+ * (memory project_network_ar_producer_scope): integers to re-pin exist only in an
+ * integer-consistent frame, which is what this harness certifies.
  */
 
 #include <gtest/gtest.h>
@@ -91,13 +89,13 @@ namespace {
 
 const GnssTime kT0{2313, 259200.0};
 
-/// PPP core size used by Application::run (position ×3, clock, tropo) — the
-/// same constant tests/test_filter_core.cpp pins.
+/// PPP core size used by Application::run (position ×3, clock, tropo); the same
+/// constant tests/test_filter_core.cpp pins.
 constexpr size_t kPppCoreSize = 5;
 
 /// Deterministic consumer float covariance: position variance per axis
-/// (σ_3D = √(3·4e-4) ≈ 0.035 m, safely under the 0.05 m AR σ-gate) and
-/// per-ambiguity variance ((4 mm)² ≈ (0.02 cyc)² on L1 — a converged float).
+/// (σ_3D = √(3·4e-4) ≈ 0.035 m, below the 0.05 m AR σ-gate) and per-ambiguity
+/// variance ((4 mm)² ≈ (0.02 cyc)² on L1, a converged float).
 constexpr double kPosVar = 4.0e-4;
 constexpr double kAmbVar = 1.6e-5;
 
@@ -108,13 +106,13 @@ std::string tempFile(const char* name) {
 }
 
 // ===========================================================================
-// The synthetic known-integer frame (all values deterministic — no RNG).
+// The synthetic known-integer frame (all values deterministic, no RNG).
 //
 // Emitted satellite phase bias (metres), per (sat s, signal σ):
 //     δ̃_{s,σ} = b_{s,σ} + λ_σ·k_{s,σ} + δ_σ  (+ poison on the control pair)
 // where b is an arbitrary physical bias, k ∈ ℤ the frame integers and δ_σ the
-// COMMON fractional datum offset of signal σ.  So ref_s − ref_p =
-// λ(k_s − k_p) ∈ λℤ for every same-signal pair — the Eq-34 property.
+// fractional datum offset common to signal σ.  Hence ref_s − ref_p =
+// λ(k_s − k_p) ∈ λℤ for every same-signal pair, which is the Eq-34 property.
 //
 // Synthetic user observation (geometry/atmosphere removed, metres):
 //     L_{u,s,σ} = b_{s,σ} + δ_{u,σ} + λ_σ·(z_{u,s,σ} + ε_{s,σ})
@@ -122,19 +120,20 @@ std::string tempFile(const char* name) {
 // deterministic float-noise term (|ε| ≤ 0.034 cyc).  After the consumer
 // applies the emitted bias (MeasurementModel convention: predicted += δ̃), the
 // float ambiguity absorbs
-//     a_{s,σ} = L − δ̃ = (δ_{u,σ} − δ_σ) + λ_σ·(z − k + ε)
-// — per-satellite NON-integer (δ_u − δ_σ is engineered ≥ 0.27 cycles on every
-// signal), while the within-group DD is λ·[(z_i−k_i) − (z_ref−k_ref)] + λ·Δε:
-// integer to within the noise.  The KNOWN DD integer is therefore
+//     a_{s,σ} = L − δ̃ = (δ_{u,σ} − δ_σ) + λ_σ·(z − k + ε),
+// which is non-integer per satellite (δ_u − δ_σ lies 0.30 to 0.40 cycles from an
+// integer on every signal, so a stays at least 0.27 cycles off after ε), while the
+// within-group DD is λ·[(z_i−k_i) − (z_ref−k_ref)] + λ·Δε, integer to within the
+// noise.  The known DD integer is therefore
 //     N = (z_i − k_i) − (z_ref − k_ref).
 // ===========================================================================
 
 /// One (constellation, signal) slice of the synthetic frame.  Vectors are
 /// indexed like the owning constellation's satellite list.
 struct SignalFrame {
-    std::string signal;           ///< RINEX phase code ("L1C") — store/product key.
+    std::string signal;           ///< RINEX phase code ("L1C"); store/product key.
     std::string code_signal;      ///< Companion code observable for the B record.
-    double delta_common_m;        ///< Common fractional datum offset δ_σ (m), on EVERY bias of this signal.
+    double delta_common_m;        ///< Common fractional datum offset δ_σ (m), on every bias of this signal.
     double delta_user_m;          ///< User receiver phase bias δ_{u,σ} (m).
     std::vector<double> b_phys_m; ///< Physical satellite phase bias b_{s,σ} (m).
     std::vector<int>    k_frame;  ///< Emitted frame integers k_{s,σ} (cycles).
@@ -151,8 +150,8 @@ struct ConstellationFrame {
 
 struct SynthFrame {
     std::vector<ConstellationFrame> cons;
-    // Negative control: this (sat, signal) bias gains an extra +poison_cycles·λ
-    // in the POISONED product — a non-integer between-satellite reference pair.
+    // Negative control: in the poisoned product this (sat, signal) bias gains an
+    // extra +poison_cycles·λ, making a non-integer between-satellite reference pair.
     std::string poison_sat{"G05"};
     std::string poison_signal{"L1C"};
     double      poison_cycles{0.37};
@@ -165,8 +164,9 @@ SynthFrame makeFrame() {
     gps.system   = System::GPS;
     gps.sats     = {"G01", "G02", "G03", "G04", "G05"};
     gps.elev_deg = {80.0, 70.0, 60.0, 50.0, 35.0};
-    // The L1C common fractional δ_σ (+0.0832 m ≈ +0.44 cyc) is deliberately the
-    // SAME value in the Galileo block below — "one signal" per the harness spec.
+    // The L1C common fractional δ_σ (+0.0832 m ≈ +0.44 cyc) has the same value in
+    // the Galileo block below, so L1C is one signal across both constellations, as
+    // the harness spec requires.
     gps.signals.push_back(SignalFrame{
         "L1C", "C1C", /*δ_σ=*/+0.0832, /*δ_u=*/-0.0311,
         {0.113, -0.071, 0.049, -0.152, 0.088},
@@ -203,22 +203,22 @@ SynthFrame makeFrame() {
 }
 
 /// The emitted (product-file) bias for one (constellation, signal, sat index),
-/// WITHOUT the negative-control poison.  Shared by the writer and the store
-/// spot-checks so byte-exact comparisons compare the identical expression.
+/// without the negative-control poison.  The writer and the store spot-checks share
+/// it, so byte-exact comparisons evaluate the identical expression.
 double emittedBiasM(const PppUtils& utils, const ConstellationFrame& con,
                     const SignalFrame& sf, std::size_t i) {
     const double lam = utils.getWavelength(con.system, sf.signal, con.sats[i]);
     return sf.b_phys_m[i] + lam * static_cast<double>(sf.k_frame[i]) + sf.delta_common_m;
 }
 
-/// The KNOWN user DD integer for satellite index @p i against pivot index
+/// The known user DD integer for satellite index @p i against pivot index
 /// @p ref within one (constellation, signal) group: N = (z_i−k_i) − (z_ref−k_ref).
 int knownDdInteger(const SignalFrame& sf, std::size_t i, std::size_t ref) {
     return (sf.z_user[i] - sf.k_frame[i]) - (sf.z_user[ref] - sf.k_frame[ref]);
 }
 
-/// The Card 3 S-basis contract a chain-datum producer stamps (D5): amb_datum =
-/// SingleReceiverChain riding the existing int field (no format bump) plus the
+/// The S-basis contract a chain-datum producer stamps (card 3, D5): amb_datum =
+/// SingleReceiverChain in the existing int field (no format bump), plus the
 /// diagnostic pdr= datum-receiver token.
 SbasisContract makeEq34Contract() {
     SbasisContract c;
@@ -233,10 +233,10 @@ SbasisContract makeEq34Contract() {
     return c;
 }
 
-/// Write the synthetic product: v2 header (Card 3 contract) + two identical
-/// 30 s epochs (constant biases ⇒ zero discontinuity bumps on replay; two
-/// epochs so the store's overwrite path is exercised, not just first-sight).
-/// @p poisoned adds +poison_cycles·λ to the control pair's bias — the ONLY
+/// Write the synthetic product: v2 header (card 3 contract) plus two identical
+/// 30 s epochs.  Constant biases give zero discontinuity bumps on replay; the second
+/// epoch exercises the store's overwrite path as well as first sight.
+/// @p poisoned adds +poison_cycles·λ to the control pair's bias; that is the only
 /// difference between the positive and negative-control products.
 void writeSynthProduct(const std::string& path, const SynthFrame& frame,
                        const PppUtils& utils, bool poisoned) {
@@ -259,8 +259,8 @@ void writeSynthProduct(const std::string& path, const SynthFrame& frame,
                 for (const auto& sf : con.signals) {
                     // Consistent (arbitrary) satellite code bias per band; the
                     // 0.21 base keeps every value away from exactly 0.0 (the
-                    // store's getCodeBias cannot distinguish genuine-zero from
-                    // absent — see SsrCorrectionStore::hasCodeBias).
+                    // store's getCodeBias cannot distinguish a genuine zero from
+                    // absent; see SsrCorrectionStore::hasCodeBias).
                     s.code_bias_m[sf.code_signal] =
                         0.21 + 0.05 * static_cast<double>(i) - 0.30 * (sf.code_signal[1] - '1');
                     double bias = emittedBiasM(utils, con, sf, i);
@@ -278,9 +278,9 @@ void writeSynthProduct(const std::string& path, const SynthFrame& frame,
     }
 }
 
-/// Read the product back and replay every epoch into @p store through the SAME
-/// replay path the batch/tail consumers use, with the contract-configured
-/// emitter (@c makeReplayEmitter) — stages 2+3 of the chain.
+/// Read the product back and replay every epoch into @p store through the replay
+/// path the batch/tail consumers use, with the contract-configured emitter
+/// (@c makeReplayEmitter).  Stages 2 and 3 of the chain.
 void replayIntoStore(const std::string& path, SsrCorrectionStore& store,
                      SbasisContract& contract_out) {
     bool ok = false;
@@ -292,7 +292,7 @@ void replayIntoStore(const std::string& path, SsrCorrectionStore& store,
 }
 
 /// The consumer model: form the float ambiguity of every (sat, signal) from
-/// the synthetic observation minus the STORE-APPLIED bias (stage 4 — the
+/// the synthetic observation minus the bias looked up in the store (stage 4, the
 /// MeasurementModel kSsrPhaseBiasSign=+1 convention), seed them into
 /// @p sm as "SAT_SIG" ambiguity states with a deterministic covariance, and
 /// build the per-satellite observation list (elevation → DD pivot election).
@@ -318,7 +318,7 @@ void buildConsumerState(const SynthFrame& frame, const SsrCorrectionStore& store
                 const double observed = sf.b_phys_m[i] + sf.delta_user_m
                                       + lam * (static_cast<double>(sf.z_user[i]) + sf.eps_cyc[i]);
                 // MeasurementModel applies the SSR phase bias with sign +1 on the
-                // PREDICTED observable, so the float ambiguity absorbs the rest.
+                // predicted observable, so the float ambiguity absorbs the rest.
                 const double float_amb = observed - pb->bias_m;
                 ASSERT_NE(float_amb, 0.0);  // buildDdPairs skips exact-zero (uninit) floats
                 sm.addAmbiguity(con.sats[i] + "_" + sf.signal, float_amb);
@@ -342,12 +342,12 @@ struct DdCheck {
     int         idx_i{-1}, idx_ref{-1};  ///< State indices of the two SD ambiguities.
     double      lambda_m{0.0};
     double      dd_cycles{0.0};          ///< Float DD in cycles.
-    int         known_n{0};              ///< The KNOWN integer N = (z_i−k_i) − (z_ref−k_ref).
+    int         known_n{0};              ///< The known integer N = (z_i−k_i) − (z_ref−k_ref).
 };
 
-/// Form every within-(constellation,signal) DD against the HIGHEST-ELEVATION
-/// pivot — the same election rule as AmbiguityResolver::buildDdPairs — from
-/// the consumer float state.
+/// Form every within-(constellation, signal) DD against the highest-elevation
+/// pivot (the election rule of AmbiguityResolver::buildDdPairs) from the consumer
+/// float state.
 void collectConsumerDds(const SynthFrame& frame, const StateManager& sm,
                         const PppUtils& utils, std::vector<DdCheck>& out) {
     const Eigen::VectorXd x = sm.getStateVector();
@@ -378,23 +378,23 @@ void collectConsumerDds(const SynthFrame& frame, const StateManager& sm,
 
 /// AR configuration for the harness.  Every acceptance gate keeps its
 /// production default (ratio 3.0, upper bound 1e4, bootstrap 0.999, per-pair
-/// frac cap 0.15) — the fix must clear the REAL battery.  Only the two
-/// convergence guards are seeded for a single-shot call (min_epochs=0; the
-/// σ-gate is satisfied by the deterministic covariance, not widened), and the
-/// hold variance is tightened so the post-fix state pulls hard onto the
+/// frac cap 0.15), so the fix has to clear the production battery.  Only the two
+/// convergence guards are set for a single-shot call (min_epochs=0; the σ-gate
+/// stays at its default and is satisfied by the deterministic covariance), and the
+/// hold variance is tightened so that the post-fix state is pulled onto the
 /// integers for the fixed-state assertion.
 AmbiguityResolverConfig makeArConfig() {
     AmbiguityResolverConfig cfg;
     cfg.ar_mode              = 1;      // continuous
     cfg.min_epochs           = 0;      // single-shot harness call
     cfg.elevation_mask_ar    = 10.0;   // every synthetic sat participates
-    cfg.max_position_sigma_m = 0.05;   // production default — kPosVar passes it honestly
+    cfg.max_position_sigma_m = 0.05;   // production default; kPosVar passes it unwidened
     cfg.hold_variance        = 1e-10;  // pull the fixed state onto the integers
     return cfg;
 }
 
 // ===========================================================================
-// 1. Product round-trip: the Card 3 contract and the integer frame survive the
+// 1. Product round-trip: the card 3 contract and the integer frame survive the
 //    writer → reader → replay → store pipeline byte-exactly.
 // ===========================================================================
 TEST(Eq34ConsumerIntegerTest, SynthProductRoundTripsContractAndFrame) {
@@ -410,7 +410,7 @@ TEST(Eq34ConsumerIntegerTest, SynthProductRoundTripsContractAndFrame) {
     SbasisContract     contract;
     ASSERT_NO_FATAL_FAILURE(replayIntoStore(path, store, contract));
 
-    // Card 3 contract round-trip: the SingleReceiverChain enumerator rides the
+    // Contract round-trip (card 3): the SingleReceiverChain enumerator travels in the
     // existing S-line int field (no format bump) and the pdr= diagnostic token
     // carries the datum receiver.
     ASSERT_TRUE(contract.present);
@@ -419,8 +419,8 @@ TEST(Eq34ConsumerIntegerTest, SynthProductRoundTripsContractAndFrame) {
     EXPECT_EQ(contract.apriori_product_id, "SYNTH_EQ34_KNOWN_INTEGER");
 
     // Every emitted phase bias round-trips byte-exactly (shortest-round-trip
-    // serialization), is flagged signal_integer, and — the biases being
-    // epoch-constant — carries a ZERO discontinuity counter after replay.
+    // serialization), is flagged signal_integer, and, since the biases are
+    // epoch-constant, carries a zero discontinuity counter after replay.
     for (const auto& con : frame.cons) {
         for (std::size_t i = 0; i < con.sats.size(); ++i) {
             for (const auto& sf : con.signals) {
@@ -431,16 +431,16 @@ TEST(Eq34ConsumerIntegerTest, SynthProductRoundTripsContractAndFrame) {
                 EXPECT_TRUE(pb->signal_integer) << con.sats[i] << " " << sf.signal;
                 EXPECT_EQ(pb->discontinuity_counter, 0) << con.sats[i] << " " << sf.signal;
             }
-            // Code bias + clock also flow (consistency records; the phase-only
-            // consumer below never reads them — mirrors consume_network_clock=false,
-            // the "clean integer-recovery test" of the closed-loop harness).
+            // Code bias and clock also flow (consistency records).  The phase-only
+            // consumer below never reads them, as with consume_network_clock=false,
+            // the "clean integer-recovery test" of the closed-loop harness.
             EXPECT_NE(store.getCodeBias(con.sats[i], con.signals[0].code_signal), 0.0);
         }
     }
 
-    // The emitted frame satisfies the Eq-34 property BY CONSTRUCTION — verify
-    // it anyway so a broken table edit cannot silently invalidate the harness:
-    // within a signal, (δ̃_s − b_s) − (δ̃_p − b_p) ∈ λℤ.
+    // The emitted frame satisfies the Eq-34 property by construction.  It is
+    // checked anyway, so that a faulty table edit cannot invalidate the harness
+    // unnoticed: within a signal, (δ̃_s − b_s) − (δ̃_p − b_p) ∈ λℤ.
     for (const auto& con : frame.cons) {
         for (const auto& sf : con.signals) {
             const double lam = utils.getWavelength(con.system, sf.signal, con.sats[0]);
@@ -459,10 +459,10 @@ TEST(Eq34ConsumerIntegerTest, SynthProductRoundTripsContractAndFrame) {
 }
 
 // ===========================================================================
-// 2. THE HEADLINE: the consumer's float DD ambiguities converge to the KNOWN
-//    integers (the common per-signal fractional cancels), MLAMBDA actually
-//    executes (gate_reason==0, ratio>0), the fix clears the production
-//    acceptance battery, and the fixed state lands on the known integers.
+// 2. Main result: the consumer's float DD ambiguities round to the known
+//    integers (the common per-signal fractional cancels), MLAMBDA executes
+//    (gate_reason==0, ratio>0), the fix clears the production acceptance
+//    battery, and the fixed state lands on the known integers.
 // ===========================================================================
 TEST(Eq34ConsumerIntegerTest, FloatDdConvergesToKnownIntegersAndMlambdaFixes) {
     LogManager log;
@@ -481,10 +481,11 @@ TEST(Eq34ConsumerIntegerTest, FloatDdConvergesToKnownIntegersAndMlambdaFixes) {
     std::vector<PppObservation> obs;
     ASSERT_NO_FATAL_FAILURE(buildConsumerState(frame, store, utils, sm, obs));
 
-    // (a) The PER-SATELLITE floats are far from integer: each carries the
-    // engineered δ_u − δ_σ (≥ 0.27 cycles on every signal).  This is what makes
-    // the DD-integer assertion below non-trivial — the common fractional is
-    // demonstrably present and only the DIFFERENCE cancels it.
+    // (a) The per-satellite floats are far from integer: each carries the
+    // engineered δ_u − δ_σ (at least 0.27 cycles off an integer on every signal;
+    // the assertion uses 0.20).  This makes the DD-integer assertion below
+    // non-trivial: the common fractional is present and only the difference
+    // cancels it.
     {
         const Eigen::VectorXd x = sm.getStateVector();
         for (const auto& con : frame.cons) {
@@ -502,7 +503,7 @@ TEST(Eq34ConsumerIntegerTest, FloatDdConvergesToKnownIntegersAndMlambdaFixes) {
     }
 
     // (b) Every within-group float DD is integer to within the injected noise
-    // (|Δε| ≤ 0.055 cyc) AND rounds to the KNOWN integer N.
+    // (|Δε| ≤ 0.055 cyc) and rounds to the known integer N.
     std::vector<DdCheck> dds;
     ASSERT_NO_FATAL_FAILURE(collectConsumerDds(frame, sm, utils, dds));
     ASSERT_EQ(dds.size(), 14u);   // GPS 2×4 + Galileo 2×3
@@ -513,8 +514,8 @@ TEST(Eq34ConsumerIntegerTest, FloatDdConvergesToKnownIntegersAndMlambdaFixes) {
             << d.sat_i << "-" << d.sat_ref << " " << d.signal;
     }
 
-    // (c) MLAMBDA executes and fixes through the REAL resolver (real
-    // buildDdPairs pivot election, real search, production acceptance gates).
+    // (c) MLAMBDA executes and fixes through the production resolver
+    // (buildDdPairs pivot election, search, and acceptance gates).
     AmbiguityResolver resolver(makeArConfig(), log);
     const AmbiguityResolution res = resolver.resolve(sm, obs);
 
@@ -525,8 +526,8 @@ TEST(Eq34ConsumerIntegerTest, FloatDdConvergesToKnownIntegersAndMlambdaFixes) {
     EXPECT_EQ(res.num_fixed, 14);
     EXPECT_LT(res.ratio, makeArConfig().ratio_upper_bound);
 
-    // (d) The fixed state is pulled onto the KNOWN integers (hold_variance is
-    // tight, so the post-fix DD equals λ·N to well under a millicycle).
+    // (d) The fixed state is pulled onto the known integers (hold_variance is
+    // tight; the assertion tolerance on the post-fix DD is 1 mm about λ·N).
     ASSERT_EQ(res.fixed_state.size(), sm.getStateVector().size());
     for (const auto& d : dds) {
         const double dd_fixed_m = res.fixed_state(d.idx_i) - res.fixed_state(d.idx_ref);
@@ -538,9 +539,9 @@ TEST(Eq34ConsumerIntegerTest, FloatDdConvergesToKnownIntegersAndMlambdaFixes) {
 }
 
 // ===========================================================================
-// 3. NEGATIVE CONTROL: one deliberately non-integer bias pair (G05 L1C,
-//    +0.37 cyc).  The consumer's DD fraction for that pair lands far from
-//    integer; every other pair stays clean; MLAMBDA RUNS but the production
+// 3. Negative control: one deliberately non-integer bias pair (G05 L1C,
+//    +0.37 cyc).  The consumer's DD fraction for that pair lands far from an
+//    integer and every other pair stays integer; MLAMBDA runs, but the production
 //    acceptance battery refuses the fix (ratio and/or per-pair frac cap).
 // ===========================================================================
 TEST(Eq34ConsumerIntegerTest, NonIntegerBiasPairFailsAsNegativeControl) {
@@ -583,9 +584,9 @@ TEST(Eq34ConsumerIntegerTest, NonIntegerBiasPairFailsAsNegativeControl) {
     }
     EXPECT_EQ(n_poisoned, 1u);   // G05 is never the pivot (lowest elevation)
 
-    // MLAMBDA reaches the search (this is NOT a gate suppression) but the
-    // acceptance battery — ratio test and/or the 0.15-cyc per-pair fraction
-    // cap — refuses to fix a frame containing a 0.37-cycle non-integer pair.
+    // MLAMBDA reaches the search (this is not a gate suppression), but the
+    // acceptance battery (ratio test and/or the 0.15-cyc per-pair fraction cap)
+    // refuses to fix a frame containing a 0.37-cycle non-integer pair.
     AmbiguityResolver resolver(makeArConfig(), log);
     const AmbiguityResolution res = resolver.resolve(sm, obs);
     EXPECT_EQ(res.gate_reason, 0) << "the search must RUN for the control to mean anything";
@@ -597,11 +598,11 @@ TEST(Eq34ConsumerIntegerTest, NonIntegerBiasPairFailsAsNegativeControl) {
 }
 
 // ===========================================================================
-// 4. THE σ-GATE SENTINEL GUARD (the C7 misread): ratio == 0.00 with
-//    gate_reason != 0 means the MLAMBDA search NEVER RAN — it must never be
-//    read as "AR executed and produced a zero-confidence result".  Pins the
-//    sentinel for both convergence guards so any grader built on this harness
-//    keys acceptance on (gate_reason == 0 && ratio > 0), never on ratio alone.
+// 4. Gate sentinel (the C7 misreading): ratio == 0.00 with gate_reason != 0
+//    means the MLAMBDA search did not run; it does not mean "AR executed and
+//    produced a zero-confidence result".  Pins the sentinel for both convergence
+//    guards, so a grader built on this harness keys acceptance on
+//    (gate_reason == 0 && ratio > 0) and not on ratio alone.
 // ===========================================================================
 TEST(Eq34ConsumerIntegerTest, RatioZeroSentinelMeansMlambdaNeverRan) {
     LogManager log;
@@ -620,10 +621,10 @@ TEST(Eq34ConsumerIntegerTest, RatioZeroSentinelMeansMlambdaNeverRan) {
     std::vector<PppObservation> obs;
     ASSERT_NO_FATAL_FAILURE(buildConsumerState(frame, store, utils, sm, obs));
 
-    // (a) Position-σ gate: same healthy candidate set as the headline test,
-    // but an unconverged position covariance.  gate_reason=3 with the σ
-    // recorded; ratio stays the 0.00 sentinel; num_candidates shows the DD
-    // set existed (the search was suppressed, not empty).
+    // (a) Position-σ gate: the same candidate set as test 2, but an unconverged
+    // position covariance.  gate_reason=3 with the σ recorded; ratio stays at the
+    // 0.00 sentinel; num_candidates shows that the DD set existed (the search was
+    // suppressed, not empty).
     {
         Eigen::MatrixXd P = sm.getCovariance();
         for (int d = 0; d < 3; ++d) P(d, d) = 1.0;   // σ_3D ≈ 1.73 m ≫ 0.05 m
@@ -643,7 +644,7 @@ TEST(Eq34ConsumerIntegerTest, RatioZeroSentinelMeansMlambdaNeverRan) {
     }
 
     // (b) min_epochs gate: a fresh resolver with a warm-up requirement returns
-    // the sentinel on the first invocation — before DD pairs are even built.
+    // the sentinel on the first invocation, before DD pairs are built.
     {
         AmbiguityResolverConfig cfg = makeArConfig();
         cfg.min_epochs = 3;
@@ -658,9 +659,9 @@ TEST(Eq34ConsumerIntegerTest, RatioZeroSentinelMeansMlambdaNeverRan) {
 }
 
 // ===========================================================================
-// 5. CONTRACT CROSS-CHECK (D5's designed back-compat): a consumer expecting
-//    the legacy pivot-receiver datum flags "amb_datum differs" against an
-//    eq34 product — and an eq34-aware expectation verifies clean.
+// 5. Contract cross-check (the back-compatibility designed in D5): a consumer
+//    expecting the legacy pivot-receiver datum flags "amb_datum differs" against
+//    an eq34 product, and an eq34-aware expectation verifies clean.
 // ===========================================================================
 TEST(Eq34ConsumerIntegerTest, ContractFlagsAmbDatumForLegacyConsumer) {
     LogManager log;
@@ -686,8 +687,8 @@ TEST(Eq34ConsumerIntegerTest, ContractFlagsAmbDatumForLegacyConsumer) {
     }
 
     // Legacy consumer (PivotReceiverZeroAmbiguity expectation): incompatible,
-    // with the amb_datum mismatch named — exactly the designed refusal path
-    // for a pre-Card-3 consumer meeting a chain-datum product.
+    // with the amb_datum mismatch named.  This is the designed refusal path for a
+    // consumer predating card 3 that meets a chain-datum product.
     {
         SbasisContract expected = makeEq34Contract();
         expected.decl.amb_datum = SbasisDeclaration::AmbDatum::PivotReceiverZeroAmbiguity;

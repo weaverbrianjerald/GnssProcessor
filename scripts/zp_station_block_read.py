@@ -1,34 +1,34 @@
 #!/usr/bin/env python3
-"""Read `logs/network_station_block.csv` — the card-ZP per-station LOCAL-BLOCK audit.
+"""Read `logs/network_station_block.csv`, the card-ZP per-station local-block audit.
 
     python scripts/zp_station_block_read.py <run_dir> [<run_dir> ...]
     python scripts/zp_station_block_read.py --epochs 1,5,20 <run_dir> ...
     python scripts/zp_station_block_read.py --station WROC00POL <run_dir>
 
-SPEC_event_harness §24.10.  The producer writes one row per station per TRACED epoch
-(the first 20 EMITTED epochs, then every 60th) describing that station's LOCAL normal
-block N_rr = A_r^T W A_r + folded station priors — the matrix
+SPEC_event_harness §24.10. The producer writes one row per station per traced epoch
+(the first 20 emitted epochs, then every 60th) describing that station's local normal
+block N_rr = A_r^T W A_r + folded station priors, the matrix
 NetworkEstimator::reconstructStation inverts with the shared states held at their
-solved values x_s.  Columns are documented in the `#` provenance line the producer
+solved values x_s. Columns are documented in the `#` provenance line the producer
 writes above the header; this reader skips it.
 
 What it prints, per traced epoch, across the stations present:
 
   n_sta                 stations audited that epoch
-  rank<n                how many have a RANK-DEFICIENT local block
+  rank<n                how many have a rank-deficient local block
   cond p50/p90/max      condition number of the block over its non-null subspace
-  ev1 span histogram    which local KINDS span the SMALLEST eigenpair, as a count
+  ev1 span histogram    which local kinds span the smallest eigenpair, as a count
                         over stations of the kind-set (e.g. "amb 41, zwd+clk 15")
-  zwd_info p50/p10      the ZWD column's effective / raw information ratio -- the
+  zwd_info p50/p10      the ZWD column's effective to raw information ratio, the
                         §24.9 quantity ("~1/50" was the first estimate)
   x_r_norm p50          the reconstructed local correction's norm (metres)
-  x_r_zwd p50           its ZWD element (metres) -- what network_zwd.csv publishes
-  zero-red code/phase   fraction of DATA rows with redundancy < 1e-6, per kind
+  x_r_zwd p50           its ZWD element (metres): what network_zwd.csv publishes
+  zero-red code/phase   fraction of data rows with redundancy < 1e-6, per kind
 
-No bars, no verdicts: this is the eyes of the card.  With more than one run
-directory it also prints a side-by-side of the same quantities at each shared epoch
-index, which is how the two VEHICLES (carry_invariant vs phase_leveling) are read
-against each other.
+No bars, no verdicts: this reads the raw quantities the card inspects. With more
+than one run directory it also prints a side-by-side of the same quantities at
+each shared epoch index, which is how the two vehicles (carry_invariant vs
+phase_leveling) are compared against each other.
 """
 import argparse
 import csv
@@ -68,7 +68,7 @@ def parse_float(s):
 
 
 def span_kinds(span):
-    """The KIND set of a span field, canonically ordered.
+    """The kind set of a span field, canonically ordered.
 
     A span is `label=share` items joined by '|'; a label is `clk`, `zwd`,
     `rxcb:<sig>`, `iono:<sat>`, `amb:<sat>:<sig>` or the `col<k>` fallback.  Only the

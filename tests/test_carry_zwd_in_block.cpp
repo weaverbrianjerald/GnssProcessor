@@ -1,26 +1,25 @@
 /**
  * @file test_carry_zwd_in_block.cpp
- * @brief Contract tests for @c network.carry_zwd_in_block — the B9 ZWD carry folded
- *        INSIDE the F3 jointly-whitened station block instead of as a diagonal
+ * @brief Contract tests for @c network.carry_zwd_in_block: the B9 ZWD carry folded
+ *        inside the F3 jointly-whitened station block instead of as a diagonal
  *        coupling row outside it (SPEC_amb_iono_split_overcount §7 item 17,
- *        "block ALL carried local columns").
+ *        "block all carried local columns").
  *
- * WHY the card exists, in one sentence the tests are shaped around: a diagonal B9
- * row asserts the station's ZWD direction a SECOND time, on top of the assertion
- * every carried ambiguity row of the same station already makes implicitly — the
- * station-common over-count that falsified @c network.carry_zwd on the quiet
- * 60-sta truth bed (consumer 3D rms 0.204 → 0.723 m).  Inside the block the joint
- * Σ carries the harvested @f$(N_{rr}^{-1})_{c\,c_j}@f$ cross terms, so the overlap
- * is subtracted exactly rather than double counted.
+ * Rationale: a diagonal B9 row asserts the station's ZWD direction a second time,
+ * on top of the assertion every carried ambiguity row of the same station already
+ * makes implicitly.  That station-common over-count is what falsified
+ * @c network.carry_zwd on the quiet 60-station truth bed.  Inside the block the
+ * joint Σ carries the harvested @f$(N_{rr}^{-1})_{c\,c_j}@f$ cross terms, so the
+ * overlap is subtracted exactly rather than counted twice.
  *
- * What is reachable from a unit test is the SEAM the card acts on —
- * @c CouplingRowBuilder::buildLocalBlock over a real registered
- * @c NetworkEstimator — plus the loader's interlocks.  The two ends the tests
- * cannot reach are the harvest (which appends the ZWD column to @c cols and writes
- * row n of @c PlHarvestBlock::C) and the PASS-B driver (which pushes the
- * @c LocalBlockCol and counts @c pl_blk_zwd_fallback_diag); those are graded on the
- * sim fixture ladder, and the driver's fallback CONTRACT — "a non-SPD block buffers
- * nothing, so the caller emits the B9 diagonal row instead" — is pinned here.
+ * A unit test reaches the seam the card acts on
+ * (@c CouplingRowBuilder::buildLocalBlock over a real registered
+ * @c NetworkEstimator) and the loader's interlocks.  It does not reach the harvest
+ * (which appends the ZWD column to @c cols and writes row n of
+ * @c PlHarvestBlock::C) or the PASS-B driver (which pushes the @c LocalBlockCol and
+ * counts @c pl_blk_zwd_fallback_diag); those are graded on the sim fixture ladder.
+ * The driver's fallback contract is pinned here: a non-SPD block buffers nothing,
+ * so the caller emits the B9 diagonal row instead.
  */
 
 #include <gtest/gtest.h>
@@ -50,9 +49,9 @@ namespace {
 // --- seam fixture ------------------------------------------------------------
 //
 // Mirrors test_network_coupling.cpp's BuilderFixture (one registered satellite
-// clock + phase bias, layout frozen at beginEpoch) — deliberately a separate
-// local copy so this file owns its suite name outright and neither file's cases
-// can drift the other's layout.
+// clock + phase bias, layout frozen at beginEpoch).  A separate local copy, so
+// this file owns its suite name and neither file's cases can change the other's
+// layout.
 struct ZwdBlockFixture {
     NetworkEstimator est;
     GlobalVtecShConfig shc{};
@@ -91,7 +90,7 @@ std::shared_ptr<PlHarvestBlock> makeHarvestBlock(const std::vector<double>& diag
     return blk;
 }
 
-/// A carried local column pointing at @p blk index @p idx, with one PRESENT shared
+/// A carried local column pointing at @p blk index @p idx, with one present shared
 /// coupling term (the G01 clock) so every row carries a real border regressor.
 LocalCarry makeCarry(double value_abs, double var,
                      const std::shared_ptr<PlHarvestBlock>& blk, int idx) {
@@ -117,8 +116,8 @@ fs::path writeTempConfig(const std::string& tag, const std::string& body) {
     return p;
 }
 
-/// A minimal loadable PPP-RTK network config; @p extra splices into the network
-/// block (the zwd_seam_reseed / iono-carry config files' pattern).
+/// A minimal loadable PPP-RTK network config; @p extra is spliced into the network
+/// block (the pattern of the zwd_seam_reseed and iono-carry config tests).
 std::string networkConfig(const std::string& extra) {
     return std::string("{\n")
         + "  \"processing\": {\n"
@@ -156,15 +155,15 @@ bool loadInto(const std::string& tag, const std::string& body, GnssConfig& cfg) 
 }  // namespace
 
 // =============================================================================
-// (1) ON: k ambiguity columns + the ZWD build a (k+1)-row whitened block whose Σ
-//     carries the HARVESTED ZWD cross terms.
+// (1) On: k ambiguity columns plus the ZWD build a (k+1)-row whitened block whose
+//     Σ carries the harvested ZWD cross terms.
 // =============================================================================
 //
-// The direct assertion is on Σ itself (retained as R.pl_blk.Sigma): its last row /
-// column must be the harvest block's ZWD row, not zero — "the ZWD is coupled to the
-// ambiguities", which is the whole mechanism.  The whitening is then checked the way
-// test_network_coupling checks the ambiguity-only block: L·(emitted) == raw, i.e.
-// the emitted rows really are L⁻¹·[I | M | y] for THIS Σ.
+// The direct assertion is on Σ itself (retained as R.pl_blk.Sigma): its last row
+// and column are the harvest block's ZWD row, not zero, so the ZWD is coupled to
+// the ambiguities.  The whitening is then checked the way test_network_coupling
+// checks the ambiguity-only block: L·(emitted) == raw, i.e. the emitted rows are
+// L⁻¹·[I | M | y] for this Σ.
 TEST(CarryZwdInBlockTest, ZwdColumnJoinsTheWhitenedBlockAndCarriesItsHarvestedCrossTerms) {
     ZwdBlockFixture f;
     // 3 ambiguity columns (a GPS triple LOS) + the ZWD at block index 3.
@@ -192,12 +191,12 @@ TEST(CarryZwdInBlockTest, ZwdColumnJoinsTheWhitenedBlockAndCarriesItsHarvestedCr
     ASSERT_EQ(cb.crows.size(), 4u);
     for (const PendCplRow& row : cb.crows) {
         EXPECT_DOUBLE_EQ(row.w, 1.0);
-        EXPECT_FALSE(row.local.empty());   // a BLOCK row (dense L⁻¹), not a scalar +1 row
+        EXPECT_FALSE(row.local.empty());   // a block row (dense L⁻¹), not a scalar +1 row
     }
-    EXPECT_EQ(cb.crows[3].local_col, 3);   // the ZWD row's PRIMARY column is the ZWD column
+    EXPECT_EQ(cb.crows[3].local_col, 3);   // the ZWD row's primary column is the ZWD column
 
     // Σ: 4×4, diagonal = each column's σ² (var_eff here, no departed/tu terms),
-    // off-diagonals = the harvested cross terms — INCLUDING the ZWD's.
+    // off-diagonals = the harvested cross terms, the ZWD's included.
     const Eigen::MatrixXd& S = f.R.pl_blk.Sigma;
     ASSERT_EQ(S.rows(), 4);
     ASSERT_EQ(S.cols(), 4);
@@ -224,8 +223,8 @@ TEST(CarryZwdInBlockTest, ZwdColumnJoinsTheWhitenedBlockAndCarriesItsHarvestedCr
         z(k) = cb.crows[static_cast<std::size_t>(k)].y;
     }
     // Raw: +1 on each column, the border regressor M_r, and the RHS
-    // (value_abs − x_lin) + Σ M_rj·ŝ_prev,j.  The ZWD row is built by the SAME
-    // ingredient path as an ambiguity row — that identity is the point.
+    // (value_abs − x_lin) + Σ M_rj·ŝ_prev,j.  The ZWD row is built by the same
+    // ingredient path as an ambiguity row, and this check pins that identity.
     Eigen::MatrixXd Hr_raw = Eigen::MatrixXd::Zero(4, f.R.A_r.cols());
     Eigen::MatrixXd Hs_raw = Eigen::MatrixXd::Zero(4, f.R.A_s.cols());
     Eigen::VectorXd z_raw(4);
@@ -240,10 +239,10 @@ TEST(CarryZwdInBlockTest, ZwdColumnJoinsTheWhitenedBlockAndCarriesItsHarvestedCr
     EXPECT_LT((L * z  - z_raw ).cwiseAbs().maxCoeff(), 1e-12);
 }
 
-// The is_zwd flag is TELEMETRY ONLY.  If it ever became load-bearing in the
-// algebra, the ZWD would stop being "just another carried local column" and the
-// exactness claim would need re-proving — so pin that the whitened output is
-// bit-identical with the flag set and cleared.
+// The is_zwd flag is telemetry only.  If it entered the algebra, the ZWD would no
+// longer be an ordinary carried local column and the exactness claim would need a
+// new proof, so the whitened output is pinned bit-identical with the flag set and
+// cleared.
 TEST(CarryZwdInBlockTest, IsZwdFlagChangesTelemetryOnlyNotTheAlgebra) {
     const std::vector<double> cdiag = {0.040, 0.0090};
     auto blk = makeHarvestBlock(cdiag, 0.0050);
@@ -268,26 +267,26 @@ TEST(CarryZwdInBlockTest, IsZwdFlagChangesTelemetryOnlyNotTheAlgebra) {
             EXPECT_EQ(flag.crows[k].local[j].second, noflag.crows[k].local[j].second);
         }
     }
-    EXPECT_EQ(flag_f.R.pl_blk_zwd_cols, 1);     // the ONLY difference
+    EXPECT_EQ(flag_f.R.pl_blk_zwd_cols, 1);     // the only difference
     EXPECT_EQ(noflag_f.R.pl_blk_zwd_cols, 0);
 }
 
 // =============================================================================
-// (2) OFF: the block is k rows and the ZWD is the diagonal B9 row, with the exact
-//     ingredients the pre-card path produced.
+// (2) Off: the block is k rows and the ZWD is the diagonal B9 row, with the exact
+//     ingredients of the unarmed path.
 // =============================================================================
 //
-// "Byte-identical ingredients" is asserted BITWISE (EXPECT_EQ on doubles, the
-// LosScaledVariance precedent): the OFF-path ZWD row's weight, RHS, primary column
-// and border coefficient must be exactly what buildCplRow emits standalone — and it
-// must be a SCALAR row (empty `local`), never a block row.
+// Byte-identical ingredients are asserted bitwise (EXPECT_EQ on doubles, as in the
+// LosScaledVariance tests): the off-path ZWD row's weight, RHS, primary column and
+// border coefficient equal what buildCplRow emits standalone, and the row is a
+// scalar row (empty `local`), not a block row.
 TEST(CarryZwdInBlockTest, KnobOffLeavesKBlockRowsAndTheZwdAsTheDiagonalB9Row) {
     const std::vector<double> cdiag = {0.040, 0.030, 0.050};   // 3 ambiguities; ZWD not in C
     auto blk = makeHarvestBlock(cdiag, 0.0060);
     LocalCarry a0 = makeCarry(2.00, cdiag[0], blk, 0);
     LocalCarry a1 = makeCarry(2.25, cdiag[1], blk, 1);
     LocalCarry a2 = makeCarry(1.75, cdiag[2], blk, 2);
-    // OFF: the ZWD carry is harvested WITHOUT a block (the pre-card
+    // Off: the ZWD carry is harvested without a block (the unarmed
     // `harvestCoupling(est_idx, R.pl_zwd.col, nullptr, nullptr)` call).
     LocalCarry zw = makeCarry(0.16, 0.0090, /*blk=*/nullptr, /*idx=*/-1);
     const double zvar_eff = 0.0090 + 1e-9 * 30.0;   // var + zwd_q·gap, the B9 expression
@@ -297,16 +296,16 @@ TEST(CarryZwdInBlockTest, KnobOffLeavesKBlockRowsAndTheZwdAsTheDiagonalB9Row) {
     ASSERT_TRUE(cb.buildLocalBlock({LocalBlockCol{0, 0.5,   &a0, cdiag[0], 30.0, 1.0},
                                     LocalBlockCol{1, -0.25, &a1, cdiag[1], 30.0, 1.0},
                                     LocalBlockCol{2, 1.0,   &a2, cdiag[2], 30.0, 1.0}}));
-    ASSERT_EQ(cb.crows.size(), 3u);                 // k rows, NOT k+1
+    ASSERT_EQ(cb.crows.size(), 3u);                 // k rows, not k+1
     EXPECT_EQ(f.R.pl_blk.Sigma.rows(), 3);
     EXPECT_EQ(f.R.pl_blk_zwd_cols, 0);
     EXPECT_EQ(f.R.pl_blk_zwd_missing_cross, 0);
 
-    // …then the B9 diagonal row, exactly as ApplicationNetworkAssembly emits it.
+    // Then the B9 diagonal row, as ApplicationNetworkAssembly emits it.
     cb.buildCplRow(/*col=*/3, /*x_lin_val=*/0.15, zw, zvar_eff, /*gap=*/30.0);
     ASSERT_EQ(cb.crows.size(), 4u);
     const PendCplRow& zrow = cb.crows[3];
-    EXPECT_TRUE(zrow.local.empty());                // SCALAR row: the implicit +1 at local_col
+    EXPECT_TRUE(zrow.local.empty());                // scalar row: the implicit +1 at local_col
     EXPECT_EQ(zrow.local_col, 3);
     EXPECT_EQ(zrow.w, 1.0 / zvar_eff);              // bitwise: the legacy B9 expression
     EXPECT_EQ(zrow.y, (0.16 - 0.15) + 0.8 * 1.5);
@@ -314,8 +313,8 @@ TEST(CarryZwdInBlockTest, KnobOffLeavesKBlockRowsAndTheZwdAsTheDiagonalB9Row) {
     EXPECT_EQ(zrow.shared[0].first, f.clk_col);
     EXPECT_EQ(zrow.shared[0].second, 0.8);
 
-    // The same row built by a builder that never saw a block is bit-identical —
-    // the property that makes the fallback below a true degrade to today's B9.
+    // The same row built by a builder that never saw a block is bit-identical, so
+    // the fallback below degrades exactly to the unarmed B9 row.
     ZwdBlockFixture g;
     auto solo = g.make();
     solo.buildCplRow(/*col=*/3, /*x_lin_val=*/0.15, zw, zvar_eff, /*gap=*/30.0);
@@ -327,13 +326,13 @@ TEST(CarryZwdInBlockTest, KnobOffLeavesKBlockRowsAndTheZwdAsTheDiagonalB9Row) {
 }
 
 // =============================================================================
-// (3) Block failure ⇒ the diagonal fallback, and it buffers NOTHING first.
+// (3) Block failure ⇒ the diagonal fallback, with nothing buffered first.
 // =============================================================================
 //
-// The driver's contract on a non-SPD block is "emit the per-column rows instead,
-// and count it".  For the ZWD that means the B9 diagonal row.  The load-bearing
-// half a unit test can pin is that a FAILED build leaves `crows` untouched — if it
-// buffered partial rows, the caller's fallback would double-inject every column.
+// The driver's contract on a non-SPD block is to emit the per-column rows instead
+// and count the fallback.  For the ZWD that means the B9 diagonal row.  The part a
+// unit test can pin is that a failed build leaves `crows` untouched: partial rows
+// buffered there would make the caller's fallback inject every column twice.
 TEST(CarryZwdInBlockTest, NonSpdBlockBuffersNothingAndTheZwdTakesTheDiagonalFallback) {
     // A cross term larger than the geometric mean of the diagonals makes Σ
     // indefinite; the ridge retry cannot rescue it.
@@ -350,14 +349,13 @@ TEST(CarryZwdInBlockTest, NonSpdBlockBuffersNothingAndTheZwdTakesTheDiagonalFall
     EXPECT_TRUE(cb.crows.empty());         // nothing buffered ⇒ no double inject
     EXPECT_EQ(f.R.pl_blk_blocks, 0);
     EXPECT_EQ(f.R.pl_blk_rows, 0);
-    // The ZWD column was ADMITTED to the block (it passed the scalar screen) even
-    // though the factorization then failed — the counter must say so, otherwise the
-    // fallback rate cannot be read against the admission rate.
+    // The ZWD column was admitted to the block (it passed the scalar screen) even
+    // though the factorization then failed.  The counter records the admission, so
+    // the fallback rate can be read against the admission rate.
     EXPECT_EQ(f.R.pl_blk_zwd_cols, 1);
 
     // The caller's fallback: the ambiguity per-column row and the B9 diagonal ZWD
-    // row.  Both are ordinary scalar rows, which is what "degrades to today's B9"
-    // means concretely.
+    // row.  Both are ordinary scalar rows, the same as the unarmed B9 path.
     const double zvar_eff = cdiag[1] + 1e-9 * 30.0;
     cb.buildCplRow(/*col=*/0, /*x_lin_val=*/0.5,  a0, cdiag[0], /*gap=*/30.0);
     cb.buildCplRow(/*col=*/1, /*x_lin_val=*/0.15, zw, zvar_eff, /*gap=*/30.0);
@@ -368,15 +366,15 @@ TEST(CarryZwdInBlockTest, NonSpdBlockBuffersNothingAndTheZwdTakesTheDiagonalFall
 }
 
 // =============================================================================
-// (4) A missing ZWD cross term is counted SEPARATELY, and the block still builds.
+// (4) A missing ZWD cross term is counted separately, and the block still builds.
 // =============================================================================
 //
-// The NaN-pair rule: a pair whose two entries were not stashed at the SAME harvest
-// (pointer-unequal PlHarvestBlock, or one entry with no block at all — e.g. a
-// warm-resume-restored ZWD) has no valid cross term, so it is ZEROED, never
-// guessed.  Σ stays block-diagonal by harvest stamp and therefore PD.  Splitting
-// the ZWD's share out of pl_blk_pair_missing is what makes "the carried ZWD is not
-// actually coupled to anything" visible instead of hidden in an aggregate.
+// The NaN-pair rule: a pair whose two entries were not stashed at the same harvest
+// (pointer-unequal PlHarvestBlock, or one entry with no block at all, e.g. a ZWD
+// restored on a warm resume) has no valid cross term, so it is set to zero, not
+// estimated.  Σ stays block-diagonal by harvest stamp and therefore PD.  The ZWD's
+// share of pl_blk_pair_missing is counted on its own, so a carried ZWD coupled to
+// nothing shows up directly rather than inside the aggregate.
 TEST(CarryZwdInBlockTest, ZwdWithoutAHarvestBlockZeroesItsPairsAndIsCountedSeparately) {
     const std::vector<double> cdiag = {0.040, 0.030, 0.050};
     auto blk = makeHarvestBlock(cdiag, 0.0060);
@@ -391,10 +389,10 @@ TEST(CarryZwdInBlockTest, ZwdWithoutAHarvestBlockZeroesItsPairsAndIsCountedSepar
                                     LocalBlockCol{1, -0.25, &a1, cdiag[1], 30.0, 1.0},
                                     LocalBlockCol{2, 1.0,   &a2, cdiag[2], 30.0, 1.0},
                                     LocalBlockCol{3, 0.15,  &zw, 0.0090,   30.0, 1.0, true}}));
-    ASSERT_EQ(cb.crows.size(), 4u);            // the block STILL builds — 4 rows
+    ASSERT_EQ(cb.crows.size(), 4u);            // the block still builds: 4 rows
     EXPECT_EQ(f.R.pl_blk_zwd_cols, 1);
     EXPECT_EQ(f.R.pl_blk_zwd_missing_cross, 3);  // ZWD ↔ each of the 3 ambiguities
-    EXPECT_EQ(f.R.pl_blk_pair_missing, 3);       // and the ZWD's share IS the whole total here
+    EXPECT_EQ(f.R.pl_blk_pair_missing, 3);       // the ZWD's share is the whole total here
 
     // Σ: the ambiguity block keeps its harvested cross terms; every ZWD pair is 0.
     const Eigen::MatrixXd& S = f.R.pl_blk.Sigma;
@@ -406,8 +404,8 @@ TEST(CarryZwdInBlockTest, ZwdWithoutAHarvestBlockZeroesItsPairsAndIsCountedSepar
         EXPECT_DOUBLE_EQ(S(k, 3), 0.0);
     }
 
-    // A ZWD stashed at a DIFFERENT harvest (a second block object) is the same
-    // rule for a different reason — pointer inequality, not a null pointer.
+    // A ZWD stashed at a different harvest (a second block object) falls under the
+    // same rule through pointer inequality rather than a null pointer.
     auto other = makeHarvestBlock({0.0090}, 0.0);
     LocalCarry zw2 = makeCarry(0.16, 0.0090, other, 0);
     ZwdBlockFixture g;
@@ -419,20 +417,20 @@ TEST(CarryZwdInBlockTest, ZwdWithoutAHarvestBlockZeroesItsPairsAndIsCountedSepar
 }
 
 // =============================================================================
-// (5) Loader interlocks — including the NEGATIVE CONTROL: carry_zwd off ⇒ nothing.
+// (5) Loader interlocks, including the negative control: carry_zwd off ⇒ nothing.
 // =============================================================================
 
 TEST(CarryZwdInBlockTest, DefaultIsOffOnAnArmedF3Posture) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("default", networkConfig(kF3Posture), cfg));
     EXPECT_FALSE(cfg.networkCarryZwdInBlock());
-    EXPECT_TRUE(cfg.networkPhaseLevelingLocalBlock());   // the vehicle IS armed…
+    EXPECT_TRUE(cfg.networkPhaseLevelingLocalBlock());   // the vehicle is armed…
     EXPECT_FALSE(cfg.networkCarryZwd());                 // …and B9 still defaults off
 }
 
-// NEGATIVE CONTROL: the sub-knob never CREATES a carry.  With carry_zwd off there
-// is nothing to put in the block, so an armed sub-knob is disabled (armed-and-inert
-// is forbidden — a run-end "0 ZWD columns" must mean the mechanism found nothing).
+// Negative control: the sub-knob never creates a carry.  With carry_zwd off there
+// is nothing to put in the block, so an armed sub-knob is disabled.  Armed-and-inert
+// is not allowed, so a run-end "0 ZWD columns" means the mechanism found nothing.
 TEST(CarryZwdInBlockTest, DisabledWhenCarryZwdIsOff) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("nozwd",
@@ -453,13 +451,14 @@ TEST(CarryZwdInBlockTest, DisabledWhenTheF3BlockIsOff) {
                                        "    \"carry_zwd\": true,\n"
                                        "    \"carry_zwd_in_block\": true,\n"),
                          cfg));
-    EXPECT_TRUE(cfg.networkCarryZwd());                   // B9 itself is untouched…
+    EXPECT_TRUE(cfg.networkCarryZwd());                   // the B9 carry itself is untouched…
     EXPECT_FALSE(cfg.networkPhaseLevelingLocalBlock());
     EXPECT_FALSE(cfg.networkCarryZwdInBlock());           // …the sub-knob is disabled
 }
 
-// F3 armed but structurally unable to build a block (no conditional coupling rows)
-// is the same armed-and-inert failure: the ZWD column would have no block to join.
+// An F3 vehicle that is armed but structurally unable to build a block (no
+// conditional coupling rows) is the same armed-and-inert case: the ZWD column
+// would have no block to join.
 TEST(CarryZwdInBlockTest, DisabledWhenF3CannotBuildABlockOnThisPosture) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("inertf3",
@@ -483,19 +482,18 @@ TEST(CarryZwdInBlockTest, ArmedHappyPathSurvivesLoadAndLeavesQAtItsDefault) {
     EXPECT_TRUE(cfg.networkCarryZwdInBlock());
     EXPECT_TRUE(cfg.networkCarryZwd());
     EXPECT_TRUE(cfg.networkPhaseLevelingLocalBlock());
-    // The card deliberately changes the VEHICLE, not the process-noise model.
+    // The card changes the vehicle, not the process-noise model.
     EXPECT_DOUBLE_EQ(cfg.networkZwdCarryQ(), 1e-9);
-    // And it does NOT subject the ZWD to the F3 young-column age gate.
+    // Nor does it subject the ZWD to the F3 young-column age gate.
     EXPECT_EQ(cfg.networkPhaseLevelingLocalBlockMinAgeEp(), 0);
 }
 
-// The RECOMMEND branch (ledger 2026-09-10, SPEC_amb_iono_split_overcount §6.16.7d arm F2):
-// carry_zwd ON + F3 ON + the sub-knob OFF is the one combination the ledger calls a
-// configuration error rather than a conservative choice — the diagonal ZWD row inside an
-// F3 station is the falsified double count (quiet sim consumer 0.723 vs 0.0877 m rms,
-// field T3c 7619 vs 849 flags).  The loader says so and does NOTHING else: this is the
-// guard that the advisory did not grow a side effect, i.e. that it stayed the mirror of
-// the DISABLING interlocks above rather than becoming a fourth one.
+// The ledger's recommend branch (SPEC_amb_iono_split_overcount §6.16.7d arm F2):
+// carry_zwd on, F3 on and the sub-knob off is the one combination the ledger calls a
+// configuration error rather than a conservative choice, because the diagonal ZWD row
+// inside an F3 station is the falsified double count.  The loader reports it and
+// changes nothing: this test pins that the advisory has no side effect and does not
+// act as a fourth disabling interlock alongside the ones above.
 TEST(CarryZwdInBlockTest, DiagonalVehicleUnderF3IsAdvisedAgainstButNotAltered) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("recommend",

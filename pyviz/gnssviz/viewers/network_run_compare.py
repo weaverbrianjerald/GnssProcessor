@@ -1,18 +1,18 @@
-"""N-run comparison for PPP-RTK NETWORK legs -- "reference vs guarded vs arm".
+"""N-run comparison for PPP-RTK network legs ("reference vs guarded vs arm").
 
 :mod:`gnssviz.compare` answers "how did run **B** differ from run **A**?" for a
-*pair*.  A validation card, though, is usually graded over a **family** of legs:
-the DOY-129 reference day, the frame-guards leg that re-ran the same window with
-the guard set armed, and (next) the s2z realization arm.  Answering "which leg
-withheld what, when, and where did the misfit sit?" by opening three pair-wise
-reports is exactly the read this module removes.
+*pair*.  A validation card is usually graded over a **family** of legs, for
+example the DOY-129 reference day, a frame-guards leg that re-ran the same window
+with the guard set armed, and the s2z realization arm.  This module answers
+"which leg withheld what, when, and where did the misfit sit?" in one report
+instead of three pair-wise ones.
 
 A :class:`RunSet` is an ordered list of :class:`RunLeg` (label + a
 :class:`~gnssviz.trace_paths.TraceContext`); **leg 0 is the reference** and every
 ratio / agreement statistic is quoted against it.  Each *run comparator* is a
-plain ``fn(runs) -> ViewerResult`` -- the same return type the report assembler
+plain ``fn(runs) -> ViewerResult``, the same return type the report assembler
 already consumes, so the N-run report reuses
-:func:`gnssviz.report.write_html_report` verbatim.
+:func:`gnssviz.report.write_html_report` unchanged.
 
 What it draws
 -------------
@@ -20,8 +20,8 @@ What it draws
     One :class:`~gnssviz.figures.Raster` row per leg over the **union** epoch
     axis, cells coloured by the producer's disposition vocabulary (``emitted`` /
     ``*_withheld`` / ``*_failed`` / ``sync_skip``), with a NaN (transparent) cell
-    wherever a leg has no row for that epoch -- so differing coverage reads as a
-    gap, never as a silently-dropped sample.  Plus a cumulative-emitted curve per
+    wherever a leg has no row for that epoch, so differing coverage reads as a
+    gap rather than as a dropped sample.  Plus a cumulative-emitted curve per
     leg, and an agreement table listing the first epochs where a leg's
     disposition diverges from the reference's.
 
@@ -32,23 +32,23 @@ What it draws
     and vertical lines at the structural frame events (:data:`FRAME_EVENTS`:
     CB-excursion trips, code-datum reseeds, pivot handovers, clock-basis changes,
     SH-gate engage/release).  The σ̂0 trigger / withhold-ceiling **config echoes
-    are compared across legs** and a divergence is called out -- two legs graded
-    against different ceilings is a grading defect, not a result.
+    are compared across legs** and a divergence is called out, because legs
+    graded against different ceilings are not comparable.
 
 ``events``
-    Per-tier event counts AND **per-epoch rates** across legs with the ratio
+    Per-tier event counts and **per-epoch rates** across legs with the ratio
     against the reference (>3x or new is called out).  Rates, not raw counts, are
-    the comparable quantity: legs routinely span different epoch counts.
+    the comparable quantity, because legs often span different epoch counts.
 
 ``keyed_world``
     The RHS geography read.  ``network_pf_keyed.csv`` STA pools are reduced to a
     robust-z of ``s0_code`` at an onset epoch against **each key's own pre-onset
-    baseline** (median / 1.4826·MAD -- the same statistic
+    baseline** (median / 1.4826·MAD, the same statistic
     ``scripts/p2_gate_verdict.py`` §4.3 prints, so the viewer and the verdict
-    script cannot disagree), then joined to the ``network_stations.csv`` roster
+    script agree), then joined to the ``network_stations.csv`` roster
     and painted on a per-leg worldmap through the diverging ``vik`` map.  Roster
-    stations with no keyed pool stay grey, and the unjoined-key count is reported
-    -- a join that silently drops keys would fake a clean geography.
+    stations with no keyed pool stay grey, and the unjoined-key count is reported,
+    so a join that drops keys is visible rather than reading as a clean geography.
 
 ``scorecard``
     Every other comparator's summary in one monospaced panel.
@@ -58,7 +58,7 @@ Not in the viewers ``REGISTRY``
 Like :data:`gnssviz.compare.COMPARATORS`, these take a :class:`RunSet`, not a
 single ``TraceContext``; the single-ctx driver would call them with the wrong
 argument.  They live in :data:`RUN_COMPARATORS` and are driven by
-``run_compare_n.py``, and this module is deliberately **not** imported from
+``run_compare_n.py``, and this module is intentionally **not** imported from
 ``gnssviz/viewers/__init__.py``.
 
 Colours
@@ -67,7 +67,7 @@ Leg 0 (the reference) is a dark neutral; the remaining legs walk the shared
 :func:`~gnssviz.palettes.distinguishable_colors` sequence.  The keyed-z map uses
 ``vik`` (diverging, signed z) and the disposition raster uses the fixed
 per-disposition palette the single-run
-:mod:`~gnssviz.viewers.network_epoch_status` viewer defines -- never a
+:mod:`~gnssviz.viewers.network_epoch_status` viewer defines, not a
 hand-rolled ramp.
 """
 
@@ -90,8 +90,8 @@ from ..trace_paths import TraceContext
 from .base import ViewerResult, ViewerSkip
 # The disposition vocabulary + palette are the producer's, and the single-run
 # viewer already owns them; extending that tuple here (rather than re-typing it)
-# keeps ONE table for the six original lanes.  ``sh_gate_withheld`` is the lane
-# the SPEC_day129_frame_guards Phase-2.2 SH health gate added.
+# keeps one table for the six original lanes.  ``sh_gate_withheld`` is the lane
+# of the SH health gate (SPEC_day129_frame_guards Phase-2.2).
 from .network_epoch_status import _DISP_COLOR as _ES_DISP_COLOR
 from .network_epoch_status import _DISPOSITIONS as _ES_DISPOSITIONS
 # One source for the map auto-framing rule (regional cluster -> padded bbox,
@@ -119,7 +119,7 @@ _OTHER_COLOR = (0.75, 0.35, 0.75)
 _LANE_COLOR: Dict[str, tuple] = dict(_ES_DISP_COLOR)
 _LANE_COLOR["sh_gate_withheld"] = (0.55, 0.30, 0.65)   # purple: the SH health gate
 _LANE_COLOR[OTHER_LANE] = _OTHER_COLOR
-#: 1-BASED class codes.  The categorical colorbar styler ticks 1..K when no
+#: 1-based class codes.  The categorical colorbar styler ticks 1..K when no
 #: explicit ticks are given, so a 1-based raster code lines the swatch up with
 #: its label without a second tick table.
 _LANE_CODE: Dict[str, int] = {d: i + 1 for i, d in enumerate(_LANES)}
@@ -137,9 +137,9 @@ C_DATUM = (0.96, 0.70, 0.10)
 C_HELD_OUT = (0.86, 0.16, 0.16)
 
 #: (tier, event-name or ``None``) selectors drawn as vertical event lines on the
-#: ``tracks`` figure.  Deliberately narrow: these are the *structural frame*
-#: events (a handful per run), not the per-epoch QC firehose (``T0_mw_detect`` /
-#: ``T1_if_slip`` run to thousands of rows and belong in the ``events`` table).
+#: ``tracks`` figure.  The set is narrow on purpose: these are the *structural
+#: frame* events (a handful per run), not the per-epoch QC events (``T0_mw_detect``
+#: / ``T1_if_slip`` run to thousands of rows and belong in the ``events`` table).
 FRAME_EVENTS: Tuple[Tuple[str, Optional[str]], ...] = (
     ("CB_EXC", None),        # code-bias excursion guard: trip / disc landed
     ("CB_DATUM", None),      # code-datum reseed / pin change
@@ -147,7 +147,7 @@ FRAME_EVENTS: Tuple[Tuple[str, Optional[str]], ...] = (
     ("CLK_BASIS", None),     # clock-basis change
     ("SH_GATE", "engage"),   # SH health gate engage ...
     ("SH_GATE", "release"),  # ... and release (the per-epoch 'withhold' rows are
-                             #     the disposition raster's story, not a line)
+                             #     shown by the disposition raster, not as lines)
 )
 
 
@@ -157,7 +157,7 @@ FRAME_EVENTS: Tuple[Tuple[str, Optional[str]], ...] = (
 def auto_label(log_dir: str) -> str:
     """Short label for a trace folder: ``runs/day129_guards/leg01/logs`` -> ``leg01``.
 
-    A run's traces almost always sit in a ``logs`` subfolder of the run dir, so
+    A run's traces usually sit in a ``logs`` subfolder of the run dir, so
     the run dir's basename is the name a reader recognises; anything else labels
     by its own basename.
     """
@@ -235,8 +235,8 @@ class RunSet:
     def require(self, csv_name: str, minimum: int = 1) -> List[RunLeg]:
         """Legs carrying ``csv_name``; :class:`ViewerSkip` when fewer than ``minimum``.
 
-        The skip reason names the legs that lack it -- "absent on leg01" is
-        actionable, "skipped" is not.
+        The skip reason names the legs that lack it ("absent on leg01" rather
+        than a bare "skipped").
         """
         have = self.having(csv_name)
         if len(have) < minimum:
@@ -271,7 +271,7 @@ def _load(leg: RunLeg, csv_name: str, cols: Sequence[str]) -> _Loaded:
     A run that is still executing (or was killed) leaves a **partial final line**
     in every open trace; pandas reads it as a row with a non-finite ``week`` /
     ``tow``.  Those rows are dropped here and the count is carried through to the
-    summary -- a silent drop would understate a leg's epoch coverage.
+    summary, since an unreported drop would understate a leg's epoch coverage.
     """
     df = load_trace(leg.ctx.path(csv_name))
     require_cols(df, cols, f"{csv_name} ({leg.label})")
@@ -311,7 +311,7 @@ def _finite(v) -> np.ndarray:
 
 
 def _num(df: pd.DataFrame, col: str) -> np.ndarray:
-    """Column as float (``NaN`` when absent) -- schema-tolerant column access."""
+    """Column as float (``NaN`` when absent): schema-tolerant column access."""
     if col not in df.columns:
         return np.full(len(df), np.nan)
     return pd.to_numeric(df[col], errors="coerce").to_numpy(float)
@@ -346,9 +346,9 @@ def _ylim_for(series: Sequence[np.ndarray], pad: float = 0.06) -> Optional[Tuple
     """Padded (lo, hi) across every finite sample, or ``None`` when there are none.
 
     Shading a withheld stretch needs a band with *numeric* extents, and
-    ``fill_between`` participates in autoscale -- so the axes limits are pinned
-    here and the band is drawn exactly to them, instead of guessing a big number
-    that would wreck the y-scale.
+    ``fill_between`` participates in autoscale, so the axes limits are pinned
+    here and the band is drawn to them, instead of using a large fixed number
+    that would distort the y-scale.
     """
     vals = np.concatenate([_finite(s) for s in series]) if series else np.array([])
     if vals.size == 0:
@@ -403,10 +403,10 @@ def compare_dispositions(runs: RunSet, *, max_divergences: int = 12) -> ViewerRe
     legs = runs.require(CSV_EPOCH_STATUS, minimum=1)
     loaded = [_load(leg, CSV_EPOCH_STATUS, _ES_COLS) for leg in legs]
 
-    # Column axis.  A Raster spreads its columns UNIFORMLY across the time span,
-    # so the columns have to BE a regular time grid or the tick labels lie: two
-    # legs covering disjoint windows (a seed and its resume leg) would otherwise
-    # render as one continuous block and put each leg's start hours off.
+    # Column axis.  A Raster spreads its columns uniformly across the time span,
+    # so the columns must form a regular time grid or the tick labels are wrong:
+    # two legs covering disjoint windows (a seed and its resume leg) would
+    # otherwise render as one continuous block with each leg's start hours off.
     gs_union = np.unique(np.concatenate([L.df["_gsec"].to_numpy(float) for L in loaded]))
     gs_cols, step, grid_note = _epoch_grid(gs_union)
     t_union = _gsec_to_utc(gs_cols)
@@ -463,8 +463,8 @@ def _epoch_grid(gs_union: np.ndarray, max_cols: int = 20000
                 ) -> Tuple[np.ndarray, float, str]:
     """A regular GPS-second column grid spanning the union, at its modal cadence.
 
-    Returns ``(columns, step, note)``.  Falls back to the distinct-epoch axis --
-    with a stated reason, never silently -- when a regular grid would need more
+    Returns ``(columns, step, note)``.  Falls back to the distinct-epoch axis,
+    with the reason stated in ``note``, when a regular grid would need more
     than ``max_cols`` columns (legs days apart at a 1 s cadence).
     """
     if gs_union.size < 2:
@@ -550,7 +550,7 @@ def _disposition_summary(loaded: List[_Loaded], gs_union: np.ndarray,
                          + [int((_text(L.df, "disposition") == d).sum()) for L in loaded])
         out.append(_table(["disposition"] + [L.leg.label for L in loaded], drows, w))
 
-    # Agreement vs the reference on the shared epochs -- the A/B/C read.
+    # Agreement vs the reference on the shared epochs (the A/B/C read).
     out.append("")
     out.append(f"Disposition agreement vs '{ref.leg.label}':")
     if len(loaded) == 1:
@@ -605,10 +605,10 @@ def compare_tracks(runs: RunSet, *,
 
     # -- axes 1: sigma0 (adaptation) + config echoes + frame-event lines ------ #
     if es:
-        # The gate levels are folded into the y-limit BEFORE the axes is built:
-        # "how far below the ceiling is σ̂0" is the read this axis exists for, and
-        # a reference line parked outside the limits also collapses constrained
-        # layout (its label is an artist at that off-scale y).
+        # The gate levels are folded into the y-limit before the axes is built:
+        # this axis shows how far σ̂0 sits below the ceiling, and a reference line
+        # outside the limits also collapses constrained layout (its label is an
+        # artist at that off-scale y).
         trig, ceil, echo_note = _config_echoes(es)
         levels = [v for v in (trig, ceil) if np.isfinite(v) and v > 0]
         ax = _overlay_axes(es, "sigma0", title="Robust variance factor σ̂0 "
@@ -646,9 +646,9 @@ def compare_tracks(runs: RunSet, *,
     if sh:
         ax_a00 = _overlay_axes(sh, "a00_tecu", title="SH-VTEC a₀₀ (mean VTEC)",
                                ylabel="a₀₀ (TECU)", withheld=None)
-        # Count first, shade second: the count is the reportable fact and must not
+        # Count first, shade second: the count is the reported fact and must not
         # depend on whether a y-limit could be computed (an all-NaN a₀₀ column
-        # yields no limit, and "0 flagged" would then be a false reassurance).
+        # yields no limit, and "0 flagged" would then be wrong).
         lim = ax_a00.ylim
         has_flag = any("a00_in_band" in L.df.columns for L in sh)
         n_oob_total = sum(int((_num(L.df, "a00_in_band") == 0.0).sum()) for L in sh)
@@ -697,7 +697,7 @@ def _overlay_axes(loaded: List[_Loaded], col: str, *, title: str, ylabel: str,
             gs_w, mask_w = withheld.get(L.leg.label, (None, None))
             if gs_w is None:
                 continue
-            # Map the withheld mask onto THIS frame's epochs (the SH trace has a
+            # Map the withheld mask onto this frame's epochs (the SH trace has a
             # row only on epochs that reached the SH stage, so a positional zip
             # would mis-shade).
             wmap = dict(zip(gs_w.tolist(), mask_w.tolist()))
@@ -833,11 +833,11 @@ def _tracks_summary(es: List[_Loaded], sh: List[_Loaded], notes: List[str]) -> s
 # --------------------------------------------------------------------------- #
 def compare_events(runs: RunSet, *, ratio_flag: float = 3.0,
                    top_n: int = 12) -> ViewerResult:
-    """Per-tier event counts + per-epoch RATES across legs, ratio'd against leg 0.
+    """Per-tier event counts + per-epoch rates across legs, as ratios to leg 0.
 
-    Counts alone mislead the moment two legs span different epoch counts (they
-    routinely do -- a seed and its resume leg, a full day and a window), so the
-    ratio is taken on the rate and the epoch denominator is printed.
+    Counts alone mislead when two legs span different epoch counts (common: a
+    seed and its resume leg, a full day and a window), so the ratio is taken on
+    the rate and the epoch denominator is printed.
     """
     legs = runs.require(CSV_EVENTS, minimum=1)
     loaded = [_load(leg, CSV_EVENTS, _EV_COLS) for leg in legs]
@@ -926,7 +926,7 @@ def compare_events(runs: RunSet, *, ratio_flag: float = 3.0,
                % (ratio_flag, ", ".join(called_out) if called_out
                   else "none — every tier within %.0fx" % ratio_flag))
 
-    # Top (tier, event) pairs per leg -- what the tier counts are actually made of.
+    # Top (tier, event) pairs per leg: what the tier counts are made of.
     out.append("")
     out.append(f"Top {top_n} (tier, event) pairs per leg:")
     for L in loaded:
@@ -1134,7 +1134,7 @@ def _keyed_axes(leg: RunLeg, sta_z: pd.DataFrame, stations: List[Station],
               colorbar=ColorBar(label="robust-z of s0_code"))
     traces: List = []
 
-    # Roster stations with no keyed pool: drawn, never dropped -- an absent pool
+    # Roster stations with no keyed pool are drawn, not dropped: an absent pool
     # is itself a result (that station contributed no code rows this epoch).
     miss = [s for s in stations if s.id not in hit]
     if miss:
@@ -1154,7 +1154,7 @@ def _keyed_axes(leg: RunLeg, sta_z: pd.DataFrame, stations: List[Station],
                                   edgecolor=(0.15, 0.15, 0.15), linewidth=0.6,
                                   zorder=7,
                                   label=f"{role} ({len(pts)})"))
-    # Label the three biggest |z| -- the whole point of the map is naming them.
+    # Label the three largest |z|: naming those stations is what the map is for.
     if zv:
         order = np.argsort(-np.abs(np.asarray(zv, dtype=float)))[:3]
         for i in order:
@@ -1197,7 +1197,7 @@ def compare_scorecard(runs: RunSet) -> ViewerResult:
 
 
 # --------------------------------------------------------------------------- #
-#  Ordered comparator registry (NOT the single-ctx viewers REGISTRY)
+#  Ordered comparator registry (separate from the single-ctx viewers REGISTRY)
 # --------------------------------------------------------------------------- #
 @dataclass
 class RunComparator:
@@ -1233,7 +1233,7 @@ def run_multi_comparators(runs: RunSet, only: Optional[Sequence[str]] = None,
     """Run every (or an ``only`` subset of) comparator over ``runs``.
 
     A comparator that raises :class:`ViewerSkip` becomes a ``(name, reason)``
-    skip; any other exception becomes a ``(name, error)`` failure -- neither
+    skip; any other exception becomes a ``(name, error)`` failure.  Neither
     aborts the rest, mirroring :func:`gnssviz.run_viewers`.
     """
     want = set(only) if only else None

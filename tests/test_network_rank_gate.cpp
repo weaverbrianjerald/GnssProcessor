@@ -1,29 +1,29 @@
 /**
  * @file test_network_rank_gate.cpp
- * @brief Unit tests for Card DG — the shared-border null-space rank-gate
- *        tolerance as a per-config CALIBRATION parameter
- *        (@c network.rank_gate_tol → NetworkEstimator::setRankGateTol).
+ * @brief Unit tests for the shared-border null-space rank-gate tolerance as a
+ *        per-config calibration parameter
+ *        (@c network.rank_gate_tol → NetworkEstimator::setRankGateTol) (card DG).
  *
- * The gate decides whether a whole epoch is emitted or withheld, so this file
- * pins the three properties the card leans on (docs/SPEC_beidou_w6_datum.md §2):
+ * The gate decides whether a whole epoch is emitted or withheld.  This file pins
+ * the three properties the card relies on (docs/SPEC_beidou_w6_datum.md §2):
  *
- *  - DG1/DG4 — the DEFAULT is still NetworkEstimator::kNullSpaceTol and the gate
- *    semantics are untouched: EXACT equality against the declared S-basis
- *    dimension, throwing in BOTH directions, over a RELATIVE cutoff
- *    @c tol·max(λmax,1).  The both-direction throw is the trap that makes the
- *    tolerance per-config: a value pushed BELOW a config's own gauge depth stops
- *    counting the declared gauges and withholds a HEALTHY config.
- *  - DG3 — an ARMED (deeper) tolerance RECLASSIFIES a weak-but-real layer from
- *    "null" to "observable" while the true gauges stay counted, which is the
- *    entire mechanism by which BeiDou's ~1e-3 families stop withholding.
- *  - DG2 — ONE resolved value, THREE consumers.  The gate, the estimability dump
- *    and the prioritized drop-and-heal must agree; the heal in particular must
- *    NOT soft-anchor a direction the gate no longer counts as null (that would be
- *    prior information on real parameters).
+ *  - The default is NetworkEstimator::kNullSpaceTol and the gate semantics are
+ *    unchanged: exact equality against the declared S-basis dimension, throwing
+ *    in both directions, over a relative cutoff @c tol·max(λmax,1).  The
+ *    two-sided throw is why the tolerance is per-config: a value pushed below a
+ *    config's own gauge depth stops counting the declared gauges and withholds a
+ *    config whose datum is correct (DG1, DG4).
+ *  - An armed (deeper) tolerance reclassifies a weak but real layer from "null" to
+ *    "observable" while the true gauges stay counted.  This is the mechanism by
+ *    which BeiDou's ~1e-3 families stop withholding (DG3).
+ *  - One resolved value feeds three consumers: the gate, the estimability dump and
+ *    the prioritized drop-and-heal agree.  In particular the heal does not
+ *    soft-anchor a direction the gate no longer counts as null, which would put
+ *    prior information on real parameters (DG2).
  *
- * The spectrum-shape tests plant eigenvalues directly on a diagonal matrix — the
- * gate's own input — so the decade placement is exact rather than emergent.  The
- * consumer-consistency tests use a REAL registered system (the same orphaned
+ * The spectrum-shape tests plant eigenvalues directly on a diagonal matrix (the
+ * gate's own input), so the decade placement is exact rather than emergent.  The
+ * consumer-consistency tests use a registered system (the same orphaned
  * phase-bias construction as test_network_phase_datum.cpp) because the dump and
  * the heal both read the estimator's reduced normals.
  */
@@ -53,7 +53,7 @@
 namespace GnssProcessor {
 namespace {
 
-/// A planted spectrum as a diagonal matrix — exactly what the gate eigen-solves.
+/// A planted spectrum as a diagonal matrix, which is what the gate eigen-solves.
 Eigen::MatrixXd planted(const std::vector<double>& ev) {
     Eigen::MatrixXd D = Eigen::MatrixXd::Zero(static_cast<Eigen::Index>(ev.size()),
                                               static_cast<Eigen::Index>(ev.size()));
@@ -62,26 +62,27 @@ Eigen::MatrixXd planted(const std::vector<double>& ev) {
     return D;
 }
 
-/// The measured 305-station SHAPE, one decade per entry: λmax 1e6, a weak-but-REAL
-/// layer at 1e-4 (1e-10 relative — BeiDou's families), and two declared gauges at
+/// The shape of the measured 305-station spectrum: λmax 1e6, a weak but real
+/// layer at 1e-4 (1e-10 relative; BeiDou's families), and two declared gauges at
 /// 1e-10 (1e-16 relative).  With max(λmax,1) = 1e6 the cutoffs are:
-///   tol 1e-9  (default) -> 1e-3  : counts the gauges AND the weak-real layer (4)
+///   tol 1e-9  (default) -> 1e-3  : counts the gauges and the weak real layer (4)
 ///   tol 1e-12 (armed)   -> 1e-6  : counts only the gauges                    (2)
-///   tol 1e-18 (too deep)-> 1e-12 : counts NOTHING                            (0)
+///   tol 1e-18 (too deep)-> 1e-12 : counts nothing                            (0)
 const std::vector<double> kStormShape = {1e-10, 1e-10, 1e-4, 1e-4, 1e6};
 constexpr int kStormDeclaredDim = 2;
 
-/// A real single-station system carrying a SECOND phase-bias column that is
-/// either GENUINELY null or WEAKLY observable — the two below-cutoff classes the
-/// card's §0.1 decomposition hangs on, with different owners:
+/// A registered single-station system carrying a second phase-bias column that is
+/// either genuinely null or weakly observable: the two below-cutoff classes of
+/// the card's §0.1 decomposition, which have different owners.
 ///
 ///  - @p weak_w == 0 : PB(G02,L1) gets no rows at all (its only anchor station
-///    "dropped").  Structurally null ⇒ eigenvalue EXACTLY 0 ⇒ below ANY positive
-///    cutoff.  No tolerance can reclassify it; only the drop-and-heal (Card PA)
-///    can resolve it.  Mirrors test_network_phase_datum.cpp's HealFixture.
+///    has dropped).  It is structurally null, so its eigenvalue is exactly 0 and
+///    below any positive cutoff.  No tolerance can reclassify it; only the
+///    drop-and-heal (card PA) resolves it.  Mirrors test_network_phase_datum.cpp's
+///    HealFixture.
 ///  - @p weak_w > 0  : PB(G02,L1) gets one phase row at that weight plus its own
-///    pinned ambiguity, so it is separable but WEAKLY — the BeiDou-family shape
-///    the gate miscounts at 1e-9 and Card DG's calibration reclassifies.
+///    pinned ambiguity, so it is separable but weakly: the BeiDou-family shape
+///    the gate miscounts at 1e-9 and the calibration reclassifies (card DG).
 ///
 /// The clock gauge is folded as a tight constraint before the gate, so the
 /// declared datum dimension is 0 and the only candidate null direction is the
@@ -127,8 +128,8 @@ std::shared_ptr<spdlog::logger> sinkLogger(std::ostringstream& oss, const char* 
 }
 
 /// The gate's observed near-zero count, whatever it is.  Passing declared_dim = -1
-/// guarantees the equality test fails, and the out-param is written BEFORE that
-/// test — so this reads the count without the caller having to predict it.
+/// makes the equality test fail, and the out-param is written before that test,
+/// so this reads the count without the caller having to predict it.
 int observedNullCount(const NetworkSbasis& sb, const Eigen::MatrixXd& N, double tol) {
     int observed = -1;
     try {
@@ -139,10 +140,9 @@ int observedNullCount(const NetworkSbasis& sb, const Eigen::MatrixXd& N, double 
 }
 
 // ---------------------------------------------------------------------------
-// DG1 — the default is the compile constant, and it is the ONLY default.
-// A fresh estimator must behave exactly as the pre-card build did, because the
-// OFF-path byte-identity claim rests on the identical double reaching the
-// identical arithmetic.
+// The default is the compile constant, and there is no other default.  A fresh
+// estimator behaves as it did before the knob existed: the off-path byte-identity
+// rests on the identical double reaching the identical arithmetic (DG1).
 // ---------------------------------------------------------------------------
 TEST(NetworkRankGateTest, DefaultToleranceIsTheCompileConstant) {
     NetworkEstimator est;
@@ -152,8 +152,8 @@ TEST(NetworkRankGateTest, DefaultToleranceIsTheCompileConstant) {
     est.setRankGateTol(1e-12);
     EXPECT_EQ(est.rankGateTol(), 1e-12);
 
-    // Configuration-level, not per-epoch: the resolved value must survive the
-    // layout lifecycle, or the gate would silently revert mid-run.
+    // Configuration-level, not per-epoch: the resolved value survives the layout
+    // lifecycle; otherwise the gate would revert mid-run without notice.
     est.registerClock("G01");
     est.beginEpoch();
     EXPECT_EQ(est.rankGateTol(), 1e-12);
@@ -162,16 +162,16 @@ TEST(NetworkRankGateTest, DefaultToleranceIsTheCompileConstant) {
 }
 
 // ---------------------------------------------------------------------------
-// DG4 — exact equality, throwing in BOTH directions.  The OVER-specified branch
-// is the one this card can newly provoke by mis-placing the tolerance, and its
-// message must say so: chasing a missing datum constraint when the real fault is
-// a too-deep cutoff is the failure mode DG3's placement rule exists to prevent.
+// Exact equality, throwing in both directions.  A misplaced tolerance can
+// provoke the over-specified branch, and its message says "over-specified" so
+// the reader looks for a too-deep cutoff rather than a missing datum constraint,
+// the confusion DG3's placement rule guards against (DG4).
 // ---------------------------------------------------------------------------
 TEST(NetworkRankGateTest, GateThrowsInBothDirections) {
     const NetworkSbasis sb;
     const Eigen::MatrixXd N = planted(kStormShape);
 
-    // Default tol: cutoff 1e-3 counts 4 (2 gauges + the 2 weak-real) vs declared 2.
+    // Default tol: cutoff 1e-3 counts 4 (2 gauges + the 2 weak real) vs declared 2.
     try {
         sb.assertNullSpaceRank(N, kStormDeclaredDim, NetworkEstimator::kNullSpaceTol);
         FAIL() << "observed 4 vs declared 2 must throw";
@@ -180,8 +180,8 @@ TEST(NetworkRankGateTest, GateThrowsInBothDirections) {
             << e.what();
     }
 
-    // A tolerance BELOW the gauge depth: nothing is counted, so the DECLARED
-    // gauges go unseen — a healthy datum reported as over-specified.
+    // A tolerance below the gauge depth: nothing is counted, so the declared
+    // gauges go unseen and a correct datum is reported as over-specified.
     try {
         sb.assertNullSpaceRank(N, kStormDeclaredDim, 1e-18);
         FAIL() << "observed 0 vs declared 2 must throw";
@@ -192,9 +192,9 @@ TEST(NetworkRankGateTest, GateThrowsInBothDirections) {
 }
 
 // ---------------------------------------------------------------------------
-// DG3 — the calibration itself: an armed tolerance placed in the measured gap
-// reclassifies the weak-but-real layer as observable while still catching every
-// declared gauge.  This is the whole mechanism by which the BeiDou arm can emit.
+// The calibration itself: an armed tolerance placed in the measured gap
+// reclassifies the weak real layer as observable while still counting every
+// declared gauge.  This is the mechanism by which the BeiDou arm can emit (DG3).
 // ---------------------------------------------------------------------------
 TEST(NetworkRankGateTest, ArmedToleranceReclassifiesTheWeakRealLayer) {
     const NetworkSbasis sb;
@@ -206,23 +206,23 @@ TEST(NetworkRankGateTest, ArmedToleranceReclassifiesTheWeakRealLayer) {
                  std::runtime_error);
     EXPECT_EQ(observed, 4) << "default cutoff 1e-3 miscounts the 1e-4 layer as null";
 
-    // Armed at 1e-12 -> cutoff 1e-6, mid-gap: the weak-real layer passes, the
+    // Armed at 1e-12 -> cutoff 1e-6, mid-gap: the weak real layer passes, the
     // gauges are still counted, and the gate agrees with the declared dimension.
     observed = -1;
     EXPECT_NO_THROW(sb.assertNullSpaceRank(N, kStormDeclaredDim, 1e-12, &observed));
     EXPECT_EQ(observed, kStormDeclaredDim)
         << "armed cutoff must count the gauges and nothing else";
 
-    // The gauges are NOT lost at the armed value — the guard against "calibrate
-    // until it emits", which would just turn the safety gate off.
+    // The gauges are still counted at the armed value.  This guards against
+    // calibrating until the epoch emits, which would switch the gate off.
     EXPECT_THROW(sb.assertNullSpaceRank(N, /*declared_dim=*/0, 1e-12),
                  std::runtime_error);
 }
 
 // ---------------------------------------------------------------------------
-// DG6 — the observed count reaches the caller on BOTH paths.  The throwing path
-// is the one that matters: the exception carries the number only as prose, and
-// under/over must be separable counters, not a parsed log string.
+// The observed count reaches the caller on both paths.  The throwing path needs
+// it most: the exception carries the number only as prose, and under- and
+// over-specified epochs are counted separately, not parsed from a log string (DG6).
 // ---------------------------------------------------------------------------
 TEST(NetworkRankGateTest, ObservedCountIsReportedOnThePassingAndThrowingPaths) {
     const NetworkSbasis sb;
@@ -246,10 +246,10 @@ TEST(NetworkRankGateTest, ObservedCountIsReportedOnThePassingAndThrowingPaths) {
 }
 
 // ---------------------------------------------------------------------------
-// DG2 (consumer 3) — the estimability dump describes the decision the GATE is
-// about to make.  Same resolved tolerance in, same cutoff and same below-count
-// out, at the default AND at an armed value.  A dump that disagreed with the
-// gate would make every calibration argument unfalsifiable.
+// The estimability dump describes the decision the gate is about to make: the
+// same resolved tolerance gives the same cutoff and the same below-cutoff count,
+// at the default and at armed values.  A dump that disagreed with the gate could
+// not support any calibration argument (DG2, consumer 3).
 // ---------------------------------------------------------------------------
 TEST(NetworkRankGateTest, DumpReportsTheGatesOwnCutoffAndCount) {
     for (const double tol : {NetworkEstimator::kNullSpaceTol, 1e-12, 1e-18}) {
@@ -262,12 +262,12 @@ TEST(NetworkRankGateTest, DumpReportsTheGatesOwnCutoffAndCount) {
             3600.0, /*declared_dim=*/0, std::vector<std::string>{}, sinkLogger(oss, "dg_dump"));
         ASSERT_TRUE(dump.valid) << "tol=" << tol;
 
-        // The dump's own cutoff is the resolved tolerance times max(λmax, 1) —
-        // the same arithmetic NetworkSbasis::assertNullSpaceRank performs.
+        // The dump's own cutoff is the resolved tolerance times max(λmax, 1), the
+        // same arithmetic NetworkSbasis::assertNullSpaceRank performs.
         EXPECT_DOUBLE_EQ(dump.cutoff, tol * std::max(dump.ev_max, 1.0)) << "tol=" << tol;
 
-        // And the gate, handed that same tolerance, counts exactly what the dump
-        // reported (declared_dim=n_below makes it a pass, isolating the COUNT).
+        // The gate, handed the same tolerance, counts what the dump reported
+        // (declared_dim=n_below makes it a pass, which isolates the count).
         const NetworkSbasis sb;
         int observed = -1;
         EXPECT_NO_THROW(sb.assertNullSpaceRank(f.est.reducedSharedNormals(),
@@ -286,13 +286,13 @@ TEST(NetworkRankGateTest, DumpReportsTheGatesOwnCutoffAndCount) {
 }
 
 // ---------------------------------------------------------------------------
-// §0.1 — the class boundary the whole card rests on: a GENUINELY null direction
-// is null at EVERY tolerance, so no amount of gate calibration can clear it.
-// A structurally absent column (no rows) has eigenvalue exactly 0, which is
-// below any positive cutoff by construction.  This is why the four-class
-// decomposition assigns the deep orphans to Card PA's heal and only the
-// weak-but-real families to Card DG — and why "calibrate until it emits" is not
-// an available shortcut.
+// The class boundary the card rests on (§0.1): a genuinely null direction is
+// null at every tolerance, so no gate calibration can clear it.  A structurally
+// absent column (no rows) has eigenvalue exactly 0, which is below any positive
+// cutoff by construction.  The four-class decomposition therefore assigns the
+// deep orphans to the heal (card PA) and only the weak but real families to the
+// calibration (card DG), and calibrating until the epoch emits cannot clear an
+// orphan.
 // ---------------------------------------------------------------------------
 TEST(NetworkRankGateTest, GenuinelyNullDirectionSurvivesEveryTolerance) {
     const NetworkSbasis sb;
@@ -306,8 +306,8 @@ TEST(NetworkRankGateTest, GenuinelyNullDirectionSurvivesEveryTolerance) {
                      std::runtime_error) << "tol=" << tol;
         EXPECT_GE(observed, 1) << "tol=" << tol;
 
-        // ...and the heal DOES resolve it, at every tolerance — the PA half of
-        // the division of labour.
+        // The heal resolves it at every tolerance: the card PA half of the
+        // division of labour.
         std::vector<NetworkEstimator::SharedPrior> cap;
         std::vector<PhaseHealEvent> events;
         EXPECT_EQ(healNearNullPhaseBias(f.est, f.keys, /*prioritized=*/true,
@@ -323,12 +323,12 @@ TEST(NetworkRankGateTest, GenuinelyNullDirectionSurvivesEveryTolerance) {
 }
 
 // ---------------------------------------------------------------------------
-// DG2 (consumer 2) / PA1 — the drop-and-heal follows the SAME resolved cutoff.
-// On a WEAK-but-real column the default cutoff counts it null and the heal
-// soft-anchors it; once the calibration moves the cutoff below it, the gate
-// calls it observable and the heal must leave it alone.  Anything else is a
-// σ = 1 m prior on a parameter the gate just declared REAL — the near-cutoff
-// fragility that ordered gate-calibration ahead of the Kaula prior (§0.3).
+// The drop-and-heal follows the same resolved cutoff.  The default cutoff counts
+// a weak but real column as null and the heal soft-anchors it; once the
+// calibration moves the cutoff below it, the gate calls it observable and the
+// heal leaves it alone.  Otherwise a σ = 1 m prior would land on a parameter the
+// gate has just declared real, the near-cutoff fragility that ordered the gate
+// calibration ahead of the Kaula prior (DG2 consumer 2, PA1; §0.3).
 // ---------------------------------------------------------------------------
 TEST(NetworkRankGateTest, HealFollowsTheResolvedToleranceNotTheDefault) {
     constexpr double kWeakW = 1e-6;
@@ -362,9 +362,9 @@ TEST(NetworkRankGateTest, HealFollowsTheResolvedToleranceNotTheDefault) {
         EXPECT_EQ(events.size(), 1u);
     }
 
-    // (b) armed one decade BELOW the weak column's own relative depth — the
-    //     measured-gap placement DG3 mandates, derived here from the spectrum
-    //     rather than guessed (guessing is a spec violation for a reason).
+    // (b) armed one decade below the weak column's own relative depth: the
+    //     measured-gap placement DG3 requires, derived here from the spectrum
+    //     rather than guessed (the spec forbids a guessed placement).
     {
         const double armed = 0.1 * weak_ev / std::max(ev_max, 1.0);
         ASSERT_GT(armed, 0.0);
@@ -388,9 +388,9 @@ TEST(NetworkRankGateTest, HealFollowsTheResolvedToleranceNotTheDefault) {
 }
 
 // ---------------------------------------------------------------------------
-// PA2 — the attribution channel is strictly OPTIONAL and observational: passing
-// nullptr (the pre-card call shape, still used by the existing tests) must heal
-// exactly the same columns.
+// The attribution channel is optional and observational: passing nullptr (the
+// older call shape, still used by other tests) heals the same columns with the
+// same priors (PA2).
 // ---------------------------------------------------------------------------
 TEST(NetworkRankGateTest, HealAttributionChannelIsObservational) {
     SecondColumnFixture with_out, without_out;
@@ -415,16 +415,15 @@ TEST(NetworkRankGateTest, HealAttributionChannelIsObservational) {
 }
 
 // ---------------------------------------------------------------------------
-// Card H2 — the phase→code COMPANION KEY transform behind the orphan-window
-// counter.  This is a unit test because the field run cannot serve as one: the
-// counter reads 0 at both 305- and 50-station density, and 0 is also exactly
-// what a MISWIRED counter reports.  The first version of the counter compared
-// the phase key's signal ("L2X") against the census's code keys ("C2X") and was
-// therefore permanently zero — inert wiring that reads as "no orphans", the
-// standing-invariant-#4 failure mode.  The transform is L<band><attr> ->
-// C<band><attr>, and it MUST match the one the state-allocation co-gate applies
-// in MeasurementModel::ensureNetworkSharedStates, or the two disagree about
-// which phase column belongs to which code column.
+// The phase-to-code companion key transform behind the orphan-window counter
+// (card H2).  A field run cannot check it: the counter reads 0 at both 305- and
+// 50-station density, and 0 is also what a miswired counter reports.  Comparing
+// the phase key's signal ("L2X") against the census's code keys ("C2X") without
+// the transform leaves the counter at zero forever, which reads as "no orphans"
+// (invariant #4).  The transform is L<band><attr> -> C<band><attr>, and it
+// matches the one the state-allocation co-gate applies in
+// MeasurementModel::ensureNetworkSharedStates; otherwise the two would disagree
+// about which phase column belongs to which code column.
 // ---------------------------------------------------------------------------
 TEST(NetworkRankGateTest, PhaseToCodeCompanionKeyTransformMatchesTheCoGate) {
     struct Case { const char* sat; const char* phase_sig; const char* code_sig; };
@@ -446,8 +445,8 @@ TEST(NetworkRankGateTest, PhaseToCodeCompanionKeyTransformMatchesTheCoGate) {
         EXPECT_EQ(csig, c.code_sig);
         EXPECT_EQ(StateKeys::makeSatBiasKey(parts->satellite, csig),
                   StateKeys::makeSatBiasKey(c.sat, c.code_sig));
-        // And the trap itself: the UNTRANSFORMED phase signal must NOT collide
-        // with the code key, or the bug would be invisible.
+        // The untransformed phase signal does not collide with the code key, so
+        // skipping the transform is detectable.
         EXPECT_NE(StateKeys::makeSatBiasKey(parts->satellite, parts->signal),
                   StateKeys::makeSatBiasKey(c.sat, c.code_sig))
             << "reusing the phase signal verbatim must never match a code key";
@@ -455,9 +454,9 @@ TEST(NetworkRankGateTest, PhaseToCodeCompanionKeyTransformMatchesTheCoGate) {
 }
 
 // ---------------------------------------------------------------------------
-// Card KP (K1/K2/K3) — the loose physical-bound prior on ADMITTED OSB columns.
-// Its trigger fired on the armed 305 arm: the residual below-cutoff population
-// was 3 declared clock gauges + ONE CB+CLK direction with zero phase weight,
+// The loose physical-bound prior on admitted OSB columns (card KP, K1/K2/K3).
+// It targets the residual below-cutoff population seen on the armed 305-station
+// arm: 3 declared clock gauges plus one CB+CLK direction with zero phase weight,
 // which the drop-and-heal structurally cannot reach.
 // ---------------------------------------------------------------------------
 TEST(NetworkRankGateTest, KaulaPriorsAreOnePerAdmittedColumnAtOneOverSigmaSquared) {
@@ -474,27 +473,28 @@ TEST(NetworkRankGateTest, KaulaPriorsAreOnePerAdmittedColumnAtOneOverSigmaSquare
         EXPECT_DOUBLE_EQ(p[i].info, 1.0 / (10.0 * 10.0));
     }
 
-    // A non-positive sigma means info = 1/0 — a HARD pin on every admitted OSB,
-    // i.e. a silent datum takeover labelled "loose prior".  Refused at the seam,
-    // not only at the loader.
+    // A non-positive sigma means info = 1/0, a hard pin on every admitted OSB,
+    // i.e. an unannounced datum takeover labelled "loose prior".  The seam refuses
+    // it, not only the loader.
     EXPECT_TRUE(NetworkSbasis::buildCodeBiasKaulaPriors(keys, 0.0).empty());
     EXPECT_TRUE(NetworkSbasis::buildCodeBiasKaulaPriors(keys, -1.0).empty());
-    // No admitted columns -> nothing folded (the OFF/inert path).
+    // No admitted columns -> nothing folded (the off/inert path).
     EXPECT_TRUE(NetworkSbasis::buildCodeBiasKaulaPriors({}, 10.0).empty());
 }
 
-// K1/K3 on a real system: the prior lifts a CODE-dominated near-null direction
-// above the gate's cutoff WITHOUT being a datum row — so the declared dimension
-// the gate is checked against never moves.  This is the mechanism the residual
-// needs, isolated from the phase side entirely (there is no PB column here).
+// K1/K3 on a registered system: the prior lifts a code-dominated near-null
+// direction above the gate's cutoff without being a datum row, so the declared
+// dimension the gate is checked against does not move.  This is the mechanism
+// the residual population needs, isolated from the phase side (there is no PB
+// column here).
 TEST(NetworkRankGateTest, KaulaPriorLiftsACodeDominatedNullDirection) {
     // Shared columns [CLK(C21), CB(C21,C2I), CB(C21,C7Z)], locals [a_r].
     //   code C2I : P = a_r - c + b1
     //   code C7Z : P = a_r - c + b2
     // Two code rows, three shared unknowns and one local: the satellite clock is
-    // inseparable from a COMMON shift of its two code biases (δc = -δb1 = -δb2) —
-    // a genuinely code-dominated gauge with ZERO phase weight, exactly the class
-    // the drop-and-heal cannot touch.
+    // inseparable from a common shift of its two code biases (δc = δb1 = δb2):
+    // a code-dominated gauge with zero phase weight, the class the drop-and-heal
+    // cannot reach.
     NetworkEstimator est;
     const Eigen::Index c  = est.registerClock("C21");
     const Eigen::Index b1 = est.registerCodeBias("C21", "C2I");
@@ -515,11 +515,11 @@ TEST(NetworkRankGateTest, KaulaPriorLiftsACodeDominatedNullDirection) {
                  std::runtime_error);
     ASSERT_GE(before, 1) << "precondition: a code-dominated null direction exists";
 
-    // The direction really is CODE-dominated: no component of it is a phase-bias
-    // column, so the drop-and-heal — which only anchors PB columns spanning a
-    // near-null direction — has nothing to act on.  That is the structural reason
-    // KP exists as a SEPARATE lever rather than a heal tuning knob.  Asserted on
-    // the dumped spectrum rather than by calling the heal with a fabricated key.
+    // The direction is code-dominated: no component of it is a phase-bias column,
+    // so the drop-and-heal (which only anchors PB columns spanning a near-null
+    // direction) has nothing to act on.  That is why KP is a separate lever rather
+    // than a heal tuning knob.  Asserted on the dumped spectrum rather than by
+    // calling the heal with a fabricated key.
     {
         std::vector<std::string> col_desc(static_cast<std::size_t>(est.numShared()));
         col_desc[static_cast<std::size_t>(c)]  = "CLK|C21";
@@ -545,11 +545,11 @@ TEST(NetworkRankGateTest, KaulaPriorLiftsACodeDominatedNullDirection) {
                                     /*prioritized=*/true, /*armed=*/true, cap), 0)
         << "no phase-bias column exists in a code-only system — the heal is inert here";
 
-    // KP folds the physical bound and the CODE-dominated direction becomes
-    // observable.  The claim is a STRICT DECREASE, not "zero": this toy system
-    // also carries a legitimate satellite-clock ↔ receiver-clock gauge with no
-    // code-bias weight, which the prior correctly does NOT touch — a prior that
-    // resolved THAT would be putting information on a real datum freedom.
+    // KP folds the physical bound and the code-dominated direction becomes
+    // observable.  The claim is a strict decrease, not zero: this toy system also
+    // carries a legitimate satellite-clock ↔ receiver-clock gauge with no
+    // code-bias weight, which the prior leaves alone; resolving it would put
+    // information on a real datum freedom.
     const auto kp = NetworkSbasis::buildCodeBiasKaulaPriors(
         {{"C21", "C2I"}, {"C21", "C7Z"}}, /*sigma_m=*/10.0);
     ASSERT_EQ(kp.size(), 2u);
@@ -560,11 +560,12 @@ TEST(NetworkRankGateTest, KaulaPriorLiftsACodeDominatedNullDirection) {
         << " -> " << after << ')';
 }
 
-// K2 — the anti-fragility inequality itself, stated as arithmetic so a future
-// sigma/tolerance change cannot quietly recreate the configuration the CB-ADM
-// card rejected (prior information sitting AT the rank cutoff).
+// The margin inequality, stated as arithmetic so a later sigma or tolerance
+// change cannot recreate unnoticed the configuration card CB-ADM rejected (prior
+// information sitting at the rank cutoff) (K2).  With sigma 10 m, info = 0.01,
+// which clears the 6.0218e-06 cutoff below by about 3.2 decades.
 TEST(NetworkRankGateTest, KaulaPriorClearsTheCutoffByTwoDecades) {
-    // The measured 305-station storm arm: lambda_max 6.0218e+06 with the armed
+    // From the measured 305-station storm arm: lambda_max 6.0218e+06 with the armed
     // rank_gate_tol 1e-12 gives cutoff 6.0218e-06.
     constexpr double kLambdaMax = 6.021829601e+06;
     constexpr double kArmedTol  = 1e-12;
@@ -577,8 +578,8 @@ TEST(NetworkRankGateTest, KaulaPriorClearsTheCutoffByTwoDecades) {
         << "K2: info " << p.front().info << " vs cutoff " << cutoff
         << " is only " << decades << " decades — the rejected near-cutoff configuration";
 
-    // And the inverse guard: a prior loose enough to sit at the cutoff must FAIL
-    // the same test, or the check is vacuous.
+    // The inverse guard: a prior loose enough to sit at the cutoff fails the same
+    // test, so the check is not vacuous.
     const double sigma_at_cutoff = 1.0 / std::sqrt(cutoff);
     const auto weak = NetworkSbasis::buildCodeBiasKaulaPriors({{"C21", "C5P"}}, sigma_at_cutoff);
     ASSERT_EQ(weak.size(), 1u);
@@ -586,11 +587,11 @@ TEST(NetworkRankGateTest, KaulaPriorClearsTheCutoffByTwoDecades) {
 }
 
 // ---------------------------------------------------------------------------
-// DG1 (loader contract) — the key parses, defaults to the compile constant, and
-// its guards hold.  The floor matters more than it looks: a tolerance below
-// double's relative resolution against lambda_max counts NO direction as null,
-// which silently converts the gate into "declared_dim must be 0" — an OFF switch
-// wearing a tuning value's clothes (standing invariant #4).
+// Loader contract: the key parses, defaults to the compile constant, and its
+// guards hold (DG1).  The floor matters: a tolerance below double's relative
+// resolution against lambda_max counts no direction as null, which turns the
+// gate into "declared_dim must be 0", in effect an off switch presented as a
+// tuning value (invariant #4).
 // ---------------------------------------------------------------------------
 namespace {
 
@@ -639,11 +640,12 @@ TEST(NetworkRankGateTest, ConfigParsesArmsValidatesAndClamps) {
         {"armed",  "    \"rank_gate_tol\": 1e-12,\n", true,  1e-12},
         {"zero",   "    \"rank_gate_tol\": 0.0,\n",   false, 0.0},
         {"neg",    "    \"rank_gate_tol\": -1e-9,\n", false, 0.0},
-        // Below the 1e-16 floor: accepted but CLAMPED, never silently honoured.
+        // Below the 1e-16 floor: accepted but clamped, never honoured as given.
         {"floor",  "    \"rank_gate_tol\": 1e-30,\n", true,  1e-16},
     };
-    // Card KP's own loader contract rides here: default OFF at the documented
-    // sigma, and a non-positive sigma is refused rather than folded as info = inf.
+    // The loader contract of card KP is checked here too: off by default at the
+    // documented sigma, and a non-positive sigma is refused rather than folded as
+    // info = inf.
     {
         const auto p = writeCfg("kp_default", "");
         GnssConfig cfg;

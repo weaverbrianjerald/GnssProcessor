@@ -32,12 +32,12 @@ std::vector<std::string> secondCodeCompanions(
     const std::vector<std::string>& allow_list) {
 
     std::vector<std::string> out;
-    // No selected code means there is nothing to be a companion OF: the band has
-    // no canonical row this epoch, so any allow-listed code that arrives is the
-    // FALLBACK case, handled on the receiver side and counted separately.
+    // With no selected code the band has no canonical row this epoch, so nothing
+    // can be a companion: any allow-listed code that arrives is the fallback case,
+    // handled and counted on the receiver side.
     if (selected_code.empty()) return out;
     for (const std::string& sig : allow_list) {
-        if (sig == selected_code) continue;                   // that IS the canonical
+        if (sig == selected_code) continue;                   // the canonical code itself
         if (!reported_codes.count(sig)) continue;             // the station does not track it
         if (std::find(out.begin(), out.end(), sig) != out.end()) continue;  // duplicate entry
         out.push_back(sig);

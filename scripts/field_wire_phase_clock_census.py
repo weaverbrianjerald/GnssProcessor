@@ -1,70 +1,72 @@
 #!/usr/bin/env python3
-"""FIELD WIRE — per-satellite PHASE-CLOCK wander census + consumer geometry closure.
+"""Field wire: per-satellite phase-clock wander census + consumer geometry closure.
 
-WHY
----
+Purpose
+-------
 On the DOY-129 63-station field bed the closed-loop consumer's settled residual
-collapses onto ONE slowly-wandering direction (73 % of the [E,N,U] variance on an
+concentrates on one slowly wandering direction (73 % of the [E,N,U] variance on an
 axis at el 49.8 deg / az 9.3 deg, ACF < 0.5 at ~12 min, zero AR fixes) with tropo
-coupling closed.  That is the signature of a slowly-varying PER-SATELLITE error in
-the emitted wire parked by the float consumer in its weakest geometric direction.
+coupling closed.  That is the signature of a slowly varying per-satellite error in
+the emitted wire, which the float consumer places in its weakest geometric direction.
 
-This probe measures that on the WIRE itself, without re-processing:
+This probe measures that error on the wire itself, without re-processing:
 
-  step 2  TRUTH-FREE SMOOTHNESS.  Per satellite s and signal b the wire phase-clock
-          is formed from the emitted records, the per-epoch mean over satellites is
-          removed (the datum -- the consumer's own receiver clock re-absorbs it, so
-          the position part of any closure below is EXACTLY invariant to this), the
-          series is cut into TENURES (anchor handover / discontinuity bump / pivot /
-          datum change / absence) and inside each tenure the deviation from a LOCAL
-          LINEAR FIT over a sliding 30-min window is taken.  A real Rb/H-maser
-          satellite clock cannot produce that deviation: over 30 min its aging term
-          contributes ~1e-6 m, so everything above the product's own noise floor is
-          estimator wander.  The floor is MEASURED, not assumed -- the identical
+  step 2  Truth-free smoothness.  Per satellite s and signal b the wire phase-clock
+          is formed from the emitted records, and a per-epoch datum over satellites
+          is removed (--datum, default a 20 % trimmed mean; the consumer's own
+          receiver clock re-absorbs any per-epoch common scalar, so the position part
+          of any closure below is exactly invariant to this).  The series is cut into
+          tenures (anchor handover / discontinuity bump / pivot / datum change /
+          absence), and inside each tenure the deviation from a local linear fit over
+          a sliding window (--window-min, default 30 min) is taken.  A real
+          Rb/H-maser satellite clock cannot produce that deviation: over 30 min its
+          aging term contributes ~1e-6 m, so everything above the product's own noise
+          floor is estimator wander.  The floor is measured, not assumed: the same
           statistic is run on the external COD final clock (channel `cod_clk`).
 
-  step 3  IGS/COD COMPARISON.  See the CONVENTIONS block: on this lineage the
-          a-priori named in the product's own S record IS a COD MGX final SP3+CLK,
-          so the emitted C record is ALREADY (estimator clock - COD clock) up to a
+  step 3  IGS/COD comparison.  See the conventions block: on this lineage the
+          a-priori named in the product's own S record is a COD MGX final SP3+CLK,
+          so the emitted C record is already (estimator clock - COD clock) up to a
           per-epoch constellation-common scalar.  The truth-free clock channel is
-          therefore also the truth-graded one; the script says so explicitly and
+          therefore also the truth-graded one; the script says so in its output and
           still cross-checks against the CLK on disk.
 
-  step 4  GEOMETRY CLOSURE.  SP3 orbits -> LOS unit vectors at the consumer, design
+  step 4  Geometry closure.  SP3 orbits -> LOS unit vectors at the consumer, design
           matrix G = [-e_ENU, 1] over the satellites above the elevation mask,
           W = diag(sin^2 el), and the predicted consumer error from the wire's own
           wander,  dx(t) = (G'WG)^-1 G'W delta(t).  Correlated against the consumer
           trace, projected onto the measured error axis, and attributed per
           satellite.
 
-  step 5  EVENT OVERLAY.  |delta| in the 5 min after each event tier vs elsewhere.
+  step 5  Event overlay.  |delta| in the 5 min after each event tier vs elsewhere.
 
-CONVENTIONS RELIED ON (all read out of the source, not assumed)
---------------------------------------------------------------
-* C record  = `clock_c0_m`, a CORRECTION in metres added to the a-priori clock:
-  GnssCorrections.cpp:344 `clock_corr += applyClockToBias(c0,...)` with
-  SsrCorrectionStore.cpp:668 `(c0 + c1 dt + ...)/c` -> seconds, and PppModel.cpp:1397
-  `modeled = range - sat_clock*c ...`.  So C0 enters the PREDICTED observable with
-  coefficient -1.
-* P record  = `bias_m`, MeasurementModel.cpp:1608-1624 `kSsrPhaseBiasSign = +1.0`,
+Conventions relied on (read from the source, not assumed)
+---------------------------------------------------------
+* C record  = `clock_c0_m`, a correction in metres added to the a-priori clock:
+  GnssCorrections.cpp `clock_corr += SsrCorrectionStore::applyClockToBias(c0,...)`,
+  where SsrCorrectionStore::applyClockToBias returns `(c0 + c1 dt + ...)/c` in
+  seconds, and PppModel.cpp models `range - sat_clock*c ...`.  So C0 enters the
+  predicted observable with coefficient -1.
+* P record  = `bias_m`, MeasurementModel.cpp `kSsrPhaseBiasSign = +1.0`,
   "the satellite signal bias PRESENT in the observation, so it is added to the clean
-  model".  So P enters the PREDICTED observable with coefficient +1.
+  model".  So P enters the predicted observable with coefficient +1.
 * => the model-consistent wire phase-clock is  A_{s,b} = P_{s,b} - C0_s  (channel
   `pc_*`), and an anomaly `a` in A enters the innovation with -1, so the
   innovation-side driver is delta = -dev(A).  The literal sum C0 + P (channel
   `sum_*`) is reported alongside so the attribution can be read either way; the
-  wander MAGNITUDES are sign-blind, only the closure SIGN depends on this.
+  wander magnitudes are sign-blind, and only the closure sign depends on this.
 * IF combination: P_IF = (f1^2 P_L1C - f2^2 P_L2W)/(f1^2 - f2^2), f1 = 1575.42 MHz,
   f2 = 1227.60 MHz; the clock is band-independent so A_IF = P_IF - C0.
-* Consumer error sign: NetworkEmitStore.cpp:660 `d = pos - cl_truth`, so the trace's
-  east_m/north_m/up_m are (ESTIMATE - TRUTH).  dx above is the estimate's displacement
-  caused by the wire anomaly, so a real drive shows a POSITIVE correlation; a negative
-  one is not "the same effect with a sign slip", it is inconsistent with direct drive.
+* Consumer error sign: NetworkEmitStore.cpp `d = pos - cl_truth`, so the trace's
+  east_m/north_m/up_m are (estimate - truth).  dx above is the estimate's displacement
+  caused by the wire anomaly, so a real drive shows a positive correlation; a negative
+  one is inconsistent with direct drive, not the same effect with a sign slip.
 * Elevation mask: taken from the run's own resolved config
   (`processing.elevation_mask_deg`), overridable with --elev-mask; printed.
-* The emitted C0 differs from the estimator's clock by a per-CONSTELLATION,
-  per-epoch scalar only (NetworkClockEmitRebase.cpp: `held = c0 - acc`, "between-sat
-  differences preserved exactly"), which the per-epoch mean removal kills exactly.
+* The emitted C0 differs from the estimator's clock by a per-constellation,
+  per-epoch scalar only (NetworkClockEmitRebase.cpp: `held = c0 - acc` with one
+  accumulator per constellation, "between-sat differences preserved exactly"), which
+  the per-epoch datum removal cancels exactly.
 
 Usage
 -----
@@ -73,7 +75,7 @@ Usage
          [--station NAME] [--station-ecef X,Y,Z] [--elev-mask 15]
          [--window-min 30] [--axis 0.104,0.637,0.764]
 
-`--settle-h H` DISCARDS the first H hours; the analysis window is everything after.
+`--settle-h H` discards the first H hours; the analysis window is everything after.
 """
 
 import argparse
@@ -98,8 +100,8 @@ WGS84_A = 6378137.0
 WGS84_F = 1.0 / 298.257223563
 
 #: Event tiers that break a tenure.  PBGAUGE keys on "<sat>_<signal>"; the rest key
-#: on the satellite (or are global).  CLK_ANCHOR / READMIT are named by the card even
-#: though this lineage emits neither -- an arm that does gets them for free.
+#: on the satellite (or are global).  CLK_ANCHOR / READMIT are listed by the card even
+#: though this lineage emits neither, so an arm that emits them is handled unchanged.
 SAT_SIG_TIERS = ("PBGAUGE",)
 SAT_TIERS = ("PHASE_ANCHOR", "RETRO", "CLK_ANCHOR", "READMIT")
 GLOBAL_TIERS = ("PIVOT",)
@@ -140,9 +142,9 @@ def _neff(a, b, max_lag=60):
     """Bartlett effective sample size for corr(a, b) on autocorrelated series.
 
     n_eff = n / (1 + 2 * sum_k rho_a(k) rho_b(k)).  Both series here have a ~13 min
-    correlation time on a 30 s grid, so the nominal n = 720 buys far fewer than 720
-    independent samples -- quoting a raw Pearson p-value would overstate every
-    correlation in this report by an order of magnitude.
+    correlation time on a 30 s grid, so the nominal n = 720 gives far fewer than 720
+    independent samples; a raw Pearson p-value would overstate every correlation in
+    this report by an order of magnitude.
     """
     a = np.asarray(a, float)
     b = np.asarray(b, float)
@@ -210,7 +212,7 @@ def _acf_first_below(series_list, thresh=0.5, max_lag=120):
 
 def qtow(t):
     """Quantize a TOW to the nearest second.  The emitter prints accumulated float
-    dust (302370.00000190735) while every trace CSV prints %.3f; the grid is 30 s so
+    error (302370.00000190735) while every trace CSV prints %.3f; the grid is 30 s so
     nearest-second is unambiguous and makes cross-file joins exact."""
     return int(round(t))
 
@@ -448,11 +450,11 @@ def enu_basis(lat, lon):
 # ======================================================================
 
 def build_tenures(valid, breaks):
-    """valid: bool[N]; breaks: set of epoch indices where a NEW tenure starts.
+    """valid: bool[N]; breaks: set of epoch indices where a new tenure starts.
 
     Returns int[N] tenure id (-1 where invalid).  A missing epoch always breaks the
-    tenure, so every tenure is a CONTIGUOUS run of valid epochs -- which is what lets
-    the sliding fit below use O(1) prefix sums.
+    tenure, so every tenure is a contiguous run of valid epochs, which lets the
+    sliding fit below use O(1) prefix sums.
     """
     n = len(valid)
     tid = np.full(n, -1, dtype=np.int64)
@@ -470,14 +472,14 @@ def build_tenures(valid, breaks):
 
 
 def local_linear_resid(vals, tid, tows, halfwin_s, min_pts=12, min_span_s=300.0):
-    """Deviation of vals from a LOCAL LINEAR fit over a +/- halfwin_s window, never
+    """Deviation of vals from a local linear fit over a +/- halfwin_s window, never
     crossing a tenure boundary.  Returns float[N] with NaN where undefined.
 
     The residual is scaled by sqrt(n/(n-2)) so that windows truncated at a tenure
     edge (which have fewer degrees of freedom, hence structurally smaller residuals)
-    are directly comparable with full-width windows -- otherwise every post-event
-    epoch would read artificially quiet, which is exactly the population step 5 asks
-    about.
+    are directly comparable with full-width windows.  Without the scaling every
+    post-event epoch would read artificially quiet, and those epochs are the
+    population step 5 examines.
     """
     n = len(vals)
     out = np.full(n, np.nan)
@@ -532,11 +534,11 @@ def channel_matrix(w, sats, n_ep, kind):
 
     kind is one of: clk, pb_<band>, pc_<band>, sum_<band> with
     band in {L1C, L2W, IF, MEAN}.
-    `pc_*` = P - C0 (the model-consistent wire term; see CONVENTIONS).
+    `pc_*` = P - C0 (the model-consistent wire term; see the conventions block).
     `sum_*` = C0 + P (the literal c = clk + P of the request).
     `*_IF`   = the iono-free combination of the two band biases.
-    `*_MEAN` = the plain band average -- the band-COMMON driver for a consumer
-               that runs UNCOMBINED with a tight external ionosphere prior
+    `*_MEAN` = the plain band average: the band-common driver for a consumer
+               that runs uncombined with a tight external ionosphere prior
                (`consume_network_iono`), where each band's error maps to
                position on its own rather than through the IF coefficients.
     """
@@ -571,7 +573,7 @@ def channel_matrix(w, sats, n_ep, kind):
 
 
 def channel_breaks(w, sats, events, n_ep, tow_to_ep, kind):
-    """Per-satellite set of epoch indices that START a new tenure."""
+    """Per-satellite set of epoch indices that start a new tenure."""
     glob = set()
     for i, dc in enumerate(w.datum_changed):
         if dc:
@@ -608,14 +610,14 @@ def epoch_center(M, mode="trim", frac=0.20):
     """Per-epoch location estimate over the satellites present (NaN-aware).
 
     'trim' is a symmetric `frac` trimmed mean.  It is the default because the two
-    obvious choices each fail one of the two jobs this estimator has:
-      * MEAN is smooth in time but a single satellite's jump leaks into every other
-        one (measured: a -189.7 m step at TOW 292740 became -5.94 m on all 32);
-      * MEDIAN is outlier-proof but its own value hops between order statistics, and
-        that hopping IS a floor -- on the COD final clock the median datum's own
-        30-min residual is 0.034 m against 0.007 m for the mean, i.e. the datum
-        estimator alone would have set the noise floor of this report.
-    A 20 % trimmed mean measures 0.008 m on the same test: outlier-proof AND smooth.
+    obvious choices each fail one of the two requirements on this estimator:
+      * the mean is smooth in time but a single satellite's jump leaks into every
+        other one (measured: a -189.7 m step at TOW 292740 became -5.94 m on all 32);
+      * the median is outlier-proof but its own value hops between order statistics,
+        and that hopping sets a floor: on the COD final clock the median datum's own
+        30-min residual is 0.034 m against 0.007 m for the mean, so the datum
+        estimator alone would set the noise floor of this report.
+    A 20 % trimmed mean measures 0.008 m on the same test: outlier-proof and smooth.
     """
     n_s, n_ep = M.shape
     out = np.full(n_ep, np.nan)
@@ -636,12 +638,12 @@ def epoch_center(M, mode="trim", frac=0.20):
 
 
 def post_center(D, mode="trim"):
-    """Make a per-satellite deviation field orthogonal to the per-epoch CONSTANT.
+    """Make a per-satellite deviation field orthogonal to the per-epoch constant.
 
     The consumer carries a free receiver clock, so any per-epoch value common to all
     satellites is absorbed exactly and cannot reach position.  Removing it here (a)
-    reports only the part that CAN reach position and (b) cancels, to first order,
-    whatever noise the datum estimator itself injected -- which is why the numbers
+    reports only the part that can reach position and (b) cancels, to first order,
+    whatever noise the datum estimator itself injected, which is why the numbers
     below barely move between --datum mean / median / trim.
     """
     return D - epoch_center(D, mode)[None, :]
@@ -650,19 +652,20 @@ def post_center(D, mode="trim"):
 def datum_remove(M, mode="median"):
     """Remove a per-epoch constant over the satellites present at that epoch.
 
-    Datum-invariance note: the geometry closure's POSITION components are exactly
+    Datum invariance: the geometry closure's position components are exactly
     invariant to this choice, because G carries a receiver-clock column that
-    re-absorbs any per-epoch constant.  Removing it here just makes the per-satellite
+    re-absorbs any per-epoch constant.  Removing it here only makes the per-satellite
     contrast readable.
 
-    ⚠ EVERY level datum has an inlier-set edge, and it stamps one satellite's jump
-    onto all the others.  Measured on this bed: at TOW 292740 exactly ONE satellite's
-    IF phase-clock steps -189.7 m while the other 31 move < 0.13 m, yet the datum
-    itself moves -5.94 m (mean) / -4.88 m (trim) / -1.22 m (median) because that
-    satellite crosses the estimator's inclusion boundary.  That is why nothing
-    downstream is thresholded on this series directly: the residual field is
-    post_center()-ed and the step census re-centres the one-epoch DIFFERENCES on
-    their own median.  With those two in place the report is datum-choice-robust.
+    Every level datum has an inlier-set edge, at which one satellite's jump is copied
+    onto all the others.  Measured on this bed: at TOW 292740 one satellite's IF
+    phase-clock steps -189.7 m while the other 31 move < 0.13 m, yet the datum itself
+    moves -5.94 m (mean) / -4.88 m (trim) / -1.22 m (median) because that satellite
+    crosses the estimator's inclusion boundary.  Nothing downstream is therefore
+    thresholded on this series directly: the residual field goes through
+    post_center() and the step census re-centres the one-epoch differences on their
+    own median.  With those two in place the report does not depend on the datum
+    choice.
     """
     ctr = epoch_center(M, mode)
     return M - ctr[None, :], ctr
@@ -688,10 +691,10 @@ def tenure_demean(x, tid):
 def pass_segments(vis_row, break_eps):
     """Contiguous runs of consumer visibility, further broken at `break_eps`.
 
-    This is the segmentation a FLOAT consumer actually imposes: one constant
-    ambiguity per satellite-signal arc, re-floated only when the arc breaks or the
-    wire signals a discontinuity.  The producer's own anchor tenures are much
-    shorter, so they are the WRONG unit for "what the consumer can absorb".
+    This is the segmentation a float consumer imposes: one constant ambiguity per
+    satellite-signal arc, re-floated only when the arc breaks or the wire signals a
+    discontinuity.  The producer's own anchor tenures are much shorter, so they are
+    the wrong unit for "what the consumer can absorb".
     """
     segs = []
     i, n = 0, len(vis_row)
@@ -728,12 +731,11 @@ def analyse_channel(w, sats, events, tows, tow_to_ep, kind, halfwin_s, settle_ep
                     step_cut_m=None, datum="median"):
     """One channel end to end.
 
-    `step_cut_m` (metres): when given, every WITHIN-tenure one-epoch jump larger than
+    `step_cut_m` (metres): when given, every within-tenure one-epoch jump larger than
     this is treated as an extra tenure boundary.  Comparing the wander with and
-    without that cut splits the measured deviation into UNMARKED STEP content and
-    genuinely SMOOTH wander -- the difference between "a slowly-varying per-satellite
-    error" and "an unsignalled re-referencing", which are different defects with
-    different fixes.
+    without that cut splits the measured deviation into unmarked step content and
+    smooth wander, that is, into "an unsignalled re-referencing" and "a slowly varying
+    per-satellite error", which are different defects with different fixes.
     """
     n_ep = len(tows)
     raw = channel_matrix(w, sats, n_ep, kind)
@@ -747,13 +749,13 @@ def analyse_channel(w, sats, events, tows, tow_to_ep, kind, halfwin_s, settle_ep
     step_epochs = {}
 
     # ---- pass 1: tenures + one-epoch differences ---------------------------
-    # The differences are re-centred per epoch on their own MEDIAN across
-    # satellites before anything is counted.  Without that, a LEVEL-based datum
-    # (any of them) moves when one satellite leaves the estimator's inlier set,
-    # and the census reads a single satellite's jump as "all 32 stepped": at TOW
-    # 292740 one satellite steps -189.7 m and the level datum itself moves -4.9 m
-    # (trim) / -5.9 m (mean) / -1.2 m (median), stamping every other satellite.
-    # Re-centring the DIFFERENCES makes the census datum-choice-independent.
+    # The differences are re-centred per epoch on their own median across
+    # satellites before anything is counted.  Without that, any level-based datum
+    # moves when one satellite leaves the estimator's inlier set, and the census
+    # reads a single satellite's jump as "all 32 stepped": at TOW 292740 one
+    # satellite steps -189.7 m and the level datum itself moves -4.9 m (trim) /
+    # -5.9 m (mean) / -1.2 m (median), which then appears on every other satellite.
+    # Re-centring the differences makes the census independent of the datum choice.
     tids = {}
     d1m = np.full((len(sats), n_ep), np.nan)
     for si, s in enumerate(sats):
@@ -834,7 +836,7 @@ def analyse_channel(w, sats, events, tows, tow_to_ep, kind, halfwin_s, settle_ep
 
 def cod_floor_channel(clk, sats, tows, tow_to_ep, halfwin_s, settle_ep, events, w, n_ep,
                       datum="median"):
-    """The identical 30-min statistic on the external COD final clock: the MEASURED
+    """The same 30-min statistic on the external COD final clock: the measured
     noise floor of the instrument."""
     M = np.full((len(sats), n_ep), np.nan)
     for si, s in enumerate(sats):
@@ -926,7 +928,7 @@ def geometry(sp3, sats, tows, rx_ecef, elev_mask_deg):
 
 
 def closure(E, EL, VIS, D, sats, tows, settle_ep, axis, with_zwd=False, min_sats=5):
-    """dx(t) = (G'WG)^-1 G'W delta(t), delta = -dev(A) (see CONVENTIONS)."""
+    """dx(t) = (G'WG)^-1 G'W delta(t), delta = -dev(A) (see the module conventions)."""
     n_s, n_ep = EL.shape
     ncol = 5 if with_zwd else 4
     dx = np.full((n_ep, 3), np.nan)
@@ -1214,9 +1216,9 @@ def main():
             f"{'...' if len(ss) > 8 else ''})   events: "
             f"{', '.join(others) if others else 'NONE'}")
     say()
-    # Which event tier CO-OCCURS with the steps?  A per-epoch count-vs-count
-    # correlation, so it does not depend on getting the per-satellite attribution
-    # right -- only on "more of this tier this epoch => more steps this epoch".
+    # Which event tier co-occurs with the steps?  A per-epoch count-vs-count
+    # correlation, so it does not depend on the per-satellite attribution being
+    # right, only on "more of this tier this epoch => more steps this epoch".
     nstep = chans["pc_IF"]["step_count_per_epoch"]
     say("     which tier co-occurs?  corr( #events of tier at epoch , #pc_IF steps "
         "> 0.25 m at epoch ):")
@@ -1341,10 +1343,10 @@ def main():
         E, EL, VIS = geometry(sp3, sats, tows, ecef, elev_mask)
         say(f"    visible sats above {elev_mask:.0f} deg at the consumer: "
             f"median {int(np.median(VIS[:, settle_ep:].sum(axis=0)))}")
-        # CONSUMER-arc preparations: one constant float ambiguity per pass, so the
+        # Consumer-arc preparations: one constant float ambiguity per pass, so the
         # part of a per-satellite wire error that can reach position is the
-        # pass-mean-removed part ('pass'); 'passlin' additionally lets a slow ramp be
-        # soaked by the consumer's own clock / ZWD.
+        # pass-mean-removed part ('pass'); 'passlin' additionally removes a slow ramp,
+        # which the consumer's own clock / ZWD can absorb.
         segs_by_sat = {}
         for si, sname in enumerate(sats):
             segs_by_sat[sname] = pass_segments(VIS[si], w.retro.get(sname, set()))
@@ -1496,9 +1498,9 @@ def main():
         geo["amplitude_ladder"] = [{"trim": t, "sd_pred_axis": v} for t, v in lad]
         # ---- magnitude link (geometry-free) ----------------------------------
         # A weaker but far more robust test than the signed closure: does the consumer
-        # wander MORE in the epochs where the wire is noisier?  It needs no sign, no
+        # wander more in the epochs where the wire is noisier?  It needs no sign, no
         # per-satellite projection fidelity, and no assumption about which combination
-        # the consumer forms -- only that a noisier wire is a worse wire.
+        # the consumer forms, only that a noisier wire is a worse wire.
         Dn = chans["pc_IF"]["D"]
         wire_amp = np.full(n_ep, np.nan)
         for ei in range(settle_ep, n_ep):
@@ -1523,7 +1525,7 @@ def main():
         say(f"    ZWD column added (G=[-e,1,1/sin el]), pc_IF/hp30: "
             f"corr AX {gz['corr_axis']:+.3f}, sd_pred AX {gz['sd_pred_axis']:.3f} m "
             f"(vs {geo['pc_IF/hp30/trim0']['sd_pred_axis']:.3f} m without)")
-        # ---- control: same per-sat rms, WHITE in time ------------------------
+        # ---- control: same per-sat rms, white in time ------------------------
         rng = np.random.default_rng(20260910)
         Dn = chans["pc_IF"]["D"]
         Dw_ = np.where(np.isfinite(Dn), rng.standard_normal(Dn.shape) *

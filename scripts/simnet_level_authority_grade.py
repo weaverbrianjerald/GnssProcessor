@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""LV-6 G1 grader — the census operator applied to TRUTH.
+"""LV-6 G1 grader: the census operator applied to truth.
 
-`docs/SPEC_level_authority_internal.md` §4 G1 / §5 item 5.  The gate is
+`docs/SPEC_level_authority_internal.md` §4 G1 / §5 item 5. The gate is
 
     corr(L_cs(t), censusOperator{truth}(t)) >= +0.8   settled
-    offset ~ the MEDIAN of the injected biases
+    offset ~ the median of the injected biases
     |d(offset)/dt| <= 2 TECU/h                        settled
 
 and §5 item 5 is explicit that the reference statistic is the census operator
-applied to truth, "not the coverage-weighted mean — median vs mean skew".  This
-script IS that operator.
+applied to truth, "not the coverage-weighted mean: median vs mean skew". This
+script is that operator.
 
-WHAT THE CENSUS ACTUALLY OBSERVES (read off the code, never asserted — the
+What the census actually observes (read off the code, not asserted; covers the
 fixture's two bias-sign traps):
 
     cs.val = I1 - (b1-b2)/(gamma-1) - (B1-B2)/(gamma-1)      [slant, L1 metres]
@@ -19,16 +19,16 @@ fixture's two bias-sign traps):
     src/core/app/ApplicationNetworkAssembly.cpp:1440   i_code = -row.gf_code_m / row.gf_denom
     include/slip/NetworkRawObservables.hpp:70-71       gf_code_m = P1-P2, gf_denom = gamma-1
 
-so an injected receiver GF bias enters at -1/(gamma-1)/K_L1 = -9.5196 SLANT TECU
+so an injected receiver GF bias enters at -1/(gamma-1)/K_L1 = -9.5196 slant TECU
 per metre of b(C1C)-b(C2W), and the satellite OSB contrast enters identically.
 Both are added here, so the operator lands in the census's own realization.
 
-TRAP — THE TWO SHELLS DIFFER.  The census maps to vertical with the SH
-configuration's shell (`estimation.global_vtec_sh.layer_height_km`, 450 km on
-the wsh lineage; `NetworkLevelAuthority.cpp` reads `shc.layer_height_km`), while
+The two shells differ. The census maps to vertical with the SH configuration's
+shell (`estimation.global_vtec_sh.layer_height_km`, 450 km on the wsh lineage;
+`NetworkLevelAuthority.cpp` reads `shc.layer_height_km`), while
 `truth_atmo.csv`'s `obliquity` column was computed by the sim at
-`iono.shell_height_km` (350 km).  Using the truth column would bias every
-vertical value by several percent at low elevation.  This script recomputes the
+`iono.shell_height_km` (350 km). Using the truth column would bias every
+vertical value by several percent at low elevation. This script recomputes the
 mapping from `elev_deg` at the census's shell; pass --shell-km if the arm's SH
 config differs.
 
@@ -75,15 +75,15 @@ def main(fixture, min_los=4, elev_mask=10.0):
             if M is None: continue
             sat = r["satellite"]
             if sat[0] != "G": continue                      # producer is GPS-only
-            # TWO references, and the distinction IS gate G1.
+            # Two references, and the distinction is gate G1.
             #   v_iono : the true ionosphere alone -> censusOperator{truth}.
             #            L_cs - this = what the injected biases put into the
             #            level, i.e. the C4 confound the gate is built to
-            #            measure ("offset ~ the MEDIAN of the injected biases").
-            #   v_obs  : truth PLUS the injected receiver GF bias and satellite
-            #            OSB contrast -> what the census SHOULD observe if its
-            #            conversion chain is right.  L_cs - this ~ 0 is a
-            #            forward-model CLOSURE check, not a C4 grade.
+            #            measure ("offset ~ the median of the injected biases").
+            #   v_obs  : truth plus the injected receiver GF bias and satellite
+            #            OSB contrast -> what the census should observe if its
+            #            conversion chain is right. L_cs - this ~ 0 is a
+            #            forward-model closure check, not a C4 grade.
             # Grading the offset against v_obs would be circular: the bias sits
             # on both sides and cancels, so the test could not fail however
             # large the confound was.
@@ -108,7 +108,7 @@ def _injected_median_vertical(fixture, elev_mask):
     the census sees it: slant TECU divided by the per-LOS mapping, averaged over
     the station's own elevation distribution with the census's sin^2 weights.
 
-    This is the number G1's offset test is compared against.  It is NOT simply
+    This is the number G1's offset test is compared against. It is not simply
     median(bias)/mean(M): the mapping average is taken per station first, matching
     the operator's tier-1-then-tier-2 order."""
     stations = [d for d in sorted(os.listdir(fixture))
@@ -131,19 +131,19 @@ def _injected_median_vertical(fixture, elev_mask):
 
 
 def _exact_from_los_dump(fixture, los_csv, min_los):
-    """censusOperator{truth} on the census's OWN sampling.
+    """censusOperator{truth} on the census's own sampling.
 
     The default path re-derives a LOS set from truth_atmo.csv (every row above
-    the mask).  That is NOT the set the census reduced: the census keeps only
-    LOS whose CS-GF state is MATURE (n >= min_n) and that appear in this epoch's
-    modeled rows.  A reference built on a different set carries a different
-    mapping distribution, which is exactly the sampling error SPEC §5.2 killed
-    the planetary-mean grade for -- in miniature.
+    the mask). That is not the set the census reduced: the census keeps only
+    LOS whose CS-GF state is mature (n >= min_n) and that appear in this epoch's
+    modeled rows. A reference built on a different set carries a different
+    mapping distribution: the same sampling error SPEC §5.2 ruled out for the
+    planetary-mean grade, in miniature.
 
     With network.level_authority_los_dump armed the census publishes its own
     (station, sat, ipp, mapping, weight) rows, so the reference is evaluated on
     the identical LOS with the identical weights and the identical mapping.
-    Only the FIELD differs: truth STEC instead of the observed CS-GF value.
+    Only the field differs: truth STEC instead of the observed CS-GF value.
     """
     truth = {}   # (station, sat, tow) -> stec_total_tecu
     stations = [d for d in sorted(os.listdir(fixture))

@@ -1,37 +1,35 @@
 /**
  * @file test_ledger_emit.cpp
- * @brief Card SID phase 5: the producer's DECLARED SIGNAL ROSTER on the wire,
- *        the emitter's per-family bookkeeping read against the arc ledger
- *        (@c network.ledger_emit), and the consumer's latch and freshness
- *        response keyed on the declaration
- *        (@c network.closed_loop.roster_latch).
+ * @brief Declared signal roster on the wire, the emitter's per-family
+ *        bookkeeping read against the arc ledger (@c network.ledger_emit), and
+ *        the consumer's latch and freshness response keyed on the declaration
+ *        (@c network.closed_loop.roster_latch).  Card SID phase 5.
  *
  * ## What is under test
  *
- * Phase 5 is the first phase whose product leaves the process, so the things
- * that have to be pinned are the ones a run cannot re-derive later:
+ * Phase 5 is the first phase whose product leaves the process, so the tests pin
+ * the properties a run cannot re-derive later:
  *
- *  - the RECORD.  A new wire record type is a permanent contract.  Its grammar
+ *  - the record.  A new wire record type is a permanent contract.  Its grammar
  *    round-trips through the writer and the reader, it is declared in the format
- *    legend, and a block of them REPLACES the previous declaration rather than
+ *    legend, and a block of records replaces the previous declaration instead of
  *    merging into it;
- *  - the reader's tolerance.  The format's own rule is that unknown key=value
- *    tokens are ignorable.  An unknown RECORD TAG is a different question, and
- *    the answer measured here is what the report states: parsing continues past
- *    it and every epoch is recovered, while the sticky @c ok flag goes false;
- *  - the GENERATION COMPARISON.  Card PBH's hold generation and the ledger's
- *    admitted arc generation are two lifecycles of the same family in two key
- *    spaces.  The three classes (a generation change with a birth behind it, one
- *    without, and a birth the generation never reports) are separable by
- *    counters alone, or the run-end table says nothing;
- *  - the FIRST-SIGHTING test.  The emitter seeds a fresh baseline on
+ *  - the reader's tolerance.  The format ignores unknown key=value tokens.  An
+ *    unknown record tag is a separate case: parsing continues past it and every
+ *    epoch is recovered, while the sticky @c ok flag goes false;
+ *  - the generation comparison.  The hold generation of card PBH and the
+ *    ledger's admitted arc generation are two lifecycles of the same family in
+ *    two key spaces.  The three classes (a generation change with a birth behind
+ *    it, one without, and a birth the generation never reports) must be
+ *    separable by counters alone, or the run-end table carries no information;
+ *  - the first-sighting test.  The emitter seeds a fresh baseline on
  *    @c find() == end(); the ledger knows whether the family is returning;
- *  - the CONSUMER.  C1's two branches (the latch follows a declared signal the
- *    station tracks, and falls back when it tracks none) and C2's rule (a signal
- *    the declaration does not name is not a staleness).
+ *  - the consumer.  The two branches of C1 (the latch follows a declared signal
+ *    the station tracks, and falls back when it tracks none) and the rule of C2
+ *    (a signal the declaration does not name is not a staleness).
  *
- * Everything below drives the pieces directly: no station build, no RINEX
- * geometry, no solve.
+ * The tests drive the pieces directly: no station build, no RINEX geometry, no
+ * solve.
  */
 
 #include <gtest/gtest.h>
@@ -65,8 +63,8 @@ namespace fs = std::filesystem;
 namespace GnssProcessor {
 
 /// Test seam (declared a friend in include/model/PppModel.hpp): reaches the
-/// PRIVATE first-epoch decision, so the declared-latch comparison can be driven
-/// without a geometry / product chain.
+/// private first-epoch decision, so the declared-latch comparison can be driven
+/// without a geometry or product chain.
 struct PppModelDeclaredLatchTestAccess {
     static void decide(PppModel& m, const std::vector<RinexObservation>& obs) {
         m.decideConstellationCanonicals(obs);
@@ -198,7 +196,7 @@ std::unique_ptr<NetworkRunTraces> quietTraces() {
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// E4 (a): the record round-trips through the writer and the parser
+// The record round-trips through the writer and the parser (E4 a)
 // ---------------------------------------------------------------------------
 
 TEST(LedgerEmitTest, RosterRecordRoundTripsThroughTheWriterAndTheParser) {
@@ -211,8 +209,8 @@ TEST(LedgerEmitTest, RosterRecordRoundTripsThroughTheWriterAndTheParser) {
     {
         NetworkProductWriter w(path);
         ASSERT_TRUE(w.good());
-        // The block is written BEFORE the epoch it describes, the S-line
-        // positional precedent.
+        // The block is written before the epoch it describes, following the
+        // positional precedent of the S line.
         EXPECT_EQ(w.writeSignalDeclaration(decl), 2u);
         NetworkSolutionEpoch sol = makeEpoch(kT0, /*gen01=*/1);
         emit.emitToStore(sol, store);
@@ -240,7 +238,7 @@ TEST(LedgerEmitTest, RosterRecordRoundTripsThroughTheWriterAndTheParser) {
 
 /// The wire form is the grammar the legend declares: a positional
 /// (tag, constellation, band digit) head and self-describing key=value tokens,
-/// with an EMPTY list omitted rather than written as a placeholder: "the
+/// with an empty list omitted rather than written as a placeholder: "the
 /// network carries no phase family on this band" is the absence of `ph=`.
 TEST(LedgerEmitTest, DeclarationWireFormIsTheDeclaredGrammar) {
     NetworkSignalDeclaration d;
@@ -259,7 +257,7 @@ TEST(LedgerEmitTest, DeclarationWireFormIsTheDeclaredGrammar) {
     EXPECT_TRUE(signalDeclarationToWire(empty).empty());
 }
 
-/// A declaration REPLACES the previous one: the reader accumulates a CONTIGUOUS
+/// A declaration replaces the previous one: the reader accumulates a contiguous
 /// block and the next block starts from nothing, so a band that disappears from
 /// the producer's roster disappears from the consumer's copy too.
 TEST(LedgerEmitTest, ASecondBlockReplacesTheFirstWholesale) {
@@ -291,7 +289,7 @@ TEST(LedgerEmitTest, ASecondBlockReplacesTheFirstWholesale) {
     ASSERT_EQ(recs.size(), 2u);
     ASSERT_TRUE(recs[1].declaration_refresh.has_value());
     EXPECT_EQ(*recs[1].declaration_refresh, second);
-    // Band 2 was in the first block and not the second, so it is GONE.
+    // Band 2 was in the first block and not in the second, so it is absent.
     EXPECT_EQ(recs[1].declaration_refresh->find("GPS", '2'), nullptr);
     fs::remove(path);
 }
@@ -343,14 +341,13 @@ TEST(LedgerEmitTest, TheFormatLegendDeclaresTheDeclarationRecord) {
 }
 
 // ---------------------------------------------------------------------------
-// E4 (b): the reader's tolerance
+// The reader's tolerance (E4 b)
 // ---------------------------------------------------------------------------
 
-/// An UNKNOWN RECORD TAG is skipped and parsing continues: every epoch is
-/// recovered and the declaration around it survives.  The sticky @c ok flag does
-/// go false, which is the reader's existing "malformed line(s)" signal and is a
-/// WARN at every call site, never an abort: stated here so the contract is
-/// measured rather than assumed.
+/// An unknown record tag is skipped and parsing continues: every epoch is
+/// recovered and the declaration around it survives.  The sticky @c ok flag goes
+/// false; that is the reader's existing "malformed line(s)" signal, which every
+/// call site treats as a warning, not an abort.  The test pins this contract.
 TEST(LedgerEmitTest, AnUnknownRecordIsIgnoredByTheParser) {
     const std::string path = tempFile("gnss_sid5_unknown.txt");
     fs::remove(path);
@@ -386,7 +383,7 @@ TEST(LedgerEmitTest, AnUnknownRecordIsIgnoredByTheParser) {
     fs::remove(path);
 }
 
-/// An unknown key=value TOKEN inside an N record is ignored and the known ones
+/// An unknown key=value token inside an N record is ignored and the known ones
 /// still land: the format's own forward-compatibility rule, and the reason the
 /// record carries tokens rather than positional fields.
 TEST(LedgerEmitTest, AnUnknownTokenInsideTheRecordIsIgnored) {
@@ -437,8 +434,8 @@ TEST(LedgerEmitTest, ReplayPushesTheDeclarationIntoTheConsumerStore) {
     fs::remove(path);
 }
 
-/// The lookups a consumer actually makes, by ROLE: a card SCC companion code IS
-/// a family the network emits, so it answers the code question yes.
+/// The lookups a consumer makes, by role: a card SCC companion code is a family
+/// the network emits, so it answers the code question yes.
 TEST(LedgerEmitTest, DeclarationLookupsAnswerByRole) {
     const NetworkSignalDeclaration d = fieldDeclaration();
     EXPECT_TRUE(d.declaresPhase("GPS", "L1W"));
@@ -454,13 +451,13 @@ TEST(LedgerEmitTest, DeclarationLookupsAnswerByRole) {
 }
 
 // ---------------------------------------------------------------------------
-// E1: the generation comparison and the first-sighting test
+// The generation comparison and the first-sighting test (E1)
 // ---------------------------------------------------------------------------
 
 namespace {
 
-/// Drive one epoch of the capture / fold pair over a context whose ledger has
-/// been advanced by hand.  Returns nothing: the counters are the instrument.
+/// Drives one epoch of the capture and fold pair over a context whose ledger is
+/// advanced by hand.  Returns nothing; the tests read the counters.
 void runEpoch(NetworkRunContext& ctx, NetworkRunTraces& traces,
               const NetworkProductEmitter& emitter, const NetworkSolutionEpoch& sol,
               const std::set<ArcLedger::Key>& admitted, long long ep) {
@@ -489,8 +486,8 @@ TEST(LedgerEmitTest, HoldGenerationAgainstAdmittedArcBirths) {
     const ArcLedger::Key b{ 1, "G01", "L1C" };
 
     // Epoch 0: both arcs are born and the key is emitted for the first time.
-    // A first emission is not a CHANGE a consumer could compare, so it is
-    // excluded from both classes and reported through the first-sighting half.
+    // A first emission is not a change a consumer could compare, so it is
+    // excluded from both classes and counted by the first-sighting half.
     runEpoch(ctx, *traces, emitter, makeEpoch(kT0, 1), { a, b }, 0);
     EXPECT_EQ(ctx.counters.le.gen_changed, 0);
     EXPECT_EQ(ctx.counters.le.first_phase, 3)   // G01 L1C, G01 L2W and G02 L1C
@@ -502,7 +499,7 @@ TEST(LedgerEmitTest, HoldGenerationAgainstAdmittedArcBirths) {
     EXPECT_EQ(ctx.counters.le.birth_no_gen, 0);
 
     // Epoch 2: the hold restarts (generation 1 -> 2) while both arcs keep
-    // tracking — a hold restart with NO arc birth behind it.
+    // tracking: a hold restart with no arc birth behind it.
     runEpoch(ctx, *traces, emitter, makeEpoch(GnssTime{ 2313, 259260.0 }, 2), { a, b }, 2);
     EXPECT_EQ(ctx.counters.le.gen_changed, 1);
     EXPECT_EQ(ctx.counters.le.gen_no_birth, 1);
@@ -510,19 +507,19 @@ TEST(LedgerEmitTest, HoldGenerationAgainstAdmittedArcBirths) {
 
     // Epoch 3: arc b leaves (an admitted gap opens).
     runEpoch(ctx, *traces, emitter, makeEpoch(GnssTime{ 2313, 259290.0 }, 2), { a }, 3);
-    // Epoch 4: b is back with a gap, so it RE-ENTERS — not a birth, and no
-    // generation change is due.
+    // Epoch 4: b is back after a gap, so it re-enters.  A re-entry is not a
+    // birth, and no generation change is due.
     runEpoch(ctx, *traces, emitter, makeEpoch(GnssTime{ 2313, 259320.0 }, 2), { a, b }, 4);
     EXPECT_EQ(ctx.counters.le.birth_no_gen, 0)
         << "a re-entry is not a birth: the admitted generation does not advance";
 
-    // Epoch 5: a NEW arc of the same family is born at a third station while the
-    // hold generation stays put — a birth the consumer never learns about.
+    // Epoch 5: a new arc of the same family is born at a third station while the
+    // hold generation stays put: a birth the consumer never learns about.
     const ArcLedger::Key c{ 2, "G01", "L1C" };
     runEpoch(ctx, *traces, emitter, makeEpoch(GnssTime{ 2313, 259350.0 }, 2), { a, b, c }, 5);
     EXPECT_EQ(ctx.counters.le.birth_no_gen, 1);
 
-    // Epoch 6: a birth AND a generation change together — the agreement class.
+    // Epoch 6: a birth and a generation change together (the agreement class).
     const ArcLedger::Key d{ 3, "G01", "L1C" };
     runEpoch(ctx, *traces, emitter, makeEpoch(GnssTime{ 2313, 259380.0 }, 3), { a, b, c, d }, 6);
     EXPECT_EQ(ctx.counters.le.gen_with_birth, 1);
@@ -532,7 +529,7 @@ TEST(LedgerEmitTest, HoldGenerationAgainstAdmittedArcBirths) {
 }
 
 /// The emitter's first-sighting test against the ledger: a family the ledger has
-/// already admitted is a RETURN, whatever the emitter's baseline map says.
+/// already admitted is a return, whatever the emitter's baseline map says.
 TEST(LedgerEmitTest, EmitterFirstSightingOnAReturnIsCounted) {
     Loaded L("first", "    \"signal_roster\": true,\n    \"ledger_emit\": true,\n");
     NetworkRunContext ctx(L.cfg, L.cfg.getNetworkConfig());
@@ -541,9 +538,10 @@ TEST(LedgerEmitTest, EmitterFirstSightingOnAReturnIsCounted) {
     auto traces = quietTraces();
     const ArcLedger::Key a{ 0, "G01", "L1C" };
 
-    // Epoch 0: the ledger admits the arc; a FRESH emitter has no baseline, so
-    // both keys are first sightings the ledger calls RETURNS (the arc was
-    // admitted in the same epoch, i.e. its generation is already 1).
+    // Epoch 0: the ledger admits the arc and a fresh emitter has no baseline, so
+    // every emitted key is a first sighting.  The ledger calls G01 L1C a return
+    // (its arc was admitted in the same epoch, so its generation is already 1);
+    // the keys without an arc are true first sightings.
     {
         NetworkProductEmitter fresh(0.05, false);
         runEpoch(ctx, *traces, fresh, makeEpoch(kT0, 1), { a }, 0);
@@ -566,8 +564,8 @@ TEST(LedgerEmitTest, EmitterFirstSightingOnAReturnIsCounted) {
     EXPECT_EQ(ctx.counters.le.first_phase, before);
 }
 
-/// Disarmed, both halves return on their first line and nothing is counted ,
-/// which is what keeps an unarmed run byte-identical and costless.
+/// Disarmed, both halves return on their first line and nothing is counted,
+/// which keeps an unarmed run byte-identical and free of cost.
 TEST(LedgerEmitTest, DisarmedTheSeamsDoNothing) {
     Loaded L("off", "");
     NetworkRunContext ctx(L.cfg, L.cfg.getNetworkConfig());
@@ -581,7 +579,7 @@ TEST(LedgerEmitTest, DisarmedTheSeamsDoNothing) {
     EXPECT_EQ(ctx.counters.le.first_phase, 0);
 }
 
-/// The loader REFUSES the knob without the phase-1 observatory, because an empty
+/// The loader refuses the knob without the phase-1 observatory, because an empty
 /// declaration on the wire is a false statement a consumer would act on.
 TEST(LedgerEmitTest, LedgerEmitIsRefusedWithoutTheRoster) {
     Loaded L("norost", "    \"ledger_emit\": true,\n");
@@ -591,7 +589,7 @@ TEST(LedgerEmitTest, LedgerEmitIsRefusedWithoutTheRoster) {
 }
 
 // ---------------------------------------------------------------------------
-// E2: the declaration is built from the roster, in support order
+// The declaration is built from the roster, in support order (E2)
 // ---------------------------------------------------------------------------
 
 TEST(LedgerEmitTest, DeclarationIsBuiltFromTheRosterInSupportOrder) {
@@ -628,7 +626,7 @@ TEST(LedgerEmitTest, DeclarationIsBuiltFromTheRosterInSupportOrder) {
     EXPECT_EQ(b2->phase, (std::vector<std::string>{ "L2W" }));
     EXPECT_TRUE(b2->datum_code.empty()) << "no pin was designated on band 2";
 
-    // A datum designation the epoch's cells DISAGREE on is left empty rather
+    // A datum designation the epoch's cells disagree on is left empty rather
     // than collapsed to a majority the S-basis never realized.
     ctx.roster.by_station[2]["GPS"]['1'].datum_code = "C1W";
     const NetworkSignalDeclaration d2 = networkLedgerEmitBuildDeclaration(ctx, no_stations);
@@ -638,10 +636,10 @@ TEST(LedgerEmitTest, DeclarationIsBuiltFromTheRosterInSupportOrder) {
     ctx.roster.armed = false;
     EXPECT_FALSE(networkLedgerEmitBuildDeclaration(ctx, no_stations).present);
 
-    // A roster whose cells carry NO modelled role names nothing a consumer can
-    // act on, so the build refuses it rather than declaring an empty network ,
-    // the case a constellation's FIRST epoch produces, and the one that would
-    // otherwise be the declaration the consumer's own latch is decided against.
+    // A roster whose cells carry no modelled role names nothing a consumer can
+    // act on, so the build refuses it rather than declaring an empty network.
+    // A constellation's first epoch produces this case, and without the refusal
+    // it would be the declaration the consumer's own latch is decided against.
     ctx.roster.armed = true;
     for (int i = 0; i < 3; ++i) {
         ctx.roster.by_station[i]["GPS"]['1'] = BandRoster{};
@@ -654,17 +652,17 @@ TEST(LedgerEmitTest, DeclarationIsBuiltFromTheRosterInSupportOrder) {
 }
 
 // ---------------------------------------------------------------------------
-// C2: the freshness flip keyed on the declaration
+// The freshness flip keyed on the declaration (C2)
 // ---------------------------------------------------------------------------
 
-/// The three-way attribution the consumer's response keys on, and the ONE class
+/// The three-way attribution the consumer's response keys on, and the one class
 /// phase 5b suppresses: a signal the declaration does not name is structurally
 /// absent, not stale.
 TEST(LedgerEmitTest, AbsentByDeclarationIsNotAStalenessEvent) {
     const NetworkSignalDeclaration d = fieldDeclaration();
     // (1) undeclared: the network carries no family for L5Q at all.  Whether a
-    //     record happens to be on the wire is irrelevant: the test that matters
-    //     is the declaration's, which is what makes this class actionable.
+    //     record is on the wire does not matter; the declaration decides, which
+    //     is what makes this class actionable.
     EXPECT_EQ(signalDeclarationAttributeFlip(d, "GPS", "L5Q", true, false),
               FlipAttribution::Undeclared);
     EXPECT_EQ(signalDeclarationAttributeFlip(d, "GPS", "L5Q", true, true),
@@ -675,8 +673,8 @@ TEST(LedgerEmitTest, AbsentByDeclarationIsNotAStalenessEvent) {
     // (3) stale: a record exists and the age gate refused it.
     EXPECT_EQ(signalDeclarationAttributeFlip(d, "GPS", "C1W", false, true),
               FlipAttribution::Stale);
-    // (4) with no declaration nothing can be attributed, so today's response
-    //     stands: which is every pre-card wire.
+    // (4) with no declaration nothing can be attributed, so the existing
+    //     response stands.  Every wire written without the N record is this case.
     NetworkSignalDeclaration none;
     EXPECT_EQ(signalDeclarationAttributeFlip(none, "GPS", "L5Q", true, false),
               FlipAttribution::NoDeclaration);
@@ -684,7 +682,7 @@ TEST(LedgerEmitTest, AbsentByDeclarationIsNotAStalenessEvent) {
 }
 
 // ---------------------------------------------------------------------------
-// C1: the consumer's latch follows the declaration
+// The consumer's latch follows the declaration (C1)
 // ---------------------------------------------------------------------------
 
 namespace {
@@ -703,8 +701,8 @@ std::vector<RinexObservation> gpsEpoch(const std::vector<std::string>& codes, in
 }
 
 /// The PppModel construction chain, owned so each case is independent.  The
-/// priority list is "WC" (the W attribute first), so the station's OWN count rule
-/// latches L1W wherever both are tracked — which is the case C1 has to move.
+/// priority list is "WC" (the W attribute first), so the station's own count rule
+/// latches L1W wherever both are tracked; C1 has to move that latch.
 struct ModelFixture {
     LogManager log;
     GnssConfig cfg;
@@ -742,8 +740,8 @@ NetworkSignalDeclaration civilFirst() {
 
 }  // namespace
 
-/// C1, branch one: the station tracks a declared signal, so the latch FOLLOWS
-/// the declaration's own order instead of its own rule.
+/// C1, branch one: the station tracks a declared signal, so the latch follows
+/// the declaration's order instead of the station's own rule.
 TEST(LedgerEmitTest, LatchFollowsTheDeclarationWhenTheStationTracksIt) {
     ModelFixture own("c1_own");
     const auto obs = gpsEpoch({ "C1C", "C1W", "L1C", "L1W", "C2W", "L2W" }, 6);
@@ -755,7 +753,7 @@ TEST(LedgerEmitTest, LatchFollowsTheDeclarationWhenTheStationTracksIt) {
     EXPECT_EQ(own.model->declaredLatchCounters().compared, 0)
         << "no declaration reached this model, so the class is dead wiring";
 
-    // The arm: the same station, the same epoch, with the declaration ACTING.
+    // The arm: the same station and epoch, with the declaration acting.
     ModelFixture act("c1_act");
     act.model->setDeclaredSignalRoster(civilFirst(), /*act=*/true);
     PppModelDeclaredLatchTestAccess::decide(*act.model, obs);
@@ -769,8 +767,8 @@ TEST(LedgerEmitTest, LatchFollowsTheDeclarationWhenTheStationTracksIt) {
     EXPECT_GE(c.differ, 2);
     EXPECT_EQ(c.own_not_declared, 0) << "L1W and C1W are both declared";
 
-    // The observatory: the SAME declaration with act=false compares and counts
-    // and leaves the latch exactly where the station's own rule put it.
+    // The observatory: the same declaration with act=false compares and counts
+    // and leaves the latch where the station's own rule put it.
     ModelFixture obsv("c1_obs");
     obsv.model->setDeclaredSignalRoster(civilFirst(), /*act=*/false);
     PppModelDeclaredLatchTestAccess::decide(*obsv.model, obs);
@@ -780,7 +778,7 @@ TEST(LedgerEmitTest, LatchFollowsTheDeclarationWhenTheStationTracksIt) {
     EXPECT_EQ(obsv.model->declaredLatchCounters().from_roster, 0);
 }
 
-/// C1, branch two: the station tracks NONE of the declared signals of a band, so
+/// C1, branch two: the station tracks none of the declared signals of a band, so
 /// its own rule stands and the fall-back is counted rather than silent.
 TEST(LedgerEmitTest, LatchFallsBackWhenNoDeclaredSignalIsTracked) {
     ModelFixture f("c1_fallback");
@@ -802,17 +800,18 @@ TEST(LedgerEmitTest, LatchFallsBackWhenNoDeclaredSignalIsTracked) {
     EXPECT_EQ(c.from_roster, 0);
     EXPECT_GE(c.none_tracked, 2) << "band 1 phase and band 1 code both fell back";
     EXPECT_GT(c.own_rule, 0);
-    // The fall-back IS the MSC class at its worst: the station's own latch is a
-    // signal the network declares no family for, on BOTH halves of band 1.
+    // This fall-back is also the MSC class in its widest form: the station's own
+    // latch is a signal the network declares no family for, on both the phase
+    // and the code of band 1.
     EXPECT_GE(c.own_not_declared, 2);
 
-    // And the MSC class: the station's own latch is a signal the network declares
-    // no family for, which is a disagreement the table has to name.
+    // The MSC class alone: the station's own latch is a signal the network
+    // declares no family for, a disagreement the run-end table has to name.
     ModelFixture g("c1_notdecl");
     NetworkSignalDeclaration e = d;
     SignalDeclarationBand b1b;
     b1b.phase = { "L1W", "L1C" };   // declared, so the latch can move
-    b1b.code  = { "C1W" };          // C1C is NOT declared
+    b1b.code  = { "C1W" };          // C1C is not declared
     e.bands["GPS"]['1'] = b1b;
     g.model->setDeclaredSignalRoster(e, /*act=*/false);
     PppModelDeclaredLatchTestAccess::decide(*g.model, obs);

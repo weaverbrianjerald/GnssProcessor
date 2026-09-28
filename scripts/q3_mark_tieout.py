@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
-"""Card Q3 §3 — the wire-mark TIE-OUT for one arm (SPEC §8.4 gate 5).
+"""Card Q3 §3: the wire-mark tie-out for one arm (SPEC §8.4 gate 5).
 
-A trip is graded as a POPULATION, and clause (b) of that grading is "it lands a
-wire mark that ties out event <-> R record <-> counter".  Three independent
+A trip is graded as a population, and clause (b) of that grading is "it lands a
+wire mark that ties out event <-> R record <-> counter". Three independent
 records of the same edge:
 
   EVENT   network_events.csv, tier CLK_ANCHOR, event cta_decouple  (the guard)
   COUNTER the run-end `N wire mark(s) queued`                      (the emitter queue)
   WIRE    products.txt R records                                    (what a consumer reads)
 
-The WIRE is the only one a replay can see.  A mark that exists in the first two
-and not the third is the card's own trap #1 verbatim — `markSatDiscontinuity`
-alone is replay-invisible — so this script exists to make that failure loud
-instead of inferred.
+The wire is the only one a replay can see. A mark present in the first two
+records and absent from the wire reproduces the card's own trap #1:
+`markSatDiscontinuity` alone is replay-invisible, so this script exists to
+surface that failure directly instead of leaving it to be inferred.
 
 R rows carry the whole epoch's refloat set and are shared with the sibling
 queues (eph_cutover / cb_excursion / basis_relatch), so the wire count is an
-UPPER bound on Q3's own marks: the tie-out is "every (tow, sat) the guard
-decoupled appears on the wire", not "the two totals are equal".
+upper bound on Q3's own marks: the tie-out checks that every (tow, sat) the
+guard decoupled appears on the wire, not that the two totals are equal.
 
 Usage: python scripts/q3_mark_tieout.py <run_dir> [run_dir ...]
 """
@@ -32,8 +32,8 @@ if hasattr(sys.stdout, "reconfigure"):
 def load_events(run):
     # The producer writes traces to the shared C:\GnssProcessor\logs and the arm
     # runner harvests them into <run>/logs; older arms were copied to the run root.
-    # Look in both, newest-harvest first, or a present-but-elsewhere events file
-    # reads as "the guard never fired" — the exact false negative this checks for.
+    # Look in both, newest-harvest first: a present-but-elsewhere events file would
+    # otherwise read as "the guard never fired", the false negative this guards against.
     p = next((c for c in (os.path.join(run, "logs", "network_events.csv"),
                           os.path.join(run, "network_events.csv"))
               if os.path.exists(c)), None)
@@ -88,9 +88,9 @@ def main():
         wire = load_wire(run)
         marks, resolves = counter(run)
         arm = os.path.basename(os.path.normpath(run))
-        # Marks land in the SAME epoch as the refloat (SolPrep runs before EmitStore),
-        # but a decouple detected on a LATER guard pass can be queued after that
-        # epoch's emit — so accept the trip's own epoch or the next one.
+        # Marks land in the same epoch as the refloat (SolPrep runs before EmitStore),
+        # but a decouple detected on a later guard pass can be queued after that
+        # epoch's emit, so accept the trip's own epoch or the next one.
         hit = [e for e in ev if (e[0], e[1]) in wire or (e[0] + 30, e[1]) in wire]
         miss = [e for e in ev if e not in hit]
         print(f"{arm}: events {len(ev)} {by_reason} | counter marks {marks} | "

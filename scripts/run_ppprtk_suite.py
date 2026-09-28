@@ -3,18 +3,18 @@
 
 For every combo config in --config-dir this:
   1. runs gnss_processor.exe <config> with cwd set to a per-combo output dir
-     (so each combo's logs/ are isolated -- the engine's trace CSV names are
-     fixed and would otherwise clobber each other);
-  2. renders a per-combo HTML report via pyviz/run_report.py (network viewers +
-     the held-out consumer's per-station viewers + network_closed_loop);
+     (each combo's logs/ are isolated this way, since the engine's trace CSV
+     names are fixed and would otherwise clobber each other);
+  2. renders a per-combo HTML report via pyviz/run_report.py (network viewers,
+     the held-out consumer's per-station viewers, and network_closed_loop);
   3. parses the converged final-hour window of network_trace.csv and
      closed_loop_trace.csv into a cross-combo metrics summary;
-  4. writes a suite index.html linking every per-combo report + the summary.
+  4. writes a suite index.html linking every per-combo report and the summary.
 
-"Just run and report" -- nothing here grades against external truth; the
+This runs and reports; it does not grade against external truth. The
 consumer's own RINEX-survey truth (pos_err_3d_m in closed_loop_trace.csv) is the
-only accuracy signal, and the network side is reported via its emission/clock
-diagnostics (rms_clock_m, solved/gate rates).
+only accuracy signal, and the network side is reported through its emission and
+clock diagnostics (rms_clock_m, solved/gate rates).
 """
 import argparse
 import csv

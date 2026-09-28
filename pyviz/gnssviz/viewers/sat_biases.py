@@ -1,4 +1,4 @@
-"""Satellite code-bias viewer -- the port of ``plotSatBiases.m``.
+"""Satellite code-bias viewer: the port of ``plotSatBiases.m``.
 
 Reads ``sat_bias_trace.csv`` (one row per (epoch, satellite, signal)) and draws
 the per-(satellite, signal) hardware code-bias estimates produced by the
@@ -9,36 +9,36 @@ PPP / PPP-RTK uncombined Kalman filter.  Expected header::
 
 Three figure groups (each guarded by a content switch, MATLAB defaults kept):
 
-1. ``showValue``  -- sat-bias value time series, per (system, signal) tile,
+1. ``showValue``: sat-bias value time series, per (system, signal) tile,
    one line per satellite (colour by PRN), with NaN-gap breaks, pivot rings on
    the BSSD-frozen rows, and thin vertical handover lines.  Linear y-axis.
-2. ``showSigma``  -- sat-bias state sigma (``std_m``) on a **log** y-axis, same
-   per-(system, signal) tiling -- a convergence monitor.  No pivot rings.
-3. ``showPerKeyBand`` -- small-multiples, one tile per (sat, signal) key (capped
+2. ``showSigma``: sat-bias state sigma (``std_m``) on a log y-axis, same
+   per-(system, signal) tiling, a convergence monitor.  No pivot rings.
+3. ``showPerKeyBand``: small-multiples, one tile per (sat, signal) key (capped
    at 36 per page), the value line with its +/-1 sigma envelope, pivot rings, and
    a per-tile ``mu / sigma`` read-out.
 
 BSSD pivot handling (mirrors ``plotIonosphere.m``).  In PPP-RTK the sat-bias
 state of non-pivot sat X on signal s is ``b_X^s - b_pivot^s``; every pivot
 rotation injects a synthetic per-(sat, signal) jump of ``b_old^s - b_new^s``
-that is *not* real hardware behaviour.  ``biasReferenceMode='firstPivot'``
+that does not correspond to real hardware behaviour.  ``biasReferenceMode='firstPivot'``
 (default) walks each (constellation, signal) chronologically, accumulates a
-per-handover offset, and re-references the whole series to the first pivot seen
--- so the column reads as if a single global pivot had been used throughout and
+per-handover offset, and re-references the whole series to the first pivot seen,
+so the column reads as if a single global pivot had been used throughout and
 the (originally zero) pivot row becomes the running offset
 ``b_pivot^s - b_globalpivot^s``.  ``biasReferenceMode='rawBssd'`` shows the raw
 filter state with the handover jumps intact.  Handover epochs are marked with
-thin vertical lines in either mode.  ``std_m`` is **not** re-propagated (the
-displayed sigma is a lower bound for absolute-frame uncertainty).
+thin vertical lines in either mode.  ``std_m`` is not re-propagated: the
+displayed sigma is a lower bound for absolute-frame uncertainty.
 
 Backend-agnostic: builds :class:`Figure` specs only, no plotting library.
 
 Layout note
 -----------
-``plotSatBiases.m`` lays out an *outer* ``tiledlayout(1, nConstellations)`` with
-an *inner* vertical stack of signal tiles per column.  :class:`Figure` stacks
-axes vertically only, so the faithful mapping is **one Figure per constellation**
-with its signal tiles stacked top->bottom (the inner column).  The figure title
+``plotSatBiases.m`` lays out an outer ``tiledlayout(1, nConstellations)`` with
+an inner vertical stack of signal tiles per column.  :class:`Figure` stacks
+axes vertically only, so the faithful mapping is one Figure per constellation
+with its signal tiles stacked top to bottom (the inner column).  The figure title
 carries the constellation name; the shared figure super-title carries the
 MATLAB ``title(outerTl, ...)`` string.  ``plotStyle='lines'`` and
 ``plotLayout='per_signal'`` are the MATLAB defaults and the only mode wired here
@@ -77,7 +77,7 @@ _BAND_ALPHA = 0.4
 # Marker cycle for plotStyle='scatter' (mirrors markerList in the MATLAB).
 _MARKER_LIST = ["o", "s", "d", "^", "v", ">", "<", "p", "h", "x", "+"]
 
-# distinguishable_colors(max(8, 1e3)) in the MATLAB; we size on demand but the
+# distinguishable_colors(max(8, 1e3)) in the MATLAB; sized on demand here, but the
 # PRN-keyed index (chars 2-3) is what selects the row, so 1..99 covers every PRN.
 _N_COLORS = 1000
 _COLORS = distinguishable_colors(_N_COLORS)
@@ -137,7 +137,7 @@ def _insert_gap_breaks(t, y, gap_factor=_GAP_FACTOR):
     med = np.median(dt_sec)
     if not np.isfinite(med) or med <= 0:
         med = 1.0
-    gap_idx = np.flatnonzero(dt_sec > gap_factor * med)  # gap AFTER this index
+    gap_idx = np.flatnonzero(dt_sec > gap_factor * med)  # gap after this index
     if gap_idx.size == 0:
         return pd.to_datetime(t_sorted), y_sorted
 
@@ -360,7 +360,7 @@ def _per_key_band_figures(df, handovers):
 
     Port of Figure 3.  Keys are ``unique(sat + '|' + signal)``; capped at
     ``_MAX_PER_FIG`` per page (paged into multiple Figures rather than dropping,
-    so nothing is silently lost -- the MATLAB only warns and shows the first 36).
+    so nothing is silently lost; the MATLAB only warns and shows the first 36).
     """
     keys = sorted(set(df["satellite"].astype(str) + "|" + df["signal"].astype(str)))
     figures = []

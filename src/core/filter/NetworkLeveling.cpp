@@ -1,7 +1,7 @@
 /**
  * @file NetworkLeveling.cpp
- * @brief Implementation of @ref networkLeveling — the SB_LEVELING block relocated VERBATIM
- *        (dedent-4, zero substitution) out of Application::runNetwork at INC-11b.
+ * @brief Implementation of @ref networkLeveling: the SB_LEVELING block, relocated verbatim
+ *        (dedent 4, no substitution) out of Application::runNetwork at INC-11b.
  */
 
 #include "filter/NetworkLeveling.hpp"
@@ -73,15 +73,15 @@ void networkLeveling(
                                carry_warm, pl_now_s, registered_clock_sats,
                                shared_phase_keys, registered_code_keys);
 
-    // --- §7.6(a): lane-observatory per-event rows onto the EXISTING events
-    // stream (SPEC_lane_slip_response §7.6; the LV-2 precedent below — the
-    // trace sinks and the epoch time live on this side of the seam, and the
-    // spec's "do not create a new stream" rationale holds here too).  One row
-    // per attempt, detector-freed (`delta`) and T4-captured (`t4_delta`) alike;
-    // `action` is "measured" or the skip channel, `statistic` the lane delta in
-    // cycles, `threshold` the raw ΔMW it was differenced against.  Measure-only;
-    // buffered by the harvest, cleared here (and again at the next PASS-A
-    // clear(), belt-and-suspenders).
+    // --- Lane-observatory per-event rows on the existing events stream -------
+    // (SPEC_lane_slip_response §7.6(a)).  Emitted here, like the LV-2 rows below,
+    // because the trace sinks and the epoch time live on this side of the seam;
+    // the spec's "do not create a new stream" rule applies.  One row per attempt,
+    // detector-freed (`delta`) and T4-captured (`t4_delta`) alike; `action` is
+    // "measured" or the skip channel, `statistic` the lane delta in cycles,
+    // `threshold` the raw ΔMW it was differenced against.  Measure-only.  The
+    // harvest buffers the rows; they are cleared here and again at the next
+    // PASS-A clear().
     if (!ctx.carry.relevel.lane_obs_rows.empty()) {
         const auto cause_str = [](std::uint8_t c) {
             std::string s;
@@ -117,30 +117,31 @@ void networkLeveling(
         }
         ctx.carry.relevel.lane_obs_rows.clear();
     }
-    // --- §7.7: eq34 (sat,σ) re-reference ATTRIBUTION rows.  The chain datum
-    // counts its re-references (683/4 h measured) but only the reattach
-    // hygiene emitted rows (148), so a frame step could not be joined against
-    // the lane census post-hoc — the exact gap the T4 tail investigation hit.
-    // `eq34_reref` persists until the NEXT chain-datum entry clears it, so at
-    // this seam it is exactly THIS epoch's set.  One row per (sat,σ); the
-    // stream gate (network.trace_events) is inside emitEvent.  Measure-only.
+    // --- eq34 (sat,σ) re-reference attribution rows (SPEC_lane_slip_response §7.7)
+    // The chain datum counts its re-references, but without these rows only the
+    // reattach hygiene emits per-event rows, so a frame step could not be joined
+    // against the lane census afterwards.  `eq34_reref` persists until the next
+    // chain-datum entry clears it, so at this seam it holds this epoch's set.  One
+    // row per (sat,σ); the stream gate (network.trace_events) is inside
+    // emitEvent.  Measure-only.
     for (const auto& [rr_sat, rr_sig] : ctx.carry.eq34_reref)
         traces.emitEvent(se.time, "PHASE_DATUM", "eq34_reref", rr_sat, "",
                          std::nullopt, std::nullopt, "re_realize", rr_sig);
 
-    // --- Card LV-2 (docs/SPEC_level_information_budget.md): trace μ ------------
-    // One `lv2_mu` row per receiver-code-bias family per epoch on the EXISTING
+    // --- Trace μ of the rx code-bias de-mean (docs/SPEC_level_information_budget.md, Card LV-2)
+    // One `lv2_mu` row per receiver-code-bias family per epoch on the existing
     // events stream (the spec's "do not create a new stream for one scalar").  μ is
-    // the direct observable of the flywheel this card removes: it should sit near
-    // zero in a healthy run and swing during a frame move, and `action` says
-    // whether this epoch's value was FRESH or FROZEN by the thin-mean floor —
-    // invariant #7's decoupling edge, visible rather than inferred.  The harvest
-    // above has just reduced it; emitted here because the trace sinks and the
+    // the direct observable of the common-mode feedback that the de-mean removes:
+    // near zero in a healthy run, swinging during a frame move.  `action` says
+    // whether this epoch's value was fresh or frozen by the thin-mean floor, which
+    // makes invariant #7's decoupling edge visible in the row.  The harvest above
+    // has just reduced μ; the row is emitted here because the trace sinks and the
     // epoch time live on this side of the seam.
-    // Under LV-5 the row carries BOTH numbers: the μ actually folded against this
-    // epoch, and the folded set's own raw common mode measured afterwards — their
-    // difference is the residual force the correction left behind, which is the only
-    // honest way to tell a working de-mean from one that merely ran.
+    // Under LV-5 (rx_cb_demean_within) the row carries two numbers: the μ folded
+    // against this epoch, and the folded set's own raw common mode measured
+    // afterwards.  Their difference (`resid`) is the residual common mode the
+    // correction left behind, which distinguishes a working de-mean from one that
+    // ran without effect.
     for (const auto& [fam, rec] : ctx.carry.rx_cb_demean_last)
         traces.emitEvent(se.time, "lv2", "rx_cb_demean_mu", "", "",
                          rec.mu, static_cast<double>(ctx.knobs.rx_cb_demean_min_sta),
@@ -153,14 +154,14 @@ void networkLeveling(
                              : fmt::format("family={};n_sta={};sum_lambda={:.6g};mode=lag1",
                                            fam, rec.n_sta, rec.sum_lam));
 
-    // --- Card S2H (docs/SPEC_level_information_budget.md §17 item 3): trace μ --
+    // --- Trace μ of the rx code-bias harvest (docs/SPEC_level_information_budget.md §17 item 3, Card S2H)
     // One `s2h_mu` row per family per epoch on the events stream (the LV-2
-    // pattern — no new stream for one scalar).  μ here is the common-mode
-    // content the harvest REMOVED from the carried set this epoch: near the
+    // pattern: no new stream for one scalar).  μ here is the common-mode content
+    // the harvest removed from the carried set this epoch: close to the
     // per-epoch solve's own level wander in a healthy run, and the direct
     // observable of a frame event when the member set changes (n / n_used move
-    // with it — invariant #7's edges, visible in the row rather than inferred).
-    // `action` distinguishes an APPLIED transform from a thin-set identity.
+    // with it, so invariant #7's edges show in the row).  `action` distinguishes
+    // an applied transform from a thin-set identity.
     for (const auto& [fam, rec] : ctx.carry.rx_cb_harvest_last)
         traces.emitEvent(se.time, "s2h", "rx_cb_harvest_mu", "", "",
                          rec.mu, static_cast<double>(ctx.knobs.rx_cb_demean_min_sta),
@@ -170,15 +171,17 @@ void networkLeveling(
                                      fam, rec.n, rec.n_used, rec.n_screened,
                                      rec.sum_lam, ctx.knobs.rx_cb_harvest_screen_z));
 
-    // --- T1d: SH-field convergence detector (latch + one-shot refloat) ----
-    // Judge the co-estimated SH field "stationary" once the epoch-over-epoch coefficient
-    // RMS change drops below the threshold AND a₀₀ is inside the physical band, then LATCH
-    // (once converged, stay converged — the split it defines is the good one).  Runs POST-
-    // harvest so a refloat drops the just-stashed (possibly contaminated early) carry → a
-    // true one-epoch refloat.  The latch is read pre-solve NEXT epoch by carry_warm, so the
-    // convergence-gated carry warms one epoch after the field first settles.  Gated on one
-    // of the two toggles ⇒ byte-identical when both are OFF (the reference vector + latch
-    // are never touched, carry_warm keeps the fixed epoch-count gate).
+    // --- SH-field convergence detector (latch + one-shot refloat; T1d) ----
+    // The co-estimated SH field counts as stationary once the epoch-over-epoch
+    // coefficient RMS change drops below the threshold and a₀₀ is inside the physical
+    // band; the state then latches (once converged, it stays converged, since the split
+    // it defines is the good one).  Runs after the harvest, so a refloat drops the
+    // just-stashed carry (possibly contaminated early) and gives a true one-epoch
+    // refloat.  carry_warm reads the latch before the next epoch's solve, so the
+    // convergence-gated carry warms one epoch after the field first settles.  Gated on
+    // either of the two toggles; with both off it is byte-identical (the reference
+    // vector and the latch are never touched, and carry_warm keeps the fixed
+    // epoch-count gate).
     if ((pl_warmup_on_conv || pl_refloat_on_conv) && sh_model && !sh_converged_latch) {
         const auto& sh_coeffs = sh_model->coeffs();
         Eigen::VectorXd cur(static_cast<Eigen::Index>(sh_coeffs.size()));
@@ -206,11 +209,11 @@ void networkLeveling(
                           pl_warmup_on_conv ? "warm-gate released"
                                             : (pl_refloat_on_conv ? "refloated" : "unchanged"));
                 if (pl_refloat_on_conv) {
-                    // SPEC_withhold_era_release §8: the LARGEST single carry
-                    // retirement in the producer — a whole-fleet clear.  Counted
-                    // before the clear so the census can attribute it; without
-                    // this the census could report zero on exactly the event
-                    // shape it exists to attribute.
+                    // The largest single carry retirement in the producer: a
+                    // whole-fleet clear.  Counted before the clear so the
+                    // carry-retirement census can attribute it; otherwise the
+                    // census would report zero for this event
+                    // (SPEC_withhold_era_release §8).
                     ctx.counters.n_cr_sh_conv_flush +=
                         static_cast<long long>(local_carry.size());
                     ++ctx.counters.n_cr_sh_conv_flushes;
@@ -222,32 +225,35 @@ void networkLeveling(
     }
 
     // --- Post-fit network RAIM (Increment 3, tier T2) -------------------
-    // The safety net for the zero-process-noise carry.  The per-station slip
-    // pre-processors (MW/GF TurboEdit, IF-phase triple-difference) are
-    // threshold/pool-limited, so a real slip on a satellite that is SETTING (few
-    // tracking stations, under the pooled-MAD count) passes undetected — and with
-    // zero process noise the stale carry then freezes into the products forever.
+    // The next step, networkPostFitRaim (NetworkRaim.cpp), is called by the driver
+    // right after this seam.  It is the safety net for the zero-process-noise carry.
+    // The per-station slip pre-processors (MW/GF TurboEdit, IF-phase
+    // triple-difference) are threshold/pool-limited, so a real slip on a setting
+    // satellite (few tracking stations, under the pooled-MAD count) can pass
+    // undetected, and with zero process noise the stale carry then stays in the
+    // products indefinitely.
     //
-    // This runs AFTER the joint solve and spends the network redundancy the
+    // RAIM runs after the joint solve and uses the network redundancy that the
     // per-station detectors cannot see.  A bad carried ambiguity leaks its error
-    // into the SHARED satellite clock/phase-bias; the guilty station HIDES it
-    // there (its own residual stays small), but every OTHER station tracking that
-    // satellite is pinned to its own (correct) carry and CANNOT absorb the shared
+    // into the shared satellite clock/phase bias.  The station at fault hides it
+    // there (its own residual stays small), but every other station tracking that
+    // satellite is held to its own (correct) carry and cannot absorb the shared
     // shift, so its post-fit phase residual spikes.  Each carried ambiguity's phase
-    // residual is a Baarda-style normalized residual: v·√w divided by a ROBUST
-    // a-posteriori variance factor σ̂0 = max(1, 1.4826·median|v·√w|) pooled network-wide
-    // this epoch, so a satellite is judged an outlier relative to the network's CURRENT
-    // residual level, not to the mm measurement noise (which would trip on ordinary cm
-    // model misfit).  A cross-station consensus on the normalized residual (aggregated
-    // per satellite) therefore fires exactly when the contamination reached the PRODUCTS
-    // (the shared clock actually moved ⇒ many innocent stations spike) and stays quiet
-    // when a slip stayed local and harmless — robust WHILE THE SLIPPED FRACTION IS SMALL
-    // (an all-move-together epoch inflates σ̂0 itself and is a separate diagnosis).  It
-    // refloats the flagged satellite's
-    // carry at EVERY station (marks pending-reseed, so the next epoch re-estimates
-    // from data — the IF-phase detector's one-shot lifecycle).  Placed after the
-    // harvest so the just-completed stash's clearPendingReseed does not wipe the
-    // mark.  OFF (default) = byte-identical (no marks, no state change).
+    // residual is a Baarda-style normalized residual: v·√w divided by a robust
+    // a-posteriori variance factor σ̂0 = max(raim_s0_floor, 1.4826·median|v·√w|)
+    // (floor 1.0 by default) pooled network-wide this epoch, so a satellite is judged
+    // an outlier relative to the network's current residual level, not to the mm
+    // measurement noise (which would trip on ordinary cm model misfit).  A
+    // cross-station consensus on the normalized residual (aggregated per satellite)
+    // therefore fires when the contamination has reached the products (the shared
+    // clock moved, so many unaffected stations spike) and stays quiet when a slip
+    // stayed local and harmless.  This holds while the slipped fraction is small; an
+    // epoch where everything moves together inflates σ̂0 itself and needs a separate
+    // diagnosis.  RAIM refloats the flagged satellite's carry at every station (marks
+    // it pending-reseed, so the next epoch re-estimates it from data, the IF-phase
+    // detector's one-shot lifecycle).  It runs after this harvest so that the
+    // just-completed stash's clearPendingReseed does not wipe the mark.  Off (the
+    // default) is byte-identical (no marks, no state change).
 }
 
 } // namespace GnssProcessor

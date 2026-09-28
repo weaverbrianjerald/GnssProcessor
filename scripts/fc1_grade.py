@@ -1,43 +1,43 @@
 #!/usr/bin/env python3
 """Grade the FC-1 split-cadence fast clock against the full solve.
 
-Two modes, both grading DATUM-INVARIANT quantities only (standing invariant #5 — raw
+Two modes, both grading datum-invariant quantities only (standing invariant #5: raw
 wire clocks confound benign frame drift with real defects, so every comparison below has
 the per-epoch common mode removed before anything is measured):
 
 ``shadow``
-    The INC-2 gate.  A shadow run computes the fast tick on FULL epochs and discards it,
-    so for every epoch there is both a fast delta and the full solve's OWN delta over the
-    same interval.  Grades fast vs full directly.  PASS when the common-mode-removed RMS
+    The INC-2 gate.  A shadow run computes the fast tick on full epochs and discards it,
+    so for every epoch there is both a fast delta and the full solve's own delta over the
+    same interval.  Grades fast vs full directly.  Passes when the common-mode-removed RMS
     sits at or below a small multiple of the producer's own clock sigma.
 
 ``split``
     The INC-4 decisive gate.  Two runs of the same build over the same data:
 
-      REF   -- ``epoch_decimation_n = 1``: a full solve at every epoch (today's mode).
-      SPLIT -- ``epoch_decimation_n = N`` + ``fast_clock`` on: full solves every N epochs,
-               clocks-only ticks in between.
+      REF   : ``epoch_decimation_n = 1``, a full solve at every epoch (today's mode).
+      SPLIT : ``epoch_decimation_n = N`` with ``fast_clock`` on, full solves every N
+              epochs and clocks-only ticks in between.
 
-    At every epoch that SPLIT covered with a TICK (not a full solve), compare against
-    REF's full-solve clock, after removing the per-satellite ARM-FRAME OFFSET measured at
+    At every epoch that SPLIT covered with a tick (not a full solve), compare against
+    REF's full-solve clock, after removing the per-satellite arm-frame offset measured at
     the bracketing common full epoch and held across the era:
 
       offset     = SPLIT full c0(base) - REF c0(base),  base = latest common full <= t
       fast error = (SPLIT anchor c0 + fast delta) - REF c0 - offset
-      ZOH  error = (SPLIT anchor c0)              - REF c0 - offset  <- a consumer today
+      ZOH  error = (SPLIT anchor c0)              - REF c0 - offset  (what a consumer gets today)
 
-    The alignment is not cosmetic.  The two arms' full solves realize INDEPENDENT frame
-    random walks -- measured 317.1 cm SD-RMS apart at common epochs on the 2026-07-30
-    runs -- so without it BOTH errors saturate at the inter-arm divergence
-    (sqrt(317.1^2 + 76.9^2) = 326.3 vs the 326.4 measured) and the maximum measurable
-    improvement factor was 1.03x against a 5x gate, at ANY churn level.  With the
-    anchor-held offset removed, the ZOH error reduces algebraically to REF's own step
+    The alignment is not cosmetic: the two arms' full solves realize independent frame
+    random walks (measured 317.1 cm SD-RMS apart at common epochs on the 2026-07-30 runs), so
+    without it both errors saturate at the inter-arm divergence
+    (sqrt(317.1^2 + 76.9^2) = 326.3 against the 326.4 measured), and the maximum
+    measurable improvement factor was 1.03x against a 5x gate, at any churn level.  With
+    the anchor-held offset removed, the ZOH error reduces algebraically to REF's own step
     across the era (the true hold error) and the fast error to the tick's miss of that
-    step -- the comparison the gate was specified over.  The removed divergence is
-    PRINTED so saturation can never hide again.
+    step, which is the comparison the gate was specified over.  The removed divergence is
+    printed on every run so a saturated grade cannot pass unnoticed.
 
-    PASS when ``SD-RMS(fast) <= (1/5) * SD-RMS(ZOH)``.  Beating ZOH by 5x is the bar
-    because ZOH is already the MMSE predictor for a random-walk clock GIVEN the slow
+    Passes when ``SD-RMS(fast) <= (1/5) * SD-RMS(ZOH)``.  Beating ZOH by 5x is the bar
+    because ZOH is already the MMSE predictor for a random-walk clock given the slow
     solve (the C1 card measured the emitted c0 as a random walk with sigma_w = 0.157 m per
     30 s and an optimal rate-shrinkage of exactly zero).  A fast tier that merely ties ZOH
     has bought nothing but complexity.
@@ -136,9 +136,9 @@ def parse_fast_trace(path):
 def sd_stats(errors_by_sat):
     """Common-mode-removed statistics over one epoch's {sat: error}.
 
-    Removing the per-epoch MEDIAN is the single-realization datum-invariance step: an
+    Removing the per-epoch median is the single-realization datum-invariance step: an
     epoch-wide constant is a frame offset, not an error, and grading it would report
-    benign datum drift as fast-clock failure.  The median (not the mean) so one bad
+    benign datum drift as fast-clock failure.  The median, not the mean, so one bad
     satellite cannot define the frame it is then judged against.
     """
     if len(errors_by_sat) < 2:
@@ -226,11 +226,11 @@ def grade_split(ref_products, split_products, split_fast, ticks, ratio_bar):
     print("mode removed.  Graded on the EMITTED K values — what a consumer actually")
     print("receives, including the cdot*dt drift term — not on an intermediate.\n")
 
-    # The two arms realize INDEPENDENT frame random walks; unaligned, both errors
+    # The two arms realize independent frame random walks; unaligned, both errors
     # saturate at the inter-arm divergence (see the module docstring for the measured
-    # instance).  The offset is estimated at the latest common full epoch <= the tick —
-    # in a healthy split run that is the tick's own anchor, which makes the aligned ZOH
-    # error exactly REF's step across the era.
+    # instance).  The offset is estimated at the latest common full epoch at or before
+    # the tick: in a healthy split run that is the tick's own anchor, which makes the
+    # aligned ZOH error exactly REF's step across the era.
     common_fulls = sorted(t for t, sats in split_products.items() if sats and t in ref_products)
     if not common_fulls:
         print("NO COMMON FULL EPOCHS between the arms — the arm-frame offset cannot be")
@@ -240,7 +240,7 @@ def grade_split(ref_products, split_products, split_fast, ticks, ratio_bar):
 
     fast_sd, zoh_sd, n_ep = [], [], 0
     per_sat_fast = defaultdict(list)
-    div_sd = []   # the offsets actually removed, SD'd per epoch — reported, never hidden
+    div_sd = []   # the offsets actually removed, SD'd per epoch, and reported below
 
     for t in sorted(split_fast):
         ref_ep = ref_products.get(t)

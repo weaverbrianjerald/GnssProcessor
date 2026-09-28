@@ -1,43 +1,41 @@
 /**
  * @file NetworkEstimator.hpp
  * @brief Semantic layer over the arrowhead Schur kernel for the PPP-RTK network
- *        producer (W4-S2): shared satellite-parameter layout + explicit datum +
+ *        producer (W4-S2): shared satellite-parameter layout, explicit datum, and
  *        mapping to the emittable @c NetworkSolutionEpoch.
  *
- * Where @ref NetworkNormalEquations is pure linear algebra over abstract
- * shared/local blocks, @c NetworkEstimator gives the shared columns GNSS
- * MEANING — each shared column is a (satellite, parameter-kind, signal) — and
- * drives one solution epoch:
+ * @ref NetworkNormalEquations is pure linear algebra over abstract shared and
+ * local blocks.  @c NetworkEstimator gives each shared column its GNSS meaning, a
+ * (satellite, parameter kind, signal) triple, and drives one solution epoch:
  *
- *   1. register the shared satellite parameters (sat clock / code bias / phase
- *      bias) → fixes the shared column layout;
- *   2. @ref beginEpoch — open a fresh arrowhead system of that width;
- *   3. @ref addStation per station — pre-formed local-vs-shared design rows
- *      (built by the caller from each station's single-receiver
- *      `MeasurementModel`; the network applies no receiver-side differencing);
- *   4. @ref solve with an explicit minimum-constraint @ref Datum — the reduced
+ *   1. register the shared satellite parameters (satellite clock, code bias,
+ *      phase bias), which fixes the shared column layout;
+ *   2. @ref beginEpoch: open a fresh arrowhead system of that width;
+ *   3. @ref addStation per station: pre-formed local-vs-shared design rows, built
+ *      by the caller from each station's single-receiver `MeasurementModel` (the
+ *      network applies no receiver-side differencing);
+ *   4. @ref solve with an explicit minimum-constraint @ref Datum.  The reduced
  *      shared satellite system is rank-deficient by the gauge freedoms (overall
- *      clock, the per-constellation phase-bias↔ambiguity datum, ISB), so the
- *      datum pins exactly those before the solve (realized through the kernel's
- *      @c solveSharedConstrained seam, leaving the kernel state pristine);
- *   5. @ref toSolutionEpoch — map the shared estimate to a @c NetworkSolutionEpoch
- *      that @c NetworkProductEmitter serializes in IGS-SSR convention.
+ *      clock, the per-constellation phase-bias↔ambiguity datum, ISB), and the
+ *      datum pins exactly those.  The pins are applied to a copy of the reduced
+ *      system through the kernel's @c solveSharedConstrained seam, so the
+ *      kernel's own reduced normals never carry them;
+ *   5. @ref toSolutionEpoch: map the shared estimate to a @c NetworkSolutionEpoch,
+ *      which @c NetworkProductEmitter serializes in IGS-SSR convention.
  *
- * SCOPE (W4-S2a): this is the single-epoch estimator core, validated on a
- * synthetic noise-free network (truth recovery up to the declared S-transform).
- * Deliberately deferred:
- *   - S2b: the real `runNetwork()` epoch loop (MultiRinexSync `by_station`),
- *     building the per-station design rows from the live `MeasurementModel`, the
- *     between-epoch time update, and the config flags — those edit the shared
- *     core/config files and are sequenced after the concurrent sessions land.
- *   - W5: the full `SbasisDeclaration` / null-space rank gate.  The @ref Datum
- *     here is the minimal pin set the estimator needs to solve; W5 formalizes it.
- *   - QC / cold-start gating: no cross-station blunder isolation yet.
+ * Scope (W4-S2a): the single-epoch estimator core, validated on a synthetic
+ * noise-free network (truth recovery up to the declared S-transform).  Outside
+ * this class: the `runNetwork()` epoch loop (S2b: MultiRinexSync `by_station`,
+ * the per-station design rows from the live `MeasurementModel`, the between-epoch
+ * time update, the config flags); the `SbasisDeclaration` and the null-space rank
+ * gate in @c NetworkSbasis (W5), which formalize the minimal pin set that
+ * @ref Datum carries here; and cross-station QC (network RAIM).
  *
- * The local datum elements that live on a station's own block (e.g. the pivot
- * receiver's ambiguity / clock pin that the emitted phase bias absorbs — Odijk
- * Eq. 4/9) are realized by the caller as tight priors folded into that station's
- * design rows; only the SHARED-block gauges go through @ref Datum.
+ * Datum elements local to one station's block (for example the pivot receiver's
+ * ambiguity or clock pin that the emitted phase bias absorbs, Odijk Eq. 4/9) are
+ * realized by the caller as tight priors on that station's local block (prior
+ * rows in the design passed to @ref addStation, or @ref addStationPrior).  Only
+ * the shared-block gauges go through @ref Datum.
  */
 
 #pragma once
@@ -75,7 +73,7 @@ enum class SharedParamKind {
  */
 class NetworkEstimator {
 public:
-    /// A hard pin of a shared column to a value — one element of the S-basis.
+    /// A hard pin of a shared column to a value: one element of the S-basis.
     struct Pin {
         Eigen::Index column;  ///< Shared-block column (from @ref clockColumn etc.).
         double value;         ///< Datum value the column is fixed to (usually 0).
@@ -95,8 +93,8 @@ public:
     Eigen::Index registerPhaseBias(const std::string& sat, const std::string& signal);
     /// Register a global SH-VTEC coefficient column (n,m,trig) (idempotent).
     /// @p trig is 'C' (cosine, m>=0) or 'S' (sine, m>=1); @p layer selects the
-    /// shell (0 = legacy single layer, 1 = the dual-layer second shell — keyed
-    /// "SH2|n|m|t" so both shells coexist on the border).
+    /// shell: 0 = legacy single layer, keyed "SH|n|m|t"; 1 = the dual-layer second
+    /// shell, keyed "SH2|n|m|t", so both shells coexist on the border.
     Eigen::Index registerVtecCoeff(int n, int m, char trig, int layer = 0);
 
     /// @return The clock column for @p sat. @throws std::out_of_range if absent.
@@ -117,9 +115,9 @@ public:
      *
      * Format by kind: @c "CLK:<sat>" (satellite clock), @c "CB:<sat>:<signal>"
      * (satellite code bias), @c "PB:<sat>:<signal>" (satellite phase bias),
-     * @c "SH:<C|S>:<n>:<m>" (SH-VTEC coefficient).  Intended for the NEQ export
-     * and other offline attribution tooling — labels are stable across epochs
-     * for an unchanged registration order.
+     * @c "SH:<C|S>:<n>:<m>" (SH-VTEC coefficient; @c "SH2:<C|S>:<n>:<m>" on the
+     * second shell).  Intended for the NEQ export and other offline attribution
+     * tooling; labels are stable across epochs for an unchanged registration order.
      *
      * @throws std::out_of_range if @p col is not a registered column.
      */
@@ -132,22 +130,26 @@ public:
     // --- One solution epoch -------------------------------------------------
 
     /**
-     * @brief Clear the shared-column layout for a new epoch, REUSING allocations.
+     * @brief Clear the shared-column layout for a new epoch, reusing allocations.
      *
-     * Call at the top of each epoch (before re-registering the shared parameters)
+     * Call at the top of each epoch, before re-registering the shared parameters,
      * when the estimator is hoisted out of the epoch loop.  Empties the layout
-     * (@ref index_ / @ref columns_) and the per-epoch flags but RETAINS the
-     * underlying @ref NetworkNormalEquations station-block pool, so the heavy
-     * per-station Schur buffers are reused across epochs instead of being freed
-     * and reallocated (the network producer's memory-churn fix).  Equivalent in
-     * effect to default-constructing a new @c NetworkEstimator each epoch, minus
-     * the large-block heap churn.
+     * (@ref index_ / @ref columns_), the shared covariance, the sum-to-zero phase
+     * gauges, the DD priors and the per-epoch flags, and keeps the underlying
+     * @ref NetworkNormalEquations station-block pool, so the per-station Schur
+     * buffers are reused across epochs instead of being freed and reallocated.
+     * For the layout and the per-epoch state the effect equals default-constructing
+     * a new @c NetworkEstimator.  Everything else is kept: the settings made
+     * through the setters and passthroughs (thread budgets, rank-gate tolerance,
+     * kernel options), the attribution recorder, and the run-cumulative
+     * @ref gaugeFreePartialSkipped tally.
      */
     void reset();
 
     /// Open a fresh arrowhead system over the current shared layout.  Freezes the
-    /// layout for this epoch (no registration after this until the next call).
-    /// Reuses the kernel's retained allocations (see @ref NetworkNormalEquations::reset).
+    /// layout for this epoch: registration throws from here until the next
+    /// @ref reset.  Reuses the kernel's retained allocations (see
+    /// @ref NetworkNormalEquations::reset).
     void beginEpoch();
 
     /**
@@ -158,13 +160,14 @@ public:
      * @param y   Prefit residual (length @c m).  Any pivot-receiver datum pins
      *            local to this station are folded into @p A_r / @p W / @p y by
      *            the caller (tight prior rows).
-     * @param prior Optional DIAGONAL prior rows folded into this station's
-     *            @f$N_{rr}/u_r@f$ BEFORE the positive-definiteness test, instead
-     *            of afterwards through @ref addStationPrior — card RF-PD-fix
-     *            (@c network.station_prior_before_pd).  See
+     * @param prior Optional diagonal prior rows folded into this station's
+     *            @f$N_{rr}/u_r@f$ before the positive-definiteness test, instead
+     *            of afterwards through @ref addStationPrior
+     *            (@c network.station_prior_before_pd, card RF-PD-fix).  See
      *            @ref NetworkNormalEquations::StationPrior.  Empty (the default)
-     *            ⇒ the legacy path, byte-identical.  A row passed here MUST NOT
-     *            also be passed to @ref addStationPrior: the two do not sum.
+     *            keeps the legacy path, byte-identical.  A row passed here must
+     *            not also be passed to @ref addStationPrior: the two paths are
+     *            alternatives for one prior.
      * @return The 0-based station index for @ref reconstructStation.
      * @throws std::logic_error if called before @ref beginEpoch or after
      *         @ref solve (start a new epoch with @ref beginEpoch first).
@@ -198,13 +201,13 @@ public:
 
     /**
      * @brief Set the thread budget for the deterministic-parallel DD carry-fold
-     *        (@c network.parallel_seam) — the per-block fan-out of
+     *        (@c network.parallel_seam): the per-block fan-out of
      *        @ref NetworkNormalEquations::foldReducedDdPriors.
      *
-     * Default 1 (serial fold, byte-identical).  Unlike @ref setReduceThreads this is
-     * BYTE-IDENTITY-PRESERVING at any thread count: the per-block algebra is computed
-     * in parallel but accumulated serially in block-index order.  Takes effect on the
-     * next @ref solve.
+     * Default 1 (serial fold, byte-identical).  Unlike @ref setReduceThreads, this
+     * keeps the output byte-identical at any thread count: the per-block algebra
+     * is computed in parallel but accumulated serially in block-index order.
+     * Takes effect on the next @ref solve.
      *
      * @param n_threads Thread count (clamped to ≥ 1).
      */
@@ -214,82 +217,92 @@ public:
 
     /**
      * @brief Arm @c network.parallel_carry: run @ref solve's DD-prior fold
-     *        (@ref NetworkNormalEquations::foldReducedDdPriors) SERIAL-over-blocks with
-     *        WITHIN-BLOCK per-station threading (@p nthreads).  The fold's dominant cost is
-     *        the per-station reduction (measured ~44% of the epoch), which Eigen's GEMM
-     *        threading cannot help; @ref foldReducedDdPriors fans it across threads instead
-     *        (per-thread partials + ascending combine — ULP-relaxed vs serial) and
-     *        column-parallelizes the K×K middle inverse (byte-identical).  Eigen stays
-     *        PINNED to one thread here (the driver does NOT un-pin it around @ref solve when
-     *        armed) so the per-station OpenMP does not nest with Eigen.  When armed,
-     *        @ref solve passes block_threads=1 + station_threads=@p nthreads to the fold.
-     * @param nthreads Within-block thread budget (≤ 1 ⇒ OFF, the serial/seam fold path).
+     *        (@ref NetworkNormalEquations::foldReducedDdPriors) serially over blocks,
+     *        with per-station threading inside each block (@p nthreads).
+     *
+     * The fold's dominant cost is the per-station reduction (measured at about 44 %
+     * of the epoch), which Eigen's GEMM threading does not speed up.
+     * @ref foldReducedDdPriors fans it across threads instead, with per-thread
+     * partials combined in ascending order (ULP-level differences against the
+     * serial fold), and column-parallelizes the K×K middle inverse (byte-identical).
+     * Eigen stays pinned to one thread (the driver does not un-pin it around
+     * @ref solve when this is armed), so the per-station OpenMP does not nest with
+     * Eigen's threading.  When armed, @ref solve passes block_threads=1 and
+     * station_threads=@p nthreads to the fold, in place of the @ref setSeamThreads
+     * budget.
+     * @param nthreads Within-block thread budget (≤ 1 turns it off: the serial or
+     *                 seam fold path).
      */
     void setCarryParallelThreads(int nthreads) { carry_par_threads_ = nthreads > 1 ? nthreads : 1; }
 
     /**
-     * @brief Card DG (@c network.rank_gate_tol): set the RESOLVED relative
-     *        eigenvalue tolerance of the shared-border null-space rank gate —
-     *        the ONE value every consumer reads.
+     * @brief Set the resolved relative eigenvalue tolerance of the shared-border
+     *        null-space rank gate (@c network.rank_gate_tol, Card DG): the one
+     *        value every consumer reads.
      *
-     * Default @ref kNullSpaceTol (1e-9), so an unset config is byte-identical:
-     * the same double travels through the same arithmetic as the former compile
-     * constant.  The driver calls this ONCE, next to the other estimator knobs,
+     * Default @ref kNullSpaceTol (1e-9), so an unset config is byte-identical: the
+     * same double goes through the same arithmetic as the former compile-time
+     * constant.  The driver calls this once, next to the other estimator knobs,
      * before the epoch loop.
      *
-     * @par Why one value, three consumers
+     * @par One value, three consumers
      * The gate (@c NetworkSbasis::assertNullSpaceRank), the estimability dump
      * (@ref dumpEstimabilitySpectrum) and the prioritized drop-and-heal
-     * (@c healNearNullPhaseBias) must agree: the dump has to DESCRIBE the gate's
-     * decision, and the heal must soft-anchor only directions the gate itself
-     * counts as null.  A heal running at a LOOSER cutoff than the gate would put
-     * prior information on weak-but-REAL parameters — the near-cutoff fragility
-     * the CB-ADM card's rejected-alternatives list already killed.  Passing the
-     * tolerance around as a compile constant made that agreement implicit; the
-     * resolved member makes it structural.
+     * (@c healNearNullPhaseBias) must agree: the dump describes the gate's
+     * decision, and the drop-and-heal soft-anchors only directions the gate itself
+     * counts as null.  At a looser cutoff than the gate, it would put prior
+     * information on weak but real parameters, the near-cutoff fragility that the
+     * CB-ADM card's rejected-alternatives list rules out.  One resolved member
+     * makes that agreement structural rather than a convention.
      *
      * @par Placement rule (binding for any non-default value)
-     * The armed tolerance must be justified from THAT config's own estimability
-     * dump: the resulting cutoff (@p tol · max(λmax, 1)) has to sit ≥ 2 decades
-     * above the config's gauge depth and ≥ 2 decades below its weakest REAL
-     * direction.  The gate is an EXACT-equality test that throws in BOTH
-     * directions, so a tolerance pushed below a config's own gauge depth stops
-     * counting the declared gauges and withholds a HEALTHY config
-     * ("over-specified").  Guessing a value without a measured spectrum is a
-     * spec violation — see docs/SPEC_beidou_w6_datum.md §2 (DG3).
+     * A non-default tolerance is justified from that config's own estimability
+     * dump: the cutoff @p tol · max(λmax, 1) sits at least 2 decades above the
+     * config's gauge depth and at least 2 decades below its weakest real
+     * direction.  The gate is an exact-equality test that throws in both
+     * directions, so a tolerance below the config's own gauge depth stops
+     * counting the declared gauges and withholds a correctly specified config
+     * ("over-specified").  A value chosen without a measured spectrum violates
+     * the spec: see docs/SPEC_beidou_w6_datum.md §2 (DG3).
      *
-     * @param tol Relative eigenvalue tolerance (> 0; the loader validates and
-     *            clamps at 1e-16 so an accidental 0 cannot turn the gate off).
+     * @param tol Relative eigenvalue tolerance (> 0).  The loader rejects a value
+     *            that is not > 0 and raises one below 1e-16 to 1e-16, since a
+     *            deeper cutoff counts no direction as null and turns the gate off.
      */
     void setRankGateTol(double tol) { rank_gate_tol_ = tol; }
 
     /// The resolved rank-gate tolerance (@ref setRankGateTol); @ref kNullSpaceTol
     /// until the driver sets it.  Read by the gate call sites, the estimability
-    /// dump and the drop-and-heal — no consumer keeps a private tolerance.
+    /// dump and the drop-and-heal; no consumer keeps a private tolerance.
     double rankGateTol() const { return rank_gate_tol_; }
 
     /// Pin-aware station PD guard passthrough
     /// (@ref NetworkNormalEquations::setStationPdMedianScale;
-    /// @c network.station_pd_pin_aware).  Configuration-level — set once before
+    /// @c network.station_pd_pin_aware).  Configuration-level: set once before
     /// the epoch loop; survives @ref beginEpoch / @ref reset.
     void setStationPdMedianScale(bool on) { neq_.setStationPdMedianScale(on); }
 
-    /// Card RF-PD null-direction read passthrough
+    /// Passthrough for the station PD null-direction read
     /// (@ref NetworkNormalEquations::setStationPdNullTrace;
-    /// @c network.trace_station_pd_null).  Configuration-level — set once before
-    /// the epoch loop; survives @ref beginEpoch / @ref reset.  The record itself
-    /// is read through @ref normals() →
+    /// @c network.trace_station_pd_null, Card RF-PD).  Configuration-level: set
+    /// once before the epoch loop; survives @ref beginEpoch / @ref reset.  The
+    /// record itself is read through @ref normals() →
     /// @ref NetworkNormalEquations::lastStationPdFailure in the caller's @c catch.
     void setStationPdNullTrace(bool on) { neq_.setStationPdNullTrace(on); }
 
     /**
      * @brief Solve the shared satellite parameters under the explicit @p datum.
      *
-     * Reduces the arrowhead, applies the datum pins to the reduced shared system
-     * (a large-weight constraint per pin on a COPY, via the kernel's
-     * `solveSharedConstrained` seam), and returns the shared estimate @c x_s.
-     * The internal kernel state is left pristine, so @ref reconstructStation is
-     * valid afterwards.
+     * Reduces the arrowhead, folds the sum-to-zero phase gauges and DD priors set
+     * for this epoch (if any), then applies the datum pins to a copy of the
+     * reduced shared system and solves it through the kernel's
+     * `solveSharedConstrained` seam.  Each pin is exact (Dirichlet elimination):
+     * the pinned value's contribution moves to the right-hand side, the pinned row
+     * and column are zeroed, and the diagonal is set to the largest diagonal
+     * magnitude of the reduced normals (at least 1).  That scale keeps
+     * x_col = value exact without distorting the relative pivots the
+     * positive-definiteness guard inspects.  The kernel's own reduced normals
+     * never carry the pins, so @ref reconstructStation is valid afterwards.
      *
      * @param datum The shared-block gauges (≥ the rank deficiency of the reduced
      *        system).  An empty datum requires an already-full-rank reduced
@@ -300,13 +313,13 @@ public:
 
     /**
      * @brief Inject a carried-ambiguity (phase-leveling) prior onto one station's
-     *        local block — forwards to @ref NetworkNormalEquations::addStationPrior.
+     *        local block; forwards to @ref NetworkNormalEquations::addStationPrior.
      *
-     * Call AFTER @ref addStation (the station must already be in this epoch's
-     * arrowhead) and BEFORE @ref solve / @ref reducedSharedNormals (a local-block
-     * change must be folded before the Schur reduction; there is no post-reduce
-     * fast-path).  @p local_cols are columns within that station's @c A_r;
-     * @p delta_Nrr_diag are the per-column information weights
+     * Call after @ref addStation (the station must already be in this epoch's
+     * arrowhead) and before @ref solve / @ref reducedSharedNormals: a local-block
+     * change must be folded before the Schur reduction, and there is no
+     * post-reduce fast path.  @p local_cols are columns within that station's
+     * @c A_r; @p delta_Nrr_diag are the per-column information weights
      * (@f$1/\text{var}_\text{eff}@f$) and @p delta_ur the matching information-RHS
      * increments.  See the kernel method for the ordering/determinism contract.
      *
@@ -326,11 +339,12 @@ public:
      *        datum-as-known frame (producer-side network AR, Phase 1).
      *
      * Takes the most recent @ref solve's shared covariance (@ref
-     * sharedCovariance), zeros the rows/columns of every @p datum-pinned shared
-     * column (the S-basis gauges are EXACT, so they carry no random
-     * uncertainty), and propagates the result into station @p station's locals
-     * via @ref NetworkNormalEquations::reconstructStationCovariance.  The
-     * returned block is @f$\mathrm{Cov}(x_r\mid x_s^{\text{free}})@f$ — the
+     * sharedCovariance), zeros the rows and columns of every @p datum-pinned
+     * shared column and of every ensemble phase-gauge column
+     * (@ref zeroPhaseGaugeColumns), since those gauges are exact and carry no
+     * random uncertainty, and propagates the result into station @p station's
+     * locals via @ref NetworkNormalEquations::reconstructStationCovariance.  The
+     * returned block is @f$\mathrm{Cov}(x_r\mid x_s^{\text{free}})@f$: the
      * covariance the between-station DD ambiguities are differenced from before
      * the integer search.
      *
@@ -345,24 +359,24 @@ public:
 
     /**
      * @brief Joint conditional covariance of local parameters drawn from one or
-     *        more stations, in the datum-as-known frame — the between-station
+     *        more stations, in the datum-as-known frame: the between-station
      *        double-difference ambiguity covariance primitive (network AR, Phase 2).
      *
      * Zeros the @p datum-pinned columns (and any ensemble phase-gauge columns) of
      * the last @ref solve's @ref sharedCovariance, then forwards to
      * @ref NetworkNormalEquations::jointConditionalCovariance.  The @c (a,b) entry
-     * is @f$\mathrm{Cov}(x^{(i)}_{c_a}, x^{(j)}_{c_b}\mid x_s^{\text{free}})@f$;
-     * cross-station entries carry ONLY the shared-parameter propagation (the
-     * coupling that makes a between-station DD covariance correct).
+     * is @f$\mathrm{Cov}(x^{(i)}_{c_a}, x^{(j)}_{c_b}\mid x_s^{\text{free}})@f$.
+     * Without @p carry_aware, cross-station entries carry only the shared-parameter
+     * propagation, the coupling that makes a between-station DD covariance correct.
      *
      * @param requests @c (station, local_col) pairs.
      * @param datum    The same datum passed to @ref solve.
      * @param carry_aware Include the folded DD priors' rank-K term
      *                 (@ref NetworkNormalEquations::hasCarryCovCorrection).  @c false
-     *                 (default) is the pre-card expression, verbatim.  Armed, the
-     *                 sentence above about cross-station entries no longer holds — the
-     *                 rank-K downdate couples every column inside a DD block, and a
-     *                 chord spans two stations by construction.
+     *                 (the default) is the pre-card expression, unchanged.  With it
+     *                 on, cross-station entries also carry the rank-K downdate, which
+     *                 couples every column inside a DD block; a chord spans two
+     *                 stations by construction.
      * @return The @c k×k joint conditional covariance; empty if @p requests is
      *         empty.  Requires a prior @ref solve.
      */
@@ -371,15 +385,15 @@ public:
         const Datum& datum, bool carry_aware = false) const;
 
     /**
-     * @brief Diagonal conditional variances for a SUBSET of a station's local
+     * @brief Diagonal conditional variances for a subset of a station's local
      *        columns in the datum-as-known frame (the carried-ambiguity harvest).
      *
      * Like @ref conditionalLocalCovariance but returns only the diagonal entries
-     * for @p local_cols, computed without the full per-station inverse — the cheap
+     * for @p local_cols, computed without the full per-station inverse: the cheap
      * per-epoch harvest the phase-leveling carry needs to seed each ambiguity's
-     * next-epoch prior variance.  Zeros the @p datum-pinned shared columns of the
-     * last solve's @ref sharedCovariance (exact gauges carry no random
-     * uncertainty), then forwards to
+     * next-epoch prior variance.  Zeros the @p datum-pinned shared columns and the
+     * ensemble phase-gauge columns of the last solve's @ref sharedCovariance
+     * (exact gauges carry no random uncertainty), then forwards to
      * @ref NetworkNormalEquations::reconstructStationCovarianceDiag.
      *
      * @param station    Index from @ref addStation.
@@ -393,42 +407,43 @@ public:
         const Datum& datum, bool carry_aware = false) const;
 
     /**
-     * @brief BORDER-EXACT conditional variance diagonal: @f$\mathrm{diag}
-     *        (N_{rr}^{-1})@f$ restricted to @p local_cols — the local columns'
-     *        uncertainty RELATIVE to the shared frame, with the entire border
+     * @brief Border-exact conditional variance diagonal: @f$\mathrm{diag}
+     *        (N_{rr}^{-1})@f$ restricted to @p local_cols, i.e. the local columns'
+     *        uncertainty relative to the shared frame, with the entire border
      *        treated as known (@f$\Sigma_{ss}\equiv 0@f$).
      *
-     * The anchor-handover ledger re-validation needs exactly this flavor
+     * The anchor-handover ledger re-validation uses this form
      * (SPEC_pivot_visibility_gauge_defect §5.09.1): the shared phase-bias
      * column's own uncertainty moves the pin target and the realized frame
-     * TOGETHER, so it is common-mode in the handover step; gating on the
-     * border-inclusive marginal (@ref conditionalLocalVarianceDiag) measures
-     * the wrong quantity in both directions.  Requires a prior @ref solve.
+     * together, so it is common-mode in the handover step, and a gate on the
+     * border-inclusive marginal (@ref conditionalLocalVarianceDiag) measures the
+     * wrong quantity in both directions.  Requires a prior @ref solve.
      */
     Eigen::VectorXd pureConditionalLocalVarianceDiag(
         std::size_t station, const std::vector<Eigen::Index>& local_cols) const;
 
     /**
      * @brief Regression of one local column on the shared border and its pure
-     *        conditional variance — the ingredients of the rigorous between-epoch
-     *        conditional carry (Card 1, @c network.carry_conditional_coupling).
+     *        conditional variance: the ingredients of the rigorous between-epoch
+     *        conditional carry (@c network.carry_conditional_coupling, Card 1).
      *
      * Thin forward to @ref NetworkNormalEquations::stationRegression: returns
      * @f$M_r=N_{sr}N_{rr}^{-1}e_r@f$ (the shared-border regression row) and
-     * @f$(N_{rr}^{-1})_{rr}=\mathrm{Var}(x_r\mid x_s)@f$ (the CONDITIONAL variance
-     * given the whole shared border, distinct from the MARGINAL
+     * @f$(N_{rr}^{-1})_{rr}=\mathrm{Var}(x_r\mid x_s)@f$ (the conditional variance
+     * given the whole shared border, distinct from the marginal that
      * @ref conditionalLocalVarianceDiag returns).  Both are pure functions of the
-     * accumulated normals — datum-independent — so no @ref Datum argument is taken;
-     * the driver restricts @f$M_r@f$ to the FREE (non-datum-pinned) shared columns
-     * itself.  Requires a station already added this epoch (a solve is not
-     * required — the cached @f$N_{rr}@f$ factor exists from @ref addStation).
+     * accumulated normals and do not depend on the datum, so no @ref Datum
+     * argument is taken; the driver restricts @f$M_r@f$ to the free
+     * (non-datum-pinned) shared columns itself.  Requires a station already added
+     * this epoch; a solve is not required, since the cached @f$N_{rr}@f$ factor
+     * exists from @ref addStation.
      *
      * @param station   Index from @ref addStation.
      * @param local_col Local column within that station's @c A_r block.
-     * @param cross_cols F3 (network.phase_leveling_local_block): optional local columns at
-     *                  which the same @f$N_{rr}^{-1}e_r@f$ solve is also read (the
-     *                  conditional CROSS covariances) — forwarded verbatim; see
-     *                  @ref NetworkNormalEquations::stationRegression.
+     * @param cross_cols Optional local columns at which the same
+     *                  @f$N_{rr}^{-1}e_r@f$ solve is also read (the conditional cross
+     *                  covariances; F3, network.phase_leveling_local_block), forwarded
+     *                  unchanged; see @ref NetworkNormalEquations::stationRegression.
      * @return @ref NetworkNormalEquations::StationRegression.
      */
     NetworkNormalEquations::StationRegression stationRegression(
@@ -440,13 +455,14 @@ public:
      * @brief Baarda per-row redundancy numbers for one station's measurement rows
      *        (B2 network RAIM standardization), in the datum-as-known frame.
      *
-     * Zeros the @p datum-pinned columns of the last @ref solve's @ref sharedCovariance
-     * (the S-basis gauges are EXACT — no random uncertainty), then forwards to
-     * @ref NetworkNormalEquations::rowRedundancy.  Returns
-     * @f$r_i = 1 - w_i\,a_i^\top\mathrm{Cov}(\theta)\,a_i \in [0,1]@f$ per row, with
-     * @f$a_i = [\,@c A_s_rows.row(i)\mid@c A_r_rows.row(i)\,]@f$.  Requires a prior
-     * @ref solve.  A low value ⇒ a lightly-checked measurement whose residual barely
-     * responds to a fault (needs @f$/\sqrt{r_i}@f$ standardization to be flaggable).
+     * Zeros the @p datum-pinned columns and the ensemble phase-gauge columns of the
+     * last @ref solve's @ref sharedCovariance (exact gauges carry no random
+     * uncertainty), then forwards to @ref NetworkNormalEquations::rowRedundancy.
+     * Returns @f$r_i = 1 - w_i\,a_i^\top\mathrm{Cov}(\theta)\,a_i \in [0,1]@f$ per
+     * row, with @f$a_i = [\,@c A_s_rows.row(i)\mid@c A_r_rows.row(i)\,]@f$.
+     * Requires a prior @ref solve.  A low value marks a lightly checked measurement
+     * whose residual barely responds to a fault; such a row needs the
+     * @f$/\sqrt{r_i}@f$ standardization to be flaggable.
      */
     Eigen::VectorXd rowRedundancy(std::size_t station,
                                   const Eigen::MatrixXd& A_s_rows,
@@ -456,7 +472,7 @@ public:
 
     /// @return The kernel's reduce-once instrumentation
     ///         (@ref NetworkNormalEquations::reduceRecomputeCount) for the current
-    ///         epoch — asserts the carried prior did not force a second reduction.
+    ///         epoch, which shows whether the carried prior forced a second reduction.
     std::size_t reduceRecomputeCount() const { return neq_.reduceRecomputeCount(); }
 
     /// @name Tier D0 section-timer passthroughs (@c network.trace_section_timers)
@@ -465,7 +481,7 @@ public:
     /// reduce / solve / shared-covariance inverse / per-station covariance
     /// consumers).  Configuration-level: @ref setPerfTiming once before the epoch
     /// loop (survives @ref reset / @ref beginEpoch, like @ref setStationPdMedianScale).
-    /// OFF (default) ⇒ no clock reads, numerically byte-identical.  See
+    /// Off (default) ⇒ no clock reads, numerically byte-identical.  See
     /// @ref NetworkNormalEquations::SectionTimers.
     /// @{
     void setPerfTiming(bool on) { neq_.setPerfTiming(on); }
@@ -478,9 +494,10 @@ public:
     /**
      * @brief Covariance of the shared estimate from the most recent @ref solve.
      *
-     * The inverse of the datum-constrained reduced shared normals — i.e. the
-     * formal covariance of @c x_s (datum-pinned columns carry a tiny variance,
-     * being the fixed S-basis gauges).  Used by the network driver's between-epoch
+     * The inverse of the datum-constrained reduced shared normals, i.e. the formal
+     * covariance of @c x_s.  A datum-pinned column carries only the small
+     * artificial variance 1/s of the pin scale s used by @ref solve, and no
+     * cross-covariance; the datum-frame readouts zero it.  Used by the network driver's between-epoch
      * carry-forward (the W4-S2b D2 prior): the posterior (value, variance) per
      * shared parameter seeds the next epoch's prior via @ref
      * NetworkNormalEquations::addSharedInfo.  Empty until @ref solve is called.
@@ -488,124 +505,127 @@ public:
     const Eigen::MatrixXd& sharedCovariance() const { return shared_cov_; }
 
     /**
-     * @brief Zero the ROWS AND COLUMNS of every folded ensemble phase-bias gauge
-     *        column in a shared-covariance matrix — treat each @f$\sum_r z^s_r=0@f$
-     *        gauge as an EXACT datum (variance 0).
+     * @brief Zero the rows and columns of every folded ensemble phase-bias gauge
+     *        column in a shared-covariance matrix, treating each
+     *        @f$\sum_r z^s_r=0@f$ gauge as an exact datum (variance 0).
      *
-     * Fix A (covariance-carry consistency): the anchor-free ensemble datum fixes each
-     * satellite phase bias POST-reduce via the rank-1 @f$g g^\top/\beta@f$ fold
-     * (@ref NetworkNormalEquations::foldReducedSumZeroGauges).  A gauge's shared
-     * column is the gauge (null) direction of the un-reduced normals, so its slot of
-     * @ref sharedCovariance carries the fold's ARTIFICIAL gauge-direction variance +
-     * phase↔clock/code cross terms — not a physical uncertainty.  Any consumer that
-     * propagates the shared covariance across epochs (the driver's D2 carry) or into
-     * the station locals (the datum-frame conditional covariance) must treat those
-     * columns as exact, EXACTLY as the datum-pinned columns are zeroed.  Without this
-     * the fold's over-tight/cross-coupled gauge covariance (i) over-tightens the D2
-     * phase-bias prior → biases the coupled clock, and (ii) INFLATES the
-     * conditional-ambiguity variance the phase-leveling carry seeds from → the carry
-     * goes inert → the ensemble reference re-realizes every epoch → the emitted phase
-     * bias churns → the co-estimated iono (SH-VTEC) absorbs the churn and feeds it
-     * back → exponential clock/bias runaway.  No-op (byte-identical) when no ensemble
-     * gauge is folded (anchor / OFF path).
+     * The anchor-free ensemble datum fixes each satellite phase bias after the
+     * reduction through the rank-1 @f$g g^\top/\beta@f$ fold
+     * (@ref NetworkNormalEquations::foldReducedSumZeroGauges; Fix A,
+     * covariance-carry consistency).  A gauge's shared column is the gauge (null)
+     * direction of the un-reduced normals, so its slot of @ref sharedCovariance
+     * holds the fold's artificial gauge-direction variance and phase↔clock/code
+     * cross terms, not a physical uncertainty.  Any consumer that propagates the
+     * shared covariance across epochs (the driver's D2 carry) or into the station
+     * locals (the datum-frame conditional covariance) treats those columns as
+     * exact, in the same way as the datum-pinned columns.  Otherwise the gauge
+     * covariance over-tightens the D2 phase-bias prior, which biases the coupled
+     * clock, and inflates the conditional ambiguity variance the phase-leveling
+     * carry seeds from, which makes the carry inert.  The ensemble reference then
+     * re-realizes every epoch, the emitted phase bias churns, and the co-estimated
+     * SH-VTEC ionosphere absorbs the churn and feeds it back, driving the clocks
+     * and biases into exponential runaway.  No-op (byte-identical) when no
+     * ensemble gauge is folded (the anchor / off path).
      *
-     * @param cov In/out shared covariance (@c numShared × @c numShared); untouched
-     *            when it is not that size or no gauge column is in range.
+     * @param cov In/out shared covariance (@c numShared × @c numShared).  A gauge
+     *            column outside its bounds is skipped, so a matrix with no gauge
+     *            column in range is left untouched.
      */
     void zeroPhaseGaugeColumns(Eigen::MatrixXd& cov) const;
 
     /**
      * @brief The reduced shared normals @f$\tilde N_{ss}@f$ after Schur reduction
-     *        (lazily reduces).  The W5 null-space-gate seam — inspect the
-     *        pre-constraint reduced system before @ref solve.  Non-const: updates
-     *        the kernel's internal reduction cache (idempotent; @ref solve reuses it).
+     *        (lazily reduces).  The W5 null-space-gate seam: inspect the reduced
+     *        system before @ref solve folds the DD priors and applies the datum
+     *        pins (any sum-to-zero phase gauges are already folded).  Non-const:
+     *        updates the kernel's internal reduction cache (idempotent; @ref solve
+     *        reuses it).
      */
     const Eigen::MatrixXd& reducedSharedNormals();
 
-    /// DEFAULT relative eigenvalue tolerance for the shared-border null-space
-    /// rank gate (vs the largest λ of the reduced shared normals).  The reduced
-    /// system is deliberately ill-conditioned: phase pins the clock/phase-bias
-    /// SUM at ~1e5 weight while CODE alone separates the split, so the weakest
-    /// REAL direction sits ~7 decades above the true gauges (σ ~1e-10 vs ~1e-2
-    /// of σmax).  The 1e-6 library default of NetworkSbasis::assertNullSpaceRank
-    /// sits above the weak-but-real directions and miscounts them; 1e-9 lands in
-    /// the GPS+Galileo-era gap.
+    /// Default relative eigenvalue tolerance of the shared-border null-space rank
+    /// gate (relative to the largest λ of the reduced shared normals).  The
+    /// reduced system is ill-conditioned by construction: phase pins the
+    /// clock/phase-bias sum at ~1e5 weight while code alone separates the split,
+    /// so the weakest real direction sits about 7 decades above the true gauges
+    /// (gauges σ ~1e-10 of σmax, weakest real direction σ ~1e-2).  The 1e-6
+    /// library default of NetworkSbasis::assertNullSpaceRank sits above the weak
+    /// but real directions and miscounts them; 1e-9 lands in the GPS+Galileo gap.
     ///
-    /// Card DG (2026-07-22) made the tolerance a CALIBRATION PARAMETER rather
-    /// than a constant: this stays the single source of the DEFAULT (so an unset
-    /// @c network.rank_gate_tol is byte-identical), while the value the three
-    /// consumers actually read is @ref rankGateTol.  The reason is BeiDou —
-    /// adding BDS puts a weak-but-real family layer ≈1.7e-10 of λmax, roughly
-    /// three decades DEEPER (relatively) than the GPS+Gal-era weakest-real, so
-    /// 1e-9 miscounts again exactly as 1e-6 once did.  The measured 305-station
-    /// spectrum leaves a SIX-decade gap between that layer (~1e-3 absolute) and
-    /// the declared clock gauges (~1e-9 absolute); a per-config armed value
-    /// placed in that gap counts only the gauges again.  See @ref setRankGateTol
-    /// for the binding placement rule and docs/SPEC_beidou_w6_datum.md §0.2.
-    ///
-    /// Relocated from the run TU at decomposition INC-8.
+    /// The tolerance is a calibration parameter (Card DG).  This class constant
+    /// (INC-8) is the single source of the default, so an unset
+    /// @c network.rank_gate_tol is byte-identical, and the three consumers read
+    /// @ref rankGateTol.  BeiDou is the reason: BDS adds a weak but real family
+    /// layer at ≈1.7e-10 of λmax, about three decades deeper (relatively) than the
+    /// GPS+Galileo weakest real direction, so 1e-9 miscounts it as 1e-6 did
+    /// before.  The measured 305-station spectrum has a six-decade gap between
+    /// that layer (~1e-3 absolute) and the declared clock gauges (~1e-9 absolute);
+    /// a per-config value placed in that gap again counts only the gauges.  See
+    /// @ref setRankGateTol for the binding placement rule and
+    /// docs/SPEC_beidou_w6_datum.md §0.2.
     static constexpr double kNullSpaceTol = 1e-9;
 
     /// One reported near-null direction of an @ref EstimabilityDump: its
     /// eigenvalue plus the (column label, |component|) pairs of the ≤ 5
-    /// heaviest-spanning shared columns — the machine-readable twin of the
+    /// heaviest-spanning shared columns; the machine-readable twin of the
     /// "dir spanned by [...]" warn line (Card DG5).
     struct EstimabilityDirection {
         double ev{0.0};                                    ///< eigenvalue of the direction
         std::vector<std::pair<std::string, double>> top;   ///< ≤ 5 (col_desc label, |component|), heaviest first
     };
 
-    /// Machine-readable mirror of ONE @ref dumpEstimabilitySpectrum call, so the
+    /// Machine-readable mirror of one @ref dumpEstimabilitySpectrum call, so the
     /// storm analyzer (scripts/characterize_storm.py) can read a CSV instead of
-    /// re-parsing WARN text.  Purely observational: the struct is BUILT from the
-    /// same numbers the log lines print, in the same order, and building it
-    /// changes neither the log text nor the solution (Card DG5).
+    /// re-parsing warn text.  Observational only: the struct is filled from the
+    /// same numbers the log lines print, in the same order, and filling it changes
+    /// neither the log text nor the solution (Card DG5).
     struct EstimabilityDump {
         bool   valid{false};        ///< false ⇒ the eigensolve did not converge (nothing was logged either)
         double tow{0.0};            ///< epoch GPS time-of-week
         int    n_shared{0};         ///< reduced shared-normal dimension
         int    declared_dim{0};     ///< declared S-basis dimension for this epoch
         double ev_max{0.0};         ///< largest eigenvalue λmax
-        double cutoff{0.0};         ///< the ABSOLUTE cutoff actually applied = rankGateTol() · max(λmax, 1)
+        double cutoff{0.0};         ///< the absolute cutoff applied = rankGateTol() · max(λmax, 1)
         int    n_below{0};          ///< directions with ev < cutoff (what the gate counts)
-        /// The dumped tail (n_below + 2 directions), LARGEST-ev first — the same
-        /// order the warn lines use, so a CSV row and a log line line up 1:1.
+        /// The dumped tail (n_below + 2 directions, at most n_shared), largest ev
+        /// first: the order of the warn lines, so a CSV row and a log line match 1:1.
         std::vector<EstimabilityDirection> dirs;
     };
 
     /**
      * @brief One-shot estimability diagnostic (network.trace_estimability):
      *        dump the tail of the reduced shared-normal eigen-spectrum and name
-     *        the parameters spanning each near-zero (unpinned-gauge) direction —
-     *        relocated VERBATIM from Application::runNetwork at decomposition
-     *        INC-8.
+     *        the parameters spanning each near-zero (unpinned-gauge) direction
+     *        (INC-8).
      *
-     * Shows WHERE the null space sits relative to the declared datum dimension:
-     * a clean ~7-decade gap at exactly @p declared_dim ⇒ the 1e-9 tolerance is
-     * mis-set; one or more EXTRA tiny eigenvalues above the gap ⇒ a genuinely
-     * unpinned direction (a missing datum constraint).  The reduced shared
-     * normals are symmetric positive-SEMIdefinite (a Schur complement of
-     * weighted Gram normals), so eigenvalues EQUAL singular values: a
-     * self-adjoint eigensolve yields the exact spectrum the rank gate tests at
-     * a small fraction of a full JacobiSVD's cost.  Naming the gauge parameters
-     * still needs the eigenVECTORs, so this is a full decomposition — the
-     * CALLER keeps it behind the trace_estimability knob and its first-N latch.
-     * Non-const: @ref reducedSharedNormals lazily reduces (idempotent).
+     * Shows where the null space sits relative to the declared datum dimension.
+     * A clean gap of about 7 decades after exactly @p declared_dim eigenvalues
+     * points to a mis-set tolerance (@ref rankGateTol); one or more extra tiny
+     * eigenvalues above the gap point to a genuinely unpinned direction (a
+     * missing datum constraint).  The reduced shared normals are symmetric
+     * positive-semidefinite (a Schur complement of weighted Gram normals), so
+     * their eigenvalues equal their singular values: a self-adjoint eigensolve
+     * yields the exact spectrum the rank gate tests at a small fraction of a full
+     * JacobiSVD's cost.  Naming the gauge parameters still needs the
+     * eigenvectors, so this is a full decomposition; the caller keeps it behind
+     * the trace_estimability knob and its first-N latch.  Non-const:
+     * @ref reducedSharedNormals lazily reduces (idempotent).
      *
      * @param tow          Epoch GPS time-of-week (log stamp).
      * @param declared_dim Declared datum dimension (NetworkSbasis::Plan).
      * @param col_desc     Driver-format column labels ("CLK|sat", "PB|sat|sig",
      *                     "CB|sat|sig", "SH|n|m|trig") built by the Assembly
-     *                     column registration when armed; missing/empty entries
-     *                     fall back to "colN".  Deliberately NOT
-     *                     @ref sharedColumnLabel — the formats differ and the
+     *                     column registration when armed; missing or empty
+     *                     entries fall back to "colN".  Intentionally not
+     *                     @ref sharedColumnLabel: the formats differ, and the
      *                     trace text is golden-gated.
-     * @param log          Main logger (two warn lines per dumped direction).
+     * @param log          Main logger: one warn line with the spectrum tail, then
+     *                     one per dumped direction.
      * @return The same spectrum in machine-readable form (@ref EstimabilityDump;
      *         @c valid=false iff the eigensolve failed, in which case nothing was
      *         logged either).  The caller writes it to @c network_estimability.csv
-     *         under @c network.trace_estimability — DG5.  The log text is
-     *         UNCHANGED by this addition (it is golden-gated by the estim arm).
+     *         under @c network.trace_estimability (DG5).  Filling it leaves the
+     *         log text unchanged; the estim arm golden-gates that text.
      */
     EstimabilityDump dumpEstimabilitySpectrum(double tow, int declared_dim,
                                               const std::vector<std::string>& col_desc,
@@ -639,7 +659,7 @@ public:
     void addSharedPrior(const std::vector<SharedPrior>& priors);
 
     /**
-     * @brief Inject ONE dense full-covariance carried-forward prior onto the
+     * @brief Inject one dense full-covariance carried-forward prior onto the
      *        shared border (the C1 cross-epoch carry; forwards to
      *        @ref NetworkNormalEquations::addSharedInfo as a single symmetric
      *        information block).
@@ -647,13 +667,13 @@ public:
      * Folds @f$\Lambda = P^{-1}@f$ and @f$\eta = \Lambda\,v@f$ over the carried
      * keys, where @p cov is the previous epoch's posterior covariance block plus
      * process noise (P_prev + Q, per-key surgeries already applied by the caller)
-     * and @c v the carried values — the information-form Kalman time+prior update
-     * on the shared border.  Identity-keyed like @ref addSharedPrior, with one
-     * load-bearing difference in the absent-key policy: a key not present in this
-     * epoch's layout is MARGINALIZED — its rows/columns of @p cov are dropped
-     * BEFORE the inversion.  (Dropping rows of Λ instead would CONDITION on the
-     * departed key and bias every surviving parameter; this is why the API takes
-     * a covariance, not an information matrix.)
+     * and @c v the carried values: the information-form Kalman time and prior
+     * update on the shared border.  Identity-keyed like @ref addSharedPrior, except
+     * for the absent-key policy: a key not present in this epoch's layout is
+     * marginalized, i.e. its rows and columns of @p cov are dropped before the
+     * inversion.  Dropping rows of Λ instead would condition on
+     * the departed key and bias every surviving parameter, which is why the API
+     * takes a covariance rather than an information matrix.
      *
      * Numerics: the retained block is symmetrized and inverted in correlation
      * scaling (@f$P = D C D,\ \Lambda = D^{-1} C^{-1} D^{-1}@f$, @f$D=\sqrt{\mathrm
@@ -661,38 +681,40 @@ public:
      * retry on the unit diagonal, so blocks mixing stiff zero-q phase-bias carries
      * (~1e-9 m²) with loose clock carries (~1e-2 m²) stay well-scaled.  The folded
      * Λ is explicitly symmetrized so the pre-reduce (within-epoch RAIM replay) and
-     * post-reduce (primary fold fast-path) kernel paths agree bit-for-bit.
+     * post-reduce (primary fold fast path) kernel paths agree bit-for-bit.
      *
      * @param keys        Identity + carried value per entry (@ref SharedPrior;
-     *                    the @c info field is IGNORED — the weight is @p cov).
-     *                    Order defines the row/column order of @p cov.
+     *                    the @c info field is ignored, the weight comes from
+     *                    @p cov).  Order defines the row/column order of @p cov.
      * @param cov         @c keys.size() × @c keys.size() prior covariance
      *                    (P_prev + Q).  Must be finite with positive diagonal on
      *                    every retained key (caller pre-screens per-key variance).
      * @param lambda_diag Optional out: resized to @c keys.size(); the folded
-     *                    @f$\Lambda(c,c)@f$ per INPUT key (0 for marginalized
-     *                    keys) — feeds the B7 anchor-information trace.
+     *                    @f$\Lambda(c,c)@f$ per input key (0 for marginalized
+     *                    keys), which feeds the B7 anchor-information trace.
      * @return Number of keys retained (present in this epoch's layout).
      * @throws std::invalid_argument on a dimension mismatch.
      * @throws std::logic_error unless called between @ref beginEpoch and
      *         @ref solve (guarded, unlike the legacy diagonal overload).
      * @throws std::runtime_error when the retained block is non-finite, has a
-     *         non-positive retained variance, or stays non-PD after the ridge
-     *         retry — the caller (driver) owns the fallback policy (degrade to
-     *         the diagonal carry for the epoch).
+     *         non-positive retained variance, stays non-PD after the ridge retry,
+     *         or folds more information than the conditioning budget allows (a
+     *         diagonal of Λ above 1e13 m⁻²).  The caller (driver) owns the
+     *         fallback policy: degrade to the diagonal carry for the epoch.
      */
-    /// @param clock_gauge_free Card Q3 §2.1: marginalize the per-constellation
-    ///        SATELLITE-CLOCK common direction out of the folded block before it
-    ///        is applied (see @ref addSharedPriorClockGaugeFree for the algebra
-    ///        and the rationale).  Applied to the JOINT Λ, so the clock↔code-bias
-    ///        off-diagonals the C1 dense carry exists to retain are preserved —
+    /// @param clock_gauge_free Marginalize the per-constellation satellite-clock
+    ///        common direction out of the folded block before it is applied
+    ///        (Card Q3 §2.1; see @ref addSharedPriorClockGaugeFree for the algebra
+    ///        and the rationale).  Applied to the joint Λ, so the clock↔code-bias
+    ///        off-diagonals that the C1 dense carry exists to retain are preserved;
     ///        only the gauge direction's information is removed.
-    /// @param require_closure Card C-GF: apply the downdate along a direction ONLY when
-    ///        every column of its support is in this fold's key set.  A partially-carried
-    ///        direction is skipped and counted (@ref gaugeFreePartialSkipped) — restricted
-    ///        to a subset it is no longer the datum's functional, and downdating it would
-    ///        delete the ESTIMABLE carried-vs-uncarried contrast instead of gauge.
-    ///        Default false = the Q3 behaviour, byte-identical.
+    /// @param require_closure Apply the downdate along a direction only when every
+    ///        column of its support is in this fold's key set (Card C-GF).  A
+    ///        partially carried direction is skipped and counted
+    ///        (@ref gaugeFreePartialSkipped): restricted to a subset, it is no
+    ///        longer the datum's functional, and downdating it would delete the
+    ///        estimable carried-vs-uncarried contrast instead of gauge.  Default
+    ///        false keeps the Q3 behaviour, byte-identical.
     std::size_t addSharedPriorDense(const std::vector<SharedPrior>& keys,
                                     const Eigen::MatrixXd& cov,
                                     Eigen::VectorXd* lambda_diag = nullptr,
@@ -700,23 +722,23 @@ public:
                                     bool require_closure = false);
 
     /**
-     * @brief Card Q3 §2.1 — fold diagonal shared priors with the per-constellation
-     *        satellite-clock GAUGE direction marginalized out.
+     * @brief Fold diagonal shared priors with the per-constellation
+     *        satellite-clock gauge direction marginalized out (Card Q3 §2.1).
      *
      * ## Why
      *
-     * The per-constellation clock common mode is a GAUGE: it is fixed by the
-     * S-basis (the pivot-satellite pin), not by the carried prior, and a
-     * consumer's per-epoch receiver clock absorbs it identically.  A carry that
-     * puts information on it is competing with the datum, and the conflict lands
-     * on the pivot's observation rows rather than on the estimable
-     * between-satellite differences.  Measured on the wire (3 h, 63 sta): the
-     * anchored arm suppressed CLK-R's drained common mode Σ|μ| 49.4 m → 27.8 m
-     * vs its control — the carry was doing 44 % of the gauge's work.
+     * The per-constellation clock common mode is a gauge: the S-basis fixes it
+     * (the pivot-satellite pin), not the carried prior, and a consumer's
+     * per-epoch receiver clock absorbs it identically.  A carry that puts
+     * information on it competes with the datum, and the conflict lands on the
+     * pivot's observation rows rather than on the estimable between-satellite
+     * differences.  Measured on the wire (3 h, 63 stations), the anchored arm
+     * reduced CLK-R's drained common mode Σ|μ| from 49.4 m to 27.8 m against its
+     * control: the carry was doing 44 % of the gauge's work.
      *
      * ## The algebra
      *
-     * Removing the prior's information along a direction (equivalently: giving
+     * Removing the prior's information along a direction (equivalently, giving
      * that direction infinite prior variance) is the rank-1 downdate
      * @f[ \Lambda_{gf} = \Lambda - \Lambda u (u^\top \Lambda u)^{-1} u^\top \Lambda,
      *     \qquad \eta_{gf} = \Lambda_{gf} v @f]
@@ -724,14 +746,15 @@ public:
      * @f$\sigma^2 \to \infty@f$), with @f$u@f$ the indicator of one
      * constellation's carried clock keys.  @f$\Lambda_{gf} u = 0@f$ exactly, and
      * @f$\Lambda_{gf}@f$ stays PSD with rank one lower.  For the diagonal case
-     * this reduces to anchoring each clock to its carried value MINUS the
-     * information-weighted mean of the carried values — i.e. it anchors the
-     * DIFFERENCES, which is precisely the estimable content (Odijk
-     * datum-invariance; the GKF "carry on FUNCTIONS, not states" form).
+     * this reduces to anchoring each clock to its carried value minus the
+     * information-weighted mean of the carried values, i.e. it anchors the
+     * differences, which are the estimable content (Odijk datum-invariance; the
+     * GKF "carry on functions, not states" form).
      *
-     * A constellation contributing FEWER THAN TWO carried clock keys has no
-     * estimable content to anchor (its single key IS the gauge), so nothing is
-     * folded for it — a real outcome, not an error, and one the caller counts.
+     * A constellation contributing fewer than two carried clock keys has no
+     * estimable content to anchor (its single key is the gauge), so nothing is
+     * folded for it.  That is a valid outcome, not an error, and the caller
+     * counts it.
      *
      * Non-clock priors in @p priors are folded exactly as @ref addSharedPrior
      * folds them.
@@ -742,61 +765,63 @@ public:
     std::size_t addSharedPriorClockGaugeFree(const std::vector<SharedPrior>& priors,
                                              bool require_closure = false);
 
-    /// Card C-GF: directions SKIPPED because their support was not fully carried,
-    /// accumulated over the WHOLE RUN.  Deliberately NOT cleared by @ref reset: the
-    /// withdraw and within-epoch-replay folds run AFTER the driver's per-epoch read
-    /// point, so an epoch-scoped tally silently under-reports exactly the paths whose
-    /// fold/withdraw symmetry matters most.  Standing invariant #7 — the decoupling
-    /// edge has to be countable, or "the downdate ran" and "the downdate declined"
-    /// look identical in a run log.
+    /// Directions skipped because their support was not fully carried, accumulated
+    /// over the whole run (Card C-GF).  Not cleared by @ref reset: the withdraw and
+    /// within-epoch replay folds run after the driver's per-epoch read point, so an
+    /// epoch-scoped tally would under-report the paths whose fold/withdraw symmetry
+    /// matters most.  The count makes the decoupling edge visible (invariant #7):
+    /// without it, a downdate that ran and one that was declined look identical in
+    /// a run log.
     std::size_t gaugeFreePartialSkipped() const { return gf_partial_skipped_; }
 
     /**
-     * @brief Card Q3 — the gauge-free diagonal analogue of
+     * @brief Gauge-free diagonal analogue of
      *        @ref refoldSharedPriorDenseDroppingClocks: re-fold a gauge-free
-     *        clock prior set with @p drop_sats REFLOATED.
+     *        clock prior set with @p drop_sats refloated (Card Q3).
      *
-     * A gauge-free block is NOT diagonal, so @ref withdrawSharedPrior cannot undo
-     * one key of it — removing a key also moves the group's information-weighted
-     * mean, and every survivor is anchored against that mean.  This rebuilds both
-     * blocks (with and without the refloated keys) and folds the difference.
-     * Only @ref SharedParamKind::Clock entries of @p priors are touched.
+     * A gauge-free block is not diagonal, so @ref withdrawSharedPrior cannot undo
+     * one key of it: removing a key also moves the group's information-weighted
+     * mean, against which every survivor is anchored.  This rebuilds both blocks
+     * (with and without the refloated keys) and folds the difference.  Only
+     * @ref SharedParamKind::Clock entries of @p priors are touched.
      *
-     * @param restore Fold the inverse delta — the exact undo, for the path where
+     * @param restore Fold the inverse delta: the exact undo, for the path where
      *                the re-solve throws and the anchored solve must survive.
      * @return Number of clock keys refloated (0 ⇒ nothing folded).
      */
-    /// @param require_closure Card C-GF: MUST match the flag the original fold used.
-    ///        Closure changes WHICH directions U spans, so a withdraw taken with a
-    ///        different value un-folds a different subspace than was applied.
+    /// @param require_closure Must match the flag the original fold used
+    ///        (Card C-GF).  Closure decides per constellation whether the group was
+    ///        folded gauge-free or plainly (@ref addSharedPriorClockGaugeFree), and
+    ///        this call withdraws a plainly folded group key by key; with a
+    ///        different value it withdraws a block that was never applied.
     std::size_t refoldSharedPriorClockGaugeFreeDropping(
         const std::vector<SharedPrior>& priors,
         const std::set<std::string>& drop_sats, bool restore = false,
         bool require_closure = false);
 
     /**
-     * @brief Card Q3 (docs/SPEC_clock_temporal_anchor.md §2.4) — WITHDRAW
-     *        already-folded diagonal shared priors so the epoch can be RE-SOLVED
-     *        with those states refloated.
+     * @brief Withdraw already-folded diagonal shared priors (Card Q3,
+     *        docs/SPEC_clock_temporal_anchor.md §2.4) so the epoch can be
+     *        re-solved with those states refloated.
      *
      * The exact inverse of @ref addSharedPrior for the listed (identity, value,
-     * info) triples: it folds the NEGATED increment through
-     * @ref NetworkNormalEquations::addSharedInfo.  Legal AFTER @ref solve — that
-     * is the whole point.  A shared-border increment carries through the Schur
-     * reduction unchanged, so the kernel's reduction-preserving fast path keeps
-     * the cached reduced system current and a following @ref solve costs one
-     * datum + factorization of the K×K reduced system: **no re-reduction, no
-     * re-assembly**.
+     * info) triples: it folds the negated increment through
+     * @ref NetworkNormalEquations::addSharedInfo.  Intended to be called after
+     * @ref solve.  A shared-border increment carries through the Schur reduction
+     * unchanged, so the kernel's reduction-preserving fast path keeps the cached
+     * reduced system current, and a following @ref solve costs the datum
+     * application and one factorization of the reduced shared system, with no
+     * re-reduction and no re-assembly.
      *
-     * The caller must pass the values/infos IT FOLDED (not a recomputation): the
+     * The caller passes the values and infos it folded, not a recomputation: the
      * withdrawal is arithmetic, not a lookup, and a mismatched info would leave
      * residual prior information behind.
      *
      * Withdrawing information can only make the reduced normals less definite.
-     * The intended population — a data-supported satellite clock column carried
-     * by tens of stations — cannot be driven singular this way, and the solve's
-     * own relative-pivot guard is the backstop; the caller owns the policy on a
-     * throw (restore the pre-withdraw solution).
+     * The intended population (a data-supported satellite clock column carried by
+     * tens of stations) cannot be driven singular this way, and the solve's own
+     * relative-pivot guard is the backstop; the caller owns the policy on a throw
+     * (restore the pre-withdraw solution).
      *
      * @param priors Identity + the folded value + the folded info of each prior
      *               to remove.  Entries with @c info <= 0, or whose parameter is
@@ -806,38 +831,39 @@ public:
     void withdrawSharedPrior(const std::vector<SharedPrior>& priors);
 
     /**
-     * @brief Card Q3 — re-fold a DENSE carried block with some keys
-     *        MARGINALIZED, after @ref solve, so the epoch can be re-solved with
-     *        those states refloated.
+     * @brief Re-fold a dense carried block with some keys marginalized, after
+     *        @ref solve, so the epoch can be re-solved with those states refloated
+     *        (Card Q3).
      *
      * The dense (C1) form of @ref withdrawSharedPrior.  Folds
      * @f$(\Lambda_{new} - \Lambda_{old})@f$ and
      * @f$(\eta_{new} - \eta_{old})@f$, where @f$\Lambda_{old}@f$ is the block
      * @ref addSharedPriorDense folded for @p keys / @p cov and @f$\Lambda_{new}@f$
-     * is the same construction over the SURVIVING keys with @p drop_sats'
-     * @ref SharedParamKind::Clock rows/columns of @p cov dropped before the
-     * inversion.  Marginalization — not conditioning — is the exact treatment of
-     * a refloated key, the same policy this class already applies to a key that
-     * has left the layout.
+     * is the same construction over the surviving keys, with the
+     * @ref SharedParamKind::Clock rows and columns of @p drop_sats dropped from
+     * @p cov before the inversion.  Marginalization, not conditioning, is the
+     * exact treatment of a refloated key, the same policy this class applies to a
+     * key that has left the layout.
      *
-     * Both Λ are built by the SAME private path @ref addSharedPriorDense uses, so
-     * a re-fold that drops nothing is an exact algebraic no-op.
+     * Both Λ are built by the private path @ref addSharedPriorDense uses, so a
+     * re-fold that drops nothing is an exact algebraic no-op.
      *
-     * @param keys      The keys as originally folded (order defines @p cov).
-     * @param cov       The covariance as originally folded (P_prev + Q).
-     * @param drop_sats Satellites whose CLOCK key is to be marginalized.
-     * @param restore   Fold the INVERSE delta (Λ_old − Λ_new) instead — the exact
+     * @param keys      The keys the original fold used (order defines @p cov).
+     * @param cov       The covariance the original fold used (P_prev + Q).
+     * @param drop_sats Satellites whose clock key is to be marginalized.
+     * @param restore   Fold the inverse delta (Λ_old − Λ_new) instead: the exact
      *                  undo of a previous call with the same arguments, used when
      *                  the re-solve throws and the caller must put the epoch's
      *                  shared system back the way it solved.
      * @return Number of clock keys actually marginalized (0 ⇒ nothing folded).
-     * @throws Same conditions as @ref addSharedPriorDense (either block
-     *         non-finite / non-PD / over the information budget).  Nothing is
-     *         folded when it throws.
+     * @throws std::invalid_argument on a dimension mismatch, and
+     *         std::runtime_error under the block conditions of
+     *         @ref addSharedPriorDense (either block non-finite, non-PD, or over
+     *         the information budget).  Nothing is folded when it throws.
      */
-    /// @param clock_gauge_free MUST match the flag the original fold used, or the
+    /// @param clock_gauge_free Must match the flag the original fold used, or the
     ///        withdrawn block is not the block that was applied.
-    /// @param require_closure  Card C-GF: likewise MUST match — closure changes WHICH
+    /// @param require_closure  Must match as well (Card C-GF): closure changes which
     ///        directions U spans, so a mismatched withdraw un-folds a different
     ///        subspace and leaves a negative-semidefinite residue in the normals.
     std::size_t refoldSharedPriorDenseDroppingClocks(
@@ -850,15 +876,15 @@ public:
      *
      * Adds the information form of @p weight·‖@p H x − @p z‖² to the shared
      * normals: @f$N_{ss} \mathrel{+}= w\,H^\top H,\ u_s \mathrel{+}= w\,H^\top z@f$
-     * (via @ref NetworkNormalEquations::addSharedInfo).  Used by the network driver
-     * to pin the satellite code-bias gauges the data leaves free — the per-
-     * satellite ionosphere-free combination (so the emitted OSB is pure-DCB, its IF
-     * lump staying in the estimable clock) and the per-constellation DCB
-     * sum-to-zero — as tight-but-finite rows folded BEFORE the null-space gate, so
-     * the reduced shared system carries only the per-constellation clock deficiency
-     * the explicit @ref Datum pins.
+     * (via @ref NetworkNormalEquations::addSharedInfo).  The network driver uses it
+     * to pin the satellite code-bias gauges the data leaves free: the
+     * per-satellite ionosphere-free combination (so the emitted OSB is pure DCB
+     * and its IF lump stays in the estimable clock) and the per-constellation DCB
+     * sum-to-zero.  They go in as tight but finite rows folded before the
+     * null-space gate, so the reduced shared system carries only the
+     * per-constellation clock deficiency that the explicit @ref Datum pins.
      *
-     * Because these rows pin pure GAUGE directions (zero data information), any
+     * Because these rows pin pure gauge directions (zero data information), any
      * positive @p weight fixes them exactly without biasing the estimable
      * (between-satellite) DCB structure.  Call after @ref beginEpoch and before
      * @ref solve / the rank gate.
@@ -876,18 +902,19 @@ public:
      *        (Fix A, @c network.phase_datum_ensemble).
      *
      * The ensemble realization of the phase-bias↔ambiguity datum: instead of
-     * pinning ONE anchor receiver's ambiguity per (satellite, signal), fix the
-     * gauge by @f$\sum_r z^s_{r,\sigma}=0@f$ over the RECEIVERS tracking it — no
-     * pivot, no handover, no single-anchor SPOF, and every satellite referenced to
-     * the same receiver ensemble (so the user's between-satellite fractional bias
-     * cancels and its DD ambiguity stays integer; Odijk S-system).  Each gauge's
-     * terms are (station index, local ambiguity column) — the caller (driver)
-     * builds them from its own @c A_r layout.  Stored and folded through the kernel
+     * pinning one anchor receiver's ambiguity per (satellite, signal), the gauge
+     * is fixed by @f$\sum_r z^s_{r,\sigma}=0@f$ over the receivers tracking it.
+     * There is no pivot, no handover and no single-anchor point of failure, and
+     * every satellite is referenced to the same receiver ensemble, so the user's
+     * between-satellite fractional bias cancels and its DD ambiguity stays integer
+     * (Odijk S-system).  Each gauge's terms are (station index, local ambiguity
+     * column); the caller (driver) builds them from its own @c A_r layout.  The
+     * gauges are stored and folded through the kernel
      * (@ref NetworkNormalEquations::foldReducedSumZeroGauges) at @ref solve /
-     * @ref reducedSharedNormals, AFTER the Schur reduction and BEFORE the datum
-     * pins / null-space gate.  Pass an empty vector (the default) for the
-     * legacy anchor-pin datum — then @ref reconstructStation and the reduced system
-     * are byte-identical.  Cleared by @ref reset.
+     * @ref reducedSharedNormals, after the Schur reduction and before the datum
+     * pins / null-space gate.  An empty vector (the default state) selects the
+     * legacy anchor-pin datum, and @ref reconstructStation and the reduced system
+     * are then byte-identical.  Cleared by @ref reset.
      *
      * @param gauges One sum-to-zero gauge per (satellite, signal) shared phase bias.
      */
@@ -897,20 +924,22 @@ public:
 
 
     /**
-     * @brief Card-4 (M1) invariant carry: set the rank-K double-difference priors the
-     *        z-store folds onto the reduced system this epoch
-     *        (@ref NetworkNormalEquations::foldReducedDdPriors).
+     * @brief Set this epoch's rank-K double-difference priors from the z-store,
+     *        folded onto the reduced system by
+     *        @ref NetworkNormalEquations::foldReducedDdPriors (the Card-4 (M1)
+     *        invariant carry).
      *
-     * One @c DdPriorBlock per connected (const,signal) component — the z-store's
+     * One @c DdPriorBlock per connected (const,signal) component: the z-store's
      * carried DD ambiguities (mean + dense covariance) as gauge-free constraints on
-     * the local ambiguity columns.  Folded at @ref solve AFTER the Schur reduction,
-     * BEFORE the W5 datum constraint.  MUTUALLY EXCLUSIVE with the sum-to-zero
-     * ensemble gauges (both are post-reduce Woodbury folds reading the pristine
-     * per-station @f$N_{rr}@f$; composing them over coupled columns drops the cross
-     * term — @ref solve throws if both are set).  The Card-4 phase datum is the
-     * PRE-reduce tree pins (@ref addStationPrior), which compose exactly with this
-     * fold.  Empty (the default) → byte-identical OFF path.  Cleared per epoch (like
-     * the sum-to-zero gauges), so the driver re-sets them each epoch from the z-store.
+     * the local ambiguity columns.  Folded at @ref solve after the Schur reduction
+     * and before the W5 datum constraint.  Mutually exclusive with the sum-to-zero
+     * ensemble gauges: both are post-reduce Woodbury folds reading the unmodified
+     * per-station @f$N_{rr}@f$, and composing them over coupled columns drops the
+     * cross term, so @ref solve throws std::logic_error if both are set.  The
+     * Card-4 phase datum is the pre-reduce tree pins (@ref addStationPrior), which
+     * compose exactly with this fold.  Empty (the default) keeps the off path
+     * byte-identical.  Cleared by @ref beginEpoch and by @ref reset, so the driver
+     * sets them from the z-store after each @ref beginEpoch.
      *
      * @param blocks One rank-K DD-prior block per component.
      */
@@ -918,21 +947,21 @@ public:
         dd_priors_ = std::move(blocks);
     }
 
-    /// Posterior mean of DD-prior block @p b given the solved shared estimate @p x_s
-    /// — the value the z-store carries forward (forwards to the kernel).
+    /// Posterior mean of DD-prior block @p b given the solved shared estimate
+    /// @p x_s: the value the z-store carries forward (forwards to the kernel).
     Eigen::VectorXd ddPriorPosteriorMean(std::size_t b, const Eigen::VectorXd& x_s) const {
         return neq_.ddPriorPosteriorMean(b, x_s);
     }
 
     /**
-     * @brief Posterior COVARIANCE of DD-prior block @p b — the @f$P^z@f$ the z-store
+     * @brief Posterior covariance of DD-prior block @p b: the @f$P^z@f$ the z-store
      *        carries forward (Card 4 / M1 phase C3b).
      *
      * Builds the datum-as-known shared covariance @c cov_free from the last solve's
-     * @c shared_cov_ (the datum-pinned columns zeroed as EXACT gauges, identical to
-     * @ref conditionalLocalCovariance) and forwards to
-     * @ref NetworkNormalEquations::ddPriorPosteriorCovariance.  The DD is gauge-free,
-     * so the K×K result is datum-invariant.
+     * @c shared_cov_ (@ref datumFrameSharedCov: the datum-pinned columns zeroed as
+     * exact gauges, the same frame as @ref conditionalLocalCovariance) and forwards
+     * to @ref NetworkNormalEquations::ddPriorPosteriorCovariance.  The DD is
+     * gauge-free, so the K×K result is datum-invariant.
      *
      * @param b     DD-prior block index (input order; see @ref ddPriorPosteriorMean).
      * @param datum The same minimum-constraint datum passed to @ref solve.
@@ -960,12 +989,13 @@ public:
     /**
      * @brief Build the datum-as-known shared covariance @c cov_free once.
      *
-     * The @f$\Sigma_{ss}@f$ frame every DD-carry covariance readout consumes: the last
-     * solve's @c shared_cov_ with the datum-pinned columns treated as EXACT (variance 0)
-     * plus the phase-gauge columns zeroed.  Hoisted so a per-epoch caller (the invariant
-     * carry driver's @ref NetworkInvariantCarryDriver::installPosterior) builds it ONCE
-     * and passes it to the matrix overloads below instead of rebuilding the n_shared²
-     * copy per block per readout.  Byte-identical to the per-call builds.
+     * The @f$\Sigma_{ss}@f$ frame every DD-carry covariance readout consumes: the
+     * last solve's @c shared_cov_ with the datum-pinned columns treated as exact
+     * (variance 0) and the phase-gauge columns zeroed.  A per-epoch caller (the
+     * invariant-carry driver's @ref NetworkInvariantCarryDriver::installPosterior)
+     * builds it once and passes it to the matrix overloads below instead of
+     * rebuilding the n_shared² copy per block per readout.  Byte-identical to the
+     * per-call builds.
      */
     Eigen::MatrixXd datumFrameSharedCov(const Datum& datum) const;
 
@@ -982,19 +1012,19 @@ public:
     /// @return Number of DD-prior blocks folded this epoch.
     std::size_t numDdPriorBlocks() const { return neq_.numDdPriorBlocks(); }
 
-    // --- PD-safe invariant-DD fold (docs/SPEC_pd_safe_dd_fold.md) — forwarders ---
+    // --- PD-safe invariant-DD fold forwarders (docs/SPEC_pd_safe_dd_fold.md) ---
 
     /// Arm the PD-safe DD-prior fold arithmetic (@c network.carry_invariant_pd_safe;
-    /// @ref NetworkNormalEquations::setDdFoldPdSafe).  Set once before the epoch loop —
-    /// it survives @ref reset, like @ref setPerfTiming.  OFF ⇒ byte-identical.
+    /// @ref NetworkNormalEquations::setDdFoldPdSafe).  Set once before the epoch loop;
+    /// it survives @ref reset, like @ref setPerfTiming.  Off ⇒ byte-identical.
     void setDdFoldPdSafe(bool on) { neq_.setDdFoldPdSafe(on); }
     /// @return Whether the PD-safe fold arithmetic is armed.
     bool ddFoldPdSafe() const { return neq_.ddFoldPdSafe(); }
-    /// @return INC-0 diagnostics of the LAST DD-prior fold's PD screen (per-fold, so a
-    ///         within-epoch RAIM re-solve overwrites them — the install seam therefore
-    ///         always reads the ACCEPTED solve).  @ref NetworkNormalEquations::DdFoldStats.
+    /// @return Diagnostics of the last DD-prior fold's PD screen (INC-0).  They are
+    ///         per fold, so a within-epoch RAIM re-solve overwrites them, and the
+    ///         install seam reads the accepted solve.  @ref NetworkNormalEquations::DdFoldStats.
     const NetworkNormalEquations::DdFoldStats& ddFoldStats() const { return neq_.ddFoldStats(); }
-    /// @return Whether DD-prior block @p b folded INERTLY (PD screen tripped ⇒ M = 0).
+    /// @return Whether DD-prior block @p b folded inertly (PD screen tripped ⇒ M = 0).
     bool ddPriorBlockDegenerate(std::size_t b) const { return neq_.ddPriorBlockDegenerate(b); }
     /// @return DD-prior block @p b's relative pivot d_min/d_max at the fold.
     double ddPriorBlockMinPivotRel(std::size_t b) const { return neq_.ddPriorBlockMinPivotRel(b); }
@@ -1005,8 +1035,8 @@ public:
     ///         readback to correct (@ref NetworkNormalEquations::hasCarryCovCorrection).
     bool hasCarryCovCorrection() const { return neq_.hasCarryCovCorrection(); }
     /// @return Run-cumulative carry-aware readback telemetry
-    ///         (@ref NetworkNormalEquations::CarryCovStats) — the run-end readout, and the
-    ///         first measurement anywhere of the fold's cross-block approximation error.
+    ///         (@ref NetworkNormalEquations::CarryCovStats): the run-end readout,
+    ///         which also measures the fold's cross-block approximation error.
     const NetworkNormalEquations::CarryCovStats& carryCovStats() const {
         return neq_.carryCovStats();
     }
@@ -1014,7 +1044,7 @@ public:
     // --- Reduced-RHS class attribution (diagnostics; filter/NetworkRhsAttrib) ---
 
     /// One captured shared-info RHS increment: the tag active at the call site
-    /// (a string LITERAL — the recorder stores the pointer, not a copy) plus the
+    /// (a string literal; the recorder stores the pointer, not a copy) plus the
     /// delta the call folded into the shared RHS.
     struct AttribCapture {
         const char*     tag;        ///< class tag (string literal only)
@@ -1022,14 +1052,15 @@ public:
     };
 
     /**
-     * @brief Arm / disarm the shared-info capture recorder for THIS epoch.
+     * @brief Arm / disarm the shared-info capture recorder for this epoch.
      *
-     * Armed, every @ref addSharedPrior / @ref addSharedPriorDense /
-     * @ref addSharedConstraintRows call appends its RHS increment under the tag
-     * last set by @ref attribTag.  @ref beginEpoch clears the captures but keeps
-     * the armed flag, so a within-epoch re-solve leaves exactly the FINAL
-     * build's captures (matching the kernel state the attribution reads).
-     * Disarmed (the default), the recorder costs one branch per call.
+     * Armed, every shared-info fold (@ref addSharedPrior, @ref addSharedPriorDense,
+     * @ref addSharedPriorClockGaugeFree, @ref addSharedConstraintRows, and the
+     * withdraw and re-fold calls) appends its RHS increment under the tag last set
+     * by @ref attribTag.  @ref beginEpoch clears the captures but keeps the armed
+     * flag, so a within-epoch re-solve leaves only the final build's captures
+     * (matching the kernel state the attribution reads).  Disarmed (the default),
+     * the recorder costs one branch per call.
      */
     void attribArm(bool on) {
         attrib_armed_ = on;
@@ -1037,14 +1068,14 @@ public:
     }
     /// @return Whether the capture recorder is armed this epoch.
     bool attribArmed() const { return attrib_armed_; }
-    /// Set the class tag for subsequent shared-info folds (string literal only —
-    /// the pointer is stored verbatim).  Cheap enough to call unconditionally.
+    /// Set the class tag for subsequent shared-info folds (string literal only: the
+    /// pointer is stored as is).  Cheap enough to call unconditionally.
     void attribTag(const char* tag) { attrib_tag_ = tag; }
     /// @return This epoch's captured shared-info RHS increments (armed builds only).
     const std::vector<AttribCapture>& attribCaptures() const { return attrib_shared_; }
-    /// @return The INPUT DD-prior blocks set by @ref setDdPriors this epoch — the
+    /// @return The input DD-prior blocks set by @ref setDdPriors this epoch: the
     ///         (station, local column, coefficient) structure the attribution
-    ///         recompute needs (the kernel's folded factors do not retain it).
+    ///         recompute needs, which the kernel's folded factors do not retain.
     const std::vector<NetworkNormalEquations::DdPriorBlock>& ddPriorInputs() const {
         return dd_priors_;
     }
@@ -1054,22 +1085,24 @@ public:
      * @param x_s        The shared estimate from @ref solve.
      * @param epoch_time SSR content reference epoch stamped on the solution.
      * @param iod_ssr / provider_id / solution_id IGS-SSR stamps (pass-through).
-     * @param ambiguity_datum_ensemble T3a: true when the phase-bias gauge is the
-     *        anchor-free receiver ENSEMBLE (@c network.phase_datum_ensemble,
-     *        @c SbasisDeclaration::AmbDatum::SumToZeroPerReceiver).  The ensemble
-     *        references the satellite phase bias to the mean of the tracking
-     *        receivers' float ambiguities, so the emitted bias is NON-integer — the
-     *        @c signal_integer flag is forced false so no consumer treats it as an
-     *        AR candidate.  Default false = the pivot-receiver datum (byte-identical).
+     * @param ambiguity_datum_ensemble True when the phase-bias gauge is the
+     *        anchor-free receiver ensemble (@c network.phase_datum_ensemble,
+     *        @c SbasisDeclaration::AmbDatum::SumToZeroPerReceiver; T3a).  The
+     *        ensemble references the satellite phase bias to the mean of the
+     *        tracking receivers' float ambiguities, so the emitted bias is not
+     *        integer, and the @c signal_integer flag is forced false so no consumer
+     *        treats it as an AR candidate.  Default false = the pivot-receiver
+     *        datum (byte-identical).
      * @return One epoch of satellite-side solutions (clock C0 + per-signal code /
      *         phase bias) keyed by RINEX sat id, ready for `NetworkProductEmitter`.
+     *         SH-VTEC columns are not mapped.
      */
     NetworkSolutionEpoch toSolutionEpoch(const Eigen::VectorXd& x_s,
                                          const GnssTime& epoch_time, int iod_ssr = 0,
                                          int provider_id = 0, int solution_id = 0,
                                          bool ambiguity_datum_ensemble = false) const;
 
-    // --- RTA-10: per-constellation σ̂0 carve-out decision --------------------
+    // --- Per-constellation σ̂0 carve-out decision (RTA-10) -------------------
 
     /// One constellation's restriction of the network σ̂0 statistic
     /// (@c network.per_const_withhold): σ̂0_c over that constellation's
@@ -1089,16 +1122,16 @@ public:
      * @brief Decide, per constellation, whether its slice of a σ̂0-withheld epoch is
      *        individually publishable (RTA-10, @c network.per_const_withhold).
      *
-     * Pure policy — no estimator state.  A constellation is PUBLISHABLE iff its
-     * σ̂0_c is at or below the SAME withhold ceiling the global σ̂0 tripped
-     * (@p ceiling = @c network.raim_withhold_sigma0) AND it has at least
-     * @p min_rows rows in its pool (fewer ⇒ too little redundancy to certify
-     * cleanliness under a contaminated epoch — withheld as UNJUDGEABLE, not
-     * published unjudged).  Everything else lands in @c withhold.  The caller maps
-     * the sets onto the emission: an empty @c publish means NO healthy subset
-     * exists and the whole-epoch withhold applies unchanged; a constellation
-     * absent from @p stats (zero rows) is likewise unjudgeable and must not be
-     * published by the caller.
+     * Pure policy with no estimator state.  A constellation is publishable iff its
+     * σ̂0_c is at or below the withhold ceiling that the global σ̂0 tripped
+     * (@p ceiling = @c network.raim_withhold_sigma0) and it has at least
+     * @p min_rows rows in its pool.  With fewer rows there is too little
+     * redundancy to certify it clean in a contaminated epoch, so it is withheld as
+     * unjudgeable rather than published unjudged.  Everything else lands in
+     * @c withhold.  The caller maps the sets onto the emission: an empty
+     * @c publish means no publishable subset exists and the whole-epoch withhold
+     * applies unchanged; a constellation absent from @p stats (zero rows) is
+     * likewise unjudgeable, and the caller must not publish it.
      *
      * @param stats    Per-constellation σ̂0_c + row count (see the driver's pool
      *                 partition of the within-epoch RAIM standardized residuals).
@@ -1131,10 +1164,10 @@ private:
 
     /// @internal Shared arithmetic of @ref addSharedPriorDense and
     /// @ref refoldSharedPriorDenseDroppingClocks: map @p keys onto this epoch's
-    /// layout (absent OR @p skip keys are MARGINALIZED — their rows/cols of
-    /// @p cov are dropped before the inversion), then form Λ = P⁻¹ and η = Λv in
-    /// correlation scaling with the PD / ridge / information-budget guards.
-    /// Extracted verbatim so both callers fold bit-identical blocks.
+    /// layout (absent keys and @p skip keys are marginalized: their rows and
+    /// columns of @p cov are dropped before the inversion), then form Λ = P⁻¹ and
+    /// η = Λv in correlation scaling with the PD / ridge / information-budget
+    /// guards.  Both callers use this one path, so they fold bit-identical blocks.
     /// @param skip   Satellites whose @ref SharedParamKind::Clock key is
     ///               additionally marginalized (empty for the ordinary fold).
     /// @param col    out: shared-border column of each retained key.
@@ -1152,21 +1185,21 @@ private:
 
     std::map<std::string, Eigen::Index> index_;  ///< layout key → column
     std::vector<ColumnDesc> columns_;             ///< column → descriptor
-    /// Card C-GF partial-support skip tally.  @c mutable because @ref denseFoldTerms_ is
-    /// const and observational: the skip decision reads the layout, it does not change it.
+    /// Partial-support skip tally (Card C-GF).  @c mutable because @ref denseFoldTerms_
+    /// is const and observational: the skip decision reads the layout, it does not change it.
     mutable std::size_t gf_partial_skipped_{0};
     NetworkNormalEquations neq_{0};               ///< current-epoch arrowhead
     Eigen::MatrixXd shared_cov_;                  ///< covariance of x_s from the last solve() (for the D2 carry-forward prior)
     std::vector<NetworkNormalEquations::SumZeroGauge> phase_sumzero_gauges_;  ///< Fix A: anchor-free phase-bias gauges (empty = anchor-pin datum, byte-identical)
-    std::vector<NetworkNormalEquations::DdPriorBlock> dd_priors_;             ///< Card 4 (M1): per-component invariant-carry DD priors (empty = OFF, byte-identical)
+    std::vector<NetworkNormalEquations::DdPriorBlock> dd_priors_;             ///< per-component invariant-carry DD priors (Card 4 (M1); empty = off, byte-identical)
     bool attrib_armed_{false};                   ///< RHS-attribution capture recorder armed (diagnostics)
     const char* attrib_tag_{"shared_untagged"};  ///< class tag for the next shared-info fold (string literal)
     std::vector<AttribCapture> attrib_shared_;   ///< captured shared-info RHS increments (armed epochs only)
     int reduce_threads_{1};                       ///< per-station Schur-loop fan-out for reduce() (1 = serial; set by the driver)
     int seam_threads_{1};                         ///< per-block DD carry-fold fan-out for foldReducedDdPriors() (1 = serial; byte-identical at any count; set by the driver)
-    int carry_par_threads_{1};                    ///< network.parallel_carry: within-block per-station fan-out for the fold (1 = OFF; >1 relaxes ~1e-X on the reduction, byte-id on the middle inverse; set by the driver)
-    double rank_gate_tol_{kNullSpaceTol};         ///< Card DG (network.rank_gate_tol): the RESOLVED null-space cutoff every consumer reads (gate / dump / heal); defaults to kNullSpaceTol so an unset config is byte-identical (@ref setRankGateTol)
-    bool epoch_open_{false};                      ///< between beginEpoch() and the next layout change
+    int carry_par_threads_{1};                    ///< network.parallel_carry: within-block per-station fan-out for the fold (1 = off; > 1 gives ULP-level differences on the reduction and stays byte-identical on the middle inverse; set by the driver)
+    double rank_gate_tol_{kNullSpaceTol};         ///< resolved null-space rank-gate tolerance every consumer reads (gate / dump / drop-and-heal; network.rank_gate_tol, Card DG); defaults to kNullSpaceTol so an unset config is byte-identical (@ref setRankGateTol)
+    bool epoch_open_{false};                      ///< set by beginEpoch(), cleared by reset(); registration throws while set
     bool solved_{false};                          ///< set by solve(); blocks further addStation until beginEpoch()
 };
 

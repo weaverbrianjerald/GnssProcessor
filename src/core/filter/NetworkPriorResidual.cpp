@@ -1,14 +1,14 @@
 /**
  * @file NetworkPriorResidual.cpp
- * @brief Emission + run-end readout of the PRIOR-RESIDUAL CENSUS
+ * @brief Emission and run-end readout of the prior-residual census
  *        (docs/SPEC_prior_residual_census.md).
  *
- * The statistic itself lives entirely in the header-only accumulator
+ * The statistic lives entirely in the header-only accumulator
  * (@ref NetworkPriorResidual) so it can be unit-tested with no run coupling;
  * this translation unit is the only place that knows about traces, events,
- * counters and the station roster.  It DECIDES NOTHING — every number here is a
- * read of what the accumulator already formed, and nothing in the solve, the QC
- * tiers or the emit path reads any of it back.
+ * counters and the station roster.  It makes no decisions: every number here is
+ * a read of what the accumulator already formed, and nothing in the solve, the
+ * QC tiers or the emit path reads any of it back.
  */
 
 #include "filter/NetworkPriorResidual.hpp"
@@ -32,9 +32,9 @@ namespace GnssProcessor {
 
 namespace {
 
-/// Station index -> roster name, or a stable placeholder.  A shared
-/// (satellite-level) prior carries index -1 and reports an EMPTY station, which
-/// is the honest statement: the row has no station.
+/// Station index -> roster name, or a stable placeholder ("#idx") for an index
+/// past the roster.  A shared (satellite-level) prior carries index -1 and
+/// reports an empty station, because the row has no station.
 std::string stationName(const std::vector<NetStation>& stations, int idx) {
     if (idx < 0) return std::string();
     if (static_cast<std::size_t>(idx) >= stations.size())
@@ -75,14 +75,13 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
     const NetworkConfig& nc = config_.getNetworkConfig();
     auto& q = ctx.counters;
     ++q.prires_emit_passes;
-    // Mirrored from the accumulator rather than incremented here: beginEpoch runs
-    // in SB_T1A and this seam in SB_STASH_STATUS, so the two can legitimately
-    // differ (an epoch withheld between them advanced the census but never
-    // drained it).  Keeping both visible is what makes that state readable at run
-    // end instead of silently absorbed.
+    // Mirrored from the accumulator instead of incremented here: beginEpoch runs
+    // in SB_T1A and this seam in SB_STASH_STATUS, so the two counts can differ
+    // (an epoch withheld between them advanced the census but never drained it).
+    // Keeping both makes that state visible at run end.
     q.prires_epochs = prires.epochs();
 
-    // --- the epoch-status scalars (read BEFORE the L1 row is written) --------
+    // --- the epoch-status scalars (read before the L1 row is written) --------
     ctx.carry.prires_ep_tow      = se.time.tow;
     ctx.carry.ep_prires_rows     = prires.epochRows();
     ctx.carry.ep_prires_resp     = prires.epochRowsResp();
@@ -94,13 +93,12 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
     q.prires_hits_dropped += prires.hitsDropped();
 
     // --- the constraint-aware global variance component (the rider) -----------
-    // docs/SPEC_prior_residual_census.md §14.  Drained HERE and only here: this is
-    // the one point at which both sides are complete — the prior side from the
-    // five census feeds (the last of them a few lines above) and the data side
-    // from the post-fit RAIM row walk in SB_RAIM, which precedes SB_STASH_STATUS.
-    // MEASURE-ONLY, one level deeper than the census itself: nothing reads
-    // sigma0_global, and the A4 raim_withhold_sigma0 guard plus every gate and
-    // deweight stay on the ROBUST MEDIAN σ̂₀ formed in NetworkSolveGlue.
+    // docs/SPEC_prior_residual_census.md §14.  Drained here and nowhere else,
+    // because this is the one point at which both sides are complete: the prior
+    // side from the five census feeds and the data side from the post-fit RAIM
+    // row walk in SB_RAIM, which precedes SB_STASH_STATUS.  Measure-only: nothing
+    // reads sigma0_global, and the A4 raim_withhold_sigma0 guard and every gate
+    // and deweight use the robust median σ̂₀ formed in NetworkSolveGlue.
     if (prires.globalOn()) {
         const NetworkPriorResidual::GlobalResult g = prires.epochGlobal();
         ctx.carry.ep_s0g_formed      = g.formed;
@@ -120,10 +118,10 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
             q.s0g_max_tension     = g.prior_tension;
             q.s0g_max_tension_tow = se.time.tow;
         }
-        // Invariant #4: a DEGRADED number says so the first time it degrades, in
-        // the log as well as in-band, so nobody quotes an APPROX column from a
-        // run whose warning they never saw.  One-shot; the run-end line carries
-        // the epoch counts.
+        // Invariant #4: a degraded number is announced in the log the first time
+        // it degrades, as well as in-band (the APPROX / NO_DATA bits), so an
+        // APPROX column is not quoted without its warning.  One-shot; the run-end
+        // line carries the epoch counts.
         if ((g.flags & NetworkPriorResidual::kGlobalApprox)
             && !ctx.carry.s0g_approx_warned) {
             ctx.carry.s0g_approx_warned = true;
@@ -144,15 +142,15 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
                       "variance component and NOT LASER 5-74's global statistic.  The NO_DATA bit "
                       "is set in s0g_flags.  One-shot warning.", se.time.tow);
         }
-        // Push the per-epoch sample AFTER the counters, so the run-end quantiles
+        // Push the per-epoch sample after the counters, so the run-end quantiles
         // and the counters describe the same population.
         prires.recordEpochGlobal();
     }
 
-    // --- INC-1: the exceedance ladder, one row per (family x label) ----------
+    // --- the exceedance ladder, one row per (family x label) (INC-1) ---------
     // Only families/labels that saw a row this epoch get a row: an all-zero row
     // per label per family per epoch would triple the file for no information,
-    // and the RUN-end readout is where "this label never happened" is reported.
+    // and the run-end readout is where "this label never happened" is reported.
     if (traces.prior_residual_trace.is_open()) {
         const auto& fams = prires.families();
         for (std::size_t f = 0; f < fams.size(); ++f) {
@@ -160,11 +158,10 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
             for (int li = 0; li < kPriorResidualLabels; ++li) {
                 const auto lab = static_cast<PriorResidualLabel>(li);
                 const NetworkPriorResidual::Ladder& L = prires.epochLadder(fi, lab);
-                // The RNEG class travels in the appended columns of the SAME row
+                // The RNEG class travels in the appended columns of the same row
                 // (existing readers keep parsing by position), so a (family,
-                // label) whose only rows this epoch were r_negative must still
-                // emit — otherwise the re-partition would DELETE those rows from
-                // the file rather than move them.
+                // label) whose only rows this epoch were r_negative still emits
+                // a row; skipping it would drop those rows from the file.
                 const NetworkPriorResidual::Ladder& N = prires.rnegEpochLadder(fi, lab);
                 if (L.n_rows == 0 && N.n_rows == 0) continue;
                 auto& o = traces.prior_residual_trace;
@@ -204,11 +201,12 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
     }
 
     // --- per-row identities: the PRIORRES event tier -------------------------
-    // Rate-limited per (family, station, satellite, signal) exactly like the
-    // PREFIT events: a prior that is persistently stale should log its identity
-    // PERSISTENTLY, not 120x/hour.  The LADDER above is never rate-limited — the
-    // holdoff only thins the identities, never the counts, which is the property
-    // that lets a reader trust the occupancy numbers against a sampled event log.
+    // Rate-limited per (family, station, satellite, signal) like the PREFIT
+    // events: a persistently stale prior logs its identity once per holdoff
+    // window (network.prior_residual_event_holdoff_ep, in census epochs), not
+    // every epoch.  The ladder above is never rate-limited: the holdoff thins
+    // the identities, never the counts, so the occupancy numbers stay complete
+    // while the event log is a sample.
     const long long holdoff = static_cast<long long>(ctx.knobs.prires_event_holdoff);
     const long long now_ep  = prires.epochs();
     for (const auto& h : prires.hits()) {
@@ -233,14 +231,13 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
                         h.folded ? 1 : 0, h.e, h.disp, h.r, h.s, h.sigma0,
                         h.fold_var, h.post_var, h.gap_s,
                         priorResidualCorrobName(h.corrob),
-                        // `rneg=1` is a SEPARATE token from the existing
-                        // `r_negative=1` text on purpose: the row's ladder class
-                        // is now what that bit decides (the row is in the RNEG
-                        // class, out of every bin and out of the worst-|t|
-                        // line), and a grader filtering the event stream needs
-                        // one greppable field for it rather than a substring of
-                        // a conditional pair.  The pre-existing text is left
-                        // exactly as it was.
+                        // `rneg=1` is a separate token from the `r_negative=1`
+                        // text: that bit decides the row's ladder class (the row
+                        // is in the RNEG class, out of every bin and out of the
+                        // worst-|t| line), and a filter on the event stream needs
+                        // one greppable field for it instead of a substring of a
+                        // conditional pair.  The `r_clamped` / `r_negative` text
+                        // keeps its existing form.
                         h.r_clamped ? (h.r_negative ? " r_clamped=1 r_negative=1"
                                                     : " r_clamped=1") : "",
                         h.r_negative ? " rneg=1" : ""));
@@ -291,10 +288,10 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
             }
         }
 
-    // ⚠ Durability (spec §6): only health_trace flushes mid-run.  Flush the
-    // ladder on the content-hour roll so a killed long run keeps whole hours of
-    // the card's headline product rather than whatever happened to be in the
-    // stream buffer.  Cheap: at most one flush per hour of content.
+    // Durability (spec §6): only health_trace flushes mid-run.  Flush the ladder
+    // when the content hour rolls over, so an aborted long run keeps whole hours
+    // of the ladder instead of whatever was in the stream buffer.  At most one
+    // flush per hour of content.
     if (traces.prior_residual_trace.is_open()) {
         const int hour = static_cast<int>(se.time.tow / 3600.0);
         if (hour != ctx.carry.prires_last_flush_hour) {
@@ -316,10 +313,10 @@ void networkPriorResidualReport(const NetworkRunContext& ctx,
     const NetworkConfig& nc = config_.getNetworkConfig();
     const auto& q = ctx.counters;
     const auto& lad = NetworkPriorResidual::ladder();
-    // Read the epoch denominator off the ACCUMULATOR, not the counter: the
+    // Read the epoch denominator from the accumulator, not the counter: the
     // counter is stamped by the emission seam, so a run whose every epoch was
-    // withheld between SB_T1A and SB_STASH_STATUS would report 0 there and read
-    // as dead wiring when it is in fact "advanced but never drained".
+    // withheld between SB_T1A and SB_STASH_STATUS would report 0 there and look
+    // like dead wiring when the census advanced but was never drained.
     const long long n_ep = prires.epochs();
     if (n_ep != q.prires_emit_passes)
         log->warn("Network (prior-residual census): {} epoch(s) advanced but only {} were "
@@ -329,9 +326,9 @@ void networkPriorResidualReport(const NetworkRunContext& ctx,
                   "trace row and no events.",
                   n_ep, q.prires_emit_passes);
 
-    // Standing invariant #4, ladder edition.  The DENOMINATORS come first and
-    // unconditionally: "0 rows over 4-sigma" is a finding only when the reader
-    // can see how many epochs ran and how many rows were examined.
+    // Standing invariant #4: the denominators are logged first and
+    // unconditionally, because "0 rows over 4-sigma" is a finding only next to
+    // the number of epochs run and rows examined.
     log->info("Network (prior-residual census): {} epoch(s) censused ({} emission pass(es)), "
               "{} carried prior(s) examined, {} above the {:g}σ̂₀ TRACE threshold, {} PRIORRES "
               "event(s) emitted after the {}-epoch per-cell holdoff ({} identity(ies) dropped "
@@ -348,8 +345,8 @@ void networkPriorResidualReport(const NetworkRunContext& ctx,
         const int fi = static_cast<int>(f);
         const long long fam_rows = prires.runRows(fi);
         if (fam_rows == 0) {
-            // The distinction standing invariant #4 exists for.  q.prires_epochs
-            // separates the two cases and the message must NAME which one it is.
+            // Standing invariant #4: separate "never ran" (zero epochs) from
+            // "ran and saw nothing", and name which case applies.
             if (n_ep == 0)
                 log->warn("Network (prior-residual census): family '{}' ARMED but the census "
                           "NEVER RAN — zero epochs advanced.  This is dead wiring, not a "
@@ -372,14 +369,13 @@ void networkPriorResidualReport(const NetworkRunContext& ctx,
         for (int li = 0; li < kPriorResidualLabels; ++li) {
             const auto lab = static_cast<PriorResidualLabel>(li);
             const auto& R = prires.runLadder(fi, lab);
-            // The RNEG class (post_var > fold_var) is reported for EVERY label,
-            // including one whose ordinary ladder is empty — a (family, label)
-            // whose rows were ALL r_negative did occur, and saying "never
-            // occurred" there would hide exactly the population this
-            // re-partition exists to surface.  Read on |ê| (metres): the class's
-            // |t| is an artifact of a dispersion that does not describe one fold
-            // (the σ̂₀_global rider drops these rows for the same reason,
-            // RNEG_DROP).
+            // The RNEG class (post_var > fold_var) is reported for every label,
+            // including one whose ordinary ladder is empty: a (family, label)
+            // whose rows were all r_negative did occur, and reporting "never
+            // occurred" would hide the population the RNEG class exists to
+            // expose.  It is ranked on |ê| (metres) because its |t| comes from a
+            // dispersion that does not describe one fold (the σ̂₀_global rider
+            // drops these rows for the same reason, RNEG_DROP).
             const auto& N = prires.rnegRunLadder(fi, lab);
             if (N.n_rows > 0)
                 log->info("Network (prior-residual census) '{}'/{} RNEG: n = {} row(s) with "
@@ -429,9 +425,9 @@ void networkPriorResidualReport(const NetworkRunContext& ctx,
                           "(ê = {:.6e} m, D{{ê}} = {:.6e} m², fold_var = {:.6e}, "
                           "post_var = {:.6e}, gap = {:.1f} s).",
                           fams[f], priorResidualLabelName(lab), R.max_abs_t,
-                          // -1 is a SHARED (satellite-level) prior: it has no
-                          // station, which is a fact about the row, not a lookup
-                          // failure.  Printing "#-1" invites the opposite reading.
+                          // -1 is a shared (satellite-level) prior: the row has
+                          // no station, which is not a lookup failure, so it
+                          // prints "(shared)" instead of "#-1".
                           R.max_station < 0
                               ? std::string("(shared)")
                               : (stationName(stations, R.max_station).empty()
@@ -443,12 +439,12 @@ void networkPriorResidualReport(const NetworkRunContext& ctx,
                           R.max_e, R.max_disp, R.max_fold_var, R.max_post_var,
                           R.max_gap_s);
         }
-        // ★ THE POSITIVE CONTROL (spec §9.3).  Quantified as the 4σ̂₀ ladder ratio
-        // RESPONDED : CLEAN, and meaningful ONLY on the unfolded `+` branch — under
-        // the folded form a refloated row's r hits the ε clamp and the "shift" is a
-        // x3000 artifact, not a measurement.  A NULL result here is a PUBLISHABLE
-        // FINDING, not a failed gate: it says the prior-residual statistic has no
-        // power on this family, which is the same class of result as D5's 2.1 %.
+        // Positive control (spec §9.3): the ratio of 4σ̂₀ ladder occupancy,
+        // Responded : Clean.  It is meaningful only on the unfolded `+` branch;
+        // under the folded form a refloated row's r hits the ε clamp and the
+        // shift is an artifact of the clamp, not a measurement.  A null result is
+        // a finding, not a failed gate: the prior-residual statistic has no power
+        // on this family.
         const auto& Rr = prires.runLadder(fi, PriorResidualLabel::Responded);
         const auto& Rc = prires.runLadder(fi, PriorResidualLabel::Clean);
         if (Rr.n_rows > 0 && Rc.n_rows > 0) {
@@ -466,11 +462,10 @@ void networkPriorResidualReport(const NetworkRunContext& ctx,
                       Rr.n_rows, Rr.n_folded, Rr.n_rows - Rr.n_folded, 100.0 * fc,
                       Rc.bins[NetworkPriorResidual::kLadder4Sigma], Rc.n_rows, Rc.n_folded,
                       Rc.n_rows - Rc.n_folded, ratio);
-            // The comparison is only a MEASUREMENT when both sides sit on the same
-            // dispersion branch.  A RESPONDED population that is entirely unfolded
-            // against a CLEAN population that is entirely folded is comparing two
-            // different nulls, and the ratio is then an artifact of the branch, not
-            // a statement about power.  Say so rather than let a reader quote it.
+            // The comparison is a measurement only when both sides sit on the same
+            // dispersion branch.  An all-unfolded Responded population against an
+            // all-folded Clean population compares two different nulls, and the
+            // ratio then reflects the branch, not power; the warning says so.
             const bool rr_unfolded = Rr.n_folded == 0;
             const bool rc_folded   = Rc.n_folded == Rc.n_rows;
             if (rr_unfolded && rc_folded)
@@ -489,7 +484,7 @@ void networkPriorResidualReport(const NetworkRunContext& ctx,
                       "refloats, no reseeds and no exclusions on this family cannot grade "
                       "spec §9.3.", fams[f]);
         }
-        // --- INC-3 contingency table (spec §4/§9.6) --------------------------
+        // --- contingency table (spec §4/§9.6) (INC-3) ------------------------
         if (prires.corroborating()) {
             for (int li = 0; li < kPriorResidualLabels; ++li) {
                 const auto lab = static_cast<PriorResidualLabel>(li);
@@ -517,13 +512,13 @@ void networkPriorResidualReport(const NetworkRunContext& ctx,
                           nc.prior_residual_report_sigma, a, b, c0, d, e, f0, b, hi,
                           (hi > 0) ? 100.0 * static_cast<double>(b)
                                              / static_cast<double>(hi) : 0.0);
-                // THE AUDIT that makes the b-cell above readable.  The consensus
-                // rule can only move rows Stepped -> Flat, i.e. only RAISE the
-                // b-cell, so quoting it without showing how much the rule moved
-                // — and over what domain size — would be circular.  A mean domain
-                // of 1.00 means the rule was a no-op for this family (`pl`); a
-                // mean domain near the station count is the regime where v1's OR
-                // saturated and the b-cell was not a rate at all.
+                // Corroboration audit for the b-cell above.  The consensus rule
+                // can only move rows Stepped -> Flat, so it can only raise the
+                // b-cell; the audit shows how many rows it moved and over what
+                // domain size.  A mean domain of 1.00 means the rule was a no-op
+                // for this family (`pl`); a mean domain near the station count is
+                // the regime where the v1 OR rule saturates and the b-cell stops
+                // being a rate.
                 log->info("Network (prior-residual census) '{}'/{} CORROBORATION AUDIT: mean "
                           "domain {:.2f} (station,sat) pair(s) per row over {} row(s) carrying "
                           "evidence; v1's saturating OR would have called {} row(s) Stepped, "
@@ -539,12 +534,10 @@ void networkPriorResidualReport(const NetworkRunContext& ctx,
                                                              - R.n_corrob_stepped)
                                        / static_cast<double>(R.n_corrob_rows)
                               : 0.0);
-                // SENSITIVITY.  Without this the consensus count is
-                // UNFALSIFIABLE: "0 Stepped" reads identically whether no
-                // common-mode event occurred or the rule could never have seen
-                // one.  The bar is a strict majority (0.5000); this reports how
-                // close the data ever came to it, which is the one number that
-                // separates those two readings.
+                // Consensus sensitivity.  "0 Stepped" reads the same whether no
+                // common-mode event occurred or the rule could not have seen one.
+                // The bar is a strict majority (0.5000); the highest stepped
+                // fraction any domain reached separates the two readings.
                 if (R.n_corrob_rows > 0)
                     log->info("Network (prior-residual census) '{}'/{} CONSENSUS SENSITIVITY: "
                               "the highest stepped FRACTION any domain reached all run was "
@@ -569,10 +562,9 @@ void networkPriorResidualReport(const NetworkRunContext& ctx,
         log->info("Network (prior-residual census): worst |t| of the run = {:.4e} at {} "
                   "(RNEG rows EXCLUDED — see the next line).",
                   q.prires_max_t, q.prires_max_id);
-    // The RNEG headline, deliberately in METRES and deliberately beside the |t|
-    // line: before the re-partition this population WAS the |t| headline (927 of
-    // the 957 rows above 1e4 on runs/fldf3_pl2, top row 2.5e8), and a reader who
-    // remembers that number needs to see where it went.
+    // The RNEG headline is in metres and sits beside the |t| line: RNEG rows
+    // have inflated |t| and would otherwise dominate the worst-|t| headline, so
+    // they are reported here, ranked on |ê|, instead.
     if (q.prires_rneg_rows > 0)
         log->info("Network (prior-residual census) RNEG: {} row(s) of the run had post_var > "
                   "fold_var (r < 0) and are excluded from every ladder bin, from sum_log_t2 "
@@ -585,10 +577,10 @@ void networkPriorResidualReport(const NetworkRunContext& ctx,
                   q.prires_rneg_max_id.empty() ? std::string("-") : q.prires_rneg_max_id);
 
     // --- the constraint-aware global variance component -----------------------
-    // docs/SPEC_prior_residual_census.md §14.2/§14.6.  Invariant #4 first: the
-    // DENOMINATORS and the DEGRADATION MODE before any number, because a
-    // sigma0_global quoted without knowing whether its data side was r ≡ 1 (or
-    // empty) is not a measurement.
+    // docs/SPEC_prior_residual_census.md §14.2/§14.6.  Invariant #4: the
+    // denominators and the degradation mode are logged before any number,
+    // because sigma0_global means nothing without knowing whether its data
+    // side was r ≡ 1 or empty.
     if (prires.globalOn()) {
         const NetworkPriorResidual::GlobalResult G = prires.runGlobal();
         const auto& S = G.s;
@@ -617,12 +609,12 @@ void networkPriorResidualReport(const NetworkRunContext& ctx,
                       "{}.  Check the two feed sites before reading anything else here.",
                       S.r_data + S.r_prior, S.n_data, S.n_prior, s0gFlagText(G.flags));
         } else {
-            // The run-POOLED estimator (Σ over every row of the run), which is
-            // the variance component; the per-epoch median/p95 that follow are a
-            // different statistic and the line says so.
-            // "undefined" is written as a WORD, never as a nan: a nan in a
-            // run-end line reads as a numerical accident, and this one is a
-            // structural statement about the run (no data side ⇒ no denominator).
+            // The run-pooled estimator (Σ over every row of the run) is the
+            // variance component; the per-epoch median/p95 that follow are a
+            // different statistic, and the log line says so.
+            // An undefined tension is written as a word, not as nan: it is a
+            // structural property of the run (no data side, so no denominator),
+            // not a numerical accident.
             log->info("Network (constraint-aware global σ̂₀) RUN-POOLED: "
                       "σ̂₀²_global = (Σw·v² + Σw·ê²)/(Σr_data + Σr_prior) = "
                       "({:.6e} + {:.6e})/({:.6e} + {:.6e}) = {:.6e}  ⇒  σ̂₀_global = {:.4f}.  "
@@ -657,10 +649,10 @@ void networkPriorResidualReport(const NetworkRunContext& ctx,
                           prires.globalQuantile(0.05), prires.globalQuantile(0.50),
                           prires.globalQuantile(0.95), prires.globalSampleCount());
         }
-        // §6's per-family split: which carry family the prior-side tension came
-        // from.  This is the column that has to reconcile with M2's per-family
-        // robust σ̂ to ~factor 2 — a failure to reconcile is a bug in one of the
-        // three instruments, and finding WHICH is the gate.
+        // Per-family split (spec §6): which carry family the prior-side tension
+        // came from.  Each family's variance factor is expected to agree with the
+        // M2 per-family robust σ̂ to about a factor of 2; a larger disagreement
+        // points to a defect in one of the three instruments.
         if (S.we2 > 0.0 || S.n_prior > 0 || S.n_prior_unfolded > 0
             || S.n_prior_nominal > 0 || S.n_prior_rneg > 0) {
             for (std::size_t f = 0; f < fams.size(); ++f) {
@@ -697,7 +689,7 @@ void networkPriorResidualReport(const NetworkRunContext& ctx,
                   "not a test statistic — it inherits the same heavy-tail reality the ladders "
                   "measure, and a t/F table on it rebuilds D5 v1.");
     }
-    // The card's own honesty line: nothing above is a defect claim.
+    // Closing line: every number above is a measurement, not a defect claim.
     log->info("Network (prior-residual census): every number above is a MEASUREMENT of the "
               "carried stochastic model, not a defect claim, and no gate, deweight, exclusion "
               "or refloat was wired to any of it.  The critical value is EMPIRICAL, never "

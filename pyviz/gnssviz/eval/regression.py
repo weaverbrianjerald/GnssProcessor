@@ -2,16 +2,16 @@
 
 Two independent guards:
 
-* :func:`cross_check_truth` -- compare two truth backends (e.g. SINEX vs SIF) for
+* :func:`cross_check_truth`: compares two truth backends (e.g. SINEX vs SIF) for
   a set of stations at an epoch, flagging any whose coordinates disagree beyond a
-  tolerance.  Catches a bad/stale truth coordinate before it silently biases the
-  scorecard (long-running IGS stations agree sub-cm; a freshly-installed station
+  tolerance.  Catches a bad or stale truth coordinate before it silently biases the
+  scorecard (long-running IGS stations agree to sub-cm; a freshly installed station
   extrapolated past the solution span may not).
 
-* :func:`compare_metrics` -- diff a current scorecard against a stored *golden*
-  one, flagging any (station, cell) whose ENU bias or 3D-RMS moved beyond
-  tolerance.  This is the regression gate: a config or physics change that shifts
-  a position by more than the tolerance trips it.
+* :func:`compare_metrics`: diffs a current scorecard against a stored golden one,
+  flagging any (station, cell) whose ENU bias or 3D-RMS moved beyond tolerance.
+  This is the regression gate: a config or physics change that shifts a position
+  by more than the tolerance trips it.
 """
 
 from __future__ import annotations
@@ -150,10 +150,10 @@ def compare_metrics(current: Sequence[dict], golden: Sequence[dict], *,
         dbias = cb - gb
         drms = cr - gr
         reasons = []
-        # A finite<->NaN transition in any component is itself a regression: a run
-        # diverged (lost a finite solution) or a previously-broken cell recovered.
-        # The magnitude tests below silently ignore NaN, so without this an
-        # all-NaN diverged run would sail through the gate.
+        # A finite-to-NaN transition in any component is itself a regression: a run
+        # diverged (lost a finite solution) or a previously broken cell recovered.
+        # The magnitude tests below ignore NaN, so without this check an all-NaN
+        # diverged run would pass the gate undetected.
         nan_flip = bool(np.any(np.isnan(cb) != np.isnan(gb))
                         or (np.isnan(cr) != np.isnan(gr)))
         if nan_flip:

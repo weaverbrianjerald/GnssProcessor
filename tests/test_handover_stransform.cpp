@@ -1,37 +1,38 @@
 /**
  * @file test_handover_stransform.cpp
- * @brief HANDOVER S-TRANSFORM (network.handover_stransform, queue 1(b) —
- *        docs/SPEC_pivot_visibility_gauge_defect.md §8; measured motivation in
- *        docs/SPEC_event_harness.md §19) — the structural direction, the rank-1
+ * @brief Handover S-transform (network.handover_stransform, queue 1(b);
+ *        docs/SPEC_pivot_visibility_gauge_defect.md §8, measured motivation in
+ *        docs/SPEC_event_harness.md §19): the structural direction, the rank-1
  *        kernel, its exactness, and the loader interlocks.
  *
- * The card's whole claim is that a clock-pivot handover moves a GAUGE, not the
- * information: the carried shared state is valid, merely expressed in the datum
- * that just retired, so it should be RE-EXPRESSED rather than dropped for an
- * epoch.  That claim is only true if three things hold exactly, and each is
- * invisible at the site where it would break:
+ * The card rests on the claim that a clock-pivot handover moves a gauge, not the
+ * information: the carried shared state is valid but expressed in the datum that
+ * just retired, so it is re-expressed rather than dropped for an epoch.  The
+ * claim holds only if three properties hold exactly, and a failure of any of them
+ * is not visible at the site where it occurs:
  *
- *   1. the direction transformed along is the STRUCTURAL one the datum builder
- *      pinned — a hand-written or eigen-derived direction would mix families and
- *      silently move states the gauge does not own (§8.1 rule 1);
- *   2. the transform lands the INCOMING pivot on exactly its pinned value (0) and
- *      leaves every between-satellite difference inside the constellation
- *      untouched — that invariance IS "S-transform", and without it the released
- *      carry would inject a frame error that no instrument downstream separates
- *      from a real one (§8.4 INC-3);
- *   3. the dispersion bump is non-negative on every transformed row — §8.1 keeps
- *      only the diagonal term precisely because dropping the cross term
- *      OVER-states variance, and a bump that could go negative would turn a
- *      conservative approximation into an over-confident prior.
+ *   1. the transform runs along the structural direction the datum builder
+ *      pinned; a hand-written or eigen-derived direction would mix families and
+ *      move states the gauge does not own (§8.1 rule 1 of
+ *      SPEC_pivot_visibility_gauge_defect);
+ *   2. the transform lands the incoming pivot on its pinned value (0) and leaves
+ *      every between-satellite difference inside the constellation unchanged.
+ *      That invariance is what makes it an S-transform; without it the released
+ *      carry would inject a frame error that no downstream instrument separates
+ *      from a real one (§8.4 INC-3 of SPEC_pivot_visibility_gauge_defect);
+ *   3. the dispersion bump is non-negative on every transformed row.  §8.1 keeps
+ *      only the diagonal term because dropping the cross term overstates variance;
+ *      a bump that could go negative would turn a conservative approximation into
+ *      an over-confident prior.
  *
- * The remaining cases pin the no-op paths (a transform that cannot be derived
- * must change nothing at all, rather than half-apply) and the loader interlocks,
- * which are the only places the knob can become an inert null result that still
- * reads as a clean run (invariant #4).
+ * The remaining cases cover the no-op paths (a transform that cannot be derived
+ * changes nothing, rather than half-applying) and the loader interlocks, which
+ * are the only places the knob can become inert while the run still reads as
+ * clean (invariant #4).
  *
  * The kernel is exercised directly: it is a pure function over a carry vector and
- * a direction, with no context, no estimator and no I/O — the seam around it does
- * counters, events and the fold release, all of which the byte-identity and
+ * a direction, with no context, no estimator and no I/O.  The seam around it
+ * handles counters, events and the fold release, which the byte-identity and
  * actuation gates cover on real runs.
  */
 
@@ -64,7 +65,7 @@ CarryPrior clk(const std::string& sat, double value, double var) {
     return c;
 }
 
-/// A carried bias row (code or phase) — must never be touched by the transform.
+/// A carried bias row (code or phase); the transform must not touch it.
 CarryPrior bias(SharedParamKind kind, const std::string& sat, const std::string& sig,
                 double value, double var) {
     CarryPrior c;
@@ -79,8 +80,8 @@ CarryPrior bias(SharedParamKind kind, const std::string& sat, const std::string&
 /// The carry used by most cases: two constellations, distinct levels and variances.
 std::vector<CarryPrior> makeCarry() {
     return {
-        clk("G01", 0.00, 1.0e-6),    // the OUTGOING pivot — pinned last epoch, so level 0
-        clk("G02", -2.0742503730608925, 4.0e-4),   // the INCOMING pivot (real value, §19.1)
+        clk("G01", 0.00, 1.0e-6),    // the outgoing pivot: pinned last epoch, so level 0
+        clk("G02", -2.0742503730608925, 4.0e-4),   // incoming pivot, value from SPEC_event_harness §19.1
         clk("G05", -0.75, 2.5e-4),
         clk("G32", +1.25, 9.0e-4),
         clk("E02", +0.1443824781885379, 3.0e-4),   // Galileo: a different gauge entirely
@@ -140,13 +141,13 @@ const std::vector<std::string> kRegistered{"G01", "G02", "G05", "G32", "E02", "E
 }  // namespace
 
 // ===========================================================================
-// 1: the STRUCTURAL direction — membership, coefficients, order
+// 1: the structural direction: membership, coefficients, order
 // ===========================================================================
 
 TEST(HandoverStransform, NullDirectionIsTheConstellationsClocksAtUnitWeight) {
     const auto g = NetworkSbasis::clockNullDirection(kRegistered, "G");
     ASSERT_EQ(g.size(), 4u);
-    // Lexical order — the SAME order buildSharedDatum groups and sorts by, so the
+    // Lexical order, the order buildSharedDatum groups and sorts by, so the
     // direction spans exactly the columns that builder pinned.
     EXPECT_EQ(g[0].first, "G01");
     EXPECT_EQ(g[1].first, "G02");
@@ -154,19 +155,19 @@ TEST(HandoverStransform, NullDirectionIsTheConstellationsClocksAtUnitWeight) {
     EXPECT_EQ(g[3].first, "G32");
     for (const auto& e : g) EXPECT_DOUBLE_EQ(e.second, 1.0);
 
-    // The gauge is PER CONSTELLATION: Galileo's direction contains no GPS column.
+    // The gauge is per constellation: Galileo's direction contains no GPS column.
     const auto e = NetworkSbasis::clockNullDirection(kRegistered, "E");
     ASSERT_EQ(e.size(), 2u);
     EXPECT_EQ(e[0].first, "E02");
     EXPECT_EQ(e[1].first, "E03");
 
-    // A constellation with nothing registered yields an EMPTY direction, which the
+    // A constellation with nothing registered yields an empty direction, which the
     // caller must treat as "no transform", not as a zero direction.
     EXPECT_TRUE(NetworkSbasis::clockNullDirection(kRegistered, "C").empty());
 }
 
 // ===========================================================================
-// 2: the kernel — the incoming pivot lands on 0, everyone moves by the same c0
+// 2: the kernel: the incoming pivot lands on 0, every clock moves by the same c0
 // ===========================================================================
 
 TEST(HandoverStransform, LandsIncomingPivotOnZeroAndShiftsTheConstellationRigidly) {
@@ -181,15 +182,15 @@ TEST(HandoverStransform, LandsIncomingPivotOnZeroAndShiftsTheConstellationRigidl
 
     ASSERT_TRUE(r.applied);
     EXPECT_EQ(r.rows, 4);                       // exactly the four GPS clocks
-    EXPECT_DOUBLE_EQ(r.c0, x_q_pre);            // v_c[q] == 1 ⇒ c0 IS the carried level
+    EXPECT_DOUBLE_EQ(r.c0, x_q_pre);            // v_c[q] == 1 ⇒ c0 is the carried level
     EXPECT_TRUE(r.selfcheck_ok);
 
-    // The incoming pivot is EXACTLY its pinned value.  Not "close to" — this is the
-    // property the released carry's whole validity rests on (§8.4 INC-3).
+    // The incoming pivot is exactly its pinned value, not close to it; the released
+    // carry is valid only if this holds (§8.4 INC-3 of SPEC_pivot_visibility_gauge_defect).
     EXPECT_DOUBLE_EQ(levelOf(carry, "G02"), 0.0);
     EXPECT_DOUBLE_EQ(r.x_q_post, 0.0);
 
-    // Every other clock of the constellation moved by the SAME c0 (v_c[i] = 1).
+    // Every other clock of the constellation moved by the same c0 (v_c[i] = 1).
     EXPECT_DOUBLE_EQ(levelOf(carry, "G01"), g01_pre - x_q_pre);
     EXPECT_DOUBLE_EQ(levelOf(carry, "G05"), g05_pre - x_q_pre);
     EXPECT_DOUBLE_EQ(levelOf(carry, "G32"), g32_pre - x_q_pre);
@@ -200,7 +201,7 @@ TEST(HandoverStransform, LandsIncomingPivotOnZeroAndShiftsTheConstellationRigidl
 }
 
 // ===========================================================================
-// 3: the S-transform property — between-satellite differences are invariant
+// 3: the S-transform property: between-satellite differences are invariant
 // ===========================================================================
 
 TEST(HandoverStransform, BetweenSatelliteDifferencesAreUnchanged) {
@@ -221,7 +222,7 @@ TEST(HandoverStransform, BetweenSatelliteDifferencesAreUnchanged) {
 }
 
 // ===========================================================================
-// 4: scope — the other constellation, and every non-clock family, are untouched
+// 4: scope: the other constellation and every non-clock family are untouched
 // ===========================================================================
 
 TEST(HandoverStransform, OtherConstellationAndBiasFamiliesAreUntouched) {
@@ -235,10 +236,10 @@ TEST(HandoverStransform, OtherConstellationAndBiasFamiliesAreUntouched) {
     EXPECT_DOUBLE_EQ(levelOf(carry, "E03"), levelOf(before, "E03"));
     EXPECT_DOUBLE_EQ(varOf(carry, "E02"), varOf(before, "E02"));
 
-    // Code and phase bias have ZERO component along the clock null direction (their
-    // gauges are realized independently — the W6 IF pin + sum-to-zero rows, and the
-    // anchor-receiver ambiguity pins).  They are RELEASED to fold by the seam, never
-    // transformed; a nonzero shift here would be a double-counted datum.
+    // Code and phase bias have zero component along the clock null direction (their
+    // gauges are realized independently: the W6 IF pin + sum-to-zero rows, and the
+    // anchor-receiver ambiguity pins).  The seam releases them to fold and does not
+    // transform them; a nonzero shift here would be a double-counted datum.
     for (std::size_t i = 0; i < before.size(); ++i) {
         if (before[i].kind == SharedParamKind::Clock) continue;
         EXPECT_DOUBLE_EQ(carry[i].value, before[i].value) << "bias row " << i << " moved";
@@ -263,21 +264,22 @@ TEST(HandoverStransform, VarianceBumpIsNonNegativeAndEqualsVarQ) {
     for (const std::string& s : {"G01", "G02", "G05", "G32"}) {
         const double d = varOf(carry, s) - varOf(before, s);
         EXPECT_GE(d, 0.0) << s << " lost variance — the bump must never be negative";
-        // v_c[i] = 1 ⇒ the bump is exactly var_q (§8.1's diagonal-compatible term).
+        // v_c[i] = 1 ⇒ the bump is exactly var_q (the diagonal-compatible term of
+        // §8.1 of SPEC_pivot_visibility_gauge_defect).
         EXPECT_DOUBLE_EQ(d, var_q) << s;
     }
 }
 
 // ===========================================================================
-// 6: the no-op paths change NOTHING — a half-applied transform is the worst case
+// 6: the no-op paths change nothing; a half-applied transform is the worst outcome
 // ===========================================================================
 
 TEST(HandoverStransform, NoOpPathsLeaveTheCarryBitIdentical) {
     const auto v_c = NetworkSbasis::clockNullDirection(kRegistered, "G");
     const auto before = makeCarry();
 
-    // (a) the incoming pivot has NO carried clock level — a first sighting, or a
-    //     vanish-return whose carry aged out.  There is nothing to re-reference FROM.
+    // (a) the incoming pivot has no carried clock level (a first sighting, or a
+    //     vanish-return whose carry aged out), so there is nothing to re-reference from.
     {
         auto carry = makeCarry();
         const auto r = applyClockStransform(carry, v_c, "G99");
@@ -296,7 +298,7 @@ TEST(HandoverStransform, NoOpPathsLeaveTheCarryBitIdentical) {
             EXPECT_DOUBLE_EQ(carry[i].value, before[i].value);
     }
     // (c) a carry holding a stale row for a satellite the direction does not contain
-    //     is left alone — membership is read from v_c, never inferred from the id.
+    //     is left alone: membership is read from v_c, never inferred from the id.
     {
         auto carry = makeCarry();
         carry.push_back(clk("G77", +7.0, 1.0e-3));   // not in kRegistered
@@ -307,7 +309,7 @@ TEST(HandoverStransform, NoOpPathsLeaveTheCarryBitIdentical) {
 }
 
 // ===========================================================================
-// 7: idempotence — re-deriving the coefficient after a transform returns 0
+// 7: idempotence: re-deriving the coefficient after a transform returns 0
 // ===========================================================================
 
 TEST(HandoverStransform, SecondApplicationIsANoOp) {
@@ -324,7 +326,7 @@ TEST(HandoverStransform, SecondApplicationIsANoOp) {
 }
 
 // ===========================================================================
-// 8: the loader — default OFF, and both interlocks DISARM rather than run inert
+// 8: the loader: default off, and both interlocks disarm rather than run inert
 // ===========================================================================
 
 TEST(HandoverStransformConfig, DefaultsOffArmsFromJsonAndInterlocksDisarm) {
@@ -333,9 +335,10 @@ TEST(HandoverStransformConfig, DefaultsOffArmsFromJsonAndInterlocksDisarm) {
         EXPECT_FALSE(off.cfg.networkHandoverStransform());
     }
     {
-        // The transform releases the skip for the CHANGED constellation only; the
-        // collateral half is increment 0's job.  Without it the edge is not fixed, so
-        // the loader DISARMS rather than let a half-measure be graded (invariant #4).
+        // The transform releases the skip for the changed constellation only; the
+        // collateral half belongs to increment 0 (scoped_handover_response).  Without
+        // it the edge is not fixed, so the loader disarms the knob rather than let a
+        // partial fix be graded (invariant #4).
         Loaded no_scope("noscope", "    \"handover_stransform\": true,\n");
         EXPECT_FALSE(no_scope.cfg.networkHandoverStransform());
     }
@@ -348,7 +351,7 @@ TEST(HandoverStransformConfig, DefaultsOffArmsFromJsonAndInterlocksDisarm) {
     }
     {
         // An anchor-free clock datum realizes the gauge with no pivot satellite, so
-        // there is no handover seam to transform across — armed here the knob would
+        // there is no handover seam to transform across; armed here, the knob would
         // be permanently inert.
         Loaded s2z("s2z",
                    "    \"scoped_handover_response\": true,\n"

@@ -4,9 +4,9 @@
  *
  * The network admits GLONASS (code-only: satellite clock + per-FCN-slot receiver
  * IFB) via network.estimate_glonass.  Because the per-slot IFB is the mechanism
- * that keeps GLONASS observations from pinning the receiver clock, the flag MUST
- * force its prerequisites (estimate_ifb + enable_glonass_ifb) on and MUST require
- * GLONASS in active_systems.  These tests lock that contract.
+ * that keeps GLONASS observations from pinning the receiver clock, the flag forces
+ * its prerequisites (estimate_ifb + enable_glonass_ifb) on and requires GLONASS in
+ * active_systems.  These tests check that contract.
  */
 
 #include <gtest/gtest.h>
@@ -81,7 +81,7 @@ TEST(GlonassNetworkConfig, EstimateGlonassForcesIfbPrerequisites) {
 
 // estimate_glonass=true but GLONASS missing from active_systems is a hard error:
 // GLONASS observations would never arrive, or would arrive with no shared clock
-// column and pin the receiver clock — fail loud rather than silently misconfigure.
+// column and pin the receiver clock.  The load fails instead of running misconfigured.
 TEST(GlonassNetworkConfig, EstimateGlonassRequiresGlonassInActiveSystems) {
     LogManager log;
     const fs::path p = writeTempConfig("missing",
@@ -91,10 +91,10 @@ TEST(GlonassNetworkConfig, EstimateGlonassRequiresGlonassInActiveSystems) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-// estimate_glonass=true with GLONASS in active_systems but NO GLONASS
+// estimate_glonass=true with GLONASS in active_systems but no GLONASS
 // signal_priorities entry is a hard error: PppModel would find no priority string
 // and silently skip every GLONASS satellite at signal selection, so the network
-// would emit ZERO GLONASS products while looking nominal.  Fail loud at load
+// would emit no GLONASS products while appearing nominal.  The load fails instead
 // (the multi-GNSS signal_priorities silent-drop failure mode).
 TEST(GlonassNetworkConfig, EstimateGlonassRequiresGlonassSignalPriorities) {
     LogManager log;
@@ -105,8 +105,8 @@ TEST(GlonassNetworkConfig, EstimateGlonassRequiresGlonassSignalPriorities) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-// Default network config (no estimate_glonass): GLONASS is OFF and the per-slot
-// IFB prerequisites are NOT force-enabled — the GPS+Galileo network is unchanged.
+// Default network config (no estimate_glonass): GLONASS is off and the per-slot
+// IFB prerequisites are not force-enabled, so the GPS+Galileo network is unchanged.
 TEST(GlonassNetworkConfig, DefaultNetworkHasGlonassOff) {
     LogManager log;
     const fs::path p = writeTempConfig("default",

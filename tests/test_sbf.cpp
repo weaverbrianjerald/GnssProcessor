@@ -33,7 +33,7 @@
 namespace GnssProcessor {
 namespace {
 
-// CRC-16/CCITT-XMODEM (poly 0x1021, init 0x0000) — same as SbfStreamReader.
+// CRC-16/CCITT-XMODEM (poly 0x1021, init 0x0000), the same CRC SbfStreamReader checks.
 uint16_t crc16Xmodem(const uint8_t* d, std::size_t n) {
     uint16_t crc = 0;
     for (std::size_t i = 0; i < n; ++i) {
@@ -112,7 +112,7 @@ TEST(SbfStreamReaderTest, RejectsCorruptedBlock) {
 }
 
 // ============================================================================
-// SbfSignalMap — the corrected signal numbering
+// SbfSignalMap: the corrected signal numbering
 // ============================================================================
 TEST(SbfSignalMapTest, CorrectedSignalNumbers) {
     EXPECT_EQ(SbfSignalMap::signalInfo(0).suffix, "1C");   // GPS L1CA
@@ -121,7 +121,7 @@ TEST(SbfSignalMapTest, CorrectedSignalNumbers) {
     EXPECT_EQ(SbfSignalMap::signalInfo(17).system, System::Galileo);
     EXPECT_EQ(SbfSignalMap::signalInfo(20).suffix, "5Q");  // GAL E5a
     EXPECT_EQ(SbfSignalMap::signalInfo(13).suffix, "1P");  // BDS B1C (not B1I)
-    EXPECT_EQ(SbfSignalMap::signalInfo(28).suffix, "2I");  // BDS B1I (the real one)
+    EXPECT_EQ(SbfSignalMap::signalInfo(28).suffix, "2I");  // BDS B1I (RINEX 3 code 2I)
     EXPECT_EQ(SbfSignalMap::signalInfo(28).system, System::BeiDou);
 
     System sys;
@@ -131,7 +131,7 @@ TEST(SbfSignalMapTest, CorrectedSignalNumbers) {
 }
 
 // ============================================================================
-// MeasEpoch (4027) — one GPS satellite, one signal (L1CA, Type1 only)
+// MeasEpoch (4027): one GPS satellite, one signal (L1CA, Type1 only)
 // ============================================================================
 TEST(SbfMeasEpochTest, DecodesSingleGpsL1ca) {
     std::vector<uint8_t> body(32, 0);
@@ -184,7 +184,7 @@ TEST(SbfMeasEpochTest, DecodesSingleGpsL1ca) {
 }
 
 // ============================================================================
-// GPSNav (5891) — Keplerian decode + circular-orbit PV via LiveEphemerisStore
+// GPSNav (5891): Keplerian decode and circular-orbit PV via LiveEphemerisStore
 // ============================================================================
 TEST(SbfNavTest, DecodesGpsNavAndComputesOrbit) {
     std::vector<uint8_t> body(132, 0);
@@ -268,7 +268,7 @@ TEST(SbfRawNavTest, GpsRawCaContainer) {
 }
 
 // ============================================================================
-// Meas3Ranges (4109) — real mosaic-X5 capture bytes, cross-checked against the
+// Meas3Ranges (4109): real mosaic-X5 capture bytes, cross-checked against the
 // co-logged MeasEpoch (4027) block at the same epoch.  The reference epoch
 // (TOW 434750000) is self-contained; the delta epoch (434751000) exercises the
 // stateful differential path against the cached reference.  Expected values are
@@ -296,7 +296,7 @@ void expectObs(const std::vector<RinexObservation>& epoch, const std::string& pr
 } // namespace
 
 TEST(SbfMeas3Test, ReferenceAndDeltaMatchMeasEpoch) {
-    // Reference epoch (TOW 434750000, full measurements) — len 616.
+    // Reference epoch (TOW 434750000, full measurements), length 616 bytes.
     static const uint8_t kRefBlock[] = {
         0x24,0x40,0xd4,0x9d,0x0d,0x10,0x68,0x02,0x30,0xc2,0xe9,0x19,0x75,0x09,0x01,0x40,
         0x1f,0x00,0x58,0x00,0x04,0x07,0x0a,0x00,0xc9,0xb1,0x48,0x96,0x9b,0x53,0x3c,0x2d,
@@ -338,7 +338,7 @@ TEST(SbfMeas3Test, ReferenceAndDeltaMatchMeasEpoch) {
         0x20,0xe0,0x6f,0x17,0x26,0x95,0x79,0xd8,0x63,0x00,0xa6,0xe6,0xb7,0xc1,0x12,0x0a,
         0x54,0x07,0x4d,0xec,0xac,0xe6,0x00,0x00,
     };
-    // Delta epoch (TOW 434751000, differential vs the reference) — len 296.
+    // Delta epoch (TOW 434751000, differential against the reference), length 296 bytes.
     static const uint8_t kDeltaBlock[] = {
         0x24,0x40,0x39,0xb6,0x0d,0x10,0x28,0x01,0x18,0xc6,0xe9,0x19,0x75,0x09,0x01,0x40,
         0x1f,0x00,0x50,0x00,0x04,0x87,0x0a,0x00,0xc9,0xe6,0xf8,0xc5,0x7d,0x0e,0xa0,0x7d,
@@ -379,8 +379,8 @@ TEST(SbfMeas3Test, ReferenceAndDeltaMatchMeasEpoch) {
     expectObs(ref, "C14", "2I", 22705418.270, 118233186.158);  // BeiDou B1I
     expectObs(ref, "R06", "1C", 19666439.532, 104944043.648);  // GLONASS L1CA (FDMA)
 
-    // --- delta epoch (decoded against the cached reference; new parser, shared
-    //     singleton state — mirrors the per-frame realtime usage) ---
+    // --- delta epoch (decoded against the cached reference: a new parser over the
+    //     shared singleton state, as in per-frame real-time use) ---
     SbfParser pdelta;
     ASSERT_TRUE(pdelta.parseFrame(kDeltaBlock, sizeof(kDeltaBlock)));
     const auto& dlt = pdelta.getObservations();

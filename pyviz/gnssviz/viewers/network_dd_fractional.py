@@ -1,30 +1,30 @@
-"""Network cross-station DD fractional-cycle viewer -- the AR go/no-go instrument.
+"""Network cross-station DD fractional-cycle viewer: the AR go/no-go instrument.
 
-Port of ``scripts/view_network_dd_fractional.py`` (B5).  The NETWORK producer,
-with ``network.trace_dd_fractional`` on, writes ``network_dd_fractional.csv`` --
-the between-station double-differenced undifferenced float ambiguities per
-(constellation, signal), including the fractional-cycle residual
-``frac_cyc = dd_cyc - round(dd_cyc)``.  This is the go/no-go instrument for
-float-bias user AR: if the emitted phase biases are AR-grade the DD ambiguities
-cluster on integers and ``frac_cyc`` piles up near 0 (equivalently ±0.5 is
-empty).  A smeared, flat histogram means the bias product does not yet support
+Port of ``scripts/view_network_dd_fractional.py`` (B5). With ``network.trace_dd_fractional``
+on, the network producer writes ``network_dd_fractional.csv``: the between-station
+double-differenced undifferenced float ambiguities per (constellation, signal), including
+the fractional-cycle residual ``frac_cyc = dd_cyc - round(dd_cyc)``. This is the go/no-go
+instrument for float-bias user AR: if the emitted phase biases are AR-grade the DD
+ambiguities cluster on integers and ``frac_cyc`` piles up near 0 (equivalently ±0.5 is
+empty). A smeared, flat histogram means the bias product does not yet support
 <0.1-cycle user AR.
 
-The producer already excludes the pivot station and GLONASS -- do NOT re-filter.
+The producer already excludes the pivot station and GLONASS; this viewer does not
+re-filter.
 
 Figures
 -------
-* **A** -- one tile per (const, signal), capped to the ~8 largest-n groups
-  (disclosed in the tile / summary), a 50-bin FIXED histogram over (-0.5, 0.5]
-  drawn as a step :class:`Line` (no ``Bar`` primitive), a uniform-density
-  :class:`HLine` (n/50), and :class:`VLine` markers at ±0.1 cyc.  Title carries
-  n, the replicated robust sigma, and the within-±0.1-cyc percentage.
-* **B** (net-new) -- per-group robust sigma vs GPS time, one :class:`Line` per
-  group; a slowly-shrinking / stable sigma is the healthy signature.
+* **A**: one tile per (const, signal), capped to the ~8 largest-n groups (disclosed in
+  the tile / summary), a 50-bin fixed histogram over (-0.5, 0.5] drawn as a step
+  :class:`Line` (no ``Bar`` primitive), a uniform-density :class:`HLine` (n/50), and
+  :class:`VLine` markers at ±0.1 cyc. Title carries n, the replicated robust sigma, and
+  the within-±0.1-cyc percentage.
+* **B** (net-new): per-group robust sigma vs GPS time, one :class:`Line` per group; a
+  slowly-shrinking or stable sigma is the healthy signature.
 
-The robust-sigma estimator is replicated EXACTLY from the standalone script
-(upper-median of ``|frac|`` without interpolation, times 1.4826) so a 3-decimal
-cross-check matches -- ``np.median`` would differ for even ``n``.
+The robust-sigma estimator is replicated exactly from the standalone script (upper-median
+of ``|frac|`` without interpolation, times 1.4826) so a 3-decimal cross-check matches:
+``np.median`` would differ for even ``n``.
 """
 
 from __future__ import annotations
@@ -53,12 +53,12 @@ def wrap_half(x):
 
 
 def robust_std(vals) -> float:
-    """Robust sigma == 1.4826 * upper-median(|frac|), replicated EXACTLY.
+    """Robust sigma == 1.4826 * upper-median(|frac|), replicated exactly.
 
     Mirrors the standalone script's ``robust_std``: sort ``|v|`` ascending and
-    take the element at integer index ``len//2`` (the UPPER median for even n,
-    no interpolation).  ``np.median`` averages the two middle elements for even
-    n and would disagree at the 3rd decimal -- keep this hand-rolled index.
+    take the element at integer index ``len//2`` (the upper median for even n,
+    no interpolation). ``np.median`` averages the two middle elements for even
+    n and would disagree at the 3rd decimal, so this keeps the hand-rolled index.
     """
     v = [float(x) for x in vals if np.isfinite(x)]
     if not v:
@@ -92,13 +92,13 @@ def build_network_dd_fractional(ctx) -> ViewerResult:
     df["cons"] = df["cons"].astype(str)
     df["signal"] = df["signal"].fillna("").astype(str)
     df["frac"] = wrap_half(df["frac_cyc"].to_numpy(float))
-    # T2a: optional formal DD sigma (cycles).  −1/absent = "covariance unavailable".
+    # Optional formal DD sigma (cycles); −1 or absent means covariance unavailable (T2a).
     has_sigma = "dd_sigma_cyc" in df.columns
     if has_sigma:
         df["dd_sigma_cyc"] = df["dd_sigma_cyc"].astype(float)
     df = add_utc(df)
 
-    # --- Aggregate per (cons, signal) ONCE (the file is O(sta*sat*epoch)). ---
+    # --- Aggregate per (cons, signal) once (the file is O(sta*sat*epoch)). ---
     groups = []   # list of dicts: cons, signal, sys, n, sigma, pct, frac(np), color, ...
     for (cons, sig), sub in df.groupby(["cons", "signal"], sort=True):
         frac = sub["frac"].to_numpy(float)
@@ -117,8 +117,10 @@ def build_network_dd_fractional(ctx) -> ViewerResult:
             stds = stds[np.isfinite(stds)]
             if stds.size:
                 ser_std_med = float(np.median(stds))
-        # σ calibration (χ² intent): per-series TEMPORAL scatter vs the formal DD σ.
-        # calib = scatter/formal — ~1 honest, >>1 overconfident (σ-incest), <<1 conservative.
+        # σ calibration (χ² intent): per-series temporal scatter vs the formal DD σ.
+        # calib = scatter/formal: about 1 is well calibrated, much greater than 1 is
+        # overconfident (σ derived from the same data it grades), much less than 1 is
+        # conservative.
         med_sig = float("nan")
         calib = float("nan")
         if has_sigma:

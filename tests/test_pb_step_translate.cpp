@@ -1,37 +1,38 @@
 /**
  * @file test_pb_step_translate.cpp
- * @brief Card PBT (A) — the consumer translates EVERY phase-bias product step
- *        into its own ambiguity (@c PbStepTranslateLedger + the
- *        @c network.closed_loop.pb_step_translate plumbing).
+ * @brief The consumer translates every phase-bias product step into its own
+ *        ambiguity (@c PbStepTranslateLedger and the
+ *        @c network.closed_loop.pb_step_translate plumbing; card PBT (A)).
  *
- * What is locked here:
- *   - a 0.30 m product step translates the (sat, signal) ambiguity by EXACTLY
- *     −0.30 m with the covariance bitwise unchanged and no other state touched.
- *     ⚠ The undifferenced consumer's ambiguity STATE is in metres — the
- *     measurement model's phase row uses @c amb_term = x(amb_idx) with a unit
- *     Jacobian (MeasurementModel.cpp:1653-1655) beside a metres @c ssr_bias_term
- *     — so "−Δ/λ cycles" and "−Δ metres" are the same write, and the basis where
- *     λ WOULD appear (NL/WL) is one of the refusal branches below;
- *   - a 2 mm change is SKIPPED (nothing written, counted as skipped_eps), and a
- *     DECLARED 2 mm change is skipped too — that is the EMPTY-declaration
+ * Covered here:
+ *   - a 0.30 m product step translates the (sat, signal) ambiguity by exactly
+ *     −0.30 m, with the covariance bitwise unchanged and no other state touched.
+ *     The undifferenced consumer's ambiguity state is in metres: the phase row in
+ *     MeasurementModel::buildJacobianRow uses @c amb_term = x(amb_idx) with a unit
+ *     Jacobian beside a metres @c ssr_bias_term, so "−Δ/λ cycles" and "−Δ metres"
+ *     are the same write.  The basis where λ would appear (NL/WL) is one of the
+ *     refusal branches below;
+ *   - a 2 mm change is skipped (nothing written, counted as skipped_eps), and a
+ *     declared 2 mm change is skipped too: that is the empty-declaration
  *     population CST §7.1 measured at 117 of 390;
- *   - an UNDECLARED step is translated exactly like a declared one (the EV6
+ *   - an undeclared step is translated in the same way as a declared one (the EV6
  *     population: 451 of 545 de-commoned steps > 0.10 m arrive undeclared);
- *   - a declared step is translated exactly ONCE with both knobs armed: the
- *     engine's reaction dispatches the translation FIRST and returns, so the
- *     card-CC carry seam is not entered and its counters stay 0;
- *   - the refusal ladder: a DECLARED cell falls back to the EXISTING reset with
- *     its own counter (first sighting / NL-WL basis / BSSD / unknown key) while
- *     an UNDECLARED one is a counted NO-OP — the pre-card path did nothing there
- *     and a new reset on every sub-threshold move would be a regression;
+ *   - with both knobs armed, a declared step is translated once: the engine's
+ *     reaction dispatches the translation first and returns, so the card-CC carry
+ *     seam is not entered and its counters stay 0;
+ *   - the refusal ladder: a declared cell falls back to the existing reset with
+ *     its own counter (first sighting, NL-WL basis, BSSD, unknown key), while an
+ *     undeclared one is a counted no-op.  The reset path does nothing for an
+ *     undeclared cell, and a reset on every sub-threshold move would add a new,
+ *     harmful reaction;
  *   - the counter closure over a mixed sequence;
  *   - the config plumbing: defaults off, the harness knob reaches only the
- *     DERIVED consumer, a standalone consumer sets the processing key, and the
+ *     derived consumer, a standalone consumer sets the processing key, and the
  *     eps travels with it.
  *
  * The engine-level half (the per-key sweep, the applied-value read, the CST
- * `ev_pb` kinds) needs a full engine + product stream and is validated on the
- * field/sim arms of the card, exactly as card CC's was.
+ * `ev_pb` kinds) needs a full engine and product stream and is validated on the
+ * card's field and sim arms, as card CC's was.
  */
 
 #include <gtest/gtest.h>
@@ -60,7 +61,7 @@ constexpr double kResetStd = 100.0;   // the reaction's ambiguity_std stand-in
 constexpr double kEps      = 0.005;   // the knob's default dead band (m)
 
 /// A StateManager with a core block + two undifferenced ambiguities and a dense
-/// (fully correlated) covariance — the shape a converged consumer carries.
+/// (fully correlated) covariance, the shape a converged consumer carries.
 struct TranslateBed {
     LogManager   lm;
     GnssConfig   cfg;
@@ -145,7 +146,7 @@ TEST(PbStepTranslateTest, ThirtyCentimetreStepTranslatesExactlyAndLeavesVariance
     const Eigen::VectorXd x0 = b.sm.getStateVector();
     const Eigen::MatrixXd P0 = b.sm.getCovariance();
 
-    // k: it applies 1.300 m — a 0.30 m product step, NOT declared.
+    // k: it applies 1.300 m, a 0.30 m product step that is not declared.
     const auto d = led.react(b.sm, "G32|L1W", "G32_L1W", /*declared=*/false,
                              /*applied_now=*/true, 1.300,
                              /*basis_nlwl=*/false, /*bssd=*/false, kEps, kResetStd);
@@ -153,8 +154,8 @@ TEST(PbStepTranslateTest, ThirtyCentimetreStepTranslatesExactlyAndLeavesVariance
     EXPECT_EQ(d.action, PbStepTranslateLedger::Action::TranslateUndeclared);
     EXPECT_DOUBLE_EQ(d.delta_m, 0.300);
     const Eigen::VectorXd x1 = b.sm.getStateVector();
-    // EXACTLY −0.30 m on the one state (the undifferenced ambiguity state is in
-    // metres with a unit Jacobian — see the file banner).
+    // Exactly −0.30 m on the one state (the undifferenced ambiguity state is in
+    // metres with a unit Jacobian; see the file banner).
     EXPECT_DOUBLE_EQ(x1(b.i32), x0(b.i32) - 0.300);
     EXPECT_TRUE(bitwiseEqualExcept(x0, x1, b.i32));               // nothing else moved
     EXPECT_TRUE(bitwiseEqual(P0, b.sm.getCovariance()));          // variance untouched, bit for bit
@@ -181,7 +182,7 @@ TEST(PbStepTranslateTest, DeclaredStepTranslatesTheSameWayAndIsCountedSeparately
     EXPECT_EQ(d.action, PbStepTranslateLedger::Action::TranslateDeclared);
     EXPECT_DOUBLE_EQ(d.delta_m, 5.000);
     EXPECT_DOUBLE_EQ(b.sm.getStateVector()(b.i12), x0(b.i12) - 5.000);
-    EXPECT_TRUE(bitwiseEqual(P0, b.sm.getCovariance()));          // no re-inflation: this is the point
+    EXPECT_TRUE(bitwiseEqual(P0, b.sm.getCovariance()));          // no re-inflation, unlike the reset
     EXPECT_EQ(led.counters().translate_declared, 1u);
     EXPECT_EQ(led.counters().translate_undeclared, 0u);
     EXPECT_TRUE(led.counters().closureHolds());
@@ -198,15 +199,15 @@ TEST(PbStepTranslateTest, TwoMillimetreChangeIsSkippedDeclaredOrNot) {
         const auto d = led.react(b.sm, "G32|L1W", "G32_L1W", false, true, 1.002,
                                  false, false, kEps, kResetStd);
         EXPECT_EQ(d.action, PbStepTranslateLedger::Action::SkippedEps);
-        EXPECT_TRUE(bitwiseEqualExcept(x0, b.sm.getStateVector(), -1));   // NOTHING moved
+        EXPECT_TRUE(bitwiseEqualExcept(x0, b.sm.getStateVector(), -1));   // nothing moved
         EXPECT_TRUE(bitwiseEqual(P0, b.sm.getCovariance()));
         EXPECT_EQ(led.counters().skipped_eps, 1u);
         EXPECT_EQ(led.counters().skipped_eps_declared, 0u);
         EXPECT_DOUBLE_EQ(led.counters().sum_abs_translate_m, 0.0);
         EXPECT_TRUE(led.counters().closureHolds());
     }
-    // DECLARED and 2 mm: the EMPTY declaration (CST §7.1's 117 of 390).  It costs
-    // nothing — neither a translation nor the reset the pre-card path would take.
+    // Declared and 2 mm: the empty declaration (117 of 390 in CST §7.1).  It costs
+    // nothing: no translation, and not the reset that resetOnPhaseBiasDisc takes.
     {
         TranslateBed b;
         PbStepTranslateLedger led;
@@ -217,12 +218,12 @@ TEST(PbStepTranslateTest, TwoMillimetreChangeIsSkippedDeclaredOrNot) {
                                  false, false, kEps, kResetStd);
         EXPECT_EQ(d.action, PbStepTranslateLedger::Action::SkippedEps);
         EXPECT_TRUE(bitwiseEqualExcept(x0, b.sm.getStateVector(), -1));
-        EXPECT_TRUE(bitwiseEqual(P0, b.sm.getCovariance()));       // no re-inflation on an EMPTY declaration
+        EXPECT_TRUE(bitwiseEqual(P0, b.sm.getCovariance()));       // no re-inflation on an empty declaration
         EXPECT_EQ(led.counters().skipped_eps, 1u);
         EXPECT_EQ(led.counters().skipped_eps_declared, 1u);
         EXPECT_TRUE(led.counters().closureHolds());
     }
-    // Exactly at the band is NOT a step either (the comparison is strict >).
+    // A change equal to the band is not a step either (the comparison is strict >).
     {
         TranslateBed b;
         PbStepTranslateLedger led;
@@ -237,9 +238,9 @@ TEST(PbStepTranslateTest, TwoMillimetreChangeIsSkippedDeclaredOrNot) {
 // Once, and only once, with both knobs armed.
 // ---------------------------------------------------------------------------
 TEST(PbStepTranslateTest, DeclaredStepWithBothKnobsIsTranslatedExactlyOnce) {
-    // The mechanism half: ONE react call makes at most one shift, so a declared
-    // step moves the state by −Δ and not by −2Δ, and the card-CC ledger — which
-    // the engine's dispatch never reaches while the translation is armed — is
+    // The mechanism half: one react call makes at most one shift, so a declared
+    // step moves the state by −Δ and not by −2Δ, and the card-CC ledger (which
+    // the engine's dispatch does not reach while the translation is armed) is
     // left with empty counters.
     TranslateBed b;
     PbStepTranslateLedger led;
@@ -255,10 +256,11 @@ TEST(PbStepTranslateTest, DeclaredStepWithBothKnobsIsTranslatedExactlyOnce) {
     EXPECT_EQ(carry.counters().events, 0u);
     EXPECT_EQ(carry.counters().disc_carried, 0u);
 
-    // The dispatch half: an engine configured with BOTH knobs reports both armed,
-    // and resetOnPhaseBiasDisc branches on the translation FIRST and returns
-    // (RealTimeEngineSsrBreaks.cpp) — so carryOnPhaseBiasDisc_ is never entered
-    // and the carry counters of a live run stay 0, which is the run-end evidence.
+    // The dispatch half: an engine configured with both knobs reports both armed.
+    // resetOnPhaseBiasDisc (RealTimeEngineSsrBreaks.cpp) branches on the
+    // translation first and returns, so carryOnPhaseBiasDisc_ is not entered and
+    // the carry counters of a live run stay 0; those counters are the run-end
+    // evidence.
     LogManager lm;
     GnssConfig cfg;
     const fs::path p = writeTempConfig(
@@ -276,7 +278,7 @@ TEST(PbStepTranslateTest, DeclaredStepWithBothKnobsIsTranslatedExactlyOnce) {
 }
 
 // ---------------------------------------------------------------------------
-// The refusal ladder: declared ⇒ the EXISTING reset; undeclared ⇒ a counted no-op.
+// The refusal ladder: declared ⇒ the existing reset; undeclared ⇒ a counted no-op.
 // ---------------------------------------------------------------------------
 TEST(PbStepTranslateTest, NoPairIsAResetWhenDeclaredAndANoOpWhenNot) {
     // First sighting (no record at all) + declared ⇒ the existing reset.
@@ -289,7 +291,7 @@ TEST(PbStepTranslateTest, NoPairIsAResetWhenDeclaredAndANoOpWhenNot) {
         expectResetSignature(b.sm, b.i32, kResetStd);
         EXPECT_EQ(led.counters().reset_first_sight, 1u);
     }
-    // k−1 present but NOT applied (the A5 freshness edge) + declared ⇒ reset.
+    // k−1 present but not applied (the A5 freshness edge) + declared ⇒ reset.
     {
         TranslateBed b;
         PbStepTranslateLedger led;
@@ -299,7 +301,7 @@ TEST(PbStepTranslateTest, NoPairIsAResetWhenDeclaredAndANoOpWhenNot) {
         EXPECT_EQ(d.action, PbStepTranslateLedger::Action::ResetFirstSight);
         expectResetSignature(b.sm, b.i32, kResetStd);
     }
-    // NOT applied at k (the bias aged out) + declared ⇒ reset, never a translation
+    // Not applied at k (the bias aged out) + declared ⇒ reset, and no translation
     // to a value the model does not apply.
     {
         TranslateBed b;
@@ -310,7 +312,7 @@ TEST(PbStepTranslateTest, NoPairIsAResetWhenDeclaredAndANoOpWhenNot) {
         EXPECT_EQ(d.action, PbStepTranslateLedger::Action::ResetFirstSight);
         expectResetSignature(b.sm, b.i32, kResetStd);
     }
-    // The same shapes UNDECLARED: nothing at all, and counted as no_pair.
+    // The same shape undeclared: nothing written, counted as no_pair.
     {
         TranslateBed b;
         PbStepTranslateLedger led;
@@ -334,7 +336,7 @@ TEST(PbStepTranslateTest, StructuralRefusalsResetOnlyWhenDeclared) {
         { false, false, "G99_L1W", PbStepTranslateLedger::Action::ResetUnknownKey },
     };
     for (const auto& c : cases) {
-        // DECLARED: the existing reset, with its own counter.
+        // Declared: the existing reset, with its own counter.
         TranslateBed b;
         PbStepTranslateLedger led;
         led.record("G32|L1W", true, 0.0);
@@ -346,8 +348,8 @@ TEST(PbStepTranslateTest, StructuralRefusalsResetOnlyWhenDeclared) {
         EXPECT_EQ(led.counters().resets(), 1u);
         EXPECT_TRUE(led.counters().closureHolds());
 
-        // UNDECLARED: a counted no-op — the pre-card path did nothing here, and a
-        // BSSD consumer would otherwise reset on every sub-threshold product move.
+        // Undeclared: a counted no-op.  The reset path does nothing here, and a
+        // reset would make a BSSD consumer reset on every sub-threshold product move.
         TranslateBed b2;
         PbStepTranslateLedger led2;
         led2.record("G32|L1W", true, 0.0);
@@ -368,7 +370,8 @@ TEST(PbStepTranslateTest, CounterClosureHoldsOverAMixedSequence) {
     TranslateBed b;
     PbStepTranslateLedger led;
     // A first sighting (declared ⇒ reset), then a real step, a tiny one, an
-    // undeclared step, an unknown key and a not-applied epoch.
+    // undeclared step, an undeclared first sighting of G07 (no_pair) and a
+    // declared not-applied epoch on G07 (reset).
     led.react(b.sm, "G32|L1W", "G32_L1W", true, true, 1.0, false, false, kEps, kResetStd);
     led.record("G32|L1W", true, 1.0);
     led.react(b.sm, "G32|L1W", "G32_L1W", true, true, 1.4, false, false, kEps, kResetStd);
@@ -414,7 +417,7 @@ TEST(PbStepTranslateTest, ConfigDefaultsAreOffAndTheKnobReachesOnlyTheDerivedCon
         ASSERT_TRUE(cfg.loadFromJson(p, log));
         EXPECT_TRUE(cfg.getNetworkConfig().closed_loop.pb_step_translate);
         EXPECT_DOUBLE_EQ(cfg.getNetworkConfig().closed_loop.pb_step_translate_eps_m, 0.02);
-        EXPECT_FALSE(cfg.ssrPhaseBiasStepTranslate());                   // the PRODUCER never translates
+        EXPECT_FALSE(cfg.ssrPhaseBiasStepTranslate());                   // the producer does not translate
         const GnssConfig consumer = cfg.deriveClosedLoopConsumerConfig();
         EXPECT_TRUE(consumer.ssrPhaseBiasStepTranslate());               // the consumer does
         EXPECT_DOUBLE_EQ(consumer.getSsrPhaseBiasStepTranslateEpsM(), 0.02);   // …with the harness eps

@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """Standalone reference for the solid Earth tide (IERS 2010 dehanttideinel).
 
-This is an INDEPENDENT Python port of the same IERS Conventions
+This is an independent Python port of the same IERS Conventions
 dehanttideinel routine that GnssCorrections::computeSolidEarthTideDisplacement
 implements (Step 1 in-phase degree 2/3, Step 1 out-of-phase diurnal/
 semidiurnal + L1, Step 2 diurnal Table 7.3a + long-period Table 7.3b).
 
-Unlike the previous version, it does NOT parse any table out of the C++
-source -- it carries its own copy of the IERS tables and formulas, so it is a
-real cross-check rather than a tautology.  Its job is twofold:
+It carries its own copy of the IERS tables and formulas rather than parsing
+them out of the C++ source, so it is a cross-check rather than a tautology.
+Its job is twofold:
 
-  1. Reproduce the OFFICIAL IERS dehanttideinel test vector (the same oracle
+  1. Reproduce the official IERS dehanttideinel test vector (the same oracle
      the C++ unit test uses), confirming the algorithm end to end.
   2. Provide a second, different-language transcription path: if the C++ and
-     this script agree with the official vector to the SAME ~6e-5 m, the small
+     this script agree with the official vector to the same ~6e-5 m, the small
      residual is inherent to the IERS-2003-lineage (POINT) formulation rather
      than a C++ transcription bug.
 
@@ -116,7 +116,7 @@ def angles(fhr, jc):
             dict(s=s, tau=tau, h=h, p=p, zns=zns, ps=ps).items()}
 
 
-# IERS 2010 Table 7.3a (diurnal) — [s,h,p,N',ps, dRin, dRout, dTin, dTout] (mm)
+# IERS 2010 Table 7.3a (diurnal): [s,h,p,N',ps, dRin, dRout, dTin, dTout] (mm)
 STEP2DIU = [
     [-3., 0., 2., 0., 0., -0.01, 0.00, 0.00, 0.00],
     [-3., 2., 0., 0., 0., -0.01, 0.00, 0.00, 0.00],
@@ -151,7 +151,7 @@ STEP2DIU = [
     [3., 0., 0., 1., 0., 0.00, 0.00, 0.00, 0.00],
 ]
 
-# IERS 2010 Table 7.3b (long period) — [s,h,p,N',ps, dRin, dRout, dTin, dTout] (mm)
+# IERS 2010 Table 7.3b (long period): [s,h,p,N',ps, dRin, dRout, dTin, dTout] (mm)
 STEP2LON = [
     [0., 0., 0., 1., 0., 0.47, 0.16, 0.23, 0.07],
     [0., 2., 0., 0., 0., -0.20, -0.11, -0.12, -0.05],
@@ -245,7 +245,7 @@ def solid_earth_tide_displacement(xsta, xsun, xmon, jc, fhr):
 
 
 def main():
-    # Official IERS dehanttideinel.f test vector (2009-04-13 00:00 UT, FHR=0).
+    # IERS dehanttideinel.f test vector (2009-04-13 00:00 UT, FHR=0).
     xsta = (4075578.385, 931852.890, 4801570.154)
     xsun = (137859926952.015, 54228127881.4350, 23509422341.6896)
     xmon = (-179996231.920342, -312468450.131567, -169288918.592160)

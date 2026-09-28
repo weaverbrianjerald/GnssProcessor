@@ -3,24 +3,24 @@
 
 Checks, all of them exit-code-bearing:
 
-  1. REACHABILITY  — every ``.md`` under ``docs/`` is reachable from
+  1. REACHABILITY: every ``.md`` under ``docs/`` is reachable from
      ``docs/INDEX.md`` by following relative links through the files the tree
-     OWNS (the index, the topic pages, the status pages, the decision and card
+     owns (the index, the topic pages, the status pages, the decision and card
      STATUS headers, the split stubs, and ``docs/refound/``).
-  2. LINKS         — no relative link in an owned file dangles.
-  3. STATUS        — every file under ``docs/cards/`` and ``docs/decisions/``
+  2. LINKS: no relative link in an owned file dangles.
+  3. STATUS: every file under ``docs/cards/`` and ``docs/decisions/``
      opens with a STATUS block carrying the required keys, and exactly one
      verbatim marker if it carries verbatim text.
-  4. SIZE          — no file outside ``docs/archive/`` exceeds 60 KB, except the
-     named LIVING REGISTERS in ``SIZE_EXEMPT`` (today: ``CONFIG_promotion_ledger.md``,
+  4. SIZE: no file outside ``docs/archive/`` exceeds 60 KB, except the
+     named living registers in ``SIZE_EXEMPT`` (today: ``CONFIG_promotion_ledger.md``,
      which is one row per knob and is appended to in place at that exact path by the
      ``scripts/_*_ledger_oneoff.py`` family; splitting it would break them and its
      machine-read ``.json`` twin).  An exempt file that has gone missing is an error.
-  5. FROZEN        — every file in ``docs/archive/`` still carries its
-     READ-ONLY banner.
+  5. FROZEN: every file in ``docs/archive/`` still carries its
+     read-only banner.
 
-What is deliberately NOT link-checked: ``docs/archive/`` and ``docs/attic/``
-(frozen historical text), the verbatim body of a card (same text, relocated —
+What is deliberately not link-checked: ``docs/archive/`` and ``docs/attic/``
+(frozen historical text), the verbatim body of a card (same text, relocated;
 its links were written against the old location and must not be "fixed"), and
 the standing documents that have not been split yet (pre-existing files this
 tree only indexes).  Those are leaves in the reachability graph.
@@ -46,10 +46,10 @@ DOCS = os.path.join(ROOT, 'docs')
 MAX_BYTES = 60 * 1024
 FROZEN_DIRS = ('archive/', 'attic/')
 
-#: LIVING REGISTERS — exempt from the 60 KB bar, by name, with a reason.
+#: Living registers: exempt from the 60 KB bar, by name, with a reason.
 #:
 #: `CONFIG_promotion_ledger.md` is one row per knob, not a pile of closed cards: the
-#: `scripts/_*_ledger_oneoff.py` family and every future promotion APPEND to it at this
+#: `scripts/_*_ledger_oneoff.py` family and every future promotion appends to it at this
 #: exact path, and `CONFIG_promotion_ledger.json` is its machine-read twin that
 #: `scripts/make_golden_config.py --verify` reads.  Splitting it would break both.  It
 #: stays whole; the size bar does not apply to a register that grows one row at a time.

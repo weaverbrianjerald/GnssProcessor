@@ -1,35 +1,35 @@
 /**
  * @file test_d5_corroborate_autoarm.cpp
- * @brief Loader-contract tests for the Card 4 (M1) D5 v3/v4 EVIDENCE interlock —
- *        the auto-arm that guarantees the corroboration knobs are not silently inert.
+ * @brief Loader-contract tests for the D5 v3/v4 evidence interlock: the auto-arm that
+ *        keeps the corroboration knobs from being silently inert (Card 4, M1).
  *
- * WHAT IS BEING PINNED.  The D5 v3 suppression set
- * (@c NetworkInstallCarry.cpp:152) and the v4 pending-flat set (:692) are built from
- * @c slip_qc.epoch.verdict / @c .stepped, and the ONLY writer of those is the slip-QC
- * QUALIFY pass — which @c ApplicationNetworkAssembly.cpp:1417 runs only for a DECISION
- * card, i.e. @c SlipQcState::cardsArmed() = @c lli_corroborate || @c gap_instrument ||
+ * The D5 v3 suppression set and the v4 pending-flat set (both in
+ * @c NetworkInstallCarry.cpp) are built from @c slip_qc.epoch.verdict / @c .stepped.
+ * The only writer of those is the slip-QC qualify pass, which
+ * @c ApplicationNetworkAssembly.cpp runs only when a decision card is armed:
+ * @c SlipQcState::cardsArmed() = @c lli_corroborate || @c gap_instrument ||
  * @c bridge_gf || @c iono_cs.
  *
- * The trap this file exists to prevent: @c network.trace_slip_raw satisfies
- * @c SlipQcParams::anyConsumer but NOT @c cardsArmed().  It arms the COMPUTE pass only,
- * which sets @c epoch.computed = true and SIZES @c epoch.verdict to n_sta with EMPTY
- * maps.  The consumers gate on @c epoch.computed, so with the trace alone they RUN,
- * every per-satellite lookup misses, and the suppression set arrives empty — the gate
- * logs as armed and does nothing (standing invariant #4).  Worse, it is LATENT: the
- * sets spring to life the moment ANY card arms (the LV-6 census arming the CS advance
- * is exactly that), which is a hidden solve change on a knob nobody touched.  The
- * pre-fix loader counted @c trace_slip_raw as a sufficient consumer; it never was.
- * Filed at @c docs/SPEC_level_authority_internal.md §5.3.
+ * @c network.trace_slip_raw satisfies @c SlipQcParams::anyConsumer but not
+ * @c cardsArmed().  It arms the compute pass only, which sets @c epoch.computed = true
+ * and sizes @c epoch.verdict to n_sta with empty maps.  The consumers gate on
+ * @c epoch.computed, so with the trace alone they run, every per-satellite lookup
+ * misses, and the suppression set is empty: the gate logs as armed and does nothing
+ * (standing invariant #4).  The gap is also latent: the sets fill as soon as any card
+ * arms (the LV-6 census arming the CS advance does that), which changes the solve
+ * through a knob that was not touched.  The loader therefore does not count
+ * @c trace_slip_raw as a sufficient consumer.  See
+ * @c docs/SPEC_level_authority_internal.md §5.3.
  *
- * Assertions are on POST-LOAD STATE, never on log text: @c loadFromJson takes a
- * @c LogManager& and pulls its own logger internally, and a default-constructed
- * @c LogManager hands back a fresh console-only logger per call, so there is no
- * registry entry a test could attach a sink to.  Same choice the sibling auto-arm test
- * makes (@c tests/test_block_baarda.cpp, @c BlockBaardaSweepTest).
+ * Assertions are on post-load state, not on log text: @c loadFromJson takes a
+ * @c LogManager& and obtains its own logger internally, and a default-constructed
+ * @c LogManager returns a fresh console-only logger per call, so there is no registry
+ * entry a test could attach a sink to.  The sibling auto-arm test
+ * (@c tests/test_block_baarda.cpp, @c BlockBaardaSweepTest) makes the same choice.
  *
- * Card G (@c gap_instrument) is instrumentation-only — counters + trace rows, verified
- * byte-identical — which is why it, and never the @c mw_lli_corroborate DECISION card,
- * is what gets auto-armed.
+ * Card G (@c gap_instrument) is instrumentation only (counters and trace rows, verified
+ * byte-identical), which is why it, and not the @c mw_lli_corroborate decision card,
+ * is the card that gets auto-armed.
  */
 
 #include <gtest/gtest.h>
@@ -94,12 +94,12 @@ bool loadInto(const std::string& tag, const std::string& network_extra, GnssConf
 }  // namespace
 
 // ============================================================================
-//  Direction 1: corroborate + trace_slip_raw and NO card ⇒ the auto-arm FIRES.
+//  Direction 1: corroborate (+ trace_slip_raw) with no card armed: the auto-arm fires.
 // ============================================================================
 
-// THE REGRESSION.  Before the fix the loader treated trace_slip_raw as a sufficient
-// evidence source and skipped the auto-arm, leaving cardsArmed() false, the qualify
-// pass unrun and the suppression set structurally empty.
+// Regression case: trace_slip_raw is not a sufficient evidence source.  If the loader
+// skipped the auto-arm here, cardsArmed() would stay false, the qualify pass would not
+// run and the suppression set would be structurally empty.
 TEST(D5CorroborationAutoArm, TraceSlipRawAloneStillAutoArmsTheEvidenceCard) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("v3_trace_only",
@@ -130,8 +130,8 @@ TEST(D5CorroborationAutoArm, RetapOnlyWithTraceSlipRawAlsoAutoArms) {
         << "v4 tags flags flat from the same verdict maps v3 does";
 }
 
-// With neither the trace nor any card, the auto-arm must fire too — this is the
-// baseline the pre-fix loader already handled, kept so a future edit cannot regress it.
+// With neither the trace nor any card, the auto-arm also fires.  This baseline case
+// guards against a future edit regressing it.
 TEST(D5CorroborationAutoArm, BareCorroborateAutoArmsTheEvidenceCard) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("v3_bare",
@@ -141,12 +141,12 @@ TEST(D5CorroborationAutoArm, BareCorroborateAutoArmsTheEvidenceCard) {
 }
 
 // ============================================================================
-//  Direction 2: a DECISION card is already armed ⇒ nothing to auto-arm.
+//  Direction 2: a decision card is already armed, so there is nothing to auto-arm.
 // ============================================================================
 
-// gap_instrument explicitly ON is the posture EVERY one of the 242 corroborate configs
-// in the tree resolves to (census 2026-08-21), which is why the fix is a no-op on the
-// committed corpus.
+// Explicit gap_instrument on is the posture that every committed corroborate config
+// resolves to (census of 242 configs), so the interlock does not fire on the committed
+// corpus.
 TEST(D5CorroborationAutoArm, ExplicitGapInstrumentIsLeftExactlyAsWritten) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("v3_gap",
@@ -159,10 +159,10 @@ TEST(D5CorroborationAutoArm, ExplicitGapInstrumentIsLeftExactlyAsWritten) {
     EXPECT_FALSE(cfg.getNetworkConfig().slip_qc.lli_corroborate);
 }
 
-// The CS-GF authority (network.level_authority_csgf — the LV-6 census) is the fourth
-// cardsArmed() term and the one that motivated this card: it flips cardsArmed() all by
-// itself, so the qualify pass already runs and gap_instrument must NOT be force-armed
-// on top.  Pinning this is what keeps a census A/B from acquiring a second variable.
+// The CS-GF authority (network.level_authority_csgf, the LV-6 census) arms iono_cs, the
+// fourth cardsArmed() term, so cardsArmed() is true on its own, the qualify pass
+// already runs, and gap_instrument is not force-armed on top.  This keeps a census A/B
+// from acquiring a second variable.
 TEST(D5CorroborationAutoArm, CsGfAuthorityAlreadySatisfiesTheEvidenceRequirement) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("v3_lv6",

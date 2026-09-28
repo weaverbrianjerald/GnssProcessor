@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
-"""Build MW/WL-cascade CONDITIONING arms on the DOY-129 305-station shape.
+"""Build MW/WL-cascade conditioning arms on the DOY-129 305-station shape.
 
-Question: can the EWL->WL cascade stiffen the code/CB/iono system against the
-SH-detonation disease?  Three arms, all derived from the guards_cont anchor's OWN
+Question: can the EWL->WL cascade stiffen the code/CB/iono system against SH
+detonation?  Three arms, all derived from the guards_cont anchor's own
 leg.json so the estimator shape (roster, guards, carry, SH) is identical:
 
-  ctl   cascade OFF                      -- the reference shape
-  lane  ewl_enable + lane_carry with bridge_meas=FALSE.
-        ⚠️ This is NOT an iono-free arm, and no iono-free arm is constructible:
-        (1) network.lane_carry.enable REQUIRES network.mw_wl.ewl_enable
-            (GnssConfigLoadNetwork.cpp:2714-2720, fail-loud `return false`), and
-        (2) bridge_meas only suppresses the raw-GF lane INCREMENT; the WL
-            DECISION still comes from the phase bridge, because the walk is
+  ctl   cascade off, the reference shape
+  lane  ewl_enable + lane_carry with bridge_meas=false.
+        This is not an iono-free arm, and no iono-free arm is constructible:
+        (1) network.lane_carry.enable requires network.mw_wl.ewl_enable
+            (GnssConfigLoadNetwork.cpp:10120-10125, fail-loud `return false`), and
+        (2) bridge_meas only suppresses the raw-GF lane increment; the WL
+            decision still comes from the phase bridge, because the walk is
             gated on `(wl_inject_on || lane_fix_on || lane_bridge_on)
-            && !ewl_fixed.empty()` (NetworkMwWlGlue.cpp:439) and lane_fix_on is
-            `lane_on && lane_joint` (ApplicationNetwork.cpp:580).
+            && !ewl_fixed.empty()` (NetworkMwWlGlue.cpp:457) and lane_fix_on is
+            `lane_on && lane_joint` (ApplicationNetwork.cpp:872).
         So this arm isolates the lane-increment cost, not the iono coupling.
   casc  the shipped cascade: ewl_enable + uwl_enable (GPS EWL(2,5) lam 5.861 m)
-        + lane_carry with the phase BRIDGE increments on.
+        plus lane_carry with the phase bridge increments on.
 
 Cold by default (no snapshot): these are engagement/cost probes, not lineage runs.
 The anchor's snapshot path is always redirected into the arm dir so a run can never
@@ -36,7 +36,7 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 # Resolve any "extends" chain the base may grow.  These bases are self-contained
 # today, so this is byte-identical now; it is here so the script does not silently
-# read a four-key DELTA as a whole config the day someone rebases it (the failure
+# read a four-key delta as a whole config the day someone rebases it (the failure
 # scripts/config_posture_check.py shipped with).
 from gnss_config_chain import load_config_flat  # noqa: E402
 
@@ -87,44 +87,45 @@ def main():
     mw["lane_trace"] = True
 
     if a.arm == "lane":
-        mw["ewl_enable"] = True       # MANDATORY under lane_carry (loader hard requirement)
+        mw["ewl_enable"] = True       # mandatory under lane_carry (loader hard requirement)
         mw["bridge_sample_debias"] = True
         lc["enable"] = True
-        lc["lane_meas"] = True        # per-epoch MW(1,2) lane increments  (iono-free)
-        lc["bridge_meas"] = False     # suppresses the raw-GF INCREMENT only, not the decision
+        lc["lane_meas"] = True        # per-epoch MW(1,2) lane increments (iono-free)
+        lc["bridge_meas"] = False     # suppresses the raw-GF increment only, not the decision
     elif a.arm == "casc":
-        mw["ewl_enable"] = True       # GPS EWL(2,5), lam 5.861 m, third band UNCARRIED
+        mw["ewl_enable"] = True       # GPS EWL(2,5), lam 5.861 m, third band uncarried
         mw["uwl_enable"] = True       # arms the per-constellation lane-tier table
         mw["bridge_sample_debias"] = True   # 60-ep age-bias fix (per-sample de-bias)
         # Galileo-only levers stay off on a GPS-only roster
         mw["uwl_mid_enable"] = False
         mw["uwl_dual_top"] = False
         mw["uwl_family_pairs"] = False
-        mw["uwl_cold_fix"] = False    # FIELD-BLOCKING until the force-fire A/B (invariant #1)
+        mw["uwl_cold_fix"] = False    # field-blocking until the force-fire A/B (invariant #1)
         lc["enable"] = True
         lc["lane_meas"] = True
         lc["bridge_meas"] = True
     elif a.arm == "geom":
-        # CYCLE-GEOMETRY PROBE.  The lane trace records only the CHORD (station, sat); the
+        # Cycle-geometry probe.  The lane trace records only the chord (station, sat); the
         # fundamental cycle closes through the eq34 tree, so the effective DD baseline is not
-        # observable from it.  The F6 dump carries `est_station` for EVERY arc of a cycle
+        # observable from it.  The F6 dump carries `est_station` for every arc of a cycle
         # (F6Arc, NetworkWlRunTypes.hpp), which is exactly the cycle's station membership.
-        # f6_dump is gated on mw_wl.enable (ApplicationNetwork.cpp:653), the WL-1 float layer —
-        # a DIAGNOSTIC shape that double-drives the WL columns, so this arm is for geometry
+        # f6_dump is gated on mw_wl.enable (ApplicationNetwork.cpp:956), the WL-1 float layer,
+        # a diagnostic shape that double-drives the WL columns, so this arm is for geometry
         # only and must never be used to grade a treatment.
         mw["enable"] = True
         mw["f6_dump"] = True
         mw["ewl_enable"] = True
-        # The one-shot dump fires on the FIRST epoch the WL-1 layer arms, which needs an arc
-        # at n >= min_arc_epochs (default 10).  Cycle GEOMETRY (which stations a fundamental
+        # The one-shot dump fires on the first epoch the WL-1 layer arms, which needs an arc
+        # at n >= min_arc_epochs (default 10).  Cycle geometry (which stations a fundamental
         # cycle spans) is a property of the eq34 tree, not of the MW maturity threshold, so
         # lowering it just makes the probe cheap.  Never use this value to grade a lane.
         mw["min_arc_epochs"] = a.min_arc
         # Without cold_clock_seed a cold 305-station start leaves O(10^5) m of receiver-clock
-        # error in the ambiguity SEEDS (measured here: x_lin1 = 269 km at station 1), which
-        # the lane_max_abs_xlin_m quarantine then rejects — the WL layer arms with ~8 of ~2317
-        # cycles.  The seeder is the documented cure ([[project_network_coldseed_clock_leak]]);
-        # arm it so the geometry probe sees a representative cycle population.
+        # error in the ambiguity seeds (measured here: x_lin1 = 269 km at station 1), which
+        # the lane_max_abs_xlin_m quarantine then rejects: the WL layer arms with about 8 of
+        # 2317 cycles.  The seeder is the documented fix
+        # ([[project_network_coldseed_clock_leak]]); arm it so the geometry probe sees a
+        # representative cycle population.
         net["cold_clock_seed"] = True
 
     out = os.path.join(armdir, "leg.json")

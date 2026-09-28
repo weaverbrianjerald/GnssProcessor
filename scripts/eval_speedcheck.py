@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
-"""eval_speedcheck.py -- consolidate + grade the _net305_gpsgal_sh_n15 duration sweep.
+"""eval_speedcheck.py: consolidate and grade the _net305_gpsgal_sh_n15 duration sweep.
 
 Walks the run dirs produced by run_chain.ps1 (1ep / 3ep / 10ep / 10min), each a
-short slice of the SAME 305-station GPS+Galileo SH-VTEC network producer run, and
+short slice of the same 305-station GPS+Galileo SH-VTEC network producer run, and
 answers the two questions the sweep was built for:
 
-  (A) WHERE DOES THE TIME GO  -- separate fixed startup (product load + 305-station
-      RINEX parse + estimator construction) from the marginal per-epoch network
+  (A) Where the time goes: separates fixed startup (product load, 305-station
+      RINEX parse, estimator construction) from the marginal per-epoch network
       solve, by regressing wall-time and the engine's own epoch-loop timer against
       the processed-epoch count.
 
-  (B) ARE THE IMPLEMENTATIONS WORKING  -- per-epoch SH-iono field sanity (a00 mean
-      VTEC + coefficient power), clock/gate/estimability health from
+  (B) Whether the implementations agree: per-epoch SH-iono field sanity (a00 mean
+      VTEC and coefficient power), clock/gate/estimability health from
       network_trace.csv, the producer emit/skip ledger, and a cross-run
-      PREFIX-DETERMINISM check: because every run shares the same leading epochs,
+      prefix-determinism check: because every run shares the same leading epochs,
       epoch k must produce byte-for-byte identical a00 / clock-rms / emit counts in
-      every run that reaches it.  A drift there is an implementation/determinism bug.
+      every run that reaches it. A drift there is an implementation or determinism
+      bug.
 
 Usage:  python scripts/eval_speedcheck.py [run_root]
         run_root defaults to runs/sh_n15_speedcheck
@@ -49,10 +50,10 @@ RE_EMIT = re.compile(
     r"Network: TOW ([\d.]+) emitted epoch (\d+) — (\d+) stations, (\d+) sat clocks, "
     r"(\d+) phase biases, (\d+) code biases .*? datum dim (\d+), clock-Δ rms ([\-\d.]+) m")
 RE_A00 = re.compile(r"Network\[SH-iono\]:\s+mean VTEC \(a00\) = ([\-\d.]+) TECU over (\d+) coeffs")
-# The reduced-normals diagnostic now reports the (symmetric-PSD) EIGENvalue
+# The reduced-normals diagnostic reports the (symmetric-PSD) eigenvalue
 # spectrum ("ev_max"/"ev<cutoff"); older logs used the equivalent SVD wording
-# ("sv_max"/"sv<cutoff").  Accept either token so historical and current logs
-# both parse (the numbers are identical — eigenvalue == singular value here).
+# ("sv_max"/"sv<cutoff"). Accept either token so historical and current logs
+# both parse: eigenvalue and singular value are identical here.
 RE_ESTIM = re.compile(
     r"Network\[estimability\]: TOW ([\d.]+) reduced_N_ss (\d+)x\d+, declared_dim=(\d+), "
     r"[se]v_max=([\d.eE+\-]+), cutoff=([\d.eE+\-]+), (\d+) [se]v<cutoff")
@@ -155,7 +156,7 @@ def main() -> int:
             "vtec": parse_vtec_sh(rd / "logs" / "network_vtec_sh.csv"),
         }
 
-    # ================= (A) TIMING / SCALING =================
+    # ================= (A) timing / scaling =================
     print("=" * 92)
     print("(A)  TIMING  — fixed startup vs marginal per-epoch network solve")
     print("=" * 92)
@@ -196,7 +197,7 @@ def main() -> int:
             print(f"  => epoch-1 (cold) loop = {r1['loop_ms']/1000:.1f} s  "
                   f"vs steady {b_l:.1f} s/epoch  (cold-start premium ≈ {r1['loop_ms']/1000 - b_l:+.1f} s)")
 
-    # ================= (B) CORRECTNESS =================
+    # ================= (B) correctness =================
     print("\n" + "=" * 92)
     print("(B)  CORRECTNESS  — per-epoch health of the LONGEST run (10min / 20 epochs)")
     print("=" * 92)
@@ -238,14 +239,14 @@ def main() -> int:
             bar = "#" * min(60, int(rmsn))
             print(f"    n={n:2d}: rms={rmsn:8.2f} TECU  {bar}")
 
-    # ================= (C) CROSS-RUN PREFIX DETERMINISM =================
+    # ================= (C) cross-run prefix determinism =================
     print("\n" + "=" * 92)
     print("(C)  DETERMINISM  — epoch k must be identical in every run that reaches it")
     print("=" * 92)
     # Build per-run tow->(a00, clk_rms, n_emit-per-epoch stats) from the log emits + vtec
     def per_run_epoch_map(suf):
         r = runs[suf]
-        # a00 from run.log (ordered per emitted epoch) — pair with emit tow
+        # a00 from run.log (ordered per emitted epoch), paired with emit tow
         emap = {}
         # emit lines and a00 lines are interleaved 1:1 per epoch in order
         for e, a in zip(r["log"]["emits"], r["log"]["a00"]):
@@ -291,7 +292,7 @@ def main() -> int:
         print(f"  �“ {mism} field/epoch cells DIFFER across runs (max |Δ|={max_drift:.3e}) — "
               "non-deterministic prefix (implementation concern).")
 
-    # ================= VERDICT FLAGS =================
+    # ================= verdict flags =================
     print("\n" + "=" * 92)
     print("VERDICT FLAGS")
     print("=" * 92)

@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """Generate the AGU-abstract network configs from the FT63 pdfix_v3 lineage.
 
-The abstract needs ONE producer run whose emitted products a held-out consumer
-then positions itself from.  Two stations are lifted OUT of the roster:
+The abstract needs one producer run whose emitted products a held-out consumer
+then positions itself from. Two stations are lifted out of the roster:
 
-  * ``WTZZ00DEU`` -- the co-located test.  Its siblings stay IN the network:
-    WTZR at 1.6 m and WTZS at 69 m, so the held-out station's ionosphere and
-    troposphere are sampled by the network essentially exactly.  Residual error
-    is therefore attributable to the clock / bias products rather than to
+  * ``WTZZ00DEU``: the co-located test. Its siblings stay in the network
+    (WTZR at 1.6 m and WTZS at 69 m), so the held-out station's ionosphere and
+    troposphere are sampled by the network essentially exactly. Residual error
+    is therefore attributable to the clock and bias products rather than to
     atmospheric representation.
-  * ``OBE400DEU`` -- the operational case at ~167 km, graded afterwards through
-    the consumer-replay driver against the same written product file.
+  * ``OBE400DEU``: the operational case at about 167 km, graded afterwards
+    through the consumer-replay driver against the same written product file.
 
 Everything else is inherited verbatim from ``_ft63_pdfix_v3.json`` (PD-safe DD
-fold + D5 v3 corroboration + the Jul-28 armed set + W6 self-contained OSB).
+fold, D5 v3 corroboration, the Jul-28 armed set, W6 self-contained OSB).
 
-Usage:  python scripts/make_agu_configs.py
+Usage: python scripts/make_agu_configs.py
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 SUITE = REPO / "config" / "test_suite"
 ROOT_CFG = SUITE / "_ft63_24h_conv.json"        # the roster lives here
-PARENT = SUITE / "_ft63_pdfix_v3.json"          # the posture we extend
+PARENT = SUITE / "_ft63_pdfix_v3.json"          # the posture this generator extends
 
 HELD_OUT = "WTZZ00DEU"                          # co-located (WTZR 1.6 m, WTZS 69 m)
 REPLAY_HELD_OUT = "OBE400DEU"                   # operational, ~167 km

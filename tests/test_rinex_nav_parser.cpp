@@ -1,17 +1,19 @@
 /**
  * @file test_rinex_nav_parser.cpp
- * @brief Tests for the RINEX 3/4 navigation-message parser (RTF-1 Card 2).
+ * @brief Tests for the RINEX 3/4 navigation-message parser (RTF-1 Card 2), plus
+ *        LiveEphemerisStore::ephCutoverShiftMetres (RTF-2 Card 6).
  *
  * Two layers:
- *   (1) Self-contained UNIT tests against programmatically-formatted RINEX
- *       records (guaranteed 19-column D-field alignment, chosen values) that
- *       lock the field mapping, the per-constellation time conventions (the
- *       BeiDou NATIVE-BDT week is the load-bearing one), GLONASS/SBAS/CNAV
+ *   (1) Self-contained unit tests on programmatically formatted RINEX records
+ *       (19-column D-field alignment, chosen values).  They fix the field
+ *       mapping, the per-constellation time conventions (the one with
+ *       consequences is the native BDT week for BeiDou), GLONASS/SBAS/CNAV
  *       skipping, RINEX-4 record framing, and Fortran-D exponent tolerance.
- *   (2) An INTEGRATION test (skip-if-missing, like the Sp3 fixture test) that
- *       parses the bundled BRDC file and validates the reconstructed broadcast
- *       orbit/clock against the precise SP3/CLK products for the same epoch to a
- *       broadcast-grade tolerance — the decisive units/scale/week check.
+ *   (2) An integration test (skipped when the fixture is missing, like the Sp3
+ *       fixture test) that parses the bundled BRDC file and compares the
+ *       reconstructed broadcast orbit and clock with the precise SP3/CLK
+ *       products at the same epoch, to a broadcast-grade tolerance.  This is the
+ *       check that catches unit, scale and week errors.
  */
 
 #include <gtest/gtest.h>
@@ -115,7 +117,7 @@ const BroadcastEphemeris* findSat(const std::vector<BroadcastEphemeris>& v, cons
 } // namespace
 
 // ===========================================================================
-// Unit tests — field mapping + conventions
+// Unit tests: field mapping and conventions
 // ===========================================================================
 
 // GPS record: every Keplerian field, iode, week/toe on the GPS scale.
@@ -150,9 +152,9 @@ TEST(RinexNavParser, ParsesGpsRecordFields) {
     EXPECT_DOUBLE_EQ(e.kepler.tgd1, 0.0);        // GPS carries only one group delay
 }
 
-// BeiDou: the ORBIT-5 week field is the NATIVE BDT week and must be stored
-// verbatim (NOT converted to a GPS week) — the RTCM-decoder convention the store
-// evaluates against.  AODE lands in iode; both TGDs are kept.
+// BeiDou: the ORBIT-5 week field is the native BDT week and is stored verbatim,
+// not converted to a GPS week, because the store evaluates against the RTCM
+// decoder's convention.  AODE lands in iode; both TGDs are kept.
 TEST(RinexNavParser, BeiDouUsesNativeBdtWeekAndBothTgds) {
     const std::string body = keplerRecord(
         'C', 21, 2024, 5, 8, 12, 0, 0,
@@ -169,7 +171,7 @@ TEST(RinexNavParser, BeiDouUsesNativeBdtWeekAndBothTgds) {
     EXPECT_EQ(e.satellite, "C21");
     EXPECT_EQ(e.system, System::BeiDou);
     EXPECT_EQ(e.iode, 9);
-    EXPECT_EQ(e.kepler.toe.week, 957);           // NATIVE BDT week, not 2313
+    EXPECT_EQ(e.kepler.toe.week, 957);           // native BDT week, not 2313
     EXPECT_DOUBLE_EQ(e.kepler.toe.tow, 302400.0);
     EXPECT_EQ(e.kepler.toc.week, 957);
     EXPECT_NEAR(e.kepler.tgd0, -4.9e-9, 1e-13);
@@ -327,7 +329,7 @@ TEST(RinexNavParser, MissingEndOfHeaderReturnsEmpty) {
 }
 
 // ===========================================================================
-// Integration test — bundled BRDC vs precise SP3/CLK (the decisive check)
+// Integration test: bundled BRDC against precise SP3/CLK
 // ===========================================================================
 
 namespace {
@@ -403,11 +405,11 @@ TEST(RinexNavParserFixture, ParsesBundledBrdcAndMatchesPreciseProducts) {
     ASSERT_GT(orbits.size(), 0u);
     ASSERT_GT(clocks.size(), 0u);
 
-    // Evaluate at 23:00:00 GPS (an SP3 5-min node and a CLK 30-s node), and, per
-    // satellite, seat ONLY the parsed record whose toe-of-week is nearest that
-    // epoch so the broadcast extrapolation stays inside its fit window (the
-    // whole-file load keeps only the freshest toe, which for an early-day query
-    // would be out of window).
+    // Evaluate at 23:00:00 GPS (an SP3 5-min node and a CLK 30-s node).  For each
+    // satellite, only the parsed record whose toe-of-week is nearest that epoch is
+    // inserted, so the broadcast extrapolation stays inside its fit window.  The
+    // whole-file load keeps only the freshest toe, which would be out of window
+    // for an earlier query.
     const GnssTime T = TimeUtils::gregorianGpsToGpsTime(2024, 5, 8, 23, 0, 0.0);
     store.clear();
     std::map<std::string, BroadcastEphemeris> nearest;
@@ -435,11 +437,11 @@ TEST(RinexNavParserFixture, ParsesBundledBrdcAndMatchesPreciseProducts) {
     double max_orbit = 0.0, max_clock = 0.0;
     for (const auto& kv : nearest) {
         const std::string& sat = kv.first;
-        // Skip UNHEALTHY satellites: their broadcast ephemeris/clock is frozen or
-        // degraded by the control segment and legitimately disagrees with the
-        // precise product (e.g. G01 was set unhealthy on 2024-DOY-129, health=63,
-        // ~150 m off), so it is not a valid parser check.  health == 0 is healthy
-        // for every constellation's encoding.
+        // Skip unhealthy satellites: the control segment freezes or degrades their
+        // broadcast ephemeris and clock, so they disagree with the precise product
+        // for reasons unrelated to the parser (G01 in this fixture: health 63,
+        // about 150 m off).  health == 0 means healthy in every constellation's
+        // encoding.
         if (kv.second.health != 0) continue;
         const auto pv = store.computeSatellitePV(sat, T);
         if (!pv) continue;                       // out of fit window for this sat
@@ -470,13 +472,13 @@ TEST(RinexNavParserFixture, ParsesBundledBrdcAndMatchesPreciseProducts) {
 }
 
 // =============================================================================
-// RTF-2 Card 6: ephCutoverShiftMetres — the pure eph-cutover re-level delta.
+// ephCutoverShiftMetres: the re-level delta at an ephemeris cutover (RTF-2 Card 6).
 // =============================================================================
 
 namespace {
-// A minimal GPS clock-only ephemeris: for GPS ssrMatchIode == iode, so the IODE
-// gate is exactly the value set here.  Only the clock polynomial + toe/toc matter
-// for computeSatelliteClock; the orbital elements are left zero.
+// A minimal GPS clock-only ephemeris.  For GPS ssrMatchIode == iode, so the IODE
+// gate is the value set here.  computeSatelliteClock reads only the clock
+// polynomial and toe/toc; the orbital elements are left zero.
 BroadcastEphemeris gpsClockEph(const std::string& sat, int iode, const GnssTime& toe,
                                const GnssTime& toc, double af0, double af1 = 0.0) {
     BroadcastEphemeris e;
@@ -492,10 +494,11 @@ BroadcastEphemeris gpsClockEph(const std::string& sat, int iode, const GnssTime&
 }
 } // namespace
 
-// After an IODE roll (v2 fresher toe, demotes v1 to "previous"), the shift is the
-// exact c·Δaf0 between the freshest and the pinned old version; a missing/evicted
-// old version or an absent satellite is nullopt; querying the current IODE is a
-// no-roll 0.  af1 = af2 = 0 ⇒ bias == af0 regardless of dt, so the shift is exact.
+// After an IODE roll (v2 has the fresher toe and demotes v1 to "previous"), the
+// shift is c·Δaf0 between the freshest version and the old version pinned by IODE.
+// A missing or evicted old version, or an absent satellite, gives nullopt; querying
+// the current IODE is no roll and gives 0.  With af1 = af2 = 0 the bias equals af0
+// for any dt, so the expected shift is exact.
 TEST(EphCutoverShiftTest, ExactAf0ShiftAcrossIodeRoll) {
     auto& store = LiveEphemerisStore::getInstance();
     store.clear();
@@ -519,7 +522,7 @@ TEST(EphCutoverShiftTest, ExactAf0ShiftAcrossIodeRoll) {
     ASSERT_TRUE(shift.has_value());
     EXPECT_NEAR(*shift, kC * (af0_new - af0_old), 1e-6);
 
-    // Old version no longer retained (never inserted iode 99) → nullopt (caller forces disc).
+    // Old version not retained (iode 99 was never inserted) → nullopt (the caller forces a disc).
     EXPECT_FALSE(store.ephCutoverShiftMetres("G05", t, /*old_iode=*/99).has_value());
     // No ephemeris held for this satellite → nullopt.
     EXPECT_FALSE(store.ephCutoverShiftMetres("G09", t, /*old_iode=*/10).has_value());
@@ -531,9 +534,9 @@ TEST(EphCutoverShiftTest, ExactAf0ShiftAcrossIodeRoll) {
     store.clear();
 }
 
-// Both clock polynomials are evaluated AT the query epoch, so a non-zero af1 on
-// either version enters the shift through its own (t − toc) — the reconstruction
-// stays continuous even when the drift term is live.
+// Both clock polynomials are evaluated at the query epoch, so a non-zero af1 on
+// either version enters the shift through its own (t − toc), and the
+// reconstruction stays continuous when the drift term is non-zero.
 TEST(EphCutoverShiftTest, EvaluatesBothPolynomialsAtEpoch) {
     auto& store = LiveEphemerisStore::getInstance();
     store.clear();

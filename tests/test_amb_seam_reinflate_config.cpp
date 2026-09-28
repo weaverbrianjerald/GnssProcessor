@@ -4,12 +4,13 @@
  *        re-inflation knob (@c network.amb_seam_reinflate_var_m2, STABILITY
  *        target 2 leg C, SPEC_synthetic_minimum_network §18).
  *
- * What these tests lock: the default (0.0 = OFF, byte-identical), a plain
- * positive value parsing, the hard rejection of a negative variance ADD, and
- * that the warn-only inert postures (no snapshot path / no phase-leveling)
- * still LOAD — wiring-inert, not illegal.  The seam mechanics (one-shot
- * variance ADD on the restored leveling carries at the resume site, values
- * kept as prior means) are graded on the sim fixture ladder, not here.
+ * Checked here: the default (0.0 = off, byte-identical), parsing of a plain
+ * positive value, the hard rejection of a negative variance addition, and that
+ * the inert postures that only warn (no snapshot path, no phase leveling) still
+ * load: they are inert in the wiring, not illegal.  The seam mechanics (a
+ * one-shot variance addition on the restored leveling carries at the resume
+ * site, with the values kept as prior means) are graded on the sim fixture
+ * ladder, not here.
  */
 
 #include <gtest/gtest.h>

@@ -27,12 +27,12 @@ namespace GnssProcessor {
      * @brief Observations from multiple receivers aligned to a single GPS epoch.
      *
      * Produced by @c MultiRinexSync::synchronize().  The @c time field is
-     * taken from the reference station's epoch — rover observations
+     * taken from the reference station's epoch; rover observations
      * matched within @c BaselineConfig::epoch_sync_tolerance_s are entered
      * into @c by_station under their station name.  Stations whose
-     * observations fall outside the tolerance at this epoch are simply
-     * absent from the map; the caller decides whether to process a
-     * partial epoch or skip it.
+     * observations fall outside the tolerance at this epoch are absent
+     * from the map; the caller decides whether to process a partial epoch
+     * or skip it.
      */
     struct SyncedEpoch {
         GnssTime time{};                                                 ///< Reference epoch time (GPS scale).
@@ -71,13 +71,13 @@ namespace GnssProcessor {
         /**
          * @brief Clip every station's parse to the first @p span_s seconds.
          *
-         * Forwarded to each station's @c RinexParser before @c load().  Lets a
-         * caller that only consumes a short data span (e.g. a network solve
-         * bounded by @c processing.max_duration_s) avoid parsing — and the
-         * synchronizer avoid copying — the discarded 23h tail of full-day
-         * files.  Must be called before @c load() to take effect.  A value
-         * @c <= 0 (the default) means "no window" (parse full files), so the
-         * baseline DD path is unchanged unless it opts in.
+         * Forwarded to each station's @c RinexParser before @c load().  A
+         * caller that consumes only a short data span (e.g. a network solve
+         * bounded by @c processing.max_duration_s) then skips parsing, and the
+         * synchronizer skips copying, the unused remainder of full-day files.
+         * Must be called before @c load() to take effect.  A value @c <= 0
+         * (the default) means "no window" (parse full files), so the baseline
+         * DD path is unchanged unless it opts in.
          *
          * @param span_s Maximum span in seconds from each file's first epoch.
          */
@@ -105,7 +105,11 @@ namespace GnssProcessor {
          * matching reference epoch are skipped entirely (no DD is possible
          * without the reference).
          *
-         * @return True on success; false if a station is unloaded or the reference is missing.
+         * Stations that failed to load are skipped with a warning; the
+         * schedule is built from the stations that did load.
+         *
+         * @return True on success; false when the reference station is not loaded
+         *         or has no observations.
          */
         bool synchronize();
 
@@ -113,16 +117,17 @@ namespace GnssProcessor {
         const std::vector<SyncedEpoch>& getSyncedEpochs() const { return synced_; }
 
         /**
-         * @brief Card OWD (O4): keep only the observations of the ACTIVE systems.
+         * @brief Keep only the observations of the active systems (card OWD, O4).
          *
-         * The network producer's single admission door for constellations.  The RINEX
+         * The network producer's single admission point for constellations.  The RINEX
          * parser keeps every system and the network admits an observation by its signal
          * priority list, while the receiver inter-system bias is allocated by
-         * @c processing.active_systems; stripping the inactive systems once, right after
+         * @c processing.active_systems.  Removing the inactive systems once, right after
          * the sync, makes the two agree for every downstream reader of the synced epochs
          * (the model, the admission censuses, the closed-loop consumer feed).  Station
-         * keys stay in place even when a station's vector empties, so "a station with no
-         * usable observation this epoch" reads as it did before.
+         * keys stay in place even when a station's vector empties, so a station with no
+         * usable observation in an epoch is represented the same way as without the
+         * filter.
          *
          * @param epochs The synced epochs, filtered in place.
          * @param active The active system names (@c processing.active_systems: "GPS",
@@ -133,7 +138,7 @@ namespace GnssProcessor {
         static std::map<std::string, std::size_t> retainSystems(
             std::vector<SyncedEpoch>& epochs, const std::vector<std::string>& active);
 
-        /// Card OWD (O4): @ref retainSystems applied to this instance's synced epochs.
+        /// @ref retainSystems applied to this instance's synced epochs (card OWD, O4).
         /// @param active The active system names.
         /// @return The number of observations removed per system name.
         std::map<std::string, std::size_t> retainSystems(const std::vector<std::string>& active) {

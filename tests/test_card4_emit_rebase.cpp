@@ -1,25 +1,25 @@
 /**
  * @file test_card4_emit_rebase.cpp
- * @brief Card 4 (M1) phase D — Gate 5 (EmitRebaseInteger) for the emit-layer
- *        frame re-base (docs/SPEC_card4_invariant_carry.md §10 (gate 5 block)).
+ * @brief Gate 5 (EmitRebaseInteger) for the emit-layer frame re-base
+ *        (docs/SPEC_card4_invariant_carry.md §10, gate 5 block; Card 4 (M1) phase D).
  *
- * Drives the PRODUCTION re-base (`NetworkEmitRebase`, the exact object
- * ApplicationNetwork runs before every emit) into the PRODUCTION emitter
- * (`NetworkProductEmitter`, whose 0.05 m phase-bias jump test remains the sole
- * discontinuity authority), on hand-built solution epochs so the assertions are
- * isolated from network-solve noise.  The gate asserts:
+ * Feeds the production re-base (`NetworkEmitRebase`, the object ApplicationNetwork
+ * runs before each emit) into the production emitter (`NetworkProductEmitter`, whose
+ * 0.05 m phase-bias jump test is the only discontinuity authority), on hand-built
+ * solution epochs so the assertions are isolated from network-solve noise.  The gate
+ * asserts:
  *
  *   1. A forced datum re-realization (the same double differences realized in a
- *      different S-basis frame: a per-satellite integer×λ + one common fractional
- *      δ per component) ⇒ emitted per-key steps EXACTLY 0 after re-basing and the
- *      disc counter silent.
- *   2. NEGATIVE control — re-base disabled ⇒ the integer-class (≥1 λ) step is
- *      visible on the same assertion (a numeric fail, not a throw).
- *   3. A slip on the emission-reference (spanning-tree) path ⇒ the integer step
- *      SURVIVES the re-base + the disc fires (the re-base must NOT launder genuine
- *      events — standing invariant #1), while a clean peer stays silent.
- *   4. Independent components carry independent δ (no cross-component leakage) and
- *      a first sighting is a genuine event the re-base passes through untouched.
+ *      different S-basis frame: a per-satellite integer×λ plus one common fractional
+ *      δ per component) gives emitted per-key steps of exactly 0 after re-basing, and
+ *      the disc counter stays silent.
+ *   2. Negative control: with the re-base disabled, the integer-class (≥1 λ) step is
+ *      visible on the same assertion (a numeric failure, not a throw).
+ *   3. A slip on the emission-reference (spanning-tree) path keeps its integer step
+ *      through the re-base and the disc fires, while a clean peer stays silent.  The
+ *      re-base does not absorb genuine events (standing invariant #1).
+ *   4. Independent components carry independent δ (no cross-component leakage), and
+ *      a first sighting is a genuine event that the re-base passes through unchanged.
  */
 
 #include <gtest/gtest.h>
@@ -81,8 +81,9 @@ TEST(Card4EmitRebase, IntegerAndCommonFractionalZeroTheStep) {
     EXPECT_NEAR(eN[0].bias_m, b1, 1e-12);
     EXPECT_NEAR(eN[1].bias_m, b2, 1e-12);
 
-    // Frame N+1: the SAME estimable solution re-realized — per-sat integer + one
-    // common fractional δ for the component.  Verify it really is the same DD first:
+    // Frame N+1: the same estimable solution re-realized, with a per-satellite integer
+    // plus one common fractional δ for the component.  First check that the DD is
+    // unchanged:
     const int k1 = 3, k2 = -2; const double delta = 0.037;
     const double raw1 = b1 + k1 * LAM + delta, raw2 = b2 + k2 * LAM + delta;
     const double dd_move = (raw1 - raw2) - (b1 - b2);                 // = (k1-k2)*λ exactly
@@ -112,12 +113,12 @@ TEST(Card4EmitRebase, RebaseKeepsDiscSilentAcrossDatumChurn) {
                     const std::vector<std::pair<std::string, double>>& sats,
                     const std::set<std::string>& slip = {}) {
         auto ent = makeEntries(sats, slip);
-        rb.rebaseEpoch(ent);                  // PRODUCTION re-base
+        rb.rebaseEpoch(ent);                  // production re-base
         std::map<std::string, double> out;
         for (const auto& e : ent) out[e.sat] = e.bias_m;
         std::vector<std::pair<std::string, double>> reb;
         for (const auto& [s, raw] : sats) { (void)raw; reb.push_back({s, out[s]}); }
-        em.emitToStore(makeEpoch(t, reb), store);   // PRODUCTION emitter (disc authority)
+        em.emitToStore(makeEpoch(t, reb), store);   // production emitter (disc authority)
     };
 
     GnssTime t = kT0;
@@ -134,7 +135,7 @@ TEST(Card4EmitRebase, RebaseKeepsDiscSilentAcrossDatumChurn) {
     EXPECT_NEAR(pb->bias_m, b1, 1e-9);                     // the wire carries the re-based value
 }
 
-// --- 3. NEGATIVE control: no re-base ⇒ the integer-class step fires disc ----------
+// --- 3. Negative control: without the re-base the integer-class step fires disc ---
 
 TEST(Card4EmitRebase, NoRebaseIntegerStepFiresDisc) {
     SsrCorrectionStore store;
@@ -145,7 +146,7 @@ TEST(Card4EmitRebase, NoRebaseIntegerStepFiresDisc) {
     EXPECT_EQ(em.discontinuityCounter("G01", "L1C"), 0);
 
     GnssTime t = kT0; t.tow += 30.0;
-    // The identical churned frame, emitted RAW (re-base disabled = the OFF/A-B control).
+    // The same churned frame, emitted raw (re-base disabled: the off arm of the A/B).
     em.emitToStore(makeEpoch(t, {{"G01", b1 + 3 * LAM + 0.037}, {"G02", b2 - 2 * LAM + 0.037}}),
                    store);
     EXPECT_GE(em.discontinuityCounter("G01", "L1C"), 1);   // 3λ+δ ≈ 0.61 m ≫ 0.05 m
@@ -178,15 +179,15 @@ TEST(Card4EmitRebase, ReferencePathSlipSurvivesAndFiresDisc) {
     emit(t, {{"G01", b1}, {"G02", b2}});             // steady
     EXPECT_EQ(em.discontinuityCounter("G01", "L1C"), 0);
 
-    // G01 slips +1 cycle on its emission-reference (tree) arc — flagged slipped.  The
-    // re-base must leave its integer step intact (k_s=0), NOT launder it.
+    // G01 slips +1 cycle on its emission-reference (tree) arc and is flagged slipped.
+    // The re-base leaves its integer step intact (k_s = 0) instead of removing it.
     t.tow += 30.0;
     emit(t, {{"G01", b1 + 1 * LAM}, {"G02", b2}}, /*slip=*/{"G01"});
     EXPECT_GE(em.discontinuityCounter("G01", "L1C"), 1);   // step survived → disc fired
     EXPECT_EQ(em.discontinuityCounter("G02", "L1C"), 0);   // clean peer stays silent
     EXPECT_GE(rb.counters().slips_preserved, 1);
 
-    // The emitted G01 value stepped by ~1 cycle (not laundered back to b1).
+    // The emitted G01 value stepped by one cycle (it was not re-based back to b1).
     auto pb = store.getPhaseBias("G01", "L1C");
     ASSERT_TRUE(pb.has_value());
     EXPECT_NEAR(pb->bias_m, b1 + LAM, 1e-9);

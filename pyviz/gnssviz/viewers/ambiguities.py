@@ -1,4 +1,4 @@
-"""Float-ambiguity viewer -- the port of ``plotAmbiguities.m``.
+"""Float-ambiguity viewer: the port of ``plotAmbiguities.m``.
 
 Reads ``ambiguity_trace.csv`` (header ``week,tow_s,key,value_m,std_m``) where the
 ``key`` column is a ``<SAT>_<SIGNAL>`` state key (``G01_L1C``, ``E11_L1C_L5Q``,
@@ -7,16 +7,16 @@ Reads ``ambiguity_trace.csv`` (header ``week,tow_s,key,value_m,std_m``) where th
 
 It reproduces the two MATLAB figures (and the console summary):
 
-* **Figure 1 -- "Ambiguity estimates (meters) by System".**  One tile per
+* **Figure 1, "Ambiguity estimates (meters) by System".**  One tile per
   constellation present (in MATLAB ``categories`` alphabetical order: BeiDou,
   GLONASS, GPS, Galileo, QZSS, SBAS).  Each unique key in that system is drawn as
-  scatter markers (no connecting line, no error bars -- the MATLAB error-bar block
+  scatter markers (no connecting line, no error bars: the MATLAB error-bar block
   is commented out).  Colour tracks the *global* satellite index (the satellite's
   position in the whole-dataset alphabetical sort), via ``distinguishable_colors``
   cycled with ``mod``; marker glyph cycles per key within the system through the
   MATLAB marker list ``o s d ^ v > < p h x +``.  Each key gets a legend entry.
 
-* **Figure 2 -- "Ambiguity time-series per key"** (only when
+* **Figure 2, "Ambiguity time-series per key"** (only when
   ``1 < nKeys <= 16``).  A grid of one tile per key: scatter markers, a shaded
   +/-1 sigma fill band (``std_m``), and the +/-1 sigma envelope edges (the MATLAB
   errorbar verticals, rendered here as band edges since ``figures.py`` has no
@@ -32,9 +32,10 @@ Faithfulness notes
 * The MATLAB grid layout is ``rows = ceil(sqrt(nKeys)); cols = ceil(nKeys/rows)``.
   ``figures.py`` stacks axes vertically (one column) rather than honouring a true
   rows x cols tiled layout, so the per-key figure becomes a tall single column of
-  tiles -- same tiles, same content, linear stacking.
+  tiles: same tiles, same content, linear stacking.
 * MATLAB draws each per-system marker's value-vs-time as ``scatter`` only; the
-  ``errorbar`` overlay in Figure 1 is commented out in the source, so we omit it.
+  ``errorbar`` overlay in Figure 1 is commented out in the source, and this port
+  omits it too.
 """
 
 from __future__ import annotations

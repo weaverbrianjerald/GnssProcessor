@@ -1,22 +1,22 @@
-"""Network per-station ZWD viewer -- the tropospheric wet-delay time series.
+"""Network per-station ZWD viewer: the tropospheric wet-delay time series.
 
-Reads ``network_zwd.csv`` (the PPP-RTK NETWORK producer's per-epoch, per-station
+Reads ``network_zwd.csv`` (the PPP-RTK network producer's per-epoch, per-station
 zenith wet delay: the estimated ZWD, its formal sigma, and a ``carried`` flag
-marking epochs where the station's ZWD state was *carried* forward -- i.e. held
+marking epochs where the station's ZWD state was carried forward, that is, held
 across a data gap rather than re-observed) and shows, over the run:
 
   1. **ZWD** -- per-station wet delay (m) with a shaded ±sigma envelope; the
      legend is capped so a large network stays readable.
   2. **Sigma** -- the per-station formal ZWD sigma over time, with the
-     ``carried`` windows shaded.  This is the V7 axis: a *carried* stretch
-     should show sigma *sharpening* (shrinking) as the carry tightens the state,
-     the diagnostic the armed-validation V7 step keys on.
+     ``carried`` windows shaded. This is the V7 axis: a carried stretch is
+     expected to show sigma sharpening (shrinking) as the carry tightens the
+     state, the diagnostic the armed-validation V7 step keys on.
   3. **Station ranking** -- last-30-minute median sigma per station, ranked
      worst-to-best on a numeric x axis (TextBox station labels; no categorical
      xticks exist in the figure vocabulary).
 
-A healthy network shows smooth ZWD, a bounded sigma, and carried windows that
-tighten rather than balloon the wet-delay uncertainty.
+A network in good condition shows smooth ZWD, a bounded sigma, and carried
+windows that tighten rather than widen the wet-delay uncertainty.
 """
 
 from __future__ import annotations
@@ -110,7 +110,7 @@ def _axis_sigma(slices, sta_color, stations) -> Axes:
     if not (sig_hi > sig_lo):
         sig_hi = sig_lo + 1.0
 
-    # One shading band spanning ALL stations' carried epochs (union), so the
+    # One shading band spanning every station's carried epochs (union), so the
     # V7 "shaded windows" read at a glance regardless of station count.
     t_all = np.sort(np.unique(np.concatenate(
         [slices[s]["utc"].to_numpy("datetime64[ns]") for s in stations])))

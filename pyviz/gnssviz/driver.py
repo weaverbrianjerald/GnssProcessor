@@ -1,10 +1,10 @@
-"""Run dispatch -- the Python analogue of ``view_all.m``.
+"""Run dispatch: the Python analogue of ``view_all.m``.
 
 Holds the viewer registry, decides which viewers run for a given trace folder
-(skipping any whose required CSV is missing/empty, exactly like ``view_all``),
-and returns the results.  Rendering / report assembly is left to the caller, so
-the same dispatch feeds both the offline HTML report and (later) an interactive
-or real-time front-end.
+(skipping any whose required CSV is missing or empty, matching ``view_all``),
+and returns the results.  Rendering and report assembly are left to the caller,
+so the same dispatch feeds both the offline HTML report and (later) an
+interactive or real-time front-end.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ def run_viewers(
     ----------
     only:
         Optional whitelist of viewer names to run (others skipped silently).
-        An explicit name always wins over ``default_enabled`` -- requesting a
+        An explicit name always wins over ``default_enabled``: requesting a
         default-off viewer by name runs it.
     include_disabled:
         When no ``only`` whitelist is given, also run viewers whose
@@ -55,10 +55,10 @@ def run_viewers(
             out.skipped.append(
                 (viewer.name, f"off by default (run with --only {viewer.name} or --all)"))
             continue
-        # A required input may live in the run's log dir (trace CSVs) OR in the
+        # A required input may live in the run's log dir (trace CSVs) or in the
         # answer-key truth dir (the exam viewers' truth_*.csv / scenario_summary).
         # has_truth is False whenever no truth_dir is bound, so a plain processor
-        # run auto-skips every exam viewer exactly as before.
+        # run skips every exam viewer.
         missing = [c for c in viewer.required_csvs
                    if not (ctx.has_data(c) or ctx.has_truth(c))]
         if missing:

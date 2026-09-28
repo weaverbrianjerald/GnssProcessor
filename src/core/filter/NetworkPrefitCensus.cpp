@@ -31,10 +31,10 @@ namespace GnssProcessor {
 namespace {
 
 /// Per-epoch cap on shared-column add/remove events, each direction.  A cold
-/// start registers hundreds of columns at once and the ledger is meant to make
-/// STEADY-STATE flips visible, not to transcribe the first epoch.  Truncation
-/// is counted and reported at run end — never silent (invariant #4 / the
-/// "no silent caps" rule).
+/// start registers hundreds of columns at once; the ledger is for steady-state
+/// changes, not a transcript of the first epochs.  Truncated events are counted
+/// (@c topo_truncated, reported at run end) and the epoch is logged
+/// (invariant #4).
 constexpr int kTopoColEventCap = 64;
 
 /// One classified row: its class plus the satellite of the first labelled
@@ -70,7 +70,7 @@ PrefitStationCentres centresFrom(const StationAssembly& R,
         const double y = R.y(row);
         if (!std::isfinite(y) || !std::isfinite(w)) continue;
         ++out.n[t];
-        // iono_sh_row carries no receiver clock ⇒ NOT centred (m ≡ 0).
+        // iono_sh_row carries no receiver clock, so it is not centred (m ≡ 0).
         if (t != static_cast<int>(NetRowClass::IonoShRow))
             pool[t].push_back(y);
     }
@@ -100,9 +100,11 @@ struct CellWorst {
     Eigen::Index row{-1};
 };
 
-/// Rate-limited event gate: true when this (event, station, sat, class) cell may
-/// speak again.  A parked cell must log its identity PERSISTENTLY (so a later
-/// reader can see how long it sat there) but not 120x/hour.
+/// Rate-limited event gate: true when this (event, station, sat, class) key may
+/// emit again, i.e. no earlier emission or at least @p holdoff loop epochs since
+/// the last one (holdoff <= 0 disables the limit).  A parked cell keeps logging
+/// its identity, so its duration is readable from the events, but not once per
+/// epoch.
 bool holdoffAllows(NetworkRunContext& ctx, const std::string& key, long long seq,
                    long long holdoff) {
     auto& last = ctx.carry.prefit_event_last;
@@ -173,7 +175,7 @@ PrefitStationCentres prefitStationCentres(const SharedColumnMap& cm,
 }
 
 // =====================================================================
-//  H-rider — the pooled robust prefit σ̂₀ for the H heartbeat
+//  H-rider: the pooled robust prefit σ̂₀ for the H heartbeat
 // =====================================================================
 
 double networkPrefitSigma0(const NetworkRunContext& ctx,
@@ -207,7 +209,7 @@ double networkPrefitSigma0(const NetworkRunContext& ctx,
             if (!std::isfinite(y) || !std::isfinite(w)) continue;
             if (w >= kNetPrefitPinWeight) continue;            // pin-regime DATA row
             if (!c.have[ti]) continue;                         // no usable centre
-            // INC-1's "births are not exceedances", where the labels can say so.
+            // Skip cells born this epoch (as INC-1 does) when the labels name the satellite.
             if (!tg.sat.empty() && have_prior
                 && ctx.carry.prefit_present_prev.count(
                        {static_cast<int>(i), tg.sat}) == 0)
@@ -215,7 +217,7 @@ double networkPrefitSigma0(const NetworkRunContext& ctx,
             pool.push_back(prefitStandardizedDeviation(y, w, c.m[ti]));
         }
     }
-    if (pool.empty()) return 0.0;   // = the H grammar's "unavailable" sentinel
+    if (pool.empty()) return 0.0;   // the H grammar's "unavailable" sentinel
     const std::size_t mid = pool.size() / 2;
     std::nth_element(pool.begin(), pool.begin() + mid, pool.end());
     double med = pool[mid];
@@ -227,7 +229,7 @@ double networkPrefitSigma0(const NetworkRunContext& ctx,
 }
 
 // =====================================================================
-//  INC-2 — the structural fuse
+//  Structural fuse (INC-2)
 // =====================================================================
 
 int networkPrefitFuseStation(NetworkRunContext& ctx, NetworkRunTraces& traces,
@@ -259,10 +261,10 @@ int networkPrefitFuseStation(NetworkRunContext& ctx, NetworkRunTraces& traces,
         if (!c.have[ti])              { ++ctr.fuse_skip_thin;  continue; }
 
         const double s = prefitStandardizedDeviation(y, w, c.m[ti]);
-        // Domain restriction (network.prefit_fuse_classes) — counted BOTH ways:
-        // `fuse_skip_class` is the exposure and `fuse_would_class` is what the cap
-        // gave up, so narrowing the domain is a measured trade rather than an
-        // invisible one.  See the knob's doc for why phase is out by default.
+        // Domain restriction (network.prefit_fuse_classes), counted two ways:
+        // `fuse_skip_class` is the exposure and `fuse_would_class` the caps given
+        // up, so the cost of narrowing the domain is measured.  The knob's doc
+        // explains why phase is out by default.
         if ((ctx.knobs.pc_fuse_mask & (1u << static_cast<unsigned>(ti))) == 0) {
             ++ctr.fuse_skip_class;
             if (s > s_fuse) ++ctr.fuse_would_class;
@@ -271,8 +273,8 @@ int networkPrefitFuseStation(NetworkRunContext& ctx, NetworkRunTraces& traces,
         if (s <= s_fuse) continue;
 
         // Continuous cap: the row contributes at most an S_fuse-equivalent
-        // standardized load.  NOT a drop — order-preserving, smooth, and the
-        // row still carries its sign (the prefer-fallback directive).
+        // standardized load.  The row is kept (a cap, not a drop): the cap is
+        // order-preserving and smooth, and the row keeps its sign.
         const double ratio = (s_fuse / s) * (s_fuse / s);
         R.w(row) = w * ratio;
         ++capped;
@@ -301,7 +303,7 @@ int networkPrefitFuseStation(NetworkRunContext& ctx, NetworkRunTraces& traces,
 }
 
 // =====================================================================
-//  INC-1 / INC-3 / INC-4 — the post-solve walk
+//  Post-solve walk: census, seed-birth tripwire, topology ledger (INC-1 / INC-3 / INC-4)
 // =====================================================================
 
 void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
@@ -314,9 +316,8 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
                          const NetworkIonoDeweightGate* iono_deweight) {
     if (!ctx.knobs.pc_walk_on) return;
     (void)config_;   // arming is expressed entirely through the knob snapshot
-    // Clear FIRST: an epoch the walk cannot serve must leave the epoch-status
-    // columns blank, never repeat the previous epoch's numbers as if they were
-    // this epoch's measurement.
+    // Cleared first, so an epoch the walk cannot serve leaves the epoch-status
+    // columns blank instead of repeating the previous epoch's numbers.
     ctx.carry.ep_pc_rows = 0;
 
     const bool   census_on   = ctx.knobs.pc_census_on;
@@ -339,16 +340,16 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
     long long n_gt_1k[kNetDataClasses]  = {0, 0, 0, 0};
     long long rows_epoch = 0;
 
-    // INC-3 / INC-4 structure summaries for THIS epoch.
+    // Structure summaries for this epoch (INC-3 presence, INC-4 kinds and ties).
     std::set<std::pair<int, std::string>>           present_now;
-    /// The admission card's INC-4 vet trigger (docs/SPEC_measurement_admission.md
-    /// §10): (station index, satellite) whose worst ESTABLISHED @c obs_code
-    /// deviation exceeded @ref pc_event_sigma this epoch.  Published into
-    /// `ctx.carry.prefit_code_flag` below for the admission seam, which runs
-    /// EARLIER in the epoch than this walk and therefore reads it one epoch late —
-    /// which is exactly the latency the field data shows is available: the census
-    /// named all four of the FT63 day's exposed re-entries 1-4 epochs before their
-    /// |z| crossed the admission bound.
+    /// Vet trigger for the measurement-admission card (its INC-4,
+    /// docs/SPEC_measurement_admission.md §10): the (station index, satellite)
+    /// cells whose worst established @c obs_code deviation exceeded
+    /// @ref pc_event_sigma this epoch.  Published below into
+    /// `ctx.carry.prefit_code_flag`.  The admission seam runs earlier in the epoch
+    /// than this walk, so it reads the flags one epoch late; the census flagged
+    /// exposed re-entries 1-4 epochs before their |z| crossed the admission bound,
+    /// so that latency is available.
     std::set<std::pair<int, std::string>>           code_flag_now;
     std::map<int, int>                              tie_now;
     std::map<std::pair<int, std::string>, unsigned> kind_now;
@@ -368,12 +369,12 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
         for (int t = 0; t < kNetDataClasses; ++t)
             if (!c.have[t] && c.n[t] > 0) ++ctr.type_skips;
 
-        // An SH<->slant TIE row touches only SH shared columns, so the shared
-        // labels cannot name its satellite — and an unnamed tie-row event is
-        // half an event, exactly on the valve this card was written for.  The
-        // satellite is recoverable from the LOCAL side: the row carries the
-        // station's slant-iono column for that LOS.  Built once per station-epoch
-        // (state key -> H column -> A_r column), and only while the walk runs.
+        // An SH<->slant tie row touches only SH shared columns, so the shared
+        // labels cannot name its satellite, and a tie-row event without a
+        // satellite does not identify the valve edge it reports.  The satellite
+        // is recovered from the local side: the row carries the station's
+        // slant-iono column for that LOS.  The map (state key -> H column -> A_r
+        // column) is built once per station-epoch, only while the walk runs.
         std::map<Eigen::Index, std::string> slant_col_sat;
         if (stations[i].sm) {
             try {
@@ -390,18 +391,17 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
             return {};
         };
 
-        // ESTABLISHED cells (INC-1) and cells BORN this epoch (INC-3) are kept
-        // apart: a birth's innovation is arbitrary by construction — the seed
-        // makes it ~0 against a station level that may be 1e5 m — so counting it
-        // as an INC-1 exceedance is a false positive at 1e7 sigma, 666 times an
-        // hour.  See the header's "births are not exceedances".
+        // Established cells (INC-1) and cells born this epoch (INC-3) are kept
+        // apart.  A birth's innovation is set by the seed, which makes it about 0
+        // against a station level that may be 1e5 m, so as an INC-1 exceedance it
+        // would read as a 1e7-sigma false positive.  See "Births are not
+        // exceedances" in the header.
         std::map<std::pair<std::string, int>, CellWorst> worst, worst_born;
         std::set<std::string> born_here;
-        // Every walked station gets a tie-row entry, INCLUDING zero.  Without
-        // this a station whose ties are all cut drops out of the map, so the
-        // RE-COUPLING edge (0 -> n, the era-2 discharge trigger) would be read as
-        // a first sighting and never evented — the exact half of the valve that
-        // proposed invariant #7 says must not be silent.
+        // Every walked station gets a tie-row entry, including zero.  Without it a
+        // station whose ties are all cut drops out of the map, and its re-coupling
+        // edge (0 -> n tie rows) reads as a first sighting and is never evented;
+        // invariant #7 requires that edge to be logged.
         if (topo_on) tie_now[static_cast<int>(i)] = 0;
 
         for (Eigen::Index row = 0; row < R.y.size(); ++row) {
@@ -423,10 +423,9 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
                 const auto cell = std::make_pair(static_cast<int>(i), row_sat);
                 present_now.insert(cell);
                 if (topo_on) kind_now[cell] |= (1u << ti);
-                // Births are detected whenever the walk runs — NOT only when
-                // INC-3 is armed.  INC-1 defers to them either way, and a
-                // deferral that depended on whether INC-3 was listening would
-                // make the census's own numbers config-dependent.
+                // Births are detected whenever the walk runs, not only when INC-3
+                // is armed.  INC-1 defers them either way; a deferral conditional
+                // on INC-3 would make the census numbers depend on configuration.
                 if (have_prior_presence
                     && ctx.carry.prefit_present_prev.count(cell) == 0) {
                     born_here.insert(row_sat);
@@ -440,9 +439,9 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
             if (!c.have[ti]) continue;              // no trustworthy centre this epoch
             const double s = prefitStandardizedDeviation(y, w, c.m[ti]);
             if (born_here.count(sat)) {
-                // Born this epoch: hand it to INC-3 and keep it out of INC-1's
-                // pools entirely, so max_s / p99 / the >1000 counts describe
-                // ESTABLISHED cells.  Counted, not silently dropped.
+                // Born this epoch: handed to INC-3 and kept out of INC-1's pools, so
+                // max_s, p99 and the >1000 counts describe established cells.
+                // Counted in rows_born_deferred.
                 ++ctr.rows_born_deferred;
                 CellWorst& bw = worst_born[{sat, ti}];
                 if (s > bw.s) bw = CellWorst{s, y, w, c.m[ti], row};
@@ -462,39 +461,35 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
             if (s > cw.s) cw = CellWorst{s, y, w, c.m[ti], row};
         }
 
-        // --- INC-1 exceedance events (ESTABLISHED cells, rate-limited) -------
+        // --- exceedance events (INC-1; established cells, rate-limited) -------
         for (const auto& [key, cw] : worst) {
             if (ev_sigma <= 0.0 || cw.s <= ev_sigma) continue;
-            // --- the admission card's INC-4 vet trigger ------------------------
-            // Recorded from the EXCEEDANCE itself, deliberately UPSTREAM of
-            // `census_on`, of the event-class mask and of the per-cell holdoff.
-            // This card's own principle is that a detection must not depend on
-            // whether anyone is listening on the other side (§ "births are detected
-            // whenever the walk runs — not only when INC-3 is armed"), and a trigger
-            // throttled by a diagnostic rate limiter would go quiet exactly when a
-            // cell is PERSISTENTLY bad, which is the case it exists for.
+            // --- vet trigger for the measurement-admission card ----------------
+            // Recorded from the exceedance itself, ahead of `census_on`, the
+            // event-class mask and the per-cell holdoff.  As with birth detection,
+            // the detection does not depend on which consumers are armed, and a
+            // trigger behind the diagnostic rate limiter would go quiet while a
+            // cell stays bad, which is the case it exists for.
             //
-            // CODE rows only: a phase row's prefit innovation is arc-specific and
-            // its station median is not a common mode (608 of 665 phase events on
-            // one leg, none of them findings), so a phase-driven trigger wired to an
-            // admission verdict would be a false-positive generator.  BORN cells are
-            // excluded for free — they never enter `worst`, they are handed to INC-3
-            // — and that exclusion is load-bearing rather than incidental: a
-            // re-entering arc's ambiguity IS fresh, so its own return epoch reads as
-            // a birth and defers.  It is the reason the census's earliest possible
-            // flag on a re-entry is re-entry + 1, which is exactly the lag measured
-            // at G16@BSHM (resume 307740, flagged 307770).
+            // Code rows only: a phase row's prefit innovation is arc-specific and
+            // its station median is not a common mode (on one measured leg most
+            // phase events were not faults), so a phase-driven trigger feeding an
+            // admission verdict would produce false positives.  Born cells never
+            // enter `worst` (they go to INC-3), and that exclusion matters: a
+            // re-entering arc's ambiguity is fresh, so its return epoch reads as a
+            // birth and is deferred.  The earliest census flag on a re-entry is
+            // therefore the epoch after the re-entry.
             if (key.second == static_cast<int>(NetRowClass::ObsCode))
                 code_flag_now.insert({static_cast<int>(i), key.first});
             if (!census_on) continue;
             const char* cls = rowClassName(static_cast<NetRowClass>(key.second));
             ++ctr.exceedances;
-            // EVENT DOMAIN (network.prefit_event_classes).  The statistic and the
+            // Event domain (network.prefit_event_classes).  The statistic and the
             // per-class columns cover every DATA class; only the event channel is
-            // narrowed, because a phase row's prefit innovation is arc-specific
-            // (it carries that arc's ambiguity linearization point) and its
-            // station "median" is not a common mode at all — measured 608 of 665
-            // events on one leg, none of them findings.  Suppression is COUNTED.
+            // narrowed.  A phase row's prefit innovation is arc-specific (it
+            // carries that arc's ambiguity linearization point), so its station
+            // "median" is not a common mode; on one measured leg 608 of 665 events
+            // were phase rows and none was a fault.  Suppressed events are counted.
             if ((ctx.knobs.pc_event_mask & (1u << static_cast<unsigned>(key.second))) == 0) {
                 ++ctr.events_class_skipped;
                 continue;
@@ -512,20 +507,18 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
                 ++ctr.events_held;
             }
         }
-        // --- INC-3 seed-birth tripwire (BORN cells, tighter threshold) -------
-        // These are the cells INC-1 handed over.  The count of what was handed
-        // over is reported whether or not INC-3 is armed, so "the census went
-        // quiet" and "the census deferred 400 births to a disarmed INC-3" are
-        // distinguishable at run end.
+        // --- seed-birth tripwire (INC-3; born cells, tighter threshold) -------
+        // These are the cells INC-1 handed over.  The hand-over count is kept
+        // whether or not INC-3 is armed, so a quiet census and a census that
+        // deferred births to a disarmed INC-3 can be told apart at run end.
         for (const auto& [key, cw] : worst_born) {
             const char* cls = rowClassName(static_cast<NetRowClass>(key.second));
             if (census_on && ev_sigma > 0.0 && cw.s > ev_sigma) ++ctr.cells_born_deferred;
-            // INC-3 shares INC-1's EVENT DOMAIN (network.prefit_event_classes) —
-            // one domain to reason about, and for the same measured reason: on the
-            // snap_19 birth leg 72 of 74 birth exceedances were obs_phase rows
-            // seeded to y = 0, while the TWO that mattered were obs_code and both
-            // were (BSHM00ISR, G07/G16) born already carrying ~2e5 m.  A channel
-            // where the signal is 3% of the traffic is not a locator.
+            // Birth events use INC-1's event domain (network.prefit_event_classes),
+            // for one domain to reason about and for the same measured reason: on one
+            // birth leg 72 of 74 birth exceedances were obs_phase rows seeded to
+            // y = 0, while the two real seed faults were obs_code rows born already
+            // carrying about 2e5 m.
             if (birth_on && cw.s > birth_sigma
                 && (ctx.knobs.pc_event_mask & (1u << static_cast<unsigned>(key.second))) == 0) {
                 ++ctr.events_class_skipped;
@@ -533,9 +526,9 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
             }
             if (birth_on && cw.s > birth_sigma) {
                 ++ctr.birth_events;
-                // Seed values: the ambiguity linearization point(s) this epoch and
-                // the slant-iono state — a correct self-seeded birth has s ≈ 0, so
-                // whichever of these is absurd IS the defective seed path.
+                // Seed values: this epoch's ambiguity linearization point(s) and the
+                // slant-iono state.  A correct self-seeded birth has s ≈ 0, so an
+                // implausible value here identifies the defective seed path.
                 std::string seeds;
                 for (const auto& pa : R.pl_amb) {
                     if (pa.sat != key.first) continue;
@@ -564,16 +557,16 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
                                              seeds.empty() ? "seeds=?" : seeds));
             }
         }
-        // Births are a DENOMINATOR for the whole card, not just for INC-3 —
-        // "the census is quiet" means nothing without knowing how much it
-        // handed over — so they are counted whenever the walk runs.
+        // Births are a denominator for all increments, not only INC-3 (a quiet
+        // census means nothing without the count it handed over), so they are
+        // counted whenever the walk runs.
         ctr.births += static_cast<long long>(born_here.size());
     }
 
     if (!have_prior_presence)
         ctr.birth_seed_suppressed += static_cast<long long>(present_now.size());
 
-    // --- INC-1 epoch scalars for the epoch-status row ------------------------
+    // --- epoch scalars for the epoch-status row (INC-1) ----------------------
     if (census_on) {
         for (int t = 0; t < kNetDataClasses; ++t) {
             ctx.carry.ep_pc_max_s[t]     = max_s[t];
@@ -589,7 +582,7 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
         ctx.carry.ep_pc_rows = rows_epoch;
     }
 
-    // --- INC-4 topology ledger ----------------------------------------------
+    // --- topology ledger (INC-4) --------------------------------------------
     if (topo_on) {
         auto emitTopo = [&](const char* event, const std::string& sat,
                             const std::string& station, std::optional<double> stat,
@@ -603,7 +596,7 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
                 w_now[static_cast<int>(i)] = iono_deweight->weight(stations[i].name);
 
         if (ctx.carry.topo_seeded) {
-            // (a) SH-tie row-set presence delta — the DEWEIGHT VALVE's own edge.
+            // (a) SH-tie row-count delta per station: the edges of the iono deweight valve.
             for (std::size_t i = 0; i < stations.size() && i < asm_res.size(); ++i) {
                 if (i >= est_index_of.size() || est_index_of[i] < 0) continue;
                 const int idx = static_cast<int>(i);
@@ -622,7 +615,7 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
                                      wp == ctx.carry.topo_prev_w.end() ? 1.0 : wp->second,
                                      wn == w_now.end() ? 1.0 : wn->second));
             }
-            // (b) per-(station, satellite) row-KIND changes while the sat stays present.
+            // (b) per-(station, satellite) row-kind changes while the sat stays present.
             for (const auto& [cell, mask] : kind_now) {
                 const auto pit = ctx.carry.topo_prev_kind.find(cell);
                 if (pit == ctx.carry.topo_prev_kind.end()) continue;   // rise, not a change
@@ -674,18 +667,17 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
     ctx.carry.prefit_present_prev = std::move(present_now);
     ctx.carry.prefit_walk_seeded  = true;
 
-    // --- publish the INC-4 vet trigger --------------------------------------
-    // Overwritten (not merged) every walked epoch and stamped with the loop-epoch
-    // index, so a consumer can tell "no cell was flagged this epoch" from "the walk
-    // did not run and these flags are from some earlier epoch".  The admission
-    // seam honours the stamp `n_loop_epochs - 1` only; anything older it counts as
-    // an absent consultation rather than believing it.  Both seams read the SAME
-    // counter (`n_loop_epochs`, incremented once per loop epoch before either runs),
-    // so the one-epoch offset is exact rather than assumed.
+    // --- publish the admission vet trigger ----------------------------------
+    // Overwritten (not merged) on every walked epoch and stamped with the
+    // loop-epoch index, so a consumer can tell "no cell flagged this epoch" from
+    // "the walk did not run and the flags are older".  The admission seam accepts
+    // only the stamp `n_loop_epochs - 1` and counts anything older as an absent
+    // consultation.  Both seams read `n_loop_epochs`, incremented once per loop
+    // epoch before either runs, so the one-epoch offset is exact.
     ctx.carry.prefit_code_flag    = std::move(code_flag_now);
     ctx.carry.prefit_code_flag_ep = seq;
 
-    // --- invariant #4: an inert walk must SAY it is inert --------------------
+    // --- invariant #4: an inert walk reports that it is inert -----------------
     if (rows_epoch == 0 && !ctx.carry.prefit_empty_logged) {
         ctx.carry.prefit_empty_logged = true;
         log->warn("Network (prefit census): ARMED but the first walked epoch (TOW "

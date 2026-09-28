@@ -5,12 +5,13 @@
  * Organization:
  *  - LoggingConfig::isLoggerEnabled
  *  - GnssConfig::getProductPath
+ *  - GnssConfig::GnssConfig (member defaults)
+ *  - GnssConfig::getReferencePositionEcefAtEpoch
  *
- * The bulk of this file used to be a 900-line @c loadFromJson — that
- * function has been split per top-level JSON section into private
- * helpers defined in @c GnssConfigLoad.cpp.  The shared JSON-reading
- * primitives (resolvePath / jval / jsection) live in
- * @c include/common/GnssConfigJsonHelpers.hpp.
+ * The JSON loader, @c loadFromJson, is split per top-level JSON section
+ * into private helpers defined in @c GnssConfigLoad.cpp.  The shared
+ * JSON-reading primitives (resolvePath / jval / jsection) live in
+ * @c include/config/GnssConfigJsonHelpers.hpp.
  */
 
 #include "config/GnssConfig.hpp"
@@ -81,11 +82,11 @@ namespace GnssProcessor {
     }
 
     // =================================================================
-    // Construction (defaults relocated from the header member block)
+    // Construction (member defaults)
     // =================================================================
-    // Defaults relocated out of the GnssConfig.hpp member block so that
-    // tuning a default no longer recompiles every includer of the header.
-    // Generated from the former in-class initializers (values verbatim).
+    // These defaults are set here rather than as in-class initializers in
+    // GnssConfig.hpp, so that changing a default does not recompile every
+    // file that includes the header.
     GnssConfig::GnssConfig()
         : processing_mode_{ ProcessingMode::PPP }
         , frequency_mode_{ FrequencyMode::Dual }

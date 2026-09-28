@@ -4,18 +4,19 @@
 The replay driver (`Application::runConsumerReplay`, armed by
 `network.closed_loop.replay_products_path`) drives a held-out PPP-RTK consumer
 from an already-written network product file.  The two arms of Phase 0 differ in
-exactly ONE thing — which GPS code signals the consumer uses:
+one thing: which GPS code signals the consumer uses.
 
     A:  processing.signal_priorities.GPS = ["C1W","L1C","C2W","L2W"]
     B:  processing.signal_priorities.GPS = ["C1C","L1C","C2L","L2L"]
 
-(`channel_mode: single` takes ONE canonical code + phase per band from that list;
-see ARM_SIGNALS below for why the list must be explicit rather than an attribute
-priority string.)
+(`channel_mode: single` takes one canonical code and phase per band from that
+list; see ARM_SIGNALS below for why the list must be explicit rather than an
+attribute priority string.)
 
 Everything else is inherited from the reference producer leg so the consumer's
-modeling matches the run that produced the stream.  The producer NEVER runs: the
-`network.stations` roster below exists only to satisfy load-time validation.
+modeling matches the run that produced the stream.  The producer never runs:
+the `network.stations` roster below exists only to satisfy load-time
+validation.
 
 Usage:
   python scripts/q5_make_replay_arm.py --arm A --outdir runs/q5/armA [--duration 300]
@@ -30,8 +31,8 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 LEG = REPO / "runs" / "day129_cont" / "seg01" / "leg.json"
 PRODUCTS = REPO / "runs" / "day129_cont" / "seg01" / "products.txt"
 
-# Held-out consumer: NOT in the 305-station roster, DOY-129 obs present, 30 s
-# sampling (matches the product cadence exactly), and tracks BOTH arm signal
+# Held-out consumer: not in the 305-station roster, DOY-129 obs present, 30 s
+# sampling (matches the product cadence exactly), and tracks both arm signal
 # pairs.
 #
 # Truth ECEF is the ITRF2020 / IGS20 monument coordinate, velocity-propagated to
@@ -41,25 +42,25 @@ PRODUCTS = REPO / "runs" / "day129_cont" / "seg01" / "products.txt"
 #   -> -5743538.2169  1380503.7952  -2397895.8332   sigma(mm) 3.2/1.4/1.7
 #
 # from the frozen SSC at data/static/sinex/ITRF2020-IGS-TRF.SSC (SOLN 4,
-# 2015.0 + velocity, extrapolated past the 2020.999 window end — the standard
-# ITRF usage for a current epoch).  The frame matches the products: the leg runs
-# COD MGEX finals, which are IGS20-aligned.  Independent by construction — the
-# SSC is consumed NOWHERE in the C++ engine.
+# 2015.0 + velocity, extrapolated past the 2020.999 window end: the standard
+# ITRF usage for a current epoch).  The frame matches the products: the leg
+# runs COD MGEX finals, which are IGS20-aligned.  Independent by construction:
+# the SSC is consumed nowhere in the C++ engine.
 #
-# This REPLACES the RINEX header `APPROX POSITION XYZ`
+# This replaces the RINEX header `APPROX POSITION XYZ`
 # (-5743537.9710, 1380504.0131, -2397896.3726) that Phase 0 graded against.
-# That header value is not wrong, it is STALE: it sits on this station's own
+# That header value is not wrong, it is stale: it sits on this station's own
 # ITRF2020 secular track at epoch 2011.91 with a 2.6 cm perpendicular residual,
 # i.e. it is a ~2012 realization of the same monument carried forward unchanged
 # while New Caledonia moved 5.07 cm/yr.  The resulting offset is 0.632 m
-# (E -0.269 / N -0.571 / U +0.030 — almost pure horizontal).
+# (E -0.269 / N -0.571 / U +0.030, almost pure horizontal).
 #
 # `ANTENNA: DELTA H/E/N` is 0/0/0 in this file, so header-APPROX, ARP and
 # monument are the same point and the swap is a like-for-like replacement.
 #
-# A truth error is a CONSTANT common to every arm and cannot manufacture the
-# time-localized signature Phase 0 tests for — which is why the A/B verdict did
-# not depend on this.  It does set the ABSOLUTE level, so the quiet-floor and
+# A truth error is a constant common to every arm and cannot manufacture the
+# time-localized signature Phase 0 tests for, which is why the A/B verdict did
+# not depend on this.  It does set the absolute level, so the quiet-floor and
 # fault-era numbers are only trustworthy against a real datum.  Re-anchor an
 # already-run arm onto this truth with `scripts/q5_reanchor_hourly.py`.
 CONSUMER = {
@@ -68,28 +69,29 @@ CONSUMER = {
     "position_ecef": [-5743538.2169, 1380503.7952, -2397895.8332],
 }
 
-# The arm MUST be expressed as an explicit signal ARRAY, not an attribute-priority
-# STRING.  PppModel::decideConstellationCanonicals picks, per (band, obs type), the
-# priority-list signal with the HIGHEST OBSERVATION COUNT this epoch and only breaks
-# TIES by priority order (PppModel.cpp:463-501).  NRMG tracks C2W on all 32 GPS
-# satellites and C2L on ~25, so C2W wins on count under ANY attribute string — a
-# "C-first" string yields (C1C, C2W), an L1-only contrast, not the intended pair
-# contrast.  Listing only the wanted signals removes the competitor from the
-# candidate set entirely, which is the only way to bind L2.
+# The arm must be expressed as an explicit signal array, not an attribute-priority
+# string.  Under the default canonical-signal rule, PppModel::decideConstellationCanonicals
+# picks, per (band, obs type), the priority-list signal with the highest observation
+# count this epoch, breaking ties by priority order (decideCanonicalPicks in
+# PppModel.cpp).  NRMG tracks C2W on all 32 GPS satellites and C2L on about 25, so
+# C2W wins on count under any attribute string: a "C-first" string yields (C1C, C2W),
+# an L1-only contrast, not the intended pair contrast.  Listing only the wanted
+# signals removes the competitor from the candidate set entirely, which is the only
+# way to bind L2.
 #
-# L1 phase is L1C in BOTH arms: NRMG reports C1W but no L1W (the standard RINEX-3
+# L1 phase is L1C in both arms: NRMG reports C1W but no L1W (the standard RINEX-3
 # P(Y)-code / C-A-phase convention), and the phase side is not what the +49 m
-# code-bias fault lives in (phase biases moved <= 4 mm at the event).
+# code-bias fault lives in (phase biases moved 4 mm or less at the event).
 ARM_SIGNALS = {
     "A": ["C1W", "L1C", "C2W", "L2W"],   # the graded + RTKLIB-convention pair
-    "B": ["C1C", "L1C", "C2L", "L2L"],   # the DATUM-PINNED pair (selectIfPinPair)
-    # The §1.5 MIXED pair, now deliberate: C1C sits in the datum-pinned frame,
+    "B": ["C1C", "L1C", "C2L", "L2L"],   # the datum-pinned pair (selectIfPinPair)
+    # The §1.5 mixed pair, kept deliberately: C1C sits in the datum-pinned frame,
     # C2W in the convention frame.  This is the explicit-array replication of
     # the accidental string-defined arm (runs/q5/arm*_L1only) whose position was
-    # WORSE than either consistent pair.  Used by the mechanism test [H]: vary
-    # the consumer's receiver code_bias_q (--code-bias-q) on this arm to test
-    # whether the receiver CB state absorbing a between-channel differential is
-    # what turns the intermediate correction-domain fault into the worst
+    # worse than either consistent pair.  Used by mechanism test [H]: vary the
+    # consumer's receiver code_bias_q (--code-bias-q) on this arm to test whether
+    # the receiver CB state absorbing a between-channel differential is what
+    # turns the intermediate correction-domain fault into the worst
     # position-domain outcome.
     "M": ["C1C", "L1C", "C2W", "L2W"],
 }
@@ -113,8 +115,8 @@ def main() -> int:
     outdir.mkdir(parents=True, exist_ok=True)
 
     # Two roster entries, purely to satisfy loadNetworkSection_ validation
-    # ("need >=2 stations"): the replay branch in runNetwork fires BEFORE
-    # networkValidateInputs_/networkSetup_, so no station is ever loaded or solved.
+    # ("need >=2 stations"): the replay branch in runNetwork fires before
+    # networkValidateInputs_ / networkSetup_, so no station is ever loaded or solved.
     roster_stub = leg["network"]["stations"][:2]
 
     cfg = {
@@ -157,15 +159,16 @@ def main() -> int:
             "stations": roster_stub,
             "clock_datum_station": leg["network"]["clock_datum_station"],
             "epoch_sync_tolerance_s": leg["network"]["epoch_sync_tolerance_s"],
-            # Reproduces the producer's code-bias regime on the consumer config:
-            # forces enable_code_phase_bias (.BIA) OFF + estimate_ifb ON, so the
-            # network OSB is the SOLE code-bias source and nothing double-corrects.
+            # Matches the producer's code-bias regime: model_corrections is copied
+            # verbatim from the leg (below), so enable_code_phase_bias (.BIA) stays
+            # off as the producer set it, and estimate_ifb here is on, so the
+            # network OSB is the sole code-bias source and nothing double-corrects.
             "estimate_sat_code_bias": True,
             "estimate_iono_sh": False,
             "closed_loop": {
                 "enable": True,
                 "station": CONSUMER,
-                # FLOAT consumer: a +49 m code-bias fault expresses itself in the
+                # Float consumer: a +49 m code-bias fault expresses itself in the
                 # float position directly.  AR on a faulted stream would either
                 # refuse to fix or fix wrong, and the position would then measure
                 # the resolver, not the product.

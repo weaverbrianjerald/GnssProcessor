@@ -144,7 +144,7 @@ namespace GnssProcessor {
                         const std::string vlab = ionexLabel(lines[i]);
                         if (vlab == end_label || vlab == "LAT/LON1/LON2/DLON/H" ||
                             vlab == "EPOCH OF CURRENT MAP") {
-                            break;  // malformed/short band — stop before the next record
+                            break;  // short or malformed latitude band: stop before the next record
                         }
                         const std::string& vl = lines[i];
                         for (size_t c = 0; c < vl.size() && got < out.n_lon; c += 5) {

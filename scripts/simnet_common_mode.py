@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""SYNTHETIC NETWORK — fleet-common C-record wander extractor / A-B comparator.
+"""Synthetic network: fleet-common C-record wander extractor / A-B comparator.
 
 docs/SPEC_synthetic_minimum_network.md §9.8 (the datum-wander arm).
 
-On the QUIET fixture the a-priori CLK product IS the truth (§4.2), so each
-epoch's C record is pure estimator error, and its FLEET-COMMON component (the
+On the quiet fixture the a-priori CLK product is the truth (§4.2), so each
+epoch's C record is pure estimator error, and its fleet-common component (the
 robust median over satellites) is, up to a constant, minus the realized datum
 receiver clock error:
 
@@ -13,19 +13,19 @@ receiver clock error:
 
 This is exactly the ~0.9-1.3 m rms channel §9.7.1/§9.7.9 measured (the
 pivot-relative common level that does not converge with n and is slip-
-independent).  The A/B question this tool answers: run the SAME data under two
+independent).  The A/B question this tool answers: run the same data under two
 different `network.clock_datum_station` choices and correlate the two settled,
-demeaned common(t) series —
+demeaned common(t) series:
 
-    P1 (wander OWNED BY THE DATUM STATION — its code multipath / noise / ZWD
+    P1 (wander owned by the datum station: its code multipath, noise and ZWD
         error filtering through the datum): corr ~ 0, std(A-B) ~ sqrt(2)*std
-    P2 (wander in SHARED states — iono/CB common leakage every datum sees):
+    P2 (wander in shared states, iono/CB common leakage every datum sees):
         corr ~ 1, std(A-B) << std
 
-Parsing rules follow the SPEC §8 traps: join on TOW never row index; stop the
+Parsing rules follow the SPEC §8 traps: join on TOW, never row index; stop the
 positional parse at the first '=' token; a withheld epoch simply has no E
-block.  The constant offset (A_c, d_IF medians) is not wander — all statistics
-are on DEMEANED settled series.
+block.  The constant offset (A_c, d_IF medians) is not wander; all statistics
+are on demeaned settled series.
 
 Usage:
   python scripts/simnet_common_mode.py <productsA.txt> [<productsB.txt>]

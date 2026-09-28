@@ -5,8 +5,9 @@
  * @brief GRAPHIC (GRoup And PHase Ionospheric Correction) per-signal cycle slip detector.
  *
  * The GRAPHIC combination averages the code and phase measurements on the same
- * frequency to produce an ionosphere-free observable at the cost of half the
- * code noise:
+ * frequency.  The first-order ionospheric delay enters code and phase with
+ * opposite signs and cancels, leaving an observable whose noise is about half
+ * the code noise:
  *
  *     GRAPHIC_i(t) = ( P_i(t) + lambda_i * L_i(t) ) / 2
  *
@@ -17,18 +18,20 @@
  *     dG_i(t) = GRAPHIC_i(t) - GRAPHIC_i(t-1)
  *
  * A cycle slip of dN cycles on signal i produces a jump of dN * lambda_i / 2.
- * With code noise at ~0.3 m the single-epoch detection threshold is ~0.6 m
- * after differencing, corresponding to ~3 L1 cycles or ~2.5 L2 cycles.
+ * With code noise of ~0.3 m, GRAPHIC noise is ~0.15 m and dG noise ~0.21 m,
+ * so a 0.6 m (about 3 sigma) jump corresponds to ~6.3 L1 cycles or ~4.9 L2
+ * cycles.
  *
- * Key advantages:
- *   - Works per-signal (single frequency)  no dual-frequency requirement.
- *   - Completely ionosphere-free  no contamination during scintillation.
- *   - Independent of geometry (between-epoch diff cancels range + clocks at
- *     the level of receiver motion, which is bounded by code noise).
+ * Properties:
+ *   - Works per signal (single frequency); no dual-frequency requirement.
+ *   - Ionosphere-free to first order, so scintillation does not contaminate it.
+ *   - The between-epoch difference does not remove the change in geometric
+ *     range and clocks over the interval.  The detector compares |dG| directly
+ *     with the threshold and applies no geometry or clock prediction.
  *
  * The detector maintains per-(satellite, signal) arc statistics with a
  * MAD-based adaptive threshold.  When a slip is detected, the integer slip
- * magnitude is estimated via rounding of 2*dG/lambda.
+ * magnitude is estimated by rounding 2*dG/lambda.
  *
  * References:
  *   Yunck (1993), "Coping with the atmosphere and ionosphere in precise
@@ -155,9 +158,9 @@ namespace GnssProcessor {
         double sigma_multiplier_;
 
         /** Minimum slip threshold in meters.
-         *  Code noise at ~0.3 m means dG noise is ~0.21 m (0.3/sqrt(2)),
-         *  and between-epoch differencing adds sqrt(2), giving ~0.3 m.
-         *  Floor at 0.5 m ensures only slips >= ~2.6 L1 cycles are flagged. */
+         *  Code noise of ~0.3 m gives GRAPHIC noise of ~0.15 m (0.3/2), and
+         *  between-epoch differencing multiplies by sqrt(2), giving ~0.21 m for dG.
+         *  The 0.5 m floor corresponds to a slip of ~5.3 L1 cycles (2*0.5/lambda_L1). */
         static constexpr double kMinThresholdM = 0.50;
 
         /** Maximum fractional cycle residual to accept the integer estimate. */

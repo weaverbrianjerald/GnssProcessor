@@ -1,16 +1,15 @@
 /**
  * @file NetworkRowClassify.cpp
  * @brief Implementation of the shared network row/column classifier
- *        (see NetworkRowClassify.hpp — INC-0 of
+ *        (see NetworkRowClassify.hpp; INC-0 of
  *        docs/SPEC_prefit_census_observability.md).
  *
- * Both bodies are VERBATIM relocations of the anonymous-namespace originals in
- * `NetworkRhsAttrib.cpp` (label pass + `classifyRow` lambda), with the captured
- * `fam` / `col_sat` / `c00_*` locals replaced by the @ref SharedColumnMap
- * fields and the `const char*` returns replaced by the enum (the names are
- * re-derived by @ref rowClassName, so every dumped string is unchanged).  The
- * hoist regression gate is a byte-identical attribution dump on the standing
- * `runs/ft63_leg19_rhsat` leg.
+ * Both bodies carry the logic of the label pass and the `classifyRow` lambda
+ * from `NetworkRhsAttrib.cpp` unchanged.  The captured `fam` / `col_sat` /
+ * `c00_*` locals are the @ref SharedColumnMap fields here, and the class is
+ * returned as the enum instead of a `const char*`; @ref rowClassName maps it
+ * back to the same strings, so every dumped class name is unchanged.  The
+ * relocation was gated on a byte-identical attribution dump.
  */
 
 #include "filter/NetworkRowClassify.hpp"

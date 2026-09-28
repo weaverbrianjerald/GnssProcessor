@@ -1,10 +1,10 @@
-"""Measurement-residual viewer -- the port of ``measurement_residuals.m``.
+"""Measurement-residual viewer: the port of ``measurement_residuals.m``.
 
 Reads ``measurement_residuals.csv`` (one row per (epoch, satellite, signal)) and
-draws per-(satellite, signal) residual time series, faceted by *signal* within
-each *constellation*, split into code vs phase and raw vs standardized.  The
+draws per-(satellite, signal) residual time series, faceted by signal within
+each constellation, split into code vs phase and raw vs standardized. The
 MATLAB script defaults to ``plotLayout = 'per_signal'`` with ``plotStyle =
-'lines'``, ``showStandardizedPlots = true`` and ``showLegend = false`` -- this
+'lines'``, ``showStandardizedPlots = true`` and ``showLegend = false``; this
 port reproduces that default path: up to four detail figures
 
   1. Code Residuals by Signal and System          (value = residual_m)
@@ -13,13 +13,13 @@ port reproduces that default path: up to four detail figures
   4. Phase Standardized Residuals by Signal/System
 
 Each figure is the ``plotResidualGrid`` MATLAB layout: an outer 1 x nCons grid
-where every constellation column owns an inner vertical stack of *its own*
-signals (different constellations may have different signal counts -- no blank
-``GPS / C7Q`` tiles).  The Figure spec here is a single vertical stack of axes,
-so the columns are flattened in constellation-major order (all GPS signals top
-to bottom, then all Galileo signals, ...); the constellation name leads every
-tile title so the column grouping is unambiguous, and the raster-style
-linkaxes('xy') x-sharing is provided by the figure's ``link_x``.
+where every constellation column owns an inner vertical stack of its own
+signals (different constellations may have different signal counts, so there
+are no blank ``GPS / C7Q`` tiles). The Figure spec here is a single vertical
+stack of axes, so the columns are flattened in constellation-major order (all
+GPS signals top to bottom, then all Galileo signals, ...); the constellation
+name leads every tile title so the column grouping is unambiguous, and the
+raster-style linkaxes('xy') x-sharing is provided by the figure's ``link_x``.
 
 Faithful details carried over from the MATLAB:
   * **BSSD compound-ID stripping.** The C++ logger writes ``<primary>/<pivot>``
@@ -37,7 +37,7 @@ Faithful details carried over from the MATLAB:
     ID) through ``distinguishable_colors`` so a given PRN is stable across tiles.
   * **+/-3 sigma rails** drawn on the standardized figures only.
   * **Per-tile mu/sigma** annotation (top-right), computed over finite values of
-    real (non-synthetic) rows -- sample std (ddof=1; 0 for a single sample).
+    real (non-synthetic) rows: sample std (ddof=1; 0 for a single sample).
 
 The console summary reproduces the MATLAB ``=== Residual Statistics by System
 and Type ===`` block (N, RMS, mean, sample-std of residual_m, and the count /
@@ -66,10 +66,10 @@ _SYS_BY_LETTER = {
     "C": "BeiDou", "J": "QZSS", "S": "SBAS",
 }
 # Constellation column / summary order.  measurement_residuals.m derives this
-# from categories(T.system), which is ALPHABETICAL (BeiDou, GLONASS, GPS,
-# Galileo, QZSS, SBAS).  Python sorted() reproduces that code-point order, so we
-# order present systems alphabetically here (see _present_systems) rather than a
-# canonical GPS-first list -- matching the MATLAB figure columns and summary.
+# from categories(T.system), which is alphabetical (BeiDou, GLONASS, GPS,
+# Galileo, QZSS, SBAS).  Python sorted() reproduces that code-point order, so
+# present systems are ordered alphabetically here (see _present_systems) rather
+# than a canonical GPS-first list, matching the MATLAB figure columns and summary.
 
 _MEAS_TYPES = ["Code", "Phase"]
 _SIGMA_RAIL = (1.0, 0.0, 0.0)   # dashed red +/-3 sigma rails

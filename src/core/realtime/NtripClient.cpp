@@ -37,10 +37,10 @@ bool NtripClient::start() {
         return false;
     }
 
-    // RTB-2(a): guarantee curl_global_init ran exactly once BEFORE the receive
-    // thread's first curl_easy_init.  An NTRIP-only session (no DataDownloader
-    // constructed) previously relied on libcurl's lazy auto-init, which is
-    // documented as thread-unsafe.  See CurlGlobalGuard.hpp.
+    // Ensure curl_global_init has run exactly once before the receive thread's
+    // first curl_easy_init (RTB-2(a)).  An NTRIP-only session constructs no
+    // DataDownloader, and without this call it would depend on libcurl's lazy
+    // auto-init, which is documented as thread-unsafe.  See CurlGlobalGuard.hpp.
     ensureCurlGlobalInit();
 
     running_.store(true);
@@ -113,7 +113,7 @@ size_t NtripClient::curlWriteCallback(void* data, size_t size, size_t nmemb, voi
     self->total_rx_bytes_.fetch_add(total);
     self->buf_cv_.notify_one();
 
-    // Returning 0 tells curl to abort  honour the running flag.
+    // Returning 0 tells curl to abort the transfer; this honours the running flag.
     return self->running_.load() ? total : 0;
 }
 
@@ -155,9 +155,9 @@ void NtripClient::receiveLoop() {
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
 
         // TLS transport (port-443 casters such as CDDIS).  CURLUSESSL_ALL
-        // requires SSL for all communication (belt-and-suspenders alongside the
-        // https scheme above); verification stays ON (VERIFYPEER=1/VERIFYHOST=2)
-        // unless tls_insecure is set for testing against self-signed casters.
+        // requires SSL for all communication, in addition to the https scheme
+        // above; verification stays on (VERIFYPEER=1/VERIFYHOST=2) unless
+        // tls_insecure is set for testing against self-signed casters.
         if (config_.use_tls) {
             curl_easy_setopt(curl, CURLOPT_USE_SSL, CURLUSESSL_ALL);
             curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, config_.tls_insecure ? 0L : 1L);
@@ -168,12 +168,12 @@ void NtripClient::receiveLoop() {
         struct curl_slist* headers = nullptr;
         headers = curl_slist_append(headers, "Ntrip-Version: Ntrip/2.0");
         headers = curl_slist_append(headers, "User-Agent: NTRIP GnssProcessor/1.0");
-        // RTB-2(e): a configured GGA sentence rides as the NTRIP rev2
-        // "Ntrip-GGA:" request header on the GET.  The previous
-        // CURLOPT_POSTFIELDS approach silently turned the request into a POST
-        // — wrong for fixed-station rev2 casters and not the rev2 GGA
-        // mechanism.  rev1-style IN-STREAM GGA (periodic sentences written
-        // into the open connection) is unsupported; see NtripConfig::nmea_gga.
+        // A configured GGA sentence is sent as the NTRIP rev2 "Ntrip-GGA:" request
+        // header on the GET (RTB-2(e)).  CURLOPT_POSTFIELDS is not used: it would
+        // turn the request into a POST, which is wrong for fixed-station rev2
+        // casters and is not the rev2 GGA mechanism.  rev1-style in-stream GGA
+        // (periodic sentences written into the open connection) is unsupported;
+        // see NtripConfig::nmea_gga.
         std::string gga_header;
         if (!config_.nmea_gga.empty()) {
             gga_header = "Ntrip-GGA: " + config_.nmea_gga;
@@ -188,7 +188,8 @@ void NtripClient::receiveLoop() {
             curl_easy_setopt(curl, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
         }
 
-        // Streaming: no timeout  the transfer runs until we abort.
+        // Streaming: no overall timeout; the transfer runs until the write callback
+        // aborts it after stop(), or until the caster or transport ends it.
         curl_easy_setopt(curl, CURLOPT_TIMEOUT, 0L);
         curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &NtripClient::curlWriteCallback);
@@ -208,11 +209,11 @@ void NtripClient::receiveLoop() {
 
         if (!running_.load()) break;   // stop() requested during the transfer
 
-        // Classify the outcome so a misconfiguration is an actionable error
-        // rather than a silent stall: the realtime poll loop now runs as long
-        // as the client is "running" (so it can auto-reconnect), which means a
-        // bad mountpoint or credential would otherwise spin invisibly with the
-        // engine reporting 0 epochs.  ALWAYS back off before retrying.
+        // Classify the outcome so a misconfiguration is logged as an actionable
+        // error rather than a silent stall.  The realtime poll loop runs as long as
+        // the client is "running" (so it can auto-reconnect), so a bad mountpoint
+        // or credential would otherwise retry unseen while the engine reports 0
+        // epochs.  Every outcome backs off before the retry.
         if (res != CURLE_OK) {
             log->warn("NTRIP transport error ({}); reconnecting in {} s",
                       curl_easy_strerror(res), config_.reconnect_delay_s);
@@ -233,8 +234,8 @@ void NtripClient::receiveLoop() {
             log->info("NTRIP stream {}/{} ended after {} bytes; reconnecting in {} s",
                       config_.host, config_.mountpoint, bytes_this, config_.reconnect_delay_s);
         }
-        // RTB-2(b): base delay + per-client jitter — N streams dropped by one
-        // caster outage must not re-dial the recovering caster in lockstep.
+        // Base delay plus per-client jitter (RTB-2(b)), so that N streams dropped by
+        // one caster outage do not re-dial the recovering caster in lockstep.
         std::this_thread::sleep_for(std::chrono::milliseconds(reconnectDelayMs()));
     }
 

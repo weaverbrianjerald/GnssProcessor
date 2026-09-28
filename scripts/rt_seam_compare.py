@@ -7,26 +7,27 @@ Compares runs/rtseam_goldens/<golden>/ against runs/rtseam_goldens/<cand>/.
 
 Two tiers, deliberately different in strictness:
 
-  CSV artifacts  -> STRICT byte compare, no masking.  Every per-epoch CSV the
-                    engine writes carries GPS time only, so a difference here is
-                    a real numerical or control-flow change.  This is the gate.
+  CSV artifacts    -> strict byte compare, no masking. Every per-epoch CSV the
+                      engine writes carries GPS time only, so a difference here
+                      is a real numerical or control-flow change. This is the gate.
 
-  console/main log -> MASKED compare.  Wall-clock-derived fields are genuinely
-                    nondeterministic run to run and say nothing about the cut.
+  console/main log -> masked compare. Wall-clock-derived fields are
+                      nondeterministic run to run and say nothing about the cut.
 
-MASKSPEC (the RT analogue of the network INC-0 maskspec).  Each entry exists
-because the value is a function of when the run happened, not what it computed:
+Mask specification (the RT analogue of the network INC-0 maskspec). Each entry
+exists because the value is a function of when the run happened, not what it
+computed:
 
   1. spdlog "[%E]" epoch prefix and any leading wall-clock timestamp.
-  2. "is <N>s behind wall-clock GPS"  -- lag_s, from nowContinuousGpsSeconds().
-  3. "frame rx->process <N>s"         -- steady_clock delta at the warn site.
-  4. "held <N>/<N>s"                  -- obs<->SSR hold age (pinned off in the
-                                        arm configs, masked belt-and-braces).
+  2. "is <N>s behind wall-clock GPS": lag_s, from nowContinuousGpsSeconds().
+  3. "frame rx->process <N>s": steady_clock delta at the warn site.
+  4. "held <N>/<N>s": obs/SSR hold age (pinned off in the arm configs, masked
+     as a second layer of protection).
   5. "hold expired after <N>s".
   6. elapsed / ms-per-epoch / "<N> ms wall" timing fields.
 
-NOT masked, on purpose: satellite counts, reset/repair counts, AR ratios,
-sigma0, discontinuity notices, gate decisions.  Those are the signal.
+Not masked, deliberately: satellite counts, reset/repair counts, AR ratios,
+sigma0, discontinuity notices, gate decisions. Those are the signal.
 """
 import json
 import pathlib
@@ -50,9 +51,9 @@ MASKS = [
 ]
 
 # --- CSV column masks -------------------------------------------------------
-# Ported from the network decomposition's FROZEN INC-0 maskspec, which already
-# established these exact fields as wall-clock-derived.  Masking is COLUMN
-# scoped, by header name: blanket-masking a whole file would hide a real
+# Ported from the network decomposition's frozen INC-0 maskspec, which already
+# established these exact fields as wall-clock-derived. Masking is scoped by
+# column (header name): blanket-masking a whole file would hide a real
 # numerical regression sitting in a neighbouring column.
 CSV_COL_MASKS = {
     "network_service_health.csv": {"ms_per_epoch_window", "last_emit_age_s"},
@@ -87,7 +88,7 @@ def masked_csv(path: pathlib.Path, cols: set):
 
 
 def masked_json(path: pathlib.Path, keys):
-    """Blank the named keys textually -- the manifest is JSONL, not one object."""
+    """Blank the named keys textually: the manifest is JSONL, not one object."""
     text = path.read_text(errors="replace")
     for k in keys:
         text = re.sub(r'("' + re.escape(k) + r'"\s*:\s*)("?[^,}\]"]*"?)',
@@ -109,8 +110,8 @@ def compare_arm(a: pathlib.Path, b: pathlib.Path, arm: str):
     """Return (verdict, [detail lines])."""
     detail, ok = [], True
 
-    # A run that failed or produced nothing must FAIL, never silently pass as
-    # "0 files differ" -- the vacuous-green failure mode.
+    # A run that failed or produced nothing must fail, never silently pass as
+    # "0 files differ" (a vacuous-green result).
     for side, d in (("golden", a), ("cand", b)):
         st = d / "arm_status.json"
         if not st.exists():

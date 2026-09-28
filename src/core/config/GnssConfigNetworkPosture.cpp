@@ -1,27 +1,24 @@
 /*!
  * \file GnssConfigNetworkPosture.cpp
- * \brief The network POSTURE readout — recommended-vs-armed, per run regime.
+ * \brief The network posture readout: recommended versus armed knobs, per run regime.
  *
- * Split out of @c GnssConfigLoadNetwork.cpp (2026-08-01) in the same pass that
- * decomposed @c loadNetworkSection_.  Its own TU because it is the second
- * highest-churn surface in the config layer and it churns for a DIFFERENT
- * reason than the loader: a card that lands a knob edits the loader, and a card
- * that VALIDATES a knob adds a row here.  Two concurrent sessions doing those
- * two things no longer touch one file.
+ * Separate from @c GnssConfigLoadNetwork.cpp (which holds @c loadNetworkSection_)
+ * because it changes for a different reason than the loader: a card that adds a
+ * knob edits the loader, and a card that validates a knob adds a row here, so the
+ * two kinds of change touch different files.
  *
  * The readout is log-only: it reads already-parsed state and changes nothing.
- * It is split four ways so that a new recommendation is a one-row edit inside
- * exactly one function:
+ * It is split so that a new recommendation is a one-row edit inside one
+ * function:
  *
- *   - @c networkPostureRegime_          — the regime predicates every row filters on
- *   - @c appendNetworkPostureItemsOn_    — the ON tier rows      (gaps WARN)
- *   - @c appendNetworkPostureItemsScoped_ — the SCOPED tier rows (gaps INFO)
- *   - @c networkPostureBundles_          — the COUPLED bundles   (partial arm WARNs)
- *   - @c logNetworkPosture_              — the report pass over all of the above
+ *   - @c networkPostureRegime_           : the regime predicates every row filters on
+ *   - @c appendNetworkPostureItemsOn_    : the ON tier rows (gaps log a warning)
+ *   - @c appendNetworkPostureItemsScoped_ : the SCOPED tier rows (gaps log at info)
+ *   - @c networkPostureBundles_          : the coupled bundles (a partial arm warns)
+ *   - @c logNetworkPosture_              : the report pass over all of the above
  *
- * The ON-then-SCOPED append order in @c logNetworkPosture_ is what keeps the two
- * blocks contiguous in the log; the old single table relied on a hand-sorted
- * initializer list and a comment to say so.
+ * @c logNetworkPosture_ appends the ON rows before the SCOPED rows, which keeps
+ * the two blocks contiguous in the log.
  *
  * @see docs/CONFIG_promotion_ledger.md, scripts/config_posture_check.py
  */
@@ -37,16 +34,16 @@
 namespace GnssProcessor {
 
     // =================================================================
-    //  POSTURE readout — what the field record recommends vs what is armed
+    //  Posture readout: what the field record recommends versus what is armed
     // =================================================================
     /**
      * @brief Compute the regime predicates every posture row filters on.
      *
      * A knob validated at one scale can be harmful at another
-     * (@c mw_wl.bridge_sample_debias: validated at 50 stations, net-harmful at 305 —
-     * short-baseline wrong-integer rate 0.0 % -> 12.5 %), so no row is reported unless
-     * the regime it was validated in matches THIS run.  Computed once and handed to
-     * every table builder.
+     * (@c mw_wl.bridge_sample_debias: validated at 50 stations, net-harmful at 305,
+     * where the short-baseline wrong-integer rate went from 0.0 % to 12.5 %), so a row
+     * is reported only when the regime it was validated in matches this run.  Computed
+     * once and passed to every table builder.
      *
      * @return The regime facts for this configuration.
      */
@@ -58,22 +55,23 @@ namespace GnssProcessor {
                         || frequency_mode_ == FrequencyMode::All;
         const bool warm  = !nc.state_snapshot_path.empty();
         const bool lane  = nc.mw_wl.ewl_enable || nc.mw_wl.enable || nc.lane_carry.enable;
-        // The real-time / service posture.  service_mode IS the RT service producer, so a
-        // knob scoped "post-processing only" (carry_invariant: ~57% of epoch wall time at
-        // 305 sta) must stay silent there, and the RT-only knobs must stay silent everywhere
-        // else -- that asymmetry is the whole point of regime filtering.
+        // The real-time / service posture.  service_mode is the RT service producer, so a
+        // knob scoped to post-processing (carry_invariant: ~57% of epoch wall time at
+        // 305 sta) stays silent there, and the RT-only knobs stay silent everywhere else.
         const bool rt    = app_mode_ == AppMode::RealTime || network_service_mode_;
-        // The per-station parallel family is SILENTLY inert below the threshold
-        // (ApplicationNetworkSetup.cpp:862-865), so seam/carry are only worth reporting
-        // where the family actually engages.
+        // The per-station parallel family is inert without a log line below the station
+        // threshold (setup.parallel_on in ApplicationNetworkSetup.cpp), so seam/carry are
+        // reported only where the family engages.
         const bool par   = nc.parallel_stations
                         && static_cast<int>(n_sta) > nc.parallel_min_stations;
-        // Config-determinable epoch spacing, same derivation the emit_clock_rate inert-arming
-        // guard uses at :1749.  0 when gnss_rate_s is 0 (native RINEX rate, unknown at load).
+        // Config-determinable epoch spacing, the same derivation the emit_clock_rate
+        // inert-arming guard in GnssConfigLoadNetwork.cpp uses.  0 when gnss_rate_s is 0
+        // (native RINEX rate, unknown at load).
         const double spacing_s = gnss_rate_s_ * static_cast<double>(nc.epoch_decimation_n);
-        // active_systems_ is a vector of NAMES, so a COUNT does not identify a constellation
-        // set: n_sys <= 2 admits GPS+BeiDou, which config/test_suite/_ppprtk50_4_gps_bds.json
-        // is today and which the W6 code-bias scope explicitly excludes.  Test the names.
+        // active_systems_ is a vector of names, and a count does not identify a
+        // constellation set: n_sys <= 2 admits GPS+BeiDou (for example
+        // config/test_suite/_ppprtk50_4_gps_bds.json), which the W6 code-bias scope
+        // excludes.  The predicates below test the names.
         const bool gps_only = n_sys == 1 && active_systems_.front() == "GPS";
         const bool gps_gal_only =
             !active_systems_.empty()
@@ -85,19 +83,19 @@ namespace GnssProcessor {
     }
 
     /**
-     * @brief Append the ON-tier recommendation rows (a regime-matched gap WARNs).
+     * @brief Append the ON-tier recommendation rows (a regime-matched gap logs a warning).
      *
-     * ON tier = no known counter-scope in this run's regime.  These are exactly what
-     * gets re-discovered by accident one wasted run at a time, which is why their gaps
-     * warn while the 40+ SCOPED gaps only inform.
+     * ON tier: no known counter-scope in this run's regime.  A missing ON knob otherwise
+     * costs a wasted run before it is noticed, so these gaps warn, while the SCOPED gaps
+     * (about 90 rows) only inform.
      *
      * @param r    Regime facts from @ref networkPostureRegime_.
-     * @param out  Row sink; appended to (call this BEFORE the SCOPED builder so the two
+     * @param out  Row sink; appended to (call this before the SCOPED builder so the two
      *             blocks stay contiguous in the log).
      */
     void GnssConfig::appendNetworkPostureItemsOn_(const PostureRegime& r,
                                                   std::vector<PostureItem>& out) const {
-        // Alias preamble: the rows below are the original table text, unedited.
+        // Alias preamble: the rows below use the names the table was written with.
         using Tier = PostureTier;
         using Item = PostureItem;
         const auto&       nc    = network_config_;
@@ -107,9 +105,9 @@ namespace GnssProcessor {
         const bool        par   = r.par;
 
         const std::vector<Item> rows = {
-            // --- ON tier: Card-4 invariant DD carry, its carry couplings --------------
-            // 2026-09-05: NOT reported on the phase-leveling F1/F3 lineages — the two carry
-            // VEHICLES are mutually exclusive (do_amb_carry skips the leveling inject under
+            // --- ON tier: invariant DD carry (Card 4) and its carry couplings ----------
+            // Not reported on the phase-leveling F1/F3 lineages: the two carry vehicles are
+            // mutually exclusive (do_amb_carry skips the leveling inject under
             // carry_invariant, so F3 would be inert there; SPEC_amb_iono_split_overcount).
             { !network_phase_leveling_local_block_ && !network_phase_leveling_los_scale_,
               network_carry_invariant_,
@@ -153,7 +151,7 @@ namespace GnssProcessor {
               Tier::ON, false, "network.state_snapshot_require",
               "without it a fingerprint/age/parse failure SILENTLY cold-starts; mandatory in "
               "every same-snapshot A/B" },
-            // --- ON tier: QC, RAIM and SLIP knobs -------------------------------------
+            // --- ON tier: QC, RAIM and slip knobs -------------------------------------
             { network_phase_leveling_ || network_carry_invariant_,
               network_cycle_slip_if_phase_td_,
               Tier::ON, false, "network.cycle_slip.if_phase_td",
@@ -193,10 +191,11 @@ namespace GnssProcessor {
               "an IF-TD pair behind EVERY MW lane (per-pair pools, shared reference arm) so the common-band "
               "verdict can veto an equal-count silence on any pair, not only the first (SPEC_event_harness "
               "s14.10, s16): the same-epoch trap S2 vetoed exactly, inert on a single-band slip; STORM BED, FINAL ARM (runs/golden_sim_campaign_zwdblk_cbscope5 = common_band_scope true + if_phase_td_pairs all on main b268ac2 with rules F2, F3 and " },
-            // --- s22 THE REFERENCE-ARC CLAUSE (promoted 2026-09-12): a silent MW pair whose
-            //     IF-TD sample is the chain's REFERENCE satellite is UNTESTED, not clean (dd == 0
+            // --- The reference-arc clause (s22, PROMOTED): a silent MW pair whose IF-TD
+            //     sample is the chain's reference satellite is untested, not clean (dd == 0
             //     by construction, so the pooled preview can never flag it and the veto is
-            //     structurally unavailable).  A clause of the scope's rule: regime = the scope.
+            //     structurally unavailable).  It is a clause of the scope's rule, so its
+            //     regime is the scope.
             { nc.cycle_slip_common_band_scope,
               nc.cycle_slip_common_band_ref_arc,
               Tier::ON, false, "network.cycle_slip.common_band_ref_arc",
@@ -210,7 +209,7 @@ namespace GnssProcessor {
               Tier::ON, false, "network.disc_threshold_frac_cycles",
               "set 0.25: the flat 0.05 m gate is 0.26 cyc on L1 but 0.20 on L5; G3 A/B cut PB "
               "disc L5 -20%, total -10%" },
-            // --- ON tier: EMISSION and PRODUCT knobs ----------------------------------
+            // --- ON tier: emission and product knobs ----------------------------------
             { network_emit_pb_filter_ && network_carry_invariant_ && network_carry_invariant_emit_rebase_,
               network_emit_pb_filter_gate_v2_,
               Tier::ON, false, "network.emit_pb_filter_gate_v2",
@@ -221,20 +220,20 @@ namespace GnssProcessor {
               Tier::ON, true , "network.phase_leveling",
               "armed in 107 of 108 shipped configs; zero-q sharpens clock 2.44 -> 2.00 m (-18%); "
               "the carry_warm gate for RAIM" },
-            // B6 S-basis contract line (ledger §A2 F16, APPLIED into the goldens 2026-08-08):
-            // header-only, solve-byte-identical; replay consumer -12.7 % RMS, 45 spurious
-            // resets removed.  Was a ledger row with no loader row until 2026-09-05.
-            // RTA-10 H heartbeat record (ledger §A2 F16, APPLIED with h_sigma0_prefit_census):
-            // record stream 0-diff, solve-neutral; a tail consumer distinguishes "withheld"
-            // from "producer died".  Was a ledger row with no loader row until 2026-09-05.
+            // B6 S-basis contract line (ledger §A2 F16, applied into the goldens):
+            // header-only, solve byte-identical; replay consumer -12.7 % RMS, 45 spurious
+            // resets removed.
+            // RTA-10 H heartbeat record (ledger §A2 F16, applied with h_sigma0_prefit_census):
+            // record stream 0-diff, solve-neutral; a tail consumer can tell "withheld" from
+            // "producer died".  Both rows give the ledger entries their loader coverage.
             { true,
               network_emit_epoch_status_record_,
               Tier::ON, false, "network.emit_epoch_status_record",
               "one positional H heartbeat record per epoch incl. withheld ones (gate + sigma0): "
               "record stream 0-diff, solve-neutral; pair with h_sigma0_prefit_census" },
-            // Card OWD: the S contract line is part of every wire, so the loader forces this
-            // field true and the row always reads armed; kept so the ledger row keeps its
-            // loader coverage (config_posture_check.py --verify-loader).
+            // The S contract line is part of every wire (card OWD), so the loader forces this
+            // field true and the row always reads armed.  The row stays so the ledger entry
+            // keeps its loader coverage (config_posture_check.py --verify-loader).
             { true,
               nc.serialize_sbasis_contract,
               Tier::ON, false, "network.serialize_sbasis_contract",
@@ -245,13 +244,13 @@ namespace GnssProcessor {
               Tier::ON, false, "network.write_run_manifest",
               "run provenance: config hash + build stamp + POST-arming toggle dump; no estimation "
               "effect, no product bytes" },
-            // --- ON tier: IONOSPHERE and SH-VTEC --------------------------------------
+            // --- ON tier: ionosphere and SH-VTEC --------------------------------------
             { n_sta >= 3 && tri,
               estimate_network_iono_sh_,
               Tier::ON, true , "network.estimate_iono_sh",
               "USER DIRECTIVE: always on; without SH consumer float 8.19 -> 0.98 m and robust "
               "clock spread 266 m vs single digits" },
-            // --- ON tier: PERFORMANCE / PARALLELISM + network trace_* knobs -----------
+            // --- ON tier: performance / parallelism and network trace_* knobs --------
             { par,
               nc.parallel_seam,
               Tier::ON, false, "network.parallel_seam",
@@ -284,7 +283,7 @@ namespace GnssProcessor {
               "same walk as the census, event-only (3.5 events/epoch measured); standing "
               "invariant #7 - it is what makes a gate's decouple/re-couple edges visible at all "
               "(13 silent re-coupling edges recovered on FT63 leg-19)" },
-            // --- ON tier: COLD-START, DATUM and CLOCK knobs ---------------------------
+            // --- ON tier: cold-start, datum and clock knobs ---------------------------
             { network_phase_datum_eq34_ || network_phase_datum_prioritized_,
               network_station_pd_pin_aware_,
               Tier::ON, false, "network.station_pd_pin_aware",
@@ -295,18 +294,18 @@ namespace GnssProcessor {
     }
 
     /**
-     * @brief Append the SCOPED-tier recommendation rows (a regime-matched gap INFOs).
+     * @brief Append the SCOPED-tier recommendation rows (a regime-matched gap logs at info).
      *
-     * SCOPED tier = validated, but only inside a stated scope (a station count, a
-     * constellation set, a lineage shape).  There are 40+ of them; warning on all would
-     * drown the ON tier, so they inform and stay one grep away.
+     * SCOPED tier: validated, but only inside a stated scope (a station count, a
+     * constellation set, a lineage shape).  There are about 90 of them; warning on all
+     * would bury the ON tier, so their gaps log at info level and stay searchable.
      *
      * @param r    Regime facts from @ref networkPostureRegime_.
-     * @param out  Row sink; appended to (call this AFTER the ON builder).
+     * @param out  Row sink; appended to (call this after the ON builder).
      */
     void GnssConfig::appendNetworkPostureItemsScoped_(const PostureRegime& r,
                                                       std::vector<PostureItem>& out) const {
-        // Alias preamble: the rows below are the original table text, unedited.
+        // Alias preamble: the rows below use the names the table was written with.
         using Tier = PostureTier;
         using Item = PostureItem;
         const auto&       nc           = network_config_;
@@ -320,7 +319,7 @@ namespace GnssProcessor {
         const bool        gps_gal_only = r.gps_gal_only;
 
         const std::vector<Item> rows = {
-            // --- SCOPED tier: Card-4 invariant DD carry, its carry couplings ----------
+            // --- SCOPED tier: invariant DD carry (Card 4) and its carry couplings ------
             { !network_carry_invariant_ && network_phase_leveling_ && network_shared_carry_full_cov_,
               network_carry_conditional_coupling_,
               Tier::SCOPED, true , "network.carry_conditional_coupling",
@@ -346,11 +345,11 @@ namespace GnssProcessor {
               Tier::SCOPED, false, "network.state_snapshot_carry_diagonal",
               "GPS-only: accuracy >= dense at 478x smaller (270.9 -> 0.57 MB at 305 sta); dense "
               "churns ~186 GB per 6h" },
-            // --- RS-2 (SPEC_event_harness s21, 2026-09-12): the WRITE half of the
-            //     linearization-frame carry.  The blob's Z rows are correction-frame DDs;
-            //     without the writer's sum c*x_lin per chord a resumed run folds every
-            //     restored chord in the wrong frame.  Write side only (products byte-identical,
-            //     only the snapshot grows); regime = a carry blob is being written at all.
+            // --- Write half of the linearization-frame carry (RS-2, SPEC_event_harness s21).
+            //     The blob's Z rows are correction-frame DDs; without the writer's sum
+            //     c*x_lin per chord a resumed run folds every restored chord in the wrong
+            //     frame.  Write side only (products byte-identical, only the snapshot grows);
+            //     the regime is any run that writes a carry blob.
             { nc.state_snapshot_carry,
               nc.state_snapshot_carry_lin,
               Tier::SCOPED, false, "network.state_snapshot_carry_lin",
@@ -358,9 +357,9 @@ namespace GnssProcessor {
               "re-base the restored branch onto its own linearization (network.resume_carry_rebase); "
               "the field golden's warm resume went from 61/61 withheld to emitting (SPEC_event_harness "
               "s21.5)" },
-            // --- RS-3 (SPEC_event_harness s21.7): WRITE half of datum continuity - the eq34
-            //     chain tree and the time-linked code-bias datum memory ride the snapshot as
-            //     format-forward rows.  Write side only, products byte-identical.
+            // --- Write half of datum continuity (RS-3, SPEC_event_harness s21.7): the eq34
+            //     chain tree and the time-linked code-bias datum memory are stored in the
+            //     snapshot as format-forward rows.  Write side only, products byte-identical.
             { !nc.state_snapshot_path.empty()
                   && (network_phase_datum_eq34_ || network_code_datum_time_linked_),
               nc.state_snapshot_datum_capture,
@@ -368,9 +367,9 @@ namespace GnssProcessor {
               "carry the eq34 chain tree + the time-linked code-bias datum memory in the snapshot so a "
               "warm resume can continue both datums (RS-3): first-epoch eq34 re-references 110 -> 8, "
               "code-bias re-seed discontinuities 30 -> 0, R record 30 -> 0 satellites" },
-            // --- RS-5 (SPEC_event_harness s21.10/s21.11): WRITE half of emit-layer continuity -
-            //     the eq34 emit re-base frame and the PB emission filter state ride the snapshot.
-            //     Write side only, products byte-identical.
+            // --- Write half of emit-layer continuity (RS-5, SPEC_event_harness s21.10/s21.11):
+            //     the eq34 emit re-base frame and the PB emission filter state are stored in the
+            //     snapshot.  Write side only, products byte-identical.
             { !nc.state_snapshot_path.empty()
                   && (network_carry_invariant_emit_rebase_ || network_emit_pb_filter_),
               nc.state_snapshot_emit_capture,
@@ -378,49 +377,50 @@ namespace GnssProcessor {
               "carry the emit layer's memory (ER/PF/PS rows) so a warm resume does not cold-start the "
               "eq34 emit re-base and the PB filter: the seam's 17.7 m per-key phase-bias step becomes "
               "0.000 m p50 (RS-5)" },
-            // --- RS-6a (SPEC_event_harness s21.13/s21.14): WRITE half of station-layer
-            //     continuity - the rx-CB carry and the T5 per-LOS deviation carry ride the
-            //     snapshot (RC/SD rows).  Write side only, products byte-identical.
+            // --- Write half of station-layer continuity (RS-6a, SPEC_event_harness
+            //     s21.13/s21.14): the rx-CB carry and the T5 per-LOS deviation carry are stored
+            //     in the snapshot (RC/SD rows).  Write side only, products byte-identical.
             { !nc.state_snapshot_path.empty(),
               nc.state_snapshot_station_capture,
               Tier::SCOPED, false, "network.state_snapshot_station_capture",
               "carry the rx-CB carry + the T5 iono deviation carry in the snapshot so a warm resume "
               "continues the station layer's memory: the SH a00 seam transient +4.6 -> +0.4 TECU, "
               "receiver clocks at +1 1.21 -> 0.91 m (RS-6a)" },
-            // --- RS-9 (SPEC_event_harness s21.18/s21.19): WRITE half - the rx-CB carry's
-            //     linearization point (RL rows beside RC) rides the snapshot.  Write side only,
-            //     products byte-identical; requires state_snapshot_station_capture.
+            // --- Write half (RS-9, SPEC_event_harness s21.18/s21.19): the rx-CB carry's
+            //     linearization point (RL rows beside RC) is stored in the snapshot.  Write
+            //     side only, products byte-identical; requires state_snapshot_station_capture.
             { !nc.state_snapshot_path.empty() && nc.state_snapshot_station_capture,
               nc.state_snapshot_rxcb_lin_capture,
               Tier::SCOPED, false, "network.state_snapshot_rxcb_lin_capture",
               "carry the rx-CB carry's code-bias linearization point so a warm resume judges the "
               "restored carry against the writer's frame, not one epoch of resume code (RS-9)" },
-            // --- RS-8 (SPEC_event_harness s21.16/s21.20): WRITE half - every station's locked
-            //     canonical-signal map (CN rows) rides the snapshot.  Write side only, products
-            //     byte-identical.
+            // --- Write half (RS-8, SPEC_event_harness s21.16/s21.20): every station's locked
+            //     canonical-signal map (CN rows) is stored in the snapshot.  Write side only,
+            //     products byte-identical.
             { !nc.state_snapshot_path.empty(),
               nc.state_snapshot_signal_capture,
               Tier::SCOPED, false, "network.state_snapshot_signal_capture",
               "carry each station's canonical-signal map so a warm resume does not re-decide 23 of "
               "61 stations' channels from the resume epoch: chord births at the seam 64 -> 1 (RS-8)" },
-            // RS-10 (SPEC_event_harness s21.21): only where the lineage CARRIES the ZWD (the F3
-            // station block or carry_zwd).  On a white-sink ZWD (the field golden) the B9 prior
-            // is ~4000x too stiff and the harvest turns it into the falsified diagonal carry.
+            // Reported only where the lineage carries the ZWD (the F3 station block or
+            // carry_zwd).  On a white-sink ZWD (the field golden) the B9 prior is ~4000x too
+            // stiff and the harvest turns it into the falsified diagonal carry (RS-10,
+            // SPEC_event_harness s21.21).
             { warm && (network_phase_leveling_local_block_ || network_carry_zwd_),
               network_zwd_seam_reseed_,
               Tier::SCOPED, false, "network.zwd_seam_reseed",
               "warm-resume ZWD no-restart (h6 truth rms 0.124 vs cold 0.390); settled h9-12 "
               "consumer 0.134 vs no-Z warm 0.278; NOT fingerprinted; OFF where the lineage carries "
               "no ZWD (RS-10: zwd prior sigma0 11, ZWD leg-seed 0.29 -> 1.34 m by +60)" },
-            // --- RS-10b (SPEC_event_harness s21.21): the seam reseed's own stiffness, seam-scoped
-            //     and fingerprint-exempt (it borrowed the fingerprinted zwd_carry_q before).
+            // --- The seam reseed's own stiffness (RS-10b, SPEC_event_harness s21.21): seam-scoped
+            //     and fingerprint-exempt, separate from the fingerprinted zwd_carry_q.
             { warm && network_zwd_seam_reseed_,
               network_zwd_seam_reseed_q_ > 0.0,
               Tier::SCOPED, false, "network.zwd_seam_reseed_q",
               "give the ZWD seam reseed its own stiffness: at the inherited 1e-9 the seam prior is ~4000x "
               "too stiff on a white-sink ZWD (sigma0 11, ZWD leg-seed 1.34 m by +60); tuned, the tails "
               "collapse to the reseed-OFF arm's while the cold consumer keeps its smoother start (RS-10b)" },
-            // --- SCOPED tier: QC, RAIM and SLIP knobs ---------------------------------
+            // --- SCOPED tier: QC, RAIM and slip knobs ---------------------------------
             { estimate_network_sat_code_bias_ && !warm,
               network_code_bias_disc_jump_test_,
               Tier::SCOPED, true , "network.code_bias_disc_jump_test",
@@ -431,22 +431,22 @@ namespace GnssProcessor {
               Tier::SCOPED, false, "network.cycle_slip.if_phase_td_ref_gate",
               "hardened refsat gate: raw-confirmed 71% -> 90%, unsupported refsat flags 14 -> 4, "
               "pool arm untouched" },
-            // --- s22.6/s22.7 REF-FAN (2026-09-13): the reference arm on the ADDITIONAL chains, so a
-            //     slip ON a chain's own reference stops fanning out; own-elected references through
-            //     the empirical gate, adopted ones inherit the first chain's verdict.  Regime = pairs
-            //     all + the empirical gate.
+            // --- The reference arm on the additional chains (REF-FAN, s22.6/s22.7), so a slip on a
+            //     chain's own reference does not fan out; own-elected references go through the
+            //     empirical gate, adopted ones inherit the first chain's verdict.  Regime: pairs
+            //     all plus the empirical gate.
             { nc.cycle_slip_if_phase_td_pairs == NetworkIfPhaseTdPairs::All && nc.slip_qc.ref_gate,
               nc.slip_qc.ref_arm_all,
               Tier::SCOPED, false, "network.cycle_slip.if_phase_td_ref_arm_all",
               "run the reference arm on the additional IF-TD chains (empirical gate): collateral refloats "
               "6 -> 0 on every GOPE/G24 event, the 13.3 m innocent PB re-realization removed, consumer mean "
               "1.4-2.7x better, flood held (93/94 wide-chain candidates suppressed); sim storm arm owed" },
-            // --- Card G RESPONSE on the FLOAT vehicle (AB2 sections 12 to 15, ledger
-            //     amended 2026-09-20).  Freeing a re-entering arc makes it re-level from ONE
-            //     epoch of code, which bought a KEEP_OFF on the converging LEVELING vehicle
-            //     (float consumer +56 % in hours 3 to 9) and is priced differently by a float
-            //     ambiguity state with a floored birth prior.  Regime = the vehicle; on the
-            //     leveling one the KEEP_OFF still stands, so this row must NOT report there.
+            // --- The re-entry response on the float vehicle (card G, AB2 sections 12 to 15).
+            //     Freeing a re-entering arc makes it re-level from one epoch of code; on the
+            //     converging leveling vehicle that is KEEP_OFF (float consumer +56 % in hours
+            //     3 to 9), while a float ambiguity state with a floored birth prior prices it
+            //     differently.  Regime: the float vehicle.  The KEEP_OFF on the leveling
+            //     vehicle stands, so this row does not report there.
             { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf,
               nc.slip_qc.gap_reentry,
               Tier::SCOPED, false, "network.cycle_slip.gap_reentry_relevel",
@@ -454,12 +454,11 @@ namespace GnssProcessor {
               "refloats 1069 -> 702, epochs below a decimetre 223 -> 321, clock wire on the "
               "consumer's satellites 0.0406 -> 0.0203 m, never worse than 0.03 m of consumer "
               "p50 in hours 3 to 12; needs cycle_slip.relevel_free_epoch to act" },
-            // --- Card GRS, the PER-SIGNAL rider of the row above (ledger row promoted
-            //     2026-09-20).  The row-level tier keys on the SATELLITE, so a loss of
-            //     lock on the primary pair while band 5 or a fallback signal tracks
-            //     through is never seen.  Regime = the float vehicle AND the row-level
-            //     knob: without it the per-signal history is never filled, the loader
-            //     WARNS and the tier counts itself inert.
+            // --- The per-signal rider of the row above (card GRS, PROMOTED).  The row-level
+            //     tier keys on the satellite, so it does not see a loss of lock on the
+            //     primary pair while band 5 or a fallback signal keeps tracking.  Regime: the
+            //     float vehicle and the row-level knob; without the latter the per-signal
+            //     history is never filled, the loader warns and the tier counts itself inert.
             { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf
                   && nc.slip_qc.gap_reentry,
               nc.slip_qc.gap_reentry_per_signal,
@@ -469,17 +468,16 @@ namespace GnssProcessor {
               "0.0029 m triple), field dual T4_attrib 228 -> 92, and the 12 h field arm "
               "never worse than 0.02 m of consumer p50 in hours 3 to 12 (T4_attrib 702 "
               "-> 370)" },
-            // --- Card GRK, the TRACKER KEY of the two rows above (ledger row landed
-            //     2026-09-22).  The arc-level tracker named each band by the lexically
-            //     lowest phase carrying a matching code (L1C before L1W), while a carried
-            //     ambiguity at an L1W station is keyed L1W, so the ROW-LEVEL re-entry
-            //     response looked the carry up under a key that station never uses and
-            //     reached nothing at all 18 of them, and the band-1 carry folded across
-            //     every break there.  Armed, a band whose LATCHED phase is present in the
-            //     raw record with its matching code is named by that phase.  Regime = the
-            //     float vehicle AND the row-level response: without the response there is
-            //     no lookup to miss and the choice changes only detections and the trace
-            //     (the loader WARNS).
+            // --- The tracker key of the two rows above (card GRK).  With the knob off, the
+            //     arc-level tracker names each band by the lexically lowest phase carrying a
+            //     matching code (L1C before L1W), while a carried ambiguity at an L1W station
+            //     is keyed L1W; the row-level re-entry response then looks the carry up under
+            //     a key that station never uses, and the band-1 carry folds across every
+            //     break there.  Armed, a band whose latched phase is present in the raw
+            //     record with its matching code is named by that phase.  Regime: the float
+            //     vehicle and the row-level response; without the response there is no
+            //     lookup to miss, the choice changes only detections and the trace, and the
+            //     loader warns.
             { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf
                   && nc.slip_qc.gap_reentry,
               nc.slip_qc.tracker_modeled_first,
@@ -490,13 +488,13 @@ namespace GnssProcessor {
               "re-entries 21 -> 0, gross post-fit code rows at full weight 507 -> 101 (12 h "
               "759 -> 261), consumer, census and clock wire unchanged; byte-identical on the "
               "sim" },
-            // --- Card CSL, the canonical-signal latch (ledger row landed 2026-09-20).
-            //     A VALUE knob, and the ONLY processing.* row in this table: the default
-            //     string "count" is truthy, so the armed test is an explicit comparison
-            //     on canonical_signal_rule_ (a direct GnssConfig member, not part of
-            //     network_config_ and not a PostureRegime alias) exactly as the
-            //     apriori_source row compares network_apriori_source_.  Regime = the
-            //     float vehicle: it is the only posture the rule was graded on.
+            // --- The canonical-signal latch (card CSL).  A value knob, and the only
+            //     processing.* row in this table: the default string "count" is truthy, so
+            //     the armed test is an explicit comparison on canonical_signal_rule_ (a
+            //     direct GnssConfig member, not part of network_config_ and not a
+            //     PostureRegime alias), as the apriori_source row compares
+            //     network_apriori_source_.  Regime: the float vehicle, the only posture the
+            //     rule was graded on.
             { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf,
               canonical_signal_rule_ == CanonicalSignalRule::Priority,
               Tier::SCOPED, false, "processing.canonical_signal_rule",
@@ -510,16 +508,16 @@ namespace GnssProcessor {
               Tier::SCOPED, false, "network.exclude_unmodeled_antenna_stations",
               "backstop: an unmodelled receiver PCO/PCV is a systematic in every obs feeding the "
               "shared clocks and biases" },
-            // --- Card UPO, the roster held at the MONUMENT (ledger row landed 2026-09-22).
-            //     A roster station's configured coordinate is its ITRF2020 monument
-            //     coordinate while the observations refer to the antenna, so 48 of the 59
-            //     field stations sit below their antennas by the header eccentricity.  The
-            //     station's own zenith wet delay absorbs about a quarter of the height error
-            //     and the satellite clocks take the rest, regionally.  Sits beside the
-            //     antenna-modelling row above because it is the same class of defect: a
-            //     station-frame term the shared states pay for.  Regime = the float vehicle,
-            //     the only posture the reduction was graded on; the defect itself does not
-            //     depend on the vehicle, so the goldens' re-base owes this knob.
+            // --- Roster coordinates held at the monument (card UPO).  A roster station's
+            //     configured coordinate is its ITRF2020 monument coordinate while the
+            //     observations refer to the antenna, so 48 of the 59 field stations sit below
+            //     their antennas by the header eccentricity.  The station's own zenith wet
+            //     delay absorbs about a quarter of the height error and the satellite clocks
+            //     take the rest, regionally.  Placed beside the antenna-modelling row above
+            //     because it is the same class of defect: a station-frame term the shared
+            //     states pay for.  Regime: the float vehicle, the only posture the reduction
+            //     was graded on; the defect itself does not depend on the vehicle, so the
+            //     goldens' re-base owes this knob.
             { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf,
               network_station_marker_to_arp_,
               Tier::SCOPED, false, "network.station_marker_to_arp",
@@ -551,29 +549,29 @@ namespace GnssProcessor {
               Tier::SCOPED, false, "network.raim_within_epoch",
               "the ONLY tier that acts BEFORE emit (adapt-and-EMIT); also the only source of the "
               "sigma0_adapt column" },
-            // --- RAIM pool re-host (docs/SPEC_raim_pool_rehost.md s7.1, 2026-09-13): the post-fit
-            //     screen runs on carry_invariant lineages (qc_amb census); neutral until it sees
-            //     something.  The actuator stays a separate KEEP_OFF knob.
+            // --- RAIM pool re-host (docs/SPEC_raim_pool_rehost.md s7.1): the post-fit screen
+            //     runs on carry_invariant lineages (qc_amb census) and changes nothing until it
+            //     flags a cell.  The actuator is a separate KEEP_OFF knob.
             { network_carry_invariant_ && network_raim_,
               network_raim_carry_invariant_,
               Tier::SCOPED, false, "network.raim_carry_invariant",
               "re-host the post-fit RAIM pool onto the carry-neutral qc_amb census so T3/T4 run at all "
               "under carry_invariant: 107k cells / 118 epochs on the field golden, products byte-identical, "
               "~5 % epoch cost; sigma0 at its 1.0 floor so far (power leg owed)" },
-            // --- Cards GL / RF-3, the GROSS LINE-OF-SIGHT SCREEN made complete (ledger row
-            //     landed 2026-09-22).  The only ACTING code-row tier the producer owns: every
-            //     post-fit RAIM pool admits CARRIED-AMBIGUITY PHASE rows, so a code-only gross
-            //     error on one line of sight is invisible to RAIM's consensus, and on the
-            //     float vehicle those rows are the slip response's own re-coupling edge (a
-            //     drop restores a stale, stiff variance).  Armed as the TRIPLE the census
-            //     graded: the screen, the one-row rule (the bar read as min(gross_los_min_rows,
-            //     the LOS's code rows this epoch), so a line of sight whose station has lost
-            //     every other code signal is reachable) and the same-epoch emission exclusion
-            //     (the DECISION half runs ahead of the emission and the declared LOS leaves
-            //     its satellite's contributor set at the declaring epoch).  The hold
-            //     (gross_los_bound) is FALSIFIED and the station tier stays OFF, so the armed
-            //     test names the triple and nothing else.  Regime = the float vehicle, the
-            //     only posture the completed screen was graded on.
+            // --- The completed gross line-of-sight screen (cards GL / RF-3).  It is the only
+            //     acting code-row tier the producer has: every post-fit RAIM pool admits
+            //     carried-ambiguity phase rows, so a code-only gross error on one line of
+            //     sight is invisible to RAIM's consensus, and on the float vehicle those rows
+            //     are the slip response's own re-coupling edge (a drop restores a stale, stiff
+            //     variance).  Armed as the three knobs the census graded: the screen, the
+            //     one-row rule (the bar reads min(gross_los_min_rows, the LOS's code rows this
+            //     epoch), so a line of sight whose station has lost every other code signal is
+            //     reachable) and the same-epoch emission exclusion (the decision half runs
+            //     ahead of the emission, and the declared LOS leaves its satellite's
+            //     contributor set at the declaring epoch).  The hold (gross_los_bound) is
+            //     FALSIFIED and the station tier stays off, so the armed test names these
+            //     three and nothing else.  Regime: the float vehicle, the only posture the
+            //     completed screen was graded on.
             { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf,
               nc.gross_los_screen
                   && nc.gross_los_min_rows_rule == NetworkGrossLosMinRowsRule::Available
@@ -586,7 +584,7 @@ namespace GnssProcessor {
               "10 m at full weight 100 -> 32, census 13 of 16 sites better on hours 4 to 6 with "
               "none worse, WTZZ00DEU within 0.003 m, clock wire 0.0045 -> 0.0041 m; the hold "
               "(gross_los_bound) FALSIFIED, the station tier OFF" },
-            // --- SCOPED tier: EMISSION and PRODUCT knobs ------------------------------
+            // --- SCOPED tier: emission and product knobs ------------------------------
             { nc.closed_loop.enable || network_service_mode_,
               network_emit_clock_disc_,
               Tier::SCOPED, true , "network.emit_clock_disc",
@@ -621,15 +619,15 @@ namespace GnssProcessor {
               Tier::SCOPED, false, "network.emit_pb_filter_window_epochs",
               "epoch-denominated: the 60.0 default does NOT transfer across cadence; the shipped "
               "300 s tier uses 15.0" },
-            // --- Card PBH, the EMIT-SIDE PHASE-BIAS HOLD (ledger row landed 2026-09-22).
-            //     The emitted phase bias of each (satellite, signal) is HELD at the first
-            //     value of its generation, and a gap longer than emit_pb_hold_max_gap_s
-            //     DECLARES a new generation on the wire (gen= token).  It is the LAST
-            //     writer of the value and runs one call ahead of the emitter's own
-            //     value-jump test, so it screens what the consumer receives while the
-            //     solve, the C records and the B records stay byte-identical to the OFF
-            //     run.  Regime = the float vehicle AND a closed-loop consumer, the posture
-            //     it was graded on: the hold's evidence is the consumer's.
+            // --- The emit-side phase-bias hold (card PBH).  The emitted phase bias of each
+            //     (satellite, signal) is held at the first value of its generation, and a gap
+            //     longer than emit_pb_hold_max_gap_s declares a new generation on the wire
+            //     (gen= token).  The hold is the last writer of the value and runs one call
+            //     ahead of the emitter's own value-jump test, so it changes what the consumer
+            //     receives while the solve, the C records and the B records stay
+            //     byte-identical to a run with it off.  Regime: the float vehicle and a
+            //     closed-loop consumer, the posture it was graded on (the evidence for the
+            //     hold is the consumer's).
             { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf
                   && nc.closed_loop.enable,
               nc.emit_pb_hold,
@@ -655,7 +653,7 @@ namespace GnssProcessor {
               Tier::SCOPED, true , "network.phase_leveling_max_gap_s",
               "a gap guard under 2x the epoch spacing drops the carry on any missed epoch; 120 at "
               "30 s, 900 in the 300 s tier" },
-            // --- SCOPED tier: IONOSPHERE and SH-VTEC ----------------------------------
+            // --- SCOPED tier: ionosphere and SH-VTEC ----------------------------------
             { estimate_network_iono_sh_ && n_sta >= 150 && iono_weighting_.elevation_cutoff_deg >= 24.9,
               global_vtec_sh_.max_degree >= 15,
               Tier::SCOPED, false, "estimation.global_vtec_sh.max_degree",
@@ -681,7 +679,7 @@ namespace GnssProcessor {
               Tier::SCOPED, false, "network.iono_constraint_deweight_window_epochs",
               "field runs use a 15-epoch robust-z half-life; shipped 60 is an un-retuned 30 s "
               "assumption (Class A, scales w/ rate)" },
-            // --- SCOPED tier: PERFORMANCE / PARALLELISM + network trace_* knobs -------
+            // --- SCOPED tier: performance / parallelism and network trace_* knobs ----
             { true,
               nc.health_interval_s > 0.0,
               Tier::SCOPED, false, "network.health_interval_s",
@@ -764,7 +762,7 @@ namespace GnssProcessor {
               Tier::SCOPED, false, "network.trace_postfit_sigma0",
               "with raim_within_epoch OFF the sigma0 column is 0.0000 on every row - no post-fit "
               "statistic at emit" },
-            // --- SCOPED tier: COLD-START, DATUM and CLOCK knobs -----------------------
+            // --- SCOPED tier: cold-start, datum and clock knobs -----------------------
             { rt && !(estimate_network_sat_code_bias_ && !estimate_network_iono_sh_),
               network_apriori_source_ == NetworkAprioriSource::BrdcRts,
               Tier::SCOPED, true , "network.apriori_source",
@@ -800,19 +798,19 @@ namespace GnssProcessor {
               Tier::SCOPED, true , "network.estimate_sat_code_bias",
               "W6 OSB is a drop-in for the .BIA product (3-sta closed loop 0.508 m vs 0.489 m "
               "3D); grade BIAS-ONLY" },
-            // --- Card SCC, the SECOND CODE CHANNEL (ledger row landed 2026-09-22).  Sits
-            //     beside the satellite code-bias row above because it is the same product:
-            //     with one canonical band-1 code per station the C1C and C1W satellite
-            //     families compete for the same 59 stations, so a satellite's column can
-            //     hang on a single tracker.  Armed, a station contributes every allow-listed
-            //     band-1 code it tracks as CODE-ONLY rows, each through its own receiver
-            //     inter-signal state.  Regime = the float vehicle (the only posture it was
-            //     graded on) AND the two dependencies the loader itself enforces: without
-            //     carry_rx_code_bias the new receiver state cold-starts every epoch and the
-            //     loader DISARMS the knob, and with channel_mode 'all' it is REFUSED because
-            //     that mode already widens every band on the phase side as well.  ARMED
-            //     AGAINST A FAILED FROZEN BAR of its own card (B1, WTZZ00DEU): the verdict
-            //     records the author's decision and the card keeps the bar as FAILED.
+            // --- The second code channel (card SCC).  Placed beside the satellite code-bias
+            //     row above because it is the same product: with one canonical band-1 code
+            //     per station, the C1C and C1W satellite families compete for the same 59
+            //     stations, so a satellite's column can depend on a single tracker.  Armed, a
+            //     station contributes every allow-listed band-1 code it tracks as code-only
+            //     rows, each through its own receiver inter-signal state.  Regime: the float
+            //     vehicle (the only posture it was graded on) and the two dependencies the
+            //     loader enforces: without carry_rx_code_bias the new receiver state
+            //     cold-starts every epoch and the loader disarms the knob, and with
+            //     channel_mode 'all' the loader refuses it because that mode already widens
+            //     every band on the phase side.  The knob is armed although it fails a frozen
+            //     bar of its own card (B1, WTZZ00DEU): the verdict records the author's
+            //     decision and the card keeps the bar as failed.
             { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf
                   && network_carry_rx_code_bias_
                   && channel_mode_ != ChannelMode::All,
@@ -840,16 +838,16 @@ namespace GnssProcessor {
               Tier::SCOPED, true , "network.phase_datum_prioritized",
               "legacy leg when eq34 is off: cures the single-pivot gauge re-reference (G29 -44 m "
               "step, JPLM masked)" },
-            // --- Cards RF-1 / RF-2b / RF-0hv, THE VEHICLE ITSELF (ledger row landed
-            //     2026-09-22 with the golden re-base, card GRB).  float_kf carries each
-            //     (station, satellite, signal) ambiguity as a float STATE with covariance
-            //     in the station block instead of a zero-q scalar level, and the held
-            //     S-basis freezes the phase datum's basis value with every handover
-            //     DECLARED.  The pair IS the posture, not a knob inside one, so the regime
-            //     is unconditional and the armed test is the VALUE PAIR: the retired
-            //     leveling goldens read as unarmed here and the refound ones as armed.
-            //     Sits beside the prioritized-datum row because the held basis is that
-            //     datum's basis (the loader requires the two together).
+            // --- The ambiguity vehicle (cards RF-1 / RF-2b / RF-0hv; ledger row added with
+            //     the golden re-base, card GRB).  float_kf carries each (station, satellite,
+            //     signal) ambiguity as a float state with covariance in the station block
+            //     instead of a zero-q scalar level, and the held S-basis freezes the phase
+            //     datum's basis value with every handover declared.  The pair is the
+            //     posture, not a knob inside one, so the regime is unconditional and the
+            //     armed test is the value pair: the retired leveling goldens read as unarmed
+            //     here and the refound ones as armed.  Placed beside the prioritized-datum
+            //     row because the held basis is that datum's basis (the loader requires the
+            //     two together).
             { true,
               nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf
                   && network_phase_datum_held_basis_,
@@ -865,16 +863,15 @@ namespace GnssProcessor {
               "ONLY, so the carry folds in the RETIRED frame and the clock absorbs it (1e10:1). "
               "24-sta/1h/GPS sim: clock episodes 7 -> 1, sum|dev| 160.5 -> 1.5 m, datum-free C "
               "contrast 18.66 -> 0.50 m. n=1, field arm OWED; eq34 owns eq34_reref instead" },
-            // --- Card EV7, the DROP EDGE of the phase_datum_min_stations coverage gate
-            //     (ledger row landed 2026-09-22).  The gate's own comment promises that a
-            //     gated-out key costs nothing because the surviving station's FLOAT
-            //     ambiguity absorbs the removed bias; on the FLOAT vehicle that ambiguity
-            //     is a CARRIED state at a centimetre prior and absorbs the whole bias in
-            //     one epoch, and the satellite clocks pay for what the prior will not
-            //     yield.  Regime = the float vehicle AND the gate AND the re-reference
-            //     erase this knob rides: without phase_anchor_carry_reref the edges are
-            //     counted and nothing is erased (the loader WARNS), and at
-            //     min_stations 1 no edge can exist at all.
+            // --- The drop edge of the phase_datum_min_stations coverage gate (card EV7).
+            //     The gate assumes a gated-out key costs nothing because the surviving
+            //     station's float ambiguity absorbs the removed bias.  On the float vehicle
+            //     that ambiguity is a carried state at a centimetre prior: it absorbs the
+            //     whole bias in one epoch, and the satellite clocks take up what the prior
+            //     does not.  Regime: the float vehicle, the gate, and the re-reference erase
+            //     this knob relies on; without phase_anchor_carry_reref the edges are
+            //     counted and nothing is erased (the loader warns), and at min_stations 1
+            //     no edge can exist.
             { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf
                   && network_phase_datum_min_stations_ >= 2
                   && network_phase_anchor_carry_reref_,
@@ -898,27 +895,21 @@ namespace GnssProcessor {
               Tier::SCOPED, false, "network.sbasis_complete",
               "GPS+Gal adds per-sat channel-family PB<->iono trades the declared dimension does "
               "not count; the armed net when the KP lift falls short" },
-            // PD-safe invariant-DD fold (docs/SPEC_pd_safe_dd_fold.md): the fix for the corrupt
-            // carry substrate — PD gate 87.7 % failing -> 0 on the 3 h field leg.  Only where the
-            // Card-4 carry exists; fingerprinted ('carry:pdsafe').
+            // PD-safe invariant-DD fold (docs/SPEC_pd_safe_dd_fold.md): keeps the carried DD
+            // prior positive definite (PD gate failures 87.7 % -> 0 on the 3 h field leg).
+            // Reported only where the Card-4 carry exists; fingerprinted ('carry:pdsafe').
             { network_carry_invariant_,
               network_carry_invariant_pd_safe_,
               Tier::SCOPED, true , "network.carry_invariant_pd_safe",
               "PD-safe fold of the invariant DD carry: PD gate 686/782 failing -> 0/782, mature "
               "DD steps 2.75 -> 1.02 cyc/ep (fresh-convergence lineages only)" },
-            // RTA-1 sticky clock-pivot election (STABILITY E3, SPEC_synthetic_minimum_network
-            // §18.5/§18.8): recommended where per-satellite re-realizations at re-admission are
-            // material — triple-frequency / weak-third-signal postures (settled 24 h consumer
-            // 3D rms 0.303 -> 0.078 m on the sim bed).  GPS-dual+SH field: mechanism transfers,
-            // harm absent, so not evidence-recommended there.  Inert under the anchor-free
-            // clock datums.  Fingerprinted (fresh lineage only).
-            // --- PIVOT DEPARTURE (SPEC_event_harness §19, promoted 2026-09-11).  A pivot
-            //     handover's carry skip / oscillator clear / jump-test suppression is
-            //     applied NETWORK-WIDE by default, so one constellation's datum change
-            //     re-realizes the other's carry — producer-internal free-fall, not a datum
-            //     move the consumer could transform away.  Needs a pivot datum (inert
-            //     under the anchor-free ones) and a second constellation to spare.
-            //     Fingerprinted: fresh-convergence only, no warm-resume A/B exists.
+            // --- Pivot departure (SPEC_event_harness §19, PROMOTED).  By default a pivot
+            //     handover's carry skip, oscillator clear and jump-test suppression apply
+            //     network-wide, so one constellation's datum change re-realizes the other's
+            //     carry: a producer-internal re-realization, not a datum move the consumer
+            //     could transform away.  Needs a pivot datum (inert under the anchor-free
+            //     ones) and a second constellation.  Fingerprinted: fresh convergence only;
+            //     no warm-resume A/B exists.
             { r.n_sys >= 2 && !network_clock_datum_sum_to_zero_
                   && !network_clock_datum_broadcast_anchored_,
               network_scoped_handover_response_,
@@ -928,14 +919,14 @@ namespace GnssProcessor {
               "p50 0.1204 -> 0.0825 m, max |3D| 1.34 -> 0.20, hour 5 0.236 -> 0.047; fresh "
               "pair edge 1.143 -> 0.117 m) while the producer's own contrasts move < 0.5 % "
               "(runs/golden_sim_campaign_zwdblk_scoped, exe F4FF8EF0)" },
-            // --- PIVOT DEPARTURE increment 1 (SPEC_event_harness §19.6, promoted
-            //     2026-09-12).  Increment 0 above stops a handover invalidating the
-            //     constellations whose datum did NOT move; this re-expresses the CHANGED
+            // --- Pivot departure, increment 1 (SPEC_event_harness §19.6, PROMOTED).
+            //     Increment 0 above keeps a handover from invalidating the constellations
+            //     whose datum did not move; this row re-expresses the changed
             //     constellation's own carry along the structural clock null direction and
-            //     FOLDS it, instead of dropping it for one epoch.  Needs a pivot datum (no
-            //     handover seam without one) and its own prerequisite; no n_sys term —
-            //     it acts on the constellation that changed, so one is enough.
-            //     Fingerprinted (armed-only token): fresh-convergence only.
+            //     folds it, instead of dropping it for one epoch.  Needs a pivot datum (no
+            //     handover seam without one) and its own prerequisite; no n_sys term,
+            //     because it acts on the constellation that changed, so one is enough.
+            //     Fingerprinted (armed-only token): fresh convergence only.
             { network_scoped_handover_response_
                   && !network_clock_datum_sum_to_zero_
                   && !network_clock_datum_broadcast_anchored_,
@@ -947,16 +938,23 @@ namespace GnssProcessor {
               "0.00029) and every follow-on consumer reset goes to zero, with ZWD 0.0066 -> "
               "0.0059, L1C 90.2 -> 90.4 and all truth contrasts within 1.6 % "
               "(runs/golden_sim_campaign_zwdblk_sts, exe B3A7E11B)" },
+            // Sticky clock-pivot election (RTA-1, STABILITY E3; SPEC_synthetic_minimum_network
+            // §18.5/§18.8).  Recommended where per-satellite re-realizations at re-admission
+            // are material: triple-frequency and weak-third-signal postures (settled 24 h
+            // consumer 3D rms 0.303 -> 0.078 m on the sim bed).  On the GPS dual-frequency +
+            // SH field posture the mechanism transfers and does no harm, but the evidence does
+            // not support recommending it there.  Inert under the anchor-free clock datums.
+            // Fingerprinted: fresh lineage only.
             { r.tri && !network_clock_datum_sum_to_zero_ && !network_clock_datum_broadcast_anchored_,
               network_sticky_pivot_,
               Tier::SCOPED, true , "network.sticky_pivot",
               "sticky clock-pivot election: 8 -> 2 pivot handovers/day, the h16-h18 pivot-eclipse "
               "consumer excursion eliminated (settled 24 h 3D rms 0.303 -> 0.078 m); "
               "triple-freq / weak-third-signal postures" },
-            // --- SCOPED tier: the phase-leveling carry over-count fixes (2026-09-04/05,
-            //     SPEC_amb_iono_split_overcount).  Only where the leveling carry is the live
-            //     vehicle (phase_leveling on, carry_invariant off, Card-1 coupling rows on,
-            //     Card-1b joint whitening off).  Both fingerprinted ('pl:losblock' /
+            // --- SCOPED tier: the phase-leveling carry over-count fixes
+            //     (SPEC_amb_iono_split_overcount).  Reported only where the leveling carry is
+            //     the live vehicle (phase_leveling on, carry_invariant off, Card-1 coupling
+            //     rows on, Card-1b joint whitening off).  Both fingerprinted ('pl:losblock' /
             //     'pl:losscale').  F3 supersedes F1, so F1 is reported only without F3.
             { network_phase_leveling_ && !network_carry_invariant_
                   && network_carry_conditional_coupling_ && !network_carry_coupling_joint_whiten_,
@@ -966,9 +964,9 @@ namespace GnssProcessor {
               "~n_LOS-fold station-common over-count of the diagonal leveling carry — settled DD "
               "2.72 -> 0.22 cyc, WL 36 -> 99 % at the true integer (sim 3 h); pair with "
               "phase_datum_handover_max_var_m2 >= 1e-2" },
-            // 2026-09-10 (SPEC_amb_iono_split_overcount §6.16.7d, arms Q/Z/F/F2): reported ONLY
-            // where the ZWD carry is actually armed on an F3 lineage — off either half there is
-            // no diagonal row to replace, and the loader interlock has already spoken.
+            // Reported only where the ZWD carry is armed on an F3 lineage: without either half
+            // there is no diagonal row to replace, and the loader interlock has already logged
+            // the case (SPEC_amb_iono_split_overcount §6.16.7d, arms Q/Z/F/F2).
             { network_carry_zwd_ && network_phase_leveling_local_block_,
               network_carry_zwd_in_block_,
               Tier::SCOPED, true , "network.carry_zwd_in_block",
@@ -988,25 +986,15 @@ namespace GnssProcessor {
               "under F1/F3's honest sigma the lineage's 1e-4 m^2 PB-gauge handover ceiling refuses "
               "93/93 successors (cold handovers, 4-14 m PB frame steps); 1e-2 restores 70/93 and "
               "the settled window — set >= 1e-2 (a working value, not a promotion)" },
-            // E2 seed-first re-admission (SPEC_synthetic_minimum_network §18.13/§18.14,
-            // SPEC_amb_iono_split_overcount §6.10/§6.11, 2026-09-05): a departing satellite's D2
-            // clock + code-bias carry is PARKED and seeds its re-registered columns, so the Q3
-            // anchor folds over the true gap instead of tripping `gap` and freezing a code-level
-            // re-draw into a metre-class tail.  Validated on the 24 h sim bed (T3 tails G25 6.27
-            // -> 1.69 m, G12 5.38 -> 2.71, G26 6.51 -> 4.34; consumer post-eclipse excursion 2-3x
-            // smaller; DD unchanged); the clock-only variant (readmit_seed_code_bias false) is
-            // FALSIFIED (the tails return), so both kinds seed.  Q3-anchored lineages without
-            // clock_model.  Not fingerprinted.  (readmit_coupling_marg_ep and
-            // phase_datum_handover_max_var_ratio stay KEEP_OFF and have no posture row.)
-            // Resume FRAME + COUPLING-REGRESSOR restore (SPEC_synthetic_minimum_network
-            // §18.10–§18.14, 2026-09-06): on a warm resume, restore the phase-anchor incumbents +
-            // sticky targets, the Q3 per-sat anchor state, the CLK-R held frame, every restored
-            // leveling row's Card-1 regression AND the dense D2 border covariance (QK/QP), so the
-            // first warm fold is conditional and dense.  Leg E: consumer h12 0.62 m rms (p50 0.10)
-            // vs 2.05 with the frame + regressors alone and 0.52 for a cold consumer on the
-            // continuous wire; first-fold clock trips 33 → 1.  Warm-resume lineages only (a
-            // writer armed with state_snapshot_frame_capture + state_snapshot_coupling_capture).
-            // Forward-only resume policies, not fingerprinted.
+            // Resume frame and coupling-regressor restore (SPEC_synthetic_minimum_network
+            // §18.10–§18.14).  On a warm resume, restore the phase-anchor incumbents and sticky
+            // targets, the Q3 per-satellite anchor state, the CLK-R held frame, the Card-1
+            // regression of every restored leveling row, and the dense D2 border covariance
+            // (QK/QP), so the first warm fold is conditional and dense.  Leg E: consumer h12
+            // 0.62 m rms (p50 0.10) against 2.05 with the frame and regressors alone, and 0.52
+            // for a cold consumer on the continuous wire; first-fold clock trips 33 -> 1.
+            // Warm-resume lineages only (a writer armed with state_snapshot_frame_capture and
+            // state_snapshot_coupling_capture).  Forward-only resume policies, not fingerprinted.
             { warm,
               network_resume_frame_restore_,
               Tier::SCOPED, false, "network.resume_frame_restore",
@@ -1019,10 +1007,11 @@ namespace GnssProcessor {
               "warm resume rebuilds the Card-1 regressors + the dense border from a v3 (QK/QP) "
               "snapshot: first-fold clock trips 33 -> 1, consumer h12 2.05 -> 0.62 m rms (a cold "
               "consumer on the wire converges like on the continuous run)" },
-            // --- RS-2 (SPEC_event_harness s21.4): the READ half.  At the first post-resume DD
-            //     prior build z_hat += W*zl_writer - zl_now (W = the cycle-basis projection the
-            //     build already forms; Pz untouched).  Forward-only resume policy, not
-            //     fingerprinted; a blob without ZL rows warns and keeps today's behaviour.
+            // --- Carry re-base at the seam, the read half (RS-2, SPEC_event_harness s21.4).  At
+            //     the first post-resume DD prior build, z_hat += W*zl_writer - zl_now, where W
+            //     is the cycle-basis projection the build already forms; Pz is untouched.
+            //     Forward-only resume policy, not fingerprinted.  A blob without ZL rows logs a
+            //     warning and the build proceeds without the re-base.
             { warm && nc.state_snapshot_carry,
               network_resume_carry_rebase_,
               Tier::SCOPED, false, "network.resume_carry_rebase",
@@ -1030,31 +1019,34 @@ namespace GnssProcessor {
               "post-resume build instead of folding it in the writer's frame (the field golden's "
               "61/61-withheld resume: dd_fold 7.8e7 of RHS norm, 676 D5 flags at +1; SPEC_event_harness "
               "s21.5)" },
-            // --- RS-2b (SPEC_event_harness s21.6/s21.7): the D5 gate is DIAGNOSTIC-ONLY for K
-            //     post-resume epochs so the restored (re-based) branch is not erased by the
-            //     cold station layer's one-epoch disagreement (305 -> 7 rebirths at +2; the
-            //     gate runs at the seed's own rate afterwards).  Forward-only resume policy.
+            // --- D5 warm-up after a resume (RS-2b, SPEC_event_harness s21.6/s21.7).  The D5
+            //     gate is diagnostic-only for K post-resume epochs, so the cold station layer's
+            //     one-epoch disagreement does not erase the restored (re-based) branch (chord
+            //     rebirths at +2: 305 -> 7).  Afterwards the gate trips at the seed's own rate.
+            //     Forward-only resume policy.
             { warm && nc.state_snapshot_carry,
               network_resume_d5_warmup_ep_ > 0,
               Tier::SCOPED, false, "network.resume_d5_warmup_ep",
               "hold the restored invariant DD branch through the first K post-resume epochs "
               "(D5 trips counted, not re-tapped; K = 1 suffices): +2 chord rebirths 305 -> 7, live "
               "D5 trips afterwards 0-2 per epoch = the seed's own rate (SPEC_event_harness s21.7)" },
-            // --- RS-3 (SPEC_event_harness s21.7): READ half - continue the writer's eq34 tree
-            //     and code-bias datum at the seam instead of re-electing / re-seeding them.
-            //     Forward-only resume policy, not fingerprinted; requires resume_frame_restore.
+            // --- Datum restore at the seam, the read half (RS-3, SPEC_event_harness s21.7):
+            //     continue the writer's eq34 tree and code-bias datum instead of re-electing and
+            //     re-seeding them.  Forward-only resume policy, not fingerprinted; requires
+            //     resume_frame_restore.
             { warm && network_resume_frame_restore_,
               network_resume_datum_restore_,
               Tier::SCOPED, false, "network.resume_datum_restore",
               "restore the eq34 tree maps and the code-bias datum memory at a warm resume (RS-3): "
               "eq34 rerefs at +1 110 -> 8, CB re-seed discs 30 -> 0, R record 30 -> 0 sats; a ~10 m "
               "phase-bias re-realization remains and is the next card (SPEC_event_harness s21.9)" },
-            // --- RS-4 (SPEC_event_harness s21.9): the DECLARATION half of the same seam - the
-            //     first post-resume emit marks datum_changed for any constellation whose
-            //     phase-bias level re-realized against the RESTORED emitter baselines.  The
-            //     CLK-R resume_seam rule cannot see it (it fires only on a COLD held-frame
-            //     engine, i.e. never on a lineage that restores the frame).  Outputs-only,
-            //     forward-only resume response policy, not fingerprinted.
+            // --- Phase-bias seam declaration, the declaration half of the same seam (RS-4,
+            //     SPEC_event_harness s21.9): the first post-resume emit marks datum_changed for
+            //     any constellation whose phase-bias level re-realized against the restored
+            //     emitter baselines.  The CLK-R resume_seam rule cannot see this step: it fires
+            //     only on a cold held-frame engine, which a lineage that restores the frame
+            //     never has.  Outputs only; forward-only resume response policy, not
+            //     fingerprinted.
             { warm,
               network_resume_pb_seam_mark_,
               Tier::SCOPED, false, "network.resume_pb_seam_mark",
@@ -1062,26 +1054,26 @@ namespace GnssProcessor {
               "marks datum_changed for a constellation whose restored per-key baselines moved "
               "past discThresholdM on more than 10 % of the jump test's own population "
               "(measured ~17 m p50 with datum_changed 0 today, SPEC_event_harness s21.9)" },
-            // --- RS-5 (SPEC_event_harness s21.10/s21.11): READ half - restore both emit engines
-            //     at the seam.  Forward-only resume policy, not fingerprinted; requires
-            //     resume_frame_restore.
+            // --- Emit-engine restore at the seam, the read half (RS-5, SPEC_event_harness
+            //     s21.10/s21.11): both emit engines are restored.  Forward-only resume policy,
+            //     not fingerprinted; requires resume_frame_restore.
             { warm && network_resume_frame_restore_,
               network_resume_emit_restore_,
               Tier::SCOPED, false, "network.resume_emit_restore",
               "restore the eq34 emit re-base frame + the PB emission filter at a warm resume: emitted "
               "phase biases match the continuous wire to p50 0.000 m at +1, a stateful consumer sees 0 "
               "PB resets at the seam (control 19); products otherwise byte-identical (RS-5)" },
-            // --- RS-6a (SPEC_event_harness s21.13/s21.14): READ half - restore both station-layer
-            //     memories at the seam.  Forward-only resume policy, not fingerprinted; requires
-            //     resume_frame_restore.
+            // --- Station-layer restore at the seam, the read half (RS-6a, SPEC_event_harness
+            //     s21.13/s21.14): both station-layer memories are restored.  Forward-only resume
+            //     policy, not fingerprinted; requires resume_frame_restore.
             { warm && network_resume_frame_restore_,
               network_resume_station_restore_,
               Tier::SCOPED, false, "network.resume_station_restore",
               "restore the rx-CB carry + the T5 deviation carry at a warm resume: a00 transient "
               "+4.6 -> +0.4 TECU, +2 clock contrast 0.44 -> 0.29 m, receiver clocks 1.21 -> 0.91 m; "
               "the code-bias level and the rx-CB gate share do not move (RS-6a)" },
-            // --- RS-9 (SPEC_event_harness s21.18/s21.19): READ half - restore the rx-CB frame at
-            //     the seam.  Forward-only resume policy, not fingerprinted; requires
+            // --- rx-CB frame restore at the seam, the read half (RS-9, SPEC_event_harness
+            //     s21.18/s21.19).  Forward-only resume policy, not fingerprinted; requires
             //     resume_station_restore.
             { warm && network_resume_station_restore_,
               network_resume_rxcb_lin_restore_,
@@ -1089,24 +1081,35 @@ namespace GnssProcessor {
               "restore each station's code-bias linearization point at a warm resume: rx-CB withheld "
               "share 26.3 -> 9.8 % (the seed's 11.0), the 11 defect-created stations back to folding, "
               "receiver clocks at +1 0.93 -> 0.82 m (RS-9)" },
-            // --- RS-8 (SPEC_event_harness s21.16/s21.20): READ half - restore the canonical-signal
-            //     map before any station's first epoch.  Forward-only resume policy, not
-            //     fingerprinted; requires resume_frame_restore.
+            // --- Canonical-signal map restore, the read half (RS-8, SPEC_event_harness
+            //     s21.16/s21.20): the map is restored before any station's first epoch.
+            //     Forward-only resume policy, not fingerprinted; requires resume_frame_restore.
             { warm && network_resume_frame_restore_,
               network_resume_signal_canon_restore_,
               Tier::SCOPED, false, "network.resume_signal_canon_restore",
               "restore the canonical-signal latch at a warm resume: chord births at +1 64 -> 1, L2X "
               "keys 25.6 -> 0.62 m and every other key 1.50 -> 0.60 m raw, eq34 rerefs 8 -> 2, "
               "clock contrast at +1 0.31 -> 0.16 m (RS-8)" },
-            // --- RTA-4 serialize_disc_counters (first ledger row 2026-09-12, RS-4): the per-key
-            //     discontinuity counters reach the wire (optional P/B/C fields).  Outputs-only;
-            //     changes product bytes, so the goldens pin it only with a recorded re-baseline.
+            // --- Discontinuity counters on the wire (RTA-4; ledger row added with RS-4): the
+            //     per-key discontinuity counters are written as optional P/B/C fields.  Outputs
+            //     only; it changes product bytes, so the goldens pin it only with a recorded
+            //     re-baseline.
             { true,
               network_serialize_disc_counters_,
               Tier::SCOPED, false, "network.serialize_disc_counters",
               "serialize the per-key phase / code / clock discontinuity counters so a FILE consumer "
               "sees the re-realizations the in-process consumer reacts to (smoke: only P/B/C records "
               "change, b9da8cc1 -> 87a33bf0); pin on the goldens at the RS-5 close-out re-baseline" },
+            // Seed-first re-admission (E2; SPEC_synthetic_minimum_network §18.13/§18.14,
+            // SPEC_amb_iono_split_overcount §6.10/§6.11).  A departing satellite's D2 clock and
+            // code-bias carry is parked and seeds its re-registered columns, so the Q3 anchor
+            // folds over the true gap instead of tripping `gap` and freezing a code-level
+            // re-draw into a metre-class tail.  Validated on the 24 h sim bed: T3 clock tails
+            // 2-4x smaller, consumer post-eclipse excursion 2-3x smaller, DD unchanged.  The
+            // clock-only variant (readmit_seed_code_bias false) is FALSIFIED (the tails
+            // return), so both kinds seed.  Regime: Q3-anchored lineages without clock_model.
+            // Not fingerprinted.  readmit_coupling_marg_ep and
+            // phase_datum_handover_max_var_ratio stay KEEP_OFF and have no posture row.
             { network_clock_temporal_anchor_ && !network_clock_model_,
               network_readmit_seed_horizon_s_ > 0.0,
               Tier::SCOPED, false, "network.readmit_seed_horizon_s",
@@ -1120,12 +1123,13 @@ namespace GnssProcessor {
               "readmit seeds cover the code-bias columns too (default true): the clock-only variant "
               "is FALSIFIED — the IF-pair code-bias seeds anchor the clock-vs-code-bias split at the "
               "return, without them the T3 clock tails come back (runs/readmit24h_e2clk)" },
-            // Card 1f/1g — only meaningful where the Card-1 coupling rows actually EXIST:
-            // the conditional carry armed and NOT superseded by the Card-4 invariant carry
-            // (under carry_invariant the whole coupling trio is structurally inert, which is
-            // this ledger's own "BIGGEST FINDING").  Both rows are fingerprinted.
-            // Feed interlock: without eq34 or the prioritized phase-anchor carry re-reference
-            // there is no realization-step source at all and the card is inert (measured).
+            // Coupling reinit sources (cards 1f/1g).  Meaningful only where the Card-1
+            // coupling rows exist: the conditional carry armed and not superseded by the
+            // Card-4 invariant carry (under carry_invariant the whole coupling trio is
+            // structurally inert).  This row and the carry_coupling_gauge_project row in the
+            // ON table are both fingerprinted.  Feed interlock: without eq34 or the
+            // prioritized phase-anchor carry re-reference there is no realization-step source,
+            // and the card is inert (measured).
             { network_carry_conditional_coupling_ && !network_carry_invariant_
                   && (network_phase_datum_eq34_ || network_phase_anchor_carry_reref_),
               network_carry_coupling_reinit_sources_,
@@ -1144,19 +1148,19 @@ namespace GnssProcessor {
     }
 
     /**
-     * @brief The COUPLED bundles — sets of knobs that are only correct TOGETHER.
+     * @brief The coupled bundles: sets of knobs that are correct only when armed together.
      *
      * Arming a strict subset is its own failure mode (the MW/WL lane stack without
-     * @c cold_clock_seed quarantines its lane cycles — measured @c x_lin 269 km at 305
-     * stations), so a partially armed engaged bundle WARNs while a fully unarmed one
-     * only informs.
+     * @c cold_clock_seed quarantines its lane cycles; @c x_lin measured 269 km at 305
+     * stations), so an engaged bundle that is partially armed logs a warning, while one
+     * with no member armed, or with every member armed, logs at info level.
      *
      * @param r  Regime facts from @ref networkPostureRegime_.
      * @return The bundle table for this configuration.
      */
     std::vector<GnssConfig::PostureBundle>
     GnssConfig::networkPostureBundles_(const PostureRegime& r) const {
-        // Alias preamble: the rows below are the original table text, unedited.
+        // Alias preamble: the rows below use the names the table was written with.
         const auto& nc   = network_config_;
         const bool  lane = r.lane;
 
@@ -1190,39 +1194,41 @@ namespace GnssProcessor {
               { { "estimation.ionosphere_weighting.enable", iono_weighting_.enabled },
                 { "estimation.ionosphere_weighting.elevation_cutoff_deg >= 25",
                   iono_weighting_.elevation_cutoff_deg >= 24.9 },
-                // The bundle member is "the satellite code bias has a DECLARED
-                // source", not "W6 specifically" — EXT-CB satisfies it from the
-                // external .BIA.  Naming only W6 here would fire a spurious
-                // partially-armed WARN on every EXT-CB run.
+                // The bundle member is "the satellite code bias has a declared
+                // source", not W6 in particular: EXT-CB satisfies it from the
+                // external .BIA.  Naming only W6 here would log a spurious
+                // partially-armed warning on every EXT-CB run.
                 { "network.estimate_sat_code_bias | network.external_sat_code_bias",
                   estimate_network_sat_code_bias_ || network_external_sat_code_bias_ } } },
         };
     }
 
     /**
-     * @brief Log, once per run, every knob the field record recommends for THIS run's regime
-     *        and whether it is actually ON — plus the integrity of each COUPLED bundle.
+     * @brief Log, once per run, every knob the field record recommends for this run's regime
+     *        and whether it is armed, plus the integrity of each coupled bundle.
      *
-     * Motivation (user, 2026-07-29): the project ships new work default-OFF and
-     * byte-identity-gated, which is right for new work but leaves no PROMOTION step, so
-     * validated-good options accumulate in the OFF column and are re-discovered by accident
-     * one wasted run at a time.  The loader already logs everything it ARMS; this logs the
-     * inverse, so a run cannot start without the gap being visible.
+     * New work ships default-off and byte-identity-gated, and the project has no promotion
+     * step, so validated options stay off unless a configuration arms them.  The loader
+     * logs every knob it arms; this report logs the inverse, so the gap is visible at the
+     * start of every run.
      *
-     * Two design rules, both paid for with data:
+     * Two design rules:
      *  - **Regime, not blanket.** A knob validated at one scale can be harmful at another
-     *    (`mw_wl.bridge_sample_debias`: validated at 50 stations, net-harmful at 305 —
-     *    short-baseline wrong-integer rate 0.0 % → 12.5 %).  Every entry carries the regime
-     *    it was validated in and is only reported when that regime matches this run.  That
-     *    filter lives in @ref networkPostureRegime_ and each row's `applies` predicate.
-     *  - **Bundles, not knobs.** Several options are only correct TOGETHER; arming a strict
-     *    subset is its own failure mode (the MW/WL lane stack without `cold_clock_seed`
-     *    quarantines its lane cycles — measured `x_lin` 269 km at 305 stations).  A partially
-     *    armed bundle WARNs; the table lives in @ref networkPostureBundles_.
+     *    (`mw_wl.bridge_sample_debias`: validated at 50 stations, net-harmful at 305, with
+     *    the short-baseline wrong-integer rate going from 0.0 % to 12.5 %).  Every entry
+     *    carries the regime it was validated in and is reported only when that regime
+     *    matches this run.  That filter lives in @ref networkPostureRegime_ and in each
+     *    row's `applies` predicate.
+     *  - **Bundles, not knobs.** Several options are correct only when armed together;
+     *    arming a strict subset is its own failure mode (the MW/WL lane stack without
+     *    `cold_clock_seed` quarantines its lane cycles; `x_lin` measured 269 km at 305
+     *    stations).  A partially armed bundle logs a warning; the table lives in
+     *    @ref networkPostureBundles_.
      *
-     * Log-only: reads already-parsed state and changes nothing.  Full evidence and the
-     * SCOPED/UNVALIDATED tiers live in `docs/CONFIG_promotion_ledger.md`; check any config
-     * offline with `scripts/config_posture_check.py`.
+     * Log-only: reads already-parsed state and changes nothing.  The full evidence, and
+     * the UNVALIDATED and KEEP_OFF tiers this report does not list, are in
+     * `docs/CONFIG_promotion_ledger.md`; `scripts/config_posture_check.py` checks any
+     * config offline.
      *
      * @param log  the "gnss_config" logger.
      */
@@ -1236,9 +1242,8 @@ namespace GnssProcessor {
         const bool          lane  = r.lane;
         const bool          rt    = r.rt;
 
-        // ON first, then SCOPED: the report is ONE pass, so the append order is what keeps
-        // the two blocks contiguous in the log (the pre-split table hand-sorted itself and
-        // said so in a comment — this makes it structural).
+        // ON rows first, then SCOPED: the report is a single pass, so this append order is
+        // what keeps the two blocks contiguous in the log.
         std::vector<PostureItem> items;
         appendNetworkPostureItemsOn_(r, items);
         appendNetworkPostureItemsScoped_(r, items);
@@ -1254,11 +1259,10 @@ namespace GnssProcessor {
                   lane ? "with" : "no",
                   rt ? "real-time/service" : "post-processed");
         int on_armed = 0, on_off = 0, sc_armed = 0, sc_off = 0, fp_blocked = 0;
-        // The table is pre-sorted ON-then-SCOPED, so one pass keeps the two blocks
-        // contiguous in the log.  ON-tier gaps WARN — they have no known counter-scope and
-        // are exactly what gets re-discovered by accident one wasted run at a time.  SCOPED
-        // gaps are INFO: there are 40+ of them, and warning on all would drown the tier that
-        // matters.  Both are still reported, and both are still one grep away.
+        // ON-tier gaps log a warning: an ON knob has no known regime where it should stay
+        // off.  SCOPED gaps log at info level: the table holds about 90 SCOPED rows, and
+        // warnings on all of them would bury the ON tier.  Every gap is reported either way,
+        // with the "POSTURE OFF" prefix.
         for (const auto& it : items) {
             if (!it.applies) continue;
             const bool on_tier = it.tier == Tier::ON;
@@ -1266,9 +1270,9 @@ namespace GnssProcessor {
             (on_tier ? on_off : sc_off) += 1;
             if (on_tier) log->warn("  POSTURE OFF  [ON]     {} — {}", it.knob, it.why);
             else         log->info("  POSTURE OFF  [SCOPED] {} — {}", it.knob, it.why);
-            // CHAIN axis: on a warm resume a fingerprinted recommendation is NOT actionable
-            // here.  Say so on the same line group, or the readout becomes an instruction to
-            // break the lineage.  Always WARN — this one is a correctness trap, not a tier.
+            // Chain check: on a warm resume a fingerprinted recommendation cannot be acted
+            // on in this leg, since arming it breaks the lineage.  The note follows the
+            // gap line and is always a warning, whatever the row's tier.
             if (warm && it.fp) {
                 ++fp_blocked;
                 log->warn("      ^ CHAIN: {} is in the warm-resume FINGERPRINT, so arming it on "

@@ -23,13 +23,13 @@ namespace GnssProcessor {
 namespace {
 
 constexpr const char* kHeader = "# gnss_network_state_snapshot v1";
-// Format v2 (SPEC_synthetic_minimum_network §18.10): v1 + the resume FRAME records
-// (PA/PT phase-anchor incumbent + sticky pin target, CA clock-anchor per-sat state,
+// Format v2 (SPEC_synthetic_minimum_network §18.10): v1 plus the resume frame records
+// (PA/PT phase-anchor incumbent and sticky pin target, CA clock-anchor per-sat state,
 // FA/FP/FE CLK-R held frame).  Written only when at least one frame record is
-// present, so a run that carries none writes v1 byte-for-byte; the reader accepts
-// both (a v1 file restores empty frame maps = the pre-card cold-pin behaviour).
+// present, so a run that carries none writes v1 byte-for-byte.  The reader accepts
+// both; a v1 file restores empty frame maps, which gives the cold-pin behaviour.
 constexpr const char* kHeaderV2 = "# gnss_network_state_snapshot v2";
-// Format v3 (SPEC_synthetic_minimum_network §18.12): v2 + the Card-1 coupling
+// Format v3 (SPEC_synthetic_minimum_network §18.12): v2 plus the Card-1 coupling
 // regressors (QS shared-column dictionary, QL/QZ per-row (id, M_rj) lists, QR
 // write-epoch clock-refloat set).  Written only when at least one coupling record
 // is present, so a frame-only run still writes v2 and a bare run v1 byte-for-byte;
@@ -156,13 +156,13 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
         put(fmt::format("L,{},{},{},{},{},{}{}", std::get<0>(key), std::get<1>(key),
                         std::get<2>(key), l.value_abs, l.var, l.last_seen_s,
                         // network.phase_datum_handover_max_var_ratio: the arc's first-stash
-                        // variance rides an OPTIONAL 7th field (absent ⇒ the L row is
-                        // byte-identical to every earlier format).
+                        // variance is an optional 7th field, written only when nonzero;
+                        // without it the L row is byte-identical to every earlier format.
                         l.var_first != 0.0 ? fmt::format(",{}", l.var_first)
                                            : std::string{}));
     for (const auto& [idx, l] : snap.zwd_carry)
         put(fmt::format("Z,{},{},{},{}", idx, l.value_abs, l.var, l.last_seen_s));
-    // Resume FRAME records (format v2, §18.10) — absent on a run without them.
+    // Resume frame records (format v2, §18.10); absent on a run without them.
     for (const auto& [amb, sta] : snap.anchor_incumbent)
         put(fmt::format("PA,{},{}", amb, sta));
     for (const auto& [amb, tgt] : snap.anchor_pin_target)
@@ -175,12 +175,13 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
     for (const auto& [sat, hp] : snap.clk_frame_prev)
         put(fmt::format("FP,{},{},{}", sat, hp.first, hp.second));
     if (snap.clk_frame_epochs > 0) put(fmt::format("FE,{}", snap.clk_frame_epochs));
-    // Card 1 coupling regressors (format v3, §18.12): the shared-column dictionary
-    // first, then one PACKED line per carried row holding only (dictionary id, M_rj)
-    // in HARVEST order, then the write epoch's clock-refloat set.  Emitted BEFORE the
-    // CARRY/EMITTER blobs so the verbatim blob state machines never swallow them.
-    // The driver leaves these containers empty unless network.state_snapshot_coupling_
-    // capture is armed, so a run without them writes the v1/v2 bytes unchanged.
+    // Coupling regressors (format v3, §18.12; Card 1): the shared-column dictionary
+    // first, then one packed line per carried row holding only (dictionary id, M_rj)
+    // in harvest order, then the write epoch's clock-refloat set.  Emitted before the
+    // CARRY/EMITTER blobs so the verbatim blob parsers never consume them.  The
+    // driver leaves these containers empty unless
+    // network.state_snapshot_coupling_capture is armed, so a run without them writes
+    // the v1/v2 bytes unchanged.
     for (std::size_t qi = 0; qi < snap.coupling_dict.size(); ++qi) {
         const NetworkStateSnapshot::CouplingCol& q = snap.coupling_dict[qi];
         put(fmt::format("QS,{},{},{},{},{},{},{},{},{},{}", qi, q.kind, q.sat, q.signal,
@@ -198,7 +199,7 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
         put(ln);
     }
     for (const std::string& s : snap.clock_refloat_sats) put(fmt::format("QR,{}", s));
-    // §18.12 (2a): the dense D2 covariance side-car — keys in row order, then the lower
+    // Dense D2 covariance side-car (§18.12 (2a)): keys in row order, then the lower
     // triangle per row with an explicit length (the truncation guard the QL rows use).
     for (std::size_t i = 0; i < snap.carry_cov_keys.size(); ++i)
         put(fmt::format("QK,{},{}", i, snap.carry_cov_keys[i]));
@@ -207,13 +208,13 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
         for (double v : snap.carry_cov_rows[i]) ln += fmt::format(",{}", v);
         put(ln);
     }
-    // RS-3 DATUM records (SPEC_event_harness §21.7): the eq34 chain datum's last-epoch
+    // Datum records (SPEC_event_harness §21.7; RS-3): the eq34 chain datum's last-epoch
     // spanning tree, then the time-linked code-bias datum memory.  Written only under
     // network.state_snapshot_datum_capture (the driver leaves the containers empty
-    // otherwise, so a run without it writes the previous bytes unchanged), and
-    // deliberately WITHOUT a header bump — see the format note in the header.  Emitted
-    // BEFORE the CARRY / EMITTER blobs, like the Q* group, so the verbatim blob state
-    // machines can never swallow them.
+    // otherwise, so a run without it writes the previous bytes unchanged), and without
+    // a header version bump (see the format note in the header).  Emitted before the
+    // CARRY / EMITTER blobs, like the Q* group, so the verbatim blob parsers cannot
+    // consume them.
     for (const auto& [key, sta] : snap.eq34_datum_rx) put(fmt::format("EQD,{},{}", key, sta));
     for (const auto& [key, sat] : snap.eq34_rx_parent) put(fmt::format("EQP,{},{}", key, sat));
     for (const auto& [amb, sta] : snap.eq34_sat_root)  put(fmt::format("EQS,{},{}", amb, sta));
@@ -229,54 +230,54 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
     for (const auto& s : snap.code_bias_sat_seen) put(fmt::format("CBS,{}", s));
     for (const auto& [sat, pr] : snap.code_bias_ifpin_pair)
         put(fmt::format("CBI,{},{},{}", sat, pr.first, pr.second));
-    // RS-5 EMIT-LAYER records (SPEC_event_harness §21.10): the eq34 emit re-base's
+    // Emit-layer records (SPEC_event_harness §21.10; RS-5): the eq34 emit re-base's
     // emission frame, then the PB emission filter's per-key posterior and its
     // per-constellation step-noise accumulators.  Written only under
     // network.state_snapshot_emit_capture (the driver leaves the containers empty
     // otherwise, so a run without it writes the previous bytes unchanged), under the
-    // existing header like the RS-3 group, and BEFORE the CARRY / EMITTER blobs so the
-    // verbatim blob state machines can never swallow them.  The keys carry a '|' and
-    // the format splits on ',' alone, so they need no escaping.
+    // existing header like the RS-3 group, and before the CARRY / EMITTER blobs so the
+    // verbatim blob parsers cannot consume them.  The keys carry a '|' and the format
+    // splits on ',' alone, so they need no escaping.
     for (const auto& [key, v] : snap.emit_rebase_last)
         put(fmt::format("ER,{},{}", key, v));
     for (const auto& [key, st] : snap.pb_filter_state)
         put(fmt::format("PF,{},{},{},{}", key, st.mean, st.var, st.last_seen_s));
-    // The pooled bucket's constellation field is EMPTY on purpose (Config::split_by_
-    // const false) — "PS,,<sum>,<n>" is a legal row and the parser accepts it.
+    // The pooled bucket's constellation field is empty (Config::split_by_const false);
+    // "PS,,<sum>,<n>" is a legal row and the parser accepts it.
     for (const auto& [cst, ac] : snap.pb_filter_step)
         put(fmt::format("PS,{},{},{}", cst, ac.sum_log_e2, ac.n_eff));
-    // RS-6 STATION-LAYER records (SPEC_event_harness §21.13): the rx-CB carry, then
+    // Station-layer records (SPEC_event_harness §21.13; RS-6): the rx-CB carry, then
     // the T5 per-LOS deviation carry.  Written only under
     // network.state_snapshot_station_capture (the driver leaves both containers empty
     // otherwise, so a run without it writes the previous bytes unchanged), under the
-    // existing header like the RS-3 / RS-5 groups, and BEFORE the CARRY / EMITTER
-    // blobs so the verbatim blob state machines can never swallow them.  The RC key's
-    // CB family ("GPS_DCB", "GPS_IFB5", …) and the SD key's '|' carry no comma, so
-    // neither needs escaping.  An RC row is the Z row's field set exactly — the
-    // restore therefore runs through the same makeRestoredLocalCarry the L / Z rows do.
+    // existing header like the RS-3 / RS-5 groups, and before the CARRY / EMITTER
+    // blobs so the verbatim blob parsers cannot consume them.  The RC key's CB family
+    // ("GPS_DCB", "GPS_IFB5", …) and the SD key's '|' carry no comma, so neither needs
+    // escaping.  An RC row has the Z row's field set, so the restore runs through the
+    // same makeRestoredLocalCarry as the L / Z rows.
     for (const auto& [key, l] : snap.rx_cb_carry)
         put(fmt::format("RC,{},{},{},{},{}", key.first, key.second,
                         l.value_abs, l.var, l.last_seen_s));
     for (const auto& [key, d] : snap.sh_dev_carry)
         put(fmt::format("SD,{},{},{},{},{}", key, d.dev, d.var, d.var_ss, d.t_s));
-    // RS-8 CANONICAL-SIGNAL records (SPEC_event_harness §21.16): the per-station
-    // per-(constellation, band, obs-type) latch PppModel locks from one epoch's
+    // Canonical-signal records (SPEC_event_harness §21.16; RS-8): the per-station
+    // per-(constellation, band, obs-type) latch that PppModel locks from one epoch's
     // satellite counts.  Written only under network.state_snapshot_signal_capture
     // (the driver leaves the container empty otherwise, so a run without it writes
     // the previous bytes unchanged), under the existing header like the RS-3 / RS-5
-    // / RS-6 groups, and BEFORE the CARRY / EMITTER blobs so the verbatim blob state
-    // machines can never swallow them.  Constellation / band / signal are RINEX
-    // tokens and the obs-type is one char, so none of the fields can carry a comma.
+    // / RS-6 groups, and before the CARRY / EMITTER blobs so the verbatim blob
+    // parsers cannot consume them.  Constellation / band / signal are RINEX tokens
+    // and the obs-type is one char, so none of the fields can carry a comma.
     for (const auto& [idx, rows] : snap.canonical_signals)
         for (const auto& c : rows)
             put(fmt::format("CN,{},{},{},{},{}", idx, c.constellation, c.band,
                             c.obs_type, c.signal));
-    // RS-9 (SPEC_event_harness §21.18): the code-bias LINEARIZATION POINT beside each
-    // RC row, under its own knob (network.state_snapshot_rxcb_lin_capture) so a recipe
-    // may carry the carry's numerator without its reference or both.  Same key shape as
-    // RC — (station roster index, CB state key) — and the same escaping argument (the CB
-    // family carries no comma).  Written under the EXISTING header like every group
-    // above; a reader that finds none behaves exactly as today.
+    // Code-bias linearization point beside each RC row (SPEC_event_harness §21.18;
+    // RS-9), under its own knob (network.state_snapshot_rxcb_lin_capture) so a recipe
+    // can carry the carry's numerator without its reference, or both.  Same key shape
+    // as RC, (station roster index, CB state key), and the same escaping argument (the
+    // CB family carries no comma).  Written under the existing header like every group
+    // above; a reader that finds no RL rows behaves as without the knob.
     for (const auto& [key, xl] : snap.rx_cb_lin)
         put(fmt::format("RL,{},{},{}", key.first, key.second, xl));
     for (const auto& s : snap.ura_retro_sats) put(fmt::format("R,{}", s));
@@ -284,14 +285,15 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
     for (const auto& [sat, n] : snap.ura_refloat_horizon)
         put(fmt::format("Y,{},{}", sat, n));
     for (const auto& s : snap.c1_zoh_active)  put(fmt::format("C,{}", s));
-    for (const auto& [sat, iode] : snap.relevel_iode)   // Card 6
+    for (const auto& [sat, iode] : snap.relevel_iode)   // eph-cutover re-level IODE (Card 6)
         put(fmt::format("I,{},{}", sat, iode));
-    for (const auto& s : snap.eph_cutover_disc_pending) // Card 6
+    for (const auto& s : snap.eph_cutover_disc_pending) // pending eph-cutover disc (Card 6)
         put(fmt::format("X,{}", s));
-    // Card 4 (M1) invariant carry (RTB-7 branch-faithful resume): the ArcKey vertex
-    // numbering, then the z-store blob verbatim (CARRY header .. CEND).  All three are
-    // written ONLY when the carry blob is present (network.state_snapshot_carry), so a
-    // default snapshot is byte-identical to the pre-feature format.
+    // Invariant carry for a branch-faithful resume (Card 4 M1, RTB-7): the ArcKey
+    // vertex numbering (SV, GG), then the z-store blob verbatim (CARRY header .. CEND).
+    // All three are written only when the carry blob is present
+    // (network.state_snapshot_carry), so a default snapshot is byte-identical to the
+    // format without them.
     if (!snap.carry_state.empty()) {
         for (const auto& [sat, vid] : snap.carry_sat_vertex)
             put(fmt::format("SV,{},{}", sat, vid));
@@ -329,10 +331,10 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
     bool saw_meta = false, saw_counters = false, saw_ramp = false;
     bool saw_end = false, in_emitter = false, emitter_done = false;
     bool in_carry = false, carry_done = false;
-    // §18.12 coupling records are STAGED and spliced AFTER the loop, so the record
-    // dispatch stays ORDER-FREE (a QL may legally precede its L row).  Resolving a QL
-    // into s.local_carry inline would silently make correctness depend on writer line
-    // order — a property nothing else in this format has.
+    // The §18.12 coupling records are staged and spliced after the loop, so the record
+    // dispatch stays independent of line order (a QL may legally precede its L row).
+    // Resolving a QL into s.local_carry inline would make correctness depend on the
+    // writer's line order, which nothing else in this format does.
     std::map<std::tuple<int, std::string, std::string>,
              std::vector<std::pair<int, double>>> q_rows;
     std::map<int, std::vector<std::pair<int, double>>> q_zrows;
@@ -372,7 +374,7 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
             s.emitter_state += '\n';
             continue;
         }
-        if (line.rfind("CARRY,", 0) == 0) {   // Card 4 invariant carry z-store blob
+        if (line.rfind("CARRY,", 0) == 0) {   // invariant-carry z-store blob (Card 4)
             if (carry_done) return fail("duplicate carry section");
             in_carry = true;
             s.carry_state += line;
@@ -500,29 +502,29 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
         } else if (tag == "C") {
             if (f.size() != 2) return fail("malformed C line");
             s.c1_zoh_active.insert(f[1]);
-        } else if (tag == "I") {   // Card 6 eph re-level baseline
+        } else if (tag == "I") {   // eph re-level baseline IODE (Card 6)
             if (f.size() != 3) return fail("malformed I line");
             if (!parseI(f[2], i1)) return fail("malformed I iode");
             s.relevel_iode[f[1]] = static_cast<int>(i1);
-        } else if (tag == "X") {   // Card 6 pending eph-cutover disc
+        } else if (tag == "X") {   // pending eph-cutover disc (Card 6)
             if (f.size() != 2) return fail("malformed X line");
             s.eph_cutover_disc_pending.insert(f[1]);
-        } else if (tag == "SV") {  // Card 4: satellite -> carry vertex id
+        } else if (tag == "SV") {  // satellite -> carry vertex id (Card 4)
             if (f.size() != 3) return fail("malformed SV line");
             if (!parseI(f[2], i1)) return fail("malformed SV vertex id");
             s.carry_sat_vertex[f[1]] = static_cast<int>(i1);
-        } else if (tag == "GG") {  // Card 4: (const,signal) -> carry group id
+        } else if (tag == "GG") {  // (const,signal) -> carry group id (Card 4)
             if (f.size() != 4 || f[1].size() != 1) return fail("malformed GG line");
             if (!parseI(f[3], i1)) return fail("malformed GG group id");
             s.carry_group_id.emplace_back(f[1][0], f[2], static_cast<int>(i1));
-        } else if (tag == "PA") {   // §18.10 frame: phase-anchor incumbent
+        } else if (tag == "PA") {   // frame record, phase-anchor incumbent (§18.10)
             if (f.size() != 3) return fail("malformed PA line");
             s.anchor_incumbent[f[1]] = f[2];
-        } else if (tag == "PT") {   // §18.10 frame: sticky pin target
+        } else if (tag == "PT") {   // frame record, sticky pin target (§18.10)
             if (f.size() != 3) return fail("malformed PT line");
             if (!parseD(f[2], d1)) return fail("malformed PT target");
             s.anchor_pin_target[f[1]] = d1;
-        } else if (tag == "CA") {   // §18.10 frame: clock-anchor per-sat state
+        } else if (tag == "CA") {   // frame record, clock-anchor per-sat state (§18.10)
             if (f.size() != 7) return fail("malformed CA line");
             NetworkStateSnapshot::ClockAnchorSat ca;
             if (!parseD(f[2], ca.t_last) || !parseD(f[3], ca.last_value)
@@ -531,18 +533,18 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
             ca.in_band  = static_cast<int>(i1);
             ca.anchored = (i2 != 0);
             s.clock_anchor[f[1]] = ca;
-        } else if (tag == "FA") {   // §18.10 frame: CLK-R accumulator
+        } else if (tag == "FA") {   // frame record, CLK-R accumulator (§18.10)
             if (f.size() != 3 || f[1].size() != 1) return fail("malformed FA line");
             if (!parseD(f[2], d1)) return fail("malformed FA value");
             s.clk_frame_acc[f[1][0]] = d1;
-        } else if (tag == "FP") {   // §18.10 frame: CLK-R per-sat baseline
+        } else if (tag == "FP") {   // frame record, CLK-R per-sat baseline (§18.10)
             if (f.size() != 4) return fail("malformed FP line");
             if (!parseD(f[2], d1) || !parseD(f[3], d2)) return fail("malformed FP fields");
             s.clk_frame_prev[f[1]] = {d1, d2};
-        } else if (tag == "FE") {   // §18.10 frame: CLK-R epoch count
+        } else if (tag == "FE") {   // frame record, CLK-R epoch count (§18.10)
             if (f.size() != 2 || !parseI(f[1], i1)) return fail("malformed FE line");
             s.clk_frame_epochs = static_cast<long long>(i1);
-        } else if (tag == "QS") {   // §18.12: coupling shared-column dictionary entry
+        } else if (tag == "QS") {   // coupling shared-column dictionary entry (§18.12)
             if (f.size() != 11) return fail("malformed QS line");
             long long id = 0, kd = 0, shn = 0, shm = 0, trg = 0, lay = 0;
             if (!parseI(f[1], id) || !parseI(f[2], kd) || !parseI(f[5], shn)
@@ -554,34 +556,34 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
                                         "(expected {}, saw {})",
                                         s.coupling_dict.size(), id));
             if (kd < 0 || kd > 3) return fail("QS kind out of range");
-            // p_prev == 0 is MEANINGFUL (datum-pinned / ensemble-gauge column, exactly
-            // known — Card 1e); only a NEGATIVE or non-finite value is corrupt.  fmt
+            // p_prev == 0 is valid (a datum-pinned or ensemble-gauge column, known
+            // exactly; Card 1e); only a negative or non-finite value is corrupt.  fmt
             // writes "nan"/"inf" and parseD consumes them fully, so without this screen a
-            // poisoned value round-trips silently and then hits buildCplRow's own guard
-            // (NetworkCoupling.cpp:305), which DROPS the whole row — losing the arc's
-            // LEVEL, not just its coupling.
+            // corrupt value round-trips and then hits buildCplRow's non-finite RHS guard
+            // (NetworkCoupling.cpp), which skips the whole row and so loses the arc's
+            // level, not just its coupling.
             if (!std::isfinite(d1) || !std::isfinite(d2) || d2 < 0.0)
                 return fail("QS ŝ_prev/P_prev not finite, or P_prev < 0");
             NetworkStateSnapshot::CouplingCol q;
             q.kind = static_cast<int>(kd);
-            q.sat = f[3];  q.signal = f[4];        // legally EMPTY (VtecSh / Clock)
+            q.sat = f[3];  q.signal = f[4];        // may be empty (VtecSh / Clock)
             q.sh_n = static_cast<int>(shn);
             q.sh_m = static_cast<int>(shm);
             q.sh_trig = static_cast<int>(trg);
             q.sh_layer = static_cast<int>(lay);
             q.s_prev = d1;  q.p_prev = d2;
             s.coupling_dict.push_back(std::move(q));
-        } else if (tag == "QL" || tag == "QZ") {   // §18.12: one carried row's regression
+        } else if (tag == "QL" || tag == "QZ") {   // one carried row's regression (§18.12)
             const bool zrow = (tag == "QZ");
             const std::size_t head = zrow ? 3u : 5u;   // tag, idx [, sat, signal], k
             if (f.size() < head) return fail("malformed " + tag + " line");
             long long k = 0;
             if (!parseI(f[head - 1], k) || k <= 0)
                 return fail("malformed " + tag + " entry count");
-            // Row COMPLETENESS is a parser-enforced invariant: a PARTIALLY restored
-            // coefficient vector breaks Card 1e's exact gauge identity and is strictly
-            // WORSE than no coupling at all.  The explicit k is what makes this
-            // checkable — a line that lost one whole (id, M) pair still has even arity.
+            // The parser enforces row completeness: a partially restored coefficient
+            // vector breaks the exact gauge identity (Card 1e) and is worse than no
+            // coupling at all.  The explicit k makes this checkable, because a line that
+            // lost one whole (id, M) pair still has even arity.
             if (f.size() != head + 2u * static_cast<std::size_t>(k))
                 return fail(fmt::format("{} entry-count mismatch (says {}, saw {} field(s))",
                                         tag, k, f.size() - head));
@@ -601,17 +603,17 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
                 : q_rows.emplace(std::make_tuple(static_cast<int>(i1), f[2], f[3]),
                                  std::move(ents)).second;
             if (!fresh) return fail("duplicate " + tag + " row");
-        } else if (tag == "QR") {   // §18.12: write-epoch clock-monitor refloat set
+        } else if (tag == "QR") {   // write-epoch clock-monitor refloat set (§18.12)
             if (f.size() != 2) return fail("malformed QR line");
             s.clock_refloat_sats.insert(f[1]);
-        } else if (tag == "QK") {   // §18.12 (2a): dense-carry key, row order
+        } else if (tag == "QK") {   // dense-carry key, row order (§18.12 (2a))
             if (f.size() != 3) return fail("malformed QK line");
             long long id = 0;
             if (!parseI(f[1], id) || id != static_cast<long long>(s.carry_cov_keys.size()))
                 return fail("QK ids must be dense and ascending");
             if (f[2].empty()) return fail("empty QK key");
             s.carry_cov_keys.push_back(f[2]);
-        } else if (tag == "QP") {   // §18.12 (2a): dense-carry covariance row (lower triangle)
+        } else if (tag == "QP") {   // dense-carry covariance row, lower triangle (§18.12 (2a))
             if (f.size() < 3) return fail("malformed QP line");
             long long id = 0, n = 0;
             if (!parseI(f[1], id) || id != static_cast<long long>(s.carry_cov_rows.size()))
@@ -626,55 +628,55 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
                 row[static_cast<std::size_t>(e)] = d1;
             }
             s.carry_cov_rows.push_back(std::move(row));
-        } else if (tag == "EQD") {  // RS-3: eq34 sticky datum receiver per (cons,signal)
+        } else if (tag == "EQD") {  // eq34 sticky datum receiver per (cons,signal) (RS-3)
             if (f.size() != 3 || f[1].empty() || f[2].empty())
                 return fail("malformed EQD line");
             s.eq34_datum_rx[f[1]] = f[2];
-        } else if (tag == "EQP") {  // RS-3: receiver's parent-edge satellite
+        } else if (tag == "EQP") {  // receiver's parent-edge satellite (RS-3)
             if (f.size() != 3 || f[1].empty() || f[2].empty())
                 return fail("malformed EQP line");
             s.eq34_rx_parent[f[1]] = f[2];
-        } else if (tag == "EQS") {  // RS-3: satellite's component datum receiver
+        } else if (tag == "EQS") {  // satellite's component datum receiver (RS-3)
             if (f.size() != 3 || f[1].empty() || f[2].empty())
                 return fail("malformed EQS line");
             s.eq34_sat_root[f[1]] = f[2];
-        } else if (tag == "EQT") {  // RS-3: last epoch's per-(station, amb) pin target
+        } else if (tag == "EQT") {  // last epoch's per-(station, amb) pin target (RS-3)
             if (f.size() != 4 || f[2].empty()) return fail("malformed EQT line");
             if (!parseI(f[1], i1) || !parseD(f[3], d1)) return fail("malformed EQT fields");
             s.eq34_prev_target[{static_cast<int>(i1), f[2]}] = d1;
-        } else if (tag == "EQE") {  // RS-3: last epoch's per-(station, sat) arc elevation
+        } else if (tag == "EQE") {  // last epoch's per-(station, sat) arc elevation (RS-3)
             if (f.size() != 4 || f[2].empty()) return fail("malformed EQE line");
             if (!parseI(f[1], i1) || !parseD(f[3], d1)) return fail("malformed EQE fields");
             s.eq34_prev_el[{static_cast<int>(i1), f[2]}] = d1;
-        } else if (tag == "EQR") {  // RS-3: gap-retained tree edge
+        } else if (tag == "EQR") {  // gap-retained tree edge (RS-3)
             if (f.size() != 3 || f[2].empty()) return fail("malformed EQR line");
             if (!parseI(f[1], i1)) return fail("malformed EQR station index");
             s.eq34_retained_edges.emplace(static_cast<int>(i1), f[2]);
-        } else if (tag == "CBP") {  // RS-3: time-linked code-bias previous value
+        } else if (tag == "CBP") {  // time-linked code-bias previous value (RS-3)
             if (f.size() != 4 || f[1].empty() || f[2].empty())
                 return fail("malformed CBP line");
             if (!parseD(f[3], d1)) return fail("malformed CBP value");
-            // The whole point of the map is a FINITE previous realization to
-            // difference against; a nan/inf would be accepted by strtod and then
-            // silently poison the veteran-referenced sum-to-zero RHS.
+            // The map holds a finite previous realization to difference against;
+            // strtod accepts nan/inf, which would then corrupt the
+            // veteran-referenced sum-to-zero RHS without any error.
             if (!std::isfinite(d1)) return fail("CBP value not finite");
             s.code_bias_prev[f[1]][f[2]] = d1;
-        } else if (tag == "CBS") {  // RS-3: code-bias ever-harvested satellite
+        } else if (tag == "CBS") {  // code-bias ever-harvested satellite (RS-3)
             if (f.size() != 2 || f[1].empty()) return fail("malformed CBS line");
             s.code_bias_sat_seen.insert(f[1]);
-        } else if (tag == "CBI") {  // RS-3: code-bias IF-pin reference pair
+        } else if (tag == "CBI") {  // code-bias IF-pin reference pair (RS-3)
             if (f.size() != 4 || f[1].empty() || f[2].empty() || f[3].empty())
                 return fail("malformed CBI line");
             s.code_bias_ifpin_pair[f[1]] = {f[2], f[3]};
-        } else if (tag == "ER") {   // RS-5: eq34 emit re-base emission frame
+        } else if (tag == "ER") {   // eq34 emit re-base emission frame (RS-5)
             if (f.size() != 3 || f[1].empty()) return fail("malformed ER line");
             if (!parseD(f[2], d1)) return fail("malformed ER value");
-            // The restored value IS the frame the next epoch differences against; a
-            // nan/inf strtod would accept here would propagate into every re-based
-            // emitted bias for that key (the CBP precedent).
+            // The restored value is the frame the next epoch differences against; a
+            // nan/inf, which strtod accepts, would propagate into every re-based
+            // emitted bias for that key (same screen as CBP).
             if (!std::isfinite(d1)) return fail("ER value not finite");
             s.emit_rebase_last[f[1]] = d1;
-        } else if (tag == "PF") {   // RS-5: PB emit filter per-key posterior
+        } else if (tag == "PF") {   // PB emit filter per-key posterior (RS-5)
             if (f.size() != 5 || f[1].empty()) return fail("malformed PF line");
             if (!parseD(f[2], d1) || !parseD(f[3], d2) || !parseD(f[4], d3))
                 return fail("malformed PF fields");
@@ -682,30 +684,30 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
                 || d2 < 0.0)
                 return fail("PF field not finite (or a negative variance)");
             s.pb_filter_state[f[1]] = NetworkStateSnapshot::PbFilterKey{d1, d2, d3};
-        } else if (tag == "PS") {   // RS-5: PB filter per-constellation step accumulator
-            // f[1] is legitimately EMPTY for the pooled bucket (split_by_const false) —
-            // the one record in this format whose key field may be blank.
+        } else if (tag == "PS") {   // PB filter per-constellation step accumulator (RS-5)
+            // f[1] is empty for the pooled bucket (split_by_const false); this is the
+            // one record in the format whose key field may be blank.
             if (f.size() != 4) return fail("malformed PS line");
             if (!parseD(f[2], d1) || !parseD(f[3], d2)) return fail("malformed PS fields");
             if (!std::isfinite(d1) || !std::isfinite(d2) || d2 < 0.0)
                 return fail("PS field not finite (or a negative row count)");
             s.pb_filter_step[f[1]] = NetworkStateSnapshot::PbFilterStep{d1, d2};
-        } else if (tag == "RC") {   // RS-6: receiver code-bias (rx-CB) carry entry
+        } else if (tag == "RC") {   // receiver code-bias (rx-CB) carry entry (RS-6)
             if (f.size() != 6 || f[2].empty()) return fail("malformed RC line");
             if (!parseI(f[1], i1)) return fail("malformed RC station index");
             if (!parseD(f[3], d1) || !parseD(f[4], d2) || !parseD(f[5], d3))
                 return fail("malformed RC fields");
-            // The restored value_abs IS the prior the next fold's innovation
-            // differences against and `var` is its weight, so a nan/inf strtod would
-            // accept here (the ER / CBP precedent) would poison every subsequent
-            // fold of that (station, family).  A non-positive variance is refused for
-            // the same reason: the harvest only ever stashes var > 0.
+            // The restored value_abs is the prior the next fold's innovation
+            // differences against and `var` is its weight, so a nan/inf (which strtod
+            // accepts; same screen as ER / CBP) would corrupt every later fold of that
+            // (station, family).  A non-positive variance is refused as well, since
+            // the harvest only stashes var > 0.
             if (!std::isfinite(d1) || !std::isfinite(d2) || !std::isfinite(d3)
                 || !(d2 > 0.0))
                 return fail("RC field not finite (or a non-positive variance)");
             s.rx_cb_carry[{static_cast<int>(i1), f[2]}] =
                 NetworkStateSnapshot::Local{d1, d2, d3};
-        } else if (tag == "SD") {   // RS-6: T5 / Iono-2 per-LOS deviation carry entry
+        } else if (tag == "SD") {   // T5 / Iono-2 per-LOS deviation carry entry (RS-6)
             if (f.size() != 6 || f[1].empty()) return fail("malformed SD line");
             if (!parseD(f[2], d1) || !parseD(f[3], d2) || !parseD(f[4], d3))
                 return fail("malformed SD fields");
@@ -715,12 +717,12 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
                 || !std::isfinite(d4) || d2 < 0.0 || d3 < 0.0)
                 return fail("SD field not finite (or a negative variance)");
             s.sh_dev_carry[f[1]] = NetworkStateSnapshot::ShDev{d1, d2, d3, d4};
-        } else if (tag == "CN") {   // RS-8: canonical-signal latch entry
+        } else if (tag == "CN") {   // canonical-signal latch entry (RS-8)
             // Refused at the parse like the RC / SD rows: the restored signal becomes
-            // the station's LOCKED per-band channel for the whole leg, so a malformed
-            // row is not something to skip quietly — an obs-type that is neither 'C'
-            // nor 'L' would install an entry no lookup can ever match, which reads as
-            // a cold latch for that band and re-opens the very defect this carries.
+            // the station's locked per-band channel for the whole leg, so a malformed
+            // row is not skipped.  An obs-type other than 'C' or 'L' would install an
+            // entry no lookup can match; that band then acts as a cold latch and is
+            // re-decided on the resume epoch, which this record exists to prevent.
             if (f.size() != 6 || f[2].empty() || f[3].empty() || f[5].empty())
                 return fail("malformed CN line");
             if (!parseI(f[1], i1) || i1 < 0) return fail("malformed CN station index");
@@ -728,18 +730,18 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
                 return fail("CN obs-type must be exactly 'C' or 'L'");
             s.canonical_signals[static_cast<int>(i1)].push_back(
                 NetworkStateSnapshot::CanonSignal{f[2], f[3], f[4][0], f[5]});
-        } else if (tag == "RL") {   // RS-9: code-bias linearization point (x_lin)
+        } else if (tag == "RL") {   // code-bias linearization point, x_lin (RS-9)
             if (f.size() != 4 || f[2].empty()) return fail("malformed RL line");
             if (!parseI(f[1], i1)) return fail("malformed RL station index");
             if (!parseD(f[3], d1)) return fail("malformed RL x_lin");
-            // Refused on the RC ground, one step sharper: this value becomes the
-            // station's code-bias LINEARIZATION POINT for the whole run, so a nan/inf
-            // strtod would accept here would make every subsequent innovation of that
-            // (station, family) non-finite — and, through computeRawResidual, poison
-            // the first epoch's iono and ambiguity seeds too.  No sign or magnitude
-            // screen: a receiver DCB is legitimately either sign and the seed path's
-            // own |est| < 200 m sanity bound belongs to the MEDIAN estimator, not to a
-            // value the writer already solved for.
+            // Refused on the same ground as RC: this value becomes the station's
+            // code-bias linearization point for the whole run, so a nan/inf (which
+            // strtod accepts) would make every later innovation of that (station,
+            // family) non-finite and, through computeRawResidual, corrupt the first
+            // epoch's iono and ambiguity seeds.  No sign or magnitude screen: a
+            // receiver DCB can have either sign, and the seed path's |est| < 200 m
+            // sanity bound applies to the median estimator, not to a value the writer
+            // already solved for.
             if (!std::isfinite(d1)) return fail("RL x_lin not finite");
             s.rx_cb_lin[{static_cast<int>(i1), f[2]}] = d1;
         } else {
@@ -753,14 +755,14 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
     if (!saw_meta || !saw_counters || !saw_ramp)
         return fail("missing mandatory metadata (M/N/U) line");
 
-    // §18.12 splice: bind the staged coupling rows to their L / Z carries.  EVERY
-    // failure here is a HARD parse failure — never a silent partial restore.  The
-    // caller already treats a parse failure as the cold-start signal
-    // (NetworkRunContext.cpp:1087-1091), which is byte-identical to today, and
-    // throws under network.state_snapshot_require; a file whose regressors cannot be
-    // read WHOLE must not resume with truncated rows (Card 1e amputation:
-    // Mᵀg_s ≠ −g_r(c) ⇒ every coupling row observes the clock gauge ⇒ the W5
-    // null-space gate withholds each rows-carrying epoch).
+    // Bind the staged coupling rows to their L / Z carries (§18.12 splice).  Every
+    // failure here is a hard parse failure, never a partial restore.  The caller
+    // (networkTryWarmResume in NetworkRunContext.cpp) treats a parse failure as a
+    // cold start, byte-identical to a run without a snapshot, or refuses the run
+    // under network.state_snapshot_require.  A file
+    // whose regressors cannot be read whole must not resume with truncated rows
+    // (Card 1e amputation: Mᵀg_s ≠ −g_r(c), so every coupling row observes the clock
+    // gauge and the W5 null-space gate withholds each epoch that carries rows).
     const auto ids_ok = [&](const std::vector<std::pair<int, double>>& v, int& bad) {
         for (const auto& e : v)
             if (e.first < 0
@@ -789,8 +791,8 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
             return fail(fmt::format("QZ,{} has no matching Z row", idx));
         s.coupling_zrows[idx] = std::move(ents);
     }
-    // §18.12 (2a): the dense-carry side-car must be WHOLE — n keys and n rows (row i's
-    // length i+1 is checked per row above) — or absent.  A partial block is a hard failure.
+    // The dense-carry side-car (§18.12 (2a)) must be whole (n keys and n rows; row i's
+    // length i+1 is checked per row above) or absent.  A partial block is a hard failure.
     if (s.carry_cov_rows.size() != s.carry_cov_keys.size())
         return fail(fmt::format("QK/QP count mismatch ({} key(s), {} row(s))",
                                 s.carry_cov_keys.size(), s.carry_cov_rows.size()));
@@ -822,23 +824,22 @@ bool NetworkStateSnapshotIO::write(const std::filesystem::path& path,
     }   // closed before the replace
 
     // Atomic replace.  MSVC's std::filesystem::rename maps to
-    // MoveFileExW(MOVEFILE_COPY_ALLOWED | MOVEFILE_REPLACE_EXISTING) — verified
-    // in the toolset's crt/src/stl/filesystem.cpp — so an existing destination
-    // is replaced in one step.  COPY_ALLOWED degrades to copy+delete only
-    // ACROSS volumes; the temp file lives beside the target (path + ".tmp"),
-    // i.e. always the same volume, so the replace is a metadata-only atomic
-    // rename here.  ON THIS PRIMARY PATH a crash at any point leaves either the
-    // old complete file or the new complete file at @p path — the previous good
-    // snapshot is never opened or written in place.
+    // MoveFileExW(MOVEFILE_COPY_ALLOWED | MOVEFILE_REPLACE_EXISTING) (see the
+    // toolset's crt/src/stl/filesystem.cpp), so an existing destination is
+    // replaced in one step.  COPY_ALLOWED degrades to copy+delete only across
+    // volumes; the temp file lives beside the target (path + ".tmp"), on the same
+    // volume, so the replace is a metadata-only atomic rename.  On this primary
+    // path a crash at any point leaves either the old complete file or the new
+    // complete file at @p path; the previous snapshot is never opened or written
+    // in place.
     //
     // The remove+rename fallback below is a portability backstop for an
-    // implementation that refuses an existing target; it is NOT reached on MSVC
-    // (the replace above already handles an existing destination) and — unlike
-    // the primary rename — it is NOT atomic: a crash in the window between the
-    // remove and the rename leaves neither file at @p path.  The intact
-    // "<path>.tmp" still survives that window (recoverable by hand), and reaching
-    // the branch at all already implies the atomic replace itself failed, so we
-    // accept the narrow non-atomic gap rather than claim a guarantee it lacks.
+    // implementation that refuses an existing target.  It is not reached on MSVC
+    // (the rename above already replaces an existing destination) and, unlike the
+    // primary rename, it is not atomic: a crash between the remove and the rename
+    // leaves no file at @p path.  The intact "<path>.tmp" survives that window
+    // (recoverable by hand), and the branch runs only after the atomic replace has
+    // already failed, so the narrow non-atomic gap is accepted.
     std::error_code ec;
     std::filesystem::rename(tmp, path, ec);
     if (ec) {
@@ -923,9 +924,9 @@ std::string NetworkStateSnapshotIO::warmResumeRefusalMessage(bool require,
     }
 
     // The one refusal with a harness-specific remedy.  A leg overwrites its own
-    // seed at its FIRST emitted epoch (state_snapshot_interval_s does not suppress
+    // seed at its first emitted epoch (state_snapshot_interval_s does not suppress
     // that write), so relaunching the exe on an already-run leg.json puts the
-    // first live epoch AT the snapshot epoch — age 0.000 s.
+    // first live epoch at the snapshot epoch (age 0.000 s).
     const char* remedy =
         (why == WarmResumeRefusal::NonPositiveAge)
             ? "  This is what an EVENT-HARNESS leg relaunched IN PLACE looks like: the "

@@ -12,33 +12,34 @@ matrix. This tool is that gate.
 
 Design constraints (from the plan, verifier-hardened):
 
-* **NOT vacuously passable.** A golden records its exact artifact set (relative
-  paths + expected-non-empty flags + QC data-row counts). ``compare`` FAILS on
-  any missing OR extra file, and on any QC trace that the golden had rows in but
-  the candidate does not. An empty/degenerate golden fails at ``capture`` time.
-* **Field-aware masks, frozen.** The only permitted differences are wall-clock /
-  build-stamp fields, masked at column (CSV) or key (JSON) granularity — never by
-  excluding a whole artifact. The strongest full-precision artifact (the state
-  snapshot) is masked field-level, never file-level. The mask list is discovered
-  empirically (``selfcheck`` = run the binary twice, self-compare) and then
-  FROZEN. After freeze, a newly *needed* mask mid-series is a red flag that
-  behavior changed — not a fixture to update.
+* Not vacuously passable: a golden records its exact artifact set (relative
+  paths, expected-non-empty flags, QC data-row counts). ``compare`` fails on
+  any missing or extra file, and on any QC trace that the golden had rows in
+  but the candidate does not. An empty or degenerate golden fails at
+  ``capture`` time.
+* Field-aware masks, frozen: the only permitted differences are wall-clock or
+  build-stamp fields, masked at column (CSV) or key (JSON) granularity, never
+  by excluding a whole artifact. The strongest full-precision artifact (the
+  state snapshot) is masked field-level, never file-level. The mask list is
+  discovered empirically (``selfcheck`` runs the binary twice and self-
+  compares) and then frozen. After freeze, a mask newly needed mid-series is a
+  sign that behavior changed, not a fixture to update.
 
 The known wall-clock writers (verified against the tree, INC 0) are seeded in
 ``DEFAULT_MASKSPEC`` below with their source anchors.
 
 Commands
 --------
-* ``capture  <run_dir> --out <golden_manifest.json>`` — record the golden's
+* ``capture  <run_dir> --out <golden_manifest.json>``: record the golden's
   artifact set, per-file normalized SHA-256, CSV row counts, and manifest
   counters. Asserts non-vacuous.
-* ``compare  <golden_dir> <cand_dir>`` — the increment gate. Exit 0 iff the
+* ``compare  <golden_dir> <cand_dir>``: the increment gate. Exit 0 iff the
   normalized artifact sets are identical. Can also take ``--manifest`` instead of
   a golden dir.
-* ``selfcheck <dir_a> <dir_b>`` — twice-run self-compare for empirical mask
+* ``selfcheck <dir_a> <dir_b>``: twice-run self-compare for empirical mask
   discovery. Reports every normalized diff, flagging which are already covered by
   the frozen maskspec. Informational (exit 0 unless ``--strict``).
-* ``dump-maskspec [--out spec.json]`` — emit the default frozen maskspec for
+* ``dump-maskspec [--out spec.json]``: emit the default frozen maskspec for
   review/editing.
 
 Usage
@@ -74,12 +75,12 @@ from typing import Dict, List, Optional, Tuple
 
 # ----------------------------------------------------------------------------
 # Frozen mask specification. Every entry cites the source writer verified at
-# INC 0. Extend ONLY via the selfcheck -> review -> freeze workflow; a mask added
+# INC 0. Extend only via the selfcheck -> review -> freeze workflow; a mask added
 # to make a mid-series diff disappear is masking a behavior change.
 # ----------------------------------------------------------------------------
 DEFAULT_MASKSPEC: dict = {
     # JSON/JSONL artifacts: masked keys are blanked before compare. Dotted paths
-    # index into nested objects (e.g. "build.compiled").
+    # index into nested objects (for example "build.compiled").
     "json_key_masks": {
         # network_run_manifest.json (ApplicationNetwork.cpp:1611/1614/7071)
         "network_run_manifest.json": ["written_utc", "build.compiled", "loop_ms"],
@@ -94,7 +95,7 @@ DEFAULT_MASKSPEC: dict = {
     # State snapshot file (path is config-driven: network.state_snapshot_path).
     # Matched by basename substring; M-line wall_utc masked field-level
     # (NetworkStateSnapshot.cpp:118-120; ApplicationNetwork.cpp:6939).
-    # The v1 snapshot is a line-record format (M/N/U/D/... records), NOT JSONL:
+    # The v1 snapshot is a line-record format (M/N/U/D/... records), not JSONL:
     # the only wall-clock field is the ISO-UTC stamp on the M record, masked by
     # snapshot_utc_regex below (applied to M-lines only). The JSON key mask is
     # kept for forward compatibility should the format ever become JSONL.
@@ -103,22 +104,22 @@ DEFAULT_MASKSPEC: dict = {
     "snapshot_utc_regex": r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z",
     "snapshot_utc_token": "<UTC>",
     # Product file (network.product_output_path): G-line generation_time is a
-    # wall-clock stamp ONLY under network.emit_generation_time
+    # wall-clock stamp only under network.emit_generation_time
     # (NetworkProductIO.cpp:437-439; ApplicationNetwork.cpp:5151). Matched by
     # suffix; the generation_time token on a "G " record line is canonicalized.
     "product_name_hints": [".ssr", ".rtcm", ".prod", "product"],
     "product_genline_prefixes": ["G "],
     # spdlog text logs (LogManager.cpp:363 pattern "[%E] ..."): the leading
     # bracketed timestamp is canonicalized. run.log is the stdout capture; the
-    # golden run-wrapper may already dash-mask it — the same regex normalizes both.
+    # golden run-wrapper may already dash-mask it, and the same regex normalizes both.
     "log_ts_regex": r"^\[[^\]]*\]",
     "log_ts_token": "[TS]",
     # .log content is bulky and, under parallel station regions, can carry
     # nondeterministic line ordering from shared module loggers. Default: logs are
-    # SET-checked (presence/absence) but not content-compared. --include-logs turns
+    # checked for presence/absence but not content-compared. --include-logs turns
     # on ts-masked content compare (use on serial goldens only).
     "log_content_default_off": True,
-    # run.log (stdout capture) IS content-compared by default, ts-masked, plus any
+    # run.log (stdout capture) is content-compared by default, ts-masked, plus any
     # timing summary lines matching these regexes are dropped.
     "runlog_name": "run.log",
     # Whole-line drops: lines that are purely wall-clock timing summaries.
@@ -174,7 +175,7 @@ def _normalize_jsonl(lines: List[str], key_masks: List[str]) -> List[str]:
         try:
             obj = json.loads(s)
         except json.JSONDecodeError:
-            out.append(ln)  # not JSON — compare verbatim
+            out.append(ln)  # not JSON, compare verbatim
             continue
         if isinstance(obj, dict):
             for k in key_masks:
@@ -187,7 +188,7 @@ def _mask_snapshot_records(lines: List[str], spec: dict) -> List[str]:
     """Mask the wall-UTC stamp on v1 line-record snapshot M-lines.
 
     The v1 snapshot ("# gnss_network_state_snapshot v1") is a line-record
-    format whose ONLY wall-clock field is the ISO-UTC token on the M (meta)
+    format whose only wall-clock field is the ISO-UTC token on the M (meta)
     record; every other record is full-precision deterministic state. Non-M
     lines pass through verbatim.
     """
@@ -334,7 +335,7 @@ class Result:
 # ----------------------------------------------------------------------------
 def _manifest_counters(root: str) -> dict:
     """Pull the deterministic counters from network_run_manifest.json's complete
-    record (n_synced/n_emitted/n_skipped/... ) — the strongest byte-identity
+    record (n_synced/n_emitted/n_skipped/... ), the strongest byte-identity
     signal outside the CSVs."""
     for rel in list_artifacts(root):
         if os.path.basename(rel) == "network_run_manifest.json":

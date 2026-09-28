@@ -2,15 +2,15 @@
 
 The geographic viewers (``viewers/network_map`` and the ionosphere pierce-point
 map) draw a world coastline as their backdrop.  Rather than depend on a heavy
-GIS stack (cartopy / pyproj / shapely) — against the suite's
-numpy/pandas/matplotlib-only philosophy — the coastline is *vendored* as a
-compact polyline JSON under ``assets/coastline_110m.json`` (Natural Earth 110 m,
-public domain; regenerate with ``scripts/fetch_coastline.py``).
+GIS stack (cartopy / pyproj / shapely), which the suite's numpy/pandas/matplotlib-only
+design avoids, the coastline is *vendored* as a compact polyline JSON under
+``assets/coastline_110m.json`` (Natural Earth 110 m, public domain; regenerate
+with ``scripts/fetch_coastline.py``).
 
 :func:`load_coastline` returns two ``float`` arrays ``(lon, lat)`` with ``NaN``
 separators between polylines, so the whole coastline draws with one gap-aware
 ``plot(lon, lat)`` call (the same NaN-break idiom the time-series viewers use).
-If the asset is missing the loader returns empty arrays — callers degrade to a
+If the asset is missing the loader returns empty arrays, and callers degrade to a
 graticule-only map rather than failing.
 """
 

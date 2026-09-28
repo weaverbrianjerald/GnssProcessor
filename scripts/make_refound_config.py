@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Generate the two RF-0 base configs from the two goldens.
 
-ONE posture, two beds (docs/refound/NETWORK_REFOUNDING_2026-09-14.md).  The posture
-dict is built ONCE and both configs are posture + a bed overlay, so the POSTURE half
-of the classified diff is empty BY CONSTRUCTION.
+One posture, two beds (docs/refound/NETWORK_REFOUNDING_2026-09-14.md). The posture
+dict is built once and both configs are posture plus a bed overlay, so the posture
+half of the classified diff is empty by construction.
 """
 import json, os, sys, copy
 
@@ -49,8 +49,8 @@ sim, _ = load_config(SIM_G)
 ff, fs = flat(field), flat(sim)
 
 # --------------------------------------------------------------------------------
-# 1. the shared POSTURE: union of the two goldens, FIELD wins on conflict
-#    ("Freeze the posture at your model on the field"), then the RF-0 deltas.
+# 1. the shared posture: union of the two goldens, field wins on conflict
+#    ("freeze the posture at the model on the field"), then the RF-0 deltas.
 # --------------------------------------------------------------------------------
 BED_KEYS = {
     "network.stations",
@@ -72,7 +72,7 @@ for k, v in ff.items():          # field wins
     if k not in BED_KEYS:
         posture[k] = v
 
-# ---- DROP: keys that must not appear at all -------------------------------------
+# ---- drop: keys that must not appear at all --------------------------------------
 DROP = {
     # --- the decision's scope cut ------------------------------------------------
     "network.code_bias_gf_datum":            "HARD ERROR under frequency_mode dual (GnssConfigLoadNetwork.cpp:3011-3021)",
@@ -131,8 +131,8 @@ for k in DROP:
 
 # ---- the loader's own expansion of the field golden's GPS attribute-priority
 #      string "WCSLXPYMIQ", restricted to bands 1 and 2.  GnssConfigLoad.cpp:795-828:
-#      the STRING form expands over system_bands["GPS"] = {'1','2','5'} x {C,L,D,S} x
-#      attrs and so ALWAYS registers band 5; only the ARRAY form can exclude a band.
+#      the string form expands over system_bands["GPS"] = {'1','2','5'} x {C,L,D,S} x
+#      attrs and so always registers band 5; only the array form can exclude a band.
 ATTRS = "WCSLXPYMIQ"
 gps_prio = [f"{ot}{band}{a}" for band in "12" for ot in "CLDS" for a in ATTRS]
 
@@ -168,7 +168,7 @@ POSTURE_SET = {
     "network.phase_anchor_carry_reref": True,
     "network.phase_datum_min_stations": 2,
     # ---- the physical clock time-link (s24.16 Q3; literals from runs/_cm_c8b/arm.json,
-    #      clock_anchor_q at the physical floor 2.9e-8) ---------------------------
+    #      clock_anchor_q at the physical floor 2.9e-8) --------------------------
     "network.clock_temporal_anchor": True,
     "network.clock_anchor_q": 2.9e-08,
     "network.clock_anchor_abs_m": 2.0,
@@ -186,7 +186,7 @@ POSTURE_SET = {
     # ---- free slant iono: SH dropped from the producer --------------------------
     "network.estimate_iono_sh": False,
     "network.estimate_sat_code_bias": True,
-    # LOAD-BEARING UNDER DUAL — see "HOW DUAL IS MADE SOLVABLE" above.  Without it
+    # Load-bearing under dual: see "HOW DUAL IS MADE SOLVABLE" above. Without it
     # the null-space gate observes 13 against a declared 1 and withholds every epoch.
     "network.rx_code_bias_datum": True,
     "estimation.ionosphere_weighting.enable": True,

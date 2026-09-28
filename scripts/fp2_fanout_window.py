@@ -1,27 +1,27 @@
 #!/usr/bin/env python3
-"""FP-2 FAN-OUT CENSUS on the pre-registered §20.2 window — k in [-1, +2].
+"""FP-2 fan-out census on the pre-registered §20.2 window: k in [-1, +2].
 
     python scripts/fp2_fanout_window.py [--runs C:/GnssProcessor/runs]
                                         [--prefix fp2] [--lo -1] [--hi 2]
                                         [--pb-tol 0.5] [--json out.json]
 
 `scripts/fp1_refslip_census.py` is the full mechanism census and reads the
-fan-out over k in [0, +5].  §22.7 pre-registers the FP-2 bar on a DIFFERENT
-window — ``collateral (non-reference) IF-TD refloats at GOPE k in [-1, +2] must
-read 0 on every G24 PIN leg`` — which reaches one epoch BEFORE the event (an
+fan-out over k in [0, +5].  §22.7 pre-registers the FP-2 bar on a different
+window: ``collateral (non-reference) IF-TD refloats at GOPE k in [-1, +2] must
+read 0 on every G24 PIN leg``, which reaches one epoch before the event (an
 epoch the [0,+5] window cannot see) and stops at +2.  This script reads exactly
 that window and the two companion counts the bar names:
 
-  collateral       T1_if_slip REFLOAT rows at the injected station on satellites
-                   OTHER than the injected one, event MINUS null (a satellite
+  collateral       T1_if_slip refloat rows at the injected station on satellites
+                   other than the injected one, event minus null (a satellite
                    that also refloats in the null is a natural slip, not fan-out);
-  reference's own  the same rows ON the injected satellite — under
+  reference's own  the same rows on the injected satellite: under
                    `if_phase_td_ref_arm_all` the response lands here instead,
                    which is the fix working rather than a cost;
-  PB re-realizations  products ``P`` rows for a COLLATERAL satellite whose value
+  PB re-realizations  products ``P`` rows for a collateral satellite whose value
                    moves > --pb-tol m at the event epoch (FP-1's innocent
                    13.7 m ``P/G32/L1C``), with the phase_disc counter and sigma
-                   on both sides — invariant #7's declaration edge.
+                   on both sides: invariant #7's declaration edge.
 
 Bars (§22.7, verbatim): collateral 0 on every G24 PIN leg; the reference's own
 arcs reset instead; PB datum re-realizations caused by collateral 0.
@@ -50,7 +50,7 @@ ARMS = ("off", "pin")
 
 
 def refloats(legdir, sta, t0, lo, hi):
-    """{sat: [(k, detail)]} — T1_if_slip refloat rows at one station in a window."""
+    """{sat: [(k, detail)]}: T1_if_slip refloat rows at one station in a window."""
     out = {}
     for r in read_events(legdir) or []:
         if r.get("tier") != "T1_if_slip" or r.get("action") != "refloat":

@@ -1,35 +1,35 @@
 #!/usr/bin/env python3
-"""RF-IGN — read the IGNITION-BORN ZERO-Q LEVEL evidence out of a network run.
+"""RF-IGN: read the ignition-born zero-q level evidence out of a network run.
 
 Card: docs/refound/RF-IGN_ignition_born_levels_2026-09-15.md
 
-The question this reads for is standing invariant #1: after RF-PD-fix
+Reads for standing invariant #1. After RF-PD-fix
 (``network.station_prior_before_pd``) the RF-0g field golden emits from epoch 1
-instead of from epoch 42, so ``carry_warm`` -- which is
+instead of from epoch 42, so ``carry_warm``, which is
 ``phase_leveling && n_emitted >= network.phase_leveling_warmup_epochs`` and
-counts EMITTED epochs, not loop epochs (ApplicationNetwork.cpp:1515) -- opens
-70 epochs earlier, and the phase-leveling zero-q level carry is therefore BORN
-out of a colder network (the whole harvest sits inside
+counts emitted epochs rather than loop epochs (ApplicationNetwork.cpp:1515),
+opens 70 epochs earlier. The phase-leveling zero-q level carry is therefore
+born out of a colder network (the whole harvest sits inside
 ``if (carry_warm)`` at NetworkRunContext.cpp:4112).
 
-REPORT-ONLY.  Nothing here writes into a run; every number is read off the
-trace files the run already wrote.  No plotting.
+Report-only: nothing here writes into a run, every number is read off the
+trace files the run already wrote, and there is no plotting.
 
 Sections, matching the card:
 
   (a) birth-TOW distribution of the carried level / ambiguity records.
       Read from ``network_amb_state.csv`` (``event == birth``) when
-      ``network.trace_amb_state`` was armed; otherwise the trace is ABSENT and
-      the section falls back to the two proxies that need no extra knob --
-      the ``carry_warm`` crossing TOW reconstructed from
+      ``network.trace_amb_state`` was armed; otherwise the trace is absent and
+      the section falls back to two proxies that need no extra knob: the
+      ``carry_warm`` crossing TOW reconstructed from
       ``network_epoch_status.csv`` dispositions, and the first
       ``network_prior_residual.csv`` ``pl`` row (the first epoch a leveling
-      prior actually FOLDED, which is one harvest after the first stash).
+      prior actually folded, one harvest after the first stash).
 
-  (b) the ``pl`` (phase-leveling level) prior-residual family per HOUR:
+  (b) the ``pl`` (phase-leveling level) prior-residual family per hour:
       sigma0 and the per-epoch worst |t|, p50/p90, plus the folded row count.
 
-  (c) the per-hour census of every event that could REFRESH a stale level
+  (c) the per-hour census of every event that can refresh a stale level
       (re-level / refloat / re-tap / T4 / anchor handover).
 
   (d) ``network_run_summary.csv`` plus the run-end leveling / carry counters
@@ -57,12 +57,12 @@ import sys
 
 csv.field_size_limit(1 << 24)
 
-# The ignition window this card is about: TOW 259200 (epoch 1) .. 261630, the
-# stretch the OFF golden withheld.  Overridable on the command line.
+# The ignition window this card is about: TOW 259200 (epoch 1) to 261630, the
+# stretch the off golden withheld. Overridable on the command line.
 IGN_LO_DEFAULT = 259200.0
 IGN_HI_DEFAULT = 261630.0
 
-# Events that can REFRESH / retire a carried zero-q level.  (tier, event).
+# Events that can refresh or retire a carried zero-q level. (tier, event).
 REFRESH_EVENTS = [
     ("T4_attrib", "attrib_arc"),
     ("T0_gap", "arc_resume"),
@@ -77,10 +77,10 @@ REFRESH_EVENTS = [
     ("PHASE_ANCHOR", "anchor_handover"),
     ("PHASE_ANCHOR", "anchor_slip_handover"),
     ("RELEVEL", "relevel_free"),
-    # NOT a level refresh -- the observability gate's soft-anchor heal on a
-    # near-null SHARED phase-bias column.  Carried here because its ON/OFF
-    # contrast is the availability half of the same story (it is what the
-    # ignition withholds looked like), and it must not be read as a re-tap.
+    # Not a level refresh: the observability gate's soft-anchor heal on a
+    # near-null shared phase-bias column. Carried here because its on/off
+    # contrast is the availability half of the same story (what the ignition
+    # withholds looked like); do not read it as a re-tap.
     ("GATE", "phase_heal"),
 ]
 
@@ -167,7 +167,7 @@ def carry_warm_crossing(disp, pl_warmup):
     """The first TOW at which carry_warm holds.
 
     carry_warm = phase_leveling && n_emitted >= pl_warmup, and n_emitted
-    EXCLUDES the current epoch (ApplicationNetwork.cpp:1508/1515) -- so the
+    excludes the current epoch (ApplicationNetwork.cpp:1508/1515), so the
     count is taken over the epochs strictly before each row.
     """
     n = 0

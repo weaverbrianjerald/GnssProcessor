@@ -1,25 +1,26 @@
-"""Estimator-free ALL-PAIRS MW census (UWL-1 ladder survey, Jul-16 2026).
+"""Estimator-free all-pairs MW census (UWL-1 ladder survey, 2026-07-16).
 
-Every channel combination across DISTINCT frequency bands, per constellation
-(G/E/C; R excluded FDMA), from raw RINEX — first N epochs.  Per pair:
-  lambda_WL, coverage (stations/sats/arcs), per-SAMPLE sigma (cyc — the n=1
-  decidability number), and star-basis DD fractional stats (med|f|, P<0.10,
-  P<0.15, circR — the network closed-cycle constraint check; receiver and
-  satellite MW biases cancel in the DD, so clustering on integers is the
-  direct measure of the pair's usable integer content).
-Ordered by lambda descending: the integer-accessibility ladder, measured.
+Considers every channel combination across distinct frequency bands, per
+constellation (G/E/C; R excluded, FDMA), from raw RINEX, over the first N
+epochs.  Reports per pair: lambda_WL, coverage (stations/sats/arcs), per-sample
+sigma (cycles, the n=1 decidability number), and star-basis DD fractional
+stats (med|f|, P<0.10, P<0.15, circR, the network closed-cycle constraint
+check; receiver and satellite MW biases cancel in the DD, so clustering on
+integers is the direct measure of the pair's usable integer content).
+Rows are ordered by lambda descending: the integer-accessibility ladder,
+measured.
 
 Usage: python mw_census_allpairs.py [n_epochs] [obs_glob]
 
-IMPORTABLE PARSER
------------------
+Importable parser
+------------------
 ``parse_station_tow(path, sod_lo, sod_hi, n_epochs)`` is the one RINEX MW
 implementation in the tree: it returns the same per-(satellite, channel-pair)
-MW series but TIME-STAMPED with the seconds-of-day of each epoch, so a consumer
+MW series, time-stamped with the seconds-of-day of each epoch, so a consumer
 can window-match it against an estimator trace (``scripts/lane_spectrometer.py``
 does exactly that for the measurement side of the lane ladder).
 ``parse_station`` is the census's own thin wrapper over it.  The census itself
-runs under a ``__main__`` guard so importing this module costs nothing.
+runs under a ``__main__`` guard, so importing this module costs nothing.
 """
 import glob, math, os, sys, statistics as st
 from collections import defaultdict
@@ -36,17 +37,17 @@ FREQ = {
 def parse_station_tow(path, sod_lo=None, sod_hi=None, n_epochs=None):
     """-> {(sat, pairkey): [(sod, mw_cyc), ...]} over the selected epochs.
 
-    pairkey = (sys, 'L1C/L5Q') with the HIGHER-frequency side first.
+    pairkey = (sys, 'L1C/L5Q') with the higher-frequency side first.
     ``sod``   = seconds of day of the epoch record (GPS time, as written in the
-                RINEX epoch line) — the join key for any time-windowed consumer.
+                RINEX epoch line), the join key for any time-windowed consumer.
     Epoch selection, applied in this order:
       * ``n_epochs``      stop after this many epoch records (the census's mode);
       * ``sod_lo/sod_hi`` keep only epochs inside the closed window (either may
-                          be None for an open end).  Skipped epochs are not
-                          counted against ``n_epochs``-free operation, so a tail
-                          window costs one linear scan of the file and no more.
-    A window that would wrap midnight (``sod_lo > sod_hi``) is treated as the
-    UNION of [sod_lo, 86400) and [0, sod_hi]."""
+                          be None for an open end).  Skipped epochs do not count
+                          against ``n_epochs``, so a tail window costs one linear
+                          scan of the file and no more.
+    A window that wraps midnight (``sod_lo > sod_hi``) is treated as the union
+    of [sod_lo, 86400) and [0, sod_hi]."""
     types = {}          # sys char -> [obs types]
     cur_sys, remaining = None, 0
     series = defaultdict(list)
@@ -74,7 +75,7 @@ def parse_station_tow(path, sod_lo=None, sod_hi=None, n_epochs=None):
                 types.setdefault(cur_sys, []).extend(got)
             if 'END OF HEADER' in line:
                 break
-        # Per system: usable (band,channel) sides = phase AND code present.
+        # Per system: usable (band,channel) sides are those with phase and code present.
         sides = {}   # sys -> [(band, ch, i_code, i_phase, freq)]
         for s, tl in types.items():
             if s not in FREQ:
@@ -105,7 +106,7 @@ def parse_station_tow(path, sod_lo=None, sod_hi=None, n_epochs=None):
                 ep += 1
                 if n_epochs is not None and ep > n_epochs:
                     break
-                # A1,1X,I4,4(1X,I2),F11.7 — tokenised rather than column-sliced so a
+                # A1,1X,I4,4(1X,I2),F11.7: tokenised rather than column-sliced, so a
                 # writer that pads differently cannot silently shift the time.
                 tok = line[1:].split()
                 try:
@@ -240,7 +241,7 @@ def main(argv):
     print("[uniform baseline: med|f|=0.250 P<.10=0.20 P<.15=0.30 circR=0.00]")
 
 
-# Defaults for an IMPORT (no argv): the CLI overrides them in main().
+# Defaults for an import (no argv); the CLI overrides them in main().
 N_EP = 10
 OBS_GLOB = 'C:/GnssProcessor/data/2024-129/obs/*/*_30S_MO.rnx'
 MIN_ARC = max(4, int(0.6 * N_EP))

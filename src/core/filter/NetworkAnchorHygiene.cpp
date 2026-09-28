@@ -1,7 +1,7 @@
 /**
  * @file NetworkAnchorHygiene.cpp
- * @brief eq34 reattach hygiene — arc ageing, eligibility verdicts and the INC-2
- *        bridge lifecycle.  See the header for the defect, the design and the
+ * @brief eq34 reattach hygiene: arc ageing, eligibility verdicts and the INC-2
+ *        bridge lifecycle.  The header describes the problem, the design and the
  *        ordering contract.
  */
 
@@ -24,9 +24,9 @@ namespace GnssProcessor {
 
 namespace {
 
-/// Arc ages are a MONOTONE counter compared against a small threshold; clamp them so
-/// a multi-day run cannot overflow and so the map's values stay human-readable in a
-/// debug dump.  Far above any plausible min_arc_ep + ramp.
+/// Arc ages are a monotone counter compared against a small threshold.  They are
+/// clamped so a multi-day run cannot overflow and the map's values stay readable in
+/// a debug dump.  The cap is far above any plausible min_arc_ep + ramp.
 constexpr int kArcAgeCap = 1'000'000;
 
 } // namespace
@@ -41,14 +41,14 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
                           const std::set<std::pair<int, std::string>>& carry_slipped_ambs,
                           PhaseDatumCandidates& cnd,
                           AnchorHygiene& hyg) {
-    (void)config_;   // mode predicates are already resolved into ctx.knobs
+    (void)config_;   // datum modes come from ctx.knobs; config_ serves the ledger switches below
     hyg = AnchorHygiene{};   // fully overwritten every epoch (caller storage is reused)
 
     const bool   on          = ctx.knobs.anchor_hygiene_on;
     const int    min_arc_ep  = ctx.knobs.eq34_min_arc_ep;
     const bool   bridge_on   = ctx.knobs.pin_bridge_on;
     const int    bridge_max  = ctx.knobs.pin_bridge_max_ep;
-    if (!on) return;   // OFF: no map, no bridge, no counter — structurally inert
+    if (!on) return;   // off: no map, no bridge, no counter (structurally inert)
 
     auto& age_map  = ctx.carry.anchor_arc_age;
     auto& bridges  = ctx.carry.pin_bridge;
@@ -74,28 +74,28 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
     };
 
     // --- (1) Age this epoch's anchorable arcs -----------------------------
-    // Rebuilt wholesale: an arc absent this epoch simply does not appear in the new
-    // map, so absence resets its age — the conservative direction (a returning arc
-    // must re-earn eligibility, which is exactly the 2138-epoch-gap case that broke
-    // DOY-129).  A slipped arc is entered at age 0 rather than dropped, so it is
-    // counted as present-but-fresh; either way it cannot host a reattach.
+    // Rebuilt wholesale: an arc absent this epoch does not appear in the new map, so
+    // absence resets its age.  This is the conservative direction: a satellite
+    // returning after a gap must re-earn eligibility on its new arc.  A slipped arc is
+    // entered at age 0 rather than dropped, so it counts as present but fresh; either
+    // way it cannot host a reattach.
     //
-    // Slip feeds are UNIONED because they have disjoint gates: carry_slipped_ambs is
-    // the Card-4 funnel (carry_invariant), the pending-reseed flag is the
-    // phase-leveling refloat (carry_warm).  Reading only one would leave a stack
-    // running the other with no invariant-#1 response at all (the loader warns when
-    // NEITHER is live).
+    // The two slip feeds are unioned because their gates are disjoint:
+    // carry_slipped_ambs is the DD slip funnel (carry_invariant), and the
+    // pending-reseed flag is the phase-leveling refloat (carry_warm).  Reading only
+    // one would leave a configuration running the other with no invariant-#1 response
+    // (the loader warns when neither is live).
     const bool resume_seed = ctx.carry.anchor_age_resume_seed;
     ctx.carry.anchor_age_resume_seed = false;   // one-shot: the first live epoch only
     const int seed_age = resume_seed ? std::max(min_arc_ep, 1) : 1;
-    // Card SID phase 4 (S2 / B2): the ledger's ADMITTED age is the same quantity
-    // this map counts, and the audit's disposition for the container is READER
+    // The arc ledger's admitted age is the quantity this map counts, and the audit
+    // assigns this container the reader role
     // (`runs/_msc/sid_audit_report_2026-09-22.md` E.2: "age is ep - ep_state_changed").
-    // S2 COMPARES the two and counts the disagreement; B2 takes the ledger's answer.
-    // ⚠ Both are reachable only while this seam runs at all, which needs
-    // network.eq34_anchor_min_arc_ep, the pin bridge or the fresh-pin ramp armed —
-    // so on a posture with none of them the class has a ZERO DENOMINATOR and the
-    // run-end table says dead wiring rather than agreement.
+    // S2 compares the two and counts disagreements; B2 takes the ledger's answer
+    // (Card SID phase 4).  Both are reachable only while this seam runs, which needs
+    // network.eq34_anchor_min_arc_ep, the pin bridge or the fresh-pin ramp armed.
+    // On a posture with none of them the class has a zero denominator, and the
+    // run-end table reports dead wiring rather than agreement.
     const bool sid_age_read = ctx.roster.armed && config_.networkLedgerScreens();
     const bool sid_age_use  = sid_age_read && config_.networkLedgerAnchor();
     const long long sid_now_ep = ctx.arc_ledger.epochIndex();
@@ -129,10 +129,10 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
             const int led_clamped = static_cast<int>(
                 std::min<long long>(led_age, kArcAgeCap));
             if (led_clamped != counted) ++sid_ctr.age_disagree;
-            // B2: the container becomes a READER.  Taken only where the ledger can
-            // answer; an arc it has never admitted keeps the counted value, which is
-            // the conservative direction (the alternative would seed a fresh age on
-            // an arc the estimator has been carrying since before the observatory).
+            // With the ledger anchor switch on, the container takes the ledger's age
+            // where the ledger has one (B2).  An arc the ledger has never admitted
+            // keeps the counted value; the alternative would seed a fresh age on an
+            // arc the estimator has carried since before the ledger started observing it.
             if (sid_age_use) {
                 new_age[{si, amb}] = led_clamped;
                 ++sid_ctr.age_from_ledger;
@@ -148,26 +148,29 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
                   "map is not serialized).", age_map.size(), seed_age);
 
     // --- (2) Per-key verdicts + bridge lifecycle --------------------------
-    // Everything below is decided per (sat,signal) key of the CANDIDATE UNION, using
+    // Everything below is decided per (sat,signal) key of the candidate union, using
     // three predicates evaluated once each:
-    //   incumbent_live  — the current host is present and still tracks the key, so
-    //                     the election will simply keep it: NOT a reattach.
-    //   handover_pending— an incumbent EXISTS but is not live: the key must move, and
-    //                     this is the only situation the card acts on (a first
-    //                     sighting has no level to preserve and no frame to protect).
-    //   eligible_exists — at least one tracking arc has cleared min_arc_ep.
+    //   incumbent_live   - the current host is present and still tracks the key, so
+    //                      the election keeps it: not a reattach.
+    //   handover_pending - the key had a prior realization (an incumbent, an open
+    //                      bridge, a hold, or a fresh emitted value) and no live
+    //                      incumbent: the key must move.  This is the only case the
+    //                      seam acts on; a first sighting has no level to preserve
+    //                      and no frame to protect.
+    //   eligible_exists  - at least one tracking arc has reached min_arc_ep.
     const bool datum_retired = ctx.carry.last_datum_changed;
-    // WARM CONDITIONING (spec addendum).  A cold pin is dangerous only in proportion to
-    // the warm memory it has to fight: the DOY-129 break was a cold host contradicting a
-    // realization the network had been emitting seconds earlier.  A full cold start, a
-    // restart, or a return from an outage longer than the horizon has no such memory —
-    // there the legacy behaviour (pin the cold arc, converge) is CORRECT, and blocking
-    // would merely extend the phase-bias outage by min_arc_ep epochs.  So the block is
-    // conditioned on the age of the key's last EMITTED realization.
+    // Warm conditioning (spec addendum).  A cold pin does harm in proportion to the
+    // warm memory it contradicts, for example a realization the network emitted
+    // seconds earlier.  A full cold start, a restart, or a return from an outage
+    // longer than the horizon has no such memory; there the ungated behaviour (pin
+    // the cold arc, then converge) is correct, and blocking would only extend the
+    // phase-bias outage by min_arc_ep epochs.  The block is therefore conditioned on
+    // the age of the key's last emitted realization
+    // (network.eq34_prior_realization_max_gap_s).
     const double now_s = TimeUtils::continuousGpsSeconds(t);
     const double prior_horizon_s = ctx.knobs.prior_realization_max_gap_s;
     auto priorFresh = [&](const std::string& amb) {
-        if (!(prior_horizon_s > 0.0)) return true;   // conditioning disabled ⇒ always block
+        if (!(prior_horizon_s > 0.0)) return true;   // conditioning off: every key is fresh, so the block always applies
         const auto it = ctx.carry.emitted_anchor_s.find(amb);
         if (it == ctx.carry.emitted_anchor_s.end()) return false;   // never emitted
         const double age = now_s - it->second;
@@ -195,28 +198,28 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
                         && stations[i].sm->isAmbiguityPendingReseed(amb))))
                 slipped_any = true;
         }
-        // A bridged or held-out key has NO host, so it drops out of anchor_incumbent
-        // while it is bridged / held out.  "Was this key anchored before?" must
-        // therefore include BOTH states — otherwise the epoch a bridge is dropped, or
-        // the epoch after a hold-out, the key would read as a FIRST SIGHTING (which is
-        // deliberately never gated) and the election would happily pin it on the very
-        // cold host it was just protected from, one epoch later.
+        // A bridged or held-out key has no host, so it is absent from anchor_incumbent
+        // while bridged or held out.  The test "was this key anchored before" therefore
+        // includes both states.  Otherwise, on the epoch a bridge is dropped or the
+        // epoch after a hold-out, the key would read as a first sighting (never gated)
+        // and the election would pin it on the cold host it was protected from one
+        // epoch earlier.
         const auto br = bridges.find(amb);
         const bool was_bridged = br != bridges.end();
         const bool was_blocked = ctx.carry.anchor_blocked.count(amb) != 0;
-        // `prior_fresh` also carries the case anchor_incumbent CANNOT: a key absent for
-        // a few epochs drops out of the incumbent map entirely (it is replaced wholesale
-        // by each election), so on its return it would read as a first sighting — which
-        // is exactly the DOY-129 shape, a satellite rising after a gap onto a fresh arc
-        // while the network was still emitting its old realization moments before.
+        // `prior_fresh` covers the case anchor_incumbent cannot: a key absent for a few
+        // epochs drops out of the incumbent map (each election replaces it wholesale),
+        // so on its return it would read as a first sighting.  That is the shape of the
+        // failure this seam guards: a satellite rising after a gap onto a fresh arc
+        // while the network emitted its previous realization shortly before.
         const bool prior_fresh = priorFresh(amb);
         const bool handover_pending =
             (has_incumbent || was_bridged || was_blocked || prior_fresh) && !incumbent_live;
 
-        // (2a) An OPEN bridge: apply the invariant-#1 event response FIRST, then the
-        // heal test.  Order matters — a slip on a key that ALSO regained an eligible
-        // host must be charged to the slip (the level is poison either way, but the
-        // counters are how the field run is read).
+        // (2a) An open bridge: apply the invariant-#1 event responses (slip, datum,
+        // stale) first, then the eligible-host test ("healed").  A slip on a key that has
+        // also regained an eligible host is counted as a slip drop; the held level is
+        // invalid either way, and the run-end counters then record the cause.
         bool reopen_barred = false;
         if (was_bridged) {
             const char* drop = nullptr;
@@ -232,12 +235,12 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
                      static_cast<double>(bridge_max), drop, amb);
                 bridges.erase(br);
                 // A dropped bridge leaves the key to the logic below.  On the "healed"
-                // path that is exactly what we want — an eligible host exists, so the
-                // election reattaches normally.  On slip / datum / stale the HELD
-                // VALUE is what became invalid, not the situation: re-opening a bridge
-                // on the same (now poisoned, retired or time-expired) level would make
-                // the staleness bound and the invariant-#1 response cosmetic, so the
-                // key falls through to the INC-1 hold-out instead.
+                // path an eligible host exists, so the election reattaches normally.
+                // On slip, datum or stale, the held value is invalid while the key may
+                // still lack an eligible host.  Re-opening a bridge on the same
+                // (slipped, retired or expired) level would bypass the staleness bound
+                // and the invariant-#1 response, so reopening is barred this epoch and
+                // the key goes to the INC-1 eligibility verdict instead.
                 reopen_barred = std::string(drop) != "healed";
             } else {
                 hyg.bridged.insert(amb);
@@ -247,9 +250,9 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
 
         const bool cold_hosts_only = min_arc_ep > 0 && !eligible_exists;
         if (!handover_pending) {
-            // Incumbent live, or a genuine first sighting with no warm memory.  The
-            // second case is the RESTART path and must be visible rather than silent:
-            // it is the one place a cold pin is deliberately allowed.
+            // Incumbent live, or a first sighting with no warm memory.  The second case
+            // is the restart path, one of the two places a cold pin is allowed, and it
+            // is counted so that it stays visible.
             if (cold_hosts_only && !prior_fresh)
                 ++ctr.hyg.reattach_cold_allowed_no_prior;
             ctx.carry.anchor_blocked.erase(amb);
@@ -258,9 +261,9 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
 
         // (2b) A reattach is required.  Bridge if armed and applicable; else block if
         // INC-1 says no host has converged; else let the election pick (it prefers an
-        // eligible host by construction).  The bridge is warm-conditioned too — with no
-        // fresh realization there is no level worth holding (and pb_level_prev would be
-        // stale or absent anyway).
+        // eligible host by construction).  The bridge is also warm-conditioned: with no
+        // fresh realization there is no level worth holding, and pb_level_prev would be
+        // stale or absent.
         const bool want_bridge = bridge_on && !reopen_barred && prior_fresh
                                  && (min_arc_ep <= 0 || !eligible_exists);
         if (want_bridge) {
@@ -272,7 +275,7 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
                 nb.opened_tow = t.tow;
                 bridges.emplace(amb, nb);
                 hyg.bridged.insert(amb);
-                ctx.carry.anchor_blocked.erase(amb);   // a bridge SUPERSEDES a hold-out
+                ctx.carry.anchor_blocked.erase(amb);   // a bridge supersedes a hold-out
                 ++ctr.hyg.bridges_opened;
                 emit("pin_bridge_open", satOf(amb),
                      has_incumbent ? inc->second : std::string{},
@@ -288,18 +291,18 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
         }
 
         if (cold_hosts_only && !prior_fresh) {
-            // The warm memory has expired (or never existed): a cold pin has nothing
-            // left to contradict, so allow it — a restart must not extend its own
-            // phase-bias outage by min_arc_ep epochs.  Counted, never silent.
+            // The warm memory has expired or never existed, so a cold pin contradicts
+            // nothing and is allowed; blocking would extend a restart's phase-bias
+            // outage by min_arc_ep epochs.  Each such pin is counted.
             ++ctr.hyg.reattach_cold_allowed_no_prior;
             ctx.carry.anchor_blocked.erase(amb);
         } else if (cold_hosts_only) {
-            // HOLD OUT — and keep holding until a host converges.  The hold is entered
-            // once (counted as one refused reattach) and its DURATION is counted
-            // separately: a guard that blocks one key for 300 epochs and one that
-            // blocks 300 keys once are very different field events, and a single
-            // counter cannot tell them apart.  Only the entry emits an event row, so
-            // the events CSV records transitions rather than a per-epoch flood.
+            // Hold the key out, and keep holding until a host converges.  The hold is
+            // entered once (counted as one refused reattach) and its duration is
+            // counted separately in key-epochs: one key blocked for 300 epochs and 300
+            // keys blocked once give the same single count, and the duration counter
+            // separates them.  Only the entry emits an event row, so the events CSV
+            // records transitions rather than one row per epoch.
             blocked.insert(amb);
             ++ctr.hyg.blocked_key_epochs;
             if (ctx.carry.anchor_blocked.insert(amb).second) {
@@ -314,8 +317,8 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
             }
         } else if (ctx.carry.anchor_blocked.erase(amb)) {
             // A converged host appeared (or INC-1 is off): the hold releases and the
-            // election re-hosts normally.  Traced so the hold's DURATION is readable
-            // from network_events.csv without differencing counters.
+            // election re-hosts normally.  The release is traced so the hold's duration
+            // can be read from network_events.csv without differencing counters.
             ++ctr.hyg.blocks_released;
             emit("reattach_unblocked", satOf(amb),
                  best_i == static_cast<std::size_t>(-1) ? std::string{}
@@ -328,8 +331,9 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
     }
 
     // (2c) Bridges whose key left this epoch's shared set entirely (the satellite set,
-    // the coverage gate, or a station roster change).  Held values in a set the solve
-    // no longer contains are meaningless — drop rather than let them age out.
+    // the coverage gate, or a station roster change).  A held value for a key the solve
+    // no longer contains has no meaning, so the bridge is dropped now rather than left
+    // to age out.
     for (auto it = bridges.begin(); it != bridges.end();) {
         if (cnd.union_keys.count(it->first)) { ++it; continue; }
         ++ctr.hyg.bridge_drop_leftset;
@@ -339,15 +343,14 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
         it = bridges.erase(it);
     }
 
-    // --- (3) Realize the BLOCK: the key leaves the anchored union ---------
-    // Byte-for-byte the coverage gate's disposition (NetworkPhaseDatum
+    // --- (3) Realize the block: the key leaves the anchored union ---------
+    // The same disposition as the coverage gate (NetworkPhaseDatum
     // networkBuildPhaseDatumCandidates): erase from union_keys so no shared column is
     // registered and no election can pin it, then prune each tracking station's
     // phase-bias state so the per-station column sets stay consistent with the gated
-    // union.  Its phase rows still serve the satellite clock — each station's float
-    // ambiguity absorbs the bias, exactly as a legacy non-shared signal always has —
-    // and the emitter sees a clean per-key absence (staleness / first-sighting
-    // semantics on return).
+    // union.  The key's phase rows still serve the satellite clock (each station's
+    // float ambiguity absorbs the bias, as for a non-shared signal), and the emitter
+    // sees a per-key absence (staleness / first-sighting semantics on return).
     if (!blocked.empty()) {
         for (const auto& amb : blocked) cnd.union_keys.erase(amb);
         for (std::size_t i = 0; i < stations.size(); ++i) {

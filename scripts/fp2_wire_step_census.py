@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
-"""UNDECLARED WIRE-STEP census across an FP-2 leg matrix.
+"""Undeclared wire-step census across an FP-2 leg matrix.
 
     python scripts/fp2_wire_step_census.py [--runs C:/GnssProcessor/runs]
                                            [--prefix fp2] [--tol 0.5]
                                            [--json out.json]
 
-Why this is not one of §20's gates.  G-C reads the injected satellite's wire and
-a "worst other <= 2x the floor" bar, both as event MINUS null.  A step that
-happens in BOTH the event leg and its null cancels there, and a step whose EPOCH
-merely MOVES between them shows up as an unexplained "worst other" rather than as
-what it is.  This census reads each leg on its own: every emitted satellite clock
-(``C``) and phase bias (``P``) series, every between-epoch jump above --tol, and
-whether the producer DECLARED it — the ``phase_disc`` / ``clock_disc`` counter
-incrementing and the emitted sigma opening.
+Why this is not one of §20's gates: G-C reads the injected satellite's wire and
+a "worst other <= 2x the floor" bar, both as event minus null.  A step that
+happens in both the event leg and its null cancels there, and a step whose epoch
+merely moves between them shows up as an unexplained "worst other" rather than
+as what it is.  This census reads each leg on its own: every emitted satellite
+clock (``C``) and phase bias (``P``) series, every between-epoch jump above
+--tol, and whether the producer declared it, meaning the ``phase_disc`` /
+``clock_disc`` counter incrementing and the emitted sigma opening.
 
-Standing invariant #7: a mechanism that re-realizes a datum is an EVENT at both
-edges, and the declaration is the consumer's only notice.  An UNDECLARED step is
-therefore the reportable class — a metre-scale move the consumer cannot see —
-and it is a property of ONE arm, so the PIN/OFF counts are the comparison.
+Standing invariant #7: a mechanism that re-realizes a datum is an event at both
+edges, and the declaration is the consumer's only notice.  An undeclared step is
+therefore the reportable class, a metre-scale move the consumer cannot see, and
+it is a property of one arm, so the pin/off counts are the comparison.
 """
 import argparse
 import json
@@ -54,7 +54,7 @@ def records(path, t0):
             #   C,sat,clock_c0_m[,clock_c1_m_s[,clock_disc]]...
             #   P,sat,signal,bias_m,signal_integer,wide_lane_integer[,phase_disc]
             #                [,sigma=<m>][,sigc=<m>]
-            # The disc COLUMN is optional, so index by the documented position and
+            # The disc column is optional, so index by the documented position and
             # accept it only when it is a bare integer; sigma is a key=value token.
             if f[0] == "C" and len(f) >= 3:
                 key, vi = ("C", f[1], ""), 2
@@ -83,7 +83,7 @@ def steps(series, tol):
         if k1 != k0 + 1:                     # a gap is not a step
             continue
         if abs(v1 - v0) > tol:
-            # DECLARED = the disc counter moved at this epoch.  A missing counter
+            # Declared means the disc counter moved at this epoch.  A missing counter
             # (the toggle that emits it is off) can never declare: count it as
             # undeclared and say so, rather than silently passing.
             declared = (d0 is not None and d1 is not None and d0 != d1)

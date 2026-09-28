@@ -1,33 +1,35 @@
 /**
  * @file test_pb_emit_filter.cpp
  * @brief Gates for the PB emission-continuity filter (@ref NetworkPbEmitFilter,
- *        the M5-prerequisite smoother on the re-based emitted phase biases).
+ *        the smoother on the re-based emitted phase biases that M5 requires).
  *
- * The leaf is driven standalone on synthetic single-key streams of known truth
- * (the @ref NetworkEmitRebase / @ref NetworkCarryVce precedent), and end-to-end
- * into the PRODUCTION emitter (@ref NetworkProductEmitter, whose 0.05 m jump test
- * stays the SOLE, unchanged discontinuity authority) so the disc-floor claim is
- * exercised against the real counter.  Gates:
+ * The filter is driven standalone on synthetic single-key streams of known truth
+ * (as for @ref NetworkEmitRebase / @ref NetworkCarryVce), and end-to-end into the
+ * production emitter (@ref NetworkProductEmitter, whose 0.05 m jump test remains
+ * the only, unchanged discontinuity test), so the disc-floor claim is checked
+ * against the real counter.  Gates:
  *
- *   1. A quasi-static value + per-epoch noise is smoothed (the filtered value
+ *   1. A quasi-static value with per-epoch noise is smoothed (the filtered value
  *      tracks the constant, the posterior σ shrinks below the seed, no resets).
- *   2. A reference-path slip flag ⇒ RESET: the raw (stepped) value passes through
- *      untouched (NEVER laundered — invariant #1) and the cause is recorded.
- *   3. An arc gap over max_gap_s ⇒ re-init (value passes through).
- *   4. A genuine innovation over k·σ̂_step ⇒ reset (raw value passes through).
- *   5. END-TO-END: on a noisy quasi-static stream the PRODUCTION emitter is
- *      SILENT with the filter (floor cleared) but fires on nearly every epoch
- *      UNFILTERED (negative control); a genuine >0.5 m event fires EXACTLY ONCE
- *      on both arms (preserved 1:1 — the anti-launder falsifier).
+ *   2. A reference-path slip flag causes a reset: the raw (stepped) value passes
+ *      through unchanged (never smoothed over, invariant #1) and the cause is
+ *      recorded.
+ *   3. An arc gap over max_gap_s causes a re-init (the value passes through).
+ *   4. A genuine innovation over k·σ̂_step causes a reset (the raw value passes
+ *      through).
+ *   5. End to end: on a noisy quasi-static stream the production emitter reports
+ *      no discontinuity with the filter (floor cleared) but fires on most epochs
+ *      without it (negative control); a genuine >0.5 m event fires exactly once
+ *      on both arms, which shows the filter does not hide real events.
  *   6. The k·σ̂_step gate self-tunes: σ̂_step tracks the injected noise scale.
  *
- * v2 gate (@c Config::gate_v2 — censoring-free feed + model-scaled k·√(Ppred+R) +
- * seed-as-guard; the default-OFF v1 path drives gates 1–6 unchanged):
- *   7. Censoring-free feed breaks the v1 gate-scale death spiral (v1 σ̂ latches
- *      low + resets forever; v2 σ̂ recovers the scale + resets collapse), and the
- *      n_fed_all_rows accounting proves the innovation-gated rows now feed.
- *   8. ONE k=4 transfers 30 s ↔ 300 s: a genuine event fires at BOTH cadences.
- *   9. A sub-gate slip smooths through as a bounded, non-laundered transient (the
+ * v2 gate (@c Config::gate_v2: censoring-free feed, model-scaled k·√(Ppred+R),
+ * seed used only as a guard; the default-off v1 path drives gates 1–6 unchanged):
+ *   7. The censoring-free feed breaks the v1 gate-scale spiral (v1 σ̂ latches low
+ *      and resets persist; v2 σ̂ recovers the scale and resets drop), and the
+ *      n_fed_all_rows accounting shows that the innovation-gated rows are fed.
+ *   8. One k=4 works at both 30 s and 300 s: a genuine event fires at both cadences.
+ *   9. A sub-gate slip passes as a bounded transient toward the new level (the
  *      §3 residual-risk envelope), producing no discontinuity.
  */
 
@@ -56,7 +58,7 @@ NetworkPbEmitFilter::Config defaultCfg() {
     return c;
 }
 
-// Run the filter on ONE key/value at continuous time t; returns the filtered Entry.
+// Run the filter on one key/value at continuous time t; returns the filtered Entry.
 NetworkPbEmitFilter::Entry step(NetworkPbEmitFilter& f, const std::string& sat,
                                 double value, double t, bool slipped = false) {
     std::vector<NetworkPbEmitFilter::Entry> e(1);
@@ -78,7 +80,7 @@ struct Gauss {
     }
 };
 
-// --- 1. A quasi-static value + noise is smoothed; σ shrinks; no resets -----------
+// --- 1. A quasi-static value with noise is smoothed; σ shrinks; no resets --------
 
 TEST(PbEmitFilter, SmoothsQuasiStaticStreamAndShrinksSigma) {
     NetworkPbEmitFilter f(defaultCfg());
@@ -99,7 +101,7 @@ TEST(PbEmitFilter, SmoothsQuasiStaticStreamAndShrinksSigma) {
     ASSERT_TRUE(f.stateForTest("G01", "L1C", mean, var));
     EXPECT_NEAR(mean, base, 0.02);
 
-    // Every epoch after the first sighting smoothed — no spurious resets on noise.
+    // Every epoch after the first sighting is smoothed: no spurious resets on noise.
     const auto& c = f.counters();
     EXPECT_EQ(c.inits, 1);
     EXPECT_EQ(c.smoothed, 59);
@@ -116,8 +118,8 @@ TEST(PbEmitFilter, ReferencePathSlipResetsAndIsNeverLaundered) {
     double t = kT0.week * 604800.0 + kT0.tow;
     for (int i = 0; i < 10; ++i, t += DT) step(f, "G07", base, t);   // converge on a constant
 
-    // A +1-cycle slip on the emission-reference arc, FLAGGED slipped.  The filter
-    // must emit the raw stepped value (not smooth it back toward base).
+    // A +1-cycle slip on the emission-reference arc, flagged as slipped.  The filter
+    // emits the raw stepped value instead of smoothing it back toward base.
     const double slipped_val = base + LAM;
     const auto e = step(f, "G07", slipped_val, t, /*slipped=*/true);
     EXPECT_EQ(e.reset_cause, NetworkPbEmitFilter::Cause::kRefPathSlip);
@@ -139,7 +141,7 @@ TEST(PbEmitFilter, GapBeyondMaxGapReinits) {
     for (int i = 0; i < 5; ++i, t += DT) step(f, "E11", base, t);
 
     // Return after a 20-minute gap (> 600 s) at a shifted value: a first sighting,
-    // not a continued arc — passed through, counted as a gap re-init.
+    // not a continued arc; passed through and counted as a gap re-init.
     t += 1200.0;
     const double ret_val = base + 0.3;
     const auto e = step(f, "E11", ret_val, t);
@@ -156,21 +158,21 @@ TEST(PbEmitFilter, InnovationEventResets) {
     double t = kT0.week * 604800.0 + kT0.tow;
     for (int i = 0; i < 20; ++i, t += DT) step(f, "G21", base, t);
 
-    // A 0.5 m step with NO slip flag — well above k·σ̂_step (k=4, σ̂_step≈seed floor).
+    // A 0.5 m step with no slip flag, well above k·σ̂_step (k=4, σ̂_step≈seed floor).
     const auto e = step(f, "G21", base + 0.5, t);
     EXPECT_EQ(e.reset_cause, NetworkPbEmitFilter::Cause::kInnovation);
     EXPECT_NEAR(e.value_m, base + 0.5, 1e-12);           // raw value survives
     EXPECT_EQ(f.counters().resets_innovation, 1);
 }
 
-// --- 5. END-TO-END with the PRODUCTION emitter: floor cleared, events preserved ---
+// --- 5. End to end with the production emitter: floor cleared, events preserved ---
 
 TEST(PbEmitFilter, ClearsDiscFloorAndPreservesGenuineEventAgainstUnfilteredControl) {
     SsrCorrectionStore store_f, store_u;
-    NetworkProductEmitter em_f, em_u;      // both default 0.05 m — the SOLE disc authority
+    NetworkProductEmitter em_f, em_u;      // both default 0.05 m, the only disc test
     NetworkPbEmitFilter  f(defaultCfg());
     const double base = 0.30;
-    // Per-epoch noise whose CONSECUTIVE steps exceed 0.05 m (so the unfiltered
+    // Per-epoch noise whose consecutive steps exceed 0.05 m (so the unfiltered
     // emitter false-alarms) but whose deviation from base stays sub-gate.
     const std::array<double, 6> off{{0.04, -0.045, 0.05, -0.04, 0.045, -0.05}};
 
@@ -202,7 +204,7 @@ TEST(PbEmitFilter, ClearsDiscFloorAndPreservesGenuineEventAgainstUnfilteredContr
     const int disc_f_pre = em_f.discontinuityCounter("G01", "L1C");
     const int disc_u_pre = em_u.discontinuityCounter("G01", "L1C");
 
-    // A genuine +0.6 m event: fires EXACTLY ONCE on BOTH arms (preserved 1:1).
+    // A genuine +0.6 m event fires exactly once on both arms.
     const double event_val = base + 0.6;
     const auto ee = step(f, "G01", event_val, tc);
     EXPECT_EQ(ee.reset_cause, NetworkPbEmitFilter::Cause::kInnovation);
@@ -211,7 +213,7 @@ TEST(PbEmitFilter, ClearsDiscFloorAndPreservesGenuineEventAgainstUnfilteredContr
     EXPECT_EQ(em_f.discontinuityCounter("G01", "L1C"), disc_f_pre + 1);
     EXPECT_EQ(em_u.discontinuityCounter("G01", "L1C"), disc_u_pre + 1);
 
-    // The filtered arm carried the raw event value onto the wire (not laundered).
+    // The filtered arm carried the raw event value onto the wire (not smoothed).
     const auto pb = store_f.getPhaseBias("G01", "L1C");
     ASSERT_TRUE(pb.has_value());
     EXPECT_NEAR(pb->bias_m, event_val, 1e-9);
@@ -221,8 +223,8 @@ TEST(PbEmitFilter, ClearsDiscFloorAndPreservesGenuineEventAgainstUnfilteredContr
 
 TEST(PbEmitFilter, StepSigmaSelfTunesToNoiseScale) {
     // window_epochs=0 ⇒ accumulate the whole run (deterministic, data-dominated).
-    // The probe noise MUST be Gaussian: the estimator's kChi2GeoMean de-bias is
-    // the geo-mean of χ²₁, exact for ê~N(0,σ) — a ±s square wave (zero log-spread)
+    // The probe noise must be Gaussian: the estimator's kChi2GeoMean de-bias is
+    // the geo-mean of χ²₁, exact for ê~N(0,σ); a ±s square wave (zero log-spread)
     // reads 1/√kChi2GeoMean ≈ 1.89× high by construction.  Box–Muller on raw
     // mt19937 draws keeps the sequence bit-deterministic across platforms.
     auto run = [](double s) {
@@ -251,18 +253,19 @@ TEST(PbEmitFilter, StepSigmaSelfTunesToNoiseScale) {
     EXPECT_GT(sig_high, 0.08);               // climbed well above the low run
 }
 
-// --- v2 (a): censoring-free feed breaks the gate-scale death spiral --------------
+// --- v2 (a): the censoring-free feed breaks the gate-scale spiral ----------------
 
 TEST(PbEmitFilter, V2CensoringFreeFeedBreaksTheGateScaleSpiral) {
-    // A quasi-static value + a heavy-tailed per-epoch step: a small Gaussian core
-    // (0.015 m) plus a 0.12 m step every 4th epoch — the "moderate step at gate
-    // scale" class.  With a tight seed (0.02 ⇒ initial gate 0.08 m) the 0.12 m
-    // steps start ABOVE the gate.  v1 withholds every rejected row (clean-gate), so
-    // the robust σ̂_step latches to the 0.015 m core, the gate stays ~0.06 m, and
-    // the moderate steps reject FOREVER — the documented death spiral (this induces
-    // the same censored-estimator fixed point the field hit at 300 s via forgetting
-    // + pooling).  v2 feeds the innovation-gated rows, so σ̂_step recovers the true
-    // mixture scale, the gate opens past 0.12 m, and the resets collapse.
+    // A quasi-static value with a heavy-tailed per-epoch step: a small Gaussian core
+    // (0.015 m) plus a 0.12 m step every 4th epoch (the "moderate step at gate
+    // scale" class).  With a tight seed (0.02 ⇒ initial gate 0.08 m) the 0.12 m
+    // steps start above the gate.  v1 withholds every rejected row from the
+    // estimator, so the robust σ̂_step latches to the 0.015 m core, the gate stays
+    // near 0.06 m, and the moderate steps are rejected indefinitely (the documented
+    // spiral; the same censored-estimator fixed point occurs in the field at 300 s
+    // through forgetting and pooling).  v2 feeds the innovation-gated rows, so
+    // σ̂_step recovers the mixture scale, the gate opens past 0.12 m, and the
+    // resets drop.
     const double base = 0.30, core = 0.015, spike = 0.12;
     auto drive = [&](NetworkPbEmitFilter& f) {
         Gauss g(20260714u);
@@ -290,7 +293,8 @@ TEST(PbEmitFilter, V2CensoringFreeFeedBreaksTheGateScaleSpiral) {
     EXPECT_GT(s2, 0.035);
     EXPECT_GT(s2, s1);
 
-    // v1 keeps rejecting the moderate steps (~99 of them); v2 collapses to warmup only.
+    // v1 keeps rejecting the moderate steps (100 in 400 epochs); v2 resets only during
+    // warm-up.
     EXPECT_GE(n1.resets_innovation, 80);
     EXPECT_LE(n2.resets_innovation, 25);
     EXPECT_LT(n2.resets_innovation, n1.resets_innovation);
@@ -302,12 +306,12 @@ TEST(PbEmitFilter, V2CensoringFreeFeedBreaksTheGateScaleSpiral) {
     EXPECT_GT(n2.fed_rows, n1.fed_rows);
 }
 
-// --- v2 (b): ONE k transfers 30 s ↔ 300 s (the card's reason to exist) ------------
+// --- v2 (b): one k works at both 30 s and 300 s (the purpose of the card) ---------
 
 TEST(PbEmitFilter, V2GenuineEventFiresAtBothCadencesWithOneK) {
-    // Same config (k=4 default, default seed), v2 ON: a genuine 0.6 m event fires at
-    // BOTH 30 s and 300 s cadence — the model-scaled gate k·√(Ppred+R) carries dt
-    // through the prior's q·gap term, so no per-cadence retune.
+    // Same config (k=4 default, default seed), v2 on: a genuine 0.6 m event fires at
+    // both 30 s and 300 s cadence.  The model-scaled gate k·√(Ppred+R) carries dt
+    // through the prior's q·gap term, so no per-cadence retune is needed.
     auto eventCause = [](double dt) {
         NetworkPbEmitFilter::Config c = defaultCfg();
         c.gate_v2 = true; c.window_epochs = 0.0;
@@ -323,14 +327,14 @@ TEST(PbEmitFilter, V2GenuineEventFiresAtBothCadencesWithOneK) {
     EXPECT_EQ(eventCause(300.0), NetworkPbEmitFilter::Cause::kInnovation);
 }
 
-// --- v2 (§3): a sub-gate slip smooths through as a bounded transient, not laundered
+// --- v2 (§3): a sub-gate slip passes as a bounded transient toward the new level
 
 TEST(PbEmitFilter, V2SubGateSlipSmoothsThroughBoundedNotLaundered) {
-    // Residual-risk envelope (§3): an UNFLAGGED step BELOW k·σ̂_step (the ~2σ–kσ
-    // miss band, e.g. a single-cycle L1 step the upstream funnel missed) does NOT
-    // reset — no discontinuity reaches the consumer — and is NOT snapped back: the
+    // Residual-risk envelope (§3): an unflagged step below k·σ̂_step (the ~2σ–kσ
+    // miss band, e.g. a single-cycle L1 step the upstream funnel missed) does not
+    // reset, so no discontinuity reaches the consumer, and is not snapped back: the
     // filter tracks toward the true new level over ~1/K epochs (a bounded, sub-gate
-    // transient), exactly as the header documents for v2 AND v1-as-designed.
+    // transient), as the header documents for v2 and for v1 as designed.
     NetworkPbEmitFilter::Config c = defaultCfg();
     c.gate_v2 = true; c.window_epochs = 0.0;
     NetworkPbEmitFilter f(c);
@@ -357,14 +361,14 @@ TEST(PbEmitFilter, V2SubGateSlipSmoothsThroughBoundedNotLaundered) {
     for (int i = 0; i < 500; ++i, t += DT)               // hold the new level, clean
         step(f, "G09", newlvl, t);
 
-    // Never a discontinuity through the whole transient (the consumer sees none),
-    // and the filter converged UP to the true new level (not laundered back to base,
-    // not overshooting past it).
+    // No discontinuity through the whole transient (the consumer sees none), and the
+    // filter converged up to the true new level (not pulled back to base, and not
+    // past it).
     EXPECT_EQ(f.counters().resets_innovation, resets0);
     double mean = 0.0, var = 0.0;
     ASSERT_TRUE(f.stateForTest("G09", "L1C", mean, var));
     EXPECT_GT(mean, base + 0.5 * sub);                   // tracked most of the way up
-    EXPECT_LE(mean, newlvl + 1e-6);                      // bounded — no overshoot
+    EXPECT_LE(mean, newlvl + 1e-6);                      // bounded: no overshoot
 }
 
 }  // namespace

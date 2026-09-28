@@ -1,27 +1,27 @@
 /**
  * @file test_band_scoped_response.cpp
- * @brief §Z BAND-SCOPED responses — the two keep-one rules and their config gate.
+ * @brief Band-scoped responses (§Z): the two keep-one rules and their config gate.
  *
- * (docs/SPEC_event_harness.md §Z.)  Study 1 measured that freeing EVERY band of a
- * line of sight is what buys the persistent ~0.45-cycle level floor an erase or a
- * whole-satellite refloat leaves behind: with no band pinned, (ρ, I, N₁..N₃)
- * re-draw together from one epoch of code.  Restrict either path to 2 of 3 bands
- * and the floor drops 9–29×.  Both production paths now have a knob that keeps
- * the least-suspect band pinned, and both decision RULES are pure functions —
- * which is what this file exercises:
+ * (docs/SPEC_event_harness.md §Z.)  Freeing every band of a line of sight leaves a
+ * persistent level floor after an erase or a whole-satellite refloat (about
+ * 0.45 cycles in study 1): with no band pinned, (ρ, I, N₁..N₃) re-draw together from
+ * one epoch of code.  Restricting either path to 2 of 3 bands lowered the floor
+ * 9–29×.  Each production path has a knob that keeps the least-suspect band pinned,
+ * and both decision rules are pure functions, which this file exercises:
  *
- *  * `networkRaimEraseBandScope` (T4 attribution erase, `network.raim_erase_band_scope`)
- *    — 3-band / 2-band / 1-band cells, the kept band is the smallest |r|, the
+ *  * `networkRaimEraseBandScope` (T4 attribution erase, `network.raim_erase_band_scope`):
+ *    3-band, 2-band and 1-band cells, the kept band is the smallest |r|, the
  *    all-over-gate identity, and the no-band-over-gate edge (a median-polish
- *    INTERACTION flag whose per-signal residuals all sit under k·σ̂₀ must still
- *    produce a response, never a silent skip).
- *  * `networkSlipBandScope` (detector refloats, `network.cycle_slip.refloat_band_scope`)
- *    — an IF-TD pair on a 3-band arc is a NO-OP (the third band already anchors the
- *    LOS), the same pair on a 2-band arc is the all-band FALLBACK, the MW/GF
- *    per-band decomposition picks the quieter band, and a single-band arc is never
- *    spared.
- *  * The loader — both knobs default to the pre-knob behaviour, a typo falls back
- *    loudly to it, and OFF leaves the enums at their byte-identical defaults.
+ *    interaction flag whose per-signal residuals all sit under k·σ̂₀ still produces
+ *    a response; it is not skipped).
+ *  * `networkSlipBandScope` (detector refloats, `network.cycle_slip.refloat_band_scope`):
+ *    an IF-TD pair on a 3-band arc is a no-op (the third band already anchors the
+ *    LOS), the same pair on a 2-band arc is the all-band fallback, the MW/GF
+ *    per-band decomposition picks the quieter band, bands already freed this epoch
+ *    count toward covering the arc, and a single-band arc is never spared.
+ *  * The loader: both knobs default to the pre-knob behaviour, a typo logs an error
+ *    and falls back to it, and with the knobs off the enums stay at their
+ *    byte-identical defaults.
  *
  * Structural only (the suite does not validate estimation accuracy); the floors
  * themselves are graded by the harness legs the SPEC records.
@@ -51,7 +51,7 @@ namespace fs = std::filesystem;
 constexpr double kLam1  = 0.19029367279836487;   // L1 wavelength (m)
 constexpr double kLam2  = 0.24421021342456825;   // L2 wavelength (m)
 // Derived, not transcribed: the scope recovers λ2 from (λ1, λ_WL), so the test's
-// two wavelengths must be EXACTLY consistent or the round trip carries a rounding
+// two wavelengths must be exactly consistent or the round trip carries a rounding
 // residual that has nothing to do with the rule under test.
 constexpr double kLamWl = kLam1 * kLam2 / (kLam2 - kLam1);   // 1/(1/λ1 − 1/λ2) (m)
 
@@ -68,7 +68,7 @@ RawSlipObs dualRow(const std::string& sat, const std::string& s1,
     return r;
 }
 
-/// A measured verdict whose (ΔMW, ΔGF) encode the given per-band cycle slips —
+/// A measured verdict whose (ΔMW, ΔGF) encode the given per-band cycle slips:
 /// the exact inverse of the decomposition the scope applies, so a test can state
 /// "band 1 slipped by dn1 cycles" and read back that the scope agreed.
 RawSlipVerdict verdictFor(double dn1_cyc, double dn2_cyc) {
@@ -120,7 +120,7 @@ bool loadWith(const std::string& extra, GnssConfig& cfg, LogManager& log,
 } // namespace
 
 // ---------------------------------------------------------------------------
-// T4 attribution erase — network.raim_erase_band_scope
+// T4 attribution erase: network.raim_erase_band_scope
 // ---------------------------------------------------------------------------
 
 TEST(BandScopedEraseRule, ThreeBandKeepsTheSmallestResidual) {
@@ -143,13 +143,13 @@ TEST(BandScopedEraseRule, TwoBandStillSparesOne) {
     ASSERT_TRUE(d.act);
     EXPECT_EQ(d.keep, "L2W");
     EXPECT_EQ(d.erase, (std::set<std::string>{"L1C"}));
-    // Both bands are over the gate, so the pin is the LEAST-BAD one — the identity
-    // that keeps the "we knowingly kept suspect level" population visible.
+    // Both bands are over the gate, so the pin is the less suspect one, and
+    // kept_over_gate flags it so that knowingly kept suspect levels stay countable.
     EXPECT_TRUE(d.kept_over_gate);
 }
 
 TEST(BandScopedEraseRule, SingleBandCellIsSkippedNotErased) {
-    // One band: there is nothing to spare, and freeing it is exactly the all-band
+    // One band: there is nothing to spare, and freeing it is the all-band
     // case the scope exists to prevent.  `erase` empty ⇒ the caller skips.
     const auto d = networkRaimEraseBandScope({{"L1C", 99.0}}, 4.0);
     ASSERT_TRUE(d.act);
@@ -159,9 +159,9 @@ TEST(BandScopedEraseRule, SingleBandCellIsSkippedNotErased) {
 }
 
 TEST(BandScopedEraseRule, NoBandOverGateStillErasesAllButThePin) {
-    // The median-polish INTERACTION flagged this cell while every per-signal
-    // residual sits under k·σ̂₀.  Absence of per-band evidence must NOT suppress
-    // the response (standing invariant #1) — erase everything but the pin.
+    // The median-polish interaction flagged this cell while every per-signal
+    // residual sits under k·σ̂₀.  Absence of per-band evidence does not suppress
+    // the response (standing invariant #1): everything but the pin is erased.
     const std::vector<std::pair<std::string, double>> cell = {
         {"L1C", 1.0}, {"L2W", 2.0}, {"L5Q", 3.0}};
     const auto d = networkRaimEraseBandScope(cell, 4.0);
@@ -187,12 +187,12 @@ TEST(BandScopedEraseRule, TieBreaksOnTheLexicallyLowestSignal) {
 }
 
 // ---------------------------------------------------------------------------
-// Detector refloats — network.cycle_slip.refloat_band_scope
+// Detector refloats: network.cycle_slip.refloat_band_scope
 // ---------------------------------------------------------------------------
 
 TEST(BandScopedRefloatRule, IfTdPairOnThreeBandArcIsANoOp) {
-    // L5Q is not implicated, so the arc already keeps a level anchor: the scope
-    // must not perturb the pre-knob instruction stream.
+    // L5Q is not implicated, so the arc already keeps a level anchor, and the scope
+    // leaves the pre-knob instruction stream unchanged.
     const auto row = dualRow("G10", "L1C", "L2W");
     const auto vd  = verdictFor(/*dn1=*/10.0, /*dn2=*/8.0);
     const auto d = networkSlipBandScope({"L1C", "L2W", "L5Q"}, {"L1C", "L2W"}, {},
@@ -202,9 +202,9 @@ TEST(BandScopedRefloatRule, IfTdPairOnThreeBandArcIsANoOp) {
 }
 
 TEST(BandScopedRefloatRule, IfTdPairOnTwoBandArcIsTheAllBandFallback) {
-    // The pair IS the arc.  ΔN1 = 10, ΔN2 = 2 ⇒ L2W is the quieter band and is the
-    // one that stays pinned.  This is the documented case where a truly-slipped
-    // band can stay pinned; the counter names it.
+    // The pair is the whole arc.  ΔN1 = 10, ΔN2 = 2 ⇒ L2W is the quieter band and
+    // stays pinned.  This is the documented case where a band that did slip can stay
+    // pinned; the counter names it.
     const auto row = dualRow("G10", "L1C", "L2W");
     const auto vd  = verdictFor(10.0, 2.0);
     const auto d = networkSlipBandScope({"L1C", "L2W"}, {"L1C", "L2W"}, {},
@@ -216,7 +216,7 @@ TEST(BandScopedRefloatRule, IfTdPairOnTwoBandArcIsTheAllBandFallback) {
 }
 
 TEST(BandScopedRefloatRule, DecompositionPicksTheQuieterBandEitherWay) {
-    // Same arc, slip on the OTHER band: the rule must follow the evidence, not the
+    // Same arc, slip on the other band: the rule follows the evidence, not the
     // signal ordering.
     const auto row = dualRow("G10", "L1C", "L2W");
     const auto vd  = verdictFor(1.0, 12.0);
@@ -229,8 +229,8 @@ TEST(BandScopedRefloatRule, DecompositionPicksTheQuieterBandEitherWay) {
 
 TEST(BandScopedRefloatRule, WholeSatelliteLliKeepsAMeasuredBandOverAnUnmeasuredOne) {
     // LLI on all three bands (a receiver loss of lock).  The raw row only carries
-    // the primary pair, so L5Q has NO evidence — and an unmeasured band must never
-    // out-rank a measured one, however quiet it looks.
+    // the primary pair, so L5Q has no evidence, and an unmeasured band never
+    // out-ranks a measured one, however quiet it looks.
     const auto row = dualRow("G10", "L1C", "L2W");
     const auto vd  = verdictFor(9.0, 0.05);
     const auto d = networkSlipBandScope({"L1C", "L2W", "L5Q"}, {"L1C", "L2W", "L5Q"}, {},
@@ -242,7 +242,7 @@ TEST(BandScopedRefloatRule, WholeSatelliteLliKeepsAMeasuredBandOverAnUnmeasuredO
 
 TEST(BandScopedRefloatRule, NoRawEvidenceFallsBackToTheLowestBand) {
     // A gap, a changed pair, or no raw row at all: deterministic lexical fallback
-    // (also the shortest wavelength — the smallest metric error per kept cycle).
+    // (also the shortest wavelength, so the smallest metric error per kept cycle).
     const auto d = networkSlipBandScope({"L1C", "L2W", "L5Q"}, {"L1C", "L2W", "L5Q"}, {},
                                         nullptr, nullptr);
     ASSERT_TRUE(d.scoped);
@@ -251,7 +251,7 @@ TEST(BandScopedRefloatRule, NoRawEvidenceFallsBackToTheLowestBand) {
 }
 
 TEST(BandScopedRefloatRule, PairChangedRowIsRefusedAsEvidence) {
-    // The struct's own contract: a step formed on a DIFFERENT lane must not be
+    // The struct's own contract: a step formed on a different lane is not
     // converted into cycles of this one.
     const auto row = dualRow("G10", "L1C", "L2W");
     auto vd = verdictFor(9.0, 0.05);
@@ -274,12 +274,12 @@ TEST(BandScopedRefloatRule, UnmeasuredVerdictIsRefusedAsEvidence) {
 }
 
 TEST(BandScopedRefloatRule, AlreadyFreedBandsCountTowardCoveringTheArc) {
-    // THE DEFECT THE HARNESS FOUND.  An LLI on all three bands makes the MW/LLI
-    // drain keep L1C; the IF-TD driver then implicates (L1C, L2W), which does NOT
-    // cover a 3-band arc — so per-drain the scope is a no-op there and the arc
-    // ends the epoch with EVERY band freed, byte-identical to an unscoped run
-    // (measured: evleg_z_slip3_on == evleg_z_slip3_off).  With the epoch's freed
-    // set in hand the second drain sees the arc covered and pins the survivor.
+    // An LLI on all three bands makes the MW/LLI drain keep L1C; the IF-TD driver
+    // then implicates (L1C, L2W), which alone does not cover a 3-band arc.  Judged
+    // per drain, the scope would be a no-op there and the arc would end the epoch
+    // with every band freed, byte-identical to an unscoped run.  With the epoch's
+    // freed set passed in, the second drain sees the arc covered and pins the
+    // survivor.
     const auto d = networkSlipBandScope({"L1C", "L2W", "L5Q"},   // live
                                         {"L1C", "L2W"},          // this drain
                                         {"L2W", "L5Q"},          // already freed
@@ -290,7 +290,7 @@ TEST(BandScopedRefloatRule, AlreadyFreedBandsCountTowardCoveringTheArc) {
 
 TEST(BandScopedRefloatRule, AlreadyFreedBandIsNeverChosenAsTheSurvivor) {
     // L2W is the quiet band by raw evidence, but an earlier drain already freed
-    // it — an un-freeing does not exist, so the pin must fall on a survivor.
+    // it.  A freed band cannot be re-pinned, so the pin falls on a survivor.
     const auto row = dualRow("G10", "L1C", "L2W");
     const auto vd  = verdictFor(/*dn1=*/9.0, /*dn2=*/0.05);
     const auto d = networkSlipBandScope({"L1C", "L2W"}, {"L1C"}, {"L2W"},
@@ -302,9 +302,9 @@ TEST(BandScopedRefloatRule, AlreadyFreedBandIsNeverChosenAsTheSurvivor) {
 }
 
 TEST(BandScopedRefloatRule, EverythingAlreadyFreedIsTooLateNotScoped) {
-    // The arc lost its anchor before this drain ran.  Nothing to do — but it is
-    // COUNTED, because a nonzero tally means some freeing site upstream is not
-    // routed through the scope (invariant #4).
+    // The arc lost its anchor before this drain ran.  There is nothing to do, but
+    // the case is counted (too_late), because a nonzero tally means some freeing
+    // site upstream is not routed through the scope (invariant #4).
     const auto d = networkSlipBandScope({"L1C", "L2W"}, {"L1C", "L2W"},
                                         {"L1C", "L2W"}, nullptr, nullptr);
     EXPECT_FALSE(d.scoped);
@@ -314,7 +314,7 @@ TEST(BandScopedRefloatRule, EverythingAlreadyFreedIsTooLateNotScoped) {
 
 TEST(BandScopedRefloatRule, PartialPriorFreeStillLeavesAnAnchorAndIsANoOp) {
     // L5Q freed earlier, this drain implicates only L1C: L2W is untouched by
-    // both, so the arc keeps an anchor with no help and the scope must not act.
+    // both, so the arc keeps an anchor without help and the scope does not act.
     const auto d = networkSlipBandScope({"L1C", "L2W", "L5Q"}, {"L1C"}, {"L5Q"},
                                         nullptr, nullptr);
     EXPECT_FALSE(d.scoped);
@@ -340,7 +340,7 @@ TEST(BandScopedRefloatRule, EmptyArcIsANoOp) {
 }
 
 // ---------------------------------------------------------------------------
-// The config gate — default OFF is the pre-knob behaviour
+// The config gate: the default (off) is the pre-knob behaviour
 // ---------------------------------------------------------------------------
 
 TEST(BandScopedConfig, DefaultsAreTheUnscopedPaths) {

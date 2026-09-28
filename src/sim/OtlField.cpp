@@ -100,9 +100,9 @@ bool OtlField::build(const std::filesystem::path& eot20_nc,
         return false;
     }
 
-    // The frozen set is sampled independently of the track so the reported
-    // "what the processor models" term never silently assumes the APPROX
-    // POSITION coincides with the first truth epoch.
+    // The frozen set is sampled at frozen_site, independently of the track, so the
+    // reported "what the processor models" term does not assume that the RINEX
+    // APPROX POSITION coincides with the first truth epoch.
     if (!model_.parseEot20Load(eot20_nc.string(), frozen_site, frozen_)) {
         log->error("OTL field: EOT20 synthesis failed at the frozen site "
                    "({:.3f}, {:.3f}, {:.3f})",
@@ -159,16 +159,16 @@ const OtlStationCoefficients& OtlField::coefficientsAt(const GnssTime& t,
                                                        const Eigen::Vector3d& rx) {
     if (anchors_.empty()) return frozen_;
     const double key = gpsSeconds(t);
-    // The blend depends on BOTH the epoch and the position, so the memo must key on
-    // both.  Today every call within an epoch passes the same rx (one truth position
-    // per epoch, reused across satellites), but keying on time alone would silently
-    // return a stale blend the day some caller re-queries an epoch at a moved position.
+    // The blend depends on both the epoch and the position, so the memo keys on both.
+    // Every call within an epoch currently passes the same rx (one truth position per
+    // epoch, reused across satellites), but a time-only key would return a stale blend
+    // if a caller re-queried an epoch at a different position.
     if (memo_valid_ && memo_gps_s_ == key && memo_rx_ == rx) return memo_coeffs_;
 
     if (anchors_.size() == 1) {
         memo_coeffs_ = anchors_.front().coeffs;
     } else {
-        // Bracket in TIME (monotone, so the pair is always the temporally adjacent one
+        // Bracket in time (monotone, so the pair is always the temporally adjacent one
         // even where the meander doubles back on itself)...
         auto it = std::upper_bound(anchors_.begin(), anchors_.end(), key,
                                    [](double v, const Anchor& an) { return v < an.gps_s; });
@@ -179,13 +179,13 @@ const OtlStationCoefficients& OtlField::coefficientsAt(const GnssTime& t,
         } else {
             const Anchor& lo = *(it - 1);
             const Anchor& hi = *it;
-            // ...but blend by WHERE the vessel is within that segment, not by when.
-            // Anchors are placed by distance, so a time fraction only coincides with a
-            // distance fraction at constant speed — and this trajectory ends in a
-            // deceleration to a dead stop, where the last segment spans minutes but
-            // barely any distance.  Projecting rx onto the anchor chord is exact for a
-            // straight segment, degrades gracefully on a curved one, and correctly
-            // freezes the coefficients when the vessel does.
+            // ...but blend by where the vessel is within that segment, not by when.
+            // Anchors are placed by distance, so a time fraction equals a distance
+            // fraction only at constant speed, and a landfall trajectory can decelerate
+            // to a stop, where the last segment spans minutes but little distance.
+            // Projecting rx onto the anchor chord is exact for a straight segment,
+            // approximate on a curved one, and holds the coefficients fixed while the
+            // vessel is stationary.
             const Eigen::Vector3d seg = hi.ecef - lo.ecef;
             const double seg_len2 = seg.squaredNorm();
             double f = 0.0;
@@ -205,7 +205,7 @@ const OtlStationCoefficients& OtlField::coefficientsAt(const GnssTime& t,
 
 Eigen::Vector3d OtlField::evaluate(const OtlStationCoefficients& coeffs,
                                    const Eigen::Vector3d& rx, const GnssTime& t) {
-    // Same evaluator the processor runs — identical Doodson arguments, nodal
+    // Same evaluator the processor runs: identical Doodson arguments, nodal
     // corrections and (Up, West, South)->ECEF rotation.  Only the coefficients move.
     model_.setStationCoefficients(coeffs);
     return model_.computeDisplacement(rx, t);

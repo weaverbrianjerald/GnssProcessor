@@ -1,12 +1,12 @@
 #!/usr/bin/env python
-"""Synthesize a WIDE-LANE (1,2) DD-fractional trace from a run's per-band network_dd_fractional.csv, in the
-SAME schema, so scripts/dd_frac_reref.py can grade it unchanged (same nulls, same readouts).
+"""Synthesize a wide-lane (1,2) DD-fractional trace from a run's per-band network_dd_fractional.csv, in the
+same schema, so scripts/dd_frac_reref.py can grade it unchanged (same nulls, same readouts).
 
     WL_cyc = dd_cyc(L1C) - dd_cyc(L2W)      per (week, tow, cons, sat_i, ref_sat, sta_a, sta_b) chord
     lambda_WL = c / (f1 - f2) = 0.861918 m  (GPS L1/L2)
 
-Why: a wrapped-fraction grade is meaningless where the errors are multi-cycle; an n-cycle L1 error is n/4.5 cycles
-at WL, so WL structure with uniform L1/L2 = multi-cycle-but-bounded L1 errors (SPEC_amb_iono §6.15.2).
+A wrapped-fraction grade is meaningless where the errors are multi-cycle: an n-cycle L1 error is n/4.5 cycles
+at WL, so WL structure with uniform L1/L2 indicates multi-cycle-but-bounded L1 errors (SPEC_amb_iono §6.15.2).
 
 Usage: python dd_frac_wl.py <run_dir> [--hi L1C --lo L2W --out <dir>]
 Writes <out>/logs/network_dd_fractional.csv (default <run_dir>_wl12) and prints the chord-pairing census.

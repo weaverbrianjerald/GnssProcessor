@@ -5,41 +5,41 @@
                                   [--status-json PATH]
 
 Legs from the v8 field seed (`runs/evseed_field6h_v8` ep0604, 60 epochs), run
-SEQUENTIALLY under the box-wide producer slot lock (`scripts/ev_slot.py`), one
-producer at a time, from C:/GnssProcessor with MAIN's harness
+sequentially under the box-wide producer slot lock (`scripts/ev_slot.py`), one
+producer at a time, from C:/GnssProcessor with the main session's harness
 (`scripts/event_leg.py`) into C:/GnssProcessor/runs/evleg_<name>/.
 
-The RAIM-only slip shape (§7.2): EQUAL cycles (n, n, n) on L1C / L2W / L5X of
-G24 at GOPE00CZE at the event epoch, no LLI — every MW pair is identically
+The RAIM-only slip shape (§7.2): equal cycles (n, n, n) on L1C / L2W / L5X of
+G24 at GOPE00CZE at the event epoch, no LLI. Every MW pair is identically
 zero, the (1,2) IF-TD step is 0.107·n m against the chain's bar, GF is not
 armed.  ``--event`` carries the L1C slip (the harness records it as the leg's
 event); ``--extra`` carries the full ``network.inject`` block with all three
-slips plus the knob(s) under test.  ⚠ the extra's events must carry ``tow``
+slips plus the knob(s) under test.  The extra's events must carry ``tow``
 explicitly: the harness fills ``tow`` on the ``--event`` object only, and the
-extra's array REPLACES the harness's (config-inheritance rule: arrays replace).
+extra's array replaces the harness's (config-inheritance rule: arrays replace).
 
 The ten pre-registered legs (event at ``--at-ep 10`` = leg epoch 11, tow
 277620.00000810623), in order:
   raimp_null_screen                (no event, raim_carry_invariant: true)
   for n in 1, 2, 4:
-    raimp_n<n>_off                 (inject only — the seed posture; loader INERT line)
+    raimp_n<n>_off                 (inject only, the seed posture; loader inert line)
     raimp_n<n>_screen              (inject + raim_carry_invariant: true)
     raimp_n<n>_act                 (inject + raim_carry_invariant + _refloat: true)
 
-The P0' extension (manager, 2026-09-13: the (1,2) IF-TD bar on this posture is
-its physical floor λ_IF(1,1) = 0.106953 m, EXACTLY the step an equal-count
-n = 1 slip adds to the chain, so n = 1 is caught or missed by the SIGN of the
-chain's own noise at the event epoch — a coin flip per epoch, not a blind
-shape).  ``--extension`` appends n = 1 at three more event epochs from the same
+The P0' extension (2026-09-13): the (1,2) IF-TD bar on this posture is
+its physical floor λ_IF(1,1) = 0.106953 m, exactly the step an equal-count
+n = 1 slip adds to the chain, so n = 1 is caught or missed by the sign of the
+chain's own noise at the event epoch, a coin flip per epoch, not a blind
+shape.  ``--extension`` appends n = 1 at three more event epochs from the same
 snapshot, off and act arms (a screen-only leg is byte-identical to off unless
 it flags):
   for at_ep in 14, 18, 22:   raimp_n1e<at_ep>_off, raimp_n1e<at_ep>_act
 
-Per leg the driver records the harness sha256 BEFORE the launch (the batch is
-only valid if it never moves — SPEC_event_harness §21.21, "harness defaults are
+Per leg the driver records the harness sha256 before the launch (the batch is
+only valid if it never moves: SPEC_event_harness §21.21, "harness defaults are
 shared state"), claims a slot (``claim raimp --max-wait 540``; exit 3 = call
 again), runs the harness with ``--run`` (blocks until the exe exits), releases
-the slot once ``exitcode.txt`` exists, and appends the leg's wall time / rc /
+the slot once ``exitcode.txt`` exists, and appends the leg's wall time, rc and
 harness sha to the status JSON.  A leg whose ``exitcode.txt`` already reads 0 is
 skipped, so a relaunch after an interruption resumes rather than re-runs.
 """

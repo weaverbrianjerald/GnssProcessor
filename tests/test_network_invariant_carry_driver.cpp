@@ -1,31 +1,35 @@
 /**
  * @file test_network_invariant_carry_driver.cpp
- * @brief Card 4 (M1) phase C3b gate — the live DD invariant-carry driver.
+ * @brief Tests for the live DD invariant-carry driver (card 4 (M1), phase C3b and later).
  *
- * Five gates, non-vacuous with negative/independent controls (the LEAN-review
- * discipline):
+ * The five phase-C3b gates, each with a negative or independent control so that a
+ * pass is not vacuous:
  *
- *  1. **ProjectionMatchesFromScratchAndZStore** — the carry reconcile is a
- *     change-of-basis: seed a known DD estimate in one fundamental-cycle basis,
- *     reconcile to a DIFFERENT tree, and assert the projected prior equals the
- *     from-scratch cycle-matrix truth @f$C_2 N,\ C_2\,\mathrm{Cov}(N)\,C_2^\top@f$
- *     (the phase-B CycleBasisUnimodular oracle) to 1e-9.  A negative control (the
- *     projection is NOT the identity) proves the transform is load-bearing.
- *  2. **CarryAccumulatesAndConverges** — over epochs the carried DD variance
- *     shrinks monotonically and the mean converges to the true integer DD.
- *  3. **ProductionSeamDatumFreedom** — THE C3b falsifier: the same noisy epoch
- *     stream driven under two DIFFERENT per-epoch tree realizations yields an
- *     IDENTICAL estimable double difference (basis choice cannot leak), while the
- *     realizations' chord sets genuinely differ and the carry is load-bearing.
- *  4. **MergeSplitAndFreshChords** — component merge/split and fresh-chord births
- *     are counted and the surviving DDs are preserved across the topology change.
- *  5. **ResetPredictAndOff** — reset() cold-starts, qz inflates the carry, and an
- *     empty epoch emits no blocks (the OFF path).
+ *  1. **ProjectionMatchesFromScratchAndZStore**: the carry reconcile is a change of
+ *     basis.  A known DD estimate is seeded in one fundamental-cycle basis and
+ *     reconciled to a different tree; the projected prior equals the from-scratch
+ *     cycle-matrix result @f$C_2 N,\ C_2\,\mathrm{Cov}(N)\,C_2^\top@f$ (the phase-B
+ *     CycleBasisUnimodular oracle) to 1e-9.  A negative control shows the projection
+ *     is not the identity, so the transform is load-bearing.
+ *  2. **CarryAccumulatesAndConverges**: over epochs the carried DD variance shrinks
+ *     monotonically and the mean converges to the true integer DD.
+ *  3. **ProductionSeamDatumFreedom**: the same noisy epoch stream, driven under two
+ *     different per-epoch tree realizations, yields an identical estimable double
+ *     difference (the basis choice does not leak), while the realizations' chord sets
+ *     differ and the carry is load-bearing.
+ *  4. **MergeSplitAndFreshChords**: component merges and fresh-chord births are
+ *     counted, and the surviving DDs are preserved across the topology change (the
+ *     test drives a merge only).
+ *  5. **ResetPredictAndOff**: reset() cold-starts, qz inflates the carry, and an
+ *     empty epoch emits no blocks (the off path).
  *
- * The synthetic network is the eq34 chain-datum model (per-receiver RPB δ_r makes
- * the DD truly integer): code P=a_r−c_s, phase Φ=a_r−c_s+b_s+δ_r+z_{r,s}, with a
- * spanning-tree ambiguity datum (pre-reduce pin rows, composing exactly with the
- * post-reduce DD fold) + r1's RPB pin + a shared clock pin.
+ * The later tests in this file cover the snapshot blob, the warm-resume event, the
+ * slip and innovation-gate responses, the pair (lane) carry and the counters.
+ *
+ * The synthetic network is the eq34 chain-datum model (a per-receiver RPB δ_r makes
+ * the DD integer): code P = a_r − c_s, phase Φ = a_r − c_s + b_s + δ_r + z_{r,s}, with a
+ * spanning-tree ambiguity datum (pre-reduce pin rows, which compose exactly with the
+ * post-reduce DD fold), the RPB pin of r1 and a shared clock pin.
  */
 
 #include <gtest/gtest.h>
@@ -84,9 +88,9 @@ Net makeNet(unsigned seed, int R, int S) {
     return n;
 }
 
-// Assemble one station's rows for the estimator: 2S observation rows (+ optional
-// per-(r,s) phase noise), the spanning-tree ambiguity pins for this station, a
-// loose δ_r prior (keeps N_rr PD), and — for r1 — the RPB pin δ_{r1}=0.
+// Assemble one station's rows for the estimator: 2S observation rows (with optional
+// per-(r,s) phase noise), the spanning-tree ambiguity pins for this station, and, for
+// r1, the RPB pin δ_{r1} = 0.  No δ_r prior is added (see below).
 struct StationCols { Eigen::Index a{0}, d{1}; std::vector<Eigen::Index> z; };
 StationCols ambLayout(int S) { StationCols c; c.z.resize(S); for (int s = 0; s < S; ++s) c.z[s] = 2 + s; return c; }
 
@@ -99,11 +103,11 @@ std::size_t addNetStation(NetworkEstimator& est, const Net& n, int r,
     std::vector<int> pins;                      // tree-edge ambiguity cols pinned to 0
     for (int s = 0; s < S; ++s) if (isStarTreeEdge(p, q, r, s)) pins.push_back(col.z[s]);
     const bool rpbPin = (r == r1);
-    // Each station has >=1 tree-edge pin, which fixes its local δ_r ≡ Σ_s z_{r,s} gauge
-    // (N_rr stays PD) — so NO loose δ prior is needed.  A loose δ prior would inject
+    // Each station has at least one tree-edge pin, which fixes its local δ_r ≡ Σ_s z_{r,s}
+    // gauge (N_rr stays PD), so no loose δ prior is needed.  A loose δ prior would add
     // toward-zero information that, combined with the datum-dependent set of pinned
-    // ambiguities, breaks the δ–z cancellation differently per tree and destroys the
-    // DD's datum-invariance (the DiagnosticNetworkDatumInvariance probe).
+    // ambiguities, breaks the δ–z cancellation differently per tree and removes the
+    // DD's datum invariance (checked by the DiagnosticNetworkDatumInvariance probe).
     const int nrows = 2 * S + static_cast<int>(pins.size()) + (rpbPin ? 1 : 0);
     const Eigen::Index n_local = 2 + S;
     Eigen::MatrixXd A_s = Eigen::MatrixXd::Zero(nrows, est.numShared());
@@ -164,9 +168,9 @@ std::vector<Eigen::VectorXd> driveEpoch(NetworkInvariantCarryDriver& drv, const 
     return xr;
 }
 
-// Card 4 D5: the (r,s) arcs the innovation gate flagged at the last install — the
-// caller (ApplicationNetwork) feeds these into NEXT epoch's slipped set (the C3c re-tap).
-// Mirrors the production plumbing: chord ArcKey(rxV(r), satV(s)) → (r, s).
+// The (r,s) arcs the innovation gate flagged at the last install.  The caller
+// (ApplicationNetwork) feeds these into the next epoch's slipped set (the C3c re-tap).
+// Mirrors the production plumbing: chord ArcKey(rxV(r), satV(s)) → (r, s).  (card 4 D5)
 std::set<std::pair<int, int>> innovSlips(const NetworkInvariantCarryDriver& drv) {
     std::set<std::pair<int, int>> out;
     for (const auto& [g, key] : drv.lastInnovFlags()) out.insert({key.u, key.v - kSatBase});
@@ -179,8 +183,8 @@ double estimableDD(const std::vector<Eigen::VectorXd>& xr, int r, int s, int r0,
     return xr[r](col.z[s]) - xr[r](col.z[s0]) - xr[r0](col.z[s]) + xr[r0](col.z[s0]);
 }
 
-// Solve one epoch under star(p,q) with NO DD carry (empty priors) — the datum-
-// invariance probe: the estimable DD must not depend on the tree-pin choice.
+// Solve one epoch under star(p,q) with no DD carry (empty priors).  Datum-invariance
+// probe: the estimable DD does not depend on the tree-pin choice.
 double solveNoCarryDD(const Net& n, int p, int q, const std::vector<std::vector<double>>* noise) {
     const std::string sig = "L1";
     NetworkEstimator est;
@@ -213,7 +217,7 @@ TEST(NetworkInvariantCarryDriverTest, DiagnosticNetworkDatumInvariance) {
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// GATE 1 — the reconcile is a change-of-basis matching from-scratch truth.
+// Gate 1: the reconcile is a change of basis that matches the from-scratch result.
 // ---------------------------------------------------------------------------
 TEST(NetworkInvariantCarryDriverTest, ProjectionMatchesFromScratchAndZStore) {
     const int R = 3, S = 3;
@@ -273,9 +277,9 @@ TEST(NetworkInvariantCarryDriverTest, ProjectionMatchesFromScratchAndZStore) {
 }
 
 // ---------------------------------------------------------------------------
-// RTB-7(c) — the branch-faithful snapshot blob: serializeCarry ⇄ restoreCarry
-// round-trips every carried DD (mean, variance, cross-covariance, structure)
-// bit-for-bit across multiple components/groups.
+// The branch-faithful snapshot blob: serializeCarry ⇄ restoreCarry round-trips every
+// carried DD (mean, variance, cross-covariance, structure) bit for bit across several
+// components and groups.  (RTB-7(c))
 // ---------------------------------------------------------------------------
 TEST(NetworkInvariantCarryDriverTest, SerializeRestoreRoundTripIsExact) {
     const int R = 3, S = 3;
@@ -300,7 +304,7 @@ TEST(NetworkInvariantCarryDriverTest, SerializeRestoreRoundTripIsExact) {
     std::ostringstream os;
     src.serializeCarry(os);
     const std::string blob = os.str();
-    EXPECT_NE(blob.find("CARRY,v2"), std::string::npos);   // RE-1 bumped the blob version
+    EXPECT_NE(blob.find("CARRY,v2"), std::string::npos);   // blob version 2 (RE-1)
     EXPECT_NE(blob.find("\nCEND\n"), std::string::npos);
 
     NetworkInvariantCarryDriver dst;
@@ -333,8 +337,8 @@ TEST(NetworkInvariantCarryDriverTest, SerializeRestoreRoundTripIsExact) {
 }
 
 // ---------------------------------------------------------------------------
-// RTB-7(d) G1 — resume-event build: v2/v1 blob, reset-first, binding validation,
-// and the one-shot Pz resume shock.
+// Resume event: v2/v1 blob, reset before restore, binding validation, and the
+// one-shot Pz resume shock.  (RTB-7(d) G1)
 // ---------------------------------------------------------------------------
 namespace {
 /// Minimal seeded driver: one component, K chords, known z/Pz.  Returns the chords.
@@ -370,7 +374,7 @@ TEST(NetworkInvariantCarryDriverTest, ResumeBlobV2SeedsSigma0AndV1IsLegacy) {
     const std::string v2_noS = os.str();
     EXPECT_NE(v2_noS.find("CARRY,v2"), std::string::npos) << "header must be v2";
 
-    // (a) v2 blob WITHOUT an S line -> restores, sigma0 NOT seeded (legacy behaviour).
+    // (a) v2 blob without an S line: restores, sigma0 is not seeded (legacy behaviour).
     {
         NetworkInvariantCarryDriver d(cfg);
         std::istringstream is(v2_noS); std::string err;
@@ -379,7 +383,7 @@ TEST(NetworkInvariantCarryDriverTest, ResumeBlobV2SeedsSigma0AndV1IsLegacy) {
         EXPECT_FALSE(d.resumeSigma0Seeded());
         EXPECT_DOUBLE_EQ(d.resumeSigma0Value(), 1.0);
     }
-    // (b) v2 blob WITH an S line -> sigma0 seeded, value = sqrt(sigma0_sq).
+    // (b) v2 blob with an S line: sigma0 is seeded, value = sqrt(sigma0_sq).
     {
         const double s2 = 2.25, rows = 512.0;
         std::string blob = v2_noS;
@@ -390,7 +394,7 @@ TEST(NetworkInvariantCarryDriverTest, ResumeBlobV2SeedsSigma0AndV1IsLegacy) {
         ASSERT_TRUE(d.restoreCarry(is, &err)) << err;
         EXPECT_TRUE(d.resumeSigma0Seeded());
         EXPECT_NEAR(d.resumeSigma0Value(), std::sqrt(s2), 1e-12);
-        // the gate must now actually USE it (past its warm-up row count)
+        // the gate uses the seeded value (the seeded row count is past the warm-up)
         EXPECT_NEAR(d.innovInflationSigma0(), std::sqrt(s2), 1e-6)
             << "seeded accumulator must clear the warm-up gate, not fall back to raw formal";
     }
@@ -406,16 +410,13 @@ TEST(NetworkInvariantCarryDriverTest, ResumeBlobV2SeedsSigma0AndV1IsLegacy) {
 }
 
 // ---------------------------------------------------------------------------
-// RTB-7(d) RE-1 — the σ̂₀ SEED-REASON defect.  Same shape as the σ̂₀ CLAMP VISIBILITY
-// gate one layer up (SPEC_pd_safe_dd_fold.md §11): `resumeSigma0Seeded()` is a bare
-// bool, and the run-end line ASSERTED a cause for its false — "(v1 blob / calibration
-// off)" — printed on the not-seeded branch unconditionally.  On a COLD run with
-// calibration ARMED both clauses are false and the line printed them anyway
-// (`runs/pdfix_qz0_deg15/run.log`, whose config line says CALIBRATION ON).
-//
-// FOUR distinct conditions suppress the seed and they call for four different actions.
-// The readout must name the one that actually held, and must stay a pure refactor of
-// the bool it explains — never a second opinion about whether the seed was taken.
+// σ̂₀ seed reason.  `resumeSigma0Seeded()` is a bare bool; resumeSigma0Status() names
+// which of four conditions suppressed the seed (cold run, calibration off, no S line,
+// seed rejected by the >0 guard), since each calls for a different action.  A fixed
+// "(v1 blob / calibration off)" text on the not-seeded branch is wrong on a cold run
+// with calibration armed.  The status is a pure refactor of the bool it explains and
+// never disagrees with it about whether the seed was taken.  Same pattern as the σ̂₀
+// clamp-visibility gate (SPEC_pd_safe_dd_fold.md §11).  (RTB-7(d) RE-1)
 // ---------------------------------------------------------------------------
 TEST(NetworkInvariantCarryDriverTest, ResumeSigma0SeedReasonIsNamedNotAsserted) {
     using Seed = NetworkInvariantCarryDriver::ResumeSeedState;
@@ -441,7 +442,7 @@ TEST(NetworkInvariantCarryDriverTest, ResumeSigma0SeedReasonIsNamedNotAsserted) 
         std::istringstream is(blob); std::string err;
         EXPECT_TRUE(d.restoreCarry(is, &err)) << err;
     };
-    // The whole point of the accessor: it EXPLAINS the bool, it does not re-decide it.
+    // The status explains the bool; it does not decide it a second time.
     auto consistent = [](const NetworkInvariantCarryDriver& d) {
         const auto st = d.resumeSigma0Status();
         EXPECT_EQ(st.state == Seed::Seeded, d.resumeSigma0Seeded())
@@ -450,8 +451,8 @@ TEST(NetworkInvariantCarryDriverTest, ResumeSigma0SeedReasonIsNamedNotAsserted) 
         EXPECT_DOUBLE_EQ(st.sigma0, d.resumeSigma0Value());
     };
 
-    // --- (a) THE FIELD CASE: cold run, calibration ARMED.  The pre-fix text claimed
-    //         "v1 blob / calibration off" here — BOTH clauses false. ---
+    // --- (a) The field case: cold run, calibration armed.  Neither "v1 blob" nor
+    //         "calibration off" holds here. ---
     {
         NetworkInvariantCarryDriver d(cfg_on);
         const auto st = d.resumeSigma0Status();
@@ -462,8 +463,9 @@ TEST(NetworkInvariantCarryDriverTest, ResumeSigma0SeedReasonIsNamedNotAsserted) 
         EXPECT_STREQ(NetworkInvariantCarryDriver::resumeSeedStateName(st.state), "cold");
         consistent(d);
     }
-    // --- (b) a blob that DOES carry a seed, restored by a calibration-OFF run: nothing
-    //         consulted it, and the gate is v1 BY CONFIG — not pending a warm-up count. ---
+    // --- (b) A blob that carries a seed, restored by a calibration-off run: nothing
+    //         reads the seed, and the gate is v1 by configuration, not pending a
+    //         warm-up count.  The ignored seed stays reportable. ---
     {
         NetworkInvariantCarryDriver d(cfg_off);
         restoreInto(d, withS("2.25", "512"));
@@ -474,7 +476,7 @@ TEST(NetworkInvariantCarryDriverTest, ResumeSigma0SeedReasonIsNamedNotAsserted) 
             << "the offer the run ignored must stay reportable — that IS the diagnosis";
         consistent(d);
     }
-    // --- (c) the genuine legacy case the old text described: restored, no S line. ---
+    // --- (c) The legacy case: restored, no S line. ---
     {
         NetworkInvariantCarryDriver d(cfg_on);
         restoreInto(d, no_s);
@@ -483,8 +485,8 @@ TEST(NetworkInvariantCarryDriverTest, ResumeSigma0SeedReasonIsNamedNotAsserted) 
         EXPECT_DOUBLE_EQ(st.blob_sigma0_sq, 0.0);
         consistent(d);
     }
-    // --- (d) an S line that PARSES but fails the >0 seed guard.  A writer-side defect,
-    //         and the case the legacy wording would have mis-read as an old blob. ---
+    // --- (d) An S line that parses but fails the >0 seed guard.  This is a writer-side
+    //         defect, distinct from an old blob. ---
     for (const auto& bad : {withS("0", "512"), withS("2.25", "0")}) {
         NetworkInvariantCarryDriver d(cfg_on);
         restoreInto(d, bad);
@@ -494,7 +496,7 @@ TEST(NetworkInvariantCarryDriverTest, ResumeSigma0SeedReasonIsNamedNotAsserted) 
                "degenerate accumulator";
         consistent(d);
     }
-    // --- (e) the healthy path, unchanged. ---
+    // --- (e) The seeded path, unchanged. ---
     {
         NetworkInvariantCarryDriver d(cfg_on);
         restoreInto(d, withS("2.25", "512"));
@@ -505,8 +507,7 @@ TEST(NetworkInvariantCarryDriverTest, ResumeSigma0SeedReasonIsNamedNotAsserted) 
         EXPECT_STREQ(NetworkInvariantCarryDriver::resumeSeedStateName(st.state), "seeded");
         consistent(d);
     }
-    // --- every state has a distinct tag (a log the reader cannot grep by state is the
-    //     defect again, one layer down). ---
+    // --- Every state has a distinct tag, so the log can be searched by state. ---
     std::set<std::string> tags;
     for (Seed s : {Seed::NotRestored, Seed::CalibrationOff, Seed::NoSeedLine,
                    Seed::Rejected, Seed::Seeded})
@@ -515,8 +516,8 @@ TEST(NetworkInvariantCarryDriverTest, ResumeSigma0SeedReasonIsNamedNotAsserted) 
 }
 
 TEST(NetworkInvariantCarryDriverTest, RestoreCarryResetsPriorSideState) {
-    // RE-4: restoreCarry is a general install API — it must not inherit stale
-    // per-epoch side state (block layout / counters) from earlier driver work.
+    // restoreCarry is a general install API and does not inherit stale per-epoch side
+    // state (block layout, counters) from earlier driver work.  (RE-4)
     Eigen::VectorXd z; Eigen::MatrixXd Pz;
     NetworkInvariantCarryDriver d;
     const std::vector<ArcKey> ch = seedSimple(d, 0, z, Pz);
@@ -584,20 +585,20 @@ TEST(NetworkInvariantCarryDriverTest, ApplyResumeShockAddsVarianceToDiagonalOnly
 }
 
 // ---------------------------------------------------------------------------
-// RTB-7(e) — the DIAGONAL-ONLY carry blob (v3).
+// The diagonal-only carry blob (v3).  (RTB-7(e))
 //
-// The card's HYPOTHESIS (the resumed branch lives in the MEANS, not the
-// cross-covariance) is an estimation claim that only the field A/B can rule on.
-// These gates assert exactly what the SERIALIZATION promises and nothing more:
-// the means and variances survive bit-for-bit, the cross-covariances are dropped
-// to zero (stated, not hidden), the shape is chosen by the ROW TAG rather than
-// the header version so v1/v2/v3 all still read, and the default argument leaves
-// the v2 writer byte-identical.
+// The card's hypothesis (the resumed branch lives in the means, not in the
+// cross-covariance) is an estimation claim that only the field A/B can decide.
+// These gates check what the serialization promises and nothing more: the means
+// and variances survive bit for bit, the cross-covariances are set to zero (and the
+// restore reports it), the shape is chosen by the row tag rather than the header
+// version so v1, v2 and v3 blobs all read, and the default argument leaves the v2
+// writer byte-identical.
 // ---------------------------------------------------------------------------
 namespace {
 /// A denser seed than @ref seedSimple: R×S bipartite, K = (R−1)(S−1) chords with a
-/// fully-populated PSD @f$P^z@f$ (so every off-diagonal is genuinely non-zero and a
-/// dropped cross-covariance cannot pass by accident).
+/// fully populated PSD @f$P^z@f$, so every off-diagonal is non-zero and a dropped
+/// cross-covariance cannot pass by accident.
 std::vector<ArcKey> seedDense(NetworkInvariantCarryDriver& d, int group, int R, int S,
                               unsigned seed, Eigen::VectorXd& z, Eigen::MatrixXd& Pz) {
     std::set<int> verts;
@@ -620,11 +621,11 @@ std::vector<ArcKey> seedDense(NetworkInvariantCarryDriver& d, int group, int R, 
     d.seedCarriedForTest(group, ch, z, Pz, verts, arcs);
     return ch;
 }
-/// #occurrences of a line whose first field is exactly @p tag.
+/// Number of lines whose first field equals @p tag.
 std::size_t countRows(const std::string& blob, const std::string& tag) {
     std::size_t n = 0, pos = 0;
     const std::string needle = "\n" + tag + ",";
-    // a leading "\n" prefix means the header line can never match, which is what we want
+    // the leading "\n" keeps the header line from matching, as intended
     while ((pos = blob.find(needle, pos)) != std::string::npos) { ++n; pos += needle.size(); }
     return n;
 }
@@ -649,9 +650,9 @@ TEST(NetworkInvariantCarryDriverTest, DiagonalCarryBlobV3DropsOnlyTheCrossCovari
     ASSERT_TRUE(dst.restoreCarry(is, &err)) << "v3 restore failed: " << err;
     EXPECT_EQ(dst.totalZDim(), src.totalZDim());
 
-    // (a) the MEANS — the thing the branch is claimed to live in — are bit-exact.
-    // (b) the VARIANCES are bit-exact.  (c) the CROSS-covariances are gone, and the
-    // source's were genuinely non-zero (otherwise (c) would be vacuous).
+    // (a) The means, where the branch is claimed to live, are bit-exact.
+    // (b) The variances are bit-exact.  (c) The cross-covariances are zero, and the
+    // source's were non-zero (otherwise (c) would be vacuous).
     for (Eigen::Index i = 0; i < K; ++i) {
         double zs = 0, vs = 0, zd = 0, vd = 0;
         ASSERT_TRUE(src.carriedDdForTest(3, ch[static_cast<std::size_t>(i)], zs, vs));
@@ -675,13 +676,13 @@ TEST(NetworkInvariantCarryDriverTest, DiagonalCarryBlobV3DropsOnlyTheCrossCovari
     EXPECT_GT(any_src_cross, 1e-6)
         << "control: the source covariance must actually HAVE cross terms to drop";
 
-    // Telemetry (invariant #4) — a diagonal restore is otherwise indistinguishable.
+    // Telemetry (invariant #4): without it, a diagonal restore cannot be told apart.
     EXPECT_TRUE(dst.resumeCarryRestored());
     EXPECT_TRUE(dst.resumeCarryDiagonal());
     EXPECT_EQ(dst.resumeCarryDiagonalBlocks(), 1);
 
-    // Negative control: the SAME carry through the dense (v2) writer keeps the
-    // cross-covariance and reports the shape honestly.
+    // Negative control: the same carry through the dense (v2) writer keeps the
+    // cross-covariance and reports the dense shape.
     std::ostringstream os2; src.serializeCarry(os2);       // default arg == dense
     NetworkInvariantCarryDriver dense;
     std::istringstream is2(os2.str());
@@ -709,16 +710,17 @@ TEST(NetworkInvariantCarryDriverTest, DiagonalCarryBlobShrinksAndDefaultIsUnchan
         << "the default argument MUST be the pre-RTB-7(e) writer, byte-for-byte";
     EXPECT_NE(a.str().find("CARRY,v2"), std::string::npos) << "default stays v2";
 
-    // K numbers vs K² — the ratio is the whole card.  A conservative bar (the blob
-    // also carries the Z/H/X/A structure rows, which do not shrink).
+    // The diagonal blob stores K covariance numbers per component against K² for the
+    // dense one.  The bar is conservative because the Z/H/X/A structure rows do not
+    // shrink.
     const double ratio = static_cast<double>(a.str().size()) / static_cast<double>(c.str().size());
     EXPECT_GT(ratio, 5.0) << "K=" << K << ": dense " << a.str().size() << " B vs diagonal "
                           << c.str().size() << " B — expected roughly K-fold, got " << ratio;
 }
 
 TEST(NetworkInvariantCarryDriverTest, RestoreDispatchesOnRowTagNotHeaderVersion) {
-    // The read side must be CONTENT-driven: that is what lets one converge run's
-    // artifact seed both A/B arms, and what keeps every v1/v2 snapshot readable.
+    // The reader dispatches on content, so one converge run's artifact can seed both
+    // A/B arms and every v1/v2 snapshot stays readable.
     Eigen::VectorXd z; Eigen::MatrixXd Pz;
     NetworkInvariantCarryDriver src;
     const std::vector<ArcKey> ch = seedDense(src, 0, /*R=*/3, /*S=*/3, /*seed=*/2, z, Pz);
@@ -758,9 +760,9 @@ TEST(NetworkInvariantCarryDriverTest, RestoreDispatchesOnRowTagNotHeaderVersion)
 }
 
 TEST(NetworkInvariantCarryDriverTest, DiagonalCarryBlobRoundTripsPairAndEmptyBlocks) {
-    // WL-3 pair blocks are 2K×2K with cross-BAND coupling on the (k, K+k) terms —
-    // the diagonal blob must keep both bands' means/variances and the (λ₁, λ₂) lane
-    // basis, and drop the cross-band coupling like any other off-diagonal.
+    // Pair blocks (WL-3) are 2K×2K with cross-band coupling on the (k, K+k) terms.  The
+    // diagonal blob keeps both bands' means and variances and the (λ₁, λ₂) lane basis,
+    // and drops the cross-band coupling like any other off-diagonal.
     const double lam1 = 0.19029367279836487, lam2 = 0.24421021342456825;
     const int R = 3, S = 3;
     std::set<int> verts;
@@ -779,8 +781,8 @@ TEST(NetworkInvariantCarryDriverTest, DiagonalCarryBlobRoundTripsPairAndEmptyBlo
 
     NetworkInvariantCarryDriver src;
     src.seedCarriedPairForTest(1, ch, zj, Pj, lam1, lam2, verts, arcs);
-    // ...plus a degenerate ZERO-chord component: the dense writer emits no P rows for
-    // it, so the diagonal writer must emit no PD row either or the reader desynchronizes.
+    // Plus a degenerate zero-chord component: the dense writer emits no P rows for it,
+    // so the diagonal writer emits no PD row either; otherwise the reader desynchronizes.
     src.seedCarriedForTest(2, {}, Eigen::VectorXd(0), Eigen::MatrixXd(0, 0), verts, arcs);
 
     std::ostringstream os;
@@ -811,7 +813,7 @@ TEST(NetworkInvariantCarryDriverTest, DiagonalCarryBlobRoundTripsPairAndEmptyBlo
 }
 
 // ---------------------------------------------------------------------------
-// GATE 2 — the carry accumulates information (variance shrinks, mean → integer).
+// Gate 2: the carry accumulates information (variance shrinks, mean → integer).
 // ---------------------------------------------------------------------------
 TEST(NetworkInvariantCarryDriverTest, CarryAccumulatesAndConverges) {
     const int R = 4, S = 4;
@@ -825,7 +827,7 @@ TEST(NetworkInvariantCarryDriverTest, CarryAccumulatesAndConverges) {
     const double trueDD = double(n.z[2][3] - n.z[2][q0] - n.z[p0][3] + n.z[p0][q0]);
 
     // The DD's posterior variance has a floor set by the (uncarried) shared-parameter
-    // uncertainty in this synthetic network; the carry accumulates the DIRECT part on
+    // uncertainty in this synthetic network; the carry accumulates the direct part on
     // top of that floor, so the variance is monotone non-increasing and strictly below
     // its first-epoch value, while the mean converges to the integer truth.
     double var_prev = 1e30, z_final = 0.0, var_first = 0.0, var_final = 0.0;
@@ -844,10 +846,10 @@ TEST(NetworkInvariantCarryDriverTest, CarryAccumulatesAndConverges) {
 }
 
 // ---------------------------------------------------------------------------
-// WL-2 (SPEC_ewl_wl_cascade_card.md §3.3) — the WL inject primitive + its
-// one-epoch D5 exemption.  The inject is a stiff integer assertion, so standing
-// invariant #1 demands a wired + force-fire-tested event response: the injected
-// value must NOT be re-tapped away the very next epoch (else the F6 storm returns).
+// The WL inject primitive and its one-epoch D5 exemption (WL-2,
+// SPEC_ewl_wl_cascade_card.md §3.3).  The inject is a stiff integer assertion, so
+// invariant #1 requires a wired event response tested by forced firing: the injected
+// value is not re-tapped away on the next epoch (a re-tap there reproduces the F6 storm).
 // ---------------------------------------------------------------------------
 TEST(NetworkInvariantCarryDriverTest, InjectLaneTargetEditsCarriedValue) {
     NetworkInvariantCarryDriver drv;
@@ -864,16 +866,16 @@ TEST(NetworkInvariantCarryDriverTest, InjectLaneTargetEditsCarriedValue) {
     ASSERT_TRUE(drv.carriedChordValue(0, chord, z, var));
     EXPECT_NEAR(z, 7.5, 1e-12)  << "inject must set the carried DD value";
     EXPECT_NEAR(var, 1e-4, 1e-16) << "inject must reseed the variance";
-    // Not-1:1 skip paths: a chord not carried in the group, or a wrong group, return false.
+    // Skip paths: a chord not carried in the group, or an unknown group, return false.
     EXPECT_FALSE(drv.injectCarriedChord(0, ArcKey(rxV(2), satV(2)), 0.0, 1.0));
     EXPECT_FALSE(drv.injectCarriedChord(/*group=*/9, chord, 0.0, 1.0));
 }
 
 TEST(NetworkInvariantCarryDriverTest, InjectD5ExemptionSuppressesReTap) {
-    // Control-vs-exempt contrast: the SAME wildly-off carried DD flags the D5 gate
-    // (a re-tap) WITHOUT the exemption, and does NOT flag WITH it — so the exemption,
-    // not the value, is what suppresses the re-tap.  The one-epoch lifetime is guaranteed
-    // by construction (@c gate_exempt_ is cleared after every @ref installPosterior).
+    // Control against exempt: the same far-off carried DD flags the D5 gate (a re-tap)
+    // without the exemption and does not flag with it, so the exemption, not the value,
+    // suppresses the re-tap.  The one-epoch lifetime holds by construction
+    // (@c gate_exempt_ is cleared after every @ref installPosterior).
     const int R = 4, S = 4;
     const Net n = makeNet(11, R, S);
     const ArcKey probe(rxV(2), satV(3));
@@ -882,7 +884,7 @@ TEST(NetworkInvariantCarryDriverTest, InjectD5ExemptionSuppressesReTap) {
                                      ArcKey(rxV(0), satV(3)), ArcKey(rxV(0), satV(0))};
     const std::set<int>    verts = {rxV(0), rxV(2), satV(0), satV(3)};
     const std::set<ArcKey> arcs(cyc.begin(), cyc.end());
-    const double off_val = 8.0;   // a carried DD ~40 L1 cycles off the data ⇒ a huge innovation
+    const double off_val = 8.0;   // a carried DD ~40 L1 cycles off the data ⇒ a large innovation
     auto seedOff = [&](NetworkInvariantCarryDriver& d) {
         d.seedCarriedForTest(0, {probe}, (Eigen::VectorXd(1) << off_val).finished(),
                              (Eigen::MatrixXd(1, 1) << 1e-2).finished(), verts, arcs);
@@ -897,14 +899,14 @@ TEST(NetworkInvariantCarryDriverTest, InjectD5ExemptionSuppressesReTap) {
     const NetworkInvariantCarryDriver::Config gated{
         /*qz=*/0.0, /*fresh_prior_var=*/1e6, /*innov_gate=*/true, /*innov_k=*/4.0};
 
-    // Control: off carried value, NO inject → the D5 gate flags it.
+    // Control: off carried value, no inject → the D5 gate flags it.
     NetworkInvariantCarryDriver ctrl(gated);
     seedOff(ctrl);
     { auto ns = noiseOf(); driveEpoch(ctrl, n, 0, 0, &ns, /*dt=*/1.0); }
     EXPECT_GT(innovSlips(ctrl).count({2, 3}), 0u)
         << "an off carried DD MUST flag the D5 gate without the exemption (baseline)";
 
-    // Exempt: SAME off value, but injected (⇒ D5-exempt this epoch) → NOT flagged.
+    // Exempt: same off value, but injected (⇒ D5-exempt this epoch) → not flagged.
     NetworkInvariantCarryDriver ex(gated);
     seedOff(ex);
     ASSERT_TRUE(ex.injectCarriedChord(0, probe, off_val, /*new_var=*/1e-2));  // same value; sets exemption
@@ -913,27 +915,27 @@ TEST(NetworkInvariantCarryDriverTest, InjectD5ExemptionSuppressesReTap) {
         << "the inject exemption must suppress the D5 re-tap for the epoch after inject";
 }
 
-// WL-2 (§3.3 / §7.2 "primitive exactness") — the lane-target arithmetic the
-// ApplicationNetwork inject applies over the two bands' carry groups: set the WL lane
-// difference (A1−A2) to the integer target while PRESERVING the phase-determined sum
-// (A1+A2) exactly.  Seed a garbage two-band lane, run the identical formula through the
-// primitive, and assert the lane hits the integer and the NL sum is preserved to 1e-12.
+// Lane-target arithmetic that the ApplicationNetwork inject applies over the two bands'
+// carry groups: set the WL lane difference (A1−A2) to the integer target and keep the
+// phase-determined sum (A1+A2) unchanged.  A two-band lane is seeded with arbitrary
+// values, the same formula runs through the primitive, and the lane hits the integer
+// while the NL sum is preserved to 1e-12.  (WL-2, §3.3 / §7.2 "primitive exactness")
 TEST(NetworkInvariantCarryDriverTest, InjectLaneTargetHitsIntegerPreservesSum) {
     NetworkInvariantCarryDriver drv;
-    const ArcKey chord(rxV(1), satV(1));                 // same ArcKey in BOTH band groups (1:1)
+    const ArcKey chord(rxV(1), satV(1));                 // same ArcKey in both band groups (1:1)
     const std::set<int>    verts = {rxV(0), rxV(1), satV(0), satV(1)};
     const std::set<ArcKey> arcs  = {ArcKey(rxV(0), satV(0)), ArcKey(rxV(0), satV(1)),
                                     ArcKey(rxV(1), satV(0)), ArcKey(rxV(1), satV(1))};
     const int    gL1 = 0, gL2 = 1;
     const double lam1 = 0.1902937, lam2 = 0.2442102;      // GPS L1 / L2 wavelengths (m)
     const double zlin1 = 3.7, zlin2 = -1.9;               // arbitrary linearization DD sums (m)
-    const double z1 = 0.53, z2 = -0.28;                   // garbage carried DDs (correction frame, m)
+    const double z1 = 0.53, z2 = -0.28;                   // arbitrary carried DDs (correction frame, m)
     drv.seedCarriedForTest(gL1, {chord}, (Eigen::VectorXd(1) << z1).finished(),
                            (Eigen::MatrixXd(1, 1) << 0.09).finished(), verts, arcs);
     drv.seedCarriedForTest(gL2, {chord}, (Eigen::VectorXd(1) << z2).finished(),
                            (Eigen::MatrixXd(1, 1) << 0.09).finished(), verts, arcs);
 
-    // Pre-inject absolute band DDs + preserved NL sum (the quantity the inject must keep).
+    // Pre-inject absolute band DDs and the NL sum that the inject preserves.
     const double A1 = (z1 + zlin1) / lam1, A2 = (z2 + zlin2) / lam2;
     const double s  = A1 + A2;
     const double w  = 7.0;                                // integer WL DD target (cyc)
@@ -952,20 +954,20 @@ TEST(NetworkInvariantCarryDriverTest, InjectLaneTargetHitsIntegerPreservesSum) {
 }
 
 // ---------------------------------------------------------------------------
-// GATE 3 — production-seam DatumFreedom (the make-or-break falsifier).
-// Two per-epoch tree realizations of the SAME noisy stream ⇒ identical estimable DD.
+// Gate 3: production-seam DatumFreedom, the falsifier for phase C3b.
+// Two per-epoch tree realizations of the same noisy stream ⇒ identical estimable DD.
 // ---------------------------------------------------------------------------
 TEST(NetworkInvariantCarryDriverTest, ProductionSeamDatumFreedom) {
     const int R = 4, S = 4, E = 6;
     const Net n = makeNet(2027, R, S);
-    // One shared noisy observation stream for BOTH realizations.
+    // One shared noisy observation stream for both realizations.
     std::mt19937 gen(555);
     std::normal_distribution<double> noiseDist(0.0, 0.03);
     std::vector<std::vector<std::vector<double>>> noise(E, std::vector<std::vector<double>>(R, std::vector<double>(S)));
     for (int e = 0; e < E; ++e) for (int r = 0; r < R; ++r) for (int s = 0; s < S; ++s) noise[e][r][s] = noiseDist(gen);
 
-    // Realization A: burn-in star(0,0), then vary the RECEIVER pivot p=e%R.
-    // Realization B: burn-in star(0,0), then vary the SATELLITE pivot q=e%S.
+    // Realization A: burn-in star(0,0), then vary the receiver pivot p=e%R.
+    // Realization B: burn-in star(0,0), then vary the satellite pivot q=e%S.
     auto pivotA = [&](int e) { return std::pair<int,int>(e == 0 ? 0 : (e % R), 0); };
     auto pivotB = [&](int e) { return std::pair<int,int>(0, e == 0 ? 0 : (e % S)); };
 
@@ -986,16 +988,16 @@ TEST(NetworkInvariantCarryDriverTest, ProductionSeamDatumFreedom) {
         ddB[e] = estimableDD(xrB, 2, 3, 0, 0);
         czA[e] = drvA.carriedEstimableForTest(0, target);   // carry, solve-independent
         czB[e] = drvB.carriedEstimableForTest(0, target);
-        // record chord sets to prove the realizations really diverge
+        // record chord sets to show that the realizations diverge
         chordsA_last.clear(); chordsB_last.clear();
         if (drvA.numBlocks() > 0) { auto c = drvA.blockChordsForTest(0); chordsA_last.insert(c.begin(), c.end()); }
         if (drvB.numBlocks() > 0) { auto c = drvB.blockChordsForTest(0); chordsB_last.insert(c.begin(), c.end()); }
         double z, v; if (drvA.carriedDdForTest(0, ArcKey(rxV(1), satV(1)), z, v)) varA[e] = v; else varA[e] = -1;
     }
 
-    // THE gate: the estimable DD is identical under the two tree realizations — both as
-    // reconstructed from the solve AND read straight from the carry (basis-invariance of
-    // the driver's carry through the full produce round trip).
+    // The gate: the estimable DD is identical under the two tree realizations, both as
+    // reconstructed from the solve and as read from the carry (basis invariance of the
+    // driver's carry through the full produce round trip).
     for (int e = 0; e < E; ++e) {
         EXPECT_NEAR(ddA[e], ddB[e], 1e-7)
             << "epoch " << e << ": reconstructed DD leaked the datum choice";
@@ -1003,15 +1005,15 @@ TEST(NetworkInvariantCarryDriverTest, ProductionSeamDatumFreedom) {
             << "epoch " << e << ": carried DD leaked the datum choice (A=" << czA[e] << " B=" << czB[e] << ")";
     }
 
-    // Non-vacuous: the realizations' chord bases genuinely differ...
+    // Non-vacuous: the realizations' chord bases differ...
     EXPECT_NE(chordsA_last, chordsB_last)
         << "the two realizations must elect different fundamental-cycle bases";
     // ...and the carry is load-bearing (its variance sharpened over the run).
     ASSERT_GT(varA.front(), 0.0);
     EXPECT_LT(varA.back(), varA.front())
         << "the DD carry must accumulate information across epochs (else the gate is vacuous)";
-    // ...and the divergent arms actually re-based the carry (Fable §3: tree_swaps ≥ 1 on
-    // an informative store — the pivot the DatumFreedom claim is about really happened).
+    // ...and both arms re-based the carry (Fable §3: tree_swaps ≥ 1 on an informative
+    // store, so the pivot change the DatumFreedom claim is about took place).
     EXPECT_GT(drvA.counters().tree_swaps, 0)
         << "arm A varied the receiver pivot every epoch — the carry must have been re-based";
     EXPECT_GT(drvB.counters().tree_swaps, 0)
@@ -1022,28 +1024,28 @@ TEST(NetworkInvariantCarryDriverTest, ProductionSeamDatumFreedom) {
 }
 
 // ---------------------------------------------------------------------------
-// GATE 4 — component merge / split and fresh-chord births are tracked, and the
-// surviving DDs are preserved across the topology change.
+// Gate 4: component merges and fresh-chord births are counted, and the surviving DDs
+// are preserved across the topology change.  (The test drives a merge; no split.)
 // ---------------------------------------------------------------------------
 TEST(NetworkInvariantCarryDriverTest, MergeSplitAndFreshChords) {
     NetworkInvariantCarryDriver drv;
     using Arc = NetworkInvariantCarryDriver::ArcInput;
     auto arc = [](int r, int s, bool tree) { return Arc{rxV(r), satV(s), tree, r, 2 + s}; };
 
-    // Epoch 1: TWO disjoint components — {r0,r1}×{s0,s1} and {r2,r3}×{s2,s3}.
-    // Each a 4-cycle: tree = path, one chord.
+    // Epoch 1: two disjoint components, {r0,r1}×{s0,s1} and {r2,r3}×{s2,s3}.
+    // Each is a 4-cycle: tree = path, one chord.
     NetworkInvariantCarryDriver::GroupInput g1; g1.key = 0;
     g1.arcs = { arc(0, 0, true), arc(0, 1, true), arc(1, 0, true), arc(1, 1, false),
                 arc(2, 2, true), arc(2, 3, true), arc(3, 2, true), arc(3, 3, false) };
     auto b1 = drv.buildDdPriors({g1});
     EXPECT_EQ(b1.size(), 2u) << "two disjoint components ⇒ two blocks";
-    // seed a solve-free posterior so the carry is populated (install needs an estimator;
-    // instead drive a real solve is heavy — assert births + structure here).
+    // Installing a posterior needs an estimator and a solve; this epoch checks only the
+    // births and the block structure.
     EXPECT_EQ(drv.counters().chords_born, 2);
     EXPECT_EQ(drv.counters().merges, 0);
 
-    // Install a trivial posterior directly via a mini estimator so carry persists.
-    // (Reuse the driver's own reconcile by seeding known carry.)
+    // Populate the carry without a solve: reset, then seed a known carry directly so the
+    // next epoch runs through the driver's own reconcile.
     drv.reset();
     // Seed component A carry (chord (1,1)) and component B carry (chord (3,3)).
     drv.seedCarriedForTest(0, {ArcKey(rxV(1), satV(1))}, (Eigen::VectorXd(1) << 4.0).finished(),
@@ -1055,7 +1057,7 @@ TEST(NetworkInvariantCarryDriverTest, MergeSplitAndFreshChords) {
                            {rxV(2), rxV(3), satV(2), satV(3)},
                            {ArcKey(rxV(2), satV(2)), ArcKey(rxV(2), satV(3)), ArcKey(rxV(3), satV(2)), ArcKey(rxV(3), satV(3))});
 
-    // Epoch 2: MERGE the two via a bridge (r1,s2) tree edge + keep both chords.
+    // Epoch 2: merge the two through a bridge tree edge (r1,s2) and keep both chords.
     NetworkInvariantCarryDriver::GroupInput g2; g2.key = 0;
     g2.arcs = { arc(0, 0, true), arc(0, 1, true), arc(1, 0, true), arc(1, 1, false),
                 arc(2, 2, true), arc(2, 3, true), arc(3, 2, true), arc(3, 3, false),
@@ -1070,7 +1072,7 @@ TEST(NetworkInvariantCarryDriverTest, MergeSplitAndFreshChords) {
 }
 
 // ---------------------------------------------------------------------------
-// GATE 5 — reset(), the qz predict, and the empty-epoch OFF path.
+// Gate 5: reset(), the qz predict, and the empty-epoch off path.
 // ---------------------------------------------------------------------------
 TEST(NetworkInvariantCarryDriverTest, ResetPredictAndOff) {
     NetworkInvariantCarryDriver::Config cfg; cfg.qz = 0.5;
@@ -1092,9 +1094,9 @@ TEST(NetworkInvariantCarryDriverTest, ResetPredictAndOff) {
 }
 
 // ---------------------------------------------------------------------------
-// GATE 6 — (ẑ⁺, Pᶻ⁺) are estimable ⇒ datum-invariant (Fable §1 gate assertion).
-// Fold the SAME carried DD prior, solve the SAME network under two different clock
-// datums, and assert BOTH the posterior mean AND covariance readbacks are identical.
+// Gate 6: (ẑ⁺, Pᶻ⁺) are estimable and therefore datum-invariant (Fable §1 gate
+// assertion).  The same carried DD prior is folded, the same network is solved under two
+// different clock datums, and the posterior mean and covariance readbacks are identical.
 // ---------------------------------------------------------------------------
 TEST(NetworkInvariantCarryDriverTest, PosteriorMeanAndCovDatumInvariant) {
     const int R = 4, S = 4;
@@ -1130,23 +1132,23 @@ TEST(NetworkInvariantCarryDriverTest, PosteriorMeanAndCovDatumInvariant) {
     const Eigen::MatrixXd covA  = est.ddPriorPosteriorCovariance(0, dA);
 
     const NetworkEstimator::Datum dB = {{est.clockColumn(n.sats[1]), 0.0}};
-    const Eigen::VectorXd xsB = est.solve(dB);   // re-solve, DIFFERENT clock datum
+    const Eigen::VectorXd xsB = est.solve(dB);   // re-solve, different clock datum
     const Eigen::VectorXd meanB = est.ddPriorPosteriorMean(0, xsB);
     const Eigen::MatrixXd covB  = est.ddPriorPosteriorCovariance(0, dB);
 
     EXPECT_TRUE(meanA.isApprox(meanB, 1e-7)) << "ẑ⁺ leaked the datum choice";
     EXPECT_TRUE(covA.isApprox(covB, 1e-7))   << "Pᶻ⁺ leaked the datum choice";
-    // Non-vacuous: the two datums genuinely move the shared solution, and information
+    // Non-vacuous: the two datums move the shared solution, and information
     // was folded (posterior below the prior).
     EXPECT_GT((xsA - xsB).cwiseAbs().maxCoeff(), 1e-3);
     EXPECT_LT(covA.diagonal().maxCoeff(), Pz.diagonal().maxCoeff());
 }
 
 // ---------------------------------------------------------------------------
-// GATE 7 — multi-birth joint covariance is COUPLED (Fable §2.5): on a bootstrap
-// (empty store) epoch every chord is born; chords whose fundamental cycles share a
-// tree edge must have a NONZERO carried cross-covariance (a per-chord-independent
-// harvest would leave it exactly zero).
+// Gate 7: the multi-birth joint covariance is coupled (Fable §2.5).  On a bootstrap
+// (empty store) epoch every chord is born; chords whose fundamental cycles share a tree
+// edge have a nonzero carried cross-covariance (a per-chord independent harvest would
+// leave it exactly zero).
 // ---------------------------------------------------------------------------
 TEST(NetworkInvariantCarryDriverTest, MultiBirthJointCovarianceIsCoupled) {
     const int R = 3, S = 3;
@@ -1172,7 +1174,7 @@ TEST(NetworkInvariantCarryDriverTest, MultiBirthJointCovarianceIsCoupled) {
     drv.installPosterior(est, x_s, d);
 
     // Chords (1,1) and (1,2) both close through the star(0,0) tree edges at receiver 1
-    // and receiver 0 — their cycles share tree edges, so their DDs are correlated.
+    // and receiver 0; their cycles share tree edges, so their DDs are correlated.
     double cov = 0.0, v11 = 0.0, v12 = 0.0, z;
     ASSERT_TRUE(drv.carriedCrossForTest(0, ArcKey(rxV(1), satV(1)), ArcKey(rxV(1), satV(2)), cov));
     ASSERT_TRUE(drv.carriedDdForTest(0, ArcKey(rxV(1), satV(1)), z, v11));
@@ -1184,13 +1186,13 @@ TEST(NetworkInvariantCarryDriverTest, MultiBirthJointCovarianceIsCoupled) {
 
 // ---------------------------------------------------------------------------
 // Deterministic-parallel installPosterior (network.parallel_seam): the per-block
-// posterior mean/cov + innovation are computed in parallel, but the σ̂₀ accumulator
+// posterior mean/cov and innovation are computed in parallel, but the σ̂₀ accumulator
 // feed (NetworkCarryVce::addRow), the D5 gate decisions, the flag/counter appends and
-// the carry install stay SERIAL in (block, chord) order — so the carried DDs, the run
-// counters, AND the σ̂₀ that gates the NEXT epoch are BYTE-IDENTICAL to the serial
-// install at any thread count.  Driven over a multi-epoch history with the D5 gate +
-// LS-VCE calibration ON, comparing after EVERY epoch, so a σ̂₀ carry-over divergence
-// (which would flip a later gate decision) is caught the epoch it first appears.
+// the carry install stay serial in (block, chord) order.  The carried DDs, the run
+// counters and the σ̂₀ that gates the next epoch are therefore byte-identical to the
+// serial install at any thread count.  The test runs a multi-epoch history with the D5
+// gate and LS-VCE calibration on and compares after every epoch, so a σ̂₀ carry-over
+// divergence (which would flip a later gate decision) is caught at the epoch it appears.
 // ---------------------------------------------------------------------------
 TEST(NetworkInvariantCarryDriverTest, InstallPosteriorParallelMatchesSerialByteForByte) {
     const int R = 4, S = 4;
@@ -1246,19 +1248,19 @@ TEST(NetworkInvariantCarryDriverTest, InstallPosteriorParallelMatchesSerialByteF
         EXPECT_EQ(cS.innov_flags, cP.innov_flags)     << "epoch " << ep;
         EXPECT_EQ(cS.innov_retaps, cP.innov_retaps)   << "epoch " << ep;
         EXPECT_EQ(cS.chords_carried, cP.chords_carried) << "epoch " << ep;
-        // σ̂₀ gates the NEXT epoch — it must be bit-identical, not just approximately.
+        // σ̂₀ gates the next epoch, so it is compared bit for bit, not approximately.
         EXPECT_EQ(drvS.innovInflationSigma0(), drvP.innovInflationSigma0()) << "epoch " << ep;
     }
     EXPECT_GT(drvS.totalZDim(), 0) << "non-vacuous: the carry must have accumulated DDs";
 }
 
 // ---------------------------------------------------------------------------
-// GATE 8 — Card 4 C3c slip integration on a CHORD arc, A/B with a NEGATIVE control.
-// After warming a tight carry, inject an integer jump on a chord's true ambiguity.
-// SIGNALED (drvSig): the driver re-taps that DD fresh (uncontaminated by the stale
-// carry), refloating EXACTLY that one chord and leaving its neighbours' carry intact.
-// UNSIGNALED (drvCtl, the negative control): the stiff q_z=0 carry pins the stale DD
-// ⇒ contamination visible — proving the slip feed is load-bearing, not decorative.
+// Gate 8: slip integration on a chord arc, A/B with a negative control (card 4 C3c).
+// After a tight carry is warmed, an integer jump is applied to a chord's true ambiguity.
+// Signaled (drvSig): the driver re-taps that DD fresh (free of the stale carry),
+// refloating that one chord only and leaving its neighbours' carry intact.
+// Unsignaled (drvCtl, the negative control): the stiff q_z=0 carry pins the stale DD and
+// the contamination is visible, which shows that the slip feed is load-bearing.
 // ---------------------------------------------------------------------------
 TEST(NetworkInvariantCarryDriverTest, SlippedChordArcRefloatsFreshVsContaminatingControl) {
     const int R = 4, S = 4, WARM = 8;
@@ -1267,7 +1269,7 @@ TEST(NetworkInvariantCarryDriverTest, SlippedChordArcRefloatsFreshVsContaminatin
     const ArcKey slipArc(rxV(2), satV(3));   // a chord under star(0,0)
     const ArcKey keepArc(rxV(1), satV(1));   // an untouched chord
 
-    // One shared noise stream so the two drivers warm IDENTICALLY (A/B differs only
+    // One shared noise stream so the two drivers warm identically (the A/B differs only
     // in whether the slip is signaled at the jump epoch).
     std::mt19937 gen(7);
     std::normal_distribution<double> nd(0.0, 0.02);
@@ -1299,7 +1301,7 @@ TEST(NetworkInvariantCarryDriverTest, SlippedChordArcRefloatsFreshVsContaminatin
     const double dd_sig = estimableDD(xrSig, 2, 3, 0, 0);
     const double dd_ctl = estimableDD(xrCtl, 2, 3, 0, 0);
 
-    // Signaled: EXACTLY the slipped chord refloated (no collateral erasure of neighbours).
+    // Signaled: only the slipped chord refloated (no collateral erasure of neighbours).
     EXPECT_EQ(drvSig.counters().slip_kills - sk_sig_before, 1)
         << "a chord-arc slip must refloat exactly its own chord";
     EXPECT_EQ(drvCtl.counters().slip_kills, 0) << "the unsignaled control refloats nothing";
@@ -1308,7 +1310,7 @@ TEST(NetworkInvariantCarryDriverTest, SlippedChordArcRefloatsFreshVsContaminatin
         << "signaled slip must re-tap the DD fresh to the post-slip integer";
     EXPECT_GT(std::abs(dd_ctl - trueDD_new), std::abs(dd_sig - trueDD_new) + 1.0)
         << "the unsignaled stale carry must contaminate the DD (load-bearing wiring)";
-    // The untouched neighbour kept its accumulated (tight) carry — not refloated.
+    // The untouched neighbour kept its accumulated (tight) carry and was not refloated.
     double v_keep_after; ASSERT_TRUE(drvSig.carriedDdForTest(0, keepArc, zk, v_keep_after));
     EXPECT_LT(v_keep_after, v_keep_before + 1e-9) << "no collateral erasure of an unrelated chord";
 
@@ -1319,9 +1321,9 @@ TEST(NetworkInvariantCarryDriverTest, SlippedChordArcRefloatsFreshVsContaminatin
 }
 
 // ---------------------------------------------------------------------------
-// GATE 9 — a slip on a TREE arc poisons EVERY fundamental cycle through it, so all
-// dependent chords refloat while chords not touching it survive (spec §2: a slipped
-// arc excluded from the A_old membership ⇒ any cycle whose support includes it re-taps).
+// Gate 9: a slip on a tree arc invalidates every fundamental cycle through it, so all
+// dependent chords refloat while chords not touching it survive (spec §2: a slipped arc
+// is excluded from the A_old membership ⇒ any cycle whose support includes it re-taps).
 // ---------------------------------------------------------------------------
 TEST(NetworkInvariantCarryDriverTest, SlippedTreeArcRefloatsDependentChordsOnly) {
     const int R = 4, S = 4, WARM = 8;
@@ -1339,7 +1341,7 @@ TEST(NetworkInvariantCarryDriverTest, SlippedTreeArcRefloatsDependentChordsOnly)
     double z, v_keep_before; ASSERT_TRUE(drv.carriedDdForTest(0, ArcKey(rxV(1), satV(1)), z, v_keep_before));
 
     // Tree edge (2,0) under star(0,0) (s==q).  Chords (2,1),(2,2),(2,3) close through it;
-    // chords at other receivers do not.  Jump its ambiguity + signal the slip on it.
+    // chords at other receivers do not.  Jump its ambiguity and signal the slip on it.
     n.z[2][0] += 4;
     const double trueDD_new = double(n.z[2][3] - n.z[2][0] - n.z[0][3] + n.z[0][0]);
     const std::set<std::pair<int, int>> slip{{2, 0}};
@@ -1353,23 +1355,23 @@ TEST(NetworkInvariantCarryDriverTest, SlippedTreeArcRefloatsDependentChordsOnly)
     // A refloated chord (2,3) re-tapped to the post-slip truth...
     EXPECT_LT(std::abs(estimableDD(xr, 2, 3, 0, 0) - trueDD_new), 0.3)
         << "a chord through the slipped tree edge must re-tap fresh";
-    // ...while a chord NOT through (2,0) kept its tight carry.
+    // ...while a chord not through (2,0) kept its tight carry.
     double v_keep_after; ASSERT_TRUE(drv.carriedDdForTest(0, ArcKey(rxV(1), satV(1)), z, v_keep_after));
     EXPECT_LT(v_keep_after, v_keep_before + 1e-9)
         << "chords not touching the slipped tree edge survive with their accumulated carry";
 }
 
 // ===========================================================================
-// Card 4 D5 — the estimation-side fine-slip innovation gate (spec D5 Def-1).
+// The estimation-side fine-slip innovation gate (card 4 D5, spec D5 Def-1).
 // ===========================================================================
 
 // ---------------------------------------------------------------------------
-// GATE 10 — MidSlip caught by the innovation gate, A/B with a NEGATIVE control.
-// Warm a tight carry, then jump a chord's true ambiguity WITHOUT signaling the slip
-// (the coarse MW/LLI/IF-TD layer missed it).  Gate ON: exactly that chord's post-solve
-// innovation trips ⇒ it re-taps FRESH (data-only), its arc feeds NEXT epoch's slip set,
-// the DD re-converges clean, and the untouched neighbour keeps its accumulated carry.
-// Gate OFF (control): the stiff q_z=0 carry pins the stale DD ⇒ contamination visible.
+// Gate 10: a mid-arc slip is caught by the innovation gate, A/B with a negative control.
+// A tight carry is warmed, then a chord's true ambiguity jumps without a slip signal
+// (the coarse MW/LLI/IF-TD layer missed it).  Gate on: that chord's post-solve
+// innovation alone trips ⇒ it re-taps fresh (data-only), its arc feeds the next epoch's
+// slip set, the DD re-converges, and the untouched neighbour keeps its accumulated carry.
+// Gate off (control): the stiff q_z=0 carry pins the stale DD ⇒ contamination visible.
 // ---------------------------------------------------------------------------
 TEST(NetworkInvariantCarryDriverTest, MidSlipCaughtByInnovationGateVsControl) {
     const int R = 4, S = 4, WARM = 8;
@@ -1380,9 +1382,9 @@ TEST(NetworkInvariantCarryDriverTest, MidSlipCaughtByInnovationGateVsControl) {
 
     NetworkInvariantCarryDriver::Config gcfg; gcfg.innov_gate = true; gcfg.innov_k = 4.0;
     NetworkInvariantCarryDriver drvGate(gcfg);   // D5 gate armed
-    NetworkInvariantCarryDriver drvCtl;          // gate OFF = the C3c path (negative control)
+    NetworkInvariantCarryDriver drvCtl;          // gate off = the C3c path (negative control)
 
-    // Shared noise stream so both arms warm IDENTICALLY (differ only in the gate).
+    // Shared noise stream so both arms warm identically (they differ only in the gate).
     std::mt19937 gen(17);
     std::normal_distribution<double> nd(0.0, 0.02);
     auto noiseEpoch = [&] {
@@ -1401,7 +1403,7 @@ TEST(NetworkInvariantCarryDriverTest, MidSlipCaughtByInnovationGateVsControl) {
     double zk, v_keep_before; ASSERT_TRUE(drvGate.carriedDdForTest(0, keepArc, zk, v_keep_before));
     const double trueDD_old = double(n.z[2][3] - n.z[2][0] - n.z[0][3] + n.z[0][0]);
 
-    // The UNSIGNALED integer jump (a fine slip the coarse layer missed) — chosen ABOVE the
+    // The unsignaled integer jump (a fine slip the coarse layer missed), chosen above the
     // fixture's k·σ_v floor (σ_v ≈ formal weight scale here; see spec D5 detection-power note).
     n.z[2][3] += 12;
     const double trueDD_new = trueDD_old + 12.0;
@@ -1409,7 +1411,7 @@ TEST(NetworkInvariantCarryDriverTest, MidSlipCaughtByInnovationGateVsControl) {
     driveEpoch(drvGate, n, p, q, &jumpNoise, 1.0, /*slipped=*/nullptr);  // gate must catch it
     driveEpoch(drvCtl,  n, p, q, &jumpNoise, 1.0, /*slipped=*/nullptr);  // control: no catch
 
-    // Exactly the slipped chord flagged; the control (gate off) never evaluates.
+    // Only the slipped chord is flagged; the control (gate off) never evaluates.
     EXPECT_EQ(drvGate.counters().innov_flags, 1) << "the innovation gate must flag exactly the slipped chord";
     EXPECT_EQ(drvGate.counters().innov_retaps, 1);
     EXPECT_EQ(drvCtl.counters().innov_flags, 0)  << "gate OFF must never evaluate (byte-identical C3c path)";
@@ -1419,24 +1421,25 @@ TEST(NetworkInvariantCarryDriverTest, MidSlipCaughtByInnovationGateVsControl) {
     EXPECT_EQ(*slips.begin(), std::make_pair(2, 3)) << "the flag must name the slipped (r,s) arc";
 
     // Step 1 (this epoch): the flagged chord is reset toward the data (mean d_post = ẑ+v, a
-    // PARTIAL move — v is the post-fit innovation, reduced from the true jump by the fold's
-    // border absorption, spec Cov(v) −GᵀΣG term) and its variance is inflated to the data-only
-    // scale, breaking the stiff stale prior.  The control's stiff q_z=0 carry stays pinned near
-    // the pre-slip value with a tight variance ⇒ contamination.  (The FULL clean re-tap is next
-    // epoch, step 2 — this epoch retains bounded contamination, the value provably inert.)
+    // partial move: v is the post-fit innovation, reduced from the true jump by the fold's
+    // border absorption, the −GᵀΣG term of the spec's Cov(v)) and its variance is inflated to
+    // the data-only scale, which releases the stiff stale prior.  The control's stiff q_z=0
+    // carry stays pinned near the pre-slip value with a tight variance ⇒ contamination.  (The
+    // complete re-tap happens next epoch, in step 2; this epoch keeps a bounded contamination
+    // on a value that is inert.)
     double zg, vg, zc, vc;
     ASSERT_TRUE(drvGate.carriedDdForTest(0, slipArc, zg, vg));
     ASSERT_TRUE(drvCtl.carriedDdForTest(0, slipArc, zc, vc));
     EXPECT_LT(std::abs(zg - trueDD_new), std::abs(zc - trueDD_new) - 1.0)
         << "gate: the flagged chord's carry moved toward the post-slip data (control stays stale)";
-    // The untouched neighbour kept its accumulated (tight) carry — no collateral reset.
+    // The untouched neighbour kept its accumulated (tight) carry: no collateral reset.
     double v_keep_after; ASSERT_TRUE(drvGate.carriedDdForTest(0, keepArc, zk, v_keep_after));
     EXPECT_LT(v_keep_after, v_keep_before + 1e-9) << "no collateral erasure of an unrelated chord";
 
-    // Step 2 (the decisive A/B): drive both arms forward — the gate arm feeds each epoch's
-    // innovation flags back into the next epoch's slip set (the C3c membership-exclusion re-tap,
-    // exactly the ApplicationNetwork plumbing), so it re-converges to the post-slip integer; the
-    // control (no fine-slip layer, stiff q_z=0 carry) stays pinned to the stale pre-slip value.
+    // Step 2 (the A/B that decides the gate): both arms are driven forward.  The gate arm feeds
+    // each epoch's innovation flags into the next epoch's slip set (the C3c membership-exclusion
+    // re-tap, as the ApplicationNetwork plumbing does), so it re-converges to the post-slip
+    // integer; the control (no fine-slip layer, stiff q_z=0 carry) stays at the stale value.
     const long long sk_before = drvGate.counters().slip_kills;
     double dd_gate = 0.0, dd_ctl = 0.0;
     std::set<std::pair<int, int>> feed = slips;      // epoch-8 flags re-tap at epoch 9
@@ -1454,28 +1457,23 @@ TEST(NetworkInvariantCarryDriverTest, MidSlipCaughtByInnovationGateVsControl) {
 }
 
 // ---------------------------------------------------------------------------
-// GATE 10b (D5 v4, network.carry_invariant_innov_retap_only) — WHAT THE FUNNEL REFLOAT
-// COSTS, AND WHAT IT BUYS.  This test exists to keep both halves on the record, because
-// the churn investigation (2026-08-02, `runs/ft63_24h_conv`) got the second half wrong.
+// Gate 10b: what the funnel refloat costs and what it buys (D5 v4,
+// network.carry_invariant_innov_retap_only).
 //
-// GATE 8 pins the topology: a slip on a CHORD arc refloats exactly ONE chord, its own
+// Gate 8 fixes the topology: a slip on a chord arc refloats one chord, its own
 // (`slip_kills` delta == 1).  So when the D5 gate flags a chord and the caller feeds that
 // arc into the next epoch's slipped set, the only DD the exclusion can kill is the one
-// installPosterior just reset.  Read as "therefore it protects nothing", that motivated
-// removing the feed-back outright — 513 482 of 525 009 "slip refloats" and a mean chord
-// lifetime of 4.3 epochs are that loop.
-//
-// The premise is FALSE for a genuine slip, and this test measures by how much.  Two arms,
-// IDENTICAL noise and gate, differing only in whether the flags are fed back (arm A =
-// today's ApplicationNetwork plumbing, arm B = feed-back suppressed):
-//   (1) arm A re-converges to the post-slip integer; arm B does NOT — the in-epoch reset
-//       is a partial move and the re-established stiff carry locks the remainder in;
-//   (2) arm B refloats nothing (slip_kills stays 0) — that IS the churn the knob removes;
-//   (3) arm B's carried variance ends tighter — the accumulated carry survives.
-// (2) and (3) are the win, (1) is the price, and it is only acceptable to pay it where
-// there is no jump to complete.  Hence the shipped knob suppresses the kill ONLY on arcs
-// the raw observables MEASURED as continuous; stepped and unmeasurable arcs refloat as
-// before (standing invariant #1).
+// installPosterior just reset.  That does not make the feed-back redundant for a genuine
+// slip, and this test measures the difference.  Two arms with identical noise and gate
+// differ only in whether the flags are fed back (arm A = the ApplicationNetwork plumbing,
+// arm B = feed-back suppressed):
+//   (1) arm A re-converges to the post-slip integer; arm B does not, because the in-epoch
+//       reset is a partial move and the re-established stiff carry keeps the remainder;
+//   (2) arm B refloats nothing (slip_kills stays 0), which is the churn the knob removes;
+//   (3) arm B's carried variance ends tighter, because the accumulated carry survives.
+// (2) and (3) are the gain and (1) is the cost, acceptable only where there is no jump to
+// complete.  The knob therefore suppresses the kill only on arcs that the raw observables
+// measured as continuous; stepped and unmeasurable arcs refloat as before (invariant #1).
 // ---------------------------------------------------------------------------
 TEST(NetworkInvariantCarryDriverTest, D5FunnelRefloatCompletesResetAndCostsTheCarry) {
     const int R = 4, S = 4, WARM = 8;
@@ -1485,7 +1483,7 @@ TEST(NetworkInvariantCarryDriverTest, D5FunnelRefloatCompletesResetAndCostsTheCa
 
     NetworkInvariantCarryDriver::Config gcfg; gcfg.innov_gate = true; gcfg.innov_k = 4.0;
     NetworkInvariantCarryDriver drvFun(gcfg);   // arm A: flags fed into next epoch's slip set
-    NetworkInvariantCarryDriver drvRto(gcfg);   // arm B: flags NOT fed (retap_only)
+    NetworkInvariantCarryDriver drvRto(gcfg);   // arm B: flags not fed (retap_only)
 
     std::mt19937 gen(17);
     std::normal_distribution<double> nd(0.0, 0.02);
@@ -1494,7 +1492,7 @@ TEST(NetworkInvariantCarryDriverTest, D5FunnelRefloatCompletesResetAndCostsTheCa
         for (int r = 0; r < R; ++r) for (int s = 0; s < S; ++s) v[r][s] = nd(gen);
         return v;
     };
-    // Both arms see the SAME network object and the SAME noise stream at every epoch, so
+    // Both arms see the same network object and the same noise stream at every epoch, so
     // the only difference between them is the funnel feed.
     std::vector<std::vector<std::vector<double>>> warmNoise;
     for (int e = 0; e < WARM; ++e) warmNoise.push_back(noiseEpoch());
@@ -1504,7 +1502,7 @@ TEST(NetworkInvariantCarryDriverTest, D5FunnelRefloatCompletesResetAndCostsTheCa
     }
     const double trueDD_old = double(nA.z[2][3] - nA.z[2][0] - nA.z[0][3] + nA.z[0][0]);
 
-    // The UNSIGNALED integer jump the coarse layer missed — the gate's own population.
+    // The unsignaled integer jump that the coarse layer missed: the gate's own population.
     nA.z[2][3] += 12;
     const double trueDD_new = trueDD_old + 12.0;
     const auto jumpNoise = noiseEpoch();
@@ -1525,16 +1523,13 @@ TEST(NetworkInvariantCarryDriverTest, D5FunnelRefloatCompletesResetAndCostsTheCa
         ddRto = estimableDD(driveEpoch(drvRto, nA, p, q, &ns, 1.0, /*slipped=*/nullptr), 2, 3, 0, 0);
     }
 
-    // (1) MEASURED 2026-08-02, and it FALSIFIES the "the funnel entry protects nothing"
-    //     premise for a GENUINE slip: the in-epoch reset is a PARTIAL move (v is the
-    //     post-fit innovation, reduced from the true jump by the fold's border absorption
-    //     −GᵀΣG), and with the stiff carry re-established at σ̂₀²·Cov(v)_ii the residual does
-    //     NOT wash out — 0.48 cyc after 7 epochs here, versus 0.006 for the arm that
-    //     refloats.  Topologically the kill does hit exactly one chord, its own; but that
-    //     chord's refloat is what COMPLETES the reset.  This is why the production knob is
-    //     scoped to CORROBORATED-FLAT arcs only (no jump to complete) and why a stepped or
-    //     unmeasurable arc still refloats — standing invariant #1 is not negotiable and this
-    //     number is what it costs.
+    // (1) For a genuine slip the in-epoch reset is a partial move (v is the post-fit
+    //     innovation, reduced from the true jump by the fold's border absorption −GᵀΣG),
+    //     and with the stiff carry re-established at σ̂₀²·Cov(v)_ii the residual does not
+    //     decay: 0.48 cyc after 7 epochs here, against 0.006 for the arm that refloats.
+    //     The kill hits one chord, its own, and that chord's refloat completes the reset.
+    //     This is why the production knob is scoped to corroborated-flat arcs (no jump to
+    //     complete) and a stepped or unmeasurable arc still refloats (invariant #1).
     EXPECT_NEAR(ddFun, trueDD_new, 0.05)
         << "the funnel arm re-converges to the post-slip integer";
     EXPECT_GT(std::abs(ddRto - trueDD_new), std::abs(ddFun - trueDD_new) + 0.1)
@@ -1542,7 +1537,7 @@ TEST(NetworkInvariantCarryDriverTest, D5FunnelRefloatCompletesResetAndCostsTheCa
            "slip must leave a visible residual.  If this ever passes silently, the in-epoch "
            "reset became sufficient and the flat-scoping below can be widened — re-measure "
            "before doing so.";
-    // (2) ...and arm B never refloated, while arm A did.  This delta IS the removed churn.
+    // (2) Arm B never refloated, while arm A did.  This delta is the removed churn.
     EXPECT_GE(drvFun.counters().slip_kills - skFun0, 1)
         << "the funnel arm must refloat the chord the gate already reset";
     EXPECT_EQ(drvRto.counters().slip_kills - skRto0, 0)
@@ -1558,28 +1553,25 @@ TEST(NetworkInvariantCarryDriverTest, D5FunnelRefloatCompletesResetAndCostsTheCa
 }
 
 // ---------------------------------------------------------------------------
-// GATE 10c (D5 v5, network.carry_invariant_innov_carried_only) — the gate must not test
-// a chord it has no prior for.  THIS IS THE CHURN'S ENGINE, not a tidiness fix.
+// Gate 10c: the gate does not test a chord it has no prior for (D5 v5,
+// network.carry_invariant_innov_carried_only).  Without this, born chords drive the churn.
 //
 // The test statistic is |v_i| / sqrt(Cov(v)_ii), and Cov(v) is the H0 covariance of the
-// innovation ABOUT THE CARRIED PRIOR.  A chord born this epoch has no carried prior — its
-// prior is the diffuse Config::fresh_prior_var — so the ratio is not a hypothesis test,
-// the "reset" it triggers is a no-op (a diffuse chord's posterior already IS the data-only
-// tap-off), and the flag's one lasting consequence is the funnel entry that re-borns the
-// chord next epoch, where it flags again.  Measured 2026-08-02 on `runs/churn_base`
-// (63 sta, 3 h, DOY-129): 32 062 of 33 628 flags — 95.3 % — sit on born chords at exactly
-// sqrt(var_v) = 1000.000 m (= sqrt(1e6), the diffuse prior) with median |v| 19.2 km, and
-// 27 chords are born-flagged on over half of all flagged epochs (URUM00CHN/G22 at duty
-// 0.99).  A chord re-born every epoch has by construction never accumulated anything.
+// innovation about the carried prior.  A chord born this epoch has no carried prior (its
+// prior is the diffuse Config::fresh_prior_var, so sqrt(var_v) = sqrt(1e6) = 1000 m), so
+// the ratio is not a hypothesis test and the reset it triggers is a no-op (a diffuse
+// chord's posterior already is the data-only tap-off).  The flag's one lasting effect is
+// the funnel entry that re-births the chord next epoch, where it flags again; a chord
+// re-born every epoch never accumulates anything.
 //
-// The first epoch of any run is entirely born chords, which makes it the cleanest possible
-// probe: gate OFF-by-birth must flag NOTHING there, while the unrestricted gate flags on
-// nothing but the correction frame's distance from x_lin.
+// The first epoch of any run consists entirely of born chords, which makes it a clean
+// probe: with the born-chord skip, the gate flags nothing there, while the unrestricted
+// gate flags on nothing but the correction frame's distance from x_lin.
 // ---------------------------------------------------------------------------
 TEST(NetworkInvariantCarryDriverTest, InnovationGateSkipsBornChordsUnderCarriedOnly) {
     const int R = 4, S = 4;
-    // A LARGE true ambiguity set: in the correction frame a fresh chord's innovation is
-    // its distance from x_lin, and the fixture's x_lin is 0.  This is the field shape —
+    // A large true ambiguity set: in the correction frame a fresh chord's innovation is
+    // its distance from x_lin, and the fixture's x_lin is 0.  This matches the field, where
     // a cold-start ambiguity is tens of km from the linearization point.
     Net n = makeNet(71, R, S);
     for (int r = 0; r < R; ++r)
@@ -1598,7 +1590,7 @@ TEST(NetworkInvariantCarryDriverTest, InnovationGateSkipsBornChordsUnderCarriedO
         return v;
     };
 
-    // EPOCH 1 — every chord is born.  This is the whole defect in one epoch.
+    // Epoch 1: every chord is born.
     const auto e1 = noiseEpoch();
     driveEpoch(drvAll, n, p, q, &e1, 1.0);
     driveEpoch(drvCar, n, p, q, &e1, 1.0);
@@ -1610,19 +1602,19 @@ TEST(NetworkInvariantCarryDriverTest, InnovationGateSkipsBornChordsUnderCarriedO
            "so there is no H0 and no test";
     EXPECT_GT(drvCar.counters().innov_born_skipped, 0)
         << "and the skip must be COUNTED (standing invariant #4)";
-    // The skip is counted BEFORE the threshold test, so it covers the whole born
-    // population — including the rows that would have passed anyway.
+    // The skip is counted before the threshold test, so it covers the whole born
+    // population, including the rows that would have passed anyway.
     EXPECT_GE(drvCar.counters().innov_born_skipped, drvAll.counters().innov_flags);
 
-    // ...and the SOLVE is untouched: skipping a born chord's gate cannot change the
-    // epoch's estimates, because the flag's in-epoch action (install ẑ+v at the data-only
-    // variance) is exactly what a diffuse chord's posterior already is.
+    // The solve is unchanged: skipping a born chord's gate cannot change the epoch's
+    // estimates, because the flag's in-epoch action (install ẑ+v at the data-only
+    // variance) equals what a diffuse chord's posterior already is.
     const auto xrAll = driveEpoch(drvAll, n, p, q, &e1, 1.0);
     const auto xrCar = driveEpoch(drvCar, n, p, q, &e1, 1.0);
     EXPECT_NEAR(estimableDD(xrAll, 2, 3, 0, 0), estimableDD(xrCar, 2, 3, 0, 0), 1e-6)
         << "the DD after a born-chord epoch must not depend on whether the gate looked";
 
-    // A CARRIED chord is still gated: warm both arms, then jump one arc unsignaled.
+    // A carried chord is still gated: warm both arms, then jump one arc unsignaled.
     for (int e = 0; e < 8; ++e) {
         const auto ns = noiseEpoch();
         driveEpoch(drvAll, n, p, q, &ns, 1.0);
@@ -1636,12 +1628,10 @@ TEST(NetworkInvariantCarryDriverTest, InnovationGateSkipsBornChordsUnderCarriedO
         << "carried-only must NOT blunt the gate on a genuinely carried chord — that is the "
            "fine-slip response (standing invariant #1) and it is not what this knob touches";
 
-    // Every flag the knob DID let through must have an informative prior.  This is the
-    // regression guard for the defect the v5 field leg exposed: the first implementation
-    // keyed on chord_carried ALONE, which is topological (cycle in A_old, no slip) and
-    // says nothing about information — a chord carried from a diffuse predecessor inherits
-    // a diffuse projected prior and sails through.  80.4 % of that arm's surviving flags
-    // were still at sqrt(Cov(v)) = 1000 m, i.e. still untestable.
+    // Every flag the knob lets through has an informative prior.  chord_carried alone is
+    // topological (cycle in A_old, no slip) and says nothing about information: a chord
+    // carried from a diffuse predecessor inherits a diffuse projected prior (sqrt(Cov(v))
+    // near 1000 m) and is still untestable.  This loop guards against keying on it alone.
     for (const double s : drvCar.lastInnovFlagTerms().empty()
                               ? std::vector<double>{}
                               : [&] {
@@ -1656,9 +1646,9 @@ TEST(NetworkInvariantCarryDriverTest, InnovationGateSkipsBornChordsUnderCarriedO
 }
 
 // ---------------------------------------------------------------------------
-// GATE 11 — FalseAlarmFloor: no slip, many noisy epochs, k=4 ⇒ (near) zero flags.
-// Validates that Cov(v) is well-calibrated (the standardized innovation is ~N(0,1)
-// under H0): too-small a Cov(v) would storm the carry with spurious refloats.
+// Gate 11: false-alarm floor.  No slip, many noisy epochs, k=4 ⇒ (near) zero flags.
+// Checks that Cov(v) is calibrated (the standardized innovation is ~N(0,1) under H0);
+// a Cov(v) that is too small would flood the carry with spurious refloats.
 // ---------------------------------------------------------------------------
 TEST(NetworkInvariantCarryDriverTest, InnovationGateFalseAlarmFloor) {
     const int R = 4, S = 4, E = 25;
@@ -1675,16 +1665,16 @@ TEST(NetworkInvariantCarryDriverTest, InnovationGateFalseAlarmFloor) {
         driveEpoch(drv, n, p, q, &noise, 1.0);
     }
     // (R-1)(S-1)=9 chords × ~24 carried epochs ≈ 216 chord-epochs; at k=4 the per-test
-    // false-alarm expectation is ~0.014 ⇒ zero is the overwhelmingly likely outcome.
+    // false-alarm expectation is ~0.014 ⇒ zero is by far the most likely outcome.
     EXPECT_EQ(drv.counters().innov_flags, 0)
         << "the k=4 gate must not fire on a clean (no-slip) stream — Cov(v) is well-calibrated";
-    // Non-vacuous: the carry really was populated and testable over the run.
+    // Non-vacuous: the carry was populated and testable over the run.
     EXPECT_GT(drv.totalZDim(), 0);
     EXPECT_GT(drv.counters().chords_carried, 0);
 }
 
 // ---------------------------------------------------------------------------
-// GATE 12 — the innovation Cov(v) is an estimable-quantity readout: datum-invariant,
+// Gate 12: the innovation Cov(v) is an estimable-quantity readout: datum-invariant,
 // valid (PSD, positive diagonal), and the innovation v itself is datum-invariant (the
 // data-implied DD minus the prior is gauge-free).  Non-vacuous: the datums move x_s.
 // ---------------------------------------------------------------------------
@@ -1721,7 +1711,7 @@ TEST(NetworkInvariantCarryDriverTest, InnovationCovarianceDatumInvariantAndValid
     Eigen::VectorXd vA; Eigen::MatrixXd covA; est.ddPriorInnovation(0, xsA, dA, vA, covA);
 
     const NetworkEstimator::Datum dB = {{est.clockColumn(n.sats[1]), 0.0}};
-    const Eigen::VectorXd xsB = est.solve(dB);   // DIFFERENT clock datum
+    const Eigen::VectorXd xsB = est.solve(dB);   // different clock datum
     Eigen::VectorXd vB; Eigen::MatrixXd covB; est.ddPriorInnovation(0, xsB, dB, vB, covB);
 
     ASSERT_EQ(vA.size(), K);
@@ -1733,20 +1723,19 @@ TEST(NetworkInvariantCarryDriverTest, InnovationCovarianceDatumInvariantAndValid
     EXPECT_GT(covA.diagonal().minCoeff(), 0.0) << "innovation variance must be positive";
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(covA);
     EXPECT_GT(es.eigenvalues().minCoeff(), -1e-9) << "Cov(v) must be PSD (M⁻¹ − GᵀΣG by construction)";
-    // Non-vacuous: the two datums genuinely move the shared solution.
+    // Non-vacuous: the two datums move the shared solution.
     EXPECT_GT((xsA - xsB).cwiseAbs().maxCoeff(), 1e-3);
     // Cov(v) = Pᶻ + (B − GᵀΣG), and the bracket is a valid (data-implied DD) covariance ⪰ 0,
-    // so the innovation variance is bounded BELOW by the carried prior variance on the
-    // diagonal (the S = H P Hᵀ + R structure) — the meaningful shape check, not a re-check of
-    // positivity.
+    // so the innovation variance is bounded below by the carried prior variance on the
+    // diagonal (the S = H P Hᵀ + R structure).  This checks the shape, not only positivity.
     EXPECT_GT((covA.diagonal() - Pz.diagonal()).minCoeff(), -1e-9)
         << "innovation variance must be >= the prior variance (Cov(v) = Pᶻ + data-only DD var)";
 }
 
 // ---------------------------------------------------------------------------
-// GATE 13 — links ddPriorInnovation to ddPriorPosteriorMean: with a DIFFUSE prior the
-// gain Pᶻ M → I, so the posterior update ẑ⁺ − ẑ equals the innovation v.  This ties
-// the two kernel readouts to the same underlying innov and pins the sign/scale of v.
+// Gate 13: links ddPriorInnovation to ddPriorPosteriorMean.  With a diffuse prior the
+// gain Pᶻ M → I, so the posterior update ẑ⁺ − ẑ equals the innovation v.  This ties the
+// two kernel readouts to the same underlying innovation and fixes the sign and scale of v.
 // ---------------------------------------------------------------------------
 TEST(NetworkInvariantCarryDriverTest, InnovationMatchesDiffusePriorPosterior) {
     const int R = 3, S = 3;
@@ -1777,14 +1766,14 @@ TEST(NetworkInvariantCarryDriverTest, InnovationMatchesDiffusePriorPosterior) {
 }
 
 // ===========================================================================
-// Card 4 D5 v2 — LS-VCE calibration of Cov(v) (σ̂₀²).
+// LS-VCE calibration of Cov(v) (σ̂₀²) (card 4 D5 v2).
 // ===========================================================================
 
 // ---------------------------------------------------------------------------
-// GATE 14 — under a MISSPECIFIED R (obs noise ≫ the formal weight, so the formal Cov(v)
-// is optimistic — the field's 10-30× problem in miniature), the RAW gate (v1) over-fires,
-// but the CALIBRATED gate (v2) absorbs the inflation into σ̂₀ and stops false-alarming;
-// σ̂₀ recovers the mis-specification.  A/B on ONE shared noise stream (differ only in calib).
+// Gate 14: under a misspecified R (obs noise ≫ the formal weight, so the formal Cov(v) is
+// optimistic, as in the field at 10-30×), the raw gate (v1) over-fires, while the
+// calibrated gate (v2) absorbs the inflation into σ̂₀ and stops false-alarming; σ̂₀
+// recovers the misspecification.  A/B on one shared noise stream (only calibration differs).
 // ---------------------------------------------------------------------------
 TEST(NetworkInvariantCarryDriverTest, CalibrationTamesFalseAlarmsAndRecoversSigma0) {
     const int R = 4, S = 4;
@@ -1803,8 +1792,8 @@ TEST(NetworkInvariantCarryDriverTest, CalibrationTamesFalseAlarmsAndRecoversSigm
         for (int r = 0; r < R; ++r) for (int s = 0; s < S; ++s) v[r][s] = nd(gen);
         return v;
     };
-    // Warm PAST the σ̂₀ warm-up (~200 rows / 9 chords ≈ 23 epochs) — during warm-up v2 is the
-    // raw test (σ̂₀=1), so measure only the calibrated-regime TAIL.
+    // Warm past the σ̂₀ warm-up (~200 rows / 9 chords ≈ 23 epochs).  During warm-up v2 is the
+    // raw test (σ̂₀=1), so only the tail in the calibrated regime is measured.
     const int WARM = 28, TAIL = 20;
     for (int e = 0; e < WARM; ++e) { auto ns = noiseEpoch(); driveEpoch(drvV1, n, 0, 0, &ns, 1.0); driveEpoch(drvV2, n, 0, 0, &ns, 1.0); }
     const long long f1_warm = drvV1.counters().innov_flags, f2_warm = drvV2.counters().innov_flags;
@@ -1816,18 +1805,18 @@ TEST(NetworkInvariantCarryDriverTest, CalibrationTamesFalseAlarmsAndRecoversSigm
     // constantly on ordinary scatter.
     EXPECT_GT(f1_tail, TAIL) << "raw gate must over-fire under a misspecified R (>1 flag/epoch)";
     // v2 (calibrated) absorbs the inflation into σ̂₀ ⇒ the recalibrated innovation is ~N(0,1)
-    // ⇒ the false-alarm storm collapses.
+    // ⇒ the false-alarm rate drops.
     EXPECT_LT(f2_tail * 3, f1_tail) << "calibration must tame the false-alarm storm";
     // σ̂₀ recovered a real (>1) inflation from the misspecification.
     EXPECT_GT(drvV2.innovInflationSigma0(), 1.5) << "σ̂₀ must detect the optimistic formal Cov(v)";
     EXPECT_LT(drvV2.innovInflationSigma0(), 6.0) << "σ̂₀ must not diverge";
-    // The raw gate is byte-for-byte the calibration-OFF v1 (sanity: calib is the only change).
+    // The raw gate is the calibration-off v1 exactly (sanity check: calibration is the only change).
     EXPECT_EQ(drvV1.innovInflationSigma0(), 1.0);
 }
 
 // ---------------------------------------------------------------------------
-// GATE 15 — calibration must NOT blind the gate: under the same misspecified R (σ̂₀≈3-4),
-// a real slip well above the RAISED threshold k·σ̂₀ is still caught + re-tapped.
+// Gate 15: calibration does not blind the gate.  Under the same misspecified R (σ̂₀≈3-4),
+// a real slip well above the raised threshold k·σ̂₀ is still caught and re-tapped.
 // ---------------------------------------------------------------------------
 TEST(NetworkInvariantCarryDriverTest, CalibrationRetainsDetection) {
     const int R = 4, S = 4, WARM = 30;
@@ -1848,7 +1837,7 @@ TEST(NetworkInvariantCarryDriverTest, CalibrationRetainsDetection) {
     ASSERT_GT(drv.innovInflationSigma0(), 1.5) << "σ̂₀ must be calibrated up before the slip";
     const long long flags_before = drv.counters().innov_flags;
 
-    // A slip FAR above the raised threshold k·σ̂₀·σ_formal (σ̂₀~3-4, σ_formal~1.3 ⇒ ~16-20 cyc).
+    // A slip far above the raised threshold k·σ̂₀·σ_formal (σ̂₀~3-4, σ_formal~1.3 ⇒ ~16-20 cyc).
     n.z[2][3] += 40;
     auto jumpNoise = noiseEpoch();
     driveEpoch(drv, n, 0, 0, &jumpNoise, 1.0, /*slipped=*/nullptr);
@@ -1862,29 +1851,28 @@ TEST(NetworkInvariantCarryDriverTest, CalibrationRetainsDetection) {
 }
 
 // ---------------------------------------------------------------------------
-// GATE 16 — σ̂₀ CLAMP VISIBILITY.  A reported σ̂₀ of 1.00× is produced by FOUR distinct
-// states and only one of them means "calibrated"; the `churn_base2` / `pdfix_off`
-// lineage ran a whole campaign on a v1 gate because the run-end line could not tell
-// them apart (raw σ̂₀² = 0.0099 clamped up to 1 — SPEC_pd_safe_dd_fold.md §10 finding 2).
+// Gate 16: σ̂₀ clamp visibility.  A reported σ̂₀ of 1.00× can come from four distinct
+// states, and only one of them means "calibrated"; the run-end line has to tell them
+// apart (a raw σ̂₀² below 1 is clamped up to 1: SPEC_pd_safe_dd_fold.md §10 finding 2).
 //
-// Reproduces the field case: innovations far SMALLER than the formal Cov(v) (the
+// Reproduces the field case: innovations far smaller than the formal Cov(v) (the
 // signature of a carry that is not taking data) drive the raw σ̂₀² below 1, the floor
-// clamp binds, σ̂₀ still reads exactly 1.00 — and the STATE must say `floored`, not
-// `active`, with a counter proving how long it lasted.
+// clamp binds and σ̂₀ still reads exactly 1.00.  The state reports `floored`, not
+// `active`, and a counter records how long it lasted.
 // ---------------------------------------------------------------------------
 TEST(NetworkInvariantCarryDriverTest, Sigma0FloorClampIsVisibleNotSilent) {
     using Infl = NetworkInvariantCarryDriver::InflationState;
     const int R = 4, S = 4;
     const Net n = makeNet(71, R, S);
 
-    // (a) calibration OFF ⇒ Off, σ̂₀ = 1, and the tally says "v1 BY CONFIG".
+    // (a) calibration off ⇒ Off, σ̂₀ = 1, and the tally records "v1 by configuration".
     NetworkInvariantCarryDriver::Config c_off; c_off.innov_gate = true; c_off.innov_k = 4.0;
     NetworkInvariantCarryDriver drvOff(c_off);
-    // (b) calibration ON against innovations FAR below the formal σ ⇒ raw σ̂₀² < 1 ⇒ floored.
+    // (b) calibration on against innovations far below the formal σ ⇒ raw σ̂₀² < 1 ⇒ floored.
     NetworkInvariantCarryDriver::Config c_lo = c_off;
     c_lo.innov_calibrate = true; c_lo.innov_calibrate_window = 40.0;
     NetworkInvariantCarryDriver drvLo(c_lo);
-    // (c) the same knobs against a MISSPECIFIED R (formal Cov(v) optimistic) ⇒ active.
+    // (c) the same knobs against a misspecified R (formal Cov(v) optimistic) ⇒ active.
     NetworkInvariantCarryDriver drvHi(c_lo);
 
     std::mt19937 gen(4211);
@@ -1896,8 +1884,8 @@ TEST(NetworkInvariantCarryDriverTest, Sigma0FloorClampIsVisibleNotSilent) {
         return v;
     };
 
-    // Warm-up is ~200 rows / 9 chords ≈ 23 epochs; before it BOTH calibrated arms must
-    // report WarmUp — armed, but the gate is still the raw formal test.
+    // Warm-up is ~200 rows / 9 chords ≈ 23 epochs; before it ends, the calibrated arms
+    // report WarmUp: armed, but the gate is still the raw formal test.
     for (int e = 0; e < 5; ++e) {
         auto q = epochOf(quiet); driveEpoch(drvLo, n, 0, 0, &q, 1.0);
         auto l = epochOf(loud);  driveEpoch(drvHi, n, 0, 0, &l, 1.0);
@@ -1912,14 +1900,14 @@ TEST(NetworkInvariantCarryDriverTest, Sigma0FloorClampIsVisibleNotSilent) {
         auto o = epochOf(quiet); driveEpoch(drvOff, n, 0, 0, &o, 1.0);
     }
 
-    // --- (a) OFF: no state churn, and the counters name it as config, not warm-up. ---
+    // --- (a) Off: no state changes, and the counters record configuration, not warm-up. ---
     const auto s_off = drvOff.innovInflationStatus();
     EXPECT_EQ(s_off.state, Infl::Off);
     EXPECT_EQ(s_off.sigma0, 1.0);
     EXPECT_EQ(drvOff.counters().d5_calib_off_epochs, drvOff.counters().d5_calib_epochs);
     EXPECT_EQ(drvOff.counters().d5_calib_floored_epochs, 0);
 
-    // --- (b) THE FIELD CASE: floored, reporting 1.00×, with the raw value recoverable. ---
+    // --- (b) The field case: floored, reporting 1.00×, with the raw value recoverable. ---
     const auto s_lo = drvLo.innovInflationStatus();
     EXPECT_EQ(s_lo.state, Infl::Floored)
         << "innovations below the formal Cov(v) must report FLOORED, not a calibrated 1.00×"
@@ -1931,18 +1919,18 @@ TEST(NetworkInvariantCarryDriverTest, Sigma0FloorClampIsVisibleNotSilent) {
     EXPECT_EQ(drvLo.counters().d5_calib_active_epochs, 0);
     EXPECT_LT(drvLo.counters().d5_calib_raw_min, 1.0);
 
-    // --- (c) genuinely calibrated: active, σ̂₀ > 1, no floor tally. ---
+    // --- (c) Calibrated: active, σ̂₀ > 1, no floor tally. ---
     const auto s_hi = drvHi.innovInflationStatus();
     EXPECT_EQ(s_hi.state, Infl::Active);
     EXPECT_GT(s_hi.sigma0, 1.0);
     EXPECT_EQ(drvHi.counters().d5_calib_floored_epochs, 0);
     EXPECT_GT(drvHi.counters().d5_calib_active_epochs, 0);
 
-    // --- the refactor is a no-op on the VALUE at every state (byte-identity of the fix). ---
+    // --- The status leaves the value unchanged in every state (byte identity). ---
     for (const auto* d : {&drvOff, &drvLo, &drvHi})
         EXPECT_EQ(d->innovInflationSigma0(), d->innovInflationStatus().sigma0);
 
-    // --- and the tallies partition the installs exactly (no state is unreachable). ---
+    // --- The tallies partition the installs exactly (every install lands in one state). ---
     for (const auto* d : {&drvOff, &drvLo, &drvHi}) {
         const auto& c = d->counters();
         EXPECT_EQ(c.d5_calib_epochs,
@@ -1953,11 +1941,11 @@ TEST(NetworkInvariantCarryDriverTest, Sigma0FloorClampIsVisibleNotSilent) {
 }
 
 // ===========================================================================
-// M5 card WL-3 — lane-coordinate carry (docs/SPEC_lane_carry_card.md).
-// Dual-band synthetic eq34 net: per band its own RPB δ, sat phase bias, and
-// integer ambiguities; ONE shared clock + one code row per (r,s).  The pair
-// battery drives the SAME epoch stream through (a) two per-band groups and
-// (b) one pair group, in both the §6.1 equivalence shape and the lane shape.
+// Lane-coordinate carry (M5 card WL-3, docs/SPEC_lane_carry_card.md).
+// Dual-band synthetic eq34 net: each band has its own RPB δ, satellite phase bias and
+// integer ambiguities; one clock is shared, with one code row per (r,s).  The pair
+// tests drive the same epoch stream through (a) two per-band groups and (b) one pair
+// group, in both the §6.1 equivalence shape and the lane shape.
 // ===========================================================================
 namespace {
 
@@ -2034,8 +2022,8 @@ std::size_t addNetStation2(NetworkEstimator& est, const Net2& n, int r,
     return est.addStation(A_s, A_r, w, y);
 }
 
-// The per-band shape's two groups (keys 1, 2) — the WL-3 equivalence CONTROL.
-// @p slip1 / @p slip2: PER-BAND slip sets (each band's group sees only its own).
+// The per-band shape's two groups (keys 1, 2): the control for the WL-3 equivalence.
+// @p slip1 / @p slip2: per-band slip sets (each band's group sees only its own).
 std::vector<NetworkInvariantCarryDriver::GroupInput>
 makeGroups2PerBand(const Net2& n, const std::vector<std::size_t>& ids, int p, int q,
                    const std::set<std::pair<int, int>>* slip1 = nullptr,
@@ -2055,7 +2043,7 @@ makeGroups2PerBand(const Net2& n, const std::vector<std::size_t>& ids, int p, in
     return {g1, g2};
 }
 
-// The WL-3 pair group (key 1): one arc per (r,s) with BOTH bands' columns and
+// The WL-3 pair group (key 1): one arc per (r,s) with both bands' columns and
 // per-band slip states (the driver unions them only under the lane shape).
 std::vector<NetworkInvariantCarryDriver::GroupInput>
 makeGroups2Pair(const Net2& n, const std::vector<std::size_t>& ids, int p, int q,
@@ -2115,17 +2103,17 @@ std::vector<Eigen::VectorXd> driveEpoch2(
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// WL-3 GATE 1 (SPEC §6.1) — THE structural safety net for the regroup: the pair
-// group with every lane feature at its off/isotropic sentinel must reproduce the
-// two per-band groups' carried values AND lifecycle counters to ≤1e-9, through
-// noise, a signaled slip, and a tree change; D5 flag totals identical.
+// Structural check for the regroup (WL-3 gate 1, SPEC §6.1): the pair group with
+// every lane feature at its off/isotropic sentinel reproduces the two per-band groups'
+// carried values and lifecycle counters to ≤1e-9, through noise, a signaled slip and a
+// tree change, with identical D5 flag totals.
 // ---------------------------------------------------------------------------
 TEST(NetworkInvariantCarryDriverTest, PairEquivalenceMatchesPerBandShape) {
     const int R = 4, S = 4, E = 6;
     Net2 n = makeNet2(4242, R, S);
     NetworkInvariantCarryDriver::Config cfg;
-    cfg.innov_gate = true; cfg.innov_k = 4.0;          // gate armed in BOTH arms
-    NetworkInvariantCarryDriver drvBand(cfg);          // control: today's per-band shape
+    cfg.innov_gate = true; cfg.innov_k = 4.0;          // gate armed in both arms
+    NetworkInvariantCarryDriver drvBand(cfg);          // control: the per-band shape
     NetworkInvariantCarryDriver::Config pcf = cfg;     // equivalence shape: pair regroup,
     pcf.q_wl_scale = 1.0;                              // isotropic q,
     pcf.sigma_wl_fresh_cyc = 0.0;                      // isotropic fresh prior,
@@ -2142,7 +2130,7 @@ TEST(NetworkInvariantCarryDriverTest, PairEquivalenceMatchesPerBandShape) {
     for (int e = 0; e < E; ++e) {
         const int p = (e >= 4) ? 1 : 0, q = (e >= 4) ? 1 : 0;   // epoch-4 tree change
         std::set<std::pair<int, int>> slips;
-        if (e == 3) { slips.insert({2, 3}); n.z1[2][3] += 5; }  // signaled BAND-1-ONLY slip — the equivalence shape must refloat band-1 alone, exactly like the per-band control
+        if (e == 3) { slips.insert({2, 3}); n.z1[2][3] += 5; }  // signaled band-1-only slip: the equivalence shape refloats band 1 alone, as the per-band control does
         auto n1 = noiseEpoch(), n2 = noiseEpoch();
         driveEpoch2(drvBand, n, p, q, &n1, &n2, 1.0, /*pair=*/false, e == 3 ? &slips : nullptr);
         driveEpoch2(drvPair, n, p, q, &n1, &n2, 1.0, /*pair=*/true,  e == 3 ? &slips : nullptr);
@@ -2160,7 +2148,7 @@ TEST(NetworkInvariantCarryDriverTest, PairEquivalenceMatchesPerBandShape) {
     EXPECT_EQ(A.innov_flags, B.innov_flags) << "D5 totals identical (SPEC §6.1)";
     EXPECT_GT(B.pair_components, 0) << "non-vacuous: the pair path actually ran";
     EXPECT_GT(A.chords_carried, 0) << "non-vacuous: the carry was populated";
-    // Per-chord carried values + variances: ≤1e-9 (not byte — summation order differs).
+    // Per-chord carried values and variances: ≤1e-9 (not bytewise; summation order differs).
     const int p = 1, q = 1;
     int compared = 0;
     for (int r = 0; r < R; ++r)
@@ -2175,7 +2163,7 @@ TEST(NetworkInvariantCarryDriverTest, PairEquivalenceMatchesPerBandShape) {
             if (!hp) continue;
             EXPECT_NEAR(zp1, zb1, 1e-9); EXPECT_NEAR(vp1, vb1, 1e-9);
             EXPECT_NEAR(zp2, zb2, 1e-9); EXPECT_NEAR(vp2, vb2, 1e-9);
-            // Equivalence shape carries NO cross-band coupling (per-band-identical fold).
+            // The equivalence shape carries no cross-band coupling (fold identical to per-band).
             std::vector<ArcKey> chs; Eigen::VectorXd zj; Eigen::MatrixXd Pj;
             ASSERT_TRUE(drvPair.carriedPairBlockForTest(1, chs, zj, Pj));
             const auto it = std::find(chs.begin(), chs.end(), chord);
@@ -2188,10 +2176,10 @@ TEST(NetworkInvariantCarryDriverTest, PairEquivalenceMatchesPerBandShape) {
 }
 
 // ---------------------------------------------------------------------------
-// WL-3 GATE 2 (SPEC §2/§3.1) — the LANE shape: the joint posterior retains the
-// cross-band coupling (the honest jointly-covarianced pair), and a fresh chord's
-// prior is anisotropic in the lane basis — diffuse along NL, the honest code-seed
-// scale along WL (hand values through the unit-normalized rotation).
+// The lane shape (WL-3 gate 2, SPEC §2/§3.1): the joint posterior retains the cross-band
+// coupling (a pair with a joint covariance), and a fresh chord's prior is anisotropic in
+// the lane basis: diffuse along NL, the code-seed scale along WL (hand values through the
+// unit-normalized rotation).
 // ---------------------------------------------------------------------------
 TEST(NetworkInvariantCarryDriverTest, PairLaneShapeCouplingAndFreshPrior) {
     const int R = 3, S = 3;
@@ -2202,7 +2190,7 @@ TEST(NetworkInvariantCarryDriverTest, PairLaneShapeCouplingAndFreshPrior) {
     cfg.fresh_prior_var = 1.0e6;
     NetworkInvariantCarryDriver drv(cfg);
 
-    // Epoch 1: all chords fresh — check the lane-basis prior on the RETURNED block.
+    // Epoch 1: all chords fresh; check the lane-basis prior on the returned block.
     Eigen::MatrixXd Pz0; Eigen::Index K0 = 0;
     auto grab = [&](std::vector<NetworkNormalEquations::DdPriorBlock>& blocks) {
         ASSERT_EQ(blocks.size(), 1u);
@@ -2223,7 +2211,7 @@ TEST(NetworkInvariantCarryDriverTest, PairLaneShapeCouplingAndFreshPrior) {
         EXPECT_NEAR(h_nl.dot(P * h_nl), 1.0e6, 1e-6 * 1.0e6)
             << "fresh NL direction stays diffuse";
     }
-    // Epoch 2: carried — the joint posterior must retain band-1↔band-2 coupling.
+    // Epoch 2: carried; the joint posterior retains the band-1↔band-2 coupling.
     driveEpoch2(drv, n, 0, 0, nullptr, nullptr, 1.0, /*pair=*/true);
     std::vector<ArcKey> chs; Eigen::VectorXd zj; Eigen::MatrixXd Pj;
     ASSERT_TRUE(drv.carriedPairBlockForTest(1, chs, zj, Pj));
@@ -2233,8 +2221,8 @@ TEST(NetworkInvariantCarryDriverTest, PairLaneShapeCouplingAndFreshPrior) {
         max_cross = std::max(max_cross, std::abs(Pj(i, K + i)));
     EXPECT_GT(max_cross, 1e-12)
         << "lane shape must retain the cross-band posterior coupling (the joint pair)";
-    // Lane-aware q: Q = Rᵀ·diag(q, 1000q)·R per chord — the WL lane inflates 1000×
-    // the NL direction per unit time (hand value through the unit rotation).
+    // Lane-aware q: Q = Rᵀ·diag(q, 1000q)·R per chord; the WL lane inflates 1000× faster
+    // than the NL direction per unit time (hand value through the unit rotation).
     NetworkInvariantCarryDriver::Config qcfg = cfg;
     qcfg.qz = 0.01; qcfg.q_wl_scale = 1000.0;
     NetworkInvariantCarryDriver drvQ(qcfg);
@@ -2256,9 +2244,9 @@ TEST(NetworkInvariantCarryDriverTest, PairLaneShapeCouplingAndFreshPrior) {
 }
 
 // ---------------------------------------------------------------------------
-// WL-3 GATE 3 (SPEC §3.2) — the per-epoch lane measurement is an exact scalar KF
-// update on the emitted pair block (hand value), and the D5 prior (BlockMeta)
-// tracks the folded prior.
+// The per-epoch lane measurement (WL-3 gate 3, SPEC §3.2) is an exact scalar KF update
+// on the emitted pair block (hand value).  The D5 prior (BlockMeta) is meant to track
+// the folded prior; this test does not assert it.
 // ---------------------------------------------------------------------------
 TEST(NetworkInvariantCarryDriverTest, LaneMeasurementMatchesHandKf) {
     const int R = 3, S = 3;
@@ -2296,14 +2284,14 @@ TEST(NetworkInvariantCarryDriverTest, LaneMeasurementMatchesHandKf) {
         << "lane update mean must match the hand KF value";
     EXPECT_LT((Pz_after - Pz_hand).cwiseAbs().maxCoeff(), 1e-9)
         << "lane update covariance must match the hand KF value";
-    // The lane variance genuinely shrank; the measurement is load-bearing.
+    // The lane variance shrank, so the measurement is load-bearing.
     EXPECT_LT(h.dot(Pz_after * h), h.dot(Pz_before * h) - 1e-12);
 }
 
 // ---------------------------------------------------------------------------
-// WL-3 GATE 4 (SPEC §3.3) — fold-on-change: first decision folds, an unchanged
-// decision at the NEXT epoch is a no-op, a changed integer re-folds, and a
-// re-tapped (slipped) chord must re-earn its fix (memory erased).
+// Fold on change (WL-3 gate 4, SPEC §3.3): the first decision folds, an unchanged
+// decision at the next epoch is a no-op, a changed integer re-folds, and a re-tapped
+// (slipped) chord has its fix memory erased and folds again on the next decision.
 // ---------------------------------------------------------------------------
 TEST(NetworkInvariantCarryDriverTest, LaneFixFoldOnChangeSemantics) {
     const int R = 3, S = 3;
@@ -2333,15 +2321,15 @@ TEST(NetworkInvariantCarryDriverTest, LaneFixFoldOnChangeSemantics) {
 }
 
 // ---------------------------------------------------------------------------
-// WL-3 GATE 5 (SPEC §3.4) — a slip on EITHER band's arc refloats BOTH bands of
-// the pair chord (union semantics): the reborn block prior is diffuse in both
-// band rows and slip_kills tallies 2 per killed pair chord.
+// Pair slip (WL-3 gate 5, SPEC §3.4): a slip on either band's arc refloats both bands of
+// the pair chord (union semantics).  The reborn block prior is diffuse in both band rows
+// and slip_kills tallies 2 per killed pair chord.
 // ---------------------------------------------------------------------------
 TEST(NetworkInvariantCarryDriverTest, PairSlipRefloatsBothBands) {
     const int R = 3, S = 3;
     Net2 n = makeNet2(31, R, S);
     NetworkInvariantCarryDriver::Config cfg;
-    cfg.lane_joint = true; cfg.sigma_wl_fresh_cyc = 0.0;   // isotropic fresh ⇒ diffuse probe is crisp
+    cfg.lane_joint = true; cfg.sigma_wl_fresh_cyc = 0.0;   // isotropic fresh ⇒ the diffuse check is unambiguous
     NetworkInvariantCarryDriver drv(cfg);
     for (int e = 0; e < 3; ++e)
         driveEpoch2(drv, n, 0, 0, nullptr, nullptr, e == 0 ? 0.0 : 1.0, /*pair=*/true);
@@ -2367,8 +2355,8 @@ TEST(NetworkInvariantCarryDriverTest, PairSlipRefloatsBothBands) {
 }
 
 // ---------------------------------------------------------------------------
-// WL-3 GATE 6 — injectCarriedChordPair edits both bands and its ONE-epoch D5
-// exemption spans BOTH band rows (control: an equally-off seeded carry flags).
+// injectCarriedChordPair edits both bands, and its one-epoch D5 exemption spans both band
+// rows (control: an equally-off seeded carry flags).  (WL-3 gate 6)
 // ---------------------------------------------------------------------------
 TEST(NetworkInvariantCarryDriverTest, InjectPairExemptionSpansBothRows) {
     const int R = 3, S = 3;
@@ -2377,8 +2365,8 @@ TEST(NetworkInvariantCarryDriverTest, InjectPairExemptionSpansBothRows) {
     cfg.lane_joint = true; cfg.sigma_wl_fresh_cyc = 3.0;
     cfg.innov_gate = true; cfg.innov_k = 4.0;
 
-    // Both arms warm identically, then get the SAME way-off pair value — one via the
-    // exempting inject primitive, one via a raw seed-style corruption (no exemption).
+    // Both arms warm identically, then get the same far-off pair value: one through the
+    // exempting inject primitive, one through a raw seeded corruption (no exemption).
     auto warm = [&](NetworkInvariantCarryDriver& d) {
         for (int e = 0; e < 3; ++e)
             driveEpoch2(d, n, 0, 0, nullptr, nullptr, e == 0 ? 0.0 : 1.0, /*pair=*/true);
@@ -2391,7 +2379,7 @@ TEST(NetworkInvariantCarryDriverTest, InjectPairExemptionSpansBothRows) {
     ASSERT_TRUE(drvInj.carriedPairValue(1, chord, z1, v1, z2, v2));
     ASSERT_TRUE(drvInj.injectCarriedChordPair(1, chord, z1 + 20.0, 1e-4, z2 - 20.0, 1e-4));
     driveEpoch2(drvInj, n, 0, 0, nullptr, nullptr, 1.0, /*pair=*/true);
-    // The exemption is PER CHORD (both band rows); component siblings deliberately stay
+    // The exemption is per chord (both band rows); component siblings deliberately stay
     // testable (WL-2 §3.3: an inject's residual tension may land on its neighbours).
     long long flags_on_chord = 0;
     for (const auto& [g, key] : drvInj.lastInnovFlags()) if (key == chord) ++flags_on_chord;
@@ -2400,8 +2388,8 @@ TEST(NetworkInvariantCarryDriverTest, InjectPairExemptionSpansBothRows) {
 
     NetworkInvariantCarryDriver drvCtl(cfg);
     warm(drvCtl);
-    // Control: the same off-value asserted WITHOUT the exemption — rebuild the carried
-    // block through the seed seam (mirrors InjectD5ExemptionSuppressesReTap's control).
+    // Control: the same off value without the exemption; the carried block is rebuilt
+    // through the seed seam (as in the control of InjectD5ExemptionSuppressesReTap).
     std::vector<ArcKey> chs; Eigen::VectorXd zj; Eigen::MatrixXd Pj;
     ASSERT_TRUE(drvCtl.carriedPairBlockForTest(1, chs, zj, Pj));
     {
@@ -2428,9 +2416,9 @@ TEST(NetworkInvariantCarryDriverTest, InjectPairExemptionSpansBothRows) {
 }
 
 // ---------------------------------------------------------------------------
-// WL-3 GATE 7 — the deterministic-parallel install (network.parallel_seam, armed
-// in the lineage configs) is BIT-IDENTICAL to the serial install on JOINT pair
-// blocks (the per-band shape's byte-identity gate does not cover the pair stitch).
+// The deterministic-parallel install (network.parallel_seam, armed in the lineage
+// configs) is bit-identical to the serial install on joint pair blocks; the per-band
+// byte-identity gate does not cover the pair stitch.  (WL-3 gate 7)
 // ---------------------------------------------------------------------------
 TEST(NetworkInvariantCarryDriverTest, PairInstallParallelMatchesSerialByteForByte) {
     const int R = 4, S = 4, E = 5;
@@ -2462,13 +2450,13 @@ TEST(NetworkInvariantCarryDriverTest, PairInstallParallelMatchesSerialByteForByt
 }
 
 // ---------------------------------------------------------------------------
-// LF-1 INC-1 (SPEC_lane_carry_card.md Appendix LF-1 §3.2, §5.2) — the blocked/sparse lane
-// fold (fold_blocked=true: O(K) sparse applyLaneFix + per-row symmetrize hoisted
-// to finalizeLaneBatch) must reproduce the sequential per-row fold to ≤1e-9 over
-// an IDENTICAL row sequence (measurements on every chord, two fixes, then a
-// measurement AFTER a fix — the non-commuting order both arms share).  This is
-// the equivalence-class gate; the OFF-path byte-identity is the separate wlver
-// hash gate.  Also asserts finalizeLaneBatch restored EXACT symmetry.
+// The blocked/sparse lane fold (fold_blocked=true: O(K) sparse applyLaneFix, with the
+// per-row symmetrize hoisted to finalizeLaneBatch) reproduces the sequential per-row
+// fold to ≤1e-9 over an identical row sequence (measurements on every chord, two fixes,
+// then a measurement after a fix, a non-commuting order that both arms share).  This is
+// the equivalence-class gate; off-path byte identity is the separate wlver hash gate.
+// Also checks that finalizeLaneBatch restores exact symmetry.
+// (LF-1 INC-1, SPEC_lane_carry_card.md Appendix LF-1 §3.2, §5.2)
 // ---------------------------------------------------------------------------
 TEST(NetworkInvariantCarryDriverTest, FoldBlockedMatchesSequentialLaneFold) {
     const int R = 4, S = 4;
@@ -2479,14 +2467,14 @@ TEST(NetworkInvariantCarryDriverTest, FoldBlockedMatchesSequentialLaneFold) {
     NetworkInvariantCarryDriver drvS(cfgS), drvB(cfgB);
 
     // Warm both identically (fold_blocked is inert with no lane rows) so the carry
-    // has several coupled chords + a diffuse NL direction.
+    // has several coupled chords and a diffuse NL direction.
     for (int e = 0; e < 3; ++e) {
         const double dt = e == 0 ? 0.0 : 1.0;
         driveEpoch2(drvS, n, 0, 0, nullptr, nullptr, dt, /*pair=*/true);
         driveEpoch2(drvB, n, 0, 0, nullptr, nullptr, dt, /*pair=*/true);
     }
 
-    // Apply the SAME row sequence to both; only HOW each row folds differs.
+    // Apply the same row sequence to both; only the way each row folds differs.
     Eigen::VectorXd zS, zB; Eigen::MatrixXd PS, PB;
     auto rows = [&](NetworkInvariantCarryDriver& d, Eigen::VectorXd& z, Eigen::MatrixXd& P) {
         return [&](std::vector<NetworkNormalEquations::DdPriorBlock>& blocks) {
@@ -2498,7 +2486,7 @@ TEST(NetworkInvariantCarryDriverTest, FoldBlockedMatchesSequentialLaneFold) {
                                        0.02 + 0.01 * static_cast<double>(k));
             d.applyLaneFix(blocks, 0, 0,  5,  5.0, 0.01);
             d.applyLaneFix(blocks, 0, 2, -3, -3.0, 0.01);
-            d.applyLaneMeasurement(blocks, 0, 1, 0.7, 0.05);   // a measurement AFTER a fix
+            d.applyLaneMeasurement(blocks, 0, 1, 0.7, 0.05);   // a measurement after a fix
             d.finalizeLaneBatch(blocks);                        // no-op unless fold_blocked
             z = blocks[0].zhat; P = blocks[0].Pz;
         };
@@ -2508,27 +2496,26 @@ TEST(NetworkInvariantCarryDriverTest, FoldBlockedMatchesSequentialLaneFold) {
 
     ASSERT_EQ(zS.size(), zB.size());
     ASSERT_EQ(PS.rows(), PB.rows());
-    // Equivalence class: fp reassociation + the hoisted symmetrize, NOT bit-identical.  A real
-    // algebra bug in the sparse SET diverges O(0.1+) (cf. the field 1e-4-and-growing signature).
+    // Equivalence class: fp reassociation and the hoisted symmetrize, so not bit-identical.  An
+    // algebra error in the sparse set diverges by O(0.1) or more (the field shows 1e-4 and growing).
     EXPECT_LT((zS - zB).cwiseAbs().maxCoeff(), 1e-9)
         << "blocked lane-fold mean must match the sequential fold";
     EXPECT_LT((PS - PB).cwiseAbs().maxCoeff(), 1e-6)
         << "blocked lane-fold covariance must match the sequential fold (abs err is ULP × the "
            "1e6-scale diffuse NL entries)";
-    // finalizeLaneBatch restored EXACT symmetry despite the per-row skips.
+    // finalizeLaneBatch restored exact symmetry despite the per-row skips.
     EXPECT_LT((PB - PB.transpose()).cwiseAbs().maxCoeff(), 1e-18)
         << "finalizeLaneBatch must leave Pz exactly symmetric";
-    // Non-vacuity: the rows actually moved the block.
+    // Non-vacuity: the rows moved the block.
     EXPECT_GT(PS.cwiseAbs().maxCoeff(), 1e-6);
     EXPECT_GT(zS.cwiseAbs().maxCoeff(), 1e-6);
 }
 
 // ---------------------------------------------------------------------------
-// LF-1 INC-2 (SPEC_lane_carry_card.md Appendix LF-1 §3.3) — pinned-cycle increment skip
-// LIFECYCLE: an undecided chord is never skippable; a committed-decided chord
-// becomes skippable the next epoch; a slip on its arc erases the memory ⇒ it
-// resumes increments the SAME epoch (invariant #1: the slip response is
-// provably unaffected).
+// Pinned-cycle increment skip lifecycle: an undecided chord is never skippable; a
+// committed-decided chord becomes skippable the next epoch; a slip on its arc erases the
+// memory ⇒ it resumes increments in the same epoch (invariant #1: the slip response is
+// unaffected).  (LF-1 INC-2, SPEC_lane_carry_card.md Appendix LF-1 §3.3)
 // ---------------------------------------------------------------------------
 using DdBlocks = std::vector<NetworkNormalEquations::DdPriorBlock>;
 TEST(NetworkInvariantCarryDriverTest, PinnedIncrementSkipLifecycle) {
@@ -2550,7 +2537,7 @@ TEST(NetworkInvariantCarryDriverTest, PinnedIncrementSkipLifecycle) {
     // ep3: chord 0 is committed-decided ⇒ skippable (age 1 ≤ within_n).
     driveEpoch2(drv, n, 0, 0, nullptr, nullptr, 1.0, true, nullptr, nullptr,
         [&](DdBlocks& b) { (void)b; skip_decided = drv.laneIncrementSkippable(0, 0); });
-    // ep4: slip chord 0's arc ⇒ rebirth erases the memory ⇒ NOT skippable (increments resume).
+    // ep4: slip chord 0's arc ⇒ rebirth erases the memory ⇒ not skippable (increments resume).
     const ArcKey chord0 = drv.blockChordsForTest(0).front();
     std::set<std::pair<int, int>> slips{{chord0.u, chord0.v - kSatBase}};
     driveEpoch2(drv, n, 0, 0, nullptr, nullptr, 1.0, true, &slips, nullptr,
@@ -2562,9 +2549,9 @@ TEST(NetworkInvariantCarryDriverTest, PinnedIncrementSkipLifecycle) {
         << "a slipped/reborn chord resumes increments the same epoch (invariant #1)";
 }
 
-// LF-1 INC-2 — the grace window: a decided chord that goes undecided keeps
-// skipping for within_n epochs, then resumes increments (re-converges a lane the
-// FFR gate stopped trusting).
+// Grace window: a decided chord that goes undecided keeps skipping for within_n epochs,
+// then resumes increments (re-converges a lane that the FFR gate stopped trusting).
+// (LF-1 INC-2)
 TEST(NetworkInvariantCarryDriverTest, PinnedIncrementSkipGraceExpires) {
     const int R = 3, S = 3;
     Net2 n = makeNet2(89, R, S);
@@ -2589,14 +2576,14 @@ TEST(NetworkInvariantCarryDriverTest, PinnedIncrementSkipGraceExpires) {
     EXPECT_FALSE(s_age3) << "age 3 > within_n=2 ⇒ increments resume";
 }
 
-// LF-1 INC-2 — OFF is inert: with skip_pinned_increments=false a decided chord
-// is NEVER skippable (byte-identical path; lane_fix_epoch_ stays empty).
+// Off is inert: with skip_pinned_increments=false a decided chord is never skippable
+// (byte-identical path; lane_fix_epoch_ stays empty).  (LF-1 INC-2)
 TEST(NetworkInvariantCarryDriverTest, PinnedIncrementSkipOffIsInert) {
     const int R = 3, S = 3;
     Net2 n = makeNet2(90, R, S);
     NetworkInvariantCarryDriver::Config cfg;
     cfg.lane_joint = true; cfg.sigma_wl_fresh_cyc = 3.0;
-    cfg.skip_pinned_increments = false;   // OFF
+    cfg.skip_pinned_increments = false;   // off
     NetworkInvariantCarryDriver drv(cfg);
     driveEpoch2(drv, n, 0, 0, nullptr, nullptr, 0.0, true);
     driveEpoch2(drv, n, 0, 0, nullptr, nullptr, 1.0, true, nullptr, nullptr,
@@ -2608,18 +2595,15 @@ TEST(NetworkInvariantCarryDriverTest, PinnedIncrementSkipOffIsInert) {
 }
 
 // ===========================================================================
-// SPEC_pd_safe_dd_fold.md INC-0 — reset() is a CARRY cold start, NOT an
-// instrument reset.
+// reset() is a carry cold start, not an instrument reset (SPEC_pd_safe_dd_fold.md INC-0).
 //
-// The install seam calls reset() MID-RUN from its exception handler (the catch
-// around installPosterior in NetworkInstallCarry — reachable because the
-// ddPriorPosterior* read-backs throw).  Both readers of these counters are
-// run-scoped: NetworkTeardown's run-end INC-0 line reads the LIVE driver
-// counter, and the seam ASSIGNS the cumulative totals into ctx.carry and then
-// DIFFERENCES them against the previous epoch's snapshot.  Zeroing on reset
-// therefore under-reported the run total AND drove the per-epoch churn deltas
-// negative.  Standing invariant #4: an instrument that loses its own history
-// reads clean while lying.
+// The install seam calls reset() mid-run from its exception handler (the catch around
+// installPosterior in NetworkInstallCarry, reachable because the ddPriorPosterior*
+// read-backs throw).  Both readers of these counters are run-scoped: NetworkTeardown's
+// run-end INC-0 line reads the live driver counter, and the seam assigns the cumulative
+// totals into ctx.carry and differences them against the previous epoch's snapshot.
+// Zeroing on reset would under-report the run total and drive the per-epoch churn deltas
+// negative (invariant #4: an instrument that loses its own history misreports).
 // ===========================================================================
 TEST(NetworkInvariantCarryDriverTest, MidRunResetPreservesRunCumulativeCounters) {
     const int R = 4, S = 4;
@@ -2636,23 +2620,23 @@ TEST(NetworkInvariantCarryDriverTest, MidRunResetPreservesRunCumulativeCounters)
     for (int e = 0; e < 4; ++e) { auto ns = noiseEpoch(); driveEpoch(drv, n, 0, 0, &ns, 1.0); }
 
     const NetworkInvariantCarryDriver::Counters before = drv.counters();
-    // Non-vacuous precondition: there must be real history available to lose.
+    // Non-vacuous precondition: there is history available to lose.
     ASSERT_GT(before.epochs, 0);
     ASSERT_GT(before.chords_born, 0);
     ASSERT_GT(before.chords_carried, 0);
     ASSERT_GT(before.max_z_dim, 0);
     ASSERT_GT(drv.totalZDim(), 0);
 
-    drv.reset();   // == the install seam's catch: the carry dies mid-run
+    drv.reset();   // as in the install seam's catch: the carry is dropped mid-run
 
-    // The CARRY half of the contract is unchanged (GATE 5 covers it; re-asserted here
-    // because "counters survive" must not be bought by weakening the cold start).
+    // The carry half of the contract is unchanged (gate 5 covers it; it is re-asserted
+    // here so that counter survival cannot come from a weaker cold start).
     EXPECT_EQ(drv.totalZDim(), 0) << "reset() must still cold-start the carry";
     EXPECT_EQ(drv.numBlocks(), 0u);
     EXPECT_EQ(drv.counters().z_dim, 0)
         << "z_dim is a live dimension, not a tally — it tracks the carry it describes";
 
-    // The INSTRUMENT half — the defect.
+    // The instrument half.
     EXPECT_EQ(drv.counters().epochs, before.epochs)
         << "the run instrument must SURVIVE a mid-run carry reset (invariant #4)";
     EXPECT_EQ(drv.counters().chords_born,        before.chords_born);
@@ -2664,8 +2648,8 @@ TEST(NetworkInvariantCarryDriverTest, MidRunResetPreservesRunCumulativeCounters)
     EXPECT_EQ(drv.counters().max_z_dim, before.max_z_dim)
         << "run MAXIMA are history too — a reset must not lower the run's peak";
 
-    // The field symptom itself: the seam differences these totals epoch-over-epoch, so
-    // monotonicity ACROSS the reset — not just survival of the snapshot — is the gate.
+    // The seam differences these totals epoch over epoch, so the gate is monotonicity
+    // across the reset, not only survival of the snapshot.
     { auto ns = noiseEpoch(); driveEpoch(drv, n, 0, 0, &ns, 1.0); }
     EXPECT_GT(drv.counters().chords_born, before.chords_born)
         << "post-reset births must EXTEND the run total, never restart it (a restart "
@@ -2673,16 +2657,16 @@ TEST(NetworkInvariantCarryDriverTest, MidRunResetPreservesRunCumulativeCounters)
     EXPECT_GE(drv.counters().epochs, before.epochs + 1);
 }
 
-// SPEC_pd_safe_dd_fold.md INC-0 — d5_nonpos_var_rows specifically.  This counter is
-// the D5 gate's blind-spot tally and its ONLY readout is the run-end INC-0 line, so a
-// mid-run reset erased it with no second source.  It had no coverage at all before
-// this gate; drive it the way the field did — an indefinite carried Pᶻ with pd_safe
-// OFF leaves the fold inert (M := 0), so Cov(v) = Minv − GᵀΣG inherits the negative
-// diagonals and every affected row is skipped inside the gate.
+// d5_nonpos_var_rows across a mid-run reset (SPEC_pd_safe_dd_fold.md INC-0).  This
+// counter is the D5 gate's blind-spot tally and its only readout is the run-end INC-0
+// line, so a reset that erased it would leave no second source.  The test drives it as
+// the field does: an indefinite carried Pᶻ with pd_safe off leaves the fold inert
+// (M := 0), so Cov(v) = Minv − GᵀΣG inherits the negative diagonals and every affected
+// row is skipped inside the gate.
 TEST(NetworkInvariantCarryDriverTest, D5NonPosVarRowsSurviveMidRunReset) {
     NetworkInvariantCarryDriver::Config cfg;
     cfg.innov_gate = true;    // the gate that owns the skip
-    cfg.pd_safe    = false;   // legacy fold: no repair, no rebirth — the inert path
+    cfg.pd_safe    = false;   // legacy fold: no repair, no rebirth (the inert path)
     NetworkInvariantCarryDriver drv(cfg);
 
     const int R = 3, S = 3;
@@ -2694,8 +2678,8 @@ TEST(NetworkInvariantCarryDriverTest, D5NonPosVarRowsSurviveMidRunReset) {
     std::vector<ArcKey> ch;
     for (int r = 1; r < R; ++r) for (int s = 1; s < S; ++s) ch.emplace_back(rxV(r), satV(s));
     const Eigen::Index K = static_cast<Eigen::Index>(ch.size());
-    // One eigenvalue far negative against a B of order 1 — the shape the corrupt field
-    // snapshots actually hold (the DegenerateBlockRebirthsLoudly fixture, pd_safe OFF).
+    // One eigenvalue far negative against a B of order 1: the shape of the corrupt field
+    // snapshots (the DegenerateBlockRebirthsLoudly fixture, pd_safe off).
     Eigen::MatrixXd Pz = Eigen::MatrixXd::Identity(K, K) * 1.0e-2;
     Pz(0, 0) = -1.0e6;
     drv.seedCarriedForTest(0, ch, Eigen::VectorXd::Zero(K), Pz, verts, arcs);

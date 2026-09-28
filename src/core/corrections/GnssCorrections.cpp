@@ -93,7 +93,7 @@ namespace GnssProcessor {
 
     void GnssCorrections::setClocksAndErps(const std::vector<ClockData>& clocks, const std::vector<ErpData>& erps) {
         // Override with caller-owned data (e.g. an SSR clock stream): take a private
-        // copy behind a fresh shared_ptr, releasing the previously-shared cache copy.
+        // copy behind a fresh shared_ptr and drop the reference to the shared cache copy.
         clocks_ = std::make_shared<const std::vector<ClockData>>(clocks);
         erps_ = std::make_shared<const std::vector<ErpData>>(erps);
         buildClockIndex();
@@ -138,10 +138,10 @@ namespace GnssProcessor {
         auto log = log_manager_.getLogger("ppp_model");
 
         // Provenance: "broadcast grade" means the returned clock came from the
-        // broadcast polynomial with NO precise CLK sample and NO SSR clock delta
-        // — i.e. metre-level.  Callers use this to drop carrier phase, which is
-        // meaningless against a metre-level clock.  Default to false so error
-        // paths (sat dropped anyway) never spuriously gate phase.
+        // broadcast polynomial with neither a precise CLK sample nor an SSR clock
+        // delta, so it is metre-level.  Callers use this to drop carrier phase,
+        // which is not usable against a metre-level clock.  It defaults to false so
+        // that error paths (where the satellite is dropped anyway) do not gate phase.
         if (broadcast_grade) *broadcast_grade = false;
 
         if (satellite.empty()) {
@@ -154,32 +154,33 @@ namespace GnssProcessor {
         }
 
         // Precise CLK product first.  interpolateClock returns 0.0 when no clock
-        // sample covers this epoch — an absent product, or every node outside
-        // its MAX_WINDOW (e.g. a stale fixture shadowing a live rooftop run).
-        // (It is safe to call with clocks_ empty: the clock index is then empty
-        // and it returns 0.0, so the broadcast fallback below can still fire.)
+        // sample covers this epoch: the product is absent, or every node is
+        // outside MAX_WINDOW (e.g. a stale fixture loaded during a live run).
+        // It is safe to call with clocks_ empty: the clock index is then empty and
+        // it returns 0.0, so the broadcast fallback below still applies.
         double clock_corr = interpolateClock(satellite, time, *clocks_);
 
-        // SSR record up front so the broadcast baseline + IODE gate can select
-        // the ephemeris VERSION the SSR clock delta was computed for (iode_ssr).
-        // When the receiver has cut over to a newer ephemeris but the SSR still
-        // references the prior one, this RE-REFERENCES to the retained previous
-        // record (LiveEphemerisStore keeps current+previous across a cutover)
-        // instead of dropping the satellite to broadcast-grade.
-        // Reject an SSR record desynced from the obs epoch (live corrections vs a
-        // lagging obs stream): getOrbitClock's freshness gate now also drops a
-        // record far in the FUTURE relative to the obs (the −1.5 h desync), so a
-        // stale/mis-timed SSR no longer detonates applyClockToBias.  Surface the
-        // drop loudly (rate-limited by spdlog level) so it never hides again.
+        // The SSR record is fetched first so that the broadcast baseline and the
+        // IODE gate can select the ephemeris version the SSR clock delta was
+        // computed for (iode_ssr).  When the receiver has cut over to a newer
+        // ephemeris but the SSR still references the prior one, the baseline is
+        // re-referenced to the retained previous record (LiveEphemerisStore keeps
+        // current and previous across a cutover) instead of the satellite dropping
+        // to broadcast-grade.
+        // An SSR record desynced from the obs epoch (live corrections against a
+        // lagging obs stream) is rejected: getOrbitClock's freshness gate drops a
+        // record too old or too far in the future relative to the obs, so a
+        // mis-timed record never reaches applyClockToBias.  The drop is logged at
+        // warn level.
         //
-        // RTA-9(b): the CLOCK apply window is widened by the stale-hold rung —
-        // with processing.ssr_clock_stale_hold_factor > 0 a clock aged in
-        // (ssr_max_age, factor × ssr_max_age] is still accepted here (the
-        // C0+C1·dt polynomial extrapolates over the true dt below) instead of
-        // dropping the satellite to broadcast-grade; MeasurementModel de-weights
-        // the consuming rows through the URA-staleness q²·dt³/3 machinery using
-        // the SAME clockHoldWindow.  Factor 0 (default) keeps the window at
-        // ssr_max_age exactly — byte-identical.
+        // RTA-9(b): the clock apply window is widened by the stale-hold rung.  With
+        // processing.ssr_clock_stale_hold_factor > 1, a clock aged in
+        // (ssr_max_age, factor × ssr_max_age] is still accepted here (the C0+C1·dt
+        // polynomial extrapolates over the true dt below) instead of the satellite
+        // dropping to broadcast-grade; MeasurementModel de-weights the consuming
+        // rows through the URA-staleness q²·dt³/3 model using the same
+        // clockHoldWindow.  A factor of at most 1 (default 0) keeps the window at
+        // ssr_max_age, and the output is byte-identical.
         const double ssr_max_age = config_ ? config_->getSsrMaxAge() : 60.0;
         const double clk_hold    = config_ ? config_->getSsrClockStaleHoldFactor() : 0.0;
         const double apply_window =
@@ -195,24 +196,25 @@ namespace GnssProcessor {
                               satellite, PppUtils::getSystemString(satellite), age, apply_window);
             }
         }
-        // Card 7 (RTF-2 / plan D7): the broadcast BASELINE is pinned to the
-        // version the CLOCK was referenced to.  A stamped clock IODE (brdc_rts
-        // network clock: C0 = delta vs broadcast(clock_iode)) WINS over the
-        // orbit anchor, so across a producer/consumer ephemeris-cutover skew
-        // the store's current+previous retention re-references the baseline to
-        // the producer's version instead of dropping the satellite.  Every
-        // unstamped path has clock_iode == iode (combined / inherited, Card 3)
-        // or clock_iode == -1 (falls through to iode) — byte-identical.
+        // The broadcast baseline is pinned to the ephemeris version the clock was
+        // referenced to.  A stamped clock IODE (brdc_rts network clock: C0 is the
+        // delta against broadcast(clock_iode)) takes precedence over the orbit
+        // anchor, so across a producer/consumer ephemeris-cutover skew the store's
+        // current+previous retention re-references the baseline to the producer's
+        // version instead of dropping the satellite.  Every unstamped path has
+        // clock_iode == iode (combined or inherited, Card 3) or clock_iode == -1
+        // (falls through to iode), so its output is byte-identical.
+        // (Card 7, RTF-2 / plan D7.)
         const int  ssr_iode = (ssr && ssr->has_clock)
             ? (ssr->clock_iode >= 0 ? ssr->clock_iode : ssr->iode)
             : -1;
 
-        // Live broadcast SV clock, version-matched to the SSR.  Its IODE ALWAYS
-        // drives the gate — so a precise-CLK baseline no longer forces the gate
+        // Live broadcast SV clock, version-matched to the SSR.  Its IODE drives the
+        // gate in every case, so a precise-CLK baseline does not make the gate
         // permissive (the CLK product carries no usable IODE).  It supplies the
-        // clock BASELINE only when no precise CLK sample covered this epoch.  In
+        // clock baseline only when no precise CLK sample covered this epoch.  In
         // post-processing the live store is empty (bc == nullopt), so brdc_iode
-        // stays -1 (permissive) and the prior SP3/CLK behaviour stands.
+        // stays -1 (permissive) and the SP3/CLK path is unaffected.
         const auto bc = LiveEphemerisStore::getInstance()
                             .computeSatelliteClock(satellite, time, ssr_iode);
         int  brdc_iode      = bc ? bc->iode : -1;
@@ -222,30 +224,29 @@ namespace GnssProcessor {
             used_broadcast = true;
         }
 
-        // SSR clock overlay (IGS-SSR): a delta to ADD to the broadcast/CLK
-        // baseline, applied only when fresh, finite, and IODE-matched.  A
-        // satellite carrying a fresh SSR clock is cm-grade, so it is NOT
-        // broadcast-grade even when the baseline came from the broadcast
-        // polynomial.
+        // SSR clock overlay (IGS-SSR): a delta added to the broadcast/CLK baseline,
+        // applied only when fresh, finite and IODE-matched.  A satellite carrying a
+        // fresh SSR clock is cm-grade, so it is not broadcast-grade even when the
+        // baseline came from the broadcast polynomial.
         bool ssr_clock_applied = false;
         if (ssr && ssr->has_clock) {
-            // SSR diagnostic (trace, "corrections" logger) — one line per
-            // (sat, epoch).  Exposes (1) the orbit/clock RATE terms the
+            // SSR diagnostic (trace level, "corrections" logger), one line per
+            // (sat, epoch).  It records (1) the orbit/clock rate terms the
             // between-update propagation depends on (delta_rac + delta_rac_dot*dt,
-            // c0 + c1*dt + c2*dt^2) and the age dt; (2) the clock BASELINE the SSR
-            // delta is stacked on (baseline_clk is SECONDS — the broadcast SV
-            // clock — plus used_broadcast); (3) the IODE bookkeeping:
-            //   eph_iode  = CURRENT live broadcast ephemeris IODE (steps at a cutover)
+            // c0 + c1*dt + c2*dt^2) and the age dt; (2) the clock baseline the SSR
+            // delta is added to (baseline_clk, in seconds, is the broadcast SV
+            // clock) and used_broadcast; (3) the IODE bookkeeping:
+            //   eph_iode  = current live broadcast ephemeris IODE (steps at a cutover)
             //   iode_ssr  = the ephemeris version the SSR delta was computed for
-            //   brdc_iode = the version the gate USED (re-referenced to match
-            //               iode_ssr — current or retained previous — when possible)
+            //   brdc_iode = the version the gate used (re-referenced to match
+            //               iode_ssr, current or retained previous, when possible)
             // eph_iode != brdc_iode == iode_ssr with iode_match=true means a
-            // cutover desync was re-referenced (not dropped); iode_match=false
+            // cutover desync was re-referenced rather than dropped; iode_match=false
             // means no held version matched and the satellite is dropped.  Inert
-            // unless "corrections" is at trace.
+            // unless "corrections" is at trace level.
             if (auto clog = log_manager_.getLogger("corrections");
                 clog->should_log(spdlog::level::trace)) {
-                int eph_iode = -2;   // CURRENT version (no SSR target); -2 = no live clock
+                int eph_iode = -2;   // current version (no SSR target); -2 = no live clock
                 if (auto cur = LiveEphemerisStore::getInstance()
                                   .computeSatelliteClock(satellite, time))
                     eph_iode = cur->iode;
@@ -267,38 +268,36 @@ namespace GnssProcessor {
                     eph_iode, ssr->clock_iode, brdc_iode,
                     SsrCorrectionStore::iodeMatches(brdc_iode, ssr->clock_iode));
             }
-            // Card 7 (RTF-2 / conventions §2): orbit-coherence echo check.  A
-            // brdc_rts clock echoes the RTS orbit it was estimated against;
-            // broadcast radial-orbit error absorbs 1:1 into that clock, so
-            // applying it against a DIFFERENT orbit update is a silent dm-m
-            // range bias no residual QC can see.  Compare the echo against the
-            // orbit record the consumer's overlay applies (orbitEchoStore —
-            // under RTA-8 split routing a different store than the clock's).
-            // Self-coherent merges (a combined record: the clock's own orbit
-            // part IS the echoed orbit) short-circuit without a second lookup.
-            // Mismatches are COUNTED whenever an echo is present (RTA-13
-            // count-only convention); application is WITHHELD only when the
-            // skew budget (processing.network_consumer.orbit_clock_max_skew_s,
-            // armed on the clock store) is set > 0.  No pre-Card-7 stream
-            // stamps an echo on a separate clock record, so the default path
-            // never reaches the lookup — byte-identical.
+            // Orbit-coherence echo check.  A brdc_rts clock echoes the RTS orbit it
+            // was estimated against; broadcast radial-orbit error is absorbed 1:1
+            // into that clock, so applying it against a different orbit update
+            // introduces a decimetre-to-metre range bias that residual QC cannot
+            // detect.  The echo is compared against the orbit record the consumer's
+            // overlay applies (orbitEchoStore, which under RTA-8 split routing is a
+            // different store from the clock's).  A self-coherent merge (a combined
+            // record whose own orbit part is the echoed orbit) short-circuits
+            // without a second lookup.  Mismatches are counted whenever an echo is
+            // present (RTA-13 count-only convention); application is withheld only
+            // when the skew budget (processing.network_consumer.orbit_clock_max_skew_s,
+            // armed on the clock store) is > 0.  A stream that stamps no echo on a
+            // separate clock record never reaches the lookup, so the default path
+            // is byte-identical.  (Card 7, RTF-2 / conventions §2.)
             bool echo_ok = true;
             if (ssr->orbit_iod_ssr >= 0
                 && !(ssr->has_orbit
                      && ssr->applied_orbit_iod_ssr == ssr->orbit_iod_ssr)) {
                 auto applied =
                     orbitEchoStore().getOrbitClock(satellite, time, ssr_max_age);
-                // The echo contract is about the orbit the overlay ACTUALLY
-                // APPLIES, not merely a record's presence: Geometry's apply
-                // sites gate the RAC delta on iodeMatches(brdc_iode, iode)
-                // against the pinned broadcast pick.  Replicate that gate
-                // through the SAME pinned pick (pickForSsr serves both the PV
-                // and clock evaluations of one SatRecord) — a fresh orbit
-                // record whose referenced broadcast version is no longer held
-                // is NOT applied by the overlay, so for coherence purposes it
-                // counts as "no applied orbit" (fail-closed under the budget).
-                // Post-processing (empty live store) stays permissive, exactly
-                // like the overlay gate itself.
+                // The echo contract concerns the orbit the overlay applies, not
+                // the presence of a record: Geometry's apply sites gate the RAC
+                // delta on iodeMatches(brdc_iode, iode) against the pinned
+                // broadcast pick.  The same gate is replicated here through the
+                // same pinned pick (pickForSsr serves both the PV and the clock
+                // evaluations of one SatRecord).  A fresh orbit record whose
+                // referenced broadcast version is not held by the store is not
+                // applied by the overlay, so for coherence it counts as "no applied orbit"
+                // (fail-closed under the budget).  Post-processing (empty live
+                // store) stays permissive, like the overlay gate itself.
                 if (applied && applied->has_orbit) {
                     const auto obc = LiveEphemerisStore::getInstance()
                                          .computeSatelliteClock(satellite, time,
@@ -331,12 +330,13 @@ namespace GnssProcessor {
                 }
             }
 
-            // RTF-2 (Card 3): the CLOCK application gates on the CLOCK IODE
-            // (clock_iode), not the orbit anchor (ssr->iode).  For every current
-            // path clock_iode == ssr->iode (standard clocks inherit the orbit
-            // anchor in getOrbitClock; standalone network clocks stay -1), so this
-            // is byte-identical; only a brdc_rts producer's stamped clock IODE
-            // makes it differ.  The ORBIT overlay gate (ModelGeometry) stays on iode.
+            // The clock application gates on the clock IODE (clock_iode), not on
+            // the orbit anchor (ssr->iode).  On every path except one,
+            // clock_iode == ssr->iode (standard clocks inherit the orbit anchor in
+            // getOrbitClock; standalone network clocks stay -1), so the output is
+            // byte-identical; only a brdc_rts producer's stamped clock IODE makes
+            // the two differ.  The orbit overlay gate (ModelGeometry) stays on
+            // iode.  (RTF-2, Card 3.)
             if (std::isfinite(clock_corr) && echo_ok
                 && SsrCorrectionStore::iodeMatches(brdc_iode, ssr->clock_iode)) {
                 const double dt = TimeUtils::continuousGpsSeconds(time)
@@ -344,10 +344,10 @@ namespace GnssProcessor {
                 clock_corr += SsrCorrectionStore::applyClockToBias(
                     ssr->c0, ssr->c1, ssr->c2, ssr->hr_clock, dt);
                 ssr_clock_applied = true;
-                // RTA-9(b): surface a stale-HELD application (middle rung).  The
-                // classification uses the content-epoch age — the same dt the
-                // polynomial just extrapolated over and the same dt the
-                // MeasurementModel R inflation grows with.
+                // Log a stale-held application (the middle rung, RTA-9(b)).  The
+                // classification uses the content-epoch age, which is the dt the
+                // polynomial just extrapolated over and the dt the MeasurementModel
+                // R inflation grows with.
                 if (clk_hold > 1.0
                     && SsrCorrectionStore::classifyClockAge(dt, ssr_max_age, clk_hold)
                            == SsrCorrectionStore::ClockAgeRung::StaleHeld) {
@@ -358,13 +358,13 @@ namespace GnssProcessor {
                                ssr_max_age, apply_window);
                 }
             } else {
-                // Diagnostic: an SSR clock record IS present but was NOT applied —
-                // almost always an IODE-convention mismatch (brdc vs ssr).  Logging
-                // both IODs lets a live run distinguish a decode problem (garbage
-                // ssr_iode) from a convention problem (sane-but-unequal) per
+                // Diagnostic: an SSR clock record is present but was not applied,
+                // usually because of an IODE-convention mismatch (brdc against ssr).
+                // Logging both IODs lets a live run tell a decode problem (garbage
+                // ssr_iode) from a convention problem (plausible but unequal) per
                 // constellation (GAL low-8-bit IODnav, BDS mod(toe/720,240)).
-                // echo_ok=false = the Card-7 orbit-coherence withhold (see the
-                // per-event debug line above for the echo detail).
+                // echo_ok=false is the Card-7 orbit-coherence withhold (the debug
+                // line above carries the echo detail).
                 log->trace("SSR clock present for {} ({}) but NOT applied: "
                            "brdc_iode={} clock_iode={} clock_finite={} echo_ok={}",
                            satellite, PppUtils::getSystemString(satellite),
@@ -397,19 +397,16 @@ namespace GnssProcessor {
             : SatelliteClockInterpolationMode::Linear;
 
         constexpr double MAX_WINDOW     = 3600.0;
-        // Validity bound on a tabulated clock sample.  It exists to reject
-        // NON-PHYSICAL values (the SP3 bad-clock sentinel 999999.999999 us is
-        // about 1 s), not large but real offsets.  Card GAL: it was 1e-3 s, a
-        // GPS-centric bound (GPS satellite clocks are steered to within 1 ms of
-        // system time).  Galileo's are not: on DOY-129 every CLK node of E05
-        // (+4.75 ms), E11 (+2.91 ms) and E12 (-1.03 ms) failed it, this function
-        // returned 0 (post-processing has no live broadcast store to fall back
-        // to), and the three satellites were modelled against a ZERO clock and
-        // were absent from the network's modelled set and from the simulator's
-        // fixture all day.  0.1 s is the final sanity bound
-        // getSatelliteClockCorrection already applies.  Byte-identical wherever
-        // every sample is below 1 ms (every GPS satellite of the DOY-129
-        // products: the largest is G17 at 0.708 ms).
+        // Validity bound on a tabulated clock sample.  It rejects non-physical
+        // values (the SP3 bad-clock sentinel 999999.999999 us, about 1 s), not
+        // large but real offsets.  A 1 ms bound fits GPS (satellite clocks are
+        // steered to within 1 ms of system time) but not Galileo, whose clock
+        // offsets reach several ms (E05 +4.75 ms in the DOY-129 products).  A
+        // rejected sample makes this function return 0, and post-processing has no
+        // live broadcast store to fall back to, so the satellite would be modelled
+        // against a zero clock.  0.1 s matches the final sanity bound in
+        // getSatelliteClockCorrection.  The output equals that of a 1 ms bound
+        // wherever every sample is below 1 ms.  (Card GAL.)
         constexpr double MAX_CLOCK_BIAS = 1e-1;
         constexpr size_t LAGRANGE_POINTS = 9;
 
@@ -420,12 +417,11 @@ namespace GnssProcessor {
 
         auto idx_it = clock_index_.find(satellite);
         if (idx_it == clock_index_.end() || idx_it->second.empty()) {
-            // Only worth flagging when a precise CLK product IS loaded but this
-            // satellite is missing from it.  In live broadcast+SSR mode the whole
-            // clock index is empty by design (no SP3/CLK), so this would fire for
-            // EVERY satellite EVERY epoch — pure noise that buries the log while
-            // the broadcast+SSR fallback in getSatelliteClockCorrection does the
-            // real work.  Suppress it when there is no precise product at all.
+            // Logged only when a precise CLK product is loaded but this satellite
+            // is missing from it.  In live broadcast+SSR mode the clock index is
+            // empty by design (no SP3/CLK), the message would fire for every
+            // satellite at every epoch, and the broadcast+SSR fallback in
+            // getSatelliteClockCorrection supplies the clock.
             if (!clock_index_.empty())
                 log_manager_.getLogger("corrections")->debug("Clock interp for {}: no data in index", satellite);
             return 0.0;
@@ -450,7 +446,7 @@ namespace GnssProcessor {
         };
 
         // ---------------------------------------------------------------
-        // LINEAR MODE
+        // Linear mode
         // ---------------------------------------------------------------
         if (mode == SatelliteClockInterpolationMode::Linear) {
             auto upper_it = find_upper();
@@ -510,36 +506,36 @@ namespace GnssProcessor {
         }
 
         // ---------------------------------------------------------------
-        // LSQ SAT CLOCK MODE — weighted linear LSQ over multi-node window
-        // with explicit rate-observation anchoring at coarse-cadence epochs.
+        // LSQ satellite-clock mode: weighted linear least squares over a
+        // multi-node window, with rate observations at the coarse-cadence epochs.
         //
         // Fits c(t) ≈ a + b·(t − t_query) locally, where:
         //   - Value equations:  y_k = a + b·s_k + ν_k       (every node)
         //   - Rate equations:   m_j = b + μ_j                (rate-bearing nodes)
-        //   - Weights from per-sample sigmas (CLK file) when present, otherwise
-        //     defaults LSQ_DEFAULT_SIG_VAL / LSQ_DEFAULT_SIG_RAT below.
+        //   - Weights come from the per-sample sigmas (CLK file) when present,
+        //     otherwise from the defaults LSQ_DEFAULT_SIG_VAL / LSQ_DEFAULT_SIG_RAT.
         //
-        // Window strategy: bracket-centered, sized to span the previous and
-        // next coarse-cadence rate-bearing nodes that contain t_query (~11
-        // nodes for a 30 s file with rates every 5 min).  When t_query is
-        // within LSQ_BOUNDARY_TOL_S of one of those rate nodes, the window
-        // is extended by one rate window on that side — yielding 3 rate
-        // constraints with a window roughly centered on the query.  Capped
-        // at LSQ_MAX_NODES as a runaway guard against data gaps.
+        // Window: spans from the previous to the next rate-bearing node around
+        // t_query (about 11 nodes for a 30 s file with rates every 5 min).  When
+        // t_query is within LSQ_BOUNDARY_TOL_S of one of those rate nodes, the
+        // window is extended to the next rate node on that side, which gives 3
+        // rate constraints and a window roughly centred on the query.  The width
+        // is capped at LSQ_MAX_NODES (re-centred on the bracket) to bound the
+        // window across data gaps.
         //
-        // Degrades gracefully to standard 2-node linear interpolation when
-        // fewer than LSQ_MIN_NODES valid nodes are in the window or the
-        // normal equations are singular.  Boundary queries (before first
-        // or after last clock sample) hand off to single-node nearest, same
-        // as the Linear path.
+        // With fewer than LSQ_MIN_NODES valid nodes in the window, or singular
+        // normal equations, the result falls back to 2-node linear interpolation
+        // at the bracket; a query before the first or after the last clock
+        // sample with too few nodes falls back to the nearest single node, as in
+        // the Linear path.
         //
-        // Trade-off: gives up exact-node-passage (LSQ smooths instead of
-        // interpolating), introducing ~mm-level discontinuities at clock
-        // epochs when the window slides.  In exchange the observation-noise
-        // component of the value estimate at the bracket midpoint drops by
-        // ~√(N/2) versus plain linear — material when σ_observation ≫ σ_
-        // process_per_sample (the typical regime for 30 s IGS Final clocks
-        // in the seconds-to-minutes range).
+        // Trade-off: the fit does not pass through the nodes (LSQ smooths instead
+        // of interpolating), which introduces mm-level discontinuities at clock
+        // epochs when the window slides.  In exchange, the observation-noise
+        // component of the value estimate at the bracket midpoint drops by about
+        // √(N/2) relative to plain linear interpolation.  That matters when
+        // σ_observation ≫ σ_process_per_sample, the typical regime for 30 s IGS
+        // Final clocks over seconds to minutes.
         // ---------------------------------------------------------------
         if (mode == SatelliteClockInterpolationMode::LsqSatClock) {
             constexpr size_t LSQ_NOMINAL_NODES   = 11;        // 5-min span at 30 s cadence
@@ -552,8 +548,8 @@ namespace GnssProcessor {
 
             const size_t n_total = sat_clocks.size();
 
-            // Standard 2-node linear at the bracket, no logging here — the
-            // LSQ branch logs the fallback once with full context above.
+            // Standard 2-node linear interpolation at the bracket.  It does not
+            // log; each call site logs the fallback once with full context.
             auto linearFallback = [&](size_t lo, size_t hi) -> double {
                 if (lo >= n_total || hi >= n_total) return 0.0;
                 const ClockData* c_lo = sat_clocks[lo];
@@ -583,8 +579,8 @@ namespace GnssProcessor {
                 bracket_lo = std::distance(sat_clocks.begin(), upper_bracket_it) - 1;
             }
 
-            // Exact-node shortcut (same as Linear) — preserves passage
-            // through the exact sample value when t_query coincides.
+            // Exact-node shortcut (as in Linear): when t_query coincides with a
+            // node, the sample value is returned unchanged.
             if (upper_bracket_it != sat_clocks.end()) {
                 const double t_node = TimeUtils::continuousGpsSeconds((*upper_bracket_it)->time);
                 if (std::abs(t_node - t_query) < 1e-6 && valid_node(*upper_bracket_it))
@@ -625,9 +621,9 @@ namespace GnssProcessor {
                 size_t hi_idx = (r_next != n_total) ? r_next : (n_total - 1);
 
                 // Boundary proximity: when t_query is within
-                // LSQ_BOUNDARY_TOL_S of a rate node, extend that side
-                // to include the next rate node beyond — gives 3 rate
-                // constraints with a roughly query-centered window.
+                // LSQ_BOUNDARY_TOL_S of a rate node, extend that side to the
+                // next rate node beyond it, which gives 3 rate constraints and
+                // a roughly query-centred window.
                 if (r_prev != n_total) {
                     const double t_prev = TimeUtils::continuousGpsSeconds(sat_clocks[r_prev]->time);
                     if (std::abs(t_query - t_prev) < LSQ_BOUNDARY_TOL_S && r_prev > 0) {
@@ -647,8 +643,8 @@ namespace GnssProcessor {
                 win_end   = std::min(hi_idx + 1, n_total);  // half-open
             }
 
-            // Runaway cap (data gaps / sparse coverage) — re-center on
-            // bracket and clip to LSQ_MAX_NODES width.
+            // Width cap (data gaps, sparse rate coverage): re-centre on the
+            // bracket and clip to LSQ_MAX_NODES nodes.
             if (win_end > win_start && (win_end - win_start) > LSQ_MAX_NODES) {
                 const size_t max_half = LSQ_MAX_NODES / 2;
                 win_start = (bracket_lo >= max_half) ? bracket_lo - max_half : 0;
@@ -722,8 +718,8 @@ namespace GnssProcessor {
 
             const double det = Sw * (Swxx + Sm) - Swx * Swx;
             if (!std::isfinite(det) || std::abs(det) < 1e-30) {
-                // Singular normal equations — extremely rare (would imply
-                // all sample times coincide).  Fall back to plain linear.
+                // Singular normal equations (rare; requires all sample times to
+                // coincide).  Fall back to plain linear interpolation.
                 const double fallback_hi = std::min<size_t>(bracket_lo + 1, n_total - 1);
                 const double result = linearFallback(bracket_lo, fallback_hi);
                 log->warn(
@@ -746,18 +742,18 @@ namespace GnssProcessor {
         }
 
         // ---------------------------------------------------------------
-        // LAGRANGE MODE — bracket-centered window of LAGRANGE_POINTS nodes
+        // Lagrange mode: bracket-centred window of LAGRANGE_POINTS nodes.
         //
-        // Not recommended for standard 30 s IGS CLK files — use Linear instead.
+        // Not recommended for standard 30 s IGS CLK files (use Linear there).
         // Retained for high-rate (1 Hz) products.
         //
         // The window is anchored on the bracket [x_a, x_{a+1}] containing
-        // t_query and slides by one node when t_query crosses x_{a+1}.  At
-        // that instant x_{a+1} is a node of both windows so the polynomial
-        // value is identical for both — clock is continuous across the
-        // swap.  Selecting nodes by nearest-to-query instead shifts the
-        // window at the midpoint between epochs, where the two polynomials
-        // disagree, producing a per-epoch sawtooth.
+        // t_query and slides by one node when t_query crosses x_{a+1}.  At that
+        // instant x_{a+1} is a node of both windows, so both polynomials give the
+        // same value and the clock is continuous across the swap.  Selecting
+        // nodes nearest to the query would instead shift the window at the
+        // midpoint between epochs, where the two polynomials disagree, and
+        // produce a per-epoch sawtooth.
         // ---------------------------------------------------------------
         const size_t n_total = sat_clocks.size();
 
@@ -946,11 +942,11 @@ namespace GnssProcessor {
     // -----------------------------------------------------------------------
     // Ocean pole tide (IERS 2010 Sec. 7.1.5, Desai 2002) physical constants.
     //
-    // Verbatim NGS M-PAGES values (Lib/Gnss/{Grs80,Iers}.hpp) so this port
-    // reproduces M-PAGES Lib/Station/PoleTide.cpp::computeOceanPoleTide — and
-    // the independent Python oracle scripts/ocean_pole_tide_reference.py — to
-    // ~1e-12.  The Kappa scale bakes in AS2RAD so the wobble m1,m2 are passed in
-    // arcseconds (consistent with computePoleTideCorrection above).
+    // The values are copied from NGS M-PAGES (Lib/Gnss/{Grs80,Iers}.hpp), so this
+    // port reproduces M-PAGES Lib/Station/PoleTide.cpp::computeOceanPoleTide, and
+    // the independent Python oracle scripts/ocean_pole_tide_reference.py, to about
+    // 1e-12.  The Kappa scale includes AS2RAD, so the wobble m1, m2 are passed in
+    // arcseconds (consistent with computePoleTideCorrection below).
     // -----------------------------------------------------------------------
     namespace {
         constexpr double kOptOmega     = 7.292115e-5;       // grs80::OMEGA   [rad/s]
@@ -963,7 +959,7 @@ namespace GnssProcessor {
         constexpr double kOptGammaImag = 0.0036;            // Desai gamma_2^I
 
         // Kappa = 4*pi*G*a*rho_sw*Hp/(3*g_E) * AS2RAD, Hp = sqrt(8pi/15)*Omega^2*a^4/GM.
-        // Evaluated once; constexpr so there is zero per-epoch cost.
+        // Recomputed on each call (a few multiplications and one square root).
         inline double oceanPoleTideKappa() {
             const double Hp = std::sqrt(8.0 * Constants::PI / 15.0)
                             * kOptOmega * kOptOmega
@@ -1004,15 +1000,12 @@ namespace GnssProcessor {
             return Eigen::Vector3d::Zero();
         }
 
-        // Linear interpolation of ERP (xp, yp) bracketing the query time.
-        //
-        // Previously this used std::min_element to pick the single nearest
-        // ERP entry, which produced a discrete step in xp/yp at the midpoint
-        // between consecutive ERP samples.  For typical daily ERP this is a
-        // sub-mm step every 12 h at noon (well below noise), but for any
-        // sub-daily ERP file the artifact grows linearly with the per-sample
-        // polar motion delta.  Linear interpolation matches the Sun/Moon
-        // path in Planetary::interpolateErp and eliminates the step.
+        // Linear interpolation of ERP (xp, yp) between the samples bracketing the
+        // query time.  Picking the nearest sample instead would put a step in
+        // xp/yp at the midpoint between consecutive samples (sub-mm for daily
+        // ERP, growing with the per-sample polar-motion change for sub-daily
+        // files).  Linear interpolation matches the Sun/Moon path in
+        // Planetary::interpolateErp.
         const double t_query = TimeUtils::continuousGpsSeconds(time);
         auto upper_it = std::upper_bound(erps_->begin(), erps_->end(), t_query,
             [](double t, const ErpData& e) {
@@ -1021,7 +1014,7 @@ namespace GnssProcessor {
 
         double xp_arcsec = 0.0, yp_arcsec = 0.0;
         if (upper_it == erps_->begin()) {
-            // Query before first ERP sample — use first entry (clamped extrap).
+            // Query before the first ERP sample: use the first entry (clamped).
             if (!std::isfinite(upper_it->xp) || !std::isfinite(upper_it->yp)) {
                 log->trace("No valid ERP data for pole tide at TOW {:.3f}: first entry invalid", time.tow);
                 return Eigen::Vector3d::Zero();
@@ -1029,7 +1022,7 @@ namespace GnssProcessor {
             xp_arcsec = upper_it->xp;
             yp_arcsec = upper_it->yp;
         } else if (upper_it == erps_->end()) {
-            // Query past last ERP sample — use last entry (clamped extrap).
+            // Query after the last ERP sample: use the last entry (clamped).
             auto last = std::prev(erps_->end());
             if (!std::isfinite(last->xp) || !std::isfinite(last->yp)) {
                 log->trace("No valid ERP data for pole tide at TOW {:.3f}: last entry invalid", time.tow);
@@ -1038,7 +1031,7 @@ namespace GnssProcessor {
             xp_arcsec = last->xp;
             yp_arcsec = last->yp;
         } else {
-            // Interior — linear interpolate between the bracketing pair.
+            // Interior: interpolate linearly between the bracketing pair.
             auto lo_it = std::prev(upper_it);
             if (!std::isfinite(lo_it->xp) || !std::isfinite(lo_it->yp) ||
                 !std::isfinite(upper_it->xp) || !std::isfinite(upper_it->yp)) {
@@ -1065,9 +1058,8 @@ namespace GnssProcessor {
         // Mean pole: IERS 2018 secular linear model (IERS Conventions 2010
         // update, adopted by the IGS in August 2018).  This is the convention
         // to which the post-2018 IGS SP3/CLK/ERP products consumed by this
-        // engine are referenced.  The older IERS2010 cubic mean pole diverges
-        // by >0.1 arcsec by 2024; the previous linear truncation of that cubic
-        // was wrong by ~0.2 arcsec, a large secular pole-tide bias.
+        // engine are referenced.  The older IERS2010 cubic mean pole departs from
+        // it by more than 0.1 arcsec by 2024, which would bias the pole tide.
         // Coefficients in mas; (decimal_year - 2000) in years.
         const double mjd = TimeUtils::gpsTimeToMjd(time);
         const double decimal_year = TimeUtils::mjdToDecimalYear(mjd);
@@ -1075,16 +1067,15 @@ namespace GnssProcessor {
         const double xp_mean_mas = 55.0  + 1.677 * dt_years;
         const double yp_mean_mas = 320.5 + 3.460 * dt_years;
 
-        // Wobble relative to the secular pole, in ARCSECONDS.  IERS 2010
-        // Eq. 7.24 takes m1,m2 in arcsec and the -33/-9/+9 mm Love/Shida
-        // coefficients yield the displacement directly in millimetres (scaled
-        // to metres here).
+        // Wobble relative to the secular pole, in arcseconds.  IERS 2010
+        // Eq. 7.24 takes m1, m2 in arcsec, and the -33/-9/+9 mm Love/Shida
+        // coefficients then give the displacement directly in millimetres
+        // (scaled to metres here).
         //
-        // FIXED: the previous code formed m1/m2 in RADIANS (via AS2RAD) yet
-        // applied the metre-valued coefficients, underscaling the entire
-        // correction by ~AS2RAD (4.85e-6) so the pole tide was silently ~0
-        // despite enable_pole_tide.  Keeping m1/m2 in arcsec restores the
-        // correct mm-cm displacement, matching RTKLIB tide_pole and POINT
+        // m1, m2 stay in arcsec: forming them in radians (via AS2RAD) with these
+        // coefficients would scale the whole correction by AS2RAD (4.85e-6) and
+        // leave the pole tide near zero even with enable_pole_tide on.  In arcsec
+        // the displacement is mm to cm, matching RTKLIB tide_pole and POINT
         // site/PoleTide.cpp.
         const double m1 =  xp_arcsec - xp_mean_mas * 1.0e-3;
         const double m2 = -(yp_arcsec - yp_mean_mas * 1.0e-3);
@@ -1098,12 +1089,10 @@ namespace GnssProcessor {
         //   radial = -33 sin(2 phi)(m1 cosL + m2 sinL)
         //   north  = -9  cos(2 phi)(m1 cosL + m2 sinL)
         //   east   = +9  sin(phi)  (m1 sinL - m2 cosL)
-        // FIXED 2026-06-24: the east term previously used cos(phi); the IERS
-        // (and RTKLIB tide_pole) factor is sin(phi) = cos(colatitude).  The
-        // radial/north terms were already in the geodetic-phi convention, so
-        // cos(phi) on east was internally inconsistent (~1.48x scale at mid-lat
-        // and the wrong latitude dependence — vanishing at the equator instead of
-        // the pole), a sub-mm-to-mm east bias.
+        // The east factor is sin(phi) = cos(colatitude), as in IERS and RTKLIB
+        // tide_pole, consistent with the geodetic-phi form of the radial and
+        // north terms; cos(phi) would give the wrong latitude dependence
+        // (vanishing at the equator instead of the pole).
         double radial = -0.033 * std::sin(2.0 * phi) * (m1 * std::cos(lambda) + m2 * std::sin(lambda));
         double north  = -0.009 * std::cos(2.0 * phi) * (m1 * std::cos(lambda) + m2 * std::sin(lambda));
         double east   =  0.009 * std::sin(phi)        * (m1 * std::sin(lambda) - m2 * std::cos(lambda));
@@ -1210,7 +1199,7 @@ namespace GnssProcessor {
         }
 
         // Six coefficient planes (radial/north/east real & imag) flattened as
-        // [j*nlon + i].  ~12 MB transient; freed when this method returns.
+        // [j*nlon + i].  About 6.2 MB transient; freed when this method returns.
         std::vector<float> urR(static_cast<size_t>(kNlon) * kNlat), urI(urR.size()),
                            unR(urR.size()), unI(urR.size()),
                            ueR(urR.size()), ueI(urR.size());
@@ -1356,11 +1345,11 @@ namespace GnssProcessor {
             return false;
         }
 
-        // PROVISIONAL grid geometry — mirrors the IERS opole grid layout for two
-        // harmonics.  The exact filename, header-line count, column order, and
-        // frame (CM to match OTL) of the atmospheric S1/S2 load grid (Ray & Ponte
-        // 2003 / IERS Conventions 2010 Sec. 7.1) MUST be pinned to the supplied
-        // file before enabling in production.  Assumed: 0.5-deg global grid,
+        // Provisional grid geometry, following the IERS opole grid layout for two
+        // harmonics.  The filename, header-line count, column order and frame
+        // (CM, to match OTL) of the atmospheric S1/S2 load grid (Ray & Ponte 2003 /
+        // IERS Conventions 2010 Sec. 7.1) have to be confirmed against the
+        // supplied file before production use.  Assumed: 0.5-deg global grid,
         // lat-major/lon-minor, each row:
         //   lon lat  S1[uE^R uE^I uN^R uN^I uU^R uU^I]  S2[uE^R uE^I uN^R uN^I uU^R uU^I]
         // where ^R/^I are in-phase(cos)/out-of-phase(sin) coefficients in metres.
@@ -1484,15 +1473,15 @@ namespace GnssProcessor {
     }
 
     // =================================================================
-    // IERS 2010 solid Earth tide — Step 1 (in-phase + out-of-phase) and
+    // IERS 2010 solid Earth tide: Step 1 (in-phase and out-of-phase) and
     // Step 2 (frequency-dependent) station-displacement helpers.
     //
-    // Faithful port of the IERS Conventions dehanttideinel routine
-    // (Dehant / Mathews / Gipson), cross-checked line-by-line against the
-    // in-tree POINT C translation (reference_software/point/.../SolidEarth.cpp)
-    // and validated against the official IERS dehanttideinel test vector
-    // (see SolidEarthTideTest).  The permanent (zero-frequency) tide is
-    // retained -> conventional tide-free coordinates, matching IGS/ITRF.
+    // Port of the IERS Conventions dehanttideinel routine (Dehant / Mathews /
+    // Gipson), checked line by line against the POINT C translation
+    // (reference_software/point/.../SolidEarth.cpp) and validated against the
+    // official IERS dehanttideinel test vector (see SolidEarthTideTest).  The
+    // permanent (zero-frequency) tide is retained, which gives conventional
+    // tide-free coordinates, matching IGS/ITRF.
     //
     // Every helper returns geocentric ECEF displacement (meters) and takes
     // geocentric direction cosines: cPhi/sPhi (latitude), cLa/sLa (longitude).
@@ -1803,31 +1792,27 @@ namespace GnssProcessor {
         bias_signals_.clear();
         size_t skipped_zero_code = 0;
         size_t skipped_glonass_code = 0;
-        // Skip CODE bias entries that should not be applied:
+        // Code bias entries that are not applied, and so are left out of the index:
         //
         // 1. Zero-valued entries.  Some MGEX products ship placeholder
-        //    C2I/C6I entries for BeiDou with bias=0.0 (every satellite,
-        //    every code signal); treating those as "covered" causes the
-        //    model to apply zero correction AND suppress the per-(sat,
-        //    signal) sat-bias state path, leaving the real ~tens-of-
-        //    metres hardware delay unmodelled and the row pinned as a
-        //    permanent outlier.
+        //    C2I/C6I entries for BeiDou with bias=0.0 (every satellite, every
+        //    code signal).  Treating those as covered would apply a zero
+        //    correction and also suppress the per-(sat, signal) sat-bias state,
+        //    leaving the real hardware delay (tens of metres) unmodelled and the
+        //    row a permanent outlier.
         //
-        // 2. GLONASS code entries, regardless of value.  GLONASS is
-        //    FDMA — each satellite has a different carrier — so the
-        //    *receiver*-side hardware delay differs per channel and
-        //    can't be cancelled by a single-value-per-(sat, signal)
-        //    bias correction.  Even when a product publishes a GLONASS
-        //    DCB it's a network-aggregate that won't reflect this
-        //    receiver's per-channel delays.  Treating the entries as
-        //    missing forces the per-(sat, signal) sat-bias state path
-        //    to absorb whatever the actual delay is.
+        // 2. GLONASS code entries, whatever their value.  GLONASS is FDMA (each
+        //    satellite has a different carrier), so the receiver-side hardware
+        //    delay differs per channel and cannot be cancelled by one value per
+        //    (sat, signal).  A published GLONASS DCB is a network aggregate that
+        //    does not reflect this receiver's per-channel delays.  Treating the
+        //    entries as missing lets the per-(sat, signal) sat-bias state absorb
+        //    the actual delay.
         //
-        // Both paths require @c estimate_sat_biases=true to actually
-        // create the absorbing state.  Phase biases are left as-is
-        // (zero is a meaningful value in some product schemes; GLONASS
-        // phase biases, when published, are usable because the float
-        // ambiguity absorbs whatever the receiver-side ICB is anyway).
+        // Both cases need @c estimate_sat_biases=true for the absorbing state to
+        // be created.  Phase biases are kept as they are: zero is a meaningful
+        // value in some product schemes, and published GLONASS phase biases are
+        // usable because the float ambiguity absorbs the receiver-side ICB.
         for (const auto& b : *biases_) {
             const bool is_code = !b.signal.empty() && b.signal[0] == 'C';
             if (is_code && b.bias == 0.0) {
@@ -1885,25 +1870,26 @@ namespace GnssProcessor {
         double max_gap_s,
         bool correct_velocity_frame) const {
 
-        // Wu et al. (1993), stated in THIS function's variables.  k = sat->rx.
+        // Wu et al. (1993), stated in this function's variables.  k = sat->rx.
         //
-        // The quadrature term's sign is -sgn((x cross y) . k): MINUS when the
-        // antenna's own third axis points along +k, PLUS when it points along -k.
+        // The quadrature term's sign is -sgn((x cross y) . k): minus when the
+        // antenna's own third axis points along +k, plus when it points along -k.
         // All three satellite branches below build x_s cross y_s == ez (the
-        // geocentric nadir, ~ +k), and the receiver pair is x_r = NORTH,
-        // y_r = EAST with x_r cross y_r == DOWN and (DOWN).k == +cos(zenith) > 0
-        // over the whole observable hemisphere.  Hence MINUS on BOTH dipoles:
+        // geocentric nadir, approximately +k), and the receiver pair is
+        // x_r = north, y_r = east, with x_r cross y_r == down and
+        // down.k == +cos(zenith) > 0 over the whole observable hemisphere.
+        // Both dipoles therefore take the minus sign:
         //
         //     D = x - k(k.x) - k x y      =>  |D| = 1 + cos(eps)
         //
-        // (The wrong sign gives |D| = 1 - cos(eps), a dipole that VANISHES on
+        // (The other sign gives |D| = 1 - cos(eps), a dipole that vanishes on
         //  boresight, and mirrors the phase about the LOS-vertical plane.)
         //
-        // WARNING: RTKLIB's familiar (-, +) pairing is stated with eyr = -east
-        // (WEST).  Transcribing its '+' onto this file's y_r = +east flips only
-        // one of the two lines, and a HALF FIX matches neither the model nor its
-        // negative -- a uniformly distributed band-common error spanning a full
-        // cycle.  See docs/SPEC_phase_windup_sign.md section 3.
+        // RTKLIB's (-, +) pairing is stated with eyr = -east (west).  Copying its
+        // '+' onto this file's y_r = +east changes only one of the two lines, and
+        // the result matches neither the model nor its negative: a band-common
+        // error distributed uniformly over a full cycle.  See
+        // docs/SPEC_phase_windup_sign.md section 3.
         Eigen::Vector3d k_raw = rx_pos - sat_pos;
         double k_raw_norm = k_raw.norm();
         if (k_raw_norm < 1e-3) {
@@ -1954,18 +1940,17 @@ namespace GnssProcessor {
             x_s = ex;
             y_s = ey;
         } else {
-            // Velocity-based fallback.  Built about the NADIR axis (ez), exactly
-            // as the orbit-normal and yaw-steering branches above, so that
-            // x_s cross y_s == ez in ALL THREE branches and the single
-            // -k.cross(y_s) quadrature sign below is valid unconditionally.
+            // Velocity-based fallback.  Built about the nadir axis (ez), as in the
+            // orbit-normal and yaw-steering branches above, so that
+            // x_s cross y_s == ez in all three branches and the single
+            // -k.cross(y_s) quadrature sign below holds unconditionally.
             //
-            // This branch previously framed about z_s = -ez (radially OUTWARD),
-            // giving x_s cross y_s == -ez -- the OPPOSITE handedness relative to
-            // k from its two sibling branches.  Reframing negates y_s and leaves
-            // x_s bit-identical, so the effective dipole built below with the
-            // corrected MINUS is numerically identical to what the old frame
-            // produced with the old PLUS.  That identity is the review gate: if
-            // this branch's Ds moves, the reframe is wrong.
+            // Relative to a frame built about z_s = -ez (radially outward, the
+            // opposite handedness relative to k), this frame negates y_s and
+            // leaves x_s bit-identical, so the dipole built below with the minus
+            // sign equals the outward frame's dipole with a plus sign.  That
+            // identity is the check on this branch: a Ds that differs from the
+            // outward-frame plus-sign dipole means the frame is wrong.
             Eigen::Vector3d vel = sat_vel;
             if (vel.norm() < 1e-8 && !orbits_->empty()) {
                 auto orbit_it = std::find_if(orbits_->begin(), orbits_->end(),
@@ -1979,11 +1964,11 @@ namespace GnssProcessor {
             x_s = y_s.cross(ez);
             if (x_s.norm() < 1e-8) x_s = Eigen::Vector3d::UnitX();
             x_s.normalize();
-            // Re-derive y_s from the settled x_s so that x_s cross y_s == ez
-            // EXACTLY, mirroring the orbit-normal branch.  A no-op whenever y_s
-            // is already perpendicular to ez (every non-degenerate path); it
-            // matters only in the doubly-degenerate sub-case where y_s fell
-            // through to the hard-coded (0, 1, 0).
+            // Re-derive y_s from the final x_s so that x_s cross y_s == ez
+            // exactly, as in the orbit-normal branch.  This is a no-op whenever
+            // y_s is already perpendicular to ez (every non-degenerate path); it
+            // matters only in the doubly degenerate case where y_s fell through
+            // to the hard-coded (0, 1, 0).
             y_s = ez.cross(x_s);
             y_s.normalize();
         }
@@ -1995,11 +1980,11 @@ namespace GnssProcessor {
         Eigen::Vector3d x_r(-std::sin(phi)*std::cos(lam), -std::sin(phi)*std::sin(lam), std::cos(phi));
         Eigen::Vector3d y_r(-std::sin(lam), std::cos(lam), 0.0);
 
-        // Effective dipoles.  MINUS on both -- see the sign rule at the top of
-        // this function.  BOTH LINES MUST CARRY THE SAME SIGN: flipping one is
-        // strictly worse than flipping neither.
+        // Effective dipoles, both with the minus sign (see the sign rule at the
+        // top of this function).  The two lines must carry the same sign:
+        // flipping one gives a larger error than flipping neither.
         Eigen::Vector3d Ds = x_s - k * (k.dot(x_s)) - k.cross(y_s);   // satellite
-        Eigen::Vector3d Dr = x_r - k * (k.dot(x_r)) - k.cross(y_r);   // receiver, y_r = +EAST
+        Eigen::Vector3d Dr = x_r - k * (k.dot(x_r)) - k.cross(y_r);   // receiver, y_r = +east
         double Ds_norm = Ds.norm(), Dr_norm = Dr.norm();
         if (Ds_norm < 1e-10 || Dr_norm < 1e-10) {
             log_manager_.getLogger("ppp_model")->trace("Phase wind-up for {}: degenerate dipole", satellite);
@@ -2022,10 +2007,10 @@ namespace GnssProcessor {
         bool   restarted = false;
         if (accumulate) {
             constexpr double TWO_PI = 2.0 * Constants::PI;
-            // Continuity horizon, now caller-supplied (estimation.phase_windup_
-            // max_gap_s; the historic hard-coded value was 300 s and remains the
-            // default).  See the header's parameter doc for why this horizon's
-            // ordering against network.phase_leveling_max_gap_s matters.
+            // Continuity horizon, supplied by the caller
+            // (estimation.phase_windup_max_gap_s, default 300 s).  The header's
+            // parameter doc explains why the ordering of this horizon against
+            // network.phase_leveling_max_gap_s matters.
             const double kMaxGapSeconds = max_gap_s;
             auto pw_it = prev_windup_.find(satellite);
             if (pw_it == prev_windup_.end()) {
@@ -2036,10 +2021,10 @@ namespace GnssProcessor {
                 // Same epoch.  computePhaseWindUp() is called once per signal
                 // and once per measurement-rebuild / relinearization pass; the
                 // wind-up angle is a per-epoch geometric quantity, so reuse the
-                // accumulated value produced by this epoch's first call.  Re-
-                // storing here would overwrite prev_windup_ with the still-
-                // wrapped atan2 angle, resetting the accumulator reference and
-                // silently collapsing accumulated mode back to fractional.
+                // accumulated value produced by this epoch's first call.
+                // Storing here would overwrite prev_windup_ with the wrapped
+                // atan2 angle, reset the accumulator reference, and turn
+                // accumulated mode back into fractional mode without notice.
                 gap_s = 0.0;
                 windUp_c = pw_it->second.angle;
             } else {
@@ -2051,14 +2036,14 @@ namespace GnssProcessor {
                     windUp_c = pw_it->second.angle + diff;
                 } else {
                     // Gap exceeds the continuity threshold (or epochs ran
-                    // backwards): the unwrap reference is no longer reliable,
-                    // so restart accumulation from the raw atan2 angle.
+                    // backwards): the unwrap reference is not reliable, so
+                    // restart accumulation from the raw atan2 angle.
                     restarted = true;
-                    // §10.4 restart ledger: the response drain consumes this
+                    // Restart ledger (§10.4): the response drain consumes this
                     // (satellite, gap, epoch) at PASS-A serial time.  Recorded
-                    // unconditionally in accumulated mode — bounded at the
-                    // visible constellation, and a consumer-less ledger is
-                    // inert by construction.
+                    // unconditionally in accumulated mode; its size is bounded
+                    // by the visible constellation, and without a consumer the
+                    // ledger has no effect.
                     wu_restarts_[satellite] = { gap, epoch_s };
                     log_manager_.getLogger("ppp_model")->debug(
                         "Phase wind-up gap {:.0f}s for {} exceeds {:.0f}s "
@@ -2070,22 +2055,21 @@ namespace GnssProcessor {
         }
 
         // ---- Wind-up census (read-only; both accumulation postures) --------
-        // Counts the step in the APPLIED correction between consecutive
-        // PROCESSED epochs.  In fractional mode that step is the one-cycle
-        // staircase at each half-cycle crossing (SPEC_phase_windup_sign §7,
-        // measured 43/day/station on the one user-path trace that exists); in
-        // accumulated mode a >= 0.9 cyc step means the accumulator RESTARTED.
-        // Deduped on epoch_s exactly as the CSV trace is, because this function
+        // Counts the step in the applied correction between consecutive
+        // processed epochs.  In fractional mode that step is the one-cycle
+        // staircase at each half-cycle crossing (SPEC_phase_windup_sign §7); in
+        // accumulated mode a step >= 0.9 cyc means the accumulator restarted.
+        // Deduplicated on epoch_s, like the CSV trace, because this function
         // runs once per signal and once per measurement-rebuild pass.
         if (wu_census_on_) {
             const double cyc_now = windUp_c / (2.0 * Constants::PI);
             auto& prev = wu_census_prev_[satellite];
-            // `restarted` is the ACCUMULATOR'S OWN verdict, set above.  Counting
+            // `restarted` is the accumulator's own verdict, set above.  Counting
             // it directly is what makes accumulated mode measurable: the applied
             // step cannot reveal a restart, because every in-horizon transition
-            // is unwrapped into [-0.5, +0.5] cyc, so a threshold on the step is
-            // identically silent there (`wraps` is fractional-only by
-            // construction — see the header).
+            // is unwrapped into [-0.5, +0.5] cyc, so a threshold on the step
+            // never fires there (`wraps` counts only in fractional mode by
+            // construction; see the header).
             if (restarted) ++wu_census_.restarts;
             if (!prev.seeded) {
                 prev.cycles = cyc_now; prev.epoch_s = epoch_s; prev.seeded = true;
@@ -2102,16 +2086,17 @@ namespace GnssProcessor {
                         if (step > wu_census_.max_abs_step_in_cyc)
                             wu_census_.max_abs_step_in_cyc = step;
                     } else {
-                        // Bucket against the LATER of the two horizons, so the
-                        // two buckets stay closed under either ordering.  The
-                        // between-horizons bucket is the invariant-#1 exposure
-                        // ONLY when the carry outlives the accumulator; at the
-                        // loader default the ordering is inverted (carry 120 s <
-                        // wind-up 300 s), and there this bucket instead holds the
-                        // benign inverse (the carry dies while the model stays
-                        // continuous).  The teardown states which ordering it saw
-                        // and suppresses the exposure narrative when it does not
-                        // hold, so the bucket is never read as the wrong thing.
+                        // Bucket against the later of the two horizons, so the
+                        // two buckets cover every gap under either ordering.  The
+                        // between-horizons bucket measures the invariant-#1
+                        // exposure only when the carry outlives the accumulator.
+                        // At the loader defaults the ordering is inverted (carry
+                        // 120 s < wind-up 300 s).  Gaps between the two horizons
+                        // are then in-horizon and land in gap_lt_wu, so this
+                        // bucket holds only a gap exactly equal to the wind-up
+                        // horizon.  The teardown reports which ordering
+                        // it saw and omits the exposure reading when that
+                        // ordering does not hold.
                         if (wu_census_carry_gap_s_ > 0.0) {
                             const double hi = std::max(wu_census_gap_s_, wu_census_carry_gap_s_);
                             if (gap <= hi) ++wu_census_.gap_wu_to_carry;
@@ -2124,9 +2109,9 @@ namespace GnssProcessor {
                 } else {
                     ++wu_census_.backwards;   // epochs out of order: counted, not bucketed
                 }
-                // Advance the reference unconditionally — including after a
-                // backwards transition — so one out-of-order epoch cannot make
-                // the NEXT gap measurement meaningless as well.
+                // Advance the reference unconditionally, including after a
+                // backwards transition, so that one out-of-order epoch does not
+                // also corrupt the next gap measurement.
                 prev.cycles = cyc_now; prev.epoch_s = epoch_s;
             }
         }

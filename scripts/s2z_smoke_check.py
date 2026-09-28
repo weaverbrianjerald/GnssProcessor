@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """SPEC_s2z_realization_ab Phase-0/1 smoke assertions (staged-cadence gate).
 
-Run against the 10-epoch s2z smoke (runs/s2z_ab/smoke) BEFORE the 6 h seed is
-launched.  Encodes the spec's Phase-1 smoke gate list:
+Runs against the 10-epoch s2z smoke (runs/s2z_ab/smoke) before the 6 h seed is
+launched. Encodes the spec's Phase-1 smoke gate list:
 
-  1. loader sweep clean: the SUM-TO-ZERO activation line is present and NO
+  1. loader sweep clean: the sum-to-zero activation line is present and no
      s2z warn/mutex fired (no "IGNORED under", no "INERT under
      network.clock_datum_sum_to_zero"), no [error]/[critical] anywhere;
   2. declared-dimension accounting: network_trace.csv must read
-     declared_dim == 0 with gate_ok == 1 and solved == 1 on EVERY row (the pin
-     lineage reads declared_dim == 1) — the rank gate passing with the
-     Sigma-row-closed gauge is exactly the brdc-anchored card's silent-empty-
-     product failure mode NOT happening.  (n_pivot_pins is the ASSEMBLY pin
-     total, not the clock pivot count — reported, not asserted);
+     declared_dim == 0 with gate_ok == 1 and solved == 1 on every row (the pin
+     lineage reads declared_dim == 1); the rank gate passing with the
+     Sigma-row-closed gauge confirms the brdc-anchored card's silent-empty-
+     product failure mode is not occurring. (n_pivot_pins is the assembly pin
+     total, not the clock pivot count; reported, not asserted);
   3. first processed epoch is 13:00:00 GPS exactly (tow 306000; the half-epoch
      back-off discipline), 10 epochs, every disposition 'emitted';
   4. run-end counters live (invariant #4): producer-complete line reads

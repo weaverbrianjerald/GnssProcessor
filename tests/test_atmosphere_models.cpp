@@ -2,24 +2,26 @@
  * @file test_atmosphere_models.cpp
  * @brief Unit tests for the atmosphere model layer (troposphere + ionosphere).
  *
- * Scope: the four atmosphere models whose numerics are pinned against an
- * external oracle rather than a re-derivation of our own tables —
+ * Scope: the four atmosphere models whose numerics are checked against an
+ * external oracle rather than against a re-derivation of the project's own
+ * tables:
  *  - Gpt3                    pressure / temperature from the 5° binary grid
  *  - Vmf3                    empirical mapping function (GPT3 a + SH b/c)
- *  - Troposphere (Niell)     the default non-VMF3 mapping path
+ *  - Troposphere (Niell)     the default non-VMF3 mapping path ("gmf", which
+ *                            evaluates the Niell (1996) NMF tables)
  *  - HigherOrderIonosphere   the I₂ / I₃ slant components
  *
- * Depth: convention + coefficient locks. Each suite either reproduces a
- * published/independent reference value to full double precision or asserts
- * a monotonicity / symmetry invariant that a transcription error would break.
+ * Depth: conventions and coefficients.  Each suite either reproduces a published
+ * or independent reference value to full double precision or asserts a
+ * monotonicity / symmetry invariant that a transcription error would break.
  * The Python oracles live in scripts/ (vmf3_reference.py, nmf_reference.py,
  * higher_order_iono_reference.py) and read the same coefficient headers this
- * binary links, so a table edit surfaces here.
+ * binary links, so a table edit shows up here.
  *
  * Fixtures: Gpt3Test needs the 5° binary grid under
- * data/static/gpt3/gpt3_5.grd, injected via the GNSS_TEST_DATA_DIR macro
- * defined by CMake; if the grid is absent the suite is skipped, not failed —
- * but a grid that is PRESENT and fails to load is a failure, not a skip.
+ * data/static/gpt3/gpt3_5.grd, located through the GNSS_TEST_DATA_DIR macro
+ * defined by CMake.  If the grid is absent the suite is skipped, not failed; a
+ * grid that is present and fails to load is a failure, not a skip.
  * The other three suites are fully synthetic.
  *
  * @see test_math_core.cpp          Coordinates / TimeUtils / Interpolate
@@ -62,7 +64,7 @@ namespace GnssProcessor {
 namespace {
 
 // ============================================================================
-// Gpt3 — pressure/temperature lookup from the 5° grid
+// Gpt3: pressure/temperature lookup from the 5° grid
 // ============================================================================
 
 // Shared GPT3 fixture: spdlog's global logger registry doesn't allow
@@ -73,7 +75,7 @@ class Gpt3Test : public ::testing::Test {
 protected:
     static LogManager  log_mgr_;
     static Gpt3        model_;
-    static bool        have_fixture_;   ///< grid present AND load() succeeded
+    static bool        have_fixture_;   ///< grid present and load() succeeded
     static bool        grid_present_;   ///< grid file found on disk
     static std::string grid_path_;      ///< resolved grid path, for the failure message
 
@@ -87,16 +89,13 @@ protected:
         grid_path_    = grid.string();
         grid_present_ = true;
 
-        // Per-PROCESS log directory.  LogManager::initialize() scrubs stale
-        // .log files out of this directory, and the getLogger("gpt3") inside
+        // Per-process log directory.  LogManager::initialize() removes stale
+        // .log files from this directory, and the getLogger("gpt3") inside
         // load() then holds gpt3.log open for the rest of the process.  With a
-        // fixed shared path, two concurrently running gnss_tests.exe fought
-        // over that one file and the loser took a filesystem_error straight out
-        // of SetUpTestSuite ("remove: The process cannot access the file...") —
-        // reported by gtest as "Gpt3Test: SetUpTestSuite or TearDownTestSuite"
-        // with all three cases skipped as if the fixture were missing.
-        // LogManager no longer throws there, but concurrent suites have no
-        // reason to share the file in the first place.
+        // fixed shared path, two concurrently running gnss_tests.exe processes
+        // contend for that one file.  LogManager treats directory preparation as
+        // best effort and does not throw, but concurrent suites have no reason
+        // to share the file.
         const auto log_dir = fs::temp_directory_path()
                              / ("gnss_gpt3_test_logs_" + std::to_string(GNSS_TEST_GETPID()));
         fs::create_directories(log_dir, ec);
@@ -106,9 +105,9 @@ protected:
 
     void SetUp() override {
         if (!grid_present_) GTEST_SKIP() << "GPT3 grid fixture not present";
-        // Grid present but load() failed is a REAL defect, not a missing
-        // fixture.  Folding both into one skip is what let an environmental
-        // failure masquerade as "fixture not present" for a whole release.
+        // A grid that is present but fails to load is a defect, not a missing
+        // fixture, so it fails the test.  A single skip for both cases would
+        // report an environmental failure as "fixture not present".
         ASSERT_TRUE(have_fixture_)
             << "GPT3 grid is present at " << grid_path_ << " but Gpt3::load() failed";
     }
@@ -121,8 +120,9 @@ std::string Gpt3Test::grid_path_;
 
 // A query at the exact first grid cell (87.5°N, 2.5°E) at the cell's own
 // orthometric height should reproduce the harmonic value built from the
-// line-2 a0/A1/B1/A2/B2 columns — independent of the load path, so this
-// pins both the parse order and the harmonic evaluation.
+// line-2 a0/A1/B1/A2/B2 columns.  The expected value is computed independently
+// of the load path, so this checks both the parse order and the harmonic
+// evaluation.
 TEST_F(Gpt3Test, QueryAtGridCornerMatchesHarmonic) {
     EXPECT_TRUE(model_.isLoaded());
 
@@ -157,9 +157,9 @@ TEST_F(Gpt3Test, PressureDecreasesWithHeight) {
     ASSERT_TRUE(model_.query(40.0, -75.0,    0.0, 200.0, lo));
     ASSERT_TRUE(model_.query(40.0, -75.0, 3000.0, 200.0, hi));
 
-    // 3 km altitude difference should give roughly P_hi ≈ 0.7 × P_lo with
-    // the standard 5.225 exponent; the precise factor is not the test —
-    // monotone decrease is.
+    // A 3 km altitude difference gives roughly P_hi ≈ 0.7 × P_lo with the
+    // standard 5.225 exponent.  The test checks the monotone decrease, not the
+    // precise factor.
     EXPECT_LT(hi.pressure_mbar, lo.pressure_mbar);
     EXPECT_GT(hi.pressure_mbar, 0.5 * lo.pressure_mbar);  // sanity floor
     EXPECT_LT(hi.pressure_mbar, 0.9 * lo.pressure_mbar);  // sanity ceiling
@@ -176,7 +176,7 @@ TEST_F(Gpt3Test, LongitudeWrapsConsistently) {
 }
 
 // ============================================================================
-// Vmf3 — empirical mapping function from GPT3 a + SH-synthesized b/c
+// Vmf3: empirical mapping function from GPT3 a + SH-synthesized b/c
 // ============================================================================
 
 // End-to-end VMF3 evaluation against an independent Python port of the
@@ -233,22 +233,22 @@ TEST(Vmf3Test, GrowsAtLowElevation) {
 }
 
 // ============================================================================
-// Niell Mapping Function (default "GMF"/NMF tropo path) — convention lock
+// Niell Mapping Function (default "GMF"/NMF tropo path): convention check
 // ============================================================================
 //
-// Troposphere::getTroposphereMapping in its default (non-VMF3) mode is the
-// Niell Mapping Function.  It is pinned against an independent Python port
-// (scripts/nmf_reference.py) that mirrors cssrlib tropmapfNiell — itself a
-// port of RTKLIB tropmapf, and matching POINT's NMF table.
+// Troposphere::getTroposphereMapping in its default (non-VMF3) mode evaluates
+// the Niell Mapping Function.  It is checked against an independent Python port
+// (scripts/nmf_reference.py) that mirrors cssrlib tropmapfNiell, itself a port
+// of RTKLIB tropmapf, and matches POINT's NMF table.
 //
-// This locks the two May-2026 fixes:
+// Two conventions are fixed here:
 //   1. the hydrostatic seasonal amplitude arrays carry a leading 0.0 at 15°
-//      (the prior code dropped it, shifting every amplitude one bin), and
-//   2. the seasonal combination is avg − amp·cos (the prior code used +).
-// Either regression shifts the low-elevation hydrostatic mapping by ~1e-2,
-// far above this test's 1e-6 tolerance.
+//      (dropping it shifts every amplitude by one bin), and
+//   2. the seasonal combination is avg − amp·cos, not avg + amp·cos.
+// A regression in either shifts the low-elevation hydrostatic mapping by about
+// 1e-2, far above this test's 1e-6 tolerance.
 TEST(NiellMappingTest, MatchesCanonicalReference) {
-    LogManager log_mgr;          // bare — see the Gpt3Test fixture note above
+    LogManager log_mgr;          // not initialized; see the Gpt3Test fixture note above
     GnssConfig config;           // default → Gmf/NMF mapping, no GPT3 grid
     Troposphere tropo(config, log_mgr);
 
@@ -282,22 +282,22 @@ TEST(NiellMappingTest, MatchesCanonicalReference) {
 }
 
 // ============================================================================
-// Higher-order ionosphere (I₂ + I₃) — coefficient + convention lock
+// Higher-order ionosphere (I₂ + I₃): coefficient and convention check
 // ============================================================================
 //
-// HigherOrderIonosphere::slantHigherOrderComponents is pinned against an
+// HigherOrderIonosphere::slantHigherOrderComponents is checked against an
 // independent Python oracle (scripts/higher_order_iono_reference.py) that
 // derives the coefficients from first principles and the POINT reference
 // (higher_order_iono/Class_Iono.cpp).  The dipole B-field constants are shared
-// with the engine (MagneticField, audited clean); the I₂/I₃ coefficients are
-// derived independently, so this locks the two May-2026 fixes:
+// with the engine (MagneticField); the I₂/I₃ coefficients are derived
+// independently, so two conventions are fixed here:
 //
-//   1. I₂ (group/code) coefficient is 7527·c, NOT 7527·c/2.  The /2 form is
-//      the *phase* coefficient — using it for code made both code and phase
-//      I₂ a factor of two too small.  This case's I₂ would halve on regression
-//      (~4e-3 m at L1), thousands× this 1e-9 m tolerance.
-//   2. I₃ (group/code) scales with ∫N_e²dl = η·N_max·STEC, NOT η·STEC².  The
-//      old STEC² form was ~2.3e5× too large (hundreds of metres, not ~mm).
+//   1. The I₂ group (code) coefficient is 7527·c, not 7527·c/2.  The /2 form is
+//      the phase coefficient; using it for code makes both code and phase I₂ a
+//      factor of two too small.  This case's I₂ would change by about 4e-3 m at
+//      L1 on such a regression, about 4e6 times the 1e-9 m tolerance.
+//   2. The I₃ group (code) term scales with ∫N_e²dl = η·N_max·STEC, not
+//      η·STEC².  The STEC² form is about 2.3e5 times too large.
 //
 // Internal consistency the goldens also encode: phase = −½·I₂code and
 // −⅓·I₃code; L2/L1 ratios are (f₁/f₂)³ for I₂ and (f₁/f₂)⁴ for I₃.

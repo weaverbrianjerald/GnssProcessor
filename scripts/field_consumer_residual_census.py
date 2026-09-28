@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-field_consumer_residual_census.py — what drives the REMAINING closed-loop
-consumer residual on a NETWORK field run.
+field_consumer_residual_census.py: attribution of the remaining closed-loop
+consumer residual on a network field run.
 
-Analysis-only.  Reads a completed run's traces (nothing is re-run, no C++ is
-touched) and answers one question: after a posture change has removed the
-gross vertical bias, is the leftover consumer error slow (a wandering state:
-tropo / clock / datum) or fast (per-epoch noise: geometry / iono / integers),
-and which producer-side EVENTS coincide with the bad blocks.
+Analysis only.  Reads the traces of a completed run (nothing is re-run and no
+C++ is involved) and addresses one question: once a posture change has removed
+the gross vertical bias, is the remaining consumer error slow (a wandering
+state: tropo, clock, datum) or fast (per-epoch noise: geometry, iono,
+integers), and which producer-side events coincide with the worst blocks.
 
 Instruments
 -----------
@@ -16,29 +16,30 @@ Instruments
   logs/network_events.csv       tiered producer events (gauge/pivot/slip/...)
   logs/network_epoch_status.csv per-epoch counts + sigma0
   logs/network_stations.csv     roster + ECEF (locates the held-out consumer)
-  ambiguity_trace.csv           consumer ambiguity resets — OPTIONAL, only
-                                written when logging.enable_ambiguity_trace
-                                is armed; reported as MISSING otherwise.
+  ambiguity_trace.csv           consumer ambiguity resets.  Optional: written
+                                only when logging.enable_ambiguity_trace is
+                                armed; reported as missing otherwise.
 
-Computed on the SETTLED window only (>= --settle-h after the first epoch):
+All statistics use the settled window only (>= --settle-h after the first
+epoch):
 
-  1. Character   ACF of each component about its mean; the lag where ACF
+  1. Character   ACF of each component about its mean; the lag where the ACF
                  first falls below 0.5 (and 1/e); a slow/fast variance split
-                 from 30-min block means vs pooled within-block scatter.
+                 from 30-min block means against pooled within-block scatter.
   2. Tropo       corr(UP, fleet-median per-station ZWD deviation), then
                  corr(UP, per-station ZWD deviation) for every station, with
                  each station's settled ZWD span and its distance from the
-                 consumer.  Plus the consumer's OWN ZWD if any trace carries
-                 it (a static receiver whose vertical is being driven through
-                 the wet mapping shows a UP/ZWD slope near -3 .. -4).
-  3. Blocks      per 30-min block: UP rms, 3D rms, |UP mean| vs the block's
-                 event counts; Spearman rho of every count against the block
-                 error; then the worst blocks itemised by tier.
-  4. E/N         hourly rms of east/north vs n_sats, vs local solar time at
-                 the consumer (an ionospheric-activity proxy), and vs the
-                 refloat/reset counts.
-  5. Compare     pass more than one run dir and every scalar is tabulated
-                 side by side, first run first.
+                 consumer.  Also the consumer's own ZWD if any trace carries
+                 it (a static receiver whose vertical is driven through the
+                 wet mapping shows a UP/ZWD slope near -3 .. -4).
+  3. Blocks      per 30-min block: UP rms, 3D rms, |UP mean| against the
+                 block's event counts; Spearman rho of every count against the
+                 block error; then the worst blocks itemised by tier.
+  4. E/N         hourly rms of east/north against n_sats, against local solar
+                 time at the consumer (an ionospheric-activity proxy), and
+                 against the refloat/reset counts.
+  5. Compare     with more than one run dir, every scalar is tabulated side
+                 by side, first run first.
 
 Usage
 -----
@@ -46,8 +47,8 @@ Usage
          [--settle-h 6] [--out-dir DIR] [--json PATH] [--block-min 30]
 
 Writes <out-dir>/<run_name>.txt and <out-dir>/<run_name>.json per run, plus
-<out-dir>/compare.txt when more than one run is given.  Everything printed to
-stdout as well.
+<out-dir>/compare.txt when more than one run is given.  The text reports are
+also printed to stdout.
 """
 
 from __future__ import annotations
@@ -231,10 +232,11 @@ def lag1(x):
 
 def corr_autocorr_aware(x, y):
     """
-    Pearson r plus a p-value that accounts for SERIAL CORRELATION in both
-    series.  Everything in this census is a slow-varying state, so the naive
-    n is wildly optimistic: two AR(1) series with r1 ~ 0.97 have an effective
-    sample size ~1.5 % of n.  Bartlett/Quenouille first-order correction:
+    Pearson r plus a p-value that accounts for serial correlation in both
+    series.  Every quantity in this census is a slowly varying state, so the
+    naive n overstates the evidence: two AR(1) series with r1 ~ 0.97 have an
+    effective sample size of about 1.5 % of n.  Bartlett/Quenouille
+    first-order correction:
         n_eff = n * (1 - r1x*r1y) / (1 + r1x*r1y)
     Returns (r, n, n_eff, p_eff).
     """
@@ -259,7 +261,7 @@ def rms(v):
 
 
 def ecef_to_geodetic(x, y, z):
-    """WGS-84 ECEF -> (lat_deg, lon_deg, h_m), Bowring."""
+    """Convert WGS-84 ECEF to (lat_deg, lon_deg, h_m) with Bowring's method."""
     a, f = 6378137.0, 1.0 / 298.257223563
     b = a * (1 - f)
     e2 = f * (2 - f)
@@ -337,9 +339,9 @@ def load_stations(run: Path, missing: list):
 
 def load_amb_resets(run: Path, missing: list):
     """
-    Consumer ambiguity resets per epoch.  A reset shows as std_m jumping back
-    up toward its initial (large) value for a key that was previously tight.
-    Requires logging.enable_ambiguity_trace; absent on most network runs.
+    Consumer ambiguity resets per epoch.  A reset appears as std_m rising back
+    toward its initial (large) value for a key that was previously tight.
+    Requires logging.enable_ambiguity_trace, which most network runs do not arm.
     """
     for p in (run / "ambiguity_trace.csv", _logs(run) / "ambiguity_trace.csv"):
         if p.exists():
@@ -360,17 +362,18 @@ def load_amb_resets(run: Path, missing: list):
 
 def geometry_worst_direction(run: Path, station: str, t_settle: float, missing: list):
     """
-    The direction a static single-receiver solve determines WORST, computed
-    from the REAL line-of-sight geometry at `station` (the consumer is held
-    out of the network, so its co-located twin stands in — same sky).
+    The direction a static single-receiver solve determines worst, computed
+    from the observed line-of-sight geometry at `station`.  The consumer is
+    held out of the network, so the caller passes its nearest roster station
+    (the co-located twin, which sees the same sky).
 
-    Per epoch, build G = [-e_E, -e_N, -e_U, 1] over the tracked satellites
-    (the trailing 1 is the estimated receiver clock, which is what tilts the
-    worst direction away from the vertical), invert G'G, and take the
-    position block's largest-eigenvalue eigenvector.  Averaging the position
-    cofactor over the settled epochs gives the window's worst-determined
-    axis.  If the residual's PCA axis lands on it, the error is a common-mode
-    range-like quantity being dumped into the geometric null — not a
+    Per epoch, G = [-e_E, -e_N, -e_U, 1] is built over the tracked satellites
+    (the trailing 1 is the estimated receiver clock, which tilts the worst
+    direction away from the vertical) and G'G is inverted.  The position block
+    of that cofactor is averaged over the settled epochs, and its
+    largest-eigenvalue eigenvector is the window's worst-determined axis.  If
+    the residual's PCA axis lands on it, the error is a common-mode range-like
+    quantity absorbed along the geometric null rather than a
     direction-specific defect.
     """
     p = _logs(run) / "network_ionosphere.csv"
@@ -404,9 +407,9 @@ def geometry_worst_direction(run: Path, station: str, t_settle: float, missing: 
     if n_ep < 10:
         return None
     # sky occupancy: 8 azimuth sectors x 4 elevation bands, LOS-epochs.
-    # A mid-northern-latitude site has a genuine VOID toward true north above
-    # ~45 deg elevation (GPS/Galileo inclination 55 deg), and any wire error
-    # on the few satellites that do cross it gets outsized (N,U) leverage.
+    # A mid-northern-latitude site has no satellites toward true north above
+    # ~45 deg elevation (GPS/Galileo inclination 55 deg), so a wire error on
+    # the few satellites that do cross that region has outsized (N,U) leverage.
     az_edges = np.arange(0, 361, 45)
     el_edges = np.array([0, 30, 45, 60, 90])
     H, _, _ = np.histogram2d(
@@ -484,7 +487,7 @@ def scan_for_consumer_zwd(run: Path, consumer: str):
 
 
 def classify_events(ev: pd.DataFrame) -> pd.DataFrame:
-    """Return a per-row boolean matrix of the event classes we track."""
+    """Return a per-row boolean matrix of the tracked event classes."""
     tier = ev["tier"].astype(str)
     event = ev["event"].astype(str) if "event" in ev.columns else pd.Series("", index=ev.index)
     act = ev["action"].astype(str) if "action" in ev.columns else pd.Series("", index=ev.index)
@@ -747,7 +750,7 @@ def census(run: Path, settle_h: float, block_min: float) -> dict:
         withd = [r for r in rows if r["dist_km"] is not None]
         withd.sort(key=lambda r: r["dist_km"])
         tropo["nearest_stations"] = withd[:5]
-        # CO-LOCATED twins (< 5 km) are the best available stand-in for the
+        # Co-located stations (< 5 km) are the best available stand-in for the
         # consumer's own wet troposphere when its state is not traced.
         colo = [r["station"] for r in withd if r["dist_km"] < 5.0]
         tropo["colocated_stations"] = colo
@@ -811,7 +814,7 @@ def census(run: Path, settle_h: float, block_min: float) -> dict:
     if zwd is not None and not zwd.empty:
         zz = zwd[zwd["tow"] >= t_settle].copy()
         zz["blk"] = np.floor((zz["tow"].to_numpy(dtype=float) - t0) / blk_s).astype(int)
-        # same reference as section 2: each station's own SETTLED median
+        # same reference as section 2: each station's own settled median
         smed = zz.groupby("station")["zwd_m"].median()
         zz["dev"] = zz["zwd_m"] - zz["station"].map(smed)
         zwd_blk = zz.groupby("blk")["dev"].median()
@@ -904,9 +907,10 @@ def census(run: Path, settle_h: float, block_min: float) -> dict:
     out["worst_blocks"] = worst
 
     # ----------------------------------------------------------------
-    # 3b. PER-EPOCH driver correlations (n = every settled epoch, not 12
-    #     blocks).  Serial correlation is corrected for explicitly — these
-    #     are all slow states and the naive n would be a fiction.
+    # 3b. Per-epoch driver correlations (n = every settled epoch rather than
+    #     the settled block count).  Every driver is a slow state, so the
+    #     naive n overstates the evidence; corr_autocorr_aware() corrects p
+    #     for serial correlation.
     # ----------------------------------------------------------------
     per_ep = []
     if st is not None and not st.empty:
@@ -983,7 +987,8 @@ def census(run: Path, settle_h: float, block_min: float) -> dict:
         amb["hr"] = np.floor((amb["tow"].to_numpy(dtype=float) - t0) / 3600.0).astype(int)
         amb_hr = amb.groupby("hr")["n_amb_reset"].sum()
 
-    # UTC hour of day from tow (GPS tow, week seconds); local solar time at the consumer
+    # Hour of day from the GPS tow (week seconds, leap seconds ignored, so it
+    # approximates UTC); local solar time at the consumer from its longitude.
     for h, g in cl.groupby("hr"):
         tmid = float(g["tow"].mean())
         utc_h = (tmid % 86400.0) / 3600.0
@@ -1024,7 +1029,7 @@ def census(run: Path, settle_h: float, block_min: float) -> dict:
                 r = pearson(v, hdf[comp].to_numpy())
                 rho, p, n = spearman(v, hdf[comp].to_numpy())
                 en[comp][drv] = {"r": r, "rho": rho, "p": p, "n": n}
-    # per-epoch settled correlations, which have real sample size
+    # per-epoch settled correlations (a much larger n than the hourly ones)
     en["per_epoch_settled"] = {
         "corr_east_north": pearson(s["east_m"], s["north_m"]),
         "corr_east_up": pearson(s["east_m"], s["up_m"]),
@@ -1176,7 +1181,7 @@ def render(c: dict) -> str:
             if sky:
                 cnt = np.array(sky["counts"], dtype=float)
                 pct = 100.0 * cnt / max(1.0, cnt.sum())
-                # bin i spans azimuth [45i, 45i+45); label it by its MIDPOINT
+                # bin i spans azimuth [45i, 45i+45) and is labelled by its midpoint
                 labels = ["NNE", "ENE", "ESE", "SSE", "SSW", "WSW", "WNW", "NNW"]
                 bands = [f"{a}-{b}" for a, b in zip(sky["el_edges"][:-1], sky["el_edges"][1:])]
                 A(f"      sky occupancy at {gn['station']} (% of LOS-epochs; the NORTH column at high "

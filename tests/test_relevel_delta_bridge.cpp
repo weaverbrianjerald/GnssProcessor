@@ -1,15 +1,15 @@
 /**
  * @file test_relevel_delta_bridge.cpp
- * @brief SPEC_slip_relevel_walk §6 — the float 2×2 delta-bridge kernel
- *        (networkSlipDeltaBridgeSolve) and the LocalCarry apply semantics.
+ * @brief Tests for the float 2×2 delta-bridge kernel (networkSlipDeltaBridgeSolve)
+ *        and the LocalCarry apply semantics (SPEC_slip_relevel_walk §6).
  *
  * Kernel-first, in the test_slip_bridge_kernel.cpp style: integer-injection
  * round trips pin the algebra (the β1·ΔN_WL-over-λ_IF step is this kernel's
- * analogue of the GF kernel's documented λ1-in-numerator trap), the variance
- * closed forms are checked against finite-difference propagation, and the
- * reject ladder is exercised edge by edge.  The apply micro-test certifies the
- * T0-repair mutation shape on a hand-built carry map: both bands shift, var
- * inflates, coupling and last_seen untouched — no driver needed.
+ * analogue of the GF kernel's documented λ1-in-numerator pitfall), the variance
+ * closed forms are checked against finite-difference propagation, and each
+ * rejection condition is exercised in turn.  The apply micro-test checks the
+ * T0-repair mutation shape on a hand-built carry map without a driver: both
+ * bands shift, var inflates, and coupling and last_seen stay untouched.
  */
 #include <gtest/gtest.h>
 
@@ -36,7 +36,7 @@ const double kBeta2  = kLamWl * kF2 / (kF1 + kF2);
 double difFor(int dn1, int dn2) { return kBeta1 * dn1 - kBeta2 * dn2; }
 
 TEST(RelevelDeltaBridge, BetaIdentityHolds) {
-    // β1 − β2 ≡ λ_IF — the identity the closed-form solve rests on.
+    // β1 − β2 ≡ λ_IF: the identity the closed-form solve rests on.
     EXPECT_NEAR(kBeta1 - kBeta2, kLamIf, 1e-12);
 }
 
@@ -57,9 +57,9 @@ TEST(RelevelDeltaBridge, IntegerInjectionRoundTrips) {
 
 TEST(RelevelDeltaBridge, MwBlindEqualSlipCase) {
     // ΔN1 = ΔN2 (the MW null space): ΔN_WL = 0 with the 0.7/3-cyc clean bound.
-    // The propagated σ is β1·(0.7/3)/λ_IF ≈ 1.06 cyc — ABOVE any sane cap, so
-    // the shipped gates MUST reject (this is why the clean-complement branch
-    // was removed, SPEC §8.1); with the cap loosened the algebra is exact.
+    // The propagated σ of ΔN2 is β1·(0.7/3)/λ_IF ≈ 1.06 cyc, above the 0.50 cap,
+    // so the solve rejects (SPEC §8.1 gives this as the reason the clean-complement
+    // branch was removed).  With the cap loosened to 2.0 the algebra is exact.
     const int dn = -7;
     EXPECT_FALSE(networkSlipDeltaBridgeSolve(
         0, 0.7 / 3.0, difFor(dn, dn), 0.0, kLamWl, kLamIf, 200.0, 0.50).ok);
@@ -103,13 +103,13 @@ TEST(RelevelDeltaBridge, RejectLadder) {
                                              200.0, 0.35).ok);
     EXPECT_FALSE(networkSlipDeltaBridgeSolve(1, 0.1, 0.1, 0.01, kLamWl, -1.0,
                                              200.0, 0.35).ok);
-    // λ_IF > λ_WL implies f2 <= 0 — impossible pair, must reject.
+    // λ_IF > λ_WL implies f2 <= 0: an impossible pair, rejected.
     EXPECT_FALSE(networkSlipDeltaBridgeSolve(1, 0.1, 0.1, 0.01, 0.1, 0.2,
                                              200.0, 0.35).ok);
     // Magnitude cap.
     EXPECT_FALSE(networkSlipDeltaBridgeSolve(300, 0.0, difFor(301, 1), 0.0,
                                              kLamWl, kLamIf, 200.0, 0.35).ok);
-    // Sigma cap: a 5 cm IF sigma is ~0.47 cyc through 1/λ_IF — above 0.35.
+    // Sigma cap: a 5 cm IF sigma is about 0.47 cyc through 1/λ_IF, above 0.35.
     EXPECT_FALSE(networkSlipDeltaBridgeSolve(2, 0.0, difFor(3, 1), 0.05,
                                              kLamWl, kLamIf, 200.0, 0.35).ok);
     // The same solve passes with the cap loosened (isolates the reject reason).
@@ -118,7 +118,7 @@ TEST(RelevelDeltaBridge, RejectLadder) {
 }
 
 TEST(RelevelDeltaBridge, FdmaShapedLambdasRoundTrip) {
-    // Any f1 > f2 > 0 must round-trip — GLONASS FDMA per-satellite lambdas.
+    // Any f1 > f2 > 0 round-trips, including GLONASS FDMA per-satellite lambdas.
     const double f1 = 1602.0e6 + 3 * 562.5e3, f2 = 1246.0e6 + 3 * 437.5e3;
     const double lam_wl = kC / (f1 - f2), lam_if = kC / (f1 + f2);
     const double b1 = lam_wl * f1 / (f1 + f2), b2 = lam_wl * f2 / (f1 + f2);
@@ -180,8 +180,8 @@ TEST(RelevelDeltaBridge, BridgeReplaceOutcomeLadder) {
     EXPECT_NEAR(carry[k1].var, 0.01 + bs.var1_m2, 1e-12);
     EXPECT_DOUBLE_EQ(carry[k1].last_seen_s, 999.0);  // untouched
 
-    // CorrobReject: a WRONG MW integer (the audit's failure class) puts the
-    // bridged level cycles away from the free level - carry must be untouched.
+    // CorrobReject: a wrong MW integer puts the bridged level cycles away from
+    // the free level, and the carry stays untouched.
     RelevelPend bad = pd;  bad.dn_wl = dn1 - dn2 + 7;
     carry[k1] = LocalCarry{true1 + 0.3, 0.09, 999.0};
     carry[k2] = LocalCarry{true2 - 0.2, 0.09, 999.0};

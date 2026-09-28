@@ -20,9 +20,9 @@ namespace GnssProcessor {
      * @file RinexParser.hpp
      * @brief RINEX observation file parser declarations.
      *
-     * Provides types and the @c RinexParser class used to parse RINEX
-     * observation files (RINEX 2.x / 3.x style) and expose header metadata
-     * and epoch observations for downstream processing.
+     * Declares the observation and header types and the @c RinexParser class,
+     * which parses RINEX 2.x and 3.x observation files and exposes the header
+     * metadata and the epoch observations to downstream processing.
      */
 
     // Forward declaration to avoid circular dependency
@@ -53,12 +53,12 @@ namespace GnssProcessor {
         /**
          * @brief Phase-signal code ("L1C", ...) -> decoded lock time (ms).
          *
-         * Populated ONLY by the RTCM MSM decoder (DF402 basic / DF407 extended
-         * tables) so the epoch-assembly layer can derive the 0x1 loss-of-lock
-         * LLI bit statefully via @c LockTimeTracker (RTB-3, armed by
-         * @c realtime.msm_lli_from_locktime).  Empty (default-constructed, no
-         * allocation) for RINEX-parsed and SBF-decoded observations, and
-         * deliberately NOT attached by @c attachLayout — the RINEX bulk path
+         * Populated only by the RTCM MSM decoder (DF402 basic / DF407 extended
+         * tables), so that the epoch-assembly layer can derive the 0x1
+         * loss-of-lock LLI bit from the lock-time history via @c LockTimeTracker
+         * (armed by @c realtime.msm_lli_from_locktime; RTB-3).  Empty
+         * (default-constructed, no allocation) for RINEX-parsed and SBF-decoded
+         * observations.  @c attachLayout does not attach it: the RINEX bulk path
          * never writes it, so pre-sizing it there would only cost memory.
          */
         ObsValueMap<double> lock_time_ms;
@@ -101,13 +101,13 @@ namespace GnssProcessor {
         std::string antenna_type;  /**< Antenna type/model string (e.g., "TRM59800.00") */
         std::array<double, 3> approx_position{ 0.0, 0.0, 0.0 }; /**< Approx. receiver ECEF position (meters) */
         std::array<double, 3> antenna_delta_hen{ 0.0, 0.0, 0.0 }; /**< Antenna H/E/N offsets in meters */
-        /** True when an `ANTENNA: DELTA H/E/N` record was actually present in the
-         *  header.  The eccentricity itself cannot carry that information: an
-         *  absent record and a recorded 0.0/0.0/0.0 both leave
-         *  @ref antenna_delta_hen at zero, and a caller that REDUCES a published
-         *  monument coordinate to the antenna reference point has to tell the two
-         *  apart (a zero eccentricity is a reduction that is an exact no-op; a
-         *  missing record is an unreduced coordinate that must be reported). */
+        /** True when the header contains an `ANTENNA: DELTA H/E/N` record.  The
+         *  eccentricity alone cannot show this: an absent record and a recorded
+         *  0.0/0.0/0.0 both leave @ref antenna_delta_hen at zero.  A caller that
+         *  reduces a published monument coordinate to the antenna reference point
+         *  needs to tell the two apart: a zero eccentricity is a reduction that is
+         *  an exact no-op, while a missing record leaves the coordinate unreduced,
+         *  which has to be reported. */
         bool has_antenna_delta_hen{ false };
         std::string marker_name;   /**< Marker name (station identifier) */
         std::string marker_number; /**< Marker number (optional station number) */
@@ -116,15 +116,18 @@ namespace GnssProcessor {
 
         /** Per-(system, observation-code) phase shift in cycles, parsed from
          *  RINEX 3 "SYS / PHASE SHIFT" header records.  The receiver applies
-         *  these shifts to align inter-tracking-mode phase observations to
-         *  a common reference convention.  The parser subtracts the recorded
-         *  shift from the incoming phase value during observation parsing,
-         *  yielding an unshifted phase consistent across receivers (and
-         *  consistent with the convention BIA products are calibrated for).
+         *  these shifts to align the phase of different tracking modes to a
+         *  common reference convention.  When
+         *  @c model_corrections.apply_phase_shifts is on (off by default), the
+         *  RINEX 3 observation path subtracts the recorded shift from each
+         *  phase value, giving the unshifted phase that some bias products are
+         *  calibrated for; with it off, phases are kept as recorded, which is
+         *  the convention most BIA products use.
          *  Outer key: System (GPS, Galileo, ...).  Inner key: full obs code
-         *  (e.g. "L2W", "L8X").  Value: shift in cycles.  Records with an
-         *  empty satellite list apply system-wide; per-satellite overrides
-         *  are not currently supported (rare in practice). */
+         *  (e.g. "L2W", "L8X").  Value: shift in cycles.  Only nonzero shifts
+         *  are stored, and only from records with a zero or blank satellite
+         *  count (system-wide); records with a satellite list go to
+         *  @ref phase_shifts_by_sat. */
         std::map<System, std::map<std::string, double>> phase_shifts;
     };
 
@@ -165,10 +168,9 @@ namespace GnssProcessor {
          * full.
          *
          * @param span_s Maximum span in seconds from the first observation
-         *               epoch to retain.  A value @c <= 0 (the default) means
-         *               "no window" — parse the entire file, preserving the
-         *               historical behavior for every caller that does not opt
-         *               in.
+         *               epoch to retain.  A value @c <= 0 (the default) means no
+         *               window: the entire file is parsed, as for every caller
+         *               that does not set one.
          */
         void setMaxObservationSpanSeconds(double span_s) { max_obs_span_s_ = span_s; }
 
@@ -185,11 +187,14 @@ namespace GnssProcessor {
         const std::vector<RinexObservation>& getObservations() const { return observations_; }
 
         /**
-         * @brief Validate that measurement interval is reasonable.
-         * @details Acceptable intervals: 1 Hz (1.0 s), 30 s, etc. This routine
-         *          enforces configured constraints (max 100 Hz, min 300 s) and
-         *          returns false when header interval is outside expected bounds.
-         * @return True if measurement interval is valid or not specified, false otherwise.
+         * @brief Validate that the measurement interval is reasonable.
+         * @details Checks the header interval and every interval between
+         *          consecutive parsed epochs against the fixed range
+         *          [0.01 s, 300 s] (at most 100 Hz, at least one epoch per
+         *          300 s) and returns false when any lies outside it.  Intervals
+         *          other than 30 s are logged as warnings only.
+         * @return True if the header interval (or its absence) and all epoch
+         *         intervals are within range, false otherwise.
          */
         bool validateMeasurementRate() const;
 
@@ -207,8 +212,8 @@ namespace GnssProcessor {
          * record, the header antenna type is empty and no receiver ATX entry
          * can be matched.  This setter seeds the field from configuration so
          * receiver PCO/PCV (and the `require_atx_coverage` gate) can resolve.
-         * The post-processing path never calls this — the parsed RINEX header
-         * always wins.
+         * The post-processing path does not call it; there the parsed RINEX
+         * header value is used.
          *
          * @param type Antenna type string, e.g. "LEIAR25         NONE".
          */
@@ -253,9 +258,10 @@ namespace GnssProcessor {
 
         /** @brief Get approximate receiver ECEF position (meters).
          *
-         * This is the header `APPROX POSITION XYZ` verbatim — by RINEX convention
-         * the **marker/monument**, not the antenna.  Prefer @c getArpPositionXyz
-         * for anything that seeds or compares against a position STATE.
+         * This is the header `APPROX POSITION XYZ` verbatim, which by RINEX
+         * convention is the marker (monument), not the antenna.  Use
+         * @c getArpPositionXyz for anything that seeds or is compared against a
+         * position state.
          */
         Eigen::Vector3d getApproxPositionXyz() const {
             return Eigen::Vector3d(header_.approx_position[0], header_.approx_position[1], header_.approx_position[2]);
@@ -265,11 +271,11 @@ namespace GnssProcessor {
          * @brief Get the antenna reference point ECEF position from the header (meters).
          *
          * `APPROX POSITION XYZ` reduced through `ANTENNA: DELTA H/E/N` via
-         * @c Coordinates::markerToArp.  This is the frame every position state in
-         * the engine lives in (ATX PCO/PCV are ARP-relative), so it — not the raw
-         * marker — is what a filter seed, a rover a-priori, or a truth comparison
-         * wants.  Returns the marker unchanged when the header carries no (or a
-         * zero) eccentricity, which keeps live streams and 0/0/0 stations exact.
+         * @c Coordinates::markerToArp.  Every position state in the engine refers
+         * to the ARP (ATX PCO/PCV are ARP-relative), so a filter seed, a rover
+         * a-priori or a truth comparison uses this value rather than the raw
+         * marker.  Returns the marker unchanged when the header carries no (or a
+         * zero) eccentricity, so live streams and 0/0/0 stations are exact.
          *
          * @return ARP ECEF position (meters); zero vector when the header carried
          *         no `APPROX POSITION XYZ` (callers already guard on this).
@@ -371,7 +377,9 @@ namespace GnssProcessor {
          * @brief Get GLONASS frequency (Hz) for a given satellite and frequency type.
          * @param freq_type Frequency label (e.g., "L1", "L2").
          * @param satellite Satellite identifier string (e.g., "R01").
-         * @return Frequency in Hz used to rescale GLONASS measurements.
+         * @return Frequency in Hz, for rescaling GLONASS measurements.
+         * @note Declared only: no definition exists and nothing calls it (the
+         *       rescaling call in @c parse() is commented out).
          */
         double getGlonassFrequency(const std::string& freq_type, const std::string& satellite) const;
     };

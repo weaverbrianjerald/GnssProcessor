@@ -1,12 +1,11 @@
-// Unit tests for the Card-1/1b/1d conditional coupling-row seam
-// (filter/NetworkCoupling.hpp), carved out of Application::networkPassB_ at
-// decomposition INC-7b.  These exercise the exact branches the 50-sta byte-gate
-// arms cannot reach even when coupling is LIVE: the production whitenCouplingRows
-// kernel (previously covered only by a parallel re-implementation), its refloat
-// skip-set path and non-SPD fallback, and the CouplingRowBuilder scalar / joint /
-// departed / kappa-shrink / SH-marginalize branches over a real registered
-// estimator.  The builder-over-explicit-refs shape is directly constructible —
-// no TestAccess shim required.
+// Unit tests for the conditional coupling-row seam of cards 1/1b/1d
+// (filter/NetworkCoupling.hpp, split out of Application::networkPassB_ at INC-7b).
+// They exercise branches the 50-station byte-gate arms do not reach even with
+// coupling live: the production whitenCouplingRows kernel, its refloat skip-set path
+// and non-SPD fallback, and the CouplingRowBuilder scalar / joint / departed /
+// kappa-shrink / SH-marginalize branches over a real registered estimator.  The
+// builder takes explicit references, so it is directly constructible without a
+// TestAccess shim.
 
 #include <gtest/gtest.h>
 
@@ -48,17 +47,16 @@ Eigen::MatrixXd jointCov(const std::vector<CplRowRaw>& rows,
 
 }  // namespace
 
-// --- whitenCouplingRows: the production kernel (previously only a parallel
-//     re-implementation in test_network_estimator existed) -------------------
+// --- whitenCouplingRows: the production kernel ------------------------------
 
-// The whitened +1/local (Hr), M_r/shared (Hs) and RHS (z) blocks must be exactly
-// L^{-1} applied to the raw rows, where L L^T = R (the joint covariance).  We
-// reconstruct L in the test and assert L * whitened == raw to 1e-12 — the direct
-// numerical contract addStation relies on.
+// The whitened +1/local (Hr), M_r/shared (Hs) and RHS (z) blocks are exactly L^{-1}
+// applied to the raw rows, where L L^T = R (the joint covariance).  The test
+// reconstructs L and asserts L * whitened == raw to 1e-12, the numerical contract
+// addStation relies on.
 TEST(NetworkCouplingTest, WhitenRowsAreExactInverseCholeskyOfJointCovariance) {
-    // Two locals (r0, r1) coupled to two present shared cols and sharing ONE
-    // departed shared column W (index 0 in the M_w block) — the off-diagonal
-    // correlation the scalar path drops.
+    // Two locals (r0, r1) coupled to two present shared columns and sharing one
+    // departed shared column W (index 0 in the M_w block): the off-diagonal
+    // correlation that the scalar path drops.
     std::vector<CplRowRaw> rows(2);
     rows[0].local_col = 0;
     rows[0].shared = {{0, 0.7}};
@@ -96,9 +94,9 @@ TEST(NetworkCouplingTest, WhitenRowsAreExactInverseCholeskyOfJointCovariance) {
     EXPECT_LT((L * z  - z_raw ).cwiseAbs().maxCoeff(), 1e-12);
 }
 
-// The refloat re-whiten path (ApplicationNetwork.cpp:4338) passes a `skip` set of
-// local A_r columns to drop; NO gate arm exercises a coupling refloat.  The kept
-// rows must be exactly those whose local_col is not in skip.
+// The refloat re-whiten path (the joint-coupling refloat block in NetworkSolveGlue.cpp)
+// passes a `skip` set of local A_r columns to drop; no gate arm exercises a coupling
+// refloat.  The kept rows are exactly those whose local_col is not in skip.
 TEST(NetworkCouplingTest, WhitenSkipSetDropsRefloatedRows) {
     std::vector<CplRowRaw> rows(3);
     for (int k = 0; k < 3; ++k) {
@@ -120,11 +118,11 @@ TEST(NetworkCouplingTest, WhitenSkipSetDropsRefloatedRows) {
     EXPECT_DOUBLE_EQ(Hr(1, 1), 0.0);
 }
 
-// A non-SPD joint covariance (here forced with a negative var_eff — a degenerate
-// input production screens upstream, used only to reach the return path) must
-// fail the ridge retry and return false, so the caller falls back to the scalar
-// per-row marginalization.  This fallback counter has never been non-zero in any
-// captured run, so only a unit test reaches it.
+// A non-SPD joint covariance (here forced with a negative var_eff, a degenerate input
+// that production screens upstream, used only to reach the return path) fails the
+// ridge retry and returns false, so the caller falls back to the scalar per-row
+// marginalization.  No captured run has reached this fallback, so only a unit test
+// covers it.
 TEST(NetworkCouplingTest, WhitenNonSpdReturnsFalse) {
     std::vector<CplRowRaw> rows(1);
     rows[0].local_col = 0;
@@ -160,11 +158,11 @@ struct BuilderFixture {
     StationAssembly R;
     Eigen::Index clk_col{-1}, pb_col{-1}, sh_col{-1}, clk2_col{-1};
 
-    /// @param second_clock register a SECOND G-constellation clock (G02) before
-    ///        beginEpoch().  The Card-1f cases need a present same-constellation
+    /// @param second_clock register a second G-constellation clock (G02) before
+    ///        beginEpoch().  The card-1f cases need a present same-constellation
     ///        recipient for the truncated column's coefficient; the layout is frozen at
-    ///        beginEpoch(), so it cannot be added afterwards.  Default false keeps every
-    ///        pre-existing case's layout byte-for-byte.
+    ///        beginEpoch(), so it cannot be added afterwards.  The default (false)
+    ///        leaves the layout of every other case unchanged.
     explicit BuilderFixture(bool second_clock = false) {
         clk_col = est.registerClock("G01");
         if (second_clock) clk2_col = est.registerClock("G02");
@@ -177,9 +175,9 @@ struct BuilderFixture {
         R.y.resize(0);
     }
 
-    // `gauge` / `reinit` default to false so every pre-existing case exercises the Card
-    // 1f/1g code paths with the cards OFF — that is the OFF-identity proof, and it is
-    // why those cases are left byte-for-byte unmodified.
+    // `gauge` / `reinit` default to false, so every case that does not set them runs the
+    // card 1f/1g code paths with those cards off.  Those cases, left unmodified, are the
+    // proof that the cards change nothing when off.
     CouplingRowBuilder make(bool joint, bool tu, bool shmarg,
                             bool gauge = false, bool reinit = false) {
         return CouplingRowBuilder{est, shc, /*q_clock=*/1e-4, /*q_cb=*/1e-4, /*q_pb=*/1e-4,
@@ -189,7 +187,7 @@ struct BuilderFixture {
 
 }  // namespace
 
-// Scalar path: a coupling to a PRESENT shared column produces one PendCplRow with
+// Scalar path: a coupling to a present shared column produces one PendCplRow with
 // the shared term kept as an A_s coefficient and w = 1/var_eff.
 TEST(NetworkCouplingTest, BuildScalarPresentColumnMakesPendRow) {
     BuilderFixture f;
@@ -215,7 +213,7 @@ TEST(NetworkCouplingTest, BuildScalarPresentColumnMakesPendRow) {
     EXPECT_EQ(f.R.cpl_terms_departed, 0);
 }
 
-// A coupling to a shared parameter NOT registered this epoch is DEPARTED: on the
+// A coupling to a shared parameter not registered this epoch is departed: on the
 // scalar path it is marginalized into the row variance (sigma^2 += coeff^2 P_prev)
 // and counted as a departed term.
 TEST(NetworkCouplingTest, BuildScalarDepartedColumnMarginalizesIntoVariance) {
@@ -236,7 +234,7 @@ TEST(NetworkCouplingTest, BuildScalarDepartedColumnMarginalizesIntoVariance) {
     EXPECT_EQ(f.R.cpl_terms_present, 0);
 }
 
-// Card 1d border time update: a present column is kappa-shrunk (coeff * P/(P+q*dt))
+// Border time update (card 1d): a present column is kappa-shrunk (coeff * P/(P+q*dt))
 // and the row variance inflated; the shrink is counted.
 TEST(NetworkCouplingTest, BuildScalarTimeUpdateShrinksPresentColumn) {
     BuilderFixture f;
@@ -260,20 +258,20 @@ TEST(NetworkCouplingTest, BuildScalarTimeUpdateShrinksPresentColumn) {
     EXPECT_GT(cb.crows[0].shared[0].second, kap);          // restored above the raw kappa-shrink
 }
 
-// --- Card 1f: the TRUNCATED-row gauge defect and its repair -----------------
+// --- Truncated-row gauge defect and its repair (card 1f) ---------------------
 //
 // A harvested coupling row is gauge-invariant through Mᵀg_s = −g_r(c): its
 // per-(constellation,kind) coefficient sum is whatever the harvest regression made it,
-// and it must STAY there.  Deleting a departed column's coefficient moves that sum by
+// and it has to stay there.  Deleting a departed column's coefficient moves that sum by
 // −M_dep, which turns the row into a high-weight observation of the current datum gauge
-// pinned at the old realization (measured: null ev 1e-11 → 9.43e-3 in one epoch).
+// pinned at the old realization.
 //
-// These four cases pin the fix's exact contract: the family sum is HELD AT THE HARVEST
-// VALUE — not annihilated to zero (§13.2: a Galileo ambiguity row measures Σ_E = −1
-// exactly, so annihilation would itself inject a gauge observation).
+// These four cases pin the contract of the fix: the family sum is held at the harvest
+// value, not set to zero (§13.2: a Galileo ambiguity row measures Σ_E = −1 exactly, so
+// zeroing the sum would itself inject a gauge observation).
 
-// The defect itself, with the card OFF: the surviving coefficients sum to the harvest
-// sum MINUS the departed coefficient.  This is the pre-registered "before" measurement.
+// The defect itself, with the card off: the surviving coefficients sum to the harvest
+// sum minus the departed coefficient.  This is the pre-registered "before" measurement.
 TEST(NetworkCouplingTest, GaugeProjectOffLeavesTruncatedFamilySumShort) {
     BuilderFixture f(/*second_clock=*/true);   // a present recipient exists
     LocalCarry lc;
@@ -282,7 +280,7 @@ TEST(NetworkCouplingTest, GaugeProjectOffLeavesTruncatedFamilySumShort) {
     lc.coupling = {
         CoupledShared{SharedParamKind::Clock, "G01", "", 0, 0, 'C', 0, 0.5, 1.0, 0.2},
         CoupledShared{SharedParamKind::Clock, "G02", "", 0, 0, 'C', 0, 0.3, 2.0, 0.2},
-        CoupledShared{SharedParamKind::Clock, "G99", "", 0, 0, 'C', 0, 0.2, 3.0, 0.4},  // DEPARTED
+        CoupledShared{SharedParamKind::Clock, "G99", "", 0, 0, 'C', 0, 0.2, 3.0, 0.4},  // departed
     };
     auto cb = f.make(/*joint=*/false, /*tu=*/false, /*shmarg=*/false, /*gauge=*/false);
     cb.buildCplRow(0, 0.0, lc, /*var_eff=*/0.01, /*gap=*/30.0);
@@ -291,13 +289,13 @@ TEST(NetworkCouplingTest, GaugeProjectOffLeavesTruncatedFamilySumShort) {
     double sum = 0.0;
     for (const auto& sc : cb.crows[0].shared) sum += sc.second;
     EXPECT_NEAR(sum, 0.8, 1e-12);          // harvest sum 1.0 minus the departed 0.2
-    EXPECT_EQ(f.R.cpl_gauge_held, 0);      // card off ⇒ no repair, and no counter movement
+    EXPECT_EQ(f.R.cpl_gauge_held, 0);      // with the card off: no repair, no counter movement
     EXPECT_EQ(f.R.cpl_gauge_orphan, 0);
 }
 
-// Armed: the departed coefficient is redistributed over the PRESENT same-constellation
-// clocks, so the family sum returns to its harvest value — and the RHS follows the
-// corrected coefficients, which is what keeps the row's prediction at ŝ_prev unchanged.
+// Armed: the departed coefficient is redistributed over the present same-constellation
+// clocks, so the family sum returns to its harvest value.  The RHS follows the corrected
+// coefficients, which keeps the row's prediction at ŝ_prev unchanged.
 TEST(NetworkCouplingTest, GaugeProjectHoldsTruncatedFamilySumAtHarvestValue) {
     BuilderFixture f(/*second_clock=*/true);
     LocalCarry lc;
@@ -306,7 +304,7 @@ TEST(NetworkCouplingTest, GaugeProjectHoldsTruncatedFamilySumAtHarvestValue) {
     lc.coupling = {
         CoupledShared{SharedParamKind::Clock, "G01", "", 0, 0, 'C', 0, 0.5, 1.0, 0.2},
         CoupledShared{SharedParamKind::Clock, "G02", "", 0, 0, 'C', 0, 0.3, 2.0, 0.2},
-        CoupledShared{SharedParamKind::Clock, "G99", "", 0, 0, 'C', 0, 0.2, 3.0, 0.4},  // DEPARTED
+        CoupledShared{SharedParamKind::Clock, "G99", "", 0, 0, 'C', 0, 0.2, 3.0, 0.4},  // departed
     };
     auto cb = f.make(/*joint=*/false, /*tu=*/false, /*shmarg=*/false, /*gauge=*/true);
     cb.buildCplRow(0, 1.0, lc, /*var_eff=*/0.01, /*gap=*/30.0);
@@ -316,29 +314,29 @@ TEST(NetworkCouplingTest, GaugeProjectHoldsTruncatedFamilySumAtHarvestValue) {
     ASSERT_EQ(row.shared.size(), 2u);
     double sum = 0.0;
     for (const auto& sc : row.shared) sum += sc.second;
-    EXPECT_NEAR(sum, 1.0, 1e-12);          // HARVEST sum restored (0.5 + 0.3 + 0.2)
+    EXPECT_NEAR(sum, 1.0, 1e-12);          // harvest sum restored (0.5 + 0.3 + 0.2)
     // The 0.2 deficit splits evenly over the two present recipients.
     EXPECT_NEAR(row.shared[0].second, 0.6, 1e-12);
     EXPECT_NEAR(row.shared[1].second, 0.4, 1e-12);
     // y = (value_abs − x_lin) + Σ corrected_coeff · s_prev, with the departed term's
-    // own ŝ_prev correctly ABSENT (it was marginalized into the variance).
+    // own ŝ_prev absent (it was marginalized into the variance).
     EXPECT_NEAR(row.y, (5.0 - 1.0) + 0.6 * 1.0 + 0.4 * 2.0, 1e-12);
-    // sigma^2 is untouched by the projection — the departed marginalization still pays.
+    // The projection leaves sigma^2 unchanged; the departed marginalization still applies.
     EXPECT_NEAR(row.w, 1.0 / (0.01 + 0.2 * 0.2 * 0.4), 1e-12);
     EXPECT_EQ(f.R.cpl_gauge_held, 1);
     EXPECT_EQ(f.R.cpl_gauge_orphan, 0);
 }
 
 // No present same-constellation recipient: the deficit has nowhere to go.  The row is
-// left alone and COUNTED — invariant #4, the miss is telemetry, not a silent partial fix.
+// left as it is and counted (invariant #4: the miss is reported, not partially fixed).
 TEST(NetworkCouplingTest, GaugeProjectCountsOrphanWhenWholeFamilyDeparted) {
     BuilderFixture f;
     LocalCarry lc;
     lc.value_abs = 0.0;
     lc.last_seen_s = 0.0;
     lc.coupling = {
-        CoupledShared{SharedParamKind::Clock, "G98", "", 0, 0, 'C', 0, 0.4, 1.0, 0.1},  // DEPARTED
-        CoupledShared{SharedParamKind::Clock, "G99", "", 0, 0, 'C', 0, 0.2, 1.0, 0.1},  // DEPARTED
+        CoupledShared{SharedParamKind::Clock, "G98", "", 0, 0, 'C', 0, 0.4, 1.0, 0.1},  // departed
+        CoupledShared{SharedParamKind::Clock, "G99", "", 0, 0, 'C', 0, 0.2, 1.0, 0.1},  // departed
     };
     auto cb = f.make(false, false, false, /*gauge=*/true);
     cb.buildCplRow(0, 0.0, lc, /*var_eff=*/0.01, /*gap=*/30.0);
@@ -349,7 +347,7 @@ TEST(NetworkCouplingTest, GaugeProjectCountsOrphanWhenWholeFamilyDeparted) {
     EXPECT_EQ(f.R.cpl_gauge_orphan, 1);
 }
 
-// The card is a strict generalization of Card 1d: with nothing truncated, the armed row
+// The card is a strict generalization of card 1d: with nothing truncated, the armed row
 // is bit-identical to the unarmed one (the deficit map is seeded with nothing).
 TEST(NetworkCouplingTest, GaugeProjectIsIdenticalWhenNothingTruncated) {
     BuilderFixture f(/*second_clock=*/true);
@@ -378,22 +376,23 @@ TEST(NetworkCouplingTest, GaugeProjectIsIdenticalWhenNothingTruncated) {
     EXPECT_EQ(g.R.cpl_gauge_held, 0);
 }
 
-// --- Card 1g: the reinit route no longer depends on the kappa knob ----------
+// --- Reinit route independent of the kappa knob (card 1g) --------------------
 //
-// A column RE-REALIZED since this row's harvest carries an unknown frame step in its
-// stashed ŝ_prev.  Before 1g this was honoured ONLY with carry_coupling_time_update on,
-// so on the plain Card-1 path the retired-frame value folded at FULL weight.
+// A column re-realized since this row's harvest carries an unknown frame step in its
+// stashed ŝ_prev.  With card 1g on, such a column takes the departed route whether or
+// not carry_coupling_time_update is on.  With card 1g and the time update both off, the
+// retired-frame value folds at full weight on the plain card-1 path (the legacy case).
 TEST(NetworkCouplingTest, ReinitSourcesRouteToDepartedWithTimeUpdateOff) {
     BuilderFixture f;
     // A (kind,sat,signal) mark, as the phase-anchor / eq34 re-reference feeds write it.
     f.tu_reinit_hist[{SharedParamKind::PhaseBias, "G01", "L1C"}] = 100.0;
     LocalCarry lc;
     lc.value_abs = 0.0;
-    lc.last_seen_s = 50.0;            // harvested BEFORE the re-realization at t=100
+    lc.last_seen_s = 50.0;            // harvested before the re-realization at t=100
     lc.coupling = { CoupledShared{SharedParamKind::PhaseBias, "G01", "L1C", 0, 0, 'C', 0,
                                   /*coeff=*/0.7, /*s_prev=*/9.0, /*p_prev=*/0.25} };
 
-    // kappa OFF, Card 1g OFF: the stale column folds as a full-weight PRESENT term.
+    // kappa off, card 1g off: the stale column folds as a full-weight present term.
     auto legacy = f.make(/*joint=*/false, /*tu=*/false, /*shmarg=*/false,
                          /*gauge=*/false, /*reinit=*/false);
     legacy.buildCplRow(0, 0.0, lc, 0.01, 30.0);
@@ -401,7 +400,7 @@ TEST(NetworkCouplingTest, ReinitSourcesRouteToDepartedWithTimeUpdateOff) {
     EXPECT_EQ(legacy.crows[0].shared.size(), 1u);
     EXPECT_EQ(f.R.cpl_terms_present, 1);
 
-    // kappa still OFF, Card 1g ON: it takes the departed route (kappa = 0).
+    // kappa still off, card 1g on: it takes the departed route (kappa = 0).
     BuilderFixture g;
     g.tu_reinit_hist[{SharedParamKind::PhaseBias, "G01", "L1C"}] = 100.0;
     auto fixed = g.make(false, /*tu=*/false, false, /*gauge=*/false, /*reinit=*/true);
@@ -412,9 +411,8 @@ TEST(NetworkCouplingTest, ReinitSourcesRouteToDepartedWithTimeUpdateOff) {
     EXPECT_NEAR(fixed.crows[0].w, 1.0 / (0.01 + 0.7 * 0.7 * 0.25), 1e-12);
 }
 
-// The sat-wide WILDCARD (empty signal) is what the clock-QC feeds write, and it must keep
-// matching every signal of that satellite — otherwise widening the key would silently
-// stop covering the legacy feed.
+// The clock-QC feeds write the satellite-wide wildcard (empty signal), which matches
+// every signal of that satellite, so the widened key still covers the legacy feed.
 TEST(NetworkCouplingTest, ReinitSatWideWildcardMatchesAnySignal) {
     BuilderFixture f;
     f.tu_reinit_hist[{SharedParamKind::PhaseBias, "G01", std::string{}}] = 100.0;
@@ -430,7 +428,7 @@ TEST(NetworkCouplingTest, ReinitSatWideWildcardMatchesAnySignal) {
     EXPECT_EQ(f.R.cpl_terms_departed, 1);
 }
 
-// Joint path: the same projection contract, on the Card-1b branch.
+// Joint path: the same projection contract, on the card-1b branch.
 TEST(NetworkCouplingTest, GaugeProjectHoldsFamilySumOnJointPath) {
     BuilderFixture f(/*second_clock=*/true);
     LocalCarry lc;
@@ -473,7 +471,7 @@ TEST(NetworkCouplingTest, BuildJointPresentColumnMakesRawRow) {
     EXPECT_EQ(f.R.cpl_terms_present, 1);
 }
 
-// Card 1d-SH marginalize: with carry_coupling_sh_marginalize a VtecSh coupling is
+// SH marginalize (card 1d-SH): with carry_coupling_sh_marginalize a VtecSh coupling is
 // forced onto the departed (joint M_w) route even though its column is present.
 TEST(NetworkCouplingTest, BuildJointShMarginalizeRoutesVtecToDeparted) {
     BuilderFixture f;   // SH column (1,0,'C') registered present in the fixture
@@ -487,7 +485,7 @@ TEST(NetworkCouplingTest, BuildJointShMarginalizeRoutesVtecToDeparted) {
     cb.buildCplRow(/*col=*/0, /*x_lin_val=*/0.0, lc, /*var_eff=*/0.02, /*gap=*/30.0);
 
     ASSERT_EQ(cb.craw.size(), 1u);
-    EXPECT_TRUE(cb.craw[0].shared.empty());                // SH term NOT kept present
+    EXPECT_TRUE(cb.craw[0].shared.empty());                // SH term not kept present
     ASSERT_EQ(cb.craw[0].departed.size(), 1u);             // routed to the joint M_w block
     EXPECT_EQ(f.R.cpl_terms_departed, 1);
 }
@@ -539,8 +537,8 @@ TEST(NetworkCouplingTest, AppendJointWhitensAndRetainsIngredients) {
 
 // --- rebaseCouplingPhaseBiasSprev: the eq34 D4 §14 re-base ------------------
 // CoupledShared::s_prev and CarryPrior::value are the same number for the same
-// identity, so the D4 v2-shift that applies `cp.value += s` must apply the
-// identical `+s` to every matching coupling term — and to NOTHING else.
+// identity, so the D4 v2-shift that applies `cp.value += s` applies the same `+s` to
+// every matching coupling term and to nothing else.
 
 // Selectivity: only the PhaseBias entry whose (sat, signal) is in shift_sat
 // moves, by exactly +s, and only s_prev moves (coeff / p_prev untouched).
@@ -592,24 +590,24 @@ TEST(NetworkCouplingTest, Eq34RebaseSkipsZeroAndNonFiniteShifts) {
     EXPECT_DOUBLE_EQ(cpl[2].s_prev, 1.0);    // second call touched nothing
 }
 
-// --- F1 (network.phase_leveling_los_scale): the reachable half of the inject ---
+// --- LOS-scaled leveling inject (network.phase_leveling_los_scale, F1): reachable half
 //
-// F1's B_eff grouping — the PlPend pre-pass and the per-satellite `beff` map — is
+// The B_eff grouping of F1 (the PlPend pre-pass and the per-satellite `beff` map) is
 // inline in ApplicationNetworkAssembly.cpp (the leveling inject inside the PASS-B
-// produce loop) and is NOT reachable from a unit seam; its ON-path proof is the
+// produce loop) and is not reachable from a unit seam.  Its on-path evidence is the
 // run-end 'Network (leveling LOS-scale F1)' counter line (invariant #4) and its
-// OFF-path proof is the products.txt byte-identity twin.  What IS reachable is
-// the row build F1 hands the scaled variance to: pl_emit_row → buildCplRow(col,
-// x_lin, lc, var_eff × B_eff, gap) under carry_coupling.  This pins the arithmetic
-// at that boundary for one (station, satellite) LOS carrying three bands:
-//   OFF — w = 1/var_eff, EXACTLY the legacy expression (bitwise, EXPECT_EQ);
-//   ON  — F1 passes var_eff × 3, so each band's w = 1/(3·var) and the three rows
-//         sum to one third of the OFF precision (ONE unit of iono-direction
-//         precision instead of three); y (the RHS) and the border coefficients
-//         are untouched — the scale moves weight only.
-// The scale is applied to the LOCAL conditional variance BEFORE the builder adds a
-// departed border term's coeff²·P_prev, so a departed row reads 1/(3·var + c²P),
-// not 1/(3·(var + c²P)) — the ordering F1's pre-tail placement implies.
+// off-path evidence is the products.txt byte-identity twin.  The reachable part is the
+// row build that receives the scaled variance: pl_emit_row → buildCplRow(col, x_lin,
+// lc, var_eff × B_eff, gap) under carry_coupling.  This test pins the arithmetic at
+// that boundary for one (station, satellite) LOS carrying three bands:
+//   off: w = 1/var_eff, exactly the legacy expression (bitwise, EXPECT_EQ);
+//   on:  F1 passes var_eff × 3, so each band's w = 1/(3·var) and the three rows sum
+//        to one third of the off precision (one unit of iono-direction precision
+//        instead of three); y (the RHS) and the border coefficients are unchanged,
+//        so the scale moves weight only.
+// The scale applies to the local conditional variance before the builder adds a
+// departed border term's coeff²·P_prev, so a departed row reads 1/(3·var + c²P), not
+// 1/(3·(var + c²P)); this is the ordering implied by F1's pre-tail placement.
 TEST(NetworkCouplingTest, LosScaledVarianceWeighsBandsAtOneThirdAndOffIsLegacyExact) {
     const double var[3]  = {0.04, 0.03, 0.05};   // per-band conditional variances (m²)
     const double xlin[3] = {0.5, -0.25, 1.0};
@@ -634,7 +632,7 @@ TEST(NetworkCouplingTest, LosScaledVarianceWeighsBandsAtOneThirdAndOffIsLegacyEx
     for (int k = 0; k < 3; ++k) {
         const PendCplRow& ro = off.crows[static_cast<size_t>(k)];
         const PendCplRow& rn = on.crows[static_cast<size_t>(k)];
-        EXPECT_EQ(ro.w, 1.0 / var[k]);            // OFF: the legacy expression, bitwise
+        EXPECT_EQ(ro.w, 1.0 / var[k]);            // off: the legacy expression, bitwise
         EXPECT_EQ(rn.w, 1.0 / (var[k] * static_cast<double>(B)));
         EXPECT_DOUBLE_EQ(rn.w * B, ro.w);         // each band carries one third
         EXPECT_DOUBLE_EQ(rn.y, ro.y);             // RHS untouched
@@ -650,8 +648,8 @@ TEST(NetworkCouplingTest, LosScaledVarianceWeighsBandsAtOneThirdAndOffIsLegacyEx
     EXPECT_EQ(off_f.R.cpl_terms_present, 3);
     EXPECT_EQ(on_f.R.cpl_terms_present, 3);
 
-    // Departed border column (G99 not registered): the marginal inflation is added
-    // by the builder AFTER F1's pre-tail scale of the local variance.
+    // Departed border column (G99 not registered): the builder adds the marginal
+    // inflation after F1's pre-tail scale of the local variance.
     BuilderFixture dep_f;
     auto dep = dep_f.make(/*joint=*/false, /*tu=*/false, /*shmarg=*/false);
     LocalCarry ld;
@@ -666,15 +664,15 @@ TEST(NetworkCouplingTest, LosScaledVarianceWeighsBandsAtOneThirdAndOffIsLegacyEx
     EXPECT_EQ(dep_f.R.cpl_terms_departed, 1);
 }
 
-// --- READMIT re-coupling edge (network.readmit_coupling_marg_ep) -------------------
+// --- Re-admission re-coupling edge (network.readmit_coupling_marg_ep) --------------
 //
-// A satellite inside its post-re-admission window takes the DEPARTED route even
-// though its column is PRESENT and bound: the row drops the coefficient and adds
+// A satellite inside its post-re-admission window takes the departed route even
+// though its column is present and bound: the row drops the coefficient and adds
 // M²·P_prev to σ² (the q=∞ marginalization), so no carried row conditions on a
-// column whose realization is still settling from its cold re-registration.
+// column whose realization is still settling after its cold re-registration.
 // Outside the window (expired, another satellite, null map) the row is the legacy
 // present-term row bit-for-bit, and an SH column (no satellite) is never diverted.
-// The joint (Card 1b) path routes the same term to an M_w departed column.
+// The joint path (card 1b) routes the same term to an M_w departed column.
 TEST(NetworkCouplingTest, ReadmitWindowDivertsThePresentColumnAndExpires) {
     LocalCarry lc;
     lc.value_abs = 2.0;
@@ -745,7 +743,7 @@ TEST(NetworkCouplingTest, ReadmitWindowDivertsThePresentColumnAndExpires) {
     EXPECT_EQ(sh.crows[0].shared.size(), 1u);
     EXPECT_EQ(sh_f.R.cpl_readmit_diverted, 0);
 
-    // Joint path (Card 1b): the diverted term becomes an M_w departed column.
+    // Joint path (card 1b): the diverted term becomes an M_w departed column.
     BuilderFixture jf;
     auto jb = jf.make(/*joint=*/true, false, false);
     jb.readmit_marg = &marg;

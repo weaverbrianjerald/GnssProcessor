@@ -1,9 +1,9 @@
 """Minimal, dependency-free PNG *encoder* (stdlib ``zlib`` + ``struct`` only).
 
 The plotly backend embeds a georeferenced :class:`~gnssviz.figures.RgbImage` as a
-base64 ``data:`` URI (so the interactive report stays fully offline).  When the
-image does not already carry pre-compressed bytes, it is encoded here — without
-pulling in Pillow or matplotlib on the render path.  Encoding an already-8-bit
+base64 ``data:`` URI (so the interactive report stays fully offline). When the
+image does not already carry pre-compressed bytes, it is encoded here, without
+pulling in Pillow or matplotlib on the render path. Encoding an already-8-bit
 RGB(A) array to PNG is lossless.
 """
 from __future__ import annotations

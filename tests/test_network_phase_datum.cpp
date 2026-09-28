@@ -1,18 +1,19 @@
 /**
  * @file test_network_phase_datum.cpp
  * @brief Unit tests for the phase-bias↔ambiguity datum maintenance seam
- *        (filter/NetworkPhaseDatum.hpp) — decomposition INC-8.
+ *        (filter/NetworkPhaseDatum.hpp), decomposition INC-8.
  *
- * Covers healNearNullPhaseBias, the prioritized-datum spectrum-based
- * drop-and-heal relocated VERBATIM out of the network run loop: a phase-bias
- * column left below the rank-gate cutoff (its only ambiguity anchor dropped,
- * or weak clock separation) is soft-anchored toward 0 at σ = 1 m so one weak
- * column cannot withhold the whole epoch.  The heal MUST use the SAME cutoff
- * as the gate it protects (NetworkEstimator::kNullSpaceTol), which the
+ * Covers healNearNullPhaseBias, the prioritized-datum spectrum-based drop and
+ * soft anchor relocated unchanged out of the network run loop: a phase-bias
+ * column left below the rank-gate cutoff (its only ambiguity anchor dropped, or
+ * weak clock separation) is soft-anchored toward 0 at σ = 1 m, so one weak
+ * column does not withhold the whole epoch.  The soft anchor uses the same
+ * cutoff as the gate it protects (NetworkEstimator::kNullSpaceTol), which the
  * throw-before / pass-after gate assertions here pin down.
  *
- * This file will ALSO host the INC-8b tests (prioritized anchor election +
- * incumbent carry) when that seam lands — keep the fixture below reusable.
+ * The INC-8b functions of the same seam (candidate census, ensemble datum,
+ * prioritized anchor election with incumbent carry) are not tested in this
+ * file; the fixture below is kept reusable for them.
  */
 
 #include <gtest/gtest.h>
@@ -36,12 +37,12 @@ namespace {
 //   code   P(G01)  = a_r − c                      (anchors CLK via the local clock)
 //   phase  Φ(G01)  = a_r − c + b1 + M1            (+ 1e10 pivot pin M1 = 0)
 //   phase  Φ(G02)  = a_r     + b2 + M2            (+ 1e10 pivot pin M2 = 0),
-//                                                  ONLY when anchor_second
+//                                                  only when anchor_second
 // The clock gauge (δc = δa_r common shift) is pinned by a folded tight
 // constraint row (the anchor-free datum realization), so the declared datum
-// dimension is 0 and the ONLY possible near-null direction is a phase-bias
-// column.  With anchor_second=false, PB(G02,L1) has no rows at all — the pure
-// "dropped anchor station" orphan the heal exists for.
+// dimension is 0 and the only possible near-null direction is a phase-bias
+// column.  With anchor_second=false, PB(G02,L1) has no rows at all: the
+// "dropped anchor station" orphan that the soft anchor handles.
 struct HealFixture {
     NetworkEstimator est;
     std::set<std::string> keys;   // this epoch's shared phase-bias key set
@@ -73,7 +74,7 @@ struct HealFixture {
         }
         est.addStation(A_s, A_r, w, y);
 
-        // Fold the clock gauge as a tight constraint row BEFORE the rank gate
+        // Fold the clock gauge as a tight constraint row before the rank gate
         // (declared dimension 0), like the sum-to-zero clock datum does.
         Eigen::MatrixXd H = Eigen::MatrixXd::Zero(1, est.numShared());
         H(0, c) = 1.0;
@@ -115,11 +116,11 @@ TEST(NetworkPhaseDatumTest, ReturnsZeroWhenNotPrioritizedOrEmpty) {
     EXPECT_TRUE(cap.empty());   // capture channel untouched in all three
 }
 
-// The orphan PB(G02,L1) column (its only anchor station "dropped") is a genuine
-// null direction: the full-rank gate throws before the heal, the heal
-// soft-anchors exactly that one column ({PhaseBias, G02, L1, 0, info 1.0} —
-// σ = 1 m — mirrored into cap_priors iff the within-epoch replay is armed), and
-// the SAME gate at the SAME cutoff passes afterwards.
+// The orphan PB(G02,L1) column (its only anchor station dropped) is a real null
+// direction: the full-rank gate throws before the call, the call soft-anchors
+// that one column ({PhaseBias, G02, L1, 0, info 1.0}, i.e. σ = 1 m, mirrored
+// into cap_priors iff the within-epoch replay is armed), and the same gate at
+// the same cutoff passes afterwards.
 TEST(NetworkPhaseDatumTest, HealsOrphanPhaseBiasColumn) {
     for (const bool armed : {true, false}) {
         HealFixture f;
@@ -143,12 +144,12 @@ TEST(NetworkPhaseDatumTest, HealsOrphanPhaseBiasColumn) {
             EXPECT_EQ(cap[0].sat, "G02");
             EXPECT_EQ(cap[0].signal, "L1");
             EXPECT_EQ(cap[0].value, 0.0);
-            EXPECT_EQ(cap[0].info, 1.0);     // σ = 1 m heal anchor
+            EXPECT_EQ(cap[0].info, 1.0);     // σ = 1 m soft anchor
         } else {
             EXPECT_TRUE(cap.empty());        // replay not armed: nothing mirrored
         }
 
-        // After: the residual gauge is resolved — the gate no longer throws.
+        // After: the residual gauge is resolved and the gate no longer throws.
         EXPECT_NO_THROW(sb.assertNullSpaceRank(f.est.reducedSharedNormals(), 0,
                                                NetworkEstimator::kNullSpaceTol))
             << "armed=" << armed;
@@ -156,8 +157,8 @@ TEST(NetworkPhaseDatumTest, HealsOrphanPhaseBiasColumn) {
 }
 
 // A fully pinned/informed system (both PB columns anchored by their pivot pins,
-// clock gauge folded) has no near-null direction: nothing is healed and no
-// prior is folded or captured.
+// clock gauge folded) has no near-null direction: no column is soft-anchored
+// and no prior is folded or captured.
 TEST(NetworkPhaseDatumTest, LeavesWellAnchoredColumnsAlone) {
     HealFixture f;
     f.build(/*anchor_second=*/true);

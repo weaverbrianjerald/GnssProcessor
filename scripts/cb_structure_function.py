@@ -1,46 +1,44 @@
-"""Card CB-Q -- floor-vs-walk split of the EMITTED satellite code-bias wire.
+"""Floor-vs-walk split of the emitted satellite code-bias wire (card CB-Q).
 
 The CB analogue of ``q3_clock_structure_function.py``.  For each
 (constellation, signal) the per-satellite emitted OSB series is differenced over
-a lag L, the per-epoch-pair COMMON MODE is removed over the satellites present
+a lag L, the per-epoch-pair common mode is removed over the satellites present
 at both endpoints, and the robust scale of what is left is the structure
-function SF(L).  White estimation noise is FLAT in L; a random walk of rate q
-grows as sqrt(q*L); a DRIFT grows as L.  Which of the three the wire actually
-shows is the measurement -- and on DOY-129 it is the third, which is why this
+function SF(L).  White estimation noise is flat in L; a random walk of rate q
+grows as sqrt(q*L); a drift grows as L.  Which of the three the wire actually
+shows is the measurement, and on DOY-129 it is the third, which is why this
 script reports the doubling ratio rather than assuming a walk.
 
 ## Why the common-mode removal is mandatory (standing invariant #5)
 
-The satellite code biases carry a per-(constellation, SIGNAL) sum-to-zero datum
-realized over the satellites PRESENT THIS EPOCH (see
+The satellite code biases carry a per-(constellation, signal) sum-to-zero datum
+realized over the satellites present this epoch (see
 project_network_code_bias_scope).  When the tracked set changes, the realized
-mean moves and EVERY satellite of that group steps by the same amount -- a
+mean moves and every satellite of that group steps by the same amount: a
 gauge re-realization, not motion.  Differencing only over the pair-common set
 and removing that set's own centre makes SF(L) invariant to it by construction,
 which is the same discipline Card Q3 applied to the clock.
 
-## The IF-pin NULL CONTROL (--pin)
+## The IF-pin null control (--pin)
 
 Each satellite's OSBs carry one deterministic pin: the ionosphere-free
 combination of the selected pin pair is tied to that satellite's clock
-(``NetworkSbasis::selectIfPinPair`` -- lowest band digit, then lowest signal
-name, then the first distinct frequency).  That direction is fixed BY
-CONSTRUCTION, so its structure function must read ~0.  It is the instrument's
-own null test: a parser bug, a bad gauge removal or an epoch-key mismatch would
-show up there first.  Measured on runs/agu63: SF_IF(C1C,C2W) = 0.003 cm at
-30 s against 0.642 cm for the raw signals -- the pipeline reads a pinned
-direction as pinned to four digits.
+(``NetworkSbasis::selectIfPinPair``: lowest band digit, then lowest signal
+name, then the first distinct frequency).  That direction is fixed by
+construction, so its structure function must read close to zero.  It is the
+instrument's own null test: a parser bug, a bad gauge removal or an epoch-key
+mismatch would show up there first.
 
-## What this measures, and what it does NOT
+## What this measures, and what it does not
 
-The emitted series is the FILTERED state, not an independent measurement of the
-bias.  A stiff carry suppresses its own output, so a q fitted here is a LOWER
-BOUND on the rate the data are pushing -- read it as "the wire already moves at
+The emitted series is the filtered state, not an independent measurement of the
+bias.  A stiff carry suppresses its own output, so a q fitted here is a lower
+bound on the rate the data are pushing: read it as "the wire already moves at
 least this fast", never as "the truth moves only this fast".  Card Q3 avoided
 that circularity with the phase-derived TDCP shadow; the code side has no such
 independent instrument, so the bound is stated rather than hidden.  The
 companion upper-side estimate comes from the prior-residual census (``cb``
-family variance factor) -- see docs/SPEC_cb_carry_physical_q.md.
+family variance factor); see docs/SPEC_cb_carry_physical_q.md.
 
 Usage:
   python scripts/cb_structure_function.py <run_dir_or_products.txt> [...]
@@ -59,7 +57,7 @@ import sys
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-# Carrier frequencies (Hz) by constellation + RINEX band digit — enough for the
+# Carrier frequencies (Hz) by constellation + RINEX band digit, enough for the
 # IF combination of any pin pair this producer can select.
 FREQ = {
     "G": {"1": 1575.42e6, "2": 1227.60e6, "5": 1176.45e6},
@@ -73,7 +71,7 @@ def load(path):
     """products.txt -> (path, series, disc, cbpin)
 
     series[(const, signal)][sat][tow] = code_bias_m
-    disc[sat] = sorted tows at which a discontinuity was SIGNALLED (per-record
+    disc[sat] = sorted tows at which a discontinuity was signalled (per-record
                 ``code_disc`` bump or an R retro-mark).
     """
     if os.path.isdir(path):
@@ -124,10 +122,10 @@ def load(path):
 def pin_pair(const, signals):
     """Reproduce NetworkSbasis::selectIfPinPair on the signals actually emitted.
 
-    Strict total order: band digit, THEN full signal name.  First = lowest;
-    second = the first with a DIFFERENT frequency.  (The non-stable-sort bug
+    Strict total order: band digit, then full signal name.  First is lowest;
+    second is the first with a different frequency.  The non-stable-sort bug
     that made this order-dependent is documented in
-    project_network_code_bias_scope.)
+    project_network_code_bias_scope.
     """
     f = FREQ.get(const, {})
     ordered = sorted(signals, key=lambda s: (s[1], s))
@@ -166,7 +164,7 @@ def sf_at_lag(groups, disc, L, min_sats, center):
                 continue
             c = statistics.median(row) if center == "median" else sum(row) / n
             # Removing the group's own centre costs one degree of freedom; undo
-            # that shrinkage so SF estimates the PER-SATELLITE dispersion.
+            # that shrinkage so SF estimates the per-satellite dispersion.
             g = math.sqrt(n / (n - 1.0))
             d.extend(abs((v - c) * g) for v in row)
     if not d:
@@ -186,7 +184,7 @@ def report(groups, disc, a, title, note=""):
             prev = None
             continue
         res[L] = sf
-        # The DIAGNOSTIC column: 1.0 = white floor, 1.41 = random walk, 2.0 = drift.
+        # The diagnostic column: 1.0 = white floor, 1.41 = random walk, 2.0 = drift.
         rat = ""
         if prev and prev[1] > 0:
             rat = f"{(sf / prev[1]) ** (1.0 / math.log2(L / prev[0])):.2f}"

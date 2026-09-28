@@ -18,10 +18,10 @@ and reproduces the MATLAB diagnostic suite:
          trend-immune statistic, emitted only when the June-2026 detection-
          reference columns (``local_ref_cycles`` + ``detect_mode``) are present.
 
-     The z-score, threshold-ratio and raw-MW grids are gated OFF by default in
-     the MATLAB (``showZScorePlot`` / ``showThresholdRatioPlot`` /
-     ``showRawMwPlot`` all start ``false``) and so are not built here either;
-     the keyword flags below mirror those switches for parity.
+     The z-score, threshold-ratio and raw-MW grids are off by default in the
+     MATLAB (``showZScorePlot`` / ``showThresholdRatioPlot`` /
+     ``showRawMwPlot`` all start ``false``) and here; the ``show_*_plot``
+     keyword flags mirror those switches and build the grids when set.
 
   2. **Slip-example figures** (``showSlipExampleFigs=true``) -- a two-panel zoom
      on one *detected* and one *repair-eligible* slip event, built from the
@@ -60,7 +60,7 @@ Fidelity notes
 * Colours are by numeric PRN via :func:`color_by_prn`, mirroring the MATLAB
   ``distinguishable_colors`` indexed by ``str2double(sat(2:3))``.
 * Gap-breaks are inserted where ``dt > gapFactor * median(dt)`` per series
-  (:func:`_insert_gap_breaks`), exactly as ``insertGapBreaks``.
+  (:func:`_insert_gap_breaks`), as in ``insertGapBreaks``.
 """
 
 from __future__ import annotations
@@ -729,8 +729,8 @@ def build_mwwl_trace(
     Keyword arguments mirror the MATLAB top-of-script switches: ``plot_style``
     ('lines' | 'scatter'), ``gap_factor`` (NaN-break threshold), the
     ``show_*_plot`` content toggles (z-score / threshold-ratio / raw-MW grids,
-    all OFF by default like the MATLAB), ``show_slip_example_figs`` /
-    ``show_gap_bridge_figs`` (ON), ``max_gap_bridge_figs``, ``show_legend``, and
+    all off by default as in the MATLAB), ``show_slip_example_figs`` /
+    ``show_gap_bridge_figs`` (on), ``max_gap_bridge_figs``, ``show_legend``, and
     ``hide_slip_epochs`` (drop detector-flagged rows from the grid figures /
     summary).
     """

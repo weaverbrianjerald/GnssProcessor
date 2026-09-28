@@ -38,7 +38,7 @@ def test_robust_std_matches_standalone_semantics():
     vals = [0.01, -0.02, 0.03, -0.40]          # n even -> upper of the two middles
     s = sorted(abs(v) for v in vals)           # [0.01,0.02,0.03,0.40]
     assert robust_std(vals) == pytest.approx(1.4826 * s[len(s) // 2])  # 0.03
-    # np.median would average 0.02 & 0.03 -> a different number; ensure we differ.
+    # np.median would average 0.02 and 0.03, a different number; confirm the two differ.
     assert robust_std(vals) != pytest.approx(1.4826 * float(np.median(np.abs(vals))))
 
 

@@ -1,21 +1,21 @@
 """Wire-side step census for an emitted network product (products.txt).
 
-The disc record the product may not carry, computed after the fact: scans P (phase
-bias) and C (clock) records for value steps between consecutive emitted epochs and
-splits them into
+Computes discontinuities the product record may not carry: scans P (phase bias) and
+C (clock) records for value steps between consecutive emitted epochs and splits them
+into
 
-  MID-ARC steps  - key present at the immediately previous epoch (tow-30): a true
-                   unmarked discontinuity the consumer experiences as physics;
-  GAP RE-INITS   - key returning after absence: a legitimate re-datum the consumer
-                   re-initializes through.
+  mid-arc steps: key present at the immediately previous epoch (tow-30), a true
+                 unmarked discontinuity the consumer experiences as physics;
+  gap re-inits:  key returning after absence, a legitimate re-datum the consumer
+                 re-initializes through.
 
 Clock channel: per-epoch common-mode step (median per-sat delta) plus per-sat
-outliers about it.  Also greps the wire for the marks that SHOULD carry these events
+outliers about it. Also greps the wire for the marks expected to carry these events
 (phase_disc/clock_disc fields, R records, E.datum_changed) and reports the producer
-tie-out hint (compare the mid-arc count against the run console's "PB emission-
-continuity filter ... N reset (M ref-path slip, ...)" line - on the 12 h EXT-CB pair
-the census recovered 387/385 of the producer's 394 counted ref-path-slip steps,
-SPEC_level_information_budget SS25.2).
+tie-out hint: compare the mid-arc count against the run console's "PB emission-
+continuity filter ... N reset (M ref-path slip, ...)" line. On the 12 h EXT-CB pair
+the census recovered 387/385 of the producer's 394 counted ref-path-slip steps
+(SPEC_level_information_budget SS25.2).
 
 Usage: python scripts/product_step_census.py <run_dir_or_products.txt> [...]
        [--pb-step 0.10] [--clk-common 0.10] [--clk-dev 0.50]
@@ -74,14 +74,15 @@ def census(path, pb_step, clk_common, clk_dev):
                 clk_prev[sat] = v
 
     clk_common_ep, clk_outl_ep = {}, {}
-    # Card Q3 (docs/SPEC_clock_temporal_anchor.md) grades the DEV CHANNEL — the
+    # Card Q3 (docs/SPEC_clock_temporal_anchor.md) grades the dev channel: the
     # per-satellite common-removed step, which is the datum-invariant estimable
-    # content the anchor is supposed to quieten.  Keep the whole population (and
+    # content the anchor is meant to quieten.  Keep the whole population (and
     # its per-satellite split) rather than only the outlier epochs: the card's
-    # target is a distribution shift (median 6.23 cm -> toward 2), not a count,
-    # and the PER-SATELLITE spread is the evidence that the walk is estimation
-    # noise rather than clock physics (measured 7.93..10.87 cm across 32
-    # satellites of three clock technologies -- 1.37x, which no physical fleet is).
+    # target is a distribution shift (median 6.23 cm toward 2 cm), not a count,
+    # and the per-satellite spread is the evidence that the walk is estimation
+    # noise rather than clock physics (measured 7.93 to 10.87 cm across 32
+    # satellites of three clock technologies, a 1.37x spread that no physical
+    # fleet has).
     dev_all = []
     dev_by_sat = collections.defaultdict(list)
     for t, devs in clk_delta.items():
@@ -129,9 +130,9 @@ def main():
                     f"{s}/{sg} {d:+.2f}" for (s, sg), d in worst))
         print(f"  clock common-mode steps > {a.clk_common} m: {len(ckc)} epochs; "
               f"per-sat outliers > {a.clk_dev} m: {len(cko)} epochs")
-        # DEV CHANNEL (Card Q3's graded quantity).  Reported in cm because the
-        # target scale is centimetres: 6.23 cm median / robust sigma 9.23 cm on the
-        # reference 12 h internal lineage vs ~2 cm of physical change per 30 s.
+        # Dev channel (Card Q3's graded quantity).  Reported in cm because the
+        # target scale is centimetres: 6.23 cm median, robust sigma 9.23 cm on the
+        # reference 12 h internal lineage, vs about 2 cm of physical change per 30 s.
         if dev_all:
             a_ = sorted(abs(x) for x in dev_all)
             q = lambda f: a_[min(len(a_) - 1, int(f * (len(a_) - 1)))]
@@ -144,9 +145,9 @@ def main():
             print(f"    robust sigma_w {100 * sig:.2f} cm/step; per-sat sigma_w "
                   f"min {100 * per[0]:.2f} med {100 * per[len(per) // 2]:.2f} "
                   f"max {100 * per[-1]:.2f} cm")
-            # SS4.1 -- READ THIS PIVOT-AWARE.  Under emit_clock_frame_hold the pivot's
-            # raw clock is pinned to 0, so its EMITTED value is exactly -A_c and its
-            # dev row is the per-epoch DRAINED COMMON MODE: a gauge, not estimable
+            # SS4.1: read pivot-aware.  Under emit_clock_frame_hold the pivot's
+            # raw clock is pinned to 0, so its emitted value is exactly -A_c and its
+            # dev row is the per-epoch drained common mode: a gauge, not estimable
             # content, and the only such row in the census.  Quote the ex-pivot
             # ceiling for product quality; read the pivot row as the direct measure
             # of how much of the datum's work the carry is doing (Card Q3 SS2.1).

@@ -5,32 +5,33 @@
  * @brief Polymorphic contract shared by every navigation aiding source.
  *
  * An aiding source is anything that contributes navigation information beyond
- * GNSS pseudorange/phase/Doppler — IMU, ZUPT, NHC, wheel odometry, baro
- * height, vision.  Historically the IMU was welded into four sites
- * (StateManager, KalmanFilter::predictImu, a MeasurementModel branch, and
- * Application::run), so every new modality was four-file surgery.  This
- * interface lets sources COMPOSE: each contributes up to three things, each at
- * the seam where the IMU injects exactly that today.
+ * GNSS pseudorange, phase and Doppler: IMU, ZUPT, NHC, wheel odometry, baro
+ * height, vision.  Without this interface each modality needs its own branch at
+ * four sites (StateManager, KalmanFilter::predictImu, a MeasurementModel
+ * branch, and Application::run).  The interface lets sources compose: each
+ * contributes up to three things, each at the seam where the IMU injects that
+ * same thing.
  *
- *   - STATE: it NAMES (tier-1, pre-existing core offsets) or RESERVES (tier-2,
- *     variable cardinality) its block THROUGH StateManager — never a sibling
- *     owner (StateManager stays the single layout authority).  Error-state
- *     sources keep their NOMINAL state off-vector but in the designated single
- *     owner (the KF's C_b_e_), never inside the source.
- *   - PREDICT: it returns a Phi/Q sub-block (+ optional nominal write-back)
- *     that KalmanFilter splices over the StateManager baseline (assignment,
- *     not accumulation).
- *   - MEASUREMENT: it appends independent rows (H/z/R), OR re-parameterizes
- *     existing GNSS rows via extra Jacobian columns (the TC-IMU pattern).
+ *   - State: the source names (tier 1, pre-existing core offsets) or reserves
+ *     (tier 2, variable cardinality) its block through StateManager, never
+ *     through a sibling owner; StateManager remains the single layout authority.
+ *     Error-state sources keep their nominal state off-vector in the designated
+ *     single owner (the KF's C_b_e_), never inside the source.
+ *   - Predict: the source returns a Phi/Q sub-block (plus an optional nominal
+ *     write-back) that KalmanFilter writes over the StateManager baseline
+ *     (assignment, not accumulation).
+ *   - Measurement: the source appends independent rows (H/z/R), or
+ *     re-parameterizes existing GNSS rows through extra Jacobian columns (the
+ *     TC-IMU pattern).
  *
- * Mirrors @c ISlipDetector: one uniform @c (const GnssConfig&, LogManager&)
- * constructor (so a single registry Creator works), a narrow base contract,
- * and the rich source-specific API kept OFF the base and recovered via a
- * no-RTTI typed down-cast (@c asImu) rather than polluting the base — exactly
- * @c ISlipDetector::asMelbourneWubbena().  A source opts out of a phase by the
- * NATURAL empty/invalid return (empty @c MeasurementRows, @c PredictContribution
- * with @c valid==false), the same signals the no-source fast path keys on — so
- * simple sources (ZUPT, baro) implement almost nothing.
+ * The design mirrors @c ISlipDetector: one uniform
+ * @c (const GnssConfig&, LogManager&) constructor (so a single registry Creator
+ * works), a narrow base contract, and the source-specific API kept off the base
+ * and recovered through a typed down-cast without RTTI (@c asImu), as
+ * @c ISlipDetector::asMelbourneWubbena() does.  A source opts out of a phase
+ * through the natural empty or invalid return (empty @c MeasurementRows, a
+ * @c PredictContribution with @c valid==false), the same signals the no-source
+ * fast path keys on, so simple sources (ZUPT, baro) implement almost nothing.
  *
  * @see docs/aiding_source_abstraction_design.md
  */
@@ -45,9 +46,9 @@
 
 namespace GnssProcessor {
 
-class StateManager;     // forward decl — state reservation host (single layout authority)
-class MeasurementModel; // forward decl — measurement row sink host
-class ImuAidingSource;  // forward decl — typed down-cast target (the privileged source)
+class StateManager;     // forward decl: state reservation host (single layout authority)
+class MeasurementModel; // forward decl: measurement row sink host
+class ImuAidingSource;  // forward decl: typed down-cast target (the privileged source)
 
 /**
  * @class IAidingSource
@@ -70,35 +71,36 @@ public:
     /// @brief Human-readable name (for logs/traces).
     virtual std::string name() const = 0;
 
-    // ---- (a) STATE: establish a block THROUGH StateManager ---------------
+    // ---- (a) State: establish a block through StateManager ---------------
 
     /**
      * @brief Establish this source's state block via StateManager.
      *
-     * Tier-1 sources (the IMU core error states; ZUPT/NHC/baro own NO new
-     * states) DESCRIBE pre-existing core offsets — no allocation, no P-init
-     * (the core path already seeded P).  Tier-2 sources (variable cardinality,
-     * e.g. per-landmark vision) RESERVE+seed via StateManager.  The returned
-     * @c StateBlockSpec is a one-shot RECEIPT, not a durable index cache:
-     * per-epoch index resolution MUST go through a LIVE StateManager lookup,
-     * because @c removeStateAtIndex shifts block indices on every lower prune.
+     * Tier-1 sources (the IMU core error states; ZUPT, NHC and baro own no new
+     * states) describe pre-existing core offsets, with no allocation and no
+     * P initialisation (the core path has already seeded P).  Tier-2 sources
+     * (variable cardinality, e.g. per-landmark vision) reserve and seed through
+     * StateManager.  The returned @c StateBlockSpec is a one-time receipt, not a
+     * durable index cache: per-epoch index resolution has to use a live
+     * StateManager lookup, because @c removeStateAtIndex shifts block indices on
+     * every prune below the block.
      *
      * @param sm The single source of truth for state layout.
      * @return The block descriptor, or std::nullopt if the source owns none.
      */
     virtual std::optional<StateBlockSpec> reserveStates(StateManager& sm) = 0;
 
-    // ---- (b) PREDICT: contribute Phi/Q (+ optional mechanization) --------
+    // ---- (b) Predict: contribute Phi/Q (plus optional mechanization) -----
 
     /**
      * @brief Supply this source's predict-time contribution over the interval.
      *
-     * Returns the FULL-state indices it owns (resolved LIVE from StateManager),
-     * square Phi/Q sub-blocks over those indices (KalmanFilter ASSIGNS, never
-     * accumulates), and an optional nominal segment to write into x.  The
-     * default returns @c valid==false, which KalmanFilter treats as "skip me"
-     * — leaving the predict path byte-identical to GNSS-only for
-     * measurement-only sources.
+     * Returns the full-state indices the source owns (resolved live from
+     * StateManager), square Phi/Q sub-blocks over those indices (KalmanFilter
+     * assigns them and never accumulates), and an optional nominal segment to
+     * write into x.  The default returns @c valid==false, which KalmanFilter
+     * treats as "skip this source", so for measurement-only sources the predict
+     * path stays byte-identical to GNSS-only.
      *
      * @param ctx Epoch interval + current nominal state.
      * @return Contribution; @c valid==false => KalmanFilter keeps the baseline.
@@ -107,15 +109,15 @@ public:
         (void)ctx; return PredictContribution{};  // .valid defaults false
     }
 
-    // ---- (c) MEASUREMENT: contribute H/z/R rows --------------------------
+    // ---- (c) Measurement: contribute H/z/R rows --------------------------
 
     /**
      * @brief Build independent measurement rows for this epoch.
      *
-     * Each row's Jacobian is over the FULL state (cols == state_size) and
-     * writes ONLY into StateManager-owned columns.  Labels MUST be unique
-     * within the epoch so KF outlier/exclusion keys never collide.  Default
-     * empty — a predict-only source leaves the update untouched.
+     * Each row's Jacobian spans the full state (cols == state_size) and writes
+     * only into StateManager-owned columns.  Labels have to be unique within the
+     * epoch so that KF outlier and exclusion keys never collide.  The default is
+     * empty: a predict-only source leaves the update untouched.
      *
      * @param ctx Epoch context (current state, state_size, time).
      * @return Rows to append (empty if none this epoch).
@@ -125,13 +127,13 @@ public:
     }
 
     /**
-     * @brief Whether this source RE-PARAMETERIZES existing GNSS rows (adds
-     *        Jacobian COLUMNS) instead of appending its own rows.
+     * @brief Whether this source re-parameterizes existing GNSS rows (adds
+     *        Jacobian columns) instead of appending its own rows.
      *
-     * True for sources whose information is the SAME GNSS observable expressed
-     * through extra states (TC-IMU writes attitude/accel-bias partials into the
-     * Doppler row).  Such sources are routed through the host's column-write
-     * seam, NOT the row-append seam.  This is the one capability that cannot be
+     * True for sources whose information is the same GNSS observable expressed
+     * through extra states (TC-IMU writes attitude and accel-bias partials into
+     * the Doppler row).  Such sources are routed through the host's column-write
+     * seam, not the row-append seam.  This is the one capability that cannot be
      * inferred from an empty return.  Default false.
      */
     virtual bool reparameterizesGnssRows() const { return false; }
@@ -140,13 +142,13 @@ public:
      * @brief Whether this source applies error-state nominal feedback that
      *        forces the naive (single-pass) IEKF relinearization.
      *
-     * The tightly-coupled IMU folds attitude/bias error into off-vector nominal
-     * state (C_b_e_) and zeroes the error states after each update, which
-     * conflicts with re-deriving the posterior from the epoch prior — so a
-     * config with such a source must take the naive relinearization path.  The
-     * estimator queries this (via @c AidingSourceManager) instead of
-     * hard-coding @c tightlyCoupledImu().  Default false (a source doing no
-     * nominal feedback can use the proper prior-anchored IEKF).
+     * The tightly-coupled IMU folds attitude and bias error into off-vector
+     * nominal state (C_b_e_) and zeroes the error states after each update.
+     * That conflicts with re-deriving the posterior from the epoch prior, so a
+     * config with such a source takes the naive relinearization path.  The
+     * estimator queries this (via @c AidingSourceManager) instead of hard-coding
+     * @c tightlyCoupledImu().  Default false: a source without nominal feedback
+     * can use the prior-anchored IEKF.
      */
     virtual bool requiresNaiveRelinearization() const { return false; }
 
@@ -158,7 +160,7 @@ public:
      * Separates "ingest" from "propagate" so a source can buffer asynchronous
      * samples until the next GNSS epoch boundary defines the interval.  In
      * post-processing the whole timeline is loaded up front, so the base
-     * default no-ops.
+     * default does nothing.
      */
     virtual void ingestSample(const AidingSample& sample) { (void)sample; }
 
@@ -166,11 +168,11 @@ public:
     virtual bool hasData() const = 0;
 
     /**
-     * @brief Whether this source bridges full GNSS outages (INS dead-reckon).
+     * @brief Whether this source bridges full GNSS outages (INS dead-reckoning).
      *
-     * Lets gap-recovery policy (classifyDynamicsMode / handleGap) and the MW
+     * Lets the gap-recovery policy (classifyDynamicsMode / handleGap) and the MW
      * arc-reset tolerance query the abstraction instead of @c enableImu().
-     * Default false (a baro/ZUPT does not bridge a full GNSS outage).
+     * Default false (baro or ZUPT does not bridge a full GNSS outage).
      */
     virtual bool bridgesGaps() const { return false; }
 
@@ -188,10 +190,10 @@ public:
     /**
      * @brief Typed access to the IMU source when this instance is one.
      *
-     * Returns @c this for @c ImuAidingSource, nullptr otherwise.  Lets the
-     * owner recover the IMU's rich API (TC Jacobian inputs, attitude) from a
-     * registry-built handle without RTTI — exactly
-     * @c ISlipDetector::asMelbourneWubbena().  Keeps that rich API OFF the base.
+     * Returns @c this for @c ImuAidingSource, nullptr otherwise.  Lets the owner
+     * recover the IMU's source-specific API (TC Jacobian inputs, attitude) from a
+     * registry-built handle without RTTI, as
+     * @c ISlipDetector::asMelbourneWubbena() does, and keeps that API off the base.
      */
     virtual ImuAidingSource* asImu() { return nullptr; }
 };

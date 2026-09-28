@@ -3,8 +3,9 @@
 
     python scripts/chain_status.py [--runroot C:/GnssProcessor/runs/day129_cont]
 
-Reports, per segment: snapshot position, epochs emitted, warm-resume verdict,
-throughput, and the rms_clock_m stability series from network_trace.csv.
+Reports, per segment: snapshot position, epochs emitted, warm-resume age and
+carried-DD count, and the rms_clock_m stability series from network_trace.csv.
+Prints an overall day-position and status summary from the latest segment.
 """
 import argparse
 import csv
@@ -14,7 +15,7 @@ import re
 import statistics
 
 DAY_ANCHOR_TOW = 259200.0   # 2024-05-08 00:00:00 GPS
-END_TOW = 345570.0          # 23:59:30 — the day's last epoch
+END_TOW = 345570.0          # 23:59:30, the day's last epoch
 EPOCH_S = 30.0
 
 

@@ -1,33 +1,30 @@
 /**
  * @file test_rtcm_logger_lifetime.cpp
- * @brief Regression guard: the RTCM parse path must survive an empty spdlog
- *        registry.
+ * @brief Regression guard: the RTCM parse path survives an empty spdlog registry.
  *
  * The bare `spdlog::warn()` / `spdlog::info()` / `spdlog::trace()` free
  * functions expand to `spdlog::default_logger_raw()->warn(...)`, i.e. they
- * dereference a RAW BORROWED pointer into the registry's `default_logger_`
+ * dereference a raw borrowed pointer into the registry's `default_logger_`
  * slot.  `spdlog::drop_all()` empties that slot, so the next such call
  * dereferences nullptr and takes an access violation (0xC0000005) rather than
  * dropping the message.
  *
- * `LogManager` calls `drop_all()` from `shutdown()` (LogManager.cpp:201) and
- * from the re-initialize branch of `initialize()` (:115).  Neither is reachable
- * in a production run today — `shutdown()` has no callers, and no path
- * initializes one `LogManager` instance twice — so in the shipped binaries this
- * is latent.  It is live in THIS binary, where one test dropping the registry
- * poisons every later test in the process, which is exactly how it was found.
+ * Both `LogManager::shutdown()` and the re-initialize branch of
+ * `LogManager::initialize()` call `spdlog::drop_all()`.  Neither is reached in a
+ * production run at present (`shutdown()` has no callers, and no path initializes
+ * one `LogManager` instance twice), so in the shipped binaries the fault is latent.
+ * In the test binary it is live: one test that drops the registry affects every
+ * later test in the process.
  *
- * Historically this made four RtcmParserDecodeTest cases latent crashes: any
- * earlier test in the same process that dropped the registry turned
- * `IgsSsr4076UnsupportedImReturnsFalse`, `Rtcm1033ReceiverAntennaDescriptor`
- * and both `Rtcm1230GlonassBiases*` cases into SEH faults — those are exactly
- * the RtcmParserDecodeTest cases whose decode path reaches a log call.  The
- * parse path now resolves its logger per call through logging/SafeLogger.hpp,
- * which returns a shared_ptr and never returns null.
+ * The RtcmParserDecodeTest cases whose decode path reaches a log call
+ * (`IgsSsr4076UnsupportedImReturnsFalse`, `Rtcm1033ReceiverAntennaDescriptor` and
+ * both `Rtcm1230GlonassBiases*` cases) fault with an SEH exception under that
+ * condition if the parser uses the free functions.  The parse path therefore
+ * resolves its logger per call through logging/SafeLogger.hpp, which returns a
+ * shared_ptr and never returns null.
  *
  * Each test here drops the registry only for the duration of the case and
- * restores it afterwards, so the blast radius does not leak into the rest of
- * the binary.
+ * restores it afterwards, so the change does not leak into the rest of the binary.
  */
 
 #include <gtest/gtest.h>
@@ -51,7 +48,7 @@ using TestSupport::DroppedRegistry;
 using TestSupport::SinkCapture;
 
 // ============================================================================
-// Local helpers — MSB-first bit writer + frame wrapper.
+// Local helpers: MSB-first bit writer and frame wrapper.
 // ============================================================================
 
 class BitWriter {
@@ -122,7 +119,7 @@ std::vector<uint8_t> build1230Frame() {
 }
 
 /// IM = 99 is unrecognised, so the decoder rejects the frame and takes its
-/// trace-level "unsupported sub-type" branch — a log call on a failure path.
+/// trace-level "unsupported sub-type" branch, a log call on a failure path.
 std::vector<uint8_t> build4076UnsupportedImFrame() {
     BitWriter pw;
     pw.put(12, 4076);
@@ -136,7 +133,7 @@ std::vector<uint8_t> build4076UnsupportedImFrame() {
 // Tests
 // ============================================================================
 
-// 1033 logs once per parser at info — the first case that faulted.
+// 1033 logs once per parser at info.
 TEST(RtcmLoggerLifetimeTest, Decode1033SurvivesDroppedRegistry) {
     const auto frame = build1033Frame();
     DroppedRegistry guard;
@@ -158,9 +155,9 @@ TEST(RtcmLoggerLifetimeTest, Decode1230SurvivesDroppedRegistry) {
     EXPECT_EQ(parser.getGlonassBiases().front().reference_station_id, 77);
 }
 
-// The 4076 reject path logs at trace.  Level filtering happens INSIDE the
-// logger, so a trace call still dereferenced the null default logger before
-// any level check could discard it — this case faulted too.
+// The 4076 reject path logs at trace.  Level filtering happens inside the
+// logger, so a trace call through the free functions dereferences the null
+// default logger before any level check can discard it.
 TEST(RtcmLoggerLifetimeTest, Rejected4076SurvivesDroppedRegistry) {
     const auto frame = build4076UnsupportedImFrame();
     DroppedRegistry guard;
@@ -175,7 +172,7 @@ TEST(RtcmLoggerLifetimeTest, Rejected4076SurvivesDroppedRegistry) {
 // "not yet decoded" trace branch in parseFrame() itself.
 TEST(RtcmLoggerLifetimeTest, UndecodedTypeSurvivesDroppedRegistry) {
     BitWriter pw;
-    pw.put(12, 1013);                       // system parameters — not decoded here
+    pw.put(12, 1013);                       // system parameters, not decoded
     while (pw.bitCount() < 8 * 8) pw.put(8, 0);
     const auto frame = buildFrame(pw.bytes());
     DroppedRegistry guard;
@@ -185,8 +182,8 @@ TEST(RtcmLoggerLifetimeTest, UndecodedTypeSurvivesDroppedRegistry) {
     EXPECT_EQ(parser.lastMessageType(), 1013);
 }
 
-// The guard itself must leave the registry usable, or every later test in the
-// binary inherits the very defect this file guards against.
+// The guard itself leaves the registry usable; otherwise every later test in the
+// binary would run with the empty registry this file guards against.
 TEST(RtcmLoggerLifetimeTest, GuardRestoresDefaultLogger) {
     // Deliberately no assertion that a default exists on entry: this is a
     // round-trip check, and demanding a non-null default here would turn any

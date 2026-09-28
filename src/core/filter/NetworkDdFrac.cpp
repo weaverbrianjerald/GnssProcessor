@@ -1,7 +1,7 @@
 /**
  * @file NetworkDdFrac.cpp
- * @brief Implementation of @ref networkDdFrac — the SB_DDFRAC block relocated VERBATIM
- *        (dedent-4, zero substitution) out of Application::runNetwork at INC-11b.
+ * @brief Implementation of @ref networkDdFrac: the SB_DDFRAC block, relocated verbatim
+ *        (dedent-4, no substitution) out of Application::runNetwork (INC-11b).
  */
 
 #include "filter/NetworkDdFrac.hpp"
@@ -54,8 +54,8 @@ void networkDdFrac(
     auto& dd_frac_trace        = traces.dd_frac_trace;
     const bool phase_datum_prioritized = ctx.knobs.phase_datum_prioritized;
     auto& n_loop_epochs = ctx.counters.n_loop_epochs;
-    // Pure gauge-pin predicate (byte-copy of Application::networkIsGaugePinned_,
-    // INC-7 H1 — member-state-free, so reproduced here as a local for the seam).
+    // Pure gauge-pin predicate, a byte-copy of Application::networkIsGaugePinned_
+    // (INC-7 H1).  It reads no member state, so the seam holds it as a local.
     auto networkIsGaugePinned_ = [](const std::vector<NetStation>& stations,
                                     bool phase_datum_prioritized, std::size_t i,
                                     const std::string& sat, const std::string& signal) -> bool {
@@ -64,22 +64,21 @@ void networkDdFrac(
     };
 
 
-    // --- S1: the (cons, signal, sat) -> anchor STATION map -----------------------
-    // docs/SPEC_lane_spectrometer.md §3.3 anchor partition.  Emitted HERE because this
-    // seam already reconstructs the gauge-pin predicate and already walks every
-    // station's ambiguity key map, so the map is read off the election that ran rather
-    // than re-derived (a second derivation is a second thing that can disagree with
-    // the datum).  Deliberately OUTSIDE the DD-fractional gate below: that block is
-    // stride-decimated and stream-gated, while the anchor map is small (bounded by
-    // gauge freedoms = satellites x signals, NOT by station pairs) and the partition
-    // wants it on every processed epoch — the sticky tree re-elects often (47 tree
-    // swaps / 31 epochs measured at 50 stations) and the grader takes the per-arc
-    // MODE, which needs the full sequence.
+    // --- S1: the (cons, signal, sat) -> anchor station map -----------------------
+    // docs/SPEC_lane_spectrometer.md §3.3 anchor partition.  The map is emitted here
+    // because this seam already reconstructs the gauge-pin predicate and walks every
+    // station's ambiguity key map, so the map is read off the election that ran
+    // instead of being re-derived (a second derivation could disagree with the
+    // datum).  It sits outside the DD-fractional gate below on purpose: that block is
+    // stride-decimated and stream-gated, while the anchor map is small (bounded by the
+    // gauge freedoms, satellites x signals, not by station pairs) and the partition
+    // needs it on every processed epoch.  The sticky tree re-elects often, and the
+    // grader takes the per-arc mode, which needs the full sequence.
     //
-    // Note the complement: the DD-fractional emit SKIPS pinned ambiguities (see the
-    // networkIsGaugePinned_ continue below), so no satellite can appear both as a
-    // graded DD member and as its own anchor on the same signal — the two files are
-    // exactly the two halves of the gauge.
+    // The two outputs are complementary: the DD-fractional emit skips pinned
+    // ambiguities (the networkIsGaugePinned_ continue below), so no satellite appears
+    // both as a graded DD member and as its own anchor on the same signal.  The two
+    // files together cover the gauge, each ambiguity in one of them.
     if (traces.phase_anchor_trace.is_open()) {
         for (std::size_t i = 0; i < stations.size(); ++i) {
             if (est_index_of[i] < 0 || !stations[i].sm) continue;
@@ -97,21 +96,24 @@ void networkDdFrac(
                     << stations[i].name << '\n';
             }
         }
-        // Flushed per epoch: this stream exists to grade runs that may be killed
-        // mid-flight, and an unflushed tail is exactly the evidence that goes missing.
+        // Flushed every epoch: the stream grades runs that may be killed mid-flight,
+        // and an unflushed tail would lose the last epochs of that record.
         traces.phase_anchor_trace.flush();
     }
 
     // --- Cross-station DD fractional-residual (B5) ----------------------
     // For each present station, back-substitute its local block and read each
-    // ABSOLUTE float ambiguity (x_lin + x_r(col), m) per (sat,signal).  Within a
-    // (const,signal), difference each sat against a reference sat (between-sat SD),
-    // then difference that across station pairs → the between-station DD.  A DD near
-    // an integer #cycles is evidence the float biases support user AR.  P1-2: the
-    // fractional cycle (dd_cyc = dd_m/λ, frac_cyc = dd_cyc − round) is computed HERE
-    // so the CSV is a ready fractional histogram.  EXCLUDED from the pool: the pivot
-    // station (its ambiguities are pinned to zero — a degenerate DD) and GLONASS
-    // (FDMA: no common λ per signal, between-sat SD not integer).  Read-only; gated.
+    // absolute float ambiguity (x_lin + x_r(col), m) per (sat,signal).  Within a
+    // (const,signal), difference each sat against one reference sat (between-sat SD),
+    // then difference that across station pairs to form the between-station DD.  A DD
+    // near an integer number of cycles is evidence that the float biases support user
+    // AR.  The fractional cycle (dd_cyc = dd_m/λ, frac_cyc = dd_cyc − round) is
+    // computed here so the CSV is a ready fractional histogram (P1-2).  Excluded from
+    // the pool: pinned ambiguities (the whole pivot station under legacy gauge pinning,
+    // the anchored (sat,signal) cells under phase_datum_prioritized), since a pinned
+    // ambiguity gives a degenerate DD; and GLONASS (FDMA: no common λ per signal, the
+    // between-sat SD is not integer).  Read-only; runs only when the trace is open, on
+    // the configured epoch stride.
     if (dd_frac_trace.is_open()
         && ((n_loop_epochs - 1)
             % static_cast<size_t>(std::max(1, nc.trace_dd_fractional_epoch_stride)) == 0)) {  // T2e stride
@@ -163,13 +165,13 @@ void networkDdFrac(
             }
         }
         const auto t_dd_pool1 = std::chrono::steady_clock::now();
-        // --- T2a/T2b: collect the between-station DDs, (optionally) subsample, then
-        //     propagate the joint conditional covariance ONCE to attach a per-DD formal σ
+        // --- T2a/T2b: collect the between-station DDs, optionally subsample, then
+        //     propagate the joint conditional covariance once to attach a per-DD formal σ
         //     (cycles).  The DD variance is gᵀ Q g with g=[+1,−1,−1,+1] over the four undiff
         //     ambiguities (sta_a/sat, sta_a/ref, sta_b/sat, sta_b/ref); only the diagonal is
         //     needed, so no dense nd×nd differencing matrix is materialised.  dd_m / dd_cyc /
-        //     frac_cyc are computed EXACTLY as before (benchmark-identical); dd_sigma_cyc is
-        //     appended (−1 = covariance unavailable this epoch).
+        //     frac_cyc are computed as in the trace before T2a (benchmark-identical);
+        //     dd_sigma_cyc is appended (−1 = covariance unavailable this epoch).
         struct DdOut {
             std::string cons, signal, sat, ref;
             std::size_t sta_a_i, sta_b_i;
@@ -178,12 +180,13 @@ void networkDdFrac(
             int rq[4]{ -1, -1, -1, -1 };                  // request indices, filled post-subsample
         };
         std::vector<DdOut> dds;
-        // §6.12.5: advance the per-(cons,signal) reference AGE map before electing.  Age is
-        // consecutive TRACED epochs at >= 2 stations; a satellite absent this epoch is ERASED, so a
-        // returning satellite re-enters at age 1 and cannot inherit its pre-gap seniority — which is
-        // the whole point, since it is exactly a returned reference's newborn legs that re-referenced
-        // the trace and read as a network-wide episode.  Maintained unconditionally (both policies)
-        // so the `lowest` default reports its own switch rate; it touches no solve input.
+        // §6.12.5: advance the per-(cons,signal) reference age map before electing.  Age counts
+        // consecutive traced epochs at >= 2 stations; a satellite absent this epoch (or seen at
+        // fewer than 2 stations) is erased, so a returning satellite re-enters at age 1 and does not
+        // inherit its pre-gap seniority.  A returned reference's newborn legs re-reference the whole
+        // trace and read as a network-wide episode, which the `oldest` policy avoids.  The map is
+        // maintained under both policies (network.trace_dd_fractional_ref = lowest | oldest), so the
+        // `lowest` default reports its own switch rate; it touches no solve input.
         for (auto& [cs, satmap] : pool) {
             auto& age = ctx.carry.ddfrac_ref_age[cs];
             for (auto it = age.begin(); it != age.end();) {
@@ -195,14 +198,16 @@ void networkDdFrac(
                 if (stamap.size() >= 2 && age.find(sat) == age.end()) age[sat] = 1;
         }
         for (auto& [cs, satmap] : pool) {
-            std::string ref;   // reference sat = lexically-lowest sat present at ≥2 stations
+            std::string ref;   // `lowest`: the lexically lowest sat present at ≥2 stations
             for (const auto& [sat, stamap] : satmap)
                 if (stamap.size() >= 2) { ref = sat; break; }
             if (ref.empty()) continue;
             // `oldest`: longest continuous presence, ties -> lexically lowest.  `satmap` is a
-            // std::map so the scan is already in lexical order and a STRICT > keeps the first
-            // (lowest) satellite of a tied age — so `oldest` degenerates to `lowest` exactly when
-            // every candidate is the same age, which is what makes the age_win counter meaningful.
+            // std::map, so the scan runs in lexical order and the strict > keeps the first
+            // (lowest) satellite of a tied age.  `oldest` therefore elects the `lowest` choice
+            // whenever the lexically lowest candidate shares the maximum age (in particular
+            // when every candidate has the same age), so n_ddfrac_ref_age_win counts only the
+            // epochs where age changed the election.
             const std::string ref_lowest = ref;
             if (nc.trace_dd_fractional_ref == NetworkDdFracRef::Oldest) {
                 const auto& age = ctx.carry.ddfrac_ref_age[cs];
@@ -261,9 +266,9 @@ void networkDdFrac(
         }
         const auto t_dd_collect = std::chrono::steady_clock::now();
         const std::size_t n_all_dd = dds.size();
-        // T2b: deterministic seeded subsample keyed on (week,tow) — reproducible per epoch;
-        // 0 = unlimited (full-pair benchmark).  Bounds BOTH the emit and the covariance-
-        // request count (the dominant 305-station tracer cost).
+        // T2b: deterministic subsample seeded from (week,tow), reproducible per epoch;
+        // 0 = unlimited (full-pair benchmark).  Bounds both the emit and the covariance-
+        // request count (the dominant tracer cost at 305 stations).
         const int dd_max_pairs = nc.trace_dd_fractional_max_pairs;
         if (dd_max_pairs > 0 && dds.size() > static_cast<std::size_t>(dd_max_pairs)) {
             std::mt19937 rng(static_cast<unsigned>(se.time.week) * 604800u
@@ -288,11 +293,11 @@ void networkDdFrac(
         };
         for (auto& d : dds)
             for (int p = 0; p < 4; ++p) d.rq[p] = reqOf(d.amb[p]);
-        // Carry-aware readback (docs/SPEC_carry_aware_covariance.md §6).  OFF (default) is
-        // the pre-card expression, verbatim.  ON, this σ is the σ of the estimator that
-        // actually ran — which is what makes `med|frac|` conditioned on it a TEST rather
-        // than a restatement (a uniform fractional part is the EXPECTED reading whenever
-        // σ_DD ≳ 0.3 cyc, so the campaign's six-hour null needs a σ it can trust).
+        // Carry-aware readback (docs/SPEC_carry_aware_covariance.md §6).  Off (default), the
+        // expression is the one that predates the card, unchanged.  On, this σ is the σ of
+        // the estimator that ran, so `med|frac|` conditioned on it is a test and not a
+        // restatement: a uniform fractional part is the expected reading whenever
+        // σ_DD ≳ 0.3 cyc, and a null result needs a σ that reflects the carried state.
         const bool dd_carry_aware = ctx.knobs.carry_aware_covariance;
         Eigen::MatrixXd cov;
         if (!reqs.empty()) {
@@ -321,10 +326,10 @@ void networkDdFrac(
                 << fmt::format("{:.4f}", d.dd_cyc) << ','
                 << fmt::format("{:.4f}", d.frac_cyc) << ','
                 << fmt::format("{:.4f}", dd_sigma_cyc) << ','
-                // INC-0: the column says WHICH covariance produced the σ next to it.  The
-                // parent card's §11 is the lesson — a number published without its state
-                // is an instrument that lies, and this exact σ was read as meaningful for
-                // a whole campaign while it could not see 78 % of the carried state.
+                // The last column records which covariance produced the σ beside it
+                // (1 = carry-aware, 0 = default).  The default σ leaves the carried state
+                // out of the local block, so a σ is interpretable only with this flag
+                // (parent card §11; INC-0).
                 << (dd_carry_aware ? 1 : 0) << '\n';
         }
         const auto t_dd_emit = std::chrono::steady_clock::now();

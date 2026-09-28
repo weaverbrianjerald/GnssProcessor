@@ -1,45 +1,45 @@
 /**
  * @file NetworkAmbFloat.hpp
- * @brief RF-1 step 4 — the FLOORED BIRTH PRIOR and the BOUNDED DROP that replaces the
- *        leveling vehicle's four un-instrumented reset paths.
+ * @brief Float ambiguity vehicle: the floored birth prior and the bounded drop that
+ *        replace the leveling vehicle's reset paths (RF-1 step 4).
  *
- * Card: docs/refound/RF-1_float_ambiguities_design.md §3.3 / §3.4 / §7.2, pre-registered
- * in docs/refound/RF-1_steps12_read_2026-09-15.md.  Live only under
+ * Design: docs/refound/RF-1_float_ambiguities_design.md §3.3 / §3.4 / §7.2,
+ * pre-registered in docs/refound/RF-1_steps12_read_2026-09-15.md.  Active only under
  * @c network.ambiguity_vehicle = "float_kf".
  *
- * WHAT IS WRONG TODAY (design §1.5, measured in steps 1–2).  Four paths return a carried
- * ambiguity to a level re-determined from ONE epoch, and none of them restores a
- * birth-scale variance: the free-epoch latch and the gap cliff SKIP one inject and let
- * the harvest re-stash at a phase-stiff variance; the T4 / T3 refloats and the gap prune
- * DELETE the entry.  The field trace priced the middle one: a @c t4_attrib erase throws
- * away a prior at 1.5e-6 m² and the successor arc starts at 0.114 m² — 76 000× looser —
- * and takes 31 folds to earn it back, 120 times an hour.
+ * Leveling-vehicle behaviour replaced here (design §1.5).  Four paths return a carried
+ * ambiguity to a level re-determined from one epoch without restoring a birth-scale
+ * variance: the free-epoch latch and the gap cliff skip one inject and let the harvest
+ * re-stash the level at a phase-stiff variance; the T4 and T3 refloats delete the entry.
+ * The successor arc then starts orders of magnitude looser than the prior it replaced
+ * and needs many folds to recover (design §1.5 gives the field figures).
  *
- * THE REPLACEMENT, in one operator (§3.4).  A slip is a statement about CONFIDENCE, not
- * about IDENTITY, so a drop restores the birth prior and keeps everything else:
+ * The replacement is one operator (§3.4).  A slip reduces confidence in the level and
+ * does not change the arc's identity, so a drop restores the birth prior and keeps
+ * everything else:
  *
- *     lc.var       = var_birth = max(var_first, floor(elevation))
+ *     lc.var       = max(var_birth, var_first, floor(elevation))
  *     lc.coupling.clear();  lc.blk = nullptr;  lc.blk_idx = -1
- *     lc.relevel_s = now;   lc.dropped_ep = now_ep
- *     // value_abs, var_first, var_birth, birth_s, birth_ep, last_seen_s, n_folds KEPT
+ *     lc.relevel_s = now;   lc.dropped_ep = now_ep;  lc.drop_walk_ph = 1
+ *     // value_abs, var_first, var_birth, birth_s, birth_ep, last_seen_s, n_folds kept
  *
- * and the prior IS STILL FOLDED this epoch, at birth strength.  Three consequences the
- * card argues and this build must deliver (standing invariant #7):
- *  1. **the decoupling edge is BOUNDED** — today a free epoch removes ALL information
- *     about the column for one epoch, opening an unbounded direction that the shared
- *     parameters re-balance into (R10's 88 % of unsignalled satellite-clock steps sit on
- *     a T4 refloat of the same satellite).  A drop removes information down to a STATED
- *     level, so the response is proportional;
- *  2. **the re-coupling edge re-validates by construction** — the arc re-earns its
- *     variance as information accumulates, and @c network_amb_state.csv's @c fold_var
- *     trajectory can watch it happen;
- *  3. **@c value_abs survives** — the manager's decision of 2026-09-14, question 2.  It
- *     is the linearization point, an exact solve no-op, and keeping it is what the
- *     lane-preserving refloat needs later.
+ * The prior is still folded in the same epoch, at birth strength.  Consequences
+ * (standing invariant #7):
+ *  1. The decoupling edge is bounded.  A free epoch removes all information about the
+ *     column for one epoch, opening an unbounded direction that the shared parameters
+ *     re-balance into (card R10 ties unsignalled satellite-clock steps to T4 refloats of
+ *     the same satellite).  A drop removes information down to a stated level, so the
+ *     response is proportional.
+ *  2. The re-coupling edge re-validates by construction: the arc re-earns its variance
+ *     as information accumulates, visible in the @c fold_var trajectory of
+ *     @c network_amb_state.csv.
+ *  3. @c value_abs survives (design decision of 2026-09-14, question 2).  It is the
+ *     linearization point, so keeping it is an exact solve no-op, and the
+ *     lane-preserving refloat depends on it.
  *
- * WHAT STAYS AN ERASE.  The gap PRUNE past @c phase_leveling_max_gap_s and an explicit
- * re-admission beyond the readmit horizon — the one case that means "this is a different
- * arc" (§3.4).  Both remain events with both edges counted.
+ * Cases that remain an erase: the gap prune past @c phase_leveling_max_gap_s and an
+ * explicit re-admission beyond the readmit horizon, the one case that means "this is a
+ * different arc" (§3.4).  Both remain events with both edges counted.
  */
 #pragma once
 
@@ -61,61 +61,64 @@ namespace GnssProcessor {
     struct NetworkRunTraces;
     struct NetStation;
 
-    /// Cause tags for a drop — the @c event vocabulary of @c network_amb_state.csv and
-    /// the key of the run-end inventory.  One string constant per site so the reader and
-    /// the writer cannot drift.
+    /// Cause tags for a drop: the @c event vocabulary of @c network_amb_state.csv and
+    /// the key of the run-end inventory.  One constant per cause, shared by the writer
+    /// and the reader.
     namespace AmbDropCause {
         inline constexpr const char* kReLevelFree = "relevel_free";  ///< a detector's latched free-epoch set (the five NetworkSlipQc sites).
         inline constexpr const char* kStaleGap    = "stale_gap";     ///< the inject-site gap cliff (gap > phase_leveling_max_gap_s, arc still present).
-        inline constexpr const char* kT4Attrib    = "t4_attrib";     ///< RAIM prominence-attribution refloat (was an erase).
-        inline constexpr const char* kT3Consensus = "t3_consensus";  ///< RAIM per-satellite consensus refloat (was an erase).
+        inline constexpr const char* kT4Attrib    = "t4_attrib";     ///< RAIM prominence-attribution refloat (an erase on the leveling vehicle).
+        inline constexpr const char* kT3Consensus = "t3_consensus";  ///< RAIM per-satellite consensus refloat (an erase on the leveling vehicle).
     }
 
     /**
-     * @brief The BIRTH-PRIOR FLOOR at one line of sight (m²) — §3.3(b), elevation-mapped.
+     * @brief Birth-prior floor at one line of sight (m²); design §3.3(b), elevation-mapped.
      *
-     * The floor is a statement about what a CODE-determined level is worth, so it is
-     * mapped exactly as the code row weights are: @f$\sigma^2(e)=\sigma^2_\text{zen}/
+     * The floor states what a code-determined level is worth, so it is mapped the same
+     * way as the code row weights: @f$\sigma^2(e)=\sigma^2_\text{zen}/
      * \sin^{2p}(e)@f$ with @p elev_power the posture's @c filter.code_elevation_power.
-     * A flat zenith floor would be optimistic at exactly the low elevations that own the
-     * metre-plus tail (§24.13 finding 2: the 25.8 % of iono rows below the tie cutoff).
+     * A flat zenith floor would be optimistic at the low elevations that hold the
+     * metre-plus tail (§24.13 finding 2: 25.8 % of iono rows lie below the tie cutoff).
+     * The sine is clamped at sin(5°), so the floor is bounded for grazing elevations.
      *
-     * @param base_m2    @c network.amb_float_birth_var_m2 — the floor AT ZENITH (m²).
-     *                   0 disables the floor entirely (returns 0).
-     * @param elev_deg   LOS elevation (degrees).  A non-finite or non-positive value —
-     *                   the "elevation unavailable" case — returns the ZENITH value,
-     *                   which is the conservative direction (a smaller floor never
-     *                   invents confidence the arc has not earned).
+     * @param base_m2    @c network.amb_float_birth_var_m2, the floor at zenith (m²).
+     *                   A value <= 0 disables the floor (returns 0).
+     * @param elev_deg   LOS elevation (degrees).  A non-finite or non-positive value
+     *                   (elevation unavailable) returns the zenith value, the smallest
+     *                   the floor can be, so it never adds confidence the arc has not
+     *                   earned.
      * @param elev_power The σ-power of the code weights (@c getCodeElevationPower()).
      * @return The floor in m² at that elevation, clamped at the zenith value from below.
      */
     double ambFloatBirthFloor(double base_m2, double elev_deg, double elev_power);
 
     /**
-     * @brief Apply the DROP operator to one carried entry, in place (§3.4).
+     * @brief Apply the drop operator to one carried entry, in place (§3.4).
      *
      * @param lc        The entry.  @c value_abs, @c var_first, @c var_birth, both birth
      *                  stamps, @c last_seen_s and @c n_folds are untouched.
      * @param floor_m2  This LOS's birth floor from @ref ambFloatBirthFloor; the restored
-     *                  variance is @c max(var_birth, var_first, floor_m2) so a drop can
-     *                  only ever LOOSEN the prior, never tighten one.
-     * @param now_s     Continuous-GPS seconds — the new @c relevel_s (the age clock
-     *                  restarts, exactly as it does on a re-level today).
-     * @param now_ep    This epoch's @c n_loop_epochs — the new @c dropped_ep.
-     * @return True when the entry actually changed (its variance was tighter than the
-     *         birth prior).  False means the arc was already at or below birth strength,
-     *         which is an idempotent re-drop within one epoch and is counted separately.
+     *                  variance is @c max(var_birth, var_first, floor_m2), so a drop can
+     *                  only loosen the prior, never tighten it.
+     * @param now_s     Continuous-GPS seconds, the new @c relevel_s (the age clock
+     *                  restarts, as on a re-level).
+     * @param now_ep    This epoch's @c n_loop_epochs, the new @c dropped_ep.
+     * @return True when the entry changed (its variance was tighter than the birth
+     *         prior).  False when the arc was already at or below birth strength (an
+     *         idempotent re-drop within one epoch, counted separately; @c relevel_s,
+     *         @c dropped_ep and @c drop_walk_ph are still updated), or when the
+     *         restored variance would not be positive (the entry is left unchanged).
      */
     bool ambFloatDrop(LocalCarry& lc, double floor_m2, double now_s, long long now_ep);
 
     /**
-     * @brief RF-3a A1 — the outcome of a drop taken with BOTH floors in hand.
+     * @brief Outcome of a drop taken with both floors in hand (RF-3a A1).
      *
      * @c from_drop_floor is the drop floor's own ON-path telemetry (standing invariant
-     * #4): it is true exactly when the DROP-only floor is what the restored variance
-     * came from, i.e. when it exceeded the arc's own birth prior and the birth floor.
-     * 0 of these under an armed drop floor means every arc was already born looser
-     * than it, which is a reading, not a quiet run.
+     * #4): it is true when the drop-only floor determined the restored variance, i.e. it
+     * exceeded the arc's own birth prior and the birth floor, and the variance moved.
+     * A count of 0 under an armed drop floor means every dropped arc was already looser
+     * than the floor; that is a reading, not an inert run.
      */
     struct AmbDropOutcome {
         bool acted{false};            ///< The entry's variance actually moved (@ref ambFloatDrop's return).
@@ -123,23 +126,22 @@ namespace GnssProcessor {
     };
 
     /**
-     * @brief RF-3a A1 — the DROP taken at both floors, the one site the four drop
-     *        call sites share so they cannot drift.
+     * @brief Drop taken at both floors; the one function all four drop causes use, so
+     *        they cannot diverge (RF-3a A1).
      *
      * The restored variance is @c max(var_birth, var_first, birth_floor, drop_floor),
      * with both floors already elevation-mapped by @ref ambFloatBirthFloor at the call
-     * site (the mapping is the code weights' own, so a floor stated at zenith is not
-     * optimistic at the low elevations that own the metre-plus tail).  The BIRTH stash
-     * is untouched by @p drop_floor_m2 — that separation is the whole point of the
-     * knob: the RF-3 read measured that a floor at the birth removes the post-drop walk
-     * AND slows every birth, while the defect it is aimed at is the re-coupling edge of
-     * the slip and gap re-entry response.
+     * site (the code weights' own mapping, so a floor stated at zenith is not
+     * optimistic at the low elevations that hold the metre-plus tail).  The birth stash
+     * does not use @p drop_floor_m2.  The RF-3 read measured that a floor at birth
+     * removes the post-drop walk but also slows every birth, while the defect this knob
+     * targets is the re-coupling edge of the slip and gap re-entry response.
      *
      * @param lc            The entry.
      * @param birth_floor_m2 This LOS's @c network.amb_float_birth_var_m2 floor (m²).
      * @param drop_floor_m2  This LOS's @c network.amb_float_drop_var_m2 floor (m²).
-     * @param now_s         Continuous-GPS seconds — the new @c relevel_s.
-     * @param now_ep        This epoch's @c n_loop_epochs — the new @c dropped_ep.
+     * @param now_s         Continuous-GPS seconds, the new @c relevel_s.
+     * @param now_ep        This epoch's @c n_loop_epochs, the new @c dropped_ep.
      * @return the outcome.
      */
     AmbDropOutcome ambFloatDropFloored(LocalCarry& lc, double birth_floor_m2,
@@ -147,54 +149,60 @@ namespace GnssProcessor {
                                        long long now_ep);
 
     /**
-     * @brief RF-3c — the DROP FLOOR IN FORCE at this epoch (the warm-up gate).
+     * @brief Drop floor in force at this epoch, i.e. the warm-up gate (RF-3c).
      *
-     * The one site the three drop call sites share, so the gate cannot be read one way
-     * at the free-epoch latch and another at the RAIM refloats.  Returns 0 — that is,
-     * today's @c max(var_birth, var_first, birth floor) — for a drop taken before the
-     * gate opens, and the floor itself from @p after_ep onwards.
+     * Shared by the drop sites (this file's free-epoch latch and gap cliff, and the
+     * RAIM refloats in NetworkRaim.cpp), so every site reads the gate the same way.
+     * Returns 0 for a drop taken before the gate opens, which leaves the restored
+     * variance at @c max(var_birth, var_first, birth floor), and the floor itself from
+     * epoch @p after_ep onwards.  Returns 0 when @p drop_floor_m2 <= 0.
      *
-     * The abscissa is the producer's processed-epoch counter, the same one
-     * @c network.gross_los_warmup_epochs and the phase-leveling warmup read, because the
-     * distinction the gate draws is the same one they draw: an arc dropped while the
-     * network is still finding its clocks is a CONVERGENCE event, and what a
-     * re-determined level is worth is a statement about a SETTLED network.
+     * The abscissa is the producer's processed-epoch counter, the one
+     * @c network.gross_los_warmup_epochs and the phase-leveling warmup read, because
+     * the gate draws the same distinction they do: an arc dropped while the network is
+     * still converging its clocks is a convergence event, and the worth of a
+     * re-determined level is a property of a settled network.
      *
      * @param drop_floor_m2 @c network.amb_float_drop_var_m2 at this line of sight (m²).
      * @param now_ep        This epoch's @c n_loop_epochs.
-     * @param after_ep      @c network.amb_float_drop_floor_after_ep; 0 = no gate.
+     * @param after_ep      @c network.amb_float_drop_floor_after_ep; <= 0 = no gate.
      * @return the floor to use at this drop (m²).
      */
     double ambFloatDropFloorNow(double drop_floor_m2, long long now_ep, int after_ep);
 
     /**
-     * @brief The SERIAL pre-assembly drop pass — the free-epoch latch and the gap cliff.
+     * @brief Serial pre-assembly drop pass: the free-epoch latch and the gap cliff.
      *
      * Runs after PASS A's slip scans (which fill @c ctx.carry.relevel.free_ambs) and
-     * BEFORE the PASS-B assembly, so by the time the parallel inject reads an entry the
-     * drop has already happened and the inject simply folds it at birth strength instead
-     * of skipping it.  Serial by construction: it mutates @c ctx.carry.local_carry, which
-     * the produce phase then reads.
+     * before the PASS-B assembly, so when the parallel inject reads an entry the drop
+     * has already happened and the inject folds it at birth strength instead of
+     * skipping it.  Serial because it mutates @c ctx.carry.local_carry, which the
+     * produce phase then reads.
      *
-     * Two causes, both of which SKIPPED an inject on the leveling vehicle:
-     *  - @c relevel_free — every @c (station, amb key) the detectors latched this epoch.
-     *    The latched set itself is untouched, because the lane observatory, the
-     *    phase-datum candidacy screen, the anchor-slip handover staging and the harvest's
-     *    statistics guards all read it (§4.1: "keep the latched-set plumbing");
-     *  - @c stale_gap — every carried arc whose sighting gap already exceeds
-     *    @c phase_leveling_max_gap_s.  The post-harvest PRUNE still erases the ones that
-     *    are genuinely gone; this catches the ones that are PRESENT this epoch, which the
-     *    prune structurally cannot see (the harvest refreshes @c last_seen_s first).
+     * Two causes, both of which skip an inject on the leveling vehicle:
+     *  - @c relevel_free: every @c (station, amb key) the detectors latched this epoch.
+     *    The latched set itself is left in place, because the lane observatory, the
+     *    phase-datum candidacy screen, the anchor-slip handover staging and the
+     *    harvest's statistics guards all read it (§4.1: "keep the latched-set
+     *    plumbing").  With @c network.phase_datum_held_basis armed, every latched arc
+     *    is also stamped in @c ctx.carry.amb_flag_ep with this epoch, whether or not it
+     *    has a carry (RF-2 items 3 and 4).
+     *  - @c stale_gap: every carried arc whose sighting gap already exceeds
+     *    @c phase_leveling_max_gap_s.  The post-harvest prune still erases arcs that are
+     *    gone; this pass targets arcs present this epoch, which the prune cannot see
+     *    because the harvest refreshes @c last_seen_s first.  The loop does not test
+     *    presence, so an absent arc past the horizon is also dropped and counted here
+     *    before the prune erases it.
      *
      * A no-op unless the vehicle is @c float_kf.
      *
      * @param ctx       The run context (the carry, the knobs, the counters, the trace buffer).
-     * @param config_   The run config (the birth floor and the code elevation power).
+     * @param config_   The run config (the code elevation power).
      * @param log       The network logger.
-     * @param stations  The station roster — for the trace rows' station names.
+     * @param stations  The station roster, for the trace rows' station names.
      * @param elev_of   Per station, this epoch's LOS elevation by satellite (degrees);
-     *                  empty when the floor is unarmed, in which case the zenith value is
-     *                  used and the pass costs one map walk.
+     *                  empty when the birth floor is unarmed, in which case both floors
+     *                  use their zenith value and the pass costs one map walk.
      * @param week      GPS week of this epoch (the trace rows' stamp).
      * @param tow       GPS time of week (s) of this epoch.
      * @param pl_now_s  Continuous-GPS seconds of this epoch.
@@ -207,56 +215,60 @@ namespace GnssProcessor {
         long long week, double tow, double pl_now_s);
 
     /**
-     * @brief RF-1 step 5 — the DECLARED ANCHOR S-TRANSFORM (design §3.6), replacing
-     *        @c networkApplyPhaseAnchorCarryReref's network-wide erase.
+     * @brief Declared anchor S-transform (design §3.6), replacing the network-wide
+     *        erase of @c networkApplyPhaseAnchorCarryReref for continuous handovers
+     *        (RF-1 step 5).
      *
-     * A state that is ERASED at every anchor handover is not a state (the manager's
-     * decision of 2026-09-14, question 3).  Today a (satellite, signal) family's
-     * re-reference drops EVERY station's carry for that family — a whole-family refloat,
-     * every station, one epoch.  The frame did step, so the carried values ARE stale in
-     * the old basis; but a frame step is a KNOWN, exact basis change, so the right answer
-     * is to express the carry in the new basis rather than to throw it away:
+     * Requires @c float_kf and @c network.amb_float_declared_handover.  Without it, a
+     * (satellite, signal) family's re-reference drops every station's carry for that
+     * family in one epoch, and a state erased at every anchor handover does not persist
+     * as a state (design decision of 2026-09-14, question 3).  The frame does step, so
+     * the carried values are stale in the old basis; but a frame step is a known, exact
+     * basis change, so the carry is expressed in the new basis instead:
      *
      *     Δ = value_abs(r_in, sat, signal)          // the incoming anchor's carried level
      *     for every station r carrying (sat, signal):  value_abs_r −= Δ
      *     the shared phase bias of (sat, signal):      value      += Δ
      *     every coupling s_prev on that PB column:                += Δ
-     *     // VARIANCES UNTOUCHED — an exact basis change, not a refloat
+     *     // variances untouched: an exact basis change, not a refloat
      *
-     * and the incoming anchor's own column then reads 0, which is exactly what its
-     * @f$w=10^{10}@f$ gauge pin is about to assert.  That identity is checked to
-     * @c kStsExactTolM and reported, never thrown — the @c sts_selfcheck_ok pattern of
-     * @ref networkHandoverStransform.
+     * The incoming anchor's own column then reads 0, which its @f$w=10^{10}@f$ gauge pin
+     * is about to assert.  That identity is checked against @c kStsExactTolM and
+     * reported, never thrown (the @c sts_selfcheck_ok pattern of
+     * @ref networkHandoverStransform).
      *
-     * ⚠ TWO FILED LATENT DEFECTS THIS MUST NOT RE-OPEN.
-     *  (i) @c NetworkChainDatum.cpp:852-866 — the D4 operator shifts @c lc.value_abs AND
-     *      every coupling @c s_prev on a shifted PB column TOGETHER, because a Card-1
-     *      coupling row's RHS is @f$y=(v-x_{lin})+\sum_j M_j\hat s_{prev,j}@f$ and a
-     *      gauge-invariant row's correct y-change under a known frame step is the exact
-     *      CANCELLATION of the two moves.  Shifting one and not the other injects the
-     *      frame step as row bias.  This function does both, plus the shared PB carried
-     *      prior, which is the third reference on the same identity;
-     *  (ii) invariant #7 — it is an EVENT with both edges: a @c STRANSFORM /
-     *      @c sts_applied row per family carries the outgoing and incoming anchors, Δ,
-     *      the number of carries shifted and the self-check residual.
+     * Two filed latent defects this function must not re-open:
+     *  (i) The D4 carry S-transformation in @c NetworkChainDatum.cpp
+     *      (SPEC_card1_coupling_carry §14) shifts @c lc.value_abs and every coupling
+     *      @c s_prev on a shifted PB column together, because a Card-1 coupling row's
+     *      RHS is @f$y=(v-x_{lin})+\sum_j M_j\hat s_{prev,j}@f$ and, for a
+     *      gauge-invariant row under a known frame step, the two moves cancel exactly.
+     *      Shifting one and not the other injects the frame step as row bias.  This
+     *      function moves both, plus the shared PB carried prior, the third reference
+     *      on the same identity.
+     *  (ii) Invariant #7: the transform is an event with both edges.  One
+     *      @c STRANSFORM row per family (@c sts_applied, or @c sts_selfcheck_fail when
+     *      the self-check fails) carries the outgoing and incoming anchors, Δ, the
+     *      number of carries shifted and the self-check residual.
      *
-     * SCOPE.  Only a CONTINUOUS handover has a Δ: the successor was elected with a
-     * carried level, and that level is the new basis.  A COLD re-realization has no
-     * ledger entry for the successor — there is nothing to transform to — so its family
-     * keeps the ERASE, and the two populations are counted separately.  That split is
-     * the honest limit of this step, and it is why RF-2 owns the ELECTION policy that
-     * makes cold handovers rare.
+     * Scope.  Only a continuous handover has a Δ: the successor was elected with a
+     * carried level, and that level is the new basis.  A cold re-realization has no
+     * ledger entry for the successor, so its family keeps the erase; cold handovers,
+     * an unknown incoming station, and a continuous handover whose incoming anchor
+     * holds no live carry are counted separately as refused.  Δ = 0 is the identity:
+     * the family is taken over without a shift.  The election policy that makes cold
+     * handovers rare belongs to RF-2.
      *
      * @param ctx         The run context (the carry, the shared prior stash, the counters).
      * @param log         The network logger.
-     * @param traces      The trace streams — the @c STRANSFORM event rows.
+     * @param traces      The trace streams, for the @c STRANSFORM event rows.
      * @param stations    The station roster (resolving the incoming anchor's index).
-     * @param handovers   THIS epoch's anchor handovers, from the election.
+     * @param handovers   This epoch's anchor handovers, from the election.
      * @param week        GPS week of the epoch.
      * @param tow         GPS time of week (s) of the epoch.
      * @param handled_out Receives every (sat, signal) family this transform took
-     *                    ownership of; the caller REMOVES them from the erase set, so a
-     *                    family is transformed or erased, never both.
+     *                    ownership of (shifted or identity); the caller removes them from
+     *                    the erase set, so a family is transformed or erased, never both.
      * @return The number of carried entries whose value was shifted.
      */
     long long networkAmbFloatDeclaredHandover(

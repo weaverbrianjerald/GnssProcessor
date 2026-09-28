@@ -1,34 +1,34 @@
 #!/usr/bin/env python3
-"""EV6-read: the hour-6 Q3 mass-decouple event on the RF-0hv float vehicle (a DIAGNOSTIC).
+"""EV6-read: the hour-6 Q3 mass-decouple event on the RF-0hv float vehicle (a diagnostic).
 
-Pre-registered in ``docs/refound/EV6_hour6_decouple_event_2026-09-15.md``.  Trace-only: it reads a
+Pre-registered in ``docs/refound/EV6_hour6_decouple_event_2026-09-15.md``. Trace-only: it reads a
 finished run directory and writes nothing but stdout (no plotting, no run, no solve).
 
 Five sections, in the order the card's read (a)-(d) asks for them:
 
 (a) ``--section consumer``   per-epoch closed-loop rows in the window: 3D / E / N / U / n_sats and
-                             the per-epoch delta, so a STEP and a RAMP are distinguishable by eye.
+                             the per-epoch delta, so a step and a ramp are distinguishable by eye.
 (b) ``--section events``     every ``network_events.csv`` row in the window with its identity and
-                             detail.  The two census families (PRIORRES / MDB) are summarised as a
+                             detail. The two census families (PRIORRES / MDB) are summarised as a
                              count per epoch unless ``--all-families``; everything else is printed.
-(c) ``--section wire``       the emitted wire.  Per satellite per epoch: the de-commoned change of
-                             the satellite CLOCK, of the consumer's IF CODE correction
-                             ``-clk + a1*b(C1C) + a2*b(C2W)`` and of its IF PHASE correction
+(c) ``--section wire``       the emitted wire. Per satellite per epoch: the de-commoned change of
+                             the satellite clock, of the consumer's IF code correction
+                             ``-clk + a1*b(C1C) + a2*b(C2W)`` and of its IF phase correction
                              ``-clk + a1*B(L1x) + a2*B(L2x)``, each against the median change over
-                             the satellites present at BOTH epochs (standing invariant #5: the
+                             the satellites present at both epochs (standing invariant #5: the
                              network-common part cancels in the consumer clock and must not be
-                             graded).  Every cell carries whether the epoch DECLARED that satellite
-                             (a ``disc_counter`` bump / an ``R`` record), so an undeclared step is
+                             graded). Every cell carries whether the epoch declared that satellite
+                             (a ``disc_counter`` bump or an ``R`` record), so an undeclared step is
                              visible as such.
-(d) ``--section census``     the whole-run CLK_ANCHOR census: one row per decouple EPOCH with its
+(d) ``--section census``     the whole-run CLK_ANCHOR census: one row per decouple epoch with its
                              satellite count, the trip reasons, the in-epoch pass depth, the max
                              de-commoned wire excursion it created, how much of that excursion
-                             REVERSED at the next epoch (the return), and the consumer before /
-                             peak / after.  This is the size-vs-step instrument RF-0hv s7.3 asked
+                             reversed at the next epoch (the return), and the consumer before /
+                             peak / after. This is the size-vs-step instrument RF-0hv s7.3 asked
                              for, with the reversal column that names what the size alone misses.
     ``--section undeclared`` the wire-contract ledger: every (satellite, epoch) whose de-commoned IF
-                             code or phase correction moved more than ``--step-m`` with NO
-                             declaration, tagged with whether the satellite was LOOSE (decoupled and
+                             code or phase correction moved more than ``--step-m`` with no
+                             declaration, tagged with whether the satellite was loose (decoupled and
                              not yet re-coupled) at that epoch.
 
 Usage:
@@ -76,7 +76,7 @@ def read_products(run_dir):
             elif tag == "P" and len(f) >= 4:
                 per[tow].setdefault(f[1], _blank())["phase"][f[2]] = float(f[3])
             elif tag == "R":
-                # B1 per-satellite discontinuity bump: every satellite named here is DECLARED.
+                # B1 per-satellite discontinuity bump: every satellite named here is declared.
                 for s in f[1:]:
                     if s:
                         per[tow].setdefault(s, _blank())["declared"] = True
@@ -143,8 +143,8 @@ def read_epoch_status(run_dir):
 def _combo(rec, pairs, kind):
     """(-clk + a1*b(s1) + a2*b(s2), pair) for the first available signal pair, else (None, None).
 
-    The PAIR travels with the value because a satellite whose available pair changes between epochs
-    has no comparable difference — the two combinations are different linear functionals of a
+    The pair travels with the value because a satellite whose available pair changes between epochs
+    has no comparable difference: the two combinations are different linear functionals of a
     different state, and differencing them manufactures a step of tens of metres out of nothing.
     """
     if rec["clk"] is None:
@@ -157,7 +157,7 @@ def _combo(rec, pairs, kind):
 
 
 def wire_deltas(per, tp, t):
-    """sat -> (dclk, dcode, dphase), each de-commoned by the median over satellites in BOTH epochs.
+    """sat -> (dclk, dcode, dphase), each de-commoned by the median over satellites in both epochs.
 
     Standing invariant #5: only the between-satellite contrast is datum-invariant; the common part is
     the consumer's own clock and must be removed before anything is graded.
@@ -184,13 +184,13 @@ def wire_deltas(per, tp, t):
 
 
 def declared_at(per, disc, tp, t, sat):
-    """Did the EMITTED WIRE declare this satellite at epoch t?
+    """Did the emitted wire declare this satellite at epoch t?
 
     The ``R`` record is the only discontinuity channel products.txt actually carries: measured on
     this lineage the ``C`` records are 3 fields (no ``clock_disc`` even with
-    ``network.emit_clock_disc``), ``B`` 4 (no ``code_disc``) and ``P`` 6 (no ``phase_disc``).  The
-    per-record ``disc_counter`` of ``network_solution.csv`` is an INTERNAL trace — it also counts
-    code-bias re-realizations that never reach a consumer — so it is reported separately
+    ``network.emit_clock_disc``), ``B`` 4 (no ``code_disc``) and ``P`` 6 (no ``phase_disc``). The
+    per-record ``disc_counter`` of ``network_solution.csv`` is an internal trace: it also counts
+    code-bias re-realizations that never reach a consumer, so it is reported separately
     (@ref internal_bump) and never treated as a declaration.
     """
     _ = (tp, disc)   # kept in the signature: the internal view is one call away, see internal_bump
@@ -198,7 +198,7 @@ def declared_at(per, disc, tp, t, sat):
 
 
 def internal_bump(disc, tp, t, sat):
-    """Did any per-record disc_counter of this satellite move? (network_solution.csv, INTERNAL.)"""
+    """Did any per-record disc_counter of this satellite move? (network_solution.csv, internal.)"""
     a, b = disc.get(tp, {}).get(sat), disc.get(t, {}).get(sat)
     return a is not None and b is not None and b != a
 

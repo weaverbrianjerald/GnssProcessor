@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """Warm-start arms over the 19:26:00 SH detonation from the guards_cont history.
 
-Derives an arm config from the anchor's OWN leg.json (fingerprint match by
+Derives an arm config from the anchor's own leg.json (fingerprint match by
 construction) and a chosen history snapshot runs/guards_cont/seed/snap.txt.epNNNN:
 
-  --arm null   stock resume (nothing changed) — the control that must REPRODUCE
+  --arm null   stock resume (nothing changed), the control that must reproduce
                the detonation through the resume seam before any treated arm is
                readable (the 19:00-seam lesson: guards-armed resumes can mute it).
-  --arm weci   same + network.raim_we_code_iono = true — the first ON run of the
-               within-epoch code/iono screening, meeting the detonation live.
+  --arm weci   same, plus network.raim_we_code_iono = true, the first run with the
+               within-epoch code/iono screening on, meeting the detonation live.
 
 Anchor default ep0721 = 19:00:00 (tow 327600): ~52 epochs of post-resume settle
 before the detonation at ep 773 (tow 329160).  Window default 2700 s
 (19:00:30 .. 19:45:00) covers the detonation + the 19:34 spike + decay onset.
 
-chain_make_leg discipline: the arm COPIES the history snapshot into its own dir
-(reads AND writes its own file), half-epoch back-off on the offset, require=true.
+chain_make_leg discipline: the arm copies the history snapshot into its own dir
+(reads and writes its own file), half-epoch back-off on the offset, require=true.
 
 Usage:
     python scripts/weci_detonation_arm.py --arm null [--anchor-ep 721] [--dur 2700]
@@ -32,7 +32,7 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 # Resolve any "extends" chain the base may grow.  These bases are self-contained
 # today, so this is byte-identical now; it is here so the script does not silently
-# read a four-key DELTA as a whole config the day someone rebases it (the failure
+# read a four-key delta as a whole config the day someone rebases it (the failure
 # scripts/config_posture_check.py shipped with).
 from gnss_config_chain import load_config_flat  # noqa: E402
 

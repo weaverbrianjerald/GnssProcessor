@@ -6,11 +6,10 @@
  *   - byte 0       : preamble 0xD3
  *   - bytes 1-2    : 6 reserved bits + 10-bit payload length (big-endian)
  *   - bytes 3..N+2 : payload of N bytes
- *   - bytes N+3..  : 24-bit CRC-Q24 over (header + payload)
+ *   - bytes N+3..  : 24-bit CRC-24Q over (header + payload)
  *
- * The 12-bit message-type field DF002 lives in the FIRST 12 BITS OF THE
- * PAYLOAD (bytes 3-4), NOT the header.  This is the single most common
- * source of confusion in DIY RTCM decoders.  CRC verification is done by
+ * The 12-bit message-type field DF002 is the first 12 bits of the payload
+ * (bytes 3-4), not part of the 3-byte header.  CRC verification is done by
  * RtcmStreamReader before frames reach this parser, so this layer assumes
  * frame integrity.
  */
@@ -62,16 +61,16 @@ bool isMsm4Type(uint16_t mt) {
     return ((mt - 1071) % 10) == 3;  // MSM4 sits at offset 3 within each per-system block.
 }
 
-// Framing-integrity guard the MSM decoder's ok() flag does NOT provide.  The
-// bit reader only flags OVER-read; a structurally-wrong decode (wrong MSM
-// subtype width table, an off-by-N field offset, a misframed payload) can
-// UNDER-consume the payload — leaving the per-cell block read from the wrong
-// bits — yet still report ok()==true because the running offset never passed
-// the end.  A correct MSM frame consumes every defined field; the only legal
-// slack is the 0-7 trailing bits that pad the message to a byte boundary.  So
-// payload_bits - bits_consumed >= 8 means the decode is silently misaligned —
-// a likely culprit for plausible-but-wrong observations (e.g. an L1/L2 split
-// that survives ok()).  Warn loudly so it is not mistaken for clean data.
+// Framing-integrity check that the MSM decoder's ok() flag does not provide.  The
+// bit reader flags only over-reads; a structurally wrong decode (wrong MSM subtype
+// width table, a field offset off by N bits, a misframed payload) can under-consume
+// the payload, so the per-cell block is read from the wrong bits, and still report
+// ok()==true because the running offset never passed the end.  A correct MSM frame
+// consumes every defined field; the only allowed slack is the 0-7 trailing bits that
+// pad the message to a byte boundary.  payload_bits - bits_consumed >= 8 therefore
+// means the decode is misaligned, which can produce plausible but wrong
+// observations (for example an L1/L2 split that passes ok()).  The warning keeps
+// such a decode from being taken for clean data.
 void warnIfUnderConsumed(uint16_t mt, const char* label, std::size_t payload_bytes,
                          std::size_t bits_consumed, bool ok) {
     if (!ok) return;  // truncation already reported by the caller
@@ -90,12 +89,12 @@ RtcmParser::RtcmParser(std::filesystem::path file_path)
     : file_path_(std::move(file_path)) {}
 
 // ---------------------------------------------------------------------------
-// RTB-1(a): per-parser stream-time tracker (nearest-continuation promotion).
+// Per-parser stream-time tracker (nearest-continuation promotion; RTB-1(a)).
 // ---------------------------------------------------------------------------
 
 double RtcmParser::anchorGpsSeconds() {
     if (time_anchor_gps_s_ > 0.0) return time_anchor_gps_s_;
-    // Cold start: the ONLY host-clock consultation on the promotion path.
+    // Cold start: the only host-clock consultation on the promotion path.
     // TimeUtils::nowContinuousGpsSeconds honours the realtime.leap_seconds
     // override (RTB-1(c)).
     const double now = TimeUtils::nowContinuousGpsSeconds();
@@ -156,8 +155,8 @@ bool RtcmParser::parseFrame(const uint8_t* frame, std::size_t len) {
     if (RtcmNav::isBroadcastEphemerisType(msg_type)) {
         // The truncated broadcast week fields (10-bit GPS WN etc.) only need a
         // week-scale hint; derive it from the stream-time tracker (RTB-1(a)).
-        // Nav content epochs (toe/toc, hours from "now") do NOT advance the
-        // tracker — the per-second MSM/SSR stream epochs own it.
+        // Nav content epochs (toe/toc, hours from "now") do not advance the
+        // tracker; only the per-second MSM/SSR stream epochs do.
         const double anchor = anchorGpsSeconds();
         const int week = anchor > 0.0
             ? static_cast<int>(anchor / static_cast<double>(TimeUtils::SECONDS_IN_WEEK))
@@ -241,9 +240,8 @@ bool RtcmParser::decodeIgsSsr4076(const uint8_t* payload, std::size_t len) {
 //
 // Layout (RTCM 10403.3 sec. 3.5.9): five counted ASCII strings + the antenna
 // setup id, all 8-bit fields.  Decoded into RtcmReceiverAntennaDescriptor and
-// surfaced on the parser output; logged once (per parser) at info.  Storage
-// for a future SIF (station-info) cross-check — deliberately not wired
-// further.
+// exposed on the parser output; logged once per parser at info.  Kept for a
+// future SIF (station-info) cross-check and not consumed elsewhere.
 // ---------------------------------------------------------------------------
 bool RtcmParser::decodeReceiverAntennaDescriptor(const uint8_t* payload, std::size_t len) {
     RtcmBitReader r(payload, len);
@@ -293,8 +291,9 @@ bool RtcmParser::decodeReceiverAntennaDescriptor(const uint8_t* payload, std::si
 // Layout (RTCM 10403.3 sec. 3.5.15): DF003 station id (12), DF421 code-phase
 // bias indicator (1), 3 reserved bits, DF422 FDMA signals mask (4, MSB = L1
 // C/A … LSB = L2 P), then one signed 16-bit bias (0.02 m units, DF423-DF426)
-// per SET mask bit, in mask order.  Surfaced + logged once only; NOT wired
-// into the GLONASS IFB estimation (see RtcmGlonassBias — RTF-scale change).
+// per set mask bit, in mask order.  Exposed and logged once only; not wired
+// into the GLONASS IFB estimation (see RtcmGlonassBias; wiring it is an
+// RTF-scale change).
 // ---------------------------------------------------------------------------
 bool RtcmParser::decodeGlonassBiases(const uint8_t* payload, std::size_t len) {
     RtcmBitReader r(payload, len);
@@ -382,9 +381,9 @@ void RtcmParser::clear() {
     broadcast_eph_.clear();
     receiver_descriptors_.clear();
     glonass_biases_.clear();
-    // time_anchor_gps_s_ and the 1033/1230 log-once flags deliberately
-    // survive clear(): the tracker IS the stream-time continuity (RTB-1(a)),
-    // and clear() runs once per frame on the reused engine parser.
+    // time_anchor_gps_s_, last_ssr_header_ and the 1033/1230 log-once flags
+    // survive clear(): the tracker carries the stream-time continuity
+    // (RTB-1(a)), and clear() runs once per frame on the reused engine parser.
 }
 
 } // namespace GnssProcessor

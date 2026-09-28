@@ -1,27 +1,27 @@
 #!/usr/bin/env python3
-"""Card CST — read `logs/closed_loop_sat_trace.csv` (the per-satellite closed-loop
+"""Card CST: read `logs/closed_loop_sat_trace.csv` (the per-satellite closed-loop
 consumer trace) against the consumer's own position trace and the producer's events.
 
     python scripts/cst_consumer_read.py <run_dir> [--tow-min T --tow-max T]
            [--section overview|steps|states|resid|events|attrib|all]
            [--sat G23] [--top N] [--step-m M] [--var-ratio R]
 
-TRACE-ONLY: launches nothing, writes nothing but stdout, does not plot.
+Trace-only: launches nothing, writes nothing but stdout, does not plot.
 
-THE ONE PIECE OF ALGEBRA IS STANDING INVARIANT #5.  Every epoch-to-epoch
-per-satellite delta is DE-COMMONED by the median change over the satellites (or
-(sat,signal) cells) present at BOTH epochs, because the network-common part of a
+The one piece of algebra is standing invariant #5. Every epoch-to-epoch
+per-satellite delta is de-commoned by the median change over the satellites (or
+(sat,signal) cells) present at both epochs, because the network-common part of a
 correction is absorbed by the consumer's own receiver-clock state and grading it
-raw confounds benign frame motion with a real step.  A cell whose availability
-CHANGES between two epochs is skipped rather than differenced.
+raw confounds benign frame motion with a real step. A cell whose availability
+changes between two epochs is skipped rather than differenced.
 
-WHAT IS AND IS NOT A MEASUREMENT HERE
-  * `innov_*` are PRE-fit innovations and carry the consumer's receiver clock
-    (~ -98 m on this bed).  They are reported de-commoned or not at all.
-  * `res_*` are POST-fit residuals; the receiver clock is already absorbed, so
+What is and is not a measurement here
+  * `innov_*` are pre-fit innovations and carry the consumer's receiver clock
+    (~ -98 m on this bed). They are reported de-commoned or not at all.
+  * `res_*` are post-fit residuals; the receiver clock is already absorbed, so
     they are quoted raw.
-  * a DECLARED step is one whose disc counter (`pb_disc` / `cb_disc` /
-    `clk_disc`) changed at the same epoch.  Everything else is UNDECLARED, which
+  * a declared step is one whose disc counter (`pb_disc` / `cb_disc` /
+    `clk_disc`) changed at the same epoch. Everything else is undeclared, which
     is the population EV6 measured at 451 of 545 on the producer side.
 """
 from __future__ import annotations
@@ -116,19 +116,19 @@ def load_events(run_dir, tmin, tmax):
 # --------------------------------------------------------------------------
 def pair_deltas(prev, cur, field, key_is_sat=False):
     """Per-cell delta of `field` between two epochs, de-commoned by the median
-    over the cells present (with a finite value) at BOTH epochs.
+    over the cells present (with a finite value) at both epochs.
 
-    key_is_sat: collapse (sat,sig) to sat first — the satellite clock and the
-    slant iono are per-SATELLITE quantities that repeat across a satellite's
+    key_is_sat: collapse (sat,sig) to sat first, since the satellite clock and
+    the slant iono are per-satellite quantities that repeat across a satellite's
     rows, and differencing them per row would weight a two-band satellite twice
     in the median.
 
-    For per-(sat,signal) quantities the median is taken WITHIN each signal, not
+    For per-(sat,signal) quantities the median is taken within each signal, not
     across the epoch: L1W and L2W phase biases do not share a common mode (the
     band-differential part is absorbed by the receiver's code-bias / phase-clock
     states, the band-common part by the receiver clock), so one median over a
     mixed L1/L2 population leaks a band-differential motion into every cell's
-    residual.  The returned `med` is then the median OF the per-signal medians,
+    residual. The returned `med` is then the median of the per-signal medians,
     reported only as a scale.
     """
     def collapse(ep):
@@ -157,7 +157,7 @@ def pair_deltas(prev, cur, field, key_is_sat=False):
 
 
 def declared(prev, cur, key, disc_field):
-    """Did the producer DECLARE at `cur` for this cell? (disc counter changed)"""
+    """Did the producer declare at `cur` for this cell? (disc counter changed)"""
     p, c = prev.get(key), cur.get(key)
     if p is None or c is None:
         return None
@@ -325,7 +325,7 @@ def sec_resid(ep, pos, args):
 
 
 def sec_drift(ep, pos, args):
-    """Monotone drift over the whole window, per cell — the ramp instrument."""
+    """Monotone drift over the whole window, per cell: the ramp instrument."""
     print('== MONOTONE DRIFT OVER THE WINDOW (cumulative de-commoned, pair-consistent) ==')
     print('   cumulative sum of the de-commoned pair deltas; a cell missing at either')
     print('   epoch of a pair contributes nothing to that pair (never a manufactured step).')
@@ -370,11 +370,11 @@ def sec_events(ep, pos, args):
 
 
 def sec_census(ep, pos, args):
-    """Run-wide: how often the consumer resets, and how big the step it reset FOR was.
+    """Run-wide: how often the consumer resets, and how big the step it reset for was.
 
     The question EV6 could not ask from the producer side: when the producer
-    DECLARES a phase-bias discontinuity, how much did the emitted value actually
-    move at the consumer?  A declaration with no step behind it costs the
+    declares a phase-bias discontinuity, how much did the emitted value actually
+    move at the consumer? A declaration with no step behind it costs the
     consumer its whole phase memory for nothing."""
     print('== RESET CENSUS: the consumer\'s response vs the step it responded to ==')
     tows = sorted(ep)
@@ -420,7 +420,7 @@ def sec_census(ep, pos, args):
 
 
 def sec_pair(ep, pos, args):
-    """The RF-0b pair: does the consumer's slant iono move WITH its ambiguities?"""
+    """The RF-0b pair: does the consumer's slant iono move with its ambiguities?"""
     print('== AMBIGUITY <-> SLANT-IONO PAIR (cumulative de-commoned over the window) ==')
     tows = sorted(ep)
     cuma, cumi = defaultdict(float), defaultdict(float)
@@ -453,8 +453,9 @@ def sec_pair(ep, pos, args):
 def sec_impact(ep, pos, args):
     """Every mass-reset epoch, with the consumer's position before and after.
 
-    A reset is NOT automatically damage: EV6 measured harmless producer events
-    on this run.  What this table separates is the reset EVENT from its COST."""
+    A reset does not automatically cost the consumer: EV6 measured harmless
+    producer events on this run. This table separates the reset event from its
+    cost."""
     print('== MASS-RESET EPOCHS AND WHAT THEY COST THE CONSUMER ==')
     print('   reset >= %d cells.  before/after = consumer 3D p50 over the 15 min'
           % args.min_reset)

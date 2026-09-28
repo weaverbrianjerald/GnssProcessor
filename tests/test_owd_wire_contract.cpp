@@ -1,16 +1,16 @@
 /**
  * @file test_owd_wire_contract.cpp
- * @brief Card OWD (O1): the S contract line is part of every wire.
+ * @brief The S contract line is part of every wire (card OWD, O1).
  *
- * Two pure pieces of the fix, tested without a producer run:
+ * Two pure functions, tested without a producer run:
  *   - @c NetworkProductReader::admitsWire, the replay's refusal of a wire without an S
- *     contract line (a pre-OWD wire replays with the DEFAULT emitter, so it cannot
- *     reproduce the producer's clock declarations) unless the consumer asks for it on
- *     purpose through @c network.replay_allow_undeclared_wire;
+ *     contract line (such a wire replays with the default emitter, so it cannot
+ *     reproduce the producer's clock declarations) unless the consumer opts in
+ *     explicitly through @c network.replay_allow_undeclared_wire;
  *   - @c aprioriIdentityForWindow, the S line's a-priori identity naming the product files
  *     in force during the processing window (the resolver merges the previous, the
- *     observation and the next day, and the first merged SP3 used to be the previous
- *     day's).
+ *     observation and the next day, so the first merged SP3 is the previous day's and
+ *     does not identify the product in force).
  */
 #include <gtest/gtest.h>
 

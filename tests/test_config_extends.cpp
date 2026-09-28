@@ -2,23 +2,24 @@
  * @file test_config_extends.cpp
  * @brief Contract tests for `"extends"` config inheritance in GnssConfig::loadFromJson.
  *
- * The project ships ~493 standalone config files because the loader had no way to say
- * "same as X but with Y".  `extends` adds base+delta composition, and the whole change is
- * only safe if two properties hold, so both are locked here:
+ * `extends` adds base+delta composition ("same as X but with Y") to a loader whose configs
+ * were otherwise all standalone.  The change is safe only if two properties hold, and both
+ * are locked here:
  *
- *  1. **Byte-identical for every existing config.**  A document with no `extends` key must
- *     parse exactly as it did before inheritance existed.  Every pre-existing config takes
- *     that path, so a regression here would silently re-interpret the entire test suite.
- *  2. **Arrays REPLACE, never concatenate.**  `network.stations` is an array, and the
- *     warm-resume fingerprint hashes the roster IN ORDER (NetworkRunContext.cpp).  A base
- *     roster concatenating with a child roster would produce duplicate stations, a different
- *     order, and a station count matching no intended regime — while still loading cleanly.
- *     That is exactly the class of silent-wrong the fingerprint exists to catch, so the
- *     merge rule is tested directly rather than trusted.
+ *  1. **Byte-identical for every existing config.**  A document with no `extends` key
+ *     parses exactly as it did before inheritance existed.  Every existing config takes
+ *     that path, so a regression here would silently re-interpret all of them.
+ *  2. **Arrays replace, never concatenate.**  `network.stations` is an array, and the
+ *     warm-resume fingerprint hashes the roster in order (NetworkRunContext.cpp).  A base
+ *     roster concatenated with a child roster would give duplicate stations, a different
+ *     order, and a station count matching no intended regime, while still loading cleanly.
+ *     The fingerprint exists to catch that class of silent error, so the merge rule is
+ *     tested directly.
  *
- * Also covered: nested-object merging (the point of the feature), explicit blanking, chains,
- * multiple bases with later-wins ordering, and the three hard errors (missing base, cycle,
- * depth overflow) that must fail loudly rather than half-apply a configuration.
+ * Also covered: nested-object merging (the purpose of the feature), chains, multiple bases
+ * with later-wins ordering, removal of the `extends` key before the section loaders run,
+ * and the hard errors (missing base, cycle including self-reference, depth overflow, and a
+ * non-string `extends` value), which fail the load rather than half-apply a configuration.
  */
 
 #include <gtest/gtest.h>
@@ -74,7 +75,7 @@ std::string netBody(const std::string& extra) {
 }  // namespace
 
 // ---------------------------------------------------------------------------
-//  Property 1 — the no-extends path is untouched
+//  Property 1: the no-extends path is unchanged
 // ---------------------------------------------------------------------------
 TEST(ConfigExtends, NoExtendsKeyLeavesChainEmptyAndLoadsNormally) {
     LogManager log;
@@ -86,7 +87,7 @@ TEST(ConfigExtends, NoExtendsKeyLeavesChainEmptyAndLoadsNormally) {
 }
 
 // ---------------------------------------------------------------------------
-//  Property 2 — arrays replace.  The fingerprint-safety property.
+//  Property 2: arrays replace (the fingerprint-safety property)
 // ---------------------------------------------------------------------------
 TEST(ConfigExtends, ArraysReplaceAndDoNotConcatenate) {
     LogManager log;
@@ -101,17 +102,17 @@ TEST(ConfigExtends, ArraysReplaceAndDoNotConcatenate) {
     })");
     GnssConfig cfg;
     ASSERT_TRUE(cfg.loadFromJson(child, log));
-    // 2, not 5 — a concatenating merge would silently change the roster ORDER and COUNT,
+    // 2, not 5: a concatenating merge would silently change the roster order and count,
     // both of which are hashed into the warm-resume fingerprint.
     ASSERT_EQ(cfg.getNetworkConfig().stations.size(), 2u);
     EXPECT_EQ(cfg.getNetworkConfig().stations[0].name, "YYYY");
     EXPECT_EQ(cfg.getNetworkConfig().stations[1].name, "ZZZZ");
 }
 
-// A replaced roster invalidates an INHERITED clock_datum_station, and the existing validator
-// catches it ("clock_datum_station 'X' not found among stations").  Worth locking: it is the
-// one foreseeable way a base+delta split bites, and it fails loudly rather than silently
-// re-electing some other station as the datum.
+// A replaced roster invalidates an inherited clock_datum_station, and the existing validator
+// catches it ("clock_datum_station 'X' not found among stations").  This is the one
+// foreseeable failure of a base+delta split, and the load fails instead of silently
+// electing some other station as the datum.
 TEST(ConfigExtends, ReplacingRosterWithoutUpdatingInheritedDatumStationIsRejected) {
     LogManager log;
     writeCfg("dr_base.json", netBody(""));                     // datum AAAA, roster A/B/C
@@ -152,8 +153,8 @@ TEST(ConfigExtends, ChildOverridesBaseScalarAndKeepsUnmentionedSiblings) {
     GnssConfig cfg;
     ASSERT_TRUE(cfg.loadFromJson(child, log));
     EXPECT_DOUBLE_EQ(cfg.getElevationMaskDeg(), 25.0);
-    // The sibling keys of the overridden one survive — this is the whole point: a delta
-    // config sets one knob without restating the section.
+    // The sibling keys of the overridden one survive, so a delta config sets one knob
+    // without restating the section.
     EXPECT_EQ(cfg.getNetworkConfig().stations.size(), 3u);
     EXPECT_EQ(cfg.getNetworkConfig().clock_datum_station, "AAAA");
     ASSERT_EQ(cfg.configExtendsChain().size(), 1u);
@@ -202,7 +203,7 @@ TEST(ConfigExtends, ChainOfThreeResolvesAndChildStillWins) {
 }
 
 // ---------------------------------------------------------------------------
-//  Hard errors — must fail loudly, never half-apply
+//  Hard errors: the load fails instead of half-applying a configuration
 // ---------------------------------------------------------------------------
 TEST(ConfigExtends, MissingBaseIsAHardError) {
     LogManager log;
@@ -211,8 +212,8 @@ TEST(ConfigExtends, MissingBaseIsAHardError) {
         "processing": { "mode": "ppp-rtk-network" }
     })");
     GnssConfig cfg;
-    // A silently-ignored missing base would run with the DELTA only — a config that looks
-    // armed and is not.  That is the failure mode this must not have.
+    // A silently ignored missing base would run with the delta only: a config that looks
+    // armed and is not.  The load therefore fails.
     EXPECT_FALSE(cfg.loadFromJson(child, log));
 }
 

@@ -40,12 +40,12 @@ std::vector<std::string> secondPhaseCompanions(
     const std::vector<std::string>& allow_list) {
 
     std::vector<std::string> out;
-    // No latched phase this epoch means there is nothing to be SECOND to: the band
-    // has no canonical row, so an allow-listed phase that arrives is the FALLBACK
-    // case, which the caller counts and does not add.
+    // With no latched phase this epoch the band has no canonical row, so there is
+    // nothing for a phase to be second to.  An allow-listed phase that arrives is the
+    // fallback case, which the caller counts and does not add.
     if (selected_phase.empty()) return out;
     for (const std::string& sig : allow_list) {
-        if (sig == selected_phase) continue;                  // that IS the canonical
+        if (sig == selected_phase) continue;                  // the canonical phase itself
         if (!reported_phases.count(sig)) continue;            // the station does not track it
         if (std::find(out.begin(), out.end(), sig) != out.end()) continue;  // duplicate entry
         out.push_back(sig);
@@ -79,11 +79,11 @@ void networkSecondPhaseEpochTail(NetworkRunContext& ctx, const GnssConfig& confi
     if (!config_.networkSecondPhaseRowsActive()) return;   // unarmed: one flag test
     auto& C = ctx.counters.second_phase;
 
-    // (1) THE SLIP CENSUS BY TIER (R4, standing invariant #1).  `relevel.free_cause`
-    //     is the producer's own per-arc tier bitmask: it is cleared at the TOP of the
-    //     next epoch's slip scan, so at this point it holds THIS epoch's causes from
-    //     every tier, the post-solve RAIM ones included.  A second-phase arc is one
-    //     whose (satellite, signal) cell is open at that station this epoch.
+    // (1) Slip census by tier (R4, standing invariant #1).  `relevel.free_cause` is
+    //     the producer's per-arc tier bitmask.  It is cleared at the start of the
+    //     next epoch's slip scan, so here it holds this epoch's causes from every
+    //     tier, the post-solve RAIM ones included.  A second-phase arc is one whose
+    //     (satellite, signal) cell is open at that station this epoch.
     for (const auto& [key, bits] : ctx.carry.relevel.free_cause) {
         const int sta = key.first;
         if (sta < 0 || sta >= static_cast<int>(stations.size())) continue;
@@ -102,10 +102,10 @@ void networkSecondPhaseEpochTail(NetworkRunContext& ctx, const GnssConfig& confi
         if (bits & RelevelEpochState::kCauseGap)       ++C.slip_gap;
     }
 
-    // (2) THE ANCHOR CENSUS (R3).  A second-phase arc is a phase-datum candidate like
-    //     any other, so the question the card owes an answer to is whether the
-    //     election ever SEATS one.  `anchor_incumbent` is keyed by the ambiguity form
-    //     and holds the incumbent station's NAME.
+    // (2) Anchor census (R3).  A second-phase arc is a phase-datum candidate like any
+    //     other; this counts, per epoch, the seated anchors that are second-phase arcs.
+    //     `anchor_incumbent` is keyed by the ambiguity key and holds the incumbent
+    //     station's name.
     for (const auto& [amb, name] : ctx.carry.anchor_incumbent) {
         const auto parts = StateKeys::parseAmbiguityKey(amb);
         if (!parts) continue;

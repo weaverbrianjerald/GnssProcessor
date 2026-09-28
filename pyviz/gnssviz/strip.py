@@ -1,17 +1,17 @@
-"""Shared (satellite x epoch) strip-chart builder -- the port of
+"""Shared (satellite x epoch) strip-chart builder, the port of
 ``plotSatEpochStrip.m``.
 
 Driver viewers (``view_*_strip``) melt their CSV into a long-form table ``D`` with
 columns ``system, satellite, facet, utc, value`` and call
 :func:`build_sat_epoch_strip`, which returns one :class:`Figure` per
-constellation (each with one tile per *facet* -- signal / signal-pair / none).
+constellation, each with one tile per *facet* (signal, signal pair, or none).
 No plotting library is touched here: the figures are rendered later by a backend.
 
 Parity with the MATLAB renderer:
-* one shared colormap + colour-limits + colorbar across all constellations;
+* one shared colormap, colour limits, and colorbar across all constellations;
 * satellites sorted by numeric PRN (chars 2-3), unparseable PRNs sorted last;
 * ``NaN`` cells transparent; columns spread uniformly across the time span;
-* robust auto colour-limits via *nearest-rank* 2nd/98th percentiles (matching the
+* robust auto colour limits via *nearest-rank* 2nd/98th percentiles (matching the
   toolbox-free ``pctl`` in the MATLAB source), symmetric when diverging.
 """
 

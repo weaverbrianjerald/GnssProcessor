@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Split a docs/ monolith into one-card-per-file, VERBATIM and verifiably.
+"""Split a docs/ monolith into one-card-per-file, verbatim and verifiably.
 
-The rule this script exists to enforce: **no existing section text is ever
-rewritten, shortened or reflowed.**  Every byte of a monolith ends up in
+The rule this script exists to enforce: no existing section text is ever
+rewritten, shortened or reflowed. Every byte of a monolith ends up in
 exactly one target file, in document order, and ``--verify`` proves it by
 hash: concatenating the target files' verbatim bodies in document order must
 reproduce the archived monolith byte for byte.
@@ -34,13 +34,13 @@ Mapping files
       ]
     }
 
-Each group is ``[anchor, target, id, status, summary]``.  ``anchor`` is a
-PREFIX of exactly one heading line (``##`` or ``###``) in the monolith, or the
+Each group is ``[anchor, target, id, status, summary]``. ``anchor`` is a
+prefix of exactly one heading line (``##`` or ``###``) in the monolith, or the
 literal ``__preamble__`` for the text above the first heading (which must be
-the first group).  A group owns every heading from its anchor up to (not
+the first group). A group owns every heading from its anchor up to (not
 including) the next group's anchor, so the groups partition the file into
-contiguous slices.  The same target may appear in several groups — the
-document is chronological and cards interleave — and its slices are
+contiguous slices. The same target may appear in several groups, since the
+document is chronological and cards interleave, and its slices are
 concatenated in document order.
 
 Line endings are LF everywhere; the reader normalises CRLF on input so the
@@ -132,7 +132,7 @@ def heading_offsets(text: str):
 def resolve_groups(text: str, groups):
     """Turn the mapping's groups into (target, id, status, summary, slices).
 
-    Returns ``ordered`` — the groups in document order, each with the
+    Returns ``ordered``: the groups in document order, each with the
     ``(start, end)`` char range it owns and the heading lines inside it.
     """
     heads = heading_offsets(text)
@@ -180,7 +180,7 @@ def sec_label(line: str) -> str:
 
 
 def facts(body: str):
-    """Auto-extract the STATUS facts that are IN the text (never invented)."""
+    """Auto-extract the STATUS facts that are in the text (never invented)."""
     commits, seen = [], set()
     for m in RE_COMMIT.finditer(body):
         t = m.group(1)

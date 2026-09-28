@@ -80,7 +80,7 @@ def ecef_to_enu(x, y, z, lat0_deg, lon0_deg, h0):
     return e, n, u
 
 
-# Thin-shell single-layer ionosphere constants — match GlobalIonosphereMap.cpp
+# Thin-shell single-layer ionosphere constants, matching GlobalIonosphereMap.cpp
 # (Re = base radius, H = shell height).  These are the IONEX defaults the C++
 # pierce-point computation uses; keep them in sync if the GIM header changes.
 _RE_KM = 6371.0
@@ -136,7 +136,7 @@ def great_circle(lat1_deg, lon1_deg, lat2_deg, lon2_deg, n: int = 48):
     Spherical-slerp interpolation of the two unit vectors; ``n`` points
     inclusive of both endpoints.  Returns longitudes wrapped to [-180, 180);
     intended for drawing baseline arcs on an equirectangular world map.  (No
-    antimeridian splitting — a span crossing +/-180 draws as one segment; for
+    antimeridian splitting: a span crossing +/-180 draws as one segment; for
     the global IGS networks the baselines-from-datum arcs render cleanly.)
     """
     lat1, lon1 = np.radians(lat1_deg), np.radians(lon1_deg)

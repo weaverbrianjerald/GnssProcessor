@@ -1,56 +1,59 @@
 #!/usr/bin/env python3
-"""SPEC_event_harness §24.6 — the per-LOS CODE-RESIDUAL attribution, read off the
-producer's own SIGNED post-fit residual rows (`network.trace_postfit_rows` ->
+"""SPEC_event_harness §24.6: per-LOS code-residual attribution, read from the
+producer's own signed post-fit residual rows (`network.trace_postfit_rows` ->
 logs/network_pf_rows.csv: week,tow,station,sat,signal,kind,resid_m,w,elev_deg).
 
     python scripts/pf_rows_attrib.py <legdir> [--k-lo 10 --k-hi 60] [--tow0 277320]
                                      [--seed-run runs/evseed_field6h_v8] [--json out.json]
 
 Window: k = 1 + (tow - tow0)/30, kept for k in [k_lo, k_hi] (the settled part of a
-60-epoch leg).  Every read below is done on the CODE rows and repeated on the PHASE
-rows (the phase is the control: cm, and the LOS whose phase shares a code signature
-names geometry / troposphere, the last row of the §24.6 table).
+60-epoch leg). Every read below runs on the code rows and is repeated on the phase
+rows (the phase is the control: centimeter-scale, and the LOS whose phase shares a
+code signature names geometry or troposphere, the last row of the §24.6 table).
 
-Items (the SPEC's numbering):
-  1. per (station, satellite, signal): residual MEAN over the window (a constant no
-     state absorbed) and rms ABOUT the mean; pooled distributions and the share of
+Items (numbered as in the SPEC):
+  1. per (station, satellite, signal): residual mean over the window (a constant no
+     state absorbed) and rms about the mean; pooled distributions and the share of
      the pooled sum of squares the per-LOS means carry.
   2. per station: rms(C2W)/rms(C1C) and rms(C5Q|C5X)/rms(C1C) of the code residuals
-     (dispersive => (f1/f2)^2 = 1.647 / (f1/f5)^2 = 1.793; non-dispersive => 1) and
-     the SIGN agreement per LOS (Pearson r of the C1C and C2W series of one LOS,
-     matched by epoch) plus the cross-signal relation of the per-LOS MEANS.
+     (dispersive gives (f1/f2)^2 = 1.647, (f1/f5)^2 = 1.793; non-dispersive gives 1)
+     and the sign agreement per LOS (Pearson r of the C1C and C2W series of one LOS,
+     matched by epoch), plus the cross-signal relation of the per-LOS means.
   3. per station: code rms in elevation bins 15-25 / 25-45 / >45 deg (1/sin(el)
-     predicts a low/high ratio of ~2.5; a flat error predicts ~1).
-  4. per satellite: mean over stations of the per-LOS code MEAN (a satellite-side
+     predicts a low/high ratio of about 2.5; a flat error predicts about 1).
+  4. per satellite: mean over stations of the per-LOS code mean (a satellite-side
      constant) vs its spread across stations (a station-side one).
   5. the seven stations the frame-blind rx-CB gate refuses (§21.18) vs the rest.
-  6. a variance decomposition of the pooled code residual on ORTHOGONAL projections
+  6. a variance decomposition of the pooled code residual on orthogonal projections
      (every table closes exactly): per-(station,signal) constants, per-(satellite,
      signal) constants, per-(station,epoch) and per-(satellite,epoch) common modes
-     (clock-like), then per LOS-epoch the SIGNAL-COMMON mean vs the BETWEEN-signal
+     (clock-like), then per LOS-epoch the signal-common mean vs the between-signal
      part, the latter split into the gamma-direction (the ionosphere's pattern,
-     gamma_b = (f1/fb)^2) and its orthogonal remainder.  Reported MARGINALLY (each
-     alone on the raw residual — bar A2's "> 70 % in one row") and NESTED (what is
-     left for each after the ones before it).  ⚠ With two signals ANY between-signal
-     difference is "gamma-direction" by construction, so the dispersive verdict comes
-     from the SHAPE tests: (a) between/common energy vs the 1/(amp-1) ≈ 0.057 a pure
-     dispersive error carries; (b) the 3-signal groups' gamma-direction share of
-     their between-signal energy (~1 dispersive, ~0.5 signal-specific); (c) the sign
-     relation of the two signals (dispersive +1.647, signal-common +1, and the
-     ANTI-correlated -w1/(w2 g2) that the per-LOS iono column's normal equation
-     forces when the CODE rows alone close it — free ambiguities carry no iono
-     LEVEL information; the closure ratio c = |sum w g v| / sqrt(sum (w g v)^2) reads
-     that directly).  The implied dispersive share is noise-corrected with the
+     gamma_b = (f1/fb)^2) and its orthogonal remainder. Reported both marginally
+     (each alone on the raw residual, e.g. bar A2's ">70% in one row") and nested
+     (what is left for each after the rows before it). With only two signals, any
+     between-signal difference is "gamma-direction" by construction, so the
+     dispersive verdict comes from the shape tests: (a) between/common energy
+     against the 1/(amp-1) ≈ 0.057 a pure dispersive error carries; (b) the
+     3-signal groups' gamma-direction share of their between-signal energy (about
+     1 for dispersive, about 0.5 for signal-specific); (c) the sign relation of the
+     two signals (dispersive +1.647, signal-common +1, and the anti-correlated
+     -w1/(w2 g2) that the per-LOS iono column's normal equation forces when the
+     code rows alone close it, since free ambiguities carry no iono level
+     information; the closure ratio c = |sum w g v| / sqrt(sum (w g v)^2) reads
+     that directly). The implied dispersive share is noise-corrected with the
      3-signal groups' empirical sigma_hat and enters bar A2 only when the shape
-     tests admit it (otherwise it is reported shape-REFUTED); the last named row
-     is the per-LOS residual left after every state-side row.
+     tests admit it (otherwise it is reported as shape-refuted); the last named
+     row is the per-LOS residual left after every state-side row.
   7. per-station code rms of the leg vs the seed's network_pf_keyed.csv STA ranking
-     (bar A1: Spearman > 0.9), on the SAME statistic (rms of |v|*sqrt(w), the pf_keyed
-     convention) at the SAME epochs and over the seed's settled hours 2-5; plus a
-     self-consistency check of the dump against the leg's own pf_keyed STA rows.
+     (bar A1: Spearman > 0.9), on the same statistic (rms of |v|*sqrt(w), the
+     pf_keyed convention) at the same epochs and over the seed's settled hours 2-5;
+     plus a self-consistency check of the dump against the leg's own pf_keyed STA
+     rows.
 
 Conventions taken from the code (NetworkFrameDiag.cpp): resid_m = v = y - A_s x_s -
-A_r x_r (observed - predicted, metres, NOT standardized); the pass pools |v|*sqrt(w).
+A_r x_r (observed minus predicted, metres, not standardized); the pass pools
+|v|*sqrt(w).
 """
 import argparse
 import csv
@@ -279,8 +282,8 @@ def item1_los(d, kind, out):
     print("  top-8 LOS by |mean|:")
     for _, sta, sat, sig, m, s, n in top[:8]:
         print(f"    {sta} {sat} {sig}: mean {m:8.3f} m  rms about mean {s:7.3f} m  n {n}")
-    # Level PERSISTENCE: the per-LOS mean over the first half of the window vs the
-    # second half.  A fixed bias (code bias / datum constant) reproduces itself
+    # Level persistence: the per-LOS mean over the first half of the window vs the
+    # second half.  A fixed bias (code bias or datum constant) reproduces itself
     # (r ~ 1, slope ~ 1); code multipath at its 10-20 min timescale decorrelates.
     tmid = float(np.median(np.unique(d["tow"])))
     a_, b_, wts = [], [], []
@@ -298,7 +301,7 @@ def item1_los(d, kind, out):
     print(f"  level PERSISTENCE (per-LOS mean, first half vs second half of the window, {a_.size} LOS-signal "
           f"series with >= 8 epochs in each): r {r_half:.3f}, slope {slope_half:.3f}, rms(second - first) "
           f"{rms_diff:.3f} m vs rms(level) {rms(a_):.3f} m  (fixed bias => r ~ 1, slope ~ 1; multipath => lower)")
-    # |level| vs 1/sin(el) across LOS: the elevation shape of the CONSTANT part.
+    # |level| vs 1/sin(el) across LOS: the elevation shape of the constant part.
     el = d["el"]
     xs, ys = [], []
     for (sta, sat, sig), ix in G.items():
@@ -537,10 +540,10 @@ def item5_refused(d, kind, out):
 
 
 def twoway_fit(v, a_keys, b_keys, max_sweeps=200, tol=1e-10):
-    """Least-squares fit of v = alpha[a] + beta[b] (two-way additive) by BACKFITTING —
+    """Least-squares fit of v = alpha[a] + beta[b] (two-way additive) by backfitting:
     alternating per-key means, which is Gauss-Seidel on the normal equations and
-    converges to the same orthogonal projection as the dense solve without the
-    (rows x keys) design matrix (60 k x 4.6 k = 2.3 GB on a 61-station leg).
+    converges to the same orthogonal projection as the dense solve without forming
+    the (rows x keys) design matrix (60k x 4.6k = 2.3 GB on a 61-station leg).
     Returns the fitted values."""
     v = np.asarray(v, dtype=float)
     _, ia = np.unique(a_keys, return_inverse=True)
@@ -573,16 +576,17 @@ def proj_means(v, keys):
 
 def proj_gamma(v, sat, sig, keys):
     """Per group (one LOS-epoch, or one LOS for the window means) with >= 2 distinct
-    known dispersive factors: the orthogonal projection of the group's signal-CENTRED
-    residuals onto the centred dispersive pattern (gamma_b - mean gamma), ONE
-    parameter per group — the between-signal part that has the ionosphere's shape.
+    known dispersive factors: the orthogonal projection of the group's signal-centred
+    residuals onto the centred dispersive pattern (gamma_b - mean gamma), one
+    parameter per group, giving the between-signal part that has the ionosphere's
+    shape.
 
     Returns (fitted, participated mask, n_groups, n_groups with >= 3 signals,
     amplification), where amplification is the fit-SS-weighted mean over groups of
-    sum(gamma^2) / sum((gamma - mean)^2): the factor a PURELY dispersive error's total
-    SS carries relative to its between-signal SS (GPS C1C+C2W: 17.7; C1C+C2W+C5: 19.5),
-    i.e. what the gamma-shaped share must be multiplied by to read the ionosphere's
-    implied share of the whole residual.
+    sum(gamma^2) / sum((gamma - mean)^2): the factor a purely dispersive error's total
+    sum of squares carries relative to its between-signal sum of squares (GPS
+    C1C+C2W: 17.7; C1C+C2W+C5: 19.5), i.e. what the gamma-shaped share must be
+    multiplied by to read the ionosphere's implied share of the whole residual.
     """
     fitted = np.zeros_like(v)
     part = np.zeros(v.size, dtype=bool)
@@ -613,16 +617,16 @@ def proj_gamma(v, sat, sig, keys):
 
 def gamma_shape_and_closure(v, w, sat, sig, keys):
     """Per LOS-epoch group with >= 2 distinct dispersive factors:
-      - 3-signal groups: the gamma-direction share of the BETWEEN-signal energy
-        (a dispersive error => ~1.0; iid signal-specific energy => ~0.5 with 2 dof);
-        their gamma-orthogonal remainder is also the empirical per-signal noise
-        estimate (one dof per group): sigma_hat^2 = SS_rem3 / n3.
-      - every group: the per-LOS IONO NORMAL-EQUATION closure on these rows,
-        c = |sum_b w_b g_b v_b| / sqrt(sum_b (w_b g_b v_b)^2).  A per-LOS iono
-        column whose normal equation is closed by the CODE rows ALONE (free
-        ambiguities: the phase rows carry no iono LEVEL information) forces
-        sum_b w_b g_b v_b = 0 exactly (c ~ 0); if the phase / the SH tie / a carry
-        share the column, c is O(1).
+      - 3-signal groups: the gamma-direction share of the between-signal energy
+        (a dispersive error gives ~1.0; iid signal-specific energy gives ~0.5 with
+        2 dof); their gamma-orthogonal remainder is also the empirical per-signal
+        noise estimate (one dof per group): sigma_hat^2 = SS_rem3 / n3.
+      - every group: the per-LOS iono normal-equation closure on these rows,
+        c = |sum_b w_b g_b v_b| / sqrt(sum_b (w_b g_b v_b)^2). A per-LOS iono
+        column whose normal equation is closed by the code rows alone (free
+        ambiguities, since the phase rows carry no iono level information) forces
+        sum_b w_b g_b v_b = 0 exactly (c ~ 0); if the phase, the SH tie, or a carry
+        shares the column, c is O(1).
       - 2-signal groups: the measured slope of v_2 on v_1 through the origin and
         the closure-predicted slope median(-w_1 / (w_2 g_2)) (anti-correlated);
         a dispersive error predicts +g_2 (1.647), a signal-common error +1.
@@ -672,10 +676,10 @@ def gamma_shape_and_closure(v, w, sat, sig, keys):
 
 
 def item6_decomposition(d, kind, out):
-    """Variance decomposition of the pooled residual on ORTHOGONAL projections, so every
-    table closes exactly.  MARGINAL = each projection alone on the raw residual (bar A2);
-    NESTED = each fitted to what the previous ones left, in the physically nested order;
-    plus the dispersive-SHAPE tests that a two-signal split cannot make on its own."""
+    """Variance decomposition of the pooled residual on orthogonal projections, so every
+    table closes exactly. Marginal: each projection alone on the raw residual (bar A2).
+    Nested: each fitted to what the previous ones left, in the physically nested order.
+    Also runs the dispersive-shape tests that a two-signal split cannot make on its own."""
     v = d["res"].astype(float)
     w = d["w"].astype(float)
     n = v.size
@@ -738,7 +742,7 @@ def item6_decomposition(d, kind, out):
           f"information; O(1) => the phase / SH tie / a carry share it)")
     print(f"  2-signal LOS-epochs (n {sh['n2']}): slope of v_2 on v_1 through the origin, measured {sh['slope_meas']:.3f}; "
           f"closure-predicted -w1/(w2 g2) median {sh['slope_pred']:.3f}; dispersive +g2 = 1.647; signal-common +1.000")
-    # ---- the same on the per-LOS window MEANS (the constant part; noise averaged down) --
+    # ---- the same on the per-LOS window means (the constant part; noise averaged down) --
     G = group(d["sta"], d["sat"], d["sig"])
     m_sta, m_sat, m_sig, m_val, m_w = [], [], [], [], []
     for (sta, sat, sig), ix in G.items():
@@ -779,14 +783,14 @@ def item6_decomposition(d, kind, out):
         print(f"    {name:78s} {s:6.1f} %")
     print(f"    {'(sum)':78s} {sum(s for _, s in nested):6.1f} %")
     # ---- bar A2 --------------------------------------------------------------------
-    # NAMED rows of the SPEC table only.  The ionosphere row enters with its implied
-    # share ONLY when its own shape test admits it (between/common energy within 3x
-    # of the 1/(amp-1) a dispersive error carries AND the 3-signal gamma-direction
-    # share >= 0.8); otherwise it is shape-REFUTED and reported as such.  The
-    # multipath / observation-model row is what is left per LOS after every named
+    # Named rows of the SPEC table only.  The ionosphere row enters with its implied
+    # share only when its own shape test admits it (between/common energy within 3x
+    # of the 1/(amp-1) a dispersive error carries, and the 3-signal gamma-direction
+    # share >= 0.8); otherwise it is shape-refuted and reported as such.  The
+    # multipath or observation-model row is what is left per LOS after every named
     # state-side row (the nested LOS-epoch rows' sum): elevation-shaped and
     # phase-clean names that row, metre amplitude and persistence argue against it
-    # (item 1 / item 3 carry both reads).
+    # (item 1 and item 3 carry both reads).
     iono_ok = (math.isfinite(ratio) and math.isfinite(pure) and ratio <= 3.0 * pure
                and math.isfinite(sh["gamma_share_3"]) and sh["gamma_share_3"] >= 0.8)
     los_unexplained = sum(s for name, s in nested[4:])

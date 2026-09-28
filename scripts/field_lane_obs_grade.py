@@ -5,18 +5,18 @@ SPEC_lane_slip_response §7.6 pre-registered field rule.
 Input: a run directory whose logs/network_events.csv carries tier=LANE_OBS rows
 (the §7.6 instrument; requires network.trace_events + relevel_lane_snap armed).
 
-The pre-registered rule (§7.6, registered BEFORE the instrumented re-run):
-  * grade the DETECTOR-driven (non-T4) sub-population at el > 30 deg;
-      PASS      = >=5-cyc mass ~ 0 there AND median |delta| inside the null
+The pre-registered rule (§7.6, registered before the instrumented re-run):
+  * grade the detector-driven (non-T4) sub-population at el > 30 deg;
+      PASS      = >=5-cyc mass ~ 0 there and median |delta| inside the null
                   band (0.4-0.9 cyc);
       FALSIFIED = persistent >=5-cyc mass on that clean sub-population;
-  * the T4-freed sub-population is a REFLOAT-JUSTIFICATION census (dMW ~ 0
-    there, so a large delta is the carry error the refloat REMOVED) and is
+  * the T4-freed sub-population is a refloat-justification census (dMW ~ 0
+    there, so a large delta is the carry error the refloat removed) and is
     never pooled into the lane-cost grade;
-  * detector sub-population < ~30 measured rows at el > 30 is §7.4's redesign
-    trigger, not a verdict.
+  * a detector sub-population under ~30 measured rows at el > 30 triggers
+    §7.4's redesign, not a verdict.
 
-This script REPORTS; the verdict sentence belongs in the SPEC, written by a
+This script reports; the verdict sentence belongs in the SPEC, written by a
 person reading the report.
 """
 
@@ -140,15 +140,15 @@ def main():
     report_pop("all T4", t4)
     report_pop(f"T4 el > {args.el_cut:.0f}", [r for r in t4 if r["el"] > args.el_cut])
 
-    # §7.7 satellite-coherence split: a FRAME step is satellite-common at one
-    # epoch (near-identical |delta| at several stations simultaneously); a real
-    # per-arc carried error is not.  Cluster = same satellite, tows within
-    # --cluster-gap of each other, >= --cluster-min distinct stations, all with
-    # measured |delta| >= --cluster-floor.  Clustered rows are reported apart
-    # and the census is re-stated without them; the in-run gauge guard already
+    # §7.7 splits by satellite coherence: a frame step is satellite-common at one
+    # epoch (near-identical |delta| at several stations simultaneously), while a
+    # per-arc carried error is not. A cluster is the same satellite, tows within
+    # --cluster-gap of each other, at least --cluster-min distinct stations, all
+    # with measured |delta| >= --cluster-floor. Clustered rows are reported apart
+    # and the census is re-stated without them. The in-run gauge guard already
     # vets the traced frame channels, so a surviving cluster is either an
-    # untraced frame event or a genuinely satellite-common carried error — the
-    # spread column is the discriminator (a frame constant has ~zero spread).
+    # untraced frame event or a genuinely satellite-common carried error; the
+    # spread column is the discriminator (a frame constant has close to zero spread).
     sus = sorted((r for r in t4 if r["measured"] and abs(r["delta"]) >= args.cluster_floor),
                  key=lambda r: (r["sat"], r["tow"]))
     clusters, cur = [], []

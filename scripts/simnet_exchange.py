@@ -1,43 +1,41 @@
 #!/usr/bin/env python3
-"""SYNTHETIC W6+SH ARM — the clock <-> receiver-DCB <-> ionosphere EXCHANGE signature.
+"""Synthetic W6+SH arm: the clock, receiver-DCB and ionosphere exchange signature.
 
 docs/SPEC_synthetic_minimum_network.md §11 item 4.
 
-WHY THIS TOOL EXISTS.  The field campaign cornered the ~1.3 m detrended wander of
-the emitted wire as ESTIMATOR-INTERNAL (§9.9/§9.9.1: the a-priori product frame was
-exonerated, and the wander is not receiver-code-driven).  What it could never do is
-watch the exchange directly, because in the field every channel involved is unknown.
-On this fixture all three are known, so the wander can be decomposed instead of
-inferred.
+The field campaign attributed the ~1.3 m detrended wander of the emitted wire to the
+estimator rather than the input products (§9.9/§9.9.1: the a-priori product frame is
+exonerated, and the wander is not receiver-code-driven), but the field data cannot show
+the exchange directly because every channel involved there is unknown. On this fixture
+all three channels are known, so the wander can be decomposed instead of inferred.
 
-WHICH DIRECTIONS CAN ACTUALLY MOVE — this is the part that is easy to get wrong.
 Under the W6 code-bias datum the satellite side is pinned twice: the iono-free
 combination over the pinned pair goes into the satellite clock, and each channel is
-forced to zero mean over the registered set.  So the emitted satellite code biases
-have NO free fleet-common mode — their per-channel mean is 0 by construction, and a
-"fleet-mean satellite DCB drift" channel would be measuring the datum, not the
-estimator.  The directions that CAN wander are:
+forced to zero mean over the registered set. The emitted satellite code biases have no
+free fleet-common mode (their per-channel mean is 0 by construction), so a
+"fleet-mean satellite DCB drift" channel would measure the datum, not the estimator.
+The directions that can wander are:
 
   1. clk_common(t)   -- fleet-median C-record error.  On a quiet fixture with no
-                        injected satellite-clock error the C record IS the error, and
+                        injected satellite-clock error the C record is the error, and
                         its fleet-common part is (up to a constant) minus the realized
-                        datum receiver's clock error (§9.8: the common level FOLLOWS
+                        datum receiver's clock error (§9.8: the common level follows
                         the datum station).                                      [m]
-  2. rxdcb_common(t) -- fleet-MEAN receiver-DCB error.  Table-8 (contract §B.4) says
+  2. rxdcb_common(t) -- fleet-mean receiver-DCB error.  Table-8 (contract §B.4) says
                         the fleet-mean receiver GF code bias is absorbed into the
                         ionosphere, so this is the gauge-bearing partner of a00 and
-                        the one channel the standing record already fingers ("the
-                        rx-CB carry's rolling common-mode memory is what TRACKS the
-                        level").                                                 [m]
+                        the channel the standing record already identifies (the
+                        rx-CB carry's rolling common-mode memory is what tracks the
+                        level).                                                 [m]
   3. a00_err(t)      -- estimated global mean VTEC minus the injected field's mean at
-                        the SAME epoch.                                       [TECU]
+                        the same epoch.                                       [TECU]
 
   4. cb_rms(t)       -- rms of the per-(sat,signal) code-bias residual after the §4.4
-                        transform.  Reported as a co-moving DIAGNOSTIC, not a gauge:
+                        transform.  Reported as a co-moving diagnostic, not a gauge:
                         it is what the pinned datum leaves free.               [m]
 
-THE PRE-REGISTERED EXCHANGE COEFFICIENT, DERIVED FROM THE MODEL'S OWN COEFFICIENTS.
-The receiver DCB state enters the two reference-band CODE rows with mu1/dmu and
+The pre-registered exchange coefficient is derived from the model's own coefficients.
+The receiver DCB state enters the two reference-band code rows with mu1/dmu and
 mu2/dmu (`StateInitializer::resolveReceiverBias`, mu1 = 1, mu2 = gamma = 1.6469,
 dmu = mu1 - mu2 = -0.6469), so on the geometry-free difference P1 - P2 its signature
 is exactly +1 * x_DCB.  The slant ionosphere's GF signature is (1 - gamma) * iota =
@@ -46,32 +44,31 @@ Delta therefore needs
 
     Delta - 0.6469 * Delta_iota = 0   =>   Delta_iota = +1.546 * Delta   [m of L1]
 
-and 1 m of L1 delay is 1/0.1624 = 6.16 TECU of SLANT, so at a fleet-typical
+and 1 m of L1 delay is 1/0.1624 = 6.16 TECU of slant, so at a fleet-typical
 obliquity of ~1.2 the vertical coefficient is
 
     +1.546 / (0.1624 * 1.2) = +7.93 TECU per metre of rx-DCB common error.
 
-The sign is POSITIVE: a positive receiver-DCB error is absorbed by a POSITIVE
+The sign is positive: a positive receiver-DCB error is absorbed by a positive
 ionosphere, because both enter the GF combination with the same effective sign once
-dmu's own negative sign is carried through.  (An earlier version of this header
-asserted the opposite from a hand-waved argument and the measured data contradicted
-it; the coefficients above are the derivation, and this project has now been bitten
-by a bias SIGN convention twice in one session -- see the IF-lump note in
-scripts/simnet_grade.py.)  Measured slope and correlation are reported against that
-number; a match is the exchange, a mismatch says the wander is entering somewhere
-else and the next arm should look there.
+dmu's own negative sign is carried through (this derivation is the current basis for
+the sign; see also the IF-lump note in scripts/simnet_grade.py for the same
+convention elsewhere in the project).  Measured slope and correlation are reported
+against that number: a match is the exchange, a mismatch means the wander is entering
+somewhere else and the next arm should look there.
 
-METHOD NOTES (the traps this project has already paid for):
-  * join on TOW, never on row index -- a withheld epoch simply has no E block;
-  * all statistics on DEMEANED SETTLED series (a constant offset is not wander, and
+Method notes:
+  * join on TOW, never on row index: a withheld epoch simply has no E block;
+  * all statistics use demeaned, settled series (a constant offset is not wander, and
     the level channel's own convergence budget is ~2 h);
-  * correlations are reported on the series AND on first differences.  A slow common
+  * correlations are reported on the series and on first differences.  A slow common
     trend inflates the level correlation of any two rising series; the
-    first-difference correlation is what says they move together epoch to epoch;
-  * the truth a00 is the network's COVERAGE-WEIGHTED mean vertical TEC (mean over
+    first-difference correlation is what shows whether they move together epoch to
+    epoch;
+  * the truth a00 is the network's coverage-weighted mean vertical TEC (mean over
     the sampled stations' lines of sight of stec_total/obliquity), not a spherical
-    harmonic mean.  It is the honest reference for what THIS network can see, and it
-    is stated rather than dressed up as a global mean.
+    harmonic mean; it is the reference for what this network can see, not a global
+    mean.
 
 Usage:
   python scripts/simnet_exchange.py <fixture_dir> [--products P] [--run RUNDIR]
@@ -91,7 +88,7 @@ GPS_L1, GPS_L2 = 1575.42e6, 1227.60e6
 GAMMA = (GPS_L1 / GPS_L2) ** 2                 # 1.6469
 TECU_TO_L1_M = 0.1624                          # metres of L1 delay per TECU
 NOMINAL_OBLIQUITY = 1.2                        # fleet-typical slant/vertical ratio
-# TECU of VERTICAL TEC per metre of receiver GF code-bias error (see the header).
+# TECU of vertical TEC per metre of receiver GF code-bias error (see the header).
 EXCHANGE_TECU_PER_M = +1.0 / ((GAMMA - 1.0) * TECU_TO_L1_M * NOMINAL_OBLIQUITY)
 
 
@@ -161,9 +158,9 @@ def parse_products(path, osb_truth, pin):
     """-> {tow: {"clk": median C, "cb_rms": rms transformed CB residual}}.
 
     The CB residual applies §4.4's transform (per-satellite IF lump over the pinned
-    pair, then zero mean per channel over the epoch's registered set) to the TRUTH
-    before differencing, exactly as scripts/simnet_grade.py does.  With no injected
-    OSB (the INT posture) the CB part is simply absent.
+    pair, then zero mean per channel over the epoch's registered set) to the truth
+    before differencing, the same way scripts/simnet_grade.py does.  With no injected
+    OSB (the INT posture) the CB part is absent.
     """
     out, tow, clk, cb = {}, None, [], {}
     j1, j2 = pin if pin else (None, None)
@@ -285,9 +282,9 @@ def a00_series(run_dir):
 
 
 def truth_vtec_series(manifest, n_sample):
-    """-> {tow: coverage-weighted mean VERTICAL TECU} from truth_atmo.csv.
+    """-> {tow: coverage-weighted mean vertical TECU} from truth_atmo.csv.
 
-    Sampled over up to n_sample solve stations by STRIDE (a Fibonacci roster's index
+    Sampled over up to n_sample solve stations by stride (a Fibonacci roster's index
     is monotone in latitude, so a prefix would be a latitude band, not a network).
     """
     solve = [s for s in manifest["stations"] if not s.get("consumer")]

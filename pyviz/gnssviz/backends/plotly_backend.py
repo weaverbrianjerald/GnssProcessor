@@ -1,7 +1,7 @@
 """Plotly implementation of the rendering :class:`Backend`.
 
 Interprets the same :class:`gnssviz.figures.Figure` specs as the matplotlib
-backend into interactive plotly figures -- this is what makes the suite usable
+backend into interactive plotly figures, which is what makes the suite usable
 for browser dashboards and the real-time view.  Viewers are unchanged: they emit
 specs; this module is the only one that imports plotly.
 
@@ -66,7 +66,7 @@ class PlotlyBackend(Backend):
 
         title = fig.title or None
         show_any = any(getattr(s, "legend", None) is not None for s in specs)
-        # Overlay the legend INSIDE the plot area (top subplot) so it does not reserve a
+        # Overlay the legend inside the plot area (top subplot) so it does not reserve a
         # right-hand gutter of blank whitespace on every figure.  Position follows the
         # first axis's matplotlib-style loc; the semi-transparent box lets data show
         # through.  x/y are paper coords (whole plotting area); yanchor near the top
@@ -329,7 +329,7 @@ class PlotlyBackend(Backend):
             gofig.update_yaxes(type="log", row=row, col=1, secondary_y=False)
         if spec.xscale == "log":
             gofig.update_xaxes(type="log", row=row, col=1)
-        # Plotly expresses a LOG axis's `range` in EXPONENTS, matplotlib in data units.
+        # Plotly expresses a log axis's `range` in exponents, matplotlib in data units.
         # Viewers speak data units (that is the contract Axes.xlim/ylim documents), so a
         # log axis has to be converted here or a perfectly sane limit like 35 m renders as
         # 10^35.  Non-positive bounds are dropped rather than passed to log10.

@@ -1,9 +1,9 @@
 /**
  * @file NetworkClockAnchor.cpp
- * @brief Implementation of Card Q3, the guarded temporal clock anchor
- *        (docs/SPEC_clock_temporal_anchor.md).  Design rationale, the two exact
- *        identities the guard rests on, and the invariant-#1/#7 contract live in
- *        the header banner — read that first.
+ * @brief Implementation of the guarded temporal clock anchor (card Q3,
+ *        docs/SPEC_clock_temporal_anchor.md).  The design rationale, the two exact
+ *        identities the guard rests on, and the invariant #1 and #7 contract are in
+ *        the header's file comment.
  */
 
 #include "filter/NetworkClockAnchor.hpp"
@@ -27,19 +27,18 @@ namespace {
 
 /// Maximum in-epoch withdraw→re-solve passes.  A pass can expose a second
 /// satellite (removing one trip moves the per-constellation median), but the
-/// population this card exists for is a handful of genuine events per day, so a
-/// run that needs more than three passes is telling us the anchor is
-/// mis-specified rather than that the data has three faults — the cap is a
-/// backstop, and hitting it is logged, not silently absorbed.
+/// target population is a handful of genuine events per day, so an epoch that
+/// needs more than three passes points at a mis-specified anchor rather than three
+/// data faults.  The cap is a backstop, and reaching it is logged.
 constexpr int kCtaMaxPasses = 3;
 
-/// Minimum fraction of the folded prior variance the DATA must have removed
+/// Minimum fraction of the folded prior variance that the data must have removed
 /// (`(P⁻ − P⁺)/P⁻`, the redundancy of the carried row) before a refloat is
-/// admissible.  Below it the satellite's clock column is PRIOR-DOMINATED —
-/// withdrawing its prior would leave a near-unobservable column and the
-/// re-solve's own relative-pivot guard would (rightly) reject it.  Such a
-/// satellite still DECOUPLES and is still marked; only the same-epoch VALUE
-/// correction is skipped, and the skip is logged rather than hidden.
+/// admissible.  Below it the satellite's clock column is prior-dominated:
+/// withdrawing its prior would leave a nearly unobservable column, which the
+/// re-solve's relative-pivot guard would reject.  Such a satellite still decouples
+/// and is still marked; only the same-epoch value correction is skipped, and the
+/// skip is logged.
 constexpr double kCtaMinCarryRedundancy = 0.05;
 
 /// Comma-join a satellite set for a log line (fmt/ranges is not pulled in here).
@@ -52,13 +51,13 @@ std::string joinSats(const std::set<std::string>& s) {
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// §2.1 — the gauge projection, shared by the guard and the census.
+// The gauge projection, shared by the guard and the census (§2.1).
 // ---------------------------------------------------------------------------
 
 std::vector<double> clockAnchorGaugeProject(const Eigen::MatrixXd& cov,
                                             const std::vector<Eigen::Index>& cols) {
     const std::size_t n = cols.size();
-    if (n < 2) return {};                      // a lone clock IS the gauge
+    if (n < 2) return {};                      // a lone clock is the gauge
     std::vector<double> rowmean(n, 0.0);
     double grand = 0.0;
     for (std::size_t a = 0; a < n; ++a) {
@@ -88,7 +87,7 @@ std::vector<double> clockAnchorGaugeProjectDiag(const std::vector<double>& var) 
 }
 
 // ---------------------------------------------------------------------------
-// Fold side — the variance decision and the per-satellite bookkeeping.
+// Fold side: the variance decision and the per-satellite bookkeeping.
 // ---------------------------------------------------------------------------
 
 void clockAnchorBeginEpoch(NetworkRunContext& ctx) {
@@ -108,33 +107,33 @@ ClockAnchorFold clockAnchorFoldVariance(NetworkRunContext& ctx,
                                         double seed_horizon_s) {
     ClockAnchorFold out;
     const double dt_leg = std::max(0.0, dt_epoch);
-    // OFF path: the legacy expression, character for character, so an unarmed run
+    // Off path: the legacy expression, character for character, so an unarmed run
     // cannot differ in the last bit.
     out.var_eff = prev_var + ctx.knobs.q_clock * dt_leg;
     if (!ctx.knobs.cta_on) return out;
 
     ClockAnchorSat& st = ctx.carry.clk_anchor.sat[sat];
 
-    // Per-satellite elapsed time.  NEVER the driver's dt: every skip path advances
+    // Per-satellite elapsed time, not the driver's dt: every skip path advances
     // prev_tow while this carry survives untouched, so dt understates a stale
-    // carry's age without bound (DOY-129 withheld 278 consecutive epochs).  A
-    // first sighting has no elapsed time — and is LOOSE anyway.
+    // carry's age without bound.  A first sighting has no elapsed time and falls
+    // back to dt (it is LOOSE in any case).
     const double dt_sat = (st.t_last > 0.0) ? (pl_now_s - st.t_last) : dt_leg;
-    // READMIT continuity: a PARKED pre-gap realization seeding a re-registered column
-    // is stale only beyond the seed horizon — the gap it spans is exactly the evidence
+    // Re-admission continuity: a parked pre-gap realization seeding a re-registered
+    // column is stale only beyond the seed horizon.  The gap it spans is the evidence
     // gap the park holds, and the guard (not the staleness bound) re-validates it.
     const double gap_bound = (seed_horizon_s > ctx.knobs.cta_max_gap_s)
                                  ? seed_horizon_s : ctx.knobs.cta_max_gap_s;
     const bool stale = !(dt_sat > 0.0)
                     || (ctx.knobs.cta_max_gap_s > 0.0 && dt_sat > gap_bound);
-    // A LOOSE seed inflates over the TRUE gap, never the driver's dt (the legacy loose
-    // expression is kept character-for-character when nothing is seeding).
+    // A LOOSE seed inflates over the true gap, not the driver's dt (the legacy loose
+    // expression is kept character for character when nothing is seeding).
     if (seed_horizon_s > 0.0 && dt_sat > 0.0)
         out.var_eff = prev_var + ctx.knobs.q_clock * dt_sat;
     if (stale && st.anchored) {
-        // Detected here because it decides the variance; the STATE TRANSITION,
-        // the event and the wire mark are the guard's, so every decoupling edge
-        // lands through one path with one identity.
+        // Detected here because it decides the variance.  The state transition,
+        // the event and the wire mark belong to the guard, so every decoupling edge
+        // goes through one path with one identity.
         st.stale_pending = true;
         out.decoupled    = true;
     }
@@ -148,15 +147,17 @@ ClockAnchorFold clockAnchorFoldVariance(NetworkRunContext& ctx,
             ++ctx.counters.cta_floor_hits;
         }
         ++ctx.counters.cta_folded_anchored;
-        // Card GAL: the same count per constellation letter (run-end readout only).
+        // The same count per constellation letter, for the run-end readout only
+        // (card GAL).
         ++ctx.counters.mgnss.anchor_folds_anchored[sat.substr(0, 1)];
     } else {
-        // LOOSE folds at the LEGACY rate over the LEGACY dt — exactly the pre-card
-        // behaviour.  That is what bounds a decoupled satellite (standing
-        // invariant #7): it is not unconstrained, it is on the carry the existing
-        // clock_runaway_check monitor already polices.
+        // LOOSE folds at the legacy rate over the legacy dt, the behaviour without
+        // the anchor (a re-admission seed inflates over its true gap, above).  That
+        // bounds a decoupled satellite (standing invariant #7): it is not
+        // unconstrained, it is on the carry that the existing clock_runaway_check
+        // monitor already bounds.
         ++ctx.counters.cta_folded_loose;
-        ++ctx.counters.mgnss.anchor_folds_loose[sat.substr(0, 1)];   // card GAL
+        ++ctx.counters.mgnss.anchor_folds_loose[sat.substr(0, 1)];   // per constellation (card GAL)
     }
 
     st.t_last          = pl_now_s;
@@ -173,8 +174,8 @@ ClockAnchorFold clockAnchorFoldVariance(NetworkRunContext& ctx,
 
 namespace {
 
-/// The DECOUPLING edge: state transition + event + wire mark, one path.
-/// Returns true when an edge actually fired (the satellite was ANCHORED).
+/// The decoupling edge: state transition, event and wire mark, in one path.
+/// Returns true when an edge fired (the satellite was ANCHORED).
 bool decouple(NetworkRunContext& ctx, NetworkRunTraces& traces, const GnssTime& t,
               const std::string& sat, const char* reason,
               std::optional<double> statistic, std::optional<double> threshold,
@@ -183,11 +184,12 @@ bool decouple(NetworkRunContext& ctx, NetworkRunTraces& traces, const GnssTime& 
     const bool was_anchored = st.anchored;
     st.anchored = false;
     st.in_band  = 0;
-    if (!was_anchored) return false;   // already LOOSE: not an edge, nothing to mark
+    if (!was_anchored) return false;   // already LOOSE: no edge, nothing to mark
     ctx.carry.clk_anchor.tripped.insert(sat);
-    ++ctx.counters.mgnss.anchor_trips[sat.substr(0, 1)];   // card GAL: per constellation
-    // READMIT continuity: a trip this soon after a clock SEED is the data rejecting the
-    // seeded pre-gap realization — invariant #7's mark-if-moved, attributed and counted.
+    ++ctx.counters.mgnss.anchor_trips[sat.substr(0, 1)];   // per constellation (card GAL)
+    // Re-admission continuity: a trip within the verify window of a clock seed is the
+    // data rejecting the seeded pre-gap realization (invariant #7's mark-if-moved),
+    // attributed in the event detail and counted.
     std::string seed_tag;
     if (!ctx.carry.readmit_seeded_s.empty()) {
         const auto rs = ctx.carry.readmit_seeded_s.find(sat);
@@ -223,10 +225,9 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
     auto& anchor = ctx.carry.clk_anchor;
     ++ctx.counters.cta_epochs;
 
-    // --- Non-statistical decoupling causes, applied BEFORE the test ----------
-    // Each is "the carry this satellite would be tested against is not the one
-    // the anchor promised", so testing it would only produce a mis-attributed
-    // statistic.
+    // --- Non-statistical decoupling causes, applied before the test ----------
+    // In each case the carry this satellite would be tested against is not the
+    // anchored carry, so testing it would only produce a misattributed statistic.
     for (const std::string& sat : registered_clock_sats) {
         const auto it = anchor.sat.find(sat);
         if (it == anchor.sat.end() || !it->second.stale_pending) continue;
@@ -259,14 +260,14 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
     const double abs_m   = ctx.knobs.cta_abs_m;
     const double s_floor = std::max(1e-12, ctx.knobs.cta_sigma_floor_m
                                          * ctx.knobs.cta_sigma_floor_m);
-    // Card C-GF: the RESOLVED predicate, not the Q3 knob.  A withdraw must un-fold
+    // The resolved predicate, not the Q3 knob (card C-GF).  A withdraw must un-fold
     // exactly what was folded; reading a different flag than the fold used leaves a
     // negative-semidefinite residue in the shared normals (see NetworkRunContext.hpp).
-    const bool gf         = ctx.knobs.carry_gauge_free;     // the FOLD (what a withdraw must un-fold)
-    // Card C-GF: closure is part of "what was folded" — it selects WHICH directions U
-    // spans, so every withdraw below must carry it alongside `gf`.
+    const bool gf         = ctx.knobs.carry_gauge_free;     // the fold (what a withdraw must un-fold)
+    // Closure is part of what was folded: it selects which directions U spans, so
+    // every withdraw below passes it alongside `gf` (card C-GF).
     const bool gfc        = ctx.knobs.carry_gauge_free_closure;
-    const bool proj_post  = ctx.knobs.cta_stat_proj_post;   // the DENOMINATOR's posterior half
+    const bool proj_post  = ctx.knobs.cta_stat_proj_post;   // the denominator's posterior half
     const bool proj_prior = ctx.knobs.cta_stat_proj_prior;  // …and its prior half
     int pass = 0;
     for (; pass < kCtaMaxPasses; ++pass) {
@@ -274,13 +275,14 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
         struct Row { std::string sat; double e{}, S{}, post_var{}, var_eff{}; bool anchored{}; };
         std::vector<Row> rows;
         std::map<char, std::vector<double>> e_by_const;
-        // Card Q3 §2.1: the statistic is on the COMMON-REMOVED residual, so BOTH
-        // halves of S = P⁻ − P⁺ have to be the variance of that CONTRAST rather
-        // than of the raw state (@ref clockAnchorGaugeProject documents why, and
-        // why the raw marginal is wrong for either fold).  Which halves get
-        // projected is `network.clock_anchor_gauge_free_stat`, resolved into the
-        // two predicates above — the BISECTION knob, because the gauge-free arm
-        // moved the fold and this denominator in one step.
+        // The statistic is on the common-removed residual, so both halves of
+        // S = P⁻ − P⁺ have to be the variance of that contrast rather than of the
+        // raw state (card Q3 §2.1; @ref clockAnchorGaugeProject documents why, and
+        // why the raw marginal is wrong for either fold).  Which halves are
+        // projected is set by `network.clock_anchor_gauge_free_stat`, resolved into
+        // the two predicates above.  It is a bisection knob: the gauge-free arm
+        // changed the fold and this denominator in one step, and the knob separates
+        // the two.
         std::map<std::string, double> post_gf, prior_gf;
         if (proj_post || proj_prior) {
             std::map<char, std::vector<std::pair<std::string, Eigen::Index>>> by_c;
@@ -295,7 +297,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
             }
             for (const auto& [c, v] : by_c) {
                 (void)c;
-                if (v.size() < 2) continue;   // no estimable subspace ⇒ leave the raw marginals
+                if (v.size() < 2) continue;   // no estimable contrast: keep the raw marginals
                 if (proj_post) {
                     std::vector<Eigen::Index> cols;
                     cols.reserve(v.size());
@@ -304,10 +306,10 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                     for (std::size_t a = 0; a < pv.size(); ++a) post_gf[v[a].first] = pv[a];
                 }
                 if (proj_prior) {
-                    // The prior side uses the variance the fold ACTUALLY used, read
-                    // back per satellite — never re-derived (re-deriving is how a
-                    // statistic ends up standardizing by a variance the mechanism
-                    // never applied; the census makes the same choice).
+                    // The prior side uses the variance the fold applied, read back
+                    // per satellite and not re-derived: a re-derived variance can
+                    // differ from the one the mechanism applied.  The census makes
+                    // the same choice.
                     std::vector<double> vv;
                     vv.reserve(v.size());
                     for (const auto& m : v) vv.push_back(anchor.sat[m.first].last_var_eff);
@@ -341,11 +343,11 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                 if (qit != prior_gf.end() && std::isfinite(qit->second) && qit->second > 0.0)
                     r.var_eff = qit->second;
             }
-            // Var(x̂ − μ) = P⁻ − P⁺ EXACTLY.  The floor is a LOWER BOUND on the
-            // denominator (never an addition to it — that was the pre-B3 incest
-            // form): a weak-data epoch removes no information, so S → 0 and the
-            // unfloored statistic would 0/0-blow-up on precisely the
-            // lowest-confidence satellites.
+            // Var(x̂ − μ) = P⁻ − P⁺ exactly.  The floor is a lower bound on the
+            // denominator, not an addition to it (adding it is the pre-B3 data-incest
+            // form).  A weak-data epoch removes no information, so S → 0 and the
+            // unfloored statistic would divide 0 by 0 on the lowest-confidence
+            // satellites.
             r.S        = std::max(s_floor, r.var_eff - r.post_var);
             r.anchored = it->second.folded_anchored;
             if (!std::isfinite(r.e) || !std::isfinite(r.S)) continue;
@@ -354,9 +356,9 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
         }
         if (rows.empty()) break;
         // The per-constellation common mode is the free per-epoch clock gauge (rx
-        // clocks are white, q = 1000).  Removing it is standing invariant #5, not
-        // cosmetics: without it every satellite of a re-realizing constellation
-        // reports the gauge and the guard storms.
+        // clocks are white, q = 1000).  Removing it is standing invariant #5:
+        // without it every satellite of a re-realizing constellation reports the
+        // gauge shift and the guard trips on all of them.
         std::map<char, double> med;
         for (auto& [c, v] : e_by_const) {
             std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(v.size() / 2),
@@ -377,13 +379,13 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
             }
             const bool bad_nis = aw > k;
             const bool bad_abs = abs_m > 0.0 && std::abs(eh) > abs_m;
-            // §3's k derivation needs the realized DISTRIBUTION, not just its max:
-            // the denominator √S shrinks as q tightens, so a fixed k means a
+            // The k derivation of §3 needs the realized distribution, not only its
+            // max: the denominator √S shrinks as q tightens, so a fixed k means a
             // different number of metres at every rung of the ladder.  Accumulated
-            // over ANCHORED rows on the FIRST pass only — a later pass re-tests the
-            // survivors against a moved median and would double-count them.  (The
-            // population is still truncated ACROSS epochs by the guard's own action;
-            // the un-truncated null needs a k-disarmed arm.  Counter doc says so.)
+            // over anchored rows on the first pass only; a later pass re-tests the
+            // survivors against a moved median and would count them twice.  The
+            // population is still truncated across epochs by the guard's own action;
+            // the untruncated null needs a k-disarmed arm (see the counter docs).
             if (pass == 0 && r.anchored) {
                 const double sqrt_s = std::sqrt(r.S);
                 ++ctx.counters.cta_w_rows;
@@ -404,16 +406,16 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                          fmt::format("e={:.4f};med={:.4f};sqrtS={:.4f};pass={}",
                                      r.e, med[r.sat[0]], std::sqrt(r.S), pass));
                 trip.insert(r.sat);
-                // Admission screen for the same-epoch VALUE correction only —
-                // never for the decouple or the mark, which are unconditional.
+                // Admission screen for the same-epoch value correction only; the
+                // decouple and the mark are unconditional.
                 const double redun = (r.var_eff > 0.0)
                                          ? (r.var_eff - r.post_var) / r.var_eff : 0.0;
                 if (redun >= kCtaMinCarryRedundancy) trip_resolve.insert(r.sat);
             } else {
-                // LOOSE: the invariant-#7 re-validation.  The SAME statistic
-                // against the loose fold's own null — the question at this edge is
-                // "is the event over?", not "is the clock quiet at 2 cm" (the
-                // re-seed and the next anchored pass answer that).
+                // LOOSE: the invariant #7 re-validation.  The same statistic,
+                // against the loose fold's own null: the question at this edge is
+                // whether the event is over, not whether the clock is quiet at 2 cm
+                // (the re-seed and the next anchored pass answer that).
                 ClockAnchorSat& st = anchor.sat[r.sat];
                 if (bad_nis || bad_abs) { st.in_band = 0; continue; }
                 ++st.in_band;
@@ -421,13 +423,12 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                     st.anchored = true;
                     st.in_band  = 0;
                     ++ctx.counters.cta_recouples;
-                    // NOT wire-marked: re-engaging a prior whose mean IS the last
-                    // posterior adds information without stepping the emitted
-                    // value, so there is nothing for a consumer to reset.  It IS
-                    // an event with an identity and its evidence — which is what
-                    // invariant #7 asks of a re-coupling edge — and the next fold
-                    // RE-SEEDS from the LOOSE posterior variance rather than
-                    // resuming a steady-state tight one.
+                    // Not marked on the wire: re-engaging a prior whose mean is the
+                    // last posterior adds information without stepping the emitted
+                    // value, so a consumer has nothing to reset.  It is an event with
+                    // an identity and its evidence, as invariant #7 asks of a
+                    // re-coupling edge, and the next fold re-seeds from the LOOSE
+                    // posterior variance instead of resuming a steady-state tight one.
                     traces.emitEvent(se_time, "CLK_ANCHOR", "cta_recouple", r.sat, "",
                                      aw, k, "reengage",
                                      fmt::format("in_band={};reseed_var={:.3e}",
@@ -452,12 +453,12 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
             break;
         }
 
-        // --- The value correction: withdraw + re-solve (adapt-and-EMIT) ------
+        // --- The value correction: withdraw and re-solve (adapt and emit) -----
         // Split the withdrawal by fold path.  A key in the C1 dense block is
-        // MARGINALIZED out of the block (rows/cols dropped, block re-inverted); a
+        // marginalized out of the block (rows/cols dropped, block re-inverted); a
         // diagonal key is subtracted outright.  Both are exact inverses of what
         // was folded, which is why the capture records the folded (value, info)
-        // rather than recomputing them.
+        // instead of recomputing them.
         std::set<std::string> dense_drop;
         for (const auto& kk : ws.cap_dense_keys)
             if (kk.kind == SharedParamKind::Clock && trip_resolve.count(kk.sat))
@@ -469,8 +470,8 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                 diag_drop.push_back(p);
         if (dense_drop.empty() && diag_drop.empty()) {
             // The capture channel is the only record of what was folded; with it
-            // unarmed there is nothing to withdraw exactly, and guessing would
-            // leave residual prior information behind.  Say so — do not pretend.
+            // unarmed there is nothing to withdraw exactly, and a guess would leave
+            // residual prior information behind.  Log it and stop.
             log->warn("Network (Card Q3): TOW {:.1f} — {} clock-anchor trip(s) cannot be "
                       "value-corrected in-epoch: no captured clock prior to withdraw (the "
                       "RAIM-replay capture channel is unarmed for this fold).  Decoupled and "
@@ -484,7 +485,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
         try {
             if (!dense_drop.empty()) {
                 est.attribTag("cta_refloat");
-                // The gauge-free flag MUST match the fold, or the withdrawn block
+                // The gauge-free flag has to match the fold, or the withdrawn block
                 // is not the block that was applied.
                 est.refoldSharedPriorDenseDroppingClocks(ws.cap_dense_keys,
                                                          ws.cap_dense_cov, dense_drop,
@@ -493,7 +494,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
             }
             if (!diag_drop.empty()) {
                 est.attribTag("cta_refloat");
-                // A gauge-free diagonal block is NOT diagonal: removing one key
+                // A gauge-free "diagonal" block is not diagonal: removing one key
                 // moves the group's information-weighted mean, so every survivor's
                 // anchor target changes.  Re-fold the group instead of subtracting
                 // one entry.
@@ -541,7 +542,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
         ++ctx.counters.cta_resolves;
         // Keep the RAIM replay channel in step: the within-epoch re-solve replays
         // cap_priors / cap_dense_* verbatim onto a fresh arrowhead, so a withdrawn
-        // prior left in the capture would be silently re-injected.
+        // prior left in the capture would be re-injected.
         if (!diag_drop.empty()) {
             auto& cp = ws.cap_priors;
             cp.erase(std::remove_if(cp.begin(), cp.end(),
@@ -552,7 +553,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                      cp.end());
         }
         if (!dense_drop.empty()) {
-            // Marginalize the dropped keys out of the CAPTURED block too, so a
+            // Marginalize the dropped keys out of the captured block too, so a
             // replay re-folds the same reduced block this solve used.
             std::vector<Eigen::Index> keep;
             keep.reserve(ws.cap_dense_keys.size());

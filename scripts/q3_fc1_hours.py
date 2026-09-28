@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The FC-1 SHADOW HOUR TABLE — the score for Card Q3 work.
+"""The FC-1 shadow-hour table: the score for card Q3 work.
 
 ``project_fast_clock_card``: *"KEEP network.fast_clock.shadow as a standing
 instrument ... it is the only way to answer 'how much of the emitted clock is
@@ -8,9 +8,9 @@ work."*  The table it names is, per hour:
 
     | producer Δc0 | phase-measured Δc0 | corr |
 
-both common-mode removed (standing invariant #5 — the per-epoch clock ensemble
-is a free gauge), where "phase-measured" is FC-1's TDCP tick: the satellite clock
-change derived from CONTINUOUS CARRIER PHASE, which shares no machinery with the
+both common-mode removed (standing invariant #5: the per-epoch clock ensemble is
+a free gauge), where "phase-measured" is FC-1's TDCP tick: the satellite clock
+change derived from continuous carrier phase, which shares no machinery with the
 producer's own clock estimate.
 
 The 2026-07-30 baseline this is graded against (50 sta, GPS+Gal, 3 h):
@@ -19,15 +19,15 @@ The 2026-07-30 baseline this is graded against (50 sta, GPS+Gal, 3 h):
     hour 1           67.8    |       1.73    |      -0.001
     hour 2           83.1    |       1.93    |      +0.018
 
-i.e. ~98 % of the emitted clock's epoch-to-epoch motion was NOT information.  A
-successful anchor moves the producer column toward the phase column and lifts
-the correlation off zero.  Both readings matter and the correlation is the
-harder one: shrinking the producer column while corr stays 0 means the walk got
-quieter without getting more real.
+that is, about 98 % of the emitted clock's epoch-to-epoch motion was not
+information. A successful anchor moves the producer column toward the phase
+column and lifts the correlation off zero. Both readings matter and the
+correlation is the harder one: shrinking the producer column while corr stays
+near 0 means the walk got quieter without getting more real.
 
-⚠ The producer column here is the RMS of the common-removed per-epoch change of
-the EMITTED clock — the same object the dev channel of
-``scripts/product_step_census.py`` reports as a robust sigma.  It is NOT
+The producer column here is the RMS of the common-removed per-epoch change of
+the emitted clock, the same object the dev channel of
+``scripts/product_step_census.py`` reports as a robust sigma. It is not
 comparable to a raw (un-common-removed) clock RMS.
 
 Usage:
@@ -62,17 +62,17 @@ def load_products(path):
 
 
 def load_marked(path):
-    """{tow: {sat}} carried by R records — per-satellite discontinuities the
-    producer DECLARED at that epoch.
+    """{tow: {sat}} carried by R records: per-satellite discontinuities the
+    producer declared at that epoch.
 
-    Why this matters for the score: Card Q3's guard answers a detected clock
-    event by refloating the satellite and MARKING it, so the emitted value takes
-    a deliberate one-epoch step and the consumer is told to reset there.  An RMS
+    Why this matters for the score: card Q3's guard answers a detected clock
+    event by refloating the satellite and marking it, so the emitted value takes
+    a deliberate one-epoch step and the consumer is told to reset there. An RMS
     taken over those epochs charges the card for doing exactly what it says it
     does, and RMS is tail-dominated, so a handful of marked steps can move the
     aggregate the opposite way from the body of the distribution (measured: the
     3 h anchor arm improved every satellite in the worst-5 table while its
-    aggregate SD-RMS rose 21.7 -> 27.1 cm).  Both numbers are reported below;
+    aggregate SD-RMS rose 21.7 -> 27.1 cm). Both numbers are reported below;
     neither is quoted alone.
     """
     marked, tow = collections.defaultdict(set), None
@@ -156,11 +156,11 @@ def main():
             sq = math.sqrt(sum((v - mq) ** 2 for v in q) / n)
             cov = sum((p[i] - mp) * (q[i] - mq) for i in range(n)) / n
             c = cov / (sp * sq) if sp > 0 and sq > 0 else float("nan")
-            # prod_rob : robust sigma (1.4826*MAD) of the SAME producer column --
-            #            the BODY of the distribution, insensitive to the marked
+            # prod_rob : robust sigma (1.4826*MAD) of the same producer column,
+            #            the body of the distribution, insensitive to the marked
             #            steps that dominate an RMS.
-            # prod_unmk: the RMS with (sat,epoch) pairs the producer MARKED removed
-            #            -- a declared discontinuity is not an error the consumer
+            # prod_unmk: the RMS with (sat,epoch) pairs the producer marked removed:
+            #            a declared discontinuity is not an error the consumer
             #            integrates, it is one it is told to reset at.
             ap_ = sorted(abs(v) for v in p)
             rob = 1.4826 * ap_[len(ap_) // 2]

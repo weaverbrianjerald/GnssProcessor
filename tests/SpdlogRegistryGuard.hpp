@@ -2,12 +2,12 @@
 
 /**
  * @file SpdlogRegistryGuard.hpp
- * @brief Test-only RAII helpers for exercising an EMPTY spdlog registry without
- *        poisoning the rest of the test binary.
+ * @brief Test-only RAII helpers for exercising an empty spdlog registry without
+ *        leaving the rest of the test binary with a dropped registry.
  *
  * Shared by tests/test_rtcm_logger_lifetime.cpp and tests/test_safe_logger.cpp.
- * It lives in a header rather than being copied into both because the restore
- * sequence below is order-dependent in a way that is easy to break silently.
+ * It is a shared header rather than two copies because the restore sequence below
+ * is order-dependent, and a copy that drifts would break without failing a test.
  */
 
 #include <spdlog/spdlog.h>
@@ -22,27 +22,27 @@ namespace GnssProcessor {
 namespace TestSupport {
 
 /**
- * @brief Empties the spdlog registry exactly the way LogManager does, and puts
- *        it back on scope exit.
+ * @brief Empties the spdlog registry the same way LogManager does (re-initialize
+ *        and shutdown both call `spdlog::drop_all()`), and restores it on scope exit.
  *
  * `spdlog::drop_all()` is process-global: without the restore, one test using it
- * would leave every later test in the binary logging into a dropped registry —
- * which is the very defect these suites exist to guard against.
+ * would leave every later test in the binary logging into a dropped registry,
+ * which is the defect these suites guard against.
  *
- * @warning The destructor's ordering is load-bearing. It re-registers the
- *          snapshot FIRST and calls `set_default_logger()` LAST, and it skips
- *          the saved default inside the loop. That is not redundancy:
- *          `registry::set_default_logger()` re-inserts the logger into
- *          `loggers_` under its own name, so re-registering it in the loop as
- *          well would throw `spdlog_ex` on the duplicate. Equally, dropping the
- *          trailing `set_default_logger()` would leave `default_logger_` null
- *          while `loggers_` looked healthy — a subtler version of the original
- *          bug. Change one half and you must change the other.
+ * @warning The destructor's ordering is required.  It re-registers the snapshot
+ *          first, skipping the saved default inside the loop, and calls
+ *          `set_default_logger()` last.  `registry::set_default_logger()`
+ *          re-inserts the logger into `loggers_` under its own name, so also
+ *          re-registering it in the loop would throw `spdlog_ex` on the duplicate.
+ *          Omitting the trailing `set_default_logger()` would leave
+ *          `default_logger_` null while `loggers_` looks populated, a less visible
+ *          form of the same defect.  The skip and the trailing call go together;
+ *          changing one requires changing the other.
  *
- * @note If a test body faults (SEH) rather than merely failing, the destructor
- *       does not run and the registry stays dropped for the remainder of the
- *       process. That is acceptable here precisely because a fault is the
- *       failure these suites detect: the cascade is a symptom, not a new bug.
+ * @note If a test body faults (SEH) rather than failing an assertion, the
+ *       destructor does not run and the registry stays dropped for the rest of the
+ *       process.  That is acceptable because a fault is the failure these suites
+ *       detect: the later failures follow from it and are not separate defects.
  */
 class DroppedRegistry {
 public:
@@ -72,18 +72,18 @@ private:
 
 /**
  * @brief Temporarily attaches an ostream sink to @p logger so a test can assert
- *        on what was actually EMITTED, then removes it again.
+ *        on what was actually emitted, then removes it again.
  *
- * Needed because "did not crash" is too weak an assertion for this defect class:
- * a wrong fix that swallows the message when the registry is empty (e.g.
- * `if (auto l = spdlog::default_logger()) l->warn(...)`) also does not crash.
- * Binding the output distinguishes "degraded to a fallback" from "silently
- * dropped".
+ * "Did not crash" is too weak an assertion for this defect class: a wrong fix that
+ * discards the message when the registry is empty (e.g.
+ * `if (auto l = spdlog::default_logger()) l->warn(...)`) does not crash either.
+ * Capturing the output distinguishes "fell back to another logger" from "dropped
+ * without a trace".
  *
- * The sink is popped in the destructor because the loggers involved outlive the
- * test — in particular `Logging::fallbackConsoleLogger()` is a module-local
- * static shared by every test in the binary, so an unbalanced push would leak a
- * dangling reference to this test's stream.
+ * The sink is removed in the destructor because the loggers involved outlive the
+ * test.  In particular, `Logging::fallbackConsoleLogger()` is a module-local static
+ * shared by every test in the binary, so a sink left attached would hold a dangling
+ * reference to this test's stream.
  */
 class SinkCapture {
 public:

@@ -1,30 +1,34 @@
 /**
  * @file test_w6_iono_constraint.cpp
- * @brief Card RF-0b — @c network.w6_iono_constraint, the self-contained W6 posture.
+ * @brief @c network.w6_iono_constraint, the self-contained W6 posture (card RF-0b), and
+ *        the datum cards built on it (RF-0c, RF-0d, RF-0e, RF-0f).
  *
- * Card: docs/refound/RF-0_baseline_2026-09-14.md, Finding 2.  Under GPS-only DUAL the
- * producer had no reachable posture without EXTERNAL ionosphere data: the co-estimated
- * SH field was off, @c network.code_bias_gf_datum (the only condition that switched the
- * loader's @c ionosphere_weighting force off) is refused under
- * @c processing.frequency_mode = dual, and the run then hard-errored without a `.INX`.
- * This option adds the third answer — NO ionosphere constraint at all, with the satellite
+ * Card: docs/refound/RF-0_baseline_2026-09-14.md, Finding 2.  Under GPS-only dual
+ * frequency, without this option, the producer has no posture that avoids external
+ * ionosphere data: the co-estimated SH field is off, @c network.code_bias_gf_datum (the
+ * only condition that switches the loader's @c ionosphere_weighting force off) is refused
+ * under @c processing.frequency_mode = dual, and the run hard-errors without a `.INX`.
+ * This option adds a third posture: no ionosphere constraint at all, with the satellite
  * code-bias datum left to the rows @ref GnssProcessor::NetworkSbasis::buildCodeBiasDatumRows
  * already folds every epoch.
  *
- * Two halves, and the second is the one that matters.
+ * The RF-0b tests come in two halves; the second carries the result.
  *
- * 1. THE PARSE + INTERLOCKS.  Default @c auto must be today's behaviour exactly
- *    (standing invariant #6), @c none must CLEAR the force rather than merely skip it,
- *    the two contradictory co-arms must fail loud, and a typo must never silently select
- *    a different product datum.
- * 2. THE DATUM'S REACH.  The card's premise is that the per-(constellation, signal)
+ * 1. Parse and interlocks.  The default @c auto reproduces the behaviour without the knob
+ *    (standing invariant #6), @c none clears the force instead of merely skipping it,
+ *    the two contradictory co-arms fail the load, and a typo never selects a different
+ *    product datum.
+ * 2. The datum's reach.  The card's premise is that the per-(constellation, signal)
  *    sum-to-zero rows can stand in for the GIM.  They cannot, and the tests below
- *    COMPUTE the shortfall rather than assert it: with the ionosphere-free pin and the
+ *    compute the shortfall instead of asserting it: with the ionosphere-free pin and the
  *    sum-to-zero rows folded, exactly @c n_sat-1 of the rank-deficiency-3b directions
  *    (Odijk et al. 2016, J Geod 90:15-44) survive, because a sum-to-zero row is violated
- *    only by the CONSTELLATION-WIDE shift and is blind to every between-satellite one.
- *    That is the structural half of the RF-0b reading, locked here so nobody has to
- *    re-derive it from a field log.
+ *    only by the constellation-wide shift and is blind to every between-satellite one.
+ *    That is the structural half of the RF-0b reading.
+ *
+ * Later sections cover the per-satellite geometry-free datum (RF-0c), its per-signal
+ * extension and S-line declaration (RF-0d), the level datum (RF-0e) and the band-2 ISC
+ * (RF-0f).
  */
 
 #include <gtest/gtest.h>
@@ -45,7 +49,7 @@
 #include "filter/NetworkEstimator.hpp"
 #include "filter/NetworkSbasis.hpp"
 #include "logging/LogManager.hpp"
-#include "products/NetworkProductIO.hpp"   // RF-0d item 2: the S-line declaration
+#include "products/NetworkProductIO.hpp"   // the S-line declaration (RF-0d item 2)
 
 namespace fs = std::filesystem;
 using namespace GnssProcessor;
@@ -60,9 +64,9 @@ fs::path writeTempConfig(const std::string& tag, const std::string& body) {
     return p;
 }
 
-/// A minimal but loadable PPP-RTK network config.  @p processing_extra is spliced into
-/// the processing block, @p network_extra into the network block; both must end with a
-/// trailing comma when non-empty (the fixed tail follows).
+/// A minimal loadable PPP-RTK network config.  @p processing_extra is spliced into the
+/// processing block, @p network_extra into the network block; each needs a trailing
+/// comma when non-empty (the fixed tail follows).
 std::string networkConfig(const std::string& processing_extra,
                           const std::string& network_extra) {
     return std::string("{\n") +
@@ -83,9 +87,9 @@ std::string networkConfig(const std::string& processing_extra,
         "}\n";
 }
 
-/// The W6 slice, armed the way every RF-0 lineage arms it — including the explicit
-/// `ionosphere_weighting.enable: true` those configs carry (the loader forced it anyway,
-/// so it was written down).  That explicit true is exactly what "none" has to CLEAR.
+/// The W6 slice, armed as every RF-0 lineage arms it, including the explicit
+/// `ionosphere_weighting.enable: true` those configs carry (the loader forces it anyway,
+/// so the configs state it).  That explicit true is what "none" has to clear.
 constexpr const char* kW6 = "    \"estimate_sat_code_bias\": true,\n";
 constexpr const char* kIonoWeightOn =
     "    \"estimation\": { \"ionosphere_weighting\": { \"enable\": true } },\n";
@@ -103,7 +107,7 @@ double gpsCodeFreq(const std::string& /*sat*/, const std::string& sig) {
     }
 }
 
-/// mu_j = (f_ref / f_j)^2 — the ionospheric coefficient relative to @p base_sig.  The
+/// mu_j = (f_ref / f_j)^2, the ionospheric coefficient relative to @p base_sig.  The
 /// rank-deficiency-3b direction is defined only up to a per-satellite scale (beta^s
 /// absorbs it), so any consistent reference works for a dimension count.
 double muRel(const std::string& base_sig, const std::string& sig) {
@@ -112,33 +116,33 @@ double muRel(const std::string& base_sig, const std::string& sig) {
 }
 
 /// Owns the builder's side channels and clears the per-epoch scratch before each call,
-/// exactly as the driver contract requires ("cleared by caller").  Deliberately
-/// self-contained rather than shared with the other suites' harnesses: the suite
-/// convention here is one owner per suite name.
+/// as the driver contract requires ("cleared by caller").  Self-contained instead of
+/// shared with the other suites' harnesses, following the convention of one owner per
+/// suite name.
 struct DatumRowsHarness {
     using Pair = std::pair<std::string, std::string>;
 
     bool cb_time_linked{false};
     bool clock_signal_basis_hold{false};
     bool emit_clock_disc{false};
-    bool gf_datum{false};              ///< RF-0b's whole point: the GF pin is NOT armed.
-    /// RF-0c: the hard per-satellite geometry-free datum mode and its run-latched
-    /// broadcast targets (metres, `c*T_GD`).  Off by default so every RF-0b case above
-    /// keeps measuring the un-datumed posture it was written for.
+    bool gf_datum{false};              ///< The GF pin is not armed (the RF-0b posture).
+    /// The hard per-satellite geometry-free datum mode and its run-latched broadcast
+    /// targets (metres, `c*T_GD`) (RF-0c).  Off by default so every RF-0b case keeps
+    /// measuring the un-datumed posture it was written for.
     NetworkSatGfDatum sat_gf_datum{NetworkSatGfDatum::NoneMode};
     std::map<std::string, double> sat_gf_target_m;
-    /// RF-0e: the two arms of the level-datum A/B.  Off by default so every case
-    /// above keeps measuring the posture it was written for.
+    /// The two arms of the level-datum A/B (RF-0e).  Off by default so every case keeps
+    /// measuring the posture it was written for.
     bool sat_if_level_datum{false};
     bool sat_gf_datum_time_linked{false};
-    /// RF-0f: leave the band-2 companion unpinned, and the set of (sat|signal) keys a
-    /// station was found to bridge.  Empty means nothing is bridged, so every companion
-    /// falls through to the pin -- which is exactly the unobservable case.
+    /// Leave the band-2 companion unpinned, and the set of (sat|signal) keys a station
+    /// was found to bridge (RF-0f).  Empty means nothing is bridged, so every companion
+    /// falls through to the pin, which is the unobservable case.
     bool sat_isc_state{false};
     std::set<std::string> isc_bridged;
-    /// B5D: leave an extra-band column unpinned where the data determine it, and the
+    /// Leave an extra-band column unpinned where the data determine it, and the
     /// `"sat|signal|<b1><b2>"` determination roster the driver builds from the station
-    /// state maps.  Off by default so every case above keeps measuring the posture it
+    /// state maps (B5D).  Off by default so every case keeps measuring the posture it
     /// was written for.
     bool sat_gf_extra_band_free{false};
     std::set<std::string> extra_band_determined;
@@ -184,9 +188,9 @@ struct DatumRowsHarness {
     }
 };
 
-/// The smallest solution epoch the writer will serialize — RF-0d item 2 only needs a
-/// record to exist so the S line has a file to sit in; the epoch's CONTENT is not what
-/// these cases are about.
+/// The smallest solution epoch the writer serializes.  The RF-0d item 2 cases only need
+/// a record to exist so the S line has a file to sit in; the epoch's content is not
+/// under test.
 NetworkSolutionEpoch makeMinimalEpoch() {
     NetworkSolutionEpoch sol;
     sol.epoch_time  = GnssTime{2313, 259200.0};
@@ -202,7 +206,7 @@ NetworkSolutionEpoch makeMinimalEpoch() {
     return sol;
 }
 
-/// A GPS roster: @p n_sats satellites, each carrying @p sigs.
+/// A GPS roster of @p n_sats satellite IDs, G01 upward.
 std::vector<std::string> gpsSats(int n_sats) {
     std::vector<std::string> sats;
     for (int i = 1; i <= n_sats; ++i)
@@ -222,14 +226,14 @@ std::vector<DatumRowsHarness::Pair> registerRoster(
     return keys;
 }
 
-/// How many dimensions of the rank-deficiency-3b family SURVIVE the folded rows.
+/// How many dimensions of the rank-deficiency-3b family survive the folded rows.
 ///
 /// The family is, per satellite s, `d^s_j -= mu_j * beta^s` on every one of that
-/// satellite's code-bias columns — the shift that exactly compensates
+/// satellite's code-bias columns: the shift that exactly compensates
 /// `I_r^s += beta^s` at every station, and is therefore invisible to the observation
 /// equations when the ionosphere is free per line of sight.  Mapping each unit `beta^s`
 /// through @p H gives one column of A; the surviving dimension is `n_sats - rank(A)`.
-/// Computed, not asserted: this is the card's central count.
+/// The count is computed, not asserted, because it is the card's central result.
 int survivingRd3bDims(const NetworkEstimator& est, const Eigen::MatrixXd& H,
                       const std::vector<std::string>& sats,
                       const std::vector<std::string>& sigs) {
@@ -254,11 +258,11 @@ int survivingRd3bDims(const NetworkEstimator& est, const Eigen::MatrixXd& H,
 }  // namespace
 
 // ===========================================================================
-// Half 1 — the parse and the interlocks.
+// Half 1: the parse and the interlocks.
 // ===========================================================================
 
-// Standing invariant #6: absent knob == today's producer.  The W6 slice force-arms the
-// GIM-weighted ionosphere constraint, and that must not move.
+// Standing invariant #6: with the knob absent the producer is unchanged.  The W6 slice
+// force-arms the GIM-weighted ionosphere constraint, and that stays so.
 TEST(W6IonoConstraintTest, DefaultIsAutoAndKeepsTheIonoConstraintForce) {
     LogManager log;
     const fs::path p = writeTempConfig("default", networkConfig("", kW6));
@@ -269,8 +273,8 @@ TEST(W6IonoConstraintTest, DefaultIsAutoAndKeepsTheIonoConstraintForce) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-// An explicitly written "auto" is the SAME posture as an absent knob — a config that
-// documents its choice must not thereby change it.
+// An explicitly written "auto" is the same posture as an absent knob: a config that
+// documents its choice does not change it by doing so.
 TEST(W6IonoConstraintTest, ExplicitAutoIsIdenticalToAbsent) {
     LogManager log;
     const fs::path p = writeTempConfig("auto",
@@ -282,10 +286,10 @@ TEST(W6IonoConstraintTest, ExplicitAutoIsIdenticalToAbsent) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-// "none" must CLEAR the ionosphere-weighting force, not merely decline to apply it.
+// "none" clears the ionosphere-weighting force, not merely declines to apply it.
 // Every RF-0 lineage writes `ionosphere_weighting.enable: true` explicitly (the loader
-// forced it anyway), so a "skip the force" implementation would leave a flag reading ON
-// with nothing folding behind it — standing invariant #4's exact shape.
+// forces it anyway), so a "skip the force" implementation would leave a flag reading on
+// with nothing folding behind it, the case standing invariant #4 describes.
 TEST(W6IonoConstraintTest, NoneClearsAnExplicitIonoWeightingEnable) {
     LogManager log;
     const fs::path p = writeTempConfig("none",
@@ -295,7 +299,7 @@ TEST(W6IonoConstraintTest, NoneClearsAnExplicitIonoWeightingEnable) {
     ASSERT_TRUE(cfg.loadFromJson(p, log));
     EXPECT_EQ(cfg.getNetworkConfig().w6_iono_constraint, NetworkW6IonoConstraint::None);
     EXPECT_FALSE(cfg.getIonosphereWeightingConfig().enabled);
-    // The rest of the W6 slice is untouched — "none" changes the ionosphere posture and
+    // The rest of the W6 slice is untouched: "none" changes the ionosphere posture and
     // nothing else about what the network estimates.
     EXPECT_TRUE(cfg.estimateNetworkSatCodeBias());
     EXPECT_TRUE(cfg.estimateSatBiases());
@@ -305,10 +309,10 @@ TEST(W6IonoConstraintTest, NoneClearsAnExplicitIonoWeightingEnable) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-// The co-estimated SH-VTEC field IS a single-layer ionosphere constraint (it is what
-// arms the W6 slice at all), so "no constraint" alongside it is a contradiction.  Fail
-// loud rather than letting one silently win and shipping a product whose datum nobody
-// chose — the same contract network.code_bias_gf_datum has against the same knob.
+// The co-estimated SH-VTEC field is a single-layer ionosphere constraint (it is what
+// arms the W6 slice at all), so "no constraint" alongside it is a contradiction.  The
+// load fails instead of letting one setting win and emitting a product whose datum was
+// never chosen; network.code_bias_gf_datum has the same contract against the same knob.
 TEST(W6IonoConstraintTest, NoneRefusesTheCoEstimatedShField) {
     LogManager log;
     const fs::path p = writeTempConfig("none_sh",
@@ -320,10 +324,10 @@ TEST(W6IonoConstraintTest, NoneRefusesTheCoEstimatedShField) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-// Both remove the ionosphere constraint, so this is not a rank conflict — it is a DATUM
+// Both remove the ionosphere constraint, so this is not a rank conflict but a datum
 // ambiguity, which is worse: the run would solve and emit, with the satellite code-bias
 // frame decided by branch order.  Triple frequency, so the GF datum's own dual gate
-// passes and it is THIS interlock being exercised.
+// passes and this interlock is the one exercised.
 TEST(W6IonoConstraintTest, NoneRefusesTheGeometryFreePin) {
     LogManager log;
     const fs::path p = writeTempConfig("none_gf",
@@ -338,8 +342,8 @@ TEST(W6IonoConstraintTest, NoneRefusesTheGeometryFreePin) {
 
 // Without the W6 slice there are no satellite code-bias columns, hence no satellite-DCB
 // rank deficiency for an ionosphere constraint to answer: the option decides nothing.
-// That is a WARN, not an error — nothing is broken, it is idle — but it must load, and
-// it must not reach into the ionosphere posture on its way past.
+// That is a warning, not an error (nothing is broken; the option is idle): the config
+// loads, and the option leaves the ionosphere posture alone.
 TEST(W6IonoConstraintTest, NoneWithoutTheW6SliceLoadsAndIsInert) {
     LogManager log;
     const fs::path p = writeTempConfig("none_inert",
@@ -354,9 +358,9 @@ TEST(W6IonoConstraintTest, NoneWithoutTheW6SliceLoadsAndIsInert) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-// A typo must never select a different product datum.  Fall back to "auto" — the posture
-// that needs external data and says so loudly at startup — not to "none", which would
-// silently ship a differently-gauged product.
+// A typo never selects a different product datum.  It falls back to "auto" (the posture
+// that needs external data and reports so at startup), not to "none", which would emit
+// a differently-gauged product without notice.
 TEST(W6IonoConstraintTest, UnknownValueFallsBackToAuto) {
     LogManager log;
     const fs::path p = writeTempConfig("typo",
@@ -369,14 +373,14 @@ TEST(W6IonoConstraintTest, UnknownValueFallsBackToAuto) {
 }
 
 // ===========================================================================
-// Half 2 — what the sum-to-zero datum actually reaches.
+// Half 2: what the sum-to-zero datum reaches.
 // ===========================================================================
 
-// The builder takes no ionosphere-constraint argument at all, which is the whole reason
-// RF-0b needs no new datum row: the rows the card names are already folded on every W6
-// epoch, GIM or no GIM.  Lock the shape (one IF pin per satellite, one sum-to-zero row
-// per (constellation, signal) channel) so a future change to the builder's arming cannot
-// quietly remove the only datum this posture has.
+// The builder takes no ionosphere-constraint argument, which is why RF-0b needs no new
+// datum row: the rows the card names are already folded on every W6 epoch, with or
+// without a GIM.  The shape (one IF pin per satellite, one sum-to-zero row per
+// (constellation, signal) channel) is checked so a change to the builder's arming
+// cannot remove the only datum this posture has.
 TEST(W6IonoConstraintTest, DatumRowsAreBuiltWithoutAnyIonoConstraintInput) {
     NetworkEstimator est;
     const auto sats = gpsSats(32);
@@ -393,14 +397,14 @@ TEST(W6IonoConstraintTest, DatumRowsAreBuiltWithoutAnyIonoConstraintInput) {
     EXPECT_EQ(rows.H.cols(), est.numShared());
 }
 
-// THE CARD'S CENTRAL COUNT.  With the ionosphere free per line of sight, each satellite
+// The card's central count.  With the ionosphere free per line of sight, each satellite
 // owns one rank-deficiency-3b direction (Odijk 2016).  The ionosphere-free pin is
-// ORTHOGONAL to it by construction (a1*mu_1 + a2*mu_2 = 0 is what "ionosphere-free"
+// orthogonal to it by construction (a1*mu_1 + a2*mu_2 = 0 is what "ionosphere-free"
 // means), and a sum-to-zero row over signal j changes by -mu_j * sum_s beta^s, so it is
-// violated ONLY by the constellation-wide shift.  Together they therefore close exactly
-// ONE of the 32 directions and leave 31 open — which is what the external GIM's
-// common-mode-free R was closing, and what a "none" posture must answer for by some
-// other means (a prior, on today's tree network.cb_kaula_prior).
+// violated only by the constellation-wide shift.  Together they therefore close exactly
+// one of the 32 directions and leave 31 open.  The external GIM's common-mode-free R
+// closes those 31; a "none" posture has to close them by other means (a prior, in the
+// current code network.cb_kaula_prior).
 TEST(W6IonoConstraintTest, SumToZeroRowsCloseOnlyTheConstellationWideDirection) {
     NetworkEstimator est;
     const auto sats = gpsSats(32);
@@ -413,11 +417,11 @@ TEST(W6IonoConstraintTest, SumToZeroRowsCloseOnlyTheConstellationWideDirection) 
     EXPECT_EQ(survivingRd3bDims(est, rows.H, sats, sigs), 31);
 }
 
-// The count is n_sat-1 and NOT n_signal-dependent: adding a third channel adds a third
-// sum-to-zero row, but every one of them tests the same scalar sum_s beta^s, so the
-// extra rows buy nothing.  (This is also the cleanest statement of why the GF datum, not
-// the sum-to-zero rows, is what closes rd 3b — and why it needs a third frequency to
-// leave anything estimable behind.)
+// The count is n_sat-1 and does not depend on the number of signals: a third channel
+// adds a third sum-to-zero row, but every one of them tests the same scalar
+// sum_s beta^s, so the extra rows close nothing.  (This is also the clearest statement
+// of why the GF datum, not the sum-to-zero rows, closes rd 3b, and why it needs a third
+// frequency to leave anything estimable.)
 TEST(W6IonoConstraintTest, ExtraChannelsDoNotCloseMoreDirections) {
     NetworkEstimator est;
     const auto sats = gpsSats(12);
@@ -431,11 +435,11 @@ TEST(W6IonoConstraintTest, ExtraChannelsDoNotCloseMoreDirections) {
     EXPECT_EQ(survivingRd3bDims(est, rows.H, sats, sigs), 11);
 }
 
-// CONTRAST, so the 31 above cannot be read as "the rows are broken".  Arm the
-// geometry-free pin — the OTHER answer to the same rank deficiency — and every direction
+// Contrast, so the 31 above cannot be read as "the rows are broken".  With the
+// geometry-free pin armed (the other answer to the same rank deficiency) every direction
 // closes.  This is the posture network.code_bias_gf_datum implements and that the loader
-// refuses under dual precisely because it then leaves nothing estimable; here it is used
-// only to show that the surviving-dimension instrument above responds.
+// refuses under dual because it then leaves nothing estimable; here it only shows that
+// the surviving-dimension instrument above responds.
 TEST(W6IonoConstraintTest, TheGeometryFreePinClosesEveryDirection) {
     NetworkEstimator est;
     const auto sats = gpsSats(32);
@@ -451,7 +455,7 @@ TEST(W6IonoConstraintTest, TheGeometryFreePinClosesEveryDirection) {
 }
 
 // ===========================================================================
-// Card RF-0c — the HARD per-satellite geometry-free datum (network.sat_gf_datum).
+// The hard per-satellite geometry-free datum, network.sat_gf_datum (card RF-0c).
 // ===========================================================================
 
 // Standing invariant #6: the default builds no row at all, so an unarmed run folds
@@ -474,10 +478,10 @@ TEST(W6IonoConstraintTest, SatGfDatumDefaultBuildsNoRow) {
     EXPECT_EQ(rows.H.rows(), 34);             // 32 IF pins + 2 sum-to-zero, unchanged
 }
 
-// THE CARD'S BAR, on real datum rows.  RF-0b left 31 of 32 rd-3b directions open with
-// only the IF pin and the sum-to-zero rows; the hard geometry-free datum must close
-// every one — with no prior anywhere in the picture, because a prior is exactly what
-// this card exists to stop standing in for a datum.
+// The card's bar, on real datum rows.  RF-0b leaves 31 of 32 rd-3b directions open with
+// only the IF pin and the sum-to-zero rows; the hard geometry-free datum closes every
+// one, with no prior involved, because the card replaces a prior standing in for a
+// datum with an actual datum.
 TEST(W6IonoConstraintTest, SatGfDatumZeroClosesEveryDirection) {
     NetworkEstimator est;
     const auto sats = gpsSats(32);
@@ -489,21 +493,21 @@ TEST(W6IonoConstraintTest, SatGfDatumZeroClosesEveryDirection) {
     const auto rows = h.build(est, keys);
 
     EXPECT_EQ(rows.n_sat_gf_rows, 32);
-    // 32 IF + 32 GF.  Both sum-to-zero rows are SUPPRESSED (RF-0d): the datum pins
-    // every column of both channels, so their level rows are redundant — and under
-    // broadcast_tgd they would be inconsistent, so they go in both modes.
+    // 32 IF + 32 GF.  Both sum-to-zero rows are suppressed (RF-0d): the datum pins
+    // every column of both channels, so their level rows are redundant, and under
+    // broadcast_tgd they would be inconsistent, so they are dropped in both modes.
     EXPECT_EQ(rows.n_s2z_suppressed, 2);
     EXPECT_EQ(rows.H.rows(), 64);
     EXPECT_EQ(rows.z.cwiseAbs().maxCoeff(), 0.0);     // every target zero in this mode
     EXPECT_EQ(survivingRd3bDims(est, rows.H, sats, sigs), 0);
 }
 
-// The same, on a roster with same-band companions (C1W beside C1C, C2X beside C2W) —
-// the field's actual shape.  The pin touches only the ionosphere-free pair, but the
-// rd-3b shift moves EVERY one of the satellite's columns by its own mu, so a single
-// row on the pair still closes the whole per-satellite direction.  Worth its own case
-// because the opposite (needing one row per signal) is the plausible reading, and it
-// is the reading the L2X wire tail would suggest.
+// The same, on a roster with same-band companions (C1W beside C1C, C2X beside C2W),
+// which is the field's actual shape.  The pin touches only the ionosphere-free pair, but
+// the rd-3b shift moves every one of the satellite's columns by its own mu, so a single
+// row on the pair still closes the whole per-satellite direction.  This has its own
+// case because the opposite reading (one row needed per signal) is plausible, and it is
+// the reading the L2X wire tail would suggest.
 TEST(W6IonoConstraintTest, SatGfDatumClosesDirectionsWithSameBandCompanions) {
     NetworkEstimator est;
     const auto sats = gpsSats(16);
@@ -520,17 +524,16 @@ TEST(W6IonoConstraintTest, SatGfDatumClosesDirectionsWithSameBandCompanions) {
 }
 
 // ===========================================================================
-// Card RF-0d — the PER-SIGNAL extension of the geometry-free datum.
+// The per-signal extension of the geometry-free datum (card RF-0d).
 // ===========================================================================
 
-// THE CARD'S BAR.  Four registered channels, the prior off.  RF-0c's pair pin already
-// left 0 rank-deficiency-3b directions here (the mu-shift moves every column of a
-// satellite together, so one row on the pair reaches it) — what it did NOT do was make
-// the EXTRA channels' levels a datum, which is why the sparse C2X wire stayed loud.
-// After RF-0d every cross-band column is pinned and the C2X column's own geometry-free
-// direction against the reference is closed too; the same-band C1W is deliberately NOT
-// pinned, because its difference from C1C is a pure ISC that needs no ionosphere to be
-// observable.
+// The card's bar.  Four registered channels, the prior off.  RF-0c's pair pin already
+// leaves 0 rank-deficiency-3b directions here (the mu-shift moves every column of a
+// satellite together, so one row on the pair reaches it), but it does not make the extra
+// channels' levels a datum, which leaves the sparse C2X wire noisy.  With RF-0d every
+// cross-band column is pinned and the C2X column's own geometry-free direction against
+// the reference is closed too; the same-band C1W is deliberately not pinned, because its
+// difference from C1C is a pure ISC that needs no ionosphere to be observable.
 TEST(W6IonoConstraintTest, SatGfDatumPerSignalPinsEveryCrossBandColumn) {
     NetworkEstimator est;
     const auto sats = gpsSats(32);
@@ -546,18 +549,18 @@ TEST(W6IonoConstraintTest, SatGfDatumPerSignalPinsEveryCrossBandColumn) {
     EXPECT_EQ(rows.n_sat_gf_sameband_free, 32); // C1W: same band as the reference, free
     EXPECT_EQ(rows.n_sat_gf_extra_nofreq, 0);
     // Every channel is now completely pinned except the free C1W, so three of the four
-    // sum-to-zero rows are suppressed as redundant-and-fighting.
+    // sum-to-zero rows are suppressed as redundant and conflicting.
     EXPECT_EQ(rows.n_s2z_suppressed, 3);
     EXPECT_EQ(rows.n_s2z_channels, 4);          // the census is over the channels present
     EXPECT_EQ(survivingRd3bDims(est, rows.H, sats, sigs), 0);
 }
 
-// THE L2X COLUMN'S OWN DIRECTION, NAMED.  The card asks for it by name, and it is a
-// different direction from the rd-3b family above: shift ONLY the C2X columns by a
-// per-satellite delta and leave every other column alone.  Nothing in the observation
-// equations sees it except the stations that track C2X — which on the field is a sparse
-// set — so before RF-0d it was weakly determined (a coverage problem wearing a datum's
-// clothes), and after RF-0d it is pinned.
+// The L2X column's own direction, which the card names.  It differs from the rd-3b
+// family above: shift only the C2X columns by a per-satellite delta and leave every
+// other column alone.  Only the stations that track C2X (a sparse set on the field)
+// see it in the observation equations, so without the RF-0d rows it is weakly
+// determined (a coverage problem that looks like a datum problem), and with them it is
+// pinned.
 TEST(W6IonoConstraintTest, SatGfDatumPerSignalClosesTheSparseL2xDirection) {
     NetworkEstimator est;
     const auto sats = gpsSats(32);
@@ -579,7 +582,7 @@ TEST(W6IonoConstraintTest, SatGfDatumPerSignalClosesTheSparseL2xDirection) {
         return static_cast<int>(n - lu.rank());
     };
 
-    DatumRowsHarness pair_only;                 // RF-0c behaviour, for the contrast
+    DatumRowsHarness pair_only;                 // no GF datum, for the contrast
     pair_only.sat_gf_datum = NetworkSatGfDatum::NoneMode;
     const auto before = pair_only.build(est, keys);
     // With no geometry-free datum at all, the C2X levels are held only by their channel's
@@ -592,10 +595,10 @@ TEST(W6IonoConstraintTest, SatGfDatumPerSignalClosesTheSparseL2xDirection) {
     EXPECT_EQ(l2xDims(after.H), 0);             // every C2X column is now a datum
 }
 
-// Under broadcast_tgd the extra rows carry the SAME c*T_GD (the identity
+// Under broadcast_tgd the extra rows carry the same c*T_GD (the identity
 // (d_k - d_ref)/(mu_k - 1) = c*T_GD holds for every band k), and each one is counted as
-// an asserted zero ISC — the part of a "broadcast" datum the navigation message does not
-// actually state.
+// an asserted zero ISC: the part of a "broadcast" datum the navigation message does not
+// state.
 TEST(W6IonoConstraintTest, SatGfDatumPerSignalCountsTheAssertedIscZeros) {
     NetworkEstimator est;
     const auto sats = gpsSats(3);
@@ -611,7 +614,7 @@ TEST(W6IonoConstraintTest, SatGfDatumPerSignalCountsTheAssertedIscZeros) {
     EXPECT_EQ(rows.n_sat_gf_extra_rows, 3);
     EXPECT_EQ(rows.n_sat_gf_isc_zero, 3);
     EXPECT_EQ(rows.n_sat_gf_sameband_free, 0);
-    // Row order per satellite: IF pin, pair GF, then the extra(s) — so the extra row
+    // Row order per satellite: IF pin, pair GF, then the extra(s), so the extra row
     // carries the same target as the pair row immediately before it.
     EXPECT_DOUBLE_EQ(rows.z(1), -3.1);
     EXPECT_DOUBLE_EQ(rows.z(2), -3.1);
@@ -620,10 +623,10 @@ TEST(W6IonoConstraintTest, SatGfDatumPerSignalCountsTheAssertedIscZeros) {
     EXPECT_EQ(rows.n_s2z_suppressed, 3);        // all three channels fully pinned
 }
 
-// broadcast_tgd pins the SAME row at c*T_GD.  Two things are checked and both matter:
-// the RHS lands verbatim (the geometry-free combination of the IS-GPS-200 biases is
-// exactly c*T_GD — no frequency factor), and the datum still closes every direction,
-// because a pin's rank is in its Jacobian and not in its target.
+// broadcast_tgd pins the same row at c*T_GD.  Two things are checked: the RHS lands
+// verbatim (the geometry-free combination of the IS-GPS-200 biases is exactly c*T_GD,
+// with no frequency factor), and the datum still closes every direction, because a
+// pin's rank is in its Jacobian and not in its target.
 TEST(W6IonoConstraintTest, SatGfDatumBroadcastTgdPinsTheLatchedMetresVerbatim) {
     NetworkEstimator est;
     const auto sats = gpsSats(4);
@@ -641,25 +644,25 @@ TEST(W6IonoConstraintTest, SatGfDatumBroadcastTgdPinsTheLatchedMetresVerbatim) {
     EXPECT_EQ(rows.n_sat_gf_tgd_missing, 1);   // G04 has no navigation record
     EXPECT_EQ(rows.n_sat_gf_pair_not_l1l2, 0);
 
-    // ROW ORDER IS INTERLEAVED, and that is the builder's contract, not an accident:
-    // the per-satellite loop pushes each satellite's IF pin and then its geometry-free
-    // row before moving on, and the sum-to-zero rows are appended after the loop.  So
-    // satellite k's GF row is at 2k+1, and the 2 sum-to-zero rows are last.
+    // The row order is interleaved, and that is the builder's contract: the
+    // per-satellite loop pushes each satellite's IF pin and then its geometry-free row
+    // before moving on, and any sum-to-zero rows are appended after the loop.  So
+    // satellite k's GF row is at 2k+1; here both sum-to-zero rows are suppressed.
     EXPECT_EQ(rows.H.rows(), 4 * 2);        // both sum-to-zero rows suppressed (RF-0d)
     EXPECT_DOUBLE_EQ(rows.z(1), -3.1);   // G01
     EXPECT_DOUBLE_EQ(rows.z(3), 1.7);    // G02
-    EXPECT_DOUBLE_EQ(rows.z(5), 0.0);    // G03 — broadcast T_GD is exactly zero
-    EXPECT_DOUBLE_EQ(rows.z(7), 0.0);    // G04 — the fallback, counted above
+    EXPECT_DOUBLE_EQ(rows.z(5), 0.0);    // G03: broadcast T_GD is exactly zero
+    EXPECT_DOUBLE_EQ(rows.z(7), 0.0);    // G04: the fallback, counted above
     EXPECT_EQ(rows.z(0), 0.0);           // and the IF pins keep their own zero target
     EXPECT_EQ(rows.z(2), 0.0);
     EXPECT_EQ(survivingRd3bDims(est, rows.H, sats, sigs), 0);
 }
 
-// A pinned pair the navigation message never described must NOT be given a group delay.
+// A pinned pair the navigation message never described is not given a group delay.
 // Here the only two distinct frequencies are L1 and L5, so T_GD (an L1/L2 quantity) does
-// not apply: the row is still folded — the datum must be complete or the gate withholds —
-// but at zero, and counted, so the run-end line can say what fraction of a
-// "broadcast_tgd" product is not actually the physical datum.
+// not apply: the row is still folded (the datum has to be complete or the gate
+// withholds), but at zero, and counted, so the run-end line can say what fraction of a
+// "broadcast_tgd" product is not the physical datum.
 TEST(W6IonoConstraintTest, SatGfDatumBroadcastTgdRefusesANonL1L2Pair) {
     NetworkEstimator est;
     const auto sats = gpsSats(3);
@@ -674,8 +677,8 @@ TEST(W6IonoConstraintTest, SatGfDatumBroadcastTgdRefusesANonL1L2Pair) {
     EXPECT_EQ(rows.n_sat_gf_rows, 3);
     EXPECT_EQ(rows.n_sat_gf_tgd_hits, 0);
     EXPECT_EQ(rows.n_sat_gf_pair_not_l1l2, 3);
-    // The targets themselves — not just the counters — must be zero: a counted fallback
-    // that still pinned the map's value would be the worst of both.
+    // The targets themselves are zero, not just the counters: a counted fallback that
+    // still pinned the map's value would be wrong and misreported at once.
     EXPECT_EQ(rows.z.cwiseAbs().maxCoeff(), 0.0);
     EXPECT_EQ(survivingRd3bDims(est, rows.H, sats, sigs), 0);
 }
@@ -700,9 +703,9 @@ TEST(W6IonoConstraintTest, SatGfDatumParsesBothArmedModes) {
     }
 }
 
-// With an ionosphere constraint present this direction is DETERMINED BY DATA, so a pin
-// is a second datum fighting the data rather than replacing it.  The card's precondition,
-// enforced.
+// With an ionosphere constraint present this direction is determined by the data, so a
+// pin would be a second datum conflicting with the data instead of replacing it.  The
+// loader enforces the card's precondition.
 TEST(W6IonoConstraintTest, SatGfDatumRequiresTheNoConstraintPosture) {
     LogManager log;
     const fs::path p = writeTempConfig("gf_needs_none",
@@ -712,9 +715,9 @@ TEST(W6IonoConstraintTest, SatGfDatumRequiresTheNoConstraintPosture) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-// Both knobs build the SAME row on the SAME pair; two of them is a singular stack, not
+// Both knobs build the same row on the same pair; two of them make a singular stack, not
 // a stronger datum.  Triple frequency so code_bias_gf_datum's own dual gate passes and
-// it is THIS interlock being exercised.
+// this interlock is the one exercised.
 TEST(W6IonoConstraintTest, SatGfDatumRefusesTheOdijkGfPin) {
     LogManager log;
     const fs::path p = writeTempConfig("gf_vs_gf",
@@ -728,7 +731,7 @@ TEST(W6IonoConstraintTest, SatGfDatumRefusesTheOdijkGfPin) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-// A typo must fall back to the posture that changes nothing, never to a datum.
+// A typo falls back to the posture that changes nothing, never to a datum.
 TEST(W6IonoConstraintTest, SatGfDatumUnknownValueFallsBackToNone) {
     LogManager log;
     const fs::path p = writeTempConfig("gf_typo",
@@ -742,15 +745,15 @@ TEST(W6IonoConstraintTest, SatGfDatumUnknownValueFallsBackToNone) {
 }
 
 // ===========================================================================
-// Card RF-0d item 2 - the S-line DECLARATION, `sat_gf_datum=<mode>`.
+// The S-line declaration `sat_gf_datum=<mode>` (card RF-0d item 2).
 // ===========================================================================
 
-// A NEW field, never an overload of gfpin=.  That token's payload is its presence
-// ("the geometry-free direction is a datum") and a signal pair; this one answers what
-// presence cannot -- pinned at WHAT -- and the two answers differ by c*T_GD on every
-// emitted code bias of the satellite, with the opposite shift in the ionosphere the
-// consumer is told to estimate for itself.  It must round-trip BESIDE gfpin=, not
-// inside it, and must not be swallowed by the bare-':' realized-pivot fallback.
+// A separate field, not an overload of gfpin=.  That token's payload is its presence
+// ("the geometry-free direction is a datum") and a signal pair; this one states what
+// presence cannot, the value the direction is pinned at, and the two possible values
+// differ by c*T_GD on every emitted code bias of the satellite, with the opposite shift
+// in the ionosphere the consumer estimates for itself.  It round-trips beside gfpin=,
+// not inside it, and is not taken by the bare-':' realized-pivot fallback.
 TEST(W6IonoConstraintTest, SatGfDatumDeclarationRoundTripsOnTheSLine) {
     const fs::path path = fs::temp_directory_path() / "w6_iono_satgfdatum_sline.txt";
     std::error_code ec; fs::remove(path, ec);
@@ -802,9 +805,9 @@ TEST(W6IonoConstraintTest, SatGfDatumDeclarationAbsentWhenUnarmed) {
     armed.sat_gf_datum = "zero";
     { NetworkProductWriter w(with_p.string(), armed); ASSERT_TRUE(w.good()); }
 
-    // Compare the S LINES, not the whole files.  The '#' header legend is
+    // Compare the S lines, not the whole files.  The '#' header legend is
     // grammar-complete by contract (HeaderLegendDeclaresEveryEmittedField enforces it),
-    // so it names sat_gf_datum=<mode> in BOTH files by design — a whole-file search
+    // so it names sat_gf_datum=<mode> in both files by design; a whole-file search
     // would find the legend and prove nothing about the record stream.
     const auto sLine = [](const fs::path& p) {
         std::ifstream f(p);
@@ -821,8 +824,8 @@ TEST(W6IonoConstraintTest, SatGfDatumDeclarationAbsentWhenUnarmed) {
     // The armed S line is the unarmed S line plus exactly that token, appended last.
     EXPECT_EQ(b, a + ",sat_gf_datum=zero");
 
-    // The value survives a round-trip VERBATIM rather than being normalized: a reader
-    // that predates a future mode must not silently rewrite the product's frame.
+    // The value survives a round-trip verbatim instead of being normalized, so a reader
+    // that predates a future mode does not rewrite the product's frame.
     bool ok = false;
     SbasisContract parsed;
     NetworkProductReader::read(with_p.string(), &parsed, &ok);
@@ -832,16 +835,16 @@ TEST(W6IonoConstraintTest, SatGfDatumDeclarationAbsentWhenUnarmed) {
 }
 
 // ===========================================================================
-// Card RF-0e - the level datum.  e1: an absolute per-constellation ionosphere-free
+// The level datum (card RF-0e).  e1: an absolute per-constellation ionosphere-free
 // sum-to-zero row.  e2: time-linked geometry-free rows.
 // ===========================================================================
 
-// e1's FIRST bar: the row is CONSISTENT with the geometry-free pins.  Build the
-// broadcast-pinned solution the datum asserts -- d_j = c*T_GD*mu_j on every column --
-// and push it through the level row: the residual must be identically zero, because
-// a1 + a2*gamma = 0 IS the definition of the ionosphere-free weights.  This is what
-// makes the row a companion of the pins rather than a competitor, which the per-signal
-// sum-to-zero rows RF-0d suppressed were not (their residual is mu_j*c*Sum_s T_GD^s).
+// e1's first bar: the row is consistent with the geometry-free pins.  The
+// broadcast-pinned solution the datum asserts (d_j = c*T_GD*mu_j on every column),
+// pushed through the level row, gives an identically zero residual, because
+// a1 + a2*gamma = 0 is the definition of the ionosphere-free weights.  This makes the
+// row a companion of the pins instead of a competitor, unlike the per-signal
+// sum-to-zero rows RF-0d suppresses (their residual is mu_j*c*Sum_s T_GD^s).
 TEST(W6IonoConstraintTest, IfLevelDatumRowHasZeroResidualOnAPinnedRoster) {
     NetworkEstimator est;
     const auto sats = gpsSats(32);
@@ -867,28 +870,28 @@ TEST(W6IonoConstraintTest, IfLevelDatumRowHasZeroResidualOnAPinnedRoster) {
         x(est.codeBiasColumn(s, "C1C")) = t;
         x(est.codeBiasColumn(s, "C2W")) = t * mu2;
     }
-    // Every row of the stack must be satisfied by it -- the geometry-free rows by
-    // construction, and the level row because the broadcast frame IS ionosphere-free.
+    // Every row of the stack is satisfied by it: the geometry-free rows by
+    // construction, and the level row because the broadcast frame is ionosphere-free.
     const Eigen::VectorXd resid = rows.H * x - rows.z;
     EXPECT_LT(resid.cwiseAbs().maxCoeff(), 1e-9)
         << "the level row and the geometry-free pins disagree on the broadcast frame";
 }
 
-// e1's SECOND bar: the row ANCHORS the ionosphere-free level.
+// e1's second bar: the row anchors the ionosphere-free level.
 //
-// ONE CORRECTION TO THE OBVIOUS FRAMING, and it is the point of the card.  The level is
-// NOT a rank hole: the per-satellite IF pin rows span it, and `code_datum_time_linked`
-// changes only their RHS (NetworkSbasis.cpp:722-735 -- the target becomes the previous
-// kept epoch's solved IF combination whenever both signals have a veteran and the pair is
-// unchanged, and stays 0 otherwise).  So the stack says "do not CHANGE the level", never
-// "the level is zero", and once the per-signal sum-to-zero rows are suppressed nothing
-// says the latter at all.  This measures that directly: give every satellite a carried
-// level of L and solve the stacked rows.  Without e1 the solution sits at L -- the carry
-// is reproduced exactly, however far it has walked.  With e1 it is pulled essentially to
-// ZERO: the level row's Jacobian carries n entries, so its leverage on the level
-// coordinate scales with n and it BEATS the n pins that each carry one -- equal-weight
-// least squares lands at L/(n+1), not L*n/(n+1).  Worth pinning precisely, because it
-// makes e1 a HARD level pin, not the gentle restoring force it was first described as.
+// The level is not a rank hole, which is the point of the card: the per-satellite IF
+// pin rows span it, and `code_datum_time_linked` changes only their RHS (in
+// NetworkSbasis::buildCodeBiasDatumRows the target becomes the previous kept epoch's
+// solved IF combination whenever both signals have a veteran and the pair is unchanged,
+// and stays 0 otherwise).  So the stack says "do not change the level", never "the level
+// is zero", and once the per-signal sum-to-zero rows are suppressed nothing says the
+// latter.  The test measures this directly: every satellite gets a carried level of L
+// and the stacked rows are solved.  Without e1 the solution sits at L: the carry is
+// reproduced exactly, however far it has walked.  With e1 it is pulled nearly to zero:
+// the level row's Jacobian carries n entries, so its leverage on the level coordinate
+// scales with n and outweighs the n pins that each carry one; equal-weight least squares
+// lands at L/(n+1), not L*n/(n+1).  e1 is therefore a hard level pin, not a gentle
+// restoring force.
 TEST(W6IonoConstraintTest, IfLevelDatumAnchorsTheCarriedLevel) {
     NetworkEstimator est;
     const auto sats = gpsSats(32);
@@ -941,14 +944,14 @@ TEST(W6IonoConstraintTest, IfLevelDatumAnchorsTheCarriedLevel) {
     EXPECT_LT(std::abs(lvl), std::abs(L))
         << "e1 must pull the level toward zero";
     // The compromise is L/(n+1), not L*n/(n+1): minimising sum_s (IF_s - L)^2 +
-    // (sum_s IF_s)^2 gives (m - L) + n*m = 0.  The level row WINS.
+    // (sum_s IF_s)^2 gives (m - L) + n*m = 0.  The level row dominates.
     EXPECT_NEAR(lvl, L / 33.0, 1e-6);
 }
 
-// e2's bar: the change pin leaves the FIRST-SIGHTING anchor in force.  A satellite with
-// no veteran value must still be pinned at the absolute broadcast target -- that is the
-// only place the frame is asserted at all under this arm -- while a satellite with
-// veterans carries its own previous geometry-free combination instead.
+// e2's bar: the change pin leaves the first-sighting anchor in force.  A satellite with
+// no veteran value is still pinned at the absolute broadcast target (the only place the
+// frame is asserted under this arm), while a satellite with veterans carries its own
+// previous geometry-free combination instead.
 TEST(W6IonoConstraintTest, SatGfTimeLinkKeepsTheFirstSightingAnchor) {
     NetworkEstimator est;
     const auto sats = gpsSats(3);
@@ -971,7 +974,7 @@ TEST(W6IonoConstraintTest, SatGfTimeLinkKeepsTheFirstSightingAnchor) {
     const double mu = muRel("C1C", "C2W") - 1.0;
     EXPECT_NEAR(rows.z(1), (1.00 - 0.40) / mu, 1e-12);    // carried, not -3.1
     EXPECT_NEAR(rows.z(3), (0.30 + 0.20) / mu, 1e-12);    // carried, not  1.7
-    EXPECT_DOUBLE_EQ(rows.z(5), 2.2);                     // ANCHORED at c*T_GD
+    EXPECT_DOUBLE_EQ(rows.z(5), 2.2);                     // anchored at c*T_GD
 }
 
 // And unarmed, e2 changes nothing: every row keeps the absolute target, so the RF-0d
@@ -997,14 +1000,14 @@ TEST(W6IonoConstraintTest, SatGfTimeLinkUnarmedKeepsTheAbsoluteTarget) {
 }
 
 // ===========================================================================
-// Card RF-0f - the band-2 ISC: estimated where a station bridges, pinned where none does.
+// The band-2 ISC: estimated where a station bridges, pinned where none does (card RF-0f).
 // ===========================================================================
 
-// THE CARD'S FIRST BAR: estimable with one dual-tracking station.  The companion column
-// gets NO geometry-free row, so `b(C2X) = b(C2W) + ISC^s` with the ISC free -- which is
-// what it already was before RF-0d pinned it at c*T_GD (an assertion of ISC = 0 that
-// RINEX navigation never makes).  The band-1 companion stays free as it always was, and
-// the C2W pin itself is untouched: that is the P-code pair the T_GD describes.
+// The card's first bar: estimable with one dual-tracking station.  The companion column
+// gets no geometry-free row, so `b(C2X) = b(C2W) + ISC^s` with the ISC free, as it was
+// before RF-0d pinned it at c*T_GD (an assertion of ISC = 0 that RINEX navigation never
+// makes).  The band-1 companion stays free, and the C2W pin itself is untouched: that is
+// the P-code pair the T_GD describes.
 TEST(W6IonoConstraintTest, IscStateLeavesABridgedBand2CompanionFree) {
     NetworkEstimator est;
     const auto sats = gpsSats(8);
@@ -1023,15 +1026,14 @@ TEST(W6IonoConstraintTest, IscStateLeavesABridgedBand2CompanionFree) {
     EXPECT_EQ(rows.n_isc_observed, 8);
     EXPECT_EQ(rows.n_isc_pinned, 0);
     EXPECT_EQ(rows.n_sat_gf_extra_rows, 0);      // no companion row at all
-    EXPECT_EQ(rows.n_sat_gf_rows, 8);            // the P-code pair pin is UNCHANGED
+    EXPECT_EQ(rows.n_sat_gf_rows, 8);            // the P-code pair pin is unchanged
     EXPECT_EQ(rows.n_sat_gf_sameband_free, 8);   // C1W, free as before
-    // The C2X column carries NO geometry-free row.  Its only entry is the channel's
-    // sum-to-zero LEVEL row (coefficient 1), which RF-0d's suppression correctly
-    // RE-ENABLES here: once the columns are not each pinned, that channel's
-    // constellation-wide mean needs a datum again.  A level row is not an ISC
-    // assertion -- it fixes the mean and leaves every between-satellite ISC free.
-    // Only C1C and C2W are fully pinned: C1W was already free (the band-1 rule) and
-    // C2X is free now, so BOTH keep their level rows.
+    // The C2X column carries no geometry-free row.  Its only entry is the channel's
+    // sum-to-zero level row (coefficient 1), which RF-0d's suppression logic re-enables
+    // here: once the columns are not each pinned, that channel's constellation-wide
+    // mean needs a datum again.  A level row is not an ISC assertion: it fixes the mean
+    // and leaves every between-satellite ISC free.  Only C1C and C2W are fully pinned:
+    // C1W is free (the band-1 rule) and C2X is free now, so both keep their level rows.
     EXPECT_EQ(rows.n_s2z_suppressed, 2);
     for (const auto& s : sats) {
         const Eigen::Index c = est.codeBiasColumn(s, "C2X");
@@ -1041,8 +1043,8 @@ TEST(W6IonoConstraintTest, IscStateLeavesABridgedBand2CompanionFree) {
     }
 }
 
-// THE CARD'S SECOND BAR: pinned without one.  No station bridges the two signals, so the
-// ISC is unreachable and the column falls through to the RF-0d pin -- counted, so the run
+// The card's second bar: pinned without one.  No station bridges the two signals, so the
+// ISC is unreachable and the column falls through to the RF-0d pin, counted so the run
 // and the wire can both say which satellites' C2X is an estimate and which an assertion.
 TEST(W6IonoConstraintTest, IscStatePinsAnUnbridgedBand2Companion) {
     NetworkEstimator est;
@@ -1061,16 +1063,16 @@ TEST(W6IonoConstraintTest, IscStatePinsAnUnbridgedBand2Companion) {
     EXPECT_EQ(rows.n_isc_pinned, 7);
     EXPECT_EQ(rows.n_sat_gf_extra_rows, 7);      // the pinned ones still get their row
     EXPECT_EQ(rows.n_sat_gf_rows, 8);            // and the P-code pin is still every satellite's
-    // G03's C2X column carries ONLY the channel sum-to-zero entry; every other
+    // G03's C2X column carries only the channel sum-to-zero entry; every other
     // satellite's carries its geometry-free pin as well.  The two are told apart by the
-    // ROW COUNT, not by presence -- which is the honest distinction once a level row is
-    // back in play for that channel.
+    // row count, not by presence, because a level row is back in play for that channel.
     EXPECT_EQ((rows.H.col(est.codeBiasColumn("G03", "C2X")).array().abs() > 1e-12).count(), 1);
     EXPECT_EQ((rows.H.col(est.codeBiasColumn("G01", "C2X")).array().abs() > 1e-12).count(), 2);
 }
 
-// Standing invariant #6: unarmed, RF-0f changes nothing -- the RF-0d stack is reproduced
-// row for row and target for target, and neither counter moves.
+// Standing invariant #6: unarmed, RF-0f changes nothing and its counters stay 0.  Armed
+// with nothing bridged, every companion is pinned (and counted in n_isc_pinned), so the
+// RF-0d stack is reproduced row for row and target for target.
 TEST(W6IonoConstraintTest, IscStateUnarmedIsByteIdenticalToRf0d) {
     NetworkEstimator est;
     const auto sats = gpsSats(8);
@@ -1088,14 +1090,14 @@ TEST(W6IonoConstraintTest, IscStateUnarmedIsByteIdenticalToRf0d) {
 
     EXPECT_EQ(a.n_isc_observed, 0);
     EXPECT_EQ(a.n_isc_pinned, 0);                // the counters are RF-0f-only
-    // ...so every companion is pinned and the folded stack is IDENTICAL to RF-0d's.
+    // ...so every companion is pinned and the folded stack is identical to RF-0d's.
     EXPECT_EQ(b.n_isc_pinned, 8);
     ASSERT_EQ(a.H.rows(), b.H.rows());
     EXPECT_LT((a.H - b.H).cwiseAbs().maxCoeff(), 1e-15);
     EXPECT_LT((a.z - b.z).cwiseAbs().maxCoeff(), 1e-15);
 }
 
-// The wire half: `isc=obs` is a NEW per-record token that round-trips, and a record
+// The wire half: `isc=obs` is a per-record token that round-trips, and a record
 // without it parses exactly as it did before the token existed.
 TEST(W6IonoConstraintTest, IscObsTokenRoundTripsOnTheBRecord) {
     const fs::path path = fs::temp_directory_path() / "w6_iono_isc_token.txt";

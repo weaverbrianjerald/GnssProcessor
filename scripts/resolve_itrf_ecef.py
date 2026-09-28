@@ -5,14 +5,14 @@ Wraps the test-suite's authoritative ``SinexTruth`` parser
 (``pyviz/gnssviz/eval/truth.py``) and prints each station's velocity-propagated
 ECEF.  That coordinate is the right value for two uses:
 
-* a NETWORK station's held-fixed ``network.stations[].position_ecef`` — a wrong
+* a network station's held-fixed ``network.stations[].position_ecef``: a wrong
   fixed coordinate biases the estimated satellite clock/bias products directly;
 * the truth for scoring a held-out closed-loop consumer.
 
 It is also the ECEF-resolution step for populating the config when scaling the
 network to dozens of globally distributed IGS stations.
 
-The grader is consumed *nowhere* in the C++ engine, so using it to seed config
+The grader is not consumed by the C++ engine, so using it to seed config
 coordinates keeps the truth independent of the solver.
 
 ``SinexTruth`` is loaded standalone (the ``gnssviz`` package ``__init__`` pulls

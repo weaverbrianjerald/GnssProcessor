@@ -4,7 +4,7 @@ A *viewer* is the Python analogue of one MATLAB ``view_*`` / ``plot*`` script: i
 reads one (or more) trace CSVs from a :class:`~gnssviz.trace_paths.TraceContext`,
 prepares data, and returns :class:`Figure` specs plus an optional plain-text
 summary (the console read-outs the MATLAB scripts ``fprintf``).  It never touches
-a plotting library -- rendering is the backend's job.
+a plotting library: rendering is the backend's job.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ class ViewerSkip(Exception):
 
     The driver turns this into a *skipped* (not *failed*) entry, with the
     exception text as the reason.  Used by viewers whose applicability cannot be
-    expressed as a missing ``required_csvs`` -- e.g. the geographic viewers,
+    expressed as a missing ``required_csvs``, e.g. the geographic viewers,
     which depend on a station roster / config / IONEX resolved at build time.
     """
 
@@ -44,7 +44,7 @@ class Viewer:
     is explicitly requested (``--only <name>``) or the caller opts every viewer
     in (``--all`` / ``include_disabled=True``).  Use it for heavy or noisy
     viewers that are useful on demand but shouldn't clutter the standard
-    summary -- e.g. the ``residual_strip`` raster.
+    summary, e.g. the ``residual_strip`` raster.
     """
     name: str
     title: str

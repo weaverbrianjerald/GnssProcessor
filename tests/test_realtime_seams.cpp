@@ -3,21 +3,21 @@
  * @brief Stream-level real-time invariants the position grader cannot see.
  *
  * The real-time replay tier (manifest_realtime.json) grades the converged
- * position vs an independent site coordinate -- a strong end-to-end guard, but
- * blind to two failure modes that can still produce a *plausible-looking*
- * position while being wrong:
+ * position against an independent site coordinate.  That is an end-to-end
+ * guard, but it cannot see two failure modes that still produce a plausible
+ * but wrong position:
  *
- *   1. An old observation consuming a FUTURE-stamped SSR correction and
- *      extrapolating the orbit/clock backward (the obs<->SSR sync hole: high-rate
- *      obs back up behind real-time while sparse corrections stay fresh, so an
- *      old obs queries a fresh correction with a large *negative* age).
- *      Contract lives in SsrCorrectionStore freshness gating.
+ *   1. An old observation consuming a future-stamped SSR correction and
+ *      extrapolating the orbit/clock backward.  High-rate observations back up
+ *      behind real time while sparse corrections stay fresh, so an old
+ *      observation queries a fresh correction with a large negative age.  The
+ *      contract is the SsrCorrectionStore freshness gate.
  *
  *   2. A broadcast ephemeris extrapolated far beyond its fit interval (a
- *      never-refreshed sat, or obs/eph desync) silently yielding a junk orbit or
- *      clock instead of dropping the satellite.  Contract lives in the
- *      LiveEphemerisStore fit-window guard (the BSSD epoch-blowup / RT
- *      model-degradation root).
+ *      satellite never refreshed, or observation/ephemeris desync) giving a
+ *      wrong orbit or clock instead of dropping the satellite.  The contract is
+ *      the LiveEphemerisStore fit-window guard (the root of the BSSD epoch
+ *      blowup and the RT model degradation).
  *
  * Both are unit-constructible without a PppModel / RINEX chain, deterministic,
  * and complementary to the position-accuracy regression cell.  See
@@ -31,8 +31,8 @@
 #include "products/SsrCorrectionStore.hpp"
 #include "products/BroadcastEphemerisTypes.hpp"
 #include "products/LiveEphemerisStore.hpp"
-#include "products/ProductResolver.hpp"  // RTB-4 ULT naming statics (header-only use)
-#include "realtime/RealTimeEngine.hpp"   // RTA-8(b) ingest-filter statics (header-only use)
+#include "products/ProductResolver.hpp"  // ULT naming statics, header-only use (RTB-4)
+#include "realtime/RealTimeEngine.hpp"   // ingest-filter statics, header-only use (RTA-8(b))
 #include "rtcm/RtcmTypes.hpp"
 #include "common/Namespaces.hpp"
 
@@ -50,30 +50,30 @@ SsrClockCorrection makeClock(const std::string& sat, double c0_m,
 }
 
 // ===========================================================================
-// (1) obs<->SSR sync: freshness gating is three-region, and the FUTURE side is
-// the one the obs-backlog bug exercised.  age = query - record.received_time:
-//   age >  max_age   -> stale past record      -> REJECT  (covered elsewhere)
-//   -max_age<=age<0  -> mild future (jitter)    -> ACCEPT
-//   age < -max_age   -> record far in the future-> REJECT  (the backlog hole)
-// Tested as a black box through getOrbitClock so it pins the consumed behaviour,
-// not a private helper.
+// (1) Observation/SSR sync: the freshness gate has three regions, and the
+// future side is the one an observation backlog reaches.
+// age = query - record.received_time:
+//   age >  max_age      -> stale past record          -> reject  (covered elsewhere)
+//   -max_age <= age < 0 -> mild future (jitter)       -> accept
+//   age < -max_age      -> record far in the future   -> reject  (backlog case)
+// Tested as a black box through getOrbitClock, so the tests pin the consumed
+// behaviour rather than a private helper.
 // ===========================================================================
 
-// A correction received well AFTER the obs being processed (old obs, fresh
-// correction) must be rejected -- never extrapolated backward onto stale obs.
+// A correction received well after the observation being processed (old
+// observation, fresh correction) is rejected, not extrapolated backward.
 TEST(RealtimeSsrFreshnessTest, FutureRecordBeyondMaxAgeRejected) {
     auto& store = SsrCorrectionStore::getInstance();
     store.clear();
-    // record stamped 100 s in the FUTURE relative to the query; max_age 30 s.
+    // Record stamped 100 s in the future relative to the query; max_age 30 s.
     store.pushClock(makeClock("G07", 0.05, GnssTime{2300, 200.0}), SsrHeader{});
     auto q = store.getOrbitClock("G07", GnssTime{2300, 100.0}, /*max_age_s=*/30.0);
     EXPECT_FALSE(q.has_value());
     store.clear();
 }
 
-// A small negative age (receipt jitter / sub-epoch drift) is within tolerance
-// and must still be consumed -- otherwise normal stream timing would drop
-// corrections.
+// A small negative age (receipt jitter, sub-epoch drift) is within tolerance and
+// is consumed; otherwise normal stream timing would drop corrections.
 TEST(RealtimeSsrFreshnessTest, MildFutureRecordAccepted) {
     auto& store = SsrCorrectionStore::getInstance();
     store.clear();
@@ -87,9 +87,10 @@ TEST(RealtimeSsrFreshnessTest, MildFutureRecordAccepted) {
 }
 
 // ===========================================================================
-// (2) Fit-interval guard: an ephemeris extrapolated beyond ~2x its broadcast fit
-// interval is rejected (sat skipped) rather than emitting a silently-wrong
-// orbit/clock.  Per-system windows: GPS/QZSS 4 h, GAL/BDS 2 h, GLONASS 0.5 h.
+// (2) Fit-interval guard: an ephemeris extrapolated beyond about twice its
+// broadcast fit interval is rejected (the satellite is skipped) instead of
+// giving a wrong orbit/clock.  Per-system windows: GPS/QZSS 4 h, GAL/BDS 2 h,
+// GLONASS 0.5 h.
 // ===========================================================================
 
 BroadcastEphemeris gpsEph(const std::string& sat = "G07") {
@@ -121,8 +122,9 @@ TEST(RealtimeEphStalenessTest, GpsOrbitDroppedBeyondFitWindow) {
     store.clear();
 }
 
-// The clock path enforces the same guard (so a stale sat drops entirely, never
-// contributing a junk clock that the position filter would have to reject).
+// The clock path enforces the same guard, so a stale satellite drops entirely
+// and never contributes a wrong clock that the position filter would have to
+// reject.
 TEST(RealtimeEphStalenessTest, GpsClockDroppedBeyondFitWindow) {
     auto& store = LiveEphemerisStore::getInstance();
     store.clear();
@@ -135,8 +137,8 @@ TEST(RealtimeEphStalenessTest, GpsClockDroppedBeyondFitWindow) {
     store.clear();
 }
 
-// Galileo's window is tighter (2 h): a query stale for GPS-standards (3 h) is
-// already rejected for Galileo -- pins the per-system table, not a global const.
+// Galileo's window is tighter (2 h): a 3 h query, inside the GPS window, is
+// already rejected for Galileo.  Pins the per-system table, not a global const.
 TEST(RealtimeEphStalenessTest, GalileoWindowTighterThanGps) {
     auto& store = LiveEphemerisStore::getInstance();
     store.clear();
@@ -155,18 +157,19 @@ TEST(RealtimeEphStalenessTest, GalileoWindowTighterThanGps) {
 }
 
 // ===========================================================================
-// (3) RT0-1 -- clock-only IODE gate.  A network / IGS-SSR CLOCK subtype carries
-// no orbit IODE, so getOrbitClock must report iode = -1 ("unknown") for it.  The
+// (3) Clock-only IODE gate (RT0-1).  A network or IGS-SSR clock subtype carries
+// no orbit IODE, so getOrbitClock reports iode = -1 ("unknown") for it.  The
 // downstream clock gate (GnssCorrections) computes
 //     ssr_iode  = has_clock ? (clock_iode >= 0 ? clock_iode : ssr->iode) : -1;
 //                 (Card 7 pinned eval; clock_iode == -1 on every unstamped
 //                  record, so this reduces to ssr->iode here)
-//     brdc_iode = live broadcast IODE (>=0 in RT, -1 in post-processing);
+//     brdc_iode = live broadcast IODE (>= 0 in RT, -1 in post-processing);
 // and applies the SSR clock only when SsrCorrectionStore::iodeMatches passes.
-// A {0} default (the pre-fix bug) collided with a real broadcast IODE and
-// silently dropped EVERY network clock in live RT, while post-processing's empty
-// live store (brdc_iode=-1) stayed permissive and masked it.  These pin both the
-// store-seam value and the consumed gate behaviour without a PppModel chain.
+// A default of {0} would collide with a real broadcast IODE and drop every
+// network clock in live RT, while post-processing's empty live store
+// (brdc_iode = -1) stays permissive and would not show the fault.  These tests
+// pin both the store value and the consumed gate behaviour without a PppModel
+// chain.
 // ===========================================================================
 
 // A standalone clock record reports the -1 "unknown" IODE sentinel, not {0}.
@@ -178,14 +181,14 @@ TEST(RealtimeSsrIodeGateTest, ClockOnlyRecordReportsUnknownIode) {
     ASSERT_TRUE(q.has_value());
     EXPECT_TRUE(q->has_clock);
     EXPECT_FALSE(q->has_orbit);      // network emitter pushes clock only (orbit from IGS)
-    EXPECT_EQ(q->iode, -1);          // unknown -> gate-permissive (NOT the {0} default)
+    EXPECT_EQ(q->iode, -1);          // unknown -> gate-permissive (not the {0} default)
     store.clear();
 }
 
-// Card headline: with a POPULATED live ephemeris store (brdc_iode >= 0, the RT
-// condition), a clock-only network correction is APPLIED, not dropped.  The
-// pre-fix {0} default would have failed iodeMatches against a non-zero broadcast
-// IODE -- pinned below as the regression witness.
+// With a populated live ephemeris store (brdc_iode >= 0, the RT condition), a
+// clock-only network correction is applied, not dropped.  A {0} default would
+// fail iodeMatches against a non-zero broadcast IODE; the last assertion pins
+// that as the regression witness.
 TEST(RealtimeSsrIodeGateTest, NetworkClockAppliesAgainstPopulatedBroadcastIode) {
     auto& eph_store = LiveEphemerisStore::getInstance();
     auto& ssr_store = SsrCorrectionStore::getInstance();
@@ -195,7 +198,7 @@ TEST(RealtimeSsrIodeGateTest, NetworkClockAppliesAgainstPopulatedBroadcastIode) 
     // Live RT: broadcast ephemeris present with a real, non-zero IODE (10).
     eph_store.insert(gpsEph("G07"));
 
-    // Network producer pushes a CLOCK-ONLY correction (orbit comes from IGS).
+    // Network producer pushes a clock-only correction (orbit comes from IGS).
     const GnssTime t{2300, 7200.0};
     ssr_store.pushClock(makeClock("G07", 0.05, t), SsrHeader{});
 
@@ -204,10 +207,10 @@ TEST(RealtimeSsrIodeGateTest, NetworkClockAppliesAgainstPopulatedBroadcastIode) 
     ASSERT_TRUE(ssr->has_clock);
     ASSERT_FALSE(ssr->has_orbit);
 
-    // Reproduce the GnssCorrections clock gate exactly (GnssCorrections.cpp: the
-    // ssr_iode / brdc_iode / iodeMatches trio) against the SHARED gate function.
-    // Card 7: the baseline pins to a stamped clock_iode first; unstamped (-1,
-    // this record) falls through to the orbit anchor — the RT0-1 expression.
+    // Reproduce the GnssCorrections clock gate (GnssCorrections.cpp: the
+    // ssr_iode / brdc_iode / iodeMatches trio) against the shared gate function.
+    // The baseline pins to a stamped clock_iode first; an unstamped record (-1,
+    // as here) falls through to the orbit anchor, the RT0-1 expression (Card 7).
     const int  ssr_iode  = (ssr && ssr->has_clock)
         ? (ssr->clock_iode >= 0 ? ssr->clock_iode : ssr->iode)
         : -1;
@@ -219,36 +222,37 @@ TEST(RealtimeSsrIodeGateTest, NetworkClockAppliesAgainstPopulatedBroadcastIode) 
     EXPECT_GE(brdc_iode, 0);         // populated live store -> real IODE (the RT trap)
     EXPECT_EQ(brdc_iode, 10);        // gpsEph IODE, unchanged by the -1 re-reference
 
-    // RTF-2 (Card 3): the CLOCK gate now keys on clock_iode.  A standalone network
-    // clock carries no wire IODE and no orbit, so clock_iode inherits the -1
-    // "unknown" anchor -> permissive, identical to the pre-card gate on ssr->iode.
+    // The clock gate keys on clock_iode.  A standalone network clock carries no
+    // wire IODE and no orbit, so clock_iode inherits the -1 "unknown" anchor and
+    // is permissive, the same result as a gate on ssr->iode (RTF-2, Card 3).
     EXPECT_EQ(ssr->clock_iode, -1);
-    // Gate MUST pass -> the network clock is applied.
+    // The gate passes, so the network clock is applied.
     EXPECT_TRUE(SsrCorrectionStore::iodeMatches(brdc_iode, ssr->clock_iode));
 
-    // ...and the gate's OTHER co-condition holds (GnssCorrections.cpp:242 gates on
-    // std::isfinite(clock_corr) AND iodeMatches, where clock_corr = broadcast
-    // baseline + SSR delta).  Assert a finite, non-trivial correction is genuinely
-    // applied -- an IODE match alone does not prove the clock is usable.
+    // The gate's finiteness condition also holds.  GnssCorrections.cpp applies
+    // the clock when std::isfinite(clock_corr), the orbit-echo check and
+    // iodeMatches all pass, where clock_corr is the broadcast baseline plus the
+    // SSR delta.  An IODE match alone does not prove the clock is usable, so
+    // assert a finite, non-zero correction.
     const double applied    = SsrCorrectionStore::applyClockToBias(
         ssr->c0, ssr->c1, ssr->c2, ssr->hr_clock, /*dt=*/0.0);   // query epoch == SSR epoch
     const double clock_corr = bc->bias + applied;                // seconds
     EXPECT_TRUE(std::isfinite(clock_corr));
     EXPECT_GT(std::abs(applied), 0.0);                           // the 0.05 m c0 actually contributes
 
-    // Regression witness: the pre-fix {0} default would have collided here
-    // (brdc_iode 10 != 0) and dropped the clock.  If a future change reintroduces
-    // a {0} default, ClockOnlyRecordReportsUnknownIode fails; this pins WHY.
+    // Regression witness: a {0} default would collide here (brdc_iode 10 != 0)
+    // and drop the clock.  A change that reintroduces a {0} default fails
+    // ClockOnlyRecordReportsUnknownIode; this assertion records the reason.
     EXPECT_FALSE(SsrCorrectionStore::iodeMatches(brdc_iode, /*old default=*/0));
 
     eph_store.clear();
     ssr_store.clear();
 }
 
-// RTF-2 (Card 3): a brdc_rts producer stamps the clock's OWN broadcast IODE and
-// an orbit coherence echo.  getOrbitClock propagates them onto the merged
-// record's clock_iode / orbit_iod_ssr / orbit_epoch, and the consumer gates the
-// clock on clock_iode (applies on a broadcast match, drops on a mismatch).
+// A brdc_rts producer stamps the clock's own broadcast IODE and an orbit
+// coherence echo.  getOrbitClock propagates them onto the merged record's
+// clock_iode / orbit_iod_ssr / orbit_epoch, and the consumer gates the clock on
+// clock_iode: applied on a broadcast match, dropped on a mismatch (RTF-2, Card 3).
 TEST(RealtimeSsrIodeGateTest, StampedClockIodePropagatesAndGates) {
     SsrCorrectionStore store;   // owned: no singleton coupling
     SsrClockCorrection c = makeClock("G07", 0.05, GnssTime{2300, 100.0});
@@ -268,9 +272,9 @@ TEST(RealtimeSsrIodeGateTest, StampedClockIodePropagatesAndGates) {
     EXPECT_FALSE(SsrCorrectionStore::iodeMatches(24, q->clock_iode));  // mismatch -> drop
 }
 
-// RTF-2 (Card 3) byte-identity: a STANDARD SSR clock (no wire IODE) merged with a
-// standalone orbit inherits the ORBIT's IODE for the clock gate — exactly the
-// pre-card behaviour (the old gate keyed the clock on the orbit anchor too).
+// Byte-identity: a standard SSR clock (no wire IODE) merged with a standalone
+// orbit inherits the orbit's IODE for the clock gate, which matches a gate keyed
+// on the orbit anchor (RTF-2, Card 3).
 TEST(RealtimeSsrIodeGateTest, StandardClockInheritsOrbitIodeForGate) {
     SsrCorrectionStore store;   // owned
     SsrOrbitCorrection o;
@@ -287,11 +291,11 @@ TEST(RealtimeSsrIodeGateTest, StandardClockInheritsOrbitIodeForGate) {
     EXPECT_EQ(q->iode, 30);                     // orbit anchor
     EXPECT_EQ(q->clock_iode, 30);               // inherited (unstamped clock) -> gate == orbit gate
     EXPECT_TRUE(SsrCorrectionStore::iodeMatches(30, q->clock_iode));
-    EXPECT_FALSE(SsrCorrectionStore::iodeMatches(31, q->clock_iode));  // mismatch drops BOTH, as today
+    EXPECT_FALSE(SsrCorrectionStore::iodeMatches(31, q->clock_iode));  // mismatch drops orbit and clock
 }
 
-// RTF-2 (Card 3): a combined record shares one IOD, so clock_iode == iode and the
-// orbit echo is the record's own IOD-SSR / content epoch.
+// A combined record shares one IOD, so clock_iode == iode and the orbit echo is
+// the record's own IOD-SSR / content epoch (RTF-2, Card 3).
 TEST(RealtimeSsrIodeGateTest, CombinedPropagatesClockIode) {
     SsrCorrectionStore store;   // owned
     SsrCombinedCorrection cb;
@@ -308,27 +312,27 @@ TEST(RealtimeSsrIodeGateTest, CombinedPropagatesClockIode) {
     EXPECT_EQ(q->clock_iode, 44);               // combined: clock shares the orbit IOD
     EXPECT_EQ(q->orbit_iod_ssr, 6);
     EXPECT_NEAR(q->orbit_epoch.tow, 95.0, 1e-9);
-    // Card 7: a combined record is SELF-coherent — the applied orbit's own
-    // IOD-SSR equals the echo by construction, which is exactly the condition
-    // the GnssCorrections echo check short-circuits on (no second lookup).
+    // A combined record is self-coherent: the applied orbit's own IOD-SSR equals
+    // the echo by construction, which is the condition the GnssCorrections echo
+    // check short-circuits on (no second lookup).  (Card 7)
     EXPECT_EQ(q->applied_orbit_iod_ssr, 6);
     EXPECT_EQ(SsrCorrectionStore::classifyOrbitEcho(*q, q, /*max_skew_s=*/30.0),
               SsrCorrectionStore::OrbitEchoVerdict::Match);
 }
 
 // ===========================================================================
-// Card 7 (RTF-2) — consumer pinned clock eval + orbit-coherence echo check.
+// Consumer pinned clock eval and orbit-coherence echo check (Card 7, RTF-2).
 // The producer's brdc_rts clock is a delta against broadcast(clock_iode) and
-// echoes the RTS orbit it was estimated against; the consumer (a) evaluates
-// the broadcast baseline PINNED to that version (current/previous retention
-// absorbs producer/consumer cutover skew) and (b) verifies the echo against
-// the orbit it actually applies, withholding the clock when the armed skew
-// budget says the two products belong to different orbit generations.
+// echoes the RTS orbit it was estimated against.  The consumer (a) evaluates
+// the broadcast baseline pinned to that version (current/previous retention
+// absorbs producer/consumer cutover skew) and (b) checks the echo against the
+// orbit it applies, withholding the clock when the armed skew budget says the
+// two products belong to different orbit generations.
 // ===========================================================================
 
-// D7 pinned eval: a stamped clock_iode selects WHICH retained broadcast version
-// the baseline evaluates — the previous version across a cutover — and the gate
-// drops the clock only when the pinned version is no longer held.
+// Pinned eval (D7): a stamped clock_iode selects which retained broadcast
+// version the baseline evaluates (the previous version across a cutover), and
+// the gate drops the clock only when the pinned version is no longer held.
 TEST(Card7ConsumerTest, PinnedBaselineEvaluatesStampedEphVersion) {
     auto& eph_store = LiveEphemerisStore::getInstance();
     eph_store.clear();
@@ -348,8 +352,8 @@ TEST(Card7ConsumerTest, PinnedBaselineEvaluatesStampedEphVersion) {
 
     const GnssTime t{2300, 9000.0};
 
-    // Producer stamped the clock against v10; the pinned eval must return the
-    // RETAINED PREVIOUS version — its af0 and its IODE — not the freshest.
+    // The producer stamped the clock against v10; the pinned eval returns the
+    // retained previous version (its af0 and its IODE), not the freshest.
     SsrCorrectionStore ssr_store;   // owned
     SsrClockCorrection c;
     c.sat = "G07"; c.c0 = 0.05;
@@ -360,8 +364,8 @@ TEST(Card7ConsumerTest, PinnedBaselineEvaluatesStampedEphVersion) {
     ASSERT_TRUE(q.has_value());
     EXPECT_EQ(q->clock_iode, 10);
 
-    // The Card-7 baseline selection, re-stated locally: this test pins the
-    // STORE's pinned-retention contract (computeSatelliteClock honors the pin
+    // The Card-7 baseline selection, restated locally: this test pins the
+    // store's pinned-retention contract (computeSatelliteClock honors the pin
     // across a demotion); the production selection expression itself is pinned
     // end-to-end by SsrStoreInjectionTest.Card7PinnedEvalUsesStampedVersion,
     // whose fixture geometry makes a revert flip its assertions.
@@ -379,8 +383,8 @@ TEST(Card7ConsumerTest, PinnedBaselineEvaluatesStampedEphVersion) {
     EXPECT_EQ(cur->iode, 11);
     EXPECT_NEAR(cur->bias, 2e-5, 1e-9);
 
-    // Pinned version EVICTED (a stamp two generations old): pickForSsr falls
-    // back to the freshest version, whose reported IODE then FAILS the gate —
+    // Pinned version evicted (a stamp two generations old): pickForSsr falls
+    // back to the freshest version, whose reported IODE then fails the gate, so
     // the clock is dropped and the RTA-9 staleness ladder governs (D7).
     const auto gone = eph_store.computeSatelliteClock("G07", t, /*ssr_iode=*/9);
     ASSERT_TRUE(gone.has_value());
@@ -428,7 +432,7 @@ TEST(Card7ConsumerTest, OrbitEchoClassifyMatrix) {
     EXPECT_EQ(SsrCorrectionStore::classifyOrbitEcho(rec, other, 10.0), V::IodSsrMismatch);
     EXPECT_EQ(SsrCorrectionStore::classifyOrbitEcho(rec, other,  0.0), V::IodSsrMismatch);  // counted even with the budget unset
 
-    // Content-epoch skew: evaluated ONLY when the budget is armed (> 0).
+    // Content-epoch skew: evaluated only when the budget is armed (> 0).
     EXPECT_EQ(SsrCorrectionStore::classifyOrbitEcho(rec, skewed, 10.0), V::EpochSkew);   // 20 s > 10 s
     EXPECT_EQ(SsrCorrectionStore::classifyOrbitEcho(rec, skewed, 30.0), V::Match);       // 20 s <= 30 s
     EXPECT_EQ(SsrCorrectionStore::classifyOrbitEcho(rec, skewed,  0.0), V::Match);       // budget unset -> skew clause off
@@ -441,7 +445,7 @@ TEST(Card7ConsumerTest, OrbitEchoCheckCountsAndClear) {
     using V = SsrCorrectionStore::OrbitEchoVerdict;
     const GnssTime t{2300, 100.0};
 
-    SsrCorrectionStore store;   // owned: plays the CLOCK store (counter home)
+    SsrCorrectionStore store;   // owned: plays the clock store (holds the counters)
     SsrCorrectionStore::OrbitClockCorrection rec;
     rec.has_clock     = true;
     rec.orbit_iod_ssr = 7;
@@ -451,7 +455,7 @@ TEST(Card7ConsumerTest, OrbitEchoCheckCountsAndClear) {
     other.applied_orbit_iod_ssr = 8;
     other.orbit_epoch_time      = t;
 
-    // Budget unset: identity mismatches still classify and COUNT (count-only mode).
+    // Budget unset: identity mismatches still classify and count (count-only mode).
     EXPECT_EQ(store.checkOrbitEcho("G07", rec, other), V::IodSsrMismatch);
     EXPECT_EQ(store.checkOrbitEcho("G07", rec, std::nullopt), V::NoAppliedOrbit);
     auto counts = store.orbitEchoMismatchCounts();
@@ -480,10 +484,10 @@ TEST(Card7ConsumerTest, OrbitEchoCheckCountsAndClear) {
     EXPECT_NEAR(store.orbitEchoMaxSkew(), 10.0, 1e-12);
 }
 
-// The merge carries the APPLIED orbit's own IOD-SSR for a standalone orbit
-// record too (the split-store consumer's orbit-side lookup).
+// The merge also carries the applied orbit's own IOD-SSR for a standalone orbit
+// record (the split-store consumer's orbit-side lookup).
 TEST(Card7ConsumerTest, StandaloneOrbitCarriesOwnIodSsr) {
-    SsrCorrectionStore store;   // owned: plays the ORBIT store
+    SsrCorrectionStore store;   // owned: plays the orbit store
     SsrOrbitCorrection o;
     o.sat           = "G07";
     o.iode          = 30;
@@ -496,17 +500,17 @@ TEST(Card7ConsumerTest, StandaloneOrbitCarriesOwnIodSsr) {
     EXPECT_TRUE(q->has_orbit);
     EXPECT_EQ(q->applied_orbit_iod_ssr, 9);
     EXPECT_NEAR(q->orbit_epoch_time.tow, 95.0, 1e-9);
-    EXPECT_EQ(q->orbit_iod_ssr, -1);   // a bare orbit record carries no ECHO (that rides on the clock)
+    EXPECT_EQ(q->orbit_iod_ssr, -1);   // a bare orbit record carries no echo (the echo rides on the clock)
 }
 
 // ===========================================================================
-// (4) RTA-8(b) — per-stream SSR ingest filter.  The record-in → push-decision-
-// out matrix is a pure static (ssrPushAction) factored out of feedRtcmFrame so
-// the policy is pinned without a parser/engine; the combined-record
-// decomposition is pinned end-to-end through an OWNED store.
+// (4) Per-stream SSR ingest filter (RTA-8(b)).  The mapping from record kind to
+// push decision is a pure static (ssrPushAction) factored out of feedRtcmFrame,
+// so the policy is pinned without a parser or engine; the combined-record
+// decomposition is pinned end-to-end through an owned store.
 // ===========================================================================
 
-// Default policy All: every record kind pushes — the byte-identical legacy path.
+// Default policy All: every record kind pushes (the byte-identical legacy path).
 TEST(SsrIngestFilterTest, AllPolicyPushesEveryKind) {
     using RTE = RealTimeEngine;
     for (auto kind : { RTE::SsrRecordKind::Orbit,    RTE::SsrRecordKind::Clock,
@@ -518,8 +522,8 @@ TEST(SsrIngestFilterTest, AllPolicyPushesEveryKind) {
     }
 }
 
-// OrbitOnly: orbit + URA push as today; combined decomposes; every clock- or
-// bias-bearing kind drops — including the high-rate clock (clock content).
+// OrbitOnly: orbit and URA push; combined decomposes; every clock- or
+// bias-bearing kind drops, including the high-rate clock (clock content).
 TEST(SsrIngestFilterTest, OrbitOnlyPolicyMatrix) {
     using RTE = RealTimeEngine;
     const auto p = RTE::SsrAcceptPolicy::OrbitOnly;
@@ -542,14 +546,15 @@ TEST(SsrIngestFilterTest, OrbitOnlyPolicyMatrix) {
 // A combined orbit+clock record decomposed at the push site yields an
 // orbit-only store entry: has_orbit without has_clock, the RAC fields / IODE /
 // content epoch carried over, the clock polynomial gone.  The store's
-// combined-wins merge logic is untouched — the combined record never entered.
+// combined-wins merge logic is not involved, because the combined record never
+// enters the store.
 TEST(SsrIngestFilterTest, CombinedDecomposesToOrbitOnlyPush) {
     SsrCombinedCorrection comb;
     comb.sat           = "G07";
     comb.iode          = 42;
     comb.delta_rac     = Eigen::Vector3d{0.5, -0.2, 0.1};
     comb.delta_rac_dot = Eigen::Vector3d{1e-4, -2e-4, 3e-5};
-    comb.c0            = 0.8;              // clock content that must NOT survive
+    comb.c0            = 0.8;              // clock content that must not survive
     comb.c1            = 1e-4;
     comb.c2            = 1e-7;
     comb.received_time = GnssTime{2300, 100.0};
@@ -578,11 +583,11 @@ TEST(SsrIngestFilterTest, CombinedDecomposesToOrbitOnlyPush) {
     EXPECT_NEAR(q->orbit_epoch_time.tow, 95.0, 1e-12);  // orbit dt base preserved
 }
 
-// RTB-5(b): the combined→orbit decomposition must carry the SSR reference-
-// point tag — a legacy (APC-referenced) 1060/1066 record decomposed under
-// the orbit_only ingest policy is STILL an APC-referenced orbit, and losing
-// the tag would silently re-enable the satellite-PCO double count under
-// realtime.honor_ssr_reference_point.
+// The combined-to-orbit decomposition carries the SSR reference-point tag.  A
+// legacy (APC-referenced) 1060/1066 record decomposed under the orbit_only
+// ingest policy is still an APC-referenced orbit; losing the tag would
+// re-enable the satellite-PCO double count under
+// realtime.honor_ssr_reference_point (RTB-5(b)).
 TEST(SsrIngestFilterTest, CombinedDecompositionPreservesReferencePoint) {
     SsrCombinedCorrection comb;
     comb.sat             = "E11";
@@ -625,22 +630,22 @@ TEST(SsrIngestFilterTest, ParseAcceptPolicy) {
 }
 
 // ===========================================================================
-// (5) RTA-9(b) — clock staleness ladder.  clockHoldWindow/classifyClockAge are
-// the single decision helpers GnssCorrections (apply window) and
-// MeasurementModel (R-inflation rung) share; the store-level test pins that a
-// held clock is genuinely retrievable through the widened window.
+// (5) Clock staleness ladder (RTA-9(b)).  clockHoldWindow and classifyClockAge
+// are the shared decision helpers of GnssCorrections (apply window) and
+// MeasurementModel (R-inflation rung); the store-level test pins that a held
+// clock is retrievable through the widened window.
 // ===========================================================================
 
 TEST(SsrClockStaleHoldTest, WindowAndClassification) {
     using Store = SsrCorrectionStore;
-    // Factor 0 (default): window is the base gate — the rung is off.
+    // Factor 0 (default): the window is the base gate and the rung is off.
     EXPECT_DOUBLE_EQ(Store::clockHoldWindow(30.0, 0.0), 30.0);
     // Factor 3: window widens; factors ≤ 1 cannot shrink the base gate.
     EXPECT_DOUBLE_EQ(Store::clockHoldWindow(30.0, 3.0), 90.0);
     EXPECT_DOUBLE_EQ(Store::clockHoldWindow(30.0, 0.5), 30.0);
 
     using Rung = Store::ClockAgeRung;
-    // Rung off (factor 0): the historic two-state gate.
+    // Rung off (factor 0): the two-state gate.
     EXPECT_EQ(Store::classifyClockAge(20.0, 30.0, 0.0), Rung::Fresh);
     EXPECT_EQ(Store::classifyClockAge(45.0, 30.0, 0.0), Rung::Rejected);
     // Rung armed (factor 3): fresh ≤ 30 < held ≤ 90 < rejected.
@@ -654,8 +659,8 @@ TEST(SsrClockStaleHoldTest, WindowAndClassification) {
 }
 
 // Store-level: a clock aged past ssr_max_age but inside the hold window is
-// rejected by the base gate yet retrievable through clockHoldWindow — exactly
-// the lookup GnssCorrections performs when the rung is armed.
+// rejected by the base gate yet retrievable through clockHoldWindow, the lookup
+// GnssCorrections performs when the rung is armed.
 TEST(SsrClockStaleHoldTest, HeldClockRetrievableThroughWiderWindow) {
     SsrCorrectionStore store;   // owned: no singleton coupling
     SsrClockCorrection clk = makeClock("G07", 0.05, GnssTime{2300, 100.0});
@@ -676,12 +681,12 @@ TEST(SsrClockStaleHoldTest, HeldClockRetrievableThroughWiderWindow) {
 }
 
 // ===========================================================================
-// (6) RTB-4 — ultra-rapid (ULT) orbit naming.  ProductResolver's public
-// naming statics pin the IGS long-name grammar, the per-analysis-centre
-// sampling token, the token fallback pair, and the start-hour walk-back
-// candidate sequences — all without touching the network.  Span convention
-// (load-bearing, documented at the statics): 02D = 48 h from the filename
-// epoch, 24 h OBSERVED then 24 h PREDICTED, release ≈ epoch + ~27 h.
+// (6) Ultra-rapid (ULT) orbit naming (RTB-4).  ProductResolver's public naming
+// statics pin the IGS long-name grammar, the per-analysis-centre sampling
+// token, the token fallback pair and the start-hour walk-back candidate
+// sequences, all without network access.  Span convention (documented at the
+// statics, and the walk-back depends on it): 02D = 48 h from the filename
+// epoch, 24 h observed then 24 h predicted, release at about epoch + 27 h.
 // ===========================================================================
 
 // Per-centre sampling token: COD publishes 05M ultra-rapids, the IGS combined
@@ -708,7 +713,7 @@ TEST(UltOrbitNamingTest, FilenameGrammar) {
               "COD0OPSULT_20260050600_02D_05M_ORB.SP3.gz");
 }
 
-// Obs-day walk-back (anchor (D, 00)): the first candidate's OBSERVED half
+// Obs-day walk-back (anchor (D, 00)): the first candidate's observed half
 // covers the whole processing day; each subsequent candidate is 6 h earlier
 // across the previous day, degrading day-D coverage toward the predicted
 // half.  Six candidates cover the worst-case live release latency

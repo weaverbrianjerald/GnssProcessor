@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-"""RF-PD - read the ``TOPOLOGY / sta_pd_dropped`` rows a run armed with
+"""RF-PD: read the ``TOPOLOGY / sta_pd_dropped`` rows a run armed with
 ``network.trace_station_pd_null`` wrote into ``logs/network_events.csv``.
 
-Each row names, for ONE station dropped by ``NetworkNormalEquations::addStation``'s
-positive-definiteness test in ONE epoch, the null direction of its rejected local
-block: the smallest eigenvalue, the near-zero eigenvalue COUNT, the pivot triple the
+Each row names, for one station dropped by ``NetworkNormalEquations::addStation``'s
+positive-definiteness test in one epoch, the null direction of its rejected local
+block: the smallest eigenvalue, the near-zero eigenvalue count, the pivot triple the
 decision used, and the top-5 largest-|weight| columns of the null eigenvector as
-StateManager labels (``AMB|G07|L1C=0.7071`` - the estimability DIR-row style).
+StateManager labels (``AMB|G07|L1C=0.7071``, the estimability DIR-row style).
 
 Five reads, in the order card RF-PD asks for them:
 
-  (1) the null-column FAMILY census (which parameter family the drop is about);
+  (1) the null-column family census (which parameter family the drop is about);
   (2) per station: count, dominant family, and whether the named top column
-      PERSISTS across consecutive rejections (a standing structural null) or
-      ROTATES (a birth / transient);
+      persists across consecutive rejections (a standing structural null) or
+      rotates (a birth / transient);
   (3) the always-rejected stations and their named columns;
-  (4) time structure - rejections per epoch across the run, ignition vs settled;
-  (5) the near-zero eigenvalue MULTIPLICITY distribution (one null per rejected
+  (4) time structure: rejections per epoch across the run, ignition vs settled;
+  (5) the near-zero eigenvalue multiplicity distribution (one null per rejected
       station, or several).
 
 Usage:  python scripts/rf_pd_null_read.py <run_dir> [<run_dir> ...] [--settled-tow T]
@@ -50,8 +50,8 @@ FAMILY_NAME = {
 def parse_detail(detail):
     """``k=v;...;fam=F:m F:m;cols=LBL=w LBL=w`` -> (dict, cols, family-mass dict).
 
-    ``cols`` is the top-5 slice; ``fam`` is the WHOLE null eigenvector's per-family
-    mass sum w^2 (which sums to 1).  The top-5 is a thin slice of a null that is
+    ``cols`` is the top-5 slice; ``fam`` is the whole null eigenvector's per-family
+    mass sum w^2 (which sums to 1). The top-5 is a thin slice of a null that is
     spread near-evenly over a whole band, so the family census is taken off ``fam``
     and the top-5 only names the individual columns.
     """
@@ -153,7 +153,7 @@ def report(run_dir, rows, settled_tow, topn, only_sta):
         print("       depend on where the top-5 cut fell):")
         for f, m in fam_mass.most_common():
             print("       %-8s %6.2f%%   %s" % (f, 100.0 * m / tot, FAMILY_NAME.get(f, "")))
-        # Per-rejection spread of the DOMINANT family's mass: a null CONFINED to one
+        # Per-rejection spread of the dominant family's mass: a null confined to one
         # family reads near 1.0; a mixed null reads well under it.
         dom = fam_mass.most_common(1)[0][0]
         v = sorted(r["fam"].get(dom, 0.0) for r in rows)

@@ -1,42 +1,41 @@
 /**
  * @file test_young_arc_inflate.cpp
- * @brief Contract tests for @c network.phase_leveling_young_inflate_var_m2 — the
- *        AGE-AWARE variance inflation of freshly RE-LEVELLED phase-leveling arcs
+ * @brief Contract tests for @c network.phase_leveling_young_inflate_var_m2, the
+ *        age-aware variance inflation of freshly re-levelled phase-leveling arcs
  *        (SPEC_amb_iono_split_overcount §6.17–§6.18).
  *
- * WHY the card exists, in the one sentence the tests are shaped around: on the slipped
- * 60-station bed a detector slip response frees the arc for ONE epoch
- * (@c network.cycle_slip.relevel_free_epoch) and the next harvest re-stashes it at that
- * epoch's posterior — a level whose VALUE is code-quality (0.2–0.4 m off, the truth
- * census) but whose harvested VARIANCE is phase-STIFF, because the conditional it is
- * read from is conditioned on the station's MATURE arcs — so the arc is inconsistent
- * with geometry until ~20 min of geometry change refine it, the T4 attribution tier
- * erases it (21 erases/station-hour), and the erase–re-level treadmill sustains a
+ * Motivation: a detector slip response frees an arc for one epoch
+ * (@c network.cycle_slip.relevel_free_epoch) and the next harvest re-stashes it at
+ * that epoch's posterior.  The resulting level has a code-quality value (0.2–0.4 m off
+ * truth on the slipped 60-station bed) but a phase-stiff harvested variance, because
+ * the conditional it is read from is conditioned on the station's mature arcs.  The
+ * arc then disagrees with geometry until about 20 min of geometry change refine it, the
+ * T4 attribution tier erases it, and the repeated erase and re-level sustains a
  * metre-class ZWD/clock plateau.
  *
- * Three things separate this from the neighbours falsified on the same bed the same
- * day, and each is a test below:
+ * Three properties distinguish this mechanism from the alternatives falsified on the
+ * same bed; each has tests below:
  *
- *  1. the population is AGE-SELECTED — only arcs young SINCE THEIR LAST RE-LEVEL, an
- *     age clock (@ref LocalCarry::relevel_s) that is deliberately NOT @c birth_s (a
- *     re-level preserves birth_s by design, and it is the re-level, not the birth, that
- *     resets what the level is worth).  Uniform floors (1e-4 / 1e-3 m²) and uniform
- *     level process noise (1e-7 / 1e-6 m²/s) were falsified — too small AND applied to
- *     every arc;
- *  2. the inflated arc STAYS INSIDE the F3 whitened block with its cross terms, applied
- *     as a CONGRUENCE scaling of its row/column of Σ.  Arm 5b (young legs kept OUT of
- *     the block) was falsified on the quiet bed's post-eclipse legs;
- *  3. the inflation starts at CODE level and DECAYS, so it is a statement about what
- *     the level is worth rather than a tuning constant.
+ *  1. The population is age-selected: only arcs young since their last re-level.  The
+ *     age clock is @ref LocalCarry::relevel_s, not @c birth_s, because a re-level
+ *     preserves birth_s and it is the re-level that resets what the level is worth.
+ *     Uniform floors (1e-4 / 1e-3 m²) and uniform level process noise (1e-7 / 1e-6
+ *     m²/s) were falsified: too small, and applied to every arc.
+ *  2. The inflated arc stays inside the F3 whitened block with its cross terms, via a
+ *     congruence scaling of its row and column of Σ.  Arm 5b (young legs kept out of
+ *     the block) was falsified on the quiet bed's post-eclipse legs.
+ *  3. The inflation starts at code level and decays with age, so it expresses what the
+ *     level is worth rather than a tuning constant.
  *
- * The congruence's three algebraic properties — exact target diagonal, PD preserved,
- * every correlation coefficient unchanged — are what make (2) safe, and they are pinned
- * here both at the helper (@ref GnssProcessor::NetworkYoungInflate::congruence) and at
- * the real seam (@c CouplingRowBuilder::buildLocalBlock over a registered
- * @c NetworkEstimator).  What a unit test cannot reach is the harvest's stamping site
- * and the PASS-B age arithmetic against a live run clock; the STAMP RULE itself is
- * factored into @ref GnssProcessor::NetworkYoungInflate::stamp so the rule — not a
- * paraphrase of it — is what the harvest calls and what these cases check.
+ * Three algebraic properties of the congruence make (2) safe: the target diagonal is
+ * exact, positive definiteness is preserved, and every correlation coefficient is
+ * unchanged.  They are pinned both at the helper
+ * (@ref GnssProcessor::NetworkYoungInflate::congruence) and at the real seam
+ * (@c CouplingRowBuilder::buildLocalBlock over a registered @c NetworkEstimator).  A
+ * unit test cannot reach the harvest's stamping site or the PASS-B age arithmetic
+ * against a live run clock, so the stamp rule is factored into
+ * @ref GnssProcessor::NetworkYoungInflate::stamp, which the harvest calls and these
+ * cases check.
  */
 
 #include <gtest/gtest.h>
@@ -66,9 +65,9 @@ namespace {
 
 // --- seam fixture ------------------------------------------------------------
 //
-// One registered satellite clock + phase bias, layout frozen at beginEpoch — the
-// shape test_carry_zwd_in_block / test_carry_iono_in_block use.  A local copy so
-// this file owns its suite name outright and no other file's layout can drift it.
+// One registered satellite clock and phase bias, layout frozen at beginEpoch (the
+// shape test_carry_zwd_in_block / test_carry_iono_in_block use).  A local copy, so
+// this file owns its suite name and no change to another file's fixture affects it.
 struct YoungBlockFixture {
     NetworkEstimator est;
     GlobalVtecShConfig shc{};
@@ -104,7 +103,7 @@ std::shared_ptr<PlHarvestBlock> makeHarvestBlock(const std::vector<double>& diag
     return blk;
 }
 
-/// A carried local column pointing at @p blk index @p idx, with one PRESENT shared
+/// A carried local column pointing at @p blk index @p idx, with one present shared
 /// coupling term (the G01 clock) so every row carries a real border regressor.
 LocalCarry makeCarry(double value_abs, double var,
                      const std::shared_ptr<PlHarvestBlock>& blk, int idx) {
@@ -185,28 +184,28 @@ bool loadInto(const std::string& tag, const std::string& body, GnssConfig& cfg) 
 }  // namespace
 
 // =============================================================================
-// (1) THE STAMP.  relevel_s is the age clock, and it moves on exactly two events.
+// (1) The stamp.  relevel_s is the age clock, and it moves on two events only.
 // =============================================================================
 
-// A CREATED entry — a first stash, or the re-stash after a T4 attribution erase / gap
-// prune DELETED the entry (which is precisely why the erase needs no clause of its own:
-// it deletes, so the next harvest creates).  Its level came from one epoch of code.
+// A created entry: a first stash, or the re-stash after a T4 attribution erase or gap
+// prune deleted the entry (the erase needs no clause of its own because it deletes, so
+// the next harvest creates).  Its level came from one epoch of code.
 TEST(YoungArcInflateTest, StampIsSetWhenTheEntryIsCreated) {
     EXPECT_DOUBLE_EQ(YI::stamp(/*prev=*/0.0, /*created=*/true, /*freed=*/false,
                                /*now_s=*/1'234'567.0),
                      1'234'567.0);
 }
 
-// A FREED arc — it was in this epoch's latched relevel.free_ambs set, so THIS harvest
-// re-levelled it from one epoch of code even though the entry already existed.
+// A freed arc: it was in this epoch's latched relevel.free_ambs set, so this harvest
+// re-levelled it from one epoch of code although the entry already existed.
 TEST(YoungArcInflateTest, StampIsSetWhenTheArcWasFreedThisEpoch) {
     EXPECT_DOUBLE_EQ(YI::stamp(/*prev=*/1'000'000.0, /*created=*/false, /*freed=*/true,
                                /*now_s=*/1'234'567.0),
                      1'234'567.0);
 }
 
-// Every OTHER re-stash PRESERVES it — otherwise the age would reset every epoch and no
-// arc could ever mature out of the inflation.
+// Every other re-stash preserves the stamp; otherwise the age would reset every epoch
+// and no arc could mature out of the inflation.
 TEST(YoungArcInflateTest, StampIsPreservedOnAnOrdinaryRestash) {
     EXPECT_DOUBLE_EQ(YI::stamp(/*prev=*/1'000'000.0, /*created=*/false, /*freed=*/false,
                                /*now_s=*/1'234'567.0),
@@ -218,7 +217,7 @@ TEST(YoungArcInflateTest, StampIsSetWhenBothEventsCoincide) {
 }
 
 // =============================================================================
-// (2) THE DECAY.  V_add = V0·exp(−age/τ), age in LOOP EPOCHS.
+// (2) The decay.  V_add = V0·exp(−age/τ), age in loop epochs.
 // =============================================================================
 
 TEST(YoungArcInflateTest, VarAddStartsAtV0AndEFoldsEveryTau) {
@@ -237,13 +236,14 @@ TEST(YoungArcInflateTest, VarAddStartsAtV0AndEFoldsEveryTau) {
 
     const auto a2 = YI::varAdd(k, now - 40.0 * dt, now, dt);            // age 2τ
     EXPECT_NEAR(a2.var_add, 0.09 / std::exp(2.0), 1e-15);
-    // Strictly decreasing in age — the whole point is that the arc EARNS its stiffness
-    // back rather than being handed a fixed floor.
+    // Strictly decreasing in age: the arc regains its stiffness as it ages instead of
+    // receiving a fixed floor.
     EXPECT_GT(a0.var_add, a1.var_add);
     EXPECT_GT(a1.var_add, a2.var_add);
 }
 
-// The ceiling is a REFUSAL, and it is COUNTED (invariant #3: measure the deferral).
+// Past the ceiling nothing is added, and the refusal is flagged (over_age) so it can be
+// counted (invariant #3).
 TEST(YoungArcInflateTest, NothingIsAddedBeyondTheAgeCeilingAndTheRefusalIsFlagged) {
     const YI::Knobs k = armed(0.09, 20.0, 60);
     const double now = 100'000.0, dt = 30.0;
@@ -258,10 +258,10 @@ TEST(YoungArcInflateTest, NothingIsAddedBeyondTheAgeCeilingAndTheRefusalIsFlagge
     EXPECT_DOUBLE_EQ(out.var_add, 0.0);
 }
 
-// relevel_s == 0 is UNSTAMPED — a warm-resume-restored entry (the field is not
-// snapshotted, by the birth_s rule) or a pre-card lineage.  It reads as MATURE: no
-// inflation, and NOT counted as an age refusal, so the age-skip counter stays a
-// statement about real arcs.
+// relevel_s == 0 is unstamped: a warm-resume-restored entry (the field is not
+// snapshotted, as with birth_s) or an entry from a lineage without the stamp.  It reads
+// as mature: no inflation, and not counted as an age refusal, so the age-skip counter
+// counts only arcs with a known age.
 TEST(YoungArcInflateTest, AnUnstampedEntryIsMatureAndIsNotCountedAsAnAgeRefusal) {
     const auto a = YI::varAdd(armed(), /*relevel_s=*/0.0, /*now_s=*/100'000.0, 30.0);
     EXPECT_FALSE(a.inflated);
@@ -269,7 +269,7 @@ TEST(YoungArcInflateTest, AnUnstampedEntryIsMatureAndIsNotCountedAsAnAgeRefusal)
     EXPECT_DOUBLE_EQ(a.var_add, 0.0);
 }
 
-// The age unit is LOOP EPOCHS, taken from the run's own observed spacing — the same
+// The age unit is loop epochs, taken from the run's own observed spacing: the same
 // wall-clock gap is a young arc at 30 s cadence and a mature one at 1 s.
 TEST(YoungArcInflateTest, AgeIsCountedInLoopEpochsNotSeconds) {
     const YI::Knobs k = armed(0.09, 20.0, 60);
@@ -284,8 +284,8 @@ TEST(YoungArcInflateTest, AgeIsCountedInLoopEpochsNotSeconds) {
     EXPECT_TRUE(fast.over_age);
 }
 
-// An unknowable epoch length (first epoch, implausible spacing) must never become a
-// division by zero or a guessed nominal rate — it inflates nothing.
+// An unknown epoch length (first epoch, zero, negative or non-finite spacing) inflates
+// nothing, rather than dividing by zero or assuming a nominal rate.
 TEST(YoungArcInflateTest, AnUnknownEpochLengthInflatesNothing) {
     const YI::Knobs k = armed();
     for (double dt : {0.0, -30.0, std::numeric_limits<double>::quiet_NaN()}) {
@@ -303,8 +303,8 @@ TEST(YoungArcInflateTest, ANegativeAgeIsRefused) {
     EXPECT_FALSE(a.over_age);
 }
 
-// OFF is OFF on all three shape knobs, including the degenerate shapes the loader also
-// refuses — belt and suspenders, since a config path is not the only caller.
+// A zero on any of the three shape knobs turns the mechanism off, including the
+// degenerate shapes the loader also refuses; a config path is not the only caller.
 TEST(YoungArcInflateTest, TheKnobIsOffAtV0ZeroAndOnEveryDegenerateShape) {
     const double now = 100'000.0;
     EXPECT_FALSE(armed(0.0).on());
@@ -320,8 +320,8 @@ TEST(YoungArcInflateTest, TheKnobIsOffAtV0ZeroAndOnEveryDegenerateShape) {
 }
 
 // =============================================================================
-// (3) THE CONGRUENCE.  Σ ← DΣD: exact target diagonal, PD preserved, correlations
-//     EXACTLY unchanged.  This is what lets the arc stay INSIDE the block.
+// (3) The congruence.  Σ ← DΣD: exact target diagonal, PD preserved, correlations
+//     unchanged to rounding.  This is what lets the arc stay inside the block.
 // =============================================================================
 
 TEST(YoungArcInflateTest, CongruenceInflatesTheTargetDiagonalExactlyAndPreservesPd) {
@@ -338,7 +338,7 @@ TEST(YoungArcInflateTest, CongruenceInflatesTheTargetDiagonalExactlyAndPreserves
     EXPECT_EQ(YI::congruence(S, va), 1u);
 
     EXPECT_NEAR(S(1, 1), S0(1, 1) + add, 1e-15);      // exactly Σ_jj + var_add
-    // Untouched columns keep their marginals BITWISE — the inflation is local.
+    // Untouched columns keep their marginals bitwise: the inflation is local.
     for (int k : {0, 2, 3}) EXPECT_DOUBLE_EQ(S(k, k), S0(k, k));
     // Off-diagonals of the target column scaled by f; everything else bitwise.
     const double f = std::sqrt((S0(1, 1) + add) / S0(1, 1));
@@ -354,9 +354,9 @@ TEST(YoungArcInflateTest, CongruenceInflatesTheTargetDiagonalExactlyAndPreserves
     EXPECT_GT(minEig(S), 0.0);
 }
 
-// THE property that makes it a congruence and not a diagonal bump: a freshly
-// re-levelled arc is not LESS coupled to its station's other columns, it is worth less
-// on its own.  Every correlation coefficient must survive to machine precision.
+// The property that distinguishes a congruence from a diagonal bump: a freshly
+// re-levelled arc is not less coupled to its station's other columns, it is worth less
+// on its own.  Every correlation coefficient survives to machine precision.
 TEST(YoungArcInflateTest, CongruencePreservesEveryCorrelationCoefficient) {
     Eigen::MatrixXd S(4, 4);
     S << 0.040, 0.006, 0.005, 0.004,
@@ -365,12 +365,12 @@ TEST(YoungArcInflateTest, CongruencePreservesEveryCorrelationCoefficient) {
          0.004, 0.003, 0.006, 0.012;
     const Eigen::MatrixXd C0 = corrOf(S);
 
-    const std::vector<double> va = {0.09, 0.0, 0.02, 0.0};   // TWO inflated columns
+    const std::vector<double> va = {0.09, 0.0, 0.02, 0.0};   // two inflated columns
     EXPECT_EQ(YI::congruence(S, va), 2u);
     EXPECT_LT((corrOf(S) - C0).cwiseAbs().maxCoeff(), 1e-14);
     EXPECT_GT(minEig(S), 0.0);
 
-    // …and the contrast: adding the same amounts to the DIAGONAL alone does move them.
+    // Contrast: adding the same amounts to the diagonal alone does move them.
     Eigen::MatrixXd D(4, 4);
     D << 0.040, 0.006, 0.005, 0.004,
          0.006, 0.030, 0.007, 0.003,
@@ -380,9 +380,9 @@ TEST(YoungArcInflateTest, CongruencePreservesEveryCorrelationCoefficient) {
     EXPECT_GT((corrOf(D) - C0).cwiseAbs().maxCoeff(), 1e-3);
 }
 
-// Two inflated columns must compose as D Σ D exactly, including the (j,k) entry that
-// takes BOTH factors — the loop applies row and column scalings independently, so this
-// is the case a naive implementation gets wrong.
+// Two inflated columns compose as D Σ D, including the (j,k) entry that takes both
+// factors.  The loop applies row and column scalings independently, and this entry is
+// where an implementation that scaled it only once would differ.
 TEST(YoungArcInflateTest, CongruenceMatchesDSigmaDForOverlappingColumns) {
     Eigen::MatrixXd S(3, 3);
     S << 0.040, 0.006, 0.005,
@@ -401,8 +401,8 @@ TEST(YoungArcInflateTest, CongruenceMatchesDSigmaDForOverlappingColumns) {
     EXPECT_LT((S - want).cwiseAbs().maxCoeff(), 1e-18);
 }
 
-// OFF path: not one write to Σ.  This is the byte-identity contract at the algebra
-// level — the driver's OFF path never produces a positive var_add at all.
+// Off path: no write to Σ.  This is the byte-identity contract at the algebra level;
+// with the knob off the driver never produces a positive var_add.
 TEST(YoungArcInflateTest, CongruenceWithNoPositiveAdditionTouchesNothing) {
     Eigen::MatrixXd S(3, 3);
     S << 0.040, 0.006, 0.005,
@@ -418,8 +418,8 @@ TEST(YoungArcInflateTest, CongruenceWithNoPositiveAdditionTouchesNothing) {
 }
 
 // =============================================================================
-// (4) THE SEAM.  LocalBlockCol::var_add reaches Σ through buildLocalBlock, the arc
-//     STAYS IN the block, and the whitening still reproduces L⁻¹·[I | M | y].
+// (4) The seam.  LocalBlockCol::var_add reaches Σ through buildLocalBlock, the arc
+//     stays in the block, and the whitening still reproduces L⁻¹·[I | M | y].
 // =============================================================================
 
 TEST(YoungArcInflateTest, VarAddInflatesItsBlockColumnInsideTheWhitenedBlock) {
@@ -446,13 +446,13 @@ TEST(YoungArcInflateTest, VarAddInflatesItsBlockColumnInsideTheWhitenedBlock) {
     EXPECT_DOUBLE_EQ(S(2, 2), cdiag[2]);
     EXPECT_DOUBLE_EQ(S(0, 2), cross);                    // their mutual term, bitwise
     const double fj = std::sqrt((cdiag[1] + add) / cdiag[1]);
-    EXPECT_NEAR(S(0, 1), cross * fj, 1e-15);             // still COUPLED, just looser
+    EXPECT_NEAR(S(0, 1), cross * fj, 1e-15);             // still coupled, only looser
     EXPECT_NEAR(S(1, 2), cross * fj, 1e-15);
     EXPECT_GT(minEig(S), 0.0);
     EXPECT_EQ(f.R.pl_blk_yng_scaled, 1);                 // counted (invariant #4)
-    EXPECT_EQ(f.R.pl_blk_rows, 3);                       // the arc is IN the block, not out
+    EXPECT_EQ(f.R.pl_blk_rows, 3);                       // the arc is in the block
 
-    // The emitted rows are still exactly L⁻¹·[I | M | y] for the SCALED Σ.
+    // The emitted rows are still L⁻¹·[I | M | y] for the scaled Σ.
     const Eigen::MatrixXd L = Eigen::LLT<Eigen::MatrixXd>(S).matrixL();
     Eigen::MatrixXd Hr = Eigen::MatrixXd::Zero(3, f.R.A_r.cols());
     Eigen::MatrixXd Hs = Eigen::MatrixXd::Zero(3, f.R.A_s.cols());
@@ -477,8 +477,8 @@ TEST(YoungArcInflateTest, VarAddInflatesItsBlockColumnInsideTheWhitenedBlock) {
     EXPECT_LT((L * z  - z_raw ).cwiseAbs().maxCoeff(), 1e-12);
 }
 
-// OFF at the seam: var_add 0 on every column must be bit-identical to the pre-card
-// block — same Σ, same rows, same counters, and pl_blk_yng_scaled untouched.
+// Off at the seam: var_add 0 on every column is bit-identical to a block built without
+// the var_add field: same Σ, same rows, and pl_blk_yng_scaled stays 0.
 TEST(YoungArcInflateTest, ZeroVarAddIsBitIdenticalToTheUninflatedBlock) {
     const std::vector<double> cdiag = {0.040, 0.030, 0.050};
     auto blk = makeHarvestBlock(cdiag, 0.0060);
@@ -494,7 +494,7 @@ TEST(YoungArcInflateTest, ZeroVarAddIsBitIdenticalToTheUninflatedBlock) {
         LocalBlockCol{1, -0.25, &a1, cdiag[1], 30.0, 1.0, false, false, 0.0},
         LocalBlockCol{2, 1.0,   &a2, cdiag[2], 30.0, 1.0, false, false, 0.0},
     }));
-    ASSERT_TRUE(base.buildLocalBlock({          // the pre-card 6-element brace init
+    ASSERT_TRUE(base.buildLocalBlock({          // the 6-element brace init (no var_add)
         LocalBlockCol{0, 0.5,   &a0, cdiag[0], 30.0, 1.0},
         LocalBlockCol{1, -0.25, &a1, cdiag[1], 30.0, 1.0},
         LocalBlockCol{2, 1.0,   &a2, cdiag[2], 30.0, 1.0},
@@ -512,8 +512,8 @@ TEST(YoungArcInflateTest, ZeroVarAddIsBitIdenticalToTheUninflatedBlock) {
     EXPECT_EQ(base_f.R.pl_blk_yng_scaled, 0);
 }
 
-// The inflation LOOSENS: the whitened row's information about its own column must go
-// DOWN, which is the entire mechanical claim ("the level is worth less than the stiff
+// The inflation loosens: the whitened row's information about its own column goes
+// down, which is the mechanical claim ("the level is worth less than the stiff
 // harvested variance says").  1/L_kk is the row's own-column coefficient.
 TEST(YoungArcInflateTest, InflationLoosensTheArcsOwnWhitenedRow) {
     const std::vector<double> cdiag = {0.040, 0.030, 0.050};
@@ -530,7 +530,7 @@ TEST(YoungArcInflateTest, InflationLoosensTheArcsOwnWhitenedRow) {
             LocalBlockCol{1, -0.25, &a1, cdiag[1], 30.0, 1.0, false, false, add},
             LocalBlockCol{2, 1.0,   &a2, cdiag[2], 30.0, 1.0},
         }));
-        // Row 1's coefficient on its OWN local column (block column 1 = A_r column 1).
+        // Row 1's coefficient on its own local column (block column 1 = A_r column 1).
         for (const auto& lc : cb.crows[1].local)
             if (lc.first == 1) return std::abs(lc.second);
         return 0.0;
@@ -538,9 +538,9 @@ TEST(YoungArcInflateTest, InflationLoosensTheArcsOwnWhitenedRow) {
     EXPECT_LT(ownCoeff(0.09), ownCoeff(0.0));
 }
 
-// A column so heavily inflated that it dwarfs the block must still factorize — the
-// congruence cannot break PD, so there is no "inflate too hard and lose the block"
-// failure mode to guard against elsewhere.
+// A column inflated far beyond the rest of the block still factorizes: the congruence
+// cannot break PD, so an excessive inflation cannot lose the block and needs no guard
+// elsewhere.
 TEST(YoungArcInflateTest, AHugeInflationStillFactorizes) {
     const std::vector<double> cdiag = {0.040, 0.030, 0.050};
     auto blk = makeHarvestBlock(cdiag, 0.0060);
@@ -569,7 +569,7 @@ TEST(YoungArcInflateTest, DefaultIsOffOnAnArmedLevelingPosture) {
     EXPECT_DOUBLE_EQ(cfg.networkPhaseLevelingYoungInflateVarM2(), 0.0);
     EXPECT_DOUBLE_EQ(cfg.networkPhaseLevelingYoungInflateTauEp(), 20.0);
     EXPECT_EQ(cfg.networkPhaseLevelingYoungInflateMaxAgeEp(), 60);
-    EXPECT_TRUE(cfg.networkPhaseLeveling());       // the vehicle IS armed…
+    EXPECT_TRUE(cfg.networkPhaseLeveling());       // the leveling vehicle is armed
 }
 
 TEST(YoungArcInflateTest, ArmedHappyPathKeepsTheValueAndTheShapeDefaults) {
@@ -608,15 +608,16 @@ TEST(YoungArcInflateTest, DisabledWhenPhaseLevelingIsOff) {
     EXPECT_DOUBLE_EQ(cfg.networkPhaseLevelingYoungInflateVarM2(), 0.0);
 }
 
-// Card 4's invariant DD carry supersedes the leveling ambiguity inject outright
-// (do_amb_carry is false), so riding it would be ARMED AND INERT — invariant #4.
+// Under carry_invariant (the Card 4 invariant DD carry) the leveling ambiguity inject is
+// off (do_amb_carry is false), so the inflation would be armed and inert (invariant #4);
+// the loader disables it.
 TEST(YoungArcInflateTest, DisabledUnderCarryInvariant) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("ci",
                          networkConfig(std::string(kF3Posture)
-                                       // carry_invariant is only DEFINED on the eq34
-                                       // chain datum, so the posture must be legal
-                                       // before the interlock under test can fire.
+                                       // carry_invariant is defined only on the eq34
+                                       // chain datum; the posture has to be legal
+                                       // before the interlock under test can act.
                                        + "    \"phase_datum_eq34\": true,\n"
                                          "    \"carry_invariant\": true,\n"
                                          "    \"phase_leveling_young_inflate_var_m2\": 0.09,\n"),
@@ -625,7 +626,7 @@ TEST(YoungArcInflateTest, DisabledUnderCarryInvariant) {
     EXPECT_DOUBLE_EQ(cfg.networkPhaseLevelingYoungInflateVarM2(), 0.0);
 }
 
-// F3 is deliberately NOT required: off the block the inflation is a plain
+// The F3 block is not required: without it the inflation is a plain
 // var_eff += var_add on the per-column diagonal row, and that route is wired.
 TEST(YoungArcInflateTest, StaysArmedWithoutTheF3Block) {
     GnssConfig cfg;

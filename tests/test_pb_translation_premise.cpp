@@ -60,7 +60,7 @@ TEST(PbTranslationPremiseTest, KnownDatumChangePreservesObservationAndPrediction
 TEST(PbTranslationPremiseTest, CorrectPhysicalBiasUpdateNeedsNoAmbiguityTranslation) {
     for (bool declared : {false, true}) {
         Bed b;
-        // Hardware bias AND observed phase increase together. The true
+        // Hardware bias and observed phase increase together. The true
         // carrier ambiguity and datum stay fixed at 12 m.
         const double observed = 12.0 + kDelta;
         EXPECT_NEAR(residual(observed, b.ambiguity(), kDelta), 0.0, 1e-12);

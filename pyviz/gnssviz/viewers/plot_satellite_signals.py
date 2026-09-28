@@ -1,17 +1,17 @@
-"""Per-epoch, per-satellite SIGNAL-usage strip -- the port of
+"""Per-epoch, per-satellite signal-usage strip: the port of
 ``plotSatelliteSignals.m``.
 
 Companion to :mod:`gnssviz.viewers.satellite_status`.  Where that viewer answers
 "was the satellite used?" (one row per sat, status raster), this one resolves the
-usage into the actual signals tracked -- which frequency BANDS and which tracking
-CHANNELS (RINEX attributes) each satellite contributed at every epoch.
+usage into the actual signals tracked: which frequency bands and which tracking
+channels (RINEX attributes) each satellite contributed at every epoch.
 
 Data source
 -----------
-``measurement_residuals.csv`` -- the same file the residual viewer reads.  It
+``measurement_residuals.csv``, the same file the residual viewer reads.  It
 carries one row per (epoch, satellite, signal) for every signal the filter
-actually USED in its update, so a signal's presence in the file == "this signal
-was used this epoch".
+actually used in its update, so a signal's presence in the file means that signal
+was used this epoch.
 
 Required columns (read by name; order irrelevant)::
 
@@ -22,26 +22,26 @@ Required columns (read by name; order irrelevant)::
 Each obs code decomposes as ``<type><band><attribute>``:
 
 * ``type``    L/C/D/S       carrier phase / code / doppler / SNR
-* ``band``    the digit     1,2,5,6,7,8,9   -> drives COLOR
+* ``band``    the digit     1,2,5,6,7,8,9   -> drives colour
 * ``channel`` attribute     C,W,Q,X,I,L,... -> the "many of them" dimension
 
-``L1C`` and ``C1C`` are the SAME signal (band 1, channel C) measured two ways, so
-we collapse on (band, channel) and treat type as a sub-dimension.
+``L1C`` and ``C1C`` are the same signal (band 1, channel C) measured two ways, so
+the pair collapses onto (band, channel) and type is treated as a sub-dimension.
 
-Visual encoding -- the channel problem
---------------------------------------
+Visual encoding: the channel problem
+-------------------------------------
 There are far too many tracking channels to give each its own colour, so each
 satellite is split into one thin sub-row per band it tracks; a cell is filled
-when that (sat, band) was used at that epoch.  The band is named in the ROW LABEL
-("G01 L1" / "G01 L2"), which frees the cell COLOUR to carry the channel
+when that (sat, band) was used at that epoch.  The band is named in the row
+label ("G01 L1" / "G01 L2"), which frees the cell colour to carry the channel
 dimension.  How a cell is coloured is selectable via ``channel_encoding``:
 
-* ``'count'``   (default) DISCRETE colour = how many distinct tracking channels
+* ``'count'``   (default) discrete colour: how many distinct tracking channels
   were used in that band this epoch (1=yellow 2=orange 3=blue 4=cyan 5+=purple).
-* ``'shade'``   COLOUR = frequency band, brightness = #channels (light = 1).
-* ``'obstype'`` COLOUR = band, brightness = phase-only / code-only / both.
-* ``'letters'`` COLOUR = band; attribute letters drawn inside each cell
-  (auto-hidden above ``max_label_epochs`` epochs -- the matplotlib backend has no
+* ``'shade'``   colour = frequency band, brightness = #channels (light = 1).
+* ``'obstype'`` colour = band, brightness = phase-only / code-only / both.
+* ``'letters'`` colour = band; attribute letters drawn inside each cell
+  (auto-hidden above ``max_label_epochs`` epochs; the matplotlib backend has no
   per-cell text primitive, so this falls back to ``'shade'`` shading; see
   ``missing_primitives``).
 
@@ -247,7 +247,7 @@ def _build_signal_figure(d, sys_name, sys_char, epochs_all, enc,
                                 + 2 * (not has_l and has_c)
                                 + 3 * (has_l and has_c))
             # unique() preserves first-seen order (MATLAB unique sorts, but the
-            # join is only for the data-tip text -- order is cosmetic).
+            # join is only for the data-tip text, so the order is cosmetic).
             tip_grid[r, ei] = "  ".join(sorted(pd.unique(cd)))
             attr_grid[r, ei] = "".join(sorted(pd.unique(ch)))
 
@@ -343,7 +343,7 @@ def _legend_swatch(color, label):
     """A single off-plot (NaN) marker that contributes only a coloured legend key.
 
     One NaN point (rather than an empty series) is required so plotly emits a
-    legend entry -- an empty go.Scatter is dropped from the legend; matplotlib
+    legend entry: an empty go.Scatter is dropped from the legend; matplotlib
     legends either way and never plots the NaN.
     """
     return Scatter(x=[float("nan")], y=[float("nan")], color=tuple(color),

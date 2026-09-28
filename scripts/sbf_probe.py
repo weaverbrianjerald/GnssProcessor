@@ -19,7 +19,7 @@ OUT = "sbf_capture.sbf"
 # A few well-known SBF block numbers for a friendly label in the histogram.
 NAMES = {
     4027: "MeasEpoch",        # classic measurements (decoder supports this)
-    4109: "Meas3Ranges",      # compact 'meas3' measurements (NOT yet supported)
+    4109: "Meas3Ranges",      # compact 'meas3' measurements (decoded by Meas3Decoder)
     4110: "Meas3Doppler",
     4111: "Meas3PP",
     4113: "Meas3CN0HiRes",

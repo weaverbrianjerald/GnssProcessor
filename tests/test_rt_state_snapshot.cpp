@@ -5,12 +5,11 @@
  *        the StateManager::restoreDynamicState exact-layout replay primitive.
  *
  * The engine-level halves (stage / age + fingerprint gates / apply / cadence
- * write) are validated end-to-end on the sim closed-loop ladder — the
- * SPEC_synthetic_minimum_network §17 record — not here: they need a full
- * engine + product stream.  What this file locks is the FORMAT contract (a
- * corrupt or truncated file can never half-restore) and the layout-replay
- * contract (a restored index landing anywhere but its serialized slot is a
- * hard refusal, never a silent shift).
+ * write) need a full engine and product stream, so they are validated end to end
+ * on the sim closed-loop ladder (SPEC_synthetic_minimum_network §17), not here.
+ * This file covers the format contract (a corrupt or truncated file never
+ * half-restores) and the layout-replay contract (a restored index that would land
+ * anywhere but its serialized slot is refused, never shifted).
  */
 
 #include <gtest/gtest.h>
@@ -87,7 +86,7 @@ TEST(RtStateSnapshotTest, RoundTripIsExact) {
         EXPECT_EQ(r.dyn[k].kind, s.dyn[k].kind);
         EXPECT_EQ(r.dyn[k].key, s.dyn[k].key);
     }
-    // "{:.17g}" round-trips doubles exactly — bitwise state/covariance equality.
+    // "{:.17g}" round-trips doubles exactly, so state and covariance match bitwise.
     ASSERT_EQ(r.x.size(), s.x.size());
     for (Eigen::Index i = 0; i < s.x.size(); ++i) EXPECT_EQ(r.x(i), s.x(i));
     ASSERT_EQ(r.P.rows(), s.P.rows());
@@ -167,14 +166,14 @@ TEST(RtStateSnapshotTest, RestoreDynamicStateReplaysExactLayout) {
     GnssConfig cfg;
     // The ctor's size parameter is a base hint: the manager derives its actual
     // core block from the config (base + clock + ISB offsets + ...), so read
-    // the realized core back — exactly what the engine's write-side harvest
-    // does (core = state size − Σ dynamic map sizes).
+    // the realized core back, as the engine's write-side harvest does
+    // (core = state size − Σ dynamic map sizes).
     StateManager sm{ 5, lm, cfg };
     const std::size_t core = sm.getStateSize();
     ASSERT_GE(core, 5u);
 
     using K = StateManager::RestoredStateKind;
-    // Interleaved kinds — the layout a semantic add* replay could NOT rebuild
+    // Interleaved kinds: a layout that a semantic add* replay cannot rebuild
     // (addIonosphereState pairs a rate row when enableIonoRate, elevation-
     // scales seeds, and short-circuits duplicates).
     ASSERT_TRUE(sm.restoreDynamicState(K::Ionosphere, "G01", 3.25, core + 0));
@@ -188,16 +187,17 @@ TEST(RtStateSnapshotTest, RestoreDynamicStateReplaysExactLayout) {
     EXPECT_EQ(sm.getCodeBiasStates().at("DCB_G_C2W"), core + 3);
     EXPECT_EQ(sm.getStateVector()(static_cast<Eigen::Index>(core + 1)), -7.5);
 
-    // Both refusal paths are MUTATION-FREE: getStateSize() is map-derived, so
-    // an appended-but-unregistered row would desynchronize the vector from the
-    // reported size — the primitive pre-checks the landing index and the key.
+    // Both refusal paths leave the state unchanged.  getStateSize() is derived
+    // from the maps, so an appended but unregistered row would desynchronize the
+    // vector from the reported size; the primitive therefore checks the landing
+    // index and the key before it writes.
     const std::size_t n_before = sm.getStateSize();
     EXPECT_FALSE(sm.restoreDynamicState(K::Ambiguity, "E11_L1C", 0.0, 42));      // wrong index
     EXPECT_FALSE(sm.restoreDynamicState(K::Ionosphere, "G01", 9.9, n_before));   // duplicate key
     EXPECT_EQ(sm.getStateSize(), n_before);
     EXPECT_EQ(sm.getStateVector().size(), static_cast<Eigen::Index>(n_before));
 
-    // Wholesale x/P replace at the rebuilt size — the resume's final step.
+    // Wholesale x/P replace at the rebuilt size: the resume's final step.
     const std::size_t n = sm.getStateSize();
     Eigen::VectorXd x = Eigen::VectorXd::Constant(static_cast<Eigen::Index>(n), 2.5);
     Eigen::MatrixXd P = Eigen::MatrixXd::Identity(static_cast<Eigen::Index>(n),
@@ -208,7 +208,7 @@ TEST(RtStateSnapshotTest, RestoreDynamicStateReplaysExactLayout) {
     EXPECT_EQ(sm.getCovariance()(static_cast<Eigen::Index>(core + 1),
                                  static_cast<Eigen::Index>(core + 1)), 0.04);
 
-    // The SSR disc-counter memory round-trips through the new accessors.
+    // The SSR disc-counter memory round-trips through its accessors.
     sm.setSsrDiscontinuityMemory({ { "G01|L1C", 2 } });
     EXPECT_EQ(sm.getSsrDiscontinuityMemory().at("G01|L1C"), 2);
     EXPECT_TRUE(sm.noteSsrDiscontinuity("G01|L1C", 3));   // restored baseline → bump fires

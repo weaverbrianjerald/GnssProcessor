@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Card CE / s24.17 leg 2: the HOUR-BY-HOUR grade of a long cold arm.
+"""Card CE / s24.17 leg 2: the hour-by-hour grade of a long cold arm.
 
     python scripts/ce_hourly_grade.py --arms c10,pvb6 [--hours 6] [--tow0 259200]
         [--runs C:/GnssProcessor/runs] [--prefix _cm_] [--force] [--json out.json]
 
-scripts/cm_grade.py grades ONE window (the last hour of a 2 h arm).  The 2 h numbers are
-ignition by construction — the level channel's convergence budget is ~2 h
-(SPEC_level_information_budget s14) — so a posture claim needs the same reads repeated per
-hour on a longer arm.  This wrapper does exactly that and nothing else: it IMPORTS cm_grade
+scripts/cm_grade.py grades one window (the last hour of a 2 h arm).  The 2 h numbers are
+ignition by construction (the level channel's convergence budget is about 2 h,
+SPEC_level_information_budget s14), so a posture claim needs the same reads repeated per
+hour on a longer arm.  This wrapper does exactly that and nothing else: it imports cm_grade
 and calls its own `per_station_median` / `pct` for (i) and (ii), so the definitions cannot
 drift from the card's, and it drives `wire_vs_code_census.py` once per hour for (iii) into a
 per-hour output directory (cm_grade's `census()` caches under one fixed name per arm, which
@@ -16,10 +16,10 @@ would silently return hour 1's numbers for every later window).
 Per arm per hour h (k = 120*(h-1)+1 .. 120*h, tow = tow0 + 30*(k-1)):
   (i)   network_pf_keyed.csv kind STA: per-station median rms_code over the hour, then
         p50 / p90 / max across stations.  Guarded exactly as cm_grade guards it: an arm whose
-        post-fit pass pooled zero code rows reports an EMPTY POOL, never a pass.
+        post-fit pass pooled zero code rows reports an empty pool, never a pass.
   (ii)  network_zwd.csv: per-station median zwd_m; the count with |ZWD| > 0.5 m and the worst.
   (iii) wire_vs_code_census.py --window-tow/--window-n: declared within-arc rms of D_phase and
-        D_code, and the raw clock contrast LEVEL p50.
+        D_code, and the raw clock contrast level p50.
   consumer: p50 / p90 of pos_err_3d_m over the hour from logs/closed_loop_trace.csv.
   avail:    emitted / withheld from network_epoch_status.csv over the hour.
 """
@@ -39,7 +39,7 @@ PY = sys.executable or "python"
 
 
 def census_window(armdir, runs_root, t_lo, n_ep, tag, force=False):
-    """wire_vs_code_census.py over ONE window, into its own out dir (so hours cannot collide)."""
+    """wire_vs_code_census.py over one window, into its own out dir (so hours cannot collide)."""
     label = os.path.basename(armdir.rstrip("/\\"))
     out_dir = os.path.join(armdir, f"census_{tag}")
     summ = os.path.join(out_dir, f"win_{label}_summary.json")
@@ -132,7 +132,7 @@ def main():
             med, tows = CG.per_station_median(os.path.join(logs, "network_pf_keyed.csv"), "STA", "key",
                                               ["rms_code", "s0_code", "rms_phase"], t_lo, t_hi)
             if med and code_pooled == 0:
-                med = None                       # EMPTY POOL, not a residual (cm_grade's guard)
+                med = None                       # empty pool, not a residual (cm_grade's guard)
             i = None
             if med and med["rms_code"]:
                 rc = np.array(list(med["rms_code"].values()))

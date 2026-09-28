@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """A/B two ``ev_seam_grade.py`` JSONs on the V3 no-harm channels of the D5 v5 card.
 
-``ev_seam_grade.py`` grades ONE leg against the continuous seed it resumed from, so
+``ev_seam_grade.py`` grades one leg against the continuous seed it resumed from, so
 each arm's numbers carry the same resume-seam transient.  Differencing the two arms'
 readings cancels that transient and leaves the knob's own effect, which is what the
 pre-registered V3 bars are written against:
@@ -92,7 +92,7 @@ def main():
     print('  %-32s %12s %12s' % ('emitted epochs', ae, be))
     ok &= (aw == bw)
     print('  [%s] V3f withheld epochs equal' % ('PASS' if aw == bw else 'FAIL'))
-    # PB "silent step" epochs — a > 5 cm move on > 10 % of keys with no declared R.
+    # PB "silent step" epochs: a > 5 cm move on > 10 % of keys with no declared R.
     ap = len(_g(A, 'gates', 'G5', 'pb_bad_epochs') or [])
     bp = len(_g(B, 'gates', 'G5', 'pb_bad_epochs') or [])
     print('  %-32s %12s %12s   (report only)' % ('PB >5cm-on->10%-keys epochs', ap, bp))

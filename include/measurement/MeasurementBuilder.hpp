@@ -4,25 +4,22 @@
  * @file MeasurementBuilder.hpp
  * @brief Strategy hierarchy that selects the measurement-differencing regime.
  *
- * The Kalman measurement assembly differs across processing modes only in a
- * few well-defined places: PPP builds raw (undifferenced) rows; PPP-RTK adds a
+ * The Kalman measurement assembly differs across processing modes in a few
+ * well-defined places: PPP builds raw (undifferenced) rows; PPP-RTK adds a
  * between-satellite single-difference pre/post pass (pivot handover, pivot
  * signal-coverage map, pivot-covariance freeze, and the in-place S-transform);
  * baseline modes build double-differenced rows from two per-receiver inputs.
  *
- * Previously these were scattered inline @c if(config_.enableBetweenSatelliteSd())
- * / @c if(config_.isBaselineMode()) branches inside @c MeasurementModel, and the
- * @c DifferencingMode enum that names the three regimes was dead documentation.
- * This file makes @c DifferencingMode the live dispatch key: a
- * @c MeasurementDifferencingStrategy is selected once (by
- * @c MeasurementBuilderFactory from @c differencingModeFor) and @c MeasurementModel
- * calls polymorphic hooks instead of branching on config flags.
+ * @c DifferencingMode is the dispatch key: a @c MeasurementDifferencingStrategy
+ * is selected once (by @c MeasurementBuilderFactory from @c differencingModeFor),
+ * and @c MeasurementModel calls its polymorphic hooks instead of branching on
+ * @c config_.enableBetweenSatelliteSd() / @c config_.isBaselineMode().
  *
  * The numeric building blocks (row assembly, pivot management, the transforms)
  * stay owned by @c MeasurementModel; the strategies are thin orchestrators that
- * call back into it (they are declared @c friend by @c MeasurementModel).  This
- * keeps the delicate, well-tuned measurement numerics in one place while the
- * mode logic lives behind a clean polymorphic seam.
+ * call back into it (@c MeasurementModel declares them @c friend).  The
+ * measurement numerics stay in one place, and the per-mode step selection sits
+ * behind the strategy interface.
  */
 
 #include "measurement/BssdTransform.hpp"  // DifferencingMode
@@ -38,13 +35,14 @@
 
 namespace GnssProcessor {
 
-class MeasurementModel;  // forward decl — strategies hold no MeasurementModel
+class MeasurementModel;  // forward declaration; strategies hold no MeasurementModel
 
 /**
  * @brief Resolve the differencing regime implied by the configuration.
  *
- * Baseline modes ⇒ @c DoubleDifference; otherwise between-satellite SD enabled
- * ⇒ @c BetweenSatellite; otherwise @c None (plain PPP).
+ * Network producer (@c ProcessingMode::PPP_RTK_Network) ⇒ @c None, whatever the
+ * SD toggle says; otherwise baseline modes ⇒ @c DoubleDifference; otherwise
+ * between-satellite SD enabled ⇒ @c BetweenSatellite; otherwise @c None (plain PPP).
  *
  * @param config Processing configuration.
  * @return The differencing mode the measurement builder should use.
@@ -57,9 +55,10 @@ DifferencingMode differencingModeFor(const GnssConfig& config);
  *
  * The single-vector (PPP / PPP-RTK) build skeleton lives in
  * @c MeasurementModel::computeMeasurementUpdate and calls the three hook
- * methods at the points that used to be config-flag branches.  The
- * double-difference build is fully owned by the @c DoubleDifference strategy,
- * which the two-vector overload delegates to.
+ * methods (@c preparePivots, @c freezePivotCovariances, @c applyDifferencing).
+ * The two-vector overload calls @c buildDoubleDifference, which the
+ * @c DoubleDifference strategy implements by delegating to the model's DD row
+ * assembly.
  *
  * Strategies are stateless; each hook receives the @c MeasurementModel to act
  * on so a single instance can serve the model for its whole lifetime.
@@ -74,8 +73,10 @@ public:
     /**
      * @brief Pre-pass before state creation: pivot handover + coverage map.
      *
-     * Runs at the top of the single-vector build, before
-     * @c ensureRequiredStates.  No-op for undifferenced PPP.
+     * Runs at the top of the single-vector build, after the pivot
+     * signal-coverage map is cleared and before @c ensureRequiredStates, so no
+     * ambiguity state is created for a signal the pivot does not track.
+     * No-op for undifferenced PPP.
      *
      * @param model        The measurement model to act on.
      * @param observations Epoch observations.
@@ -140,7 +141,7 @@ public:
 
 /**
  * @class UndifferencedMeasurementBuilder
- * @brief Plain PPP — raw observables, no differencing (all hooks no-op).
+ * @brief Plain PPP: raw observables, no differencing (all hooks are no-ops).
  */
 class UndifferencedMeasurementBuilder : public MeasurementDifferencingStrategy {
 public:

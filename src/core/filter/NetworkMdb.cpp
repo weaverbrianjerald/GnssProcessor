@@ -1,25 +1,23 @@
 /**
  * @file NetworkMdb.cpp
- * @brief Baarda reliability numbers (MDB) on the network path — see
- *        NetworkMdb.hpp for the design argument
+ * @brief Baarda reliability numbers (MDB) on the network path; see
+ *        NetworkMdb.hpp for the design
  *        (docs/SPEC_redundancy_census.md).
  *
  * Measure-only.  Nothing in this translation unit writes a weight, a state or a
  * decision; it reads @f$(\sigma_i, r_i)@f$ pairs the host loops already hold,
- * divides once, and emits aggregates + counters + a reporting event stream.
+ * divides once, and emits aggregates, counters and a reporting event stream.
  *
- * ## Why the aggregates are scaled at FLUSH and not at FEED
+ * ## Why the aggregates are scaled at flush time, not at feed time
  *
- * @f$\hat\sigma_{0,f}@f$ is a per-family positive constant for the epoch, and a
+ * @f$\hat\sigma_{0,f}@f$ is a positive per-family constant for the epoch, and a
  * positive scaling commutes with every order statistic:
- * @f$\mathrm{med}(c\,x) = c\,\mathrm{med}(x)@f$ and likewise for any quantile
- * and the maximum.  So aggregating the FORMAL pool and multiplying the three
- * numbers at the end is EXACT, not an approximation — and it is the only
- * ordering that can work, because the P1-4 pass that measures
- * @f$\hat\sigma_{0,f}@f$ runs in SB_FRAMEDIAG, after the SB_RAIM feed site.
- * Scaling at feed time would silently apply the PREVIOUS epoch's inflation to
- * this epoch's rows, which is exactly the kind of one-epoch lag this project has
- * paid for before.
+ * @f$\mathrm{med}(c\,x) = c\,\mathrm{med}(x)@f$, and likewise for any quantile
+ * and the maximum.  Aggregating the formal pool and multiplying the three numbers
+ * at the end is therefore exact.  It is also the only ordering that works: the
+ * P1-4 pass that measures @f$\hat\sigma_{0,f}@f$ runs in SB_FRAMEDIAG, after the
+ * SB_RAIM feed site, so scaling at feed time would apply the previous epoch's
+ * inflation to this epoch's rows.
  */
 
 #include "filter/NetworkMdb.hpp"
@@ -82,17 +80,15 @@ NetworkMdbStats networkMdbStats(std::vector<double>& v) {
     NetworkMdbStats s;
     const std::size_t n = v.size();
     if (n == 0) return s;
-    // Median: the UPPER median for even n, matching every other robust
-    // statistic in the network producer (stationPrefitCensus, the RAIM sigma0
-    // pool, the clock QC pools) so a reader never has to ask which convention a
-    // given median column used.
+    // Median: the upper median for even n, the convention of the other robust
+    // statistics in the network producer (stationPrefitCensus, the RAIM sigma0
+    // pool, the clock QC pools), so every median column uses the same one.
     const std::size_t im = n / 2;
     std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(im), v.end());
     s.med = v[im];
-    // p95, NEAREST-RANK: ceil(0.95 n) - 1, clamped.  Nearest-rank rather than an
-    // interpolating definition because the pool is a census of rows, not a
-    // sample from a continuum, and because it makes a one-row bin report that
-    // row instead of interpolating against nothing.
+    // p95, nearest-rank: index ceil(0.95 n) - 1, clamped.  Nearest-rank rather
+    // than an interpolating definition because the pool is a census of rows, not
+    // a sample from a continuum, and because a one-row bin then reports that row.
     std::size_t ip = static_cast<std::size_t>(std::ceil(0.95 * static_cast<double>(n)));
     ip = (ip == 0) ? 0 : ip - 1;
     if (ip >= n) ip = n - 1;
@@ -127,18 +123,15 @@ NetworkMdbScale networkMdbFamilyScale(int cls, long long pf_rows,
     }
     f.have = true;
     f.sigma0 = s0;
-    // A DEFLATING scale (sigma0 < 1) is reported, never clamped — the
-    // prior-residual census's rule, for its reason: a census that clamped would
-    // report a calibrated-optimistic family as if it were calibrated, and the
-    // deflation IS the measurement.  But it is tagged, because a scaled MDB
-    // BELOW the formal one reads as a TIGHTER reliability guarantee and on the
-    // phase family it is the exact opposite.  Measured on the FT63 cold smoke:
-    // sigma0_phase = 0.041 pulls the phase median MDB from 4.58 m to 0.19 m, on
-    // rows that are 78 % UNCHECKABLE — the post-fit phase pool has almost no
-    // dispersion precisely because each phase row is fitted by its own free
-    // ambiguity, which is the same fact as "these rows carry no redundancy".
-    // Reading 0.19 m there as "a 20 cm fault would be caught" is D5 v1 in
-    // mirror image.
+    // A deflating scale (sigma0 < 1) is reported, never clamped, following the
+    // prior-residual census's rule: clamping would report an optimistically
+    // calibrated family as calibrated, and the deflation is the measurement.  It
+    // is tagged because a scaled MDB below the formal one reads as a tighter
+    // reliability guarantee, and on the phase family the meaning is the reverse:
+    // the post-fit phase pool has almost no dispersion because each phase row is
+    // fitted by its own free ambiguity, which is the same fact as "these rows
+    // carry no redundancy".  A small scaled phase MDB is not evidence that a fault
+    // of that size would be detected.
     if (s0 < 1.0) {
         f.src = (cls == static_cast<int>(NetRowClass::ObsCode))
                     ? "postfit_code_deflating" : "postfit_phase_deflating";
@@ -160,9 +153,9 @@ NetworkMdbScale familyScale(const NetworkRunContext& ctx, int cls) {
                                  c.ep_sigma0_pf_phase);
 }
 
-/// Format a double for the CSV, or an EMPTY field when it is unavailable.
-/// Blank, never 0 and never the formal value: "unavailable" and "measured zero"
-/// must not share an encoding (the epoch-status convention).
+/// Format a double for the CSV, or an empty field when it is unavailable.
+/// Blank, never 0 and never the formal value, so that "unavailable" and "measured
+/// zero" have different encodings (the epoch-status convention).
 std::string num(bool have, double v) {
     return have ? fmt::format("{:.6e}", v) : std::string();
 }
@@ -170,13 +163,13 @@ std::string num(bool have, double v) {
 }  // namespace
 
 // ===========================================================================
-//  INC-1: the flush
+//  The flush (INC-1)
 // ===========================================================================
 
 void networkMdbFlush(NetworkRunContext& ctx, const GnssConfig& config_,
                      const std::shared_ptr<spdlog::logger>& log,
                      NetworkRunTraces& traces, const SyncedEpoch& se) {
-    // Alias preamble (seam contract) — the body reads the driver's names.
+    // Alias preamble (seam contract): the body reads the driver's names.
     const auto& nc      = config_.getNetworkConfig();
     auto& acc           = ctx.carry.mdb;
     auto& q             = ctx.counters.mdb;
@@ -185,14 +178,14 @@ void networkMdbFlush(NetworkRunContext& ctx, const GnssConfig& config_,
 
     const auto t0 = std::chrono::steady_clock::now();
     ++q.passes;
-    // The flush is the epoch clock for the per-cell event holdoff.  It advances
-    // on EVERY pass, including the empty ones, so a holdoff configured in
-    // epochs means epochs rather than "epochs on which something happened".
+    // The flush is the epoch clock for the per-cell event holdoff.  It advances on
+    // every pass, including empty ones, so a holdoff configured in epochs counts
+    // epochs rather than epochs on which something was fed.
     const long long seq = ctx.carry.mdb_seq++;
 
     // Not this epoch's accumulator ⇒ neither feed site ran.  That is a legal
-    // state (the census is strided; RAIM needs a warm carry) and it is NOT the
-    // same as "ran and found nothing" — q.passes carries the difference.
+    // state (the census is strided; RAIM needs a warm carry) and differs from
+    // "ran and found nothing"; q.passes against q.epochs records the difference.
     if (acc.tow != se.time.tow || (!acc.fed_raim && !acc.fed_census)) {
         q.wall_ms += std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - t0).count();
@@ -205,7 +198,7 @@ void networkMdbFlush(NetworkRunContext& ctx, const GnssConfig& config_,
     q.rows        += acc.rows_raim + acc.rows_census;
     q.rows_skipped += acc.skipped_weight;
 
-    // ---- the aggregates + the trace row per (constellation x class) --------
+    // ---- the aggregates and the trace row per (constellation x class) ------
     for (int s = 0; s < kNetMdbConstellations; ++s) {
         for (int c = 0; c < kNetDataClasses; ++c) {
             NetworkMdbBin& b = acc.bin[s][c];
@@ -267,8 +260,8 @@ void networkMdbFlush(NetworkRunContext& ctx, const GnssConfig& config_,
     }
 
     // ---- the reporting event stream (per (station x class) worst row) ------
-    // A REPORTING threshold, not a gate: nothing downstream reads mdb_event_m,
-    // and the action column says so.
+    // A reporting threshold, not a gate: nothing downstream reads mdb_event_m,
+    // and the event's action column reads "observe".
     if (event_m > 0.0) {
         for (const NetworkMdbCandidate& cd : acc.cand) {
             if (!(cd.mdb > event_m)) continue;
@@ -291,15 +284,14 @@ void networkMdbFlush(NetworkRunContext& ctx, const GnssConfig& config_,
         }
     }
 
-    // ---- the uncheckable JOIN (one domain, two instruments) ---------------
-    // Only evaluable on an epoch the census actually SWEPT — its per-epoch
-    // scalars are stamped, and a non-sweep epoch leaves them blank rather than
-    // repeating a stale sweep's numbers.  Note what is compared and what is
-    // NOT: the census's `uncheckable` uses the POLICY floor network.redundancy_eps,
-    // MDB's infinity uses the ARITHMETIC floor 1e-6, so the infinity count is a
-    // strict SUBSET and asserting equality against it would be wrong.  What must
-    // agree exactly is this seam's independent recount of the same two numbers
-    // over the same rows.
+    // ---- the uncheckable join (one row domain, two instruments) ------------
+    // Evaluable only on an epoch the census swept: its per-epoch scalars are
+    // stamped, and a non-sweep epoch leaves them blank rather than repeating a
+    // stale sweep's numbers.  The census's `uncheckable` uses the policy floor
+    // network.redundancy_eps and MDB's infinity uses the arithmetic floor 1e-6, so
+    // the infinity count is a subset and is not compared for equality.  What must
+    // agree exactly is this seam's independent recount of the census's two
+    // numbers over the same rows.
     if (acc.fed_census && ctx.carry.redun_ep_tow == se.time.tow) {
         ++q.join_checks;
         const long long cen_rows  = ctx.carry.ep_redun_rows;
@@ -358,9 +350,9 @@ void networkMdbReport(NetworkRunContext& ctx, const GnssConfig& config_,
                   ctx.knobs.mdb_event_holdoff,
                   q.min_seen ? q.min_mdb : 0.0, q.max_mdb,
                   q.max_mdb_id.empty() ? std::string("(none finite)") : q.max_mdb_id);
-        // Rule 1 of the card.  A run whose scaled column never populated has NOT
-        // measured its own honesty margin, and the formal numbers above are the
-        // optimistic ones — say so where the numbers are, not in a doc.
+        // Reporting rule 1 (see the header).  A run whose scaled column was never
+        // populated has not measured its formal/scaled margin, and the formal
+        // numbers above are the optimistic ones; the log states this next to them.
         if (q.bins_scaled > 0) {
             log->info("Network (MDB): {} of {} aggregate bin(s) carried an empirical "
                       "scale (largest sigma0_f = {:.3f}), so mdb_scaled = mdb_formal x "
@@ -368,14 +360,13 @@ void networkMdbReport(NetworkRunContext& ctx, const GnssConfig& config_,
                       "run's honesty margin: D5 measured the formal sigma 10-30x "
                       "optimistic, and MDB scales linearly with it.",
                       q.bins_scaled, q.bins_scaled + q.bins_unscaled, q.max_scale);
-            // The mirror-image trap.  A sigma0 BELOW 1 makes the scaled MDB
-            // SMALLER than the formal one, which reads as a TIGHTER guarantee —
-            // and on the phase family it is the exact opposite: that pool has
-            // almost no post-fit dispersion precisely because each phase row is
-            // fitted by its own free ambiguity, which is the same fact as "these
-            // rows carry no redundancy".  Reported and never clamped (the
-            // prior-residual census's rule: the deflation IS the measurement),
-            // but never silent either.
+            // A sigma0 below 1 makes the scaled MDB smaller than the formal one,
+            // which reads as a tighter guarantee.  On the phase family the meaning
+            // is the reverse: that pool has almost no post-fit dispersion because
+            // each phase row is fitted by its own free ambiguity, which is the
+            // same fact as "these rows carry no redundancy".  Reported, never
+            // clamped (the prior-residual census's rule: the deflation is the
+            // measurement), and warned.
             if (q.bins_deflating > 0)
                 log->warn("Network (MDB): {} of those {} bin(s) scaled DOWNWARD "
                           "(sigma0_f < 1; deepest {:.4e} on {}), so their mdb_scaled "
@@ -416,7 +407,7 @@ void networkMdbReport(NetworkRunContext& ctx, const GnssConfig& config_,
                   "this run — not passed.");
     }
 
-    // --- invariant #4: separate "ran and found nothing" from "never ran" ----
+    // --- invariant #4: distinguish "ran and found nothing" from "never ran" --
     if (q.passes == 0)
         log->warn("Network (MDB): ARMED but the flush ran on ZERO epochs — the wiring "
                   "never executed.  Nothing in this run is evidence about the card.");

@@ -1,23 +1,23 @@
-"""Network structured QC-event timeline -- the L2 ``network_events.csv`` log.
+"""Network structured QC-event timeline: the L2 ``network_events.csv`` log.
 
 Reads ``network_events.csv`` (one long-format row per discrete QC action the
-PPP-RTK NETWORK producer took) and renders the events as glyphs over a
-per-satellite lattice, so a lock-in / storm of refloats / a pivot handover is
-visible at a glance and attributable to a satellite and a QC tier.
+PPP-RTK network producer took) and renders the events as glyphs over a
+per-satellite lattice, so a lock-in, a storm of refloats, or a pivot handover
+is visible at a glance and attributable to a satellite and a QC tier.
 
 Tier vocabulary (the ``tier`` column):
   ``T1_if_slip`` ``T2_within_epoch`` ``T3_raim`` ``T4_attrib``
   ``T5_clock_model`` ``T6_clock_monitor`` ``GATE`` ``SIGMA0`` ``PIVOT`` ``RETRO``
 
-Figure 1 -- "QC events by satellite" -- one Axes per present constellation (in
-``SYSTEM_ORDER``).  Each tile is an all-NaN :class:`Raster` (rows = the tile's
-satellite names, via ``row_labels`` -- the only y-tick facility for a raster; a
-NaN grid paints nothing) with one :class:`Markers` layer per (tier-colour ×
+Figure 1, "QC events by satellite": one Axes per present constellation (in
+``SYSTEM_ORDER``).  Each tile is an all-NaN :class:`Raster` (rows are the tile's
+satellite names, via ``row_labels``, the only y-tick facility for a raster; a
+NaN grid paints nothing) with one :class:`Markers` layer per (tier-colour x
 action-shape) group.  Markers are raster-addressed by 0-based row index.  Shapes
 map from the *event* name: refloat -> "x", withhold -> "v", retro_bump -> "s",
 pivot_handover -> "D".  Colours map from the *tier*.
 
-Figure 2 -- "Epoch disposition raster" -- OPTIONAL: drawn only when
+Figure 2, "Epoch disposition raster": optional, drawn only when
 ``network_trace.csv`` is present, as a single-lane emitted/withheld strip
 (degrades gracefully to nothing when that trace is absent).
 
@@ -50,11 +50,12 @@ _UNKNOWN_TIER_COLOR = (0.5, 0.5, 0.5)
 _SHAPE_RULES = (
     # Product-referenced measurement admission (docs/SPEC_measurement_admission.md).
     # These carry no generic verb in their names, so without explicit rules the
-    # whole family renders as the default circle and a REJECTION is indis-
-    # tinguishable from a READMIT.  ``adm_heal`` precedes ``adm_`` because first
-    # hit wins.  (The ADMISSION tier itself still draws in the unknown-tier grey:
-    # extending ``_TIERS`` would re-walk the colour list and shift every existing
-    # tier's colour, which is a bigger change than this card is entitled to make.)
+    # whole family renders as the default circle and a rejection is
+    # indistinguishable from a readmission.  ``adm_heal`` precedes ``adm_``
+    # because first hit wins.  (The admission tier itself still draws in the
+    # unknown-tier grey: extending ``_TIERS`` would re-walk the colour list and
+    # shift every existing tier's colour, which is a bigger change than this
+    # card is entitled to make.)
     ("adm_heal", "^"),
     ("adm_", "v"),
     ("retro_bump", "s"),
@@ -115,7 +116,7 @@ def _events_by_sat(df) -> Figure:
     """Figure 1: per-constellation all-NaN raster + tier/shape marker layers.
 
     Only satellite-attributed events (non-empty ``sat``) place a glyph; the
-    system-wide events (empty sat -- e.g. GATE/SIGMA0 epoch withholds) are
+    system-wide events (empty sat, e.g. GATE/SIGMA0 epoch withholds) are
     surfaced in the summary and, when the trace is present, the Figure-2 strip.
     """
     sat_df = df[df["sat"] != ""]
@@ -143,7 +144,7 @@ def _events_by_sat(df) -> Figure:
         row_of = {s: i for i, s in enumerate(sats)}
         n_sats = len(sats)
 
-        # All-NaN backdrop grid: the row_labels are the ONLY y-tick facility; the
+        # All-NaN backdrop grid: the row_labels are the only y-tick facility; the
         # grid paints nothing (all transparent).  Columns span the full run time.
         grid = np.full((n_sats, max(1, x_all.size)), np.nan)
         traces = [Raster(x=(x_all if x_all.size else d_sys["utc"].to_numpy()),
@@ -252,7 +253,7 @@ def _summary(df, disp_summary) -> str:
                                                     "tier"].astype(str))))
             out.append(f"  {str(sat):<6}: {int(c):>4}  [{tiers}]")
 
-    # Action-class breakdown (by mapped shape) — a quick refloat/withhold tally.
+    # Action-class breakdown (by mapped shape): a quick refloat/withhold tally.
     out.append("")
     out.append("Action classes (by shape):")
     shape_label = {"x": "refloat/reset", "v": "withhold/exclude",

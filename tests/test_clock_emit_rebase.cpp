@@ -1,23 +1,24 @@
 /**
  * @file test_clock_emit_rebase.cpp
- * @brief Card CLK-R (docs/SPEC_clock_emit_rebase.md) — the clock emission
- *        re-base leaf (NetworkClockEmitRebase) + its loader contract.
+ * @brief The clock emission re-base leaf (NetworkClockEmitRebase) and its loader
+ *        contract (card CLK-R, docs/SPEC_clock_emit_rebase.md).
  *
  * What is pinned here:
- *   1. Stage 1 removes the per-epoch common-mode step EXACTLY (the 613/1440
- *      census class) while preserving between-satellite differences to
- *      float-rounding — the frame hold is the clock-ensemble gauge, nothing
- *      else.  New sights join the held frame (no step vs their peers).
- *   2. Stage 2 marks a genuine per-sat step (common-removed, census-aligned
- *      statistic) and passes the value through UNSMOOTHED — never laundered
- *      (invariant #1); it works with the frame hold OFF too (raw-wire marks,
+ *   1. Stage 1 removes the per-epoch common-mode step exactly (the census's
+ *      common-mode class) while preserving between-satellite differences to
+ *      float rounding: the frame hold is the clock-ensemble gauge and nothing
+ *      else.  New sightings join the held frame (no step against their peers).
+ *   2. Stage 2 marks a genuine per-satellite step (common-removed statistic,
+ *      aligned with the census) and passes the value through unsmoothed
+ *      (invariant #1); it also works with the frame hold off (raw-wire marks,
  *      the card's "or" branch).
  *   3. The guards: forced keys neither vote nor double-mark; the μ vote is a
  *      median (minority outliers cannot drag the frame); the min_common floor
  *      freezes the frame instead of trusting a thin vote; the leash re-anchors
- *      WITH a reported constellation (the caller's datum-mark obligation); a
- *      beyond-horizon return is a first sighting (no stale-baseline step test).
- *   4. Loader contract: both knobs default OFF and parse independently.
+ *      and reports the constellation (so the caller can mark the datum change);
+ *      a return beyond the horizon is a first sighting (no step test against a
+ *      stale baseline) unless gap_jump_m is armed (stage 2b).
+ *   4. Loader contract: both knobs default off and parse independently.
  */
 
 #include <gtest/gtest.h>
@@ -97,14 +98,14 @@ std::map<std::string, double> shifted(const std::map<std::string, double>& base,
 }
 
 // ===========================================================================
-// stage 1 — the frame hold
+// stage 1: the frame hold
 // ===========================================================================
 
 TEST(ClockEmitRebase, FrameHoldRemovesCommonModeExactly) {
     NetworkClockEmitRebase eng(holdCfg());
     auto e0 = epoch(eng, 0.0, kBase);
-    // Two epochs with pure common-mode steps (the census's 613-epoch class,
-    // incl. a 17.7 m-scale spike): the emitted series must be CONTINUOUS.
+    // Two epochs with pure common-mode steps (the census's common-mode class,
+    // including a 17.7 m-scale spike): the emitted series stays continuous.
     auto e1 = epoch(eng, 30.0, shifted(kBase, 0.8));
     auto e2 = epoch(eng, 60.0, shifted(kBase, 0.8 + 17.7));
     for (const auto& [sat, v] : kBase) {
@@ -133,8 +134,9 @@ TEST(ClockEmitRebase, NewSatelliteJoinsTheHeldFrame) {
     NetworkClockEmitRebase eng(holdCfg());
     epoch(eng, 0.0, kBase);
     epoch(eng, 30.0, shifted(kBase, 5.0));   // acc -> 5.0
-    // G07 first-sights while the frame is displaced: it must join the HELD
-    // frame (its SD vs peers = the raw SD), not re-import the solve frame.
+    // G07 is first sighted while the frame is displaced: it joins the held
+    // frame (its SD against peers = the raw SD) instead of re-importing the
+    // solve frame.
     auto raw = shifted(kBase, 5.0);
     raw["G07"] = 4.0;
     auto e2 = epoch(eng, 60.0, raw);
@@ -151,8 +153,8 @@ TEST(ClockEmitRebase, MinCommonFloorFreezesTheFrame) {
         {"G01", 1.0}, {"G02", 2.0}, {"G03", 3.0}};
     epoch(eng, 0.0, three);
     auto e1 = epoch(eng, 30.0, shifted(three, 1.0));
-    // Only 3 fresh keys < min_common: the μ vote is void, the frame must NOT
-    // move (a thin median is noise), the step passes to the wire.
+    // Only 3 fresh keys < min_common: the μ vote is void, the frame does not
+    // move (a thin median is noise), and the step passes to the wire.
     EXPECT_NEAR(eng.frameAccForTest('G'), 0.0, 1e-12);
     EXPECT_NEAR(valueOf(e1, "G01"), 2.0, 1e-12);
 }
@@ -160,17 +162,17 @@ TEST(ClockEmitRebase, MinCommonFloorFreezesTheFrame) {
 TEST(ClockEmitRebase, LeashReanchorsAndReportsTheConstellation) {
     NetworkClockEmitRebase::Config c = holdCfg();
     c.leash_m = 0.5;
-    c.jump_test = true;   // must be suppressed on the re-anchor epoch
+    c.jump_test = true;   // suppressed on the re-anchor epoch
     NetworkClockEmitRebase eng(c);
     epoch(eng, 0.0, kBase);
     std::set<char> ra1;
     epoch(eng, 30.0, shifted(kBase, 0.4), &ra1);
     EXPECT_TRUE(ra1.empty());
     EXPECT_NEAR(eng.frameAccForTest('G'), 0.4, 1e-12);
-    // Second 0.4 m common step crosses the 0.5 m leash: re-anchor to the solve
-    // frame (raw passthrough, accumulator cleared), constellation reported so
-    // the caller can markDatumChange — and NO step marks on that epoch, even
-    // for a satellite with a genuine event (the datum mark covers everything).
+    // A second 0.4 m common step crosses the 0.5 m leash: re-anchor to the solve
+    // frame (raw passthrough, accumulator cleared) and report the constellation
+    // so the caller can markDatumChange.  No step marks are set on that epoch,
+    // even for a satellite with a genuine event (the datum mark covers it).
     std::set<char> ra2;
     auto e2 = epoch(eng, 60.0, shifted(kBase, 0.8, {{"G06", 5.0}}), &ra2);
     EXPECT_EQ(ra2, std::set<char>{'G'});
@@ -182,7 +184,7 @@ TEST(ClockEmitRebase, LeashReanchorsAndReportsTheConstellation) {
 }
 
 // ===========================================================================
-// stage 2 — the step marks
+// stage 2: the step marks
 // ===========================================================================
 
 TEST(ClockEmitRebase, GenuineStepPassesThroughAndMarks) {
@@ -193,26 +195,26 @@ TEST(ClockEmitRebase, GenuineStepPassesThroughAndMarks) {
     auto e1 = epoch(eng, 30.0, shifted(kBase, 0.0, {{"G03", 2.0}}));
     EXPECT_TRUE(markedOf(e1, "G03"));
     EXPECT_FALSE(markedOf(e1, "G01"));
-    // Never laundered: the marked value carries the full step (held frame).
+    // Not smoothed: the marked value carries the full step (held frame).
     EXPECT_NEAR(valueOf(e1, "G03"), kBase.at("G03") + 2.0, 1e-9);
     for (const auto& e : e1)
         if (e.sat == "G03") EXPECT_NEAR(e.step_m, 2.0, 1e-9);
     EXPECT_EQ(eng.counters().marks, 1);
-    // Below threshold: not an event.
+    // A 1 m step, below the 1.5 m threshold: not an event.
     auto e2 = epoch(eng, 60.0, shifted(kBase, 0.0, {{"G03", 2.0 + 1.0}}));
     EXPECT_FALSE(markedOf(e2, "G03"));
     EXPECT_EQ(eng.counters().marks, 1);
 }
 
 TEST(ClockEmitRebase, JumpTestAloneMarksTheRawWire) {
-    NetworkClockEmitRebase::Config c;   // frame_hold OFF
+    NetworkClockEmitRebase::Config c;   // frame_hold off
     c.jump_test = true;
     NetworkClockEmitRebase eng(c);
     epoch(eng, 0.0, kBase);
-    // A 5 m COMMON step with the hold off: values pass through untouched
-    // (mediation not armed) and nobody is marked — the statistic is
-    // common-removed (the census's own), so the common class never
-    // storms the marks.  The one satellite with an extra 2 m IS marked.
+    // A 5 m common step with the hold off: values pass through untouched
+    // (mediation not armed) and the common step marks no satellite, because
+    // the statistic is common-removed (the census's own).  The one satellite
+    // with an extra 2 m is marked.
     auto e1 = epoch(eng, 30.0, shifted(kBase, 5.0, {{"G02", 2.0}}));
     EXPECT_NEAR(valueOf(e1, "G01"), kBase.at("G01") + 5.0, 1e-12);  // raw wire
     EXPECT_NEAR(eng.frameAccForTest('G'), 0.0, 1e-12);              // no hold
@@ -225,9 +227,9 @@ TEST(ClockEmitRebase, ForcedKeysNeitherVoteNorMark) {
     c.jump_test = true;
     NetworkClockEmitRebase eng(c);
     epoch(eng, 0.0, kBase);
-    // G04 is forced (a retro bump / datum change is already pending): its 10 m
-    // step must not drag the μ vote, must not double-mark, and its value still
-    // rides the held frame (one shared subtrahend — SD preserved).
+    // G04 is forced (a retro bump or datum change is already pending): its 10 m
+    // step does not drag the μ vote and is not marked a second time, and its
+    // value still rides the held frame (one shared subtrahend, so SD is preserved).
     auto e1 = epoch(eng, 30.0, shifted(kBase, 0.0, {{"G04", 10.0}}),
                     nullptr, {"G04"});
     EXPECT_FALSE(markedOf(e1, "G04"));
@@ -259,8 +261,8 @@ TEST(ClockEmitRebase, BeyondHorizonReturnIsAFirstSighting) {
     std::map<std::string, double> five = kBase;
     five.erase("G06");
     for (double t = 30.0; t <= 660.0; t += 30.0) epoch(eng, t, five);
-    // Return with a huge offset: a first sighting (stale baseline suppressed —
-    // the emitter's own RTA-11 rule), never a mark.
+    // Return with a 50 m offset: a first sighting (the stale baseline is
+    // suppressed, the emitter's own RTA-11 rule), not a mark.
     auto raw = five;
     raw["G06"] = kBase.at("G06") + 50.0;
     auto e = epoch(eng, 690.0, raw);
@@ -270,10 +272,10 @@ TEST(ClockEmitRebase, BeyondHorizonReturnIsAFirstSighting) {
 }
 
 TEST(ClockEmitRebase, GapAwareReturnMarksAgainstPreGapBaseline) {
-    // Stage 2b (E1): the same beyond-horizon return, with gap_jump_m armed —
-    // the retained pre-gap baseline now tests the return.  This is the
-    // measured eclipse-readmission re-realization (6.3-6.7 m steps that
-    // stage 2's fresh-only test structurally cannot see).
+    // Stage 2b: the same beyond-horizon return with gap_jump_m armed, so the
+    // retained pre-gap baseline tests the return.  This targets the
+    // eclipse-readmission re-realization (measured 6.3-6.7 m steps), which the
+    // fresh-only test of stage 2 cannot see by construction (E1).
     NetworkClockEmitRebase::Config c = holdCfg();
     c.jump_test  = true;
     c.max_gap_s  = 600.0;
@@ -293,8 +295,8 @@ TEST(ClockEmitRebase, GapAwareReturnMarksAgainstPreGapBaseline) {
 }
 
 TEST(ClockEmitRebase, GapAwareReturnWithinBandStaysUnmarked) {
-    // A quiet return inside the gap band: no mark, no false positive — the
-    // knob must not turn every readmission into a consumer reset.
+    // A quiet return inside the gap band: no mark and no false positive, so the
+    // knob does not turn every readmission into a consumer reset.
     NetworkClockEmitRebase::Config c = holdCfg();
     c.jump_test  = true;
     c.max_gap_s  = 600.0;

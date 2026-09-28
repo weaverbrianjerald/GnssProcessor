@@ -6,23 +6,28 @@ the harness compares a PPP / PPP-RTK solution against.
 
 Backends
 --------
-``SinexTruth`` (PRIMARY)
+``SinexTruth`` (primary)
     Parses an IGS / ITRF **SINEX** (``.snx``) or station **SSC**: the
     ``SOLUTION/ESTIMATE`` block's ``STAX/STAY/STAZ`` (+ ``VELX/VELY/VELZ``)
-    rows.  Independent by construction -- a SINEX/SSC is consumed *nowhere* in
-    the C++ engine, so a frame or site-displacement bug in the engine cannot
-    hide inside the grader.  A single ITRF20xx/IGS20 SSC covers every IGS
+    rows.  Independent by construction: the C++ engine does not read SINEX/SSC
+    anywhere, so a frame or site-displacement bug in the engine cannot also
+    be present in the grader.  A single ITRF20xx/IGS20 SSC covers every IGS
     station globally; velocity propagation does the rest.
 
-``SifTruth`` (FALLBACK + CROSS-CHECK)
-    Reads an NGS **Station Info File** -- the same ``*_SIF.json`` the C++
-    ``StationInfoFile`` loader consumes -- and is a faithful Python port of
+``SifTruth`` (fallback and cross-check)
+    Reads an NGS **Station Info File** (the same ``*_SIF.json`` the C++
+    ``StationInfoFile`` loader consumes) and is a Python port of
     ``resolveStationCoordinate`` (linear + optional periodic + post-seismic).
     Used for stations absent from the SINEX, and as a cross-check: SINEX-vs-SIF
     agreement on the linear part validates both readers.
 
+``SiteTruth``
+    A frozen JSON site database for receivers that are in neither a SINEX nor
+    a SIF.
+
 ``CompositeTruth``
-    Tries SINEX first, then SIF.
+    Tries each backend in order; the harness default
+    (:func:`make_default_truth`) is SINEX, then SIF, then the site database.
 
 Frame / epoch caveats (see ``docs/test_suite.md``)
 --------------------------------------------------
@@ -30,11 +35,11 @@ Frame / epoch caveats (see ``docs/test_suite.md``)
   products the run used.  COD/IGS final MGEX products are IGS20-aligned, so
   compare against an ITRF2020/IGS20 SSC for a mm-level result.
 * SINEX gives the **secular** (regularized) position + velocity.  ``SifTruth``
-  with ``with_periodic=True`` *adds* the empirical seasonal (loading) term --
-  i.e. the *actual* antenna position at epoch, which is what a daily static PPP
-  estimates.  The two therefore differ by the seasonal displacement
+  with ``with_periodic=True`` *adds* the empirical seasonal (loading) term,
+  i.e. gives the *actual* antenna position at epoch, which is what a daily
+  static PPP estimates.  The two therefore differ by the seasonal displacement
   (mm-to-cm).  For A-B diffing on a fixed date the choice cancels; for absolute
-  accuracy it does not -- pick deliberately.
+  accuracy it does not, so the choice has to be made explicitly.
 * The SSC coordinate is the monument reference (marker/ARP).  The engine must
   reduce its phase-center solution to the same point via the RINEX antenna
   height + ``igs20.atx`` PCO, or a constant vertical bias appears.
@@ -137,20 +142,20 @@ class SinexTruth(TruthSource):
     """Truth from an IGS / ITRF SINEX or SSC.
 
     Parses the ``SOLUTION/ESTIMATE`` ``STA*``/``VEL*`` parameters and the
-    ``SOLUTION/EPOCHS`` validity windows, keyed by 4-character SINEX ``CODE`` and
-    solution number.  ITRF realizations are piecewise-linear across station
-    discontinuities (several ``SOLN``s per station, each its own
-    position+velocity at the SINEX reference epoch).  :meth:`resolve` picks the
-    ``SOLN`` whose window covers the query epoch and *extrapolates off the last
-    SOLN beyond the solution span* -- the standard ITRF usage for current
-    epochs, since e.g. ITRF2020 windows end ~2021.0.  A 9-char IGS long name
-    (``CIT100USA``) resolves on its first four characters.
+    ``SOLUTION/EPOCHS`` validity windows, keyed by 4-character SINEX ``CODE``,
+    point code ``PT`` (``A`` preferred) and solution number.  ITRF realizations
+    are piecewise-linear across station discontinuities (several ``SOLN``s per
+    station, each its own position+velocity at the SINEX reference epoch).
+    :meth:`resolve` picks the ``SOLN`` whose window covers the query epoch and,
+    beyond the solution span, *extrapolates off the last SOLN* (off the first
+    one before it), the standard ITRF usage for current epochs, since e.g.
+    ITRF2020 windows end ~2021.0.  A 9-char IGS long name (``CIT100USA``)
+    resolves on its first four characters.
     """
 
     def __init__(self, path, frame: str = "", default_epoch: float = 2015.0):
         self.path = Path(path)
         self.default_epoch = float(default_epoch)
-        # code -> {soln_int: _SnxSoln}
         # code -> {pt: {soln_int: _SnxSoln}}
         self._stations: Dict[str, Dict[str, Dict[int, _SnxSoln]]] = {}
         self.frame = frame
@@ -300,7 +305,7 @@ def _decimal_year_from_sif(s: str) -> float:
     """Port of ``decimalYearFromSif``: ``"YYYY-MM-DDTHH:MM:SS TZ"`` -> decimal yr.
 
     Timezone suffix is ignored (<=18 s GPS-UTC offset is far below the precision
-    that matters here).  An open-ended END (year >= 9000) maps to ``9999.0``.
+    that matters here).  An open-ended end (year >= 9000) maps to ``9999.0``.
     """
     m = re.match(r"\s*(\d+)-(\d+)-(\d+)(?:T(\d+):(\d+):(\d+))?", s)
     if not m:
@@ -403,7 +408,7 @@ def _ecef_to_llh_rad(ecef: np.ndarray) -> Tuple[float, float]:
 class SifTruth(TruthSource):
     """Truth from one or more NGS Station Info Files (``*_SIF.json``).
 
-    Faithful port of the C++ ``resolveStationCoordinate``: linear term
+    Port of the C++ ``resolveStationCoordinate``: linear term
     ``coords + velocity*(t - ref_epoch)`` plus optional periodic (seasonal) and
     post-seismic deformation.  ``ref_epoch`` is the file-level
     ``METADATA.REFERENCE_EPOCH`` (2020.0 for IGS20), to which *all* occupation
@@ -604,12 +609,12 @@ class SiteTruth(TruthSource):
     """Truth from a frozen JSON *site database* of fixed-station coordinates.
 
     For receivers that are **not** IGS/CORS stations (so absent from any SINEX
-    or SIF) -- e.g. a rooftop research receiver fed to the real-time engine --
-    the truth coordinate is established once *out of band* (a long static-PPP
+    or SIF), e.g. a rooftop research receiver fed to the real-time engine, the
+    truth coordinate is established once *out of band* (a long static-PPP
     survey-in, an official survey, or a published monument value) and frozen
-    into a small JSON file that the engine consumes **nowhere**.  That keeps the
-    grader independent in exactly the same sense as :class:`SinexTruth`: a frame
-    or site-displacement bug in the engine cannot hide inside the truth.
+    into a small JSON file that the engine does not read.  That keeps the
+    grader independent in the same sense as :class:`SinexTruth`: a frame or
+    site-displacement bug in the engine cannot also be present in the truth.
 
     File schema (``data/static/sites/*.json``)::
 
@@ -650,7 +655,7 @@ class SiteTruth(TruthSource):
         for name, sj in (doc.get("sites", {}) or {}).items():
             ecef = self._vec3(sj, "ecef_m")
             if ecef is None:
-                continue                          # a site without a position is useless
+                continue                          # a site without a position is skipped
             vel = self._vec3(sj, "velocity_m_yr")
             if vel is None:
                 vel = np.zeros(3, dtype=float)
@@ -708,7 +713,7 @@ class SiteTruth(TruthSource):
 
 
 # ---------------------------------------------------------------------------
-# Composite (SINEX primary, SIF fallback)
+# Composite (SINEX primary, then SIF, then the site database)
 # ---------------------------------------------------------------------------
 
 class CompositeTruth(TruthSource):
@@ -731,12 +736,13 @@ def make_default_truth(sinex_paths: Optional[Sequence] = None,
                        site_paths: Optional[Sequence] = None) -> CompositeTruth:
     """Build the harness default: SINEX/SSC primary, SIF, then site database.
 
-    Any path that does not exist is silently skipped, so the composite degrades
-    gracefully (e.g. to SIF-only until a real SSC is dropped into
-    ``data/static/sinex/``).  Order is SINEX -> SIF -> :class:`SiteTruth`; the
-    site database is last because its members (non-IGS stations) are disjoint
-    from the global SSC/SIF coverage, so the precedence never actually bites --
-    but keeping the published-network sources first is the safe default.
+    Any path that does not exist is skipped without a message, as is a SINEX or
+    site file that parses to 0 stations, so the composite falls back (e.g. to
+    SIF-only until a real SSC is placed in ``data/static/sinex/``).  Order is
+    SINEX -> SIF -> :class:`SiteTruth`; the site database is last because its
+    members (non-IGS stations) are disjoint from the global SSC/SIF coverage, so
+    the precedence has no effect in practice, and keeping the published-network
+    sources first is the safe default.
 
     Parameters
     ----------
@@ -749,7 +755,7 @@ def make_default_truth(sinex_paths: Optional[Sequence] = None,
     for p in (sinex_paths or []):
         if Path(p).is_file():
             snx = SinexTruth(p)
-            if snx.stations():      # a file that parsed to 0 stations is useless
+            if snx.stations():      # a file that parsed to 0 stations is skipped
                 sources.append(snx)
     sif_existing = [p for p in (sif_paths or []) if Path(p).is_file()]
     if sif_existing:

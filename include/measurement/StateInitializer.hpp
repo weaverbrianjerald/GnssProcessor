@@ -6,12 +6,12 @@
  * @brief First-epoch state seeding for inter-system biases, phase clock, code
  *        biases, and the (network) cold receiver clock.
  *
- * StateInitializer encapsulates the one-shot initialization logic that runs
- * on the first epoch to seed ISB, phase clock offset, receiver DCB/IFB, and
- * — on the network path, opt-in — the cold receiver clock, from code and
- * phase observation residuals.  Extracting this from MeasurementModel keeps
- * the per-epoch hot path readable and isolates the initialization-specific
- * helpers (computeRawResidual, resolveReceiverBias, computeIonosphereSeed,
+ * StateInitializer holds the one-shot initialization logic that runs on the
+ * first epoch and seeds, from code and phase observation residuals, the ISB,
+ * the phase clock offset, the receiver DCB/IFB and (on the network path, opt-in)
+ * the cold receiver clock.  Keeping it out of MeasurementModel keeps the
+ * per-epoch hot path readable and gathers the initialization helpers
+ * (computeRawResidual, resolveReceiverBias, computeIonosphereSeed,
  * computeMedian) in one place.
  */
 
@@ -64,17 +64,17 @@ public:
      * Computes the median code residual per system relative to GPS.
      *
      * @return @c true if initialization completed (GPS reference present, so the
-     *         ISB seeds are final); @c false if it bailed because no GPS code
-     *         observation was available this epoch.  The caller must only latch
-     *         "ISB initialized" on @c true — otherwise a run whose GPS joins
-     *         after the first estimating epoch marks the bias done-but-unseeded
-     *         and never retries, pinning every non-GPS ISB at 0 for the session.
+     *         ISB seeds are final); @c false if no GPS code observation was
+     *         available this epoch.  Latch "ISB initialized" on @c true only.
+     *         Latching on @c false would mark the bias done without a seed when
+     *         GPS joins after the first estimating epoch, and every non-GPS ISB
+     *         would then stay at 0 for the session.
      */
     bool initializeInterSystemBiases(const std::vector<PppObservation>& observations,
                                       const std::string& epoch_prefix);
 
     /**
-     * @brief Seed the phase clock offset from the codephase residual difference.
+     * @brief Seed the phase clock offset from the code-minus-phase residual difference.
      */
     void initializePhaseClockOffset(const std::vector<PppObservation>& observations,
                                      const std::string& epoch_prefix);
@@ -89,27 +89,28 @@ public:
                                const std::string& epoch_prefix);
 
     /**
-     * @brief Pre-seed a genuinely COLD receiver clock from GPS code residuals.
+     * @brief Pre-seed a cold receiver clock from GPS code residuals.
      *
-     * Writes the median GPS code residual — the GPS-referenced receiver clock
-     * (ISB carries the inter-system offsets, so GPS-only is the correct datum)
-     * — into @c x(getClockIndex()).  On the PPP-RTK NETWORK path nothing else
-     * pre-solves the receiver clock before @c ensureRequiredStates first seeds
-     * ambiguities, so without this the whole free-running clock offset leaks
-     * uniformly into every cold ambiguity seed (see
-     * @c GnssConfig::networkColdClockSeed).  Call BEFORE the ambiguity-seed
-     * loop (and after the iono seed, so @c computeRawResidual can remove the
-     * seeded slant iono from the code residual) and ONCE per station.
+     * Writes the median GPS code residual, which is the GPS-referenced receiver
+     * clock, into @c x(getClockIndex()).  GPS alone is the correct datum because
+     * the ISB states carry the inter-system offsets.  On the PPP-RTK network path
+     * nothing else pre-solves the receiver clock before @c ensureRequiredStates
+     * first seeds ambiguities; without this seed the whole free-running clock
+     * offset enters every cold ambiguity seed uniformly (see
+     * @c GnssConfig::networkColdClockSeed).  Call it once per station, before the
+     * ambiguity-seed loop and after the iono seed (so @c computeRawResidual can
+     * remove the seeded slant iono from the code residual).
      *
-     * Self-limiting: only acts while the clock is genuinely cold (state == 0),
-     * so it never overwrites a clock already seeded by the PPP path's
+     * Acts only while the clock is cold (|state| at most 1e-6 m), so it never
+     * overwrites a clock already seeded by the PPP path's
      * @c StateManager::syncPppStateToStateVector.
      *
-     * @return @c true when the pre-seed is settled and the caller should latch
-     *         it (clock seeded from GPS code, OR already non-cold ⇒ nothing to
-     *         do); @c false when the clock is cold but NO GPS code observation
-     *         was available this epoch (retry next epoch — do NOT latch, mirror
-     *         of @ref initializeInterSystemBiases's GPS-reference contract).
+     * @return @c true when the pre-seed is settled and the caller should latch it
+     *         (clock seeded from GPS code, or already not cold, or no clock state
+     *         in this configuration); @c false when the clock is cold and no GPS
+     *         code observation was available this epoch.  On @c false, do not
+     *         latch; retry next epoch (the same contract as
+     *         @ref initializeInterSystemBiases).
      */
     bool seedColdReceiverClock(const std::vector<PppObservation>& observations,
                                 const std::string& epoch_prefix);
@@ -136,8 +137,8 @@ public:
      * @brief Resolved receiver-bias state for one observation signal.
      */
     struct ReceiverBiasEntry {
-        std::string state_key;   /**< Key into code_bias_indices_ (e.g. "G_DCB" or "G_IFB5"). */
-        double      coefficient; /**< Jacobian coefficient for the state.  NaN ? no bias modelled. */
+        std::string state_key;   /**< Key into code_bias_indices_ (e.g. "GPS_DCB" or "GPS_IFB5"). */
+        double      coefficient; /**< Jacobian coefficient for the state.  NaN means no bias is modelled. */
     };
 
     /**
@@ -162,97 +163,99 @@ public:
      *
      * Only code signals with valid (non-zero, in-product) BIA coverage are
      * used.  `(P - mod)` for an uncovered signal carries the raw satellite
-     * code bias, which would pollute the iono seed by tens of metres.
-     * Returns std::nullopt when no usable pair of bands is available — the
-     * caller should fall back to seed=0 with an inflated initial variance
-     * so the filter doesn't trust the zero too tightly.
+     * code bias, which would bias the iono seed by tens of metres.
+     * Returns the first seed from a pair of distinct bands that is finite and
+     * below 200 m in magnitude, or std::nullopt when no such pair exists.  On
+     * std::nullopt the caller falls back to seed = 0 with an inflated initial
+     * variance, so the filter does not weight the zero too tightly.
      */
     std::optional<double> computeIonosphereSeed(const PppObservation& obs) const;
 
     // -------------------------------------------------------------------
-    // Card LV-1 — bias-free per-LOS iono seeding
+    // Bias-free per-LOS iono seeding (card LV-1)
     // (docs/SPEC_level_information_budget.md)
     // -------------------------------------------------------------------
 
     /**
      * @brief Per-station, per-epoch inputs for the LV-1 seed reframe.
      *
-     * Installed by the NETWORK producer immediately before the PASS-B state
-     * pre-pass (@c MeasurementModel::computeMeasurementUpdate) and CONSUMED ONCE
-     * — the pre-pass disarms it — so a stale frame can never be applied to a
-     * later epoch's allocation.
+     * The network producer installs the frame immediately before the PASS-B
+     * state pre-pass (@c MeasurementModel::computeMeasurementUpdate).  The
+     * pre-pass disarms it after one use, so a frame is never applied to a later
+     * epoch's allocation.
      */
     struct IonoSeedFrame {
-        /// satellite → the field's slant value at THAT line of sight's pierce
+        /// satellite → the field's slant value at that line of sight's pierce
         /// point, in metres of L1 slant delay
         /// (@f$\sum_l M_l(el)\cdot\text{tecu\_to\_L1m}\cdot \mathrm{SH}_l(IPP_l)@f$).
-        /// Built by the producer from the LAG-1 solved SH field, or from the a₀₀
+        /// Built by the producer from the lag-1 solved SH field, or from the a₀₀
         /// climatology prior mean before the first solve.
         std::map<std::string, double> field_slant_m;
         /// Minimum usable raw seeds at this station-epoch for the median offset.
         int min_sats = 5;
-        /// Station name — used once, for the cold-start offset log line.
+        /// Station name, used once, for the cold-start offset log line.
         std::string station;
     };
 
-    /// LV-1 run tallies (standing invariant #4: an armed-but-inert reframe must
-    /// never read as working).  Summed over stations at the run-end readout.
+    /// Run tallies of the LV-1 reframe, so that an armed reframe that does nothing
+    /// is visible (standing invariant #4).  Summed over stations at the run-end readout.
     struct IonoSeedFrameStats {
-        long long reframed = 0;      ///< seeds born in the field's frame.
-        long long fallback_raw = 0;  ///< no station offset (< min_sats) ⇒ RAW seed.
-        long long field_missing = 0; ///< offset OK but no field value for that LOS ⇒ RAW seed.
+        long long reframed = 0;      ///< seeds allocated in the field's frame.
+        long long fallback_raw = 0;  ///< no station offset (< min_sats), so the raw seed is used.
+        long long field_missing = 0; ///< offset present but no finite field value for that LOS (or a non-finite result), so the raw seed is used.
         long long offsets = 0;       ///< station-epochs with a usable median offset.
         double last_offset_m = 0.0;  ///< the most recent median offset (m of L1 slant GF).
     };
 
     // -------------------------------------------------------------------
-    // RS-9 — the code-bias LINEARIZATION POINT restore
+    // Code-bias linearization point restore (RS-9)
     // (docs/SPEC_event_harness.md §21.18)
     // -------------------------------------------------------------------
 
     /**
      * @brief Install the writer's code-bias linearization points for this
-     *        station, to be used INSTEAD of @ref initializeCodeBiases' one-shot
+     *        station, used in place of @ref initializeCodeBiases' one-shot
      *        median seed on the station's first processed epoch.
      *
-     * WHY.  @ref initializeCodeBiases seeds @c x(cb) ONCE, from ONE epoch of
-     * code, behind the one-shot @c isCodeBiasInitialized() latch, and nothing
-     * ever writes it back.  That value is a pure LINEARIZATION POINT for the
-     * solve (a code bias enters linearly, so shifting it is an exact solve
-     * no-op — project_network_xlin_invariance), but it is also the reference the
-     * network producer's rx-CB carry inject gate measures its innovation
-     * against (@c cb_innov_raw = @c value_abs − @c x_lin(cb), the 5.13 m bar at
-     * @c ApplicationNetworkAssembly.cpp:3954).  On a warm resume that reference
-     * is re-derived from the RESUME epoch's code while the carry's numerator is
-     * restored from the snapshot, so 17 of 61 field stations sat outside the bar
-     * every epoch of a leg against the continuous run's 7 (§21.18(a)/(b)) and
-     * lost their receiver-DCB memory for the whole leg.  Restoring the frame the
-     * gate judges against is the re-coupling edge RS-6 left open (invariant #7).
+     * Rationale.  @ref initializeCodeBiases seeds @c x(cb) once, from one epoch
+     * of code, behind the one-shot @c isCodeBiasInitialized() latch, and nothing
+     * writes it back.  For the solve that value is only a linearization point (a
+     * code bias enters linearly, so shifting it is an exact solve no-op;
+     * project_network_xlin_invariance).  It is also the reference the network
+     * producer's rx-CB carry inject gate measures its innovation against
+     * (@c cb_innov_raw = @c value_abs − @c x_lin(cb), against the 5.13 m bar of
+     * the @c rxCbInjectGate call in @c ApplicationNetworkAssembly.cpp).  On a warm
+     * resume that reference is re-derived from the resume epoch's code while the
+     * carry's numerator is restored from the snapshot, so stations can sit outside
+     * the bar for a whole leg and lose their receiver-DCB memory
+     * (§21.18(a)/(b)).  Restoring the reference the gate compares against covers
+     * the re-coupling edge of the warm resume (invariant #7) that RS-6 left open.
      *
-     * Contract: a key PRESENT here is seeded to @p overrides' value and counted
-     * in @c applied.  A key the loop reaches that is NOT present simply takes
-     * today's median seed and is NOT counted anywhere — the RL rows pair 1:1
-     * with the RC rows, so an absent key is one with no rx-CB CARRY, whose
-     * @c x_lin the inject gate therefore never reads (a field station holds
-     * @c GPS_DCB, which is carried, and @c GPS_IFB5, which is not).  @c uncovered
-     * is the invariant-#4 tripwire for the case that WOULD matter: a key that has
-     * a carry, and whose restored reference could not be applied (a non-finite
-     * value, or a state index this run does not hold).  It should read 0.
+     * Contract: a key present here is seeded to @p overrides' value and counted in
+     * @c applied.  A key the loop reaches that is absent takes the usual median
+     * seed and is not counted.  The RL rows pair 1:1 with the RC rows, so an
+     * absent key is one with no rx-CB carry, whose @c x_lin the inject gate never
+     * reads (a field station holds @c GPS_DCB, which is carried, and
+     * @c GPS_IFB5, which is not).  @c uncovered counts the case that matters: a
+     * key that has a carry and whose restored reference could not be applied (a
+     * non-finite value, or a state index this run does not hold).  It should read
+     * 0 (invariant #4).
      *
-     * Install BEFORE the station's first @c computeMeasurementUpdate; it is read
-     * only under the one-shot latch, so a later install is inert by construction.
+     * Install before the station's first @c computeMeasurementUpdate.  The map is
+     * read only under the one-shot latch, so a later install has no effect.
      *
      * @param overrides  CB state key ("GPS_DCB", "GPS_IFB5", …) → the writer's
      *                   @c x_lin for that state, in metres.
      * @param applied    Optional out-slot incremented per covered key seeded.
-     * @param uncovered  Optional out-slot incremented per COVERED key that could
-     *                   not be seeded (see above) — never for an absent key.
+     * @param uncovered  Optional out-slot incremented per covered key that could
+     *                   not be seeded (see above); never for an absent key.
      *
-     * @note The two out-slots are RAW pointers on purpose: the network producer
-     *       runs @c computeMeasurementUpdate inside an OpenMP parallel-for over
-     *       stations, so each station is handed a pointer to its OWN element of
-     *       a driver-owned, never-resized vector — distinct objects, no race and
-     *       no atomics.  The driver sums them serially at the run-end readout.
+     * @note The two out-slots are raw pointers because the network producer runs
+     *       @c computeMeasurementUpdate inside an OpenMP parallel-for over
+     *       stations.  Each station receives a pointer to its own element of a
+     *       driver-owned vector that is never resized, so the objects are
+     *       distinct and need no atomics.  The driver sums them serially at the
+     *       run-end readout.
      */
     void setCodeBiasSeedOverride(std::map<std::string, double> overrides,
                                  long long* applied = nullptr,
@@ -265,24 +268,23 @@ public:
     std::size_t codeBiasSeedOverrideSize() const { return code_bias_seed_override_.size(); }
 
     /**
-     * @brief The RS-9 seed decision for ONE code-bias key.
+     * @brief The RS-9 seed decision for one code-bias key.
      *
-     * STATIC and free of member state on purpose: the rule is what a unit test
-     * must be able to pin, and constructing a @c StateInitializer drags in
-     * @c PppModel → @c ProductParser + @c RinexParser, a chain no test at this
-     * tier builds.  @ref initializeCodeBiases calls exactly this.
+     * Static and free of member state so that a unit test can pin the rule:
+     * constructing a @c StateInitializer requires @c PppModel, which pulls in
+     * @c ProductParser and @c RinexParser, and no test at this tier builds that
+     * chain.  @ref initializeCodeBiases calls this function.
      *
      * @param overrides  The installed map (empty ⇒ always @c std::nullopt, which
-     *                   is the whole pre-card path).
+     *                   is the path taken when RS-9 is not armed).
      * @param key        CB state key being seeded.
-     * @return The writer's @c x_lin when the key is covered by a FINITE entry;
-     *         @c std::nullopt otherwise, and the caller takes today's one-epoch
-     *         median seed.  A non-finite entry is refused rather than trusted —
-     *         the parser already refuses one, so this is belt-and-braces against
-     *         a future producer of the map.  Use @ref codeBiasSeedOverrideCovers
-     *         to tell the two @c nullopt cases apart: an ABSENT key is a key with
-     *         no carry (nothing reads its reference), while a PRESENT-but-refused
-     *         one is the counted failure.
+     * @return The writer's @c x_lin when the key is covered by a finite entry;
+     *         @c std::nullopt otherwise, and the caller takes the one-epoch
+     *         median seed.  A non-finite entry is refused.  The parser already
+     *         refuses one; this check guards any other producer of the map.  Use
+     *         @ref codeBiasSeedOverrideCovers to tell the two @c nullopt cases
+     *         apart: an absent key has no carry (nothing reads its reference),
+     *         while a present but refused key is the counted failure.
      */
     static std::optional<double> resolveCodeBiasSeedOverride(
         const std::map<std::string, double>& overrides, const std::string& key) {
@@ -293,13 +295,13 @@ public:
     }
 
     /**
-     * @brief Does the installed map carry a reference for @p key at all?
+     * @brief Whether the installed map carries a reference for @p key at all.
      *
-     * The population @c uncovered is measured against.  The RL rows pair 1:1 with
-     * the RC rows, so "present in the map" is exactly "this key has an rx-CB carry
-     * entry", which is exactly "the inject gate will difference something against
-     * this key's @c x_lin".  A key the seeding loop reaches that is ABSENT here is
-     * therefore not a miss — it is a code-bias family nothing carries.
+     * Defines the population @c uncovered is measured against.  The RL rows pair
+     * 1:1 with the RC rows, so presence in the map means the key has an rx-CB
+     * carry entry, and therefore that the inject gate differences something
+     * against this key's @c x_lin.  A key the seeding loop reaches that is absent
+     * here is not a miss: it is a code-bias family that nothing carries.
      */
     static bool codeBiasSeedOverrideCovers(const std::map<std::string, double>& overrides,
                                            const std::string& key) {
@@ -320,31 +322,33 @@ public:
     /**
      * @brief The station-common content of this epoch's raw iono seeds.
      *
-     * The MEDIAN of @p seeds — robust to a single bad channel, which a mean is
-     * not; the geometry-free code seed of one mis-tracked satellite can be tens
-     * of metres.  Physically this is (receiver GF hardware bias ⊕ the station's
-     * median slant ionosphere).
+     * The median of @p seeds, which (unlike a mean) is robust to a single bad
+     * channel; the geometry-free code seed of one mis-tracked satellite can be off
+     * by tens of metres.  Physically this is the receiver GF hardware bias ⊕ the
+     * station's median slant ionosphere.
      *
-     * @param seeds    Raw per-satellite seeds (REORDERED in place by the median).
-     * @param min_sats Minimum sample count; below it there is no robust estimate.
+     * @param seeds    Raw per-satellite seeds (reordered in place by the median).
+     * @param min_sats Minimum sample count (values below 1 are treated as 1);
+     *                 below it there is no robust estimate.
      * @return The median, or @c std::nullopt when @c seeds.size() < min_sats.
      */
     static std::optional<double> stationSeedOffset(std::vector<double>& seeds,
                                                     int min_sats);
 
     /**
-     * @brief Gather this station's raw per-satellite seeds and reduce to the
+     * @brief Gather this station's raw per-satellite seeds and reduce them to the
      *        median offset.
      *
-     * Runs over ALL of @p observations (not only the ones being allocated), so a
+     * Runs over all of @p observations (not only the ones being allocated), so a
      * single mid-run re-birth still gets the full-station statistic.  The
      * @c |seed| < 200 m sanity check inside @ref computeIonosphereSeed screens
-     * each contribution, so a garbage channel is rejected BEFORE it can move the
+     * each contribution, so a garbage channel is rejected before it can move the
      * median.
      *
-     * Not const: it tallies the outcome and emits the ONE cold-start log line
-     * carrying the station's offset (a direct estimate of that receiver's GF
-     * hardware bias — cross-checkable against @c scripts/extcb_gim_verdict.py).
+     * Not const: it tallies the outcome and emits, once per station, the
+     * cold-start log line carrying the station's offset (a direct estimate of
+     * that receiver's GF hardware bias, which can be cross-checked against
+     * @c scripts/extcb_gim_verdict.py).
      */
     std::optional<double> computeStationSeedOffset(
         const std::vector<PppObservation>& observations, int min_sats);
@@ -355,8 +359,9 @@ public:
      *   seed' = raw − station_offset + field_slant(IPP)
      *
      * Falls back to @p raw_seed (counted) when the station offset is absent
-     * (< @c min_sats usable seeds) or the frame carries no field value for this
-     * satellite — a handful of bias-in lines of sight cannot move the field.
+     * (< @c min_sats usable seeds) or the frame carries no finite field value for
+     * this satellite.  The few lines of sight seeded with the receiver bias still
+     * in them cannot move the field.
      *
      * @param satellite       The LOS's satellite id.
      * @param raw_seed        The seed @ref computeIonosphereSeed returned.
@@ -388,19 +393,19 @@ private:
     bool code_bias_initialized_ = false;
     bool clock_seed_initialized_ = false;
 
-    // Card LV-1 state.  Disarmed by default, so a PPP run (and any network run
-    // with network.iono_seed_field_frame off) never enters the reframe path.
+    // State of the LV-1 seed reframe.  Disarmed by default, so a PPP run (and any network
+    // run with network.iono_seed_field_frame off) never enters the reframe path.
     IonoSeedFrame      iono_seed_frame_{};
     bool               iono_seed_frame_armed_ = false;
     bool               iono_seed_offset_logged_ = false;   ///< cold-start one-shot log latch.
     IonoSeedFrameStats iono_seed_stats_{};
 
-    // RS-9 state (§21.18).  Empty by default, so every run that does not arm
-    // network.resume_rxcb_lin_restore takes the pre-card path with no branch
-    // taken and no counter touched.
+    // State of the RS-9 code-bias restore (§21.18).  Empty by default, so a run that does not arm
+    // network.resume_rxcb_lin_restore takes the median-seed path, with no override
+    // branch taken and no counter touched.
     std::map<std::string, double> code_bias_seed_override_{};
     long long* cb_seed_override_applied_   = nullptr;  ///< station-owned out-slot (see setCodeBiasSeedOverride).
-    long long* cb_seed_override_uncovered_ = nullptr;  ///< ditto.
+    long long* cb_seed_override_uncovered_ = nullptr;  ///< station-owned out-slot (see setCodeBiasSeedOverride).
 };
 
 } // namespace GnssProcessor

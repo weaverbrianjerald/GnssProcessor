@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""EVENT HARNESS — census of 'MW slip detected' lines in mw_slip_detector*.log: lane wavelength, arc age,
-evidence ratio |dev|/thresh, integer known?, rounding fraction.  Prices candidate refloat gates.
+"""Census of 'MW slip detected' lines in mw_slip_detector*.log: lane wavelength, arc age,
+evidence ratio |dev|/thresh, whether the integer is known, and rounding fraction. Prices candidate refloat gates.
 Usage: mw_detect_census.py <logdir> [--list]"""
 import sys, os, re, glob, collections
 logdir = sys.argv[1]; do_list = '--list' in sys.argv

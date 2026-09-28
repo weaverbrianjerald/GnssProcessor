@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""EVENT HARNESS grader — one injected event, read against its NULL leg.
+"""Event-harness grader: one injected event, read against its null leg.
 
     python scripts/event_grade.py runs/evleg_<name> --null runs/evleg_<null> \
         --fixture C:/GnssProcessor/runs/simnet60_quiet_wu93_24h [--json out.json]
 
-Every quantity is reported at epochs RELATIVE to t0 (the event's tow), for the
+Every quantity is reported at epochs relative to t0 (the event's tow), for the
 window ``--pre`` .. ``--post`` (default -10 .. +50).  Because the event leg and
-the null leg resume from the SAME snapshot with the SAME config except for
-``network.inject``, the DIFFERENCE column (event - null) cancels the warm-resume
+the null leg resume from the same snapshot with the same config except for
+``network.inject``, the difference column (event - null) cancels the warm-resume
 seam transient, the bed and the posture, leaving the event's own signature.
 
 Channels, in the order the table prints them:
@@ -15,22 +15,22 @@ Channels, in the order the table prints them:
   lvl        the injected arc's own level error: the chord-median DD error of
              (station, sat, signal) from ``logs/network_dd_fractional.csv``,
              joined against the fixture's true integers.  For a `slip` the
-             injected delta is ADDED to the truth from t0 on, so `lvl` reads the
-             producer's residual error, not the injection itself.  ⚠ the DD
-             trace carries ONE reference satellite and its error is in every
-             chord (SPEC_amb_iono §6.12) — a per-arc median inherits that; use
-             the DIFF column, which cancels it to the extent the two legs share
+             injected delta is added to the truth from t0 on, so `lvl` reads the
+             producer's residual error, not the injection itself.  The DD
+             trace carries one reference satellite and its error is in every
+             chord (SPEC_amb_iono §6.12); a per-arc median inherits that. Use
+             the diff column, which cancels it to the extent the two legs share
              the reference (they do, except where the event moves it).
   zwd/iono   the station's ZWD error vs truth_tropo.csv and its per-LOS slant
              iono error for the injected satellite vs truth_atmo.csv.
-  clk/pb     the EMITTED satellite clock and L1 phase bias for `sat`, from
-             products.txt, minus the null leg's — the event's WIRE signature.
+  clk/pb     the emitted satellite clock and L1 phase bias for `sat`, from
+             products.txt, minus the null leg's: the event's wire signature.
   cons       the closed-loop consumer: 3D ENU error and ar_gate from
              closed_loop_trace.csv.
   qc         detector/QC events on that (station, sat) from network_events.csv,
              printed as tier@offset.
 
-Nothing here is a verdict.  It is an instrument; the verdict is the operator's.
+Nothing here is a verdict. It is an instrument; the verdict is the operator's.
 """
 import argparse
 import bisect
@@ -83,7 +83,7 @@ def fmt(v, d=3, w=8):
 def arc_level_error(legdir, fixture, sta, sat, sig, t0, lo, hi, inj_delta):
     """Chord-median DD error (cycles) of (sta, sat, sig), per relative epoch.
 
-    The injected delta is folded into the TRUTH from t0 on, so a perfectly
+    The injected delta is folded into the truth from t0 on, so a perfectly
     responding producer reads ~0 and an unresponsive one reads inj_delta.
     """
     path = os.path.join(legdir, "logs", "network_dd_fractional.csv")
@@ -106,7 +106,7 @@ def arc_level_error(legdir, fixture, sta, sat, sig, t0, lo, hi, inj_delta):
         n = n_at(n_int, slips, s, v, g, tow)
         if n is None:
             return None
-        # the INJECTED slip is part of this arc's truth from t0 on
+        # the injected slip is part of this arc's truth from t0 on
         if inj_delta and s == sta and v == sat and g == sig and tow >= t0 - 0.25:
             n += inj_delta
         return n
@@ -332,12 +332,12 @@ def read_products(path, lo_tow=None, hi_tow=None):
 
 
 def seam_report(legdir, refdir, cm=0.01):
-    """Per-epoch max |Delta| between a NULL leg's wire and a CONTINUOUS run's.
+    """Per-epoch max |Delta| between a null leg's wire and a continuous run's.
 
     This is the harness's own control: it measures what the warm-resume seam
-    costs, in the same units the event legs are graded in.  Because BOTH legs of
-    an event A/B carry this transient identically, the event grader's DIFF
-    columns cancel it -- this report is what justifies that claim.
+    costs, in the same units the event legs are graded in.  Because both legs of
+    an event A/B carry this transient identically, the event grader's diff
+    columns cancel it: this report is what justifies that claim.
     """
     m = leg_meta(legdir)
     first = int(round(m["first_tow"]))
@@ -370,7 +370,7 @@ def seam_report(legdir, refdir, cm=0.01):
               f"{len(dp):>5} {fmt(mp,4,10)} {fmt(rp,4,10)}")
         if first_ok is None and mc is not None and mp is not None \
            and mc < cm and mp < cm:
-            # require it to STAY below from here on
+            # require it to stay below from here on
             first_ok = i
         elif first_ok is not None and ((mc or 0) >= cm or (mp or 0) >= cm):
             first_ok = None
@@ -434,11 +434,11 @@ def main():
     lo, hi = -abs(args.pre), abs(args.post)
     m = leg_meta(args.legdir)
     ev = m.get("event") or {}
-    # A leg may carry SEVERAL events at one tow (Study 3's all-band injected
-    # slip writes one per band).  The lvl channel is per-signal, so grade ONE of
+    # A leg may carry several events at one tow (Study 3's all-band injected
+    # slip writes one per band).  The lvl channel is per-signal, so grade one of
     # them: --signal names which, and the matching event supplies the injected
     # delta that gets folded into the truth.  Without --signal the first event
-    # is graded, which is what a single-event leg has always done.
+    # is graded, matching a single-event leg.
     ev_all = ev if isinstance(ev, list) else [ev]
     if isinstance(ev, list):
         ev = {}
@@ -457,8 +457,8 @@ def main():
     sig = args.signal or ev.get("signal") or "L1C"
     if sig == "all":
         sig = "L1C"
-    # An arc_erase BAND SCOPE is a ";"-separated list (Study 1 rung 2); the lvl
-    # channel is per-signal, so grade the FIRST band of the scope and say so.
+    # An arc_erase band scope is a ";"-separated list (Study 1 rung 2); the lvl
+    # channel is per-signal, so grade the first band of the scope and say so.
     if ";" in sig or "," in sig:
         scope = [t for t in sig.replace(",", ";").split(";") if t]
         sig = scope[0]

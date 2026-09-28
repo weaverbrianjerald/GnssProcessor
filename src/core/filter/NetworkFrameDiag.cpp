@@ -1,9 +1,11 @@
 /**
  * @file NetworkFrameDiag.cpp
- * @brief SPEC_day129_frame_guards Phase 1 trigger instrumentation (P1-3, P1-4).
+ * @brief SPEC_day129_frame_guards Phase 1 trigger instrumentation (P1-3, P1-4) and
+ *        the datum-direction information ratio (invariant #7).
  *
  * See NetworkFrameDiag.hpp for the derivation and the row-classification rules.
- * Both functions are measure-only: they read the solved system and write CSV.
+ * All three functions are measure-only: they read the solved system and write CSV
+ * rows, events and counters.
  */
 
 #include "filter/NetworkFrameDiag.hpp"
@@ -34,10 +36,10 @@ namespace {
 enum Family { kClk = 0, kCb = 1, kPb = 2, kSh = 3, kFamilyCount = 4 };
 
 /// Classify one shared column from its @c sharedColumnLabel prefix.  The labels
-/// are "CLK:", "CB:", "PB:", "SH:"/"SH2:" (NetworkEstimator.cpp:138-153); an
-/// unrecognized label is charged to the phase-bias bucket rather than dropped,
-/// so the four masses always sum to 1 and a future family cannot silently
-/// disappear from the partition.
+/// are "CLK:", "CB:", "PB:", "SH:"/"SH2:" (NetworkEstimator::sharedColumnLabel in
+/// NetworkEstimator.cpp); an unrecognized label is charged to the phase-bias bucket
+/// instead of being dropped, so the four masses always sum to 1 and a future family
+/// stays in the partition.
 Family familyOf(const std::string& label) {
     if (label.rfind("CLK:", 0) == 0) return kClk;
     if (label.rfind("CB:",  0) == 0) return kCb;
@@ -60,17 +62,17 @@ void networkShSpectrum(NetworkRunContext& ctx, const GnssConfig& config_,
                        NetworkEstimator& est) {
     if (!traces.sh_spectrum_trace.is_open()) return;
 
-    // reducedSharedNormals() is the SAME cached Schur complement the datum rank
-    // gate tested this epoch — by the post-solve call site the reduction has
-    // already happened, so this is a cache read, not a second reduce.
+    // reducedSharedNormals() is the cached Schur complement the datum rank gate
+    // tested this epoch.  By the post-solve call site the reduction has already
+    // happened, so this is a cache read, not a second reduce.
     const Eigen::MatrixXd& Nss = est.reducedSharedNormals();
     const Eigen::Index n = Nss.rows();
     if (n <= 0) return;
 
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(Nss, Eigen::ComputeEigenvectors);
     if (es.info() != Eigen::Success) {
-        // Once per run: a failed eigensolve is a diagnostic gap, not a solve
-        // problem (the solution is untouched), but it must not be silent.
+        // Logged once per run: a failed eigensolve is a diagnostic gap, not a solve
+        // problem (the solution is untouched), but it is reported.
         if (ctx.carry.sh_spectrum_fail_logged == false) {
             ctx.carry.sh_spectrum_fail_logged = true;
             log->warn("Network (P1-3): SelfAdjointEigenSolver did not converge on the "
@@ -80,11 +82,11 @@ void networkShSpectrum(NetworkRunContext& ctx, const GnssConfig& config_,
         }
         return;
     }
-    const Eigen::VectorXd& ev = es.eigenvalues();      // ASCENDING
+    const Eigen::VectorXd& ev = es.eigenvalues();      // ascending
     const Eigen::MatrixXd& V  = es.eigenvectors();
 
-    // Per-column family map (built once per epoch — the shared layout is rebuilt
-    // every epoch, so it cannot be cached across epochs).
+    // Per-column family map, built once per epoch: the shared layout is rebuilt
+    // every epoch, so it cannot be cached across epochs.
     std::vector<Family> fam(static_cast<std::size_t>(n), kPb);
     int n_fam[kFamilyCount] = {0, 0, 0, 0};
     for (Eigen::Index c = 0; c < n; ++c) {
@@ -99,8 +101,8 @@ void networkShSpectrum(NetworkRunContext& ctx, const GnssConfig& config_,
     const double cond   = (ev_min > 0.0) ? (ev_max / ev_min)
                                          : std::numeric_limits<double>::infinity();
 
-    // Mass partition of the SMALLEST direction.  L1 (not L2) mass: the question
-    // is "how much of this direction lives in the clocks vs the field", and the
+    // Mass partition of the smallest direction.  L1 (not L2) mass: the question
+    // is how much of this direction lives in the clocks versus the field, and the
     // L1 share of |v| answers it without over-weighting one dominant column the
     // way squared mass would.
     double mass[kFamilyCount] = {0.0, 0.0, 0.0, 0.0};
@@ -129,18 +131,18 @@ void networkShSpectrum(NetworkRunContext& ctx, const GnssConfig& config_,
     }
     for (int f = 0; f < kFamilyCount; ++f) o << ',' << fmt::format("{:.6f}", mass[f]);
     for (int f = 0; f < kFamilyCount; ++f) o << ',' << span[f];
-    // The ABSOLUTE null-space cutoff the rank gate applies this epoch
-    // (rankGateTol · max(λmax,1)).  Without it ev_min is uninterpretable: these are
-    // the PRE-datum reduced normals (solve() pins a COPY — NetworkEstimator.cpp:255),
-    // so the smallest eigenvalues legitimately include the DECLARED gauge freedoms.
-    // "λ_min cratered" means nothing except relative to this line.
+    // The absolute null-space cutoff the rank gate applies this epoch
+    // (rankGateTol · max(λmax,1)).  Without it ev_min cannot be interpreted: these
+    // are the pre-datum reduced normals (solve() applies the datum to a copy), so the
+    // smallest eigenvalues legitimately include the declared gauge freedoms.  A small
+    // λ_min is meaningful only relative to this cutoff.
     o << ',' << fmt::format("{:.9e}", est.rankGateTol() * std::max(ev_max, 1.0));
     o << '\n';
 
     // --- Mode detail (strided) -------------------------------------------
-    // Naming the columns that span the smallest directions is what turns "λ_min
-    // cratered" into "λ_min cratered ALONG a clock+SH direction".  Strided
-    // because it is ~kModesReported × kTopColumns rows per traced epoch.
+    // Naming the columns that span the smallest directions shows along which
+    // direction (for example clock+SH) λ_min dropped.  Strided because it is
+    // ~kModesReported × kTopColumns rows per traced epoch.
     const int stride = config_.getNetworkConfig().trace_sh_spectrum_stride;
     if (stride > 0 && traces.sh_spectrum_mode_trace.is_open()
         && (ctx.carry.sh_spectrum_epochs % stride) == 0) {
@@ -179,10 +181,10 @@ void networkPostfitSigma0(NetworkRunContext& ctx, const GnssConfig& config_,
                           const std::vector<std::vector<PppObservation>>* modeled) {
     (void)config_;   // toggles are expressed through which traces are open
     const std::size_t stations_n = stations.size();
-    // §4.3 keyed extension: active only while its trace is open — the OFF path
-    // (trace closed) adds zero label lookups and zero pool work.
+    // Keyed extension (§4.3): active only while its trace is open; with the trace
+    // closed it adds no label lookups and no pool work.
     const bool keyed = traces.pf_keyed_trace.is_open();
-    // §24.6 rows extension: the SIGNED per-row dump, same gate discipline.  The
+    // Rows extension (§24.6): the signed per-row dump, gated the same way.  The
     // per-column sat / signal labels are shared with the keyed path.
     const bool rows_on = traces.pf_rows_trace.is_open();
     const bool labels  = keyed || rows_on;
@@ -192,41 +194,40 @@ void networkPostfitSigma0(NetworkRunContext& ctx, const GnssConfig& config_,
     ctx.carry.ep_pf_rows         = 0;
 
     // Shared-column families used to classify each row.
-    //  - SH: a row with any nonzero in an SH-VTEC column IS the SH↔slant-iono
+    //  - SH: a row with any nonzero in an SH-VTEC column is the SH↔slant-iono
     //    pseudo-observation, whose 3σ exceedance is a documented structural
-    //    artifact (NetworkIonoDeweightGate.hpp:20-30) — excluded outright.
-    //  - PB / CB: the PHASE/CODE discriminator.  An uncombined phase row carries
-    //    a satellite PHASE-bias partial and a code row a satellite CODE-bias
+    //    artifact (NetworkIonoDeweightGate.hpp:20-30); it is excluded outright.
+    //  - PB / CB: the phase/code discriminator.  An uncombined phase row carries
+    //    a satellite phase-bias partial and a code row a satellite code-bias
     //    partial, so the split is a property of the measurement model and holds
-    //    whatever the QC configuration is.  (The within-epoch RAIM's pl_amb set
-    //    would be the natural discriminator but is populated only under
-    //    phase_leveling — off on the DOY-129 reference run — which would silently
-    //    put EVERY row in the code pool.  That is exactly the class of inert
-    //    wiring standing invariant #4 exists to catch, so it is not used here.)
-    //  - CLK: the CODE side's fallback, and the exact counterpart of the
-    //    ambiguity-column touch the PHASE side already carries (2026-09-14,
-    //    card ZP worker; found by card PV).  A satellite CODE-bias column is
-    //    NOT a property every posture has: with the biases supplied externally
-    //    (a .BIA product, "0 code biases") there are no CB columns at all, and
-    //    even with them estimated the W6 datum signal's OSB is the gauge and so
-    //    carries no column either — §24.9 saw that as "the residual-pool trace
-    //    omits every C1C row at WROC".  Both cases sent EVERY affected code row
-    //    to the unattributed counter, so the wire census saw 0 code arcs on an
-    //    external-bias posture (PV-A: 0 code + 235 335 phase rows written,
-    //    257 347 unattributed).  What every real observation equation DOES
-    //    carry is the satellite CLOCK partial, so a data row that touches a
-    //    CLK column and no ambiguity column is a CODE row.  Rows with no
-    //    shared partial at all (pivot pins, local prior rows) still touch
-    //    neither and stay unattributed — which is what that counter means now.
-    //    NOTE the residual limitation: such a row has no CB/PB label, so its
-    //    `signal` is EMPTY and it joins the per-STATION and per-SATELLITE pools
-    //    but not the per-SIGNAL one.  The receiver code-bias local column is no
-    //    help — on this lineage it is one per-constellation "GPS_DCB", not a
-    //    per-signal state.
+    //    whatever the QC configuration is.  The within-epoch RAIM's pl_amb set is
+    //    not the primary discriminator because it is populated only under
+    //    phase_leveling; without leveling it would put every row in the code pool
+    //    (the inert wiring standing invariant #4 guards against).  It serves only
+    //    as the secondary phase signal below.
+    //  - CLK: the code side's fallback, the counterpart of the ambiguity-column
+    //    touch on the phase side (card ZP; found by card PV).  A satellite
+    //    code-bias column is not present in every posture: with the biases
+    //    supplied externally (a .BIA product, "0 code biases") there are no CB
+    //    columns, and with them estimated the W6 datum signal's OSB is the gauge
+    //    and carries no column either (§24.9: the residual-pool trace omitted every
+    //    C1C row at WROC).  Without the fallback every such code row goes to the
+    //    unattributed counter and the wire census sees no code arcs on an
+    //    external-bias posture.  Every real observation equation carries the
+    //    satellite clock partial, so a data row that touches a CLK column and is
+    //    not phase is a code row.  Rows with no shared partial (pivot pins, local
+    //    prior rows) touch neither and stay unattributed, which is what that
+    //    counter means.  Remaining limitation: such a row has no CB/PB label, so
+    //    its label-derived signal is empty and it joins the per-station and
+    //    per-satellite keyed pools but not the per-signal one (the rows trace
+    //    takes the observation's own signal instead; see below).  The receiver
+    //    code-bias local column does not help: on this lineage it is one
+    //    per-constellation "GPS_DCB", not a per-signal state.
     std::vector<char> is_sh_col, is_pb_col, is_cb_col, is_clk_col;
-    // Keyed extension: per-column sat / signal, parsed from the SAME labels the
-    // bitmap pass fetches ("CLK:G01" / "CB:G01:C1W" / "PB:G01:L1C") — no extra
-    // label calls, and empty vectors (zero cost) when the keyed trace is closed.
+    // Keyed extension: per-column sat / signal, parsed from the labels the bitmap
+    // pass already fetches ("CLK:G01" / "CB:G01:C1W" / "PB:G01:L1C"): no extra
+    // label calls, and empty vectors (no cost) when neither the keyed nor the rows
+    // trace is open.
     std::vector<std::string> col_sat, col_sig;
     if (x_s.size() > 0) {
         const std::size_t nsh = static_cast<std::size_t>(x_s.size());
@@ -244,7 +245,7 @@ void networkPostfitSigma0(NetworkRunContext& ctx, const GnssConfig& config_,
             else if (lbl.rfind("CB:", 0) == 0) is_cb_col[u] = 1;
             else if (lbl.rfind("CLK:", 0) == 0) is_clk_col[u] = 1;
             if (labels && lbl.rfind("SH", 0) != 0) {
-                // "KIND:sat[:signal]" — sat between the first and (optional)
+                // "KIND:sat[:signal]": sat between the first and (optional)
                 // second colon, signal after the second.
                 const std::size_t p1 = lbl.find(':');
                 if (p1 != std::string::npos) {
@@ -300,8 +301,8 @@ void networkPostfitSigma0(NetworkRunContext& ctx, const GnssConfig& config_,
 
         const Eigen::VectorXd v = R.y - R.A_s * x_s - R.A_r * x_r;
 
-        // Local columns carrying a present ambiguity — the PHASE discriminator
-        // (the same pl_amb set the within-epoch RAIM pools over).
+        // Local columns carrying a present ambiguity: the secondary phase
+        // discriminator (the pl_amb set the within-epoch RAIM pools over).
         std::vector<char> is_amb_col(static_cast<std::size_t>(R.A_r.cols()), 0);
         for (const auto& pa : R.pl_amb)
             if (pa.col >= 0 && pa.col < R.A_r.cols())
@@ -309,14 +310,14 @@ void networkPostfitSigma0(NetworkRunContext& ctx, const GnssConfig& config_,
 
         // Keyed: this station's own {code, phase} pools (STA row written below).
         std::vector<double> sta_code, sta_phase;
-        // Rows: this station's satellite -> elevation (deg) off the MODELED set,
-        // built only while the rows trace is open (zero cost otherwise).
+        // Rows: this station's satellite -> elevation (deg) off the modelled set,
+        // built only while the rows trace is open (no cost otherwise).
         std::map<std::string, double> sta_el;
         if (rows_on && modeled && i < modeled->size())
             for (const PppObservation& o : (*modeled)[i]) sta_el[o.satellite] = o.elevation;
 
         for (Eigen::Index row = 0; row < v.size(); ++row) {
-            // Card-1 coupling rows are statements about the CARRY, not data.
+            // Card-1 coupling rows are statements about the carry, not data.
             if (R.cpl_row_start >= 0 && row >= R.cpl_row_start) continue;
             bool sh_row = false, pb_row = false, cb_row = false, clk_row = false;
             const std::string* row_sat = nullptr;   // keyed: first labeled col's sat
@@ -340,18 +341,18 @@ void networkPostfitSigma0(NetworkRunContext& ctx, const GnssConfig& config_,
             if (!std::isfinite(r)) continue;
 
             // Ambiguity-column touch is a secondary phase signal for a run whose
-            // satellite phase biases are NOT estimated (no PB columns at all).
+            // satellite phase biases are not estimated (no PB columns at all).
             bool phase_row = pb_row;
             for (Eigen::Index c = 0; c < R.A_r.cols() && !phase_row; ++c)
                 if (is_amb_col[static_cast<std::size_t>(c)] && std::abs(R.A_r(row, c)) > 0.5)
                     phase_row = true;
 
-            // CODE = a data row that is not phase and carries a satellite
-            // partial — the CB column when the posture estimates one, else the
-            // CLK column every observation equation has (see the CLK note at the
-            // family bitmaps).  A row with NEITHER (no shared partial at all: a
-            // pivot pin, a local prior row) is still data for pool_all but stays
-            // unattributed rather than being misfiled.
+            // Code = a data row that is not phase and carries a satellite partial:
+            // the CB column when the posture estimates one, else the CLK column
+            // every observation equation has (see the CLK note at the family
+            // bitmaps).  A row with neither (no shared partial: a pivot pin, a local
+            // prior row) still enters pool_all but stays unattributed instead of
+            // being misfiled.
             const bool code_row = !phase_row && (cb_row || clk_row);
 
             pool_all.push_back(r);
@@ -371,14 +372,14 @@ void networkPostfitSigma0(NetworkRunContext& ctx, const GnssConfig& config_,
             }
             if (rows_on) {
                 if (phase_row || code_row) {
-                    // SIGNED v (metres), the row weight, and the LOS elevation.  The
-                    // sat comes from the same CLK/CB/PB labels the keyed pools key on.
-                    // Card OWD (O5): the signal is the observation's OWN (the assembly's
-                    // row_sig, row-aligned with H for the data rows); an appended row
-                    // falls back to the first labelled column's.  The label alone left
-                    // a row whose only shared column is the clock with an empty signal
-                    // (32 code and 2 987 phase rows on runs/_rf0hv10_field6), and every
-                    // (station, sat, signal) grade pooled them across signals.
+                    // Signed v (metres), the row weight, and the LOS elevation.  The
+                    // sat comes from the CLK/CB/PB labels the keyed pools key on.  The
+                    // signal is the observation's own (the assembly's row_sig,
+                    // row-aligned with H for the data rows); an appended row falls back
+                    // to the first labelled column's.  The label alone would leave a row
+                    // whose only shared column is the clock with an empty signal, and
+                    // every (station, sat, signal) grade would pool such rows across
+                    // signals (card OWD, O5).
                     const std::string* obs_sig =
                         (row < static_cast<Eigen::Index>(R.row_sig.size())
                          && !R.row_sig[static_cast<std::size_t>(row)].empty())
@@ -444,22 +445,22 @@ void networkDatumInfoRatio(NetworkRunContext& ctx, NetworkRunTraces& traces,
                            const std::vector<std::string>& registered_clock_sats,
                            double ev_max, bool gate_over_withheld) {
     // The gate writes ev_max < 0 on any exit that computed no spectrum (empty
-    // normals, non-square, solver failure).  Nothing to measure against then —
-    // and reconstructing a cutoff from a guess would be worse than silence.
+    // normals, non-square, solver failure).  There is then nothing to measure
+    // against, and a cutoff reconstructed from a guess would mislead.
     if (!(ev_max >= 0.0) || declared_dim <= 0) return;
     const Eigen::MatrixXd& N = est.reducedSharedNormals();
     const Eigen::Index n = N.rows();
     if (n == 0 || N.cols() != n) return;
 
-    // The gate's OWN cutoff, reconstructed from its own λmax — not a second
-    // decomposition and not a re-derived tolerance (the Card DG2 lesson: every
-    // consumer must read the one resolved rank_gate_tol).
+    // The gate's own cutoff, reconstructed from its own λmax: no second
+    // decomposition and no re-derived tolerance, because every consumer reads the
+    // one resolved rank_gate_tol (card DG2).
     const double cutoff = est.rankGateTol() * std::max(ev_max, 1.0);
     if (!(cutoff > 0.0)) return;
 
-    // DECLARED datum directions, analytically.  Plan::declared_dimension counts one
-    // satellite-clock gauge per constellation in PIN mode, and the direction is the
-    // indicator over that constellation's clock columns — exactly what
+    // Declared datum directions, built analytically.  Plan::declared_dimension counts
+    // one satellite-clock gauge per constellation in pin mode, and the direction is
+    // the indicator over that constellation's clock columns: what
     // NetworkSbasis::buildSharedDatum groups (`by_const`) and what the sum-to-zero
     // branch writes out as an explicit all-ones row.  No eigensolve is involved:
     // vᵀNv needs the direction, not the spectrum.
@@ -467,7 +468,7 @@ void networkDatumInfoRatio(NetworkRunContext& ctx, NetworkRunTraces& traces,
     for (const std::string& sat : registered_clock_sats) {
         if (sat.empty()) continue;
         try { by_const[sat[0]].push_back(est.clockColumn(sat)); }
-        catch (...) {}   // not in this epoch's layout — not part of this epoch's gauge
+        catch (...) {}   // not in this epoch's layout, so not part of this epoch's gauge
     }
     if (by_const.empty()) return;
 
@@ -475,16 +476,15 @@ void networkDatumInfoRatio(NetworkRunContext& ctx, NetworkRunTraces& traces,
     bool any_breach = false;
     std::set<std::string> evaluated;   // invariant #7: what this epoch actually judged
     for (const auto& [cc, cols] : by_const) {
-        // A one-member group is not a gauge DIRECTION in any useful sense (the lone
-        // clock IS the datum), and normalizing it would report the column's own
+        // A one-member group is not a gauge direction in any useful sense (the lone
+        // clock is the datum), and normalizing it would report the column's own
         // information as a gauge breach on every epoch.
         if (cols.size() < 2) continue;
-        // A range error is tracked by its OWN flag, never by the sign of q.  N is only
-        // positive-SEMIdefinite as a whole: its off-diagonals are freely negative, so a
-        // PARTIAL sum of vᵀNv dips below zero routinely.  Overloading q's sign as the
-        // error sentinel therefore aborts the accumulation on ordinary data and reports
-        // zero samples on every epoch — which is exactly what the first armed run
-        // measured (11 epochs, 0 directions).
+        // A range error is tracked by its own flag, not by the sign of q.  N is
+        // positive-semidefinite only as a whole: its off-diagonals can be negative, so
+        // a partial sum of vᵀNv routinely dips below zero.  Using q's sign as the error
+        // sentinel would abort the accumulation on ordinary data and report zero
+        // directions on every epoch.
         bool bad = false;
         double q = 0.0;
         for (const Eigen::Index a : cols) {
@@ -495,10 +495,10 @@ void networkDatumInfoRatio(NetworkRunContext& ctx, NetworkRunTraces& traces,
             }
             if (bad) break;
         }
-        // The COMPLETED quadratic form is >= 0 because N is PSD at the gate; a negative
-        // final value means rounding at the gauge, which floors to 0 rather than being
-        // discarded (a gauge direction reading exactly 0 is the healthy case, and
-        // dropping it would make the healthy case indistinguishable from a miswire).
+        // The completed quadratic form is >= 0 because N is PSD at the gate; a negative
+        // final value is rounding at the gauge and is floored to 0 instead of being
+        // discarded (a gauge direction reading exactly 0 is the expected case, and
+        // dropping it would make that case indistinguishable from a miswire).
         if (bad || !std::isfinite(q)) continue;
         if (q < 0.0) q = 0.0;
         // vᵀv = |cols| for the indicator, so the Rayleigh quotient is q/|cols|.
@@ -516,11 +516,11 @@ void networkDatumInfoRatio(NetworkRunContext& ctx, NetworkRunTraces& traces,
         if (ctx.counters.ddi_ratio_min < 0.0 || ratio < ctx.counters.ddi_ratio_min)
             ctx.counters.ddi_ratio_min = ratio;
 
-        // Standing invariant #7: this is a mechanism that changes which information
-        // flows into which states, so it is an EVENT at BOTH edges.  The BREACH edge
-        // says a declared gauge stopped being free; the CLEAR edge says it became free
-        // again — and a direction that silently returns must not read as a first
-        // sighting (the FT63 topology-ledger lesson).
+        // Standing invariant #7: a declared gauge taking or losing information changes
+        // which information flows into which states, so both edges are events.  The
+        // breach edge says a declared gauge stopped being free; the clear edge says it
+        // became free again, so a returning direction does not read as a first
+        // sighting (FT63 topology ledger).
         const bool breach = ratio >= 1.0;
         const bool was    = ctx.carry.ddi_breached.count(id) > 0;
         if (breach) any_breach = true;
@@ -535,12 +535,11 @@ void networkDatumInfoRatio(NetworkRunContext& ctx, NetworkRunTraces& traces,
                                          id, rq, cutoff, cols.size()));
         }
     }
-    // A latched direction that STOPPED being evaluated (its constellation dropped below
-    // two registered clocks, or left the layout) must emit its CLEAR edge here.  Without
-    // this the flag latches forever, and when the direction returns and breaches again no
-    // edge fires — the re-coupling reads as "already breached" and goes silent, which is
-    // precisely the failure invariant #7 names (a returning member must not be mistaken
-    // for a continuing one).
+    // A latched direction that is no longer evaluated (its constellation dropped below
+    // two registered clocks, or left the layout) emits its clear edge here.  Otherwise
+    // the flag would stay latched, and when the direction returned and breached again no
+    // edge would fire: the re-coupling would read as already breached, the failure
+    // invariant #7 names (a returning member mistaken for a continuing one).
     for (auto it = ctx.carry.ddi_breached.begin(); it != ctx.carry.ddi_breached.end();) {
         if (evaluated.count(*it)) { ++it; continue; }
         ++ctx.counters.ddi_breach_edges;
@@ -553,8 +552,8 @@ void networkDatumInfoRatio(NetworkRunContext& ctx, NetworkRunTraces& traces,
     }
     if (any_breach) {
         ++ctx.counters.ddi_breach_epochs;
-        // The coincidence that makes the run-end advice actionable: an OVER-specified
-        // withhold ON a breached epoch is a FILLED NULL, not a mis-placed tolerance.
+        // The coincidence that makes the run-end advice actionable: an over-specified
+        // withhold on a breached epoch indicates a filled null, not a misplaced tolerance.
         if (gate_over_withheld) ++ctx.counters.ddi_over_breach;
     }
 }

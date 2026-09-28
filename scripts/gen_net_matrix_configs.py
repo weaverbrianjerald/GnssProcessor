@@ -7,11 +7,11 @@ working-tree configs:
   net50  <- config/test_suite/_net50_em25_pl_zeroq_slip_1h.json  (50 sta, deg 4,  datum JPLM00USA)
   net305 <- config/test_suite/_net305_gpsgal_sh_n15_1h.json      (305 sta, deg 15, datum MBAR00UGA)
 
-We KEEP each base's roster, filter q's, elevation mask (25 deg — the validated
-healthy set; 10 deg destroys the zero-q carry at 305, see runs/net_matrix net305_10min
-vs net305_30min_em25), SH degree, datum
-and only (a) set processing.max_duration_s per duration cell and (b) overwrite the
-network{} feature toggles + estimation.global_vtec_sh.trace with the canonical
+Each base's roster, filter q's, elevation mask (25 deg, the validated healthy set;
+10 deg destroys the zero-q carry at 305, see runs/net_matrix net305_10min vs
+net305_30min_em25), SH degree and datum are kept unchanged; the generator only
+(a) sets processing.max_duration_s per duration cell and (b) overwrites the
+network{} feature toggles and estimation.global_vtec_sh.trace with the canonical
 all-features set below.  Output -> runs/net_matrix_2024-129/configs/.
 """
 import json, copy, os
@@ -39,7 +39,7 @@ FEATURES = {
     "parallel_stations": True,
     "parallel_min_stations": 8,
 
-    # --- phase-leveling zero-q carry + slip DETECTION (robust: mw_detect + if_phase_td) ---
+    # --- phase-leveling zero-q carry + slip detection (robust: mw_detect + if_phase_td) ---
     "phase_leveling": True,
     "phase_leveling_q_amb": 0.0,
     "phase_leveling_warmup_epochs": 6,
@@ -89,7 +89,7 @@ FEATURES = {
     "health_interval_s": 30.0,
     "write_run_manifest": True,
 
-    # --- ALL visualization trace toggles (feed the full pyviz network viewer set) ---
+    # --- all visualization trace toggles (feed the full pyviz network viewer set) ---
     "trace_stations": True,
     "trace_ionosphere": True,
     "trace_estimability": True,
@@ -105,7 +105,7 @@ FEATURES = {
     "trace_station_residuals": True,
 }
 
-# Keys that must NOT be present alongside sum-to-zero clock datum (they'd warn as inert).
+# Keys that must be absent alongside sum-to-zero clock datum (they would warn as inert).
 DROP_KEYS = ["clock_datum_satellite", "sticky_pivot", "pivot_vanish_return_signal"]
 
 def build(nsta, tag, dur):

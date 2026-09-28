@@ -1,11 +1,10 @@
 /**
  * @file NetworkRelevel.cpp
- * @brief Implementation of @ref networkEphCutoverRelevel — the Card-6 ephemeris-cutover
- *        re-level block relocated VERBATIM out of @ref networkSolveGlue
- *        (NetworkSolveGlue.cpp) at the Card-6 relevel decomposition (2026-07-23).  The
- *        block body is a byte-copy (dedent-0); the only added code is the alias preamble
- *        that byte-copies the SolveGlue carry aliases + the emitEvent forwarder so the
- *        body reads the original names.
+ * @brief Implementation of @ref networkEphCutoverRelevel, the ephemeris-cutover re-level
+ *        block moved out of @ref networkSolveGlue (NetworkSolveGlue.cpp) at the Card-6
+ *        relevel decomposition.  The block body is copied unchanged (dedent 0); the only
+ *        added code is the alias preamble, which copies the SolveGlue carry aliases and
+ *        the emitEvent forwarder so the body reads the original names.
  */
 
 #include "filter/NetworkRelevel.hpp"
@@ -50,38 +49,38 @@ void networkEphCutoverRelevel(NetworkRunContext& ctx,
                          action, detail);
     };
 
-// --- Card 6 (RTF-2 / plan D3): ephemeris-cutover re-level ------------------------------
-// The producer's estimable per-sat clock is Δδtˢ = (true sat clock) − (broadcast
-// a-priori clock of the version this epoch's geometry uses).  When that broadcast
-// version rolls (old IODE → new IODE) the a-priori jumps by
-// Δ_eph(t) = c·(brdc_new(t) − brdc_old(t)); the TRUE clock is continuous, so the
-// estimable Δδtˢ must jump by −Δ_eph to keep representing the same satellite.  Left
-// alone, the carried clock prior — the TIGHT two-state clock_osc prediction, or the
-// D2 q_clock carry — is a full Δ_eph out of frame and FIGHTS the new-frame
-// measurements: a slow transient that also trips the two-state NIS / clock-monitor
-// jump test as a spurious per-sat fault.  So we deterministically re-base the CARRIED
-// clock state by −Δ_eph, and the solve runs entirely in the new frame — emitted C0 is
-// continuous-in-reconstruction (the consumer forms brdc(new_iode)+C0, Card 7) with NO
+// --- Ephemeris-cutover re-level (card 6, RTF-2 / plan D3) ------------------------------
+// The producer's estimable per-satellite clock is Δδtˢ = (true satellite clock) −
+// (broadcast a-priori clock of the version this epoch's geometry uses).  When that
+// broadcast version rolls (old IODE → new IODE), the a-priori jumps by
+// Δ_eph(t) = c·(brdc_new(t) − brdc_old(t)); the true clock is continuous, so Δδtˢ must
+// jump by −Δ_eph to keep representing the same satellite.  Without a re-base, the
+// carried clock prior (the tight two-state clock_osc prediction, or the D2 q_clock
+// carry) sits a full Δ_eph out of frame and pulls against the new-frame measurements:
+// a slow transient that also trips the two-state NIS / clock-monitor jump test as a
+// spurious per-satellite fault.  The block therefore re-bases the carried clock state
+// by −Δ_eph, and the solve runs in the new frame.  Emitted C0 stays continuous in
+// reconstruction (the consumer forms brdc(new_iode)+C0, card 7), with no
 // discontinuity bump.
 //
-// ORDERING (deliberate deviation from the plan's "after the solve, before the C1
-// pass"): the re-base MUST precede the prior injection (below) and the solve.  The
-// plan's post-solve placement anchored to where Card 5 STAMPS clock_iode (after
-// toSolutionEpoch); but by then x_s was already solved against the OLD-frame prior, so
-// a post-hoc x_s shift is exact ONLY when the prior dominates (tight) and OVER-corrects
-// a data-dominated (loose) solve.  Shifting the PRIOR is unconditionally exact for any
-// prior weight AND — being a deterministic function of the broadcast ephemeris alone —
-// is independent of the solve, so it applies identically on every disposition (emit /
-// σ̂0-withhold / solve-fail).  The IODE this epoch uses is read straight from the
-// shared LiveEphemerisStore (Card 5's own equivalence note: toe granularity ≫
-// intra-epoch light-travel, so the emit-site query lands on the version the emission
-// path used), so no dependence on the post-solve stamp remains.
+// Ordering: the re-base precedes the prior injection (below) and the solve.  This
+// deviates from the plan, which placed it after the solve and before the C1 pass, where
+// card 5 stamps clock_iode (after toSolutionEpoch).  After the solve, x_s has been
+// estimated against the old-frame prior, so a post-hoc x_s shift is exact only when a
+// tight prior dominates, and over-corrects a data-dominated (loose) solve.  Shifting the
+// prior is exact for any prior weight; it depends only on the broadcast ephemeris, so it
+// is independent of the solve and applies identically on every disposition (emit /
+// σ̂0-withhold / solve-fail).  The IODE this epoch uses is read from the shared
+// LiveEphemerisStore (card 5's equivalence note: toe granularity ≫ intra-epoch light
+// travel, so the query lands on the version the emission path used), so nothing
+// depends on the post-solve stamp.
 //
-// Placed after the observability-gate `continue`: a gate-withheld epoch leaves the
-// carried clock state untouched (its post-emit update never runs), so deferring the
-// re-level to the next non-gate-withheld epoch keeps relevel_iode and the carried
-// state in lock-step.  On the σ̂0/solve-fail paths the block DID run, the shift landed,
-// and the (skipped) post-emit updates leave it in place — no double-shift either way.
+// The block sits after the observability gate.  A gate-withheld epoch leaves the carried
+// clock state untouched (its post-emit update never runs), so deferring the re-level to
+// the next epoch that passes the gate keeps relevel_iode and the carried state in
+// lock-step.  On the σ̂0-withhold and solve-fail paths the block has run and the shift
+// has landed; the post-emit updates are skipped and leave it in place.  Neither path
+// applies the shift twice.
 if (brdc_rts) {
     auto& eph_store = LiveEphemerisStore::getInstance();
     for (const std::string& sat : registered_clock_sats) {
@@ -94,24 +93,24 @@ if (brdc_rts) {
             relevel_iode[sat] = new_iode;
             continue;
         }
-        if (bit->second == new_iode) continue;               // no roll — the common case
+        if (bit->second == new_iode) continue;               // no roll (the common case)
         const int old_iode = bit->second;
         const auto shift = eph_store.ephCutoverShiftMetres(sat, se.time, old_iode);
         relevel_iode[sat] = new_iode;                        // baseline advances regardless
         if (shift) {
-            // Re-base the carried clock state by −Δ_eph.  Offset / level term ONLY —
-            // the drift (c1) and the 2×2 covariance are frame-invariant and untouched.
+            // Re-base the carried clock state by −Δ_eph.  Only the offset / level term
+            // moves; the drift (c1) and the 2×2 covariance are frame-invariant.
             const double d = *shift;
             if (auto oit = clock_osc.find(sat); oit != clock_osc.end() && oit->second.init)
                 oit->second.x0 -= d;                          // two-state offset (clock_model)
-            for (CarryPrior& cp : prev_carry)                 // D2 scalar clock carry (model off)
+            for (CarryPrior& cp : prev_carry)                 // scalar clock carry (D2, model off)
                 if (cp.kind == SharedParamKind::Clock && cp.sat == sat) cp.value -= d;
             if (auto jit = prev_clk.find(sat); jit != prev_clk.end())
                 jit->second.first -= d;                       // clock-monitor jump baseline
-            // Card 1: the coupling stash references this clock via ŝ_prev terms —
-            // re-level them into the new frame too, else every coupling row's RHS
-            // is off by M·Δ_eph after a cutover (the row's functional u = r + Mᵀs
-            // is frame-consistent only if ALL carried references move together).
+            // The coupling stash references this clock through ŝ_prev terms (card 1).
+            // Re-level them into the new frame as well; otherwise every coupling row's
+            // RHS is off by M·Δ_eph after a cutover (the row's functional u = r + Mᵀs
+            // is frame-consistent only when all carried references move together).
             if (carry_cpl_cond) {
                 for (auto& [lk, lcv] : local_carry)
                     for (CoupledShared& cs2 : lcv.coupling)
@@ -128,10 +127,11 @@ if (brdc_rts) {
             emitEvent("RELEVEL", "eph_cutover_relevel", sat, "", -d, std::nullopt,
                       "relevel", fmt::format("iode={}->{}", old_iode, new_iode));
         } else {
-            // Prior version no longer retained → Δ_eph incomputable → the clock stepped
-            // by an unknown amount.  Force a per-sat discontinuity (consumer resets this
-            // sat's network-corrected ambiguity across the step); it lands at the sat's
-            // next actual emit (below).  Effectively unreachable with per-epoch checking.
+            // The prior version is no longer retained, so Δ_eph cannot be computed and
+            // the clock stepped by an unknown amount.  Force a per-satellite
+            // discontinuity (the consumer resets this satellite's network-corrected
+            // ambiguity across the step); NetworkSolPrep lands it at the satellite's next
+            // actual emit.  Not expected when the check runs every epoch.
             eph_cutover_disc_pending.insert(sat);
             log->warn("Network (Card 6): {} eph cutover IODE {}->{} but the prior version "
                       "is no longer held — forcing a per-sat discontinuity (Δ_eph "

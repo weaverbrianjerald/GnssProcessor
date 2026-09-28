@@ -1,23 +1,21 @@
 /**
  * @file test_warm_resume_require.cpp
- * @brief HB-1 — `network.state_snapshot_require` must MEAN "refuse", on EVERY
- *        refusal branch (docs/SPEC_event_harness.md §6b, §11 Card A).
+ * @brief `network.state_snapshot_require` means "refuse" on every refusal branch
+ *        (docs/SPEC_event_harness.md §6b, §11 Card A; HB-1).
  *
- * The defect this file guards against is not "the guard is missing"; it is that
- * the guard said different things on different branches.  An event-harness leg
- * relaunched in place hits the NON-POSITIVE-AGE branch (it overwrote its own seed
- * at its first emitted epoch, so the snapshot IS the epoch being resumed to), and
- * what an operator saw was a `COLD START` warning followed, ~26 s later, by the
- * process dying at 0xC0000409 with the reason nowhere in the log.  The run was in
- * fact refused — that exit code is MSVC's `abort()` fast-fail from an unhandled
- * exception — but nothing readable said so, so the leg read as a cold one.
+ * The requirement is that every refusal branch reports the same way under
+ * `require`.  An event-harness leg relaunched in place hits the non-positive-age
+ * branch: it overwrote its own seed at its first emitted epoch, so the snapshot is
+ * the epoch being resumed to.  If that branch logs only a `COLD START` warning and
+ * the refusal then surfaces as an unhandled exception, the process exits with
+ * 0xC0000409 (MSVC's `abort()` fast-fail) and no reason in the log, and the leg
+ * reads as a cold one.
  *
- * The policy therefore lives in ONE pure function,
- * @c NetworkStateSnapshotIO::warmResumeRefusalMessage, which is what this file
- * tests: every refusal class produces a fatal message under `require`, no class
- * produces one without it, and the class the harness actually hits names its own
- * remedy.  The gate itself is tested for producing the right CLASS, so the two
- * halves cannot drift apart.
+ * The policy therefore lives in one pure function,
+ * @c NetworkStateSnapshotIO::warmResumeRefusalMessage, which this file tests:
+ * every refusal class produces a fatal message under `require`, no class produces
+ * one without it, and the class the harness hits names its own remedy.  The gate
+ * is tested for producing the right class, so the two halves cannot drift apart.
  *
  * No fixture: `warmResumeAllowed` is pure and the message builder is pure.
  */
@@ -50,10 +48,10 @@ namespace {
 
 } // namespace
 
-// ----------------------------------------------------- the gate's CLASSIFICATION
+// ----------------------------------------------------- the gate's classification
 TEST(NetworkWarmResumeRequire, RelaunchInPlaceIsClassifiedNonPositiveAge) {
-    // The event-harness case, exactly: the leg wrote its own snapshot at its first
-    // emitted epoch, so the first live epoch IS the snapshot epoch — age 0.000 s.
+    // The event-harness case: the leg wrote its own snapshot at its first emitted
+    // epoch, so the first live epoch is the snapshot epoch (age 0.000 s).
     const NetworkStateSnapshot s = snapAt(2313, 279150.0, kFp);
     const double snap_s = 2313.0 * 604800.0 + 279150.0;
     std::string reason;
@@ -63,7 +61,7 @@ TEST(NetworkWarmResumeRequire, RelaunchInPlaceIsClassifiedNonPositiveAge) {
     EXPECT_EQ(why, WarmResumeRefusal::NonPositiveAge);
     EXPECT_TRUE(contains(reason, "age 0.000 s")) << reason;
 
-    // One epoch EARLIER is the same class (it would double-fold the carry harder).
+    // One epoch earlier is the same class (it would double-fold the carry further).
     why = WarmResumeRefusal::None;
     EXPECT_FALSE(NetworkStateSnapshotIO::warmResumeAllowed(s, kFp, snap_s - 30.0, kHorizon,
                                                            &reason, &why));
@@ -75,8 +73,8 @@ TEST(NetworkWarmResumeRequire, EachGateRefusalGetsItsOwnClass) {
     const double snap_s = 2313.0 * 604800.0 + 279150.0;
     WarmResumeRefusal why = WarmResumeRefusal::None;
 
-    // Fingerprint mismatch is checked FIRST (a stale-but-matching snapshot and a
-    // fresh-but-mismatched one must not report the same thing).
+    // Fingerprint mismatch is checked first, so a fresh but mismatched snapshot
+    // reports Fingerprint, not an age class.
     EXPECT_FALSE(NetworkStateSnapshotIO::warmResumeAllowed(s, kFp + 1, snap_s + 30.0,
                                                            kHorizon, nullptr, &why));
     EXPECT_EQ(why, WarmResumeRefusal::Fingerprint);
@@ -93,10 +91,10 @@ TEST(NetworkWarmResumeRequire, EachGateRefusalGetsItsOwnClass) {
     EXPECT_EQ(why, WarmResumeRefusal::None);
 }
 
-// ------------------------------------------------------------- the REQUIRE policy
+// ------------------------------------------------------------- the require policy
 TEST(NetworkWarmResumeRequire, RequireOffNeverProducesAFatalMessage) {
-    // Without `require` every refusal is a legal cold start — the pre-card behaviour,
-    // which must stay byte-identical.
+    // Without `require` every refusal is a legal cold start, byte-identical to the
+    // behaviour before the knob existed.
     for (auto why : { WarmResumeRefusal::MissingFile, WarmResumeRefusal::ParseFailure,
                       WarmResumeRefusal::NoLiveEpochs, WarmResumeRefusal::Fingerprint,
                       WarmResumeRefusal::NonPositiveAge, WarmResumeRefusal::Stale,
@@ -108,7 +106,7 @@ TEST(NetworkWarmResumeRequire, RequireOffNeverProducesAFatalMessage) {
 }
 
 TEST(NetworkWarmResumeRequire, RequireOnIsFatalOnEveryRefusalClass) {
-    // The regression the card exists for: ONE class silently not hard-failing.
+    // The regression this guards: any single class failing to hard-fail.
     for (auto why : { WarmResumeRefusal::MissingFile, WarmResumeRefusal::ParseFailure,
                       WarmResumeRefusal::NoLiveEpochs, WarmResumeRefusal::Fingerprint,
                       WarmResumeRefusal::NonPositiveAge, WarmResumeRefusal::Stale,
@@ -118,7 +116,7 @@ TEST(NetworkWarmResumeRequire, RequireOnIsFatalOnEveryRefusalClass) {
         EXPECT_FALSE(m.empty());
         EXPECT_TRUE(contains(m, "state_snapshot_require")) << m;
         EXPECT_TRUE(contains(m, "REFUSED")) << m;
-        EXPECT_TRUE(contains(m, "DETAIL-42")) << m;   // the reason is NAMED, never swallowed
+        EXPECT_TRUE(contains(m, "DETAIL-42")) << m;   // the reason appears in the message
     }
 }
 
@@ -128,7 +126,7 @@ TEST(NetworkWarmResumeRequire, NonPositiveAgeNamesTheHarnessRemedy) {
             true, WarmResumeRefusal::NonPositiveAge, "age 0.000 s");
     EXPECT_TRUE(contains(m, "event_leg.py rerun")) << m;
     EXPECT_TRUE(contains(m, "NOT OLDER")) << m;
-    // Another class must NOT claim the harness remedy (it would be wrong advice).
+    // Another class does not name the harness remedy (it would be wrong advice).
     const std::string other = NetworkStateSnapshotIO::warmResumeRefusalMessage(
             true, WarmResumeRefusal::Fingerprint, "fingerprint mismatch");
     EXPECT_FALSE(contains(other, "event_leg.py rerun")) << other;

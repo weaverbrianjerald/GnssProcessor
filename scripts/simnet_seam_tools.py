@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""simnet_seam_tools.py -- seam / wire-realization instruments for gnss_network_product v2.
+"""simnet_seam_tools.py: seam and wire-realization instruments for gnss_network_product v2.
 
 Seven read-only instruments over the producer wire (products.txt) and the
-closed-loop consumer trace, ported 1:1 from the seam-control campaign
-scratchpad (docs/SPEC_synthetic_minimum_network.md section 18.9 quotes their
-output, so the numbers are contractual).  One shared wire parser (records
-E / C / B / P / R / U / H), one shared frequency table, stdlib only.
+closed-loop consumer trace.  docs/SPEC_synthetic_minimum_network.md section
+18.9 quotes their output, so the computations must reproduce those numbers.
+One shared wire parser (records E / C / B / P / R / U / H), one shared
+frequency table, stdlib only.
 
 Subcommands (A, B = products.txt paths; tows in GPS seconds of week):
 
@@ -17,17 +17,17 @@ Subcommands (A, B = products.txt paths; tows in GPS seconds of week):
       code-side (dB-dC) and phase-side (dP-dC) change a consumer sees,
       with the sub-cycle part of the phase side and the URA on both wires.
   walk      A B t0 t_hi [every=40]
-      Post-seam WALK of A-B relative to its value at t0: per-sat clock walk
+      Post-seam walk of A-B relative to its value at t0: per-sat clock walk
       and per-key phase-side walk, between-sat SD / max per constellation.
   quality   A B t0 t_hi [every=40]
       Wire-quality series (URA, P sigma, sigcc, H status) on both wires plus
-      the SUB-CYCLE phase-side walk of A-B (rms in cycles, count > 0.1 cyc).
+      the sub-cycle phase-side walk of A-B (rms in cycles, count > 0.1 cyc).
   steps     W t_lo t_hi [every=1] [--t-ref T]
-      Epoch-to-epoch phase-side step on ONE wire: n, rms, p50, max, counts
+      Epoch-to-epoch phase-side step on one wire: n, rms, p50, max, counts
       above 0.05 m (the contract's disc_thresh_m) and above half a cycle,
       the clock-alone and PB-alone steps, and the sub-cycle rms.
   drift     W t_a t_b
-      Total phase-side drift on ONE wire between two epochs, reduced to its
+      Total phase-side drift on one wire between two epochs, reduced to its
       sub-cycle part, per constellation; integer-class (> 0.5 cyc) count.
   consumer  run[:label] ... [--bin-min N] [--tow-lo T] [--tow-hi T] [--day0 T]
       Hourly consumer 3-D truth-error table (n, rms, p50, max) from
@@ -35,28 +35,29 @@ Subcommands (A, B = products.txt paths; tows in GPS seconds of week):
 
 Conventions shared by every subcommand:
 
-  (a) Between-satellite statistics are COMMON-MODE REMOVED per constellation:
-      the per-constellation MEDIAN of the quantity is subtracted first, so a
-      wandering datum level (which a consumer's receiver clock absorbs) can
-      not masquerade as a per-satellite effect.  'cm' columns print that
-      median; 'sd' is the sample SD (n-1) of the residuals, 'max' their
-      largest absolute value.  (`quality` and `steps` print a plain rms of
-      already-differenced quantities instead -- no median step there.)
+  (a) Between-satellite statistics have the common mode removed per
+      constellation: the per-constellation median of the quantity is
+      subtracted first, so a wandering datum level (which a consumer's
+      receiver clock absorbs) does not appear as a per-satellite effect.
+      'cm' columns print that median; 'sd' is the sample SD (n-1) of the
+      residuals, 'max' their largest absolute value.  (`quality` and `steps`
+      print a plain rms of already-differenced quantities instead, with no
+      median step.)
   (b) "Phase-side" means (P - C): satellite phase bias minus satellite clock,
-      the combination a consumer's ambiguity absorbs.  Its SUB-CYCLE part is
-      the mod-lambda CENTRED reduction  ((x/lambda + 1/2) mod 1) - 1/2  per
+      the combination a consumer's ambiguity absorbs.  Its sub-cycle part is
+      the centred mod-lambda reduction  ((x/lambda + 1/2) mod 1) - 1/2  per
       signal wavelength, which removes integer re-references (the marked
-      events) and SATURATES at +-lambda/2: a phase-side change larger than
-      half a cycle is reported as its wrapped remainder, never its true size.
-      Read the raw columns (ps, D, the |d| > 0.5 cyc counts) for the
+      events) and saturates at +-lambda/2: a phase-side change larger than
+      half a cycle is reported as its wrapped remainder, not its true size.
+      The raw columns (ps, D, the |d| > 0.5 cyc counts) carry the
       integer-class part.
 
-Fine print the outputs depend on:
+Details the outputs depend on:
   * Wavelengths: GPS L1C / L2W / L5Q and Galileo L1C / L5Q / L7Q (FREQ_HZ);
     the code signal paired with phase signal Lxy is Cxy.
-  * The H (heartbeat) record PRECEDES the E record of its own epoch on the
+  * The H (heartbeat) record precedes the E record of its own epoch on the
     wire, so the H status `quality` shows against epoch t is the heartbeat
-    written at the start of the FOLLOWING epoch; the last epoch shows '-'.
+    written at the start of the following epoch; the last epoch shows '-'.
   * `steps` counts "> 0.5 cyc" against a fixed 0.095 m (half of 0.19 m) for
     every signal; its sub-cycle rms uses the per-signal wavelength.
   * `steps` dt(h) is measured from --t-ref (default: t_lo); `consumer` bins
@@ -64,7 +65,7 @@ Fine print the outputs depend on:
 
 --selftest writes a synthetic three-epoch wire pair to a temp dir (clock
 +1.0 m on G02 stepping to +1.5 m at the third epoch; phase bias +0.19 m on
-G03/L1C stepping to +0.21 m) plus a tiny consumer trace, runs every
+G03/L1C stepping to +0.21 m) plus a small consumer trace, runs every
 subcommand on them and checks the printed numbers against hand-derived values.
 
 Usage:

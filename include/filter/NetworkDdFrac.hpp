@@ -3,10 +3,11 @@
  * @file NetworkDdFrac.hpp
  * @brief Network producer epoch block: cross-station DD fractional-residual (B5) diagnostic trace.
  *
- * Relocated VERBATIM (dedent-only, zero substitution) out of Application::runNetwork
- * at decomposition INC-11b (2026-07-22).  void, self-contained (produces no crossing
- * locals); every carry / trace object is an explicit reference into the caller's
- * state.  The caller keeps the subBegin/subEnd(SB_DDFRAC) brackets.
+ * Relocated verbatim (dedent only, no substitution) out of Application::runNetwork
+ * (decomposition INC-11b).  Returns void and is self-contained (it produces no
+ * locals that cross into the driver); every carry and trace object is an explicit
+ * reference into the caller's state.  The caller keeps the subBegin/subEnd(SB_DDFRAC)
+ * brackets.
  */
 
 #include "app/NetworkSetupResult.hpp"
@@ -32,15 +33,20 @@ namespace spdlog { class logger; }
 namespace GnssProcessor {
 
 class GnssConfig;
-class NetworkCarryVce;      // full type in app/NetworkRunContext.hpp (the .cpp)
-struct NetworkRunContext;   // app/NetworkRunContext.hpp — included in the .cpp only
-struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp — included in the .cpp only
+class NetworkCarryVce;      // filter/NetworkCarryVce.hpp, included in the .cpp only
+struct NetworkRunContext;   // app/NetworkRunContext.hpp, included in the .cpp only
+struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cpp only
 
 /**
  * @brief Emit this epoch's cross-station DD fractional-residual (B5) diagnostic trace.
- *        Forms double-differenced carried-ambiguity residuals across station pairs and
- *        reduces each to its fractional cycle for the B5 trace row.  Log-only — mutates
- *        no estimation state and is byte-identical / no-op unless the B5 trace is armed.
+ *        Forms between-station double differences of the absolute float ambiguities,
+ *        each against one reference satellite per (constellation, signal) (the
+ *        lexically lowest present at 2 or more stations by default;
+ *        network.trace_dd_fractional_ref = lowest | oldest), and reduces each to its
+ *        fractional cycle for a network_dd_fractional.csv row.  Also writes the
+ *        per-epoch phase-anchor map when that trace is open.  Trace-only: it mutates no
+ *        estimation state (only the trace's own reference-age bookkeeping and
+ *        counters), and it does nothing unless one of the two traces is open.
  *        The caller keeps the subBegin/subEnd(SB_DDFRAC) brackets.
  */
 void networkDdFrac(

@@ -9,16 +9,16 @@ sliced statistics:
   * PD-safe INC-0/1/2 run-end counters      (run.log)
   * D5 population + policy counters + sigma0 (run.log)
   * carry lifecycle: births / refloats / pop (run.log)
-  * per-QUARTER flag & birth sums            (logs/network_epoch_status.csv)
+  * per-quarter flag and birth sums          (logs/network_epoch_status.csv)
   * chord informational lifetime             (pop / births-per-epoch)
   * wall cost                                (run.log)
 
-Deliberately NOT computed here: the PSD gate, the spillway steps/structure function and
-total_IF. Those have their own tools (`parse_carry_psd.py`, `grade_dd_spillway.py`,
-`chain_stability.py`) and re-implementing them here would create a second, divergent
+Not computed here: the PSD gate, the spillway steps/structure function and total_IF.
+Those have their own tools (`parse_carry_psd.py`, `grade_dd_spillway.py`,
+`chain_stability.py`), and re-implementing them here would create a second, divergent
 definition of the same quantity. Run those separately; this is the counter sheet.
 
-`dd_sigma_cyc` is absent ON PURPOSE — it is carry-blind (SPEC_pd_safe_dd_fold.md §8).
+`dd_sigma_cyc` is absent by design: it is carry-blind (SPEC_pd_safe_dd_fold.md §8).
 """
 import csv
 import io

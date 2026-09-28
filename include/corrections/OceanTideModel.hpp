@@ -4,17 +4,19 @@
  * @file OceanTideModel.hpp
  * @brief Ocean tidal loading (OTL) displacement model using 11 major tidal constituents.
  *
- * Implements the IERS Conventions (2010) approach for computing station
- * displacements due to ocean tidal loading. The model evaluates 11 major
- * tidal constituents (M2, S2, N2, K2, K1, O1, P1, Q1, Mf, Mm, Ssa) using
- * astronomically-derived tidal arguments (Doodson variables).
+ * Computes station displacements due to ocean tidal loading with the BLQ amplitude and
+ * Greenwich phase-lag convention of the IERS Conventions (2010). The model evaluates 11
+ * major tidal constituents (M2, S2, N2, K2, K1, O1, P1, Q1, Mf, Mm, Ssa) from
+ * astronomical arguments built with Doodson multipliers. It applies no nodal
+ * corrections and no admittance interpolation to minor constituents.
  *
- * Station-specific amplitude and phase coefficients must be supplied externally,
- * e.g. from the Onsala Space Observatory ocean loading provider
- * (http://holt.oso.chalmers.se/loading/) or the IERS ocean loading tables.
+ * Station-specific amplitude and phase coefficients come from one of two sources:
+ * a BLQ file, e.g. from the Onsala Space Observatory ocean loading provider
+ * (http://holt.oso.chalmers.se/loading/) or the IERS ocean loading tables
+ * (parseBLQ()), or the EOT20 global load grid (parseEot20Load(), radial only).
  *
- * When no station-specific coefficients are available, the model provides a
- * latitude-dependent approximate model as fallback.
+ * Without station-specific coefficients the displacement is zero
+ * (computeApproximateDisplacement()).
  */
 
 #include "logging/LogManager.hpp"
@@ -69,12 +71,14 @@ namespace GnssProcessor {
      * @brief Compute ocean tidal loading station displacement.
      *
      * The model evaluates:
-     *   dr_k(t) = sum_j A_{k,j} · cos(omega_j·t + chi_j(t) + u_j(t) - phi_{k,j})
+     *   dr_k(t) = sum_j A_{k,j} · cos(chi_j(t) - phi_{k,j})
      *
-     * where k in {up, west, south}, j indexes the 11 constituents, omega_j is the
-     * tidal angular frequency, chi_j(t) is the astronomical argument, u_j(t) is
-     * the nodal correction angle, A_{k,j} is the station amplitude, and phi_{k,j}
-     * is the Greenwich phase lag.
+     * where k in {up, west, south}, j indexes the 11 constituents, chi_j(t) is the
+     * astronomical argument (Doodson multipliers applied to GMST + pi and the lunar and
+     * solar mean longitudes, plus the species phase bias), A_{k,j} is the station
+     * amplitude, and phi_{k,j} is the Greenwich phase lag.  The time dependence is
+     * carried entirely by chi_j(t); there is no separate omega_j·t term and no nodal
+     * correction u_j(t).
      *
      * The result is converted from a local (Up, West, South) frame to ECEF.
      */
@@ -101,26 +105,37 @@ namespace GnssProcessor {
         /**
          * @brief Compute the ocean tidal loading displacement in ECEF coordinates.
          *
+         * Without valid station coefficients this delegates to
+         * computeApproximateDisplacement(), which returns zero.
+         *
          * @param rx_pos Receiver ECEF position (meters).
          * @param time   GNSS epoch (GPS week + TOW).
-         * @return ECEF displacement vector (meters). Returns zero vector on error.
+         * @return ECEF displacement vector (meters). Returns zero vector on error: a
+         *         non-finite position or one with norm below 1 km, or a non-finite
+         *         displacement or one with norm above 0.5 m.
          */
         Eigen::Vector3d computeDisplacement(const Eigen::Vector3d& rx_pos, const GnssTime& time) const;
 
         /**
-         * @brief Compute approximate OTL displacement when no station coefficients are available.
+         * @brief Fallback when no station coefficients (BLQ or EOT20) are loaded.
          *
-         * Uses a latitude-dependent heuristic scaled from global average coastal amplitudes.
-         * This is a rough approximation and should only be used when no BLQ data is available.
+         * Returns the zero vector.  A latitude-scaled, phase-blind synthetic signal with
+         * the wrong Greenwich phase adds a coherent oscillation to the Up channel, which
+         * for many stations is worse than no correction; with zero, the receiver clock
+         * and ZTD absorb the residual OTL signal.  Both arguments are unused.
          *
          * @param rx_pos Receiver ECEF position (meters).
          * @param time   GNSS epoch (GPS week + TOW).
-         * @return ECEF displacement vector (meters). Returns zero vector on error.
+         * @return The zero vector.
          */
         Eigen::Vector3d computeApproximateDisplacement(const Eigen::Vector3d& rx_pos, const GnssTime& time) const;
 
         /**
          * @brief Parse a BLQ-format ocean loading file and extract coefficients for a station.
+         *
+         * The first header line (two leading spaces) whose upper-cased text contains the
+         * upper-cased station name selects the block, so the match is a case-insensitive
+         * substring match.
          *
          * @param blq_path Path to the BLQ file.
          * @param station_name Station name to search for (case-insensitive).
@@ -142,8 +157,7 @@ namespace GnssProcessor {
          *   A = sqrt(hRe² + hIm²) and φ = atan2(-hIm, hRe).
          * EOT20 carries only the radial (height) load component; horizontal
          * amplitudes are set to zero. The radial signal dominates OTL
-         * (horizontals are typically 1–3 mm peak), so this is a substantial
-         * upgrade over the latitude-scaled phase-blind fallback.
+         * (horizontals are typically 1–3 mm peak).
          *
          * @param nc_path        Path to EOT20_load.nc.
          * @param station_ecef   Receiver ECEF position (meters), used to derive
@@ -162,18 +176,19 @@ namespace GnssProcessor {
         OtlStationCoefficients station_coeffs_;
 
         /**
-         * @brief Compute the six fundamental Delaunay arguments and GMST at an epoch.
+         * @brief Compute the five fundamental Delaunay arguments and GMST at an epoch.
          *
          * Returns an array of 6 values (radians):
-         *   [0] l    Mean anomaly of the Moon
-         *   [1] l'   Mean anomaly of the Sun
-         *   [2] F    Mean argument of latitude of the Moon
-         *   [3] D    Mean elongation of the Moon from the Sun
-         *   [4] ?    Mean longitude of the ascending node of the Moon
-         *   [5] ?    Greenwich Mean Sidereal Time (GMST)
+         *   [0] l    Mean anomaly of the Moon
+         *   [1] l'   Mean anomaly of the Sun
+         *   [2] F    Mean argument of latitude of the Moon
+         *   [3] D    Mean elongation of the Moon from the Sun
+         *   [4] Ω    Mean longitude of the ascending node of the Moon
+         *   [5] GMST Greenwich Mean Sidereal Time
          *
          * @param t_centuries Julian centuries of TT from J2000.0.
-         * @param ut1_frac UT1 fractional day for GMST computation.
+         * @param ut1_frac Unused: GMST is computed from @p t_centuries, with GPS time
+         *        standing in for UT1.
          * @return Array of 6 fundamental arguments in radians.
          */
         std::array<double, 6> computeFundamentalArguments(double t_centuries, double ut1_frac) const;
@@ -182,7 +197,7 @@ namespace GnssProcessor {
          * @brief Compute the tidal argument (astronomical phase) for each constituent.
          *
          * Uses the Doodson multipliers to combine fundamental arguments into
-         * the astronomical argument ?_j for each of the 11 constituents.
+         * the astronomical argument χ_j for each of the 11 constituents.
          *
          * @param fund_args Array of 6 fundamental arguments (radians).
          * @return Array of 11 tidal arguments (radians), one per constituent.
@@ -216,15 +231,15 @@ namespace GnssProcessor {
         /**
          * @brief Doodson-Warburg species phase bias per constituent (cycles).
          *
-         * The astronomical argument assembled from DOODSON_MULTIPLIERS must
-         * carry an additional species-dependent quarter-cycle term: the
+         * The astronomical argument assembled from DOODSON_MULTIPLIERS carries an
+         * additional species-dependent quarter-cycle term: the
          * Cartwright-Tayler-Edden / Schwiderski tide-generating potential refers
-         * to a SINE rather than a COSINE when (degree + n1) is odd — i.e. +pi/2
+         * to a sine rather than a cosine when (degree + n1) is odd, i.e. +pi/2
          * for the diurnal band.  Both the standard BLQ Greenwich phase lags and
          * the EOT20/FES complex load coefficients are referenced to this
-         * canonical argument, so omitting the bias leaves the diurnal
-         * constituents (K1/O1/P1/Q1) a full 90 deg out of phase and mismodels
-         * the entire diurnal OTL contribution.
+         * canonical argument, so without the bias the diurnal constituents
+         * (K1/O1/P1/Q1) are 90 deg out of phase and the diurnal OTL contribution
+         * is mismodelled.
          *
          * Values are the IERS ARG.f / Schwiderski angfac(4,.) quarter-cycle
          * column (cycles; multiplied by 2*pi when added to the argument):
@@ -240,7 +255,8 @@ namespace GnssProcessor {
         /**
          * @brief Angular speeds of the 11 constituents (degrees per hour).
          *
-         * Used for the approximate model when Doodson arguments are not needed.
+         * Not referenced by the current code: computeApproximateDisplacement(), the
+         * model that used these speeds, returns zero.
          * Order: M2, S2, N2, K2, K1, O1, P1, Q1, Mf, Mm, Ssa
          */
         static constexpr double CONSTITUENT_SPEEDS_DEG_PER_HOUR[11] = {

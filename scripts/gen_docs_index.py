@@ -1,35 +1,34 @@
 #!/usr/bin/env python3
 """
-Generate docs/README.md — a navigable index of the docs/ corpus.
+Generate docs/README.md, a navigable index of the docs/ corpus.
 
     python scripts/gen_docs_index.py            # write docs/README.md
     python scripts/gen_docs_index.py --check     # exit 1 if out of date (CI-able)
     python scripts/gen_docs_index.py --stdout    # print, don't write
 
-WHY GENERATED: docs/ is ~95 files / ~37k lines and grows by a doc or two per
-session.  A hand-maintained index goes stale in a week; this one is rebuilt from
-the files themselves, so the cost of adding a doc is zero.
+The docs/ tree grows by a doc or two per session; a hand-maintained index goes
+stale quickly, so this one is rebuilt from the files themselves, keeping the
+cost of adding a doc at zero.
 
 Each row carries the three facts needed to decide whether to open a doc:
 
   STATUS   read from explicit markers in the doc's own header region (these docs
-           state their own status) -- CLOSED / OPEN / MIXED / unmarked.
+           state their own status): CLOSED / OPEN / MIXED / unmarked.
   IN       inbound citations from other docs, the agent memory store,
-           code+scripts, and CLAUDE.md/README.  This is the "is it load-bearing"
-           number: SPEC_day129_frame_guards is cited by ~30 source files, so it
-           must not be renamed or merged.  A finished doc with IN=0 is an
-           archive candidate (docs/attic/).
+           code and scripts, and CLAUDE.md/README. This is the load-bearing
+           count: a doc cited by many source files (for example
+           SPEC_day129_frame_guards) must not be renamed or merged. A finished
+           doc with IN = 0 is an archive candidate (docs/attic/).
   COMMIT   last commit date touching the file, or "uncommitted".
 
-Two counting rules learned the hard way:
+Two counting rules:
 
-  * `.claude/worktrees/` holds full repo copies.  An unfiltered repo-wide grep
-    reports those copies as citations and will score a live doc as uncited.
-    Only the canonical trees below are scanned.
-  * A bare stem is only matched when it is DISTINCTIVE.  Counting the stem of
-    `CONFIG.md` or `test_suite.md` matches the word "CONFIG" and the
-    `config/test_suite/` directory name, which inflated those two rows by an
-    order of magnitude in the first version of this map.
+  * `.claude/worktrees/` holds full repo copies. An unfiltered repo-wide grep
+    would report those copies as citations and score a live doc as uncited, so
+    only the canonical trees below are scanned.
+  * A bare stem is only matched when it is distinctive. Counting the stem of
+    `CONFIG.md` or `test_suite.md` also matches the word "CONFIG" and the
+    `config/test_suite/` directory name, inflating those two rows.
 """
 import argparse
 import re
@@ -49,8 +48,8 @@ CLOSED_MARKS = ["CLOSED", "LANDED", "COMMITTED", "EXECUTED", "SUPERSEDED",
 OPEN_MARKS = ["OPEN", "NOT BUILT", "UNBUILT", "TODO", "OWED", "DRAFT",
               "IN PROGRESS", "STAGED", "BLOCKED", "PENDING", "NEXT"]
 
-# Ordered; first match wins.  Tested against the current corpus -- if you add a
-# doc that lands in "Other", add a keyword here rather than renaming the doc.
+# Ordered; first match wins. Tested against the current corpus: a doc that lands
+# in "Other" should get a keyword here rather than being renamed.
 GROUPS = [
     ("Real-time / RTF",                 r"^rt_|^rtf|realtime|streaming_frontend"),
     ("Synthetic network / simulator",    r"synthetic|^sim_"),
@@ -107,7 +106,7 @@ def group_of(name: str, title: str) -> str:
 
 
 def collect_referrers():
-    """Canonical trees only -- never .claude/worktrees (full repo copies)."""
+    """Canonical trees only: .claude/worktrees holds full repo copies and is excluded."""
     files = []
     files += sorted(DOCS.glob("*.md"))
     files += sorted(MEM.glob("*.md")) if MEM.is_dir() else []

@@ -1,15 +1,15 @@
 /**
  * @file test_sim_network_fixture.cpp
- * @brief Unit battery for the synthetic MINIMUM NETWORK fixture (docs/SPEC_synthetic_minimum_network.md).
+ * @brief Unit tests for the synthetic minimum-network fixture (docs/SPEC_synthetic_minimum_network.md).
  *
- * Product-free and processor-free, like the rest of `gnss_simulator_selftest`:
- * these tests exercise the pieces that make a multi-station fixture MEAN
- * something, and they exist because each of them has a silent failure mode that
- * produces a beautiful, passing, worthless run.
+ * Product-free and processor-free, like the rest of `gnss_simulator_selftest`.
+ * These tests cover the pieces that give a multi-station fixture its meaning;
+ * each has a failure mode that is silent and still produces a passing run whose
+ * results mean nothing.
  *
- * Suite names here (`SimNetworkSeedSalt`, `SimNetworkStationConfig`,
- * `SimNetworkSatClockError`, `SimNetworkRoster`) are owned by THIS FILE ONLY —
- * the repo keeps one suite per file with zero cross-file overlap.
+ * The suite names here (`SimNetworkSeedSalt`, `SimNetworkStationConfig`,
+ * `SimNetworkSatClockError`, `SimNetworkRoster`) are owned by this file alone;
+ * the repository keeps each suite in one file, with no cross-file overlap.
  */
 
 #include <gtest/gtest.h>
@@ -53,10 +53,10 @@ GnssTime t0At(double tow, int week = 2313) {
 } // namespace
 
 // ---------------------------------------------------------------------------
-// Seed salt.  The salt is what keeps N station processes from sharing one noise,
-// multipath, slip, ZWD and receiver-clock realization.  If it collides or returns
-// the legacy sentinel, the network silently becomes perfectly conditioned and
-// meaningless, and no run gate can see it.
+// Seed salt.  The salt keeps N station processes from sharing one noise, multipath,
+// slip, ZWD and receiver-clock realization.  If it collides or returns the legacy
+// sentinel, the network becomes perfectly conditioned and meaningless, and no run
+// gate detects it.
 // ---------------------------------------------------------------------------
 
 TEST(SimNetworkSeedSalt, IsDeterministicForAName) {
@@ -73,8 +73,8 @@ TEST(SimNetworkSeedSalt, NeverReturnsTheLegacySentinel) {
 }
 
 TEST(SimNetworkSeedSalt, DistinctNamesGiveDistinctSalts) {
-    // Includes the near-miss names a real roster uses -- one character apart is the
-    // case a weak hash fails on, and it is exactly how stations get named.
+    // Includes the near-miss names a real roster uses: names one character apart are
+    // the case a weak hash fails on, and stations are named that way.
     const std::vector<std::string> names = { "SNA000SIM", "SNB000SIM", "SNC000SIM",
                                              "SND000SIM", "SNE000SIM", "SNA000SIN",
                                              "SNA001SIM", "SNA000SI",  "NSA000SIM" };
@@ -85,10 +85,10 @@ TEST(SimNetworkSeedSalt, DistinctNamesGiveDistinctSalts) {
 
 TEST(SimNetworkSeedSalt, SurvivesAJsonDoubleRoundTrip) {
     // The salt is written into a JSON child config, and a JSON number is conventionally
-    // a double (53-bit mantissa).  A full 64-bit salt comes back ROUNDED, so two
+    // a double (53-bit mantissa).  A full 64-bit salt comes back rounded, so two
     // stations differing only in the low bits would collide and share one whole noise
-    // realization -- silently, and only in the multi-station path.  Regression test for
-    // exactly that: the value must be exact through a double, both ways.
+    // realization, without any error and only in the multi-station path.  The value
+    // therefore has to survive a conversion to double and back exactly.
     for (const char* n : { "SNA000SIM", "SNB000SIM", "SNC000SIM", "SND000SIM",
                            "SNE000SIM", "SNZ000SIM" }) {
         const std::uint64_t salt = stationSeedSalt(n);
@@ -98,9 +98,10 @@ TEST(SimNetworkSeedSalt, SurvivesAJsonDoubleRoundTrip) {
 }
 
 TEST(SimNetworkSeedSalt, OneCharacterChangeMovesManyBits) {
-    // Adjacent salts would seed adjacent, correlated mt19937_64 states -- correlated
-    // enough to bias variance-component estimation, different enough that no equality
-    // check catches it.  Require a broad avalanche, not merely inequality.
+    // Adjacent salts would seed adjacent, correlated mt19937_64 states: correlated
+    // enough to bias variance-component estimation, yet different enough that no
+    // equality check catches it.  The test requires a broad avalanche (at least 16
+    // differing bits), not merely inequality.
     const std::uint64_t a = stationSeedSalt("SNA000SIM");
     const std::uint64_t b = stationSeedSalt("SNB000SIM");
     int bits = 0;
@@ -142,8 +143,8 @@ TEST(SimNetworkStationConfig, OverridesIdentityOriginAndAnchorAndStripsRoster) {
     EXPECT_DOUBLE_EQ(j["trajectory"]["lat0_deg"].get<double>(), 11.0);
     EXPECT_DOUBLE_EQ(j["trajectory"]["lon0_deg"].get<double>(), 21.0);
     EXPECT_DOUBLE_EQ(j["trajectory"]["h0_m"].get<double>(), 123.0);
-    // The ABSOLUTE anchor must be written, or every child re-derives the storm centre
-    // from its own origin and sits exactly at it.
+    // The absolute anchor has to be written; otherwise every child re-derives the
+    // storm centre from its own origin and sits exactly at it.
     EXPECT_DOUBLE_EQ(j["iono"]["center_lat_deg"].get<double>(), 44.0);
     EXPECT_DOUBLE_EQ(j["iono"]["center_lon_deg"].get<double>(), -55.0);
     // Unrelated knobs survive verbatim.
@@ -213,8 +214,8 @@ TEST(SimNetworkRoster, RejectsFewerThanThreeSolveStations) {
 }
 
 TEST(SimNetworkRoster, CountsTheConsumerOutsideTheSolve) {
-    // 3 peers + 1 held-out consumer is legal; 3 total WITH a consumer is not, because
-    // it leaves only 2 in the solve.
+    // 3 peers + 1 held-out consumer is legal; 3 in total including a consumer is not,
+    // because that leaves only 2 in the solve.
     const auto dir = tempDir("roster");
     SimConfig cfg;
     std::string err;
@@ -311,10 +312,10 @@ TEST(SimNetworkSatClockError, InactiveByDefaultAndReturnsExactlyZero) {
 }
 
 TEST(SimNetworkSatClockError, IsIndependentOfTheSatelliteSetAndItsOrder) {
-    // THE determinism property that lets N station processes agree on the satellite
-    // side.  If a satellite's series depended on the set or the iteration order, two
-    // stations with different skies would inject DIFFERENT satellite clocks -- a
-    // satellite-side term made station-dependent, which grades as an estimator defect.
+    // This determinism lets N station processes agree on the satellite side.  If a
+    // satellite's series depended on the set or the iteration order, two stations
+    // with different skies would inject different satellite clocks: a satellite-side
+    // term made station-dependent, which grades as an estimator defect.
     SimConfig::SatClock cfg;
     cfg.bias0_sigma_m = 0.5;
     cfg.rate_sigma_mps = 1e-4;
@@ -347,9 +348,10 @@ TEST(SimNetworkSatClockError, DistinctSatellitesGetDistinctRealizations) {
 }
 
 TEST(SimNetworkSatClockError, RandomWalkFirstEpochIsUndisturbedAndScalesAsSqrtQdt) {
-    // sigma per step = sqrt(q*dt) -- the SAME convention the producer's
-    // filter.process_noise.sat_clock_q uses, so injected truth and the estimator's
-    // stochastic model are directly comparable.  q_phys ~ 3e-8 is ~0.9 mm / 30 s.
+    // sigma per step = sqrt(q*dt), the convention the producer's
+    // filter.process_noise.sat_clock_q also uses, so injected truth and the
+    // estimator's stochastic model are directly comparable.  q_phys ~ 3e-8 m²/s gives
+    // ~0.95 mm per 30 s step.
     SimConfig::SatClock cfg;
     cfg.rw_q_m2ps = 3e-8;
     const double dt = 30.0;
@@ -380,7 +382,7 @@ TEST(SimNetworkSatClockError, RandomWalkFirstEpochIsUndisturbedAndScalesAsSqrtQd
             ++cnt;
         }
     const double rms = std::sqrt(ss / static_cast<double>(cnt));
-    const double expect = std::sqrt(cfg.rw_q_m2ps * dt);       // ~9.3e-4 m
+    const double expect = std::sqrt(cfg.rw_q_m2ps * dt);       // ~9.5e-4 m
     EXPECT_NEAR(rms, expect, 0.05 * expect) << "rms=" << rms << " expect=" << expect;
 }
 
@@ -402,7 +404,7 @@ TEST(SimNetworkSatClockError, ScriptedStepIsHeldFromItsEpochOnward) {
     // From the step epoch onward: held, not an impulse.
     EXPECT_DOUBLE_EQ(e.metres("G07", t0At(302400.0 + 30.0 * 9)), 2.5);   // epoch 10
     EXPECT_DOUBLE_EQ(e.metres("G07", t0At(302400.0 + 30.0 * 19)), 2.5);  // last epoch
-    // And it touches nobody else -- an event that leaked would grade as a false alarm.
+    // Other satellites are untouched; an event that leaked would grade as a false alarm.
     EXPECT_DOUBLE_EQ(e.metres("G08", t0At(302400.0 + 30.0 * 15)), 0.0);
 }
 
@@ -444,8 +446,9 @@ TEST(SimNetworkSatClockError, InterpolatesOffGridAndClampsAtBothEnds) {
 }
 
 TEST(SimNetworkSatClockError, RefusesAStepOnASatelliteItDoesNotGenerate) {
-    // An event that injects nothing is graded downstream as an UNDETECTED event, i.e.
-    // it reads as a guard defect rather than a fixture typo.  Fail loudly instead.
+    // An event that injects nothing is graded downstream as an undetected event, i.e.
+    // it reads as a guard defect rather than a fixture typo.  build() fails instead
+    // and names the satellite.
     SimConfig::SatClock cfg;
     SimConfig::ScriptedSatClockStep ev;
     ev.sat = "G31";
@@ -470,7 +473,7 @@ TEST(SimNetworkSatClockError, TruthFileIsWrittenOnlyWhenActive) {
     std::string err;
     ASSERT_TRUE(inactive.build(off, { "G01" }, t0At(302400.0), 30.0, 5, &err)) << err;
     EXPECT_TRUE(inactive.writeTruth(p));
-    // An ABSENT file says "this channel was not simulated"; an empty one cannot.
+    // An absent file says "this channel was not simulated"; an empty one cannot.
     EXPECT_FALSE(std::filesystem::exists(p));
 
     SimConfig::SatClock on;
@@ -519,7 +522,7 @@ TEST(SimNetworkSatClockError, ConfigLoaderValidatesTheStepList) {
                          "sat_clock":{"steps":[{"sat":"G05","epoch":5}]}})");
     EXPECT_FALSE(loadSimConfig(empty, c3, &err));
 
-    // A negative 1-sigma is a sign error, not a knob.
+    // A negative random-walk density is a sign error, not a knob.
     SimConfig c4;
     const auto neg = dir / "neg.json";
     writeText(neg, R"({"sat_clock":{"rw_q_m2ps":-1e-8}})");

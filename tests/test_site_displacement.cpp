@@ -3,20 +3,20 @@
  * @brief Unit tests for the geophysical site-displacement corrections.
  *
  * Scope: the three GnssCorrections displacement models that move the station
- * marker at the cm-to-sub-mm level —
+ * marker at the cm-to-sub-mm level:
  *  - computeSolidEarthTideDisplacement      IERS 2010 dehanttideinel port
  *  - computeOceanPoleTideDisplacement       IERS 2010 Sec. 7.1.5 / Desai 2002
  *  - computeAtmosphericTideDisplacement     S1/S2 thermal tide
  *
- * Depth: external-oracle vector locks, not re-derivations of our own tables.
- * The solid-earth case uses the OFFICIAL published test vector from the IERS
- * dehanttideinel.f header; the ocean-pole case uses an independent Python
- * oracle (scripts/ocean_pole_tide_reference.py) over a verbatim row of the
- * IERS opole grid; the atmospheric case pins the coefficient index mapping,
- * the S1/S2 argument scaling, and the ENU->ECEF rotation against hand-
- * computed values. That independence is the point: a prior version of the
- * solid-earth test parsed the Step-2 table out of the C++ source and was
- * therefore structurally blind to table-value errors.
+ * Method: vector checks against external oracles, not re-derivations of the
+ * project's own tables.  The solid-earth case uses the official published test
+ * vector from the IERS dehanttideinel.f header; the ocean-pole case uses an
+ * independent Python oracle (scripts/ocean_pole_tide_reference.py) over a
+ * verbatim row of the IERS opole grid; the atmospheric case pins the coefficient
+ * index mapping, the S1/S2 argument scaling, and the ENU->ECEF rotation against
+ * hand-computed values.  The oracles are independent of the C++ source on purpose:
+ * a test that reads its expected values out of the tables it checks cannot detect
+ * table-value errors.
  *
  * Ocean tide loading (OceanTideModel) and the grid loaders are validated
  * separately; the SIF/OTL sign-convention work has its own coverage.
@@ -41,20 +41,18 @@ namespace GnssProcessor {
 namespace {
 
 // ============================================================================
-// Solid Earth tide (IERS 2010) — official dehanttideinel test vector
+// Solid Earth tide (IERS 2010): official dehanttideinel test vector
 // ============================================================================
 //
-// GnssCorrections::computeSolidEarthTideDisplacement is a faithful port of the
-// IERS Conventions dehanttideinel routine (Step 1 in-phase degree 2/3, Step 1
+// GnssCorrections::computeSolidEarthTideDisplacement is a port of the IERS
+// Conventions dehanttideinel routine (Step 1 in-phase degree 2/3, Step 1
 // out-of-phase diurnal/semidiurnal + L1, Step 2 diurnal Table 7.3a and long-
-// period Table 7.3b).  It is pinned here against the OFFICIAL published test
-// vector from the IERS dehanttideinel.f header — a genuine external oracle,
-// not a re-derivation of our own tables.  (The prior test parsed the Step-2
-// table out of the C++ source and so was structurally blind to table-value
-// errors; a transcription bug that zeroed K1 and inflated P1 — a ~1 cm diurnal
-// radial error — slipped past it.  This vector test catches that class of bug:
-// the displacement is sensitive to every band, including the sub-mm Step-1
-// out-of-phase terms, at the 1e-4 m tolerance below.)
+// period Table 7.3b).  It is pinned here against the official published test
+// vector from the IERS dehanttideinel.f header, an external oracle rather than
+// a re-derivation of the project's own tables.  A Step-2 transcription error
+// (for example a zeroed K1 and an inflated P1, a diurnal radial error of about
+// 1 cm) fails this test: the displacement is sensitive to every band, including
+// the sub-mm Step-1 out-of-phase terms, at the 1e-4 m tolerance below.
 //
 // Inputs and expected output are verbatim from the IERS reference:
 //   XSTA = (4075578.385, 931852.890, 4801570.154) m            (φ≈49°)
@@ -75,11 +73,10 @@ TEST(SolidEarthTideTest, MatchesIersOfficialVector) {
     const Eigen::Vector3d expected(0.07700420357108126,
                                    0.06304056321824968,
                                    0.05516568152597247);
-    // The port reproduces the official vector to ~6e-5 m — within
-    // dehanttideinel's own ~0.1 mm accuracy and ~200x below the ~12 mm
-    // corruption it replaces. The residual is a constant/rounding-lineage
-    // difference vs the reference Fortran, not a band omission (each band,
-    // incl. the sub-mm Step-1 out-of-phase terms, is exercised here).
+    // The port reproduces the official vector to about 6e-5 m, within
+    // dehanttideinel's own accuracy of about 0.1 mm. The residual is a constant
+    // and rounding difference against the reference Fortran, not a band omission
+    // (each band, including the sub-mm Step-1 out-of-phase terms, is exercised).
     EXPECT_NEAR(dx.x(), expected.x(), 1e-4) << "dx, got " << dx.x();
     EXPECT_NEAR(dx.y(), expected.y(), 1e-4) << "dy, got " << dx.y();
     EXPECT_NEAR(dx.z(), expected.z(), 1e-4) << "dz, got " << dx.z();
@@ -129,7 +126,7 @@ TEST(OceanPoleTideTest, MatchesReferenceVector) {
 }
 
 // ============================================================================
-// Atmospheric pressure loading — S1/S2 thermal tide (convention lock)
+// Atmospheric pressure loading: S1/S2 thermal tide (convention check)
 // ============================================================================
 //
 // computeAtmosphericTideDisplacement assembles the diurnal (S1) and semidiurnal
@@ -200,7 +197,7 @@ TEST(AtmosphericTideTest, S1S2ConventionAndRotation) {
     // an in-range one passes through equal to the hand-computed value.
     {
         std::array<double, 12> c{};
-        c[4] = 1.0;   // 1 m radial cos (S1) — far above the ~1.5 mm physical band
+        c[4] = 1.0;   // 1 m radial cos (S1), far above the ~1.5 mm physical band
         gc.setAtmosphericTideCoefficients(c);
         const double d_u = 1.0 * std::cos(theta_s1);
         const Eigen::Vector3d e = gc.computeAtmosphericTideDisplacement(rx0, t);

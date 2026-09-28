@@ -1,13 +1,14 @@
 /**
  * @file RtcmMsmDecoder.cpp
- * @brief MSM7 decoder for GPS/GLO/GAL/QZS/BDS/SBAS.
+ * @brief MSM4/MSM5/MSM7 decoder for GPS/GLO/GAL/QZS/BDS/SBAS.
  *
  * MSM7 layout (RTCM 10403.3 sec. 3.5.16 + Annex A):
  *
  *   Header
- *     DF002 message type                      12 bits  (consumed by dispatcher)
+ *     DF002 message type                      12 bits  (skipped; read by the dispatcher)
  *     DF003 reference station ID              12
- *     System-specific epoch (DF004/16/248/...) 30 / 27 bits
+ *     System-specific epoch (DF004/16/248/...) 30      (GLONASS: 3-bit day of week
+ *                                                       + 27-bit time of day)
  *     DF393 multiple message bit               1
  *     DF409 IODS                               3
  *     reserved                                 7
@@ -19,19 +20,23 @@
  *     DF395 sig mask                          32
  *     DF396 cell mask                  Nsat × Nsig
  *
- *   Per satellite (Nsat × ...):
+ *   Per satellite (each field packed as one block over all Nsat satellites):
  *     DF397 rough range int (ms)               8
- *     DF419 ext sat info (ALL systems in MSM5/7) 4   (GLONASS: freq channel)
+ *     DF419 ext sat info (all systems in MSM5/7) 4   (GLONASS: freq channel)
  *     DF398 rough range mod 1 ms (units 2^-10 ms) 10
  *     DF399 rough phase range rate (m/s)      14  signed
  *
- *   Per cell (Ncell = popcount(cell_mask)):
+ *   Per cell (Ncell = popcount(cell_mask); each field packed as one block over all cells):
  *     DF405 fine pseudorange    20 signed   units 2^-29 ms
  *     DF406 fine phase range    24 signed   units 2^-31 ms
  *     DF407 lock time           10          extended-range table
  *     DF420 half-cycle amb       1
  *     DF408 CNR                 10          units 1/16 dB-Hz
  *     DF404 fine phase range rate 15 signed units 0.0001 m/s
+ *
+ *   MSM4 and MSM5 use DF400 (15 bits, 2^-24 ms), DF401 (22 bits, 2^-29 ms),
+ *   DF402 (4-bit lock time) and DF403 (6-bit CNR, whole dB-Hz); MSM4 has no
+ *   DF419, DF399 or DF404 (see kMsm4 / kMsm5).
  *
  * Reconstruction:
  *   range_ms = rough_int + rough_mod·2^-10 + fine·2^-29
@@ -58,7 +63,7 @@ namespace GnssProcessor::RtcmMsm {
 
 namespace {
 
-/// Per-call logger for the MSM decode path — see logging/SafeLogger.hpp for
+/// Per-call logger for the MSM decode path.  logging/SafeLogger.hpp explains
 /// why the bare spdlog::xxx() free functions are unsafe here.
 std::shared_ptr<spdlog::logger> msmLog() {
     return Logging::safeDefaultLogger();
@@ -70,17 +75,19 @@ std::shared_ptr<spdlog::logger> msmLog() {
 struct SystemDesc {
     System system;
     char   sat_prefix;
-    int    epoch_bits;        ///< 30 for ALL systems.  GLONASS still carries 30
+    int    epoch_bits;        ///< 30 for all systems.  GLONASS also carries 30
                               ///< bits, but interprets them as 3-bit day-of-week
                               ///< + 27-bit time-of-day (see promoteEpoch), whereas
                               ///< the others are a flat 30-bit ms-of-week.
     bool   uses_glo_tod;
-    bool   has_ext_sat_info;  ///< True if this system gives DF419 MEANING (GLONASS
-                              ///< FDMA freq channel).  DF419 is PRESENT in MSM5/7
-                              ///< for all systems regardless; this flag governs
+    bool   has_ext_sat_info;  ///< True if this system assigns DF419 a meaning (GLONASS
+                              ///< FDMA freq channel).  DF419 is present in MSM5/7
+                              ///< for all systems regardless; this flag describes
                               ///< interpretation only, not bitstream consumption.
-    int    sbas_prn_offset;   ///< 119 for SBAS (PRN = bit + 119), 0 otherwise.
-    double bdt_to_gps_offset_s; ///< 14 for BDS (BDT vs GPS), 0 otherwise.
+                              ///< The decode body does not read it; it keys the
+                              ///< GLONASS channel on the system.
+    int    sbas_prn_offset;   ///< 119 for SBAS (PRN = 0-based mask bit + 1 + 119), 0 otherwise.
+    double bdt_to_gps_offset_s; ///< 14 for BDS (GPS time = BDT + 14 s), 0 otherwise.
 };
 
 constexpr SystemDesc kGps     {System::GPS,     'G', 30, false, false,   0,  0.0};
@@ -93,26 +100,26 @@ constexpr SystemDesc kBeidou  {System::BeiDou,  'C', 30, false, false,   0, 14.0
 // ---------------------------------------------------------------------------
 // MSM variant (field widths and feature flags).  MSM4/MSM5/MSM7 share the
 // same overall structure but differ in per-cell / per-sat field widths and
-// capability flags.  MSM6 (high-precision, no Doppler) is not yet emitted.
+// capability flags.  MSM6 (high precision, no Doppler) is not implemented.
 // ---------------------------------------------------------------------------
 struct MsmVariant {
-    int    msm_subtype;            ///< 4 or 7.
+    int    msm_subtype;            ///< 4, 5 or 7.
     int    bits_fine_pr;
     int    bits_fine_phase;
     int    bits_lock;
     int    bits_cnr;
     bool   has_range_rate;         ///< Per-sat rough + per-cell fine, only in MSM5/7.
-    bool   honour_ext_sat_info;    ///< DF419 present in the bitstream (MSM5/MSM7) —
-                                   ///< read 4·Nsat bits for EVERY system, not just GLONASS.
-    double scale_fine_pr_ms;       ///< 2^-24 (MSM4) or 2^-29 (MSM7).
-    double scale_fine_phase_ms;    ///< 2^-29 (MSM4) or 2^-31 (MSM7).
-    double cnr_unit_dbhz;          ///< 1.0 (MSM4) or 1.0/16.0 (MSM7).
+    bool   honour_ext_sat_info;    ///< DF419 present in the bitstream (MSM5/MSM7):
+                                   ///< read 4·Nsat bits for every system, not just GLONASS.
+    double scale_fine_pr_ms;       ///< 2^-24 (MSM4/MSM5) or 2^-29 (MSM7).
+    double scale_fine_phase_ms;    ///< 2^-29 (MSM4/MSM5) or 2^-31 (MSM7).
+    double cnr_unit_dbhz;          ///< 1.0 (MSM4/MSM5) or 1.0/16.0 (MSM7).
     int    sentinel_fine_pr;       ///< Invalid-cell sentinel for fine pseudorange.
     int    sentinel_fine_phase;    ///< Invalid-cell sentinel for fine phase range.
 };
 
-// Note: scale factors are computed via `std::ldexp` of -24/-29/-31 to keep
-// them constexpr-friendly across compilers.  Equivalent to std::pow(2,-N).
+// Note: scale factors are written as 1.0 / (1ull << N) for N = 24/29/31, which
+// is exact and constexpr on every compiler.  Equivalent to std::pow(2,-N).
 constexpr MsmVariant kMsm4 {
     /*msm_subtype=*/4,
     /*bits_fine_pr=*/15,  /*bits_fine_phase=*/22,
@@ -126,11 +133,11 @@ constexpr MsmVariant kMsm4 {
     /*sentinel_fine_phase=*/-(1 << 21),  // -2097152
 };
 
-// MSM5 (RTB-2(c)): MSM4-precision range fields (DF400/DF401, 4-bit DF402
-// lock, whole-dB-Hz DF403 CNR) PLUS the Doppler capability of MSM7 (per-sat
-// DF399 rough + per-cell DF404 fine phase range rate) — and, because it is
-// an MSM5/7-family message, the per-sat DF419 extended-satellite-info block
-// IS present for every constellation (RTCM 10403.3 Table 3.5-75).
+// MSM5: MSM4-precision range fields (DF400/DF401, 4-bit DF402 lock,
+// whole-dB-Hz DF403 CNR) plus the Doppler fields of MSM7 (per-sat DF399 rough
+// and per-cell DF404 fine phase range rate).  As an MSM5/7-family message it
+// also carries the per-sat DF419 extended-satellite-info block for every
+// constellation (RTCM 10403.3 Table 3.5-75) (RTB-2(c)).
 constexpr MsmVariant kMsm5 {
     /*msm_subtype=*/5,
     /*bits_fine_pr=*/15,  /*bits_fine_phase=*/22,
@@ -179,7 +186,8 @@ const SystemDesc* descForMsgType(uint16_t mt, int expected_sub, int& subtype_out
 
 // ---------------------------------------------------------------------------
 // Lock-time decode (DF407, MSM6/MSM7).  Returns lock duration in ms.
-// Source: RTCM 10403.3 Table 3.5-101.  >= 64 s after level 6.
+// Source: RTCM 10403.3 Table 3.5-101.  n = 0..63 maps to n ms; each following
+// group of 32 values starts at double the previous start and doubles the step.
 // ---------------------------------------------------------------------------
 double lockTimeMsExtended(int n) {
     if (n < 64)  return  static_cast<double>(n);
@@ -197,12 +205,12 @@ double lockTimeMsExtended(int n) {
     if (n < 448) return  131072.0 + (n - 416) *   4096.0;
     if (n < 480) return  262144.0 + (n - 448) *   8192.0;
     if (n < 512) return  524288.0 + (n - 480) *  16384.0;
-    // RTB-3 fix: DF407 is a full 10-bit field (0..1023); the doubling pattern of
-    // Table 3.5-101 continues past n=511.  n=512..703 are VALID long locks
-    // (~17.2 min .. ~18.6 h), NOT invalid — collapsing them to 0.0 makes a
-    // long-held carrier look like a lock reset to LockTimeTracker, fabricating a
-    // perpetual LLI slip on the healthiest satellites.  Continue the table, then
-    // saturate at the top level (2^26 ms) so a stable lock reads as equal maxima.
+    // DF407 is a full 10-bit field (0..1023), and the doubling pattern of
+    // Table 3.5-101 continues past n=511: n=512..703 are valid long locks
+    // (~17.5 min to ~18.4 h).  Mapping them to 0.0 would make a long-held
+    // carrier look like a lock reset to LockTimeTracker and raise an LLI slip
+    // on every epoch.  n >= 704 saturates at the top level (2^26 ms), so a
+    // stable lock reads as equal maxima (RTB-3).
     if (n < 544) return  1048576.0  + (n - 512) *   32768.0;
     if (n < 576) return  2097152.0  + (n - 544) *   65536.0;
     if (n < 608) return  4194304.0  + (n - 576) *  131072.0;
@@ -212,8 +220,8 @@ double lockTimeMsExtended(int n) {
     return 67108864.0;  // n >= 704: saturate at the top step (~18.6 h)
 }
 
-// MSM4 4-bit lock time (DF402): n=0 → 0 ms; n=1..15 → 32·2^(n-1) ms.
-// Range 32 ms .. 524288 ms (~ 8.7 minutes).
+// MSM4/MSM5 4-bit lock time (DF402): n=0 → 0 ms; n=1..15 → 32·2^(n-1) ms.
+// Range 32 ms .. 524288 ms (~8.7 minutes).
 double lockTimeMsBasic(int n) {
     if (n <= 0 || n > 15) return 0.0;
     return 32.0 * static_cast<double>(1ull << (n - 1));
@@ -270,24 +278,24 @@ double wavelengthForSuffix(System sys, const std::string& suffix) {
 }
 
 // ---------------------------------------------------------------------------
-// GLONASS FDMA helpers.  GLONASS L1/L2 are frequency-division — each satellite
-// transmits on a slot-specific carrier f = base + k·offset — so the wavelength
+// GLONASS FDMA helpers.  GLONASS L1/L2 are frequency-division: each satellite
+// transmits on a slot-specific carrier f = base + k·offset, so the wavelength
 // is per-satellite, keyed by the FDMA channel number k (-7..+6).
 // ---------------------------------------------------------------------------
 
 // Decode the RTCM DF419 "Extended Satellite Information" (4 bits) into the FDMA
 // channel k.  Per RTCM 10403.3 / the RTKLIB reference, value v maps to k = v-7
-// for v in [0,13]; 14 and 15 are reserved/unknown.  Returns INT_MIN when the
-// channel is unknown (DF419 absent in MSM4/6, or a reserved value).
+// for v in [0,13]; 14 and 15 are reserved/unknown.  Returns INT_MIN for a
+// reserved value.  When DF419 is absent (MSM4/6) the caller uses INT_MIN directly.
 int glonassFcnFromDf419(int ext_sat_info) {
     return (ext_sat_info >= 0 && ext_sat_info <= 13) ? (ext_sat_info - 7) : INT_MIN;
 }
 
 // Per-satellite GLONASS wavelength (m) for a RINEX-3 obs-code suffix.  The FDMA
 // bands (G1='1', G2='2') need the channel k; the CDMA bands (G3='3', G1a='4',
-// G2a='6') are fixed.  Returns 0.0 when the wavelength can't be resolved
-// (unknown band, or an FDMA band with no channel) — the caller then carries the
-// phase in metres, exactly as for an unmapped signal.
+// G2a='6') are fixed.  Returns 0.0 when the wavelength cannot be resolved
+// (unknown band, or an FDMA band with no channel); the caller then carries the
+// phase in metres, as for an unmapped signal.
 double glonassWavelength(const std::string& suffix, int fcn) {
     if (suffix.empty()) return 0.0;
     switch (suffix[0]) {
@@ -307,7 +315,8 @@ double glonassWavelength(const std::string& suffix, int fcn) {
 }
 
 // ---------------------------------------------------------------------------
-// Sat ID formatting from satellite mask bit.
+// Sat ID formatting from the 0-based satellite mask bit (PRN = bit + 1; SBAS
+// adds sbas_prn_offset, so the first SBAS bit formats as "S120").
 // ---------------------------------------------------------------------------
 std::string formatSat(const SystemDesc& sys, int bit_index) {
     char buf[8];
@@ -326,9 +335,8 @@ std::string formatSat(const SystemDesc& sys, int bit_index) {
 // Nearest-continuation week promotion (RTB-1(a); RTKLIB adjweek).  Given a
 // mod-week time @p tow and a continuous-GPS-seconds anchor (the caller's
 // last-known stream time, host clock only at cold start), pick the week that
-// minimizes |week·604800 + tow − anchor|.  A non-positive anchor preserves
-// the legacy "no week available" behaviour (week 0), which direct decoder
-// calls (tests) rely on.
+// minimizes |week·604800 + tow − anchor|.  A non-positive anchor returns
+// week 0 ("no week available"), which direct decoder calls (tests) rely on.
 int nearestWeek(double anchor_gps_seconds, double tow) {
     if (anchor_gps_seconds <= 0.0) return 0;
     const int w = static_cast<int>(std::floor(
@@ -338,18 +346,18 @@ int nearestWeek(double anchor_gps_seconds, double tow) {
 
 GnssTime promoteEpoch(const SystemDesc& sys, uint32_t raw, double anchor_gps_seconds) {
     if (sys.uses_glo_tod) {
-        // GLONASS MSM epoch is a 30-bit field = 3-bit day-of-week (high bits)
-        // + 27-bit time-of-day in ms (low bits) — NOT 27 bits total.  Reading
-        // it as 27 (the prior bug) read the header 3 bits short, misaligning
-        // the satellite mask and corrupting the whole GLONASS decode.
+        // The GLONASS MSM epoch is a 30-bit field: 3-bit day-of-week (high bits)
+        // + 27-bit time-of-day in ms (low bits).  decodeMsmImpl reads all 30
+        // bits (epoch_bits); reading only 27 would leave the header 3 bits short and misalign the
+        // satellite mask and everything after it.
         //
         // GLONASS runs on the UTC(SU)+3h ("Moscow") day, so the ms-of-day is
         // promoted to a full GPS-week GnssTime by anchoring on the caller's
-        // last-known continuous GPS time (host clock only at cold start —
-        // RTB-1(a)) and carrying it back through UTC (leap seconds) — see
-        // TimeUtils::glonassTodToGpsTime.  The 3-bit DOW is redundant given
-        // that anchor (it only resolves ±12 h, which the anchor already does)
-        // and is left unread for the value.
+        // last-known continuous GPS time (host clock only at cold start,
+        // RTB-1(a)) and converting through UTC (leap seconds); see
+        // TimeUtils::glonassTodToGpsTime, which resolves the midnight wrap to
+        // within ±12 h of the anchor.  The 3-bit day-of-week is therefore not
+        // needed and its value is not used.
         const uint32_t tod_ms = raw & 0x7FFFFFFu;       // DF034 low 27 bits (ms-of-day)
         return TimeUtils::glonassTodToGpsTime(static_cast<double>(tod_ms) * 1e-3,
                                               anchor_gps_seconds);
@@ -419,13 +427,13 @@ MsmDecodeResult decodeMsmImpl(
 
     res.epoch_time = promoteEpoch(*sys, epoch_raw, anchor_gps_seconds);
 
-    // Satellite mask (64 bits) — bit i set => satellite (i+1) present.
+    // Satellite mask (64 bits): bit i (counted from the MSB) set => satellite (i+1) present.
     const uint64_t sat_mask_hi = r.u(32);
     const uint64_t sat_mask_lo = r.u(32);
     const uint64_t sat_mask    = (sat_mask_hi << 32) | sat_mask_lo;
     if (!r.ok()) return res;
 
-    // Signal mask (32 bits) — bit i set => RTCM signal id (i+1) present.
+    // Signal mask (32 bits): bit i (counted from the MSB) set => RTCM signal id (i+1) present.
     const uint32_t sig_mask = r.u(32);
     if (!r.ok()) return res;
 
@@ -468,13 +476,13 @@ MsmDecodeResult decodeMsmImpl(
     // ------------------ Per-satellite block ------------------
     for (auto& s : sats) s.rough_range_int = static_cast<int>(r.u(8));
     // DF419 (Extended Satellite Information, 4 bits/sat) is present in the
-    // bitstream for EVERY constellation in MSM5/MSM7 — it is NOT GLONASS-only.
-    // Only GLONASS assigns it meaning (the FDMA frequency-channel number); for
-    // the other systems it is reserved, but the 4·Nsat bits are still there and
-    // MUST be consumed or the entire per-cell block reads 4·Nsat bits early
-    // (corrupting rough-range-modulo and every fine pseudorange).  Gate on the
-    // MSM variant alone (true for MSM5/MSM7, false for MSM4/MSM6) — matching
-    // RTCM 10403.3 and the cssrlib reference (rtcm.py: `if msm==5 or msm==7`).
+    // bitstream for every constellation in MSM5/MSM7, not only GLONASS.  Only
+    // GLONASS assigns it a meaning (the FDMA frequency-channel number); for the
+    // other systems it is reserved, but the 4·Nsat bits are still there and have
+    // to be consumed, or the rough-range-modulo block and the whole per-cell
+    // block are read 4·Nsat bits early.  The read is gated on the MSM variant
+    // alone (true for MSM5/MSM7, false for MSM4/MSM6), as in RTCM 10403.3 and
+    // the cssrlib reference (rtcm.py: `if msm==5 or msm==7`).
     if (V.honour_ext_sat_info) {
         for (auto& s : sats) s.ext_sat_info = static_cast<int>(r.u(4));
     }
@@ -486,8 +494,8 @@ MsmDecodeResult decodeMsmImpl(
 
     // ------------------ Per-cell block ------------------
     // RTCM packs each field block contiguously across all cells, in cell
-    // order (which is row-major sat × sig).  We decode them into parallel
-    // vectors and recombine at the end.  Field widths come from the
+    // order (which is row-major sat × sig).  The blocks are decoded into
+    // parallel vectors and recombined below.  Field widths come from the
     // variant table; range-rate fields are absent in MSM4.
     const int N = res.n_cells;
     std::vector<int>  fine_pseudorange(N, 0);
@@ -510,7 +518,8 @@ MsmDecodeResult decodeMsmImpl(
     // ------------------ Reconstruction ------------------
     // RTCM-defined sentinel values for "invalid".  The fine-pseudorange
     // and fine-phase sentinels come from the variant; per-sat sentinels
-    // (range_int=0xFF, rough_rate=−2¹³) are constant across MSM4-7.
+    // (range_int=0xFF, rough_rate=−2¹³) and the 15-bit fine-rate sentinel
+    // (−2¹⁴) are constant across MSM4-7.
     const int kInvalidFinePseudo = V.sentinel_fine_pr;
     const int kInvalidFinePhase  = V.sentinel_fine_phase;
     constexpr int kInvalidFineRate   = -(1 << 14);   // -16384
@@ -520,11 +529,12 @@ MsmDecodeResult decodeMsmImpl(
     const double c = Constants::SPEED_OF_LIGHT;
 
     // Optional one-satellite raw-field diagnostic.  Set GNSS_RTCM_DUMP_SAT=G05
-    // (or any sat id) to emit, per epoch, the raw DF397/DF398 rough-range
-    // integers, the per-signal raw DF405 fine-pseudorange integer, and the
-    // reconstructed metres — so the decoded bytes can be checked field-by-field
-    // against an independent decoder (RTKLIB / pyrtcm / cssrlib) on the SAME
-    // frame.  Read once (env is process-stable); no cost when unset.
+    // (or any sat id) to log at warn level, per epoch, the raw DF397/DF398
+    // rough-range integers, the per-signal raw fine-pseudorange integer (DF405,
+    // or DF400 in MSM4/MSM5; the log labels it DF405raw), and the reconstructed
+    // metres, so the decoded fields can be checked one by one against an
+    // independent decoder (RTKLIB / pyrtcm / cssrlib) on the same frame.  The
+    // variable is read once (the environment is process-stable); no cost when unset.
     static const char* const kDumpSat = std::getenv("GNSS_RTCM_DUMP_SAT");
 
     observations.reserve(observations.size() + sats.size());
@@ -553,8 +563,8 @@ MsmDecodeResult decodeMsmImpl(
                            sat.rough_range_mod, rough_s, rough_s * c);
         }
 
-        // Rough phase range rate (m/s).  Only present in MSM5/MSM7;
-        // marked invalid via sentinel inside that range.
+        // Rough phase range rate (m/s).  Present only in MSM5/MSM7, where the
+        // sentinel −2¹³ marks it invalid; absent or invalid gives NaN.
         const double rough_rate_mps = (!V.has_range_rate
                                        || sat.rough_range_rate == kInvalidRoughRate)
                                         ? std::nan("")
@@ -565,12 +575,13 @@ MsmDecodeResult decodeMsmImpl(
         obs.system    = sys->system;
         obs.time      = res.epoch_time;
 
-        // GLONASS FDMA channel from DF419.  Only trust ext_sat_info when DF419
-        // was actually present in the bitstream (MSM5/MSM7); on MSM4/MSM6 the
-        // field defaults to 0, which would otherwise decode to a bogus k=-7 for
-        // every satellite.  Drives the per-sat wavelength below and is carried
-        // on the observation so downstream consumers (PppUtils slot map, MW
-        // combinations) can resolve frequency.
+        // GLONASS FDMA channel from DF419.  ext_sat_info is used only when DF419
+        // was present in the bitstream (MSM5/MSM7); on MSM4/MSM6 the field stays
+        // at its default 0, which would decode to a false k=-7 for every
+        // satellite, so INT_MIN (unknown) is used instead.  The channel sets the
+        // per-sat wavelength below and is carried on the observation so
+        // downstream consumers (PppUtils slot map, MW combinations) can resolve
+        // frequency.
         const int glo_fcn = (sys->system == System::GLONASS && V.honour_ext_sat_info)
                               ? glonassFcnFromDf419(sat.ext_sat_info) : INT_MIN;
         if (sys->system == System::GLONASS) obs.glonass_freq_channel = glo_fcn;
@@ -595,7 +606,8 @@ MsmDecodeResult decodeMsmImpl(
                                    fine_m, sig.suffix, rng_s * c);
                 }
             }
-            // Phase (cycles, RINEX-3 convention).
+            // Phase (cycles, RINEX-3 convention).  When no wavelength resolves
+            // (wl = 0), the value is stored in metres under the same L code.
             if (fine_phaserange[idx] != kInvalidFinePhase) {
                 const double phase_s = rough_s
                     + static_cast<double>(fine_phaserange[idx]) * V.scale_fine_phase_ms * 1e-3;
@@ -605,13 +617,15 @@ MsmDecodeResult decodeMsmImpl(
                                          : wavelengthForSuffix(sys->system, sig.suffix);
                 obs.measurements["L" + sig.suffix] = (wl > 0.0) ? phase_m / wl : phase_m;
             }
-            // CNR (dB-Hz) — DF403 is whole dB-Hz in MSM4, DF408 is 1/16 dB-Hz in MSM7.
+            // CNR (dB-Hz): DF403 is whole dB-Hz in MSM4/MSM5, DF408 is 1/16 dB-Hz
+            // in MSM7.  A zero CNR is treated as absent.
             if (cnr[idx] != 0) {
                 obs.measurements["S" + sig.suffix] =
                     static_cast<double>(cnr[idx]) * V.cnr_unit_dbhz;
             }
-            // Doppler (Hz) — only in MSM5/MSM7.  Combine rough + fine range
-            // rate, convert to Hz via the carrier wavelength.
+            // Doppler (Hz), only in MSM5/MSM7: rough + fine range rate, converted
+            // to Hz via the carrier wavelength as D = -rate / wl.  No D value is
+            // stored when the wavelength is unknown.
             if (V.has_range_rate
                 && fine_rate[idx] != kInvalidFineRate
                 && !std::isnan(rough_rate_mps)) {
@@ -625,11 +639,11 @@ MsmDecodeResult decodeMsmImpl(
                 }
             }
             // LLI: the 0x2 half-cycle bit is set here from DF420.  The 0x1
-            // loss-of-lock bit needs HISTORY (lock-time decreased vs the
-            // previous epoch), which a stateless decoder cannot supply — the
-            // decoded lock time is therefore surfaced on lock_time_ms below
-            // and the epoch-assembly layer (RealTimeEngine + LockTimeTracker,
-            // behind realtime.msm_lli_from_locktime) derives the 0x1 bit.
+            // loss-of-lock bit needs history (lock time decreased against the
+            // previous epoch), which a stateless decoder cannot supply, so the
+            // decoded lock time goes on lock_time_ms below and the epoch-assembly
+            // layer (RealTimeEngine + LockTimeTracker, behind
+            // realtime.msm_lli_from_locktime) derives the 0x1 bit.
             int lli = 0;
             if (half_amb[idx]) lli |= 0x2;
             obs.lli_flags["L" + sig.suffix] = lli;

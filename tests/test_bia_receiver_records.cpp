@@ -1,28 +1,30 @@
 /**
  * @file test_bia_receiver_records.cpp
- * @brief Item 0b unblock (docs/SPEC_level_information_budget.md §17, §28): the
- *        BIA parser's RECEIVER bias records.
+ * @brief Tests for the BIA parser's receiver bias records (Item 0b,
+ *        docs/SPEC_level_information_budget.md §17, §28).
  *
- * The parser skipped every station-bearing line silently (satellite-only by
- * construction) — 6797 records/day in the COD MGX OSB file alone — and rejected
- * DSB records outright, which is the record type the CAS MGEX DCB product uses
- * for the NONZERO receiver DCBs the ladder's final rung needs.  The 2026-08-08
- * 12 h S2H verdict promoted this from "known-latent" to "the measured blocker
- * of the level endpoint" (the a₀₀ anchor's authority is insufficient in BOTH
- * carry postures; external receiver DCBs are the designed authority).
+ * The BIA parser reads station-bearing lines into a receiver bias vector, separate
+ * from the satellite vector, and accepts receiver DSB records.  The COD MGX OSB
+ * file carries 6797 receiver records per day, and the CAS MGEX DCB product uses
+ * receiver DSB records for the nonzero receiver DCBs that the final rung of the
+ * level ladder needs.  External receiver DCBs are the designed authority for the
+ * level endpoint, since the a₀₀ anchor's authority is insufficient in both carry
+ * postures (12 h S2H verdict).
  *
- * Pinned here:
+ * Checked here:
  *   1. Receiver OSB lines (COD format: 1-char system in the PRN field, 4-char
- *      station) parse into the RECEIVER vector with ns→m conversion.
+ *      station) parse into the receiver vector with ns→m conversion.
  *   2. Receiver DSB lines (CAS format: two observation codes) parse with both
  *      signals and the is_dsb flag.
- *   3. The satellite vector is UNTOUCHED by receiver/DSB content — same count,
- *      same values, byte-identical consumers (the card's structural guarantee).
- *   4. Satellite DSB lines are skipped (counted, out of scope) — never folded
- *      into the OSB vector whose consumers assume observable-specific semantics.
- *   5. An all-receiver file (the CAS DCB shape) is a LEGAL parse; a file with
- *      neither population still fails loud.
- *   6. Malformed receiver lines warn-and-skip without poisoning the rest.
+ *   3. The satellite vector is unchanged by receiver/DSB content (same count,
+ *      same values), so its consumers stay byte-identical (the card's structural
+ *      guarantee).
+ *   4. Satellite DSB lines are skipped and counted, never folded into the OSB
+ *      vector, whose consumers assume observable-specific semantics.
+ *   5. An all-receiver file (the CAS DCB shape) parses successfully; a file with
+ *      neither population still fails.
+ *   6. A malformed receiver line is warned about and skipped without affecting
+ *      the other lines.
  *
  * Line formats are copied character-for-character from the real
  * COD0MGXFIN_20241290000_01D_01D_OSB.BIA on disk (fixed-width SINEX_BIAS).
@@ -72,7 +74,7 @@ const char* kRxOsb =
 const char* kRxDsb =
     " DSB  G    G   ALGO      C1C  C2W  2024:129:00000 2024:130:00000 ns                 -8.1234      0.0300\n";
 
-// Satellite DSB line (CAS satellite DCB shape) — out of scope, counted skip.
+// Satellite DSB line (CAS satellite DCB shape): out of scope, skipped and counted.
 const char* kSatDsb =
     " DSB  G049 G01           C1C  C2W  2024:129:00000 2024:130:00000 ns                 -1.2345      0.0100\n";
 
@@ -126,7 +128,7 @@ TEST(BiaReceiverRecords, ReceiverDsbLinesCarryBothSignals) {
     EXPECT_NEAR(r.rx[0].bias, -8.1234 * kNsToM, 1e-9);
 }
 
-// The card's structural guarantee: the satellite vector is IDENTICAL with and
+// The card's structural guarantee: the satellite vector is identical with and
 // without receiver/DSB content in the file.
 TEST(BiaReceiverRecords, SatelliteVectorIsUntouchedByReceiverContent) {
     const auto plain = parse("sat_only", kSatOsb);
@@ -140,13 +142,13 @@ TEST(BiaReceiverRecords, SatelliteVectorIsUntouchedByReceiverContent) {
         EXPECT_EQ(plain.sats[i].signal, mixed.sats[i].signal);
         EXPECT_DOUBLE_EQ(plain.sats[i].bias, mixed.sats[i].bias);
     }
-    // Satellite DSB stayed OUT of both vectors (out-of-scope, counted).
+    // The satellite DSB line is in neither vector (out of scope, counted).
     EXPECT_EQ(mixed.sats.size(), 2u);
     for (const auto& rb : mixed.rx) EXPECT_FALSE(rb.station.empty());
 }
 
-// The CAS MGEX DCB shape: receiver records only.  Legal parse now; the old
-// satellite-only emptiness check would have failed the whole file.
+// The CAS MGEX DCB shape: receiver records only.  The parse succeeds because
+// parseBia fails only when both the satellite and the receiver sets are empty.
 TEST(BiaReceiverRecords, AllReceiverFileIsALegalParse) {
     const auto r = parse("rx_only", std::string(kRxOsb) + kRxDsb);
     EXPECT_TRUE(r.ok);
@@ -160,7 +162,7 @@ TEST(BiaReceiverRecords, EmptyFileStillFailsLoud) {
 }
 
 TEST(BiaReceiverRecords, MalformedReceiverLinesSkipWithoutPoisoning) {
-    // Bad unit, bad observation code, non-numeric bias — each skips alone.
+    // Bad unit, bad observation code, non-numeric bias: each line is skipped alone.
     const std::string bad =
         " OSB  G    G   ABMF      C1W       2024:129:00000 2024:130:00000 s                   1.0000      0.0006\n"
         " OSB  G    G   ABMF      X9x       2024:129:00000 2024:130:00000 ns                  1.0000      0.0006\n"
@@ -171,9 +173,8 @@ TEST(BiaReceiverRecords, MalformedReceiverLinesSkipWithoutPoisoning) {
     EXPECT_EQ(r.rx.size(), 2u);   // only the two good receiver lines
 }
 
-// The real COD MGX file on disk, when present: 6797 receiver records is the
-// number the old parser dropped silently every run (fixture-gated like the
-// other data-dependent smokes).
+// The real COD MGX file on disk, when present: it holds 6797 receiver records
+// (fixture-gated like the other data-dependent smoke tests).
 TEST(BiaReceiverRecords, RealCodMgxFileWhenPresent) {
     const fs::path real =
         "C:/GnssProcessor/data/2024-129/products/COD0MGXFIN_20241290000_01D_01D_OSB.BIA";
@@ -191,7 +192,7 @@ TEST(BiaReceiverRecords, RealCodMgxFileWhenPresent) {
     int gps_nonzero = 0;
     for (const auto& rb : parser.getReceiverBiases())
         if (rb.constellation == 'G' && std::abs(rb.bias) > 1e-6) ++gps_nonzero;
-    EXPECT_LT(gps_nonzero, 60);   // 56/57 exactly zero per the record — allow drift
+    EXPECT_LT(gps_nonzero, 60);   // 56/57 exactly zero per the record; the bound allows drift
 }
 
 }  // namespace

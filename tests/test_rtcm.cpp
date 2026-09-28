@@ -263,7 +263,7 @@ TEST(RtcmParserDecodeTest, StationCoords1005) {
 }
 
 // ============================================================================
-// SsrCorrectionStore — push/get + staleness
+// SsrCorrectionStore: push/get and staleness
 // ============================================================================
 TEST(SsrCorrectionStoreTest, PushAndQuery) {
     auto& store = SsrCorrectionStore::getInstance();
@@ -288,10 +288,10 @@ TEST(SsrCorrectionStoreTest, PushAndQuery) {
 }
 
 // hasCodeBias is the per-(sat,signal) coverage predicate that suppresses
-// redundant sat-bias STATE allocation in MeasurementModel.  Its contract: a
-// pure presence check that must agree with getCodeBias's lookup — including the
-// case getCodeBias != 0.0 cannot distinguish, a PRESENT-but-zero entry, which
-// must read as covered (the provider's bias set defines that signal's datum).
+// redundant sat-bias state allocation in MeasurementModel.  Its contract: a pure
+// presence check that agrees with getCodeBias's lookup, including the case that
+// getCodeBias != 0.0 cannot distinguish: an entry that is present but zero reads
+// as covered (the provider's bias set defines that signal's datum).
 TEST(SsrCorrectionStoreTest, HasCodeBiasPresenceContract) {
     auto& store = SsrCorrectionStore::getInstance();
     store.clear();
@@ -307,12 +307,12 @@ TEST(SsrCorrectionStoreTest, HasCodeBiasPresenceContract) {
     EXPECT_TRUE(store.hasCodeBias("E16", "C1C"));
     EXPECT_NEAR(store.getCodeBias("E16", "C1C"), 1.04, 1e-12);
 
-    // Present-but-zero: hasCodeBias is TRUE even though getCodeBias is 0.0 —
-    // the distinction the suppression gate relies on.
+    // Present but zero: hasCodeBias is true although getCodeBias is 0.0; the
+    // suppression gate relies on this distinction.
     EXPECT_TRUE(store.hasCodeBias("E16", "C7X"));
     EXPECT_NEAR(store.getCodeBias("E16", "C7X"), 0.0, 1e-12);
 
-    // Absent signal on a present sat (e.g. stream omits E5a): NOT covered, so
+    // Absent signal on a present sat (e.g. the stream omits E5a): not covered, so
     // the sat-bias state is still allocated as its only correction.
     EXPECT_FALSE(store.hasCodeBias("E16", "C5Q"));
     EXPECT_NEAR(store.getCodeBias("E16", "C5Q"), 0.0, 1e-12);
@@ -340,15 +340,16 @@ TEST(SsrCorrectionStoreTest, StalenessRejected) {
 }
 
 // ============================================================================
-// RTA-13 — obs-code attribute-mismatch counters + optional CODE band fallback
+// Observation-code attribute-mismatch counters and the optional code band
+// fallback (RTA-13)
 // ============================================================================
 
 namespace {
 
-// One satellite carrying a C5Q code bias and an L5Q phase bias — the classic
-// "receiver tracks the X attribute, network emitted only Q" fixture.  Owned
-// stores throughout: the counters are per-store diagnostics and the tests must
-// stay order-independent of the singleton.
+// One satellite carrying a C5Q code bias and an L5Q phase bias: the receiver
+// tracks the X attribute and the network emitted only Q.  The tests use owned
+// stores throughout, because the counters are per-store diagnostics and the
+// tests must not depend on the singleton's state or on test order.
 void pushAttrFixture(SsrCorrectionStore& store, const GnssTime& t) {
     SsrCodeBias cb;
     cb.sat = "G01";
@@ -368,10 +369,10 @@ void pushAttrFixture(SsrCorrectionStore& store, const GnssTime& t) {
 
 } // namespace
 
-// Fallback OFF (default): an exact miss with a same-band sibling present stays a
-// miss (bias 0 / nullopt) but increments the per-(sat,signal,domain) counter —
-// in BOTH domains and through BOTH the no-time and the age-gated overloads.  A
-// miss with NO same-band sibling counts nothing (it is a coverage gap, not an
+// Fallback off (default): an exact miss with a same-band sibling present stays a
+// miss (bias 0 / nullopt) but increments the per-(sat,signal,domain) counter, in
+// both domains and through both the no-time and the age-gated overloads.  A miss
+// without a same-band sibling counts nothing (it is a coverage gap, not an
 // attribute mismatch).
 TEST(SsrBiasAttrMismatchTest, ExactMissWithSiblingCountedBothDomains) {
     SsrCorrectionStore store;
@@ -398,10 +399,10 @@ TEST(SsrBiasAttrMismatchTest, ExactMissWithSiblingCountedBothDomains) {
     EXPECT_TRUE(store.biasAttributeMismatchCounts().empty());
 }
 
-// Fallback ON: the CODE domain consumes the same-band sibling's bias — and
-// hasCodeBias agrees (a covered signal must never be both estimated and
-// SSR-corrected) — while PHASE stays exact-match (integer property) and keeps
-// counting.  The mismatch is still counted under fallback so it stays visible.
+// Fallback on: the code domain consumes the same-band sibling's bias, and
+// hasCodeBias agrees (a covered signal must not be both estimated and
+// SSR-corrected).  The phase domain stays exact-match (integer property) and keeps
+// counting.  The code mismatch is still counted under fallback so it stays visible.
 TEST(SsrBiasAttrMismatchTest, BandFallbackCodeOnlyNeverPhase) {
     SsrCorrectionStore store;
     const GnssTime t{2300, 100.0};
@@ -420,7 +421,7 @@ TEST(SsrBiasAttrMismatchTest, BandFallbackCodeOnlyNeverPhase) {
     EXPECT_NEAR(store.getCodeBias("G01", "C2W"), 0.0, 1e-15);
     EXPECT_FALSE(store.hasCodeBias("G01", "C2W"));
 
-    // Phase: NEVER falls back — nullopt through both overloads.
+    // Phase does not fall back: nullopt through both overloads.
     EXPECT_FALSE(store.getPhaseBias("G01", "L5X").has_value());
     EXPECT_FALSE(store.getPhaseBias("G01", "L5X", t, 30.0).has_value());
 
@@ -431,9 +432,9 @@ TEST(SsrBiasAttrMismatchTest, BandFallbackCodeOnlyNeverPhase) {
     EXPECT_EQ(counts.at("G01|L5X|L"), 2u);
 }
 
-// Fallback OFF keeps hasCodeBias exact-match — the pre-RTA-13 contract — and a
-// STALE record never counts (staleness is a different failure than attribute
-// mismatch; the aged overloads gate freshness FIRST).
+// Fallback off keeps hasCodeBias an exact-match check (the contract that predates
+// RTA-13), and a stale record does not count: staleness is a different failure
+// from attribute mismatch, and the aged overloads check freshness first.
 TEST(SsrBiasAttrMismatchTest, FallbackOffCoverageExactAndStaleNotCounted) {
     SsrCorrectionStore store;
     const GnssTime t{2300, 100.0};
@@ -448,30 +449,31 @@ TEST(SsrBiasAttrMismatchTest, FallbackOffCoverageExactAndStaleNotCounted) {
     EXPECT_NEAR(store.getCodeBias("G01", "C5X", stale_q, 30.0), 0.0, 1e-15);
     EXPECT_FALSE(store.getPhaseBias("G01", "L5X", stale_q, 30.0).has_value());
 
-    // Nothing counted: hasCodeBias is a presence check (never counts — it runs
-    // per state-allocation gate, not per applied row) and the stale lookups
-    // rejected on age before the signal map was consulted.
+    // Nothing counted: hasCodeBias is a presence check and does not count (it
+    // runs per state-allocation gate, not per applied row), and the stale lookups
+    // were rejected on age before the signal map was consulted.
     EXPECT_TRUE(store.biasAttributeMismatchCounts().empty());
 }
 
-// RTA-13 fix: a combined iono-free key ("C1W_C5X") must NEVER band-fall-back to
-// a raw single-signal sibling ("C1C").  Its first two chars ("C1") match, but a
-// combined observable's DCB is not a single-band bias — returning C1C's bias
-// would silently corrupt the IF code residual, and even fallback-OFF it would
-// inflate the mismatch counter.  Combined keys exact-miss (0 / not-covered) and
-// are NOT counted, with the band fallback both off and on.
+// A combined iono-free key ("C1W_C5X") must not band-fall-back to a raw
+// single-signal sibling ("C1C").  Its first two chars ("C1") match, but a combined
+// observable's DCB is not a single-band bias: returning C1C's bias would corrupt
+// the IF code residual without notice, and with the fallback off it would still
+// inflate the mismatch counter.  Combined keys exact-miss (0, not covered) and
+// are not counted, with the band fallback both off and on (RTA-13).
 TEST(SsrBiasAttrMismatchTest, CombinedIfKeyNeverBandFallsBack) {
     SsrCorrectionStore store;
     const GnssTime t{2300, 100.0};
     pushAttrFixture(store, t);   // G01 carries single-signal C1C, C5Q
 
-    // Fallback OFF (default): combined key misses to 0, not covered, never counts.
+    // Fallback off (default): the combined key misses to 0, is not covered, and
+    // does not count.
     EXPECT_NEAR(store.getCodeBias("G01", "C1W_C5X"), 0.0, 1e-15);
     EXPECT_NEAR(store.getCodeBias("G01", "C1W_C5X", t, 30.0), 0.0, 1e-15);
     EXPECT_FALSE(store.hasCodeBias("G01", "C1W_C5X"));
     EXPECT_TRUE(store.biasAttributeMismatchCounts().empty());
 
-    // Fallback ON: still no spurious single-band bias for the combined key.
+    // Fallback on: still no spurious single-band bias for the combined key.
     store.setCodeBiasBandFallback(true);
     EXPECT_NEAR(store.getCodeBias("G01", "C1W_C5X"), 0.0, 1e-15);
     EXPECT_NEAR(store.getCodeBias("G01", "C1W_C5X", t, 30.0), 0.0, 1e-15);
@@ -480,7 +482,7 @@ TEST(SsrBiasAttrMismatchTest, CombinedIfKeyNeverBandFallsBack) {
 }
 
 // ============================================================================
-// Apply helpers — RAC frame + clock polynomial
+// Apply helpers: RAC frame and clock polynomial
 // ============================================================================
 TEST(SsrApplyTest, RadialOnlyTransform) {
     // Sat at +X axis at GEO altitude, moving in +Y; radial frame:
@@ -537,7 +539,7 @@ TEST(SsrApplyTest, ClockHighRateAdds) {
 }
 
 // ============================================================================
-// IODE match semantics — gates the SSR overlay for the realtime PPP-RTK path.
+// IODE match semantics: the gate on the SSR overlay for the realtime PPP-RTK path.
 // ============================================================================
 TEST(SsrIodeMatchTest, BothUnknownPasses) {
     // Post-processing case: SP3-derived OrbitData carries iode=-1.
@@ -545,8 +547,8 @@ TEST(SsrIodeMatchTest, BothUnknownPasses) {
 }
 
 TEST(SsrIodeMatchTest, OneSideUnknownPasses) {
-    // Permissive on either side missing — preserves current behaviour
-    // until the broadcast-nav parser populates the broadcast IODE.
+    // Passes when either side is missing, so records are still applied while
+    // the broadcast-nav parser does not populate the broadcast IODE.
     EXPECT_TRUE(SsrCorrectionStore::iodeMatches(-1, 42));
     EXPECT_TRUE(SsrCorrectionStore::iodeMatches(42, -1));
 }
@@ -557,15 +559,15 @@ TEST(SsrIodeMatchTest, EqualPasses) {
 }
 
 TEST(SsrIodeMatchTest, MismatchRejects) {
-    // The whole point: when both sides are valid and differ, the
-    // SSR record must NOT be applied to the (wrong) broadcast baseline.
+    // When both sides are valid and differ, the SSR record must not be
+    // applied to the (wrong) broadcast baseline.
     EXPECT_FALSE(SsrCorrectionStore::iodeMatches(42, 43));
     EXPECT_FALSE(SsrCorrectionStore::iodeMatches(0, 1));
     EXPECT_FALSE(SsrCorrectionStore::iodeMatches(255, 0));
 }
 
 // ============================================================================
-// MSM7 — GPS L1C single-satellite single-signal frame
+// MSM7: GPS L1C single-satellite single-signal frame
 // ============================================================================
 
 // Helper: build the bytes of an MSM7 GPS payload with one satellite (G05)
@@ -600,8 +602,8 @@ static std::vector<uint8_t> buildMsm7GpsPayload(
     pw.put(1, 1);
 
     // Per-sat block.  DF419 (extended satellite info, 4 bits) is present for
-    // EVERY system in MSM7 — written here as reserved 0 so the frame is
-    // spec-correct and the decoder's DF419 consumption stays byte-aligned.
+    // every system in MSM7; it is written here as reserved 0 so the frame is
+    // spec-correct and the decoder's DF419 consumption stays aligned.
     pw.put(8,  rough_range_int);
     pw.put(4,  0);                             // DF419 extended satellite info
     pw.put(10, rough_range_mod);
@@ -678,7 +680,7 @@ TEST(RtcmParserDecodeTest, Msm7GpsSnrFromCnrField) {
     EXPECT_NEAR(it->second, 720.0 / 16.0, 1e-9);   // 1/16 dB-Hz units
 }
 
-// Build a GPS MSM7 payload for G05 with TWO signals — 1C (id 2) and 2W (id 10) —
+// Build a GPS MSM7 payload for G05 with two signals, 1C (id 2) and 2W (id 10),
 // including DF419, so the multi-cell per-band reconstruction path is exercised.
 // Cell order is sat-major, signal-ascending → cell 0 = 1C (L1), cell 1 = 2W (L2).
 static std::vector<uint8_t> buildMsm7GpsTwoSignal(
@@ -713,13 +715,13 @@ static std::vector<uint8_t> buildMsm7GpsTwoSignal(
     return pw.bytes();
 }
 
-// Regression test for the DF419 omission: pre-fix the decoder skipped DF419
-// (4 bits/sat) for non-GLONASS systems, reading the per-cell block 4 bits early
-// and scrambling the L1/L2 split (the live stream's +124 m ionospherically-
-// impossible geometry-free).  With DF419 consumed, the two bands reconstruct to
-// the encoded values and the geometry-free is the small NEGATIVE value we set.
+// Regression test for DF419 alignment.  A decoder that skips DF419 (4 bits/sat)
+// for non-GLONASS systems reads the per-cell block 4 bits early and scrambles the
+// L1/L2 split (on a live stream this produced a +124 m geometry-free, which the
+// ionosphere cannot produce).  With DF419 consumed, the two bands reconstruct to
+// the encoded values and the geometry-free is the small negative value encoded.
 TEST(RtcmParserDecodeTest, Msm7GpsTwoSignalDf419Alignment) {
-    const int fine_2w = 8953;  // ~ +5.0 m on L2 → C2W sits ABOVE C1C (physical)
+    const int fine_2w = 8953;  // ~ +5.0 m on L2 → C2W sits above C1C (physical)
     const auto payload = buildMsm7GpsTwoSignal(/*rough_int=*/67,
                                                /*fine_1c=*/0, /*fine_2w=*/fine_2w);
 
@@ -731,7 +733,7 @@ TEST(RtcmParserDecodeTest, Msm7GpsTwoSignalDf419Alignment) {
     EXPECT_EQ(res.n_signals, 2);
     EXPECT_EQ(res.n_cells, 2);
     // DF419 alignment invariant: the decode consumes the whole payload bar the
-    // 0-7 trailing byte-pad bits.  Pre-fix this under-consumed by 4·Nsat bits.
+    // 0-7 trailing byte-pad bits.  Skipping DF419 under-consumes by 4·Nsat bits.
     EXPECT_LT(payload.size() * 8 - res.bits_consumed, 8u);
 
     ASSERT_EQ(obs.size(), 1u);
@@ -750,14 +752,14 @@ TEST(RtcmParserDecodeTest, Msm7GpsTwoSignalDf419Alignment) {
     EXPECT_NEAR(it_c1->second, exp_c1c, 1e-3);
     EXPECT_NEAR(it_c2->second, exp_c2w, 1e-3);
 
-    // Decisive guard: geometry-free C1-C2 is the small NEGATIVE value encoded,
-    // never the +124 m garbage the DF419 mis-alignment produced live.
+    // Main check: geometry-free C1-C2 is the small negative value encoded, not
+    // the large positive value a DF419 misalignment produces.
     EXPECT_NEAR(it_c1->second - it_c2->second, -fine_2w * scale * 1e-3 * c, 1e-3);
     EXPECT_LT(it_c1->second - it_c2->second, 0.0);
 }
 
 // ============================================================================
-// IGS-SSR (RTCM 4076) — IM-based dispatch reuses legacy body decoders
+// IGS-SSR (RTCM 4076): IM-based dispatch reuses the legacy body decoders
 // ============================================================================
 
 // Helper: build the bytes of an IGS-SSR 4076 GPS Clock (IM=22) payload
@@ -768,7 +770,7 @@ static std::vector<uint8_t> buildIgsSsr4076GpsClock(double c0_m, int iod_ssr) {
     pw.put(12, 4076);                       // DF002 message type
     pw.put(3,  1);                          // IGS-SSR version
     pw.put(8,  22);                         // IM: GPS Clock (IGM02)
-    pw.put(20, 100);                        // DF385 epoch ms (= 100 s into week)
+    pw.put(20, 100);                        // DF385 epoch, s (100 s into the week)
     pw.put(4,  0);                          // DF391 update interval
     pw.put(1,  0);                          // DF388 multi-message
     pw.put(4,  iod_ssr);                    // DF413 IOD-SSR
@@ -801,10 +803,10 @@ TEST(RtcmParserDecodeTest, IgsSsr4076GpsClock) {
 
 TEST(RtcmParserDecodeTest, IgsSsr4076GalileoOrbit) {
     // IM = 61 = Galileo Orbit (IGM01) per IGS-SSR Format v1.00 (GAL = 61-67).
-    // The IGS-SSR satellite block uses a UNIFORM layout for every constellation:
-    // IDF011 6-bit sat id + IDF012 8-bit GNSS IOD + 6×delta fields (NO 24-bit
-    // IODCRC).  This is NARROWER than the legacy 1240-series Galileo orbit, which
-    // uses a 10-bit IODE — the bug this test now guards against.
+    // The IGS-SSR satellite block uses one layout for every constellation:
+    // IDF011 6-bit sat id + IDF012 8-bit GNSS IOD + 6×delta fields (no 24-bit
+    // IODCRC).  This is narrower than the legacy 1240-series Galileo orbit, which
+    // uses a 10-bit IODE; the test guards against decoding 4076 with that layout.
     BitWriter pw;
     pw.put(12, 4076);
     pw.put(3, 1);
@@ -842,7 +844,7 @@ TEST(RtcmParserDecodeTest, IgsSsr4076GalileoOrbit) {
 }
 
 TEST(RtcmParserDecodeTest, IgsSsr4076UnsupportedImReturnsFalse) {
-    // IM = 99 — unrecognised; decoder must reject without producing records.
+    // IM = 99 is unrecognised; the decoder must reject it without producing records.
     BitWriter pw;
     pw.put(12, 4076);
     pw.put(3, 1);
@@ -858,7 +860,7 @@ TEST(RtcmParserDecodeTest, IgsSsr4076UnsupportedImReturnsFalse) {
 }
 
 // ============================================================================
-// MSM4 — same structure as MSM7 but narrower precision, no Doppler
+// MSM4: same structure as MSM7 but narrower precision, no Doppler
 // ============================================================================
 TEST(RtcmParserDecodeTest, Msm4GpsSingleCellPseudorange) {
     // Build a 1074 (GPS MSM4) frame with one satellite (G05) on signal 1C.
@@ -1144,13 +1146,13 @@ TEST(LiveEphemerisStoreTest, GpsCircularOrbitRadiusAndMotion) {
 }
 
 // The IODE the store reports to the SSR overlay gate must be expressed in the
-// IGS-SSR (RTCM 4076) "GNSS IOD" matching convention, NOT the raw broadcast
-// field — otherwise the IODE-match gate never passes for Galileo/BeiDou and
-// their SSR clocks are silently dropped (the GAL/BDS "stuck at broadcast grade"
-// bug).  Per IGS-SSR Format v1.00 IDF012:
+// IGS-SSR (RTCM 4076) "GNSS IOD" matching convention, not as the raw broadcast
+// field.  Otherwise the IODE-match gate never passes for Galileo and BeiDou, and
+// their SSR clocks are dropped without notice, leaving those systems at broadcast
+// grade.  Per IGS-SSR Format v1.00 IDF012:
 //   GPS    : the 8-bit LNAV IODE (passthrough),
 //   Galileo: the low 8 bits of the 10-bit I/NAV IODnav,
-//   BeiDou : mod(toe_sow / 720, 240)  (NOT the raw 5-bit AODE).
+//   BeiDou : mod(toe_sow / 720, 240)  (not the raw 5-bit AODE).
 TEST(LiveEphemerisStoreTest, SsrMatchIodeConventionPerConstellation) {
     auto& store = LiveEphemerisStore::getInstance();
     store.clear();
@@ -1164,12 +1166,12 @@ TEST(LiveEphemerisStoreTest, SsrMatchIodeConventionPerConstellation) {
     ASSERT_TRUE(gal.has_value());
     EXPECT_EQ(gal->iode, 44);
 
-    // BeiDou: toe_sow = 7200 -> mod(7200/720, 240) = 10, NOT the raw AODE (21).
-    // toe.week is the NATIVE BDT week; the query is GPS week 2300, so the toe
+    // BeiDou: toe_sow = 7200 -> mod(7200/720, 240) = 10, not the raw AODE (21).
+    // toe.week is the native BDT week; the query is GPS week 2300, so the toe
     // must sit at BDT week 2300 - 1356 = 944 (BDT week 0 = GPS week 1356) for the
-    // epochs to coincide.  This also guards the staleness path: it lifts the
-    // BeiDou toe to GPS scale via toeGpsContinuous, so a raw-week comparison
-    // would read ~1356 weeks stale and drop the clock (has_value() == false).
+    // epochs to coincide.  This also covers the staleness path, which lifts the
+    // BeiDou toe to GPS scale via toeGpsContinuous; a raw-week comparison would
+    // read ~1356 weeks stale and drop the clock (has_value() == false).
     BroadcastEphemeris c;
     c.satellite = "C08"; c.system = System::BeiDou; c.iode = 21;   // raw AODE, must be ignored
     c.kepler.toe = GnssTime{944, 7200.0}; c.kepler.toc = GnssTime{944, 7200.0};
@@ -1260,7 +1262,7 @@ TEST(GlonassTodToGps, MiddayRoundTripWithLeapSeconds) {
 }
 
 TEST(GlonassTodToGps, MoscowDayBoundaryAfterUtcEvening) {
-    // UTC 22:00 is already the NEXT Moscow day (01:00).  The Moscow-day framing
+    // UTC 22:00 is already the next Moscow day (01:00).  The Moscow-day framing
     // must still land on the correct UTC instant.
     const GnssTime expected = TimeUtils::gregorianToGpsTime(2026, 6, 16, 22, 0, 0);
     const double   anchor   = TimeUtils::continuousGpsSeconds(expected);
@@ -1282,7 +1284,7 @@ TEST(GlonassTodToGps, AnchorJitterDoesNotShiftResult) {
 TEST(GlonassTodToGps, WrapResolvesToNearestMoscowDay) {
     // tod = 23:25 Moscow (84300 s) with an anchor 1 h later that has already
     // crossed Moscow midnight (00:25).  The +/-12 h wrap must place the tod in
-    // the PREVIOUS Moscow day, i.e. ~1 h before the anchor instant.
+    // the previous Moscow day, i.e. ~1 h before the anchor instant.
     const GnssTime expected = TimeUtils::gregorianToGpsTime(2026, 6, 16, 20, 25, 0);
     const double   anchor   = anchorOfUtc(2026, 6, 16, 21, 25, 0);
     const GnssTime got = TimeUtils::glonassTodToGpsTime(gloTodFromUtc(20, 25, 0.0), anchor);
@@ -1298,7 +1300,7 @@ TEST(GlonassTodToGps, NoAnchorReturnsZero) {
 }
 
 // ============================================================================
-// RTB-2(c): MSM5 — MSM4-precision ranges + coarse lock + Doppler + DF419
+// MSM5: MSM4-precision ranges, coarse lock, Doppler and DF419 (RTB-2(c))
 // ============================================================================
 
 // Build a 1075 (GPS MSM5) payload with one satellite (G05) on signal 1C.
@@ -1318,7 +1320,7 @@ static std::vector<uint8_t> buildMsm5GpsPayload(
     pw.put(32, 1u  << (31 - 1));               // sig mask: signal id 2 ("1C")
     pw.put(1, 1);                              // cell mask: 1×1 present
 
-    // Per-sat block: MSM5 carries DF419 for EVERY system (like MSM7) and the
+    // Per-sat block: MSM5 carries DF419 for every system (like MSM7) and the
     // 14-bit DF399 rough range rate.
     pw.put(8,  rough_range_int);               // DF397
     pw.put(4,  0);                             // DF419 extended satellite info
@@ -1376,7 +1378,7 @@ TEST(RtcmParserDecodeTest, Msm5GpsRangesDopplerAndCoarseLock) {
     ASSERT_NE(it_d, obs.measurements.end());
     EXPECT_NEAR(it_d->second, 100.0 / Constants::GPS_L1_WAVELENGTH, 1e-3);
 
-    // RTB-3: lock time surfaced through the 4-bit BASIC table:
+    // Lock time is surfaced through the 4-bit basic table (RTB-3):
     // n=5 → 32·2^(5-1) = 512 ms.
     auto it_lock = obs.lock_time_ms.find("L1C");
     ASSERT_NE(it_lock, obs.lock_time_ms.end());
@@ -1396,11 +1398,11 @@ TEST(RtcmParserDecodeTest, Msm7LockTimeSurfacedViaExtendedTable) {
 }
 
 TEST(RtcmParserDecodeTest, Msm7LockTimeExtendedTablePastN511) {
-    // RTB-3 regression: DF407 is a full 10-bit field and n>=512 are VALID long
-    // locks (the doubling of Table 3.5-101 continues), NOT "invalid".  The
-    // decoder used to collapse n>=512 to 0.0, which LockTimeTracker reads as a
-    // lock reset -> perpetual spurious LLI slip on the longest-locked (healthiest)
-    // satellites.  n=512 -> 1048576 + (512-512)*32768 = 1048576 ms (~17.5 min).
+    // Regression test (RTB-3): DF407 is a full 10-bit field and n>=512 are valid
+    // long locks (the doubling of Table 3.5-101 continues), not "invalid".  A
+    // decoder that maps n>=512 to 0.0 makes LockTimeTracker read a lock reset, so
+    // the longest-locked satellites get a spurious LLI slip every epoch.
+    // n=512 -> 1048576 + (512-512)*32768 = 1048576 ms (~17.5 min).
     const auto payload = buildMsm7GpsPayload(
         100000, 67, 0, -100, 0, 0, /*lock=*/512, 0, 720, 0);
     RtcmParser parser;
@@ -1408,12 +1410,12 @@ TEST(RtcmParserDecodeTest, Msm7LockTimeExtendedTablePastN511) {
     const auto& obs = parser.getObservations().front();
     auto it = obs.lock_time_ms.find("L1C");
     ASSERT_NE(it, obs.lock_time_ms.end());
-    EXPECT_GT(it->second, 0.0);              // never the old n>=512 -> 0.0 cliff
+    EXPECT_GT(it->second, 0.0);              // n>=512 must not decode to 0.0
     EXPECT_NEAR(it->second, 1048576.0, 1e-9);
 }
 
 // ============================================================================
-// RTB-3: LockTimeTracker — RTKLIB lossoflock-equivalent decision rule
+// LockTimeTracker: the RTKLIB lossoflock-equivalent decision rule (RTB-3)
 // ============================================================================
 
 TEST(LockTimeTrackerTest, FreshKeyWithLockDoesNotFlag) {
@@ -1424,7 +1426,7 @@ TEST(LockTimeTrackerTest, FreshKeyWithLockDoesNotFlag) {
 
 TEST(LockTimeTrackerTest, FreshKeyAtZeroFlags) {
     // RTKLIB rule: prev reads as 0 for a never-seen key, and (lock==0 &&
-    // prev==0) is a loss — an unlocked signal flags from first sight.
+    // prev==0) is a loss, so an unlocked signal flags from first sight.
     LockTimeTracker t;
     EXPECT_TRUE(t.update("", "G02", "L1C", 0.0));
 }
@@ -1452,12 +1454,12 @@ TEST(LockTimeTrackerTest, ResetToZeroFlagsAndPersistentZeroKeepsFlagging) {
 }
 
 TEST(LockTimeTrackerTest, SaturatedExtendedTableTopNeverFalseFlags) {
-    // RTB-3: the MSM7 extended table (DF407) spans the full 10-bit range and
-    // saturates at its TRUE top step (2^26 ms, n>=704) — NOT at n=511.  A lock
-    // that keeps ticking up past the old n=511 cliff must read as monotonically
-    // non-decreasing, and the saturated maxima repeat epoch after epoch with no
-    // false loss.  (Before the decode fix n>=512 collapsed to 0.0, which this
-    // tracker reads as a reset — see Msm7LockTimeExtendedTablePastN511.)
+    // The MSM7 extended table (DF407) spans the full 10-bit range and saturates
+    // at its top step (2^26 ms, n>=704), not at n=511.  A lock that keeps rising
+    // past n=511 must read as monotonically non-decreasing, and the saturated
+    // maximum repeats epoch after epoch with no false loss.  (A decode that maps
+    // n>=512 to 0.0 would read here as a reset; see
+    // Msm7LockTimeExtendedTablePastN511.)  (RTB-3)
     LockTimeTracker t;
     EXPECT_FALSE(t.update("", "G01", "L1C", 524288.0 + 31.0 * 16384.0)); // n=511
     EXPECT_FALSE(t.update("", "G01", "L1C", 1048576.0));                 // n=512
@@ -1481,7 +1483,7 @@ TEST(LockTimeTrackerTest, KeysAreIndependentAcrossSatSignalAndStation) {
 }
 
 // ============================================================================
-// RTB-5(a)/(b): legacy-SSR dialect guards — GAL IOD mask + reference point
+// Legacy-SSR dialect guards: Galileo IOD mask and reference point (RTB-5(a)/(b))
 // ============================================================================
 
 // Build a legacy Galileo orbit (1240) payload with one satellite.
@@ -1533,7 +1535,7 @@ TEST(RtcmParserDecodeTest, LegacyGpsCombined1060ApcTagged) {
     pw.put(16, 0); pw.put(4, 0);            // provider + solution
     pw.put(6, 1);                           // num sats
     pw.put(6, 5);                           // G05
-    pw.put(8, 42);                          // GPS IODE (8 bits — NOT masked)
+    pw.put(8, 42);                          // GPS IODE (8 bits, not masked)
     pw.putSigned(22, 0); pw.putSigned(20, 0); pw.putSigned(20, 0);
     pw.putSigned(21, 0); pw.putSigned(19, 0); pw.putSigned(19, 0);
     pw.putSigned(22, 250);                  // c0 = 0.025 m
@@ -1618,7 +1620,7 @@ TEST(SsrCorrectionStoreTest, OrbitReferencePointRoundTrip) {
 }
 
 // ============================================================================
-// RTB-2(d): 1033 receiver/antenna descriptors + 1230 GLONASS biases
+// 1033 receiver/antenna descriptors and 1230 GLONASS biases (RTB-2(d))
 // ============================================================================
 
 TEST(RtcmParserDecodeTest, Rtcm1033ReceiverAntennaDescriptor) {
@@ -1703,7 +1705,7 @@ TEST(RtcmParserDecodeTest, Rtcm1230GlonassBiasesPartialMask) {
 }
 
 // ============================================================================
-// RTB-1(a): per-parser stream-time tracker — nearest-continuation promotion
+// Per-parser stream-time tracker: nearest-continuation promotion (RTB-1(a))
 // ============================================================================
 
 // Re-usable 1058 (GPS clock SSR) builder with a chosen TOW.
@@ -1726,8 +1728,9 @@ static std::vector<uint8_t> buildGpsClock1058AtTow(uint32_t tow_s) {
 TEST(RtcmParserTimeTrackerTest, SsrNearestContinuationAcrossWeekBoundary) {
     RtcmParser parser;
 
-    // Frame 1: tow = 100 s.  Cold start — anchor seeded from the host clock,
-    // week resolved to nearest continuation of "now" (some week W1 > 0).
+    // Frame 1: tow = 100 s.  Cold start: the anchor is seeded from the host
+    // clock and the week resolved to the nearest continuation of "now" (some
+    // week W1 > 0).
     ASSERT_TRUE(parser.parseFrame(buildFrame(buildGpsClock1058AtTow(100))));
     ASSERT_EQ(parser.getSsrClocks().size(), 1u);
     const int w1 = parser.getSsrClocks()[0].epoch_time.week;
@@ -1735,10 +1738,10 @@ TEST(RtcmParserTimeTrackerTest, SsrNearestContinuationAcrossWeekBoundary) {
     EXPECT_NEAR(parser.timeAnchorGpsSeconds(),
                 w1 * 604800.0 + 100.0, 1e-6);
 
-    // Frame 2: tow = 604700 s — 200 s BEFORE frame 1 across the week
-    // boundary.  Nearest continuation must land on week w1 - 1 (|Δt| = 200 s),
-    // never the naive current week (which would be ~a week in the future) —
-    // deterministic regardless of the host clock, since the anchor is now the
+    // Frame 2: tow = 604700 s, 200 s before frame 1 across the week boundary.
+    // Nearest continuation must land on week w1 - 1 (|Δt| = 200 s), not the
+    // naive current week (which would be about a week in the future).  The
+    // result does not depend on the host clock, because the anchor is now the
     // tracker.
     ASSERT_TRUE(parser.parseFrame(buildFrame(buildGpsClock1058AtTow(604700))));
     ASSERT_EQ(parser.getSsrClocks().size(), 2u);
@@ -1757,9 +1760,9 @@ TEST(RtcmParserTimeTrackerTest, MsmFollowsSsrAnchorAcrossWeekRollover) {
     const int w = parser.getSsrClocks()[0].epoch_time.week;
     ASSERT_GT(w, 0);
 
-    // An MSM frame 15 s later (tow = 5 s of the NEXT week) must promote to
-    // week w + 1 by nearest continuation — the per-frame host-clock promotion
-    // this replaces could land it a whole week off around the rollover.
+    // An MSM frame 15 s later (tow = 5 s of the next week) must promote to
+    // week w + 1 by nearest continuation; a per-frame host-clock promotion can
+    // land a whole week off around the rollover.
     const auto msm = buildMsm7GpsPayload(/*epoch_ms=*/5000, 67, 0, -100,
                                          0, 0, 64, 0, 720, 0);
     ASSERT_TRUE(parser.parseFrame(buildFrame(msm)));
@@ -1769,7 +1772,7 @@ TEST(RtcmParserTimeTrackerTest, MsmFollowsSsrAnchorAcrossWeekRollover) {
 }
 
 // ============================================================================
-// RTB-1(c): leap-second override feeds the wall-clock → GPS conversion
+// Leap-second override feeds the wall-clock → GPS conversion (RTB-1(c))
 // ============================================================================
 
 TEST(TimeUtilsLeapOverrideTest, OverrideShiftsNowContinuousGpsSeconds) {
@@ -1777,8 +1780,8 @@ TEST(TimeUtilsLeapOverrideTest, OverrideShiftsNowContinuousGpsSeconds) {
     const double t_base = TimeUtils::nowContinuousGpsSeconds();
     TimeUtils::setLeapSecondsOverride(TimeUtils::LEAP_SECONDS + 2.0);
     const double t_over = TimeUtils::nowContinuousGpsSeconds();
-    // Restore FIRST so a failing expectation can't leak the override into
-    // other tests (nowContinuousGpsSeconds is process-global).
+    // Restore before any expectation, so a failing expectation cannot leak the
+    // override into other tests (nowContinuousGpsSeconds is process-global).
     TimeUtils::setLeapSecondsOverride(TimeUtils::LEAP_SECONDS);
     // The two reads truncate to whole wall seconds, so the difference is the
     // +2 s override plus at most one wall-second of quantisation.

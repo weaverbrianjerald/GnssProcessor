@@ -1,11 +1,11 @@
 /**
  * @file TcpClient.cpp
- * @brief Windows winsock2 implementation of TcpClient.
+ * @brief Socket implementation of TcpClient (Winsock2 on Windows).
  *
- * The realtime mode currently runs on win32 (per CLAUDE.md); this file
- * uses winsock2 directly.  Porting to a POSIX build is a matter of
- * swapping the headers, replacing @c closesocket with @c close, and
- * dropping the @c WSAStartup gate.
+ * The project builds on Windows (CLAUDE.md, Build), where the file uses Winsock2
+ * directly under _WIN32.  The #else branch maps the same code onto POSIX
+ * sockets: POSIX headers, @c closesocket defined as @c close, and a no-op
+ * @c WSAStartup gate.
  */
 
 #include "realtime/TcpClient.hpp"
@@ -34,9 +34,9 @@ namespace GnssProcessor {
 namespace {
 
 #ifdef _WIN32
-// Initialise winsock once for the whole process.  We never call
-// WSACleanup — the OS reclaims at process exit, and a partial cleanup
-// would break any other library that's still using sockets.
+// Initialise Winsock once for the whole process.  WSACleanup is never called:
+// the OS reclaims the resources at process exit, and an early cleanup would
+// break any other library still using sockets.
 struct WsaGuard {
     WsaGuard() {
         WSADATA d;
@@ -53,10 +53,10 @@ void ensureWsaInit() {
 void ensureWsaInit() {}
 #endif
 
-// Apply a receive timeout so recv() returns periodically: the loop can then
-// re-check running_ (responsive shutdown within one timeout instead of
-// blocking until the peer sends or closes) and a silent receiver no longer
-// wedges the thread until the multi-hour OS keepalive default.
+// Apply a receive timeout so recv() returns periodically and the loop can
+// re-check running_: shutdown completes within one timeout instead of blocking
+// until the peer sends or closes.  A timeout alone is not treated as a lost
+// connection; the loop retries on the same socket (see recvTimedOut()).
 void setRecvTimeout(SOCKET sock, int timeout_ms) {
 #ifdef _WIN32
     DWORD tv = static_cast<DWORD>(timeout_ms);
@@ -70,9 +70,9 @@ void setRecvTimeout(SOCKET sock, int timeout_ms) {
 #endif
 }
 
-// True when a negative recv() return is merely the SO_RCVTIMEO firing (no data
-// this interval) rather than a real error or peer close — the caller should
-// retry on the same socket rather than tearing down and reconnecting.
+// True when a negative recv() return is the SO_RCVTIMEO firing (no data this
+// interval; on POSIX also EINTR) rather than a real error or peer close.  The
+// caller then retries on the same socket instead of reconnecting.
 bool recvTimedOut() {
 #ifdef _WIN32
     const int e = WSAGetLastError();
@@ -189,7 +189,7 @@ void TcpClient::receiveLoop() {
         connected_.store(true);
 
         constexpr int kRecvBufBytes   = 4096;
-        constexpr int kRecvTimeoutMs  = 1000;   // bound shutdown latency + detect a silent peer
+        constexpr int kRecvTimeoutMs  = 1000;   // bounds shutdown latency
         setRecvTimeout(sock, kRecvTimeoutMs);
         std::vector<char> tmp(kRecvBufBytes);
 
@@ -202,7 +202,7 @@ void TcpClient::receiveLoop() {
             }
 
             std::lock_guard<std::mutex> lock(buf_mutex_);
-            // Drop oldest if buffer would exceed cap (back-pressure).
+            // Drop the oldest bytes when the buffer would exceed kMaxBufSize.
             if (buf_.size() + static_cast<std::size_t>(n) > kMaxBufSize) {
                 const std::size_t excess = (buf_.size() + n) - kMaxBufSize;
                 buf_.erase(buf_.begin(), buf_.begin() + static_cast<std::ptrdiff_t>(excess));

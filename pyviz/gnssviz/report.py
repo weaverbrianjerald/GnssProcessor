@@ -1,8 +1,8 @@
 """Self-contained HTML report assembly.
 
 Renders each viewer's :class:`Figure` specs through a backend to PNG bytes,
-base64-embeds them, and writes a single standalone ``.html`` file -- the offline
-"summary report after each run" deliverable.  No templating dependency: the HTML
+base64-embeds them, and writes a single standalone ``.html`` file: the offline
+summary report produced after each run.  No templating dependency: the HTML
 is built with plain string formatting so the suite stays installable with just
 numpy/pandas/matplotlib.
 """
@@ -38,11 +38,12 @@ def _plotly_inline_script() -> Optional[str]:
         js_path = os.path.join(pkg, "package_data", "plotly.min.js")
         with open(js_path, "r", encoding="utf-8") as fh:
             js = fh.read()
-        # The bundle carries ONE cdn.plot.ly reference: the default `topojsonURL`
-        # for topojson choropleth basemaps (`"https://cdn.plot.ly/un/"`).  We never
-        # draw one, but an embedded offline report must not name a CDN at all — so
-        # neutralise that default.  This keeps the artifact provably network-free
-        # (and lets the offline check assert no cdn.plot.ly substring at all).
+        # The bundle carries one cdn.plot.ly reference: the default `topojsonURL`
+        # for topojson choropleth basemaps (`"https://cdn.plot.ly/un/"`).  That
+        # basemap is never drawn, but an embedded offline report must not name a
+        # CDN at all, so that default is neutralised.  This keeps the artifact
+        # provably network-free (and lets the offline check assert no cdn.plot.ly
+        # substring at all).
         js = js.replace("cdn.plot.ly", "")
         return "<script type='text/javascript'>" + js + "</script>"
     except Exception:
@@ -91,21 +92,21 @@ def build_html_report(
 
     When ``live_token`` is set, a small poller is embedded that re-fetches
     ``/status`` every ``poll_interval`` seconds and reloads the page when the
-    token changes -- the basis of the real-time dashboard (no reload while the
+    token changes: the basis of the real-time dashboard (no reload while the
     data is idle, one reload per new-data tick).
 
-    ``extra_html`` is *trusted* HTML (caller-generated, never user input) injected
-    just below the meta line and above the table of contents -- used by the
+    ``extra_html`` is trusted HTML (caller-generated, never user input) injected
+    just below the meta line and above the table of contents; it is used by the
     test-suite report for a coloured pass/fail gate banner and per-cell report
     links, which the escaped ``<pre>`` summaries cannot carry.
 
     ``plotly_js`` selects the JS-runtime source for interactive (plotly) reports:
-    ``'cdn'`` (default, unchanged -- one small CDN ``<script>``, needs network on
+    ``'cdn'`` (default, unchanged: one small CDN ``<script>``, needs network on
     first open) or ``'inline'`` (embed the installed plotly.min.js so the report
-    is fully offline -- ~4 MB, no downloads).  Ignored for static backends.  If
-    ``'inline'`` is asked for but the bundled JS can't be found, this falls back
-    to the CDN and notes it in the meta line (never silently ships a report that
-    can't render offline).
+    is fully offline, about 4 MB, no downloads).  Ignored for static backends.
+    If ``'inline'`` is asked for but the bundled JS cannot be found, this falls
+    back to the CDN and notes it in the meta line; the report never silently
+    ships without noting that it cannot render offline.
     """
     now = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     # Interactive backends (plotly) need their JS runtime loaded once per doc.
@@ -174,7 +175,7 @@ def build_html_report(
             if getattr(anim, "summary", ""):
                 parts.append(f"<pre>{html.escape(anim.summary)}</pre>")
             try:
-                # Cap animation DPI: an N-frame GIF base64-embedded at full
+                # Cap animation DPI: an n-frame GIF base64-embedded at full
                 # figure DPI bloats the HTML; 90 keeps movies legible but light.
                 gif = render_gif(anim, backend, dpi=min(dpi, 90))
                 b64 = base64.b64encode(gif).decode("ascii")

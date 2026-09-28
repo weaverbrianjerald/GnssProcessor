@@ -3,12 +3,13 @@
  * @brief RINEX 3/4 navigation-message parser → @c BroadcastEphemeris.
  *
  * Field layout follows the RINEX 3.04 / 4.00 navigation format (fixed 19-column
- * D19.12 fields).  The Keplerian element units are copied DIRECTLY — RINEX nav
- * already stores angles in radians and rates in rad/s — and the time
- * conventions mirror @c RtcmNavDecoder.cpp exactly (GPS/QZSS/Galileo on the
- * GPS-week scale the file carries; BeiDou @c toe/@c toc on the native BDT week
- * numbering, whose whole-week GPS offset cancels under the store's half-week
- * @c normalizeTk wrap).  See @c RinexNavParser.hpp for scope.
+ * D19.12 fields).  The Keplerian elements are copied without scaling, because
+ * RINEX nav already stores angles in radians and rates in rad/s.  The time
+ * conventions match @c RtcmNavDecoder.cpp: GPS/QZSS/Galileo on the GPS-week
+ * scale the file carries; BeiDou @c toe/@c toc on the native BDT week numbering,
+ * which @c LiveEphemerisStore handles by shifting the query epoch to BDT
+ * (@c kBdtToGpsOffsetSec, 1356 weeks + 14 s) before forming t_k.  See
+ * @c RinexNavParser.hpp for scope.
  */
 
 #include "products/RinexNavParser.hpp"
@@ -35,35 +36,32 @@ namespace {
 // at columns 4, 23, 42, 61; the epoch line's three clock terms at 23, 42, 61.
 constexpr std::size_t kFieldW = 19;
 
-/// Diagnostic logger for the parser's two warn paths.  Resolved on EVERY call
-/// and guaranteed non-null.
+/// Diagnostic logger for the parser's warn paths.  Resolved on each call and
+/// never null.
 ///
-/// The previous version cached
-/// `spdlog::get("gnss_processor") ? ... : spdlog::default_logger()` in a
-/// function-local `static` and returned `.get()`.  Two defects:
+/// The logger is resolved per call and never cached as a raw pointer taken from
+/// a by-value `shared_ptr` in a function-local `static`, for two reasons:
 ///
-///  * **`spdlog::default_logger()` is not guaranteed non-null.**  The registry's
-///    default logger is cleared by `spdlog::drop_all()`, which LogManager calls
-///    on both re-initialize (LogManager.cpp:115) and shutdown (:201).  The null
-///    was cached and then dereferenced, faulting with an access violation on the
-///    two warn paths below instead of emitting the diagnostic.  Those are the
-///    ONLY RinexNavParser paths that log, which is why the fault presented as
-///    exactly two failing cases (`RejectsPreRinex3`,
-///    `MissingEndOfHeaderReturnsEmpty`) while the other eight passed.
-///  * **Caching on FIRST call froze the choice**, so the parser could never pick
-///    up "gnss_processor" once LogManager registered it later.
+///  * `spdlog::default_logger()` can return null.  `spdlog::drop_all()` clears
+///    the registry's default logger, and both `LogManager::initialize` (on
+///    re-initialization) and `LogManager::shutdown` call it.  A cached null is
+///    dereferenced on the next warn and faults with an access violation instead
+///    of emitting the diagnostic (the `RejectsPreRinex3` and
+///    `MissingEndOfHeaderReturnsEmpty` tests exercise these paths).
+///  * A choice cached on the first call is frozen, so a "gnss_processor" logger
+///    that LogManager registers later would never be picked up.
 ///
 /// Returns a `shared_ptr`, not a raw pointer, so the logger cannot be dropped
-/// from under the caller's `->warn(...)`.  This mirrors the "degrade, never
-/// throw" contract `LogManager::getLogger()` documents for pre-initialization
-/// call sites — RinexNavParser is a static utility class, so there is no
-/// LogManager to inject (the same shape as `tailLog()` in NetworkProductIO.cpp).
+/// while the caller's `->warn(...)` runs.  This follows the degrade-rather-than-
+/// throw contract `LogManager::getLogger()` documents for pre-initialization
+/// call sites.  RinexNavParser is a static utility class, so there is no
+/// LogManager to inject (`tailLog()` in NetworkProductIO.cpp has the same shape).
 std::shared_ptr<spdlog::logger> navLog() {
     if (auto named = spdlog::get("gnss_processor")) return named;
     if (auto def = spdlog::default_logger()) return def;
-    // Registry has no default (post-drop_all).  Unregistered console fallback:
-    // a diagnostic is never silently lost, and never faults.  Deliberately NOT
-    // registered so repeated calls cannot collide in the global registry.
+    // The registry has no default (after drop_all).  An unregistered console
+    // fallback keeps the diagnostic from being lost or faulting.  It is not
+    // registered, so repeated calls cannot collide in the global registry.
     static const std::shared_ptr<spdlog::logger> fallback =
         std::make_shared<spdlog::logger>(
             "rinex_nav", std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
@@ -90,8 +88,8 @@ double parseRinexDouble(const std::string& raw) {
         if (c == 'D' || c == 'd') {
             t.push_back('E');
         } else if ((c == '+' || c == '-') && i > 0) {
-            // A sign after position 0 that is NOT already an exponent sign (prev
-            // char e/E/d/D) marks a missing exponent letter — insert one.
+            // A sign after position 0 that does not follow an exponent letter
+            // (e/E/d/D) marks a missing exponent letter; insert one.
             const char p = s[i - 1];
             if (p != 'e' && p != 'E' && p != 'd' && p != 'D') t.push_back('E');
             t.push_back(c);
@@ -136,7 +134,7 @@ std::vector<double> tokenize(const std::string& s) {
     return out;
 }
 
-// Whitespace-tokenize a line into string tokens (RINEX-4 record-header parsing,
+// Whitespace-tokenize a line into string tokens (RINEX 4 record-header parsing,
 // e.g. "> EPH G07 LNAV" → {">","EPH","G07","LNAV"}).
 std::vector<std::string> tokenize_str(const std::string& s) {
     std::vector<std::string> out;
@@ -146,9 +144,9 @@ std::vector<std::string> tokenize_str(const std::string& s) {
     return out;
 }
 
-// RINEX-4 EPH message types whose orbit-line layout matches the RINEX-3 legacy
+// RINEX 4 EPH message types whose orbit-line layout matches the RINEX 3 legacy
 // 7-line Keplerian record.  CNAV/CNV1/CNV2 (different layout) and FDMA (GLONASS)
-// are deliberately excluded.
+// are excluded.
 bool isLegacyKeplerMsg(const std::string& msg) {
     return msg == "LNAV" || msg == "INAV" || msg == "FNAV" ||
            msg == "D1"   || msg == "D2";
@@ -165,7 +163,7 @@ bool decodeKeplerRecord(const std::string& epoch,
     if (sys == System::Unknown) return false;
 
     // Epoch calendar (constellation-native time scale: GPS for G/J, GST≈GPS for
-    // E, BDT for C) — columns [3,23) hold "YYYY MM DD hh mm ss".
+    // E, BDT for C); columns [3,23) hold "YYYY MM DD hh mm ss".
     const std::vector<double> cal = tokenize(epoch.substr(3, 20));
     if (cal.size() < 6) return false;
     const int    yy = static_cast<int>(cal[0]);
@@ -184,31 +182,31 @@ bool decodeKeplerRecord(const std::string& epoch,
     auto orb = [&](std::size_t line, std::size_t idx) {
         return field(cont[line], 4 + idx * kFieldW);
     };
-    // ORBIT-1: IODE, Crs, Δn, M0
+    // Broadcast orbit 1: IODE, Crs, Δn, M0
     const double iode_d = orb(0, 0);
     const double crs    = orb(0, 1);
     const double dn     = orb(0, 2);
     const double m0     = orb(0, 3);
-    // ORBIT-2: Cuc, e, Cus, sqrtA
+    // Broadcast orbit 2: Cuc, e, Cus, sqrtA
     const double cuc    = orb(1, 0);
     const double e      = orb(1, 1);
     const double cus    = orb(1, 2);
     const double sqrtA  = orb(1, 3);
-    // ORBIT-3: Toe, Cic, Ω0, Cis
+    // Broadcast orbit 3: Toe, Cic, Ω0, Cis
     const double toe_s  = orb(2, 0);
     const double cic    = orb(2, 1);
     const double om0    = orb(2, 2);
     const double cis    = orb(2, 3);
-    // ORBIT-4: i0, Crc, ω, Ωdot
+    // Broadcast orbit 4: i0, Crc, ω, Ωdot
     const double i0     = orb(3, 0);
     const double crc    = orb(3, 1);
     const double w      = orb(3, 2);
     const double omdot  = orb(3, 3);
-    // ORBIT-5: IDOT, codes/dataSrc, Week, flag
+    // Broadcast orbit 5: IDOT, codes/dataSrc, Week, flag
     const double idot   = orb(4, 0);
-    const double src_d  = orb(4, 1);   // card OWD: Galileo data sources (GPS: codes on L2)
+    const double src_d  = orb(4, 1);   // Galileo data sources; GPS: codes on L2 (card OWD)
     const double week_d = orb(4, 2);
-    // ORBIT-6: accuracy, health, TGD/BGD-a, TGD2/BGD-b
+    // Broadcast orbit 6: accuracy, health, TGD/BGD-a, TGD2/BGD-b
     const double health = orb(5, 1);
     const double tgd0   = orb(5, 2);
     const double tgd1   = orb(5, 3);
@@ -216,21 +214,19 @@ bool decodeKeplerRecord(const std::string& epoch,
     if (sqrtA <= 0.0) return false;   // uninitialised / non-orbit record
 
     BroadcastEphemeris eph;
-    // Card RXP: the same blank-padded identifier the RINEX 3 OBSERVATION path
-    // carries ("G 7" for "G07").  The navigation record has the identical
-    // one-line shape, so it takes the identical normalization: an ephemeris
-    // keyed "G 7" matches no observation and no product record, and the
-    // satellite would drop out of the solution with no warning.  No product
-    // file of DOY-129 is written that way, so this changes nothing on the
-    // current beds; it closes the same hole in the other reader.
+    // Normalize the blank-padded identifier ("G 7" to "G07"), as the RINEX 3
+    // observation path does.  An ephemeris keyed "G 7" matches no observation
+    // and no product record, and the satellite would drop out of the solution
+    // with no warning (card RXP).
     eph.satellite = epoch.substr(0, 3);
     if (eph.satellite[1] == ' ') eph.satellite[1] = '0';
     eph.system    = sys;
     eph.iode      = static_cast<int>(std::lround(iode_d));
     eph.health    = static_cast<int>(std::lround(health));
-    // Card OWD (O3): the Galileo data-source word says which message the record is
-    // (I/NAV or F/NAV) and which clock and group-delay pair it carries; the network's
-    // group-delay latch prefers the F/NAV (E1, E5a) records.  Other systems: -1.
+    // The Galileo data-source word says which message the record is (I/NAV or
+    // F/NAV) and which clock and group-delay pair it carries; the network's
+    // group-delay latch prefers the F/NAV (E1, E5a) records.  Other systems keep
+    // -1.  (Card OWD, O3.)
     if (sys == System::Galileo) eph.data_source = static_cast<int>(std::lround(src_d));
     eph.received_time = GnssTime{0, 0.0};   // file load: no wall-clock receipt stamp
 
@@ -240,17 +236,18 @@ bool decodeKeplerRecord(const std::string& epoch,
     k.crs = crs; k.crc = crc; k.cus = cus; k.cuc = cuc; k.cis = cis; k.cic = cic;
     k.af0 = af0; k.af1 = af1; k.af2 = af2;
     k.tgd0 = tgd0;
-    // tgd1 is the SECOND group delay (GAL BGD E1-E5b / BDS TGD2); GPS/QZSS carry
-    // only one (ORBIT-6 field 3 there is IODC, not a delay) so leave it 0.
+    // tgd1 is the second group delay (GAL BGD E1-E5b / BDS TGD2).  GPS/QZSS carry
+    // one group delay (the fourth field of broadcast orbit 6 is IODC there), so
+    // tgd1 stays 0 for them.
     if (sys == System::Galileo || sys == System::BeiDou) k.tgd1 = tgd1;
 
-    // Week: the RINEX field already carries the constellation's operative week
-    // numbering — GPS week for G/J, GPS-aligned week for E (RINEX stores Galileo
-    // week continuous with GPS), native BDT week for C — exactly what the RTCM
-    // decoders store.  Seconds-of-week is scale-agnostic (Sunday-relative), so
-    // gregorianGpsToGpsTime (no leap correction) gives the toc SOW for every
-    // system; pair it with the record's week (matching the decoders' single-week
-    // toe/toc).  toe SOW comes straight from the Toe field.
+    // Week: the RINEX field carries the constellation's operative week numbering
+    // (GPS week for G/J; for E the GPS-aligned week, since RINEX stores the
+    // Galileo week continuous with GPS; native BDT week for C), which is what the
+    // RTCM decoders store.  Seconds-of-week are Sunday-relative on every scale,
+    // so gregorianGpsToGpsTime (no leap correction) gives the toc SOW for every
+    // system; it is paired with the record's week, matching the decoders'
+    // single-week toe/toc.  The toe SOW is the Toe field.
     const int week = static_cast<int>(std::lround(week_d));
     double toc_sow = toe_s;   // fallback: broadcast toc==toe when the calendar is unusable
     try {
@@ -314,10 +311,10 @@ std::vector<BroadcastEphemeris> parseLines(std::vector<std::string> lines,
         if (trim(ln).empty()) { ++i; continue; }
 
         if (v4 && ln[0] == '>') {
-            // RINEX-4 record header: "> EPH G07 LNAV" (or STO/EOP/ION — skipped).
-            // Tolerate a space-less ">EPH ..." from a non-conformant writer by
-            // normalising to "> EPH ..." before tokenising (else rectype would be
-            // read as the sat and the whole EPH record silently dropped).
+            // RINEX 4 record header: "> EPH G07 LNAV" (STO/EOP/ION records are
+            // skipped).  A space-less ">EPH ..." from a non-conformant writer is
+            // normalised to "> EPH ..." before tokenising; otherwise rectype would
+            // be read as the satellite and the EPH record dropped without a log line.
             std::string hdr = ln;
             if (hdr.size() > 1 && hdr[1] != ' ') hdr.insert(1, " ");
             const auto toks = tokenize_str(hdr);
@@ -331,16 +328,17 @@ std::vector<BroadcastEphemeris> parseLines(std::vector<std::string> lines,
             const std::string msgtype = toks.size() > 3 ? toks[3] : std::string{};
             if (rectype == "EPH" && isLegacyKeplerMsg(msgtype))
                 decodeKeplerRecord(epoch, cont, out);
-            // else: STO/EOP/ION, CNAV, or GLONASS FDMA — skipped.
+            // Otherwise (STO/EOP/ION, CNAV, or GLONASS FDMA) the record is skipped.
             continue;
         }
 
-        // RINEX-3 record (or a RINEX-4 stray): the epoch line leads with the
-        // system letter; continuation lines follow, leading-space indented.
+        // RINEX 3 record (or a stray line in a RINEX 4 file): the epoch line
+        // leads with the system letter; continuation lines follow, indented by
+        // a leading space.
         const std::string epoch = ln;
         ++i;
         const std::vector<std::string> cont = collectContinuations(lines, i);
-        decodeKeplerRecord(epoch, cont, out);   // silently skips R/S/short blocks
+        decodeKeplerRecord(epoch, cont, out);   // skips R/S/short blocks without logging
     }
     return out;
 }

@@ -23,9 +23,9 @@ namespace GnssProcessor {
      * @brief Troposphere helper for mapping functions and ZHD computation.
      *
      * This class implements tropospheric utilities used by the processing
-     * pipeline: the Global Mapping Function (GMF) for hydrostatic and wet
-     * mapping, and estimation of the Saastamoinen zenith hydrostatic delay
-     * given a receiver position in ECEF coordinates.
+     * pipeline: hydrostatic and wet mapping (Niell NMF tables, or VMF3 from the
+     * GPT3 grid when configured), and estimation of the Saastamoinen zenith
+     * hydrostatic delay given a receiver position in ECEF coordinates.
      */
     class Troposphere {
     public:
@@ -43,15 +43,20 @@ namespace GnssProcessor {
         ~Troposphere();
 
         /**
-         * @brief Compute tropospheric mapping functions using the Global Mapping Function (GMF).
+         * @brief Compute hydrostatic and wet tropospheric mapping functions.
          *
          * Computes the hydrostatic (dry) and wet mapping functions for a given
-         * elevation angle using the GMF model (Boehm et al. 2006), which accounts
-         * for latitude, height and day-of-year. Falls back to simple empirical
-         * mappings if receiver position is unavailable.
+         * elevation angle.  With @c TroposphereMappingFunction::Vmf3 and a loaded
+         * GPT3 grid, VMF3 is evaluated from the GPT3 "a" coefficients.  Otherwise,
+         * or when the GPT3 query fails, the Niell (1996) NMF tables are used (the
+         * method name and log text call this path "GMF", after the Global
+         * Mapping Function of Boehm et al. 2006); they account for
+         * latitude, height and day-of-year.  An invalid receiver position (norm
+         * below 1 km or non-finite) selects the Black & Eisner mapping; an
+         * elevation outside 0..90 deg returns 1.0 for both outputs.
          *
          * @param elevation Elevation angle in degrees (0..90).
-         * @param receiver_pos Receiver ECEF position (meters) for GMF computation.
+         * @param receiver_pos Receiver ECEF position (meters) for the latitude/height terms.
          * @param time GNSS epoch used to derive day-of-year.
          * @param[out] mf_d Output hydrostatic (dry) mapping function (unitless).
          * @param[out] mf_w Output wet mapping function (unitless).
@@ -63,20 +68,20 @@ namespace GnssProcessor {
         /**
          * @brief Compute Saastamoinen zenith hydrostatic delay (ZHD).
          *
-         * When the configured a priori source is
-         * @c TroposphereAprioriSource::StandardAtmosphere, station
-         * pressure is reduced from the configured sea-level pair via
-         * the standard-atmosphere lapse formula.  When the source is
-         * @c TroposphereAprioriSource::Gpt3 and the GPT3 grid is
-         * loaded, pressure and temperature are queried from the grid
-         * at the receiver lat/lon/h/doy; on grid failure the call
-         * silently falls back to the standard-atmosphere path so a
-         * single bad query never aborts the run.
+         * Without a loaded GPT3 grid, station pressure is reduced from the
+         * configured sea-level pair via the standard-atmosphere lapse
+         * formula.  When the GPT3 grid is loaded, which happens when the a
+         * priori source is @c TroposphereAprioriSource::Gpt3 or the mapping
+         * function is @c TroposphereMappingFunction::Vmf3, station pressure is
+         * queried from the grid at the receiver lat/lon/h/doy (temperature is
+         * not used).  On a failed query the call falls back to the
+         * standard-atmosphere value without a log line, so a single bad query
+         * does not abort the run.
          *
          * @param receiver_pos Receiver position in ECEF coordinates (meters).
          * @param time         GNSS epoch (used to derive day-of-year for the
-         *                     GPT3 harmonics; ignored when the a priori source
-         *                     is the standard atmosphere).
+         *                     GPT3 harmonics; ignored when no GPT3 grid is
+         *                     loaded).
          * @return Zenith hydrostatic delay (ZHD) in meters.
          */
         double computeSaastamoinenZHD(const Eigen::Vector3d& receiver_pos,
@@ -84,12 +89,13 @@ namespace GnssProcessor {
     private:
         LogManager& log_manager_;                         /**< Logger for debugging and info. */
         const GnssConfig& config_;                        /**< Configuration settings (read-only). */
-        std::unique_ptr<Gpt3> gpt3_;                      /**< GPT3 grid (non-null only when source == Gpt3 and load succeeded). */
+        std::unique_ptr<Gpt3> gpt3_;                      /**< GPT3 grid (non-null when the a priori source is Gpt3 or the mapping function is Vmf3, and the load succeeded). */
 
         /**
          * @brief Evaluate the continued-fraction mapping function form.
          *
-         * Computes 1/mf using the Marini (1972) continued fraction:
+         * Computes mf using the Marini (1972) continued fraction (returns 1.0
+         * when the denominator is below 1e-12 in magnitude):
          *   mf(el) = (1 + a/(1 + b/(1 + c))) / (sin(el) + a/(sin(el) + b/(sin(el) + c)))
          *
          * @param sin_el Sine of elevation angle.

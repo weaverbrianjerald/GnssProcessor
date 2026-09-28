@@ -2,10 +2,10 @@
  * @file BssdTransform.cpp
  * @brief Between-Satellite Single-Difference (BSSD) S-transformation.
  *
- * Two methods cover two paths through the pipeline.  @c apply() handles
+ * Two methods cover two paths through the pipeline.  @c apply() performs
  * the in-place EpochMeasurement S-transform used by PPP-RTK BSSD;
- * @c differenceBrsd() handles the BRSD-vector → DD-row operation used
- * by baseline DD.  See the header for the full architectural notes.
+ * @c differenceBrsd() performs the BRSD-vector → DD-row operation used
+ * by baseline DD.  The header holds the architectural notes.
  */
 
 #include "measurement/BssdTransform.hpp"
@@ -41,20 +41,18 @@ if (n < 2) return;
 
 const bool is_uncombined = config_.isUncombinedEnabled();
 
-// Group measurements by the FULL signal identifier so each tracking
+// Group measurements by the full signal identifier, so each tracking
 // attribute on a band (e.g. L1W vs L1C) forms its own SD frame.
 //
-// Earlier this code collapsed L1W and L1C into a shared "GPS|L1" group
-// to keep a non-pivot that fell back to a different tracking mode from
-// becoming an undifferenced singleton.  That rationale no longer holds:
-// the canonical-pick is now arc-stable and constellation-wide (see
-// PppModel::decideConstellationCanonicals), so every satellite in a
-// constellation tracks the same signal set for the entire run — pivot
-// included.  Band-grouping under channel_mode=all instead became
-// actively harmful: the pivot's non-canonical signal (e.g. L1C when L1W
-// is the band's first row) was treated as a non-pivot row inside its
-// own pivot group and got SD'd against the pivot's other signal, giving
-// the inter-channel offset as a permanent "pivot-vs-itself" residual.
+// Grouping by band instead (e.g. a shared "GPS|L1" group) harms
+// channel_mode=all: the pivot's non-canonical signal (e.g. L1C when L1W is
+// the band's first row) becomes a non-pivot row inside its own pivot group
+// and is differenced against the pivot's other signal, which leaves the
+// inter-channel offset as a permanent pivot-vs-itself residual.  Full-signal
+// groups do not strand non-pivots as undifferenced singletons, because the
+// canonical signal pick is arc-stable and constellation-wide (see
+// PppModel::decideConstellationCanonicals): every satellite in a
+// constellation, pivot included, tracks the same signal set for the run.
 auto bandGroupKey = [&](const std::string& constellation,
                         const std::string& signal_type) -> std::string {
     return constellation + "|" + signal_type;
@@ -66,7 +64,7 @@ struct RowInfo {
     std::string satellite;
     std::string signal_type;
     std::string constellation;
-    std::string group_key;   ///< band-normalized group key for SD pairing
+    std::string group_key;   ///< "constellation|signal_type" group key for SD pairing
     double elevation;
 };
 std::vector<RowInfo> rows(static_cast<size_t>(n));
@@ -86,9 +84,9 @@ for (Eigen::Index i = 0; i < n; ++i) {
 }
 
     // ---- Step 2: Pivot selection ---------------------------------------
-    // The pivot map is owned by PivotManager in every BSSD mode — combined
-    // IF and uncombined alike — so the satellite whose ambiguity column is
-    // zeroed here matches the one MeasurementModel seeds and freezes.
+    // PivotManager owns the pivot map in every BSSD mode (combined IF and
+    // uncombined), so the satellite whose ambiguity column is zeroed here is
+    // the one MeasurementModel seeds and freezes.
     const std::map<std::string, std::string> cons_pivot_sat =
         pivot_manager_.getPivotSatellites();
 
@@ -101,10 +99,11 @@ for (Eigen::Index i = 0; i < n; ++i) {
             pivot_map[ri.group_key] = ri.row;
     }
 
-    // Diagnostic (trace): the per-(constellation|signal) pivot rows.  A C5/C7
-    // residual mystery is usually visible here — if "Galileo|C5Q" (etc.) is
-    // ABSENT, the Galileo pivot does not track that signal, so every C5/C7 row
-    // is rejected (BSSD purity rule below) rather than single-differenced.
+    // Diagnostic (trace): the per-(constellation|signal) pivot rows.  When a
+    // group such as "Galileo|C5Q" is absent here, the Galileo pivot does not
+    // track that signal, so every row on it is rejected (Step 3) rather than
+    // single-differenced; this is the first place to look for missing C5/C7
+    // residuals.
     if (auto lg = log_manager_.getLogger("bssd_transform");
         lg->should_log(spdlog::level::trace)) {
         for (const auto& [gk, prow] : pivot_map)
@@ -113,15 +112,13 @@ for (Eigen::Index i = 0; i < n; ++i) {
     }
 
     // ---- Step 3: Partition into SD-eligible rows; reject everything else
-    // BSSD purity rule: a row that cannot be paired with a same-group pivot
-    // is REJECTED, not passed through.  Letting an undifferenced row
-    // survive would silently feed a measurement whose receiver-clock /
-    // ISB / code-bias dependence has been zeroed out of H by Step 6
-    // (those columns get globally zeroed because *differenced* rows no
-    // longer depend on them) — but the row itself was never differenced.
-    // The Kalman filter would then absorb the receiver clock and biases
-    // into other states.  Drop the row instead so BSSD mode only ever
-    // applies properly-differenced observations.
+    // A row that cannot be paired with a same-group pivot is rejected, not
+    // passed through.  Step 6 zeroes the receiver clock, ISB and code-bias
+    // columns for all rows, because differenced rows do not depend on
+    // them; an undifferenced row that survived would still contain those
+    // terms with no column to absorb them, and the filter would push the
+    // receiver clock and biases into other states.  Dropping the row keeps
+    // BSSD mode to properly differenced observations only.
     std::map<std::string, int> grp_cnt;
     for (const auto& ri : rows) {
         if (pivot_map.count(ri.group_key))
@@ -147,12 +144,13 @@ for (Eigen::Index i = 0; i < n; ++i) {
         } else {
             sd_entries.push_back({ri.row, ri.group_key}); fate = "sd-paired";
         }
-        // Per-row fate + the ZERO-difference innovation entering BSSD.  The
-        // physical receiver clock is common to every row and cancels ONLY for
-        // sd-paired/pivot rows; a reject-* row is dropped (never differenced),
-        // so it cannot leak the rx clock into the filter.  If C5/C7 show up
-        // sd-paired with a small post-SD residual in measurement_residuals.csv,
-        // the rx clock is being removed correctly.
+        // Trace each row's fate and its zero-difference innovation entering
+        // BSSD.  The physical receiver clock is common to every row and cancels
+        // only for sd-paired and pivot rows; a reject-* row is dropped without
+        // being differenced, so it cannot carry the receiver clock into the
+        // filter.  C5/C7 rows that appear sd-paired with a small post-SD
+        // residual in measurement_residuals.csv show the receiver clock being
+        // removed correctly.
         if (trace_pairs)
             bssd_pair_lg->trace("{}BSSD-PAIR {} {} group={} fate={} zd_innov={:+.3f}m",
                                 epoch_prefix, ri.satellite, ri.signal_type,
@@ -177,22 +175,21 @@ for (Eigen::Index i = 0; i < n; ++i) {
     }
 
     // ---- Step 4-5: Sparse SD transform ---------------------------------
-    // The differencing operator D has exactly two non-zeros per SD row:
-    // +1 at the non-pivot's input index, -1 at the pivot's input index.
-    // The dense D · X family of products is therefore wasteful — each
-    // operation collapses to a per-row difference of input rows.  R_undiff
-    // is also "diagonal held as full n×n dense" — purely silly.
+    // The differencing operator D has two non-zeros per SD row: +1 at the
+    // non-pivot's input index and -1 at the pivot's input index.  Each
+    // product D · X therefore reduces to a per-row difference of input rows,
+    // and a dense product would waste work.  The input covariance is taken
+    // from the diagonal R_v rather than from the dense n×n R_full.
     //
-    // Below we compute new_z, new_H, and new_R directly from the sparse
-    // structure.  The new R has a known sparsity pattern: within a group,
-    // off-diagonal entries equal the pivot's variance (the shared term);
-    // across different groups, entries are zero.
+    // new_z, new_H and new_R are computed directly from the sparse structure.
+    // Within a group, the off-diagonal entries of new_R equal the pivot's
+    // variance (the shared term); across groups they are zero.
     const Eigen::Index m = static_cast<Eigen::Index>(n_sd);
 
     struct SdSparse {
         Eigen::Index pos;   ///< Input row that gets the +1 (non-pivot).
         Eigen::Index neg;   ///< Input row that gets the -1 (pivot).
-        std::string  gk;    ///< Group key — used for R off-diagonal pattern.
+        std::string  gk;    ///< Group key, used for the R off-diagonal pattern.
     };
     std::vector<SdSparse> sd_rows;
     sd_rows.reserve(n_sd);
@@ -232,16 +229,15 @@ for (Eigen::Index i = 0; i < n; ++i) {
             new_H.col(static_cast<Eigen::Index>(idx)).setZero();
     };
 
-    // 6a. Receiver clock, phase clock, ISB, clock-rate and ISBR.  All
-    // receiver-side states cancel in same-system SD, so their sensitivity
-    // (Jacobian column) must be zeroed after differencing.  Under the
-    // current StateManager gating none of clock / ISB / clock-rate / ISBR
-    // are allocated when BSSD is on — these calls are then no-ops
-    // (zero_col guards on idx < n_cols, and getSystemsWithTimeOffsets()
-    // iterates an empty container).  The calls document intent and remain
-    // robust if any of those states are re-introduced later.  Phase clock,
-    // if enabled, is still allocated under BSSD but receives no measurement
-    // update or process noise — the column-zero here is what makes that so.
+    // 6a. Receiver clock, phase clock, ISB, clock rate and ISBR.  All
+    // receiver-side states cancel in same-system SD, so their Jacobian
+    // columns are zeroed after differencing.  StateManager allocates none of
+    // clock / ISB / clock rate / ISBR when BSSD is on, so these calls are
+    // no-ops (zero_col checks idx < n_cols, and getSystemsWithTimeOffsets()
+    // returns an empty container); they state the intent and stay correct if
+    // any of those states is allocated again.  The phase clock, when enabled,
+    // is still allocated under BSSD but gets no process noise; this column
+    // zeroing is what keeps it out of the measurement update.
     zero_col(state_manager_.getClockIndex());
     if (state_manager_.hasPhaseClock())
         zero_col(state_manager_.getPhaseClockIndex());
@@ -254,10 +250,11 @@ for (Eigen::Index i = 0; i < n; ++i) {
     }
 
     // 6b. Receiver DCB / IFB columns.  These are receiver-common and cancel in
-    // same-system SD — EXCEPT the per-FCN-slot GLONASS IFB states, which do NOT
-    // cancel (two sats on different slots have different group delays, so the
-    // differenced row keeps +1 on the sat's slot column and -1 on the pivot's).
-    // Skip zeroing those so the inter-slot signal survives differencing.
+    // same-system SD, except the per-FCN-slot GLONASS IFB states: two
+    // satellites on different slots have different group delays, so the
+    // differenced row keeps +1 on the satellite's slot column and -1 on the
+    // pivot's.  Those columns are left in place so the inter-slot signal
+    // survives differencing.
     for (const auto& [key, idx] : state_manager_.getCodeBiasStates())
         if (!StateKeys::isGlonassPerSlotIfbKey(key))
             zero_col(idx);
@@ -280,17 +277,17 @@ for (Eigen::Index i = 0; i < n; ++i) {
     }
 
     // ---- Step 7: Reparameterize phase ambiguities ----------------------
-    // When band-normalized grouping is active, the pivot row's actual signal
-    // type (e.g. "L1W") may differ from the non-pivot's (e.g. "L1C").
-    // The reference ambiguity to zero is always the *pivot's* signal type.
+    // The reference ambiguity to zero is keyed by the pivot row's signal type.
+    // With full-signal grouping (Step 1) it equals the non-pivot's; the code
+    // reads it from the pivot row regardless.
     //
-    // Under @c StateAmbiguityBasis::NlWl the pivot's "ambiguity" on band b
-    // is split across two state columns: NL_<ref_band> and (when b !=
-    // ref_band) WL_<min(ref,b)>_<max(ref,b)>.  Both are zeroed by the
-    // S-transform — same mechanism as PerBand, just two columns instead
-    // of one.  The pivot's ref_band is recovered by parsing whichever NL
-    // ambiguity key references the pivot satellite (one per sat, by
-    // construction in @c MeasurementModel::ensureRequiredStates).
+    // Under @c StateAmbiguityBasis::NlWl the pivot's ambiguity on band b is
+    // split across two state columns: NL_<ref_band> and (when b != ref_band)
+    // WL_<min(ref,b)>_<max(ref,b)>.  The S-transform zeroes both, by the same
+    // mechanism as PerBand with two columns instead of one.  The pivot's
+    // ref_band is recovered by parsing the NL ambiguity key that references the
+    // pivot satellite (one per satellite, by construction in
+    // @c MeasurementModel::ensureRequiredStates).
     const bool nlwl = (config_.getStateAmbiguityBasis()
                        == StateAmbiguityBasis::NlWl);
     std::map<std::string, char> pivot_ref_band;
@@ -395,11 +392,12 @@ for (Eigen::Index i = 0; i < n; ++i) {
 // BSSD on BRSD (baseline DD path)
 //
 // The BRSD layer has already cancelled receiver-shared bias terms in
-// residual space.  This static method just performs the BSSD step:
-// for each non-pivot satellite, subtract the pivot's BRSD residual /
-// variance from the non-pivot's, per (band, obs_type) group.
+// residual space.  This static method performs only the BSSD step: for each
+// non-pivot satellite, it subtracts the pivot's BRSD residual from the
+// non-pivot's per (band, obs_type) group, and carries the two BRSD variances
+// through separately.
 //
-// No state required — pivot selection is the caller's responsibility
+// It holds no state.  Pivot selection is the caller's responsibility
 // (MeasurementModel owns the sticky pivot logic for baseline mode and
 // passes the result in via @p pivots).
 // ===========================================================================

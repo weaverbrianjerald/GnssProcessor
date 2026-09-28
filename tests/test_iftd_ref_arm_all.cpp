@@ -1,57 +1,54 @@
 /**
  * @file test_iftd_ref_arm_all.cpp
- * @brief REF-FAN (`network.cycle_slip.if_phase_td_ref_arm_all`,
- *        docs/SPEC_event_harness.md §22.6) — the reference arm on the ADDITIONAL
- *        gradient chains, and the fan-out it exists to stop.
+ * @brief Gates for the reference-satellite slip arm on the additional IF-TD gradient
+ *        chains (`network.cycle_slip.if_phase_td_ref_arm_all`,
+ *        docs/SPEC_event_harness.md §22.6, REF-FAN), and for the fan-out it removes.
  *
- * ### The defect
+ * ### The fan-out
  *
- * Under `if_phase_td_pairs = all` every band pair of a satellite rides its own
- * between-epoch gradient chain (§14.10).  The reference-satellite slip test
- * (tier T1r) runs on the FIRST chain ONLY: an additional chain ADOPTS the first
- * chain's reference where that satellite is in its set and ELECTS its own
- * otherwise, and in NEITHER case is a slip ON that reference ever attributed.
- * A reference's own double difference is identically 0 by construction, so the
- * step does not appear on its own rows at all — it appears, in full, on every
- * OTHER satellite of the chain, where the pooled outlier test reads it as a
- * simultaneous slip on a family of innocent arcs.  Measured on the field seed:
- * a −99 cyc L5X slip at GOPE00CZE/G24 (the reference of both L5 chains) gave
- * `abs_dev = 0.000000` on G24 and −31.8 m / −283.9 m on G11, G25 and G32 — six
- * false IF-TD refloats, one of which re-realized a satellite phase-bias datum
- * network-wide by 13.7 m.
+ * Under `if_phase_td_pairs = all` each band pair of a satellite has its own
+ * between-epoch gradient chain (§14.10).  Without the knob, the reference-satellite
+ * slip test (tier T1r) runs on the first chain only.  An additional chain adopts the
+ * first chain's reference when that satellite is in its set and elects its own
+ * otherwise; in neither case is a slip on that reference attributed.  The
+ * reference's own double difference is identically 0 by construction, so the step
+ * does not appear on its own rows; it appears in full on every other satellite of
+ * the chain, where the pooled outlier test reads it as simultaneous slips on arcs
+ * that did not slip.  The resulting false IF-TD refloats can re-realize a satellite
+ * phase-bias datum network-wide (field example in §22.6).
  *
- * ### Why it was built that way, and what the knob may not undo
+ * ### Why the arm needs the empirical gate
  *
- * Re-running the arm per chain through the LEGACY candidate condition
- * |median| > 0.5·λ_IF flooded (§14.10.3): on (L2W,L5Q) the IF coefficients are
- * 12.26 / −11.26 — noise amplification 16.6 — against λ_IF = 0.1248 m, so NOISE
- * clears the fixed floor (5 351 candidates / 64 fires on a quiet 70-epoch
- * 60-station null).  The knob therefore re-opens the arm only behind card R's
- * EMPIRICAL gate, which scales with each chain's OWN dispersion, and the
- * detector refuses the combination in code as well as at the loader.
+ * Running the arm per chain through the legacy candidate condition
+ * |median| > 0.5·λ_IF floods (§14.10.3): on (L2W,L5Q) the IF coefficients are
+ * 12.26 / −11.26 (noise amplification 16.6) against λ_IF = 0.1247 m, so noise alone
+ * clears the fixed floor (5 351 candidates and 64 fires on a quiet 70-epoch
+ * 60-station null).  The knob therefore opens the arm only behind the empirical gate
+ * of card R, which scales with each chain's own dispersion, and the detector refuses
+ * the combination in code as well as in the loader.
  *
- * ### What is gated here
+ * ### Gates in this file
  *
- * - Default OFF: with the knob absent the additional chains behave exactly as
- *   today — no arm, no reset key, and the fan-out sits on every non-reference DD.
- * - OWN-ELECTED reference: the arm runs on THAT chain, with THAT chain's
- *   dispersion state and λ_IF; the reference arc is reset and the fan-out is
- *   rebased out of every other satellite's DD.
- * - ADOPTED reference: the first chain's verdict is INHERITED, never re-derived.
- * - The second lock: armed without the empirical gate, the additional chains
- *   still run no arm — the legacy condition can never gate a wide chain again.
- * - Byte-identity: `pairs = first` and the FIRST chain's own numbers are
- *   untouched in both settings.
- * - The loader's interlock (both prerequisites) and its arm.
+ * - Off by default: with the knob absent the additional chains run no arm and push
+ *   no reset key, and the fan-out stays on every non-reference DD.
+ * - Own-elected reference: the arm runs on that chain, with that chain's dispersion
+ *   state and λ_IF; the reference arc is reset and the fan-out is rebased out of
+ *   every other satellite's DD.
+ * - Adopted reference: the first chain's verdict is inherited, never re-derived.
+ * - Second lock: armed without the empirical gate, the additional chains still run
+ *   no arm, so the legacy condition never gates a wide chain.
+ * - Byte identity: with `pairs = first`, and for the first chain's own numbers,
+ *   both knob settings give identical results.
+ * - The loader interlock (both prerequisites) and the armed load.
  *
- * Everything drives the PUBLIC API with synthetic uncombined (PPP-RTK)
- * observations.  The IF coefficients satisfy c1 + c2 == 1 exactly, so giving
- * every band of a satellite the same observed-minus-modeled value makes the IF
- * OMC of EVERY pair equal that value — the quiet stream is a designed quantity
- * for all three pairs at once and a per-band offset is the only thing that
- * separates them.  Detectors run with `setDeferFlagging(true)`, the network
- * wiring: in that mode only the reference arm pushes reset keys, so a nonempty
- * return from `detect()` is unambiguous evidence about a chain's reference arm.
+ * All tests drive the public API with synthetic uncombined (PPP-RTK) observations.
+ * The IF coefficients satisfy c1 + c2 == 1 exactly, so giving every band of a
+ * satellite the same observed-minus-modeled value makes the IF OMC of every pair
+ * equal that value: the quiet stream is designed for all three pairs at once, and
+ * a per-band offset is the only thing that separates them.  Detectors run with
+ * `setDeferFlagging(true)`, as in the network wiring; in that mode only the
+ * reference arm pushes reset keys, so a nonempty return from `detect()` comes from
+ * a chain's reference arm.
  */
 
 #include <gtest/gtest.h>
@@ -82,8 +79,8 @@ constexpr double kF1 = Constants::GPS_L1_FREQ;
 constexpr double kF2 = Constants::GPS_L2_FREQ;
 constexpr double kF5 = Constants::GPS_L5_FREQ;
 
-/// Chain keys.  The FIRST pair of a satellite keeps the bare system string
-/// (its decisions are the pre-knob ones byte for byte); every additional pair
+/// Chain keys.  The first pair of a satellite keeps the bare system string (its
+/// decisions are byte-identical to those without the knob); every additional pair
 /// is "<system>|<sig1>_<sig2>".
 const std::string kChain12 = "GPS";
 const std::string kChain15 = "GPS|L1C_L5Q";
@@ -110,9 +107,9 @@ using BandState  = std::map<std::string, std::vector<std::string>>;        ///< 
 using BandOffset = std::map<std::string, std::map<std::string, double>>;   ///< satellite → (band → extra OMC on that band alone)
 
 /// One epoch of uncombined observations.  Each satellite carries exactly the
-/// bands @p bands names for it, so a DUAL-band satellite contributes only to the
-/// first chain and is structurally absent from the additional ones — which is
-/// what forces those chains to hold their OWN reference election.
+/// bands @p bands names for it, so a dual-band satellite contributes only to the
+/// first chain and is absent from the additional ones, which then elect their own
+/// reference.
 std::vector<PppObservation> makeEpoch(double tow, std::size_t epoch_idx,
                                       const OmcState& omc_m,
                                       const ElevState& elev_deg,
@@ -147,8 +144,8 @@ std::vector<PppObservation> makeEpoch(double tow, std::size_t epoch_idx,
     return epoch;
 }
 
-/// Card R's armed gate, defaults as shipped (k = 6, min_n = 4, thin_widen = 3,
-/// coherence = 0.5, max_consecutive = 1, no warm-up abstention).
+/// The armed gate of card R with its default parameters (k = 6, min_n = 4,
+/// thin_widen = 3, coherence = 0.5, max_consecutive = 1, no warm-up abstention).
 IfPhaseSlipDetector::RefGateParams armedGate() {
     IfPhaseSlipDetector::RefGateParams p;
     p.enable = true;
@@ -164,7 +161,7 @@ struct FanHarness {
 
     /// @param all_pairs  `if_phase_td_pairs = all`.
     /// @param ref_gate   card R's empirical gate.
-    /// @param ref_arm    §22.6 — the arm on the additional chains.
+    /// @param ref_arm    the arm on the additional chains (§22.6).
     FanHarness(bool all_pairs, bool ref_gate, bool ref_arm) {
         det.setDeferFlagging(true);         // the network wiring
         det.setAllPairs(all_pairs);
@@ -188,8 +185,8 @@ struct FanHarness {
                    : it->second.delta_grad_m;
     }
 
-    /// This chain's per-chain reference-arm counters (zeroed when absent, which
-    /// is itself the reading: the arm never ran there).
+    /// This chain's reference-arm counters, zeroed when absent (absence means the
+    /// arm never ran on that chain).
     IfPhaseSlipDetector::RefArmChainCounters chain(const std::string& key) const {
         const auto it = det.refArmChainCounters().find(key);
         return (it == det.refArmChainCounters().end())
@@ -199,10 +196,10 @@ struct FanHarness {
 };
 
 /// Six GPS satellites.  G01 is dual-band (L1C+L2W only), so it is present in the
-/// FIRST chain and structurally ABSENT from both L5 chains — which forces those
-/// chains to elect their own reference.  G02 is the highest-elevation satellite
-/// they can see, and both it and G01 clear the 45° reference-retention bar, so
-/// the reference identity is a controlled variable rather than an outcome.
+/// first chain and absent from both L5 chains, which therefore elect their own
+/// reference.  G02 is the highest-elevation satellite those chains see, and both
+/// it and G01 clear the 45° reference-retention bar, so the test controls which
+/// satellite is the reference.
 BandState ownElectedBands() {
     return { { "G01", { "L1C", "L2W" } },
              { "G02", { "L1C", "L2W", "L5Q" } },
@@ -213,7 +210,7 @@ BandState ownElectedBands() {
 }
 
 /// Every satellite triple-band: every chain contains G01, so every additional
-/// chain ADOPTS the first chain's reference.
+/// chain adopts the first chain's reference.
 BandState adoptedBands() {
     BandState b = ownElectedBands();
     b["G01"] = { "L1C", "L2W", "L5Q" };
@@ -234,7 +231,7 @@ bool hasKey(const std::vector<std::string>& keys, const std::string& k) {
     return std::find(keys.begin(), keys.end(), k) != keys.end();
 }
 
-/// Only the reset keys of the FIRST chain's pair — what must not move when the
+/// Only the reset keys of the first chain's pair, which must not change when the
 /// additional chains are armed.
 std::vector<std::string> firstChainKeys(const std::vector<std::string>& keys) {
     std::vector<std::string> out;
@@ -284,7 +281,7 @@ std::string networkConfig(const std::string& extra) {
         "}\n";
 }
 
-/// A `network.cycle_slip` block with the three knobs this card interlocks.
+/// A `network.cycle_slip` block with the three interlocked knobs.
 std::string cycleSlipBlock(const char* pairs, bool ref_gate, bool ref_arm_all) {
     return std::string(
         "    \"cycle_slip\": {\n"
@@ -306,14 +303,14 @@ bool loadWith(const std::string& extra, GnssConfig& cfg, LogManager& log,
 }  // namespace
 
 // ===========================================================================
-// Default OFF — the defect, reproduced
+// Off by default: the fan-out reproduced
 // ===========================================================================
 
 // With `pairs = all` and the empirical gate armed but the knob absent, an
-// additional chain runs NO reference arm: the step on its own reference stays on
-// every one of that chain's non-reference DDs (the fan-out the pooled test then
-// attributes to innocent arcs), and no reset key names the reference.  This is
-// the pre-card behaviour and the baseline every ON assertion is read against.
+// additional chain runs no reference arm: the step on its own reference stays on
+// every non-reference DD of that chain (the fan-out the pooled test then attributes
+// to arcs that did not slip), and no reset key names the reference.  This is the
+// baseline the armed tests are compared against.
 TEST(IfTdRefArmAll, DefaultOffLeavesTheFanOutOnEveryInnocentArc) {
     FanHarness h(/*all_pairs=*/true, /*ref_gate=*/true, /*ref_arm=*/false);
     const auto elev  = sixSatElevations();
@@ -322,7 +319,7 @@ TEST(IfTdRefArmAll, DefaultOffLeavesTheFanOutOnEveryInnocentArc) {
 
     for (std::size_t e = 0; e < 3; ++e) EXPECT_TRUE(h.step(e, omc, elev, bands).empty());
 
-    // A −0.4 m step on G02's L5Q alone.  G02 is the reference ELECTED by both L5
+    // A −0.4 m step on G02's L5Q alone.  G02 is the reference elected by both L5
     // chains (G01 has no L5 to be adopted from), so the (1,5) and (2,5)
     // combinations move on the reference itself while (1,2) stays quiet.
     const BandOffset slip = { { "G02", { { "L5Q", -0.4 } } } };
@@ -342,15 +339,15 @@ TEST(IfTdRefArmAll, DefaultOffLeavesTheFanOutOnEveryInnocentArc) {
     }
     EXPECT_NEAR(h.dd("G03", "L1C_L2W"), 0.0, 5e-3) << "the first chain is quiet";
 
-    // Invariant #4: the additional chains report no opportunity at all — the arm
-    // did not run there.  That is the defect, not a clean result.
+    // Invariant #4: the additional chains report no opportunity at all because the
+    // arm did not run there.  Zero counts here mean the arm is absent, not clean.
     EXPECT_EQ(h.chain(kChain15).opportunities, 0);
     EXPECT_EQ(h.chain(kChain25).opportunities, 0);
     EXPECT_GT(h.chain(kChain12).opportunities, 0) << "the first chain's arm always runs";
 }
 
 // ===========================================================================
-// (i) OWN-ELECTED reference — tested on its own chain, through the gate
+// (i) Own-elected reference: tested on its own chain, through the gate
 // ===========================================================================
 
 TEST(IfTdRefArmAll, OwnElectedReferenceIsResetAndTheFanOutIsRebasedOut) {
@@ -364,10 +361,10 @@ TEST(IfTdRefArmAll, OwnElectedReferenceIsResetAndTheFanOutIsRebasedOut) {
     const BandOffset slip = { { "G02", { { "L5Q", -0.4 } } } };
     const auto keys = h.step(3, omc, elev, bands, slip);
 
-    // The reference's OWN arc, on each L5 chain, keyed by THAT chain's pair.
+    // The reference's own arc on each L5 chain, keyed by that chain's pair.
     EXPECT_TRUE(hasKey(keys, "G02_L1C_L5Q")) << "the (1,5) chain's reference arc";
     EXPECT_TRUE(hasKey(keys, "G02_L2W_L5Q")) << "the (2,5) chain's reference arc";
-    // …and nothing on the first chain, which did not move.
+    // Nothing on the first chain, which did not move.
     EXPECT_TRUE(firstChainKeys(keys).empty());
 
     // The fan-out is gone: the rebase leaves only the per-satellite residual, so
@@ -377,7 +374,8 @@ TEST(IfTdRefArmAll, OwnElectedReferenceIsResetAndTheFanOutIsRebasedOut) {
         EXPECT_NEAR(h.dd(sat, "L2W_L5Q"), 0.0, 5e-2) << sat;
     }
 
-    // The counters say which arm decided it, and how many rows it de-implicated.
+    // The counters record which arm decided, and on how many rows the fan-out was
+    // removed.
     EXPECT_EQ(h.chain(kChain15).fires_own, 1);
     EXPECT_EQ(h.chain(kChain15).fires_inherited, 0) << "no adoption: G01 has no L5";
     EXPECT_GT(h.chain(kChain15).opportunities, 0);
@@ -388,11 +386,10 @@ TEST(IfTdRefArmAll, OwnElectedReferenceIsResetAndTheFanOutIsRebasedOut) {
     EXPECT_EQ(h.chain(kChain12).fires_own, 0) << "the first chain never moved";
 }
 
-// The arm on an additional chain must use THAT chain's own dispersion state and
-// λ_IF, not the first chain's.  (L2W,L5Q) has |c2| = 11.28 against 1.26 on
-// (L1C,L5Q), so the same L5 step is ~9× larger there — and the two chains'
-// EWMAs advance on their own samples, which is what makes the empirical bar
-// track each combination's own noise instead of the first chain's.
+// The arm on an additional chain uses that chain's own dispersion state and λ_IF,
+// not the first chain's.  (L2W,L5Q) has |c2| = 11.26 against 1.26 on (L1C,L5Q), so
+// the same L5 step is about 9× larger there.  Each chain's EWMA advances on its own
+// samples, so the empirical bar tracks each combination's own noise.
 TEST(IfTdRefArmAll, EachChainJudgesOnItsOwnScaleAndWavelength) {
     FanHarness h(/*all_pairs=*/true, /*ref_gate=*/true, /*ref_arm=*/true);
     const auto elev  = sixSatElevations();
@@ -408,7 +405,7 @@ TEST(IfTdRefArmAll, EachChainJudgesOnItsOwnScaleAndWavelength) {
     EXPECT_EQ(h.chain(kChain25).candidates, 0)
         << "the WIDE combination must not be a candidate on noise — that is §14.10.3";
 
-    // A step just over the (1,5) floor (0.5·λ_IF = 54.5 mm) but 9× that on (2,5).
+    // A step just over the (1,5) floor (0.5·λ_IF = 54.5 mm), and 9× larger on (2,5).
     const double d = -0.05;                                  // m on L5Q alone
     EXPECT_GT(std::abs(c2Of(kF1, kF5) * d), 0.5 * 0.1089);
     const BandOffset slip = { { "G02", { { "L5Q", d } } } };
@@ -420,14 +417,14 @@ TEST(IfTdRefArmAll, EachChainJudgesOnItsOwnScaleAndWavelength) {
 }
 
 // ===========================================================================
-// (ii) ADOPTED reference — the first chain's verdict, inherited
+// (ii) Adopted reference: the first chain's verdict, inherited
 // ===========================================================================
 
 TEST(IfTdRefArmAll, AdoptedReferenceInheritsTheFirstChainsFire) {
     const auto elev  = sixSatElevations();
     const auto bands = adoptedBands();          // every chain contains G01
     // A step on G01's L1C alone: it moves (1,2) by c1 = 2.546 and (1,5) by
-    // c1 = 2.261, and leaves (2,5) — which does not contain L1C — exactly alone.
+    // c1 = 2.261, and leaves (2,5), which does not contain L1C, unchanged.
     const BandOffset slip = { { "G01", { { "L1C", 0.2 } } } };
 
     std::vector<std::string> keys_off, keys_on;
@@ -445,17 +442,17 @@ TEST(IfTdRefArmAll, AdoptedReferenceInheritsTheFirstChainsFire) {
         else     { c15_off = h.chain(kChain15); }
     }
 
-    // OFF: the first chain fires on its own reference and the (1,5) chain — which
-    // adopted that same reference — does not hear about it.  The step rides
-    // every one of its non-reference DDs.
+    // Off: the first chain fires on its own reference, and the (1,5) chain, which
+    // adopted that reference, is not told.  The step stays on every one of its
+    // non-reference DDs.
     EXPECT_TRUE(hasKey(keys_off, "G01_L1C_L2W"));
     EXPECT_FALSE(hasKey(keys_off, "G01_L1C_L5Q"));
     EXPECT_NEAR(fan_off, -c1Of(kF1, kF5) * 0.2, 5e-3);
     EXPECT_EQ(c15_off.opportunities, 0) << "no arm ran on the adopting chain";
 
-    // ON: the verdict is inherited, the (1,5) reference arc is reset with THIS
-    // chain's key, and the rebase — by THIS chain's own median — takes the
-    // fan-out off the innocent arcs.
+    // On: the verdict is inherited, the (1,5) reference arc is reset with this
+    // chain's key, and the rebase by this chain's own median removes the fan-out
+    // from the other arcs.
     EXPECT_TRUE(hasKey(keys_on, "G01_L1C_L2W")) << "the first chain is unchanged";
     EXPECT_TRUE(hasKey(keys_on, "G01_L1C_L5Q"));
     EXPECT_TRUE(hasKey(keys_on, "G01_L2W_L5Q"));
@@ -465,18 +462,18 @@ TEST(IfTdRefArmAll, AdoptedReferenceInheritsTheFirstChainsFire) {
     EXPECT_EQ(c15_on.candidates, 1) << "(1,5) contains L1C, so its own median moved too";
     EXPECT_EQ(c15_on.fanout_suppressed, 5) << "G02..G06 — every satellite but the reference";
 
-    // The named COST of unconditional inheritance, measured rather than assumed:
-    // (2,5) does not contain L1C, so its own combination never moved — its
-    // candidate counter stays 0 while it still resets the reference arc.  That
-    // gap (inherited fires > candidates) is the run-end number that prices it.
+    // The cost of unconditional inheritance: (2,5) does not contain L1C, so its own
+    // combination never moved and its candidate counter stays 0, yet it still
+    // resets the reference arc.  The run-end gap (inherited fires > candidates)
+    // counts these resets.
     EXPECT_EQ(c25_on.fires_inherited, 1);
     EXPECT_EQ(c25_on.candidates, 0);
     EXPECT_EQ(c25_on.fanout_suppressed, 0) << "nothing to de-implicate there";
 }
 
-// A first chain that does NOT fire hands down nothing: the additional chains are
-// exactly today.  (An adopted reference is never tested on its own chain, so
-// "no fire" must mean "no action", not "test it here instead".)
+// A first chain that does not fire hands down nothing, and the additional chains
+// behave as with the knob off.  An adopted reference is never tested on its own
+// chain, so no fire means no action, not a local test instead.
 TEST(IfTdRefArmAll, NoFirstChainFireMeansNoInheritance) {
     FanHarness h(/*all_pairs=*/true, /*ref_gate=*/true, /*ref_arm=*/true);
     const auto elev  = sixSatElevations();
@@ -485,7 +482,7 @@ TEST(IfTdRefArmAll, NoFirstChainFireMeansNoInheritance) {
 
     for (std::size_t e = 0; e < 4; ++e) EXPECT_TRUE(h.step(e, omc, elev, bands).empty());
 
-    // A step on a NON-reference satellite: no chain's reference moved.
+    // A step on a non-reference satellite: no chain's reference moved.
     const BandOffset slip = { { "G04", { { "L5Q", -0.4 } } } };
     EXPECT_TRUE(h.step(4, omc, elev, bands, slip).empty());
     EXPECT_EQ(h.chain(kChain15).fires_inherited, 0);
@@ -496,15 +493,15 @@ TEST(IfTdRefArmAll, NoFirstChainFireMeansNoInheritance) {
 }
 
 // ===========================================================================
-// The second lock — the legacy condition may never gate a wide chain
+// The second lock: the legacy condition never gates a wide chain
 // ===========================================================================
 
-// The loader disarms the knob without `if_phase_td_ref_gate`; this pins the
-// detector's own refusal, which is what protects a caller that bypasses the
-// loader.  Without the empirical gate the legacy |median| > 0.5·λ_IF condition
-// IS the decision, and on (L2W,L5Q) — noise amplification 16.6 against
-// λ_IF = 0.1248 m — that condition is met by NOISE (§14.10.3: 5 351 candidates /
-// 64 fires on a quiet null).
+// The loader disarms the knob without `if_phase_td_ref_gate`; this test covers the
+// detector's own refusal, which protects a caller that bypasses the loader.
+// Without the empirical gate the legacy |median| > 0.5·λ_IF condition would be the
+// decision, and on (L2W,L5Q) (noise amplification 16.6 against λ_IF = 0.1247 m)
+// noise meets that condition (§14.10.3: 5 351 candidates and 64 fires on a quiet
+// null).
 TEST(IfTdRefArmAll, ArmedWithoutTheEmpiricalGateTheAdditionalChainsStillDoNotRun) {
     FanHarness h(/*all_pairs=*/true, /*ref_gate=*/false, /*ref_arm=*/true);
     const auto elev  = sixSatElevations();
@@ -520,12 +517,12 @@ TEST(IfTdRefArmAll, ArmedWithoutTheEmpiricalGateTheAdditionalChainsStillDoNotRun
     EXPECT_EQ(h.chain(kChain25).opportunities, 0);
     EXPECT_EQ(h.chain(kChain15).fires_own, 0);
     EXPECT_EQ(h.chain(kChain25).fires_own, 0);
-    // The fan-out is still there, which is the honest OFF reading.
+    // The fan-out is still present, as with the knob off.
     EXPECT_NEAR(h.dd("G03", "L1C_L5Q"), -c2Of(kF1, kF5) * (-0.4), 5e-3);
 }
 
-// The same refusal on the ADOPTED path: an inherited verdict on a wide chain is
-// also refused without the gate, so neither half of the card can re-open §14.10.3.
+// The same refusal on the adopted path: an inherited verdict on a wide chain is
+// also refused without the gate, so neither path can reopen §14.10.3.
 TEST(IfTdRefArmAll, InheritanceIsAlsoRefusedWithoutTheEmpiricalGate) {
     FanHarness h(/*all_pairs=*/true, /*ref_gate=*/false, /*ref_arm=*/true);
     const auto elev  = sixSatElevations();
@@ -542,7 +539,7 @@ TEST(IfTdRefArmAll, InheritanceIsAlsoRefusedWithoutTheEmpiricalGate) {
 }
 
 // ===========================================================================
-// Byte-identity — the first chain and `pairs = first`
+// Byte identity: the first chain and `pairs = first`
 // ===========================================================================
 
 // With one chain per satellite there is no additional chain, so the knob is a
@@ -570,10 +567,9 @@ TEST(IfTdRefArmAll, PairsFirstIsUntouched) {
         EXPECT_PRED_FORMAT2(SameDd, dds[0][i], dds[1][i]) << "sample " << i;
 }
 
-// Under `pairs = all` the FIRST chain must also be untouched: it already runs the
-// arm, and nothing this card adds may perturb the decisions the default path
-// makes.  Its reset keys and every one of its double differences are compared
-// bit for bit across the knob.
+// Under `pairs = all` the first chain is also unchanged: it already runs the arm,
+// and the knob does not alter the decisions of the default path.  Its reset keys
+// and every one of its double differences are compared bit for bit across the knob.
 TEST(IfTdRefArmAll, TheFirstChainIsUntouchedUnderPairsAll) {
     const auto elev  = sixSatElevations();
     const auto bands = adoptedBands();
@@ -633,7 +629,7 @@ TEST(IfTdRefArmAll, LoaderDefaultIsOff) {
                          cfg, log, "default"));
     EXPECT_FALSE(cfg.getNetworkConfig().slip_qc.ref_arm_all);
 
-    // …and absent from the JSON entirely, not merely written false.
+    // Also off when the key is absent from the JSON, not only when written false.
     GnssConfig cfg2; LogManager log2;
     ASSERT_TRUE(loadWith("    \"cycle_slip\": { \"if_phase_td\": true,"
                          " \"if_phase_td_pairs\": \"all\","

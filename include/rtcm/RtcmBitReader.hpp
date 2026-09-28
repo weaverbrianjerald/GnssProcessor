@@ -10,9 +10,9 @@
  *   - @c sm(n)  : sign-magnitude integer (MSB sign, remaining magnitude)
  *   - @c u64(n) / @c s64(n) / @c sm64(n) : 64-bit variants
  *
- * Sign-magnitude is required for several DFs (e.g. DF034 GLONASS satellite
- * frequency channel, several SSR fields).  Two's-complement is the common
- * case for RTCM signed integers.
+ * Sign-magnitude is required for several DFs (e.g. the GLONASS ephemeris
+ * fields DF110-DF123 of message 1020, several SSR fields).  Two's-complement
+ * is the common case for RTCM signed integers.
  *
  * The reader tracks a bit offset; reading past the end sets an error flag,
  * after which all subsequent reads return zero and @c ok() returns false.

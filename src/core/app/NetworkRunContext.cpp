@@ -1,13 +1,12 @@
 /**
  * @file NetworkRunContext.cpp
- * @brief @internal Knob snapshot + the relocated RTB-7 fingerprint /
- *        warm-resume restore / snapshot write and the carry-lifecycle
- *        functions of Application::runNetwork.
+ * @brief @internal Knob snapshot, snapshot fingerprint (RTB-7), warm-resume
+ *        restore, state-snapshot writer and the carry-lifecycle functions of
+ *        Application::runNetwork.
  *
- * Decomposition INC-4 (2026-07-16) — bodies relocated VERBATIM from
- * ApplicationNetwork.cpp; each function opens with an alias block binding the
- * former local names into the context so the moved code is textually
- * unchanged.
+ * The bodies were relocated from ApplicationNetwork.cpp (decomposition INC-4).
+ * Each function opens with an alias block that binds the driver's former local
+ * names to members of the context, so the relocated code keeps those names.
  */
 
 #include "app/NetworkRunContext.hpp"
@@ -18,12 +17,12 @@
 #include "filter/NetworkAmbStateTrace.hpp"   // AmbStateRow / ambStateNoteErase (RF-1 §7.4)
 #include "filter/NetworkAmbFloat.hpp"       // ambFloatBirthFloor (RF-1 step 4)
 #include "filter/NetworkCarryVce.hpp"
-#include "filter/NetworkClockAnchor.hpp"      // Card Q3 guarded temporal clock anchor
+#include "filter/NetworkClockAnchor.hpp"      // guarded temporal clock anchor (card Q3)
 #include "filter/NetworkPriorResidual.hpp"    // prior-residual census (SPEC_prior_residual_census)
-#include "filter/NetworkInvariantCarryDriver.hpp"   // RTB-7(c) branch-faithful carry (de)serialize
-#include "products/NetworkClockEmitRebase.hpp"       // §18.10 resume frame restore: CLK-R held frame travels
-#include "products/NetworkEmitRebase.hpp"            // RS-5 §21.10: the eq34 emit re-base frame travels
-#include "products/NetworkPbEmitFilter.hpp"          // RS-5 §21.10: the PB emit filter state travels
+#include "filter/NetworkInvariantCarryDriver.hpp"   // branch-faithful carry (de)serialization (RTB-7(c))
+#include "products/NetworkClockEmitRebase.hpp"       // CLK-R held frame, restored on warm resume (§18.10)
+#include "products/NetworkEmitRebase.hpp"            // eq34 emit re-base frame, restored on warm resume (RS-5, §21.10)
+#include "products/NetworkPbEmitFilter.hpp"          // PB emit filter state, restored on warm resume (RS-5, §21.10)
 #include "filter/NetworkNormalEquations.hpp"
 #include "filter/NetworkPivotHandover.hpp"   // datumChangeAffectsKey (handover scope predicate)
 #include "filter/NetworkSbasis.hpp"          // kWindUpYawModelId (wind-up model revision token)
@@ -31,7 +30,7 @@
 #include "math/TimeUtils.hpp"
 #include "products/NetworkProductEmitter.hpp"
 #include "products/NetworkStateSnapshot.hpp"
-#include "realtime/RealTimeEngine.hpp"       // Card CC (B): consumer snapshot beside the network history copy
+#include "realtime/RealTimeEngine.hpp"       // consumer snapshot written beside the network history copy (card CC, part B)
 #include "rinex/MultiRinexSync.hpp"
 
 #include <fmt/format.h>
@@ -60,42 +59,42 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.pl_max_gap_s = config_.networkPhaseLevelingMaxGapS();
     k.pl_var_floor = config_.networkPhaseLevelingVarFloorM2();
     k.pl_los_scale = config_.networkPhaseLevelingLosScale();
-    // RF-1 step 3 (docs/refound/RF-1_float_ambiguities_design.md §3.2 / §7.2): under the
-    // float_kf vehicle the station-wide jointly-whitened local block is STRUCTURAL, not a
-    // knob — `buildLocalBlock` re-pointed as the vehicle's definition of the fold.  So
-    // this member is the RESOLVED LIVE PREDICATE, and every downstream consumer (the
-    // PASS-B inject, the harvest's cross-covariance stash, the run-end readout, the
-    // trace's `route`) picks the vehicle up with no further branch.  The F3 KNOB itself
-    // stays refused under float_kf at load: one switch on one fold, never two.
-    // ⚠ read the vehicle off the CONFIG here, not off `k`: the amb_float_* members are
-    // filled a few lines below, and an ordering flip would silently disarm the block.
+    // Under the float_kf vehicle the station-wide jointly whitened local block is part of
+    // the vehicle, not a knob: `buildLocalBlock` is the vehicle's definition of the fold.
+    // pl_local_block is therefore the resolved predicate (F3 knob or vehicle), and every
+    // downstream consumer (the PASS-B inject, the harvest's cross-covariance stash, the
+    // run-end readout, the trace's `route`) follows the vehicle with no further branch.
+    // The loader forces the F3 knob itself off under float_kf, so one switch controls the
+    // fold.  The vehicle is read from the config, not from `k`: the amb_float_* members
+    // are filled below, and reading them here would leave the block disarmed without a
+    // warning.  See docs/refound/RF-1_float_ambiguities_design.md §3.2, §7.2 (RF-1 step 3).
     k.pl_blk_from_vehicle = config_.getNetworkConfig().ambiguity_vehicle
                             == NetworkAmbiguityVehicle::FloatKf;
     k.pl_local_block = config_.networkPhaseLevelingLocalBlock() || k.pl_blk_from_vehicle;
-    k.pl_blk_min_age_ep = config_.networkPhaseLevelingLocalBlockMinAgeEp();   // F3 block admission age gate
+    k.pl_blk_min_age_ep = config_.networkPhaseLevelingLocalBlockMinAgeEp();   // admission age gate of the F3 block
     k.pl_blk_young_free = config_.networkPhaseLevelingLocalBlockYoungMode() == "free";
-    // RF-1 §7.1 (docs/refound/RF-1_float_ambiguities_design.md): the AMBIGUITY VEHICLE
-    // and its supporting knobs.  ⚠ STEP 1: the vehicle is registered and carries no
-    // mechanism — nothing on the solve path reads amb_float_kf, so both values are
-    // byte-identical; the joint block (step 3), var_birth + the drop (step 4) and the
-    // declared anchor S-transform (step 5) are separately armed A/Bs.
+    // Ambiguity vehicle and its supporting knobs (RF-1 §7.1,
+    // docs/refound/RF-1_float_ambiguities_design.md).  The joint block (step 3) follows the
+    // vehicle (above); the birth variance and the drop (step 4) and the declared anchor
+    // S-transform (step 5) each have their own knob below.
     k.amb_float_kf = config_.getNetworkConfig().ambiguity_vehicle
                      == NetworkAmbiguityVehicle::FloatKf;
     k.amb_birth_var_floor = config_.getNetworkConfig().amb_float_birth_var_m2;
-    // RF-3a: the DROP-only floor.  ANDed with the vehicle here so every downstream site
-    // reads ONE number and a miswired arm (a floor without float_kf) cannot half-act.
+    // Variance floor applied at the drop only (RF-3a).  It is gated on the vehicle here, so
+    // every downstream site reads one number and a floor configured without float_kf
+    // resolves to 0 instead of acting at some sites and not at others.
     k.amb_drop_var_floor  = k.amb_float_kf
                                 ? config_.getNetworkConfig().amb_float_drop_var_m2 : 0.0;
-    // RF-3c: the warm-up gate is meaningless without the floor it guards, so it is
-    // resolved to 0 there — a site then reads "floor, from epoch N" as one statement.
+    // The drop floor's warm-up gate (RF-3c) has no meaning without the floor, so it
+    // resolves to 0 when the floor is off; a site reads the pair as "floor, from epoch N".
     k.amb_drop_floor_after_ep =
         (k.amb_drop_var_floor > 0.0)
             ? config_.getNetworkConfig().amb_float_drop_floor_after_ep : 0;
     k.amb_float_q_m2s = config_.getNetworkConfig().amb_float_q_m2s;
     k.amb_float_declared_handover = config_.getNetworkConfig().amb_float_declared_handover;
-    // RF-2 item 1: the held S-BASIS, already interlocked at load against float_kf and
-    // phase_datum_prioritized.  The AND with the vehicle is repeated here so a future
-    // loader edit cannot arm it on the level vehicle through this path.
+    // Held S-basis (RF-2 item 1).  The loader already interlocks it with float_kf and
+    // phase_datum_prioritized; the vehicle test is repeated here so that a later loader
+    // edit cannot arm it on the level vehicle through this path.
     k.pd_held_basis = config_.networkPhaseDatumHeldBasis()
                       && config_.getNetworkConfig().ambiguity_vehicle
                              == NetworkAmbiguityVehicle::FloatKf;
@@ -106,9 +105,9 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.trace_amb_state = config_.getNetworkConfig().trace_amb_state;
     k.trace_amb_state_every =
         std::max(1, config_.getNetworkConfig().trace_amb_state_every);
-    // AGE-AWARE young-arc inflate (SPEC_amb_iono_split_overcount §6.17–§6.18).  The
-    // loader has already disabled it (V0 -> 0) off the leveling vehicle, so the live
-    // predicate is Knobs::on() alone.
+    // Age-aware young-arc inflation (SPEC_amb_iono_split_overcount §6.17–§6.18).  The
+    // loader already disables it (V0 -> 0) off the leveling vehicle, so Knobs::on() alone
+    // is the live predicate.
     k.yng.var_m2     = config_.networkPhaseLevelingYoungInflateVarM2();
     k.yng.tau_ep     = config_.networkPhaseLevelingYoungInflateTauEp();
     k.yng.max_age_ep = config_.networkPhaseLevelingYoungInflateMaxAgeEp();
@@ -131,25 +130,26 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.zwd_seam_epochs = config_.networkZwdSeamReseedEpochs();
     k.zwd_seam_q = config_.networkZwdSeamReseedQ();
     k.amb_seam_reinflate_var = config_.networkAmbSeamReinflateVarM2();
-    k.resume_frame_restore   = config_.networkResumeFrameRestore();      // §18.10
-    k.resume_coupling_restore = config_.networkResumeCouplingRestore();  // §18.12
-    k.resume_datum_restore   = config_.networkResumeDatumRestore();      // RS-3 §21.7
-    k.resume_emit_restore    = config_.networkResumeEmitRestore();       // RS-5 §21.10
-    k.resume_station_restore = config_.networkResumeStationRestore();    // RS-6 §21.13
+    k.resume_frame_restore   = config_.networkResumeFrameRestore();      // frame state (§18.10)
+    k.resume_coupling_restore = config_.networkResumeCouplingRestore();  // coupling rows (§18.12)
+    k.resume_datum_restore   = config_.networkResumeDatumRestore();      // datum tree (RS-3, §21.7)
+    k.resume_emit_restore    = config_.networkResumeEmitRestore();       // emit engines (RS-5, §21.10)
+    k.resume_station_restore = config_.networkResumeStationRestore();    // station layer (RS-6, §21.13)
     k.resume_station_rxcb    = config_.networkResumeStationRestoreRxCb();
     k.resume_station_shdev   = config_.networkResumeStationRestoreShDev();
-    k.resume_signal_canon_restore = config_.networkResumeSignalCanonRestore();  // RS-8 §21.16
-    k.resume_border_restore  = config_.networkResumeBorderRestore();     // RS-7 §21.14
-    k.resume_rxcb_lin_restore = config_.networkResumeRxCbLinRestore();   // RS-9 §21.18
-    k.resume_pb_seam_mark    = config_.networkResumePbSeamMark();       // RS-4 §21.9
-    k.resume_slip_warmup_ep  = config_.networkResumeSlipWarmupEp();      // §18.10
-    k.resume_d5_warmup_ep    = config_.networkResumeD5WarmupEp();        // RS-2b §21.6
-    k.readmit_seed_horizon_s = config_.networkReadmitSeedHorizonS();     // E2 seed-first re-admission
+    k.resume_signal_canon_restore = config_.networkResumeSignalCanonRestore();  // signal latch (RS-8, §21.16)
+    k.resume_border_restore  = config_.networkResumeBorderRestore();     // border covariance (RS-7, §21.14)
+    k.resume_rxcb_lin_restore = config_.networkResumeRxCbLinRestore();   // rx-CB x_lin (RS-9, §21.18)
+    k.resume_pb_seam_mark    = config_.networkResumePbSeamMark();       // PB seam mark (RS-4, §21.9)
+    k.resume_slip_warmup_ep  = config_.networkResumeSlipWarmupEp();      // MW/LLI warm-up (§18.10)
+    k.resume_d5_warmup_ep    = config_.networkResumeD5WarmupEp();        // warm-up of the D5 gate (RS-2b, §21.6)
+    k.readmit_seed_horizon_s = config_.networkReadmitSeedHorizonS();     // seed-first re-admission (E2)
     k.readmit_marg_ep        = config_.networkReadmitCouplingMargEp();   // block/row re-coupling edge
     k.readmit_seed_cb        = config_.networkReadmitSeedCodeBias();     // seed the code biases too (or clock only)
-    // Unconditional Z-row capture (SPEC_synthetic_minimum_network §17 finding 3):
-    // any snapshot-armed run records + harvests the per-station ZWD posterior so
-    // EVERY snapshot carries Z rows — read-only w.r.t. the solve, no inject.
+    // Z-row capture is unconditional (SPEC_synthetic_minimum_network §17 finding 3): a run
+    // with a snapshot path records and harvests the per-station ZWD posterior, so every
+    // snapshot carries Z rows.  The capture is read-only with respect to the solve (no
+    // inject).
     k.zwd_capture = !nc.state_snapshot_path.empty();
     k.iono_on = config_.networkCarryIono();  // loader guarantees phase_leveling + relevel_free_epoch (scope=relevel) + the SH/mech-B/carry_invariant mutexes
     // I-in-block; loader guarantees phase_leveling + pl_local_block + carry_cpl_cond,
@@ -186,7 +186,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.lv1_seed_frame = config_.networkIonoSeedFieldFrame();  // loader guarantees estimate_iono_sh
     k.lv1_min_sats = config_.networkIonoSeedFieldFrameMinSats();
     k.carry_vce = config_.networkCarryVce();
-    k.vce_apply_on = config_.networkCarryVceApply();   // M2 v2; loader guarantees carry_vce
+    k.vce_apply_on = config_.networkCarryVceApply();   // VCE apply (M2 v2); loader guarantees carry_vce
     k.ura_on = config_.networkEmitUra();
     k.ura_alpha = config_.networkUraEwmaAlpha();
     k.ura_retro = config_.networkUraRetroBump();
@@ -238,22 +238,20 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.perconst_on = config_.networkPerConstWithhold();
     k.perconst_min_rows = config_.networkPerConstWithholdMinRows();
     k.emit_epoch_status = config_.networkEmitEpochStatusRecord();
-    // Card CLK-R: clock emission re-base knobs.
-    // The engine itself lives in NetworkCarryState (its per-sat baselines and
-    // frame accumulators must survive the epoch loop) and is configured by the
-    // driver next to the PB-filter setup.
+    // Clock emission re-base knobs (card CLK-R).  The engine lives in NetworkCarryState,
+    // because its per-satellite baselines and frame accumulators outlive the epoch, and
+    // the driver configures it next to the PB-filter setup.
     k.clk_frame_hold = config_.networkEmitClockFrameHold();
     k.clk_jump_test  = config_.networkClockDiscJumpTest();
-    // Card PBH: the emit-side phase-bias hold.  The held values and generations live
-    // in NetworkCarryState (they must survive the epoch loop); this is only the knob
-    // snapshot the NetworkPbHold seam reads.
+    // Emit-side phase-bias hold (card PBH).  The held values and generations live in
+    // NetworkCarryState because they outlive the epoch; these are the knobs the
+    // NetworkPbHold seam reads.
     k.emit_pb_hold           = config_.getNetworkConfig().emit_pb_hold;
     k.emit_pb_hold_max_gap_s = config_.getNetworkConfig().emit_pb_hold_max_gap_s;
-    // The guarded temporal clock
-    // anchor.  `cta_on` is resolved against its clock_model interlock HERE, so
-    // every downstream site reads one predicate: under the two-state oscillator
-    // the clock is never stashed to the D2 carry, so the anchor has nothing to
-    // fold and must not claim otherwise (the loader errors on the combination).
+    // Guarded temporal clock anchor.  `cta_on` is resolved against the clock_model
+    // interlock here, so every downstream site reads one predicate.  Under the two-state
+    // oscillator the clock is never stashed to the D2 carry, so the anchor has nothing to
+    // fold and reads as off (the loader reports an error on the combination).
     k.clk_model_on = config_.networkClockModel();
     k.cta_on             = config_.networkClockTemporalAnchor() && !k.clk_model_on;
     k.cta_q              = config_.networkClockAnchorQ();
@@ -266,52 +264,52 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.cta_mark           = config_.networkClockAnchorMark();
     k.cta_resolve        = config_.networkClockAnchorResolve();
     k.cta_gauge_free     = config_.networkClockAnchorGaugeFree();
-    // Card CLV: the code-only level re-base.  Resolved against the clock_model
+    // Code-only clock level re-base (card CLV).  Resolved against the clock_model
     // interlock: under the two-state oscillator the clock lives on clock_osc, which the
-    // re-base does not move, so the carried clock and its oscillator would part.
+    // re-base does not move, so the carried clock and its oscillator would diverge.
     k.clv_on           = config_.networkClockLevelCarry() && !k.clk_model_on;
     k.clv_floor_m      = config_.networkClockLevelSigmaFloorM();
     k.clv_horizon_s    = config_.networkClockLevelHorizonS();
     k.clv_ignition_var = config_.getInitialStd().sat_clock * config_.getInitialStd().sat_clock;
-    // Card C-GF: ONE resolved predicate that every fold, withdraw and replay site reads.
+    // Gauge-free carry downdate: one resolved predicate that every fold, withdraw and
+    // replay site reads (card C-GF).
     //
-    // The gauge-free downdate belongs to the CARRY FOLD, not to the Q3 clock anchor —
-    // it removes the datum's own direction from the carried information, which is a
-    // property of carrying information across a re-realizable datum, not of anchoring a
-    // clock temporally.  It was reachable only through `clock_anchor_gauge_free`, so a
-    // config running the dense carry without the Q3 anchor could not have it at all.
+    // The downdate belongs to the carry fold, not to the Q3 clock anchor: it removes the
+    // datum's own direction from the carried information, which is a property of carrying
+    // information across a re-realizable datum, not of anchoring a clock in time.  It is
+    // armed either through `clock_anchor_gauge_free` with the Q3 anchor on, or through the
+    // dense carry (network.shared_carry_full_cov) with network.shared_carry_gauge_free.
     //
-    // It MUST be a single resolved field rather than a predicate re-derived per site.
-    // Fold and withdraw have to agree exactly: the withdraw subtracts what the fold
-    // added, so a fold that downdated and a withdraw that did not leaves a residue
-    // −ΛU(UᵀΛU)⁻¹UᵀΛ, which is NEGATIVE SEMIDEFINITE — the reduced normals stop being
-    // PSD along the gauge and the constrained solve either throws on its pivot guard
-    // (persistent epoch skip) or factorizes into a saddle and returns a silently wrong
-    // x_s.  Resolving once here makes that disagreement unrepresentable.
+    // It is a single resolved field, not a predicate re-derived per site, because fold and
+    // withdraw have to agree: the withdraw subtracts what the fold added, and a fold that
+    // downdated paired with a withdraw that did not leaves a residue −ΛU(UᵀΛU)⁻¹UᵀΛ, which
+    // is negative semidefinite.  The reduced normals then lose PSD along the gauge, and the
+    // constrained solve either throws on its pivot guard (the epoch is skipped, every
+    // epoch) or factorizes a saddle and returns a wrong x_s without an error.
     k.carry_gauge_free   = (k.cta_on && k.cta_gauge_free)
                         || (config_.networkSharedCarryFullCov()
                             && config_.networkSharedCarryGaugeFree());
-    // Closure is part of the GENERALIZATION, not of the re-arming: the Q3 path keeps its
-    // original rule so its arms stay byte-identical and an A/B against them isolates the
-    // closure test as the single new variable.
+    // The closure test belongs to the dense-carry arming only: the Q3 path keeps its
+    // original rule, so Q3 configurations stay byte-identical and an A/B against them
+    // isolates the closure test as the one changed variable.
     k.carry_gauge_free_closure = config_.networkSharedCarryFullCov()
                               && config_.networkSharedCarryGaugeFree();
-    // Card Q3 §2.1 — resolve the guard/census DENOMINATOR here, once, for the same
-    // reason `cta_on` resolves its interlock here: a mapping re-derived at two call
-    // sites is a mapping that will eventually disagree between them, and the guard
-    // and the census MUST standardize identically or the census stops being a
-    // cross-check on the guard.  `auto` follows the fold, which is what every arm
-    // run before this knob existed did — so `auto` is byte-identical by construction.
+    // The denominator of the anchor guard and its census is resolved here, once (card Q3
+    // §2.1), for the same reason `cta_on` resolves its interlock here: the guard and the
+    // census have to standardize identically, or the census stops being a cross-check on
+    // the guard, and a mapping derived separately at two call sites can drift apart.
+    // `auto` follows the fold, which is the behavior before this knob existed, so `auto`
+    // is byte-identical to it.
     {
         const auto stat = config_.networkClockAnchorGaugeFreeStat();
         k.cta_stat_proj_post  = (stat == NetworkClockAnchorStat::Post)
                              || (stat == NetworkClockAnchorStat::Proj)
-                             // Card C-GF: `auto` means "follow the FOLD", and the fold is now
-                             // `carry_gauge_free`.  OR-ed with the original term rather than
-                             // replacing it, so a config with cta_gauge_free set but cta_on
-                             // false keeps its existing denominator bit-for-bit (the census
-                             // reads these same predicates) while the carry-side arming is
-                             // still tracked.
+                             // `auto` follows the fold, and the fold is `carry_gauge_free`
+                             // (card C-GF).  The term is OR-ed with the original one rather
+                             // than replacing it, so a config with cta_gauge_free set and
+                             // cta_on false keeps its denominator bit for bit (the census
+                             // reads the same predicates) while the carry-side arming is
+                             // still followed.
                              || (stat == NetworkClockAnchorStat::Auto
                                  && (k.cta_gauge_free || k.carry_gauge_free));
         k.cta_stat_proj_prior = (stat == NetworkClockAnchorStat::Proj);
@@ -329,32 +327,31 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.carry_invariant = k.phase_datum_eq34 && config_.networkCarryInvariant();
     k.carry_invariant_pd_safe = k.carry_invariant && config_.networkCarryInvariantPdSafe();
     k.carry_aware_covariance = k.carry_invariant && config_.networkCarryAwareCovariance();
-    // POOL RE-HOST.  Resolved HERE, beside the other
-    // carry_invariant-derived knobs rather than up with the raim_* family, so that ONE
-    // bool answers "is the re-hosted census live" for all three consumers — the driver's
-    // call-site gate, the assembly's census fill and the seam's pool selector.  They must
-    // not be able to disagree about whether qc_amb exists.
+    // RAIM pool re-host (network.raim_carry_invariant).  Resolved here, beside the other
+    // carry_invariant-derived knobs rather than with the raim_* family, so that one bool
+    // tells all three consumers whether the re-hosted census is live: the driver's
+    // call-site gate, the assembly's census fill and the seam's pool selector.  They
+    // cannot then disagree about whether qc_amb exists.
     //
-    // The k.carry_invariant conjunct also drags in phase_datum_eq34 (see just above).
-    // That is defensive redundancy, not a live discriminator: carry_invariant WITHOUT
-    // eq34 is a hard load error (the loader's "network.carry_invariant requires
-    // network.phase_datum_eq34" check in GnssConfigLoadNetwork.cpp returns false), so
-    // no config that could exercise the difference ever reaches here.  Kept because it
-    // matches how carry_invariant_pd_safe / carry_aware_covariance resolve, and because
-    // if that requirement is ever relaxed this line is already correct.
+    // The k.carry_invariant conjunct also includes phase_datum_eq34 (above).  That is
+    // defensive redundancy, not a live discriminator: carry_invariant without eq34 is a
+    // load error (the loader's "network.carry_invariant requires network.phase_datum_eq34"
+    // check in GnssConfigLoadNetwork.cpp returns false), so no config that could exercise
+    // the difference reaches this line.  It is kept because it matches how
+    // carry_invariant_pd_safe and carry_aware_covariance resolve, and it stays correct if
+    // that requirement is relaxed.
     k.raim_ci_on = k.raim_on && k.carry_invariant && config_.networkRaimCarryInvariant();
-    // Card GL (docs/SPEC_event_harness.md §24.18): the gross line-of-sight screen.
-    // Resolved once here so the driver, the assembly, the seam and the teardown all
-    // read ONE bool.  Unconditional (no interlock): the screen owns its own residual
-    // walk and its own state, so it does not need any other tier to be armed — which
-    // is the point, since every other post-fit tier is phase-only.
+    // Gross line-of-sight screen (card GL, docs/SPEC_event_harness.md §24.18).  Resolved
+    // once here so the driver, the assembly, the seam and the teardown read one bool.  It
+    // has no interlock: the screen owns its residual walk and its state, so it runs with no
+    // other tier armed, which matters because every other post-fit tier is phase-only.
     k.gl_on      = config_.getNetworkConfig().gross_los_screen;
     k.gl_deweight = k.gl_on ? config_.getNetworkConfig().gross_los_deweight : 1.0;
-    // GL-2 (§24.19): ANDed with gl_on here so every downstream site reads ONE bool.
-    // The satellite rule is a SCOPE decision on the gross-LOS rule — it tallies the
-    // same over-bar verdicts — so it cannot mean anything without the screen itself.
+    // Satellite stand-down (GL-2, §24.19), gated on gl_on here so every downstream site
+    // reads one bool.  The satellite rule sets the scope of the gross-LOS rule (it tallies
+    // the same over-bar verdicts), so it has no meaning without the screen.
     k.gl2_on = k.gl_on && config_.getNetworkConfig().gross_los_sat_standdown;
-    // RF-3b: the four sub-rules, each ANDed with the screen for the same reason GL-2 is.
+    // The four sub-rules of RF-3b, each gated on the screen for the same reason as GL-2.
     k.gl_min_rows_available = k.gl_on
         && config_.getNetworkConfig().gross_los_min_rows_rule
                == NetworkGrossLosMinRowsRule::Available;
@@ -373,18 +370,17 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.eq34_seed_round_rehost = k.eq34_seed_round
                             && config_.networkPhaseDatumEq34SeedRoundRehostFrame();
     k.phase_datum_prioritized = config_.networkPhaseDatumPrioritized() || k.phase_datum_ensemble || k.phase_datum_eq34;
-    // §9.7.10: resolved once for the run — the datum-station slip path exists only
-    // under the LEGACY pivot datum (every no-pivot datum runs the slip loops from
-    // i_lo = 0 already, so station 0 has ordinary coverage there).
+    // Resolved once for the run (§9.7.10): the datum-station slip path exists only under
+    // the legacy pivot datum.  Every no-pivot datum already runs the slip loops from
+    // i_lo = 0, so station 0 has ordinary coverage there.
     k.datum_station_detect = config_.networkCycleSlipDatumStationDetect()
                              && !k.phase_datum_prioritized;
     k.phase_hold_sigma = k.phase_datum_ensemble ? config_.networkPhaseDatumHoldSigmaM() : 0.0;
     k.phase_hold_on = k.phase_hold_sigma > 0.0;
     k.phase_hold_var = k.phase_hold_sigma * k.phase_hold_sigma;
-    // eq34 reattach hygiene.  The loader has
-    // already disarmed every increment outside an anchored election; the
-    // `&& !ensemble` here is belt-and-braces so a hand-built NetworkConfig (tests)
-    // cannot arm the seam on a datum that elects no anchor.
+    // eq34 reattach hygiene.  The loader already disarms every increment outside an
+    // anchored election; the `&& !ensemble` here is a second guard, so a hand-built
+    // NetworkConfig (tests) cannot arm the seam on a datum that elects no anchor.
     {
         const bool anchored = k.phase_datum_prioritized && !k.phase_datum_ensemble;
         k.eq34_min_arc_ep    = anchored ? std::max(0, nc.eq34_anchor_min_arc_ep) : 0;
@@ -401,52 +397,50 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
         k.fresh_pin_scale    = ramp_on ? nc.eq34_fresh_pin_sigma_scale : 1.0;
         k.fresh_pin_ramp_ep  = ramp_on ? nc.eq34_fresh_pin_ramp_ep : 0;
         k.anchor_hygiene_on  = k.eq34_min_arc_ep > 0 || k.pin_bridge_on || ramp_on;
-        // TWO-EDGE CONTINUOUS HANDOVER.
-        // Resolved here, inside `anchored`, because it is meaningful only where an
-        // anchor PIN exists to hand over.  `!phase_datum_eq34` narrows it further:
-        // the chain datum owns its own pin-target policy (pin-round / seed-round)
-        // and the two would fight for the same target.  The loader already disarms
-        // all three cases; this is the same belt-and-braces the block above uses so
-        // a hand-built NetworkConfig in a test cannot arm it on the wrong election.
+        // Two-edge continuous handover.  Resolved here, inside `anchored`, because it
+        // applies only where an anchor pin exists to hand over.  `!phase_datum_eq34`
+        // narrows it further: the chain datum owns its pin-target policy (pin-round /
+        // seed-round), and the two would compete for the same target.  The loader already
+        // disarms all three cases; this is the same second guard as the block above, so a
+        // hand-built NetworkConfig in a test cannot arm it on the wrong election.
         k.pd_handover_continuous = anchored && !k.phase_datum_eq34
                                    && config_.networkPhaseDatumHandoverContinuous();
         k.pd_handover_max_var = k.pd_handover_continuous
                                 ? config_.networkPhaseDatumHandoverMaxVarM2() : 0.0;
         k.pd_handover_max_var_ratio = k.pd_handover_continuous
                                 ? config_.networkPhaseDatumHandoverMaxVarRatio() : 0.0;
-        // QUEUE item 1(d): the PHASE_ANCHOR carry re-reference — same placement
-        // and the same belt-and-braces as the handover knob directly above (it
-        // is meaningful only where an anchor pin exists to hand over, and the
-        // eq34 chain owns its own eq34_reref carry hygiene).
+        // PHASE_ANCHOR carry re-reference (queue item 1(d)), with the same placement and
+        // the same second guard as the handover knob above: it applies only where an
+        // anchor pin exists to hand over, and the eq34 chain has its own eq34_reref carry
+        // hygiene.
         k.pa_carry_reref = anchored && !k.phase_datum_eq34
                            && config_.networkPhaseAnchorCarryReref();
-        // COLD ANCHOR-FALLBACK (SPEC_event_harness §15).  Resolved against
+        // Cold anchor fallback (SPEC_event_harness §15).  Resolved against
         // pd_handover_continuous, not against `anchored`, because the pass screens
-        // candidates with the LEDGER's own usability predicate — with no ledger it
-        // has nothing to read and would elect by coverage rank exactly as today.
-        // The loader warns about the same INERT case; this is the belt-and-braces a
-        // hand-built NetworkConfig (tests) needs.
+        // candidates with the handover ledger's usability predicate; without the ledger
+        // it has nothing to read and would elect by coverage rank, as it does when off.
+        // The loader warns about that inert case; this is the second guard a hand-built
+        // NetworkConfig (tests) needs.
         k.pd_candidacy_usable = k.pd_handover_continuous
                                 && config_.networkPhaseDatumCandidacyUsable();
         k.pd_candidacy_min_age_ep = k.pd_candidacy_usable
                                 ? config_.networkPhaseDatumCandidacyMinAgeEp() : 0;
-        // Iteration 2, the SATELLITE clause — resolved with its parent so every site
-        // reads ONE bool and an iteration-1 A/B is a single knob.
+        // Satellite clause (iteration 2), resolved with its parent so every site reads one
+        // bool and an A/B against iteration 1 changes a single knob.
         k.pd_candidacy_satellite = k.pd_candidacy_usable
                                 && config_.networkPhaseDatumCandidacySatellite();
     }
-    // SBC S-basis completion (network.sbasis_complete).  Resolved here so the
-    // pb_level_prev harvest (which the completion's continuity targets re-use —
-    // the shared PhaseBias carry is not in prev_carry under carry_invariant) and
-    // the solve-glue block read one predicate.
+    // S-basis completion (network.sbasis_complete, SBC).  Resolved here so that the
+    // pb_level_prev harvest and the solve-glue block read one predicate.  The completion's
+    // continuity targets reuse that harvest, because under carry_invariant the shared
+    // PhaseBias carry is not in prev_carry.
     k.sbasis_complete_on  = config_.networkSbasisComplete();
     k.sbasis_complete_max = config_.networkSbasisCompleteMax();
-    // Flicker/gap signal integrity.  The loader
-    // already disarmed every action when the census master is off; resolving them
-    // here as well is belt-and-braces so a hand-built NetworkConfig (tests) cannot
-    // arm a demotion behind a classifier that never runs.  `sig_withhold` carries
-    // BOTH spellings of the withhold disposition (the explicit bool and the spec's
-    // "scale <= 0"), so no site downstream has to know there were two.
+    // Flicker/gap signal integrity.  The loader already disarms every action when the
+    // census master is off; resolving them here as well is a second guard, so a
+    // hand-built NetworkConfig (tests) cannot arm a demotion behind a classifier that
+    // never runs.  `sig_withhold` covers both spellings of the withhold disposition (the
+    // explicit bool and the spec's "scale <= 0"), so downstream sites read one field.
     {
         const auto& si = nc.signal_integrity;
         k.sig_integrity_on    = si.census;
@@ -458,16 +452,15 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
         k.sig_revet_ep        = si.census ? std::max(0, si.revet_ep) : 0;
         k.sig_flicker_max_ep  = si.census ? std::max(0, si.flicker_max_ep) : 0;
         k.sig_refloat_regain  = si.census && si.refloat_on_regain;
-        // The resume warmup only MEANS anything if there is a demotion to apply.
+        // The resume warm-up has an effect only when there is a demotion to apply.
         k.sig_resume_warmup   = si.census && si.resume_warmup_vet
                                 && (k.sig_withhold || k.sig_unvetted_scale > 1.0);
     }
-    // Iono-deweight RELEASE hygiene.  The
-    // loader has already disarmed every increment without the SH field (and INC-1
-    // without the adaptive gate that alone can produce a release edge); resolving it
-    // here as well is belt-and-braces so a hand-built NetworkConfig (tests) cannot arm
-    // a response to an event that cannot happen.  `dw_hygiene_on` is the single
-    // predicate the seam and the assembly's held-row lookup read.
+    // Iono-deweight release hygiene.  The loader already disarms every increment without
+    // the SH field (and INC-1 without the adaptive gate, the only source of a release
+    // edge); resolving it here as well is a second guard, so a hand-built NetworkConfig
+    // (tests) cannot arm a response to an event that cannot occur.  `dw_hygiene_on` is the
+    // single predicate the seam and the assembly's held-row lookup read.
     {
         const bool field = config_.estimateNetworkIonoSh();
         const auto& idw = config_.getIonoConstraintDeweightConfig();
@@ -487,37 +480,33 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
                        || k.dw_release_validate_k > 0.0
                        || k.dw_admit_validate_k > 0.0;
     }
-    // Redundancy / testability census.  Nothing
-    // to resolve against the estimation configuration — the census reads the
-    // solved system and writes counters, so the two arming knobs ARE the
-    // predicate.  The loader has already clamped the thresholds.
+    // Redundancy / testability census.  Nothing to resolve against the estimation
+    // configuration: the census reads the solved system and writes counters, so the two
+    // arming knobs are the predicate.  The loader already clamps the thresholds.
     k.redun_census_on = nc.redundancy_census_stride > 0
                      || nc.redundancy_escalate_sigma > 0.0;
-    // Baarda reliability numbers / MDB.
-    // Nothing to resolve against the estimation configuration either — MDB reads
-    // (sigma_i, r_i) pairs the host loops already hold and writes counters — but the
-    // two SOURCE flags are resolved here rather than re-derived at the feed sites,
-    // for two reasons.  (1) The RAIM source needs the tier it rides to be live:
-    // raim_redundancy_normalize alone computes no r_i, because networkPostFitRaim is
-    // not called at all without network.raim.  (2) The run-end invariant-#4 lines
-    // must be able to say WHICH feed was armed when a source contributed zero rows —
-    // "the RAIM pool never ran warm" and "no sweep completed" demand different fixes.
-    // The AND with a live source is belt-and-braces against the loader's hard error,
-    // so a hand-built NetworkConfig (tests) cannot arm a flush over dead wiring.
+    // Baarda reliability numbers / MDB.  Nothing to resolve against the estimation
+    // configuration either (MDB reads the (sigma_i, r_i) pairs the host loops already
+    // hold and writes counters), but the two source flags are resolved here rather than
+    // at the feed sites, for two reasons.  (1) The RAIM source needs its host tier live:
+    // raim_redundancy_normalize alone computes no r_i, because networkPostFitRaim is not
+    // called without network.raim.  (2) The run-end lines for invariant #4 report which
+    // feed was armed when a source contributed zero rows, since "the RAIM pool never ran
+    // warm" and "no sweep completed" need different fixes.  Requiring a live source is a
+    // second guard behind the loader's error, so a hand-built NetworkConfig (tests)
+    // cannot arm a flush over wiring that never runs.
     k.mdb_from_raim   = config_.networkRaim() && config_.networkRaimRedundancyNormalize();
     k.mdb_from_census = k.redun_census_on;
     k.mdb_on          = nc.mdb && (k.mdb_from_raim || k.mdb_from_census);
     k.mdb_event_m     = std::max(0.0, nc.mdb_event_m);
     k.mdb_event_holdoff = static_cast<long long>(std::max(0, nc.mdb_event_holdoff_ep));
-    // Prior-residual census.  Nothing to
-    // resolve against the estimation configuration — the census reads
-    // (prior mean, prior var, posterior var) triples the carry harvests already
-    // hold and writes counters, so the master arm IS the predicate.  The family
-    // CSV is parsed ONCE, here, into per-family bools: the feed sites sit in the
-    // serial carry harvest and must test a bool, not search a vector, per row.
-    // `prires_on` is the AND of the arm and a non-empty KNOWN family set, so a
-    // census armed with only unknown family names (the loader already WARNed)
-    // never enters a single feed site.
+    // Prior-residual census.  Nothing to resolve against the estimation configuration:
+    // the census reads the (prior mean, prior var, posterior var) triples the carry
+    // harvests already hold and writes counters, so the master arm is the predicate.  The
+    // family CSV is parsed once, here, into per-family bools, because the feed sites sit
+    // in the serial carry harvest and test a bool per row instead of searching a vector.
+    // `prires_on` requires the arm and a non-empty set of known families, so a census
+    // armed with only unknown family names (the loader already warns) enters no feed site.
     {
         k.prires_on = false;
         if (nc.prior_residual_census) {
@@ -527,37 +516,35 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
                 else if (f == "pb")   k.prires_pb   = true;
                 else if (f == "cb")   k.prires_cb   = true;
                 else if (f == "zwd")  k.prires_zwd  = true;
-                else if (f == "iono") k.prires_iono = true;   // QUEUE 8b slant-iono carry
+                else if (f == "iono") k.prires_iono = true;   // slant-iono carry (queue 8b)
                 else if (f == "rxcb") k.prires_rxcb = true;
-                else if (f == "clk")  k.prires_clk  = true;   // Card Q3 INC-0
+                else if (f == "clk")  k.prires_clk  = true;   // clock anchor (card Q3, INC-0)
             }
             k.prires_on = k.prires_pl || k.prires_pb || k.prires_cb
                        || k.prires_zwd || k.prires_iono || k.prires_rxcb || k.prires_clk;
         }
-        // The corroboration join is re-AND-ed with the master here rather than
-        // trusted from the loader's hard error: belt-and-braces, so a hand-built
-        // NetworkConfig (tests) cannot arm a join behind a census that never runs.
+        // The corroboration join is gated on the master again here rather than relying on
+        // the loader's error, so a hand-built NetworkConfig (tests) cannot arm a join
+        // behind a census that never runs.
         k.prires_corrob       = k.prires_on && nc.prior_residual_corroborate;
         k.prires_report_sigma = (nc.prior_residual_report_sigma > 0.0)
                                 ? nc.prior_residual_report_sigma : 4.0;
         k.prires_event_holdoff = std::max(0, nc.prior_residual_event_holdoff_ep);
-        // Constraint-aware global σ̂₀.
-        // Same belt-and-braces AND with the master.  `prires_s0g_redun` mirrors
-        // `mdb_from_raim` EXACTLY and for the same reason: raim_redundancy_
-        // normalize alone computes no r_i, because networkPostFitRaim is not
-        // called at all without network.raim.  Resolved here rather than
-        // re-derived at the feed site so the r ≡ 1 fallback is decided ONCE and
-        // the run-end line can say which mode the whole run was in.
+        // Constraint-aware global σ̂₀, gated on the master as the second guard above.
+        // `prires_s0g_redun` equals `mdb_from_raim`, for the same reason:
+        // raim_redundancy_normalize alone computes no r_i, because networkPostFitRaim is
+        // not called without network.raim.  It is resolved here rather than at the feed
+        // site, so the r ≡ 1 fallback is decided once and the run-end line reports which
+        // mode the whole run used.
         k.prires_s0g       = k.prires_on && nc.prior_residual_global_sigma0;
         k.prires_s0g_redun = config_.networkRaim()
                           && config_.networkRaimRedundancyNormalize();
     }
-    // BlockFormal LOS block census.  The master is
-    // AND-ed with a LIVE HOST here rather than trusted from the loader's hard
-    // error — belt-and-braces, so a hand-built NetworkConfig (tests) cannot arm a
+    // BlockFormal LOS block census.  The master is gated on a live host here rather than
+    // relying on the loader's error, so a hand-built NetworkConfig (tests) cannot arm a
     // sweep behind a redundancy census that never runs.  The host predicate is the
-    // census's own two-term expression, repeated verbatim as every other consumer
-    // repeats it; there is no `network.redundancy_census` bool to read.
+    // census's own two-term expression, repeated as every other consumer repeats it;
+    // there is no `network.redundancy_census` bool to read.
     {
         k.bb_on     = nc.block_baarda && k.redun_census_on;
         k.bb_corrob = k.bb_on && nc.block_baarda_corroborate;
@@ -566,13 +553,12 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
         k.bb_event_holdoff =
             static_cast<long long>(std::max(0, nc.block_baarda_event_holdoff_ep));
     }
-    // Station congruence screen.  Same host
-    // predicate, same belt-and-braces AND, and for the same reason the block
-    // census has one: a hand-built NetworkConfig (tests) must not be able to arm
-    // a sweep behind a redundancy census that never runs.  `cg_on` is ALSO what
-    // gates the assembly's INC-0 geometry retention, so resolving it here — once,
-    // before ctx.knobs goes const — is what keeps the producer and the assembly
-    // from disagreeing about whether row_pos_enu exists.
+    // Station congruence screen.  Same host predicate and the same second guard as the
+    // block census, for the same reason: a hand-built NetworkConfig (tests) cannot
+    // arm a sweep behind a redundancy census that never runs.  `cg_on` also gates the
+    // assembly's geometry retention (INC-0), so resolving it here, once, before ctx.knobs
+    // becomes const, keeps the producer and the assembly in agreement about whether
+    // row_pos_enu exists.
     {
         k.cg_on = nc.congruence_screen && k.redun_census_on;
         k.cg_report_sigma = (nc.congruence_report_sigma > 0.0)
@@ -580,13 +566,12 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
         k.cg_event_holdoff =
             static_cast<long long>(std::max(0, nc.congruence_event_holdoff_ep));
     }
-    // Prefit census / structural fuse / seed-birth tripwire / topology ledger /
-    // flight recorder.  Nothing to
-    // resolve against the estimation configuration either — these read the
-    // assembled row stacks and (for the fuse) cap a weight, so the arming knobs
-    // ARE the predicate; the loader has already clamped them.  `pc_walk_on` is
-    // the UNION of the three walk-riding increments: INC-3 and INC-4 need the
-    // classification pass whether or not the INC-1 columns are wanted.
+    // Prefit census, structural fuse, seed-birth tripwire, topology ledger and flight
+    // recorder.  Nothing to resolve against the estimation configuration either: these
+    // read the assembled row stacks and (the fuse) cap a weight, so the arming knobs are
+    // the predicate, and the loader already clamps them.  `pc_walk_on` is the union of the
+    // three increments that ride the walk: INC-3 and INC-4 need the classification pass
+    // whether or not the INC-1 columns are requested.
     k.pc_census_on     = nc.trace_prefit_census;
     k.pc_event_sigma   = std::max(0.0, nc.prefit_event_sigma);
     k.pc_event_mask    = parseDataClassMask(nc.prefit_event_classes);
@@ -603,25 +588,23 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.h_sigma0_census      = config_.networkHSigma0PrefitCensus();
     k.h_sigma0_class_mask  = parseDataClassMask(config_.networkHSigma0Classes());
     k.rec_on           = nc.rhs_attrib_on_trip;
-    // Datum graph census.  Nothing to resolve
-    // against the estimation configuration: the census reads the epoch's
-    // registration sets and the admitted support, and writes nothing back, so
-    // the master arm IS the predicate.  Deliberately NOT AND-ed with
+    // Datum graph census.  Nothing to resolve against the estimation configuration: the
+    // census reads the epoch's registration sets and the admitted support and writes
+    // nothing back, so the master arm is the predicate.  It is not gated on
     // `sbasis_complete`: without SBC the spectral side still supplies the
-    // observed-vs-declared COUNT, the reconciliation degrades to count-level and
-    // the trace says so (`obs_src=count`) — silently disarming the census there
-    // would hide the tier-1 fragmentation reading, which needs no spectrum at all.
+    // observed-vs-declared count, the reconciliation drops to count level and the trace
+    // records it (`obs_src=count`).  Disarming the census there would hide the tier-1
+    // fragmentation reading, which needs no spectrum.
     k.dg_on            = nc.datum_graph_census;
     k.dg_event_holdoff = static_cast<long long>(std::max(0, nc.datum_graph_event_holdoff_ep));
     // Product-referenced measurement admission.  Nothing to resolve against the
-    // estimation configuration either — the screen reads `observed` / `modeled`
-    // and removes observables, so the arming knobs ARE the predicate and the
-    // loader has already clamped the thresholds.  `adm_on` is the UNION of the
-    // response and the census because both ride the SAME pass; screening implies
-    // the census columns, which is why `adm_trace` is resolved as the
-    // OR rather than copied.  The clamps are repeated here rather than trusted:
-    // belt-and-braces, so a hand-built NetworkConfig (tests) cannot arm a screen
-    // on a bound of zero and reject the entire network.
+    // estimation configuration either: the screen reads `observed` / `modeled` and removes
+    // observables, so the arming knobs are the predicate, and the loader already clamps
+    // the thresholds.  `adm_on` is the union of the response and the census because both
+    // ride one pass; screening implies the census columns, so `adm_trace` is resolved as
+    // the OR rather than copied.  The clamps are repeated here as a second guard, so a
+    // hand-built NetworkConfig (tests) cannot arm a screen with a bound of zero and reject
+    // the whole network.
     k.adm_screen   = nc.adm_screen;
     k.adm_trace    = nc.adm_trace || nc.adm_screen;
     k.adm_on       = k.adm_screen || k.adm_trace;
@@ -630,22 +613,22 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.adm_heal_ep  = std::max(1, nc.adm_heal_ep);
     k.adm_max_frac = (nc.adm_max_frac > 0.0 && nc.adm_max_frac < 1.0)
                      ? nc.adm_max_frac : 0.5;
-    // INC-4 re-entry vet.  The `&& adm_screen` is the loader's INERT-guard
-    // re-imposed at the predicate rather than trusted from load order — a vet is an
-    // ADMISSION verdict and the measure-only arm makes none, so a census-only run
-    // that somehow reached here with `adm_revet` set must not start rewriting arc
-    // records.  Same belt-and-braces reason as the clamps above.
+    // Re-entry vet (INC-4).  The `&& adm_screen` repeats the loader's inert guard at the
+    // predicate instead of relying on load order: a vet is an admission verdict and the
+    // measure-only arm makes none, so a census-only run that reaches here with
+    // `adm_revet` set does not rewrite arc records.  Same second-guard reason as the
+    // clamps above.
     k.adm_revet        = nc.adm_revet && nc.adm_screen;
     k.adm_revet_gap_ep = std::max(1, nc.adm_revet_gap_ep);
     k.adm_revet_ep     = std::max(0, nc.adm_revet_ep);
     k.adm_revet_census = nc.adm_revet_census;
     k.adm_revet_hold   = nc.adm_revet_hold;
-    // Resolved to METRES here, once, so the seam compares against a number rather
-    // than re-deriving a product per channel per epoch.  The clamp is repeated
-    // rather than trusted (a hand-built NetworkConfig in a test could carry a
-    // scale of 0 and refuse every re-entry in the network); a scale above 1 would
-    // make the "tighter" vet bound looser than the card's own bound, which
-    // inverts the knob, so it clamps too.
+    // Resolved to metres here, once, so the seam compares against a number rather than
+    // forming a product per channel per epoch.  The clamp is repeated here (a hand-built
+    // NetworkConfig in a test could carry a scale of 0 and refuse every re-entry in the
+    // network).  A scale above 1 would make the tighter vet bound looser than the
+    // admission bound itself, inverting the knob, so an out-of-range scale falls back to
+    // 0.2.
     {
         const double s = (nc.adm_revet_bound_scale > 0.0
                           && nc.adm_revet_bound_scale <= 1.0)
@@ -657,8 +640,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
 
 void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config_,
                                 const std::vector<NetStation>& stations) {
-    // Alias block (INC-4 migration mechanic) — the relocated body reads the
-    // former runNetwork() locals under their original names.
+    // Alias block (INC-4): the relocated body reads the former runNetwork() locals under
+    // their original names.
     const auto& nc = config_.getNetworkConfig();
     const GlobalVtecShConfig& shc = config_.getGlobalVtecShConfig();
     auto& snap_path = ctx.carry.snap_path;
@@ -673,8 +656,8 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
     const int    pl_warmup = ctx.knobs.pl_warmup;
     const double pl_max_gap_s = ctx.knobs.pl_max_gap_s;
     const double pl_var_floor = ctx.knobs.pl_var_floor;
-    const bool   pl_los_scale = ctx.knobs.pl_los_scale;   // F1: per-LOS B_eff scale at inject
-    const bool   pl_local_block = ctx.knobs.pl_local_block; // F3: station-wide whitened local block at inject
+    const bool   pl_los_scale = ctx.knobs.pl_los_scale;   // per-LOS B_eff scale at inject (F1)
+    const bool   pl_local_block = ctx.knobs.pl_local_block; // station-wide whitened local block at inject (F3)
     const double pb_var_floor = ctx.knobs.pb_var_floor;
     const double cb_var_floor = ctx.knobs.cb_var_floor;
     const bool   zwd_on = ctx.knobs.zwd_on;
@@ -708,115 +691,116 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
     const bool   carry_cpl_joint = ctx.knobs.carry_cpl_joint;
 
     if (!snap_path.empty()) {
-        // Config fingerprint over the DATUM-relevant fields: resuming under a
-        // changed S-basis/pivot pin, station roster (order defines the carry's
-        // station indices), carry q's / gap bounds / floors, clock-model
-        // parameters, or emitter channel config must COLD-start — the carried
-        // state would be interpreted in the wrong frame or under the wrong rules.
+        // Config fingerprint over the datum-relevant fields.  A resume under a changed
+        // S-basis or pivot pin, station roster (its order defines the carry's station
+        // indices), carry q values, gap bounds or floors, clock-model parameters, or
+        // emitter channel config has to cold-start, because the carried state would be
+        // read in the wrong frame or under the wrong rules.
         std::string fp;
         auto add = [&fp](const std::string& v) { fp += v; fp += '\x1f'; };
         for (const auto& st : stations) { add(st.name); add(st.is_pivot ? "P" : "-"); }
         add(nc.clock_datum_station); add(nc.clock_datum_satellite);
-        // Card UPO: the roster's fixed coordinates are reduced from the monument to
-        // the antenna reference point when network.station_marker_to_arp is armed,
-        // so every carried quantity that references a station's geometry — the
-        // phase-leveling zero-q levels, the carried ambiguities, the local blocks —
-        // means a station at a DIFFERENT place across the flip.  Appended ONLY when
-        // armed, so every pre-card snapshot's fingerprint is byte-identical.
+        // With network.station_marker_to_arp armed, the roster's fixed coordinates are
+        // reduced from the monument to the antenna reference point, so every carried
+        // quantity that references a station's geometry (the phase-leveling zero-q levels,
+        // the carried ambiguities, the local blocks) refers to a different position across
+        // the flip (card UPO).  Appended only when armed, so the fingerprint of a snapshot
+        // written with it off is unchanged.
         if (config_.networkStationMarkerToArp()) add("roster:arp");
-        // Carrier-phase wind-up MODEL REVISION.  Unlike every other token here
-        // this is a CODE constant, not a knob — and it has to be, because the
-        // thing that changes what the carried state means is a source fix, not a
-        // config.  The pre-2026-08-21 dipole sign left +2*phi_wu in every phase
-        // observation (~0.4 cyc ZD arc range), which the carried ambiguities,
-        // the phase-leveling zero-q level and the shared PB/CB carry all
-        // absorbed.  Resuming a snapshot written under the old convention into a
-        // corrected binary would re-reference stiff carries levelled in a frame
-        // that no longer exists — standing invariant #1 (a stale zero-q value
-        // carried past a jump) and #7 (a re-coupling edge with nothing
-        // re-validating what it reconnects).  Nothing else in this fingerprint
-        // can see it: it hashes config knobs only, with no code version or
-        // binary hash.  Appending the token forces a COLD start across the fix.
+        // Carrier-phase wind-up model revision.  Unlike the other tokens this is a code
+        // constant, not a knob, because what changes the meaning of the carried state is a
+        // source fix, not a config.  The earlier dipole sign left +2*phi_wu in every phase
+        // observation (about 0.4 cycles of ZD arc range), which the carried ambiguities,
+        // the phase-leveling zero-q level and the shared PB/CB carry absorbed.  Resuming a
+        // snapshot written under the old convention into a corrected binary would
+        // re-reference stiff carries levelled in the superseded frame (standing
+        // invariant #1, a stale zero-q value carried past a jump, and invariant #7, a
+        // re-coupling edge with nothing re-validating what it reconnects).  The rest of
+        // the fingerprint hashes config knobs only, with no code version or binary hash,
+        // so this token is what forces a cold start across the fix.  See
+        // docs/SPEC_phase_windup_sign.md.
         add(kWindUpYawModelId);
         // The phase-bias gauge realization (single-pivot vs prioritized anchor)
         // defines which station's ambiguities carry the datum; a resume across a
         // toggle change would interpret the carried anchors in the wrong frame.
         add(fmt::format("{}", phase_datum_prioritized));
-        // Fix A: the anchor-free ensemble datum references the receiver ENSEMBLE
-        // (Σ_r z=0), a different carried-ambiguity frame than the single-anchor
-        // pivot/prioritized datum (both of which set phase_datum_prioritized).
-        // Appended ONLY when armed, so every pre-existing (non-ensemble) snapshot
-        // fingerprint is unchanged (byte-identical).
+        // The anchor-free ensemble datum (fix A) references the receiver ensemble
+        // (Σ_r z=0), a different carried-ambiguity frame than the single-anchor pivot or
+        // prioritized datum (both of which set phase_datum_prioritized).  Appended only
+        // when armed, so a non-ensemble snapshot's fingerprint is unchanged.
         if (phase_datum_ensemble) add("phdatum:ens");
-        // The Eq-34 chain datum references a different carried-ambiguity
-        // frame (per-receiver RPB split + spanning-tree pins) than the anchor/pivot
-        // or ensemble datums; a resume across a toggle flip must cold-start.
-        // Appended ONLY when armed, so every non-eq34 snapshot stays byte-identical.
+        // The eq34 chain datum references a different carried-ambiguity frame
+        // (per-receiver RPB split plus spanning-tree pins) than the anchor, pivot or
+        // ensemble datums, so a resume across the flip has to cold-start.  Appended only
+        // when armed, so a non-eq34 snapshot's fingerprint is unchanged.
         if (phase_datum_eq34) add("phdatum:eq34");
-        // Card 4 OPEN-4: the invariant carry snapshots a DD z-store the legacy
-        // carries don't have; a resume across a carry_invariant flip must cold-start.
-        // Appended ONLY when armed, so every non-carry snapshot stays byte-identical.
+        // The invariant carry snapshots a DD z-store that the legacy carries do not have,
+        // so a resume across a carry_invariant flip has to cold-start (card 4, OPEN-4).
+        // Appended only when armed, so the fingerprint of a snapshot without it is
+        // unchanged.
         if (carry_invariant) add("carry:inv");
-        // PD-safe DD fold: the carried Pᶻ a pd_safe run
-        // writes came out of a DIFFERENT recursion — product-form posterior, equilibrated
-        // factorization, eigen-clamp repairs, degenerate blocks rebirthed rather than
-        // frozen — and is PD by construction.  Resuming one arm's z-store into the other
-        // mixes the two arithmetics inside a single lineage, which is exactly the
-        // "never flip mid-chain" failure the fingerprint exists to prevent.  Appended
-        // ONLY when armed, so every pre-card snapshot's fingerprint is untouched.
-        // (An OFF-run snapshot restored INTO a pd_safe run is separately handled: the
-        // INC-2c restore guard rebirths any non-PD block it finds in the blob.)
+        // PD-safe DD fold.  The carried Pᶻ a pd_safe run writes comes from a different
+        // recursion (product-form posterior, equilibrated factorization, eigen-clamp
+        // repairs, degenerate blocks rebirthed rather than frozen) and is PD by
+        // construction.  Resuming one arm's z-store into the other would mix the two
+        // arithmetics inside a single lineage, which is the mid-chain flip the fingerprint
+        // exists to prevent.  Appended only when armed, so the fingerprint of a snapshot
+        // written with it off is unchanged.  (A snapshot from an off run restored into a
+        // pd_safe run is handled separately: the INC-2c restore guard rebirths any non-PD
+        // block it finds in the blob.)
         if (carry_invariant_pd_safe) add("carry:pdsafe");
-        // network.carry_aware_covariance is deliberately ABSENT from the fingerprint.  It
-        // is a READ-back knob: its two consumers (dd_sigma_cyc, the log-only AR probe) feed
-        // nothing back, so no byte of the snapshot — carry blob, stash, emitter state —
+        // network.carry_aware_covariance is left out of the fingerprint on purpose.  It is
+        // a read-back knob: its two consumers (dd_sigma_cyc, the log-only AR probe) feed
+        // nothing back, so no byte of the snapshot (carry blob, stash, emitter state)
         // changes meaning when it flips.  Fingerprinting it would strand every existing
-        // snapshot for a trace column (the loader's fingerprint-SAFE trace-knob
-        // precedent — the trace-class knobs that stay armable on a warm resume
-        // against an untraced snapshot, in GnssConfigLoadNetwork.cpp).  If a
-        // later card routes the correction into the phase-leveling stash (the stored prior
-        // variance), THAT knob is a different knob and it MUST be fingerprinted.
+        // snapshot for a trace column; it follows the loader's fingerprint-safe list of
+        // trace-class knobs that stay armable on a warm resume against an untraced
+        // snapshot (GnssConfigLoadNetwork.cpp).  A later knob that routes the correction
+        // into the phase-leveling stash (the stored prior variance) is a different knob
+        // and has to be fingerprinted.
         add(fmt::format("{}", pl_on));           add(fmt::format("{}", pl_q_amb));
         add(fmt::format("{}", pl_warmup));       add(fmt::format("{}", pl_max_gap_s));
-        // F1 (network.phase_leveling_los_scale): the stash is unchanged but the
-        // inject-side WEIGHTING of the same stashed variances differs across the
-        // flip (the carried level was accumulated under a different recursion),
-        // so a resume across it must cold-start — the pl_var_floor rule.  Appended
-        // ONLY when armed, so every pre-F1 snapshot fingerprint is unchanged.
+        // Per-LOS scale (F1, network.phase_leveling_los_scale).  The stash is unchanged,
+        // but the inject-side weighting of the same stashed variances differs across the
+        // flip (the carried level was accumulated under a different recursion), so a
+        // resume across it has to cold-start, as for pl_var_floor.  Appended only when
+        // armed, so the fingerprint of a snapshot written with it off is unchanged.
         if (pl_los_scale) add("pl:losscale");
-        // F3 (network.phase_leveling_local_block): same rule, stronger reason — the
-        // carried LEVELS were accumulated under a different prior (joint vs
-        // independent rows), and the harvest block itself is not in the snapshot.
-        // Armed-only, beside the F1 tag.
+        // Local block (F3, network.phase_leveling_local_block): the same rule for a
+        // stronger reason.  The carried levels were accumulated under a different prior
+        // (joint against independent rows), and the harvest block itself is not in the
+        // snapshot.  Appended only when armed, beside the F1 tag.
         if (pl_local_block) add("pl:losblock");
-        // B9-in-block (network.carry_zwd_in_block): solve-affecting for the same reason
-        // F3 itself is — the carried ZWD *and* the carried levels were accumulated under a
-        // different prior geometry (one joint Σ over {ambiguities, ZWD} vs a block plus an
-        // independent diagonal row), so a warm resume must not cross the flip.  The
-        // harvest block is not snapshotted either way.  Armed-only append, beside the F1/F3
-        // tags, so every pre-card snapshot fingerprint is unchanged.
+        // ZWD in the local block (B9-in-block, network.carry_zwd_in_block) affects the
+        // solve for the same reason F3 does: the carried ZWD and the carried levels were
+        // accumulated under a different prior geometry (one joint Σ over {ambiguities,
+        // ZWD} against a block plus an independent diagonal row), so a warm resume cannot
+        // cross the flip.  The harvest block is not snapshotted either way.  Appended only
+        // when armed, beside the F1/F3 tags, so a snapshot written with it off keeps its
+        // fingerprint.
         if (config_.networkCarryZwdInBlock()) add("zwd:blk");
-        // I-in-block (network.carry_iono_in_block): solve-affecting for the same reason —
-        // the carried levels were accumulated against a prior geometry that either did or
-        // did not include the station's iono columns in the joint Σ, so a warm resume must
-        // not cross the flip.  The in-block iono carry itself is not snapshotted (it
-        // cold-starts), but the LEVELS that resume are the ones its presence shaped.
-        // Armed-only append, beside the F1/F3/ZWD tags, so every pre-card fingerprint is
-        // unchanged.  q and the gap join it because both change the prior's weight.
+        // Iono in the local block (network.carry_iono_in_block) affects the solve for the
+        // same reason: the carried levels were accumulated against a prior geometry that
+        // did or did not include the station's iono columns in the joint Σ, so a warm
+        // resume cannot cross the flip.  The in-block iono carry itself is not snapshotted
+        // (it cold-starts), but the levels that resume were shaped by it.  Appended only
+        // when armed, beside the F1/F3/ZWD tags, so a snapshot written with it off keeps
+        // its fingerprint.  q and the gap bound are included because both change the
+        // prior's weight.
         if (config_.networkCarryIonoInBlock()) {
             add("iono:blk");
             add(fmt::format("{}", config_.networkCarryIonoInBlockQM2()));
             add(fmt::format("{}", config_.networkCarryIonoInBlockMaxGapS()));
         }
-        // RX-CLK-in-block (network.carry_rx_clock_in_block): solve-affecting for the same
-        // reason — the carried levels were accumulated against a prior geometry that either
-        // did or did not include the station's receiver-clock column in the joint Σ, so a
-        // warm resume must not cross the flip.  The clock carry itself is not snapshotted
-        // (it cold-starts, one epoch of today's white-clock behaviour), but the LEVELS that
-        // resume are the ones its presence shaped.  Armed-only append, beside the
-        // F1/F3/ZWD/iono tags, so every pre-card fingerprint is unchanged.  The whole
-        // variance ladder joins it: each of q, rate_q, rate_var0 and the ISB flag changes
-        // the prior's weight, and jump_k changes which epochs carried anything at all.
+        // Receiver clock in the local block (network.carry_rx_clock_in_block) affects the
+        // solve for the same reason: the carried levels were accumulated against a prior
+        // geometry that did or did not include the station's receiver-clock column in the
+        // joint Σ, so a warm resume cannot cross the flip.  The clock carry itself is not
+        // snapshotted (it cold-starts, which gives one epoch of white-clock behaviour), but
+        // the levels that resume were shaped by it.  Appended only when armed, beside the
+        // F1/F3/ZWD/iono tags, so a snapshot written with it off keeps its fingerprint.
+        // The whole variance ladder is included: q, rate_q, rate_var0 and the ISB flag
+        // each change the prior's weight, and jump_k changes which epochs carried anything.
         if (config_.networkCarryRxClockInBlock()) {
             add("rxclk:blk");
             add(fmt::format("{}", config_.networkCarryRxClockQM2()));
@@ -826,66 +810,63 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
             add(fmt::format("{}", config_.networkCarryRxClockJumpK()));
             add(fmt::format("{}", config_.networkCarryRxClockIsb()));
         }
-        // Card SCC (R6): the second code channel adds a receiver INTER-SIGNAL state per
-        // station and band-1 companion, and that state is carried by the receiver
-        // code-bias carry whose stash IS in the snapshot.  A resume across the flip
-        // would therefore restore (or fail to restore) a set of receiver code-bias
-        // columns the other side of the flip does not have, and the companion CODE rows
-        // that determine them change the local block every epoch — solve-affecting on
-        // both counts.  Armed-only append, beside the F1/F3/ZWD/iono/rxclk tags, so
-        // every pre-card snapshot fingerprint is unchanged.  The allow-list and the
-        // sigma scale join it: the list decides WHICH columns exist, and the scale
-        // decides the weight at which their rows were accumulated.
-        // Card SID phase 6b (R8): the all-channel widening decides WHICH COLUMNS EXIST
-        // — a receiver inter-signal code state per extra code and per band, a float
-        // ambiguity per extra phase, and the shared satellite families those rows feed.
-        // A resume across the flip would restore a carry whose column set the other
-        // side does not have, which is the same argument cards SCC and SID phase 6a
-        // make for their own knobs.  Armed-only append, so every pre-card snapshot
-        // fingerprint is unchanged.
+        // Second code channel (card SCC, R6): adds a receiver inter-signal state per
+        // station and band-1 companion, carried by the receiver code-bias carry whose
+        // stash is in the snapshot.  A resume across the flip would restore (or fail to
+        // restore) receiver code-bias columns that the other side does not have, and the
+        // companion code rows that determine them change the local block every epoch, so
+        // the knob affects the solve on both counts.  Appended only when armed, beside the
+        // F1/F3/ZWD/iono/rxclk tags, so a snapshot written with it off keeps its
+        // fingerprint.  The allow-list and the sigma scale are included: the list decides
+        // which columns exist, and the scale sets the weight at which their rows were
+        // accumulated.
+        // All-channel mode (card SID phase 6b, R8) decides which columns exist: a receiver
+        // inter-signal code state per extra code and per band, a float ambiguity per extra
+        // phase, and the shared satellite families those rows feed.  A resume across the
+        // flip would restore a carry whose column set the other side does not have, the
+        // same argument as for SCC and SID phase 6a.  Appended only when armed, so a
+        // snapshot written with it off keeps its fingerprint.
         if (config_.networkChannelModeAll()) add("chanmode:all");
         if (config_.networkSecondCodeChannel()) {
             add("scc:2ndcode");
             for (const auto& sig : config_.networkSecondCodeSignals()) add(sig);
             add(fmt::format("{}", config_.networkSecondCodeSigmaScale()));
         }
-        // Card SID phase 6a (R6): the second PHASE channel adds a float ambiguity per
-        // extra arc and feeds an existing satellite phase-bias family from stations
-        // that did not support it before, so the carried levels and the shared border a
-        // snapshot holds mean different things across the flip — solve-affecting on
-        // both counts.  Armed-only append, on the card SCC precedent, so every
-        // pre-card snapshot fingerprint is unchanged.  The allow-list and the sigma
-        // scale join it: the list decides WHICH arcs exist, and the scale decides the
-        // weight at which their rows were accumulated.
+        // Second phase channel (card SID phase 6a, R6): adds a float ambiguity per extra
+        // arc and feeds an existing satellite phase-bias family from stations that did not
+        // support it before, so the carried levels and the shared border in a snapshot
+        // mean different things across the flip.  Appended only when armed, as for SCC,
+        // so a snapshot written with it off keeps its fingerprint.  The allow-list and the
+        // sigma scale are included: the list decides which arcs exist, and the scale sets
+        // the weight at which their rows were accumulated.
         if (config_.networkSecondPhaseChannel()) {
             add("sid:2ndphase");
             for (const auto& sig : config_.networkSecondPhaseSignals()) add(sig);
             add(fmt::format("{}", config_.networkSecondPhaseSigmaScale()));
         }
-        // Card SID phase 3 (R6): the gap re-entry RESPONSE keys on the arc ledger's
-        // admitted lifecycle, which decides WHICH carried levels survive a break.
-        // A resume across the flip would restore levels the other side of the flip
-        // would have refloated, and the ledger itself is deliberately not
-        // snapshotted, so the two sides cannot be reconciled after the fact.
-        // Armed-only append, on the card SCC precedent, so every pre-card snapshot
-        // fingerprint is byte-identical.  The no-verdict policy joins it: it
-        // decides the disposition of the population the raw tiers never saw.
+        // Ledger re-entry response (card SID phase 3, R6): the gap re-entry response keys
+        // on the arc ledger's admitted lifecycle, which decides which carried levels
+        // survive a break.  A resume across the flip would restore levels that the other
+        // side would have refloated, and the ledger is not snapshotted (by design), so the
+        // two sides cannot be reconciled afterwards.  Appended only when armed, as for
+        // SCC, so a snapshot written with it off keeps its fingerprint.  The no-verdict
+        // policy is included because it decides the disposition of the arcs the raw
+        // tiers never saw.
         if (config_.networkLedgerReentry()) {
             add("sid:ledger_reentry");
             add(config_.networkLedgerReentryNoVerdict()
                     == LedgerReentryNoVerdict::Refloat ? "refloat" : "bridge");
         }
-        // Card SID phase 4b (B3): the ELECTION'S MEMORY ACROSS A GAP.  Armed, a
-        // family the coverage gate erased and that returns at the same generation
-        // is re-pinned on its PREVIOUS incumbent rather than on whichever station
-        // the coverage rank picks, so the carried ambiguities a resumed run
-        // restores were accumulated against a different realization of that
-        // family's datum — and the drop memo that decides it is deliberately not
-        // snapshotted, so the two sides cannot be reconciled after the fact.
-        // Armed-only append, on the card SCC precedent, so every pre-card snapshot
-        // fingerprint is byte-identical.  network.ledger_screens is NOT appended:
-        // it is an observatory and changes no byte of the solve, which is the same
-        // trace-knob rule the loader's fingerprint-SAFE list applies.
+        // Election memory across a gap (card SID phase 4b, B3).  When armed, a family that
+        // the coverage gate erased and that returns at the same generation is re-pinned on
+        // its previous incumbent rather than on the station the coverage rank picks, so
+        // the carried ambiguities a resumed run restores were accumulated against a
+        // different realization of that family's datum.  The drop memo that decides it is
+        // not snapshotted (by design), so the two sides cannot be reconciled afterwards.
+        // Appended only when armed, as for SCC, so a snapshot written with it off keeps
+        // its fingerprint.  network.ledger_screens is not appended: it is an observatory
+        // and changes no byte of the solve, the same trace-knob rule the loader's
+        // fingerprint-safe list applies.
         if (config_.networkLedgerAnchor()) add("sid:ledger_anchor");
         add(fmt::format("{}", pl_var_floor));    add(fmt::format("{}", pb_var_floor));
         add(fmt::format("{}", cb_var_floor));    add(fmt::format("{}", zwd_on));
@@ -898,133 +879,126 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         add(fmt::format("{}", emit_clock_disc));
         add(fmt::format("{}", config_.networkEmitterStalenessHorizonS()));
         add(fmt::format("{}", sticky_pivot));    add(fmt::format("{}", scoped_handover));
-        // Queue 1(b): the handover S-transform changes WHICH carried priors fold
-        // at a pivot switch, so a resume across a toggle change would interpret a
-        // carry that was (or was not) re-expressed in the wrong datum.  Appended
-        // ONLY when armed, so every pre-existing snapshot fingerprint is
-        // unchanged (byte-identical OFF path) — the phase_datum_ensemble /
-        // phase_leveling_los_scale precedent.  ARMED ⇒ fresh convergence only.
+        // Handover S-transform (queue 1(b)): it changes which carried priors fold at a
+        // pivot switch, so a resume across a toggle change would read a carry that was
+        // (or was not) re-expressed in the wrong datum.  Appended only when armed, as for
+        // phase_datum_ensemble and phase_leveling_los_scale, so the off path keeps its
+        // fingerprint.  When armed, the lineage needs a fresh convergence.
         if (ctx.knobs.handover_stransform) add("sts:1");
         add(fmt::format("{}", emit_gen_id));
         add(fmt::format("{}", config_.estimateNetworkSatCodeBias()));
         add(fmt::format("{}", config_.estimateNetworkIonoSh()));
-        // EXT-CB: the satellite code bias moves from a shared COLUMN to a modelled
-        // CORRECTION on the observable, and the forced rx DCB adds a local state —
-        // so a carried shared border means something different with it armed than
-        // without, and a warm resume must not cross the flip.  The (sat_code_bias,
-        // iono_sh) pair above already reads (false, true) only in this posture, but
-        // that is an inference from a coupling; append the knob itself so the
-        // fingerprint states it.  Conditional-append (the rxcb/shl2/iono2 pattern)
-        // so every pre-card snapshot fingerprint is unchanged.
+        // External satellite code bias (EXT-CB): the satellite code bias moves from a
+        // shared column to a modelled correction on the observable, and the forced rx DCB
+        // adds a local state, so a carried shared border means something different with it
+        // armed and a warm resume cannot cross the flip.  The (sat_code_bias, iono_sh) pair
+        // above reads (false, true) only in this posture, but that is an inference from a
+        // coupling, so the knob itself is appended to state it.  Appended only when armed
+        // (the rxcb/shl2/iono2 pattern), so a snapshot written with it off keeps its
+        // fingerprint.
         if (config_.networkExternalSatCodeBias()) add("extcb:1");
-        // RXCB-DATUM changes which receiver-DCB combination is realized, so the
-        // carried rx-CB levels mean something different with it armed.  Same
-        // conditional-append rule: pre-card fingerprints are unchanged.
+        // The receiver code-bias datum (RXCB-DATUM) changes which receiver-DCB combination
+        // is realized, so the carried rx-CB levels mean something different with it armed.
+        // Appended only when armed, like the others.
         if (config_.networkRxCodeBiasDatum())
             add(fmt::format("rxcbdatum:{}", config_.networkRxCodeBiasDatumSigmaM()));
         add(fmt::format("{}", q_clock)); add(fmt::format("{}", q_pb)); add(fmt::format("{}", q_cb));
         add(fmt::format("{}", nc.warmup_ura_floor_m)); add(fmt::format("{}", nc.warmup_epochs));
-        // Slant-iono carry (QUEUE 8b): solve-affecting — the leveling levels a chain
-        // harvests under iono-carried solves mean something different than white-iono
-        // ones, so a warm resume must not cross the flip even though the carry map
-        // itself is not snapshotted (it cold-starts).  Conditional-append (the
-        // rxcb/shl2/iono2 pattern) so every pre-card snapshot fingerprint is unchanged.
+        // Slant-iono carry (queue 8b) affects the solve: the leveling levels a chain
+        // harvests under iono-carried solves mean something different than under white
+        // iono, so a warm resume cannot cross the flip even though the carry map itself is
+        // not snapshotted (it cold-starts).  Appended only when armed (the rxcb/shl2/iono2
+        // pattern), so a snapshot written with it off keeps its fingerprint.
         if (config_.networkCarryIono())
             add(fmt::format("ionocarry:{}:{}:{}:{}:{}", config_.networkIonoCarryScope(),
                             config_.networkIonoCarrySource(),
                             config_.networkIonoCarryQ(), config_.networkIonoCarryVarFloor(),
                             config_.networkIonoCarryMaxGapS()));
-        // rx-CB carry: conditional append ONLY when armed, so every
-        // pre-existing snapshot fingerprint is unchanged (the shl2/iono2 pattern).
+        // rx-CB carry: appended only when armed (the shl2/iono2 pattern), so a snapshot
+        // written with it off keeps its fingerprint.
         if (rx_cb_on) {
             add("rxcb:1"); add(fmt::format("{}", rx_cb_q));
-            // Card LV-2: the de-mean changes
-            // what a carried rx-CB level MEANS — the carry stops transporting the
-            // common mode, so a chain that folded demeaned priors and one that did
-            // not have realized different receiver-DCB frames.  Same conditional-
-            // append rule (nested inside rxcb:1, which is itself conditional), so
-            // every pre-card snapshot fingerprint is unchanged.
+            // The de-mean (card LV-2) changes what a carried rx-CB level means: the carry
+            // stops transporting the common mode, so a chain that folded demeaned priors
+            // and one that did not have realized different receiver-DCB frames.  Appended
+            // only when armed, nested inside rxcb:1 (itself conditional).
             if (ctx.knobs.rx_cb_demean) {
                 add(fmt::format("rxcbdemean:{}", ctx.knobs.rx_cb_demean_min_sta));
-                // Card LV-5: a chain that folded against THIS epoch's μ and one that
-                // folded against last epoch's realized different receiver-DCB frames.
+                // Within-epoch de-mean (card LV-5): a chain that folded against this
+                // epoch's μ and one that folded against last epoch's have realized
+                // different receiver-DCB frames.
                 if (ctx.knobs.rx_cb_demean_within) add("rxcbdemeanwin:1");
             }
-            // Card LV-4: which priors fold, and which carried entries survive an
-            // event, both change — so a resume must not cross the flip.  Same
-            // nested conditional-append rule.
+            // Step gate (card LV-4): it changes which priors fold and which carried entries
+            // survive an event, so a resume cannot cross the flip.  Nested and appended
+            // only when armed, like the others.
             if (ctx.knobs.rx_cb_step_gate)
                 add(fmt::format("rxcbstep:{}", ctx.knobs.rx_cb_step_k));
-            // The S-consistent harvest re-zeros the carried set's common mode every
-            // epoch, so a stored snapshot's absolute rx-CB levels live in a
-            // different frame than an untransformed chain's — a resume must not
-            // cross the flip.  Same nested conditional-append rule.
+            // The S-consistent harvest re-zeros the carried set's common mode every epoch,
+            // so a stored snapshot's absolute rx-CB levels are in a different frame than
+            // those of an untransformed chain, and a resume cannot cross the flip.  Nested
+            // and appended only when armed, like the others.
             if (ctx.knobs.rx_cb_harvest_demean)
                 add(fmt::format("rxcbharv:{}", ctx.knobs.rx_cb_harvest_screen_z));
         }
-        // The anchor changes the TEMPORAL
-        // MODEL of the carried satellite clock — a snapshot written by an anchored run
-        // carries variances produced by a different process, and its per-satellite
-        // ANCHORED/LOOSE state deliberately does not travel (a warm resume is an
-        // invariant-#1 event, so every satellite must re-earn the anchor).  Mixing the
-        // two inside one lineage would fold a stiffness whose evidence never existed.
-        // Conditional append, so every pre-card snapshot fingerprint is unchanged.
+        // The clock anchor changes the temporal model of the carried satellite clock: a
+        // snapshot written by an anchored run carries variances produced by a different
+        // process, and its per-satellite anchored/loose state is not carried across on
+        // purpose (a warm resume is an invariant #1 event, so every satellite re-earns the
+        // anchor).  Mixing the two inside one lineage would fold a stiffness without the
+        // evidence behind it.  Appended only when armed, so a snapshot written with it off
+        // keeps its fingerprint.
         if (ctx.knobs.cta_on)
             add(fmt::format("cta:{}:{}:{}:{}:{}:{}:{}:{}", ctx.knobs.cta_q,
                             ctx.knobs.cta_var_floor, ctx.knobs.cta_max_gap_s,
                             ctx.knobs.cta_k, ctx.knobs.cta_abs_m,
                             ctx.knobs.cta_sigma_floor_m, ctx.knobs.cta_recouple_ep,
                             ctx.knobs.cta_resolve));
-        // §2.1 gauge-free fold: a snapshot written by a gauge-free run carries a
-        // carry whose clock information lives on a different SUBSPACE, so a resume
-        // must not cross the flip.  Conditional-append so a plain-anchor lineage's
-        // fingerprint is unchanged by this card.
-        // Card C-GF: the token now follows the RESOLVED predicate, so arming the
-        // downdate through the carry knob invalidates a snapshot exactly as arming it
-        // through the Q3 knob always did — the carried block's information lives on a
-        // different subspace either way, and a resume that crossed the flip would fold
-        // incompatible carries.  Byte-identical for every existing config: with
-        // shared_carry_gauge_free off, carry_gauge_free == cta_on && cta_gauge_free.
-        // Closure is part of the token, not a separate one: it changes WHICH directions
-        // are marginalized out of the carried block, so a resume that crossed a closure
-        // flip would fold a carry living on a different subspace — the same
-        // incompatibility the bare gauge-free flip causes.  "cta:gf" alone is preserved
-        // for the legacy arming so existing snapshots still match.
+        // Gauge-free fold (§2.1): a snapshot written by a gauge-free run holds a carry whose
+        // clock information is in a different subspace, so a resume cannot cross the
+        // flip.  Appended only when armed, so a plain-anchor lineage keeps its fingerprint.
+        // The token follows the resolved predicate (card C-GF), so arming the downdate
+        // through the carry knob invalidates a snapshot in the same way as arming it through
+        // the Q3 knob.  For a config with shared_carry_gauge_free off the token is
+        // unchanged, since carry_gauge_free == cta_on && cta_gauge_free there.  The closure
+        // test is part of the token, not a separate one: it changes which directions are
+        // marginalized out of the carried block, so crossing a closure flip is the same
+        // incompatibility as crossing the gauge-free flip.  The legacy arming (no closure)
+        // keeps the bare "cta:gf" token, so existing snapshots still match.
         if (ctx.knobs.carry_gauge_free)
             add(ctx.knobs.carry_gauge_free_closure ? "cta:gf+cl" : "cta:gf");
-        // §2.1 bisection: the denominator decides the TRIP population, and a trip
-        // withdraws a prior and re-solves the epoch — so two runs differing only here
-        // produce different carried state and must not resume across each other.
-        // Appended only when the resolved pair is NOT what `auto` would have chosen,
-        // so an existing lineage's fingerprint is unchanged by the knob's arrival.
+        // Guard statistic (§2.1 bisection): the denominator decides which epochs trip, and a
+        // trip withdraws a prior and re-solves the epoch, so two runs that differ only here
+        // produce different carried state and cannot resume across each other.  Appended
+        // only when the resolved pair differs from what `auto` would choose, so a lineage
+        // on `auto` keeps its fingerprint.
         if (ctx.knobs.cta_on
             && (ctx.knobs.cta_stat_proj_post != ctx.knobs.cta_gauge_free
                 || ctx.knobs.cta_stat_proj_prior))
             add(fmt::format("cta:gfstat:{}:{}", ctx.knobs.cta_stat_proj_post ? 1 : 0,
                             ctx.knobs.cta_stat_proj_prior ? 1 : 0));
-        // Card CLV: the level re-base moves the carried clock and phase-bias values (and
-        // every coupling term that references them), so a snapshot written with the
-        // card armed carries a different state than one written without it.
-        // Conditional append, so every pre-card snapshot fingerprint is unchanged.
+        // The clock level re-base (card CLV) moves the carried clock and phase-bias values
+        // (and every coupling term that references them), so a snapshot written with it
+        // armed holds a different state than one written without it.  Appended only when
+        // armed, so a snapshot written with it off keeps its fingerprint.
         if (ctx.knobs.clv_on)
             add(fmt::format("clv:{}:{}", ctx.knobs.clv_floor_m, ctx.knobs.clv_horizon_s));
-        // Card LV-1: the seed reframe changes the per-station LINEARIZATION POINT of
-        // the per-LOS iono AND (through initializeCodeBiases, which subtracts the
-        // seeded iono) of the receiver DCB.  The absolute solve is invariant to that
-        // frame, but the SNAPSHOT stores absolute carried levels whose prefit
-        // innovations are read against x_lin — the rx-CB inject gate is exactly such
-        // a consumer — so a resume must not cross the flip.  Conditional append.
+        // The seed reframe (card LV-1) changes the per-station linearization point of the
+        // per-LOS iono and, through initializeCodeBiases (which subtracts the seeded iono),
+        // of the receiver DCB.  The absolute solve is invariant to that frame, but the
+        // snapshot stores absolute carried levels whose prefit innovations are read against
+        // x_lin (the rx-CB inject gate is such a consumer), so a resume cannot cross the
+        // flip.  Appended only when armed.
         if (ctx.knobs.lv1_seed_frame)
             add(fmt::format("lv1seed:{}", ctx.knobs.lv1_min_sats));
-        // M2 v2: the variance FACTOR multiplies every
-        // carry fold variance, so a carried (value, var) pair means a different prior
-        // with it armed than without — the textbook fingerprint case, and the reason
-        // this knob is NOT in the carry_vce monitor's fingerprint-free class.  Note
-        // the fingerprint is necessary but NOT sufficient here: both legs of an
-        // apply-ON chain fingerprint identically while α² itself is unsnapshotted, so
-        // networkTryWarmResume refuses the resume outright (spec §8, the one BLOCKING
-        // deferral).  Appended ONLY when armed, so every pre-card snapshot's
-        // fingerprint is untouched.
+        // Carry VCE apply (M2 v2): the variance factor multiplies every carry fold
+        // variance, so a carried (value, var) pair means a different prior with it armed
+        // than without.  That makes it a fingerprinted knob, unlike the carry_vce monitor,
+        // which is fingerprint-free.  The fingerprint is necessary but not sufficient here:
+        // both legs of an apply-on chain fingerprint identically while α² itself is not
+        // snapshotted, so networkTryWarmResume refuses the resume outright (spec §8, the
+        // one blocking deferral).  Appended only when armed, so a snapshot written with it
+        // off keeps its fingerprint.
         if (config_.networkCarryVceApply()) {
             add("vceapply:1");
             add(config_.networkCarryVceApplyFamilies());
@@ -1034,150 +1008,147 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
             add(fmt::format("{}", config_.networkCarryVceComponents()));
             add(fmt::format("{}", config_.networkCarryVceWindowEpochs()));
         }
-        // apriori_source + anchor σ are datum-relevant.  The carried clock
-        // frame is Δδtˢ-vs-broadcast in brdc_rts but Δδtˢ-vs-precise in sp3 (differ by
-        // ~metres), and only brdc_rts carries the relevel_iode baseline — so a warm
-        // resume must NOT cross an apriori_source change or it would fold a clock carry
-        // in the wrong frame and re-level against a stale baseline.
+        // apriori_source and the anchor σ are datum-relevant.  The carried clock frame is
+        // Δδtˢ against broadcast under brdc_rts and Δδtˢ against precise under sp3 (they
+        // differ by metres), and only brdc_rts carries the relevel_iode baseline, so a warm
+        // resume across an apriori_source change would fold a clock carry in the wrong
+        // frame and re-level against a stale baseline.
         add(fmt::format("{}", static_cast<int>(config_.networkAprioriSource())));
         add(fmt::format("{}", config_.networkAprioriClockAnchorSigmaM()));
-        // The clock-gauge REALIZATION defines the frame the carried clock states
-        // live in (pin / sum-to-zero / broadcast-anchored differ by per-const or
-        // common-mode constants) — a resume across a realization change must
-        // cold-start.  Appended ONLY when a non-default realization is armed so
-        // every pre-existing (pin-mode) snapshot fingerprint is unchanged.
+        // The clock-gauge realization defines the frame of the carried clock states (pin,
+        // sum-to-zero and broadcast-anchored differ by per-constellation or common-mode
+        // constants), so a resume across a realization change has to cold-start.  Appended
+        // only when a non-default realization is armed, so a pin-mode snapshot keeps its
+        // fingerprint.
         if (clock_sum_to_zero || clock_brdc_anchored)
             add(fmt::format("clkdatum:s2z={},bca={}", clock_sum_to_zero,
                             clock_brdc_anchored));
-        // Optional emitter discontinuity channels are construction parameters of
-        // the snapshotted emitter state (restoreState hard-fails on a mismatch) —
-        // same conditional-append rule keeps default fingerprints unchanged.
+        // The optional emitter discontinuity channels are construction parameters of the
+        // snapshotted emitter state (restoreState fails on a mismatch); appended only when
+        // armed, so default fingerprints are unchanged.
         if (config_.networkCodeBiasDiscJumpTest() || config_.networkClockDiscOnSetChange())
             add(fmt::format("emitchan:cbj={},cks={}", config_.networkCodeBiasDiscJumpTest(),
                             config_.networkClockDiscOnSetChange()));
-        // Card JT: the de-commoned phase jump test decides which (sat,signal) counters
-        // step, and those counters ARE snapshotted emitter state — a resume across a
-        // change of this knob would continue a counter series minted under the other
-        // test.  It adds no serialized state of its own (the de-commoned step is a
-        // pure function of the epoch and last_phase_bias_), so it is fingerprinted
-        // here rather than in the EMITTER header; appended ONLY when armed, so every
-        // pre-JT snapshot fingerprint is unchanged.
+        // The de-commoned phase jump test (card JT) decides which (sat,signal) counters
+        // step, and those counters are snapshotted emitter state, so a resume across a
+        // change of this knob would continue a counter series produced under the other
+        // test.  It adds no serialized state of its own (the de-commoned step is a pure
+        // function of the epoch and last_phase_bias_), so it is fingerprinted here rather
+        // than in the emitter header.  Appended only when armed, so a snapshot written
+        // with it off keeps its fingerprint.
         if (config_.getNetworkConfig().disc_jump_test_decommon)
             add("discdecom=1");
-        // Card MS: same argument for the per-channel mark scope — it decides which
-        // CHANNEL's counters a landed mark steps, those counters are snapshotted
-        // emitter state, and the pending-mark section now carries a channel mask.
-        // Appended ONLY when armed, so every pre-MS snapshot fingerprint is unchanged.
+        // The same argument applies to the per-channel mark scope (card MS): it decides
+        // which channel's counters a landed mark steps, those counters are snapshotted
+        // emitter state, and the pending-mark section carries a channel mask.  Appended
+        // only when armed, so a snapshot written with it off keeps its fingerprint.
         if (config_.getNetworkConfig().disc_mark_scope == "channel")
             add("discscope=channel");
-        // The held clock signal basis defines which IF combination each carried
-        // clock state is referenced to; a resume across a toggle change would carry
-        // clock states in a re-selected-per-epoch frame vs a held frame.  Appended
-        // ONLY when armed so every pre-existing snapshot fingerprint is unchanged.
+        // The held clock signal basis defines which IF combination each carried clock
+        // state is referenced to; a resume across a toggle change would mix clock states in
+        // a frame re-selected per epoch with states in a held frame.  Appended only when
+        // armed, so a snapshot written with it off keeps its fingerprint.
         if (clock_signal_basis_hold)
             add(fmt::format("clkbasishold={}", clock_signal_basis_hold));
         // Excluding unmatched-antenna stations from phase-bias emission changes which
         // per-(sat,signal) phase-bias states the carried solution holds; a resume across a
-        // toggle change would carry a different shared-state set.  Appended ONLY when armed
-        // so every pre-existing snapshot fingerprint is unchanged.
+        // toggle change would carry a different shared-state set.  Appended only when
+        // armed, so a snapshot written with it off keeps its fingerprint.
         if (pb_excl_unmatched)
             add(fmt::format("pbexclunmatched={}", pb_excl_unmatched));
-        // T2e: epoch decimation changes the carried-state cadence, so a resume must match it.
-        // Conditional-append (only when != 1) keeps every existing config's fingerprint byte-
-        // identical.  The DD-trace stride is TRACE-ONLY and deliberately NOT folded in — arming
-        // a trace on resume must not invalidate an untraced snapshot.
+        // Epoch decimation changes the carried-state cadence, so a resume has to match it
+        // (T2e).  Appended only when != 1, so a config without decimation keeps its
+        // fingerprint.  The DD-trace stride is trace-only and left out on purpose: arming
+        // a trace on resume does not invalidate an untraced snapshot.
         if (nc.epoch_decimation_n != 1)
             add(fmt::format("edecim={}", nc.epoch_decimation_n));
-        // T5: the GM deviation changes the estimation (not trace-only), and its carry
-        // is NOT persisted in the snapshot — a resume across a tau change must cold-start.
+        // The GM deviation (T5) changes the estimation (it is not trace-only), and its
+        // carry is not persisted in the snapshot, so a resume across a tau change has to
+        // cold-start.
         if (shc.rep_error_tau_s > 0.0)
             add(fmt::format("shdevtau={}", shc.rep_error_tau_s));
-        // Iono-2 dual-layer: the second shell adds carried SH coefficients whose
-        // meaning depends on its degree AND height (a resume across a re-layering
-        // would fold layer-fitted coefficients into a different shell geometry).
-        // Conditional-append (only when armed) keeps every existing fingerprint
-        // byte-identical.
+        // Dual-layer ionosphere (Iono-2): the second shell adds carried SH coefficients
+        // whose meaning depends on its degree and height (a resume across a re-layering
+        // would fold layer-fitted coefficients into a different shell geometry).  Appended
+        // only when armed, so a single-layer config keeps its fingerprint.
         if (shc.layer2_max_degree > 0)
             add(fmt::format("shl2={}@{}", shc.layer2_max_degree, shc.layer2_height_km));
-        // The conditional local carry changes what the per-station carry MEANS
-        // (a shared-coupled conditional row vs an independent diagonal marginal) — a
-        // resume across a toggle change would fold a carry of the wrong KIND, and that
-        // alone is why the token exists.  §18.12 AMENDMENT: the per-column coupling data
-        // (M_r rows, ŝ_prev, P_prev) IS persisted now, but only into a format-v3 snapshot
-        // written under network.state_snapshot_coupling_capture and only rebuilt by a
-        // reader that arms network.resume_coupling_restore; a v1/v2 file still carries
-        // none of it and a restored row degrades to a plain diagonal.  So the rationale is
-        // the MEANING change, no longer "the data is missing" — the token stays either
-        // way (deleting it would strand every stored seed).
-        // Conditional-append (only when armed) keeps every existing fingerprint byte-identical.
+        // The conditional local carry changes what the per-station carry means (a
+        // shared-coupled conditional row against an independent diagonal marginal), so a
+        // resume across a toggle change would fold a carry of the wrong kind; that is the
+        // reason for the token.  The per-column coupling data (M_r rows, ŝ_prev, P_prev) is
+        // persisted, but only into a format-v3 snapshot written under
+        // network.state_snapshot_coupling_capture, and only a reader that arms
+        // network.resume_coupling_restore rebuilds it (§18.12); a v1/v2 file carries none
+        // of it, and a restored row degrades to a plain diagonal.  The token stays in
+        // either case (removing it would strand every stored seed).  Appended only when
+        // armed, so a snapshot written with it off keeps its fingerprint.
         if (carry_cpl_cond)
             add(fmt::format("carrycplcond={}", carry_cpl_cond));
-        // The time-linked code-bias datum changes what the emitted OSB/clock
-        // split MEANS (a time-continuity datum vs a per-epoch set-mean datum) and its
-        // per-(const,signal) previous-value map is NOT persisted in the snapshot — a
-        // resume across a toggle change would compare a solve in one datum against a
-        // carry in the other.  Conditional-append (only when armed) keeps every
-        // existing fingerprint byte-identical.
+        // The time-linked code-bias datum changes what the emitted OSB/clock split means (a
+        // time-continuity datum against a per-epoch set-mean datum), and its
+        // per-(const,signal) previous-value map is persisted only under
+        // network.state_snapshot_datum_capture, so a resume across a toggle change would
+        // compare a solve in one datum against a carry in the other.  Appended only when
+        // armed, so a snapshot written with it off keeps its fingerprint.
         if (cb_time_linked)
             add(fmt::format("cbtimelink={}", cb_time_linked));
-        // The border time update changes what an injected coupling row MEANS
-        // (a κ-shrunk, re-independenced pseudo-obs of the MOVED border vs the raw
-        // harvest-epoch row) and the κ inputs (per-column P_prev + q ladder) are not
-        // persisted in the v1 snapshot.  Conditional-append (only when armed) keeps
-        // every existing fingerprint byte-identical.
+        // The border time update changes what an injected coupling row means (a κ-shrunk,
+        // re-independenced pseudo-observation of the moved border against the raw
+        // harvest-epoch row), and the κ inputs (per-column P_prev and the q ladder) are not
+        // persisted in the v1 snapshot.  Appended only when armed, so a snapshot written
+        // with it off keeps its fingerprint.
         if (carry_cpl_tu)
             add(fmt::format("carrycpltu={}", carry_cpl_tu));
-        // Card 1d-SH: marginalized-vs-carried SH coupling changes what an armed carry
-        // MEANS; conditional-append keeps existing fingerprints byte-identical.
+        // Marginalized against carried SH coupling (card 1d-SH) changes what an armed
+        // carry means; appended only when armed, so existing fingerprints are unchanged.
         if (carry_cpl_shmarg)
             add(fmt::format("cplshmarg={}", carry_cpl_shmarg));
-        // Card 1f/1g: both change WHICH information an injected coupling row carries —
-        // 1f alters the coefficient vector of every truncated row, 1g moves whole columns
-        // onto the departed route.  Same footing as carry_cpl_tu above; conditional-append
-        // keeps every existing fingerprint byte-identical.
+        // Gauge projection and source re-init (cards 1f and 1g) both change which
+        // information an injected coupling row carries: 1f alters the coefficient vector
+        // of every truncated row, and 1g moves whole columns onto the departed route.  Same
+        // footing as carry_cpl_tu above; appended only when armed, so existing
+        // fingerprints are unchanged.
         if (ctx.knobs.carry_cpl_gauge)
             add(fmt::format("carrycplgauge={}", ctx.knobs.carry_cpl_gauge));
         if (ctx.knobs.carry_cpl_reinit)
             add(fmt::format("carrycplreinit={}", ctx.knobs.carry_cpl_reinit));
-        // JOINT-whitening reshapes the injected coupling rows (departed cols →
-        // shared M_w marginalization vs a per-row scalar σ²) — a solve-determining
-        // treatment on the SAME footing as carry_cpl_cond/_tu/_shmarg above, all of
-        // which gate a resume.  It was the lone Card-1 coupling knob missing here, so a
-        // warm resume flipping joint-whiten (with carry_cpl_cond still ON) matched
-        // fingerprints and was permitted to proceed and diverge.  Conditional-append
-        // (only when armed) keeps every non-joint fingerprint byte-identical; joint
-        // requires carry_cpl_cond so an armed-joint config already carries carrycplcond.
+        // Joint whitening reshapes the injected coupling rows (departed columns go to a
+        // shared M_w marginalization instead of a per-row scalar σ²), which determines the
+        // solve in the same way as carry_cpl_cond/_tu/_shmarg above; all of them gate a
+        // resume.  Without this token, a warm resume that flips joint whitening with
+        // carry_cpl_cond still on would match fingerprints and diverge.  Appended only when
+        // armed, so a non-joint fingerprint is unchanged; joint requires carry_cpl_cond, so
+        // an armed-joint config also carries carrycplcond.
         if (carry_cpl_joint)
             add(fmt::format("carrycpljoint={}", carry_cpl_joint));
-        // SPEC_day129_frame_guards Phase 2.1: the CB-excursion guard changes what a
-        // carried code bias MEANS across an excursion (a reinit-decorrelated state
-        // vs a stiff continuation) and its pending-bump queue is not snapshotted —
-        // a resume flipping it would fold a carry of the wrong kind and could
-        // silently drop a queued discontinuity.  On the SAME footing as
-        // cbtimelink / carrycpl* above.  Conditional-append (only when armed)
-        // keeps every existing (unarmed) fingerprint byte-identical.
+        // The CB-excursion guard (SPEC_day129_frame_guards phase 2.1) changes what a
+        // carried code bias means across an excursion (a reinit-decorrelated state against
+        // a stiff continuation), and its pending-bump queue is not snapshotted, so a resume
+        // that flips it would fold a carry of the wrong kind and could drop a queued
+        // discontinuity without a trace.  Same footing as cbtimelink / carrycpl* above.
+        // Appended only when armed, so an unarmed fingerprint is unchanged.
         if (nc.cb_excursion_reinit)
             add(fmt::format("cbexc={},{}", nc.cb_excursion_median_m,
                             nc.cb_excursion_reinit_all_sats));
-        // --- DELIBERATELY NOT FINGERPRINTED: the forward-only-policy exemption ---
+        // --- Not fingerprinted: the forward-only policy exemption ---
         //
-        // Everything listed below is left OUT of the fingerprint on one shared
-        // argument, recorded here so a future reader does not "fix" the omission.
+        // The knobs listed below are left out of the fingerprint for one shared reason,
+        // recorded here so that the omission is not "fixed" later.
         //
-        // The rule: a knob is exempt when it is a FORWARD-ONLY POLICY — it changes
-        // what the run DOES from here on (which rows fold, at what weight, which
-        // observables are admitted, which arcs re-tap, what a resume rebuilds) but
-        // re-references no carried quantity retroactively and changes what no
-        // serialized state MEANS.  A carried ambiguity, code bias, slant or ZWD is
-        // the same quantity in the same frame whether or not a screen is deciding
-        // what feeds it next epoch.  Each such knob's OWN state is per-epoch or
-        // per-resume and is never serialized, so a resumed leg simply starts with
-        // it cold — the conservative direction, since a resume is exactly a window
+        // A knob is exempt when it is a forward-only policy: it changes what the run does
+        // from here on (which rows fold, at what weight, which observables are admitted,
+        // which arcs re-tap, what a resume rebuilds), but it re-references no carried
+        // quantity retroactively and changes the meaning of no serialized state.  A
+        // carried ambiguity, code bias, slant or ZWD is the same quantity in the same frame
+        // whether or not a screen decides what feeds it next epoch.  Each such knob's own
+        // state is per-epoch or per-resume and is never serialized, so a resumed leg starts
+        // with it cold.  That is the conservative direction, because a resume is a window
         // in which no time-difference detector can operate.
         //
-        // Why it matters practically: a fingerprinted knob cannot be A/B'd on one
-        // snapshot.  Keeping these out is what makes every OFF/ON validation pair
-        // replay from a shared seed under `state_snapshot_require: true`.
+        // In practice, a fingerprinted knob cannot be A/B tested on one snapshot; keeping
+        // these out lets every off/on validation pair replay from a shared seed under
+        // `state_snapshot_require: true`.
         //
         // Exempt families:
         //   eq34 reattach hygiene   eq34_anchor_min_arc_ep, phase_datum_time_linked,
@@ -1195,66 +1166,63 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         //                           resume_datum_restore (RS-3, §21.7),
         //                           resume_emit_restore (RS-5, §21.10),
         //                           resume_station_restore{,_rxcb,_shdev} (RS-6, §21.13),
-        //                           resume_signal_canon_restore (RS-8, §21.16)
-        //                           resume_border_restore (RS-7, §21.14)
+        //                           resume_signal_canon_restore (RS-8, §21.16),
         //                           resume_border_restore (RS-7, §21.14),
         //                           resume_rxcb_lin_restore (RS-9, §21.18),
         //                           zwd_seam_reseed_q (RS-10b, §21.21)
         //
-        // Two entries need their own note:
+        // Notes on individual entries:
         //
-        //   adm_revet reads a cross-epoch record, which LOOKS fingerprint-relevant.
-        //   It is not: `vet_left` / `last_ep` live in the same unserialized record
-        //   map as `admitted`, so a resumed leg opens no vet windows and every
-        //   channel reads as a first sighting — the restore case, already handled.
-        //   (`adm_resume_pending` makes that first restored epoch a screened RESTORE
-        //   rather than a birth, the one case the seed-birth tripwire cannot see.)
+        //   adm_revet reads a cross-epoch record, which looks fingerprint-relevant but is
+        //   not: `vet_left` / `last_ep` live in the same unserialized record map as
+        //   `admitted`, so a resumed leg opens no vet windows and every channel reads as a
+        //   first sighting, which is the restore case and is already handled.
+        //   (`adm_resume_pending` makes the first restored epoch a screened restore rather
+        //   than a birth, the one case the seed-birth tripwire cannot see.)
         //
-        //   state_snapshot_datum_capture (RS-3) is the same representation question with
-        //   one twist: its rows ride the EXISTING header (the optional-var_first
-        //   precedent), so a pre-card binary rejects the file on the unknown record TAG
-        //   rather than on the header literal.  Both are this format's documented
-        //   cold-start signal and both throw under state_snapshot_require, so the safety
-        //   is identical; keeping the header stable is what lets an RS-3 A/B diff two
-        //   snapshots and see only the new rows.  The datum quantities themselves are
-        //   already fingerprinted by the knobs that create them (phase_datum_eq34,
-        //   code_datum_time_linked), so a writer/reader mismatch on their MEANING is
-        //   unreachable.
+        //   state_snapshot_datum_capture (RS-3) is a representation question like the
+        //   coupling capture below, with one difference: its rows use the existing header
+        //   (as the optional var_first field does), so a binary that predates it rejects
+        //   the file on the unknown record tag rather than on the header literal.  Both are
+        //   this format's documented cold-start signal and both throw under
+        //   state_snapshot_require, so the safety is the same; keeping the header stable
+        //   lets an RS-3 A/B diff two snapshots and see only the new rows.  The datum
+        //   quantities themselves are fingerprinted by the knobs that create them
+        //   (phase_datum_eq34, code_datum_time_linked), so a writer/reader mismatch on
+        //   their meaning cannot occur.
         //
-        //   state_snapshot_coupling_capture is a serialization REPRESENTATION, not a
-        //   policy: it adds rows and bumps the header to v3.  That is a binary
-        //   vintage question — a pre-card reader fails the header check and
-        //   cold-starts — not a fingerprint one, and the writer's products and traces
-        //   stay byte-identical because the capture block reads ctx.carry after the
-        //   emit and writes only into `snap`.  The Card-1 arithmetic tokens those
-        //   rows depend on are already in fp above, so a writer/reader mismatch on
-        //   the coupling arithmetic is unreachable.  The same precedent covers the
-        //   unconditional Z-row and frame-row captures, and the RS-5 emit-layer
-        //   (state_snapshot_emit_capture) and RS-6 station-layer
-        //   (state_snapshot_station_capture) captures: both add rows under the
-        //   EXISTING header and leave the writer's products and traces byte-identical,
-        //   and the quantities themselves are already fingerprinted by the knobs that
-        //   create them (carry_invariant_emit_rebase / emit_pb_filter for the emit
-        //   layer; carry_rx_code_bias and global_vtec_sh.rep_error_tau_s for the two
-        //   station carries), so a writer/reader mismatch on their MEANING is
-        //   unreachable.
+        //   state_snapshot_coupling_capture is a serialization representation, not a
+        //   policy: it adds rows and bumps the header to v3.  That is a question of binary
+        //   vintage (a reader that predates it fails the header check and cold-starts), not
+        //   of the fingerprint, and the writer's products and traces stay byte-identical
+        //   because the capture block reads ctx.carry after the emit and writes only into
+        //   `snap`.  The card-1 arithmetic tokens those rows depend on are already in fp
+        //   above, so a writer/reader mismatch on the coupling arithmetic cannot occur.
+        //   The same reasoning covers the unconditional Z-row and frame-row captures and
+        //   the RS-5 emit-layer (state_snapshot_emit_capture) and RS-6 station-layer
+        //   (state_snapshot_station_capture) captures: both add rows under the existing
+        //   header and leave the writer's products and traces byte-identical, and the
+        //   quantities themselves are fingerprinted by the knobs that create them
+        //   (carry_invariant_emit_rebase / emit_pb_filter for the emit layer;
+        //   carry_rx_code_bias and global_vtec_sh.rep_error_tau_s for the two station
+        //   carries), so a writer/reader mismatch on their meaning cannot occur.
         //
         //   state_snapshot_signal_capture (RS-8, §21.16) is the same representation
-        //   question again — CN rows under the EXISTING header, read out of the station
-        //   models after the emit, writer's products and traces byte-identical.  The
-        //   station ROSTER (which is what the row's index means) is already in fp above,
-        //   so an index cannot silently name a different station.  Its OWN contents —
-        //   signal_priorities and the coverage allowlist — are deliberately NOT added:
-        //   they are not in the fingerprint today, adding them would strand every stored
-        //   snapshot, and a mismatch is not silent anyway.  A restored channel this run
-        //   does not track simply has no observation, which is the pre-card reading for
-        //   that band (a station that tracks nothing on a band has no canonical for it
-        //   either way), and the restore AUDIT reports the disagreement explicitly.
+        //   question: CN rows under the existing header, read from the station models after
+        //   the emit, with the writer's products and traces byte-identical.  The station
+        //   roster (which defines what the row's index means) is already in fp above, so an
+        //   index cannot name a different station undetected.  Its own contents
+        //   (signal_priorities and the coverage allowlist) are left out on purpose: they are
+        //   not in the fingerprint, adding them would strand every stored snapshot, and
+        //   a mismatch is visible anyway.  A restored channel that this run does not track
+        //   has no observation, which is what the band reads without the restore (a station
+        //   that tracks nothing on a band has no canonical for it either way), and the
+        //   restore audit reports the disagreement.
         //
-        // ⚠ Do NOT move any of these into the fingerprint: it would strand every
-        //   stored snapshot AND outlaw the same-snapshot OFF/ON A/B that their
-        //   validation depends on.  (zwd_on / zwd_q above DO stay fingerprinted —
-        //   the continuous carry is solve-affecting on both sides of a seam.)
+        // None of these belongs in the fingerprint: adding one would strand every stored
+        // snapshot and rule out the same-snapshot off/on A/B that its validation depends
+        // on.  (zwd_on / zwd_q above stay fingerprinted, because the continuous carry
+        // affects the solve on both sides of a seam.)
         live_fingerprint = NetworkStateSnapshotIO::fnv1a64(fp);
     }
 }
@@ -1266,8 +1234,8 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                           NetworkClockEmitRebase* clk_rebase,
                           NetworkEmitRebase* emit_rebase,
                           NetworkPbEmitFilter* pb_filter) {
-    // Alias block (INC-4 migration mechanic) — the relocated body reads the
-    // former runNetwork() locals under their original names.
+    // Alias block (INC-4): the relocated body reads the former runNetwork() locals under
+    // their original names.
     const auto& nc = config_.getNetworkConfig();
     const auto& synced = sync.getSyncedEpochs();
     auto& snap_path = ctx.carry.snap_path;
@@ -1311,39 +1279,36 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
     const bool   fullcov_on = ctx.knobs.fullcov_on;
     const bool   ura_on = ctx.knobs.ura_on;
 
-    // RTB-7(d) HB-1: when state_snapshot_require is armed, ANY failure to complete a
-    // warm resume is a hard run error instead of a warn + silent cold start — the
-    // structural guard for same-snapshot A/B (a resume overwrites the snapshot it read,
-    // so an un-re-seeded relaunch would otherwise be graded as warm while running cold).
+    // With state_snapshot_require armed, any failure to complete a warm resume is a run
+    // error instead of a warning and a cold start (RTB-7(d), HB-1).  This guards
+    // same-snapshot A/B runs: a resume overwrites the snapshot it read, so a relaunch that
+    // was not re-seeded would otherwise be graded as warm while running cold.
     //
-    // ⚠ The message is built by NetworkStateSnapshotIO::warmResumeRefusalMessage so
-    // every branch below says the same thing in the same words, and the
-    // non-positive-age branch (the one SPEC_event_harness §6b found reading as a
-    // COLD START in the log and then killing the process with an unhandled
-    // exception) names its own remedy.  The throw is caught at the runNetwork()
-    // call site, which logs e.what() as the ONE error line and returns 1 — a
+    // NetworkStateSnapshotIO::warmResumeRefusalMessage builds the message, so every
+    // branch below reports the refusal in the same words, and the non-positive-age branch
+    // names its own remedy (SPEC_event_harness §6b).  The throw is caught at the
+    // runNetwork() call site, which logs e.what() as a single error line and returns 1: a
     // controlled abort with the reason in the log, not a 0xC0000409 fast-fail.
     auto hb1 = [&](WarmResumeRefusal why, const std::string& detail) {
         const std::string msg = NetworkStateSnapshotIO::warmResumeRefusalMessage(
                 nc.state_snapshot_require, why, detail);
         if (!msg.empty()) throw std::runtime_error(msg);
     };
-    // The COLD-START warnings below are suppressed under `require`: announcing a
-    // cold start the run is about to refuse is the exact confusion §6b reported.
+    // The cold-start warnings below are suppressed under `require`, because the run is
+    // about to refuse the cold start they would announce (§6b).
     const bool cold_ok = !nc.state_snapshot_require;
     if (nc.state_snapshot_require && !snap_path.empty()
         && !std::filesystem::exists(snap_path))
         hb1(WarmResumeRefusal::MissingFile,
             "snapshot file '" + snap_path.string() + "' does not exist");
-    // M2 v2 — the ONE field-BLOCKING deferral,
-    // enforced rather than documented.  The variance factor α² is cross-epoch,
-    // solve-affecting, and NOT in the snapshot; a resumed leg would restart every
-    // group at α² = 1 and re-climb at the slew rate, so the carry priors either
-    // side of the seam encode different variances for the same carried values.
-    // The fingerprint cannot catch this (an apply-ON seed and an apply-ON leg
-    // fingerprint identically), so the refusal has to live here.  v1 is
-    // fresh-convergence-only; the relaxation is a snapshot field plus
-    // NetworkCarryVce::seedRobustFloor, and neither exists yet.
+    // Carry VCE apply (M2 v2) has one field-blocking deferral, enforced here: the variance
+    // factor α² is cross-epoch, affects the solve, and is not in the snapshot.  A resumed
+    // leg would restart every group at α² = 1 and climb back at the slew rate, so the
+    // carry priors on either side of the seam would encode different variances for the
+    // same carried values.  The fingerprint cannot detect this (an apply-on seed and an
+    // apply-on leg fingerprint identically), so the refusal is here.  v1 supports fresh
+    // convergence only; lifting that needs an α² field in the snapshot (there is none)
+    // plus a resume seed of the monitor through NetworkCarryVce::seedRobustFloor.
     if (ctx.knobs.vce_apply_on && !snap_path.empty()
         && std::filesystem::exists(snap_path))
         throw std::runtime_error(
@@ -1364,8 +1329,8 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                           snap_path.string(), err);
             hb1(WarmResumeRefusal::ParseFailure, "parse failure: " + err);
         } else {
-            // First epoch this run will actually process (honouring the
-            // start_offset_hours fast-forward) — the age reference of the gate.
+            // First epoch this run processes (after the start_offset_hours fast-forward);
+            // it is the age reference of the gate.
             double first_live_s = -1.0;
             if (!synced.empty()) {
                 const double anchor_s = TimeUtils::continuousGpsSeconds(synced.front().time);
@@ -1377,13 +1342,12 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     }
                 }
             }
-            // Carry-validity horizon = max of the per-key gap bounds.  Past it
-            // every restored key would be dropped/reseeded downstream anyway;
-            // WITHIN it, per-key staleness after restore is handled by the
-            // EXISTING machinery (local-carry max-gap drop, D2 q·dt inflation
-            // over the true gap via the restored prev_week/prev_tow, clock-model
-            // per-sat t_last gap logic) — restore everything, let the
-            // established per-key logic judge each key.
+            // Carry-validity horizon = max of the per-key gap bounds.  Past it every
+            // restored key would be dropped or reseeded downstream anyway.  Within it,
+            // per-key staleness after the restore is handled by the existing logic
+            // (local-carry max-gap drop, D2 q·dt inflation over the true gap through the
+            // restored prev_week/prev_tow, clock-model per-satellite t_last gap logic), so
+            // everything is restored and each key is judged by its own rule.
             const double horizon_s = std::max(pl_max_gap_s, clk_model_max_gap);
             std::string gate;
             WarmResumeRefusal gate_why = WarmResumeRefusal::None;
@@ -1401,10 +1365,10 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                               snap_path.string(), gate);
                 hb1(gate_why, "snapshot '" + snap_path.string() + "': " + gate);
             } else {
-                // Emitter layer FIRST (all-or-nothing): a failed emitter restore
-                // discards the whole warm resume — restoring the driver carries
-                // without the emitter's baselines/pending flags would emit WRONG
-                // discontinuity counters (the silent consumer datum break).
+                // Emitter layer first (all or nothing): a failed emitter restore discards
+                // the whole warm resume.  Restoring the driver carries without the
+                // emitter's baselines and pending flags would emit wrong discontinuity
+                // counters, a consumer datum break with no signal.
                 std::istringstream es(snap.emitter_state);
                 if (!emitter.restoreState(es)) {
                     if (cold_ok)
@@ -1432,28 +1396,29 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                         cp.value     = sc.value;
                         cp.var       = sc.var;
                         cp.inflate_q = sc.inflate_q;
-                        // Iono-2 dual-layer: the second shell's coefficients ride the
-                        // (empty-for-VtecSh) sat field as "L1" — a layer tag old
-                        // readers key-mismatch into a safe climatology reseed.
+                        // Dual-layer ionosphere (Iono-2): the second shell's coefficients
+                        // use the sat field (otherwise empty for VtecSh) as the layer tag
+                        // "L1"; an older reader fails the key match and reseeds from
+                        // climatology, which is safe.
                         if (cp.kind == SharedParamKind::VtecSh && cp.sat == "L1") {
                             cp.sh_layer = 1;
                             cp.sat.clear();
                         }
                         prev_carry.push_back(std::move(cp));
                     }
-                    // C1: the D records serialize per-key (value, var) only, so the
-                    // carried block's CROSS-covariance comes from the QK/QP side-car or
-                    // not at all.  Restored (RS-7 / §18.12 (2a)) the first warm fold runs
-                    // the dense path; otherwise it runs the legacy per-key diagonal and
-                    // the dense block re-seeds at the first emit.
+                    // Dense carry (C1): the D records serialize per-key (value, var) only,
+                    // so the carried block's cross-covariance comes from the QK/QP side-car
+                    // or not at all.  When it is restored (RS-7, §18.12 (2a)) the first warm
+                    // fold runs the dense path; otherwise it runs the legacy per-key
+                    // diagonal and the dense block re-seeds at the first emit.
                     //
-                    // ⚠ This line is printed BEFORE the dense-border block below, so it
-                    // must not assert "diagonal" on a leg that is about to restore the
-                    // border — invariant #4 cuts both ways, and P9a (§21.14) reads exactly
-                    // this clause.  The predicate is the block's own arming test minus the
+                    // This line is printed before the dense-border block below, so it does
+                    // not claim "diagonal" on a leg that is about to restore the border
+                    // (invariant #4 applies in both directions, and P9a, §21.14, reads this
+                    // clause).  The predicate is the block's own arming test without the
                     // post-filter nk>0 / finite screen, which only the block can evaluate;
-                    // if that screen fails the block warns and says it degraded to the
-                    // diagonal, so the pair of lines stays truthful either way.
+                    // if that screen fails, the block warns that it degraded to the
+                    // diagonal, so the two lines stay consistent either way.
                     const bool border_restore_armed =
                         (ctx.knobs.resume_coupling_restore || ctx.knobs.resume_border_restore)
                         && fullcov_on;
@@ -1494,26 +1459,25 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     }
                     local_carry.clear();
                     for (const auto& [key, l] : snap.local_carry) {
-                        // RESTORED-ARC AGE (SPEC_event_harness §15.4): the birth
-                        // stamps are deliberately not snapshotted, and the entry is
-                        // therefore SENTINEL-stamped rather than left at 0 — 0 also
-                        // means "never stashed", which is what the harvest's
-                        // first-stash-wins rule reads it as, so the first post-resume
-                        // harvest used to re-brand every restored arc as born at the
-                        // RESUME.  var_first stays 0 on a pre-ratio file: the ratio
-                        // ceiling then refuses the arc until it re-converges.
+                        // Restored-arc age (SPEC_event_harness §15.4): the birth stamps
+                        // are not snapshotted, so the entry is stamped with the restored-arc
+                        // sentinel rather than left at 0.  A 0 means "never stashed" to the
+                        // harvest's first-stash-wins rule, which would re-stamp every
+                        // restored arc as born at the resume.  var_first stays 0 on a file
+                        // without the ratio field; the ratio ceiling then refuses the arc
+                        // until it re-converges.
                         local_carry[key] = makeRestoredLocalCarry(
                             l.value_abs, l.var, l.last_seen_s, l.var_first);
                     }
-                    // STABILITY target 2 leg C: seam-scoped soft refloat of the
-                    // restored leveling carries.  The h-vintage zero-q levels were
-                    // leveled under the OLD run's ZWD realization; against the
-                    // resume's fresh station filters they are an invariant-#1
-                    // stiff prior (measured: the post-retire ZWD drag, §18).  A
-                    // one-shot variance ADD keeps the carried value as the prior
-                    // mean — no refloat-from-code, no fresh station-common-iono
-                    // seeding — and lets the fold re-earn the stiffness.  RESUME
-                    // path only: continuous epochs structurally never reach here.
+                    // Seam-scoped soft refloat of the restored leveling carries (stability
+                    // target 2, leg C).  The h-vintage zero-q levels were levelled under
+                    // the previous run's ZWD realization; against the resume's fresh
+                    // station filters they are a stiff prior of the invariant #1 kind (the
+                    // post-retire ZWD drag, §18).  A one-shot variance add keeps the
+                    // carried value as the prior mean (no refloat from code, no fresh
+                    // station-common iono seeding) and lets the fold re-earn the
+                    // stiffness.  Only the resume path reaches this code; continuous
+                    // epochs do not.
                     if (ctx.knobs.amb_seam_reinflate_var > 0.0 && !local_carry.empty()) {
                         for (auto& [key, l] : local_carry)
                             l.var += ctx.knobs.amb_seam_reinflate_var;
@@ -1526,30 +1490,28 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     zwd_carry.clear();
                     for (const auto& [idx, l] : snap.zwd_carry)
                         // Same restored-entry convention as the L rows above.  The ZWD
-                        // carry has no age reader today and its harvest replaces the
-                        // whole entry (so the sentinel does not survive the first
-                        // stash), but a restored Z row IS a restored entry and reads
-                        // as one — an age gate added here later must not have to
-                        // rediscover §15.4.
+                        // carry has no age reader and its harvest replaces the whole entry
+                        // (so the sentinel does not survive the first stash), but a
+                        // restored Z row is a restored entry and is marked as one, so an
+                        // age gate added here later inherits §15.4.
                         zwd_carry[idx] = makeRestoredLocalCarry(l.value_abs, l.var,
                                                                 l.last_seen_s);
-                    // Seam-scoped ZWD re-seed (SPEC_synthetic_minimum_network §17
-                    // finding 3): arm the post-resume inject window.  This is the
-                    // RE-COUPLING edge (invariant #7): the restored h-vintage ZWD
-                    // posteriors reconnect to the solve for a bounded horizon while
-                    // the (deliberately un-snapshotted) station filters re-establish
-                    // their own memory; the retire at horizon exhaustion is the
-                    // DECOUPLING edge, logged at the harvest.  The window rides the
-                    // ordinary B9 fold — per-entry staleness (pl_max_gap_s) and the
-                    // carry_warm gate still apply per epoch.
+                    // Seam-scoped ZWD re-seed (SPEC_synthetic_minimum_network §17 finding
+                    // 3): arm the post-resume inject window.  This is the re-coupling edge
+                    // (invariant #7): the restored h-vintage ZWD posteriors reconnect to
+                    // the solve for a bounded horizon while the station filters (not
+                    // snapshotted, by design) rebuild their own memory; the retire at the
+                    // end of the horizon is the decoupling edge, logged at the harvest.
+                    // The window uses the ordinary B9 fold, so per-entry staleness
+                    // (pl_max_gap_s) and the carry_warm gate still apply per epoch.
                     if (ctx.knobs.zwd_seam_on) {
                         if (!zwd_carry.empty()) {
                             ctx.carry.zwd_seam_ep_left = ctx.knobs.zwd_seam_epochs;
-                            // RS-10b (§21.21): the window's effective q is its own
-                            // (network.zwd_seam_reseed_q) when armed, else the borrowed
-                            // network.zwd_carry_q.  Named here because this line is the
-                            // ON-path telemetry for the bracket — the run-end counters
-                            // say the window folded, this says how stiffly.
+                            // The window's effective q is its own (network.zwd_seam_reseed_q)
+                            // when armed, else network.zwd_carry_q (RS-10b, §21.21).  The log
+                            // line names it because it is the on-path telemetry for the
+                            // window: the run-end counters show that the window folded, and
+                            // this line shows how stiffly.
                             log->info("Network (ZWD seam re-seed): ARMED at the resume seam — {} "
                                       "restored Z row(s) will fold as B9-style priors for the next "
                                       "{} emitted epoch(s) (RW q {:.3e} m²/s over the true gap, "
@@ -1566,18 +1528,19 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       "restarts exactly as an unarmed resume.");
                         }
                     }
-                    // Resume FRAME restore (network.resume_frame_restore, SPEC_synthetic_
-                    // minimum_network §18.10).  The RE-COUPLING edge (invariant #7): the
-                    // realization-frame bookkeeping the v1 snapshot omitted — per-(sat,
-                    // signal) phase-anchor incumbents + R2 sticky pin targets, the Q3
-                    // clock-anchor per-sat state (with its t_last, so the stale test runs
-                    // on the TRUE gap), and the CLK-R held frame — reconnects to the solve
-                    // BEFORE the first election / clock fold / emit.  Measured without
-                    // it: the election runs incumbent-less for every family, marks
-                    // them all, erases every restored leveling carry, marginalizes their
-                    // D2 PB prior and re-pins the frame at fresh code seeds; every clock
-                    // folds LOOSE for the re-couple horizon; the held frame restarts at 0.
-                    // Identities are counted (invariant #4: 0 under an armed knob = INERT).
+                    // Resume frame restore (network.resume_frame_restore, SPEC_synthetic_
+                    // minimum_network §18.10), the re-coupling edge (invariant #7).  The
+                    // realization-frame bookkeeping that the v1 snapshot omitted
+                    // (per-(sat, signal) phase-anchor incumbents and R2 sticky pin targets,
+                    // the Q3 clock-anchor per-satellite state with its t_last, so the stale
+                    // test runs on the true gap, and the CLK-R held frame) reconnects to
+                    // the solve before the first election, clock fold and emit.  Without it
+                    // the election runs without incumbents for every family, marks them
+                    // all, erases every restored leveling carry, marginalizes their D2 PB
+                    // prior and re-pins the frame at fresh code seeds; every clock folds
+                    // loose for the re-couple horizon; and the held frame restarts at 0.
+                    // Identities are counted (invariant #4: 0 under an armed knob means
+                    // inert).
                     if (ctx.knobs.resume_frame_restore) {
                         if (!snap.hasFrameState()) {
                             log->warn("Network (resume frame restore): ARMED but the snapshot "
@@ -1603,17 +1566,16 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                 ++ctx.counters.n_resume_frame_cta;
                                 if (ca.anchored) ++ctx.counters.n_resume_frame_cta_anchored;
                             }
-                            // Judge graft (Card 3 → the built card): PRIME the two-edge
-                            // handover ledger from the restored leveling rows, so a
-                            // family whose restored incumbent no longer tracks the
-                            // satellite at the first live epoch takes the CONTINUOUS
-                            // handover path (NetworkPhaseDatum.cpp re-validate gate on
-                            // the restored conditional variance) instead of the cold
-                            // pin + 1(d) mark + erase.  The ledger is rebuilt wholesale
-                            // by the first post-resume harvest, so this is a one-epoch
-                            // seed exactly like the ordinary ledger lifetime.  Only when
-                            // the continuous-handover machinery is armed (the map is
-                            // unread otherwise).
+                            // Prime the two-edge handover ledger from the restored
+                            // leveling rows (the judge graft from card 3), so a family whose
+                            // restored incumbent does not track the satellite at the first
+                            // live epoch takes the continuous handover path (the
+                            // NetworkPhaseDatum.cpp re-validate gate on the restored
+                            // conditional variance) instead of the cold pin, 1(d) mark and
+                            // erase.  The first post-resume harvest rebuilds the ledger
+                            // wholesale, so this is a one-epoch seed, the same lifetime as
+                            // the ordinary ledger.  Done only when the continuous handover
+                            // is armed (the map is not read otherwise).
                             std::size_t n_ledger_primed = 0;
                             if (ctx.knobs.pd_handover_continuous) {
                                 for (const auto& [key, lc] : ctx.carry.local_carry) {
@@ -1658,29 +1620,28 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       n_ledger_primed);
                         }
                     }
-                    // RS-3 DATUM restore (network.resume_datum_restore, SPEC_event_harness
-                    // §21.7).  The frame restore above brought back the eq34 tree's
-                    // SATELLITE side (anchor_incumbent); this brings back the receiver
-                    // side and the second, unrelated datum memory, BEFORE anything that
-                    // could run an election — the whole of networkTryWarmResume runs
-                    // ahead of the first epoch, so the ordering is structural, and the
-                    // loader guarantees resume_frame_restore is armed with it.
+                    // Datum restore (RS-3; network.resume_datum_restore, SPEC_event_harness
+                    // §21.7).  The frame restore above brought back the satellite side of
+                    // the eq34 tree (anchor_incumbent); this brings back the receiver side
+                    // and the second, unrelated datum memory before anything that could
+                    // run an election.  networkTryWarmResume runs as a whole before the
+                    // first epoch, so the ordering holds by construction, and the loader
+                    // guarantees resume_frame_restore is armed with it.
                     //
-                    // Measured without it at the field seam: the sticky-tree seed sees an
-                    // empty eq34_rx_parent / eq34_sat_root, rebuilds the tree from the
-                    // cold arc registry, and every phase-bias family re-realizes by the
-                    // integer between the old and the new pinned arc — 110
-                    // PHASE_DATUM/eq34_reref at the first post-resume epoch against the
-                    // seed's 2, an R record naming 30 satellites, 14 m per-satellite PB
-                    // offsets.  The DD branch cannot prevent it (a DD is invariant to the
-                    // datum by construction), which is why RS-2's branch-faithful resume
-                    // left the wire's realization untouched.
+                    // Without it, the sticky-tree seed sees an empty eq34_rx_parent /
+                    // eq34_sat_root, rebuilds the tree from the cold arc registry, and every
+                    // phase-bias family re-realizes by the integer between the old and the
+                    // new pinned arc (PHASE_DATUM/eq34_reref events at the first
+                    // post-resume epoch and large per-satellite PB offsets).  The DD branch
+                    // cannot prevent it, since a DD is invariant to the datum by
+                    // construction; that is why the branch-faithful resume (RS-2) leaves
+                    // the wire's realization untouched.
                     //
-                    // The two halves are gated and reported SEPARATELY: a file may carry
+                    // The two halves are gated and reported separately: a file may carry
                     // one and not the other (a run with phase_datum_eq34 but no
-                    // code_datum_time_linked writes no CB* rows and vice versa), and an
-                    // absent half must read as INERT for that half alone, never borrow
-                    // the other's verdict (the hasFrameState/hasCouplingState precedent).
+                    // code_datum_time_linked writes no CB* rows, and vice versa), and an
+                    // absent half reads as inert for that half alone, without borrowing the
+                    // other's verdict (as hasFrameState/hasCouplingState do).
                     bool datum_cb_restored = false;
                     if (ctx.knobs.resume_datum_restore) {
                         const bool have_eq34 =
@@ -1729,13 +1690,13 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                         if (have_cb) {
                             ctx.carry.code_bias_prev_      = snap.code_bias_prev;
                             ctx.carry.code_bias_sat_seen_  = snap.code_bias_sat_seen;
-                            // ...and the pair those values were solved under.  Restoring
-                            // the values without the pair is strictly WORSE than today:
-                            // `pair_same` still reads false everywhere, so the IF-pin RHS
-                            // still re-seeds to 0, while the restored seen-set now makes
-                            // every one of those re-seeds BUMP.  A pair that genuinely
-                            // changed across the seam still trips the test and still
-                            // bumps — the resume's previous kept epoch IS the writer's.
+                            // Restore also the IF-pin pair those values were solved under.
+                            // Restoring the values without the pair is worse than restoring
+                            // neither: `pair_same` would read false everywhere, so the IF-pin
+                            // RHS would re-seed to 0, and the restored seen-set would make
+                            // every one of those re-seeds bump.  A pair that did change
+                            // across the seam still trips the test and bumps, because the
+                            // resume's previous kept epoch is the writer's.
                             ctx.carry.code_bias_ifpin_pair_ = snap.code_bias_ifpin_pair;
                             datum_cb_restored = true;
                             long long n_cbp = 0;
@@ -1777,27 +1738,24 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       ctx.counters.n_resume_datum_cb_pair,
                                       datum_cb_restored ? "FALSE" : "true (CB half inert)");
                     }
-                    // RS-5 EMIT-LAYER restore (network.resume_emit_restore,
-                    // SPEC_event_harness §21.10).  AFTER the frame and datum restores
-                    // and before anything that could emit — the whole of
-                    // networkTryWarmResume runs ahead of the first epoch, so the
-                    // ordering is structural, and the loader guarantees
-                    // resume_frame_restore is armed with it (an emit layer restored on
-                    // top of a RE-ELECTED realization frame would re-base this run's
-                    // biases onto a level the writer never emitted).
+                    // Emit-layer restore (RS-5; network.resume_emit_restore,
+                    // SPEC_event_harness §21.10).  It runs after the frame and datum
+                    // restores and before anything that could emit; networkTryWarmResume
+                    // runs as a whole before the first epoch, so the ordering holds by
+                    // construction.  The loader guarantees resume_frame_restore is armed
+                    // with it: an emit layer restored on top of a re-elected realization
+                    // frame would re-base this run's biases onto a level the writer never
+                    // emitted.
                     //
-                    // Measured without it at the field seam (§21.10): the leg's emit
-                    // layer is 0.000 on ALL 129 keys at the first post-resume epoch
-                    // while the seed's is 18.410 m p50 at the same tow, and the emitted
-                    // difference closes EXACTLY as raw + (leg layer − seed layer) over
-                    // 120 keys — i.e. the whole 17.666 m step is these two cold starts,
-                    // not the estimator (whose own state moves 1.695 m).
+                    // Without it, the leg's emit layer starts at 0 on every key while the
+                    // writer's carries its accumulated re-base, so the emitted phase biases
+                    // step by the difference of the two emit layers at the seam, not by
+                    // anything the estimator did (§21.10 has the measurement).
                     //
-                    // The two halves are gated and reported SEPARATELY, the
-                    // hasFrameState / hasDatumState precedent: a file may carry the ER
-                    // rows and no PF/PS (a writer with carry_invariant but without
-                    // emit_pb_filter), and an absent half must read as INERT for that
-                    // half alone.
+                    // The two halves are gated and reported separately, as hasFrameState /
+                    // hasDatumState are: a file may carry the ER rows and no PF/PS (a
+                    // writer with carry_invariant but without emit_pb_filter), and an
+                    // absent half reads as inert for that half alone.
                     if (ctx.knobs.resume_emit_restore) {
                         const bool have_er = !snap.emit_rebase_last.empty();
                         const bool have_pf = !snap.pb_filter_state.empty()
@@ -1862,39 +1820,36 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       ctx.counters.n_resume_emit_filter_keys,
                                       ctx.counters.n_resume_emit_step_accums);
                     }
-                    // RS-6 STATION-LAYER restore (network.resume_station_restore,
-                    // SPEC_event_harness §21.13).  AFTER the emit restore and before the
-                    // first epoch — the whole of networkTryWarmResume runs ahead of it,
-                    // so the ordering is structural, and the loader guarantees
-                    // resume_frame_restore is armed with it (both memories are expressed
-                    // in the realization frame underneath them).
+                    // Station-layer restore (RS-6; network.resume_station_restore,
+                    // SPEC_event_harness §21.13).  It runs after the emit restore and
+                    // before the first epoch (networkTryWarmResume runs as a whole before
+                    // it), and the loader guarantees resume_frame_restore is armed with it,
+                    // because both memories are expressed in the realization frame under
+                    // them.
                     //
-                    // Measured without it at the field seam (§21.13): the rx-CB inject
-                    // gate withholds 26 % of its priors on the leg against 13 % on the
-                    // seed — the whole station layer re-seeding from one epoch of code —
-                    // and ~400 deviation entries cold-seed at +1, which is the SH a₀₀
-                    // transient.
+                    // Without it, the whole station layer re-seeds from one epoch of code
+                    // (the rx-CB inject gate then withholds more of its priors), and the
+                    // deviation entries cold-seed at the first epoch, which produces the SH
+                    // a₀₀ transient (§21.13).
                     //
-                    // The two halves are gated and reported SEPARATELY, the
-                    // hasFrameState / hasDatumState / hasEmitState precedent: a file may
-                    // carry RC rows and no SD (a writer with the rx-CB carry and no T5
-                    // deviation carry), and an absent half must read as INERT for that
-                    // half alone.  The two sub-switches are DIAGNOSTIC — they let one
-                    // §21.13 attribution leg restore a single half, and a withheld half
-                    // is logged as withheld, never as absent.
+                    // The two halves are gated and reported separately, as hasFrameState /
+                    // hasDatumState / hasEmitState are: a file may carry RC rows and no SD
+                    // (a writer with the rx-CB carry and no T5 deviation carry), and an
+                    // absent half reads as inert for that half alone.  The two sub-switches
+                    // are diagnostic: they let one §21.13 attribution leg restore a single
+                    // half, and a withheld half is logged as withheld, not as absent.
                     if (ctx.knobs.resume_station_restore) {
                         const bool have_rc = !snap.rx_cb_carry.empty();
                         const bool have_sd = !snap.sh_dev_carry.empty();
                         if (have_rc && ctx.knobs.resume_station_rxcb) {
-                            // RESTORED-ARC AGE (§15.4.1), exactly as the L / Z rows:
-                            // the entry goes back through makeRestoredLocalCarry rather
-                            // than a bare aggregate, so a restored rx-CB entry is
-                            // distinguishable from a never-stashed one at every reader
-                            // that grows an age test later.  The rx-CB harvest itself
-                            // stashes a bare LocalCarry and its inject reads only
-                            // value_abs / var / last_seen_s, so the sentinel changes
-                            // nothing THIS card measures — it is the convention, and an
-                            // age gate added here later must not have to rediscover it.
+                            // Restored-arc age (§15.4.1), as for the L / Z rows: the entry
+                            // goes back through makeRestoredLocalCarry rather than a bare
+                            // aggregate, so a restored rx-CB entry is distinguishable from a
+                            // never-stashed one at any reader that adds an age test.  The
+                            // rx-CB harvest stashes a bare LocalCarry and its inject reads
+                            // only value_abs / var / last_seen_s, so the sentinel has no
+                            // effect on any current reader; it keeps the convention for a
+                            // later age gate.
                             ctx.carry.rx_cb_carry.clear();
                             for (const auto& [key, l] : snap.rx_cb_carry)
                                 ctx.carry.rx_cb_carry[{key.first, key.second}] =
@@ -1917,11 +1872,10 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                             "capture, or one without the rx-CB carry)");
                         }
                         if (have_sd && ctx.knobs.resume_station_shdev) {
-                            // Restored AS WRITTEN — no sentinel, and none is wanted:
-                            // ShDevCarry's own cold test is `t_s <= 0`, so carrying the
-                            // writer's harvest stamp is what makes the entry read WARM,
-                            // and the epoch's aging pre-pass then ages it over the TRUE
-                            // gap (and drops it at 5·tau, the existing staleness rule).
+                            // Restored as written, without a sentinel: ShDevCarry's own cold
+                            // test is `t_s <= 0`, so keeping the writer's harvest stamp makes
+                            // the entry read warm, and the epoch's aging pre-pass then ages it
+                            // over the true gap (and drops it at 5·tau, the staleness rule).
                             ctx.carry.sh_dev_carry.clear();
                             for (const auto& [key, d] : snap.sh_dev_carry)
                                 ctx.carry.sh_dev_carry[key] =
@@ -1955,21 +1909,20 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       ctx.counters.n_resume_station_shdev,
                                       ctx.counters.n_resume_station_shdev == 1 ? "y" : "ies");
                     }
-                    // RS-8 CANONICAL-SIGNAL restore (network.resume_signal_canon_restore,
-                    // SPEC_event_harness §21.16) — STAGED here, APPLIED by
-                    // networkRestoreCanonicalSignals immediately after this function
-                    // returns.  The latch lives in each station's PppModel and this seam
-                    // has no roster; growing one just to reach the models would make the
-                    // resume seam depend on the whole station bundle for one map, so the
-                    // rows are parked in ctx.carry and the driver's very next call drains
-                    // them (the two are a pair — an empty stash there means either this
-                    // block did not run or the snapshot carried nothing).
+                    // Canonical-signal restore (RS-8; network.resume_signal_canon_restore,
+                    // SPEC_event_harness §21.16).  The rows are staged here and applied by
+                    // networkRestoreCanonicalSignals, which the driver calls immediately
+                    // after this function returns.  The latch lives in each station's
+                    // PppModel and this seam has no roster; adding one to reach the models
+                    // would make the resume seam depend on the whole station bundle for one
+                    // map, so the rows are parked in ctx.carry and the next call drains them
+                    // (an empty stash there means this block did not run or the snapshot
+                    // carried nothing).
                     //
-                    // Measured without it (§21.16): the resume epoch's satellite counts
-                    // re-decide the latch — GAMB00PYF L2X→L2W, CPVG00CPV L2W→L2X,
-                    // OAFA00ARG L2X→L2W — so the L2X tracker set changes, the eq34 L2X
-                    // component's datum receiver vanishes, and the six L2X phase-bias
-                    // families read p50 |Δ| 25.6 m at +1 against 1.50 m for the other 123.
+                    // Without it, the resume epoch's satellite counts re-decide the latch,
+                    // which can switch a station between L2X and L2W; the L2X tracker set
+                    // then changes, the eq34 L2X component loses its datum receiver, and
+                    // the L2X phase-bias families step at the seam (§21.16).
                     if (ctx.knobs.resume_signal_canon_restore) {
                         ctx.carry.resume_canon_rows.clear();
                         long long staged = 0;
@@ -1998,25 +1951,25 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       staged, staged == 1 ? "y" : "ies",
                                       ctx.carry.resume_canon_rows.size());
                     }
-                    // RS-9 CODE-BIAS LINEARIZATION-POINT restore
-                    // (network.resume_rxcb_lin_restore, SPEC_event_harness §21.18) —
-                    // the OTHER edge of the seam RS-6 above opens.  RS-6 restores the
-                    // rx-CB carry's NUMERATOR; the gate that decides whether it is ever
-                    // folded tests it against x_lin(cb), a one-shot seed re-derived on
-                    // this leg from the RESUME epoch's code.  Measured: 17 of 61 field
-                    // stations outside the gate's fixed 5.13 m bar EVERY epoch of a leg
-                    // against the continuous run's 7, refreshed and refused forever with
-                    // no receiver-DCB memory while the run-end line read "61 carried"
-                    // (§21.18(a)/(b)).  Invariant #7 exactly: RS-6 re-validated the value
-                    // it reconnected and not the frame it is judged against.
+                    // Code-bias linearization-point restore (RS-9;
+                    // network.resume_rxcb_lin_restore, SPEC_event_harness §21.18): the
+                    // other edge of the seam that RS-6 above opens.  RS-6 restores the
+                    // rx-CB carry's numerator; the gate that decides whether it is ever
+                    // folded tests it against x_lin(cb), a one-shot seed that this leg
+                    // would re-derive from the resume epoch's code.  Without this restore,
+                    // a station whose seed lands outside the gate's fixed bar is refused on
+                    // every epoch of the leg and keeps no receiver-DCB memory, while the
+                    // run-end line still counts it as carried (§21.18(a)/(b)).  This is
+                    // invariant #7: RS-6 re-validates the value it reconnects, not the
+                    // frame it is judged against.
                     //
-                    // Only STASHED here.  x_lin lives in each station's StateManager, and
-                    // the one-shot latch that freezes it does not close until that
-                    // station's first computeMeasurementUpdate — so the consumption is a
-                    // separate seam (networkApplyRxCbLinRestore) called from runNetwork
-                    // right after this function, where the station roster is in scope.
-                    // The loader hard-requires resume_station_restore and its rxcb half,
-                    // so an armed knob here always sits under a restored carry.
+                    // The rows are only stashed here.  x_lin lives in each station's
+                    // StateManager, and the one-shot latch that freezes it does not close
+                    // until that station's first computeMeasurementUpdate, so a separate
+                    // seam (networkApplyRxCbLinRestore), called from runNetwork right after
+                    // this function where the station roster is in scope, consumes them.
+                    // The loader requires resume_station_restore and its rxcb half, so an
+                    // armed knob here always sits under a restored carry.
                     if (ctx.knobs.resume_rxcb_lin_restore) {
                         if (!snap.rx_cb_lin.empty()) {
                             ctx.carry.rxcb_lin_restore.clear();
@@ -2046,51 +1999,50 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       "station for the whole leg (§21.18).");
                         }
                     }
-                    // Coupling regressors (network.resume_coupling_restore) — the
-                    // second half of the frame restore, and the RE-COUPLING edge for
-                    // the leveling carry itself.
+                    // Coupling regressors (network.resume_coupling_restore): the second half
+                    // of the frame restore, and the re-coupling edge for the leveling carry
+                    // itself.
                     //
                     // Without it a restored LocalCarry has an empty `coupling`, so
-                    // buildCplRow's per-entry loop never runs: row.shared is empty,
-                    // rhs = value_abs − x_lin, σ² = var_eff.  That is a plain DIAGONAL
-                    // prior at the PURE CONDITIONAL variance, which no continuous epoch
-                    // produces — the diagonal carry is stiff at the MARGINAL variance,
-                    // while the coupling row is stiff at the conditional one but
-                    // SHARED-NEUTRAL, its A_s = M_r cancelling the reduced-normals
-                    // contribution.  In the Schur reduction (A_r = e_c, A_s = M, weight
-                    // w, P = N_rr⁻¹, n_c = e_cᵀPe_c, M_d = N_sr P e_c, α = w/(1+w·n_c))
-                    // the shared normals gain α(M − M_d)(M − M_d)ᵀ.  An empty coupling
-                    // is the M = 0 case, driving the border by the full α‖M_d‖ at
-                    // α ≈ 1e6 m⁻² per row — four orders above the anchored clock prior's
-                    // ≈ 1.1e4 m⁻², and the source of the 33 first-fold trips.
+                    // buildCplRow's per-entry loop does not run: row.shared is empty,
+                    // rhs = value_abs − x_lin, σ² = var_eff.  That is a plain diagonal prior
+                    // at the pure conditional variance, which no continuous epoch produces:
+                    // the diagonal carry is stiff at the marginal variance, while the
+                    // coupling row is stiff at the conditional one but shared-neutral, its
+                    // A_s = M_r cancelling the reduced-normals contribution.  In the Schur
+                    // reduction (A_r = e_c, A_s = M, weight w, P = N_rr⁻¹, n_c = e_cᵀPe_c,
+                    // M_d = N_sr P e_c, α = w/(1+w·n_c)) the shared normals gain
+                    // α(M − M_d)(M − M_d)ᵀ.  An empty coupling is the M = 0 case, which
+                    // drives the border by the full α‖M_d‖ at α ≈ 1e6 m⁻² per row, four
+                    // orders of magnitude above the anchored clock prior's ≈ 1.1e4 m⁻²
+                    // (the source of the first-fold trips in §18.11).
                     //
-                    // ⚠ Touches DIRECTION only; `var` is never modified.  The variant
-                    // that attacked the row's WEIGHT walked the consumer 5.13 m in h12
-                    // by letting the level re-float on the cold station layer
-                    // (invariant #1, the slip-relevel-walk family).
+                    // The restore changes the row's direction only; `var` is never
+                    // modified.  Changing the row's weight instead lets the level re-float
+                    // on the cold station layer and walks the consumer (invariant #1, the
+                    // slip-relevel-walk family).
                     //
-                    // All-or-nothing per row, guaranteed upstream: the parser refuses
-                    // any file with incomplete, out-of-range, non-finite or orphaned
-                    // rows, so a row reaching here is bit-for-bit the write epoch's
-                    // harvest, in harvest order.  A row with no QL/QZ record keeps its
-                    // empty coupling and degrades to the diagonal.  Coefficients are NOT
-                    // re-sparsified and ŝ_prev / P_prev are NOT re-derived: P_prev = 0 is
-                    // the meaningful "datum-pinned, exactly known" value, and re-deriving
-                    // it would activate the κ shrink on a column the datum re-applies
-                    // exactly.
+                    // Each row is all or nothing, guaranteed upstream: the parser refuses
+                    // any file with incomplete, out-of-range, non-finite or orphaned rows,
+                    // so a row reaching here is bit for bit the write epoch's harvest, in
+                    // harvest order.  A row with no QL/QZ record keeps its empty coupling
+                    // and degrades to the diagonal.  Coefficients are not re-sparsified and
+                    // ŝ_prev / P_prev are not re-derived: P_prev = 0 is the meaningful
+                    // "datum-pinned, exactly known" value, and re-deriving it would activate
+                    // the κ shrink on a column the datum re-applies exactly.
                     //
-                    // Deliberately OUTSIDE the resume_frame_restore block: it rides its
-                    // own knob, so frame-ON / coupling-OFF stays byte-for-byte the old
-                    // path in the new binary — the same-build control invariant #6
-                    // requires.  hasFrameState() is also the wrong INERT predicate here,
-                    // and the frame block's ledger sub-block carries a third gate this
-                    // must not inherit.
+                    // This block sits outside the resume_frame_restore block on purpose: it
+                    // has its own knob, so frame on / coupling off stays byte-identical to
+                    // the old path in the new binary, the same-build control that
+                    // invariant #6 requires.  hasFrameState() is also the wrong inert
+                    // predicate here, and the frame block's ledger sub-block carries a third
+                    // gate that this block must not inherit.
                     if (ctx.knobs.resume_coupling_restore) {
-                        // Gate on the population the restore actually REBUILDS, not on
-                        // hasCouplingState() (which is true for a QR- or QS-only file too):
+                        // Gate on the population the restore rebuilds, not on
+                        // hasCouplingState() (which is also true for a QR- or QS-only file):
                         // otherwise a file with no QL/QZ takes the else branch and logs
-                        // "ARMED ... 0 L row(s) + 0 Z row(s)" while seeding tu_reinit_hist —
-                        // the invariant-#4 'inert reported as armed' shape.
+                        // "ARMED ... 0 L row(s) + 0 Z row(s)" while seeding tu_reinit_hist,
+                        // an inert path reported as armed (invariant #4).
                         if (snap.coupling_rows.empty() && snap.coupling_zrows.empty()) {
                             log->warn("Network (resume coupling restore): ARMED but the "
                                       "snapshot carries NO QS/QL records (a writer without "
@@ -2115,7 +2067,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                         cs.m        = q.sh_m;
                                         cs.trig     = static_cast<char>(q.sh_trig);
                                         cs.sh_layer = q.sh_layer;   // a layer-1 SH coeff
-                                        cs.coeff    = mj;           // must NOT resolve to
+                                        cs.coeff    = mj;           // must not resolve to
                                         cs.s_prev   = q.s_prev;     // the layer-0 column
                                         cs.p_prev   = q.p_prev;
                                         cpl.push_back(std::move(cs));
@@ -2145,32 +2097,32 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                             ctx.counters.n_resume_cpl_orphan  = n_miss;
                             ctx.carry.resume_cpl_census_pending = (n_rows + n_zrows) > 0;
 
-                            // ---- The DECOUPLING edge the snapshot cannot otherwise
+                            // ---- The decoupling edge that the snapshot cannot otherwise
                             // reach (standing invariant #7).  ctx.carry.tu_reinit_hist is
                             // per-epoch state and never serialized, so on the first warm
-                            // epoch no restored term would be diverted for a column that
-                            // was demonstrably being RE-DRAWN at the write epoch.  Seed
-                            // it from the three sources the snapshot does carry, at a
-                            // stamp strictly above every restored last_seen_s so
-                            // tuReinitSince fires for exactly the restored population.
-                            // The term then takes the DEPARTED route (κ = 0, M²·P_prev
-                            // marginalized into σ², coefficient handed to the gauge
-                            // restore) instead of folding a re-drawn value at full weight.
+                            // epoch no restored term would be diverted for a column that was
+                            // being re-drawn at the write epoch.  It is seeded from the three
+                            // sources the snapshot does carry, at a stamp strictly above
+                            // every restored last_seen_s, so tuReinitSince fires for exactly
+                            // the restored population.  The term then takes the departed
+                            // route (κ = 0, M²·P_prev marginalized into σ², coefficient handed
+                            // to the gauge restore) instead of folding a re-drawn value at
+                            // full weight.
                             //
-                            // Deliberately NOT seeded: a pivot change, a sticky re-pin, a
+                            // Not seeded, on purpose: a pivot change, a sticky re-pin, a
                             // Σz=0 re-realization, or a per-epoch set-mean code-bias datum
-                            // step.  Those are PURE GAUGE motions, and the identity
-                            // Mᵀg_s = −g_r(c) makes a COMPLETE row exactly invariant under
-                            // them — the solution moves as (r + αg_r, s + αg_s) and the row
-                            // residual is unchanged.  Blanket-diverting them would inflate
-                            // σ² on ~40 % of every row's terms for no correctness gain.
-                            // carry_coupling_gauge_project, loader-required here, repairs
-                            // the family sum for whatever DOES truncate.
+                            // step.  Those are pure gauge motions, and the identity
+                            // Mᵀg_s = −g_r(c) makes a complete row exactly invariant under
+                            // them: the solution moves as (r + αg_r, s + αg_s) and the row
+                            // residual is unchanged.  Diverting them wholesale would inflate
+                            // σ² on about 40 % of every row's terms with no gain in
+                            // correctness.  carry_coupling_gauge_project, which the loader
+                            // requires here, repairs the family sum for whatever does
+                            // truncate.
                             //
-                            // The fourth source, prev_carry.inflate_q, needs no seed: it
-                            // is restored on the D rows and the first warm epoch's serial
-                            // pre-pass writes it at pl_now_s, already above every restored
-                            // stamp.
+                            // The fourth source, prev_carry.inflate_q, needs no seed: it is
+                            // restored on the D rows, and the first warm epoch's serial
+                            // pre-pass writes it at pl_now_s, above every restored stamp.
                             double t_seed = 0.0;
                             for (const auto& [k2, lc] : local_carry)
                                 t_seed = std::max(t_seed, lc.last_seen_s);
@@ -2188,10 +2140,10 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                 if (!ca.anchored) { seedClock(sat); ++n_loose; }
                             for (const std::string& sat : snap.eph_cutover_disc_pending)
                                 seedClock(sat);
-                            // QR: a hard-refloated sat is skip-stashed, so restoring the set
-                            // is the only way the first warm epoch's pre-pass
-                            // (ApplicationNetworkAssembly.cpp:2320-2326) behaves as a
-                            // continuous epoch's would.
+                            // QR: a hard-refloated satellite is skip-stashed, so restoring the
+                            // set is the only way the first warm epoch's pre-pass (the
+                            // prev_clock_refloat_sats loop in ApplicationNetworkAssembly.cpp)
+                            // behaves as a continuous epoch's would.
                             ctx.carry.prev_clock_refloat_sats = snap.clock_refloat_sats;
                             ctx.counters.n_resume_cpl_seed_reinit = n_seed;
 
@@ -2212,23 +2164,22 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       snap.clock_refloat_sats.size());
                         }
                     }
-                    // §18.12 (2a): the dense D2 covariance side-car.  TWO read knobs reach
-                    // it (RS-7, §21.14).  Under resume_coupling_restore it is the other half
-                    // of the coupling seam: the coupling rows are conditional from the
-                    // first warm fold, so the border they condition on must fold DENSE
-                    // from the first fold too, or the 376-key diagonal asymmetry §18.12
-                    // measured stays.  Under resume_border_restore it stands ALONE — a
-                    // covariance block carries no regression and no gauge identity, so it
-                    // needs neither carry_conditional_coupling nor Card 1f, and that is
-                    // what makes it reachable on a carry_invariant field lineage where the
-                    // loader refuses resume_coupling_restore outright.  Keys with no
-                    // restored D row are dropped (row AND column) and counted; the fold
-                    // still degrades per-key as before.
+                    // Dense D2 covariance side-car (§18.12 (2a)).  Two read knobs reach it
+                    // (RS-7, §21.14).  Under resume_coupling_restore it is the other half of
+                    // the coupling seam: the coupling rows are conditional from the first
+                    // warm fold, so the border they condition on has to fold dense from the
+                    // first fold too, or the diagonal asymmetry measured in §18.12 remains.
+                    // Under resume_border_restore it stands alone: a covariance block carries
+                    // no regression and no gauge identity, so it needs neither
+                    // carry_conditional_coupling nor card 1f, which makes it usable on a
+                    // carry_invariant field lineage where the loader refuses
+                    // resume_coupling_restore.  Keys with no restored D row are dropped (row
+                    // and column) and counted; the fold still degrades per key as before.
                     //
                     // Invariant #4: armed with no usable QK/QP records (a writer without
-                    // network.state_snapshot_coupling_capture, or a truncated block) the
-                    // knob is INERT and has to SAY so — a border that silently restarts
-                    // diagonal IS the defect this card exists to close.
+                    // network.state_snapshot_coupling_capture, or a truncated block), the
+                    // knob is inert and logs that it is, because a border that restarts
+                    // diagonal without a message is the defect the restore closes.
                     if (ctx.knobs.resume_border_restore && fullcov_on && !border_rows_present)
                         log->warn("Network (RS-7 border restore): ARMED but the snapshot "
                                   "carries NO usable QK/QP records ({} key(s), {} row(s)) — "
@@ -2238,10 +2189,9 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                   "before, which IS the §21.14 defect.",
                                   snap.carry_cov_keys.size(), snap.carry_cov_rows.size());
                     if (border_restore_armed && border_rows_present) {
-                        // Name the knob that actually armed the restore: on a field leg
-                        // resume_coupling_restore is refused by the loader, so a line
-                        // reading "resume coupling restore" would send the reader hunting
-                        // a knob the config does not carry.
+                        // Name the knob that armed the restore: on a field leg the loader
+                        // refuses resume_coupling_restore, so a line reading "resume
+                        // coupling restore" would point at a knob the config does not carry.
                         const char* const border_knob =
                             ctx.knobs.resume_border_restore ? "RS-7 border restore"
                                                             : "resume coupling restore";
@@ -2288,16 +2238,14 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       border_knob, nk, finite);
                         }
                     }
-                    // §21.14 (invariant #4): the first-fold census — n_resume_cpl_diag_border,
+                    // First-fold census (§21.14, invariant #4): n_resume_cpl_diag_border,
                     // the count of carried keys that missed prev_carry_cov.row and folded
-                    // through the legacy per-key DIAGONAL path — is the ONLY instrument that
-                    // reads whether the border came back dense.  It used to be latched
-                    // inside the coupling restore, so a resume that did not arm THAT knob
-                    // reported 0 for the same reason a healthy one does, and the control arm
-                    // of any border A/B was unreadable.  Latch it for every warm resume that
-                    // has a dense carry at all: the CONTROL legs then read the full diagonal
-                    // count and the border legs read ~0 (plus whatever the drop screen
-                    // rejected).  Trace-class — everything the latch gates is a counter or a
+                    // through the legacy per-key diagonal path, is the one instrument that
+                    // shows whether the border came back dense.  It is latched for every
+                    // warm resume with a dense carry, not only inside the coupling restore,
+                    // so that the control legs of a border A/B read the full diagonal count
+                    // and the border legs read about 0 (plus whatever the drop screen
+                    // rejected).  Trace-class: everything the latch gates is a counter or a
                     // measure-only census vector, so products stay byte-identical.
                     if (fullcov_on && !prev_carry.empty()) {
                         ctx.carry.resume_cpl_census_pending = true;
@@ -2315,10 +2263,11 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                   "IF-TD (T1) and wind-up drains stay live.",
                                   ctx.knobs.resume_slip_warmup_ep);
                     }
-                    // RS-2b (§21.6): the same window one layer up, on the ESTIMATION-side
-                    // fine-slip gate.  Armed HERE and nowhere else — a cold start must never
-                    // set it, or the gate would be diagnostic-only on a run with no restored
-                    // branch to protect.  Countdown decremented at the install seam.
+                    // The same window one layer up, on the estimation-side fine-slip gate
+                    // (RS-2b, §21.6).  It is armed here and nowhere else: a cold start never
+                    // sets it, since the gate would otherwise be diagnostic-only on a run
+                    // with no restored branch to protect.  The countdown is decremented at
+                    // the install seam.
                     if (ctx.knobs.resume_d5_warmup_ep > 0) {
                         ctx.carry.resume_d5_warmup_left = ctx.knobs.resume_d5_warmup_ep;
                         log->info("Network (RS-2b resume D5 warm-up): ARMED — the Card-4 D5 "
@@ -2332,83 +2281,75 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     ura_refloat_horizon = snap.ura_refloat_horizon;
                     ura_retro_sats      = snap.ura_retro_sats;
                     retro_active        = snap.retro_active;
-                    // Restore the eph-cutover re-level baseline + any pending
-                    // forced disc so a warm resume does not re-level against a stale
-                    // baseline (or lose a pending forced bump).  Empty in an sp3 or
-                    // pre-Card-6 snapshot ⇒ the first brdc_rts epoch re-seeds cleanly.
+                    // Restore the eph-cutover re-level baseline and any pending forced
+                    // disc, so a warm resume does not re-level against a stale baseline (or
+                    // lose a pending forced bump).  Both are empty in an sp3 snapshot or one
+                    // written before card 6, and the first brdc_rts epoch then re-seeds.
                     relevel_iode             = snap.relevel_iode;
                     eph_cutover_disc_pending = snap.eph_cutover_disc_pending;
-                    // The time-linked code-bias previous-value map is NOT
-                    // persisted, so it re-seeds empty here.  A satellite emitted before
-                    // the snapshot whose split now re-seeds IS a re-reference the
-                    // consumer must see — mark the run "resumed" so every first post-
-                    // resume re-seed disc-bumps (conservative; a genuinely-new sat's
-                    // first emit absorbs a harmless bump).  Inert unless code_datum_time_linked.
+                    // Without the datum restore, the time-linked code-bias previous-value
+                    // map re-seeds empty here.  A satellite emitted before the snapshot
+                    // whose split re-seeds is a re-reference the consumer has to see, so the
+                    // run is marked "resumed" and every first post-resume re-seed disc-bumps
+                    // (conservative: a new satellite's first emit absorbs a harmless bump).
+                    // Inert unless code_datum_time_linked.
                     //
-                    // RS-3 (§21.7): unless the DATUM restore above actually brought the map
-                    // back.  Then the datum CONTINUES across the seam — a satellite whose
-                    // split is unchanged has no step to signal — so the blanket latch would
-                    // manufacture 30 consumer-visible discontinuities the wire does not
-                    // have.  The per-satellite seen-set restored with it keeps the
-                    // distinction the latch was standing in for: a satellite that genuinely
-                    // re-seeds is still a RETURN and still bumps.
+                    // When the datum restore above did bring the map back (RS-3, §21.7), the
+                    // datum continues across the seam and a satellite whose split is
+                    // unchanged has no step to signal, so the blanket latch would create
+                    // consumer-visible discontinuities that the wire does not have.  The
+                    // per-satellite seen-set restored with the map keeps the distinction the
+                    // latch approximated: a satellite that does re-seed is still a return
+                    // and still bumps.
                     code_bias_datum_resumed_ = !datum_cb_restored;
-                    // RS-3 telemetry latch: measure the first post-resume epoch's datum
-                    // churn (eq34 rerefs / reattaches, code-bias re-seed discs) on EVERY
-                    // warm resume, armed or not, so an A/B's control leg is read by the
-                    // same instrument as its treatment.  Pure counters — nothing
-                    // downstream branches on it, so the OFF path stays byte-identical
-                    // (the anchor_age_resume_seed / adm_resume_pending shape).
+                    // Telemetry latch (RS-3): measure the first post-resume epoch's datum
+                    // churn (eq34 rerefs and reattaches, code-bias re-seed discs) on every
+                    // warm resume, armed or not, so an A/B's control leg is read by the same
+                    // instrument as its treatment.  It only feeds counters and nothing
+                    // downstream branches on it, so the off path stays byte-identical (like
+                    // anchor_age_resume_seed and adm_resume_pending).
                     ctx.carry.resume_datum_first_ep = true;
-                    // RS-4 (§21.9): the DECLARATION half's one-shot latch, set beside the
-                    // RS-3 telemetry latch and for the same reason — every warm resume
-                    // arms it so an A/B's control leg is read by the same instrument.
-                    // NetworkEmitStore consumes it at the FIRST emit, the only point at
-                    // which the emitter's restored per-key baselines still hold the
-                    // previous run's emitted values.  Read only under the knob.
+                    // One-shot latch of the declaration half (RS-4, §21.9), set beside the
+                    // RS-3 telemetry latch and for the same reason: every warm resume arms
+                    // it, so an A/B's control leg is read by the same instrument.
+                    // NetworkEmitStore consumes it at the first emit, the only point at
+                    // which the emitter's restored per-key baselines still hold the previous
+                    // run's emitted values.  Read only under the knob.
                     ctx.carry.resume_pb_seam_pending = true;
-                    // eq34 reattach hygiene (spec §2 INC-1 warm-resume rule): the
-                    // arc-age map is not serialized, so without this latch every arc
-                    // would look one epoch old on the first resumed epoch and the
-                    // eligibility gate would block EVERY reattach for min_arc_ep
-                    // epochs.  Arcs behind a snapshot are mature by definition, so the
-                    // first hygiene pass seeds them at the threshold instead of 1.
-                    // Inert unless ctx.knobs.anchor_hygiene_on.
+                    // eq34 reattach hygiene (spec §2, INC-1 warm-resume rule): the arc-age
+                    // map is not serialized, so without this latch every arc would look one
+                    // epoch old on the first resumed epoch, and the eligibility gate would
+                    // block every reattach for min_arc_ep epochs.  Arcs behind a snapshot
+                    // are mature by definition, so the first hygiene pass seeds them at the
+                    // threshold instead of 1.  Inert unless ctx.knobs.anchor_hygiene_on.
                     ctx.carry.anchor_age_resume_seed = true;
-                    // Flicker/gap signal integrity (spec ADDENDUM, Aug-1): a warm
-                    // resume is the TRUE sibling of the flicker case and the one
-                    // situation the card must vet network-wide.  The snapshot restores
-                    // TIGHT carries but NO detector state (nothing here deserializes MW
-                    // Welford counts or IF-TD arc history — they re-converge from
-                    // scratch), so for the first revet_ep epochs every arc in the
-                    // network carries fully-warm state with zero time-difference
-                    // coverage.  That is the same hazard as a flicker, at network
-                    // scale.  Latched as a COUNTDOWN so the classifier can decrement it
-                    // without knowing anything about resumes.  Inert unless
-                    // ctx.knobs.sig_resume_warmup.
+                    // Flicker/gap signal integrity (spec addendum): a warm resume is the
+                    // network-wide form of the flicker case.  The snapshot restores tight
+                    // carries but no detector state (MW Welford counts and IF-TD arc history
+                    // are not deserialized and re-converge from scratch), so for the first
+                    // revet_ep epochs every arc in the network carries fully warm state with
+                    // no time-difference coverage, the same hazard as a flicker.  Latched as
+                    // a countdown, so the classifier can decrement it without knowing about
+                    // resumes.  Inert unless ctx.knobs.sig_resume_warmup.
                     ctx.carry.si_resume_warmup_ep = ctx.knobs.sig_resume_warmup
                                                         ? ctx.knobs.sig_revet_ep : 0;
-                    // Product-referenced measurement admission (spec §3 INC-1,
-                    // second clause): the admission-record map is not serialized, so
-                    // on the first post-resume screen pass every channel looks brand
-                    // new — but its ESTIMATOR state was restored and may be carrying
-                    // the corrupt seed the screen exists to catch.  A restored
-                    // corrupt arc is NOT a birth: it must be evented as such and it
-                    // must REFLOAT (a birth has nothing to refloat; a restore has a
-                    // stiff carried chord that would otherwise ride the hole the
-                    // withhold punches — standing invariant #1).  This is the one
-                    // case the census card's INC-3 structurally cannot see, and the
-                    // reason the spec named it explicitly.  Written unconditionally
-                    // (inert unless ctx.knobs.adm_screen), so the OFF path stays
-                    // byte-identical — the anchor_age_resume_seed shape.
+                    // Product-referenced measurement admission (spec §3, INC-1 second
+                    // clause): the admission-record map is not serialized, so on the first
+                    // post-resume screen pass every channel looks new, while its estimator
+                    // state was restored and may carry the corrupt seed the screen exists
+                    // to catch.  A restored corrupt arc is not a birth: it is evented as a
+                    // restore and refloated (a birth has nothing to refloat; a restore has a
+                    // stiff carried chord that would otherwise span the hole the withhold
+                    // opens, standing invariant #1).  The census card's INC-3 cannot see
+                    // this case by construction, which is why the spec names it.  Written
+                    // unconditionally (inert unless ctx.knobs.adm_screen), so the off path
+                    // stays byte-identical, as for anchor_age_resume_seed.
                     ctx.carry.adm_resume_pending = true;
-                    // RTA-3 seam (the critical one): PRESERVE the snapshot's
-                    // generation id.  The first-emit minting site only mints when
-                    // generation_id == 0, so a restored non-zero id SUPPRESSES the
-                    // mint — consumers keep the same product datum and never
-                    // hard-reset.  (Same-config guarantee: emit_gen_id is in the
-                    // fingerprint, so an id-less snapshot only warm-resumes an
-                    // id-less run, where 0 is correct.)
+                    // Preserve the snapshot's generation id (RTA-3 seam).  The first-emit
+                    // minting site mints only when generation_id == 0, so a restored
+                    // non-zero id suppresses the mint, and consumers keep the same product
+                    // datum without a hard reset.  emit_gen_id is in the fingerprint, so an
+                    // id-less snapshot warm-resumes only an id-less run, where 0 is correct.
                     generation_id = snap.generation_id;
                     iod           = snap.iod;
                     prev_week     = snap.prev_week;
@@ -2422,11 +2363,11 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     n_perconst_diffuse_published = static_cast<size_t>(snap.n_perconst_diffuse);
                     last_emit_content_s = snap.last_emit_content_s;
                     last_health_write_s = snap.last_health_write_s;
-                    // RTB-7(b): ramp state restores — a warm-resumed producer is
-                    // NOT degraded.  Already-lifted ⇒ grade 0 ("warm"); mid-ramp
-                    // ⇒ the ramp CONTINUES from the restored counts (never
-                    // restarts), with the grade anchored at the original first
-                    // emit (honest total product time to grade).
+                    // The ramp state is restored, so a warm-resumed producer is not degraded
+                    // (RTB-7(b)).  Already lifted ⇒ grade 0 ("warm"); mid-ramp ⇒ the ramp
+                    // continues from the restored counts (it does not restart), with the
+                    // grade anchored at the original first emit, so the reported time to
+                    // grade covers the whole product lifetime.
                     ura_ewma_updates     = static_cast<size_t>(snap.ura_ewma_updates);
                     ramp_lifted          = snap.ramp_lifted;
                     first_emit_content_s = snap.first_emit_content_s;
@@ -2435,10 +2376,11 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                         log->info("Network (RTB-7): cold-start-to-product-grade: 0 s (warm "
                                   "resume — ramp already lifted before the bounce).");
                     }
-                    // RTB-7(c): branch-faithful — restore the invariant DD carry (the
-                    // z-store branch) + the ArcKey vertex numbering it references.  Only
-                    // when armed AND the blob is present; a failure cold-starts the carry
-                    // (shared/emitter state stay warm) so the resume degrades to RTB-7(a).
+                    // Branch-faithful resume (RTB-7(c)): restore the invariant DD carry (the
+                    // z-store branch) and the ArcKey vertex numbering it references, only
+                    // when armed and the blob is present.  A failure cold-starts the carry
+                    // (shared and emitter state stay warm), so the resume degrades to
+                    // RTB-7(a).
                     if (nc.state_snapshot_carry && !snap.carry_state.empty()) {
                         ctx.carry.carry_sat_vertex = snap.carry_sat_vertex;
                         ctx.carry.carry_group_id.clear();
@@ -2449,9 +2391,9 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                         std::string cerr;
                         bool carry_ok = carry_driver.restoreCarry(cs, &cerr);
                         if (carry_ok) {
-                            // RE-4: the blob is numbered in the WRITING run's id space —
-                            // reject it unless every chord/arc binds to these live maps,
-                            // rather than silently re-keying chords onto wrong satellites.
+                            // The blob is numbered in the writing run's id space, so it is
+                            // rejected unless every chord and arc binds to these live maps,
+                            // instead of re-keying chords onto the wrong satellites (RE-4).
                             std::set<int> satv, gids;
                             for (const auto& sv : ctx.carry.carry_sat_vertex) satv.insert(sv.second);
                             for (const auto& gi : ctx.carry.carry_group_id)   gids.insert(gi.second);
@@ -2468,7 +2410,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                             hb1(WarmResumeRefusal::Other,
                                 "the invariant-carry blob could not be restored/bound: " + cerr);
                         } else {
-                            // RE-2: wired event response for the stiff restored carry.
+                            // Event response for the stiff restored carry (RE-2).
                             std::size_t shocked = 0;
                             if (nc.state_snapshot_resume_shock_m > 0.0)
                                 shocked = carry_driver.applyResumeShock(
@@ -2488,8 +2430,8 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                                             nc.state_snapshot_resume_shock_m,
                                                             shocked)
                                               : std::string("none"),
-                                      // RTB-7(e) / invariant #4: a diagonal restore looks
-                                      // identical to a dense one everywhere else.
+                                      // A diagonal restore looks identical to a dense one
+                                      // everywhere else (RTB-7(e), invariant #4).
                                       carry_driver.resumeCarryDiagonal()
                                           ? fmt::format("DIAGONAL-ONLY (v3 blob, {} block(s)) — "
                                                         "means exact, chord cross-covariances "
@@ -2497,9 +2439,10 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                                         carry_driver.resumeCarryDiagonalBlocks())
                                           : std::string("dense (v1/v2 blob) — the branch "
                                                         "geometry resumes exactly"),
-                                      // RS-2 / invariant #4: whether the blob carries the ZL
-                                      // rows decides whether resume_carry_rebase has anything
-                                      // to act on, and nothing else in this line shows it.
+                                      // Whether the blob carries ZL rows decides whether
+                                      // resume_carry_rebase has anything to act on, and
+                                      // nothing else in this line shows it (RS-2,
+                                      // invariant #4).
                                       carry_driver.resumeCarryLinBlocks() > 0
                                           ? fmt::format("ZL rows present on {} block(s) — the "
                                                         "means can be re-based onto this run's "
@@ -2514,9 +2457,9 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                                         "WRITER's linearization frame and "
                                                         "cannot be re-based (writer needs "
                                                         "network.state_snapshot_carry_lin)"));
-                            // RS-2: armed with nothing to act on is the invariant-#4 case —
-                            // the run reads "warm + branch-faithful" and the re-base counters
-                            // stay 0 for a reason the log would otherwise never state.
+                            // Armed with nothing to act on (RS-2, invariant #4): the run reads
+                            // "warm + branch-faithful" and the re-base counters stay 0, and
+                            // this warning states why.
                             if (config_.networkResumeCarryRebase()
                                 && carry_driver.resumeCarryLinBlocks() == 0)
                                 log->warn("Network (RS-2): network.resume_carry_rebase is armed "
@@ -2525,14 +2468,13 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                           "behaviour (every restored chord folds against the "
                                           "WRITER's x_lin).  Re-write the seed with "
                                           "network.state_snapshot_carry_lin.");
-                            // PD-safe INC-2c: the
-                            // restore guard's loud half.  Every blob written before that
-                            // card can carry the corrupt joint lane block (indefinite Pᶻ,
-                            // negative diagonals), and importing it verbatim would seed a
-                            // fixed build with the frozen carry the fix exists to release.
-                            // A non-zero count on the FIRST pd_safe resume is expected;
-                            // a non-zero count resuming from a pd_safe-armed run is a NEW
-                            // bug — the writing run's blocks were PD by construction.
+                            // Reporting half of the PD-safe restore guard (INC-2c).  A blob
+                            // written without pd_safe can carry a corrupt joint lane block
+                            // (indefinite Pᶻ, negative diagonals); importing it verbatim would
+                            // seed the fixed build with the frozen carry the fix releases.  A
+                            // non-zero count on the first pd_safe resume is expected; a
+                            // non-zero count when resuming from a pd_safe-armed run is a new
+                            // defect, because the writing run's blocks were PD by construction.
                             if (carry_driver.resumeCarryRebirthBlocks() > 0)
                                 log->warn("Network (Card 4 PD-safe fold, INC-2c): {} restored "
                                           "carry block(s) FAILED the equilibrated PD screen "
@@ -2570,17 +2512,17 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
 void networkRestoreCanonicalSignals(NetworkRunContext& ctx, const GnssConfig& config_,
                                     std::vector<NetStation>& stations,
                                     const std::shared_ptr<spdlog::logger>& log) {
-    // RS-8 (SPEC_event_harness §21.16), the APPLY half of the canonical-signal restore.
-    // networkTryWarmResume parsed the snapshot and staged its CN rows; this seam is the
-    // driver's very next call, where the station roster is in scope, and it is the only
-    // place the latch can actually be written.  It must run BEFORE the first processed
-    // epoch: PppModel::decideConstellationCanonicals locks the latch on that epoch, and
-    // a restore arriving afterwards would be overwritten already.
+    // Apply half of the canonical-signal restore (RS-8, SPEC_event_harness §21.16).
+    // networkTryWarmResume parsed the snapshot and staged its CN rows; the driver calls
+    // this seam next, with the station roster in scope, and it is the only place that
+    // writes the latch.  It has to run before the first processed epoch:
+    // PppModel::decideConstellationCanonicals locks the latch on that epoch, and a
+    // restore after it would already be overwritten.
     //
-    // Unarmed, or on a run that never resumed, the stash is empty and this is a no-op
+    // Unarmed, or on a run that did not resume, the stash is empty and this is a no-op
     // (byte-identical).  Armed with an empty stash after a resume, networkTryWarmResume
-    // has ALREADY warned once about the CN-less snapshot — invariant #4 is served there,
-    // where the file is in hand, rather than warned about twice.
+    // has already warned once about the snapshot without CN rows; invariant #4 is served
+    // there, where the file is in hand, instead of warning twice.
     if (!ctx.knobs.resume_signal_canon_restore) return;
     auto& staged = ctx.carry.resume_canon_rows;
     if (staged.empty()) return;
@@ -2589,9 +2531,9 @@ void networkRestoreCanonicalSignals(NetworkRunContext& ctx, const GnssConfig& co
     for (const auto& [idx, rows] : staged) {
         if (idx < 0 || idx >= static_cast<int>(stations.size())
             || !stations[static_cast<std::size_t>(idx)].model) {
-            // Unreachable through a PASSING fingerprint (the roster is one of its terms),
-            // so this is a tripwire rather than a handled case — and a silent drop is
-            // exactly the failure mode the card exists to end.
+            // Unreachable when the fingerprint passes (the roster is one of its terms),
+            // so this is a tripwire rather than a handled case, and the drop is counted
+            // and logged below rather than skipped without a trace.
             ++n_orphan;
             continue;
         }
@@ -2619,32 +2561,32 @@ void networkRestoreCanonicalSignals(NetworkRunContext& ctx, const GnssConfig& co
 }
 
 // ---------------------------------------------------------------------------
-// RS-9 (SPEC_event_harness §21.18): install the resume's stashed code-bias
-// linearization points on the station initializers.
+// Install the resume's stashed code-bias linearization points on the station
+// initializers (RS-9, SPEC_event_harness §21.18).
 //
-// Its own seam rather than a block inside networkTryWarmResume because the two
-// need different things: the resume function owns the snapshot and stashes the
-// RL map into ctx.carry, while THIS needs the mutable station roster — and the
-// only window in which the install can matter is between the resume and the
-// first computeMeasurementUpdate, since StateInitializer::isCodeBiasInitialized
-// is a one-shot latch.  The driver therefore calls it immediately after the
-// resume, one line, exactly as the RS-8 canonical-signal map is wired.
+// This is a separate seam rather than a block inside networkTryWarmResume because
+// the two need different inputs: the resume function owns the snapshot and stashes
+// the RL map into ctx.carry, while this one needs the mutable station roster.  The
+// install matters only between the resume and the first computeMeasurementUpdate,
+// since StateInitializer::isCodeBiasInitialized is a one-shot latch, so the driver
+// calls it immediately after the resume, in the same way as the RS-8
+// canonical-signal restore.
 // ---------------------------------------------------------------------------
 void networkApplyRxCbLinRestore(NetworkRunContext& ctx, const GnssConfig& config_,
                                 std::vector<NetStation>& stations,
                                 const std::shared_ptr<spdlog::logger>& log) {
     // Nothing stashed ⇒ nothing to do: the knob is off, no warm resume happened, or
-    // the snapshot carried no RL rows (warned at the resume).  No allocation, no
-    // branch taken inside any station — byte-identical.
+    // the snapshot carried no RL rows (warned at the resume).  No allocation and no
+    // branch taken inside any station, so the run is byte-identical.
     if (ctx.carry.rxcb_lin_restore.empty()) return;
     (void)config_;   // the knob is already resolved into ctx.knobs / the stash
-    // One out-slot pair per station, sized ONCE here and never resized: each
+    // One out-slot pair per station, sized once here and never resized: each
     // StateInitializer keeps a raw pointer to its own element and increments it from
-    // inside the OpenMP parallel produce phase.  Distinct objects ⇒ race-free with no
-    // atomics, the same discipline as the per-station StationAssembly tallies.
-    // {applied, carried-but-unseeded} — the second is scoped to the keys the map
-    // CARRIES (the RL rows pair 1:1 with the RC rows), so a code-bias family with no
-    // carry, whose x_lin no gate reads, is not counted as a miss.
+    // inside the OpenMP parallel produce phase.  Distinct objects ⇒ race-free without
+    // atomics, the same discipline as the per-station StationAssembly tallies.  The
+    // pair is {applied, carried-but-unseeded}; the second is scoped to the keys the
+    // map carries (the RL rows pair 1:1 with the RC rows), so a code-bias family with
+    // no carry, whose x_lin no gate reads, is not counted as a miss.
     ctx.carry.rxcb_lin_sta_counts.assign(stations.size(), {0LL, 0LL});
     long long installed_sta = 0, installed_entries = 0, orphan = 0;
     for (const auto& [sidx, keymap] : ctx.carry.rxcb_lin_restore) {
@@ -2658,8 +2600,8 @@ void networkApplyRxCbLinRestore(NetworkRunContext& ctx, const GnssConfig& config
         installed_entries += static_cast<long long>(keymap.size());
     }
     // The roster is inside the warm-resume fingerprint, so an index that does not
-    // resolve should be unreachable; if it ever is, it is a silent lost restore
-    // (invariant #4) and must be loud.
+    // resolve should be unreachable; if one occurs, the restore for that station is
+    // lost, and the warning makes it visible (invariant #4).
     if (orphan > 0)
         log->warn("Network (RS-9 rx-CB frame restore): {} restored station index(es) did "
                   "not resolve to a live station model and were DROPPED — those stations "
@@ -2671,8 +2613,7 @@ void networkApplyRxCbLinRestore(NetworkRunContext& ctx, const GnssConfig& config
               "inject gate's reference is the writer's rather than this leg's.",
               installed_sta, installed_entries);
     // Consumed: the map has been handed to the initializers, and re-installing it
-    // later could only be inert (the latch has closed).  Dropping it here makes that
-    // structural rather than conventional.
+    // later would be inert (the latch has closed).  Clearing it here enforces that.
     ctx.carry.rxcb_lin_restore.clear();
 }
 
@@ -2686,8 +2627,8 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
                                const NetworkEmitRebase* emit_rebase,
                                const NetworkPbEmitFilter* pb_filter,
                                RealTimeEngine* consumer) {
-    // Alias block (INC-4 migration mechanic) — the relocated body reads the
-    // former runNetwork() locals under their original names.
+    // Alias block (INC-4): the relocated body reads the former runNetwork() locals under
+    // their original names.
     const auto& nc = config_.getNetworkConfig();
     auto& snap_path = ctx.carry.snap_path;
     auto& last_snapshot_write_s = ctx.carry.last_snapshot_write_s;
@@ -2724,28 +2665,27 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
     auto& last_emit_content_s = ctx.counters.last_emit_content_s;
     auto& last_health_write_s = ctx.counters.last_health_write_s;
 
-    // --- RTB-7(a): periodic atomic state snapshot -------------------------
-    // End-of-epoch, EMITTED epochs only (skipped epochs `continue` above and
-    // mutate no carry state), every state_snapshot_interval_s of PRODUCT
-    // time.  Written AFTER this epoch's product emit + flush, to the
-    // snapshot's own temp file + rename — the product writer is never
-    // flushed or reordered by this block (emission is unperturbed).  Path
-    // empty (default) ⇒ byte-identical.
+    // --- Periodic atomic state snapshot (RTB-7(a)) ---------------------------
+    // Written at the end of emitted epochs only (skipped epochs `continue` in the
+    // driver and change no carry state), every state_snapshot_interval_s of product
+    // time.  It is written after this epoch's product emit and flush, through the
+    // snapshot's own temp file and rename; this block never flushes or reorders the
+    // product writer, so emission is unaffected.  Empty path (the default) ⇒
+    // byte-identical.
     if (!snap_path.empty()
         && (last_snapshot_write_s < 0.0
             || pl_now_s - last_snapshot_write_s >= nc.state_snapshot_interval_s)) {
-        // RTB-7 cold-state exclusions (in-tree record of a decision previously
-        // documented only in memory/report): this snapshot carries ONLY shared,
-        // network-level producer state — the cross-epoch carries (phase-level /
-        // iono / ZWD), clock oscillators, pivots, generation id, URA/ramp metrics
-        // and the emitter's disc-counter / baseline / first-sighting bookkeeping.
-        // Per-STATION filter state is DELIBERATELY NOT snapshotted: per-station
-        // cycle-slip arcs and slip-detector history, per-station StateManager
-        // ambiguity / iono / receiver-bias marks, and per-station covariance.  On
-        // a warm resume those layers cold-start and re-warm within a few epochs,
-        // and the post-fit RAIM safety net absorbs the transient — serializing the
-        // large per-station covariance blocks would buy nothing the re-warm does
-        // not already provide.  That is the recovery-budget trade RTB-7 accepts.
+        // Cold-state exclusions (RTB-7).  The snapshot carries the producer's own state:
+        // the cross-epoch carries (phase level, iono, ZWD), clock oscillators, pivots,
+        // generation id, URA/ramp metrics and the emitter's disc-counter, baseline and
+        // first-sighting bookkeeping, plus the optional capture groups below.  The
+        // per-station filter state is not snapshotted, by design: per-station cycle-slip
+        // arcs and slip-detector history, per-station StateManager ambiguity / iono /
+        // receiver-bias marks, and per-station covariance.  On a warm resume those layers
+        // cold-start and re-warm within a few epochs, and the post-fit RAIM absorbs the
+        // transient; serializing the large per-station covariance blocks would add nothing
+        // the re-warm does not already provide.  That is the recovery-budget trade RTB-7
+        // accepts.
         NetworkStateSnapshot snap;
         snap.snap_week          = t.week;
         snap.snap_tow           = t.tow;
@@ -2770,10 +2710,11 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
         snap.first_emit_content_s = first_emit_content_s;
         snap.shared_carry.reserve(prev_carry.size());
         for (const CarryPrior& cp : prev_carry) {
-            // READMIT: a PARKED entry (a departed satellite's pre-gap realization) is NOT
-            // serialized — the D record has no park stamp, so a restored copy would fold as
-            // a fresh live carry with epoch-dt inflation (forward-only response policy: a
-            // seam inside a satellite's absence loses its seed, i.e. today's cold return).
+            // A parked entry (a departed satellite's pre-gap realization, READMIT) is not
+            // serialized: the D record has no park stamp, so a restored copy would fold as
+            // a fresh live carry with epoch-dt inflation.  Under the forward-only response
+            // policy, a seam inside a satellite's absence loses its seed, and the
+            // satellite returns cold.
             if (cp.t_park_s > 0.0) { ++ctx.counters.n_snap_parked_excluded; continue; }
             NetworkStateSnapshot::SharedCarry sc;
             sc.kind      = static_cast<int>(cp.kind);
@@ -2785,8 +2726,9 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
             sc.value     = cp.value;
             sc.var       = cp.var;
             sc.inflate_q = cp.inflate_q;
-            // Iono-2 dual-layer: tag the second shell in the (empty-for-VtecSh)
-            // sat field — record arity unchanged, old readers reseed safely.
+            // Dual-layer ionosphere (Iono-2): tag the second shell in the sat field
+            // (otherwise empty for VtecSh); the record arity is unchanged, and older
+            // readers reseed safely.
             if (cp.kind == SharedParamKind::VtecSh && cp.sh_layer > 0)
                 sc.sat = "L1";
             snap.shared_carry.push_back(std::move(sc));
@@ -2809,8 +2751,8 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
             so.t_last = o.t_last; so.init = o.init;
             snap.clock_rate_est[sat] = so;
         }
-        // network.phase_datum_handover_max_var_ratio: the arc's first-stash variance rides
-        // an OPTIONAL trailing L field — filled only when the ratio ceiling is armed, so a
+        // network.phase_datum_handover_max_var_ratio: the arc's first-stash variance is an
+        // optional trailing L field, filled only when the ratio ceiling is armed, so a
         // default snapshot's L rows stay byte-identical.
         const bool l_var_first = ctx.knobs.pd_handover_max_var_ratio > 0.0;
         for (const auto& [key, lc] : local_carry) {
@@ -2824,15 +2766,15 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
         snap.ura_refloat_horizon = ura_refloat_horizon;
         snap.ura_retro_sats      = ura_retro_sats;
         snap.retro_active        = retro_active;
-        snap.relevel_iode              = relevel_iode;              // Card 6
-        snap.eph_cutover_disc_pending  = eph_cutover_disc_pending;  // Card 6
-        // Resume FRAME state (§18.10, snapshot format v2) — captured when
-        // network.state_snapshot_frame_capture is armed (judge graft over the Z-row
-        // precedent: a v2 file is unreadable to a pre-card binary, so the default
-        // snapshot must stay v1 byte-for-byte): the per-(sat,signal) phase-anchor
-        // incumbents + R2 sticky targets as of THIS epoch's election, the Q3 clock-
-        // anchor per-sat state (folded sats only), and the CLK-R held frame.
-        // Whether a resume USES the rows is the resume-side knob
+        snap.relevel_iode              = relevel_iode;              // eph cutover (card 6)
+        snap.eph_cutover_disc_pending  = eph_cutover_disc_pending;  // eph cutover (card 6)
+        // Resume frame state (§18.10, snapshot format v2), captured when
+        // network.state_snapshot_frame_capture is armed: the per-(sat,signal)
+        // phase-anchor incumbents and R2 sticky targets as of this epoch's election, the
+        // Q3 clock-anchor per-satellite state (folded satellites only), and the CLK-R
+        // held frame.  It has its own knob, unlike the Z rows, because a binary that
+        // predates it cannot read a v2 file, so the default snapshot stays v1 byte for
+        // byte.  Whether a resume uses the rows is the resume-side knob
         // network.resume_frame_restore.
         if (nc.state_snapshot_frame_capture) {
         snap.anchor_incumbent  = ctx.carry.anchor_incumbent;
@@ -2854,29 +2796,29 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
             snap.clk_frame_epochs = fs.epochs;
         }
         }   // state_snapshot_frame_capture
-        // Card 1 coupling regressors (§18.12, snapshot format v3) — captured under
-        // network.state_snapshot_coupling_capture (its OWN knob, not the frame knob:
-        // the rows multiply the file ~37x and the keep-history library with it, and a
-        // frame-only writer must stay available for cheap legs and for the arm-B
-        // control).  Layout: a DICTIONARY of shared columns keyed on
-        // (identity, ŝ_prev, P_prev) plus one packed line per carried row.
+        // Card-1 coupling regressors (§18.12, snapshot format v3), captured under
+        // network.state_snapshot_coupling_capture.  This is a separate knob from the frame
+        // knob because the rows make the file about 37 times larger (and the keep-history
+        // library with it), and a frame-only writer stays available for cheap legs and for
+        // the arm-B control.  Layout: a dictionary of shared columns keyed on
+        // (identity, ŝ_prev, P_prev), plus one packed line per carried row.
         //
-        // Why the value pair is part of the dictionary KEY and not just the payload:
-        // harvestCoupling assigns cs.s_prev = x_s(j) and cs.p_prev = cov_df(j,j) from
-        // the shared COLUMN alone (the harvest lambda in networkHarvestLocalCarries),
-        // so rows of ONE harvest epoch agree — but a station whose harvest FAILED hits
-        // `continue` before the stash and keeps an OLDER coupling.  Measured on the
-        // branch-point file: 12 of 2811 L rows carry an older last_seen_s.  An
-        // identity-only hoist would restore those rows against the wrong frame — the
-        // frozen-frame class of defect that killed the lane seed site.
+        // The value pair is part of the dictionary key, not only the payload, because
+        // harvestCoupling assigns cs.s_prev = x_s(j) and cs.p_prev = cov_df(j,j) from the
+        // shared column alone (the harvest lambda in networkHarvestLocalCarries): rows of
+        // one harvest epoch agree, but a station whose harvest failed hits `continue`
+        // before the stash and keeps an older coupling, so a file can hold L rows with an
+        // older last_seen_s.  An identity-only hoist would restore those rows against the
+        // wrong frame (the frozen-frame defect class, the reason the lane seed-site snap
+        // was deleted).
         //
-        // ROW ATOMICITY (Card 1e): a row is written WHOLE or not at all.  An amputated
+        // Row atomicity (card 1e): a row is written whole or not at all.  A truncated
         // coefficient vector loses the exact gauge identity Mᵀg_s = −g_r(c); every
-        // coupling row then observes the clock gauge and the W5 null-space gate
-        // WITHHOLDS each rows-carrying epoch — strictly worse than the diagonal degrade
-        // an empty vector already gives.  fmt writes "nan"/"inf" and the parser's strtod
-        // would accept and fully consume them, so the finite screen here is
-        // load-bearing, not belt-and-braces.
+        // coupling row then observes the clock gauge, and the W5 null-space gate withholds
+        // each epoch that carries rows, which is worse than the diagonal degrade an empty
+        // vector already gives.  fmt writes "nan"/"inf", and the parser's strtod would
+        // accept and consume them, so the finite screen here is required, not a second
+        // guard.
         if (nc.state_snapshot_coupling_capture && config_.networkCarryConditionalCoupling()) {
             using CplKey = std::tuple<int, std::string, std::string, int, int, int, int,
                                       double, double>;
@@ -2889,18 +2831,18 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
             long long n_terms = 0, n_drop = 0;
             const auto pack = [&](const std::vector<CoupledShared>& cpl) -> bool {
                 ents.clear();
-                // Screen the WHOLE row BEFORE hoisting anything.  Bailing inside the build
-                // loop below would leave the columns already pushed for terms 0..k-1 in
-                // snap.coupling_dict as ORPHAN QS records no QL/QZ line references: it
-                // inflates snap_cpl_dict_last (the '{}-column dictionary' the run-end line
-                // prints), and if EVERY row drops it leaves hasCouplingState() true, so a v3
-                // header is written for a file holding a dictionary and zero rows — a shape
-                // this format's own prose says cannot occur.  Row atomicity is the stated
-                // invariant (Card 1e); it has to cover the dictionary half too.
+                // Screen the whole row before hoisting anything.  Returning from inside the
+                // build loop below would leave the columns already pushed for terms 0..k-1
+                // in snap.coupling_dict as orphan QS records that no QL/QZ line references:
+                // they inflate snap_cpl_dict_last (the '{}-column dictionary' the run-end
+                // line prints), and if every row drops, hasCouplingState() stays true and a
+                // v3 header is written for a file with a dictionary and zero rows, a shape
+                // the format description rules out.  Row atomicity (card 1e) covers the
+                // dictionary half as well.
                 for (const CoupledShared& cs : cpl)
                     if (!std::isfinite(cs.coeff) || !std::isfinite(cs.s_prev)
                         || !std::isfinite(cs.p_prev) || cs.p_prev < 0.0)
-                        return false;               // omit the WHOLE row, never part of it
+                        return false;               // omit the whole row, never part of it
                 ents.reserve(cpl.size());
                 for (const CoupledShared& cs : cpl) {
                     const CplKey k = keyOf(cs);
@@ -2913,14 +2855,14 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
                         q.sh_n     = cs.n;
                         q.sh_m     = cs.m;
                         q.sh_trig  = static_cast<int>(cs.trig);
-                        q.sh_layer = cs.sh_layer;   // own field: never the D "L1" hack
+                        q.sh_layer = cs.sh_layer;   // own field, not the D-record "L1" tag
                         q.s_prev   = cs.s_prev;
                         q.p_prev   = cs.p_prev;
                         it = dict_id.emplace(
                                  k, static_cast<int>(snap.coupling_dict.size())).first;
                         snap.coupling_dict.push_back(std::move(q));
                     }
-                    ents.emplace_back(it->second, cs.coeff);   // HARVEST order preserved
+                    ents.emplace_back(it->second, cs.coeff);   // harvest order preserved
                 }
                 return !ents.empty();
             };
@@ -2936,16 +2878,17 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
                 n_terms += static_cast<long long>(ents.size());
                 snap.coupling_zrows[idx] = ents;
             }
-            // Card 1d/1g: the refloat set has no D-row carrier (a hard-refloated sat is
-            // skip-stashed), so the resume cannot otherwise reproduce the pre-pass mark.
+            // The refloat set has no D-row carrier (a hard-refloated satellite is
+            // skip-stashed), so without this the resume cannot reproduce the pre-pass mark
+            // (cards 1d/1g).
             snap.clock_refloat_sats = ctx.carry.prev_clock_refloat_sats;
             ctx.carry.snap_cpl_dict_last    = static_cast<long long>(snap.coupling_dict.size());
             ctx.carry.snap_cpl_rows_last    = static_cast<long long>(snap.coupling_rows.size());
             ctx.carry.snap_cpl_zrows_last   = static_cast<long long>(snap.coupling_zrows.size());
             ctx.carry.snap_cpl_terms_last   = n_terms;
             ctx.carry.snap_cpl_rows_dropped += n_drop;
-            // §18.12 (2a): the C1 dense D2 covariance side-car — the other half of the
-            // seam.  Keys in row order (QK), lower triangle per row (QP); the whole block
+            // The C1 dense D2 covariance side-car, the other half of the seam (§18.12
+            // (2a)).  Keys in row order (QK), lower triangle per row (QP); the whole block
             // is omitted (never truncated) when any entry is non-finite or a row has no
             // key.  Parked entries never have a row, so nothing here references them.
             {
@@ -2972,20 +2915,19 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
                 }
             }
         }   // state_snapshot_coupling_capture
-        // RS-3 DATUM capture (network.state_snapshot_datum_capture, SPEC_event_harness
-        // §21.7) — the WRITE half of the two datum memories a warm resume had to
-        // re-realize.  The frame block above carries the eq34 tree's SATELLITE side
-        // (anchor_incumbent); this carries the RECEIVER side plus the per-component root
-        // vote, the pin targets, the longevity elevations and the extend-only retained
-        // set — together exactly what networkElectChainDatum's sticky seed reads — and
-        // the time-linked code-bias previous-value map + ever-seen set.
+        // Datum capture (RS-3; network.state_snapshot_datum_capture, SPEC_event_harness
+        // §21.7): the write half of the two datum memories that a warm resume would
+        // otherwise re-realize.  The frame block above carries the satellite side of the
+        // eq34 tree (anchor_incumbent); this carries the receiver side plus the
+        // per-component root vote, the pin targets, the longevity elevations and the
+        // extend-only retained set (together, what networkElectChainDatum's sticky seed
+        // reads), and the time-linked code-bias previous-value map and ever-seen set.
         //
-        // Plain copies of ctx.carry AFTER the emit, into `snap` only: the writer run's
-        // products and every trace are byte-identical, which is what makes this knob
-        // legal to add to an existing recipe.  Every container is already empty on a run
-        // that does not arm the datum it belongs to (phase_datum_eq34 /
-        // code_datum_time_linked), so arming the capture on such a run costs nothing and
-        // writes no rows.
+        // These are plain copies of ctx.carry after the emit, into `snap` only: the writer
+        // run's products and every trace are byte-identical, so the knob can be added to
+        // an existing recipe.  Every container is empty on a run that does not arm the
+        // datum it belongs to (phase_datum_eq34 / code_datum_time_linked), so arming the
+        // capture on such a run costs nothing and writes no rows.
         if (nc.state_snapshot_datum_capture) {
             snap.eq34_datum_rx  = ctx.carry.eq34_datum_rx;
             snap.eq34_rx_parent = ctx.carry.eq34_rx_parent;
@@ -2997,18 +2939,18 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
             for (const auto& [idx, amb] : ctx.carry.eq34_retained_edges)
                 snap.eq34_retained_edges.emplace(idx, amb);
             // Non-finite screen on the code-bias values only: the eq34 targets and
-            // elevations are rounded/geometric quantities the election recomputes, while
-            // code_bias_prev_ IS the quantity the veteran-referenced sum-to-zero RHS
-            // differences against — a nan there would survive the parse (strtod accepts
-            // it) and poison the restored datum, so it is dropped at the source.
+            // elevations are rounded or geometric quantities the election recomputes,
+            // while code_bias_prev_ is the quantity the veteran-referenced sum-to-zero RHS
+            // differences against.  A nan there would survive the parse (strtod accepts
+            // it) and corrupt the restored datum, so it is dropped at the source.
             for (const auto& [fam, per_sat] : ctx.carry.code_bias_prev_)
                 for (const auto& [sat, v] : per_sat)
                     if (std::isfinite(v)) snap.code_bias_prev[fam][sat] = v;
             snap.code_bias_sat_seen = ctx.carry.code_bias_sat_seen_;
-            // The IF-pin pair that PRODUCED those values — the third container of the
-            // same kept-epoch lifecycle.  Without it the restore is inert on the IF-pin
-            // half: `pair_same` reads false for every satellite, the split re-seeds to 0
-            // and every satellite disc-bumps (measured: 32 of 32 on a field probe).
+            // The IF-pin pair that produced those values, the third container of the same
+            // kept-epoch lifecycle.  Without it the restore is inert on the IF-pin half:
+            // `pair_same` reads false for every satellite, the split re-seeds to 0 and
+            // every satellite disc-bumps.
             snap.code_bias_ifpin_pair = ctx.carry.code_bias_ifpin_pair_;
             ctx.carry.snap_datum_rows_last =
                 static_cast<long long>(snap.eq34_datum_rx.size()
@@ -3022,21 +2964,21 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
             for (const auto& [fam, per_sat] : snap.code_bias_prev)
                 ctx.carry.snap_datum_rows_last += static_cast<long long>(per_sat.size());
         }   // state_snapshot_datum_capture
-        // RS-5 EMIT-LAYER capture (network.state_snapshot_emit_capture, SPEC_event_harness
-        // §21.10) — the WRITE half of the last cross-epoch state the snapshot did not hold.
-        // The frame/datum blocks above carry the ESTIMATOR's realization; these two engines
-        // sit downstream of it on the OUTPUTS ONLY (NetworkEmitStore.cpp:164 re-base,
-        // :271 filter) and are bare runNetwork locals, so a warm resume cold-starts both
-        // and the first post-resume epoch emits the raw solve-frame phase bias while the
-        // continuous wire carries the accumulated re-base (17.666 m p50 per (sat,signal)
-        // measured at the field seam; §21.10's closure table).
+        // Emit-layer capture (RS-5; network.state_snapshot_emit_capture,
+        // SPEC_event_harness §21.10): the write half of the emit-side cross-epoch state.
+        // The frame and datum blocks above carry the estimator's realization; these two
+        // engines sit downstream of it on the outputs only (the re-base and the filter in
+        // NetworkEmitStore.cpp) and are runNetwork locals, so without the capture a warm
+        // resume cold-starts both, and the first post-resume epoch emits the raw
+        // solve-frame phase bias while the continuous wire carries the accumulated re-base
+        // (§21.10 has the closure table).
         //
-        // Plain exports AFTER the emit, into `snap` only — the same write-side discipline
-        // as the datum block, which is what makes this knob legal to add to an existing
-        // recipe.  A run that arms neither engine (carry_invariant off / emit_pb_filter
-        // off) exports empty maps and writes no rows, so arming the capture there costs
-        // nothing.  Nothing here enters the warm-resume fingerprint: the rows change no
-        // estimate, only the LEVEL the emitted biases are expressed in.
+        // These are plain exports after the emit, into `snap` only, with the same
+        // write-side discipline as the datum block, so the knob can be added to an
+        // existing recipe.  A run that arms neither engine (carry_invariant off /
+        // emit_pb_filter off) exports empty maps and writes no rows, so arming the capture
+        // there costs nothing.  Nothing here enters the warm-resume fingerprint: the rows
+        // change no estimate, only the level in which the emitted biases are expressed.
         if (nc.state_snapshot_emit_capture) {
             if (emit_rebase) snap.emit_rebase_last = emit_rebase->exportState();
             if (pb_filter) {
@@ -3053,24 +2995,24 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
                                        + snap.pb_filter_state.size()
                                        + snap.pb_filter_step.size());
         }   // state_snapshot_emit_capture
-        // RS-6 STATION-LAYER capture (network.state_snapshot_station_capture,
-        // SPEC_event_harness §21.13) — the WRITE half of the two per-station memories
-        // that restart COLD at every warm resume.  The frame / datum blocks carry the
-        // network's realization and the emit block the level on top of it; these two
-        // are the STATION layer underneath: the receiver code-bias posterior per
+        // Station-layer capture (RS-6; network.state_snapshot_station_capture,
+        // SPEC_event_harness §21.13): the write half of the two per-station memories that
+        // otherwise restart cold at every warm resume.  The frame and datum blocks carry
+        // the network's realization and the emit block the level on top of it; these two
+        // are the station layer underneath: the receiver code-bias posterior per
         // (station, CB family) and the per-LOS SH representation-error deviation.
         //
-        // Plain copies of ctx.carry AFTER the emit, into `snap` only — the same
-        // write-side discipline as the datum and emit blocks, which is what makes this
-        // knob legal to add to an existing recipe.  A run that arms neither carry
-        // (network.carry_rx_code_bias / the T5 deviation) exports empty maps and writes
-        // no rows, so arming the capture there costs nothing.
+        // These are plain copies of ctx.carry after the emit, into `snap` only, with the
+        // same write-side discipline as the datum and emit blocks, so the knob can be
+        // added to an existing recipe.  A run that arms neither carry
+        // (network.carry_rx_code_bias / the T5 deviation) exports empty maps and writes no
+        // rows, so arming the capture there costs nothing.
         //
-        // The non-finite screen is at the SOURCE, as for code_bias_prev: a nan that
-        // strtod would accept on the way back in becomes the prior the next fold's
-        // innovation differences against (rx-CB) or the GM level the next harvest ages
-        // (T5).  An entry dropped here is simply cold on the resume — the pre-card
-        // behaviour for that one key — where a poisoned one is not recoverable.
+        // The non-finite screen is at the source, as for code_bias_prev: a nan that strtod
+        // would accept on the way back in becomes the prior the next fold's innovation
+        // differences against (rx-CB) or the GM level the next harvest ages (T5).  An
+        // entry dropped here is only cold on the resume (the behaviour without the
+        // capture, for that one key), whereas a corrupt entry cannot be recovered.
         if (nc.state_snapshot_station_capture) {
             for (const auto& [key, lc] : ctx.carry.rx_cb_carry)
                 if (std::isfinite(lc.value_abs) && std::isfinite(lc.var) && lc.var > 0.0
@@ -3086,20 +3028,20 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
             ctx.carry.snap_station_rows_last =
                 static_cast<long long>(snap.rx_cb_carry.size() + snap.sh_dev_carry.size());
         }   // state_snapshot_station_capture
-        // RS-8 CANONICAL-SIGNAL capture (network.state_snapshot_signal_capture,
-        // SPEC_event_harness §21.16) — the WRITE half of the one per-station latch that
-        // lived in NO snapshot: PppModel's per-(constellation, band, obs-type) canonical
-        // signal, decided from that station's FIRST processed epoch's satellite counts
-        // and then locked for the run.
+        // Canonical-signal capture (RS-8; network.state_snapshot_signal_capture,
+        // SPEC_event_harness §21.16): the write half of the per-station latch that no
+        // other snapshot group holds, PppModel's per-(constellation, band, obs-type)
+        // canonical signal, decided from the satellite counts of that station's first
+        // processed epoch and then locked for the run.
         //
-        // One of the two snapshot groups that cannot be read out of ctx.carry — the
-        // latch is inside each station's model — which is why this function takes the
-        // roster at all (the RS-9 RL block below is the other; it reads the station's
-        // own state vector).
+        // It is one of the two snapshot groups that cannot be read out of ctx.carry (the
+        // latch is inside each station's model), which is why this function takes the
+        // roster; the RS-9 RL block below is the other, and it reads the station's own
+        // state vector.
         //
-        // Read-only w.r.t. the models and written into `snap` alone, the same write-side
-        // discipline as the datum / emit / station blocks, which is what makes the knob
-        // legal to add to an existing recipe: products and traces byte-identical.
+        // Read-only with respect to the models and written into `snap` alone, with the
+        // same write-side discipline as the datum, emit and station blocks, so the knob
+        // can be added to an existing recipe: products and traces stay byte-identical.
         if (nc.state_snapshot_signal_capture) {
             for (std::size_t i = 0; i < stations.size(); ++i) {
                 const auto& st = stations[i];
@@ -3116,33 +3058,33 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
                 n += static_cast<long long>(rows.size());
             ctx.carry.snap_canon_rows_last = n;
         }   // state_snapshot_signal_capture
-        // RS-9 CODE-BIAS LINEARIZATION POINT capture (network.state_snapshot_rxcb_lin_
-        // capture, SPEC_event_harness §21.18) — the RC row's REFERENCE.  The RC row above
-        // carries the rx-CB carry's numerator; the gate that decides whether that prior is
-        // folded tests `value_abs − x_lin(cb)` against a FIXED 5.13 m bar, and x_lin is the
-        // one-shot seed StateInitializer::initializeCodeBiases wrote on this station's
-        // FIRST processed epoch and never revised.  It is not in ctx.carry at all — it
-        // lives in the station's own state vector — which is why this is the one snapshot
-        // block that reads `stations`.
+        // Code-bias linearization-point capture (RS-9;
+        // network.state_snapshot_rxcb_lin_capture, SPEC_event_harness §21.18): the
+        // reference of the RC row.  The RC row above carries the rx-CB carry's numerator;
+        // the gate that decides whether that prior is folded tests `value_abs − x_lin(cb)`
+        // against a fixed 5.13 m bar, and x_lin is the one-shot seed that
+        // StateInitializer::initializeCodeBiases wrote on this station's first processed
+        // epoch and never revises.  It is not in ctx.carry but in the station's own state
+        // vector, which is why this block reads `stations`.
         //
-        // Read-only and AFTER the emit, exactly like the blocks above, so arming it moves
-        // no estimate and no trace: an x_lin shift is an exact solve no-op for a state that
-        // enters linearly (project_network_xlin_invariance) and nothing here writes one
-        // anyway.  Keyed EXACTLY as the RC rows — (roster index, CB state key) — so the
-        // restore can pair them without a second identity, and screened for finiteness at
-        // the SOURCE for the RC reason one step sharper: a non-finite linearization point
-        // would poison the first epoch's iono and ambiguity seeds through
-        // computeRawResidual, not merely one fold.
+        // Read-only and after the emit, like the blocks above, so arming it moves no
+        // estimate and no trace: an x_lin shift is an exact solve no-op for a state that
+        // enters linearly (project_network_xlin_invariance), and nothing here writes one.
+        // Keyed exactly as the RC rows, (roster index, CB state key), so the restore can
+        // pair them without a second identity, and screened for finiteness at the source
+        // for a stronger form of the RC reason: a non-finite linearization point would
+        // corrupt the first epoch's iono and ambiguity seeds through computeRawResidual,
+        // not only one fold.
         //
-        // Driven off the RC rows THEMSELVES, not off the station's code-bias state set:
-        // one RL row beside each RC row, and never an orphan.  A station carries more
-        // code-bias states than the rx-CB carry holds (a GPS L1/L2/L5 lineage has
-        // GPS_DCB *and* GPS_IFB5 per station while only GPS_DCB is carried), and a
-        // reference with no carry to judge has no consumer — restoring it would be an
-        // unmeasured state change outside this card.  Iterating what was written also
-        // makes the pairing structural: the RL count IS the RC count, so a restore can
-        // never bind a frame to a carry the file does not hold.  The loader's
-        // requirement on state_snapshot_station_capture is what makes this non-empty.
+        // Driven by the RC rows themselves, not by the station's code-bias state set: one
+        // RL row beside each RC row, and no orphans.  A station carries more code-bias
+        // states than the rx-CB carry holds (a GPS L1/L2/L5 lineage has GPS_DCB and
+        // GPS_IFB5 per station while only GPS_DCB is carried), and a reference with no
+        // carry to judge has no consumer; restoring it would be an unmeasured state
+        // change.  Iterating what was written also makes the pairing structural: the RL
+        // count equals the RC count, so a restore cannot bind a frame to a carry the file
+        // does not hold.  The loader's requirement on state_snapshot_station_capture is
+        // what makes this non-empty.
         if (nc.state_snapshot_rxcb_lin_capture) {
             for (const auto& [key, l] : snap.rx_cb_carry) {
                 (void)l;
@@ -3161,9 +3103,9 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
             ctx.carry.snap_rxcb_lin_rows_last =
                 static_cast<long long>(snap.rx_cb_lin.size());
         }   // state_snapshot_rxcb_lin_capture
-        // RTB-7(c): branch-faithful — serialize the invariant DD carry (z-store branch)
-        // + its ArcKey vertex numbering (sat→vertex, (const,signal)→group), so a warm
-        // resume reproduces the phase-ambiguity branch instead of re-converging one.
+        // Branch-faithful snapshot (RTB-7(c)): serialize the invariant DD carry (z-store
+        // branch) and its ArcKey vertex numbering (sat→vertex, (const,signal)→group), so a
+        // warm resume reproduces the phase-ambiguity branch instead of re-converging one.
         if (nc.state_snapshot_carry) {
             snap.carry_sat_vertex = ctx.carry.carry_sat_vertex;
             snap.carry_group_id.clear();
@@ -3171,9 +3113,10 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
             for (const auto& [key, gid] : ctx.carry.carry_group_id)
                 snap.carry_group_id.emplace_back(key.first, key.second, gid);
             std::ostringstream ccs;
-            // RTB-7(e): write-side shape knob.  The blob is ~99% of the snapshot at scale
-            // (305 sta: 13.1M dense Pᶻ numbers vs 7.9k means), so the diagonal shape is the
-            // difference between a 258 MB and a ~160 KB file.  Read side is unaffected.
+            // Write-side shape knob (RTB-7(e)).  The blob is about 99 % of the snapshot at
+            // scale (at 305 stations, 13.1M dense Pᶻ numbers against 7.9k means), so the
+            // diagonal shape makes the difference between a 258 MB and a ~160 KB file.  The
+            // read side is unaffected.
             carry_driver.serializeCarry(ccs, nc.state_snapshot_carry_diagonal);
             snap.carry_state = ccs.str();
             ctx.carry.snap_carry_bytes_last =
@@ -3191,10 +3134,11 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
                       "previous good snapshot (if any) is left intact.",
                       snap_path.string(), werr);
         else
-            ++ctx.carry.snap_writes;   // RTB-7(e): run-end blob-size readout (invariant #4)
-        // RTB-7(d) BR-1: keep a per-epoch copy so the branch can be graded over time
-        // (scripts/diff_carry_blobs.py).  Write-side only — same atomic temp+rename, and
-        // the estimation cannot see it (this runs after emit over const refs).
+            ++ctx.carry.snap_writes;   // run-end blob-size readout (RTB-7(e), invariant #4)
+        // Keep a per-epoch copy so the branch can be graded over time
+        // (scripts/diff_carry_blobs.py; RTB-7(d), BR-1).  Write-side only: the same atomic
+        // temp file and rename, and the estimation cannot see it (this runs after the
+        // emit, over const references).
         if (nc.state_snapshot_keep_history) {
             std::filesystem::path hp = snap_path;
             hp += fmt::format(".ep{:04d}", static_cast<unsigned long long>(snap.n_emitted));
@@ -3202,13 +3146,13 @@ void networkWriteStateSnapshot(NetworkRunContext& ctx, const GnssConfig& config_
             if (!NetworkStateSnapshotIO::write(hp, snap, &herr))
                 log->warn("Network (RTB-7d/BR-1): history snapshot write to '{}' failed ({}).",
                           hp.string(), herr);
-            // Card CC (B): the closed-loop consumer's own snapshot beside this
-            // history copy, same suffix, same tow.  The consumer processed this
-            // epoch inside networkEmitStore (earlier in the same loop iteration);
-            // writeStateSnapshotTo refuses — nothing written, counted, logged —
-            // if its last processed epoch is not `t`, so the file on disk can
-            // never carry a different tow than the copy it sits beside.  Consumer
-            // memory only: the producer's snapshot, solve and products see nothing.
+            // The closed-loop consumer's own snapshot beside this history copy, with the
+            // same suffix and tow (card CC, part B).  The consumer processed this epoch
+            // inside networkEmitStore (earlier in the same loop iteration);
+            // writeStateSnapshotTo refuses (writes nothing, counts and logs it) if its
+            // last processed epoch is not `t`, so the file on disk cannot carry a
+            // different tow than the copy beside it.  Consumer memory only: the
+            // producer's snapshot, solve and products are unaffected.
             if (nc.closed_loop.state_snapshot && consumer) {
                 const std::filesystem::path cp = RealTimeEngine::consumerSnapshotHistoryPath(
                     snap_path, static_cast<unsigned long long>(snap.n_emitted));
@@ -3236,52 +3180,49 @@ void networkInjectShVtecPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                               const SphericalHarmonicIonosphere* sh_model,
                               const SphericalHarmonicIonosphere* sh_model2,
                               bool datum_changed, double dt, bool within_epoch_armed) {
-    // Alias block (INC-4 migration mechanic) — the relocated body reads the
-    // former runNetwork() locals under their original names.
+    // Alias block (INC-4): the relocated body reads the former runNetwork() locals under
+    // their original names.
     const GlobalVtecShConfig& shc = config_.getGlobalVtecShConfig();
     auto& prev_carry = ctx.carry.prev_carry;
     auto& cap_priors = ws.cap_priors;
 
-    // --- SH-VTEC prior (Kaula + temporal), folded BEFORE the gate ----------
-    // The SH coefficients are SHARED columns in the reduced normals; without a
-    // bound on every one, a coefficient whose IPP support rotated over an
-    // ocean/polar gap is near-null and trips the all-or-nothing rank gate.
-    // A degree-dependent Kaula prior (σ_n = kaula_scale/n; a₀₀ a LOOSE climatology
-    // prior, so the mean VTEC stays data-determined and is NOT clamped to an
-    // external value) keeps every coefficient PSD-bounded
-    // → declared_dimension stays = #constellations regardless of coverage.  The
-    // SAME prior carries the field forward in time as a bounded random walk
-    // (anchor the previous estimate, inflate by the per-degree q, but never
-    // exceed the Kaula bound).  Folded via addSharedPrior BEFORE the gate (so the
-    // gate sees the regularized SH block) — unlike the clock/bias D2 carry-
-    // forward, which must stay AFTER the gate (it would otherwise fill the clock
-    // gauge the datum pins).
+    // --- SH-VTEC prior (Kaula + temporal), folded before the gate -----------
+    // The SH coefficients are shared columns in the reduced normals.  Without a bound
+    // on each one, a coefficient whose IPP support has rotated over an ocean or polar
+    // gap is near-null and trips the all-or-nothing rank gate.  A degree-dependent
+    // Kaula prior (σ_n = kaula_scale/n; a₀₀ gets a loose climatology prior, so the mean
+    // VTEC stays data-determined and is not clamped to an external value) keeps every
+    // coefficient PSD-bounded, so declared_dimension stays = #constellations regardless
+    // of coverage.  The same prior carries the field forward in time as a bounded
+    // random walk (anchor the previous estimate, inflate by the per-degree q, never
+    // exceed the Kaula bound).  It is folded through addSharedPrior before the gate, so
+    // the gate sees the regularized SH block; the clock/bias D2 carry-forward, by
+    // contrast, stays after the gate, because it would otherwise fill the clock gauge
+    // that the datum pins.
     if (config_.estimateNetworkIonoSh() && sh_model && est.numShared() > 0) {
         std::map<std::tuple<int, int, int, char>, const CarryPrior*> sh_carry;
-        // RTA-2 scope decision: the SH-VTEC carry skip deliberately stays
-        // GLOBAL even under network.scoped_handover_response.  The SH
-        // coefficients are constellation-LESS shared columns, so no scoped
-        // subset exists for them; and although the pure clock-gauge
-        // S-transform leaves the iono columns invariant in exact arithmetic,
-        // the carried SH posterior was estimated JOINTLY with the old-datum
-        // clock/bias states, so the conservative (existing) response is kept:
-        // on ANY datum change the RW-toward-previous term is dropped for one
-        // epoch and the coefficients fall back to the always-on Kaula
-        // climatology anchor below (still PSD-bounded, gate-safe) — a cheap,
-        // bounded cost that avoids scoping a column that belongs to no
-        // constellation.
+        // Scope decision (RTA-2): the SH-VTEC carry skip stays global, on purpose, even
+        // under network.scoped_handover_response.  The SH coefficients are shared
+        // columns without a constellation, so no scoped subset exists for them; and
+        // although the pure clock-gauge S-transform leaves the iono columns invariant in
+        // exact arithmetic, the carried SH posterior was estimated jointly with the
+        // old-datum clock/bias states.  The conservative response is therefore kept: on
+        // any datum change the random-walk-toward-previous term is dropped for one epoch
+        // and the coefficients fall back to the always-on Kaula climatology anchor below
+        // (still PSD-bounded and gate-safe), a small, bounded cost that avoids scoping a
+        // column that belongs to no constellation.
         if (!datum_changed)
             for (const CarryPrior& cp : prev_carry)
                 if (cp.kind == SharedParamKind::VtecSh)
                     sh_carry.emplace(
                         std::make_tuple(cp.sh_layer, cp.sh_n, cp.sh_m, cp.sh_trig), &cp);
 
-        // Dual-layer (Iono-2): the SAME mean-reverting prior recipe per shell,
-        // with per-layer Kaula scale / q / a₀₀ anchor.  The layer-2 a₀₀ anchor
-        // is deliberately TIGHT (the inter-layer split of the mean VTEC is
-        // quasi-null from ground-only geometry — only the mapping-function
-        // difference of the two shell heights observes it); the TOTAL mean
-        // stays data-determined through layer 1's loose anchor.
+        // Dual-layer (Iono-2): the same mean-reverting prior recipe per shell, with a
+        // per-layer Kaula scale, q and a₀₀ anchor.  The layer-2 a₀₀ anchor is tight on
+        // purpose: the inter-layer split of the mean VTEC is nearly null from
+        // ground-only geometry (only the mapping-function difference of the two shell
+        // heights observes it), while the total mean stays data-determined through
+        // layer 1's loose anchor.
         std::vector<NetworkEstimator::SharedPrior> sh_priors;
         for (const ShLayer& lay :
              shLayers(shc, sh_model, sh_model2)) {
@@ -3294,16 +3235,17 @@ void networkInjectShVtecPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                 const double clim = (c.n == 0 && c.m == 0 && c.trig == 'C')
                     ? lay.mean_prior_tecu : 0.0;   // a₀₀ → mean VTEC; others → 0
 
-                // Mean-reverting (first-order Gauss-Markov) prior: ALWAYS apply the
-                // Kaula climatology anchor (toward clim, σ = kaula_sigma) AND, when a
+                // Mean-reverting (first-order Gauss-Markov) prior: always apply the
+                // Kaula climatology anchor (toward clim, σ = kaula_sigma) and, when a
                 // posterior was carried forward, a random-walk anchor (toward the
                 // previous estimate, inflated by the per-degree q).  Combining them in
                 // information space pulls every coefficient back toward climatology
-                // each epoch (so the field cannot random-walk away — the design's
-                // "unobserved coefficients are pulled to their prior", §6.1) while the
-                // RW term preserves temporal continuity for well-observed ones.  A
-                // pure RW-toward-previous (no climatology re-assertion) let the global
-                // field drift to unphysical magnitudes; this is the bound.
+                // each epoch, so the field cannot random-walk away (the design's
+                // "unobserved coefficients are pulled to their prior", §6.1), while the
+                // random-walk term keeps temporal continuity for well-observed ones.  A
+                // pure random walk toward the previous value, with no climatology
+                // term, lets the global field drift to unphysical magnitudes; the
+                // climatology term bounds it.
                 double info  = 1.0 / kaula_var;       // climatology Tikhonov (always on)
                 double sumiv = info * clim;
                 const auto it =
@@ -3337,28 +3279,28 @@ void networkInjectShVtecPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
 
 void networkInjectPhaseHoldPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                                  NetworkEstimator& est, bool within_epoch_armed) {
-    // Alias block (INC-4 migration mechanic) — the relocated body reads the
-    // former runNetwork() locals under their original names.
+    // Alias block (INC-4): the relocated body reads the former runNetwork() locals under
+    // their original names.
     auto& prev_carry = ctx.carry.prev_carry;
     const bool   phase_hold_on = ctx.knobs.phase_hold_on;
     const double phase_hold_var = ctx.knobs.phase_hold_var;
     auto& cap_priors = ws.cap_priors;
 
-    // --- Fix A hold: held satellite phase-bias datum (seed-once + time-lock) ---
-    // Inject the held b_s priors BEFORE the null-space gate — like the SH-VTEC
-    // prior above, and UNLIKE the clock/code D2 carry below (which must stay
-    // post-gate so the gate sees the data-only clock-gauge structure).  A held
-    // (sat,signal) has its Σz=0 fold SKIPPED in buildEnsembleGauges (a hard w→∞
-    // fold would override a finite prior), so this stiff fixed-variance prior is
-    // that column's DATUM: it must be in the reduced normals the gate inspects, or
-    // the held column reads as a near-null gauge and trips the O(n³) heal / a
-    // withhold every epoch.  (In practice the tight local ambiguity carry usually
-    // already lifts it above the cutoff, but this makes the datum explicit and
-    // robust to a weak/cold carry on a fresh arc.)  The phase-ensemble datum is
-    // orthogonal to the clock-pivot datum_changed handover, so it is injected
-    // EVERY epoch regardless.  Phase biases are excluded from the clock-frame D2
-    // carry loops below under hold, so this is the single injection (no double
-    // fold).  Inert / no-op unless phase_hold_on (byte-identical).
+    // --- Fix A hold: held satellite phase-bias datum (seed once, then time-locked) ---
+    // Inject the held b_s priors before the null-space gate, like the SH-VTEC prior
+    // above and unlike the clock/code D2 carry below (which stays after the gate so
+    // the gate sees the data-only clock-gauge structure).  A held (sat,signal) has its
+    // Σz=0 fold skipped in buildEnsembleGauges (a hard w→∞ fold would override a
+    // finite prior), so this stiff fixed-variance prior is that column's datum.  It
+    // has to be in the reduced normals the gate inspects, or the held column reads as
+    // a near-null gauge and triggers the O(n³) null-space repair or a withhold every
+    // epoch.  (The tight local ambiguity carry usually lifts it above the cutoff
+    // already, but this makes the datum explicit and robust to a weak or cold carry on
+    // a fresh arc.)  The phase-ensemble datum is orthogonal to the clock-pivot
+    // datum_changed handover, so it is injected every epoch regardless.  Under hold,
+    // phase biases are excluded from the clock-frame D2 carry loops below, so this is
+    // the only injection (no double fold).  No-op unless phase_hold_on
+    // (byte-identical).
     if (phase_hold_on && !prev_carry.empty()) {
         std::vector<NetworkEstimator::SharedPrior> hp;
         hp.reserve(prev_carry.size());
@@ -3380,8 +3322,8 @@ void networkInjectPhaseHoldPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
 void networkInjectPinBridgePrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                                  NetworkEstimator& est, bool within_epoch_armed,
                                  const std::shared_ptr<spdlog::logger>& log) {
-    // --- eq34 reattach hygiene INC-2: the time-linked phase datum -----------
-    // See the header for why this must be folded PRE-gate.  Inert (no allocation,
+    // --- eq34 reattach hygiene (INC-2): the time-linked phase datum ----------
+    // The header explains why this is folded before the gate.  Inert (no allocation,
     // no row) unless a bridge is open, which requires network.phase_datum_time_linked.
     auto& bridges = ctx.carry.pin_bridge;
     if (!ctx.knobs.pin_bridge_on || bridges.empty()) return;
@@ -3389,8 +3331,8 @@ void networkInjectPinBridgePrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     bp.reserve(bridges.size());
     for (auto& [amb, br] : bridges) {
         // "sat_signal" → (sat, signal).  The satellite id never contains '_', so the
-        // FIRST underscore splits it (the StateKeys::parseAmbiguityKey convention —
-        // an iono-free combination keeps its own underscores inside `signal`).
+        // first underscore splits it (the StateKeys::parseAmbiguityKey convention; an
+        // iono-free combination keeps its own underscores inside `signal`).
         const auto us = amb.find('_');
         if (us == std::string::npos || us == 0 || us + 1 >= amb.size()) continue;
         if (!std::isfinite(br.value)) continue;
@@ -3409,11 +3351,12 @@ void networkInjectPinBridgePrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     est.addSharedPrior(bp);   // skips keys absent from this epoch's layout
     if (within_epoch_armed)
         ws.cap_priors.insert(ws.cap_priors.end(), bp.begin(), bp.end());
-    // Card-KP K2 analogue, sampled ONCE: a datum row whose information sits AT the
-    // rank-gate cutoff either trips the gate or survives by coincidence.  The bridge
-    // is a DATUM row, so it must sit well above it; report the actual margin rather
-    // than trusting the default sigma.  The reduced normals here already contain the
-    // row we just folded, which is what the gate is about to judge.
+    // Margin check, sampled once (the analogue of card KP's K2): a datum row whose
+    // information sits at the rank-gate cutoff either trips the gate or survives by
+    // coincidence.  The bridge is a datum row, so it has to sit well above the cutoff;
+    // the actual margin is reported rather than assumed from the default sigma.  The
+    // reduced normals here already contain the row just folded, which is what the gate
+    // is about to judge.
     if (!ctx.counters.hyg.bridge_margin_logged) {
         ctx.counters.hyg.bridge_margin_logged = true;
         const Eigen::MatrixXd& Nss = est.reducedSharedNormals();
@@ -3447,8 +3390,9 @@ void networkInjectPinBridgePrior(NetworkRunContext& ctx, EpochWorkspace& ws,
 
 namespace {
 
-/// READMIT continuity: is @p cp's shared column registered in THIS epoch's layout?
-/// (The estimator's lookups throw on an unknown key — the contract resolveSharedCol wraps.)
+/// READMIT continuity: is @p cp's shared column registered in this epoch's layout?
+/// (The estimator's lookups throw on an unknown key; resolveSharedCol wraps the same
+/// contract.)
 bool readmitColumnPresent(const NetworkEstimator& est, const CarryPrior& cp) {
     try {
         switch (cp.kind) {
@@ -3462,9 +3406,9 @@ bool readmitColumnPresent(const NetworkEstimator& est, const CarryPrior& cp) {
     }
 }
 
-/// READMIT continuity: bookkeeping + the RE-COUPLING-edge event for one column seeded
-/// from a parked pre-gap realization at the D2 install (standing invariant #7: the edge
-/// has an identity, its evidence gap, and the variance it re-coupled at).
+/// READMIT continuity: bookkeeping and the re-coupling-edge event for one column seeded
+/// from a parked pre-gap realization at the D2 install (standing invariant #7: the event
+/// records the edge's identity, its evidence gap, and the variance it re-coupled at).
 void readmitNoteSeed(NetworkRunContext& ctx, NetworkRunTraces& traces, const GnssTime& t,
                      const CarryPrior& cp, double seed_gap, double horizon_s,
                      double var_eff, bool anchored) {
@@ -3491,14 +3435,14 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                                const std::set<char>& changed_consts, double dt,
                                bool within_epoch_armed,
                                const std::shared_ptr<spdlog::logger>& log) {
-    // Alias block (INC-4 migration mechanic) — the relocated body reads the
-    // former runNetwork() locals under their original names.
+    // Alias block (INC-4): the relocated body reads the former runNetwork() locals under
+    // their original names.
     auto& prev_carry = ctx.carry.prev_carry;
     auto& prev_carry_cov = ctx.carry.prev_carry_cov;
     auto& eq34_reref = ctx.carry.eq34_reref;
-    // QUEUE item 1(d): the anchored election's re-reference set — consumed below
-    // exactly as eq34_reref is (the two are mutually exclusive by election mode,
-    // and both are always empty when their mechanism is off).
+    // The anchored election's re-reference set (queue item 1(d)), consumed below in the
+    // same way as eq34_reref (the two are mutually exclusive by election mode, and both
+    // are empty when their mechanism is off).
     const auto& pa_reref = ctx.carry.phase_anchor_reref;
     const bool   scoped_handover = ctx.knobs.scoped_handover;
     const bool   fullcov_on = ctx.knobs.fullcov_on;
@@ -3510,20 +3454,19 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     const double clk_mon_reinit_var = ctx.knobs.clk_mon_reinit_var;
     const double pb_var_floor = ctx.knobs.pb_var_floor;
     const double cb_var_floor = ctx.knobs.cb_var_floor;
-    // M2 v2 — the LASER 5-95 variance factor,
-    // applied to the shared carry AFTER the hand model has formed var_eff exactly
-    // as it does today (q·Δt inflation then the B4 floor).  Both D2 branches route
-    // through this one lambda so the diagonal and the C1 dense fold cannot drift
-    // apart: the dense branch's DIAGONAL is var_eff, and the marginal prior on any
-    // one state must be identical either way — the same property that makes the
-    // M2 carry innovation representation-independent in the first place.
+    // Carry VCE apply (M2 v2): the LASER 5-95 variance factor, applied to the shared
+    // carry after the hand model has formed var_eff (q·Δt inflation, then the B4
+    // floor).  Both D2 branches route through this one lambda so the diagonal and the
+    // C1 dense fold cannot drift apart: the dense branch's diagonal is var_eff, and the
+    // marginal prior on any one state has to be identical either way, the same property
+    // that makes the M2 carry innovation independent of the representation.
     //
-    // An inflate_q key is EXCLUDED: it folds with the clock-monitor REINIT variance,
-    // a deliberate soft refloat that is not the hand carry model, and the monitor
-    // skips those rows too (NetworkStashStatus's feed), so there is no measured
-    // factor for them and scaling one would be inventing a number.
+    // An inflate_q key is excluded: it folds with the clock-monitor reinit variance, a
+    // deliberate soft refloat that is not the hand carry model, and the monitor skips
+    // those rows too (NetworkStashStatus's feed), so there is no measured factor for
+    // them.
     //
-    // OFF (or an unarmed family) returns var unchanged ⇒ byte-identical.
+    // Off (or an unarmed family) returns var unchanged ⇒ byte-identical.
     const bool  vce_apply_on = ctx.knobs.vce_apply_on;
     const auto& vce_apply    = ctx.carry.vce_apply;
     const auto vce_scale_shared = [&](SharedParamKind kind, const std::string& sat,
@@ -3539,38 +3482,37 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     auto& cap_dense_cov = ws.cap_dense_cov;
     auto& clk_prior_info = ws.clk_prior_info;
     auto& anchor_info_trace = traces.anchor_info_trace;
-    // The guarded temporal clock
-    // anchor decides the CLOCK rows' fold variance in both branches below.  The
-    // per-satellite elapsed time it inflates over is continuous GPS seconds, NOT
-    // the driver's inter-epoch dt (see the seam header — every skip path advances
-    // dt while the carry survives).  Untouched, un-allocated when OFF.
+    // The guarded temporal clock anchor sets the clock rows' fold variance in both
+    // branches below.  The per-satellite elapsed time it inflates over is continuous
+    // GPS seconds, not the driver's inter-epoch dt (see the seam header: every skip path
+    // advances dt while the carry survives).  Untouched and unallocated when off.
     const bool   cta_on    = ctx.knobs.cta_on;
     const double cta_now_s = cta_on ? TimeUtils::continuousGpsSeconds(t) : 0.0;
     if (cta_on) clockAnchorBeginEpoch(ctx);
-    // RTA-2 scope predicate — re-declared verbatim over the explicit
-    // (datum_changed, changed_consts) parameters; identical read points.
+    // Scope predicate (RTA-2), re-declared over the explicit (datum_changed,
+    // changed_consts) parameters, with the same read points.
     const auto handover_affects = [&](const std::string& sat) {
         return datum_changed
             && datumChangeAffectsKey(sat, changed_consts, scoped_handover);
     };
-    // Queue 1(b) INC-1 — the LOAD-BEARING half of the S-transform card.  When the
-    // transform re-expressed this constellation's carry (ctx.carry.sts_consts, filled
-    // by networkHandoverStransform earlier this epoch), the prior is valid in the
-    // INCOMING datum and must FOLD: the retired-datum skip below is released for
-    // exactly those keys and the retained rows are counted (invariant #4 — transforms
-    // applied with sts_rows_retained == 0 means this release is mis-wired).  The set is
-    // empty on every non-handover epoch and whenever the knob is off, so the OFF path
-    // is byte-identical.
+    // The half of the S-transform (queue 1(b), INC-1) that changes the solve.  When the
+    // transform re-expressed this constellation's carry (ctx.carry.sts_consts, filled by
+    // networkHandoverStransform earlier this epoch), the prior is valid in the incoming
+    // datum and folds: the retired-datum skip below is released for exactly those keys,
+    // and the retained rows are counted (invariant #4: transforms applied with
+    // sts_rows_retained == 0 mean this release is mis-wired).  The set is empty on every
+    // epoch without a handover and whenever the knob is off, so the off path is
+    // byte-identical.
     const auto sts_released = [&](const std::string& sat) {
         return !ctx.carry.sts_consts.empty() && !sat.empty()
             && ctx.carry.sts_consts.count(sat.front()) > 0;
     };
     // READMIT continuity (E2 seed-first re-admission, network.readmit_seed_horizon_s).
-    // The epoch clock the stash (which has none of its own) and the guard read; the
-    // seed check list for this epoch; and the frame drop: a clock-datum change retires a
-    // parked entry's frame exactly as it skips the live carry of the changed
-    // constellation(s) — but a parked entry cannot be re-stashed fresh next epoch, so it
-    // is DROPPED (counted), not skipped.
+    // Set up the epoch clock that the stash (which has none of its own) and the guard
+    // read, clear this epoch's seed check list, and apply the frame drop: a clock-datum
+    // change retires a parked entry's frame as it skips the live carry of the changed
+    // constellations, but a parked entry cannot be re-stashed fresh next epoch, so it is
+    // dropped (and counted) rather than skipped.
     const double readmit_h = ctx.knobs.readmit_seed_horizon_s;
     const double now_s = (readmit_h > 0.0) ? TimeUtils::continuousGpsSeconds(t) : 0.0;
     if (readmit_h > 0.0) {
@@ -3590,78 +3532,75 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
         }
     }
 
-    // --- D2 carry-forward prior (diagonal, inflated over the gap) -------
-    // Applied AFTER the gate (which must see the DATA-only gauge structure)
-    // and BEFORE the solve.  The prior anchors each non-datum shared
-    // parameter to its previous-epoch estimate; it is skipped on a pivot
-    // handover, when the carried values belong to a now-retired datum.
-    // RTA-2 (network.scoped_handover_response): only the CHANGED
-    // constellation(s)' datum retired — a per-constellation clock gauge is
-    // independent of its siblings, so carries of unaffected constellations
-    // remain valid and fold normally; the per-key skip below drops exactly
-    // the retired-datum keys.  OFF reproduces the legacy all-or-nothing
-    // skip byte-identically (the outer gate collapses to !datum_changed and
-    // the per-key skip can never trigger inside it).
+    // --- Diagonal D2 carry-forward prior (inflated over the gap) --------
+    // Applied after the gate (which has to see the data-only gauge structure) and before
+    // the solve.  The prior anchors each non-datum shared parameter to its
+    // previous-epoch estimate; it is skipped on a pivot handover, when the carried values
+    // belong to a retired datum.  Under network.scoped_handover_response (RTA-2) only the
+    // changed constellations' datum is retired: a per-constellation clock gauge is
+    // independent of its siblings, so carries of unaffected constellations remain valid
+    // and fold normally, and the per-key skip below drops exactly the retired-datum keys.
+    // Off reproduces the legacy all-or-nothing skip byte for byte (the outer gate reduces
+    // to !datum_changed, and the per-key skip cannot trigger inside it).
     if ((!datum_changed || scoped_handover) && !prev_carry.empty() && !fullcov_on) {
         std::vector<NetworkEstimator::SharedPrior> priors;
         priors.reserve(prev_carry.size());
         for (const CarryPrior& cp : prev_carry) {
-            if (cp.kind == SharedParamKind::VtecSh) continue;  // SH prior is folded PRE-gate
-            // Fix A hold: the held phase-bias prior is injected by its own block
-            // BELOW, unconditionally — the phase-ensemble datum is orthogonal to
-            // the CLOCK pivot handover this clock-frame carry is gated on, so a
-            // clock datum change must NOT drop it (else a held sat, whose Σz=0 fold
-            // buildEnsembleGauges skipped, is left un-datumed and the epoch withholds).
+            if (cp.kind == SharedParamKind::VtecSh) continue;  // SH prior is folded before the gate
+            // Fix A hold: the held phase-bias prior is injected unconditionally by
+            // networkInjectPhaseHoldPrior (before the gate).  The phase-ensemble datum is
+            // orthogonal to the clock pivot handover this clock-frame carry is gated on,
+            // so a clock datum change does not drop it (otherwise a held satellite, whose
+            // Σz=0 fold buildEnsembleGauges skipped, would be left without a datum and the
+            // epoch would withhold).
             if (phase_hold_on && cp.kind == SharedParamKind::PhaseBias) continue;
             if (handover_affects(cp.sat)) {
-                if (!sts_released(cp.sat)) continue;   // RTA-2: retired-datum key (scoped mode only)
-                ++ctx.counters.sts_rows_retained;      // queue 1(b): re-expressed ⇒ folds instead
+                if (!sts_released(cp.sat)) continue;   // retired-datum key, scoped mode only (RTA-2)
+                ++ctx.counters.sts_rows_retained;      // re-expressed ⇒ folds instead (queue 1(b))
             }
-            // Card 3 (eq34) D4 hygiene: a re-referenced (sat,σ) stepped its b_s
-            // frame at this epoch's election — marginalize its carried PB prior
-            // for ONE epoch (it belongs to the retired frame; folding it yanks
-            // the new frame by up to the full re-level).  Mirrors the RTA-2
-            // scoped skip; always empty when eq34 is off.
+            // eq34 D4 hygiene (card 3): a re-referenced (sat,σ) stepped its b_s frame at
+            // this epoch's election, so its carried PB prior is marginalized for one epoch
+            // (it belongs to the retired frame; folding it would pull the new frame by up
+            // to the full re-level).  Mirrors the RTA-2 scoped skip; always empty when eq34
+            // is off.
             if (cp.kind == SharedParamKind::PhaseBias
                 && eq34_reref.count({cp.sat, cp.signal})) continue;
-            // QUEUE item 1(d): the SAME marginalization for the anchored
-            // election's handovers (SPEC_pivot_visibility_gauge_defect §5.07.5
-            // R1) — the exact skip this comment block was already describing,
-            // extended to the election whose un-transformed carry the satellite
-            // clock was measured absorbing.  Always empty when the knob is off.
+            // The same marginalization for the anchored election's handovers (queue item
+            // 1(d); SPEC_pivot_visibility_gauge_defect §5.07.5 R1): the skip above,
+            // extended to the election whose untransformed carry the satellite clock was
+            // absorbing.  Always empty when the knob is off.
             if (cp.kind == SharedParamKind::PhaseBias
                 && pa_reref.count({cp.sat, cp.signal})) continue;
             if (clk_model_on && cp.kind == SharedParamKind::Clock) continue;  // clock is on clock_osc
             const double q = (cp.kind == SharedParamKind::Clock)    ? q_clock
                            : (cp.kind == SharedParamKind::CodeBias) ? q_cb
                                                                     : q_pb;
-            // READMIT (E2 seed-first re-admission): a PARKED entry is a departed satellite's
-            // pre-gap realization.  Column still absent ⇒ nothing to fold (skipped BEFORE
-            // the anchor fold, which would otherwise stamp the satellite); column
-            // re-registered ⇒ this is the RE-COUPLING edge — the entry seeds it at
+            // READMIT (E2 seed-first re-admission): a parked entry is a departed
+            // satellite's pre-gap realization.  Column still absent ⇒ nothing to fold
+            // (skipped before the anchor fold, which would otherwise stamp the satellite).
+            // Column re-registered ⇒ the re-coupling edge: the entry seeds it at
             // var + q·gap, the Q3 anchor folds over its own per-satellite elapsed time
-            // bounded by the seed horizon, and the guard re-validates; expired ⇒ skipped
-            // here, dropped at the stash.  seed_gap == 0 leaves every expression below the
-            // legacy one, character for character.
+            // bounded by the seed horizon, and the guard re-validates.  Expired ⇒ skipped
+            // here and dropped at the stash.  With seed_gap == 0 every expression below is
+            // the legacy one, character for character.
             double seed_gap = 0.0;
             if (cp.t_park_s > 0.0) {
                 if (!(readmit_h > 0.0) || !readmitColumnPresent(est, cp)) continue;
                 seed_gap = now_s - cp.t_park_s;
                 if (!(seed_gap > 0.0) || seed_gap > readmit_h) continue;
             }
-            // A clock-monitor-flagged satellite folds with the large REINIT variance (a soft
-            // large-q reinitialization): the weak prior still anchors the parameter at its
-            // previous value — curbing the collective datum drift a hard refloat causes — but
-            // is loose enough for the data to walk a frozen clock back toward truth.
+            // A clock-monitor-flagged satellite folds with the large reinit variance (a
+            // soft large-q reinitialization): the weak prior still anchors the parameter
+            // at its previous value, which limits the collective datum drift a hard
+            // refloat causes, but is loose enough for the data to move a frozen clock back
+            // toward truth.
             double var_eff = cp.inflate_q ? clk_mon_reinit_var
                                           : cp.var + q * (seed_gap > 0.0 ? seed_gap
                                                                          : std::max(0.0, dt));
-            // The satellite clock's
-            // temporal constraint.  An inflate_q key is deliberately EXCLUDED — that
-            // is a monitor-driven soft refloat, not the hand carry model, and
-            // overriding it with a stiff anchor would re-freeze exactly what the
-            // monitor just loosened.  OFF ⇒ the returned var_eff is the expression
-            // above, character for character.
+            // The satellite clock's temporal constraint.  An inflate_q key is excluded on
+            // purpose: that is a monitor-driven soft refloat, not the hand carry model,
+            // and a stiff anchor on it would re-freeze what the monitor just loosened.
+            // Off ⇒ var_eff is the expression above, character for character.
             bool seed_anchored = false;
             if (cta_on && cp.kind == SharedParamKind::Clock && !cp.inflate_q) {
                 const ClockAnchorFold cf = clockAnchorFoldVariance(
@@ -3670,34 +3609,34 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                 var_eff       = cf.var_eff;
                 seed_anchored = cf.anchored;
             }
-            // B4: floor the D2 phase-bias / code-bias carry variance (caps Λ so a stiff
-            // zero-q carry cannot lock a biased product in), mirroring the ambiguity-carry
-            // floor.  Only on the non-refloat path (a clk-monitor refloat is deliberately
-            // loose); clock is out of scope (own two-state model / monitor).  0 = off.
+            // Floor the D2 phase-bias / code-bias carry variance (B4), which caps Λ so a
+            // stiff zero-q carry cannot lock in a biased product, mirroring the
+            // ambiguity-carry floor.  Only on the non-refloat path (a clock-monitor
+            // refloat is loose on purpose); the clock is out of scope (it has its own
+            // two-state model and monitor).  0 = off.
             if (!cp.inflate_q) {
                 const double floor = (cp.kind == SharedParamKind::PhaseBias) ? pb_var_floor
                                    : (cp.kind == SharedParamKind::CodeBias)  ? cb_var_floor
                                                                              : 0.0;
                 if (floor > 0.0) var_eff = std::max(var_eff, floor);
             }
-            var_eff = vce_scale_shared(cp.kind, cp.sat, cp.inflate_q, var_eff);  // M2 v2 factor
+            var_eff = vce_scale_shared(cp.kind, cp.sat, cp.inflate_q, var_eff);  // VCE apply factor (M2 v2)
             if (!(var_eff > 0.0)) continue;
             NetworkEstimator::SharedPrior p;
             p.kind = cp.kind; p.sat = cp.sat; p.signal = cp.signal;
             p.value = cp.value; p.info = 1.0 / var_eff;
             if (anchor_info_trace.is_open() && cp.kind == SharedParamKind::Clock)
-                clk_prior_info[cp.sat] = p.info;   // B7: scalar clock carry info on this column
+                clk_prior_info[cp.sat] = p.info;   // scalar clock carry info on this column (B7)
             priors.push_back(p);
             if (seed_gap > 0.0)
                 readmitNoteSeed(ctx, traces, t, cp, seed_gap, readmit_h, var_eff, seed_anchored);
         }
         est.attribTag("d2_carry");
-        // Card Q3 §2.1: with the gauge-free fold armed, the CLOCK entries are
-        // folded with the per-constellation common direction marginalized out —
-        // the anchor then constrains the estimable between-satellite differences
-        // and leaves the gauge to the S-basis datum.  Non-clock entries fold
-        // identically either way, and the OFF path is the same single call it
-        // always was.
+        // With the gauge-free fold armed (card Q3 §2.1), the clock entries are folded
+        // with the per-constellation common direction marginalized out, so the anchor
+        // constrains the estimable between-satellite differences and leaves the gauge to
+        // the S-basis datum.  Non-clock entries fold identically either way, and the off
+        // path is the original single call.
         if (ctx.knobs.carry_gauge_free) {
             const std::size_t gf = est.addSharedPriorClockGaugeFree(
                 priors, ctx.knobs.carry_gauge_free_closure);
@@ -3709,18 +3648,17 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
         if (within_epoch_armed)
             cap_priors.insert(cap_priors.end(), priors.begin(), priors.end());
     } else if ((!datum_changed || scoped_handover) && !prev_carry.empty()) {
-        // C1 (network.shared_carry_full_cov): fold the carried block as ONE dense
-        // information prior Λ = (P_prev + Q)⁻¹ — the information-form KF time
-        // update on the shared border, recovering the cross-covariances (most
-        // critically clock↔phase-bias) the diagonal stash above discards.  Entry
-        // selection, per-key skip rules, and the per-key var_eff surgery
-        // (inflate_q reinit, q·dt inflation, B4 floors) are IDENTICAL to the
-        // diagonal branch; the only new content is the retained off-diagonals.
-        // Keys with no matrix row (first fold after a warm resume, or after a
-        // stash-side non-finite screen) fold through the legacy diagonal path —
-        // the mode degrades per-key, it never breaks.  Keys skipped by rule are
-        // MARGINALIZED (their rows/cols of P are simply not selected), which is
-        // the exact treatment for a departed/retired parameter.
+        // Dense carry (C1, network.shared_carry_full_cov): fold the carried block as one
+        // dense information prior Λ = (P_prev + Q)⁻¹, the information-form KF time update
+        // on the shared border, which keeps the cross-covariances (most importantly
+        // clock↔phase-bias) that the diagonal branch above discards.  Entry selection,
+        // per-key skip rules and the per-key var_eff adjustments (inflate_q reinit, q·dt
+        // inflation, B4 floors) are identical to the diagonal branch; the only addition
+        // is the retained off-diagonals.  Keys with no matrix row (the first fold after a
+        // warm resume, or after a stash-side non-finite screen) fold through the legacy
+        // diagonal path, so the mode degrades per key and does not fail.  Keys skipped by
+        // rule are marginalized (their rows and columns of P are not selected), which is
+        // the exact treatment for a departed or retired parameter.
         std::vector<NetworkEstimator::SharedPrior> dkeys;     // dense-eligible set
         std::vector<std::size_t> drow;                        // row in prev_carry_cov.P
         std::vector<double> dvar_eff;                         // per-key var_eff (diag + fallback)
@@ -3731,27 +3669,27 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
         dvar_eff.reserve(prev_carry.size());
         dinflate.reserve(prev_carry.size());
         for (const CarryPrior& cp : prev_carry) {
-            if (cp.kind == SharedParamKind::VtecSh) continue;  // SH prior is folded PRE-gate
+            if (cp.kind == SharedParamKind::VtecSh) continue;  // SH prior is folded before the gate
             if (phase_hold_on && cp.kind == SharedParamKind::PhaseBias) continue;  // Fix A hold: injected separately (datum-change-independent)
             if (handover_affects(cp.sat)) {
-                if (!sts_released(cp.sat)) continue;   // RTA-2: retired-datum key (scoped mode only)
-                ++ctx.counters.sts_rows_retained;      // queue 1(b): re-expressed ⇒ folds instead
+                if (!sts_released(cp.sat)) continue;   // retired-datum key, scoped mode only (RTA-2)
+                ++ctx.counters.sts_rows_retained;      // re-expressed ⇒ folds instead (queue 1(b))
             }
-            // Card 3 (eq34) D4 hygiene: marginalize re-referenced PB keys for
-            // this epoch (retired frame) — see the diagonal branch above.
+            // eq34 D4 hygiene (card 3): marginalize re-referenced PB keys for this epoch
+            // (retired frame); see the diagonal branch above.
             if (cp.kind == SharedParamKind::PhaseBias
                 && eq34_reref.count({cp.sat, cp.signal})) continue;
-            // QUEUE item 1(d): anchored-election handovers, same treatment
-            // (see the diagonal branch above).
+            // Anchored-election handovers (queue item 1(d)), same treatment (see the
+            // diagonal branch above).
             if (cp.kind == SharedParamKind::PhaseBias
                 && pa_reref.count({cp.sat, cp.signal})) continue;
             if (clk_model_on && cp.kind == SharedParamKind::Clock) continue;  // clock is on clock_osc
             const double q = (cp.kind == SharedParamKind::Clock)    ? q_clock
                            : (cp.kind == SharedParamKind::CodeBias) ? q_cb
                                                                     : q_pb;
-            // READMIT (E2): the SAME parked-entry disposition as the diagonal branch above
-            // (a parked entry has no dense row — it was never in the stashed block — so a
-            // seed always folds through the diagonal leftovers below).
+            // READMIT (E2): the same parked-entry disposition as the diagonal branch above
+            // (a parked entry has no dense row, since it was never in the stashed block,
+            // so a seed always folds through the diagonal leftovers below).
             double seed_gap = 0.0;
             if (cp.t_park_s > 0.0) {
                 if (!(readmit_h > 0.0) || !readmitColumnPresent(est, cp)) continue;
@@ -3761,13 +3699,12 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             double var_eff = cp.inflate_q ? clk_mon_reinit_var
                                           : cp.var + q * (seed_gap > 0.0 ? seed_gap
                                                                          : std::max(0.0, dt));
-            // The SAME clock-anchor decision as the diagonal branch above.
-            // It must be the same, and it must be on the DIAGONAL of cov_eff: the
-            // marginal prior on any one state has to be identical on both branches
-            // (the property that makes the guard statistic path-independent), and
-            // the dense fold's off-diagonals are retained deliberately — the anchor
-            // does not re-create the independence assumption C1 removed on the very
-            // state it makes stiffest (SPEC §2.1, assessment deviation #1).
+            // The same clock-anchor decision as in the diagonal branch above, applied on
+            // the diagonal of cov_eff: the marginal prior on any one state has to be
+            // identical on both branches (the property that makes the guard statistic
+            // path-independent), and the dense fold's off-diagonals are kept on purpose,
+            // so the anchor does not re-create the independence assumption C1 removed on
+            // the state it makes stiffest (SPEC §2.1, assessment deviation #1).
             bool seed_anchored = false;
             if (cta_on && cp.kind == SharedParamKind::Clock && !cp.inflate_q) {
                 const ClockAnchorFold cf = clockAnchorFoldVariance(
@@ -3782,7 +3719,7 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                                                                              : 0.0;
                 if (floor > 0.0) var_eff = std::max(var_eff, floor);
             }
-            var_eff = vce_scale_shared(cp.kind, cp.sat, cp.inflate_q, var_eff);  // M2 v2 factor
+            var_eff = vce_scale_shared(cp.kind, cp.sat, cp.inflate_q, var_eff);  // VCE apply factor (M2 v2)
             if (!(var_eff > 0.0)) continue;
             NetworkEstimator::SharedPrior p;
             p.kind = cp.kind; p.sat = cp.sat; p.signal = cp.signal;
@@ -3792,7 +3729,7 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             const auto rit = prev_carry_cov.row.find(sharedCarryKey(cp.kind, cp.sat, cp.signal));
             if (rit == prev_carry_cov.row.end()) {
                 if (anchor_info_trace.is_open() && cp.kind == SharedParamKind::Clock)
-                    clk_prior_info[cp.sat] = p.info;   // B7: diagonal-carry info (no dense row)
+                    clk_prior_info[cp.sat] = p.info;   // diagonal-carry info, no dense row (B7)
                 leftovers.push_back(p);
                 continue;
             }
@@ -3803,13 +3740,13 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
         }
         const std::size_t kd = dkeys.size();
         if (kd > 0) {
-            // P_eff over the dense set: subset of the stashed posterior covariance;
-            // diagonal := var_eff (the stashed diagonal equals cp.var by
-            // construction, so this IS the legacy q·dt inflation + B4 floor); a
-            // clock-monitor-flagged key is DECORRELATED before its diagonal becomes
-            // the reinit variance (its old cross-covariances are stale once the
-            // variance is replaced — and a swapped diagonal under live off-diagonals
-            // could make P_eff indefinite).
+            // P_eff over the dense set: the subset of the stashed posterior covariance,
+            // with diagonal := var_eff (the stashed diagonal equals cp.var by
+            // construction, so this is the legacy q·dt inflation plus the B4 floor).  A
+            // clock-monitor-flagged key is decorrelated before its diagonal becomes the
+            // reinit variance: its old cross-covariances are stale once the variance is
+            // replaced, and a swapped diagonal under live off-diagonals could make P_eff
+            // indefinite.
             Eigen::MatrixXd cov_eff(kd, kd);
             for (std::size_t a = 0; a < kd; ++a)
                 for (std::size_t b = 0; b < kd; ++b)
@@ -3831,7 +3768,7 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                 if (anchor_info_trace.is_open())
                     for (std::size_t a = 0; a < kd; ++a)
                         if (dkeys[a].kind == SharedParamKind::Clock)
-                            clk_prior_info[dkeys[a].sat] = lam(static_cast<Eigen::Index>(a));  // B7: folded Λ(c,c)
+                            clk_prior_info[dkeys[a].sat] = lam(static_cast<Eigen::Index>(a));  // folded Λ(c,c) (B7)
                 if (ctx.knobs.carry_gauge_free) {
                     std::size_t nclk = 0;
                     for (std::size_t a = 0; a < kd; ++a)
@@ -3844,15 +3781,15 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                     cap_dense_cov  = cov_eff;
                 }
             } catch (const std::exception& e) {
-                // Numerical fallback: fold the SAME keys as independent diagonal
-                // priors with 1/var_eff — exactly the legacy semantics for this
-                // epoch.  Self-healing: the next emit re-stashes a fresh block.
+                // Numerical fallback: fold the same keys as independent diagonal priors
+                // with 1/var_eff, the legacy semantics for this epoch.  The next emit
+                // re-stashes a fresh block, so the fallback lasts one epoch.
                 log->warn("Network (C1): dense carried-covariance fold failed ({}) — "
                           "falling back to the diagonal carry for this epoch.",
                           e.what());
                 traces.emitEvent(t, "D2_DENSE", "fallback_diagonal", "", "",
                           static_cast<double>(kd), std::nullopt, "fallback",
-                          e.what());   // non-PD / non-finite / conditioning budget — emitEvent sanitizes commas
+                          e.what());   // non-PD, non-finite or conditioning budget; emitEvent sanitizes commas
                 for (std::size_t a = 0; a < kd; ++a) {
                     if (anchor_info_trace.is_open() &&
                         dkeys[a].kind == SharedParamKind::Clock)
@@ -3862,24 +3799,22 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             }
         }
         est.attribTag("d2_leftover");
-        // §18.12 (invariant #7, silent side): the dense border block is deliberately NOT
-        // snapshotted (see the C1 dense-covariance note in networkTryWarmResume), so at
-        // the FIRST post-resume fold every carried key misses prev_carry_cov.row and
-        // folds through the legacy DIAGONAL path while the restored coupling rows are
-        // already conditional.  That asymmetry lasts exactly one epoch and is present in
-        // EVERY arm (it is not an A/B confounder), but its SIZE is the follow-on
-        // increment's target — measure it instead of assuming it.  Read HERE, one step
-        // above the gauge-free / plain addSharedPrior branch below, so the count is the
-        // same population on BOTH fold routes.
+        // First post-resume fold (§18.12, invariant #7): unless the dense border was
+        // restored from the snapshot's QK/QP records (RS-7, see networkTryWarmResume),
+        // every carried key misses prev_carry_cov.row here and folds through the legacy
+        // diagonal path while the restored coupling rows are already conditional.  That
+        // asymmetry lasts one epoch; the census measures its size instead of assuming
+        // it.  It is read here, before the gauge-free / plain addSharedPrior branch
+        // below, so the count covers the same population on both fold routes.
         if (ctx.carry.resume_cpl_census_pending)
             ctx.counters.n_resume_cpl_diag_border =
                 static_cast<long long>(leftovers.size());
-        // Card Q3 §2.1: leftovers are the keys the dense fold could not take (no
-        // matrix row after a warm resume, or a non-finite screen).  Under the
-        // gauge-free fold they form their own group — and a constellation that
-        // contributes only ONE leftover clock is entirely gauge, so nothing is
-        // folded for it.  That is conservative by construction: the fallback can
-        // under-anchor, never re-introduce gauge information.
+        // Leftovers are the keys the dense fold could not take (no matrix row after a
+        // warm resume, or a non-finite screen; card Q3 §2.1).  Under the gauge-free fold
+        // they form their own group, and a constellation that contributes one leftover
+        // clock is entirely gauge, so nothing is folded for it.  This is conservative by
+        // construction: the fallback can under-anchor but cannot re-introduce gauge
+        // information.
         if (ctx.knobs.carry_gauge_free)
             ctx.counters.cta_gf_keys +=
                 static_cast<long long>(est.addSharedPriorClockGaugeFree(
@@ -3889,12 +3824,13 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
         if (within_epoch_armed)
             cap_priors.insert(cap_priors.end(), leftovers.begin(), leftovers.end());
     }
-    // Card C-GF: the partial-support skip tally is RUN-scoped on the estimator and is
-    // read once at teardown — reading it here would miss the withdraw and
+    // The partial-support skip tally (card C-GF) is run-scoped on the estimator and is
+    // read once at teardown; reading it here would miss the withdraw and
     // within-epoch-replay folds, which run after this point in the epoch.
 
-    // (Fix A hold: the held phase-bias datum is injected PRE-gate above, next to
-    // the SH-VTEC prior — it is a datum, so the gate must see it.)
+    // (Fix A hold: the held phase-bias datum is injected before the gate by
+    // networkInjectPhaseHoldPrior, next to the SH-VTEC prior; it is a datum, so the
+    // gate has to see it.)
 }
 
 void networkInjectClockOscPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
@@ -3904,8 +3840,8 @@ void networkInjectClockOscPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                                 bool clk_model_warm, bool datum_changed,
                                 const std::set<char>& changed_consts,
                                 double pl_now_s, double dt, bool within_epoch_armed) {
-    // Alias block (INC-4 migration mechanic) — the relocated body reads the
-    // former runNetwork() locals under their original names.
+    // Alias block (INC-4): the relocated body reads the former runNetwork() locals under
+    // their original names.
     auto& clock_osc = ctx.carry.clock_osc;
     const double clk_model_q1 = ctx.knobs.clk_model_q1;
     const double clk_model_q2 = ctx.knobs.clk_model_q2;
@@ -3915,47 +3851,50 @@ void networkInjectClockOscPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     auto& cap_priors = ws.cap_priors;
     auto& clk_prior_info = ws.clk_prior_info;
     auto& anchor_info_trace = traces.anchor_info_trace;
-    // RTA-2 scope predicate — re-declared verbatim over the explicit
-    // (datum_changed, changed_consts) parameters; identical read points.
+    // Scope predicate (RTA-2), re-declared over the explicit (datum_changed,
+    // changed_consts) parameters, with the same read points.
     const auto handover_affects = [&](const std::string& sat) {
         return datum_changed
             && datumChangeAffectsKey(sat, changed_consts, scoped_handover);
     };
 
-    // --- Two-state oscillator clock carry-forward prior (network.clock_model) ------------
-    // The satellite clock's prior comes from the physical clock model: predict [offset,drift]
-    // forward and fold the offset (mean = drift-following prediction, info = 1/predicted-var).
-    // Because the prediction is tight (~cm), the post-solve innovation exposes a lock-in that
-    // the scalar random walk would freeze.  Skipped on a pivot handover (retired datum) and
-    // for the first warm epoch of each satellite (no prediction until it is seeded).
-    // RTA-2 (network.scoped_handover_response): a handover retires only the changed
-    // constellation(s)' datum, so under scoping their satellites alone skip the prediction
-    // (they re-seed from this epoch's new-datum solve in the post-solve update); unaffected
-    // constellations' oscillators predict normally.  OFF is byte-identical (outer gate
-    // collapses to !datum_changed; the per-sat skip can never trigger inside it).
+    // --- Two-state oscillator clock carry-forward prior (network.clock_model) -----------
+    // The satellite clock's prior comes from the physical clock model: predict
+    // [offset, drift] forward and fold the offset (mean = drift-following prediction,
+    // info = 1/predicted var).  Because the prediction is tight (cm level), the
+    // post-solve innovation exposes a lock-in that the scalar random walk would freeze.
+    // Skipped on a pivot handover (retired datum) and for the first warm epoch of each
+    // satellite (no prediction until it is seeded).  Under
+    // network.scoped_handover_response (RTA-2) a handover retires only the changed
+    // constellations' datum, so only their satellites skip the prediction (they re-seed
+    // from this epoch's new-datum solve in the post-solve update); oscillators of
+    // unaffected constellations predict normally.  Off is byte-identical (the outer
+    // gate reduces to !datum_changed, and the per-satellite skip cannot trigger inside
+    // it).
     if (clk_model_warm && (!datum_changed || scoped_handover)) {
         std::vector<NetworkEstimator::SharedPrior> clkp;
         clkp.reserve(clock_osc.size());
         for (const std::string& sat : registered_clock_sats) {
-            if (handover_affects(sat)) continue;  // RTA-2: retired-datum sat (scoped mode only)
+            if (handover_affects(sat)) continue;  // retired-datum satellite, scoped mode only (RTA-2)
             auto it = clock_osc.find(sat);
             if (it == clock_osc.end() || !it->second.init) continue;
-            // P0-3: predict over THIS satellite's true elapsed time, not the global
-            // epoch dt.  A satellite absent for several epochs (eclipse exclusion is
-            // ON in the clock-model config) would otherwise get an hours-old state
-            // predicted over ONE dt of Q — a falsely-tight prior.  Past a gap bound
-            // its carried state is stale: drop the prior entirely (reseed) so the
-            // clock re-acquires from data + the a-priori anchor rather than trusting
-            // an ancient value.  (Within the bound the Q·dt inflation over the true
-            // gap naturally de-weights the prior — the honest, self-limiting behavior.)
+            // Predict over this satellite's true elapsed time, not the global epoch dt
+            // (P0-3).  A satellite absent for several epochs (eclipse exclusion is on in
+            // the clock-model config) would otherwise get an hours-old state predicted
+            // over one dt of Q, a falsely tight prior.  Past the gap bound its carried
+            // state is stale: the prior is dropped (reseed), so the clock re-acquires from
+            // data and the a-priori anchor instead of an old value.  (Within the bound,
+            // the Q·dt inflation over the true gap de-weights the prior, which limits
+            // itself.)
             const double sat_dt = (it->second.t_last > 0.0)
                                       ? (pl_now_s - it->second.t_last) : std::max(0.0, dt);
             if (!(sat_dt >= 0.0) || sat_dt > clk_model_max_gap) {
-                // T5 (V2 blind spot): the stale-carry reseed is otherwise SILENT.  Naturally
-                // edge-triggered — the update reseeds t_last, so next epoch is fresh.
+                // Event for the stale-carry reseed, which is otherwise not reported (T5,
+                // V2 blind spot).  It is edge-triggered by construction: the update
+                // reseeds t_last, so the next epoch is fresh.
                 traces.emitEvent(t, "T5_clock_model", "stale_prior_reseed", sat, "", sat_dt,
                           clk_model_max_gap, "reseed", "carry past gap");
-                continue;   // R11: stale → no prior (reseed)
+                continue;   // stale → no prior, reseed (R11)
             }
             const ClockOscPred pr = clockOscPredict(it->second, sat_dt,
                                                     clk_model_q1, clk_model_q2);
@@ -3964,7 +3903,7 @@ void networkInjectClockOscPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             NetworkEstimator::SharedPrior p;
             p.kind = SharedParamKind::Clock; p.sat = sat; p.signal = "";
             p.value = pr.x0; p.info = 1.0 / pr.p00;
-            if (anchor_info_trace.is_open()) clk_prior_info[sat] = p.info;  // B7: two-state clock-model prior info
+            if (anchor_info_trace.is_open()) clk_prior_info[sat] = p.info;  // two-state clock-model prior info (B7)
             clkp.push_back(p);
         }
         est.attribTag("clock_osc");
@@ -3980,10 +3919,10 @@ void networkRxCbDemeanPrepass(NetworkRunContext& ctx,
                               double pl_now_s) {
     if (!ctx.knobs.rx_cb_on || !ctx.knobs.rx_cb_demean
         || !ctx.knobs.rx_cb_demean_within) return;
-    const auto& rx_cb_carry = ctx.carry.rx_cb_carry;   // READ-only here
-    // Clear the per-epoch trace record FIRST: an epoch that computes no μ (cold
-    // start, or a full carry wipe) must not leave the previous epoch's row standing
-    // for the trace emitter to publish under this epoch's timestamp.
+    const auto& rx_cb_carry = ctx.carry.rx_cb_carry;   // read-only here
+    // Clear the per-epoch trace record first: an epoch that computes no μ (cold start,
+    // or a full carry wipe) must not leave the previous epoch's row for the trace
+    // emitter to publish under this epoch's timestamp.
     ctx.carry.rx_cb_demean_last.clear();
     if (rx_cb_carry.empty()) return;                   // cold start: nothing to average
     constexpr double kRxCbMaxGapS = 900.0;             // the inject's own horizon
@@ -4001,7 +3940,7 @@ void networkRxCbDemeanPrepass(NetworkRunContext& ctx,
             if (cb_idx < 0 || cb_idx >= x_lin.size()) continue;
             if (!std::isfinite(x_lin(cb_idx))) continue;
             const auto cbit = rx_cb_carry.find({static_cast<int>(i), cb_key});
-            if (cbit == rx_cb_carry.end()) continue;           // cold — nothing to fold
+            if (cbit == rx_cb_carry.end()) continue;           // cold: nothing to fold
             const double gap = pl_now_s - cbit->second.last_seen_s;
             if (gap > kRxCbMaxGapS) continue;                  // the fold would be skipped
             const double var_eff = cbit->second.var
@@ -4016,10 +3955,10 @@ void networkRxCbDemeanPrepass(NetworkRunContext& ctx,
         }
     }
 
-    // Same reduction, same thin-mean floor, same freeze semantics as the LV-2
-    // harvest path — only the EPOCH the result is applied to differs.  Writing
-    // ctx.carry.rx_cb_demean_mu here (serially, before PASS B) is what removes the
-    // lag; the parallel produce phase reads it exactly as before.
+    // Same reduction, thin-mean floor and freeze semantics as the LV-2 harvest path;
+    // only the epoch the result is applied to differs.  Writing
+    // ctx.carry.rx_cb_demean_mu here (serially, before PASS B) removes the one-epoch
+    // lag, and the parallel produce phase reads it as before.
     bool any = false;
     for (const auto& [fam, s] : sum_lam) {
         const auto held = ctx.carry.rx_cb_demean_mu.find(fam);
@@ -4059,11 +3998,11 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                                 const std::vector<std::string>& registered_clock_sats,
                                 const std::set<std::string>& shared_phase_keys,
                                 const std::vector<std::pair<std::string, std::string>>& registered_code_keys) {
-    // Alias block (INC-4 migration mechanic) — the relocated body reads the
-    // former runNetwork() locals under their original names.
+    // Alias block (INC-4): the relocated body reads the former runNetwork() locals under
+    // their original names.
     auto& local_carry = ctx.carry.local_carry;
     auto& zwd_carry = ctx.carry.zwd_carry;
-    auto& iono_carry = ctx.carry.iono_carry;   // QUEUE 8b
+    auto& iono_carry = ctx.carry.iono_carry;   // slant-iono carry (queue 8b)
     auto& rpb_carry = ctx.carry.rpb_carry;
     auto& eq34_reref = ctx.carry.eq34_reref;
     auto& n_cpl_harvest_fail = ctx.counters.n_cpl_harvest_fail;
@@ -4074,71 +4013,70 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
     const double pl_max_gap_s = ctx.knobs.pl_max_gap_s;
     const double pl_q_amb = ctx.knobs.pl_q_amb;
     const double pl_var_floor = ctx.knobs.pl_var_floor;
-    const bool   pl_los_scale = ctx.knobs.pl_los_scale;   // F1: mirror the injector's per-LOS B_eff in the fold-variance readback
-    const bool   pl_local_block = ctx.knobs.pl_local_block; // F3: stash the harvest cross-covariance block beside the per-column carry
-    // RF-1 §3.3(b): the birth-prior FLOOR the stash records in LocalCarry::var_birth.
-    // 0.0 (default) ⇒ var_birth == var_first to the ULP, and nothing reads either.
+    const bool   pl_los_scale = ctx.knobs.pl_los_scale;   // mirror the injector's per-LOS B_eff in the fold-variance readback (F1)
+    const bool   pl_local_block = ctx.knobs.pl_local_block; // stash the harvest cross-covariance block beside the per-column carry (F3)
+    // Birth-prior floor that the stash records in LocalCarry::var_birth (RF-1 §3.3(b)).
+    // 0.0 (default) ⇒ var_birth == var_first to the ULP, so the floor has no effect.
     const double amb_birth_var_floor = ctx.knobs.amb_birth_var_floor;
-    // RF-1 step 4: the σ-power the birth floor's elevation mapping uses — the CODE
-    // weights', because the floor is a statement about what a CODE-determined level is
-    // worth (design §3.3(b)).
+    // The σ-power of the birth floor's elevation mapping is the code weights' power,
+    // because the floor states what a code-determined level is worth (RF-1 step 4,
+    // design §3.3(b)).
     const double amb_elev_power = config_.getCodeElevationPower();
-    // RF-1 §7.4 (network.trace_amb_state): the per-arc carry-state trace.  The stride
-    // gates TRAJECTORY rows only — an EVENT (birth / drop / erase) is written on every
-    // epoch, because an inventory that skips events is not an inventory.  OFF the whole
-    // block below is unreachable (byte-identical).
+    // Per-arc carry-state trace (network.trace_amb_state, RF-1 §7.4).  The stride gates
+    // trajectory rows only; an event (birth / drop / erase) is written on every epoch,
+    // so the trace is a complete inventory of events.  Off, the whole block below is
+    // unreachable (byte-identical).
     const bool amb_state_on = ctx.knobs.trace_amb_state;
     const bool amb_state_tr =
         amb_state_on
         && (ctx.knobs.trace_amb_state_every <= 1
             || (static_cast<long long>(ctx.counters.n_loop_epochs)
                 % ctx.knobs.trace_amb_state_every) == 0);
-    // Age in EPOCHS for the trace's relevel clock: the run's OWN observed inter-epoch
-    // spacing, exactly as the young-arc inflate derives it, so the column means the same
-    // thing at 1 s and 30 s cadence and no nominal rate is invented.  ⚠ Read here and
-    // not later: ctx.carry.pl_prev_now_s is advanced to THIS epoch at the very end of
-    // this function, so inside the stash loop it still holds the previous stamp.
+    // Age in epochs for the trace's relevel clock uses the run's own observed
+    // inter-epoch spacing, as the young-arc inflation derives it, so the column means the
+    // same thing at 1 s and 30 s cadence without a nominal rate.  It is read here, not
+    // later: ctx.carry.pl_prev_now_s is advanced to this epoch at the end of this
+    // function, so inside the stash loop it still holds the previous stamp.
     const double amb_state_dt_ep_s = [&] {
         const double dt = pl_now_s - ctx.carry.pl_prev_now_s;
         return (std::isfinite(dt) && dt > 0.0 && dt <= pl_max_gap_s) ? dt : 0.0;
     }();
     const bool   zwd_on = ctx.knobs.zwd_on;
-    const bool   iono_on = ctx.knobs.iono_on;             // QUEUE 8b
+    const bool   iono_on = ctx.knobs.iono_on;             // slant-iono carry (queue 8b)
     const double iono_q = ctx.knobs.iono_q;
     const double iono_var_floor = ctx.knobs.iono_var_floor;
     const double iono_max_gap_s = ctx.knobs.iono_max_gap_s;
     const double eq34_rpb_q = ctx.knobs.eq34_rpb_q;
     const bool   phase_datum_prioritized = ctx.knobs.phase_datum_prioritized;
-    // PRIOR-RESIDUAL CENSUS — the pl / zwd /
-    // rxcb feed arms.  Resolved once at run start into per-family bools, so an
-    // OFF run pays one bool test per harvest loop and nothing else.
+    // Prior-residual census: the pl / zwd / rxcb feed arms.  Resolved once at run start
+    // into per-family bools, so an off run pays one bool test per harvest loop and
+    // nothing else.
     const bool   prires_pl   = ctx.knobs.prires_pl;
     const bool   prires_zwd  = ctx.knobs.prires_zwd;
-    const bool   prires_iono = ctx.knobs.prires_iono;   // QUEUE 8b
+    const bool   prires_iono = ctx.knobs.prires_iono;   // slant-iono carry (queue 8b)
     const bool   prires_rxcb = ctx.knobs.prires_rxcb;
-    // RS-10b (§21.21): the former `zwd_q` alias is gone on purpose — this body's one
-    // consumer (the prior-residual census's fold_var) has to read the EFFECTIVE q
-    // through NetworkKnobs::zwdQEff(zwd_seam_live), because inside a live seam window
-    // an armed network.zwd_seam_reseed_q replaces network.zwd_carry_q at the injector.
-    // A bare zwd_q here would silently mis-scale the `zwd` family's σ̂₀.
-    // B9-in-block (network.carry_zwd_in_block): the ZWD column joins the F3 harvest
-    // block.  Conjoined with the SAME live predicate the block itself carries
-    // (pl_local_block && carry_cpl_cond) so the harvest and the inject agree on which
-    // station-epochs have a block at all; carry_cpl_joint is the injector's mutex and
-    // never reaches the block path there either.  OFF ⇒ `cols` is untouched and
-    // PlHarvestBlock::C keeps its exact pre-card dimension (byte-identical).
+    // There is no `zwd_q` alias here, on purpose (RS-10b, §21.21): this body's one
+    // consumer (the prior-residual census's fold_var) reads the effective q through
+    // NetworkKnobs::zwdQEff(zwd_seam_live), because inside a live seam window an armed
+    // network.zwd_seam_reseed_q replaces network.zwd_carry_q at the injector.  A bare
+    // zwd_q would mis-scale the `zwd` family's σ̂₀ without any warning.
+    // ZWD in the local block (B9-in-block, network.carry_zwd_in_block): the ZWD column
+    // joins the F3 harvest block.  It is gated on the same live predicate as the block
+    // itself (pl_local_block && carry_cpl_cond), so the harvest and the inject agree on
+    // which station-epochs have a block; carry_cpl_joint is the injector's mutex and
+    // does not reach the block path there either.  Off ⇒ `cols` is untouched and
+    // PlHarvestBlock::C keeps its dimension without the ZWD column (byte-identical).
     const bool   zwd_blk_on  = ctx.knobs.zwd_in_block && pl_local_block && carry_cpl_cond;
-    // I-in-block (network.carry_iono_in_block): the per-LOS iono columns join the SAME
-    // harvest block, on the SAME live predicate, for the same reason — so the harvest and
-    // the inject agree on which station-epochs have a block at all.  OFF ⇒ `cols` is
-    // untouched and PlHarvestBlock::C keeps its exact pre-card dimension (byte-identical).
+    // Iono in the local block (network.carry_iono_in_block): the per-LOS iono columns
+    // join the same harvest block, on the same live predicate, for the same reason.
+    // Off ⇒ `cols` is untouched and PlHarvestBlock::C keeps its dimension
+    // (byte-identical).
     const bool   iono_blk_on = ctx.knobs.iono_blk && pl_local_block && carry_cpl_cond;
     const double iono_blk_gap_s = ctx.knobs.iono_blk_max_gap_s;
-    // RX-CLK-in-block (network.carry_rx_clock_in_block): the receiver-clock (and ISB)
-    // columns join the SAME harvest block, on the SAME live predicate, for the same
-    // reason — so the harvest and the inject agree on which station-epochs have a block
-    // at all.  OFF ⇒ `cols` is untouched and PlHarvestBlock::C keeps its exact pre-card
-    // dimension (byte-identical).
+    // Receiver clock in the local block (network.carry_rx_clock_in_block): the
+    // receiver-clock (and ISB) columns join the same harvest block, on the same live
+    // predicate, for the same reason.  Off ⇒ `cols` is untouched and PlHarvestBlock::C
+    // keeps its dimension (byte-identical).
     const bool   rxclk_blk_on  = ctx.knobs.rxclk_blk && pl_local_block && carry_cpl_cond;
     const double rxclk_gap_s   = ctx.knobs.rxclk_max_gap_s;
     const double rxclk_q       = ctx.knobs.rxclk_q_m2;
@@ -4149,28 +4087,27 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
     const bool   zwd_capture   = ctx.knobs.zwd_capture;
     const bool   zwd_seam_live = ctx.carry.zwd_seam_ep_left > 0;
 
-    // --- TWO-EDGE CONTINUOUS HANDOVER: ledger harvest -------------------------
+    // --- Two-edge continuous handover: ledger harvest --------------------------
     //
-    // Record, for every anchor-CANDIDATE column, the station's ABSOLUTE ambiguity
-    // estimate in THIS epoch's realized frame, so that if the anchor for that key
-    // moves next epoch the election can pin the successor HERE instead of at 0 —
-    // making the gauge change an S-transform rather than a re-realization.
+    // Record, for every anchor-candidate column, the station's absolute ambiguity
+    // estimate in this epoch's realized frame, so that if the anchor for that key moves
+    // next epoch the election can pin the successor at this value instead of at 0,
+    // which makes the gauge change an S-transform rather than a re-realization.
     //
-    // ⚠ WHY NOT `st.sm->getStateVector()(amb_idx)` AT ELECTION TIME.  That is
-    // `x_lin`, a linearization FRAME.  The network solve is never written back into
-    // the per-station StateManager (`setStateVector` runs once, at setup), and an
-    // `x_lin` shift on a local column is a proven exact solve no-op — so pinning to
-    // it would carry no information about where the arc actually sits.  The estimate
-    // is `x_lin + back-substituted Δx`, which exists only HERE, after the solve.
-    // Hence the one-epoch deferral: harvested now, consumed by the next epoch's
-    // election.  Same shape as carry_innov_pending / dw_release_pending /
-    // raim_refloat_pending.
+    // The election cannot read `st.sm->getStateVector()(amb_idx)` instead: that is
+    // `x_lin`, a linearization frame.  The network solve is never written back into the
+    // per-station StateManager (`setStateVector` runs once, at setup), and an `x_lin`
+    // shift on a local column is an exact solve no-op, so pinning to it would carry no
+    // information about where the arc sits.  The estimate is `x_lin + back-substituted
+    // Δx`, which exists only here, after the solve.  Hence the one-epoch deferral:
+    // harvested now, consumed by the next epoch's election, in the same way as
+    // carry_innov_pending / dw_release_pending / raim_refloat_pending.
     //
-    // The population is `R.qc_amb`, the carry-neutral census — columns PRESENT in
-    // A_r and UNPINNED.  That is exactly right: a station holding the pin is not a
-    // handover TARGET, and its pinned column carries no independent information.
-    // Deliberately NOT gated on carry_warm: the whole point is to work on the
-    // lineages where the phase-leveling carry does not exist.
+    // The population is `R.qc_amb`, the carry-neutral census: columns present in A_r
+    // and not pinned.  A station holding the pin is not a handover target, and its
+    // pinned column carries no independent information.  Not gated on carry_warm, on
+    // purpose: the ledger has to work on lineages where the phase-leveling carry does
+    // not exist.
     if (ctx.knobs.pd_handover_continuous) {
         ctx.carry.handover.value_abs.clear();
         for (size_t i = 0; i < stations.size(); ++i) {
@@ -4184,17 +4121,15 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             for (const auto& pa : R.qc_amb) cols_hv.push_back(pa.col);
             try {
                 xr  = est.reconstructStation(est_idx_hv, x_s);
-                // The pin is a hard ~1e10-weight constraint, so the re-coupling edge
-                // must be able to RE-VALIDATE the value before stamping it in
-                // (invariant #7).  BORDER-EXACT flavor, deliberately NOT
-                // the leveling carry's border-inclusive harvest: the shared phase-
-                // bias column's uncertainty moves the pin target and the realized
-                // frame TOGETHER (common-mode in the handover step), and folding it
-                // in refused 552/582 settled successors on the 12 h quiet flagship
-                // while §5.0's G21 (+17.07 m, 378 σ) sailed under a 1.0 m² ceiling —
-                // the marginal gates the wrong quantity in both directions.  What
-                // the ceiling must bound is the successor's error RELATIVE to the
-                // shared frame, which is what this returns.
+                // The pin is a hard constraint (weight ~1e10), so the re-coupling edge
+                // has to re-validate the value before applying it (invariant #7).  This
+                // uses the border-exact variance, not the leveling carry's
+                // border-inclusive harvest: the shared phase-bias column's uncertainty
+                // moves the pin target and the realized frame together (common mode in
+                // the handover step), so including it gates the wrong quantity in both
+                // directions, refusing settled successors while passing a large real
+                // error (§5.0's G21 case).  The ceiling has to bound the successor's
+                // error relative to the shared frame, which is what this returns.
                 vhv = est.pureConditionalLocalVarianceDiag(est_idx_hv, cols_hv);
             } catch (...) { continue; }
             for (std::size_t a = 0; a < R.qc_amb.size(); ++a) {
@@ -4204,12 +4139,13 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 if (!std::isfinite(value_abs)) continue;
                 const double var = (a < static_cast<std::size_t>(vhv.size()))
                                        ? vhv(static_cast<Eigen::Index>(a)) : -1.0;
-                // Key on "sat_signal" — byte-identical to the election's `amb`
+                // Key on "sat_signal", byte-identical to the election's `amb`
                 // (kAmbiguityDelimiter is '_'), so the lookup needs no translation.
                 AnchorHandoverLedger::Entry hv_e{value_abs, var};
                 // network.phase_datum_handover_max_var_ratio: the arc's first-stash
-                // conditional variance (0 = never carried ⇒ the ratio test refuses it).
-                // Read off LAST epoch's carry (this harvest precedes the leveling harvest).
+                // conditional variance (0 = never carried ⇒ the ratio test refuses it),
+                // read from the previous epoch's carry (this harvest precedes the leveling
+                // harvest).
                 {
                     const auto lcit = local_carry.find(
                         std::make_tuple(static_cast<int>(i), pa.sat, pa.signal));
@@ -4222,19 +4158,17 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
         ctx.carry.handover.primed = true;
     }
 
-    // --- Phase-leveling carry: harvest posterior + stash (Increment 1) ----
-    // For each present non-pivot station, recover its ambiguities' ABSOLUTE
-    // values (x_lin + back-substituted Δx) and their conditional variances
-    // (the cheap per-column diagonal harvest, NOT the full per-station inverse)
-    // and refresh the persistent carry.  Then drop entries unseen beyond the
-    // max gap (a stale-carry / map-growth guard — distinct from the slip-driven
-    // REFLOAT/DROP of later increments).
+    // --- Phase-leveling carry: harvest posterior and stash (increment 1) ----
+    // For each present non-pivot station, recover its ambiguities' absolute values
+    // (x_lin + back-substituted Δx) and their conditional variances (the cheap
+    // per-column diagonal harvest, not the full per-station inverse), and refresh the
+    // persistent carry.  Then drop entries unseen beyond the max gap (a stale-carry and
+    // map-growth guard, distinct from the slip-driven refloat/drop of later increments).
     if (carry_warm) {
-        // Build, ONCE per epoch, the shared
-        // column → identity descriptor map and the datum-frame marginal-variance
-        // diagonal, so each carried local's regression on the FREE shared border can
-        // be stashed in a layout-stable (identity-keyed) form.  Empty / unused on the
-        // legacy diagonal path → byte-identical.
+        // Build, once per epoch, the shared column → identity descriptor map and the
+        // datum-frame marginal-variance diagonal, so each carried local's regression on
+        // the free shared border can be stashed in a layout-stable (identity-keyed) form.
+        // Empty and unused on the legacy diagonal path → byte-identical.
         std::map<Eigen::Index, CoupledShared> col2desc;
         Eigen::MatrixXd cov_df;   // shared covariance, datum-pinned + ensemble-gauge cols zeroed
         if (carry_cpl_cond) {
@@ -4268,9 +4202,9 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                               regcol(std::move(d),
                                      est.vtecCoeffColumn(c.n, c.m, c.trig, lay.layer)); } catch (...) {}
                     }
-            // P_prev,jj a departed shared column is marginalized with next epoch: the
-            // datum-frame marginal variance (datum-pinned + ensemble-gauge cols EXACT = 0,
-            // mirroring conditionalLocalVarianceDiag's frame).
+            // P_prev,jj, with which a departed shared column is marginalized next epoch:
+            // the datum-frame marginal variance (datum-pinned and ensemble-gauge columns
+            // exactly 0, mirroring conditionalLocalVarianceDiag's frame).
             cov_df = est.sharedCovariance();
             for (const auto& p : plan.shared_datum)
                 if (p.column >= 0 && p.column < cov_df.rows()) {
@@ -4278,13 +4212,13 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 }
             est.zeroPhaseGaugeColumns(cov_df);
         }
-        // Harvest one carried column's PURE conditional variance (N_rr⁻¹)_cc
-        // + its regression on the free shared border (identity-keyed, sparsified).
+        // Harvest one carried column's pure conditional variance (N_rr⁻¹)_cc and its
+        // regression on the free shared border (identity-keyed, sparsified).
         // Returns {cond_var, coupling}; cond_var ≤ 0 on failure → the caller skips.
-        // F3 (network.phase_leveling_local_block): `cross_cols` / `cross` — when
-        // non-null, the SAME per-column solve is also read at the station's other
-        // carried columns and handed back as (N_rr⁻¹)_{c c_j} (a gather, no second
-        // solve); null on every other call (byte-identical).
+        // With F3 (network.phase_leveling_local_block), non-null `cross_cols` / `cross`
+        // make the same per-column solve also read the station's other carried columns
+        // and return them as (N_rr⁻¹)_{c c_j} (a gather, no second solve); both are null
+        // on every other call (byte-identical).
         auto harvestCoupling = [&](std::size_t est_idx, Eigen::Index col,
                                    const std::vector<Eigen::Index>* cross_cols,
                                    Eigen::VectorXd* cross)
@@ -4303,22 +4237,22 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     if (std::abs(mj) <= thr) continue;          // sparsify near-zero entries
                     const auto dit = col2desc.find(j);
                     if (dit == col2desc.end()) continue;        // col not in the enumerated shared set
-                    // A datum-pinned OR ensemble-gauge column is KEPT in the row
-                    // (coefficient + its ŝ_prev RHS term) with p_prev = 0 ("exactly known";
-                    // the zeroed cov_df diagonal mirrors conditionalLocalVarianceDiag's
-                    // frame).  The FULL regression row is exactly GAUGE-INVARIANT — every
-                    // station data row satisfies A_s·g_s + A_r·g_r = 0 for each structural
-                    // gauge direction, so M = e_cᵀN_rr⁻¹N_rs has Mᵀg_s = −g_r(c) and the
-                    // row's +1 local completes the cancellation.  The former FREE-column
-                    // restriction AMPUTATED the pinned columns' coefficients, leaving
-                    // M'ᵀg ≠ 0: every coupling row then observed the clock gauge, the W5
-                    // null-space gate saw "0 null directions vs declared dim" and WITHHELD
-                    // every epoch that carried rows — which kept the whole coupling carry
-                    // structurally inert in the field (the byte-identical-A/B trap).
-                    // Under the datum the pinned term is exact (Dirichlet elimination);
-                    // p_prev = 0 degrades every other path correctly: the κ time update
-                    // falls through unshrunk (a pinned column does not move) and a
-                    // departed pinned column marginalizes to +0.
+                    // A datum-pinned or ensemble-gauge column is kept in the row
+                    // (coefficient and its ŝ_prev RHS term) with p_prev = 0 ("exactly
+                    // known"; the zeroed cov_df diagonal mirrors
+                    // conditionalLocalVarianceDiag's frame).  The full regression row is
+                    // exactly gauge-invariant: every station data row satisfies
+                    // A_s·g_s + A_r·g_r = 0 for each structural gauge direction, so
+                    // M = e_cᵀN_rr⁻¹N_rs has Mᵀg_s = −g_r(c), and the row's +1 local
+                    // completes the cancellation.  Dropping the pinned columns'
+                    // coefficients would leave M'ᵀg ≠ 0: every coupling row would then
+                    // observe the clock gauge, and the W5 null-space gate would see "0 null
+                    // directions vs declared dim" and withhold every epoch that carries
+                    // rows, which leaves the coupling carry inert while the A/B still
+                    // reads byte-identical.  Under the datum the pinned term is exact
+                    // (Dirichlet elimination), and p_prev = 0 degrades every other path
+                    // correctly: the κ time update falls through unshrunk (a pinned column
+                    // does not move), and a departed pinned column marginalizes to +0.
                     const double pj = (j < cov_df.rows() && cov_df(j, j) > 0.0)
                                           ? cov_df(j, j) : 0.0;
                     CoupledShared cs = dit->second;
@@ -4330,23 +4264,23 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             }
             return {reg.cond_var, std::move(cpl)};
         };
-        // ---- Rung 3 v3 lane observatory: PRE-event snapshot -----------------
-        // Taken here because the loop below
-        // overwrites local_carry entry-by-entry, so a band's pre-event level is
-        // gone the moment its own iteration runs.  Only the freed population is
-        // snapshotted, so the OFF path and the no-slip epoch both cost nothing.
+        // ---- Lane observatory (rung 3 v3): pre-event snapshot ---------------
+        // Taken here because the loop below overwrites local_carry entry by entry, so a
+        // band's pre-event level is gone once its own iteration runs.  Only the freed
+        // population is snapshotted, so the off path and an epoch without slips cost
+        // nothing.
         //
-        // C(t-) and C(t+) are BOTH read inside this function, hence both in the
-        // gauge this epoch's datum work already settled — the frame hazard that
-        // killed the seed site cannot arise here.
-        // (value_abs, last_seen_s) — the stamp is load-bearing: a carry that was
-        // NOT stashed at the immediately preceding epoch spans a different
-        // interval from the one-epoch ΔMW it would be differenced against.
+        // C(t-) and C(t+) are both read inside this function, so both are in the gauge
+        // this epoch's datum work already settled; the frame hazard of the deleted
+        // seed-site snap cannot arise here.
+        // (value_abs, last_seen_s): the stamp matters, because a carry that was not
+        // stashed at the immediately preceding epoch spans a different interval from
+        // the one-epoch ΔMW it would be differenced against.
         std::map<std::tuple<int, std::string, std::string>, std::pair<double, double>> lane_pre;
-        // ⚠ NOT gated on a non-empty lane_mw: an epoch with freed arcs but no raw
-        // rows must still reach the measurement loop so each freed LOS lands in
-        // n_lane_skip_no_row.  Gating here would restore the silent-denominator
-        // defect the no_row channel exists to close.
+        // Not gated on a non-empty lane_mw: an epoch with freed arcs but no raw rows
+        // still has to reach the measurement loop, so each freed LOS is counted in
+        // n_lane_skip_no_row; otherwise the denominator would miss those arcs, which the
+        // no_row channel exists to prevent.
         const bool lane_obs_on = config_.networkCycleSlipRelevelLaneSnap();
         if (lane_obs_on) {
             for (const auto& fa : ctx.carry.relevel.free_ambs) {
@@ -4356,10 +4290,9 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 const auto cit = local_carry.find(key);
                 if (cit != local_carry.end())
                     lane_pre[key] = { cit->second.value_abs, cit->second.last_seen_s };
-                // A freed band's PARTNER may not itself be freed (band-scoped
-                // response): snapshot the whole pair, because the partner's
-                // carry is what anchors the lane and it is overwritten by the
-                // same loop.
+                // A freed band's partner may not itself be freed (band-scoped response):
+                // snapshot the whole pair, because the partner's carry anchors the lane
+                // and the same loop overwrites it.
                 const auto mit = ctx.carry.relevel.lane_mw.find({fa.first, parts->satellite});
                 if (mit == ctx.carry.relevel.lane_mw.end()) continue;
                 for (const std::string& sig : { mit->second.sig1, mit->second.sig2 }) {
@@ -4373,22 +4306,23 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             }
         }
 
-        // B9-in-block (network.carry_zwd_in_block): the ZWD harvest is a SEPARATE loop
-        // further down (it must run for stations with no carried ambiguities at all), so
-        // the block this loop allocates — and the exact `cols` order its rows are indexed
-        // by — are handed forward per station.  Empty vectors when the knob is off, and
-        // nothing below touches them.
+        // ZWD in the local block (B9-in-block, network.carry_zwd_in_block): the ZWD
+        // harvest is a separate loop further down (it has to run for stations with no
+        // carried ambiguities), so the block this loop allocates, and the `cols` order its
+        // rows are indexed by, are handed forward per station.  Empty vectors when the
+        // knob is off, and nothing below touches them.
         std::vector<std::shared_ptr<PlHarvestBlock>> zblk_of_sta;
         std::vector<std::vector<Eigen::Index>>       zblk_cols_of_sta;
         if (zwd_blk_on) {
             zblk_of_sta.resize(stations.size());
             zblk_cols_of_sta.resize(stations.size());
         }
-        // I-in-block: the same hand-forward for the per-LOS iono harvest loop below.
-        // `iblk_row0_of_sta` is the block index of this station's FIRST iono column —
-        // the iono columns are appended immediately after the ambiguities and BEFORE the
-        // ZWD, so the ZWD keeps the last-row slot its own (validated) card computes as
-        // C.rows()−1.  Empty vectors when the knob is off; nothing below touches them.
+        // Iono in the local block: the same hand-forward for the per-LOS iono harvest
+        // loop below.  `iblk_row0_of_sta` is the block index of this station's first iono
+        // column; the iono columns are appended right after the ambiguities and before
+        // the ZWD, so the ZWD keeps the last-row slot that its own (validated) card
+        // computes as C.rows()−1.  Empty vectors when the knob is off; nothing below
+        // touches them.
         std::vector<std::shared_ptr<PlHarvestBlock>> iblk_of_sta;
         std::vector<std::vector<Eigen::Index>>       iblk_cols_of_sta;
         std::vector<Eigen::Index>                    iblk_row0_of_sta;
@@ -4397,10 +4331,11 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             iblk_cols_of_sta.resize(stations.size());
             iblk_row0_of_sta.assign(stations.size(), -1);
         }
-        // RX-CLK-in-block: the same hand-forward for the receiver-clock harvest loop.
-        // `rblk_row0_of_sta` is the block index of this station's FIRST clock-family
-        // column — appended after the iono columns and BEFORE the ZWD, so the ZWD keeps
-        // the last-row slot its own (validated) card computes as C.rows()−1.
+        // Receiver clock in the local block: the same hand-forward for the
+        // receiver-clock harvest loop.  `rblk_row0_of_sta` is the block index of this
+        // station's first clock-family column, appended after the iono columns and before
+        // the ZWD, so the ZWD keeps the last-row slot that its own (validated) card
+        // computes as C.rows()−1.
         std::vector<std::shared_ptr<PlHarvestBlock>> rblk_of_sta;
         std::vector<std::vector<Eigen::Index>>       rblk_cols_of_sta;
         std::vector<Eigen::Index>                    rblk_row0_of_sta;
@@ -4411,51 +4346,51 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
         }
         for (size_t i = 0; i < stations.size(); ++i) {
             if (est_index_of[i] < 0) continue;
-            // Prioritized: harvest the former pivot too — its non-anchored arcs
-            // are in R.pl_amb; anchored (pinned) keys were excluded at build, so
-            // inject and harvest partition on the SAME per-(sat,signal) predicate.
+            // Prioritized datum: harvest the former pivot too.  Its non-anchored arcs are
+            // in R.pl_amb, and anchored (pinned) keys were excluded at build, so inject
+            // and harvest partition on the same per-(sat,signal) predicate.
             if (!phase_datum_prioritized && stations[i].is_pivot) continue;  // legacy: pivot gauge-pinned, never carried
             const StationAssembly& R = asm_res[i];
-            // I-in-block: a station with NO carry-eligible ambiguities can still have
-            // live per-LOS iono columns, and PASS B builds a block for exactly that case
-            // (its `if (!pl_pend.empty() || !iono_bc.empty())` gate).  Skipping it here
-            // would leave those entries stashed WITHOUT a block, so every pair with them
-            // would be zeroed next epoch — a silently diagonal iono prior, i.e. the very
-            // vehicle this card replaces.  Harvest and inject must agree on which
-            // station-epochs have a block.  OFF ⇒ iono_blk_on is false and this is
-            // exactly the pre-card `if (R.pl_amb.empty()) continue;` (byte-identical).
-            // RX-CLK-in-block: and the same for a station whose only live carry is its
-            // receiver clock — PASS B builds a block for that case too, and skipping it
-            // here would stash the entry WITHOUT a block, i.e. silently diagonalize the
-            // most station-common direction of all.
+            // Iono in the local block: a station with no carry-eligible ambiguities can
+            // still have live per-LOS iono columns, and PASS B builds a block for that
+            // case (its `if (!pl_pend.empty() || !iono_bc.empty())` gate).  Skipping it
+            // here would stash those entries without a block, so every pair with them
+            // would be zeroed next epoch, giving a diagonal iono prior (the vehicle the
+            // in-block carry replaces).  Harvest and inject have to agree on which
+            // station-epochs have a block.  Off ⇒ iono_blk_on is false and this reduces
+            // to `if (R.pl_amb.empty()) continue;` (byte-identical).
+            // Receiver clock in the local block: the same holds for a station whose only
+            // live carry is its receiver clock.  PASS B builds a block for that case too,
+            // and skipping it here would stash the entry without a block, diagonalizing
+            // the most station-common direction of all.
             if (R.pl_amb.empty() && !(iono_blk_on && !R.pl_iono.empty())
                 && !(rxclk_blk_on && !R.pl_rxclk.empty())) continue;
             const std::size_t est_idx = static_cast<std::size_t>(est_index_of[i]);
             std::vector<Eigen::Index> cols;
             cols.reserve(R.pl_amb.size() + 1 + R.pl_iono.size() + R.pl_rxclk.size());
             for (const auto& a : R.pl_amb) cols.push_back(a.col);
-            // I-in-block: the station's present per-LOS iono columns become block indices
-            // n_amb … n_amb+k−1, appended BEFORE the ZWD so the ZWD's own card keeps its
-            // "the appended column is the LAST row" invariant.  Every per-column solve
-            // below then gathers (N_rr⁻¹)_{c_a, icol} for free, the same gather that
-            // already pays for the ambiguity–ambiguity terms.  R.pl_iono is PASS B's
-            // record of what it pushed, so a station whose block was never built keeps
-            // the pre-card `cols`.
+            // Iono in the local block: the station's present per-LOS iono columns become
+            // block indices n_amb … n_amb+k−1, appended before the ZWD so the ZWD keeps
+            // its invariant that the appended column is the last row.  Every per-column
+            // solve below then gathers (N_rr⁻¹)_{c_a, icol} at no extra cost, the same
+            // gather that already covers the ambiguity–ambiguity terms.  R.pl_iono is
+            // PASS B's record of what it pushed, so a station whose block was never built
+            // keeps `cols` as it was.
             const Eigen::Index iono_row0 = static_cast<Eigen::Index>(cols.size());
             const bool iono_in_cols = iono_blk_on && !R.pl_iono.empty();
             if (iono_in_cols)
                 for (const auto& t : R.pl_iono) cols.push_back(std::get<1>(t));
-            // B9-in-block: the station's ZWD column becomes block index n (the LAST
-            // entry), so every per-column solve below gathers its (N_rr⁻¹)_{c_a, zcol}
-            // cross term for free — the same gather that already pays for the
-            // ambiguity-ambiguity terms.  Appended AFTER the ambiguity columns so the
-            // pl rows keep their exact indices `a`; the ZWD's own row n is written by
-            // the ZWD loop below.  R.pl_zwd_present is PASS B's record, so a station
-            // whose tropo column was absent this epoch simply keeps the pre-card `cols`.
-            // RX-CLK-in-block: the station's receiver-clock (and ISB) columns become the
-            // next block indices, appended AFTER the iono columns and BEFORE the ZWD so the
-            // ZWD's own card keeps its "the appended column is the LAST row" invariant.
-            // Every per-column solve below then gathers (N_rr⁻¹)_{c_a, rcol} for free.
+            // ZWD in the local block (B9-in-block): the station's ZWD column becomes block
+            // index n (the last entry), so every per-column solve below gathers its
+            // (N_rr⁻¹)_{c_a, zcol} cross term at no extra cost, the same gather that
+            // already covers the ambiguity-ambiguity terms.  It is appended after the
+            // ambiguity columns so the pl rows keep their indices `a`; the ZWD loop below
+            // writes the ZWD's own row n.  R.pl_zwd_present is PASS B's record, so a
+            // station whose tropo column was absent this epoch keeps `cols` without it.
+            // Receiver clock in the local block: the station's receiver-clock (and ISB)
+            // columns become the next block indices, appended after the iono columns and
+            // before the ZWD so the ZWD keeps its last-row invariant.  Every per-column
+            // solve below then gathers (N_rr⁻¹)_{c_a, rcol} at no extra cost.
             const Eigen::Index rxclk_row0 = static_cast<Eigen::Index>(cols.size());
             const bool rxclk_in_cols = rxclk_blk_on && !R.pl_rxclk.empty();
             if (rxclk_in_cols)
@@ -4466,16 +4401,16 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             Eigen::VectorXd xr, vard;
             try {
                 xr = est.reconstructStation(est_idx, x_s);
-                if (!carry_cpl_cond)   // Card 1 uses the PURE conditional (N_rr⁻¹)_cc, not this MARGINAL
+                if (!carry_cpl_cond)   // the coupling carry (card 1) uses the pure conditional (N_rr⁻¹)_cc, not this marginal
                     vard = est.conditionalLocalVarianceDiag(est_idx, cols, plan.shared_datum);
             } catch (...) { continue; }
-            // F3 (network.phase_leveling_local_block): this station-epoch's harvest
-            // CROSS-covariance block C(a,b) = (N_rr⁻¹)_{c_a c_b} over R.pl_amb's columns
-            // — one shared_ptr per station-epoch, filled row by row below from each
-            // column's own n_c solve (the gather stationRegression already pays for),
-            // and pointed at by every entry stashed at THIS harvest.  Re-stashed WHOLE
-            // every epoch from the posterior, so Σ never drifts across epochs; the
-            // previous block is released as its last referencing entry is replaced.
+            // Local block (F3, network.phase_leveling_local_block): this station-epoch's
+            // harvest cross-covariance block C(a,b) = (N_rr⁻¹)_{c_a c_b} over R.pl_amb's
+            // columns.  One shared_ptr per station-epoch, filled row by row below from
+            // each column's own n_c solve (the gather stationRegression already performs),
+            // and referenced by every entry stashed at this harvest.  It is re-stashed
+            // whole every epoch from the posterior, so Σ does not drift across epochs; the
+            // previous block is released when its last referencing entry is replaced.
             // Null when the knob is off ⇒ nothing below allocates or writes.
             std::shared_ptr<PlHarvestBlock> hblk;
             if (pl_local_block && carry_cpl_cond) {
@@ -4483,20 +4418,20 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 const Eigen::Index nb = static_cast<Eigen::Index>(cols.size());
                 hblk->C = Eigen::MatrixXd::Constant(nb, nb, std::numeric_limits<double>::quiet_NaN());
                 hblk->stamp_s = pl_now_s;
-                // B9-in-block: hand the block + its column order to the ZWD loop below,
-                // which owns row n.  Handed over ONLY when the ZWD is actually in `cols`
-                // — otherwise the ZWD loop must not write a row that does not exist.
+                // ZWD in the block: hand the block and its column order to the ZWD loop
+                // below, which owns row n.  Handed over only when the ZWD is in `cols`;
+                // otherwise the ZWD loop would write a row that does not exist.
                 if (zwd_in_cols) {
                     zblk_of_sta[i]      = hblk;
                     zblk_cols_of_sta[i] = cols;
                 }
-                // I-in-block: same hand-forward, plus the row offset the iono loop needs.
+                // Iono in the block: same hand-forward, plus the row offset the iono loop needs.
                 if (iono_in_cols) {
                     iblk_of_sta[i]      = hblk;
                     iblk_cols_of_sta[i] = cols;
                     iblk_row0_of_sta[i] = iono_row0;
                 }
-                // RX-CLK-in-block: same hand-forward, plus the row offset its loop needs.
+                // Receiver clock in the block: same hand-forward, plus its loop's row offset.
                 if (rxclk_in_cols) {
                     rblk_of_sta[i]      = hblk;
                     rblk_cols_of_sta[i] = cols;
@@ -4510,13 +4445,14 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 if (!std::isfinite(value_abs)) continue;
                 double var;
                 std::vector<CoupledShared> coupling;
-                Eigen::VectorXd cross;   // F3: (N_rr⁻¹)_{c_a c_b} over the station's carried columns (empty OFF)
+                Eigen::VectorXd cross;   // (N_rr⁻¹)_{c_a c_b} over the station's carried columns, empty when off (F3)
                 if (carry_cpl_cond) {
                     auto hc = harvestCoupling(est_idx, pa.col, hblk ? &cols : nullptr,
                                               hblk ? &cross : nullptr);
                     var = hc.first; coupling = std::move(hc.second);
-                    // Card 1/1d observability: a failed harvest drops the carry entirely;
-                    // an EMPTY regression silently degrades the row to a plain diagonal.
+                    // Coupling observability (cards 1 and 1d): a failed harvest drops the
+                    // carry entirely; an empty regression degrades the row to a plain
+                    // diagonal, which only this counter shows.
                     if (!(var > 0.0) || !std::isfinite(var)) ++n_cpl_harvest_fail;
                     else if (coupling.empty())               ++n_cpl_stash_empty;
                     else                                     ++n_cpl_stash;
@@ -4524,31 +4460,29 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     var = (a < static_cast<size_t>(vard.size())) ? vard(a) : -1.0;
                 }
                 if (!(var > 0.0) || !std::isfinite(var)) continue;
-                // M2 (LS-VCE): fold this ambiguity carry's post-fit innovation
-                // (carried prior − freshly solved) into the monitor BEFORE the
-                // stash overwrites the prior.  Qualify only rows that actually
-                // carried a prior this epoch — mirror the inject predicate: a
-                // live prior within max-gap, not a slip/refloat (pending reseed),
-                // and not a Card-3 re-referenced arc (a frame step, not noise).
-                // PRIOR-RESIDUAL CENSUS:
-                // the SAME (prior − solved, gap, post_var, fold_var) tuple the
-                // VCE monitor folds, but WITHOUT its two exclusions — those become
-                // the RESPONDED / FRAME labels, which is exactly the population a
-                // detector exists to find and a variance component is right to
-                // drop.  Hoisted above the monitor so both read one qualification.
+                // LS-VCE monitor (M2): fold this ambiguity carry's post-fit innovation
+                // (carried prior − freshly solved) into the monitor before the stash
+                // overwrites the prior.  Only rows that carried a prior this epoch
+                // qualify, mirroring the inject predicate: a live prior within max-gap,
+                // not a slip or refloat (pending reseed), and not a card-3 re-referenced
+                // arc (a frame step, not noise).
+                // Prior-residual census: the same (prior − solved, gap, post_var,
+                // fold_var) tuple the VCE monitor folds, but without its two exclusions,
+                // which become the RESPONDED / FRAME labels; that population is what a
+                // detector exists to find and what a variance component should drop.
+                // Hoisted above the monitor so both read one qualification.
                 //
-                // `folded` is REPRODUCED from the inject predicate, not mirrored by
-                // hand: every clause of the PASS-B injector is a pure function of
-                // values still in scope here — the carry entry, the gap, the
-                // pending-reseed mark (cleared only after this point), pa.x_lin and
-                // var_eff.  Getting it wrong is not cosmetic: the folded branch on
-                // an unfolded row inflates |t| ~3000× through the ε clamp and would
-                // make the positive control pass vacuously.  Two clauses are not
-                // reproducible here and are assumed to have held, since the ambiguity
-                // reached R.pl_amb at all: the gauge-pin exclusion and the h2local
-                // column lookup.  Note eq34_reref is a FRAME LABEL for pl, not a
-                // folded=false condition — the pl injector has no eq34 skip, so a
-                // re-referenced arc really did fold.  Truth wins over symmetry.
+                // `folded` is reproduced from the inject predicate, not mirrored by hand:
+                // every clause of the PASS-B injector is a pure function of values still
+                // in scope here (the carry entry, the gap, the pending-reseed mark, which
+                // is cleared only after this point, pa.x_lin and var_eff).  An error here
+                // matters: the folded branch on an unfolded row inflates |t| about 3000×
+                // through the ε clamp and would make the positive control pass
+                // vacuously.  Two clauses cannot be reproduced here and are assumed to
+                // hold, since the ambiguity reached R.pl_amb: the gauge-pin exclusion and
+                // the h2local column lookup.  eq34_reref is a frame label for pl, not a
+                // folded=false condition: the pl injector has no eq34 skip, so a
+                // re-referenced arc did fold.
                 const bool prires_want = prires_pl && prires_est.enabled();
                 if (carry_vce || prires_want) {
                     const auto oc = local_carry.find(
@@ -4556,11 +4490,11 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     const bool reseed_pending =
                         stations[i].sm->isAmbiguityPendingReseed(pa.amb_key);
                     const bool reref = eq34_reref.count({pa.sat, pa.signal}) > 0;
-                    // SPEC_slip_relevel_walk harvest guard: a freed or bridged arc's
-                    // (prior − solved) innovation is slip-scale — without this it
-                    // would be ingested as a CLEAN row (the detector's own mark was
-                    // consumed by the PASS-B pre-pass, so reseed_pending is false
-                    // here for every detector-caught slip).
+                    // Harvest guard (SPEC_slip_relevel_walk): a freed or bridged arc's
+                    // (prior − solved) innovation is slip-scale, and without this guard
+                    // it would be ingested as a clean row (the PASS-B pre-pass consumed
+                    // the detector's own mark, so reseed_pending is false here for every
+                    // slip the detector caught).
                     const bool relevel_freed =
                         ctx.carry.relevel.free_ambs.count({static_cast<int>(i), pa.amb_key}) > 0;
                     const bool relevel_bridged =
@@ -4575,23 +4509,23 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                             const double fold_var_hand =
                                 [&] {
                                     double v = oc->second.var + pl_q_amb * std::max(0.0, gapv);
-                                    // F1 mirror: the injector multiplied THIS column's
-                                    // variance by its LOS B_eff (before the floor).  Keyed
+                                    // Mirror of the F1 scaling: the injector multiplied this
+                                    // column's variance by its LOS B_eff (before the floor).  Keyed
                                     // by the injected (sat, signal), so a sibling band the
-                                    // inject skipped (freed / stale / reseed) is NOT scaled
-                                    // here either — the mirror reports the weight the fold
-                                    // ACTUALLY used, or the hand value when it did not fold.
-                                    // F3 (phase_leveling_local_block): a column carried in
-                                    // a whitened block folded with the block's JOINT Σ,
-                                    // whose diagonal for this column is exactly this hand
-                                    // value (+ the Card-1d / departed terms neither path
-                                    // mirrors) — so the mirror reports Σ's DIAGONAL, the
-                                    // column's MARGINAL prior variance, unscaled.  That is
-                                    // a decision, not an omission: the census standardizes
-                                    // e by the marginal prior σ the column actually carried,
-                                    // and pl_los_beff is filled ONLY on the F1 route (under
-                                    // F3, a factorization fallback), so the ×B_eff below is
-                                    // automatically absent for block columns.
+                                    // inject skipped (freed / stale / reseed) is not scaled
+                                    // here either: the mirror reports the weight the fold
+                                    // used, or the hand value when it did not fold.
+                                    // Under F3 (phase_leveling_local_block) a column carried
+                                    // in a whitened block folded with the block's joint Σ,
+                                    // whose diagonal for this column is this hand value
+                                    // (plus the card-1d / departed terms neither path
+                                    // mirrors), so the mirror reports Σ's diagonal, the
+                                    // column's marginal prior variance, unscaled.  This is
+                                    // deliberate: the census standardizes e by the marginal
+                                    // prior σ the column carried, and pl_los_beff is filled
+                                    // only on the F1 route (under F3, a factorization
+                                    // fallback), so the ×B_eff below is absent for block
+                                    // columns.
                                     if (pl_los_scale) {
                                         const auto bf = R.pl_los_beff.find({pa.sat, pa.signal});
                                         if (bf != R.pl_los_beff.end() && bf->second > 1)
@@ -4600,37 +4534,34 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                                     if (pl_var_floor > 0.0) v = std::max(v, pl_var_floor);
                                     return v;
                                 }();
-                            // M2 v2: the PASS-B injector
-                            // multiplies the SAME hand value by the SAME α² (the factor
-                            // table is refreshed once per epoch, at the end, so inject and
-                            // harvest read one value), so `fold_var` here is the variance
-                            // the fold ACTUALLY used.  Both consumers want that: the census
-                            // standardizes by the used weight, and the monitor's
-                            // sigma_hat_post readout is only "1 at convergence" if its
-                            // denominator is the used weight too.  The HAND value goes in
-                            // alongside it because it is the factor iteration's own
-                            // denominator and must stay α²-independent.  Unity when OFF.
+                            // VCE apply (M2 v2): the PASS-B injector multiplies the same
+                            // hand value by the same α² (the factor table is refreshed once
+                            // per epoch, at the end, so inject and harvest read one value),
+                            // so `fold_var` here is the variance the fold used.  Both
+                            // consumers need that: the census standardizes by the used
+                            // weight, and the monitor's sigma_hat_post reads 1 at
+                            // convergence only if its denominator is the used weight too.
+                            // The hand value is passed alongside because it is the factor
+                            // iteration's own denominator and has to stay independent of
+                            // α².  The factor is 1 when off.
                             const double fold_var =
                                 fold_var_hand * ctx.carry.vce_apply.factor(
                                                     NetworkCarryVceApply::kPl, pa.sat);
-                            // ⚠ THE CENSUS NUMERATOR IS A SEPARATE, OPEN CARD.
-                            // `innov` is the raw carried-minus-solved difference.
-                            // Under the Card-1 conditional coupling the carried
-                            // prior's RHS is not `value_abs` alone — the coupling
-                            // rows contribute Σ M_rj·ŝ_prev,j to it
-                            // (NetworkCoupling.cpp:238, the `rhs += cs.coeff *
-                            // cs.s_prev` accumulation) — so on a coupled posture
-                            // this ê and the ê the fold actually saw differ by the
-                            // regressor term.  The DENOMINATOR side of that same
-                            // mismatch is what produces the r_negative population
-                            // (post_var > fold_var: the harvested posterior is a
-                            // CONDITIONAL variance), which the census now
-                            // re-partitions into its own RNEG class rather than
-                            // letting it head the ladder.  Aligning the numerator
-                            // is deliberately NOT part of that change: it would
-                            // move every coupled family's ê and therefore its
-                            // σ̂₀, i.e. it is solve-adjacent measurement work with
-                            // its own A/B, not a readout re-partition.
+                            // Open issue (a separate card): the census numerator.  `innov`
+                            // is the raw carried-minus-solved difference.  Under the card-1
+                            // conditional coupling the carried prior's RHS is not
+                            // `value_abs` alone: the coupling rows add Σ M_rj·ŝ_prev,j to
+                            // it (the `rhs += cs.coeff * cs.s_prev` accumulation in
+                            // NetworkCoupling.cpp), so on a coupled posture this ê and the
+                            // ê the fold saw differ by the regressor term.  The denominator
+                            // side of the same mismatch produces the r_negative population
+                            // (post_var > fold_var, because the harvested posterior is a
+                            // conditional variance), which the census re-partitions into
+                            // its own RNEG class instead of letting it head the ladder.
+                            // Aligning the numerator is not part of that change, on
+                            // purpose: it would move every coupled family's ê and therefore
+                            // its σ̂₀, which is solve-adjacent measurement work with its own
+                            // A/B.
                             const double innov = oc->second.value_abs - value_abs;
                             if (carry_vce && !reseed_pending && !reref
                                 && !relevel_freed && !relevel_bridged
@@ -4647,9 +4578,9 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                                 in.fold_var = fold_var;
                                 in.post_var = var;
                                 in.gap_s    = gapv;
-                                // The inject predicate, reproduced (see above).
-                                // A freed arc's inject was SKIPPED (the latched set);
-                                // a bridged arc's (shifted) prior DID fold.
+                                // The inject predicate, reproduced (see above).  A freed
+                                // arc's inject was skipped (the latched set); a bridged
+                                // arc's (shifted) prior did fold.
                                 in.folded   = !reseed_pending && !relevel_freed
                                            && std::isfinite(pa.x_lin)
                                            && fold_var > 0.0;
@@ -4668,16 +4599,16 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                         }
                     }
                 }
-                // §18.12 OBSERVATORY (the SPEC_lane_slip_response §7.3 measure-first
-                // shape): at the FIRST post-resume harvest the restored regressor and
-                // this epoch's freshly derived one are both in hand.  Their agreement is
-                // the ONLY direct evidence the restored row was frame-valid.  Read it
-                // against the algebra: a row with A_r = e_c, A_s = M contributes
-                // α(M − M_d)(M − M_d)ᵀ to the reduced SHARED normals and α(y − β)(M − M_d)
-                // to the shared RHS, so M == M_d makes the row EXACTLY shared-neutral and
-                // rel ≪ 1 proves it was.  M == 0 — today's diagonal restore — is the
-                // MAXIMAL deviation, and that drive is the 4-8 cm the 9.5 mm clock priors
-                // lose to.  Nothing is written back: byte-identical on every solve artifact.
+                // Observatory (§18.12, in the measure-first form of
+                // SPEC_lane_slip_response §7.3): at the first post-resume harvest the
+                // restored regressor and this epoch's freshly derived one are both in hand,
+                // and their agreement is the only direct evidence that the restored row
+                // was frame-valid.  In the algebra, a row with A_r = e_c, A_s = M
+                // contributes α(M − M_d)(M − M_d)ᵀ to the reduced shared normals and
+                // α(y − β)(M − M_d) to the shared RHS, so M == M_d makes the row exactly
+                // shared-neutral, and rel ≪ 1 shows that it was.  M == 0 (the diagonal
+                // restore) is the maximal deviation.  Nothing is written back:
+                // byte-identical on every solve artifact.
                 if (ctx.carry.resume_cpl_census_pending && carry_cpl_cond
                     && !coupling.empty()) {
                     const auto old = local_carry.find(std::make_tuple(
@@ -4713,72 +4644,71 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     }
                 }
                 {
-                    // First-stash conditional variance: set once at the arc's birth, kept
-                    // across re-stashes (the honest-σ-scale denominator of the handover
-                    // ratio ceiling; an erase-and-rebirth starts it over, a re-level keeps
-                    // it so a refloated arc reads unconverged until it re-earns the level).
+                    // First-stash conditional variance: set once at the arc's birth and
+                    // kept across re-stashes (the σ-scale denominator of the handover ratio
+                    // ceiling; an erase-and-rebirth starts it over, and a re-level keeps it,
+                    // so a refloated arc reads as unconverged until it re-earns the level).
                     const auto lkey = std::make_tuple(static_cast<int>(i), pa.sat, pa.signal);
                     const auto oldc = local_carry.find(lkey);
                     const double var_first =
                         (oldc != local_carry.end() && oldc->second.var_first > 0.0)
                             ? oldc->second.var_first : var;
-                    // The arc's BIRTH — birth_ep (the F3 block admission age gate's
-                    // and the candidacy bar's clock) and its seconds twin birth_s (the
-                    // sim-only slip oracle's hard window floor: a truth slip stamped at
-                    // or before the entry's creation is already absorbed by the level
-                    // the harvest CREATED and must never be re-applied) — is stamped by
-                    // localCarryStampBirth below, the ONE definition of the
-                    // first-stash-wins rule (filter/NetworkRunTypes.hpp).  First stash
-                    // wins, kept across re-stashes, restarted by an erase-and-rebirth
-                    // (which needs no clause: the entry is GONE, so `oldc == end()` and
-                    // today's epoch is the honest stamp).
-                    // ⚠ Its "already stamped" test is `!= 0`, NOT `> 0`
-                    // (SPEC_event_harness §15.4): a warm-resume-restored entry carries
-                    // LocalCarry::kBirthEpRestored / kBirthSRestored precisely so the
-                    // rule can tell "restored, true age not snapshotted ⇒ MATURE" from
-                    // "never stashed ⇒ stamp it now".  With `> 0` the FIRST post-resume
-                    // harvest re-branded every restored arc as born at the resume epoch,
-                    // and every age gate then saw a network of newborns for min_age
-                    // epochs (390 of 414 candidacy skips read `young` on a 60-epoch leg).
-                    // AGE-AWARE young-arc inflate stamp (SPEC_amb_iono_split_overcount
-                    // §6.17–§6.18).  Two events, and ONLY two, produce a level whose
-                    // VALUE is code-quality while its harvested VARIANCE is phase-stiff:
-                    //   * the entry is CREATED — a first stash, or the re-stash after a
-                    //     T4 attribution erase / gap prune DELETED the entry (the erase
-                    //     path needs no separate clause precisely because it deletes);
-                    //   * the arc was FREED this epoch, so THIS harvest re-levelled it
+                    // The arc's birth, birth_ep (the clock of the F3 block admission age
+                    // gate and of the candidacy bar) and its seconds twin birth_s (the hard
+                    // window floor of the sim-only slip oracle: a truth slip stamped at or
+                    // before the entry's creation is already absorbed by the level the
+                    // harvest created and is not re-applied), is stamped by
+                    // localCarryStampBirth below, the single definition of the
+                    // first-stash-wins rule (filter/NetworkRunTypes.hpp).  The first stash
+                    // wins, the stamp is kept across re-stashes, and an erase-and-rebirth
+                    // restarts it (with no extra clause: the entry is gone, so
+                    // `oldc == end()` and this epoch is the stamp).
+                    // Its "already stamped" test is `!= 0`, not `> 0` (SPEC_event_harness
+                    // §15.4): a warm-resume-restored entry carries
+                    // LocalCarry::kBirthEpRestored / kBirthSRestored so the rule can tell
+                    // "restored, true age not snapshotted ⇒ mature" from "never stashed ⇒
+                    // stamp it now".  With `> 0`, the first post-resume harvest would
+                    // re-stamp every restored arc as born at the resume epoch, and every
+                    // age gate would then see a network of newborns for min_age epochs.
+                    // Age-aware young-arc inflation stamp (SPEC_amb_iono_split_overcount
+                    // §6.17–§6.18).  Two events, and only these two, produce a level whose
+                    // value is code-quality while its harvested variance is phase-stiff:
+                    //   * the entry is created: a first stash, or the re-stash after a T4
+                    //     attribution erase or gap prune deleted the entry (the erase
+                    //     path needs no separate clause because it deletes);
+                    //   * the arc was freed this epoch, so this harvest re-levelled it
                     //     from one epoch of code.
                     // The freed predicate is the harvest's own `relevel_freed` above,
                     // re-read here because that one lives inside the VCE/census scope:
-                    // `relevel.free_ambs` is the LATCHED set the PASS-B inject consulted
-                    // (empty when network.cycle_slip.relevel_free_epoch is off, which is
-                    // why no knob guard is needed — the same rule the census uses).
-                    // Every OTHER re-stash PRESERVES the stamp, so the age keeps growing
-                    // while the arc matures.  Deliberately NOT birth_s: a re-level keeps
-                    // birth_s (by design — the slip oracle's floor), and it is exactly
-                    // the re-level, not the birth, that resets what the level is worth.
+                    // `relevel.free_ambs` is the latched set the PASS-B inject consulted
+                    // (empty when network.cycle_slip.relevel_free_epoch is off, so no knob
+                    // guard is needed, the same rule the census uses).  Every other
+                    // re-stash preserves the stamp, so the age keeps growing while the arc
+                    // matures.  This is not birth_s: a re-level keeps birth_s (by design,
+                    // the slip oracle's floor), and it is the re-level, not the birth,
+                    // that resets what the level is worth.
                     const bool yng_created = (oldc == local_carry.end());
                     const bool yng_freed =
                         ctx.carry.relevel.free_ambs.count(
                             {static_cast<int>(i), pa.amb_key}) > 0;
                     LocalCarry nlc{value_abs, var, pl_now_s, std::move(coupling)};
                     nlc.var_first = var_first;
-                    // RF-1 §3.3(b) (docs/refound/RF-1_float_ambiguities_design.md): the
-                    // BIRTH PRIOR actually in force — var_first floored by the posture's
-                    // code-noise scale, set ONCE at birth and kept across every re-stash
-                    // and re-level exactly as var_first is (an erase-and-rebirth restarts
-                    // it because the entry is GONE).  ⚠ STEP 1: WRITE-ONLY.  The floor
-                    // defaults to 0.0, so this is var_first to the ULP, nothing reads it,
-                    // and the solve is byte-identical; the DROP that restores it is step
-                    // 4.  Maintained here rather than at the drop site because "what the
-                    // arc was worth when it was born" is a property of the BIRTH, and the
-                    // harvest is the only place that sees an arc's first stash.
-                    // RF-1 step 4: the floor is ELEVATION-MAPPED exactly as the code row
-                    // weights are (σ²(e) = σ²_zen / sin^{2p}(e)) — a flat zenith floor
-                    // would be optimistic at precisely the low elevations that own the
-                    // metre-plus tail (§24.13 finding 2).  pa.elev_deg is −1 when the
-                    // floor is unarmed or the station's modeled set had no elevation for
-                    // this satellite, and ambFloatBirthFloor reads that as ZENITH.
+                    // The birth prior in force (RF-1 §3.3(b),
+                    // docs/refound/RF-1_float_ambiguities_design.md): var_first floored by
+                    // the posture's code-noise scale, set once at birth and kept across
+                    // every re-stash and re-level as var_first is (an erase-and-rebirth
+                    // restarts it, because the entry is gone).  The floor defaults to 0.0,
+                    // which makes this var_first to the ULP; the drop (NetworkAmbFloat.cpp)
+                    // restores max(var_birth, var_first, floor).  It is maintained here
+                    // rather than at the drop site because what the arc was worth at birth
+                    // is a property of the birth, and the harvest is the only place that
+                    // sees an arc's first stash.
+                    // The floor is elevation-mapped as the code row weights are
+                    // (σ²(e) = σ²_zen / sin^{2p}(e), RF-1 step 4): a flat zenith floor would
+                    // be optimistic at the low elevations that hold the metre-plus tail
+                    // (§24.13 finding 2).  pa.elev_deg is −1 when the floor is unarmed or
+                    // the station's modeled set had no elevation for this satellite, and
+                    // ambFloatBirthFloor reads that as zenith.
                     const double amb_floor_los =
                         ambFloatBirthFloor(amb_birth_var_floor, pa.elev_deg,
                                            amb_elev_power);
@@ -4788,18 +4718,17 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                             : std::max(var_first, amb_floor_los);
                     if (oldc == local_carry.end() && amb_floor_los > var_first)
                         ++ctx.counters.n_amb_birth_floored;
-                    // RF-1 §7.2: the drop stamp is carried forward untouched — nothing in
-                    // this build writes it (the drop is step 4), so it stays 0 for the
-                    // life of the arc and the trace's `event` column reads "" for it.
+                    // The drop stamp (RF-1 §7.2) is written by the drop
+                    // (NetworkAmbFloat.cpp) and carried forward unchanged by the harvest.
                     nlc.dropped_ep =
                         (oldc != local_carry.end()) ? oldc->second.dropped_ep : 0;
-                    // RF-3a A2: the WALK metric.  This is the one site that sees the
+                    // Walk metric (RF-3a, A2).  This is the one site that sees the
                     // pre-fold carried value and the post-fold stash together, so it is
-                    // where "what the first fold after a drop absorbed" is measurable at
-                    // all.  MEASURE-ONLY, maintained whenever the vehicle is armed and in
-                    // BOTH states of network.amb_float_drop_var_m2 — an OFF run has to
-                    // report the walk it suffers or the ON run's number means nothing
-                    // (standing invariant #4).
+                    // where the amount the first fold after a drop absorbed can be
+                    // measured.  Measure-only, maintained whenever the vehicle is armed and
+                    // in both states of network.amb_float_drop_var_m2: an off run has to
+                    // report its walk for the on run's number to be comparable (standing
+                    // invariant #4).
                     nlc.drop_walk_ph =
                         (oldc != local_carry.end()) ? oldc->second.drop_walk_ph : 0;
                     if (nlc.drop_walk_ph > 0 && oldc != local_carry.end()) {
@@ -4820,19 +4749,19 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                         yng_created, yng_freed, pl_now_s);
                     if (yng_created)     ++ctx.counters.n_yng_stamp_create;
                     else if (yng_freed)  ++ctx.counters.n_yng_stamp_free;
-                    // RF-1 §7.4 (network.trace_amb_state): the arc's TRAJECTORY row,
+                    // The arc's trajectory row (network.trace_amb_state, RF-1 §7.4),
                     // written from the one site that sees the pre-stash entry and the
-                    // post-stash value together.  MEASURE-ONLY — nothing below is read
-                    // back, and OFF the whole block is unreachable.
+                    // post-stash value together.  Measure-only: nothing below is read back,
+                    // and when off the whole block is unreachable.
                     //
-                    // `folded` / `route` / `fold_var` are NOT re-derived here: they are
-                    // the record PASS B wrote into R.amb_state_fold at the site that
-                    // actually emitted the row, so a joint-block fallback or a "never
-                    // poison u_r" screen reads as what it was rather than as what the
-                    // knob posture implies.  n_folds counts only the epochs a prior
-                    // ACTED, which is why it is not derivable from birth_ep: the epochs
-                    // it skips — the free-epoch latch, the gap cliff, a pending reseed —
-                    // are exactly the ones this card is about.
+                    // `folded` / `route` / `fold_var` are not re-derived here: they are the
+                    // record PASS B wrote into R.amb_state_fold at the site that emitted
+                    // the row, so a joint-block fallback or a non-finite-RHS screen on u_r
+                    // reads as what happened, not as what the knob posture implies.
+                    // n_folds counts only the epochs in which a prior acted, so it cannot
+                    // be derived from birth_ep: the epochs it skips (the free-epoch latch,
+                    // the gap cliff, a pending reseed) are the ones the trace exists to
+                    // show.
                     long long nlc_n_folds =
                         (oldc != local_carry.end()) ? oldc->second.n_folds : 0;
                     if (amb_state_on) {
@@ -4853,10 +4782,10 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                         row.folded       = did_fold;
                         row.route        = did_fold ? ff->second.second : AmbFoldRoute::None;
                         row.n_folds      = nlc_n_folds;
-                        // Age reads the stamps AFTER localCarryStampBirth, so a restored
-                        // arc reports the −1 sentinel rather than being re-branded a
-                        // newborn (SPEC_event_harness §15.4's whole point), and an
-                        // unstamped relevel clock reports −1 = "mature", not "age 0".
+                        // Age reads the stamps after localCarryStampBirth, so a restored
+                        // arc reports the −1 sentinel instead of being re-stamped as a
+                        // newborn (SPEC_event_harness §15.4), and an unstamped relevel
+                        // clock reports −1 = "mature", not "age 0".
                         row.age_ep = (nlc.birth_ep > 0)
                             ? (static_cast<long long>(ctx.counters.n_loop_epochs) - nlc.birth_ep)
                             : nlc.birth_ep;
@@ -4866,12 +4795,12 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                                       std::llround((pl_now_s - nlc.relevel_s)
                                                    / amb_state_dt_ep_s))
                                 : -1;
-                        // The EVENT vocabulary is design §7.4's, used on the LEVEL
-                        // vehicle for today's response paths so an RF-0 baseline and an
-                        // RF-1 arm are comparable row for row: a `drop:` here is an
-                        // inject that did not happen because the response skipped it,
-                        // which is precisely what RF-1 replaces with a bounded drop.
-                        // Precedence is the inject's own order of tests.
+                        // The event vocabulary is design §7.4's, also used on the level
+                        // vehicle for its response paths, so an RF-0 baseline and an RF-1
+                        // arm compare row for row: a `drop:` here is an inject that did
+                        // not happen because the response skipped it, which is what RF-1
+                        // replaces with a bounded drop.  Precedence follows the inject's
+                        // own order of tests.
                         const bool reseed_now =
                             stations[i].sm->isAmbiguityPendingReseed(pa.amb_key);
                         const double gap_now = (oldc != local_carry.end())
@@ -4880,7 +4809,7 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                         else if (reseed_now)      row.event = "drop:reseed";
                         else if (yng_freed)       row.event = "drop:relevel_free";
                         else if (gap_now > pl_max_gap_s) row.event = "drop:stale_gap";
-                        // The stride gates TRAJECTORY rows; an EVENT row is always
+                        // The stride gates trajectory rows; an event row is always
                         // written, so D3's inventory is complete at any stride.
                         if (amb_state_tr || !row.event.empty())
                             ctx.carry.amb_state_rows.push_back(std::move(row));
@@ -4889,43 +4818,44 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     local_carry[lkey] = std::move(nlc);
                 }
                 if (hblk && cross.size() == hblk->C.rows()) {
-                    // F3: row a of the station's harvest block = this column's n_c read
-                    // at every carried column (its own entry equals `var`); the entry
-                    // points at the block + its index so the next inject can pair it
-                    // with any sibling stashed at THIS harvest — and with nothing else.
+                    // Local block (F3): row a of the station's harvest block is this
+                    // column's n_c read at every carried column (its own entry equals
+                    // `var`); the entry points at the block and its index, so the next
+                    // inject can pair it with any sibling stashed at this harvest, and
+                    // with nothing else.
                     hblk->C.row(static_cast<Eigen::Index>(a)) = cross.transpose();
                     auto& ent = local_carry[std::make_tuple(static_cast<int>(i), pa.sat, pa.signal)];
                     ent.blk = hblk;
                     ent.blk_idx = static_cast<int>(a);
                 }
-                // One-shot IF-phase refloat: the fresh post-slip value is now
-                // stashed, so drop any pending-reseed mark and let the next epoch
-                // resume normal carry on the new arc.  Cleared only after a
-                // SUCCESSFUL stash — a skipped non-finite value keeps the mark so
-                // the stale pre-slip carry is never re-trusted.  No-op when unmarked.
+                // One-shot IF-phase refloat: the fresh post-slip value is now stashed, so
+                // drop any pending-reseed mark and let the next epoch resume normal carry
+                // on the new arc.  Cleared only after a successful stash: a skipped
+                // non-finite value keeps the mark, so the stale pre-slip carry is not
+                // trusted again.  No-op when unmarked.
                 stations[i].sm->clearPendingReseed(pa.amb_key);
             }
         }
-        // ---- Rung 3 v3 lane observatory: POST-event measurement -------------
-        // Runs after the harvest loop, so both
-        // bands' fresh levels coexist, and before the gap prune, so a pair that
-        // is about to be time-pruned is still measurable this epoch.
+        // ---- Lane observatory (rung 3 v3): post-event measurement -----------
+        // Runs after the harvest loop, so both bands' fresh levels coexist, and before the
+        // gap prune, so a pair that is about to be time-pruned is still measurable this
+        // epoch.
         //
         //   delta = [C_a(t+)/lam_a - C_b(t+)/lam_b]
         //         - [C_a(t-)/lam_a - C_b(t-)/lam_b] - dM        [cycles]
         //
-        // Every per-(station, satellite, pair) bias — receiver and satellite,
-        // code and phase — is constant across the event and cancels in BOTH
-        // differences, so no bias convention has to be reconciled (the v1 kill)
-        // and snapped/unsnapped arcs would mix freely in a DD (the v1 DD-closure
-        // kill).  MEASURE ONLY: nothing is written back.
+        // Every per-(station, satellite, pair) bias (receiver and satellite, code and
+        // phase) is constant across the event and cancels in both differences, so no bias
+        // convention has to be reconciled (the failure of v1), and snapped and unsnapped
+        // arcs would mix freely in a DD (the v1 DD-closure failure).  Measure-only:
+        // nothing is written back.
         if (lane_obs_on) {
-            // Denominator is the FREED set, not the raw rows: a freed arc the raw
-            // pass never saw must show up as a counted skip, not as a silent
-            // shrinkage of the denominator (invariant #3 - measure the deferral).
+            // The denominator is the freed set, not the raw rows: a freed arc the raw
+            // pass never saw shows up as a counted skip, not as an unreported shrinkage
+            // of the denominator (invariant #3: measure the deferral).
             std::set<std::pair<int, std::string>> freed_los;
-            // §7.6(c): LOS-level freeing-cause union (a satellite freed on two
-            // bands by two different detectors carries both bits).
+            // LOS-level union of freeing causes (§7.6(c)): a satellite freed on two
+            // bands by two different detectors carries both bits.
             std::map<std::pair<int, std::string>, std::uint8_t> los_cause;
             for (const auto& fa : ctx.carry.relevel.free_ambs) {
                 const auto parts = StateKeys::parseAmbiguityKey(fa.second);
@@ -4936,13 +4866,12 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 if (cit2 != ctx.carry.relevel.free_cause.end())
                     los_cause[lk] |= cit2->second;
             }
-            // WARNING - SIGNAL-CODE NAMESPACE.  The raw pass names a band by the
-            // lexicographically first attribute it tracks (L1C), while the
-            // ambiguity / carry key uses the ESTIMATOR-selected code (L1W under a
-            // "W-before-C" priority list).  Matching the two by full code would
-            // miss every entry on such a network and report the miss as "no
-            // pre-event carry" - a false population verdict, not a wiring alarm.
-            // Resolve by BAND DIGIT against the carry itself, which is the
+            // Signal-code namespace: the raw pass names a band by the lexicographically
+            // first attribute it tracks (L1C), while the ambiguity / carry key uses the
+            // estimator-selected code (L1W under a "W-before-C" priority list).  Matching
+            // the two by full code would miss every entry on such a network and report
+            // the miss as "no pre-event carry", a wrong population verdict rather than a
+            // wiring alarm.  Resolve by band digit against the carry itself, which is the
             // namespace both lane levels are read from.
             const auto resolve = [&](int sta, const std::string& sat,
                                      const std::string& code) -> std::string {
@@ -4959,8 +4888,8 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 const int  sta = los.first;
                 const std::string& sat = los.second;
                 ++ctx.counters.n_lane_attempts;
-                // §7.6(a): one per-event row per ATTEMPT — the skip channel is
-                // the outcome, so the trace closes against the counters.
+                // One per-event row per attempt (§7.6(a)); the skip channel is the
+                // outcome, so the trace closes against the counters.
                 RelevelEpochState::LaneObsRow row;
                 row.sta = sta; row.sat = sat;
                 {
@@ -4993,13 +4922,13 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 if (sa.empty() || sb.empty()) { skip(ctx.counters.n_lane_skip_no_pre, "skip_no_pre"); continue; }
                 const auto ka = std::make_tuple(sta, sat, sa);
                 const auto kb = std::make_tuple(sta, sat, sb);
-                // The RESPONSE must have touched this pair.  A satellite can be in
-                // freed_los because a THIRD band was freed (L5 on a triple posture,
-                // or a second channel of the same band under channel_mode=all); both
-                // of THIS pair's carries are then continuous, there is no re-level to
-                // measure, and admitting it would fold ordinary carried-prior
-                // evolution into the histogram - biasing it toward the pre-registered
-                // "mass below ~2 cyc" conclusion.
+                // The response has to have touched this pair.  A satellite can be in
+                // freed_los because a third band was freed (L5 on a triple posture, or a
+                // second channel of the same band under channel_mode=all); both of this
+                // pair's carries are then continuous, there is no re-level to measure, and
+                // admitting the pair would fold ordinary carried-prior evolution into the
+                // histogram, biasing it toward the pre-registered "mass below ~2 cyc"
+                // conclusion.
                 const bool a_freed =
                     ctx.carry.relevel.free_ambs.count({sta, StateKeys::makeAmbiguityKey(sat, sa)}) > 0;
                 const bool b_freed =
@@ -5007,9 +4936,9 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 if (!a_freed && !b_freed) {
                     skip(ctx.counters.n_lane_skip_no_freed_band, "skip_no_freed_band"); continue;
                 }
-                // A delta-bridged band's carry was already re-based to
-                // pre_slip + shift, so its lane response is the BRIDGE's, not the
-                // free re-level's - a different population, counted apart.
+                // A delta-bridged band's carry was already re-based to pre_slip + shift,
+                // so its lane response is the bridge's, not the free re-level's: a
+                // different population, counted separately.
                 if (ctx.carry.relevel.bridged.count(ka)
                     || ctx.carry.relevel.bridged.count(kb)) {
                     skip(ctx.counters.n_lane_skip_bridged, "skip_bridged"); continue;
@@ -5018,20 +4947,20 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 if (pa_it == lane_pre.end() || pb_it == lane_pre.end()) {
                     skip(ctx.counters.n_lane_skip_no_pre, "skip_no_pre"); continue;
                 }
-                // PRE freshness: exactly one processed epoch old.  Otherwise the
-                // carry difference spans a different interval from the one-epoch
-                // MW step it is differenced against.
+                // Pre-event freshness: exactly one processed epoch old.  Otherwise the
+                // carry difference spans a different interval from the one-epoch MW step
+                // it is differenced against.
                 if (!(ctx.carry.pl_prev_now_s > 0.0)
                     || pa_it->second.second != ctx.carry.pl_prev_now_s
                     || pb_it->second.second != ctx.carry.pl_prev_now_s) {
                     skip(ctx.counters.n_lane_skip_stale_pre, "skip_stale_pre"); continue;
                 }
-                // POST freshness: RE-STASHED this epoch, tested on last_seen_s and
-                // NOT on map presence.  An un-refreshed entry survives a full
-                // pl_max_gap_s, and accepting it would contribute the PRE value as
-                // the POST value - collapsing the delta either to a one-band code
-                // re-level (top bins) or to exactly -dMW (~0.35 cyc, bottom bins).
-                // Both directions manufacture a verdict, in opposite senses.
+                // Post-event freshness: re-stashed this epoch, tested on last_seen_s and
+                // not on map presence.  An entry that was not refreshed survives a full
+                // pl_max_gap_s, and accepting it would use the pre-event value as the
+                // post-event value, collapsing the delta either to a one-band code
+                // re-level (top bins) or to exactly -dMW (~0.35 cyc, bottom bins).  Either
+                // way the histogram would show a verdict the data does not support.
                 const auto qa_it = local_carry.find(ka), qb_it = local_carry.find(kb);
                 if (qa_it == local_carry.end() || qb_it == local_carry.end()
                     || qa_it->second.last_seen_s != pl_now_s
@@ -5048,7 +4977,7 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 const bool vertex_wide = a_freed && b_freed;
                 ++(vertex_wide ? ctx.counters.n_lane_both_freed
                                : ctx.counters.n_lane_one_freed);
-                // §7.6(c): cause split over MEASURED pairs (bit counts).
+                // Cause split over measured pairs, as bit counts (§7.6(c)).
                 if (row.cause & RelevelEpochState::kCauseMw)   ++ctx.counters.n_lane_meas_mw;
                 if (row.cause & RelevelEpochState::kCauseLli)  ++ctx.counters.n_lane_meas_lli;
                 if (row.cause & RelevelEpochState::kCauseIfTd) ++ctx.counters.n_lane_meas_iftd;
@@ -5060,22 +4989,22 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 int bin = 8;
                 for (int bi = 0; bi < 8; ++bi) if (ad < kBins[bi]) { bin = bi; break; }
                 ++ctx.counters.n_lane_hist[bin];
-                // §7.6(b): the band-scoped subset separately, so the rung-2
-                // contrast (vertex-wide vs band-scoped response) is readable.
+                // The band-scoped subset separately (§7.6(b)), so the rung-2 contrast
+                // (vertex-wide against band-scoped response) is readable.
                 if (!vertex_wide) ++ctx.counters.n_lane_hist_bandscoped[bin];
                 row.measured = true;
                 row.vertex_wide = vertex_wide;
                 row.delta_cyc = delta;
                 ctx.carry.relevel.lane_obs_rows.push_back(row);
             }
-            // ---- §7.6(d): T4-side measurement over LAST epoch's pre-erase
-            // captures (the RAIM attribution/consensus erase channel — 97.3 %
-            // of all field freeing, structurally invisible to free_ambs).  The
-            // SAME delta, one extra interlock: the capture is a COPY across an
-            // epoch boundary, so a pair whose (sat,σ) was eq34-re-referenced
-            // THIS epoch is skipped (the detector path gets that guard for
-            // free because lane_pre reads local_carry, which the re-reference
-            // hygiene already erased).  Measure-only; separate closure.
+            // ---- T4-side measurement over the previous epoch's pre-erase captures
+            // (§7.6(d)): the RAIM attribution / consensus erase channel, which is most
+            // of all field freeing and does not appear in free_ambs.  Same delta, with
+            // one extra interlock: the capture is a copy across an epoch boundary, so a
+            // pair whose (sat,σ) was eq34-re-referenced this epoch is skipped (the
+            // detector path has that guard implicitly, because lane_pre reads
+            // local_carry, which the re-reference hygiene already erased).
+            // Measure-only, with its own closure.
             static const double kT4Bins[8] = { 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 25.0 };
             if (!ctx.carry.lane_t4_pre.empty()) {
                 std::set<std::pair<int, std::string>> t4_los;
@@ -5118,9 +5047,9 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                         || !(m.lam2_m > m.lam1_m)) {
                         skip(ctx.counters.n_lane_t4_skip_bad_lambda, "t4_skip_bad_lambda"); continue;
                     }
-                    // Resolve the captured bands by BAND DIGIT against the raw
-                    // pair (the capture keys carry the estimator-selected carry
-                    // signal names — the same namespace note as `resolve`).
+                    // Resolve the captured bands by band digit against the raw pair (the
+                    // capture keys carry the estimator-selected carry signal names; see
+                    // the namespace note at `resolve`).
                     const auto cap_of = [&](const std::string& code)
                         -> std::pair<const std::string*, const NetworkCarryState::LaneT4Pre*> {
                         if (code.size() < 2) return {nullptr, nullptr};
@@ -5136,14 +5065,13 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     if (!ca.second || !cb.second) {
                         skip(ctx.counters.n_lane_t4_skip_no_pre, "t4_skip_no_pre"); continue;
                     }
-                    // §7.7 handover cross-guard: EVERY frame channel that can
-                    // re-realize this pair's family between capture and
-                    // measurement — the eq34 (sat,σ) re-reference (this
-                    // lineage), the phase-anchor election's re-referenced
-                    // families (non-eq34 lineages; the set deliberately
-                    // persists across withheld epochs until a stash commits
-                    // the new frame), and the datum-station slip's
-                    // network-wide reseed (per-satellite, all signals).
+                    // Handover cross-guard (§7.7): every frame channel that can
+                    // re-realize this pair's family between capture and measurement.
+                    // These are the eq34 (sat,σ) re-reference, the phase-anchor
+                    // election's re-referenced families (non-eq34 lineages; the set
+                    // persists across withheld epochs, on purpose, until a stash
+                    // commits the new frame), and the datum-station slip's network-wide
+                    // reseed (per satellite, all signals).
                     if (eq34_reref.count({sat, *ca.first})
                         || eq34_reref.count({sat, *cb.first})
                         || ctx.carry.phase_anchor_reref.count({sat, *ca.first})
@@ -5156,9 +5084,9 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                         || cb.second->stamp_s != ctx.carry.pl_prev_now_s) {
                         skip(ctx.counters.n_lane_t4_skip_stale_pre, "t4_skip_stale_pre"); continue;
                     }
-                    // POST: re-stashed THIS epoch under the SAME signal names —
-                    // an attribute re-selection after the refloat is a different
-                    // lane, not a measurable response.
+                    // Post-event: re-stashed this epoch under the same signal names; an
+                    // attribute re-selection after the refloat is a different lane, not a
+                    // measurable response.
                     const auto qa_it = local_carry.find(std::make_tuple(sta, sat, *ca.first));
                     const auto qb_it = local_carry.find(std::make_tuple(sta, sat, *cb.first));
                     if (qa_it == local_carry.end() || qb_it == local_carry.end()
@@ -5187,27 +5115,27 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     ctx.carry.relevel.lane_obs_rows.push_back(row);
                 }
             }
-            // One-epoch lifetime (invariant #1): a capture is consumed at the
-            // FIRST harvest after its erase or dropped — never measured across
-            // an unequal interval.
+            // One-epoch lifetime (invariant #1): a capture is consumed at the first
+            // harvest after its erase, or dropped; it is never measured across an
+            // unequal interval.
             ctx.carry.lane_t4_pre.clear();
         }
-        // Stamp this harvest so the NEXT epoch can require a one-epoch-old pre.
+        // Stamp this harvest so the next epoch can require a one-epoch-old pre-event
+        // value.
         ctx.carry.pl_prev_now_s = pl_now_s;
 
-        // Carry-retirement census: this prune is
-        // the mechanism that produced the fleet-scale carry loss §1.3 called the
-        // "cliff".  It reads ONLY last_seen_s — it selects on elapsed time and on
-        // nothing else — so any claim that it performs quality THERAPY has to be
-        // measured against the quality-selected retirement paths, not assumed.
-        // The fleet size is captured BEFORE the loop so "fleet-scale" is a ratio.
+        // Carry-retirement census.  This prune is the mechanism behind the fleet-scale
+        // carry loss that §1.3 calls the "cliff".  It reads only last_seen_s (it selects
+        // on elapsed time and nothing else), so any claim that it improves quality has
+        // to be measured against the quality-selected retirement paths, not assumed.
+        // The fleet size is captured before the loop, so "fleet-scale" is a ratio.
         {
             const long long fleet_before = static_cast<long long>(local_carry.size());
             long long n_pruned = 0;
             for (auto it = local_carry.begin(); it != local_carry.end();) {
                 if (pl_now_s - it->second.last_seen_s > pl_max_gap_s) {
-                    // RF-1 §7.4 D3: capture BEFORE the erase.  This is the one
-                    // retirement path design §3.4 KEEPS as an erase ("this is a
+                    // Capture before the erase (RF-1 §7.4, D3).  This is the one
+                    // retirement path that design §3.4 keeps as an erase ("this is a
                     // different arc"), so its inventory is the control against which
                     // the three that become bounded drops are read.
                     if (amb_state_on) {
@@ -5221,13 +5149,12 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                             std::get<1>(it->first), std::get<2>(it->first),
                             it->second, "gap_prune");
                     }
-                    // Card SID phase 3 (R3a): the DECOUPLING edge of the carry
-                    // itself.  This retirement emitted nothing at all until now
-                    // (the audit's "31 lifecycle holders with both edges silent"),
-                    // so the key is buffered for the roster's audit pass, which
-                    // owns the trace bundle and the epoch time and writes the
-                    // `ARC arc_death reason=horizon` row.  Untouched without the
-                    // observatory: the vector stays empty and nothing reads it.
+                    // The decoupling edge of the carry itself (card SID phase 3, R3a).
+                    // The key is buffered for the roster's audit pass, which owns the
+                    // trace bundle and the epoch time and writes the
+                    // `ARC arc_death reason=horizon` row; without that, this retirement
+                    // would emit nothing.  Untouched without the observatory: the vector
+                    // stays empty and nothing reads it.
                     if (ctx.roster.armed)
                         ctx.carry.sid_carry_prune_deaths.push_back(it->first);
                     it = local_carry.erase(it);
@@ -5241,9 +5168,9 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 ++ctx.counters.n_cr_gap_prune_epochs;
                 if (n_pruned > ctx.counters.n_cr_gap_prune_max) {
                     ctx.counters.n_cr_gap_prune_max       = n_pruned;
-                    // week/TOW, NOT pl_now_s: every trace CSV and log line in the
-                    // run is keyed on TOW, so a continuous-GPS-seconds handle
-                    // (~1.4e9) would match nothing the reader can grep.
+                    // Week/TOW, not pl_now_s: every trace CSV and log line in the run is
+                    // keyed on TOW, so a continuous-GPS-seconds handle (~1.4e9) would not
+                    // match anything a reader can search for.
                     ctx.counters.n_cr_gap_prune_max_week  =
                         static_cast<long long>(std::floor(pl_now_s / 604800.0));
                     ctx.counters.cr_gap_prune_max_tow     = std::fmod(pl_now_s, 604800.0);
@@ -5251,28 +5178,30 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 }
             }
         }
-        // Retap statistics-guard set: one RAIM-to-harvest lifetime, consumed by
-        // the labeling above — cleared here so next epoch's RAIM refills it.
+        // Retap statistics-guard set: one RAIM-to-harvest lifetime, consumed by the
+        // labeling above and cleared here, so next epoch's RAIM refills it.
         ctx.carry.relevel_retapped_prev.clear();
-        // --- I-in-block slant-iono carry (network.carry_iono_in_block): harvest each
-        //     station's per-LOS iono posteriors THROUGH THE SAME per-column solve the
-        //     ambiguities used, write their rows of the station's harvest block, stash the
-        //     ABSOLUTE value, and prune the stale entries.
+        // --- In-block slant-iono carry (network.carry_iono_in_block): harvest each
+        //     station's per-LOS iono posteriors through the same per-column solve the
+        //     ambiguities used, write their rows of the station's harvest block, stash
+        //     the absolute value, and prune the stale entries.
         //
-        //     Independent loop (the ZWD pattern) so it runs for stations whose ambiguity
-        //     harvest produced nothing.  Three deliberate differences from the QUEUE-8(b)
-        //     diagonal carry's harvest, all of them the point of the card:
-        //       * the CROSS terms are gathered (this is what subtracts the B-fold
-        //         over-count at inject); QUEUE 8(b) took the diagonal alone,
-        //       * the coupling row IS harvested — an in-block column is folded exactly
-        //         like an ambiguity, border regression included, which is what makes the
-        //         prior exact GIVEN the border (the rx-CB "no shared footprint" rationale
-        //         is what the diagonal vehicle needed; it is not what this one needs),
-        //       * ABSOLUTE value (x_lin + x_r).  network_ionosphere.csv writes x_r alone
-        //         and is frame-broken; a carry that is not frame-complete would re-inject
-        //         a correction against a moved linearization point.
+        //     Independent loop (as for the ZWD), so it runs for stations whose
+        //     ambiguity harvest produced nothing.  It differs from the harvest of the
+        //     diagonal slant-iono carry (queue 8(b)) in three deliberate ways:
+        //       * the cross terms are gathered (they subtract the B-fold over-count at
+        //         inject); queue 8(b) took the diagonal alone;
+        //       * the coupling row is harvested: an in-block column is folded like an
+        //         ambiguity, border regression included, which makes the prior exact
+        //         given the border (the rx-CB "no shared footprint" rationale applied to
+        //         the diagonal vehicle, not to this one);
+        //       * the value is absolute (x_lin + x_r).  network_ionosphere.csv writes
+        //         x_r alone and is not frame-complete; a carry that is not
+        //         frame-complete would re-inject a correction against a moved
+        //         linearization point.
         //     A LOS whose harvest fails keeps blk = nullptr, so every pair with it is
-        //     zeroed and counted (n_pl_blk_iono_missing_cross) — the safe degrade.
+        //     zeroed and counted (n_pl_blk_iono_missing_cross), which is the safe
+        //     degrade.
         if (iono_blk_on) {
             auto& iono_blk_carry = ctx.carry.iono_blk_carry;
             for (size_t i = 0; i < stations.size(); ++i) {
@@ -5290,7 +5219,7 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 Eigen::VectorXd xr, vard;
                 try {
                     xr = est.reconstructStation(est_idx, x_s);
-                    if (!carry_cpl_cond)   // Card 1 uses the PURE conditional (N_rr⁻¹)_cc
+                    if (!carry_cpl_cond)   // the coupling carry (card 1) uses the pure conditional (N_rr⁻¹)_cc
                         vard = est.conditionalLocalVarianceDiag(est_idx, icols,
                                                                 plan.shared_datum);
                 } catch (...) { continue; }
@@ -5313,11 +5242,11 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     const auto key = std::make_pair(static_cast<int>(i), isat);
                     LocalCarry ent{value_abs, var, pl_now_s, std::move(coupling)};
                     // birth_ep / birth_s / var_first survive a re-stash and restart only
-                    // on an erase-and-rebirth (a T4 erase, or a gap prune) — the ambiguity
-                    // carry's rule, through the ambiguity carry's own helper, so the age
-                    // of an iono carry means the same thing.  (This map is NOT
-                    // snapshotted, so it never sees a RESTORED sentinel today; the shared
-                    // helper is what makes that stay true if it ever is.)
+                    // on an erase-and-rebirth (a T4 erase, or a gap prune): the ambiguity
+                    // carry's rule, applied through the ambiguity carry's own helper, so
+                    // the age of an iono carry means the same thing.  (This map is not
+                    // snapshotted, so it never sees a restored sentinel; the shared helper
+                    // keeps the rule correct if it ever is.)
                     const auto oit = iono_blk_carry.find(key);
                     const LocalCarry* iprev =
                         (oit != iono_blk_carry.end()) ? &oit->second : nullptr;
@@ -5325,12 +5254,12 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     localCarryStampBirth(
                         ent, iprev,
                         static_cast<long long>(ctx.counters.n_loop_epochs), pl_now_s);
-                    // Row irow0 + a of the station's harvest block = this iono column's
+                    // Row irow0 + a of the station's harvest block is this iono column's
                     // n_c read at every carried column of the station (its own entry
                     // equals `var`, the pure conditional).  The entry then points at the
-                    // SAME PlHarvestBlock the ambiguity and ZWD entries point at, so next
+                    // same PlHarvestBlock as the ambiguity and ZWD entries, so next
                     // epoch's inject pairs iono↔ambiguity, iono↔ZWD and iono↔iono by
-                    // pointer equality exactly as it pairs ambiguity↔ambiguity.
+                    // pointer equality, as it pairs ambiguity↔ambiguity.
                     if (iblk && irow0 >= 0 && icross.size() == iblk->C.rows()) {
                         const Eigen::Index irow = irow0 + static_cast<Eigen::Index>(a);
                         if (irow < iblk->C.rows()) {
@@ -5342,9 +5271,10 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     iono_blk_carry[key] = std::move(ent);
                 }
             }
-            // Invariant #1/#7 decoupling edge: a LOS unseen past the horizon is DROPPED,
-            // never aged into a fold.  Counted — this is the eclipse / set edge, and a run
-            // whose count is 0 over a full day did not exercise it.
+            // Decoupling edge (invariants #1 and #7): a LOS unseen past the horizon is
+            // dropped, not aged into a fold.  It is counted, because this is the
+            // eclipse / set edge, and a run whose count is 0 over a full day did not
+            // exercise it.
             for (auto it = iono_blk_carry.begin(); it != iono_blk_carry.end();) {
                 if (pl_now_s - it->second.last_seen_s > iono_blk_gap_s) {
                     it = iono_blk_carry.erase(it);
@@ -5352,33 +5282,35 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 } else ++it;
             }
         }
-        // --- RX-CLK-in-block receiver-clock carry (network.carry_rx_clock_in_block):
-        //     harvest each station's receiver-clock (and ISB) posteriors THROUGH THE SAME
+        // --- In-block receiver-clock carry (network.carry_rx_clock_in_block): harvest
+        //     each station's receiver-clock (and ISB) posteriors through the same
         //     per-column solve the ambiguities used, write their rows of the station's
         //     harvest block, run the (bias, drift) filter, and prune the stale entries.
         //
-        //     ⚠ THE DRIFT IS THE WHOLE DESIGN.  The producer never writes its solution
-        //     back into the station StateManager, so x_lin(clock) is set ONCE (0, or the
-        //     latched cold_clock_seed median) and is CONSTANT for the run: x_r carries the
-        //     entire clock, including a ~0.3 m/s ramp = 9 m per 30 s epoch (measured
-        //     0.29994 m/s on the sim truth bed, with 0.299 m RW increments about it).  A
-        //     bias-only random walk at q = 0.09 m² would therefore be ~30 σ wrong EVERY
-        //     epoch.  The honest vehicle is the (bias, drift) pair: the block column holds
-        //     the bias, and the drift is a per-station scalar Kalman state updated here
-        //     from the harvested increments — the same state that supplies the one-step
-        //     PREDICTION whose innovation is this card's clock-JUMP detector.
+        //     The drift is central to the design.  The producer never writes its
+        //     solution back into the station StateManager, so x_lin(clock) is set once
+        //     (0, or the latched cold_clock_seed median) and is constant for the run:
+        //     x_r carries the entire clock, including a ramp of about 0.3 m/s, i.e. 9 m
+        //     per 30 s epoch (0.29994 m/s on the sim truth bed, with 0.299 m random-walk
+        //     increments about it).  A bias-only random walk at q = 0.09 m² would be
+        //     about 30 σ wrong every epoch.  The carry is therefore the (bias, drift)
+        //     pair: the block column holds the bias, and the drift is a per-station
+        //     scalar Kalman state updated here from the harvested increments, the same
+        //     state that supplies the one-step prediction whose innovation is the
+        //     clock-jump detector.
         //
-        //     Independent loop (the ZWD/iono pattern) so it runs for stations whose
-        //     ambiguity harvest produced nothing.  ISB columns share the loop but NOT the
-        //     drift: an inter-system bias is a near-constant offset (the sim injects a
-        //     fixed 8.000 m), so it takes a pure random walk.
+        //     Independent loop (as for the ZWD and iono), so it runs for stations whose
+        //     ambiguity harvest produced nothing.  ISB columns share the loop but not
+        //     the drift: an inter-system bias is a near-constant offset (the sim
+        //     injects a fixed 8.000 m), so it takes a pure random walk.
         if (rxclk_blk_on) {
             auto& rx_clk_carry = ctx.carry.rx_clk_carry;
             auto& rx_clk_rate  = ctx.carry.rx_clk_rate;
-            // The run's OWN observed harvest-to-harvest spacing, kept here rather than read
-            // from ctx.carry.pl_prev_now_s because that field has ALREADY been advanced to
-            // pl_now_s by the time this loop runs.  Used only to convert a gap into EPOCHS
-            // for the per-epoch q, so the knob means the same thing at 1 s and at 30 s.
+            // The run's own observed harvest-to-harvest spacing, kept here rather than
+            // read from ctx.carry.pl_prev_now_s, because that field has already been
+            // advanced to pl_now_s when this loop runs.  Used only to convert a gap into
+            // epochs for the per-epoch q, so the knob means the same thing at 1 s and at
+            // 30 s.
             double dt_ep_run = (ctx.carry.rxclk_prev_now_s > 0.0)
                                    ? pl_now_s - ctx.carry.rxclk_prev_now_s : 0.0;
             if (!std::isfinite(dt_ep_run) || dt_ep_run <= 0.0 || dt_ep_run > rxclk_gap_s)
@@ -5398,7 +5330,7 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 Eigen::VectorXd xr, vard;
                 try {
                     xr = est.reconstructStation(est_idx, x_s);
-                    if (!carry_cpl_cond)   // Card 1 uses the PURE conditional (N_rr⁻¹)_cc
+                    if (!carry_cpl_cond)   // the coupling carry (card 1) uses the pure conditional (N_rr⁻¹)_cc
                         vard = est.conditionalLocalVarianceDiag(est_idx, rcols,
                                                                 plan.shared_datum);
                 } catch (...) { continue; }
@@ -5419,8 +5351,8 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     }
                     if (!(var > 0.0) || !std::isfinite(var)) continue;
                     const auto key = std::make_pair(static_cast<int>(i), pr.kind);
-                    // --- (bias, drift) filter + the clock-JUMP response.  PRIMARY CLOCK
-                    //     ONLY (pr.kind empty); an ISB has no rate by construction.
+                    // --- (bias, drift) filter and the clock-jump response, for the primary
+                    //     clock only (pr.kind empty); an ISB has no rate by construction.
                     if (pr.kind.empty()) {
                         auto& rt = rx_clk_rate[key];   // default-constructs on first sighting
                         if (rt.prev_s > 0.0) {
@@ -5428,25 +5360,26 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                             if (dt > 0.0 && dt <= rxclk_gap_s) {
                                 const double gap_ep = (dt_ep_run > 0.0)
                                                           ? std::max(1.0, dt / dt_ep_run) : 1.0;
-                                // rate_var < 0 = "never updated": the drift is UNKNOWN, so
+                                // rate_var < 0 = "never updated": the drift is unknown, so
                                 // the prediction is bias-only with an uninformative rate.
-                                // That is also what makes the jump gate correct on the very
-                                // first increment — with σ_d = 1 m/s the 30 s prediction
-                                // band is ~30 m, which a 9 m/epoch drift clears at 0.3 σ and
-                                // a 1 ms receiver step (3e5 m) fails by four orders.
+                                // This also keeps the jump gate correct on the first
+                                // increment: with σ_d = 1 m/s the 30 s prediction band is
+                                // about 30 m, which a 9 m/epoch drift passes at 0.3 σ and a
+                                // 1 ms receiver step (3e5 m) fails by four orders of
+                                // magnitude.
                                 const double rvar_eff =
                                     (rt.rate_var >= 0.0) ? rt.rate_var : rxclk_rate_var0;
-                                // The SAME kernel PASS B injected with, so the innovation
-                                // is tested against the prediction that was actually used.
+                                // The same kernel PASS B injected with, so the innovation
+                                // is tested against the prediction that was used.
                                 const RxClkPred rp = rxClockPredict(
                                     rt.prev_abs, rt.prev_var, rt.rate, rvar_eff, dt,
                                     gap_ep, rxclk_q);
                                 const double var_pred = rp.var;
                                 const double innov    = value_abs - rp.mean;
                                 // Gate-scale census (invariant #4): the gate is
-                                // k*sqrt(var_pred) METRES and var_pred is per
-                                // station-epoch, so a report can quote the size an
-                                // event must exceed rather than just k.  Measure-only.
+                                // k*sqrt(var_pred) metres and var_pred is per
+                                // station-epoch, so a report can quote the size an event
+                                // has to exceed rather than only k.  Measure-only.
                                 if (var_pred > 0.0 && std::isfinite(innov)) {
                                     auto& C = ctx.counters;
                                     const double gate_m = rxclk_jump_k * std::sqrt(var_pred);
@@ -5464,12 +5397,12 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                                 }
                                 if (var_pred > 0.0 && std::isfinite(innov)
                                     && std::abs(innov) > rxclk_jump_k * std::sqrt(var_pred)) {
-                                    // Invariant #1/#7: the receiver (or the solve) STEPPED.
-                                    // DECOUPLING edge — erase BOTH halves so nothing crosses
-                                    // the jump; RE-COUPLING edge — the next sighting is a
-                                    // cold rebirth whose rate prior is uninformative again,
-                                    // so the two epochs after a jump inject a near-free
-                                    // prior rather than a stale one.
+                                    // The receiver (or the solve) stepped (invariants #1
+                                    // and #7).  Decoupling edge: erase both halves, so
+                                    // nothing crosses the jump.  Re-coupling edge: the next
+                                    // sighting is a cold rebirth whose rate prior is
+                                    // uninformative again, so the two epochs after a jump
+                                    // inject a nearly free prior rather than a stale one.
                                     rx_clk_carry.erase(key);
                                     rx_clk_rate.erase(key);
                                     ++ctx.counters.n_rxclk_carry_refused;
@@ -5499,11 +5432,11 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                         rt.prev_var = var;
                     }
                     LocalCarry ent{value_abs, var, pl_now_s, std::move(coupling)};
-                    // birth_ep / birth_s / var_first survive a re-stash and restart only on
-                    // an erase-and-rebirth (a jump response, or a gap prune) — the ambiguity
-                    // carry's rule, through the ambiguity carry's own helper, so the age of
-                    // a clock carry means the same thing.  (This map is NOT snapshotted
-                    // either; same note as the iono block above.)
+                    // birth_ep / birth_s / var_first survive a re-stash and restart only
+                    // on an erase-and-rebirth (a jump response, or a gap prune): the
+                    // ambiguity carry's rule, applied through the ambiguity carry's own
+                    // helper, so the age of a clock carry means the same thing.  (This map
+                    // is not snapshotted either; see the note in the iono block above.)
                     const auto oit = rx_clk_carry.find(key);
                     const LocalCarry* rprev =
                         (oit != rx_clk_carry.end()) ? &oit->second : nullptr;
@@ -5511,12 +5444,12 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     localCarryStampBirth(
                         ent, rprev,
                         static_cast<long long>(ctx.counters.n_loop_epochs), pl_now_s);
-                    // Row rrow0 + a of the station's harvest block = this clock-family
+                    // Row rrow0 + a of the station's harvest block is this clock-family
                     // column's n_c read at every carried column of the station (its own
                     // entry equals `var`, the pure conditional).  The entry then points at
-                    // the SAME PlHarvestBlock the ambiguity / iono / ZWD entries point at,
-                    // so next epoch's inject pairs clock↔ambiguity, clock↔iono, clock↔ZWD
-                    // by pointer equality exactly as it pairs ambiguity↔ambiguity.
+                    // the same PlHarvestBlock as the ambiguity / iono / ZWD entries, so
+                    // next epoch's inject pairs clock↔ambiguity, clock↔iono and clock↔ZWD
+                    // by pointer equality, as it pairs ambiguity↔ambiguity.
                     if (rblk && rrow0 >= 0 && rcross.size() == rblk->C.rows()) {
                         const Eigen::Index rrow = rrow0 + static_cast<Eigen::Index>(a);
                         if (rrow < rblk->C.rows()) {
@@ -5528,10 +5461,10 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     rx_clk_carry[key] = std::move(ent);
                 }
             }
-            // Invariant #1/#7 decoupling edge: a station unseen past the horizon is
-            // DROPPED, never aged into a fold — and its drift state goes with it, because
-            // extrapolating a rate across an unobserved hour is exactly the stale-prior
-            // failure this card is built to avoid.  Counted.
+            // Decoupling edge (invariants #1 and #7): a station unseen past the horizon
+            // is dropped, not aged into a fold, and its drift state goes with it, because
+            // extrapolating a rate across an unobserved hour is the stale-prior failure
+            // the carry is designed to avoid.  Counted.
             for (auto it = rx_clk_carry.begin(); it != rx_clk_carry.end();) {
                 if (pl_now_s - it->second.last_seen_s > rxclk_gap_s) {
                     rx_clk_rate.erase(it->first);
@@ -5541,17 +5474,18 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             }
             ctx.carry.rxclk_prev_now_s = pl_now_s;
         }
-        // --- ZWD carry (B9): harvest posterior ZWD + stash (mirrors the ambiguity
-        //     harvest; independent loop so it works regardless of ambiguity presence).
-        //     Runs for B9 proper, for a live post-resume seam window (rolling B9),
-        //     AND — capture-only, feeding nothing back — on any snapshot-armed run,
-        //     so every RTB-7 snapshot serializes fresh Z rows (§17 finding 3).  The
-        //     capture path is read-only w.r.t. the solve: R.pl_zwd_present is
-        //     record-only on those epochs and no inject ever fires.
+        // --- ZWD carry (B9): harvest the posterior ZWD and stash it (mirrors the
+        //     ambiguity harvest, in an independent loop so it works whether or not
+        //     ambiguities are present).  Runs for B9 proper, for a live post-resume
+        //     seam window (rolling B9), and, capture-only with nothing fed back, on any
+        //     run with a snapshot path, so every RTB-7 snapshot serializes fresh Z rows
+        //     (§17 finding 3).  The capture path is read-only with respect to the
+        //     solve: R.pl_zwd_present is record-only on those epochs and no inject
+        //     fires.
         if (zwd_on || zwd_capture || zwd_seam_live) {
             for (size_t i = 0; i < stations.size(); ++i) {
-                // B9: harvest the pivot's ZWD too — R.pl_zwd_present is set for the
-                // pivot now that the carry inject above runs for it.
+                // Harvest the pivot's ZWD too (B9): R.pl_zwd_present is set for the pivot
+                // because the carry inject also runs for it.
                 if (est_index_of[i] < 0) continue;
                 const StationAssembly& R = asm_res[i];
                 if (!R.pl_zwd_present) continue;
@@ -5559,7 +5493,7 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 Eigen::VectorXd xr, vard;
                 try {
                     xr = est.reconstructStation(est_idx, x_s);
-                    if (!carry_cpl_cond)   // Card 1 uses the PURE conditional (N_rr⁻¹)_cc
+                    if (!carry_cpl_cond)   // the coupling carry (card 1) uses the pure conditional (N_rr⁻¹)_cc
                         vard = est.conditionalLocalVarianceDiag(
                             est_idx, {R.pl_zwd.col}, plan.shared_datum);
                 } catch (...) { continue; }
@@ -5568,12 +5502,13 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 if (!std::isfinite(value_abs)) continue;
                 double var;
                 std::vector<CoupledShared> coupling;
-                // B9-in-block (network.carry_zwd_in_block): when this station's pl harvest
-                // above put the ZWD column in `cols` (and only then), the ZWD is harvested
-                // through the SAME cross-gather every ambiguity column used — one call,
-                // one solve — and its row is written at block index n = cols.size()−1.
-                // zblk is null on every other station-epoch and OFF ⇒ nullptr/nullptr,
-                // i.e. the exact pre-card call (byte-identical).
+                // ZWD in the local block (B9-in-block, network.carry_zwd_in_block): when
+                // this station's pl harvest above put the ZWD column in `cols` (and only
+                // then), the ZWD is harvested through the same cross-gather every
+                // ambiguity column used (one call, one solve), and its row is written at
+                // block index n = cols.size()−1.  zblk is null on every other
+                // station-epoch, and off ⇒ nullptr/nullptr, the call as it is without the
+                // knob (byte-identical).
                 const std::shared_ptr<PlHarvestBlock> zblk =
                     zwd_blk_on ? zblk_of_sta[i] : nullptr;
                 const std::vector<Eigen::Index>* zcross_cols =
@@ -5587,16 +5522,15 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     var = (vard.size() > 0) ? vard(0) : -1.0;
                 }
                 if (!(var > 0.0) || !std::isfinite(var)) continue;
-                // PRIOR-RESIDUAL CENSUS INC-2 (new hook): the ZWD carry has NO
-                // screen of any kind today — no slip detector, no jump test, no
-                // D5 analogue — which is precisely the standing-invariant-#1 gap
-                // this card was built to inventory.  Unlike pl, `folded` is
-                // GROUND TRUTH here and needs no reproduction: PASS B already
-                // records R.pl_zwd_injected at the injector itself.  Read the
-                // prior BEFORE the stash below overwrites it.  Additionally gated
-                // on an inject-capable epoch (B9 or a live seam window) so the
-                // capture-only path adds no rows — a snapshot-armed run's census
-                // stays byte-identical to a pre-capture build's.
+                // Prior-residual census hook for the ZWD (INC-2): the ZWD carry has no
+                // screen of any kind (no slip detector, no jump test, no D5 analogue),
+                // which is the standing-invariant-#1 gap the census inventories.  Unlike
+                // pl, `folded` is recorded directly and needs no reproduction: PASS B
+                // records R.pl_zwd_injected at the injector.  The prior is read before
+                // the stash below overwrites it.  Also gated on an inject-capable epoch
+                // (B9 or a live seam window), so the capture-only path adds no rows and
+                // the census of a run with a snapshot path stays byte-identical to one
+                // without the capture.
                 if (prires_zwd && prires_est.enabled() && (zwd_on || zwd_seam_live)) {
                     const auto zit = zwd_carry.find(static_cast<int>(i));
                     if (zit != zwd_carry.end()) {
@@ -5606,35 +5540,35 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                             in.family   = "zwd";
                             in.station  = static_cast<int>(i);
                             in.e        = zit->second.value_abs - value_abs;
-                            // RS-10b: mirror the INJECTOR's q exactly — inside a live
-                            // seam window an armed network.zwd_seam_reseed_q governs
-                            // there, and a census computed against a variance no row
-                            // ever used would report the `zwd` family's σ̂₀ (the R1'
-                            // instrument) off by the override ratio.
+                            // Mirror the injector's q exactly (RS-10b): inside a live
+                            // seam window an armed network.zwd_seam_reseed_q applies
+                            // there, and a census computed against a variance no row used
+                            // would report the `zwd` family's σ̂₀ (the R1' instrument) off
+                            // by the override ratio.
                             in.fold_var = zit->second.var
                                         + ctx.knobs.zwdQEff(zwd_seam_live)
                                               * std::max(0.0, zgap);
                             in.post_var = var;
                             in.gap_s    = zgap;
                             in.folded   = R.pl_zwd_injected;
-                            // A ZWD carry within its horizon that did NOT inject
-                            // is not a mechanism RESPONSE — nothing fired on it;
-                            // the injector simply had no live column or a
-                            // non-positive var_eff.  CLEAN with the `+` branch is
-                            // the honest classification, and the mech tag says so.
+                            // A ZWD carry within its horizon that did not inject is not
+                            // a mechanism response (nothing fired on it); the injector had
+                            // no live column or a non-positive var_eff.  CLEAN with the
+                            // `+` branch is the correct classification, and the mech tag
+                            // records it.
                             in.label = PriorResidualLabel::Clean;
                             in.mech  = R.pl_zwd_injected ? "" : "not_injected";
                             prires_est.addRow(in);
                         }
                     }
                 }
-                // §18.12 OBSERVATORY, ZWD half.  The Z rows are restored and counted
-                // exactly like the L rows (n_resume_cpl_zrows, and they arm the same
+                // Observatory, ZWD half (§18.12).  The Z rows are restored and counted
+                // like the L rows (n_resume_cpl_zrows, and they arm the same
                 // resume_cpl_census_pending latch), so a census that covered only the L
-                // side would report rel ≈ 0 on a leg whose ZWD regression was stale --
-                // the invariant-#4 shape where the instrument reads clean because it never
-                // looked.  Same measure-only body as the phase-leveling census above; read
-                // BEFORE the stash below moves `coupling` out.
+                // side would report rel ≈ 0 on a leg whose ZWD regression was stale, an
+                // instrument that reads clean because it never looked (invariant #4).
+                // Same measure-only body as the phase-leveling census above; read before
+                // the stash below moves `coupling` out.
                 if (ctx.carry.resume_cpl_census_pending && carry_cpl_cond
                     && !coupling.empty()) {
                     const auto zold = zwd_carry.find(static_cast<int>(i));
@@ -5670,14 +5604,15 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 }
                 zwd_carry[static_cast<int>(i)] =
                     LocalCarry{value_abs, var, pl_now_s, std::move(coupling)};
-                // B9-in-block: row n of the station's harvest block = the ZWD column's own
-                // n_c read at every carried column (its last entry equals `var`, the pure
-                // conditional).  The entry then points at the SAME PlHarvestBlock the
-                // ambiguity entries point at, so next epoch's inject pairs ZWD↔ambiguity by
-                // pointer equality exactly as it pairs ambiguity↔ambiguity — and with
-                // nothing stashed at a different harvest.  A ZWD whose harvest failed above
-                // never reaches here: its entry keeps blk = nullptr and every pair with it
-                // is zeroed + counted (pl_blk_zwd_missing_cross), which is the safe degrade.
+                // ZWD in the local block: row n of the station's harvest block is the
+                // ZWD column's own n_c read at every carried column (its last entry
+                // equals `var`, the pure conditional).  The entry then points at the same
+                // PlHarvestBlock as the ambiguity entries, so next epoch's inject pairs
+                // ZWD↔ambiguity by pointer equality, as it pairs ambiguity↔ambiguity,
+                // and with nothing stashed at a different harvest.  A ZWD whose harvest
+                // failed above does not reach here: its entry keeps blk = nullptr, and
+                // every pair with it is zeroed and counted (pl_blk_zwd_missing_cross),
+                // which is the safe degrade.
                 if (zblk && zcross.size() == zblk->C.rows()) {
                     const Eigen::Index zrow = zblk->C.rows() - 1;   // the appended column
                     zblk->C.row(zrow) = zcross.transpose();
@@ -5694,11 +5629,11 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 else ++it;
             }
             // Seam-window bookkeeping (network.zwd_seam_reseed): count this epoch's
-            // actual folds (R.pl_zwd_injected is the injector's own ground truth),
-            // advance the retirement clock, and log the DECOUPLING edge when the
-            // horizon exhausts (invariant #7 — the ARMED line at the resume was the
-            // re-coupling edge).  Serial section: the parallel produce phase only
-            // ever READS zwd_seam_ep_left.
+            // actual folds (R.pl_zwd_injected is the injector's own record), advance the
+            // retirement clock, and log the decoupling edge when the horizon is
+            // exhausted (invariant #7; the ARMED line at the resume was the re-coupling
+            // edge).  Serial section: the parallel produce phase only reads
+            // zwd_seam_ep_left.
             if (zwd_seam_live) {
                 long long seam_folds = 0;
                 for (size_t i = 0; i < stations.size(); ++i)
@@ -5706,9 +5641,9 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 ctx.counters.n_zwd_seam_folds += seam_folds;
                 if (seam_folds > 0) ++ctx.counters.n_zwd_seam_epochs;
                 if (--ctx.carry.zwd_seam_ep_left == 0) {
-                    // This seam has no logger parameter — resolve per call and
-                    // null-guard (the spdlog free-function / cached-static hazard:
-                    // never cache, never deref unguarded).
+                    // This seam has no logger parameter: resolve the logger per call and
+                    // null-guard it (the spdlog free-function / cached-static hazard: do
+                    // not cache it, do not dereference it unguarded).
                     if (auto lg = spdlog::get("main_log"))
                         lg->info("Network (ZWD seam re-seed): RETIRED — the {}-epoch "
                                  "post-resume window is exhausted at tow {:.1f}; {} "
@@ -5722,12 +5657,12 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 }
             }
         }
-        // --- Card 3 (eq34): RPB carry — harvest δ̂_{r,σ} + stash + prune ----
-        // Mirrors the ZWD harvest.  DELIBERATELY no Card-1 coupling harvest
-        // for RPB columns: coupling rows would hand the RPB a de-facto
-        // shared-border footprint (the D6 v2 caveat zone — tuGaugeRestore
-        // group exclusions); the diagonal conditional variance keeps the
-        // carry strictly local and conservative.
+        // --- RPB carry (card 3, eq34): harvest δ̂_{r,σ}, stash and prune ----------
+        // Mirrors the ZWD harvest.  There is no card-1 coupling harvest for RPB
+        // columns, on purpose: coupling rows would give the RPB a de facto
+        // shared-border footprint (the D6 v2 caveat zone, tuGaugeRestore group
+        // exclusions); the diagonal conditional variance keeps the carry strictly
+        // local and conservative.
         if (eq34_rpb_q > 0.0) {
             for (size_t i = 0; i < stations.size(); ++i) {
                 if (est_index_of[i] < 0) continue;
@@ -5763,12 +5698,12 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 } else ++it;
             }
         }
-        // --- Slant-iono carry (QUEUE 8b): harvest posterior per-LOS iono + stash
-        //     + prune.  Mirrors the RPB harvest (plural-column, diagonal
-        //     conditional variance — DELIBERATELY no Card-1 coupling harvest, the
-        //     rx-CB rationale).  Stashes EVERY epoch regardless of the inject
-        //     scope, so the carried value tracks the solution continuously and
-        //     the re-draw-event inject always has a fresh pre-event value.
+        // --- Slant-iono carry (queue 8b): harvest the posterior per-LOS iono, stash
+        //     and prune.  Mirrors the RPB harvest (several columns, diagonal conditional
+        //     variance, and no card-1 coupling harvest on purpose, for the rx-CB
+        //     reason).  Stashes every epoch regardless of the inject scope, so the
+        //     carried value tracks the solution continuously and the re-draw-event
+        //     inject always has a fresh pre-event value.
         if (iono_on) {
             for (size_t i = 0; i < stations.size(); ++i) {
                 if (est_index_of[i] < 0) continue;
@@ -5790,11 +5725,11 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     if (icol < 0 || icol >= xr.size()) continue;
                     double value_abs, var;
                     if (ctx.knobs.iono_source_smoothed) {
-                        // CS-GF authority (§6.2 successor): stash the
-                        // level-independent carrier-smoothed GF-code estimate
-                        // instead of the solve's (level-locked) iono.  A LOS
-                        // whose authority is uninitialized this epoch keeps its
-                        // old carry aging toward eviction — never a stale stash.
+                        // CS-GF authority (§6.2 successor): stash the level-independent
+                        // carrier-smoothed GF-code estimate instead of the solve's
+                        // (level-locked) iono.  A LOS whose authority is uninitialized
+                        // this epoch keeps its old carry aging toward eviction, and no
+                        // stale value is stashed.
                         const auto csit = ctx.carry.iono_cs.find(
                             {static_cast<int>(i), isat});
                         if (csit == ctx.carry.iono_cs.end()
@@ -5808,13 +5743,12 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     }
                     if (!std::isfinite(value_abs) || !(var > 0.0)
                         || !std::isfinite(var)) continue;
-                    // PRIOR-RESIDUAL CENSUS, family "iono": the ONE instrument
-                    // that can see a wrong carried iono value (T4 pools phase
-                    // rows only; the prefit census is x_lin-framed; phase is
-                    // self-consistent with a level re-leveled against the wrong
-                    // carry).  `folded` is ground truth from the injector
-                    // (iono_injected_sats).  Read the prior BEFORE the stash
-                    // below overwrites it.
+                    // Prior-residual census, family "iono": the one instrument that can
+                    // see a wrong carried iono value (T4 pools phase rows only; the
+                    // prefit census is in the x_lin frame; phase is self-consistent with
+                    // a level re-levelled against the wrong carry).  `folded` comes from
+                    // the injector's record (iono_injected_sats).  The prior is read
+                    // before the stash below overwrites it.
                     if (prires_iono && prires_est.enabled()) {
                         const auto pit = iono_carry.find(
                             {static_cast<int>(i), isat});
@@ -5852,19 +5786,18 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
         }
     }
 
-    // --- RXCB-DATUM gauge census ------------------
-    // The zero-mean receiver-DCB datum's fold count, in its OWN walk, gated on its
-    // OWN knob.  network.rx_code_bias_datum and network.carry_rx_code_bias are
-    // independent, and datum-WITHOUT-carry is the canonical posture; counting this
-    // inside the carry bracket below left n_rxcb_gauges at 0 on every such run, so
-    // the run-end RXCB-DATUM line fired its standing-invariant-#4 alarm against a
-    // HEALTHY gauge.  A false negative on the one instrument whose whole job is to
-    // tell a live gauge from an armed-but-inert one is worse than no instrument.
+    // --- Receiver-DCB datum gauge census (RXCB-DATUM) --------------------------
+    // The zero-mean receiver-DCB datum's fold count, in its own walk, gated on its own
+    // knob.  network.rx_code_bias_datum and network.carry_rx_code_bias are independent,
+    // and the datum without the carry is the canonical posture; counting this inside
+    // the carry bracket below would leave n_rxcb_gauges at 0 on every such run, and the
+    // run-end RXCB-DATUM line would then raise its invariant #4 alarm against a working
+    // gauge.
     //
-    // This is now the SOLE accumulation site, so an armed-both run cannot double
-    // count.  It is also byte-identical on the carry-only posture: R.pl_cb_datum_rows
-    // is incremented only under `rx_cb_datum` (ApplicationNetworkAssembly.cpp, the
-    // RXCB-DATUM row build), so it is structurally 0 whenever this walk is skipped.
+    // This is the only accumulation site, so a run with both armed cannot double count.
+    // It is also byte-identical on the carry-only posture: R.pl_cb_datum_rows is
+    // incremented only under `rx_cb_datum` (the RXCB-DATUM row build in
+    // ApplicationNetworkAssembly.cpp), so it is 0 whenever this walk is skipped.
     if (ctx.knobs.rx_cb_datum) {
         for (size_t i = 0; i < stations.size(); ++i) {
             if (est_index_of[i] < 0) continue;
@@ -5873,49 +5806,49 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
         }
     }
 
-    // --- rx-CB carry: harvest + stash + prune ------
-    // DELIBERATELY OUTSIDE the carry_warm bracket above: the receiver code-bias
-    // carry must be live on the carry_invariant/no-phase-leveling lineage (the
-    // carry_warm gate is what makes the ZWD carry inert there).  Mirrors the RPB
-    // harvest mechanics: plural columns per station, conditional local variance,
-    // LocalCarry stash keyed (station, CB key).  The produce phase only READS the
-    // map (find, never insert/erase) and counts its decisions in R — summed here
-    // serially, so the whole cycle is race-free by construction.
+    // --- rx-CB carry: harvest, stash and prune -------------------------------
+    // Outside the carry_warm bracket above on purpose: the receiver code-bias carry has
+    // to be live on the carry_invariant lineage without phase leveling (the carry_warm
+    // gate is what makes the ZWD carry inert there).  Mirrors the RPB harvest: several
+    // columns per station, conditional local variance, LocalCarry stash keyed
+    // (station, CB key).  The produce phase only reads the map (find, never insert or
+    // erase) and counts its decisions in R, which are summed here serially, so the whole
+    // cycle is race-free by construction.
     if (ctx.knobs.rx_cb_on) {
         auto& rx_cb_carry = ctx.carry.rx_cb_carry;
         constexpr double kRxCbMaxGapS = 900.0;   // spec §3: housekeeping horizon
-        // Card LV-4: this epoch's invariant steps, collected during the station walk
-        // and judged AFTER it — the screen needs the whole population to build a
-        // robust, peer-relative scale (rxCbStepScale).  Empty unless armed.
+        // This epoch's invariant steps (card LV-4), collected during the station walk
+        // and judged after it: the screen needs the whole population to build a robust,
+        // peer-relative scale (rxCbStepScale).  Empty unless armed.
         struct Lv4Pending { int station; std::string key; double step; double formal_sigma; };
         std::vector<Lv4Pending> lv4_pending;
         for (size_t i = 0; i < stations.size(); ++i) {
             if (est_index_of[i] < 0) continue;
             const StationAssembly& R = asm_res[i];
             ctx.carry.rx_cb_injected_total += R.pl_cb_injected;
-            // n_rxcb_gauges is NOT summed here — it belongs to the RXCB-DATUM knob,
-            // not the carry, and lives in its own walk above.  Every counter that
-            // remains in this bracket is genuinely carry-only: their producer-side
-            // increments all sit BELOW the `if (!rx_cb_on) continue;` in the
-            // assembly's pl_cb walk, so a datum-only run cannot populate them.
+            // n_rxcb_gauges is not summed here: it belongs to the RXCB-DATUM knob, not
+            // the carry, and has its own walk above.  Every counter left in this bracket
+            // is carry-only: their producer-side increments all sit below the
+            // `if (!rx_cb_on) continue;` in the assembly's pl_cb walk, so a datum-only run
+            // cannot populate them.
             ctx.carry.rx_cb_innov_skips_total += R.pl_cb_innov_skips;
-            // RS-9 rider (§21.18): the same two tallies, kept PER STATION.  The pooled
-            // "N folded, M withheld" line cannot distinguish 26 % of stations refused
-            // occasionally from 28 % of stations refused ALWAYS, and the field seam is
-            // the second: the set is fixed from k = 1 and those stations carry no
-            // receiver-DCB memory for the whole run while the line still counts them
-            // among the "N carried".  The denominator is station-epochs with a
-            // DECISION; the numerator is station-epochs in which every decision was a
-            // withhold ("carried NOTHING" — the multi-family generalization of the
-            // one-key field posture).  Serial, so no race.
+            // The same two tallies, kept per station (RS-9 rider, §21.18).  The pooled
+            // "N folded, M withheld" line cannot tell a share of stations refused
+            // occasionally from a similar share refused always; in the second case the set
+            // is fixed from k = 1, and those stations carry no receiver-DCB memory for the
+            // whole run while the line still counts them among the "N carried".  The
+            // denominator is station-epochs with a decision; the numerator is
+            // station-epochs in which every decision was a withhold ("carried nothing",
+            // the multi-family generalization of the one-key field posture).  Serial, so
+            // no race.
             if (R.pl_cb_injected > 0 || R.pl_cb_innov_skips > 0) {
                 auto& tally = ctx.carry.rx_cb_sta_tally[stations[i].name];
                 ++tally.first;
                 if (R.pl_cb_injected == 0) ++tally.second;
             }
-            ctx.carry.lv2_folds_demeaned += R.pl_cb_demeaned;   // Card LV-2
-            // Card LV-4 same-run A/B — summed with the other produce-phase tallies,
-            // BEFORE any early continue, so a station whose back-substitution throws
+            ctx.carry.lv2_folds_demeaned += R.pl_cb_demeaned;   // de-meaned folds (card LV-2)
+            // Same-run A/B for card LV-4, summed with the other produce-phase tallies
+            // before any early continue, so a station whose back-substitution throws
             // still reports what the retired screen would have done to its folds.
             ctx.carry.lv4_frame_gate_would_skip += R.pl_cb_frame_gate_would_skip;
             if (R.pl_cb.empty()) continue;
@@ -5937,15 +5870,14 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                                        ? vard(a) : -1.0;
                 if (!std::isfinite(value_abs) || !(var > 0.0)
                     || !std::isfinite(var)) continue;
-                // PRIOR-RESIDUAL CENSUS INC-2 (new hook).  `folded` is RE-DERIVED
-                // by calling rxCbInjectGate with the identical arguments PASS B
-                // used — the gate is a pure function and every input is still in
-                // hand and un-mutated at this point (the stash below is what
-                // overwrites the entry), so this reproduces the injector's own
-                // decision exactly rather than mirroring it.  The SkipInnov branch
-                // is a genuine invariant-#1 event RESPONSE (receiver reset /
-                // firmware bias jump: withhold the fold, let the harvest re-seed),
-                // so it is the RESPONDED positive control for this family.
+                // Prior-residual census hook (INC-2).  `folded` is re-derived by calling
+                // rxCbInjectGate with the same arguments PASS B used: the gate is a pure
+                // function, and every input is still in hand and unchanged at this point
+                // (the stash below overwrites the entry), so this reproduces the
+                // injector's own decision exactly rather than mirroring it.  The
+                // SkipInnov branch is an invariant #1 event response (receiver reset or
+                // firmware bias jump: withhold the fold, let the harvest re-seed), so it
+                // is the RESPONDED positive control for this family.
                 if (prires_rxcb && prires_est.enabled()) {
                     const auto pit = rx_cb_carry.find({static_cast<int>(i), cb_key});
                     if (pit != rx_cb_carry.end()) {
@@ -5955,14 +5887,14 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                         const RxCbInjectAction cact = rxCbInjectGate(
                             cgap, kRxCbMaxGapS, pit->second.var, ctx.knobs.rx_cb_q,
                             cinnov, /*k_sigma=*/10.0, /*guard_var=*/0.25, cvar_eff,
-                            // Mirror the injector's actual configuration, or
-                            // the census would label rows "responded" for a test the
-                            // run no longer applies.
+                            // Mirror the injector's configuration, or the census
+                            // would label rows "responded" for a test the run does
+                            // not apply.
                             /*innov_test=*/!ctx.knobs.rx_cb_step_gate);
-                        // SkipGap leaves cvar_eff at 0 (the gate returns before
-                        // setting it) — there is no fold variance to standardize
-                        // against, so fall back to the nominal recompute and mark
-                        // the row RAW FORMAL rather than invent a scale.
+                        // SkipGap leaves cvar_eff at 0 (the gate returns before setting
+                        // it), so there is no fold variance to standardize against: fall
+                        // back to the nominal recompute and mark the row as raw formal
+                        // (var_nominal) rather than invent a scale.
                         const bool have_var = cvar_eff > 0.0;
                         NetworkPriorResidual::Input in;
                         in.family   = "rxcb";
@@ -5985,21 +5917,21 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                         prires_est.addRow(in);
                     }
                 }
-                // --- Card LV-4: the FRAME-INVARIANT event screen -------------
-                // docs/SPEC_level_information_budget.md.  This is the only place in
-                // the cycle where TWO absolute realizations of the same receiver bias
-                // exist side by side — the freshly back-substituted posterior
-                // (cx_lin + xr) and the carried one — so their difference is the one
-                // discrepancy no reframing, reseeding or datum change can move.  The
-                // retired inject test compared the carried value against a FROZEN
-                // x_lin instead, which is why it withheld half the folds of stations
-                // that never did anything and stayed blind to the jumps it was built
-                // for (at inject time the carried value is still the pre-jump one).
+                // --- Frame-invariant event screen (card LV-4) ---------------------
+                // docs/SPEC_level_information_budget.md.  This is the only place in the
+                // cycle where two absolute realizations of the same receiver bias exist
+                // side by side, the freshly back-substituted posterior (cx_lin + xr) and
+                // the carried one, so their difference is the one discrepancy that no
+                // reframing, reseeding or datum change can move.  The retired inject
+                // test compared the carried value against a frozen x_lin instead, so it
+                // withheld folds of stations that had no event and missed the jumps it
+                // was meant to detect (at inject time the carried value is still the
+                // pre-jump one).
                 //
-                // The DECISION cannot be taken here: it needs this epoch's whole
-                // population (see rxCbStepScale — a formal-σ test mass-triggers, and
-                // a step common to every station is a frame move, not 61 receiver
-                // resets).  So the step is recorded and the screen runs after this
+                // The decision cannot be taken here: it needs this epoch's whole
+                // population (see rxCbStepScale: a formal-σ test triggers en masse, and a
+                // step common to every station is a frame move, not a set of receiver
+                // resets).  So the step is recorded here and the screen runs after this
                 // station loop, over all stations at once.
                 if (ctx.knobs.rx_cb_step_gate) {
                     const auto sit = rx_cb_carry.find({static_cast<int>(i), cb_key});
@@ -6017,15 +5949,15 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 ++ctx.carry.rx_cb_harvested_total;
             }
         }
-        // --- Card LV-4, decision pass (serial, all stations) -------------------
-        // Robust and PEER-RELATIVE, per code-bias family: σ̂ = 1.4826·MAD of this
-        // epoch's steps (floored at the median formal σ), and the MEDIAN step is
-        // removed first because a step common to the network is a frame move, not an
-        // event.  What is left is the per-station outlier.  Response is ERASE, not
-        // overwrite (reset-not-repair): a genuine jump means this epoch's solve
-        // folded a stale pre-jump prior, so the posterior it produced is suspect
-        // too — the entry goes cold for exactly one epoch and the next harvest
-        // re-seeds it from data, the same lifecycle a first sighting takes.
+        // --- Decision pass of card LV-4 (serial, all stations) -----------------
+        // Robust and peer-relative, per code-bias family: σ̂ = 1.4826·MAD of this epoch's
+        // steps (floored at the median formal σ), and the median step is removed first,
+        // because a step common to the network is a frame move, not an event.  What is
+        // left is the per-station outlier.  The response is an erase, not an overwrite
+        // (reset, not repair): a real jump means this epoch's solve folded a stale
+        // pre-jump prior, so the posterior it produced is suspect too.  The entry goes
+        // cold for one epoch and the next harvest re-seeds it from data, the same
+        // lifecycle as a first sighting.
         if (ctx.knobs.rx_cb_step_gate && !lv4_pending.empty()) {
             std::map<std::string, std::vector<double>> by_fam, formal_by_fam;
             for (const auto& p : lv4_pending) {
@@ -6061,29 +5993,29 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 it = rx_cb_carry.erase(it);
             else ++it;
         }
-        // --- Card S2H: the S-consistent harvest (serial, all stations) ---------
-        // docs/SPEC_level_information_budget.md §17 item 3 / §27 item 1.  Runs
-        // AFTER the LV-4 erase pass and the gap prune, so the member set is
-        // exactly the set that can FOLD next epoch — the S-transform re-realizes
-        // the carried representation that will actually exert force.  Per family
-        // (the CB state key: constellation + DCB/IFB kept apart, the LV-2 rule),
-        // subtract the Λ-weighted mean of the harvested ABSOLUTE realizations
-        // from every entry, fresh and stale-but-alive alike: the whole carried
-        // set moves to the zero-mean frame together, so next epoch's folds exert
-        // ZERO net force on the common mode in the fold's own metric — the datum
-        // row (whose target is the same absolute zero) owns the level, and the
-        // frame is re-derived from THIS epoch's solution.  No frozen pin (LV-2's
-        // failure: it pinned mean(x_lin)), no lag-1 feedback (nothing is fed
-        // back), no cross-station prior rows (the carry stays diagonal — this is
-        // LASER Net3DLsa::applySTransformationForBigSystemOfEquations, Λ-weighted;
-        // see rxCbHarvestMu for the two documented deviations).
+        // --- S-consistent harvest (card S2H; serial, all stations) --------------
+        // docs/SPEC_level_information_budget.md §17 item 3 / §27 item 1.  Runs after the
+        // LV-4 erase pass and the gap prune, so the member set is exactly the set that
+        // can fold next epoch, and the S-transform re-realizes the carried
+        // representation that will exert force.  Per family (the CB state key, with
+        // constellation and DCB/IFB kept apart, the LV-2 rule), subtract the Λ-weighted
+        // mean of the harvested absolute realizations from every entry, fresh and
+        // stale-but-alive alike: the whole carried set moves to the zero-mean frame
+        // together, so next epoch's folds exert zero net force on the common mode in the
+        // fold's own metric.  The datum row (whose target is the same absolute zero) owns
+        // the level, and the frame is re-derived from this epoch's solution.  There is no
+        // frozen pin (the LV-2 failure: it pinned mean(x_lin)), no lag-1 feedback
+        // (nothing is fed back) and no cross-station prior row (the carry stays
+        // diagonal).  This is LASER
+        // Net3DLsa::applySTransformationForBigSystemOfEquations, Λ-weighted; see
+        // rxCbHarvestMu for the two documented deviations.
         //
-        // Covariance is co-transformed exactly (diag of S·Q·Sᵀ for diagonal Q):
-        // voters get var − 1/Σλ (their uncertainty ABOUT THE NEW FRAME is smaller
-        // — the common-mode variance left with μ), screened non-voters get
-        // var + 1/Σλ (μ's own variance adds, independence).  The floor guards the
-        // w→1 degenerate corner where one member IS the frame; with min_n ≥ 2 and
-        // comparable weights it never binds (1/Σλ ≈ var/n).
+        // The covariance is co-transformed exactly (diag of S·Q·Sᵀ for diagonal Q):
+        // voters get var − 1/Σλ (their uncertainty about the new frame is smaller, since
+        // the common-mode variance left with μ), and screened non-voters get var + 1/Σλ
+        // (μ's own variance adds, by independence).  The floor guards the w→1 degenerate
+        // corner where one member is the frame; with min_n ≥ 2 and comparable weights it
+        // does not bind (1/Σλ ≈ var/n).
         if (ctx.knobs.rx_cb_harvest_demean && !rx_cb_carry.empty()) {
             std::map<std::string, std::vector<LocalCarry*>> fam_entries;
             for (auto& [key, lc] : rx_cb_carry)
@@ -6128,32 +6060,30 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             }
             if (any_applied) ++ctx.carry.s2h_epochs_applied;
         }
-        // --- Card LV-2: the common-mode mean, computed HERE (serial) -----------
+        // --- Common-mode mean of card LV-2, computed here (serial) --------------
         // docs/SPEC_level_information_budget.md.  The parallel produce phase
-        // accumulated, per station and per constellation, Σλ·innov and Σλ over the
-        // rows it actually FOLDED (the gate's skips contribute nothing — a withheld
-        // row exerts no force, so it must not vote on the force being removed).
-        // Reducing them here and applying the result LAG-1 keeps the whole cycle
-        // race-free by construction, exactly like the carry itself — but the lag is
-        // a feedback delay, so under card LV-5 μ is instead reduced BEFORE
-        // PASS B (networkRxCbDemeanPrepass) and this pass degrades to a diagnostic;
-        // see the branch below.
+        // accumulated, per station and per constellation, Σλ·innov and Σλ over the rows
+        // it folded (the gate's skips contribute nothing: a withheld row exerts no force,
+        // so it does not vote on the force being removed).  Reducing them here and
+        // applying the result with a one-epoch lag keeps the cycle race-free by
+        // construction, like the carry itself; but the lag is a feedback delay, so under
+        // card LV-5 μ is reduced before PASS B instead (networkRxCbDemeanPrepass) and
+        // this pass becomes a diagnostic (see the branch below).
         //
-        // μ_c = Σλ·innov / Σλ  ⇒  Σλ·(innov − μ_c) = 0 in DELTA coordinates: the
-        // carry keeps every between-station DIFFERENCE at full stiffness and stops
-        // re-asserting LAST epoch's common-mode realization (the flywheel).
+        // μ_c = Σλ·innov / Σλ  ⇒  Σλ·(innov − μ_c) = 0 in delta coordinates: the carry
+        // keeps every between-station difference at full stiffness and stops
+        // re-asserting the previous epoch's common-mode realization (the flywheel).
         //
-        // ⚠ It does NOT free that direction (measured 2026-08-05, SPEC §13).  The
-        // de-mean moves the RHS, never the fold's information, so Σλ ≈ 100 units
-        // still land on the common mode — and in ABSOLUTE terms each row now targets
-        // value_abs−μ, whose weighted mean is mean(x_lin).  So the de-meaned carry
-        // PINS the receiver-DCB common mode to the frozen first-epoch code-bias seed
-        // frame: a rolling memory swapped for a frozen one.  It is therefore closer
-        // to the rejected "demeaned target" variant than this card believed — the
-        // difference being that the pinned value is epoch 1's data-derived mean
-        // rather than the physical zero, which is exactly why card LV-1 (which sets
-        // that seed through initializeCodeBiases) moves the level ~10 TECU with no
-        // row-set change at all.
+        // It does not free that direction (SPEC §13).  The de-mean moves the RHS, not the
+        // fold's information, so Σλ ≈ 100 units still land on the common mode, and in
+        // absolute terms each row targets value_abs−μ, whose weighted mean is
+        // mean(x_lin).  The de-meaned carry therefore pins the receiver-DCB common mode
+        // to the frozen first-epoch code-bias seed frame, replacing a rolling memory with
+        // a frozen one.  That makes it close to the rejected "demeaned target" variant;
+        // the difference is that the pinned value is epoch 1's data-derived mean rather
+        // than the physical zero, which is why card LV-1 (which sets that seed through
+        // initializeCodeBiases) moves the level by about 10 TECU with no change to the
+        // row set.
         if (ctx.knobs.rx_cb_demean) {
             std::map<std::string, double> sum_lam_innov, sum_lam;
             std::map<std::string, int> n_sta;
@@ -6169,18 +6099,18 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     ++n_sta[fam];
                 }
             }
-            // Invariant #7 (both edges): a DECOUPLING epoch — mass re-seed, RAIM
-            // re-reduce, a thin station set — must not be allowed to define the
-            // frame.  Below the floor μ FREEZES at its previous value (a held frame
-            // is conservative: it re-asserts nothing new) and the event is COUNTED,
-            // so a run that froze its way through an era says so.
-            // Card LV-5: with the within-epoch reduction armed, THIS pass is a
-            // DIAGNOSTIC only.  μ was already formed between PASS A and PASS B and
-            // folded against; what the folded set's raw mean measures now is the
-            // RESIDUAL common-mode force that survived the correction — the direct
-            // check that the de-mean did its job (it is not identically zero because
-            // the folded set is not exactly the candidate set the prepass averaged).
-            // Overwriting μ here would silently reinstate the lag.
+            // Invariant #7 (both edges): a decoupling epoch (mass re-seed, RAIM
+            // re-reduce, a thin station set) does not define the frame.  Below the floor
+            // μ freezes at its previous value (a held frame is conservative: it asserts
+            // nothing new), and the event is counted, so a run that stays frozen through
+            // an era reports it.
+            // With the within-epoch reduction of card LV-5 armed, this pass is a
+            // diagnostic only.  μ was already formed between PASS A and PASS B and folded
+            // against; the folded set's raw mean now measures the residual common-mode
+            // force that survived the correction, the direct check that the de-mean
+            // worked (it is not identically zero, because the folded set is not exactly
+            // the candidate set the prepass averaged).  Overwriting μ here would
+            // reinstate the lag without any sign in the output.
             const bool lv5_within = ctx.knobs.rx_cb_demean_within;
             bool any = false;
             if (!lv5_within) ctx.carry.rx_cb_demean_last.clear();
@@ -6222,15 +6152,15 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
         }
     }
 
-    // --- Card LV-1: LAG-1 snapshot of the solved SH-VTEC field ----------------
-    // docs/SPEC_level_information_budget.md.  Copied SERIALLY here (post-solve,
-    // x_s final) and read next epoch by the PARALLEL produce phase, which samples
-    // it at each new LOS's pierce point so a per-LOS iono state is born in the
-    // FIELD's frame instead of the receiver-bias-in frame the raw geometry-free
+    // --- One-epoch-lag snapshot of the solved SH-VTEC field (card LV-1) ---------
+    // docs/SPEC_level_information_budget.md.  Copied serially here (post-solve, x_s
+    // final) and read next epoch by the parallel produce phase, which samples it at
+    // each new LOS's pierce point, so a per-LOS iono state is born in the field's frame
+    // instead of the frame with the receiver bias included that the raw geometry-free
     // code seed carries.  Coefficients only: the pierce geometry and the sun-fixed
-    // rotation belong to the epoch that EVALUATES them, not to the epoch that
-    // solved them.  Cheap ((N+1)² doubles/shell, 81 at degree 8) and untouched
-    // when the card is disarmed.
+    // rotation belong to the epoch that evaluates them, not to the epoch that solved
+    // them.  Cheap ((N+1)² doubles per shell, 81 at degree 8) and untouched when the
+    // card is disarmed.
     if (ctx.knobs.lv1_seed_frame && sh_model) {
         const std::vector<ShLayer> lv1_lay =
             shLayers(config_.getGlobalVtecShConfig(), sh_model, sh_model2);
@@ -6250,28 +6180,29 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                 } catch (...) { ok = false; }
             }
         }
-        // A partial / failed read leaves the PREVIOUS snapshot standing (or none at
-        // all on epoch 1, which falls back to the a₀₀ climatology prior mean —
-        // the designed level authority).  Never install a half-built field.
+        // A partial or failed read leaves the previous snapshot in place (or none on
+        // epoch 1, which falls back to the a₀₀ climatology prior mean, the designed
+        // level authority).  A half-built field is never installed.
         if (ok) {
             ctx.carry.sh_field_lag1 = std::move(snap);
             ++ctx.carry.lv1_field_snapshots;
         }
     }
 
-    // §18.12: retire the first-warm-epoch latch at the END of this epoch's SERIAL
-    // harvest.  Everything the latch gates — the C1 diagonal-border count and the
-    // present/departed fold split (both earlier in the epoch, in the assembly) and the
-    // restored-vs-fresh regressor census above — therefore covers EXACTLY the first
-    // post-resume epoch.  Unconditional: a run that never resumed leaves it false, and
-    // clearing a false bool is a no-op on every OFF path.
+    // Retire the first-warm-epoch latch at the end of this epoch's serial harvest
+    // (§18.12).  Everything the latch gates (the C1 diagonal-border count in
+    // networkInjectD2CarryPrior and the present/departed fold split, both earlier in the
+    // epoch, and the restored-against-fresh regressor census above) therefore covers
+    // exactly the first
+    // post-resume epoch.  Unconditional: a run that did not resume leaves it false, and
+    // clearing a false bool is a no-op on every off path.
     if (ctx.carry.resume_cpl_census_pending)
-        // RS-7 (§21.14), P9a's second instrument.  The warm resume runs BEFORE any epoch,
-        // so every Q3 decouple counted by now belongs to the first post-resume epoch —
-        // no baseline subtraction, and no per-epoch plumbing.  §18.11 measured 33 of 52
-        // anchored clock priors out-voted at the first fold when the seam's carried rows
-        // met a border with no cross-covariance; restoring the border is supposed to put
-        // this back at the continuous run's level.
+        // Second instrument of P9a (RS-7, §21.14).  The warm resume runs before any
+        // epoch, so every Q3 decouple counted by now belongs to the first post-resume
+        // epoch, with no baseline subtraction and no per-epoch plumbing.  When the
+        // seam's carried rows meet a border with no cross-covariance, many anchored
+        // clock priors are out-voted at the first fold (§18.11); with the border
+        // restored, this count is expected to match the continuous run's level.
         ctx.counters.n_resume_first_fold_cta_trips =
             ctx.counters.cta_trip_nis + ctx.counters.cta_trip_abs
           + ctx.counters.cta_trip_gap + ctx.counters.cta_trip_datum
@@ -6283,8 +6214,8 @@ void networkRetroUraBookkeeping(NetworkRunContext& ctx,
                                 const std::set<std::string>& clock_refloat_sats,
                                 const std::set<std::string>& retro_flag_sats,
                                 bool retro_feed) {
-    // Alias block (INC-4 migration mechanic) — the relocated body reads the
-    // former runNetwork() locals under their original names.
+    // Alias block (INC-4): the relocated body reads the former runNetwork() locals under
+    // their original names.
     auto& ura_refloat_horizon = ctx.carry.ura_refloat_horizon;
     auto& ura_retro_sats = ctx.carry.ura_retro_sats;
     auto& retro_active = ctx.carry.retro_active;
@@ -6292,11 +6223,11 @@ void networkRetroUraBookkeeping(NetworkRunContext& ctx,
     const int    pl_warmup = ctx.knobs.pl_warmup;
     const bool   ura_retro = ctx.knobs.ura_retro;
 
-    // B1: after all post-emit QC tiers, record the flagged sats for the NEXT emit's
-    // retro-bump (per-SATELLITE disc bump) + post-refloat URA inflation horizon.
-    // The flag set is the union of clock_refloat_sats (clock-model / clock-monitor,
-    // plus the coupled RAIM tiers) and retro_flag_sats (the tier-independent P0-2
-    // accumulator) — so the retro-bump reaches every QC tier regardless of the
+    // After all post-emit QC tiers, record the flagged satellites for the next emit's
+    // retro-bump (per-satellite disc bump) and post-refloat URA inflation horizon (B1).
+    // The flag set is the union of clock_refloat_sats (clock model / clock monitor, plus
+    // the coupled RAIM tiers) and retro_flag_sats (the tier-independent P0-2
+    // accumulator), so the retro-bump covers every QC tier regardless of the
     // clock_monitor_couple_raim opt-in.
     if (retro_feed) {
         std::set<std::string> flagged_now;
@@ -6308,11 +6239,11 @@ void networkRetroUraBookkeeping(NetworkRunContext& ctx,
         if (ura_refloat_inflate > 1.0 && pl_warmup > 0)
             for (const std::string& sat : flagged_now) ura_refloat_horizon[sat] = pl_warmup;
 
-        // Retro-bump is EDGE-triggered (P1-3): queue only a sat that just became
-        // flagged (not already in retro_active), so a satellite that stays flagged
-        // through several recovery epochs is reset ONCE at the consumer, not every
-        // emit.  A sat that clears drops out of retro_active, so a later re-flag
-        // re-arms the bump.  ura_retro_sats is consumed at the next emit.
+        // The retro-bump is edge-triggered (P1-3): queue only a satellite that just
+        // became flagged (not already in retro_active), so a satellite that stays
+        // flagged through several recovery epochs is reset once at the consumer, not at
+        // every emit.  A satellite that clears drops out of retro_active, so a later
+        // re-flag re-arms the bump.  ura_retro_sats is consumed at the next emit.
         if (ura_retro) {
             for (const std::string& sat : flagged_now)
                 if (!retro_active.count(sat)) ura_retro_sats.insert(sat);
@@ -6339,8 +6270,8 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                        const std::set<std::string>& shared_phase_keys,
                        const std::vector<std::pair<std::string, std::string>>& registered_code_keys,
                        const std::shared_ptr<spdlog::logger>& log) {
-    // Alias block (INC-4 migration mechanic) — the relocated body reads the
-    // former runNetwork() locals under their original names.
+    // Alias block (INC-4): the relocated body reads the former runNetwork() locals under
+    // their original names.
     auto& prev_carry = ctx.carry.prev_carry;
     auto& prev_carry_cov = ctx.carry.prev_carry_cov;
     auto& prev_clock_refloat_sats = ctx.carry.prev_clock_refloat_sats;
@@ -6357,46 +6288,45 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
     const bool   cb_time_linked = ctx.knobs.cb_time_linked;
     const bool   fullcov_on = ctx.knobs.fullcov_on;
 
-    // --- D2 stash for the next epoch ------------------------------------
-    // READMIT (E2): keep the outgoing stash so departures can be PARKED after the rebuild.
+    // --- Stash of the D2 carry for the next epoch ------------------------
+    // READMIT (E2): keep the outgoing stash, so departures can be parked after the
+    // rebuild.
     const double readmit_h = ctx.knobs.readmit_seed_horizon_s;
     std::vector<CarryPrior> old_carry;
     if (readmit_h > 0.0) old_carry = prev_carry;
     prev_carry.clear();
-    prev_carry_cov.clear();   // C1: rebuilt below when the dense carry is on
-    std::vector<Eigen::Index> fc_cols;  // C1: shared-border column per dense row
-    // Fix A (covariance-carry consistency — the load-bearing companion to the
-    // point-solve fold).  Under the anchor-free ensemble phase-bias datum the
-    // gauge is realized POST-reduce by the rank-1 correction Ñ_ss += g gᵀ/β
-    // (@ref NetworkNormalEquations::foldReducedSumZeroGauges), NOT by a local
-    // pre-reduce pin as in the anchor mode.  A satellite phase-bias column is the
-    // gauge (null) direction of the UNfolded reduced normals — the fold makes the
-    // system invertible but leaves that column's slot of the reduced covariance
-    // carrying the fold's ARTIFICIAL gauge-direction variance (an over-tight,
-    // epoch-by-epoch self-reinforcing value set by the sum-to-zero reference, not
-    // a physical uncertainty — the ensemble reference is re-realized EXACTLY every
-    // epoch) plus its phase↔clock / phase↔code cross terms.  Feeding that column
-    // into the D2 carry propagates the fold into next epoch's prior: the stiff,
+    prev_carry_cov.clear();   // rebuilt below when the dense carry (C1) is on
+    std::vector<Eigen::Index> fc_cols;  // shared-border column per dense row (C1)
+    // Fix A: covariance-carry consistency, the companion to the point-solve fold that
+    // the solve depends on.  Under the anchor-free ensemble phase-bias datum the gauge
+    // is realized after the reduction by the rank-1 correction Ñ_ss += g gᵀ/β
+    // (@ref NetworkNormalEquations::foldReducedSumZeroGauges), not by a local pin before
+    // the reduction as in the anchor mode.  A satellite phase-bias column is the gauge
+    // (null) direction of the unfolded reduced normals: the fold makes the system
+    // invertible but leaves that column's slot of the reduced covariance carrying the
+    // fold's artificial gauge-direction variance (an over-tight value that reinforces
+    // itself epoch by epoch, set by the sum-to-zero reference rather than by a physical
+    // uncertainty, since the ensemble reference is re-realized exactly every epoch),
+    // plus its phase↔clock / phase↔code cross terms.  Feeding that column into the D2
+    // carry would propagate the fold into next epoch's prior: the stiff,
     // gauge-referenced phase-bias prior biases the coupled satellite clock through
-    // N_ss[clk,pb], clock_model amplifies it, and the pair runs away exponentially
-    // from epoch 2 (measured ~7×/epoch → 5e8 m).  Cure: treat every ensemble
-    // phase-bias gauge column as an EXACT datum (variance 0) in the covariance the
-    // carry harvests — the exact analogue of how conditionalLocalCovariance /
-    // conditionalLocalVarianceDiag zero the datum-PINNED shared columns before
-    // reconstructing a conditional covariance ("datum-pinned rows/cols zeroed →
-    // treat as exact").  Zeroing the ROW AND COLUMN drops both the over-tight
-    // diagonal (→ the diagonal stash's var>0 guard skips the key) and the
-    // phase↔clock/code cross-covariance (→ the key is excluded from the C1 dense
-    // block too), while the gauge-INVARIANT clock / code-bias variances (which
-    // the S-transform leaves identical to the anchor datum) pass through
-    // untouched.  Continuity of the emitted phase bias is preserved by the LOCAL
-    // ambiguity carry (phase_leveling) + the stable ensemble constraint, not by
-    // this shared carry (which under the fold merely double-counted that info and
-    // added the contamination).  Anchor / OFF mode: cov aliases
-    // est.sharedCovariance() unchanged → byte-identical.  NB: zeroing the g
-    // DIRECTION (g = λ·N_ss·e_pb, which has clock components) would instead corrupt
-    // the correct clock covariance — the contaminated direction is the phase-bias
-    // COLUMN e_pb, not g.
+    // N_ss[clk,pb], clock_model amplifies it, and the pair diverges exponentially from
+    // epoch 2 (about 7× per epoch).  Therefore every ensemble phase-bias gauge column
+    // is treated as an exact datum (variance 0) in the covariance the carry harvests,
+    // the analogue of how conditionalLocalCovariance / conditionalLocalVarianceDiag
+    // zero the datum-pinned shared columns before reconstructing a conditional
+    // covariance ("datum-pinned rows/cols zeroed → treat as exact").  Zeroing the row
+    // and column drops both the over-tight diagonal (the diagonal stash's var>0 guard
+    // then skips the key) and the phase↔clock/code cross-covariance (the key is then
+    // excluded from the C1 dense block too), while the gauge-invariant clock and
+    // code-bias variances (which the S-transform leaves identical to the anchor datum)
+    // pass through untouched.  Continuity of the emitted phase bias comes from the
+    // local ambiguity carry (phase_leveling) and the stable ensemble constraint, not
+    // from this shared carry, which under the fold would double-count that information
+    // and add the contamination.  Anchor mode or off: cov aliases
+    // est.sharedCovariance() unchanged → byte-identical.  Zeroing the g direction
+    // instead (g = λ·N_ss·e_pb, which has clock components) would corrupt the correct
+    // clock covariance: the contaminated direction is the phase-bias column e_pb, not g.
     const Eigen::MatrixXd& cov_src = est.sharedCovariance();
     Eigen::MatrixXd cov_ens;   // ensemble-only: the gauge-exact copy
     const bool ens_phase_gauge = config_.networkPhaseDatumEnsemble();
@@ -6421,70 +6351,71 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
         cp.kind = kind; cp.sat = sat; cp.signal = signal;
         cp.value = x_s(col); cp.var = var; cp.inflate_q = inflate;
         prev_carry.push_back(cp);
-        if (fullcov_on) {   // C1: register this entry's dense row (same skip rules)
+        if (fullcov_on) {   // register this entry's dense row, same skip rules (C1)
             prev_carry_cov.row.emplace(sharedCarryKey(kind, sat, signal),
                                        fc_cols.size());
             fc_cols.push_back(col);
         }
     };
-    // A satellite flagged by the clock monitor (or, opt-in, the within-epoch / post-fit RAIM)
-    // has its carried SHARED state REINITIALIZED rather than frozen.  Two modes: with
-    // clk_mon_reinit_sig > 0 (default) it is STILL stashed but marked inflate_q, so next epoch
-    // folds it with the loose reinit variance (a weak anchor that lets a frozen clock walk to
-    // truth while curbing the datum drift a hard refloat causes); with clk_mon_reinit_sig ≤ 0
-    // it is WITHHELD entirely (hard skip-stash refloat — no prior).  clock_refloat_sats is
-    // empty unless network.clock_monitor, so the stash is byte-identical when the monitor is
-    // off (nothing flagged → inflate=false → the ordinary stiff-carry stash).
+    // A satellite flagged by the clock monitor (or, opt-in, by the within-epoch / post-fit
+    // RAIM) has its carried shared state reinitialized rather than frozen.  Two modes: with
+    // clk_mon_reinit_sig > 0 (default) it is still stashed but marked inflate_q, so next
+    // epoch folds it with the loose reinit variance (a weak anchor that lets a frozen clock
+    // move back toward truth while limiting the datum drift a hard refloat causes); with
+    // clk_mon_reinit_sig ≤ 0 it is withheld entirely (hard skip-stash refloat, no prior).
+    // clock_refloat_sats is empty unless network.clock_monitor is on, so the stash is
+    // byte-identical when the monitor is off (nothing flagged → inflate=false → the
+    // ordinary stiff-carry stash).
     const bool full_refloat = !(clk_mon_reinit_sig > 0.0);   // reinit_sigma ≤ 0 → hard skip-stash
-    // Carry this stash epoch's clock-monitor flags across to the next
-    // inject (hard-refloat mode skip-stashes the flagged sat entirely, so the
-    // flag cannot ride on prev_carry.inflate_q).  Gated to keep OFF runs pristine.
-    // Card 1g honours the same history with κ off, so the mirror must follow the wider
-    // predicate — otherwise arming 1g alone would leave the clock-QC half of the feed
-    // permanently empty and the widening would silently cover only the reref sources.
+    // Carry this stash epoch's clock-monitor flags across to the next inject (hard-refloat
+    // mode skip-stashes the flagged satellite entirely, so the flag cannot travel on
+    // prev_carry.inflate_q).  Gated, so off runs are unchanged.  Card 1g reads the same
+    // history with κ off, so the mirror follows the wider predicate; otherwise arming 1g
+    // alone would leave the clock-QC half of the feed empty, and the widening would cover
+    // only the reref sources without any indication.
     if (carry_cpl_tu || ctx.knobs.carry_cpl_reinit)
         prev_clock_refloat_sats = clock_refloat_sats;
-    // The satellite clock is stashed to prev_carry ONLY in scalar-carry mode.  Under
-    // network.clock_model the clock is carried by clock_osc (updated above), so it is not
-    // stashed here — the two-state model is its sole cross-epoch memory.
+    // The satellite clock is stashed to prev_carry only in scalar-carry mode.  Under
+    // network.clock_model the clock is carried by clock_osc and is not stashed here; the
+    // two-state model is its only cross-epoch memory.
     if (!clk_model_on)
         for (const std::string& sat : registered_clock_sats) {
             const bool flagged = clock_refloat_sats.count(sat) > 0;
             if (flagged && full_refloat) continue;
             stash(SharedParamKind::Clock, sat, "", est.clockColumn(sat), flagged);
         }
-    // eq34 reattach hygiene INC-2: refresh the
-    // bridge's value source from THIS kept epoch's solved shared phase biases.
-    // Rebuilt wholesale in lock-step with the D2 carry (a departed key drops out, so a
-    // bridge can never be opened on a level from before an absence), and harvested
-    // HERE — at the stash, which every whole-epoch withhold path `continue`s before
-    // reaching — so a withheld epoch's transient solve never becomes a held level.
-    // Deliberately NOT read off prev_carry: under carry_invariant the shared PhaseBias
-    // carry is not stashed at all, which is exactly the stack this card was
-    // root-caused on.  The SBC completion (network.sbasis_complete) re-uses this
-    // harvest for the same reason — its continuity targets need the last SOLVED
-    // phase-bias levels on exactly the carry_invariant stacks.  Empty / untouched
-    // when neither consumer is armed.
+    // eq34 reattach hygiene (INC-2): refresh the bridge's value source from this kept
+    // epoch's solved shared phase biases.  Rebuilt wholesale in lock-step with the D2
+    // carry (a departed key drops out, so a bridge cannot be opened on a level from before
+    // an absence), and harvested here, at the stash, which every whole-epoch withhold path
+    // skips with `continue`, so a withheld epoch's transient solve never becomes a held
+    // level.  Not read from prev_carry, on purpose: under carry_invariant the shared
+    // PhaseBias carry is not stashed at all, and that is the configuration the bridge
+    // targets.  The S-basis completion (network.sbasis_complete, SBC) reuses this harvest
+    // for the same reason: its continuity targets need the last solved phase-bias levels
+    // on the carry_invariant configurations.  Empty and untouched when neither consumer
+    // is armed.
     const bool harvest_pb_levels =
         ctx.knobs.pin_bridge_on || ctx.knobs.sbasis_complete_on;
     if (harvest_pb_levels) ctx.carry.pb_level_prev.clear();
     for (const auto& pk : shared_phase_keys) {
         const auto parts = StateKeys::parseSatPhaseBiasKey(pk);
         if (!parts) continue;
-        // §9.7.10 datum-station slip re-reference (network.cycle_slip.datum_station_detect):
-        // a slip at the gauge-pinned datum receiver moved the level every phase bias
-        // of this satellite references.  HARD-skip the stash for one kept epoch —
-        // BEFORE the pb_level_prev harvest (a bridge must not re-open on the stale
-        // level) and before both stash branches (plain and phase_hold) — so the next
-        // solve re-seeds the bias at the new pivot level, in lockstep with the
-        // network-wide ambiguity reseed the slip drain defers until this skip has
-        // been consumed.  The set is empty unless the toggle is armed ⇒ byte-identical.
+        // Datum-station slip re-reference (§9.7.10,
+        // network.cycle_slip.datum_station_detect): a slip at the gauge-pinned datum
+        // receiver moved the level that every phase bias of this satellite references.
+        // Skip the stash entirely for one kept epoch, before the pb_level_prev harvest (a
+        // bridge must not re-open on the stale level) and before both stash branches
+        // (plain and phase_hold), so the next solve re-seeds the bias at the new pivot
+        // level, in lock-step with the network-wide ambiguity reseed that the slip drain
+        // defers until this skip has been consumed.  The set is empty unless the toggle
+        // is armed ⇒ byte-identical.
         if (ctx.carry.datum_reref_pb_sats.count(parts->satellite)) continue;
         if (harvest_pb_levels) {
-            // Guarded: this runs BEFORE the carry_invariant skip below, so it is the
-            // one site that queries a phase-bias column for EVERY shared key on a
-            // path that otherwise never would.  A key without a column is simply not
-            // harvested (a bridge then cannot open on it) — never a thrown stash.
+            // Guarded: this runs before the carry_invariant skip below, so it is the one
+            // site that queries a phase-bias column for every shared key on a path that
+            // otherwise would not.  A key without a column is not harvested (a bridge
+            // then cannot open on it); the stash does not throw.
             try {
                 const double v =
                     x_s(est.phaseBiasColumn(parts->satellite, parts->signal));
@@ -6492,35 +6423,34 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                     ctx.carry.pb_level_prev[parts->satellite + "_" + parts->signal] = v;
             } catch (...) {}
         }
-        // The DD invariant carry is the phase time-link — do NOT also stash the
-        // S-dependent shared PhaseBias carry (it would double-count in next epoch's D2 /
-        // hold / dense fold).  Clock / code / SH / ZWD carries are unaffected.
+        // The DD invariant carry is the phase time-link, so the S-dependent shared
+        // PhaseBias carry is not stashed as well (it would double-count in next epoch's
+        // D2 / hold / dense fold).  Clock / code / SH / ZWD carries are unaffected.
         if (carry_invariant) continue;
         const bool flagged = clock_refloat_sats.count(parts->satellite) > 0;
         if (flagged && full_refloat) continue;
         const Eigen::Index col =
             est.phaseBiasColumn(parts->satellite, parts->signal);
         if (phase_hold_on) {
-            // Seed-once + time-lock: carry b_s toward its realized value with the
-            // fixed (clean) hold-variance — the temporal datum that stops the
-            // ~metre/epoch re-realization.  Deliberately NOT cov(col,col): the
-            // ensemble fold leaves that column carrying an artificial gauge
-            // variance (carrying it is the epoch-2 fast runaway this whole fix
-            // family guards).  A stiff, hand-set variance makes the carried value
-            // the datum reference next epoch (buildEnsembleGauges then skips the
-            // Σz=0 fold for it).  Datum-pinned columns (none for PB) and non-finite
-            // values are still excluded.
+            // Seed once, then time-lock: carry b_s toward its realized value with the
+            // fixed hold variance, the temporal datum that stops the metre-per-epoch
+            // re-realization.  Not cov(col,col), on purpose: the ensemble fold leaves that
+            // column carrying an artificial gauge variance (carrying it causes the epoch-2
+            // runaway that the Fix A family guards against).  A stiff, hand-set variance
+            // makes the carried value the datum reference next epoch (buildEnsembleGauges
+            // then skips the Σz=0 fold for it).  Datum-pinned columns (none for PB) and
+            // non-finite values are still excluded.
             if (pinned_cols.count(col)) continue;
             const double v = x_s(col);
             if (!std::isfinite(v)) continue;
             CarryPrior cp;
             cp.kind = SharedParamKind::PhaseBias;
             cp.sat = parts->satellite; cp.signal = parts->signal;
-            // inflate_q=false always: a clock-monitor SOFT refloat of this sat
-            // (the loose-reinit path the legacy stash honors) deliberately does NOT
-            // loosen the phase-bias hold — the phase-ensemble datum is orthogonal to
-            // a clock fault, so the bias stays time-locked.  (A HARD refloat is still
-            // handled: `flagged && full_refloat` skip-stashes above, so the sat
+            // inflate_q is always false: a clock-monitor soft refloat of this satellite
+            // (the loose-reinit path the legacy stash applies) does not loosen the
+            // phase-bias hold, on purpose, because the phase-ensemble datum is orthogonal
+            // to a clock fault, so the bias stays time-locked.  (A hard refloat is still
+            // handled: `flagged && full_refloat` skip-stashes above, so the satellite
             // re-seeds next epoch.)
             cp.value = v; cp.var = phase_hold_var; cp.inflate_q = false;
             prev_carry.push_back(cp);
@@ -6529,37 +6459,39 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                   col, flagged);
         }
     }
-    // §9.7.10: the datum re-reference skip-stash queue is consumed exactly once
-    // per KEPT epoch (a withheld epoch never reaches this stash, so the queue —
-    // and the deferred ambiguity reseed keyed on its consumption — survives the
-    // withhold intact).  Cleared wholesale: a queued satellite with no phase-bias
-    // key this epoch had nothing stashed to skip, and prev_carry is rebuilt from
-    // scratch above, so there is no stale carry left to guard against.
+    // The datum re-reference skip-stash queue (§9.7.10) is consumed exactly once per
+    // kept epoch (a withheld epoch never reaches this stash, so the queue, and the
+    // deferred ambiguity reseed keyed on its consumption, survive the withhold intact).
+    // Cleared wholesale: a queued satellite with no phase-bias key this epoch had nothing
+    // stashed to skip, and prev_carry is rebuilt from scratch above, so no stale carry is
+    // left to guard against.
     if (!ctx.carry.datum_reref_pb_sats.empty()) ctx.carry.datum_reref_pb_sats.clear();
-    // Refresh the time-linked previous-value map from THIS kept epoch's
-    // solved code biases.  Cleared + rebuilt (a departed satellite drops out → its
-    // return re-seeds IT alone) in lock-step with the D2 carry — same disposition
-    // rules (a hard-refloated sat is skipped from BOTH, so it re-seeds next epoch,
-    // its re-reference disc-signalled).  NOT snapshotted.  Empty/untouched when off.
+    // Refresh the time-linked previous-value map from this kept epoch's solved code
+    // biases.  Cleared and rebuilt (a departed satellite drops out, so its return
+    // re-seeds that satellite alone) in lock-step with the D2 carry, with the same
+    // disposition rules (a hard-refloated satellite is skipped from both, so it re-seeds
+    // next epoch, with its re-reference signalled as a disc).  Written to the snapshot
+    // only under network.state_snapshot_datum_capture (RS-3).  Empty and untouched when
+    // off.
     if (cb_time_linked) {
         code_bias_prev_.clear();
-        // Advance the IF-pin comparison baseline to THIS kept epoch's pairs (a pair
-        // recorded on a since-withheld epoch never reaches here, so the baseline
-        // tracks emitted/kept datum realizations only).
+        // Advance the IF-pin comparison baseline to this kept epoch's pairs (a pair
+        // recorded on an epoch that was then withheld never reaches here, so the
+        // baseline tracks emitted / kept datum realizations only).
         code_bias_ifpin_pair_ = this_epoch_cb_ifpin;
     }
-    for (const auto& kv : registered_code_keys) {  // W6 satellite code bias (OSB)
+    for (const auto& kv : registered_code_keys) {  // satellite code bias, OSB (W6)
         const bool flagged = clock_refloat_sats.count(kv.first) > 0;
         if (flagged && full_refloat) continue;
         const Eigen::Index col = est.codeBiasColumn(kv.first, kv.second);
-        // SPEC_day129_frame_guards Phase 2.1: a network-wide common-mode clock
-        // excursion this epoch marks the affected satellite's CODE-BIAS carry for
-        // reinit — and ONLY the code-bias carry.  The clock and phase-bias carries
-        // are deliberately untouched: the clock is soft (q = 0.3 m²/ep, it recovers
-        // on its own in 2–4 epochs) and the phase biases measurably did not move
-        // (≤ 4 mm at the DOY-129 event).  The near-static code bias is the one
-        // state that ratchets, so it is the one state the guard resets.  The set is
-        // empty unless network.cb_excursion_reinit ⇒ byte-identical when OFF.
+        // CB-excursion guard (SPEC_day129_frame_guards phase 2.1): a network-wide
+        // common-mode clock excursion this epoch marks the affected satellite's code-bias
+        // carry for reinit, and only the code-bias carry.  The clock and phase-bias
+        // carries are left untouched on purpose: the clock is soft (q = 0.3 m²/ep; it
+        // recovers on its own in 2–4 epochs), and the phase biases did not move
+        // measurably (≤ 4 mm at the DOY-129 event).  The near-static code bias is the
+        // state that ratchets, so it is the state the guard resets.  The set is empty
+        // unless network.cb_excursion_reinit is on ⇒ byte-identical when off.
         const bool cb_excursion = ctx.carry.cb_excursion_sats.count(kv.first) > 0;
         stash(SharedParamKind::CodeBias, kv.first, kv.second, col,
               flagged || cb_excursion);
@@ -6572,13 +6504,12 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
             }
         }
     }
-    // C1: stash the dense covariance block over the clock/phase/code entries
-    // just recorded (the SH block below keeps its own diagonal stash — its
-    // carry is the separate pre-gate fold).  One O(k²) copy from the solve's
-    // posterior.  A single non-finite entry clears the whole block — the next
-    // fold then degrades per-key to the diagonal path instead of poisoning
-    // the next epoch's normals (the exact crash mode the SH guard below
-    // screens per-entry).
+    // Dense carry (C1): stash the dense covariance block over the clock/phase/code
+    // entries just recorded (the SH block below keeps its own diagonal stash; its carry
+    // is the separate fold before the gate).  One O(k²) copy from the solve's
+    // posterior.  A single non-finite entry clears the whole block, and the next fold
+    // degrades per key to the diagonal path instead of corrupting the next epoch's
+    // normals (the crash mode the SH guard below screens per entry).
     if (fullcov_on && !fc_cols.empty()) {
         const Eigen::Index kfc = static_cast<Eigen::Index>(fc_cols.size());
         prev_carry_cov.P.resize(kfc, kfc);
@@ -6602,9 +6533,9 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                 if (pinned_cols.count(col)) continue;   // SH cols are never datum-pinned (safety)
                 const double var = cov(col, col);
                 const double val = x_s(col);
-                // Never carry a non-finite value/variance forward — it would poison
-                // the next epoch's normals and hard-crash the solve.  The mean-
-                // reverting climatology prior re-seeds the coefficient cleanly.
+                // A non-finite value or variance is not carried forward: it would
+                // corrupt the next epoch's normals and crash the solve.  The
+                // mean-reverting climatology prior re-seeds the coefficient.
                 if (!(var > 0.0) || !std::isfinite(val) || !std::isfinite(var)) continue;
                 CarryPrior cp;
                 cp.kind = SharedParamKind::VtecSh;
@@ -6616,16 +6547,17 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
         }
     }
 
-    // ---- READMIT continuity (E2 seed-first re-admission + the block re-coupling edge) ----
+    // ---- READMIT continuity (E2 seed-first re-admission and the block re-coupling edge) ----
     // (SPEC_synthetic_minimum_network §18.4; SPEC_amb_iono_split_overcount §7 FIRST.)  Runs
-    // AFTER the wholesale rebuild above, so "absent from the new stash" is exact, and on
-    // KEPT epochs only — a withheld epoch never reaches here, which is why the detector
+    // after the wholesale rebuild above, so "absent from the new stash" is exact, and on
+    // kept epochs only: a withheld epoch never reaches here, which is why the detector
     // needs >= kReadmitMinGapEp loop epochs of absence rather than one.
     if (readmit_h > 0.0 || ctx.knobs.readmit_marg_ep > 0) {
         const long long ep = static_cast<long long>(ctx.counters.n_loop_epochs);
-        // (1) The re-admission detector + the coupling marginalization window (the block's
-        //     DECOUPLING edge, standing invariant #7): a satellite whose clock column is
-        //     registered now but was last stashed >= kReadmitMinGapEp loop epochs ago.
+        // (1) The re-admission detector and the coupling marginalization window (the
+        //     block's decoupling edge, standing invariant #7): a satellite whose clock
+        //     column is registered now but was last stashed >= kReadmitMinGapEp loop
+        //     epochs ago.
         for (const std::string& sat : registered_clock_sats) {
             long long& last = ctx.carry.readmit_last_seen_ep[sat];   // 0 on first sight
             const long long gap_ep = (last > 0) ? ep - last : 0;
@@ -6643,8 +6575,8 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                              static_cast<double>(kReadmitMinGapEp), "readmit",
                              fmt::format("gap_ep={}{}", gap_ep, marg));
         }
-        // Expired windows: the block's RE-COUPLING edge (the returned satellite's columns
-        // fold as PRESENT terms again) — traced per satellite.
+        // Expired windows: the block's re-coupling edge (the returned satellite's
+        // columns fold as present terms again), traced per satellite.
         for (auto it = ctx.carry.readmit_marg.begin(); it != ctx.carry.readmit_marg.end();) {
             if (ep >= it->second) {
                 traces.emitEvent(t, "READMIT", "marg_expired", it->first, "",
@@ -6665,22 +6597,25 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
             for (const CarryPrior& oc : old_carry) {
                 // The phase-bias frame is re-realized at the cold re-pin (the leveling
                 // carries do not survive a 55 min absence at the 120 s leveling gap), and
-                // a stiff PB seed would fight that pin — so only Clock + CodeBias park.
+                // a stiff PB seed would conflict with that pin, so only Clock and CodeBias
+                // park.
                 if (oc.kind != SharedParamKind::Clock
                     && !(oc.kind == SharedParamKind::CodeBias && ctx.knobs.readmit_seed_cb))
                     continue;
                 if (live.count({static_cast<int>(oc.kind), oc.sat, oc.signal})) continue;
                 const bool present = readmitColumnPresent(est, oc);
                 if (oc.t_park_s > 0.0) {
-                    // Already parked.  Column back but NOT re-stashed (skip-stash, pinned,
-                    // non-finite) ⇒ the memory dies with the skip; past the horizon ⇒ drop.
+                    // Already parked.  Column back but not re-stashed (skip-stash,
+                    // pinned, non-finite) ⇒ the memory is dropped with the skip; past the
+                    // horizon ⇒ drop.
                     if (present) { ++ctx.counters.n_readmit_dropped_stale; continue; }
                     if (now_s - oc.t_park_s > readmit_h) { ++ctx.counters.n_readmit_expired; continue; }
                     prev_carry.push_back(oc);
                     continue;
                 }
-                // Live last epoch, absent now: a DEPARTURE only if the column itself left
-                // the layout (a skip-stash / pinned / non-finite key is not a departure).
+                // Live last epoch, absent now: a departure only if the column itself
+                // left the layout (a skip-stash / pinned / non-finite key is not a
+                // departure).
                 if (present) continue;
                 CarryPrior cp = oc;
                 cp.t_park_s  = (ctx.carry.readmit_prev_stash_s > 0.0)
@@ -6694,14 +6629,13 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                 traces.emitEvent(t, "READMIT", "park", sat, "", static_cast<double>(n),
                                  readmit_h, "park",
                                  "D2 clock + code-bias carry parked at departure");
-                // Card SID phase 4a (S1): the READMIT writer.  The park is a SHARED
-                // parameter's departure, so it names a satellite and never a
-                // station: the expansion writes the bit on every station's arcs of
-                // that satellite that the admitted lifecycle still calls alive.
-                // This seam runs DOWNSTREAM of the roster's audit pass, so the
-                // record reaches the fold one epoch later through
-                // @ref kArcReasonLateMask, which is the earliest epoch a gap it can
-                // explain is able to open (the satellite has already departed).
+                // The READMIT writer (card SID phase 4a, S1).  The park is a shared
+                // parameter's departure, so it names a satellite and never a station:
+                // the expansion writes the bit on every station's arcs of that satellite
+                // that the admitted lifecycle still considers alive.  This seam runs
+                // after the roster's audit pass, so the record reaches the fold one epoch
+                // later through @ref kArcReasonLateMask, the earliest epoch at which a gap
+                // it can explain can open (the satellite has already departed).
                 arcReasonExpand(ctx.reasons, ctx.arc_ledger, -1, sat, "",
                                 kArcReasonReadmit);
             }

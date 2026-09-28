@@ -22,7 +22,7 @@ namespace sim {
 
 namespace {
 
-/// splitmix64 — the same mixer the simulator's other self-contained hashes use.
+/// splitmix64, the same mixer the simulator's other self-contained hashes use.
 std::uint64_t mix(std::uint64_t x) {
     x += 0x9E3779B97F4A7C15ull;
     x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ull;
@@ -30,10 +30,10 @@ std::uint64_t mix(std::uint64_t x) {
     return x ^ (x >> 31);
 }
 
-/// Per-satellite stream seed.  Derived from (base seed, satellite id) ONLY, so a
-/// satellite's realization is independent of which other satellites are present
-/// and of their iteration order — the property that lets N station processes
-/// agree bit-for-bit on the satellite side.
+/// Per-satellite stream seed, derived from (base seed, satellite id) alone.  A
+/// satellite's realization is therefore independent of which other satellites are
+/// present and of their iteration order, which lets N station processes agree
+/// bit-for-bit on the satellite side.
 std::uint64_t satSeed(std::uint64_t base, const std::string& sat) {
     std::uint64_t h = mix(base ^ 0x5A7C10CBull);
     for (unsigned char ch : sat) h = mix(h ^ static_cast<std::uint64_t>(ch));
@@ -70,8 +70,8 @@ bool SatClockError::build(const SimConfig::SatClock& cfg,
     if (!stochastic && cfg.steps.empty()) return true;   // inactive; metres() == 0.0
 
     // A scripted step naming a satellite that is not generated would inject nothing
-    // while the event matrix still lists it — and an event that injects nothing is
-    // graded as an UNDETECTED event, i.e. a false guard failure.  Refuse loudly.
+    // while the event matrix still lists it, and an event that injects nothing is
+    // graded as an undetected event, i.e. a false guard failure.  It is an error.
     const std::set<std::string> known(sats.begin(), sats.end());
     for (const auto& ev : cfg.steps)
         if (!known.count(ev.sat))
@@ -86,8 +86,9 @@ bool SatClockError::build(const SimConfig::SatClock& cfg,
             std::mt19937_64 rng(satSeed(cfg.seed, sat));
             std::normal_distribution<double> g(0.0, 1.0);
 
-            // Drawn ONCE per satellite, in a fixed order, so adding a satellite to the
-            // plan cannot perturb another satellite's realization.
+            // Drawn once per satellite, in a fixed order, from that satellite's own
+            // stream, so adding a satellite to the plan does not change another
+            // satellite's realization.
             const double bias0 = cfg.bias0_sigma_m > 0.0 ? cfg.bias0_sigma_m * g(rng) : 0.0;
             const double rate = cfg.rate_sigma_mps > 0.0 ? cfg.rate_sigma_mps * g(rng) : 0.0;
             // Random walk: sigma per step = sqrt(q * dt), the same convention the
@@ -103,7 +104,7 @@ bool SatClockError::build(const SimConfig::SatClock& cfg,
             }
         }
 
-        // Scripted steps, layered on top.  A step is HELD for the remainder of the arc
+        // Scripted steps, layered on top.  A step is held for the remainder of the arc
         // (a step, not an impulse); ramp_mps accumulates from the step epoch onward.
         for (const auto& ev : cfg.steps) {
             if (ev.sat != sat) continue;

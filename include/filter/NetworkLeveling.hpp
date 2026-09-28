@@ -3,10 +3,11 @@
  * @file NetworkLeveling.hpp
  * @brief Network producer epoch block: phase-leveling carry harvest + D2/C1 stash + T1d SH-convergence latch.
  *
- * Relocated VERBATIM (dedent-only, zero substitution) out of Application::runNetwork
- * at decomposition INC-11b (2026-07-22).  void, self-contained (produces no crossing
- * locals); every carry / trace object is an explicit reference into the caller's
- * state.  The caller keeps the subBegin/subEnd(SB_LEVELING) brackets.
+ * Relocated verbatim (dedent only, no substitution) out of Application::runNetwork
+ * at decomposition INC-11b.  void and self-contained (it produces no locals that
+ * cross the call); every carry / trace object is an explicit reference into the
+ * caller's state.  The caller keeps the subBegin/subEnd(SB_LEVELING) brackets.  The block
+ * also emits this epoch's LANE_OBS, eq34_reref, lv2 and s2h rows on the events stream.
  */
 
 #include "app/NetworkSetupResult.hpp"
@@ -32,17 +33,17 @@ namespace spdlog { class logger; }
 namespace GnssProcessor {
 
 class GnssConfig;
-class NetworkCarryVce;      // full type in app/NetworkRunContext.hpp (the .cpp)
-class NetworkPriorResidual; // filter/NetworkPriorResidual.hpp — included in the .cpp only
-struct NetworkRunContext;   // app/NetworkRunContext.hpp — included in the .cpp only
-struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp — included in the .cpp only
+class NetworkCarryVce;      // full type in filter/NetworkCarryVce.hpp, included in the .cpp only
+class NetworkPriorResidual; // full type in filter/NetworkPriorResidual.hpp; passed by reference only
+struct NetworkRunContext;   // app/NetworkRunContext.hpp, included in the .cpp only
+struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cpp only
 
 /**
  * @brief Harvest this epoch's phase-leveling carry from the post-fit solution, stash the
  *        D2/C1 carried quantities into @p ctx, and latch the T1d SH-convergence state.
- *        This is the zero-q phase-leveling carry feed (and the LS-VCE leveling-row fold);
- *        it updates the persistent carries the next epoch's prior depends on.  The caller
- *        keeps the subBegin/subEnd(SB_LEVELING) brackets.
+ *        This is the feed of the zero-q phase-leveling carry (and the LS-VCE leveling-row
+ *        fold); it updates the persistent carries that the next epoch's prior depends on.
+ *        The caller keeps the subBegin/subEnd(SB_LEVELING) brackets.
  */
 void networkLeveling(
     NetworkRunContext& ctx,

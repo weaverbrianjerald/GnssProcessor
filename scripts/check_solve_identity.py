@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Check that two runs share a byte-identical SOLVE (standing invariant #6).
+"""Check that two runs share a byte-identical solve (standing invariant #6).
 
-An OUTPUTS-only knob (an emission filter, a trace, a legend) must leave the
-estimator untouched.  Two gotchas this encodes:
+An outputs-only knob (an emission filter, a trace, a legend) must leave the
+estimator untouched. Two conditions this encodes:
 
-  * product files must be compared on their RECORDS only -- the ``#`` legend and
+  * Product files must be compared on their records only: the ``#`` legend and
     banner lines and the ``S`` contract lines are header, not wire content, and a
-    whole-file hash false-positives on them (card OWD made the S line part of every
-    wire, so a pre-OWD run against a post-OWD run differs in the header alone).  The
-    header is hashed and reported separately;
+    whole-file hash gives a false positive on them (card OWD made the S line part
+    of every wire, so a pre-OWD run against a post-OWD run differs in the header
+    alone). The header is hashed and reported separately.
   * ``network_solution.csv`` CLK/CB values come straight from the solve and must
-    match to the digit, whereas PB values are re-based at EMIT and are exactly
-    what an emission filter is allowed to change.  Comparing all three together
+    match to the digit, whereas PB values are re-based at emit and are exactly
+    what an emission filter is allowed to change. Comparing all three together
     would hide a real solve change behind an expected PB change, or flag an
     intended PB change as a solve regression.
 
@@ -30,7 +30,7 @@ REPO = Path(__file__).resolve().parent.parent
 
 
 def data_hash(products: Path) -> str | None:
-    """MD5 of a product file's RECORDS: every line that is neither a ``#`` legend or
+    """MD5 of a product file's records: every line that is neither a ``#`` legend or
     banner line nor an ``S`` contract line (card OWD: the S line is header)."""
     if not products.is_file():
         return None

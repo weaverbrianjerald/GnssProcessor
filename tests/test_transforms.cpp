@@ -7,8 +7,8 @@
  *
  *   - `BrsdTransform::apply`: single static method, no instance state.
  *   - `BssdTransform::differenceBrsd`: static helper, pure function of its
- *     inputs (the instance method `apply` is heavier — it requires a
- *     PivotManager + StateManager — and is not covered here).
+ *     inputs.  The instance method `apply` requires a PivotManager and a
+ *     StateManager and is not covered here.
  *
  * Tests build minimal `PppObservation` / `BrsdObservation` inputs in-code
  * and check residuals, variance composition, metadata propagation, the
@@ -142,9 +142,8 @@ TEST(BrsdTransformTest, AliasedCodesFlaggedAndDifferenced) {
     EXPECT_NEAR(out->variance, 0.13, 1e-12);
 }
 
-// Sign convention: positive residual = rover sees the satellite "later" than
-// the reference. Verify by setting up a configuration where rov has a larger
-// (observed - modeled) than ref.
+// Sign convention: the BRSD residual is positive when the rover's
+// (observed - modeled) is larger than the reference's.
 TEST(BrsdTransformTest, SignConventionPositiveWhenRoverIsLater) {
     PppObservation rov = makeObs("G05", "C1C", 100.0,  99.0, 0.0);  // residual +1
     PppObservation ref = makeObs("G05", "C1C", 200.0, 199.5, 0.0);  // residual +0.5
@@ -181,8 +180,8 @@ TEST(BrsdTransformTest, MissingReferenceObservationReturnsNullopt) {
     EXPECT_FALSE(out.has_value());
 }
 
-// Non-finite residual rejected. We construct a NaN difference by giving the
-// rover side observed - modeled = NaN (NaN minus anything is NaN).
+// A non-finite residual is rejected.  The rover's observed value is NaN, so
+// observed - modeled is NaN and so is the difference.
 TEST(BrsdTransformTest, NonFiniteResidualReturnsNullopt) {
     constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
     PppObservation rov = makeObs("G05", "C1C", kNaN, 0.0, 0.04);
@@ -215,8 +214,8 @@ TEST(BrsdTransformTest, MissingVarianceTreatedAsZero) {
 // ============================================================================
 
 // Two-satellite, one-constellation, one-band, one-obs-type setup. With G01
-// chosen as the pivot, the only non-pivot is G05, so we expect exactly one
-// DD row whose innov_pre = BRSD_G05 - BRSD_G01.
+// chosen as the pivot, the only non-pivot is G05, so the output is one DD row
+// with innov_pre = BRSD_G05 - BRSD_G01.
 TEST(BssdDifferenceBrsdTest, SingleNonPivotDdRow) {
     auto bi = makeBrsd("G05", "GPS", FrequencyBand::GpsL1, 'C',
                        /*residual=*/0.30, /*var_rov=*/0.04, /*var_ref=*/0.05,
@@ -307,7 +306,7 @@ TEST(BssdDifferenceBrsdTest, MissingPivotInDataSkipsConstellation) {
 }
 
 // (band, obs_type) pairing rule: a non-pivot row only emits a DD row if the
-// pivot also has a BRSD entry on the SAME (band, obs_type). A non-pivot code
+// pivot also has a BRSD entry on the same (band, obs_type). A non-pivot code
 // row without a matching pivot code row is silently dropped.
 TEST(BssdDifferenceBrsdTest, NoMatchingBandObsTypeOnPivotSkipsRow) {
     auto bi = makeBrsd("G05", "GPS", FrequencyBand::GpsL1, 'C',
@@ -373,8 +372,8 @@ TEST(BssdDifferenceBrsdTest, ExcludeKeysAliasedFormat) {
     EXPECT_TRUE(rows.empty());
 }
 
-// H3: nominal band wavelength — the pure static identity the per-λ disc contract
-// is built on (deterministic on producer and replay consumer alike).
+// Nominal band wavelength: the pure static identity that the per-λ disc contract
+// uses, so producer and replay consumer compute the same value (H3).
 TEST(SignalBandWavelengthTest, NominalWavelengthPerBand) {
     // Active-network bands resolve to their Constants wavelengths.
     EXPECT_NEAR(bandNominalWavelengthMeters(FrequencyBand::GpsL1), Constants::GPS_L1_WAVELENGTH, 1e-12);
@@ -382,8 +381,8 @@ TEST(SignalBandWavelengthTest, NominalWavelengthPerBand) {
     EXPECT_NEAR(bandNominalWavelengthMeters(FrequencyBand::GpsL5), Constants::GPS_L5_WAVELENGTH, 1e-12);
     EXPECT_NEAR(bandNominalWavelengthMeters(FrequencyBand::GalE1),  Constants::GAL_E1_WAVELENGTH,  1e-12);
     EXPECT_NEAR(bandNominalWavelengthMeters(FrequencyBand::GalE5a), Constants::GAL_E5A_WAVELENGTH, 1e-12);
-    // FDMA GLONASS: the base-frequency (channel k=0) wavelength — the "would-be-FDMA"
-    // case the emitter's (sat,signal) API is built to extend later.
+    // FDMA GLONASS: the base-frequency (channel k=0) wavelength.  The emitter's
+    // (sat, signal) API exists so that per-channel FDMA wavelengths can be added later.
     EXPECT_NEAR(bandNominalWavelengthMeters(FrequencyBand::GloG1),
                 Constants::SPEED_OF_LIGHT / Constants::GLONASS_G1_BASE_FREQ, 1e-12);
     // Unknown / unmapped bands return the 0.0 sentinel (caller falls back to the flat gate).
@@ -395,7 +394,7 @@ TEST(SignalBandWavelengthTest, NominalWavelengthPerBand) {
     EXPECT_NEAR(bandNominalWavelengthMeters(classifySignalForSat("E11", "L5Q").band),
                 Constants::GAL_E5A_WAVELENGTH, 1e-12);
     EXPECT_GT(bandNominalWavelengthMeters(classifySignalForSat("R03", "L1C").band), 0.0);
-    // The handoff's 0.25λ sanity numbers.
+    // Sanity values of 0.25λ per GPS band, in metres.
     EXPECT_NEAR(0.25 * Constants::GPS_L1_WAVELENGTH, 0.0476, 5e-4);
     EXPECT_NEAR(0.25 * Constants::GPS_L2_WAVELENGTH, 0.0610, 5e-4);
     EXPECT_NEAR(0.25 * Constants::GPS_L5_WAVELENGTH, 0.0637, 5e-4);

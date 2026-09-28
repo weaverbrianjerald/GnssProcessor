@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
-"""ftc_step_attrib.py -- trace-only attribution of consumer phase-bias translations.
+"""ftc_step_attrib.py: trace-only attribution of consumer phase-bias translations.
 
 Reads an existing closed-loop run directory and classifies every cell-epoch on
 which the consumer's pb_step_translate (PBT) ledger translated the float
-ambiguity, against what the APPLIED corrections actually did and against the
+ambiguity, against what the applied corrections did and against the
 producer's own event stream.
 
-MEASURE-ONLY: reads CSV/text traces, writes nothing back, runs no estimator.
+Measure-only: reads CSV/text traces, writes nothing back, runs no estimator.
 
-Sign convention (verified from source, see --sign):
-    src/core/products/SsrCorrectionStore.cpp:666  applyClockToBias -> (c0+...)/c  [s]
-    src/core/corrections/GnssCorrections.cpp:344  clock_corr += applyClockToBias(...)
-    src/core/model/PppModel.cpp:1490              modeled = range - sat_clock*c - ...
-    src/core/measurement/MeasurementModel.cpp:1610-1612  kSsrPhaseBiasSign = +1,
-                                                         kSsrCodeBiasSign  = +1
-    src/core/measurement/MeasurementModel.cpp:1641-1643  predicted = modeled + ...
-                                                         + ssr_bias_term (+ amb)
+Sign convention (from the source; --sign prints the note with line numbers
+that may have drifted since):
+    SsrCorrectionStore::applyClockToBias            -> (c0+...)/c  [s]
+    GnssCorrections::getSatelliteClockCorrection    clock_corr += applyClockToBias(...)
+    PppModel::computeBaseModeledValue               modeled = range - sat_clock*c - ...
+    MeasurementModel::buildJacobianRow              kSsrPhaseBiasSign = +1,
+                                                    kSsrCodeBiasSign  = +1,
+                                                    predicted = modeled + ...
+                                                    + ssr_bias_term (+ amb)
   => phase prediction carries  (-clk_m + pb_m + A)
      code  prediction carries  (-clk_m + cb_m)
   which is PBT-AUDIT section 4's "phase correction = -clock + PB, code
@@ -119,7 +120,7 @@ def load_trace(run_dir, eps):
     d["pair30"] = d["gap_s"] == 30.0
 
     # ---- common-mode removal ------------------------------------------------
-    # clock is a per-SATELLITE quantity repeated on the sat's signal rows, so the
+    # clock is a per-satellite quantity repeated on the sat's signal rows, so the
     # per-epoch median is taken over distinct satellites tracked at both epochs.
     pr = d[d["pair30"]]
     sat_clk = pr.drop_duplicates(subset=["tow", "sat"])[["tow", "sat", "d_clk"]]
@@ -140,7 +141,8 @@ def load_trace(run_dir, eps):
     d["d_cb_dc"] = d["d_cb"] - d["c_cb"]
     d["d_phi"] = -d["d_clk_dc"] + d["d_pb_dc"]
     d["d_rho"] = -d["d_clk_dc"] + d["d_cb_dc"]
-    # robustness variant: de-common the phase correction as ONE per-signal median
+    # robustness variant: remove the common mode of the whole phase correction
+    # (-d_clk + d_pb) with a single per-signal median
     d["d_phi_raw"] = -d["d_clk"] + d["d_pb"]
     c_phi = pr.assign(v=(-pr["d_clk"] + pr["d_pb"])).groupby(
         ["tow", "sig"])["v"].median().rename("c_phi")
@@ -151,8 +153,8 @@ def load_trace(run_dir, eps):
     d["hour"] = ((d["tow"] - tow0) // 3600.0).astype(int) + 1
 
     # run length: how many consecutive 30 s epochs this cell has been translating
-    # (a deterministic frame move is ISOLATED; ordinary drift past the dead band
-    # produces RUNS).
+    # (a deterministic frame move is isolated; ordinary drift past the dead band
+    # produces runs).
     d["translated"] = d["ev_pb"].astype(str).str.startswith("translate")
     runlen = np.zeros(len(d), dtype=int)
     prev_key, prev_tow_v, cur = None, None, 0
@@ -372,7 +374,7 @@ WHERE A RAW (PRE-FILTER) PHASE BIAS WOULD LIVE -- candidate audit
 
 
 def raw_mode(run, out):
-    """H-FILT read: locate a raw pre-filter PB, or prove it does not exist here."""
+    """Locate a raw pre-filter PB in the run, or show that none is written (H-FILT read)."""
     out.append(hdr(f"H-FILT raw pre-filter PB read -- {os.path.basename(run)}"))
     out.append(f"run_dir : {run}")
     out.append("")
@@ -532,7 +534,7 @@ def raw_mode(run, out):
 
 
 # --------------------------------------------------------------------------
-# R1 / R2 / R3 -- is the wire's PB movement HARMFUL for a float consumer?
+# R1 / R2 / R3: whether the wire's PB movement harms a float consumer
 # --------------------------------------------------------------------------
 F1_HZ = 1575.42e6
 F2_HZ = 1227.60e6
@@ -543,14 +545,15 @@ C_MS = 299792458.0
 LAM1 = C_MS / F1_HZ                                     # 0.190293 m
 LAM2 = C_MS / F2_HZ                                     # 0.244210 m
 CYC_R = LAM2 / LAM1                                     # 1.283333 = f1/f2
-LAM_NL = C_MS / (F1_HZ + F2_HZ)                         # 0.106891 m
-# An EQUAL-CYCLE step (N cycles on both bands) has d2/d1 = lam2/lam1 and leaks
+LAM_NL = C_MS / (F1_HZ + F2_HZ)                         # 0.106953 m
+# An equal-cycle step (N cycles on both bands) has d2/d1 = lam2/lam1 and leaks
 # exactly N * lam_NL into the IF combination:  a*lam1 - b*lam2 == lam_NL.
 
-# Card GAL: the R3 grade per constellation.  The graded pair is the constellation's
-# dual pair (GPS L1 / L2, Galileo E1 / E5a) with its own ionosphere-free weights;
-# the de-common is per (epoch, constellation), because each constellation's clock
-# common mode is its own gauge.  (band digit of the second signal, f1, f2).
+# The R3 grade per constellation.  The graded pair is the constellation's dual
+# pair (GPS L1 / L2, Galileo E1 / E5a) with its own ionosphere-free weights; the
+# common mode is removed per (epoch, constellation), because each constellation's
+# clock common mode is its own gauge.  Values: (band digit of the second signal,
+# f1, f2).  (card GAL)
 R3_PAIRS = {"G": (2, F1_HZ, F2_HZ), "E": (5, 1575.42e6, 1176.45e6)}
 
 
@@ -580,7 +583,8 @@ def build_pivot(d, eps):
         med = m.groupby("tow")[c + "_raw"].median().rename(c + "_med")
         m = m.merge(med, left_on="tow", right_index=True, how="left")
         m[c] = m[c + "_raw"] - m[c + "_med"]
-    # band-first variant (de-common each band, THEN combine) for robustness
+    # band-first variant (remove each band's common mode first, then combine),
+    # for robustness
     m["d_IF_bf"] = IF_A * m["d_pb_dc_1"] - IF_B * m["d_pb_dc_2"]
     m["d_GF_bf"] = m["d_pb_dc_1"] - m["d_pb_dc_2"]
     m["tr_any"] = m["translated_1"] | m["translated_2"]
@@ -661,13 +665,15 @@ def r1_section(m, eps, out, bed):
 
 
 def r1b_section(m, eps, out, bed):
-    """The harm-relevant quantity under the stated theory, from the WIRE alone.
+    """The harm-relevant quantity under the stated theory, from the wire alone.
 
     Theory: a wire phase-correction error is absorbed by (i) the receiver clock
     when common to all satellites, and (ii) the float ambiguity when constant
-    over an arc.  So what reaches position is the DE-COMMONED, DE-MEANED-PER-ARC
-    IF correction.  Cumulating the de-commoned per-epoch IF steps inside an arc
-    and removing the arc mean gives exactly that, with no truth needed.
+    over an arc.  What reaches position is therefore the IF correction with the
+    per-epoch common mode and the per-arc mean removed.  Cumulating the
+    common-mode-removed per-epoch IF steps inside an arc (arcs break at gaps
+    over 120 s) and removing the arc mean gives that quantity, with no truth
+    needed.
     """
     out.append(sub("R1b  WITHIN-ARC IF EXCURSION (de-commoned, de-meaned per arc)"))
     rows = []
@@ -715,7 +721,7 @@ def r1b_section(m, eps, out, bed):
     out.append("   tell the two apart.  Cumulating also accumulates the de-commoning")
     out.append("   residual (median-based, so it is not exactly zero-mean).")
 
-    # ---- the equal-CYCLE signature -------------------------------------
+    # ---- the equal-cycle signature -------------------------------------
     sel = m[m["tr_any"]]
     sh = pd.Series([shape_of(r, eps) for r in sel.itertuples(index=False)], index=sel.index)
     cyc = sel[sh == "cycle-like"]
@@ -830,7 +836,7 @@ def r2_section(d, e, idx, anchor, eps, out, bed, seed=0):
     out.append(f"   REFERENCE: a pure geometric relaxation gives rho = const and IQR ~ 0; "
                f"an uncorrelated random walk gives p50 rho ~ {0.707:.3f} with a wide IQR.")
 
-    # ---- run-START attribution with an hour-matched null --------------------
+    # ---- run-start attribution with an hour-matched null --------------------
     classes = {"STRANSFORM": TIER_STRANSFORM, "PHASE_ANCHOR": TIER_PHASE_ANCHOR,
                "PBGAUGE": TIER_PBGAUGE, "CLK_ANCHOR": TIER_CLK_ANCHOR,
                "READMIT": TIER_READMIT, "SLIP": TIER_SLIP,
@@ -944,8 +950,9 @@ def load_wire_series(run):
 def load_truth_bias_sim(run):
     """Sim fixture truth: <fixture>/<STA>/truth_bias.csv (satellite,signal,...,osb_m).
 
-    Satellite-side and TIME-CONSTANT by construction (src/sim/main.cpp:2125-2131 --
-    arc-constant, recorded once at first sighting; the file carries no time column).
+    Satellite-side and time-constant by construction: the simulator (the
+    truth_bias.csv writer in src/sim/main.cpp) records each (sat, signal) once, at
+    first sighting, and the file carries no time column.
     The fixture is named only implicitly, by the absolute RINEX paths in arm.json.
     """
     fx = None
@@ -968,9 +975,9 @@ def load_truth_bias_sim(run):
 
 
 def load_osb_bia(run, systems=("G",)):
-    """Field truth: the COD MGX OSB .BIA, parsed exactly as
+    """Field truth: the COD MGX OSB .BIA, parsed the same way as
     scripts/wire_vs_code_census.py:parse_bia (ProductParser column offsets, ns->m).
-    `systems` (card GAL): the constellation letters kept, default GPS alone."""
+    `systems`: the constellation letters kept, default GPS alone (card GAL)."""
     ap = os.path.join(run, "arm.json")
     root = year = doy = None
     src, typ = "COD", "FIN"
@@ -1058,8 +1065,9 @@ def arc_rms(series, hmin, tow0, gap_s=120.0):
 def r3_section(run, d, eps, out, bed, truth_path, systems=("G",)):
     """R3: IF-level wire-vs-truth grade of the clock, the phase bias, and their sum.
 
-    Card GAL: one grade per constellation in `systems` (default GPS alone, whose output
-    is unchanged); with more than one the section header names the constellation."""
+    One grade per constellation in `systems` (default GPS alone, whose output is
+    unchanged from the single-system version); with more than one, the section
+    header names the constellation (card GAL)."""
     for sy in systems:
         lab = bed if len(systems) == 1 else f"{bed} [system {sy}]"
         r3_one(run, d, eps, out, lab, truth_path, sy)
@@ -1067,7 +1075,7 @@ def r3_section(run, d, eps, out, bed, truth_path, systems=("G",)):
 
 
 def r3_one(run, d, eps, out, bed, truth_path, sy="G"):
-    """R3 for one constellation letter `sy` (the pre-card body, per constellation)."""
+    """R3 for one constellation letter `sy` (the single-system grade, run per constellation)."""
     band2, f1_hz, f2_hz = R3_PAIRS.get(sy, R3_PAIRS["G"])
     if_a = f1_hz ** 2 / (f1_hz ** 2 - f2_hz ** 2)
     if_b = f2_hz ** 2 / (f1_hz ** 2 - f2_hz ** 2)
@@ -1095,7 +1103,7 @@ def r3_one(run, d, eps, out, bed, truth_path, sy="G"):
     out.append("so every movement of e_pb is wire movement.")
 
     wclk, wpb = load_wire_series(run)
-    # Card GAL: this constellation's records only (a no-op on a single-system wire).
+    # this constellation's records only (a no-op on a single-system wire; card GAL)
     wclk = {k: v for k, v in wclk.items() if k[0][:1] == sy}
     wpb = {k: v for k, v in wpb.items() if k[0][:1] == sy}
     if not wclk or not wpb:
@@ -1104,7 +1112,7 @@ def r3_one(run, d, eps, out, bed, truth_path, sy="G"):
     osb_sigs = {k[1] for k in osb}
     b1s = sorted({s for (_, s, _) in wpb if band_of(s) == 1})
     b2s = sorted({s for (_, s, _) in wpb if band_of(s) == band2})
-    # Prefer the signal the CONSUMER actually applies (the field wire emits L1C
+    # Prefer the signal the consumer applies (the field wire emits L1C
     # and L1W while the consumer tracks L1W; grading L1C would measure a channel
     # the consumer never reads).
     csig = set(d["sig"].unique())
@@ -1152,18 +1160,19 @@ def r3_one(run, d, eps, out, bed, truth_path, sy="G"):
                 series[k][sat][t] = v[i] - med[i]
                 if (sat, t) in tracked:
                     series_c[k][sat][t] = v[i] - med[i]
-            # linearity control: the SUM of the two separately de-commoned
-            # channels (the median is not linear, so this need not equal the
-            # de-commoned e_phi).
+            # linearity control: the sum of the two channels with their common
+            # modes removed separately (the median is not linear, so this need
+            # not equal e_phi with its common mode removed).
             series["e_sum"][sat][t] = (v[0] - med[0]) + (v[1] - med[1])
             if (sat, t) in tracked:
                 series_c["e_sum"][sat][t] = (v[0] - med[0]) + (v[1] - med[1])
-    # ---- DIFFMEDIAN de-common control -----------------------------------
-    # A per-epoch median of LEVELS is exposed to a rotating satellite set: when
-    # the set changes the median jumps, injecting a spurious common step into
-    # every satellite.  wire_vs_code_census.py:304-331 pre-registers a second
-    # estimator that is immune to it -- integrate the per-epoch median of the
-    # satellite-wise DIFFERENCES.  Same recipe here.
+    # ---- DIFFMEDIAN common-mode control ---------------------------------
+    # A per-epoch median of levels is exposed to a rotating satellite set: when
+    # the set changes, the median jumps and injects a spurious common step into
+    # every satellite.  common_mode() in scripts/wire_vs_code_census.py
+    # pre-registers a second estimator that is immune to this: integrate the
+    # per-epoch median of the satellite-wise differences.  The same recipe is
+    # used here.
     series_d = {k: defaultdict(dict) for k in ("e_clk", "e_pb", "e_phi")}
     series_dc = {k: defaultdict(dict) for k in series_d}
     raws = {k: defaultdict(dict) for k in series_d}
@@ -1362,7 +1371,8 @@ def main():
                f"{q(d['n_clk_sats'],.5):.0f}, n_pb_sats(per signal) p50="
                f"{q(d['n_pb_sats'],.5):.0f}")
 
-    # ---- attribution REACHABILITY (invariant #4: a zero must be a real reading)
+    # ---- attribution reachability (invariant #4: a zero count is meaningful
+    #      only if events could have landed on a consumer cell)
     out.append(sub("attribution reachability (how many events CAN land on a consumer cell)"))
     cells = set(zip(d["sat"], d["sig"], d["tow"].map(snap)))
     dp = d[d["pair30"]]
@@ -1461,7 +1471,7 @@ def main():
                 out.append(f"   {k:<18} {mc[k]:>6}   ({100.0*mc[k]/max(nF,1):5.1f} % of F)")
         out.append(f"   F total {nF}")
 
-        # ---------------- NULL / lift ---------------------------------------
+        # ---------------- null / lift ---------------------------------------
         out.append(sub(f"NULL base-rate control (eps={eps})"))
         nt = d[(~d["translated"]) & d["pair30"]].copy()
         nlabs = [label_row(r, idx, anchor, multi=True)[1]
@@ -1631,7 +1641,7 @@ def main():
     out.append(f"{'ALL translated':<16} {len(tr):>6} {int(tr['isolated'].sum()):>9} "
                f"{100.0*tr['isolated'].mean():>6.1f}%")
 
-    # --- does ANY event (telemetry included) coincide with an F-none cell? ----
+    # --- does any event (telemetry included) coincide with an F-none cell? ----
     out.append(sub("F-none: coincident tiers INCLUDING the held-out telemetry tiers"))
     fnone = tr[(tr["cls"] == "F") & (tr["flabel"] == "F-none")]
     tc = Counter()
@@ -1659,11 +1669,12 @@ def main():
         out.append(f"      {t_:<18} {n:>6}"
                    + ("   (telemetry tier)" if t_ in TIER_TELEMETRY else ""))
 
-    # --- EPOCH-level (satellite-agnostic) datum events -----------------------
-    # A network-wide datum move (e.g. nine satellites decoupling from the clock
-    # anchor in one epoch) changes the emitted PB of EVERY satellite, but the
-    # producer names only the satellites it acted on.  A per-satellite key
-    # therefore UNDER-attributes; this sat-agnostic view is the upper bound.
+    # --- epoch-level (satellite-agnostic) datum events -----------------------
+    # A network-wide datum move (for example several satellites decoupling from
+    # the clock anchor in one epoch) changes the emitted PB of every satellite,
+    # but the producer names only the satellites it acted on.  A per-satellite
+    # key therefore under-attributes; this satellite-agnostic view is the upper
+    # bound.
     out.append(sub("EPOCH-level datum co-incidence (sat-agnostic upper bound)"))
     epoch_tiers = defaultdict(set)
     for r in e.itertuples(index=False):

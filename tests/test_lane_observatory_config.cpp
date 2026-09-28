@@ -3,32 +3,31 @@
  * @brief Config-contract tests for the carry-domain lane observatory
  *        (@c network.cycle_slip.relevel_lane_snap; `SPEC_lane_slip_response.md` §7.3).
  *
- * History this locks in place.  The knob's first three mechanisms (rung 3
- * v1/v2/v2.1) lived at the per-band ambiguity SEED and were deleted once the
- * write was shown to be an exact solve no-op on the network producer.  The
- * loader comment that shipped with them said the mechanism "works with or
- * without phase_leveling (the seed path is universal), so no interlock" — and
- * that sentence is precisely what let an inert knob be armed in two configs and
- * graded as a null result.
+ * Background.  The knob's first three mechanisms (rung 3 v1/v2/v2.1) acted at the
+ * per-band ambiguity seed and were deleted after the write proved to be an exact solve
+ * no-op on the network producer.  Their loader comment stated that the mechanism
+ * worked with or without phase_leveling and needed no interlock; that statement let an
+ * inert knob be armed in two configs and graded as a null result.  These tests keep
+ * the interlocks in place.
  *
- * The v3 mechanism reads @c LocalCarry::value_abs (the LEVELING carry's
- * absolute levels) over the freed set, so it has two hard requirements and one
- * hard exclusion.  Each has a distinct failure mode if it is missing:
+ * The v3 mechanism reads @c LocalCarry::value_abs (the leveling carry's absolute
+ * levels) over the freed set, so it has two hard requirements and one hard exclusion,
+ * each with a distinct failure mode:
  *
  *  - without @c phase_leveling there is no leveling carry to read at all;
  *  - without @c cycle_slip.relevel_free_epoch the freed set is empty, so every
- *    epoch short-circuits and the counters report a STRUCTURAL zero that is
+ *    epoch short-circuits and the counters report a structural zero that is
  *    indistinguishable from dead wiring (standing invariant #4);
  *  - under @c carry_invariant the leveling local carry is superseded and
- *    structurally empty, exactly as for the free-epoch response it rides on.
+ *    structurally empty, as it is for the free-epoch response the observatory
+ *    rides on.
  *
- * All three are warn-and-disarm rather than load errors, matching the sibling
- * relevel knobs.  The free-epoch rider is deliberately placed AFTER the
- * free_epoch disarm so it reads that flag's SETTLED value — but note that
- * ordering is not separately observable through the public getters, because
- * every posture that settles free_epoch to false also disarms the observatory by
- * another route.  These tests pin the END STATE; the ordering rests on code
- * placement and on the comment at the interlock.
+ * All three are warn-and-disarm rather than load errors, matching the sibling relevel
+ * knobs.  The free-epoch rider is placed after the free_epoch disarm so that it reads
+ * that flag's settled value.  The ordering is not separately observable through the
+ * public getters, because every posture that settles free_epoch to false also disarms
+ * the observatory by another route.  These tests check the end state; the ordering
+ * rests on code placement and on the comment at the interlock.
  */
 
 #include <gtest/gtest.h>
@@ -116,7 +115,7 @@ TEST(LaneObservatoryConfig, DisarmsWithoutPhaseLeveling) {
 }
 
 TEST(LaneObservatoryConfig, DisarmsWithoutFreeEpoch) {
-    // free_ambs IS the population; without it every counter is a structural
+    // free_ambs is the population; without it every counter is a structural
     // zero, which reads identically to a miswire.
     GnssConfig cfg;
     const char* extra =
@@ -131,13 +130,13 @@ TEST(LaneObservatoryConfig, DisarmsWithoutFreeEpoch) {
 }
 
 TEST(LaneObservatoryConfig, DisarmsUnderCarryInvariant) {
-    // The leveling local carry is superseded and structurally empty here — the
-    // same reason relevel_free_epoch itself is disarmed on this posture.
+    // The leveling local carry is superseded and structurally empty here, which is
+    // also why relevel_free_epoch itself is disarmed on this posture.
     GnssConfig cfg;
-    // carry_invariant is a hard load ERROR without phase_datum_eq34 (the DD
-    // cycle basis it carries is defined only in that datum), so the posture has
-    // to be spelled completely — otherwise this would assert on a failed load
-    // rather than on the interlock it is here to pin.
+    // carry_invariant is a hard load error without phase_datum_eq34 (the DD cycle
+    // basis it carries is defined only in that datum), so the posture is spelled out
+    // completely; otherwise the test would assert on a failed load rather than on the
+    // interlock under test.
     const std::string extra =
         std::string(kArmed) +
         "    \"carry_invariant\": true,\n"
@@ -150,19 +149,18 @@ TEST(LaneObservatoryConfig, DisarmsUnderCarryInvariant) {
 }
 
 TEST(LaneObservatoryConfig, DisarmsWhenFreeEpochIsJsonTrueButUnsupported) {
-    // relevel_free_epoch is set TRUE in JSON but cannot survive for want of
-    // phase_leveling; the observatory must be off either way.
+    // relevel_free_epoch is set true in JSON but is disarmed for lack of
+    // phase_leveling; the observatory is off either way.
     //
-    // ⚠ HONEST SCOPE.  This does NOT isolate the rider's ordering: the
-    // phase_leveling interlock disarms the observatory directly, before the
-    // free-epoch rider is ever consulted, so this case is satisfied by the first
-    // interlock alone and would still pass if the rider read the RAW parsed
-    // value.  The ordering is enforced by code placement (the rider sits after
-    // the free_epoch disarm) and is not separately observable through the public
-    // getters — every posture that settles free_epoch to false also disarms the
-    // observatory by another route.  Kept as an end-state contract, not as an
-    // ordering proof; DisarmsWithoutFreeEpoch is the case that actually
-    // exercises the rider.
+    // Scope: this case does not isolate the rider's ordering.  The phase_leveling
+    // interlock disarms the observatory directly, before the free-epoch rider is
+    // consulted, so the first interlock alone satisfies this case, and it would still
+    // pass if the rider read the raw parsed value.  The ordering is enforced by code
+    // placement (the rider sits after the free_epoch disarm) and is not separately
+    // observable through the public getters: every posture that settles free_epoch
+    // to false also disarms the observatory by another route.  The case is an
+    // end-state contract, not an ordering proof; DisarmsWithoutFreeEpoch is the case
+    // that exercises the rider.
     GnssConfig cfg;
     const char* extra =
         "    \"phase_leveling\": false,\n"

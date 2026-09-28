@@ -17,14 +17,14 @@ Conventions (ported, not re-derived)
     basis / normalization / sun-fixed longitude : scripts/sh_vtec.py (self-tested,
         itself a port of src/core/atmosphere/SphericalHarmonicIonosphere.cpp)
     coefficient enumeration : SphericalHarmonicIonosphere.cpp:92-95
-        (per degree: C(n,0..n) then S(n,1..n)) -- so degree N is the FIRST (N+1)^2
+        (per degree: C(n,0..n) then S(n,1..n)), so degree N is the first (N+1)^2
         columns of the degree-8 enumeration and the basis is built once.
     IPP geometry / thin-shell mapping : SphericalHarmonicIonosphere.cpp:19-53
     TECU -> L1 metres : ApplicationNetworkAssembly.cpp:1056-1057 (40.3e16 / f_L1^2)
     shell 450 km, Re 6371 km : GnssConfigTypes.hpp:3939 (global_vtec_sh defaults)
 
 Scope of the V2 elevation mask
-    The mask (15 or 25 deg) gates the FIT INPUT only.  The product is always
+    The mask (15 or 25 deg) gates the fit input only.  The product is always
     evaluated at every consumer line of sight the consumer trace carries, so the
     15-30 deg grading band stays populated and comparable across mask variants.
     ``network_ionosphere.csv`` itself already carries only el >= 15 deg (the run's
@@ -63,7 +63,7 @@ REGIONAL_RADIUS_KM = 1500.0
 
 
 # --------------------------------------------------------------------------- #
-# geometry -- ports of Coordinates::ecefToLlh and computeIppGeometry
+# geometry: ports of Coordinates::ecefToLlh and computeIppGeometry
 def ecef_to_llh(xyz: np.ndarray):
     """WGS84 geodetic lat/lon (rad) + height.  Port of Coordinates.cpp:9-50."""
     xyz = np.atleast_2d(np.asarray(xyz, float))
@@ -215,7 +215,7 @@ def prepare(B: dict) -> None:
     B["ep_start"] = np.searchsorted(B["ni_tow"], tows, "left")
     B["ep_end"] = np.searchsorted(B["ni_tow"], tows, "right")
 
-    # consumer geometry at the SAME shell
+    # consumer geometry at the same shell
     clat, clon = ecef_to_llh(B["cons_ecef"])[0][0], ecef_to_llh(B["cons_ecef"])[1][0]
     cel = np.radians(cs["g_elev"].to_numpy())
     caz = np.radians(cs["g_az"].to_numpy())
@@ -233,7 +233,7 @@ def prepare(B: dict) -> None:
     B["cs_truth"] = cs["I_L1_m"].to_numpy()
 
     # the causal product is read at the consumer epoch by index, so the two epoch
-    # grids must coincide exactly -- assert it rather than silently supplying a lag
+    # grids must coincide exactly: assert it rather than silently supplying a lag
     j = np.clip(np.searchsorted(tows, B["cs_tow"]), 0, len(tows) - 1)
     B["tow_align_max_s"] = float(np.abs(tows[j] - B["cs_tow"]).max())
 
@@ -273,7 +273,7 @@ def knot_weights(tow, knots, step):
 
 
 # --------------------------------------------------------------------------- #
-# variant B -- batch, piecewise-linear coefficients on knots
+# variant B: batch, piecewise-linear coefficients on knots
 def fit_batch(B, deg, mask_deg, use_bs, cfg, exclude=(), window=None):
     K = (deg + 1) ** 2
     nsta, nsat = len(B["stations"]), len(B["sats"])
@@ -379,7 +379,7 @@ def fit_batch(B, deg, mask_deg, use_bs, cfg, exclude=(), window=None):
 def _cond_probe(N, P, K, nk, ORB, OSB, nsta, nsat, use_bs, ridge, cfg):
     """Which regularizer the normal matrix actually requires, in order.
 
-    L0 raw; L1 + the sum-to-zero gauge on b_s (the ONE exact null direction:
+    L0 raw; L1 + the sum-to-zero gauge on b_s (the one exact null direction:
     b_s += c, b_r -= c leaves every modelled value unchanged); L2 + the loose
     b_r/b_s priors; L3 + the Kaula ridge on the coefficients.
     """
@@ -427,7 +427,7 @@ def _predict_batch(x, G, si, ti, tow, knots, step, K, ORB, OSB, nsta, nsat, use_
 
 
 # --------------------------------------------------------------------------- #
-# variant C -- causal Kalman filter from epoch 0
+# variant C: causal Kalman filter from epoch 0
 def fit_causal(B, deg, mask_deg, use_bs, cfg, exclude=(), keep_state=False):
     K = (deg + 1) ** 2
     nsta, nsat = len(B["stations"]), len(B["sats"])
@@ -542,13 +542,13 @@ def product_at_consumer(B, fit):
 
 
 def demedian(tow, err):
-    """Remove the per-epoch MEDIAN OF THE DIFFERENCE over the consumer's satellites."""
+    """Remove the per-epoch median of the difference over the consumer's satellites."""
     s = pd.Series(err)
     return (s - s.groupby(pd.Series(tow)).transform("median")).to_numpy()
 
 
 # --------------------------------------------------------------------------- #
-# variant R -- regional per-satellite interpolation, causal
+# variant R: regional per-satellite interpolation, causal
 def product_regional(B, cfit, mask_deg, drop=()):
     near = np.array([i for i in B["near"] if i not in set(drop)], int)
     out = np.full(len(B["cs_tow"]), np.nan)
@@ -793,7 +793,7 @@ def main():
                     sweep.append((f["kind"], deg, mk, bs_on, f["oos"], f["g1"], f["g2"]))
     P("")
 
-    # selection: truth-free, non-circular -- the withheld-station out-of-sample RMS
+    # selection: truth-free, non-circular; the withheld-station out-of-sample RMS
     def best(kind):
         c = [k for k in fits if k[0] == kind]
         return min(c, key=lambda k: (fits[k]["oos"] if np.isfinite(fits[k]["oos"]) else 1e9))

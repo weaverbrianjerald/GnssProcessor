@@ -1,33 +1,33 @@
 /**
  * @file test_neq_station_prior_before_pd.cpp
- * @brief Card RF-PD-fix — `NetworkNormalEquations::addStation`'s optional
- *        @ref NetworkNormalEquations::StationPrior, i.e. folding a station's own
- *        DATUM rows into @f$N_{rr}/u_r@f$ BEFORE the positive-definiteness test
- *        instead of afterwards through @ref addStationPrior
- *        (`network.station_prior_before_pd`).
+ * @brief Tests for the optional @ref NetworkNormalEquations::StationPrior argument of
+ *        `NetworkNormalEquations::addStation`, which folds a station's own datum rows
+ *        into @f$N_{rr}/u_r@f$ before the positive-definiteness test instead of
+ *        afterwards through @ref addStationPrior (`network.station_prior_before_pd`,
+ *        card RF-PD-fix).
  *
  * Two guarantees, one per gate the card pre-registered:
  *
- *  1. **ADMISSION.**  A station whose OBSERVATION-only local block is singular in
- *     exactly one direction — the direction its own loose prior row gauges — is
- *     REJECTED with the prior empty (today's behaviour, the 23 633 golden
- *     rejections of `docs/refound/RF-PD_station_rejection_2026-09-15.md`) and
- *     ADMITTED with the same rows handed to `addStation`.  The synthetic block
- *     here is the card's §5 mechanism in miniature: a code/phase pair per
- *     satellite over `{receiver DCB, slant iono, L1 amb, L2 amb}` whose one null
- *     direction is the DCB ↔ iono ↔ ambiguity confound, with the L1/L2 mass ratio
+ *  1. **Admission.**  A station whose observation-only local block is singular in
+ *     exactly one direction, the direction its own loose prior row gauges, is
+ *     rejected with the prior empty (the behaviour with the knob off; see
+ *     `docs/refound/RF-PD_station_rejection_2026-09-15.md`) and admitted with the
+ *     same rows handed to `addStation`.  The synthetic block is the card's §5
+ *     mechanism in miniature: a code/phase pair per band and satellite over
+ *     `{receiver DCB, slant iono, L1 amb, L2 amb}` whose one null direction is the
+ *     DCB ↔ iono ↔ ambiguity confound, with the ambiguity/iono mass ratio
  *     @f$1+\gamma^2@f$.
  *
- *  2. **EQUIVALENCE.**  For a block that passes EITHER way, prior-before and
- *     prior-after produce the same system to the digit — the border cross-block
- *     and local RHS bit-for-bit (same additions, same order), and the reduced
- *     shared normals / reconstructed locals to ~1e-12 relative.  The residual is
- *     not a defect and cannot be removed: `Eigen::LDLT::rankUpdate` is a
+ *  2. **Equivalence.**  For a block that passes either way, prior-before and
+ *     prior-after produce the same system: the border cross-block and local RHS
+ *     bit-for-bit (same additions, same order), and the local normals, reduced
+ *     shared normals and reconstructed locals to about 1e-12 relative (1e-10 for
+ *     the locals).  The residual cannot be removed: `Eigen::LDLT::rankUpdate` is a
  *     different algorithm from a fresh factorization of the same matrix, so the
- *     two cached factors differ at ULP even though they represent the identical
- *     @f$N_{rr}+\sum_c \Lambda_c e_c e_c^\top@f$.  (That same rankUpdate divides
- *     by the existing pivot, which is why the rank-deficient case in gate 1 can
- *     only be cured INSIDE the factorized matrix.)
+ *     two cached factors differ at ULP level although they represent the same
+ *     @f$N_{rr}+\sum_c \Lambda_c e_c e_c^\top@f$.  (rankUpdate also divides by the
+ *     existing pivot, which is why the rank-deficient case in gate 1 can be
+ *     resolved only inside the factorized matrix.)
  */
 
 #include <gtest/gtest.h>
@@ -46,11 +46,11 @@ constexpr double kGamma = 1.646944444;  // (f_L1/f_L2)^2, the card's γ
 /// One station's raw design rows over locals
 /// `[rx DCB, iono_1, N1_1, N2_1, iono_2, N1_2, N2_2, ...]` and a shared border
 /// of @p n_shared satellite columns.  Four rows per satellite (C1, L1, C2, L2),
-/// each touching ONE shared column (the satellite's), so the local block carries
+/// each touching one shared column (the satellite's), so the local block carries
 /// the whole DCB↔iono↔ambiguity structure the card names.
 ///
 /// With `d1 = 1`, `d2 = γ` (the IGS DCB convention of §5) the observation-only
-/// local block is EXACTLY rank-deficient by one: the direction
+/// local block is rank-deficient by exactly one: the direction
 /// `η=1, a_s=−1, b_s=−1, c_s=−γ` (for every satellite s) is annihilated by all
 /// four row types simultaneously.
 struct StationRows {
@@ -76,10 +76,10 @@ StationRows buildStation(int n_sat, Eigen::Index n_shared, Eigen::Index shared_b
         const double mp = wet_map_base + 0.17 * s;   // satellite-dependent scale on the shared column
         for (int k = 0; k < 4; ++k) {
             const Eigen::Index r = 4 * s + k;
-            // Per-ROW-TYPE coefficient, not one per satellite: with a single
+            // One coefficient per row type, not one per satellite: with a single
             // coefficient the shared column lies in the range of this station's
-            // locals and the Schur complement cancels to ~0, which would make the
-            // reduced-border comparison below vacuous.
+            // locals and the Schur complement cancels to about 0, which would make
+            // the reduced-border comparison below vacuous.
             S.A_s(r, sh) = mp * (1.0 + 0.23 * k);
             S.y(r) = 0.01 * (r + 1) - 0.13 * s;
         }
@@ -95,8 +95,9 @@ StationRows buildStation(int n_sat, Eigen::Index n_shared, Eigen::Index shared_b
     return S;
 }
 
-/// The loose zero-mean RXCB-DATUM row of ApplicationNetworkAssembly.cpp:4072-4078:
-/// one diagonal entry on the receiver-DCB column, Λ = 1/σ², η = Λ·(0 − x_lin).
+/// The loose zero-mean RXCB-DATUM row that station assembly builds in its pl_cb walk
+/// (ApplicationNetworkAssembly.cpp): one diagonal entry on the receiver-DCB column,
+/// Λ = 1/σ², η = Λ·(0 − x_lin).
 NetworkNormalEquations::StationPrior dcbDatum(Eigen::Index dcb_col, double sigma,
                                              double x_lin) {
     NetworkNormalEquations::StationPrior p;
@@ -109,11 +110,11 @@ NetworkNormalEquations::StationPrior dcbDatum(Eigen::Index dcb_col, double sigma
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// Gate 1 — ADMISSION.  The block the observation rows alone cannot determine.
+// Gate 1, admission: the block the observation rows alone cannot determine.
 // ---------------------------------------------------------------------------
 
-/// Sanity: the synthetic block really is singular in exactly one direction, and
-/// that direction is the card's closed-form null (mass ratio 1+γ² on AMB/IONO).
+/// Sanity check: the synthetic block is singular in exactly one direction, and that
+/// direction is the card's closed-form null (mass ratio 1+γ² of ambiguity to iono).
 /// Without this the admission test below could pass on a block that is merely
 /// ill-conditioned, which is a different finding.
 TEST(NeqStationPriorBeforePdTest, SyntheticBlockCarriesTheCardsRankOneNull) {
@@ -123,7 +124,7 @@ TEST(NeqStationPriorBeforePdTest, SyntheticBlockCarriesTheCardsRankOneNull) {
         S.A_r.transpose() * S.w.asDiagonal() * S.A_r;
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(N_rr);
     ASSERT_EQ(es.info(), Eigen::Success);
-    const Eigen::VectorXd ev = es.eigenvalues();          // ASCENDING
+    const Eigen::VectorXd ev = es.eigenvalues();          // ascending
     const double ev_max = ev.cwiseAbs().maxCoeff();
     EXPECT_LT(std::abs(ev(0)), 1e-12 * ev_max) << "smallest eigenvalue is not numerically zero";
     EXPECT_GT(std::abs(ev(1)), 1e-8 * ev_max) << "the null is not rank ONE";
@@ -140,13 +141,13 @@ TEST(NeqStationPriorBeforePdTest, SyntheticBlockCarriesTheCardsRankOneNull) {
     EXPECT_NEAR(m_amb / m_iono, 1.0 + kGamma * kGamma, 1e-6);  // §5's (b²+c²)/a²
 }
 
-/// THE CARD.  Same station, same rows, same PD test: rejected with no prior,
-/// admitted when the station's own datum row is folded in first.
+/// The card's main case.  Same station, same rows, same PD test: rejected with no
+/// prior, admitted when the station's own datum row is folded in first.
 TEST(NeqStationPriorBeforePdTest, RejectedWithoutPriorAdmittedWithPriorBeforePd) {
     const StationRows S = buildStation(5, 6, 0, 1.0, kGamma, 1.0);
     const auto prior = dcbDatum(S.dcb_col, /*sigma=*/10.0, /*x_lin=*/0.37);
 
-    // (a) Today's order: the PD test sees the observation rows alone → rejected.
+    // (a) Knob-off order: the PD test sees the observation rows alone → rejected.
     {
         NetworkNormalEquations neq(6);
         neq.setStationPdMedianScale(true);   // the pin-aware test the golden arms
@@ -154,8 +155,9 @@ TEST(NeqStationPriorBeforePdTest, RejectedWithoutPriorAdmittedWithPriorBeforePd)
                      std::invalid_argument);
         EXPECT_EQ(neq.numStations(), 0u) << "a rejected station must not be committed";
     }
-    // (b) RF-PD-fix: the same rows, with the datum row inside the factorized
-    //     block → admitted, and the pivot that was ~0 now carries the prior.
+    // (b) The same rows, with the datum row inside the factorized block →
+    //     admitted, and the pivot that was about 0 now carries the prior
+    //     (RF-PD-fix).
     {
         NetworkNormalEquations neq(6);
         neq.setStationPdMedianScale(true);
@@ -164,13 +166,14 @@ TEST(NeqStationPriorBeforePdTest, RejectedWithoutPriorAdmittedWithPriorBeforePd)
         EXPECT_EQ(neq.numStations(), 1u);
         const Eigen::VectorXd d = neq.stationLocalPivots(idx);
         EXPECT_GT(d.minCoeff(), 0.0) << "the admitted block must be positive-definite";
-        // The prior's information really is in the block: Λ = 1/σ² = 0.01 is the
-        // only thing separating the two arms, and the smallest pivot is now of
-        // that order rather than of order 1e-12 · block scale.
+        // The prior's information is in the block: Λ = 1/σ² = 0.01 is the only
+        // difference between the two arms, and the smallest pivot is now of that
+        // order rather than of order 1e-12 · block scale.
         EXPECT_GT(d.minCoeff(), 1e-4);
     }
-    // (c) The legacy post-test path CANNOT rescue it — the station is already
-    //     gone.  This is the whole reason the fix is at the addStation seam.
+    // (c) The legacy post-test path cannot admit it, because the station was
+    //     never committed; addStationPrior throws std::out_of_range.  This is why
+    //     the fix sits at the addStation seam.
     {
         NetworkNormalEquations neq(6);
         neq.setStationPdMedianScale(true);
@@ -181,8 +184,8 @@ TEST(NeqStationPriorBeforePdTest, RejectedWithoutPriorAdmittedWithPriorBeforePd)
     }
 }
 
-/// The prior is validated with the addStationPrior contract, and BEFORE anything
-/// reaches the shared border — a bad prior must not leave a half-added station.
+/// The prior is validated with the addStationPrior contract, before anything reaches
+/// the shared border, so a malformed prior does not leave a half-added station.
 TEST(NeqStationPriorBeforePdTest, RejectsMalformedPriorAndLeavesTheBorderClean) {
     const StationRows S = buildStation(3, 4, 0, 1.0, kGamma, 1.0);
     const Eigen::Index n_local = S.A_r.cols();
@@ -226,12 +229,12 @@ TEST(NeqStationPriorBeforePdTest, RejectsMalformedPriorAndLeavesTheBorderClean) 
 }
 
 // ---------------------------------------------------------------------------
-// Gate 2 — EQUIVALENCE on a block that passes either way.
+// Gate 2, equivalence on a block that passes either way.
 // ---------------------------------------------------------------------------
 
 /// `d2 != gamma*d1` breaks the exact null (§5's collapse needs the IGS
-/// convention), so this block is full-rank on its observations alone and BOTH
-/// orders admit it.  The resulting system must then be the same to the digit.
+/// convention), so this block is full-rank on its observations alone and both
+/// orders admit it.  The two resulting systems then agree to the tolerances below.
 TEST(NeqStationPriorBeforePdTest, AdmittedEitherWayGivesTheSameSystem) {
     const Eigen::Index n_shared = 5;
     const StationRows S0 = buildStation(4, n_shared, 0, /*d1=*/1.0, /*d2=*/0.4, 1.0);
@@ -239,13 +242,13 @@ TEST(NeqStationPriorBeforePdTest, AdmittedEitherWayGivesTheSameSystem) {
     const auto p0 = dcbDatum(S0.dcb_col, 10.0, 0.37);
     const auto p1 = dcbDatum(S1.dcb_col, 10.0, -0.21);
 
-    // Arm A — prior BEFORE the PD test (the new path).
+    // Arm A: prior before the PD test (network.station_prior_before_pd on).
     NetworkNormalEquations before(n_shared);
     const std::size_t a0 = before.addStationObservations(S0.A_s, S0.A_r, S0.w, S0.y, p0);
     const std::size_t a1 = before.addStationObservations(S1.A_s, S1.A_r, S1.w, S1.y, p1);
     before.reduce();
 
-    // Arm B — prior AFTER, through addStationPrior (today's path).
+    // Arm B: prior after, through addStationPrior (the knob-off path).
     NetworkNormalEquations after(n_shared);
     const std::size_t b0 = after.addStationObservations(S0.A_s, S0.A_r, S0.w, S0.y);
     const std::size_t b1 = after.addStationObservations(S1.A_s, S1.A_r, S1.w, S1.y);
@@ -256,7 +259,7 @@ TEST(NeqStationPriorBeforePdTest, AdmittedEitherWayGivesTheSameSystem) {
     ASSERT_EQ(before.numStations(), 2u);
     ASSERT_EQ(after.numStations(), 2u);
 
-    // (i) The border cross-block and the local RHS are BIT-identical: N_sr is
+    // (i) The border cross-block and the local RHS are bit-identical: N_sr is
     //     untouched by a diagonal local prior, and u_r receives the same
     //     increments onto the same base in the same ascending column order.
     for (std::size_t k = 0; k < 2; ++k) {
@@ -267,15 +270,15 @@ TEST(NeqStationPriorBeforePdTest, AdmittedEitherWayGivesTheSameSystem) {
     }
 
     // (ii) The local normal block, the Schur-reduced border and the
-    //      back-substituted locals agree to ~1e-12 relative.  Not bit-exact by
-    //      construction: LDLT::rankUpdate and a fresh LDLT of the same summed
-    //      matrix are different algorithms.
+    //      back-substituted locals agree to about 1e-12 relative (1e-10 for the
+    //      locals).  They are not bit-exact by construction: LDLT::rankUpdate and a
+    //      fresh LDLT of the same summed matrix are different algorithms.
     //
-    //      The reference SCALE is the OPERANDS', not the result's.  The reduced
-    //      border is a small difference of large numbers (N_ss − Σ N_sr N_rr⁻¹
-    //      N_rs cancels ~6 orders here), so its accuracy is bounded by the scale
-    //      the arithmetic runs at, and grading it against its own tiny maximum
-    //      would be grading cancellation noise.
+    //      The reference scale is that of the operands, not of the result.  The
+    //      reduced border is a small difference of large numbers (N_ss − Σ N_sr
+    //      N_rr⁻¹ N_rs cancels about 6 orders here), so its accuracy is bounded by
+    //      the scale the arithmetic runs at; measured against its own small maximum
+    //      the comparison would measure cancellation noise.
     double scale_rr = 0.0, scale_ur = 0.0;
     for (std::size_t k = 0; k < 2; ++k) {
         const Eigen::MatrixXd nb = before.stationLocalNormals(k);
@@ -312,8 +315,8 @@ TEST(NeqStationPriorBeforePdTest, AdmittedEitherWayGivesTheSameSystem) {
     (void)a0; (void)a1;
 }
 
-/// An EMPTY prior is the OFF path and must be the legacy call exactly — same
-/// admission, and a system bit-identical to the no-argument overload.
+/// An empty prior is the knob-off path and equals the legacy call: same admission,
+/// and a system bit-identical to the no-argument overload.
 TEST(NeqStationPriorBeforePdTest, EmptyPriorIsTheLegacyCallBitForBit) {
     const Eigen::Index n_shared = 4;
     const StationRows S = buildStation(4, n_shared, 1, 1.0, 0.4, 1.0);
@@ -335,7 +338,8 @@ TEST(NeqStationPriorBeforePdTest, EmptyPriorIsTheLegacyCallBitForBit) {
     EXPECT_TRUE(legacy.reducedSharedRhs() == empty.reducedSharedRhs());
 }
 
-/// A prior on a station with NO local block is a caller bug, not a silent no-op.
+/// A prior on a station with no local block is a caller error and throws; it is not
+/// ignored.
 TEST(NeqStationPriorBeforePdTest, PriorOnZeroLocalStationThrows) {
     NetworkNormalEquations neq(3);
     Eigen::MatrixXd N_ss = Eigen::MatrixXd::Identity(3, 3);

@@ -1,15 +1,15 @@
 /**
  * @file NetworkGrossLos.cpp
- * @brief Implementation of card GL — the gross line-of-sight screen
- *        (docs/SPEC_event_harness.md §24.18).  See NetworkGrossLos.hpp for why
- *        this mechanism exists and what its contract is.
+ * @brief Implementation of the gross line-of-sight screen (card GL,
+ *        docs/SPEC_event_harness.md §24.18).  NetworkGrossLos.hpp gives the
+ *        rationale and the contract.
  *
- * The row walk below is deliberately the SAME walk and the SAME family
- * classification as @c networkPostfitSigma0 (`filter/NetworkFrameDiag.cpp`),
- * because that pass is what MEASURED the residuals this screen acts on: if the
- * two ever disagreed about which rows are code, the grade (`network_pf_rows.csv`)
- * and the response would be describing different populations.  What differs is
- * only that this one is not gated on a trace being open, and that it ACTS.
+ * The row walk below uses the same walk and the same family classification as
+ * @c networkPostfitSigma0 (`filter/NetworkFrameDiag.cpp`), the pass that measures
+ * the residuals this screen acts on.  If the two disagreed about which rows are
+ * code, the grade (`network_pf_rows.csv`) and the response would describe
+ * different populations.  The differences are that this walk is not gated on a
+ * trace being open, and that it acts on what it finds.
  */
 
 #include "filter/NetworkGrossLos.hpp"
@@ -35,7 +35,7 @@
 namespace GnssProcessor {
 
 // ---------------------------------------------------------------------------
-// The PURE rules (unit-tested in tests/test_network_gross_los.cpp)
+// Pure rules (unit-tested in tests/test_network_gross_los.cpp)
 // ---------------------------------------------------------------------------
 
 double networkGrossLosUndoDeweight(double r_folded, double scale) {
@@ -48,7 +48,7 @@ GrossLosVerdict networkGrossLosAssess(const std::vector<GrossLosSample>& rows,
     GrossLosVerdict d;
     d.n_rows = static_cast<int>(rows.size());
     d.min_rows_eff = std::max(1, min_rows);
-    if (rows.empty()) return d;   // absence is not evidence of health — under_clear stays false
+    if (rows.empty()) return d;   // absence is not evidence of health: under_clear stays false
     std::set<std::string> sigs;
     bool all_under_clear = true;
     for (const auto& s : rows) {
@@ -62,24 +62,24 @@ GrossLosVerdict networkGrossLosAssess(const std::vector<GrossLosSample>& rows,
         }
         if (s.r > clear_sigma) all_under_clear = false;
     }
-    // RF-3b B1 (requirement F1): the bar as a RULE.  `fixed` is today — at least
-    // min_rows rows over k, whatever the line of sight has, which is unsatisfiable when
-    // it has fewer rows than the constant.  `available` reads it as
+    // The bar as a rule (RF-3b B1, requirement F1).  `fixed` (the default) requires at
+    // least min_rows rows over k whatever the line of sight has, which cannot be met
+    // when it has fewer rows than the constant.  `available` reads the bar as
     // min(min_rows, the LOS's own code rows), so a one-row line of sight is reachable
     // while a three-row one still needs two: the multi-band corroboration the constant
-    // exists for is kept exactly where the line of sight can supply it.
+    // exists for is kept wherever the line of sight can supply it.
     const int bar_fixed = std::max(1, min_rows);
     const int bar_avail = std::max(1, std::min(bar_fixed, d.n_rows));
     d.min_rows_eff = min_rows_available ? bar_avail : bar_fixed;
     d.over = d.n_over >= d.min_rows_eff;
-    // B5 (requirement F6): the population the FIXED rule cannot reach, counted under
-    // both rules so an arm that does not arm B1 still reports what B1 would have
-    // reached.  It is exactly "the evidence clears the available bar and the line of
-    // sight is SHORT" — four of the six largest episodes on runs/_rf0hv9_field6.
+    // The population the fixed rule cannot reach (B5, requirement F6), counted under
+    // both rules so an arm without B1 still reports what B1 would have reached: the
+    // evidence clears the available bar and the line of sight has fewer rows than the
+    // constant.
     d.short_over = (d.n_rows < bar_fixed) && (d.n_over >= bar_avail);
-    // The release evidence is NOT `!over`: the band between clear_sigma and k is
-    // neither, and a line of sight sitting there keeps whatever disposition it
-    // has.  That gap is what makes the hysteresis real rather than nominal.
+    // The release evidence is not `!over`: the band between clear_sigma and k is
+    // neither, and a line of sight sitting there keeps whatever disposition it has.
+    // That gap is what gives the two bars their hysteresis.
     d.under_clear = all_under_clear;
     for (const auto& s : sigs) d.signals += (d.signals.empty() ? "" : ";") + s;
     return d;
@@ -96,11 +96,11 @@ GrossLosEdge networkGrossLosStep(GrossLosState& s, const GrossLosVerdict& v,
         ++s.over_streak;
         if (s.over_streak < need_dec) return GrossLosEdge::None;
         if (!allow_declare) {
-            // A guard holds the declaration.  HOLD the streak at the requirement:
-            // discarding real evidence would make the guard a memory hole, and
-            // letting it grow would turn the gate's opening into a burst of
-            // simultaneous declarations.  Held, the line of sight declares on the
-            // first qualifying epoch after the gate opens and on no earlier one.
+            // A guard holds the declaration.  Hold the streak at the requirement:
+            // discarding it would lose real evidence, and letting it grow would turn
+            // the guard's opening into a burst of simultaneous declarations.  With the
+            // streak held, the line of sight declares on the first qualifying epoch
+            // after the guard opens and on no earlier one.
             s.over_streak = need_dec;
             return GrossLosEdge::Suppressed;
         }
@@ -111,8 +111,8 @@ GrossLosEdge networkGrossLosStep(GrossLosState& s, const GrossLosVerdict& v,
         ++s.n_declared;
         return GrossLosEdge::Declare;
     }
-    // Declared.  Only the release bar matters; over-bar evidence simply resets
-    // the clearing progress (it is the same line of sight still being wrong).
+    // Declared.  Only the release bar matters; any epoch not under it resets the
+    // clearing progress.
     if (!v.under_clear) { s.clear_streak = 0; return GrossLosEdge::None; }
     ++s.clear_streak;
     if (s.clear_streak < need_clr) return GrossLosEdge::None;
@@ -128,11 +128,11 @@ GrossLosEdge networkGrossLosStep(GrossLosState& s, const GrossLosVerdict& v,
 
 void networkGrossLosPublishScales(NetworkRunContext& ctx,
                                   std::vector<NetStation>& stations) {
-    if (!ctx.knobs.gl_on) return;   // OFF: the map is never populated ⇒ byte-identical
+    if (!ctx.knobs.gl_on) return;   // off: the map is never populated, so byte-identical
     const double f = ctx.knobs.gl_deweight;
-    // Rebuild from scratch: a released or expired line of sight must LOSE its
-    // scale in the same pass that a new declaration gains one, and a swap-based
-    // rebuild is the only version of that with no stale-key window.
+    // Rebuild from scratch: a released or expired line of sight loses its scale in
+    // the same pass that a new declaration gains one, and building fresh maps and
+    // swapping them in leaves no window in which a stale key survives.
     std::vector<std::map<std::string, double>> fresh(stations.size());
     for (const auto& [key, st] : ctx.carry.gl_state) {
         if (!st.gross) continue;
@@ -140,12 +140,12 @@ void networkGrossLosPublishScales(NetworkRunContext& ctx,
         if (i >= fresh.size()) continue;
         fresh[i][key.second] = f;
     }
-    // RF-3b B4 (requirement F4): a STATION-level declaration folds EVERY one of that
-    // station's code rows.  The assembly's map is keyed per satellite — it is the same
-    // map the per-LOS response writes — so a station-wide fold is expressed as "every
+    // A station-level declaration folds all of that station's code rows (RF-3b B4,
+    // requirement F4).  The assembly's map is keyed per satellite (the same map the
+    // per-LOS response writes), so a station-wide fold is expressed as "every
     // satellite this station was last seen screening".  That set is refreshed each
     // screened epoch, so a satellite that rises while the station is declared is folded
-    // from the epoch it is first seen, and one that sets stops being carried.
+    // from the epoch after it is first screened, and one that sets drops out.
     for (const auto& [si, sst] : ctx.carry.gl_sta_state) {
         if (!sst.gross) continue;
         const std::size_t i = static_cast<std::size_t>(si);
@@ -157,17 +157,17 @@ void networkGrossLosPublishScales(NetworkRunContext& ctx,
 }
 
 // ---------------------------------------------------------------------------
-// RF-3b B2: the HOLD — the bounded decoupling edge (standing invariant #7)
+// The hold: the bounded decoupling edge (RF-3b B2, standing invariant #7)
 // ---------------------------------------------------------------------------
 namespace {
 
-/// RF-3b B2: freeze one carried entry at its pre-declaration value.  The border
-/// regression and the joint block are cleared (that half IS the decoupling: a
-/// regression harvested against a level the screen has stopped trusting would keep
-/// injecting that level's relationship to the shared border at full strength), while
-/// the VALUE and the VARIANCE are kept exactly as they were.  With q = 0 on the
-/// ambiguity block a prior that is re-written unchanged after every harvest is
-/// literally "a fixed prior with zero process noise".
+/// Freeze one carried entry at its pre-declaration value (RF-3b B2).  The border
+/// regression and the joint block are cleared; that is the decoupling, since a
+/// regression harvested against a level the screen has declared untrusted would keep
+/// injecting that level's relationship to the shared border at full strength.  The
+/// value and the variance are kept unchanged.  With q = 0 on the ambiguity block, a
+/// prior re-written unchanged after every harvest is a fixed prior with zero
+/// process noise.
 LocalCarry glFreeze(const LocalCarry& src) {
     LocalCarry h = src;
     h.coupling.clear();
@@ -195,8 +195,9 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
                            double now_s,
                            GrossLosPhase phase) {
     if (!ctx.knobs.gl_on) return;
-    // RF-3b B3: the ACT half is the deferred response of this epoch's DECIDE pass.  It
-    // is a separate entry point so the driver has one call shape at both sites.
+    // The Act half applies the response deferred by this epoch's Decide pass (RF-3b
+    // B3).  It is routed through this entry point so the driver has one call shape at
+    // both sites.
     if (phase == GrossLosPhase::Act) {
         networkGrossLosAct(ctx, log, stations, asm_res);
         return;
@@ -212,24 +213,23 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
     const int    holdoff      = nc.gross_los_event_holdoff_ep;
     const int    warmup_ep    = nc.gross_los_warmup_epochs;
     const double max_sta_frac = nc.gross_los_max_station_frac;
-    // --- GL-2 (docs/SPEC_event_harness.md §24.19): the WHOLE-SATELLITE stand-down.
+    // --- Whole-satellite stand-down (GL-2, docs/SPEC_event_harness.md §24.19).
     const bool   gl2_on       = ctx.knobs.gl2_on;
     const int    gl2_min_sta  = nc.gross_los_sat_min_stations;
     const bool   gl2_wire     = nc.gross_los_sat_wire_withhold;
 
-    // --- GUARD 1: the MATURITY horizon (invariant #4's other half — a tier that
-    // fires on ignition is measuring ignition).  MEASURED on the cert smoke: with
-    // no horizon the screen declared 520 lines of sight in 20 cold epochs, its
-    // deweight removed the code information the cold solve needs for the receiver
-    // clocks, post-fit code sigma-hat-0 went 3.2 -> 2334 and the SH health gate
-    // withheld 9 of 20 epochs.  The screen still SCREENS during warmup — every
-    // counter and the whole |v|/sigma census are live — it only does not DECLARE,
-    // so the run says exactly what it would have done.  Same guard, same reason,
-    // as the RAIM isolated-arc refloat's networkWarmupRampLifted.
+    // --- Guard 1: the maturity horizon, counted in emitted epochs.  A tier that
+    // fires during ignition measures ignition (invariant #4).  Without the horizon, a
+    // 20-epoch cold-start smoke run declared 520 lines of sight; the deweight removed
+    // the code information the cold solve needs for the receiver clocks, and the SH
+    // health gate withheld 9 of 20 epochs.  During warm-up the screen still screens
+    // (every counter and the whole |v|/σ census are live) and only makes no
+    // declaration, so the run reports what it would have done.  The RAIM isolated-arc
+    // refloat uses the same guard (networkWarmupRampLifted) for the same reason.
     const bool mature = ctx.counters.n_emitted >= static_cast<long long>(warmup_ep);
 
-    // --- RF-3b sub-rules.  Each already ANDed with gl_on at the knob resolve, so an
-    // unarmed run reads exactly today's constants and today's path.
+    // --- Sub-rules of RF-3b.  Each is already ANDed with gl_on at the knob resolve, so an
+    // unarmed run takes the unchanged constants and path.
     const bool   mrr_avail    = ctx.knobs.gl_min_rows_available;
     const bool   gl_bound     = ctx.knobs.gl_bound;
     const bool   gl_emit_excl = ctx.knobs.gl_emit_exclude;
@@ -240,8 +240,8 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
     ++tal.epochs;
     ++ctx.carry.gl_seq;
     const long long seq = ctx.carry.gl_seq;
-    // RF-3b B3: this epoch's deferred work.  Rebuilt every screened epoch, so a release
-    // stops being carried in the same pass a new declaration starts.
+    // This epoch's deferred work (RF-3b B3).  Cleared at the start of every screened
+    // epoch, so the lists hold only this epoch's edges and emission sets.
     ctx.carry.gl_act_declare.clear();
     ctx.carry.gl_act_release.clear();
     ctx.carry.gl_act_station.clear();
@@ -264,9 +264,9 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
     };
 
     // --- Shared-column families ------------------------------------------------
-    // Identical rule and identical label source to networkPostfitSigma0's bitmap
-    // pass (NetworkFrameDiag.cpp), so the acting screen and the measuring trace
-    // can never disagree about which rows are code.
+    // Same rule and same label source as networkPostfitSigma0's bitmap pass
+    // (NetworkFrameDiag.cpp), so the acting screen and the measuring trace agree
+    // about which rows are code.
     std::vector<char> is_sh_col, is_pb_col, is_cb_col, is_clk_col;
     std::vector<std::string> col_sat, col_sig;
     if (x_s.size() > 0) {
@@ -285,7 +285,7 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
             else if (lbl.rfind("PB:", 0) == 0) is_pb_col[u] = 1;
             else if (lbl.rfind("CB:", 0) == 0) is_cb_col[u] = 1;
             else if (lbl.rfind("CLK:", 0) == 0) is_clk_col[u] = 1;
-            // "KIND:sat[:signal]" — sat between the first and (optional) second colon.
+            // "KIND:sat[:signal]": sat is the text between the first and the optional second colon.
             const std::size_t p1 = lbl.find(':');
             if (p1 == std::string::npos) continue;
             const std::size_t p2 = lbl.find(':', p1 + 1);
@@ -295,16 +295,17 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
         }
     }
 
-    // (station index, satellite) seen with at least one code row THIS epoch — the
-    // absence half of the streak rule needs the complement of this set.
+    // (station index, satellite) seen with at least one code row this epoch; the
+    // absence half of the streak rule works on the complement of this set.
     std::set<std::pair<int, std::string>> seen;
     int n_declared_ep = 0, n_cleared_ep = 0;
 
-    // GL-2 needs a NETWORK-WIDE tally before any line of sight is acted on: "the same
-    // satellite over the bar at >= N stations in one epoch" is not knowable inside a
-    // per-station walk, and a decision taken on the first station of that walk would
-    // depend on which station it happened to be.  So the pass is split: ASSESS every
-    // station, TALLY per satellite, then ACT.  The store is ~61 x 10 verdicts.
+    // The satellite stand-down (GL-2) needs a network-wide tally before any line of
+    // sight is acted on: "the same satellite over the bar at >= N stations in one
+    // epoch" is not knowable inside a per-station walk, and a decision taken partway
+    // through the walk would depend on the station order.  The pass is therefore
+    // split: assess every station, tally per satellite, then act.  The store holds
+    // about 61 x 10 verdicts.
     struct StationPass {
         std::size_t i{0};
         std::map<std::string, GrossLosVerdict> verdicts;
@@ -326,23 +327,23 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
 
         const Eigen::VectorXd v = R.y - R.A_s * x_s - R.A_r * x_r;
 
-        // Local columns carrying a present ambiguity — the PHASE discriminator.
-        // The pool is whichever census this lineage fills: pl_amb on the leveling
-        // vehicle, qc_amb on a Card-4 one.  This is a CLASSIFICATION read, not a
-        // fault pool: its only job is to keep phase rows out of the code bins.
+        // Local columns carrying a present ambiguity: the phase discriminator.  The
+        // pool is whichever census this lineage fills: pl_amb on the phase-leveling
+        // vehicle, qc_amb under carry_invariant.  This is a classification read, not a
+        // fault pool; it only keeps phase rows out of the code bins.
         std::vector<char> is_amb_col(static_cast<std::size_t>(R.A_r.cols()), 0);
         for (const auto& pa : (R.qc_amb.empty() ? R.pl_amb : R.qc_amb))
             if (pa.col >= 0 && pa.col < R.A_r.cols())
                 is_amb_col[static_cast<std::size_t>(pa.col)] = 1;
 
-        // The scale map the ASSEMBLY read for this epoch — this seam republishes
-        // it only at its own end, so what is here now is exactly what was folded.
-        // Used to undo the fold in the statistic; see the row build below.
+        // The scale map the assembly read for this epoch.  This seam republishes it
+        // only at its own end, so the map here is the one that was folded.  The
+        // statistic undoes the fold with it; see the row build below.
         const std::map<std::string, double>& gl_scale = stations[i].gl_code_sigma_scale;
 
         std::map<std::string, std::vector<GrossLosSample>> by_sat;
         for (Eigen::Index row = 0; row < v.size(); ++row) {
-            // Card-1 coupling rows are statements about the CARRY, not data.
+            // Coupling rows (card 1) are statements about the carry, not data.
             if (R.cpl_row_start >= 0 && row >= R.cpl_row_start) continue;
             bool sh_row = false, pb_row = false, cb_row = false, clk_row = false;
             const std::string* row_sat = nullptr;
@@ -371,28 +372,24 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
                 if (sc != gl_scale.end()) gl_scale_here = sc->second;
             }
             const double w = (row < R.w.size()) ? R.w(row) : 1.0;
-            // ⚠ THE RESPONSE MUST NOT LAUNDER ITS OWN RELEASE TEST.
-            // A declared line of sight's code rows were folded THIS epoch at
-            // σ × f, so |v|·√w reads f times SMALLER than the same residual at
-            // nominal weight.  At f = 100 a 144 m residual reads 1.3 σ — under
-            // the 3 σ release bar, one epoch after the same line of sight was
-            // declared at 125 σ.  MEASURED on the first `runs/_gl_on6`:
-            // declare TOW 265500 (125.6 σ, |v| 143.8 m) → clear 265560
-            // (1.28 σ, |v| STILL 144.7 m) → declare 265620 → clear 265680: a
-            // two-epoch limit cycle that erases the LOS's carry forever and
-            // leaves the deweight on only half the time.
-            // Undo the fold EXACTLY.  `gl_code_sigma_scale` is the very map the
-            // assembly read for this epoch (this seam republishes it only at
-            // its end), so multiplying by it restores the row's nominal σ and
-            // both bars then measure the DATA rather than the response.
+            // The statistic must not be reduced by the response it drives.  A
+            // declared line of sight's code rows were folded this epoch at σ × f,
+            // so |v|·√w reads f times smaller than the same residual at nominal
+            // weight.  At f = 100 a 144 m residual declared at 125 σ reads 1.3 σ one
+            // epoch later, under the 3 σ release bar, and the line of sight then
+            // alternates between declare and clear every other epoch.  Undo the fold
+            // exactly: `gl_code_sigma_scale` is the map the assembly read for this
+            // epoch (this seam republishes it only at its end), so multiplying by it
+            // restores the row's nominal σ, and both bars measure the data rather
+            // than the response.
             const double r = networkGrossLosUndoDeweight(
                 std::abs(v(row)) * std::sqrt(std::max(0.0, w)), gl_scale_here);
             if (!std::isfinite(r)) continue;
-            // RF-3b B5 (requirement F6): the F2 alarm — how far a row that is ACTUALLY
-            // FOLDED has run.  A folded row's residual is supposed to stay a MEASURE of
-            // the fault; on `runs/_rap_rf3_gl1` it ran to 445.48 m, which is what an
-            // unbounded decoupling edge looks like from the outside.  Counted whether or
-            // not network.gross_los_bound is armed, so the two arms are comparable.
+            // The requirement F2 alarm (RF-3b B5, requirement F6): the largest |v| on a
+            // row that is actually folded.  A folded row's residual should stay a
+            // measure of the fault; a growing one (hundreds of metres) is how an
+            // unbounded decoupling edge appears from outside.  Counted whether or not
+            // network.gross_los_bound is armed, so the two arms are comparable.
             if (gl_scale_here > 1.0) {
                 const double av_f = std::abs(v(row));
                 if (std::isfinite(av_f) && av_f > tal.folded_v_abs_max_m)
@@ -404,10 +401,9 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
         if (by_sat.empty()) continue;
         ++tal.stations_screened;
 
-        // Assess EVERY line of sight of the station before acting on any of them:
+        // Assess every line of sight of the station before acting on any of them:
         // guard 2 needs the station's whole over-bar fraction, and a decision taken
-        // on the first satellite of an alphabetical walk would depend on which
-        // satellite that happened to be.
+        // partway through the alphabetical walk would depend on the satellite order.
         std::map<std::string, GrossLosVerdict> verdicts;
         int n_los_here = 0, n_over_here = 0;
         for (const auto& [sat, rows] : by_sat) {
@@ -418,33 +414,30 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
             if (d.r_max > tal.r_max) tal.r_max = d.r_max;
             if (d.v_abs_max > tal.v_abs_max_m) tal.v_abs_max_m = d.v_abs_max;
             if (d.over) { ++tal.los_over; ++n_over_here; }
-            // RF-3b B5: B1's own population, counted under BOTH rules (the verdict fills
-            // it either way) — LOS-epochs whose evidence clears the available bar while
-            // the line of sight has fewer code rows than the configured constant.  With
-            // the fixed rule this is exactly what the screen CANNOT reach.
+            // Population of B1 (RF-3b B5), counted under both rules (the verdict fills
+            // it either way): LOS-epochs whose evidence clears the available bar while
+            // the line of sight has fewer code rows than the configured constant.  Under
+            // the fixed rule, this is what the screen cannot reach.
             if (d.short_over) ++tal.los_over_short;
             ++n_los_here;
             verdicts.emplace(sat, d);
         }
-        // --- GUARD 2: the WHOLE-STATION stand-down --------------------------
-        // A gross line of sight is by definition ISOLATED.  When most of a
-        // station's lines of sight are over the bar the fault is the STATION's —
-        // on `runs/_cm_c10` at hour 5 that is BSHM00ISR, whose ZWD state has
-        // diverged to 197 m with every one of its ten satellites past 20 m — and
-        // de-weighting every code row of that station removes exactly the
-        // information that determines its clock and its troposphere.  This screen
-        // cannot fix a station; standing down and SAYING so is the honest
-        // response, and the alternative is what the cert smoke measured.
-        // Measured shape on c10: the per-station over-bar fraction is p90 = 0.00
-        // in hours 1-4 and 0.11-0.12 in the two worst hours, with a max reaching
-        // 0.88-1.00 — so a 0.5 cap fires on the collapse and never on an isolated
-        // line of sight.  CLEARS are deliberately NOT blocked (see the step's
-        // contract): a guard that froze the release edge would strand the
-        // response with no way out.
-        // Evaluated only once the MATURITY horizon has opened: before that nothing
-        // can be declared anyway, so the stand-down has nothing to guard, and
-        // emitting it through a cold start would fill the event stream with a
-        // population that is the ignition transient rather than a station fault.
+        // --- Guard 2: the whole-station stand-down ---------------------------
+        // A gross line of sight is isolated by definition.  When most of a station's
+        // lines of sight are over the bar, the fault is the station's (for example a
+        // diverged ZWD state, with every satellite of the station tens of metres off),
+        // and deweighting every code row of that station removes the information that
+        // determines its clock and its troposphere.  This screen cannot repair a
+        // station, so it stands down and reports that in its own event.  On a field
+        // run with such a collapse, the per-station over-bar fraction had p90 = 0.00 in
+        // the quiet hours and 0.11-0.12 in the two worst hours, with a maximum of
+        // 0.88-1.00, so the 0.5 default cap fires on the collapse and not on an
+        // isolated line of sight.  Clears are not blocked (see the step's contract): a
+        // guard that froze the release edge would leave the response with no exit.
+        // Evaluated only once the maturity horizon has opened: before that nothing can
+        // be declared, so the stand-down has nothing to guard, and emitting it through
+        // a cold start would fill the event stream with the ignition transient rather
+        // than station faults.
         const bool sta_standdown =
             mature && max_sta_frac < 1.0 && n_los_here > 0 &&
             static_cast<double>(n_over_here) > max_sta_frac * static_cast<double>(n_los_here);
@@ -457,18 +450,17 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
                       fmt::format("n_over={};n_los={};reason=whole_station_not_one_los",
                                   n_over_here, n_los_here));
         }
-        // --- RF-3b B4 (requirement F4): the STATION TIER --------------------
-        // The guard above is correct about the diagnosis and does nothing with it: it
-        // holds THIS epoch's declarations and the next epoch declares the same lines of
-        // sight one by one on the same evidence, which is how a station fault becomes N
-        // line-of-sight faults (BSHM00ISR: guard at TOW 269310 with n_over=5 of n_los=7,
-        // per-LOS declaration at 269340).  With the tier armed the guard becomes a
-        // VERDICT with its own two edges: every one of the station's code rows folds at
-        // the deweight, its freed states are held exactly as a per-LOS declaration's are
-        // (under network.gross_los_bound), and it is RELEASED when its over-bar fraction
-        // sits at or under the cap for gross_los_clear_epochs consecutive screened
-        // epochs.  The release bar is deliberately the CAP and not gross_los_clear_sigma:
-        // the station-level statistic IS the fraction, so its hysteresis is the streak.
+        // --- The station tier (RF-3b B4, requirement F4) ---------------------
+        // The guard above holds only this epoch's declarations; at the next epoch, the
+        // same lines of sight can declare one by one on the same evidence, turning one
+        // station fault into N line-of-sight faults.  With the tier armed, the guard's
+        // condition becomes a station-level verdict with its own two edges.  At the
+        // declaration, every one of the station's code rows folds at the deweight and
+        // its states receive the per-LOS response (erase, or hold under
+        // network.gross_los_bound).  The station is released when its over-bar
+        // fraction sits at or under the cap for gross_los_clear_epochs consecutive
+        // screened epochs.  The release bar is the cap and not gross_los_clear_sigma:
+        // the station-level statistic is the fraction, so its hysteresis is the streak.
         if (gl_sta_tier && mature) {
             auto& sst = ctx.carry.gl_sta_state[static_cast<int>(i)];
             sst.sats.clear();
@@ -514,42 +506,48 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
         passes.push_back(StationPass{ i, std::move(verdicts), sta_standdown });
     }
 
-    // --- GL-2: the WHOLE-SATELLITE stand-down (§24.19) ------------------------
-    // MEASURED on `runs/_gl_on6` (§24.18's arm): at TOW 271200/271260 the screen
-    // declared TEN lines of sight and every one of them was the SAME satellite,
-    // G17, at SEYG00SYC / NYA200NOR / CEBR00ESP / LEIJ00DEU / MIZU00JPN /
-    // LCK400IND / KIT300UZB / ULAB00MNG / URUM00CHN / SVTL00RUS — ten stations
-    // spread over four continents, residuals 4–49 m.  A satellite whose code is
-    // wrong at ten stations at once is not ten gross lines of sight; it is a bad
-    // SATELLITE (its clock, its orbit or its code bias).  De-weighting it at ten
-    // stations removes it from the code solution network-wide, and the held-out
-    // consumer went to 56 m and decayed for an hour.
+    // --- The whole-satellite stand-down (GL-2, §24.19) --------------------------
+    // A satellite over the bar at several stations in the same epoch is not several
+    // gross lines of sight; it is a satellite fault (its clock, its orbit or its code
+    // bias).  In the case behind §24.19 (measured on the §24.18 arm), the per-LOS
+    // screen declared ten lines of sight of one satellite at ten stations on four
+    // continents in one epoch; deweighting all of them removed the satellite from the
+    // code solution network-wide, and the held-out consumer error reached 56 m and
+    // decayed over an
+    // hour.
     //
-    // This is the same rule as the whole-station stand-down, one axis over, and it
-    // is the population post-fit RAIM's cross-station CONSENSUS already exists to
-    // route (`network.raim_min_stations`, default 3: "a satellite so flagged at >=
-    // 3 stations is refloated network-wide").  GL-2 therefore does not invent a
-    // response — it routes the satellite to the two mechanisms the producer already
-    // owns for a consensus fault:
-    //   * the per-satellite RETRO DISC BUMP, by queueing the satellite into
-    //     `ctx.carry.ura_retro_sats` — the same queue `NetworkSolPrep` drains into
+    // This is the whole-station rule applied along the other axis, and it is the
+    // population post-fit RAIM's cross-station consensus exists to route
+    // (`network.raim_min_stations`, default 3: "a satellite so flagged at >= 3
+    // stations is refloated network-wide").  GL-2 therefore adds no response of its
+    // own; it routes the satellite to the two mechanisms the producer already has
+    // for a consensus fault:
+    //   * the per-satellite retro disc bump, by queueing the satellite into
+    //     `ctx.carry.ura_retro_sats`, the queue `NetworkSolPrep` drains into
     //     `emitter.markSatDiscontinuity`, with that seam's mark-==-land semantics
-    //     (a satellite absent from an emission stays pending) and its RETRO event;
-    //   * the per-satellite WIRE WITHHOLD, by queueing it into
+    //     (a satellite absent from an emission stays pending) and its RETRO event.
+    //     NetworkSolPrep drains the queue only when one of its own arming terms is
+    //     on (the B1 retro-bump, reference-path slip marks, the datum-station slip
+    //     re-reference, the held-basis arm, or network.gross_los_emit_exclude).
+    //     GL-2 adds no term there, so with none of them armed the queued satellites
+    //     stay pending and no mark lands;
+    //   * the per-satellite wire withhold, by queueing it into
     //     `ctx.carry.gl2_wire_pending`, which `NetworkSolPrep` prunes out of
-    //     `sol.sats` exactly the way the RT0-5 runaway quarantine and the RTA-10
-    //     per-constellation carve-out prune theirs.  NEVER an epoch withhold: the
+    //     `sol.sats` the way the RT0-5 runaway quarantine and the RTA-10
+    //     per-constellation carve-out prune theirs.  Never an epoch withhold: the
     //     epoch still emits every other satellite (adapt-and-emit).
-    // Both are one epoch late, which is the lag every post-fit tier here has (the
-    // emit seams run before SB_RAIM), and is exactly why the consensus path was
-    // built edge-triggered and pending-aware in the first place.
+    // In the Full phase both land one epoch late, the lag every post-fit tier here
+    // has (the emit seams run before SB_RAIM), which is why the consensus path is
+    // edge-triggered and pending-aware.  In the Decide phase
+    // (network.gross_los_emit_exclude) this pass runs before NetworkSolPrep, so both
+    // land at the epoch that stood the satellite down.
     std::set<std::string> sat_down_now;
     if (gl2_on && mature)
         for (const auto& [sat, n] : sat_over_stations)
             if (n >= gl2_min_sta) sat_down_now.insert(sat);
 
     if (gl2_on) {
-        // The DECOUPLING edge: a satellite that was not stood down and now is.
+        // The decoupling edge: a satellite that was not stood down and now is.
         for (const auto& sat : sat_down_now) {
             if (ctx.carry.gl2_sat_down.count(sat)) continue;
             ctx.carry.gl2_sat_down.insert(sat);
@@ -564,7 +562,7 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
                                   sat_over_stations[sat], gl2_min_sta,
                                   gl2_wire ? "retro_disc+wire_withhold" : "retro_disc"));
         }
-        // The RE-COUPLING edge: a satellite that was stood down and no longer is.
+        // The re-coupling edge: a satellite that was stood down and is not any more.
         for (auto it = ctx.carry.gl2_sat_down.begin(); it != ctx.carry.gl2_sat_down.end(); ) {
             if (sat_down_now.count(*it)) { ++it; continue; }
             const auto sit = ctx.carry.gl2_sat_since.find(*it);
@@ -579,9 +577,9 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
             if (sit != ctx.carry.gl2_sat_since.end()) ctx.carry.gl2_sat_since.erase(sit);
             it = ctx.carry.gl2_sat_down.erase(it);
         }
-        // Route the CURRENTLY stood-down set to the producer's own consensus-fault
-        // response, rebuilt every epoch so a released satellite stops being routed
-        // in the same pass a newly-faulted one starts.
+        // Route the currently stood-down set to the producer's consensus-fault
+        // response.  The wire set is rebuilt every epoch, so a released satellite stops
+        // being withheld in the same pass a newly faulted one starts.
         ctx.carry.gl2_wire_pending.clear();
         if (!ctx.carry.gl2_sat_down.empty()) {
             ++tal.sat_epochs;
@@ -594,7 +592,7 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
         }
     }
 
-    // --- ACT ------------------------------------------------------------------
+    // --- Act ------------------------------------------------------------------
     for (auto& pass : passes) {
         const std::size_t i = pass.i;
         const bool sta_standdown = pass.sta_standdown;
@@ -603,26 +601,26 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
             seen.insert(key);
             GrossLosState& st = gstate[key];
             st.last_seen_s = now_s;
-            // GL-2: a stood-down SATELLITE takes its lines of sight with it.  An
-            // already-declared one is RELEASED here — the deweight must lift, because
-            // the fault is not this line of sight's and holding it decoupled would keep
+            // A stood-down satellite (GL-2) takes its lines of sight with it.  An
+            // already-declared one is released here: the deweight lifts, because the
+            // fault is not this line of sight's, and keeping it decoupled would keep
             // removing code the solution needs (standing invariant #7's re-coupling
-            // edge, at the satellite's scale).  A release is a real edge and is
-            // counted; it deliberately does NOT go through the per-LOS clear event,
-            // which asserts the DATA healed — this one did not.
+            // edge, at the satellite's scale).  The release is counted
+            // (sat_los_released) but does not emit the per-LOS clear event, which
+            // states that the line of sight's data recovered; here they did not.
             const bool sat_down = gl2_on && ctx.carry.gl2_sat_down.count(sat) > 0;
             if (sat_down && st.gross) {
                 st.gross = false;
                 st.over_streak = 0;
                 st.clear_streak = 0;
                 ++tal.sat_los_released;
-                // RF-3b B2: the hold is the response's state, so it lifts with the
-                // response — a released line of sight must stop being frozen.
+                // The hold is part of the response, so it lifts with the response
+                // (RF-3b B2): a released line of sight must not stay frozen.
                 ctx.carry.gl_act_release.push_back({ static_cast<int>(i), sat });
             }
-            // RF-3b B5: the per-episode latency's ORIGIN.  Stamped when an over-bar
-            // streak OPENS, cleared when it ends, so a declaration can state how long
-            // the evidence stood rather than only when the response acted.
+            // Origin of the per-episode latency (RF-3b B5).  Stamped when an over-bar
+            // streak opens and cleared when it ends, so a declaration can state how
+            // long the evidence stood, not only when the response acted.
             if (d.over) {
                 if (st.over_streak == 0 && !st.gross) {
                     st.first_over_tow    = se.time.tow;
@@ -634,10 +632,10 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
                 st.first_over_tow    = 0.0;
                 st.first_over_age_ep = 0;
             }
-            // RF-3b B4: a STATION-level declaration replaces the per-LOS ones — that is
-            // the whole point of the tier, so it forbids new per-LOS declarations at
-            // that station for as long as it stands, exactly as the guard does for one
-            // epoch.  Releases stay allowed (the step's own contract).
+            // A station-level declaration replaces the per-LOS ones (RF-3b B4), so it
+            // forbids new per-LOS declarations at that station for as long as it
+            // stands, as the guard does for one epoch.  Releases stay allowed (the
+            // step's own contract).
             const bool sta_declared_now =
                 gl_sta_tier && ctx.carry.gl_sta_state.count(static_cast<int>(i))
                 && ctx.carry.gl_sta_state[static_cast<int>(i)].gross;
@@ -657,16 +655,16 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
                 ++n_declared_ep;
                 ++tal.declared_by_station[stations[i].name];
                 ++tal.declared_by_sat[sat];
-                // --- THE RESPONSE (decoupling edge) --------------------------
-                // RF-3b B3: the response is DEFERRED here and applied by
-                // @ref networkGrossLosAct, which the Full phase calls at the end of
-                // this same pass (today's behaviour, byte for byte) and the split
-                // phases call after the carry harvest.  The ordering reason is
-                // unchanged: erasing or freezing a local_carry entry before the
-                // harvest would simply be re-stashed.
+                // --- The response (decoupling edge) --------------------------
+                // Deferred here and applied by @ref networkGrossLosAct (RF-3b B3).  The
+                // Full phase calls it at the end of this same pass (byte-identical to
+                // the unsplit screen); the split phases call it after the carry
+                // harvest.  Either way it runs after the harvest, because a
+                // local_carry entry erased or frozen before the harvest would be
+                // re-stashed.
                 ctx.carry.gl_act_declare.push_back({ static_cast<int>(i), sat });
-                // RF-3b B5: the per-episode latency, in screened epochs, from the
-                // first row over the bar to the declaration.
+                // Per-episode latency (RF-3b B5), in over-bar screened epochs, from the
+                // first epoch over the bar to the declaration.
                 const long long lat = static_cast<long long>(st.first_over_age_ep);
                 tal.declare_latency_sum_ep += lat;
                 if (lat > tal.declare_latency_max_ep) tal.declare_latency_max_ep = lat;
@@ -694,10 +692,12 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
         }
     }
 
-    // --- Absence: the streak reset and the ABSENT-SATELLITE edge ----------------
-    // Standing invariant #1: a declared line of sight that stops being observed
-    // must not keep its response indefinitely — the next sighting is a new arc
-    // with a new ambiguity, and the old evidence cannot speak for it.
+    // --- Absence: the streak reset and the absent-satellite edge ----------------
+    // Standing invariant #1: a declared line of sight that stops being observed does
+    // not keep its response indefinitely.  The next sighting is a new arc with a new
+    // ambiguity, and the old evidence does not apply to it.  Past
+    // gross_los_max_gap_s, every unseen entry is erased; a declared one first
+    // expires with its own event.
     for (auto it = gstate.begin(); it != gstate.end(); ) {
         const bool here = seen.count(it->first) != 0;
         if (here) { ++it; continue; }
@@ -713,9 +713,9 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
                       gap, max_gap_s, "expire",
                       fmt::format("unseen_s={:.1f};declared_tow={:.1f};episode={}",
                                   gap, it->second.declared_tow, it->second.n_declared));
-            // RF-3b B2: the expiry is the other exit from a declaration, so it drops the
-            // hold too — otherwise a frozen prior would ride a line of sight the screen
-            // has stopped answering for (standing invariant #1's absent-satellite edge).
+            // The expiry is the other exit from a declaration, so it drops the hold too
+            // (RF-3b B2); otherwise a frozen prior would stay on a line of sight the
+            // screen has stopped tracking (standing invariant #1's absent-satellite edge).
             ctx.carry.gl_act_release.push_back({ it->first.first, it->first.second });
         }
         it = gstate.erase(it);
@@ -726,22 +726,24 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
     tal.currently_gross = now_gross;
     if (now_gross > tal.max_concurrent) tal.max_concurrent = now_gross;
 
-    // --- RF-3b B3 (requirement F3): the EMISSION's contributor set ---------------
-    // The screen has always acted one epoch late on the wire: it runs after the emit
-    // seams, so the two largest rows of every episode are already emitted when the
-    // response lands (products first differ at TOW 269700 for a declaration at 269670).
-    // With the seam split, this pass runs BEFORE the emission, and the declared line of
-    // sight leaves its satellite's CONTRIBUTOR SET for the epoch it declares.
+    // --- The emission's contributor set (RF-3b B3, requirement F3) ----------------
+    // In the Full phase the screen runs after the emit seams, so a declaration first
+    // affects the wire one epoch later, and the rows that triggered it have already
+    // been emitted.  With the seam split, this pass runs before the emission, and a
+    // declared line of sight (or every line of sight of a declared station) leaves
+    // its satellite's contributor set at every screened epoch the declaration
+    // stands, starting with the epoch it declares.
     //
-    // ⚠ WHAT THIS IS NOT.  The emitted clock and code bias are joint-solve SHARED
-    // states — NetworkEstimator::toSolutionEpoch copies x_s(c) straight into
-    // clock_c0_m / code_bias_m — so there is no per-contributor decomposition to
-    // subtract and no aggregation to re-average.  Changing the emitted VALUE without
-    // the line of sight is a second network solve of the epoch, which this knob
-    // deliberately does not take.  What it does is exact: the satellite's records are
-    // WITHHELD when too few contributors remain to stand behind them, and otherwise
-    // emitted with the producer's existing per-satellite DISCONTINUITY mark, so the
-    // consumer is told the contributor set moved instead of reading a silent step.
+    // Scope limit: the emitted clock and code bias are joint-solve shared states
+    // (NetworkEstimator::toSolutionEpoch copies x_s(c) straight into clock_c0_m /
+    // code_bias_m), so there is no per-contributor decomposition to subtract and no
+    // aggregate to re-average.  Changing the emitted value without the line of sight
+    // would take a second network solve of the epoch, which this knob does not do.
+    // Instead, a satellite whose remaining contributors fall below
+    // network.gross_los_sat_min_stations has its records withheld; otherwise its
+    // records are emitted with the producer's existing per-satellite discontinuity
+    // mark, so the consumer is told the contributor set changed instead of seeing an
+    // unsignalled step.
     if (gl_emit_excl) {
         std::map<std::string, int> contrib, excluded;
         for (const auto& pass : passes) {
@@ -782,13 +784,13 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
     }
 
     // Republish the assembly's code-scale map from the set this epoch leaves
-    // behind.  SERIAL and immediately after the decision, so the next epoch's
+    // behind.  Serial and immediately after the decision, so the next epoch's
     // parallel produce reads a settled map (the phase_sigma_scale contract).
     networkGrossLosPublishScales(ctx, stations);
 
-    // RF-3b B3: the FULL phase applies the deferred response right here, which is the
-    // post-harvest site and therefore exactly today's ordering.  Split, the ACT half
-    // runs from its own call after the harvest.
+    // The Full phase applies the deferred response here (RF-3b B3), at the
+    // post-harvest site, so its ordering matches the unsplit screen.  When split, the
+    // Act half runs from its own call after the harvest.
     if (phase == GrossLosPhase::Full)
         networkGrossLosAct(ctx, log, stations, asm_res);
 
@@ -799,7 +801,7 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
 }
 
 // ---------------------------------------------------------------------------
-// RF-3b B3: the deferred RESPONSE (the post-harvest half)
+// The deferred response: the post-harvest half (RF-3b B3)
 // ---------------------------------------------------------------------------
 
 void networkGrossLosAct(NetworkRunContext& ctx,
@@ -810,14 +812,15 @@ void networkGrossLosAct(NetworkRunContext& ctx,
     auto& tal      = ctx.counters.gross_los;
     const bool gl_bound = ctx.knobs.gl_bound;
 
-    // --- The per-LOS response.  The two forms are exclusive: OFF is the ERASE the
-    //     screen has always applied (a true rebirth — the episode dies within one epoch
-    //     of the fold on four of the six measured cases), ON is the HOLD that bounds
-    //     what the freed states can accumulate (standing invariant #7's decoupling
-    //     edge).  The erase's cost is measured: with only a folded code row left to
-    //     determine them, the freed states re-level from an under-determined epoch and
-    //     the folded row's residual then runs to 445 m, which the clear test can never
-    //     come back from — 2 of 7 declarations ended by expiry rather than release.
+    // --- The per-LOS response.  The two forms are exclusive.  With
+    //     network.gross_los_bound off it is the erase (a full rebirth of the LOS's
+    //     states); with it on it is the hold, which bounds what the freed states can
+    //     accumulate (standing invariant #7's decoupling edge).  The erase has a
+    //     measured cost: with only a folded code row left to determine them, the freed
+    //     states re-level from an under-determined epoch, the folded row's residual
+    //     can grow to hundreds of metres, and the clear test then never passes, so
+    //     such a declaration ends by expiry rather than release (2 of 7 in the
+    //     RF-3 measurement).
     const auto respond = [&](int si, const std::string& sat) {
         const std::size_t i = static_cast<std::size_t>(si);
         if (i >= stations.size() || i >= asm_res.size()) return;
@@ -834,21 +837,26 @@ void networkGrossLosAct(NetworkRunContext& ctx,
                     lit->second = h;
                     ++tal.bound_amb_held;
                 }
-                // NO pending-reseed under the hold: the state is not refloated, it is
-                // pinned.  Marking it would hand the next assembly a free column, which
-                // is the very thing this rule exists to stop.
+                // No pending-reseed under the hold: the state is pinned, not
+                // refloated.  Marking it would give the next assembly a free column,
+                // which is what the hold exists to prevent.
             } else {
                 if (ctx.carry.local_carry.erase(lk)) ++ctx.counters.n_cr_gross_los;
-                // BOOKKEEPING on a Card-4 lineage and THE actuator on the
-                // phase-leveling one — the same asymmetry the RAIM erase documents.
+                // Under carry_invariant this mark is bookkeeping; on the
+                // phase-leveling vehicle it is the actuator (the same asymmetry the
+                // RAIM erase documents).
                 if (stations[i].sm) stations[i].sm->markAmbiguityPendingReseed(pa.amb_key);
             }
-            // Card SID phase 4a (S1): the GROSS-LOS writer.  The screen's published
-            // action is a CODE-row de-weight (a cap, not a drop: the rows still fold),
-            // so the arc is recorded with the `deweight` bit, which kArcReasonGapMask
-            // excludes from every gap mask by construction.  The `gross` bit records a
-            // REMOVAL of carried state, so it is written on the erase path only — a
-            // held arc keeps its state and a gap mask must not read it as gone.
+            // The gross-LOS writer of the arc-ledger reason buffer (card SID phase 4a,
+            // S1).  The screen's published action is a code-row deweight (a cap, not a
+            // drop: the rows still fold), so the arc is recorded with the `deweight`
+            // bit, which kArcReasonGapMask excludes from every gap mask.  The `gross`
+            // bit records a removal of carried state, so it is written on the erase
+            // path only; a held arc keeps its state, and a gap mask must not read it
+            // as gone.  This runs inside SB_RAIM, before the roster's audit pass folds
+            // the buffer (arcReasonBeginEpoch opens it at the roster build), so both
+            // bits reach the fold of their own epoch and need no kArcReasonLateMask
+            // carry.
             arcReasonRecord(ctx.reasons,
                             ArcLedger::Key{ si, pa.sat, pa.signal }, kArcReasonDeweight);
             if (!gl_bound)
@@ -858,10 +866,10 @@ void networkGrossLosAct(NetworkRunContext& ctx,
         }
         tal.amb_refloated += n_amb;
         // The LOS's slant iono was estimated jointly with a level this screen has just
-        // stopped trusting, and the code residual it fired on is exactly the channel
-        // that feeds it — so the iono carry cannot vouch for itself either.  Under the
-        // hold it is FROZEN for the same reason the level is: a re-drawn iono is what
-        // the folded code row would have to determine, and it cannot.
+        // declared untrusted, and the code residual the screen fired on is the channel
+        // that feeds it, so the iono carry is not trusted either.  Under the hold it is
+        // frozen for the same reason as the level: a re-drawn iono would have to be
+        // determined by the folded code row, which cannot do it.
         const std::pair<int, std::string> ik{ si, sat };
         if (gl_bound) {
             const auto it1 = ctx.carry.iono_carry.find(ik);
@@ -885,8 +893,9 @@ void networkGrossLosAct(NetworkRunContext& ctx,
     };
 
     for (const auto& [si, sat] : ctx.carry.gl_act_declare) respond(si, sat);
-    // RF-3b B4: a STATION declaration is the same response over every satellite the
-    // station was last seen screening — one verdict, not N sequential ones.
+    // A station declaration applies the same response to every satellite the station
+    // was last seen screening, as one verdict rather than N sequential ones (RF-3b B4).
+    // A station release queues a release for each of those satellites.
     for (const auto& [si, declared] : ctx.carry.gl_act_station) {
         const auto sit = ctx.carry.gl_sta_state.find(si);
         if (sit == ctx.carry.gl_sta_state.end()) continue;
@@ -897,7 +906,7 @@ void networkGrossLosAct(NetworkRunContext& ctx,
                 ctx.carry.gl_act_release.push_back({ si, sat });
         }
     }
-    // --- The RE-COUPLING edge: a release or an expiry drops the hold, and the states
+    // --- The re-coupling edge: a release or an expiry drops the hold, and the states
     //     continue from the values they were held at.  Idempotent.
     for (const auto& [si, sat] : ctx.carry.gl_act_release) {
         ctx.carry.gl_hold_iono.erase({ si, sat });
@@ -909,10 +918,11 @@ void networkGrossLosAct(NetworkRunContext& ctx,
                 ++it;
         }
     }
-    // --- RF-3b B2: RE-APPLY the hold over whatever the harvest re-stashed.  This is
-    //     the half that makes the prior FIXED and its process noise ZERO: without it
-    //     the harvest would re-level the held column from the same under-determined
-    //     epoch the erase does, and the bound would be nominal.
+    // --- Re-apply the hold over whatever the harvest re-stashed (RF-3b B2).  This
+    //     makes the prior fixed with zero process noise; without it, the harvest would
+    //     re-level the held column from the same under-determined epoch as the erase,
+    //     and the bound would have no effect.  The held iono entries are re-applied
+    //     only in the same pass, i.e. only while at least one carried level is held.
     if (gl_bound && !ctx.carry.gl_hold_amb.empty()) {
         std::set<std::pair<int, std::string>> los_held;
         for (const auto& [key, h] : ctx.carry.gl_hold_amb) {

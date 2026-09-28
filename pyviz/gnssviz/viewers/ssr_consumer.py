@@ -1,27 +1,27 @@
-"""Consumer SSR-application viewer -- what the user engine did with the products.
+"""Consumer SSR-application viewer: what the user engine did with the products.
 
-Reads ``ssr_consumer_trace.csv`` (the PPP-RTK USER consumer's per-epoch, per-
+Reads ``ssr_consumer_trace.csv`` (the PPP-RTK user consumer's per-epoch, per-
 satellite record of the SSR corrections it actually applied: clock age, applied
 clock/URA, R-inflation, phase-bias age/freshness, and datum-discontinuity
 counters) and shows, over the run:
 
-  1. **Correction age** -- a per-sat ``ssr_age_s`` strip (how stale each applied
-     satellite correction was) plus per-epoch max/median age.  A growing age is
-     the tell-tale of a stalling / dropped product feed.  The freshness LIMIT is
-     a *consumer config* knob (``processing.ssr_max_age_s``, default 30 s) and is
-     NOT in the trace, so any reference line is annotated "limit unknown".
-  2. **URA R-inflation** -- the applied measurement-noise inflation
-     ``sqrt(r_add_var_m2)`` (m) per satellite, one constellation per tile: how
-     much the consumer down-weighted each satellite for product uncertainty.
-  3. **Events + gaps** -- per-epoch step counts of product gaps
+  1. **Correction age**: a per-sat ``ssr_age_s`` strip (how stale each applied
+     satellite correction was) plus per-epoch max/median age. A growing age
+     indicates a stalling or dropped product feed. The freshness limit is a
+     consumer config knob (``processing.ssr_max_age_s``, default 30 s) that is
+     not present in the trace, so any reference line is annotated "limit unknown".
+  2. **URA R-inflation**: the applied measurement-noise inflation
+     ``sqrt(r_add_var_m2)`` (m) per satellite, one constellation per tile, i.e.
+     how much the consumer down-weighted each satellite for product uncertainty.
+  3. **Events + gaps**: per-epoch step counts of product gaps
      (``clk_applied==0``), stale-hold flips (``pb_fresh`` 1->0), and datum
-     discontinuity resets (``clk_disc`` / ``pb_disc_max`` increments).  When a
+     discontinuity resets (``clk_disc`` / ``pb_disc_max`` increments). When a
      ``closed_loop_trace.csv`` is present the held-out user 3D position error is
      overlaid (log-y) with the product-gap epochs shaded, so a position bump can
      be read against the gap that caused it.
 
-This is the "did the consumer trust, weight, and time-align the products
-correctly?" view -- the mirror image of the producer's ``network_products``.
+This is the mirror image of the producer's ``network_products`` view: it shows
+whether the consumer trusted, weighted, and time-aligned the products correctly.
 """
 
 from __future__ import annotations
@@ -38,8 +38,8 @@ from ..strip import build_sat_epoch_strip
 from .base import Viewer, ViewerResult, ViewerSkip
 from .network_products import _by_system, _SYS_OF, _SYS_ORDER
 
-# Documented default for the (out-of-trace) freshness limit; used only to LABEL a
-# reference line -- never to gate/threshold data.
+# Documented default for the (out-of-trace) freshness limit. Used only to label a
+# reference line, not to gate or threshold data.
 _SSR_MAX_AGE_DEFAULT_S = 30.0
 _MAX_STRIP_COLS = 2000
 
@@ -92,9 +92,9 @@ def _age_figures(df) -> List[Figure]:
         "value": df["ssr_age_s"].astype(float),
     })
 
-    # Roll our OWN column decimation: the strip renders one column per unique
+    # Column decimation done locally: the strip renders one column per unique
     # epoch, so thin the epoch set (not the rows) to <= _MAX_STRIP_COLS by an
-    # even stride.  No decimation helper exists in pyviz.
+    # even stride. No decimation helper exists in pyviz.
     epochs = np.sort(pd.unique(D["utc"]))
     if epochs.size > _MAX_STRIP_COLS:
         stride = int(np.ceil(epochs.size / _MAX_STRIP_COLS))
@@ -165,7 +165,7 @@ def _events_figure(ctx, df):
     t = np.sort(pd.unique(g["utc"])).astype("datetime64[ns]")
     idx = pd.Index(t, name="utc")
 
-    # Product gap: sats with NO clock applied, per epoch.
+    # Product gap: sats with no clock applied, per epoch.
     gap_cnt = (g.assign(gap=(g["clk_applied"] <= 0).astype(int))
                .groupby("utc")["gap"].sum().reindex(idx).to_numpy(float))
 
@@ -177,9 +177,9 @@ def _events_figure(ctx, df):
                 + _incr_counts(g, "pb_disc_max", idx))
 
     # Detect the (optional) closed-loop overlay up front: when present, the held-out
-    # 3D error owns the LEFT axis on a LOG scale (the model has a single yscale that
+    # 3D error owns the left axis on a log scale (the model has a single yscale that
     # maps to the left axis; there is no right-axis log), and the per-epoch counts
-    # move to the RIGHT (linear) axis.  Without the overlay, counts stay on the left.
+    # move to the right (linear) axis. Without the overlay, counts stay on the left.
     ct = err = None
     have_overlay = False
     if ctx.has_data("closed_loop_trace.csv"):
@@ -208,12 +208,12 @@ def _events_figure(ctx, df):
 
     cl_causality = None
     if have_overlay:
-        # log-y needs a positive floor; err on the LEFT (log) axis.
+        # log-y needs a positive floor; err sits on the left (log) axis.
         err_pos = np.where(np.isfinite(err) & (err > 0), err, np.nan)
         traces.insert(0, Line(x=ct, y=err_pos, color=_C_POS, width=1.2,
                               label="held-out 3D err (m)"))
-        # Gap-epoch shading via a Band that is NaN outside gap epochs (no VSpan
-        # primitive exists).  The Band renders on the LEFT (log) axis, so span the
+        # Gap-epoch shading via a Band that is NaN outside gap epochs (no vspan
+        # primitive exists). The Band renders on the left (log) axis, so span the
         # error range at gap epochs (positive lo for the log scale); an explicit
         # ylim keeps the fill from blowing up the autoscale.
         finite = err_pos[np.isfinite(err_pos)]
@@ -277,10 +277,10 @@ def _incr_counts(g, col, idx) -> np.ndarray:
 
 
 def _gap_band(t, gap_cnt, lo_val, hi_val):
-    """Build (lo, hi) arrays that are finite ONLY on gap epochs (else NaN).
+    """Build (lo, hi) arrays that are finite only on gap epochs, NaN elsewhere.
 
     A ``Band`` breaks into segments at NaN, so this shades exactly the gap
-    epochs.  The band spans ``lo_val..hi_val`` (both positive for the log axis).
+    epochs. The band spans ``lo_val..hi_val`` (both positive for the log axis).
     """
     is_gap = gap_cnt > 0
     if not is_gap.any():
@@ -293,11 +293,11 @@ def _gap_band(t, gap_cnt, lo_val, hi_val):
 
 
 def _causality(t, gap_cnt, ct, err):
-    """Median held-out 3D error INSIDE vs OUTSIDE gap-shaded epochs.
+    """Median held-out 3D error inside vs outside gap-shaded epochs.
 
     Closed-loop epochs are matched to the consumer epoch set by exact timestamp;
     an epoch-set mismatch is tolerated (unmatched closed-loop epochs are counted
-    as OUTSIDE, since only consumer-known gaps define the shaded windows).
+    as outside, since only consumer-known gaps define the shaded windows).
     """
     gap_set = set(t[gap_cnt > 0].astype("datetime64[ns]").astype("int64").tolist())
     ck = ct.astype("datetime64[ns]").astype("int64")
@@ -328,7 +328,7 @@ def _summary(df, gap_stats, cl) -> str:
         out.append(f"SSR age (s)    : median {np.median(age):.1f}, "
                    f"std {_std(age):.1f}, max {np.max(age):.1f}")
 
-    # Applied-URA stat: median + std + worst-sat NAME (convention: never rms).
+    # Applied-URA stat: median, std, and worst-sat name (convention: never rms).
     ura = np.sqrt(df["r_add_var_m2"].astype(float))
     m = np.isfinite(ura.to_numpy(float))
     if m.any():

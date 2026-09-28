@@ -1,31 +1,31 @@
 #!/usr/bin/env python3
-"""Card CM grader (SPEC_event_harness s24.8, CODE-MODEL CONSISTENCY): the five reads per arm on the
-LAST HOUR of a 2 h cold arm (k = 121..240, k = 1 at the first emitted epoch), the six-row table and
+"""Card CM grader (SPEC_event_harness s24.8, code-model consistency): the five reads per arm on the
+last hour of a 2 h cold arm (k = 121..240, k = 1 at the first emitted epoch), the six-row table and
 the frozen bars against the control.
 
     python scripts/cm_grade.py [--runs C:/GnssProcessor/runs] [--arms a0,a1,a2,a3,a4,a5]
         [--tow0 259200] [--k-lo 121] [--k-hi 240] [--skip-census] [--skip-attrib] [--json out.json]
 
 Reads (the s24.8 numbering):
-  (i)   logs/network_pf_keyed.csv kind STA: per-station MEDIAN over the hour of rms_code (and s0_code),
+  (i)   logs/network_pf_keyed.csv kind STA: per-station median over the hour of rms_code (and s0_code),
         then p50 / p90 / max across stations                                   bar: p50 < 1.0 m
-  (ii)  logs/network_zwd.csv: per-station MEDIAN zwd_m over the hour; the count with |ZWD| > 0.5 m and
+  (ii)  logs/network_zwd.csv: per-station median zwd_m over the hour; the count with |ZWD| > 0.5 m and
         the worst three                                                        bar: zero stations
   (iii) scripts/wire_vs_code_census.py on the arm's products.txt restricted to the hour (--window-run):
-        within-arc rms of D_phase and D_code on DECLARED arcs (tracking arcs and the rotating-set-immune
-        diffmedian common mode beside them) and the raw clock contrast LEVEL p50   bar: D_phase < 0.5 m
+        within-arc rms of D_phase and D_code on declared arcs (tracking arcs and the rotating-set-immune
+        diffmedian common mode beside them) and the raw clock contrast level p50   bar: D_phase < 0.5 m
   (iv)  scripts/pf_rows_attrib.py --k-lo 121 --k-hi 240 --tow0 <tow0>: the share of the pooled code
-        sum of squares the per-LOS MEANS carry, and the implied (noise-corrected) dispersive fraction
+        sum of squares the per-LOS means carry, and the implied (noise-corrected) dispersive fraction
   (v)   availability (emitted / skipped / withheld, whole run and the hour from network_epoch_status.csv)
         and the run-end counters (prires cb / rxcb, block-Baarda G, the rx-CB carry line, the last W6-cb
         line, the P1-4 post-fit sigma0, the s24.6 row count)
 Verification per arm from the producer's own voice: the knob's effect lines and the lines that differ from
 A0's logs/gnss_config.log, any unknown-knob warning, the trace armed, and the snapshot / cold-start lines.
 
-Bars (frozen): an arm NAMES the mechanism when (i) p50 < 1.0 m AND (ii) zero stations beyond 0.5 m AND
-(iii) D_phase declared within-arc rms < 0.5 m — all three; any bar HALVED vs A0 = a contributor; nothing
-halved = exonerated.  Availability must not fall more than 5 % below A0's (a pass by withholding is not a
-pass).  The grader prints the numbers and the labels; the manager decides.
+Bars (frozen): an arm names the mechanism when (i) p50 < 1.0 m, (ii) zero stations beyond 0.5 m, and
+(iii) D_phase declared within-arc rms < 0.5 m, all three; any bar halved against A0 marks a contributor,
+none halved means the mechanism is exonerated.  Availability must not fall more than 5 % below A0's (a
+pass by withholding is not a pass).  The grader prints the numbers and the labels; the manager decides.
 """
 import argparse
 import csv
@@ -64,7 +64,7 @@ ARM_KNOBS = {
               ["clock_datum_station", "stations list", "need >=2 stations", "datum"]),
     "a8": ("network.stations cut to WROC/GOP6/FFMJ + clock_datum_station WROC00POL",
            ["clock_datum_station", "stations list", "need >=2 stations", "datum"]),
-    # card PV (s24.11) — the VEHICLE test.  Not knob arms: PV-A is the pl2 leveling vehicle on its own
+    # The vehicle test (card PV, s24.11).  Not knob arms: PV-A is the pl2 leveling vehicle on its own
     # (EXT63) chain, PV-B is the field golden with the vehicle delta and nothing else.
     "pva": ("PV-A: _fldf3_pl2 flattened (the F3 converging LEVELING vehicle on the EXT63 chain), 2 h cold",
             ["carry_invariant", "relevel_free_epoch", "gauge_project", "carry_coupling", "phase_datum",
@@ -73,7 +73,7 @@ ARM_KNOBS = {
             "relevel_free_epoch, gauge_project, the phase-datum family)",
             ["carry_invariant", "relevel_free_epoch", "gauge_project", "carry_coupling", "phase_datum",
              "phase-datum", "leveling", "inject", "do_amb_carry", "anchor", "EWL", "UWL", "lane"]),
-    # card CM2 (s24.12) — the s24.8 knob arms re-run on the LEVELING vehicle, control = pvb.
+    # The s24.8 knob arms re-run on the leveling vehicle, control = pvb (card CM2, s24.12).
     # Same knobs as a1..a7 / a10b, one per arm, on top of config/test_suite/_pv_b.json.
     "b1": ("network.carry_rx_code_bias: false", ["carry_rx_code_bias", "rx-CB carry", "rx-CB", "receiver code-bias"]),
     "b2": ("network.carry_zwd true + zwd_carry_q 1e-8 (diagonal B9 RW)", ["ZWD carry", "carry_zwd", "B9"]),
@@ -91,8 +91,8 @@ ARM_KNOBS = {
     "b9": ("UNION of the s24.12 contributors (the knobs the grade named; see the arm's _cm2_arm note)",
            ["carry_rx_code_bias", "carry_zwd", "ZWD carry", "Kaula", "sat_code_bias_q", "estimate_iono_sh",
             "SH-VTEC", "enable_code_phase_bias", "representation_sigma_tecu", "zwd_constraint"]),
-    # card CE (s24.14) — the CHAIN-ERA bisect on the LEVELING vehicle, control = pvb.  One group of
-    # s24.11's CHAIN-ERA class per arm, at the FLATTENED pl2 chain's values (the arms move PV-B towards
+    # The chain-era bisect on the leveling vehicle, control = pvb (card CE, s24.14).  One group of
+    # s24.11's chain-era class per arm, at the flattened pl2 chain's values (the arms move PV-B toward
     # PV-A), generated by scripts/ce_make_arms.py on top of config/test_suite/_pv_b.json.
     "c1": ("CODE OSB correctly specified: network.external_sat_code_bias true + estimate_sat_code_bias false "
            "+ model_corrections.enable_code_phase_bias true + estimation.require_bia_for_signals true",
@@ -115,15 +115,15 @@ ARM_KNOBS = {
             "require_bia", "estimate_ifb", "(RXCB-DATUM)", "rx_code_bias_datum", "apriori_clock_anchor",
             "(SH-iono)", "layer2", "mean_vtec", "Frequency mode", "ATX coverage", "mark_refsat_reset_disc",
             "Kaula", "emit_pb_filter_meas_sigma"]),
-    # s24.15 — the SH tie's admission cutoff (25 deg) against the 15 deg observation mask.
+    # s24.15: the SH tie's admission cutoff (25 deg) against the 15 deg observation mask.
     "c7": ("estimation.ionosphere_weighting.elevation_cutoff_deg: 15.0 (the SH tie admits the whole mask)",
            ["ionosphere weighting", "elevation_cutoff", "elevation cutoff", "iono_dw_admit", "deweight"]),
     "c7b": ("estimation.ionosphere_weighting.elevation_cutoff_deg: 20.0",
             ["ionosphere weighting", "elevation_cutoff", "elevation cutoff", "iono_dw_admit", "deweight"]),
-    # s24.16 (card Q3-F) — the SIM golden's guarded temporal clock anchor transplanted onto the field bed.
-    # NB the run-end counter line ("Network (Card Q3 / guarded temporal clock anchor): ... ANCHORED at q =
-    # ... Trips ... re-coupling edge(s), ... wire mark(s) queued") is the ON-path evidence, not the config
-    # line: `folded_anchored = 0` means the guard never bound a row and the arm is INERT (invariant #4).
+    # s24.16 (card Q3-F): the sim golden's guarded temporal clock anchor transplanted onto the field bed.
+    # The run-end counter line ("Network (Card Q3 / guarded temporal clock anchor): ... ANCHORED at q =
+    # ... Trips ... re-coupling edge(s), ... wire mark(s) queued") is the on-path evidence, not the config
+    # line: `folded_anchored = 0` means the guard never bound a row and the arm is inert (invariant #4).
     "c8": ("network.clock_temporal_anchor + the sim golden's 11 clock_anchor_* leaves (q 3e-6)",
            ["Card Q3", "clock_temporal_anchor", "clock_anchor", "TEMPORAL CLOCK ANCHOR", "gauge-free"]),
     "c8b": ("the same anchor at clock_anchor_q 2.9e-8 (the Q3 physical q)",
@@ -131,12 +131,12 @@ ARM_KNOBS = {
     "c8c": ("the same anchor (q 3e-6) + network.apriori_clock_anchor_sigma_m 0.02 (c3's external pin)",
             ["Card Q3", "clock_temporal_anchor", "clock_anchor", "TEMPORAL CLOCK ANCHOR", "gauge-free",
              "apriori_clock_anchor", "a-priori clock"]),
-    # s24.17 leg 1 — THE STACK on top of c8b (which is the control for these two).
+    # s24.17 leg 1: the stack on top of c8b (which is the control for these two).
     "c9": ("c8b + network.carry_zwd true + zwd_carry_q 1e-7 (s24.12's b2b on the anchored clock)",
            ["Card Q3", "clock_anchor", "ZWD carry", "carry_zwd", "B9"]),
     "c9b": ("c9 + network.carry_rx_code_bias false (s24.12's b1 on top of the stack)",
             ["Card Q3", "clock_anchor", "ZWD carry", "carry_zwd", "B9", "carry_rx_code_bias", "rx-CB carry", "rx-CB"]),
-    # s24.17 legs 2 and 3 — the long twin and the G4 event window.
+    # s24.17 legs 2 and 3: the long twin and the G4 event window.
     "c10": ("THE 6 H TWIN, posture arm (the leg-1 winner's knobs, 6 h cold)",
             ["Card Q3", "clock_anchor", "carry_zwd", "carry_rx_code_bias", "max_duration"]),
     "pvb6": ("THE 6 H TWIN, control: _pv_b.json, 6 h cold", ["max_duration", "carry_invariant", "phase_datum"]),
@@ -267,7 +267,7 @@ def tropo_fit(armdir, t_lo, t_hi):
         ss, ex, b = fit(sta_v[s], sta_el[s])
         per[s] = dict(pct=100.0 * ex / ss if ss > 0 else float("nan"), b_m=b, n=len(sta_v[s]), rms=math.sqrt(ss / len(sta_v[s])))
         tot += ss; expl += ex
-    # the same on the per-LOS window MEANS (one point per LOS-signal series)
+    # the same on the per-LOS window means (one point per LOS-signal series)
     mv, mel = defaultdict(list), defaultdict(list)
     for (s, sat, sig), pts in los.items():
         a = np.asarray(pts, float)
@@ -324,7 +324,7 @@ def zwd_carried(path, t_lo, t_hi):
 
 
 def consumer(armdir, tow0):
-    """The cold closed-loop consumer (WTZZ00DEU, logs/closed_loop_trace.csv — the s24.3 instrument):
+    """The cold closed-loop consumer (WTZZ00DEU, logs/closed_loop_trace.csv, the s24.3 instrument):
     p50 of the 3D error over minutes 30-60 (k 61..120) and 90-120 (k 181..240), the signed E/N/U medians
     of the second window, n_sats, and the 3D error at k = 1, 11, 60, 120, 240."""
     path = os.path.join(armdir, "logs", "closed_loop_trace.csv")
@@ -492,7 +492,7 @@ def attrib(armdir, tow0, k_lo, k_hi, force=False):
     cand = i6.get("a2_candidates") or {}
     iono_cand = cand.get("ionosphere: implied dispersive (noise-corrected; shape-admitted only)")
     return dict(
-        # the s24.6 "per-LOS dispersive" figure is the NESTED gamma-direction row (row 6 of the nested
+        # the s24.6 "per-LOS dispersive" figure is the nested gamma-direction row (row 6 of the nested
         # sequence); the implied (shape-corrected) share is reported beside it with its admission flag
         disp_nested=(nested[5][1] if len(nested) > 5 else None),
         iono_shape_admitted=(iono_cand is not None and isinstance(iono_cand, (int, float)) and np.isfinite(iono_cand)),
@@ -569,9 +569,9 @@ def grade_arm(arm, armdir, a, ref_cfg_lines=None, ctl="a0"):
     # -- (i) per-station code residual rms, last hour
     med, tows = per_station_median(os.path.join(logs, "network_pf_keyed.csv"), "STA", "key",
                                    ["rms_code", "s0_code", "rms_phase"], t_lo, t_hi)
-    # an arm whose post-fit pass pooled NO code rows (the s24.6 run-end line "0 code + N phase": EXT-CB
-    # on this lineage) has rms_code == 0 at every station — an empty pool, not a residual; bar (i) is
-    # NOT gradable there and must not read as a pass
+    # an arm whose post-fit pass pooled no code rows (the s24.6 run-end line "0 code + N phase": EXT-CB
+    # on this lineage) has rms_code == 0 at every station, an empty pool rather than a residual, so bar
+    # (i) is not gradable there and must not read as a pass
     rows_line = C.get("rows")
     code_pooled = None if rows_line is None else int(rows_line[1])
     if med and code_pooled == 0:
@@ -789,7 +789,7 @@ def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     arms = [s for s in a.arms.split(",") if s]
-    # the control arm: --control if given, else a0 (the s24.8 card's control) — unchanged behaviour
+    # the control arm: --control if given, else a0 (the s24.8 card's control)
     ctl = a.control or "a0"
     ctl_dir = os.path.join(a.runs, f"{a.prefix}{ctl}")
     if a.control and not os.path.isdir(ctl_dir):
@@ -799,8 +799,8 @@ def main():
     results = []
     ref_cfg = None
     if a.control:
-        # pre-read so an arm listed BEFORE the control still gets its config-log diff (with no
-        # --control the reference is picked up lazily inside the loop, exactly as before)
+        # pre-read so an arm listed before the control still gets its config-log diff (with no
+        # --control the reference is picked up lazily inside the loop instead)
         ref_cfg = read_lines(os.path.join(ctl_dir, "logs", "gnss_config.log"))
     for arm in arms:
         armdir = os.path.join(a.runs, f"{a.prefix}{arm}")

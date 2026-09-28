@@ -1,52 +1,52 @@
 #!/usr/bin/env python3
-"""SPEC_event_harness §24.13 — card LV-SEED: where the remaining per-LOS level is born.
+"""Where the remaining per-LOS level is born (SPEC_event_harness §24.13, card LV-SEED).
 
-READ-ONLY.  Four pre-registered reads on EXISTING runs (no producer run, no new
+Read-only.  Four pre-registered reads on existing runs (no producer run, no new
 mechanism); every run dir supplies `logs/network_pf_rows.csv` (signed per-row
 post-fit residuals), `logs/network_pf_keyed.csv`, `logs/network_zwd.csv`,
 `logs/network_ionosphere.csv`, `logs/network_vtec_sh.csv`, `logs/network_stations.csv`
 and `products.txt`.
 
-    python scripts/lvseed_read.py r1        # H1 — is the level born at arc start?
-    python scripts/lvseed_read.py r2        # H2 — is the level ionospheric?
-    python scripts/lvseed_read.py r3        # H3 — is the level station geometry?
+    python scripts/lvseed_read.py r1        # H1: is the level born at arc start?
+    python scripts/lvseed_read.py r2        # H2: is the level ionospheric?
+    python scripts/lvseed_read.py r3        # H3: is the level station geometry?
     python scripts/lvseed_read.py r4        # (only if R1 names H1) wire steps at arc births
     python scripts/lvseed_read.py witness   # per-station code rms vs arcs born inside the run
     python scripts/lvseed_read.py all
 
 Each writes `<out>/<read>.json` and `<out>/<read>.txt` (default out = runs/_lvseed).
 
-CONVENTIONS (stated once; every table below obeys them)
+Conventions (stated once; every table below follows them)
   * LOS arc  = consecutive rows of one (station, satellite, signal, kind) whose
     epoch step never exceeds `--gap-epochs` (default 5 ⇒ Δt > 150 s splits).  Arcs
     are kept when they carry >= `--min-arc` rows (default 30).
-  * LEVEL    = the UNWEIGHTED mean of the CODE-row residual `resid_m` over the
+  * Level    = the unweighted mean of the code-row residual `resid_m` over the
     stated window.  `resid_m` is the signed post-fit residual v = y − A_s x_s −
-    A_r x_r in metres (NetworkFrameDiag.cpp), NOT standardized.  The level is a
-    metre quantity, so weighting it by `w` would tilt it toward high elevation;
-    `w` (the normal-equation weight, 1/σ²-like — pf_keyed pools |v|·sqrt(w)) is
-    used ONLY as the least-squares weight in R3 and as the LOS weight when a
-    per-LOS quantity enters a fit, and each such use says so in the output.
-  * SETTLED  = the campaign's last hour, k = 121..240 ⇔ tow 262800..266370
+    A_r x_r in metres (NetworkFrameDiag.cpp), not standardized.  The level is a
+    metre quantity, so weighting it by `w` would tilt it toward high elevation.
+    `w` (the normal-equation weight, 1/σ²-like; pf_keyed pools |v|·sqrt(w)) is
+    used only as the least-squares weight in R3 and as the LOS weight when a
+    per-LOS quantity enters a fit, and each such use is stated in the output.
+  * Settled  = the campaign's last hour, k = 121..240 ⇔ tow 262800..266370
     (cm_grade.py's default window), so R2/R3 sit on the same window as §24.11/§24.12.
-  * TIE RESIDUAL (R2) = the per-LOS ABSOLUTE slant iono minus the SH field's
-    prediction at its pierce point, i.e. exactly the quantity
-    `networkAppendShIonoRows_` (ApplicationNetworkAssembly.cpp:997-1100) asserts
-    to be zero:  ι(rx,sat) − Σ_l M_l(el)·tecu_to_L1m·VTEC_l(IPP_l).  ι is
-    `iono_total_m` = x_lin + x_r, NEVER `iono_m` (x_r alone is a CORRECTION about
-    the allocation seed — CLAUDE.md Amendment 4 / NetworkIonoDiag.cpp:95-105).
+  * Tie residual (R2) = the per-LOS absolute slant iono minus the SH field's
+    prediction at its pierce point, i.e. the quantity that
+    `networkAppendShIonoRows_` (ApplicationNetworkAssembly.cpp) constrains to
+    zero:  ι(rx,sat) − Σ_l M_l(el)·tecu_to_L1m·VTEC_l(IPP_l).  ι is
+    `iono_total_m` = x_lin + x_r, never `iono_m` (x_r alone is a correction about
+    the allocation seed; CLAUDE.md Amendment 4, NetworkIonoDiag.cpp).
     The row's R keeps an all-ones per-(rx,const) block, so the per-station-epoch
-    MEAN of the tie residual is a free datum the tie does not screen; both the raw
-    and the station-epoch-demeaned form are reported and the demeaned one is what
-    the tie actually constrains.
+    mean of the tie residual is a free datum the tie does not screen; both the raw
+    and the station-epoch-demeaned form are reported, and the demeaned form is the
+    one the tie constrains.
   * e_LOS    = the receiver→satellite unit vector in the station's local ENU frame,
-    built from the elevation/azimuth the producer itself recorded in
+    built from the elevation/azimuth the producer recorded in
     `network_ionosphere.csv` (az measured North→East, the same convention as
     computeIppGeometry): e_E = cos(el)sin(az), e_N = cos(el)cos(az), e_U = sin(el).
     No SP3 is read.  A residual model v ≈ a + d·e means an implied station
     position error δ = −d (∂ρ/∂r_rx = −e), so the implied height error is −dU.
 
-BARS (frozen in §24.13; this script reports the numbers, it does not grade)
+Bars (frozen in §24.13; this script reports the numbers and does not grade)
   H1 named : R1 fraction(|m_early − m_late| < 0.3 m) > 0.7 AND r(first-epoch, m_late) > 0.8
   H2 named : R2 level_C2W/level_C1C within 1.6469 ± 0.3 with r > 0.8, OR tie-residual r > 0.5
   H3 named : the |ZWD| > 0.5 m stations carry |d| > 1 m with a consistent vertical
@@ -271,7 +271,7 @@ def build_arcs(df, kind, gap_epochs, min_arc):
 
 
 # --------------------------------------------------------------------------- #
-# R1 — is the level born at arc start?
+# Read R1: is the level born at arc start?
 # --------------------------------------------------------------------------- #
 def r1_stats(rows, rng):
     """rows: list of per-arc dicts with first/m_early/m_late/... -> the table entry."""
@@ -287,10 +287,10 @@ def r1_stats(rows, rng):
     sig_L = float(np.std(late, ddof=1)) if len(late) > 1 else float("nan")
     sig_n = float(np.median(within))
     # The pooled per-LOS level is heavy-tailed (a handful of metre-to-100 m arcs), and
-    # a Pearson r on a heavy tail is a statement about those few arcs, not the pool —
-    # so every correlation is reported THREE ways: raw Pearson (the pre-registered
-    # statistic), Spearman (rank, outlier-immune), and Pearson on the |level| < 5 m
-    # trim.  A raw r that the trim and the rank both refuse is an outlier artifact.
+    # a Pearson r on a heavy tail describes those few arcs, not the pool, so every
+    # correlation is reported three ways: raw Pearson (the pre-registered statistic),
+    # Spearman (rank, outlier-immune), and Pearson on the |level| < 5 m trim.  A raw r
+    # that neither the trim nor the rank reproduces is an outlier artifact.
     tm = np.abs(late) < 5.0
     return dict(
         n_arcs=len(rows),
@@ -303,8 +303,8 @@ def r1_stats(rows, rng):
         n_trim5m=int(tm.sum()),
         frac_delta_lt_0p3_trim5m=float(np.mean(np.abs(d[tm]) < 0.3)) if tm.any() else float("nan"),
         r_early3_vs_late=pearson(early, late),
-        # matched control: a RANDOM in-window epoch against the late mean with that
-        # epoch left out — the same statistic with the "birth" content removed.
+        # matched control: a random in-window epoch against the late mean with that
+        # epoch left out, i.e. the same statistic with the "birth" content removed.
         r_ctrl_random_epoch=pearson(ctrl, ctrl_late),
         rho_ctrl_random_epoch=spearman(ctrl, ctrl_late),
         sigma_level_m=sig_L,
@@ -320,7 +320,7 @@ def r1_stats(rows, rng):
         max_abs_level_m=float(np.abs(late).max()),
         n_level_gt_1m=int((np.abs(late) > 1.0).sum()),
         n_level_gt_5m=int((np.abs(late) > 5.0).sum()),
-        # direction: does the level GROW over the arc (|late| > |early|) or is it set
+        # direction: does the level grow over the arc (|late| > |early|) or is it set
         # at birth and held?  0.5 is a coin flip.
         frac_level_grew=float(np.mean(np.abs(late) > np.abs(early))),
         frac_level_grew_gt_1m=float(np.mean((np.abs(late) > np.abs(early))[np.abs(late) > 1.0]))
@@ -340,7 +340,7 @@ def read_r1(project, arms, gap_epochs, min_arc, seed=20260914):
             m_early = float(res[:3].mean())
             m_late = float(res[9:].mean())
             # matched control: one random row from the late window, vs the late mean
-            # computed WITHOUT it (so first-epoch and control share no noise term).
+            # computed without it (so first-epoch and control share no noise term).
             late = res[9:]
             j = int(rng.integers(0, len(late)))
             ctrl_late = float((late.sum() - late[j]) / (len(late) - 1)) if len(late) > 1 else float("nan")
@@ -451,7 +451,7 @@ def fmt_r1(res):
 
 
 # --------------------------------------------------------------------------- #
-# R2 — is the level ionospheric?
+# Read R2: is the level ionospheric?
 # --------------------------------------------------------------------------- #
 def settled_levels(df, kmin=K_SETTLED_LO, kmax=K_SETTLED_HI, min_rows=30):
     """-> DataFrame (station, sat, signal, level_m, n, mean_el, sum_w)."""
@@ -475,8 +475,8 @@ def sh_coeffs_by_epoch(project, arm, kmin, kmax):
 def sh_predict(iono_df, sh_df, stations, shcfg):
     """Per row of iono_df: Σ_l M_l·tecu_to_L1m·VTEC_l(IPP_l)  (metres on L1).
 
-    A faithful evaluation of the tie row the producer folds
-    (ApplicationNetworkAssembly.cpp:1090-1097): the IPP geometry is
+    Evaluates the tie row the producer folds (networkAppendShIonoRows_ in
+    ApplicationNetworkAssembly.cpp): the IPP geometry is
     computeIppGeometry(st.ecef, sat, Re, H_l) re-derived from the el/az the
     producer recorded for the same (station, satellite, epoch).
     """
@@ -550,9 +550,9 @@ def read_r2(project, arms, min_rows, control_arm="_cm_pvb", contrast_arm="_cm_b7
                 ratio = np.where(np.abs(x) > 1e-9, y / x, np.nan)
             s_free, c_free, r = ols_slope(x, y)
             s_orig = float((x @ y) / (x @ x)) if (x @ x) > 0 else float("nan")
-            # SAME outlier guard as R1: a handful of metre-to-100 m LOS can carry a
-            # Pearson r and an OLS slope on their own, so every one is repeated on the
-            # |level| < 5 m trim and beside its Spearman rank twin.
+            # Same outlier guard as R1: a handful of metre-to-100 m LOS can determine a
+            # Pearson r and an OLS slope on their own, so each is repeated on the
+            # |level| < 5 m trim and reported beside its Spearman rank counterpart.
             tm = (np.abs(x) < 5.0) & (np.abs(y) < 5.0)
             s_t, c_t, r_t = ols_slope(x[tm], y[tm]) if tm.sum() >= 5 else (
                 float("nan"),) * 3
@@ -584,12 +584,13 @@ def read_r2(project, arms, min_rows, control_arm="_cm_pvb", contrast_arm="_cm_b7
             tie_raw=("tie_raw_m", "mean"), tie_dm=("tie_dm_m", "mean"),
             iono_abs=("iono_total_m", "mean"), sh_pred=("sh_pred_m", "mean"),
             map0=("map0", "mean"), n_ion=("tie_raw_m", "size")).reset_index()
-        # The SH tie row is ADMITTED only above `estimation.ionosphere_weighting.
-        # elevation_cutoff_deg` (ApplicationNetworkAssembly.cpp:1044 — `if (o.elevation <
-        # iw.elevation_cutoff_deg) continue;`), while the processing mask admits the
-        # OBSERVATION from `processing.elevation_mask_deg`.  Between the two cutoffs a
-        # LOS's slant-iono state carries code/phase rows with NO tie: an admission valve
-        # in the sense of standing invariant #7.  Split every tie quantity there.
+        # The SH tie row is admitted only above `estimation.ionosphere_weighting.
+        # elevation_cutoff_deg` (networkAppendShIonoRows_ in ApplicationNetworkAssembly.cpp:
+        # `if (o.elevation < iw.elevation_cutoff_deg) continue;`), while the processing
+        # mask admits the observation from `processing.elevation_mask_deg`.  Between the
+        # two cutoffs a LOS's slant-iono state carries code/phase rows with no tie, an
+        # admission valve in the sense of standing invariant #7.  Every tie quantity is
+        # split there.
         cut = float(json.load(open(os.path.join(arm_dir(project, arm), "arm.json")))
                     .get("estimation", {}).get("ionosphere_weighting", {})
                     .get("elevation_cutoff_deg", 25.0))
@@ -631,8 +632,8 @@ def read_r2(project, arms, min_rows, control_arm="_cm_pvb", contrast_arm="_cm_b7
         sc = lev.groupby(["station", "sat"], observed=True)["level_m"].mean().rename(
             "level_common").reset_index()
         lvc = sc.merge(tie, on=["station", "sat"], how="inner")
-        # A station reports EITHER C1C or C1W as its L1 code (C/A vs the P(Y)-derived
-        # W code), so the C2W/C1C and C2W/C1W ratios above are computed on DISJOINT
+        # A station reports either C1C or C1W as its L1 code (C/A vs the P(Y)-derived
+        # W code), so the C2W/C1C and C2W/C1W ratios above are computed on disjoint
         # station populations and are not comparable without this split.  The wire's
         # code-bias datum is pinned on C1C-C2W (`cbpin=G:C1C-C2W` in the S line).
         sta_l1 = {}
@@ -804,7 +805,7 @@ def fmt_r2(res):
 
 
 # --------------------------------------------------------------------------- #
-# R3 — station geometry
+# Read R3: station geometry
 # --------------------------------------------------------------------------- #
 _ANT_CACHE = {}
 
@@ -890,9 +891,9 @@ def read_r3(project, arms, min_rows, min_los=6):
                     d_norm=float(np.linalg.norm(d)),
                     ss_frac_d_beyond_const=float(1.0 - ss_res / ss_tot_about_mean)
                     if ss_tot_about_mean > 0 else float("nan"),
-                    # NULL: three free direction parameters on n points explain
+                    # Null: three free direction parameters on n points explain
                     # 3/(n-1) of the variance about the mean by chance alone, which at
-                    # n ~ 9 is 0.375.  The adjusted form is the honest statistic.
+                    # n ~ 9 is 0.375.  The adjusted form is the statistic to read.
                     ss_null_expected=float(3.0 / (len(grp) - 1)) if len(grp) > 1 else float("nan"),
                     ss_frac_d_adj=float(1.0 - (ss_res / ss_tot_about_mean)
                                         * (len(grp) - 1) / (len(grp) - 4))
@@ -906,8 +907,8 @@ def read_r3(project, arms, min_rows, min_los=6):
                     delta_hen=rinex_antenna_delta(project, str(sta)),
                 ))
             rows.sort(key=lambda r: -abs(r["zwd_med_m"]))
-            # the pre-registered "alongside the RINEX ANTENNA: DELTA H/E/N": if the
-            # producer were working in the wrong (marker vs ARP) vertical frame, the
+            # the pre-registered comparison with the RINEX "ANTENNA: DELTA H/E/N": if
+            # the producer worked in the wrong (marker vs ARP) vertical frame, the
             # implied height error -dU would track the header's DELTA H.
             dh = np.array([r["delta_hen"][0] if r["delta_hen"] else float("nan") for r in rows])
             du = np.array([r["dU"] for r in rows])
@@ -925,7 +926,7 @@ def read_r3(project, arms, min_rows, min_los=6):
                 rho_absd_vs_abszwd=spearman([r["d_norm"] for r in rows],
                                             [abs(r["zwd_med_m"]) for r in rows]))
         out[arm] = tab
-        # the FULL roster's settled |ZWD| (the 13-station flag set of §24.11/§24.12),
+        # the settled |ZWD| of the full roster (the 13-station flag set of §24.11/§24.12),
         # independent of whether a station carried enough LOS for a fit.
         out[arm]["_zwd_roster"] = {str(k): float(v) for k, v in sorted(
             zmed.items(), key=lambda kv: -abs(kv[1]))}
@@ -996,7 +997,7 @@ def fmt_r3(res):
 
 
 # --------------------------------------------------------------------------- #
-# R4 — wire D_phase steps at arc births (conditional on R1 naming H1)
+# Read R4: wire D_phase steps at arc births (conditional on R1 naming H1)
 # --------------------------------------------------------------------------- #
 def read_r4(project, arms, gap_epochs, min_arc, step_thresh=0.3, n_shuffle=1000,
             seed=20260914, seed_run="_cm_pvb"):
@@ -1095,14 +1096,14 @@ def fmt_r4(res):
 
 
 # --------------------------------------------------------------------------- #
-# R5 — SPEC_event_harness §24.15: is the DJIG/G06 outlier a wire defect or a record?
+# Read R5, SPEC_event_harness §24.15: is the DJIG/G06 outlier a wire defect or a record?
 # --------------------------------------------------------------------------- #
 def _census_series(project, arm, t_lo, t_hi, drop_sat=None):
     """The census's own de-medianed D series for one arm and window.
 
-    `drop_sat` removes that satellite BEFORE the common mode is formed, so the
-    per-epoch median is re-taken over the remaining satellites — the honest
-    counterfactual beside the cheaper "drop it from the pool only".
+    `drop_sat` removes that satellite before the common mode is formed, so the
+    per-epoch median is re-taken over the remaining satellites.  This is the full
+    counterfactual, reported beside the cheaper "drop it from the pool only".
     """
     import wire_vs_code_census as wc
     clk_paths, bia, doy_key, _ = wc.resolve_code_products(
@@ -1147,7 +1148,7 @@ def _pool_within_arc(series, ev, sat_filter=None, step=0.25, min_n=2):
 
 
 def _pool_level(series, sat_filter=None):
-    """p50 / p95 of |de-medianed value| — the between-satellite LEVEL (level_table)."""
+    """p50 / p95 of |de-medianed value|: the between-satellite level (level_table)."""
     pool, per_sat = [], defaultdict(list)
     for key, ser in series.items():
         sat = key[0] if isinstance(key, tuple) else key
@@ -1173,7 +1174,7 @@ def read_r5a(project, arms, sat="G06", t_lo=262800.0, t_hi=266370.0):
                     if (k[0] if isinstance(k, tuple) else k) != sat}
             rms_ex, n_ex, _ = _pool_within_arc(keep, ev)
             rms_re, n_re, _ = _pool_within_arc(ser_re[kind], ev_re)
-            # share of the pooled SUM OF SQUARES the satellite carries
+            # share of the pooled sum of squares the satellite carries
             ss_all = rms_all ** 2 * n_all
             ss_sat = rms_sat ** 2 * n_sat if n_sat else 0.0
             A[f"D_{kind}"] = dict(
@@ -1203,7 +1204,7 @@ def read_r5a(project, arms, sat="G06", t_lo=262800.0, t_hi=266370.0):
 
 
 def _scan_csv(path, pred, limit=400):
-    """Return (header, [matching raw lines]) — quoted verbatim in the report."""
+    """Return (header, [matching raw lines]); the lines are quoted verbatim in the report."""
     if not os.path.isfile(path):
         return None, []
     with open(path, encoding="utf-8", errors="replace") as fh:
@@ -1285,7 +1286,7 @@ def read_r5c(project, arms, tow_focus=265470.0, sat="G06",
     for arm in arms:
         logs = os.path.join(arm_dir(project, arm), "logs")
         df = load_pf_rows(project, arm)
-        # per (station, sat) epoch runs, NO min length — a newborn arc is 1 row
+        # per (station, sat) epoch runs, with no minimum length: a newborn arc is 1 row
         g = df.groupby(["station", "sat"], observed=True)["k"]
         runs = {}
         for (sta, s), kk in g:
@@ -1319,7 +1320,7 @@ def read_r5c(project, arms, tow_focus=265470.0, sat="G06",
                             young=(age is not None and age < young_epochs),
                             low=(e is not None and e < low_elev_deg)))
         cold = [l for l in gauge if l.split(",")[3] == "handover_cold"]
-        # A satellite handing over files ONE PHASE_ANCHOR row per (sat, signal)
+        # A satellite handing over files one PHASE_ANCHOR row per (sat, signal)
         # family, so the row count over-counts elections; de-duplicate on
         # (tow, sat, successor) and report both, plus the whole-run log's own count.
         seen, uniq = set(), []
@@ -1403,9 +1404,9 @@ def read_r5d(project, arms, tow_focus=265470.0, halfwidth_ep=10,
                                       d_bias_m=b[sg][0] - a[sg][0],
                                       disc_from=a[sg][1], disc_to=b[sg][1],
                                       disc_bumped=a[sg][1] != b[sg][1]))
-        # BASE RATE (the lesson of the lag-attribution trap): a per-epoch
-        # discontinuity bump means nothing without the rate every other (sat, signal)
-        # runs at, in the SAME window and over the whole run.
+        # Base rate (see the lag-attribution trap): a per-epoch discontinuity bump
+        # means nothing without the rate at which every other (sat, signal) bumps, in
+        # the same window and over the whole run.
         def bump_rates(eps, min_pairs):
             bump, tot = defaultdict(int), defaultdict(int)
             for x, y in zip(eps[:-1], eps[1:]):
@@ -1570,7 +1571,7 @@ def fmt_r5(res):
 
 
 # --------------------------------------------------------------------------- #
-# R6 — §24.15: what the wire's noisy satellites are made of
+# Read R6, §24.15: what the wire's noisy satellites are made of
 # --------------------------------------------------------------------------- #
 R6_SATS = ["G29", "G28", "G32", "G18"]
 R6_CONTROLS = ["G27", "G06"]
@@ -1578,10 +1579,10 @@ R_EARTH_M = 6378137.0
 
 
 def sun_unit_ecef(week, tow):
-    """Sub-solar direction as an ECEF unit vector, from the SAME low-precision solar
+    """Sub-solar direction as an ECEF unit vector, from the same low-precision solar
     series `sh_vtec.mean_sun_longitude` ports from `meanSunLongitude` (sub-solar
     longitude), plus the declination from the ecliptic longitude and obliquity.
-    Good to ~0.01 deg — far inside what a cylindrical shadow test needs."""
+    Good to ~0.01 deg, well inside what a cylindrical shadow test needs."""
     jd = 2444244.5 + week * 7.0 + tow / 86400.0
     n = jd - 2451545.0
     L = math.radians((280.460 + 0.9856474 * n) % 360.0)
@@ -1598,7 +1599,7 @@ def sun_unit_ecef(week, tow):
 def eclipse_and_beta(sp3_paths, sats, week, t_lo, t_hi):
     """Cylindrical umbra test + beta angle per satellite over [t_lo, t_hi].
 
-    In shadow when the satellite is on the anti-sun side (r.s < 0) AND its distance
+    In shadow when the satellite is on the anti-sun side (r.s < 0) and its distance
     from the Earth-Sun line is below the Earth's radius.  beta is the Sun's elevation
     above the orbital plane: sin(beta) = s . (r x v)/|r x v|, v by central difference
     on the SP3 nodes.
@@ -1630,7 +1631,7 @@ def eclipse_and_beta(sp3_paths, sats, week, t_lo, t_hi):
             out[sat] = dict(error=f"only {len(t)} SP3 nodes in the window")
             continue
         v_ecef = np.gradient(xyz, t, axis=0)
-        # SP3 velocity is EARTH-FIXED; the orbit plane is inertially fixed, so the
+        # SP3 velocity is Earth-fixed; the orbit plane is inertially fixed, so the
         # plane normal needs the inertial velocity v_i = v_ecef + omega x r (still
         # written on ECEF axes, which is all the dot product with an ECEF Sun vector
         # needs).  Without this the "beta angle" swings tens of degrees in two hours,
@@ -1805,8 +1806,8 @@ def read_r6(project, arm="_cm_pvb", sats=None, t_lo=TOW0, t_hi=266370.0,
             n_boundary_epochs=len(B), boundary_epochs=sorted(B),
             frac_rows_near_boundary=float(n_near / n_rows) if n_rows else float("nan"),
             share_a_near_boundary=a_share,
-            # the honest statistic: the boundary band already COVERS `frac near` of the
-            # rows, so (a) has to be read as an enrichment over that base rate
+            # the statistic to read: the boundary band already covers `frac near` of the
+            # rows, so (a) is read as an enrichment over that base rate
             enrichment_a=float(a_share / (n_near / n_rows))
             if n_rows and n_near else float("nan"),
             share_b_drift_nested=b_share_n, share_b_drift_marginal=b_share_m,
@@ -1822,9 +1823,9 @@ def read_r6(project, arm="_cm_pvb", sats=None, t_lo=TOW0, t_hi=266370.0,
             ratio_absdD_change_over_not=float(m_chg / m_no)
             if np.isfinite(m_chg) and np.isfinite(m_no) and m_no > 0 else float("nan"),
             n_election_epochs=len({e["k"] for e in el}),
-            # a satellite's SIGNAL families can elect DIFFERENT anchor stations in the
-            # same epoch (the run-end log's "split-referenced satellites"); an election
-            # epoch with more than one successor is that
+            # the signal families of one satellite can elect different anchor stations in
+            # the same epoch (the run-end log's "split-referenced satellites"); an
+            # election epoch with more than one successor is such a case
             n_split_reference_epochs=sum(
                 1 for k in {e["k"] for e in el}
                 if len({e["to_station"] for e in el if e["k"] == k}) > 1),
@@ -1923,17 +1924,17 @@ def fmt_r6(R):
 
 
 # --------------------------------------------------------------------------- #
-# R7 — §24.15: is the wire's within-arc wander its ANCHOR station's code level?
+# Read R7, §24.15: is the wire's within-arc wander its anchor station's code level?
 # --------------------------------------------------------------------------- #
 def anchor_timelines(logs, k_of):
     """Piecewise-constant anchor station per epoch.
 
-    PHASE_ANCHOR rows carry `A->B` in the detail field, so the incumbent BEFORE the
-    first handover is that handover's own `from` — which is how a satellite with at
-    least one election gets an anchor for the whole window even though the initial
+    PHASE_ANCHOR rows carry `A->B` in the detail field, so the incumbent before the
+    first handover is that handover's own `from`; this gives a satellite with at
+    least one election an anchor for the whole window even though the initial
     election files no event.  PBGAUGE rows carry `<sat>_<signal>` and `from=A`, so
-    they give the same timeline keyed per SIGNAL (which is what a split-referencing
-    satellite like G18 actually has).  Returns (per_sat, per_sat_signal), each
+    they give the same timeline keyed per signal (which is what a split-referencing
+    satellite like G18 has).  Returns (per_sat, per_sat_signal), each
     {key: [(k_start, station)]} sorted, k_start = 1 for the incumbent.
     """
     _h, rows = _scan_csv(os.path.join(logs, "network_events.csv"),
@@ -2060,8 +2061,8 @@ def read_r7(project, arm="_cm_pvb", t_lo=TOW0, t_hi=266370.0, min_arc_ep=20,
                 sA = rA
                 rA = pearson(aS, dd)
                 sB, _i2, rB = ols_slope(bb, dd)
-                # a size-matched, autocorrelation-matched NULL: the same statistic
-                # against a DIFFERENT satellite's anchor level over the same epochs
+                # a size-matched, autocorrelation-matched null: the same statistic
+                # against another satellite's anchor level over the same epochs
                 others = [s for s in sats if s != sat and s in tl_sat]
                 nulls = []
                 for _ in range(null_draws):
@@ -2150,7 +2151,7 @@ def read_r7(project, arm="_cm_pvb", t_lo=TOW0, t_hi=266370.0, min_arc_ep=20,
         k1 = tl[i + 1][0] - 1 if i + 1 < len(tl) else k_of(t_hi)
         ks = [k for k in range(k0, k1 + 1)]
         el = [elv.get(("G32", sta, k), np.nan) for k in ks]
-        # read each tenure on the SLICE of every arc that lies inside it, not on
+        # read each tenure on the slice of every arc that lies inside it, not on
         # whole arcs that merely overlap it (an arc can span three tenures)
         seg_d, seg_a, seg_b, nseg, wsum, rms_acc = [], [], [], 0, 0.0, 0.0
         for _sig, kk, dd, aS, bb in g32_series:
@@ -2246,10 +2247,10 @@ def fmt_r7(R):
 
 
 # --------------------------------------------------------------------------- #
-# R8 — §24.19: which channel carries the BULK drift (hours 2-6 of _gl_on6)
+# Read R8, §24.19: which channel carries the bulk drift (hours 2-6 of _gl_on6)
 # --------------------------------------------------------------------------- #
 def perm_null(x, y, n=1000, seed=20260914, groups=None):
-    """|r| under permutation of y.  With `groups`, y is permuted WITHIN each group,
+    """|r| under permutation of y.  With `groups`, y is permuted within each group,
     so a station-level (or satellite-level) structure survives the null and only the
     pairing is destroyed."""
     rng = np.random.default_rng(seed)
@@ -2278,9 +2279,9 @@ def perm_null(x, y, n=1000, seed=20260914, groups=None):
 
 
 def circ_lin_r(theta_deg, y):
-    """Circular-linear correlation of a linear y with a CIRCULAR theta (local solar
+    """Circular-linear correlation of a linear y with a circular theta (local solar
     time).  A plain Pearson against an hour-of-day number is wrong at the wrap, so
-    use R = sqrt((rc^2 + rs^2 - 2 rc rs rcs)/(1 - rcs^2))."""
+    R = sqrt((rc^2 + rs^2 - 2 rc rs rcs)/(1 - rcs^2)) is used."""
     t = np.radians(np.asarray(theta_deg, float))
     y = np.asarray(y, float)
     m = np.isfinite(t) & np.isfinite(y)
@@ -2420,7 +2421,7 @@ def read_r8(project, arm="_gl_on6", contrast="_cm_c10", hours=(2, 3, 4, 5, 6),
                               for a in ("gross_los_declare", "gross_los_clear",
                                         "gross_los_expire", "gross_los_station_standdown")),
             **census_hour(arm, h))
-        # a bigger ionosphere makes a bigger ABSOLUTE representation error, so the
+        # a bigger ionosphere makes a bigger absolute representation error, so the
         # tie residual is also reported normalised by the field's own mean
         pp = out["per_hour"][h]
         pp["tie_abs_p50_over_a00_m_per_tecu"] = (
@@ -2480,7 +2481,7 @@ def read_r8(project, arm="_gl_on6", contrast="_cm_c10", hours=(2, 3, 4, 5, 6),
             tie_abs_mean=float(np.nanmean(ta)) if np.isfinite(ta).any() else float("nan"),
             tie_abs_growth=_slope(hh, ta), tie_signed_growth=_slope(hh, ts),
             lat_deg=st.get("lat_deg", float("nan")), lon_deg=lon,
-            # local solar time as an ANGLE (0 = local solar noon), and in hours
+            # local solar time as an angle (0 = local solar noon), and in hours
             lst_angle_deg=lst_deg, lst_hours=float((lst_deg / 15.0 + 12.0) % 24.0)))
     out["n_los"] = len(los)
     out["los"] = los
@@ -2630,7 +2631,7 @@ def fmt_r8(R):
 
 
 # --------------------------------------------------------------------------- #
-# R9 — §24.19: the slip response's own mid-arc RE-LEVELS
+# Read R9, §24.19: the mid-arc re-levels made by the slip response
 # --------------------------------------------------------------------------- #
 # Every (tier, event) this producer writes that re-seeds or frees a phase level
 # mid-arc.  `sig_from` says where that row's signal list lives in the detail
@@ -2785,15 +2786,15 @@ def read_r9(project, arm="_gl_on6", contrasts=("_gl_rxoff6", "_cm_c10"),
     import wire_vs_code_census as wc
     t_hi = TOW0 + DT_S * (max(hours) * ep_per_hour - 1)
     ser, evc, _c = _census_series(project, arm, TOW0, t_hi)
-    # A T4 refloat is TRIGGERED BY a large post-fit residual, so a wire step beside it
-    # is coincidence with unknown direction.  The T0/T1 detectors read RAW observables
-    # (LLI bits, MW/GF, IF time-difference) and are solve-independent — measured here:
-    # their counts are identical across all three arms — so an enrichment on THOSE
-    # events does establish direction.  Split the population.
+    # A T4 refloat is triggered by a large post-fit residual, so a wire step beside it
+    # is a coincidence of unknown direction.  The T0/T1 detectors read raw observables
+    # (LLI bits, MW/GF, IF time-difference) and are solve-independent (their counts
+    # were measured identical across all three arms), so an enrichment on those
+    # events does establish direction.  The population is split accordingly.
     DETECTOR_KINDS = ("T0_gap/arc_resume", "T0_mw_detect/lli_slip",
                       "T0_mw_detect/mw_wl_slip", "T1_if_slip/if_slip",
                       "T1_if_slip/refsat_reset")
-    sat_ep = defaultdict(set)           # sat -> epochs where ANY station re-levelled it
+    sat_ep = defaultdict(set)           # sat -> epochs where any station re-levelled it
     sat_ep_det = defaultdict(set)       # ... restricted to the raw-observable detectors
     sat_ep_t4 = defaultdict(set)        # ... restricted to the post-fit T4 refloat
     for k, sta, sat, _b, _kd in events:
@@ -3051,7 +3052,7 @@ def fmt_r9(R):
 
 
 # --------------------------------------------------------------------------- #
-# witness — per-station code rms vs arcs born inside the run
+# Read witness: per-station code rms vs arcs born inside the run
 # --------------------------------------------------------------------------- #
 def read_witness(project, arms, gap_epochs, min_arc):
     out = {}
@@ -3164,7 +3165,7 @@ def main():
         elif t == "r8":
             r = read_r8(a.project, arm=a.r8_arm, contrast=a.r8_contrast,
                         min_rows=a.min_settled_rows)
-            # one output per arm — R8b reads two arms and they must not collide
+            # one output per arm: R8b reads two arms, and their outputs must not collide
             emit(out_dir, f"r8{a.r8_arm}", r, fmt_r8(r))
         elif t == "r9":
             r = read_r9(a.project, arm=a.r9_arm,

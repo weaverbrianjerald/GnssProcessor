@@ -16,10 +16,10 @@ namespace GnssProcessor {
 	 * @file Antenna.hpp
 	 * @brief Antenna phase-center offset/variation and related corrections.
 	 *
-	 * This header declares the `Antenna` class which loads antenna models
-	 * (PCO/PCV), applies antenna corrections (including phase wind-up),
-	 * and exposes utility helpers to query receiver antenna metadata from
-	 * the RINEX parser.
+	 * This header declares the `Antenna` class, which reads the cached antenna
+	 * models (PCO/PCV), applies antenna corrections (including phase wind-up),
+	 * and exposes helpers that query the receiver antenna metadata from the
+	 * RINEX parser.
 	 */
 
 	class RinexParser; // forward-declare
@@ -27,10 +27,10 @@ namespace GnssProcessor {
 	/**
 	 * @brief Provides antenna-related corrections and metadata access.
 	 *
-	 * The `Antenna` class encapsulates antenna model loading (PCO/PCV),
-	 * interpolation of PCV grids, and computation of per-satellite antenna
-	 * corrections (in meters) including phase center offsets, phase center
-	 * variations and phase wind-up when required.
+	 * The `Antenna` class reads the antenna models (PCO/PCV) held by the
+	 * ProductCache, interpolates PCV grids, and computes per-satellite antenna
+	 * corrections (in meters): phase center offsets, phase center variations
+	 * and, for carrier phase, phase wind-up.
 	 *
 	 * The class depends on `GnssConfig` for configuration, `ProductParser`
 	 * for product/auxiliary data, `LogManager` for logging, and a
@@ -42,9 +42,10 @@ namespace GnssProcessor {
 		/**
 		 * @brief Construct an Antenna helper.
 		 *
-		 * Loads configuration and initializes internal correction objects.
-		 * Antenna model data is lazily loaded by `loadAntennaData()` or during
-		 * first correction request depending on implementation.
+		 * Binds `antennas_` to the antenna list held by the ProductCache (no
+		 * copy, no file parsing) and initializes the internal correction
+		 * objects.  The constructor also dumps the matched receiver antenna
+		 * model at trace level (@ref dumpAntennaModels).
 		 *
 		 * @param config Configuration reference (read-only).
 		 * @param product_parser Product parser used to access auxiliary files.
@@ -57,20 +58,22 @@ namespace GnssProcessor {
 		 * @brief Bilinearly interpolate an ANTEX PCV grid at a look direction.
 		 *
 		 * Pure, stateless helper (exposed for unit testing).  The table rows
-		 * are zenith/nadir rings (0-relative — the caller subtracts ZEN1) and
-		 * the columns are azimuth sectors, or a single column for an
-		 * azimuth-independent (NOAZI) table.  Linear in zenith, bilinear in
+		 * are zenith/nadir rings, indexed from ZEN1 (the caller subtracts
+		 * ZEN1), and the columns are azimuth sectors, or a single column for
+		 * an azimuth-independent (NOAZI) table.  Linear in zenith, bilinear in
 		 * (zenith, azimuth) for 2-D tables, with circular azimuth wrap.  A
 		 * query at or beyond the table's largest zenith ring is held flat
 		 * (clamped to the last ring) rather than extrapolated or read out of
-		 * bounds.
+		 * bounds.  A negative zenith is clamped to 0; an empty table or
+		 * @p dzen <= 0 returns 0.
 		 *
 		 * @param pcv_table 2-D PCV grid: rows = zenith rings, cols = azimuth sectors (1 = NOAZI).
 		 * @param zenith Zenith/nadir angle in degrees, ZEN1-relative (>= 0).
 		 * @param azimuth Azimuth angle in degrees [0, 360).
 		 * @param dazi Azimuth grid spacing (degrees); ignored for NOAZI tables.
 		 * @param dzen Zenith grid spacing (degrees); must be > 0.
-		 * @return Interpolated PCV value in the table's units (meters).
+		 * @return Interpolated PCV value in the table's units (millimetres as
+		 *         stored from the ATX; getAntennaCorrection() scales by 1e-3).
 		 */
 		static double interpolatePcv(const std::vector<std::vector<double>>& pcv_table,
 			double zenith, double azimuth, double dazi, double dzen);
@@ -80,15 +83,16 @@ namespace GnssProcessor {
 		 *
 		 * Pure, stateless helper (exposed for unit testing).  Subtracts the
 		 * antenna mounting orientation (degrees, clockwise from local North)
-		 * from the measured azimuth and wraps the result back into [0, 360).
-		 * Ported from M-PAGES @c NGS::RxAntenna::correctAzimuth.  Used by
-		 * getAntennaCorrection() to rotate the azimuth into the antenna frame
-		 * before the receiver PCV look-up when
+		 * from the measured azimuth and wraps the result once in each
+		 * direction by 360.  For both inputs in [0, 360) the result is in
+		 * [0, 360).  Ported from M-PAGES @c NGS::RxAntenna::correctAzimuth.
+		 * Used by getAntennaCorrection() to rotate the azimuth into the
+		 * antenna frame before the receiver PCV look-up when
 		 * @c GnssConfig::enableRxAntennaOrientation() is set.
 		 *
 		 * @param azimuth_deg Measured azimuth (degrees, clockwise from North).
 		 * @param orientation_deg Antenna mounting orientation (degrees, CW from North).
-		 * @return Orientation-corrected azimuth in [0, 360) degrees.
+		 * @return Orientation-corrected azimuth in degrees.
 		 */
 		static double correctAzimuth(double azimuth_deg, double orientation_deg);
 
@@ -107,18 +111,19 @@ namespace GnssProcessor {
 		/**
 		 * @brief Pure, stateless receiver-antenna matcher (exposed for unit testing).
 		 *
-		 * The single source of truth for receiver-antenna resolution, mirroring
-		 * @ref interpolatePcv / @ref correctAzimuth as a side-effect-free static so
-		 * the (order-sensitive) matching logic can be exercised directly on a
-		 * hand-built @p antennas list without a ProductCache or RinexParser.  Given
-		 * the loaded ATX antenna list and a raw RINEX receiver antenna type it
-		 * applies, in order: (1) exact / first-substring match on the normalized
-		 * type; (2) the ALWAYS-ON, type-preserving radome→NONE fallback (Tier 1) —
-		 * retry the same antenna type with a "NONE" radome; (3) only when
-		 * @p enable_type_substitution, the opt-in deprecated-code TYPE-remap table.
-		 * Step (2) NEVER remaps the antenna TYPE, so a genuinely unknown model
-		 * still resolves to nothing.  Does NOT log — @ref findReceiverAntennaEntry
-		 * wraps this to emit the correction-path ambiguity / substitution warnings.
+		 * The single implementation of receiver-antenna resolution.  Like
+		 * @ref interpolatePcv and @ref correctAzimuth it is a side-effect-free
+		 * static, so the order-sensitive matching logic can be tested directly on
+		 * a hand-built @p antennas list without a ProductCache or RinexParser.
+		 * Given the loaded ATX antenna list and a raw RINEX receiver antenna type
+		 * it applies, in order: (1) exact, then first-substring, match on the
+		 * normalized type; (2) the always-on, type-preserving radome→NONE
+		 * fallback (Tier 1), which retries the same antenna type with a "NONE"
+		 * radome; (3) only when @p enable_type_substitution is true, the opt-in
+		 * deprecated-code TYPE-remap table.  Step (2) never remaps the antenna
+		 * type, so an unknown model still resolves to nothing.  Does not log;
+		 * @ref findReceiverAntennaEntry wraps this and emits the correction-path
+		 * ambiguity and substitution warnings.
 		 *
 		 * @param antennas Loaded ATX antenna models to match against.
 		 * @param rx_antenna_type Raw receiver antenna type (RINEX header field, "<16 model><4 radome>").
@@ -132,32 +137,40 @@ namespace GnssProcessor {
 		/**
 		 * @brief Compute antenna correction for a satellite/receiver observation.
 		 *
-		 * Computes the combined antenna correction (phase center offset (PCO),
-		 * phase center variation (PCV) interpolation and any applicable
-		 * phase wind-up) and returns a scalar correction expressed in meters.
+		 * Computes the combined antenna correction (satellite and receiver
+		 * phase center offset (PCO), phase center variation (PCV)
+		 * interpolation and, for carrier phase, phase wind-up) and returns a
+		 * scalar correction in meters.
 		 *
 		 * @param satellite Satellite identifier string (e.g. "G01", "E11").
-		 * @param freq_type Frequency type string (e.g. "L1", "L2", "E1").
+		 * @param freq_type RINEX signal code (e.g. "L1C", "C5Q"); the first two
+		 *        characters select the ATX frequency key, and a leading 'L' marks
+		 *        carrier phase (wind-up is applied only then).
 		 * @param system GNSS system enum for the satellite.
 		 * @param rx_pos Receiver ECEF position (meters).
 		 * @param sat_pos Satellite ECEF position (meters).
 		 * @param sat_vel Satellite ECEF velocity (meters/sec).
-		 * @param elevation Satellite elevation angle at receiver (radians or degrees depending on caller convention).
-		 * @param azimuth Satellite azimuth angle at receiver (radians or degrees depending on caller convention).
+		 * @param elevation Satellite elevation angle at the receiver, in degrees
+		 *        (values outside [0, 90] return 0).
+		 * @param azimuth Satellite azimuth angle at the receiver, in degrees
+		 *        (values outside [0, 360) return 0).
 		 * @param rx_antenna_type Receiver antenna model/type string (from RINEX header or configuration).
 		 * @param time Epoch time at which the correction is computed.
-		 * @param sun_pos_hint Optional precomputed Sun ECEF position (meters) —
-		 *        the rigorous per-epoch value cached by Geometry; near-zero
-		 *        means "compute internally".
-		 * @param skip_satellite_pco RTB-5(c): when true, the SATELLITE PCO
-		 *        range term is omitted (satellite PCV, receiver PCO/PCV and
-		 *        wind-up are unaffected).  Used by PppModel when the applied
-		 *        SSR orbit correction is APC-referenced (legacy-SSR dialect):
-		 *        the corrected orbit already points at the antenna phase
-		 *        center, so applying the CoM->APC PCO again would double-count
-		 *        its z-offset (0.6-2.6 m along the LOS).  Default false —
-		 *        every existing caller is byte-identical.
-		 * @return Antenna correction in meters. Positive values should be applied to measured ranges as defined by the caller's convention.
+		 * @param sun_pos_hint Optional precomputed Sun ECEF position (meters),
+		 *        the rigorous per-epoch value cached by Geometry; a norm below
+		 *        1e6 m means "compute internally".
+		 * @param skip_satellite_pco When true, the satellite PCO range term is
+		 *        omitted (satellite PCV, receiver PCO/PCV and wind-up are
+		 *        unaffected).  Used by PppModel when the applied SSR orbit
+		 *        correction is APC-referenced (legacy-SSR dialect): the
+		 *        corrected orbit already points at the antenna phase center, so
+		 *        applying the CoM->APC PCO again would double-count its z-offset
+		 *        (0.6-2.6 m along the LOS).  Default false; with it false the
+		 *        output is unchanged (RTB-5(c)).
+		 * @return Antenna correction in meters (0 for non-finite or out-of-range
+		 *         inputs, or a signal with no ATX frequency key).  Positive values
+		 *         should be applied to measured ranges as defined by the caller's
+		 *         convention.
 		 */
 		double getAntennaCorrection(const std::string& satellite, const std::string& freq_type, System system,
 			const Eigen::Vector3d& rx_pos, const Eigen::Vector3d& sat_pos, const Eigen::Vector3d& sat_vel,
@@ -170,10 +183,11 @@ namespace GnssProcessor {
 		 * @brief Get receiver antenna type from the RINEX header.
 		 *
 		 * Returns the receiver antenna model/type string parsed from the
-		 * observation RINEX file header. If no receiver antenna metadata
-		 * exists, an empty string is returned.
+		 * observation RINEX file header, with all whitespace removed.  If no
+		 * receiver antenna metadata exists, logs a warning and returns an
+		 * empty string.
 		 *
-		 * @return Receiver antenna type string (e.g. "TRMxxxxx") or empty string if unknown.
+		 * @return Whitespace-stripped receiver antenna type (e.g. "TRMxxxxx") or empty string if unknown.
 		 */
 		std::string getReceiverAntennaType() const;
 
@@ -196,18 +210,20 @@ namespace GnssProcessor {
 		/// @brief The accumulator-restart ledger (§10.4 response; see
 		///        GnssCorrections::wuRestarts).
 		const std::map<std::string, GnssCorrections::WuRestart>& wuRestarts() const;
-		/// @brief Clear the restart ledger (the response drain's consume edge).
+		/// @brief Clear the restart ledger (called when the response consumes it).
 		void clearWuRestarts();
 
 		/**
 		 * @brief Dump the receiver antenna model to trace log for ATX comparison.
 		 *
 		 * Looks up the receiver antenna type from the RINEX header, finds the
-		 * matching AntennaData entry, and logs its type, validity interval,
-		 * grid parameters (dazi, dzen, zen1), PCO vectors per frequency, and
-		 * PCV table values. The output is written at trace level to the
-		 * "antenna_model" logger so it can be compared side-by-side with the
-		 * source .ATX file. Only the single receiver entry is dumped;
+		 * AntennaData entry by exact, then substring, match on the normalized
+		 * type (the radome→NONE fallback and the TYPE substitution of
+		 * @ref findReceiverAntennaEntry are not applied here), and logs its type,
+		 * validity interval, grid parameters (dazi, dzen, zen1), PCO vectors per
+		 * frequency, and PCV table values.  The output is written at trace level
+		 * to the "antenna_model" logger so it can be compared side-by-side with
+		 * the source .ATX file.  Only the single receiver entry is dumped;
 		 * satellite models are already traced per-observation in
 		 * getAntennaCorrection().
 		 */
@@ -218,9 +234,13 @@ namespace GnssProcessor {
 		 *        for a given signal.
 		 *
 		 * Maps the RINEX signal code (e.g. "L5Q") to the ATX frequency
-		 * key (e.g. "G05") using the same logic as getAntennaCorrection(),
+		 * key (e.g. "G05") using the same mapping as getAntennaCorrection(),
 		 * then checks whether the matched receiver antenna entry has a PCO
-		 * vector for that key.
+		 * vector for that key.  When
+		 * @c enable_receiver_cross_system_atx_fallback is set, a PCO vector for
+		 * a key on the receiver cross-system chain (nearest GPS band) also
+		 * counts; the in-system @c enable_atx_frequency_fallback chain is not
+		 * consulted.
 		 *
 		 * @param signal  RINEX observation code (e.g. "L5Q", "C7Q").
 		 * @param system  GNSS system of the observation.
@@ -229,10 +249,10 @@ namespace GnssProcessor {
 		bool hasReceiverAtxEntry(const std::string& signal, System system) const;
 
 		/**
-		 * @brief Card GAL (R6): the ROUTE by which the receiver antenna correction of a
-		 *        signal resolves to an ATX frequency.
+		 * @brief The route by which the receiver antenna correction of a signal
+		 *        resolves to an ATX frequency (card GAL, R6).
 		 *
-		 * Runs exactly the resolution @c getAntennaCorrection() runs for the receiver
+		 * Runs the same resolution @c getAntennaCorrection() runs for the receiver
 		 * PCO (the same matching, the same in-system frequency chain under
 		 * @c enable_atx_frequency_fallback, the same receiver-only cross-system chain
 		 * under @c enable_receiver_cross_system_atx_fallback) and names which step
@@ -244,8 +264,9 @@ namespace GnssProcessor {
 		 *                ("E01", "G05", ...), empty when none resolves.
 		 * @return "exact" (the requested key), "same_system" (an in-system frequency
 		 *         substitute), "cross_system" (the nearest GPS band), or "none" (no
-		 *         entry resolves: the receiver correction of the signal is ZERO).  An
-		 *         antenna TYPE unknown to the ANTEX also answers "none".
+		 *         entry resolves, so the receiver correction of the signal is zero).
+		 *         An antenna type unknown to the ANTEX, or a signal with no ATX
+		 *         frequency key, also returns "none".
 		 */
 		std::string receiverAtxFrequencySource(const std::string& signal, System system,
 		                                       std::string* out_key = nullptr) const;
@@ -254,16 +275,18 @@ namespace GnssProcessor {
 		 * @brief Whether the RINEX receiver antenna type matched an ATX model entry.
 		 *
 		 * Runs the same receiver-antenna matching as getAntennaCorrection()
-		 * (@ref findReceiverAntennaEntry on the RINEX-header antenna string, honouring
+		 * (@ref findReceiverAntennaEntry on the RINEX-header antenna string, with
 		 * the always-on type-preserving radome→NONE fallback and the opt-in TYPE-remap
 		 * substitution when @c GnssConfig::enableRxAntennaSubstitution() is set) and
-		 * reports whether ANY entry matched.  A false result therefore means the antenna
-		 * TYPE itself is unknown to the loaded ANTEX (radome mismatches are absorbed by
-		 * the fallback).  When false, EVERY receiver PCO/PCV correction is silently
-		 * zero for this station — getAntennaCorrection() returns only the satellite-side
-		 * terms — so the caller can surface a startup diagnostic instead of relying on
-		 * the per-observation trace being the sole signal.  Does not warn or mutate
-		 * state (unlike the correction path, which passes @c warn_on_ambiguity=true).
+		 * reports whether any entry matched.  A false result means that neither the
+		 * antenna type with its own radome nor the same type with radome NONE is in
+		 * the loaded ANTEX.  In that case every receiver PCO/PCV correction for this
+		 * station is zero without a warning: getAntennaCorrection() returns only the
+		 * satellite-side terms and wind-up.  The caller can therefore report it at
+		 * startup instead of relying on the per-observation trace.  Emits no
+		 * ambiguity warning (the correction path passes @c warn_on_ambiguity=true;
+		 * this query passes false) and does not mutate state.  The TYPE-substitution
+		 * warning still fires when the opt-in table supplies the entry.
 		 *
 		 * @return True iff an ATX entry matches the receiver antenna type.
 		 */
@@ -275,18 +298,19 @@ namespace GnssProcessor {
 		 *
 		 * Runs the same matching as @ref hasReceiverAntennaMatch on the
 		 * RINEX-header antenna string and reports whether the exact/substring
-		 * match MISSED but the radome→NONE fallback then supplied the entry —
+		 * match missed and the radome→NONE fallback then supplied the entry,
 		 * i.e. the station's receiver PCO/PCV comes from the radome-agnostic
-		 * "NONE" calibration of the same physical antenna, not its uncalibrated
-		 * radome code.  This is standard IGS/EPN practice (mm-level) but worth a
-		 * single startup diagnostic so the distinction from an exact match is
-		 * visible.  Returns false when the exact (type, radome) matched, or when
-		 * nothing matched at all (that is @ref hasReceiverAntennaMatch == false).
-		 * Does not warn or mutate state.
+		 * "NONE" calibration of the same physical antenna, not from its
+		 * uncalibrated radome code.  This is standard IGS/EPN practice
+		 * (mm-level); a single startup diagnostic keeps the distinction from an
+		 * exact match visible.  Returns false when the exact (type, radome)
+		 * matched, or when nothing matched at all (that is
+		 * @ref hasReceiverAntennaMatch == false).  Emits no ambiguity warning and
+		 * does not mutate state.
 		 *
 		 * @param out_detail [out,optional] Human-readable description of the
-		 *        substitution ("'<type> <radome>' radome '<radome>' uncalibrated
-		 *        — using ... NONE ...") for a caller's WARN; may be nullptr.
+		 *        substitution (the RINEX type, its uncalibrated radome code and the
+		 *        NONE ATX entry used) for a caller's WARN; may be nullptr.
 		 * @return True iff the receiver antenna matched only through radome→NONE.
 		 */
 		bool receiverAntennaViaRadomeFallback(std::string* out_detail = nullptr) const;
@@ -299,14 +323,20 @@ namespace GnssProcessor {
 		 * Used when @c model_corrections.require_atx_coverage is true
 		 * to filter out observations whose (sat, signal) pair would
 		 * otherwise process without proper antenna calibration.  The
-		 * @c enable_atx_frequency_fallback chain is intentionally
-		 * NOT consulted by this query — strict means strict.
+		 * @c enable_atx_frequency_fallback chain is deliberately not
+		 * consulted by this query.  The one exception is the receiver half:
+		 * when @c enable_receiver_cross_system_atx_fallback is set, a receiver
+		 * entry that has finite PCO and populated PCV for a key on the
+		 * receiver cross-system chain (nearest GPS band) also counts.  The
+		 * satellite entry is the first one whose type contains the PRN; its
+		 * validity window is not checked.
 		 *
 		 * @param satellite Satellite identifier (e.g. "G05", "E11").
 		 * @param signal    RINEX-3 observation code (e.g. "L5Q", "C7Q").
 		 * @param system    GNSS system enum for the satellite.
 		 * @return True iff sat and rx entries each have finite PCO
-		 *         and non-empty PCV for the signal's exact frequency.
+		 *         and non-empty PCV for the signal's exact frequency
+		 *         (or, for the receiver, a cross-system key as above).
 		 */
 		bool hasFullAtxCoverage(const std::string& satellite,
 		                        const std::string& signal,
@@ -318,17 +348,20 @@ namespace GnssProcessor {
 		 *        substitution chain rather than from an exact frequency
 		 *        entry on both sides.
 		 *
-		 * Returns true iff @c hasFullAtxCoverage is false, fallback is
-		 *enabled, and the fallback chain produces a non-empty alternate
-		 * frequency for at least one of the four entries (sat PCO, sat
-		 * PCV, rx PCO, rx PCV).  In that case the antenna correction is
-		 * an approximation derived from a neighbouring frequency — useful
-		 * to know for downstream uncertainty management (looser ambiguity
-		 * process noise, AR exclusion, etc.).
+		 * Returns true iff @c hasFullAtxCoverage is false, the fallback is
+		 * enabled, and the in-system fallback chain resolves a non-empty
+		 * alternate frequency for at least one of the four entries (sat PCO,
+		 * sat PCV, rx PCO, rx PCV), so a substitution on either the satellite
+		 * side or the receiver side is enough.  In that case the antenna
+		 * correction is an approximation derived from a neighbouring
+		 * frequency, which matters for downstream uncertainty management
+		 * (looser ambiguity process noise, AR exclusion, etc.).
 		 *
-		 * Returns false when the strict coverage holds OR when the
-		 * (sat, signal) has no entries at all (the correction is then
-		 * silently zero, not "substituted").
+		 * Returns false when the strict coverage holds, when the fallback is
+		 * disabled, or when the (sat, signal) has no entries at all (the
+		 * correction is then zero, not "substituted").  The receiver
+		 * cross-system chain is not examined here; a receiver covered through
+		 * it makes @c hasFullAtxCoverage true and this query false.
 		 *
 		 * @param satellite Satellite identifier (e.g. "G05").
 		 * @param signal    RINEX-3 observation code (e.g. "L5Q").
@@ -348,7 +381,7 @@ namespace GnssProcessor {
 		LogManager& log_manager_;
 		/** @brief Read-only configuration settings. */
 		const GnssConfig& config_;
-		/** @brief GNSS corrections helper (clocks, ERP, relativistic, etc.). */
+		/** @brief GNSS corrections helper (clocks, ERP, relativistic, etc.); used here for phase wind-up. */
 		GnssCorrections gnss_corrections_;
 		/** @brief Reference to cached antenna models and PCV/PCO data (zero-copy from ProductCache). */
 		const std::vector<AntennaData>& antennas_;
@@ -362,34 +395,35 @@ namespace GnssProcessor {
 		Planetary planetary_;
 
 		/**
-		 * @brief Loads antenna models (ATX/NGS or other formats) into `antennas_`.
+		 * @brief Report the cached antenna model count.
 		 *
-		 * Internal loader that queries `product_parser_` and parses antenna
-		 * model files. Called during construction or on-demand before
-		 * computing corrections.
+		 * `antennas_` is a reference into the ProductCache, so there is nothing
+		 * to load; this method only logs the entry count at debug level.  The
+		 * constructor does not call it, and no other code does.
 		 */
 		void loadAntennaData();
 
 		/**
 		 * @brief Match a RINEX receiver antenna type string to an ATX entry.
 		 *
-		 * Single source of truth for receiver-antenna matching, shared by
+		 * The member entry point for receiver-antenna matching, shared by
 		 * getAntennaCorrection() and the coverage queries
-		 * (hasReceiverAtxEntry / hasFullAtxCoverage / wasAtxSubstituted).
+		 * (hasReceiverAtxEntry / hasFullAtxCoverage / wasAtxSubstituted).  The
+		 * matching itself is @ref matchReceiverAntenna.
 		 * The raw type is whitespace-sanitized and underscore-normalized,
 		 * then matched against @c antennas_ by (1) exact match on either
 		 * normalized form, then (2) first substring containment.  On a miss,
-		 * (3) an ALWAYS-ON, type-preserving radome→NONE fallback (Tier 1)
-		 * retries the same antenna type with a "NONE" radome — the documented
-		 * IGS/EPN practice of borrowing a physical antenna's radome-agnostic
-		 * calibration when its specific radome code is uncalibrated (mm-level);
-		 * finally, only when @c GnssConfig::enableRxAntennaSubstitution() is
-		 * set, (4) a rule-driven TYPE-remap substitution (deprecated-code
-		 * table) is attempted with a warning on success.  The radome→NONE step
-		 * NEVER remaps the antenna TYPE, so a truly unknown model still
-		 * resolves to nothing (zero receiver correction); and because any
-		 * station that matched at (1)/(2) returns early, matched lookups are
-		 * byte-identical to the historical inline matching.
+		 * (3) an always-on, type-preserving radome→NONE fallback (Tier 1)
+		 * retries the same antenna type with a "NONE" radome.  This is the
+		 * documented IGS/EPN practice of borrowing a physical antenna's
+		 * radome-agnostic calibration when its specific radome code is
+		 * uncalibrated (mm-level).  Finally, only when
+		 * @c GnssConfig::enableRxAntennaSubstitution() is set, (4) a rule-driven
+		 * TYPE-remap substitution (deprecated-code table) is attempted, with a
+		 * warning on success.  The radome→NONE step never remaps the antenna
+		 * type, so an unknown model still resolves to nothing (zero receiver
+		 * correction).  A station that matches at (1) or (2) returns before
+		 * steps (3) and (4), so its result does not depend on them.
 		 *
 		 * @param rx_antenna_type Raw receiver antenna type (RINEX header field).
 		 * @param warn_on_ambiguity Emit a warning when >1 substring candidate matches (true only for the correction path).

@@ -61,11 +61,11 @@ bool parseStateD(const std::string& s, double& v) {
     return end == s.c_str() + s.size() && errno != ERANGE;
 }
 
-/// Card JT: median of a scratch vector (sorted IN PLACE — the caller owns it and
-/// never reads the order).  Even population takes the mean of the two central
-/// values; the caller guarantees a non-empty vector.  Deterministic on any build
-/// (std::sort on doubles with no ties broken by address), which the replay
-/// emitter's byte-identity depends on.
+/// Median of a scratch vector, which is sorted in place (the caller owns it and
+/// does not read the order afterwards).  An even population takes the mean of the
+/// two central values; the caller guarantees a non-empty vector.  Deterministic on
+/// any build (std::sort on doubles, no ties broken by address), which the replay
+/// emitter's byte-identity depends on (card JT).
 double medianInPlace(std::vector<double>& v) {
     const std::size_t n = v.size();
     std::sort(v.begin(), v.end());
@@ -113,10 +113,10 @@ double NetworkProductEmitter::discThresholdM(const std::string& sat,
                                              const std::string& signal) const {
     // Legacy flat metre gate unless the per-λ fractional-cycle mode is armed.
     if (disc_threshold_frac_cycles_ <= 0.0) return disc_threshold_m_;
-    // frac·λ(sat,signal): a FIXED contract — λ is a public, static band identity
-    // (deterministic on producer and replay consumer).  λ resolves via SignalBand's
-    // stateless classifier; on an unrecognized signal (λ == 0) fall back to the flat
-    // gate so a stray code never disables the discontinuity test.
+    // frac·λ(sat,signal) is a fixed contract: λ is a public, static property of the
+    // band, so producer and replay consumer compute the same threshold.  λ comes from
+    // SignalBand's stateless classifier; an unrecognized signal (λ == 0) falls back to
+    // the flat gate, so an unknown code does not disable the discontinuity test.
     const auto cls = classifySignalForSat(sat, signal);
     const double lambda = bandNominalWavelengthMeters(cls.band);
     return (lambda > 0.0) ? disc_threshold_frac_cycles_ * lambda : disc_threshold_m_;
@@ -130,23 +130,23 @@ void NetworkProductEmitter::markDatumChange(const std::set<char>& constellations
 void NetworkProductEmitter::markSatDiscontinuity(const std::set<std::string>& satellites,
                                                  unsigned channels) {
     forced_bump_sats_.insert(satellites.begin(), satellites.end());
-    // Card MS: remember WHICH channels this site says moved.  Only under the
-    // per-channel scope — the legacy scope never reads the map, so it is not
-    // built there and that path allocates and behaves exactly as before.  Two
-    // sites marking the same satellite in one epoch OR their masks, which is how
-    // a site that genuinely moves two channels (the T3c δtˢ↔dˢ re-split, an
-    // eph-cutover with an unknown Δ) declares both.
+    // Under the per-channel scope, record which channels the marking site names
+    // (card MS); an empty mask means all channels.  The legacy scope never reads
+    // the map, so it is not built there and that path is unchanged.  Two sites
+    // marking the same satellite in one epoch OR their masks; this is how a site
+    // that moves two channels (the T3c δtˢ↔dˢ re-split, an ephemeris cutover with
+    // an unknown Δ) declares both.
     if (!disc_mark_scope_channel_) return;
     const unsigned mask = (channels & kDiscChanAll) ? (channels & kDiscChanAll) : kDiscChanAll;
     for (const auto& s : satellites) forced_bump_chan_[s] |= mask;
 }
 
 unsigned NetworkProductEmitter::pendingMarkChannels(const std::string& sat) const {
-    // Card PBH.  Read-only twin of emitToStore's constForced/satForced pair: same
-    // two sources, same precedence, and deliberately NOT a refactor of them — the
-    // lambdas carry the card-MS tally and the MarkScopeEvent census as side
-    // effects, and this probe must not move either (a caller runs BEFORE the emit,
-    // so a count here would be a double count there).
+    // Read-only twin of emitToStore's constForced/satForced pair: the same two
+    // sources with the same precedence (card PBH).  It is a separate copy, not a
+    // shared helper, because those lambdas update the card-MS tally and the
+    // MarkScopeEvent census as side effects; callers run this probe before the
+    // emit, so counting here would double-count there.
     unsigned mask = 0u;
     if (!sat.empty() && (force_all_bump_ || forced_bump_consts_.count(sat.front()) != 0))
         mask |= kDiscChanAll;   // a datum change re-declares every channel it reaches
@@ -163,12 +163,12 @@ unsigned NetworkProductEmitter::pendingMarkChannels(const std::string& sat) cons
 
 std::map<char, NetworkProductEmitter::PbSeamConstTally>
 NetworkProductEmitter::pbSeamCensus(const NetworkSolutionEpoch& sol) const {
-    // Deliberately a read-only TWIN of the phase jump test in emitToStore rather than
-    // a refactor of it: the test's three decisions (population, threshold, key
-    // spelling) are reproduced here and nothing else, so this cannot alter a single
-    // emitted byte on any path — the OFF run never calls it and the ON run calls it
-    // strictly before emitToStore.  Keep the two in step: a change to the jump test's
-    // population or threshold belongs here too.
+    // Read-only twin of the phase jump test in emitToStore, kept as a separate copy
+    // so that it cannot change any emitted byte: it reproduces the test's population,
+    // threshold and key spelling and nothing else.  The OFF run does not call it; the
+    // ON run calls it before emitToStore.  The tallied step is the raw ΔPB: the card
+    // CLV level-step removal and the card JT de-commoning are not applied here.  A
+    // change to the jump test's population or threshold belongs here too.
     std::map<char, PbSeamConstTally> out;
     const double epoch_s = sol.epoch_time.week * 604800.0 + sol.epoch_time.tow;
     for (const auto& s : sol.sats) {
@@ -178,7 +178,7 @@ NetworkProductEmitter::pbSeamCensus(const NetworkSolutionEpoch& sol) const {
             const std::string key = s.sat + "|" + signal;
             const auto last_it = last_phase_bias_.find(key);
             if (last_it == last_phase_bias_.end()) continue;          // first sighting: nothing to compare
-            if (staleness_horizon_s_ > 0.0) {                          // RTA-11 staleness: same probe
+            if (staleness_horizon_s_ > 0.0) {                          // same staleness probe as staleKey (RTA-11)
                 const auto seen = phase_last_seen_s_.find(key);
                 if (seen != phase_last_seen_s_.end()
                     && (epoch_s - seen->second) > staleness_horizon_s_)
@@ -211,12 +211,12 @@ int NetworkProductEmitter::clockDiscontinuityCounter(const std::string& sat) con
     return it != clock_disc_counter_.end() ? it->second : 0;
 }
 
-// Card SID phase 5 (E1).  The three tests below are the emitter's OWN
-// first-sighting predicates, verbatim: the phase and code sides test the
-// last-value baseline map (an absent key means no previous emission to difference
-// against, so the jump test is skipped and the baseline is seeded), and the clock
-// side tests the seen-set the A2 channel fills.  They are read strictly BEFORE
-// emitToStore, which is what makes them answer about the PREVIOUS emission.
+// The three tests below are the emitter's own first-sighting predicates, unchanged:
+// the phase and code sides test the last-value baseline map (an absent key means no
+// previous emission to difference against, so the jump test is skipped and the
+// baseline is seeded), and the clock side tests the seen-set that the A2 clock
+// channel fills.  Callers read them before emitToStore, so they describe the
+// previous emission (card SID phase 5, E1).
 bool NetworkProductEmitter::isPhaseFirstSighting(const std::string& sat,
                                                  const std::string& signal) const {
     return last_phase_bias_.find(sat + "|" + signal) == last_phase_bias_.end();
@@ -235,10 +235,10 @@ void NetworkProductEmitter::adoptDiscontinuityCounters(
     const std::map<std::string, int>& phase,
     const std::map<std::string, int>& code,
     const std::map<std::string, int>& clock) {
-    // RTA-4 tail-reader adoption: overwrite ONLY the counters with the file's
-    // authoritative post-emit values.  Baselines / first-sighting markers /
-    // satellite-set trackers stay as the preceding emitToStore seeded them, so
-    // subsequent epochs step increments on top of the adopted values.
+    // Tail-reader adoption (RTA-4): overwrite the counters, and only the counters,
+    // with the file's authoritative post-emit values.  Baselines, first-sighting
+    // markers and satellite-set trackers stay as the preceding emitToStore seeded
+    // them, so later epochs step on top of the adopted values.
     for (const auto& [key, v] : phase) disc_counter_[key]       = v;
     for (const auto& [key, v] : code)  code_disc_counter_[key]  = v;
     for (const auto& [sat, v] : clock) clock_disc_counter_[sat] = v;
@@ -246,18 +246,20 @@ void NetworkProductEmitter::adoptDiscontinuityCounters(
 
 void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
                                         SsrCorrectionStore& store) {
-    // RTA-3: publish the solution-generation id to the store's epoch surface so an
-    // in-process consumer can detect a producer restart (a CHANGE of a present id
-    // = global datum break).  Unset (0) when the producer is not stamping ⇒ the
+    // Publish the solution-generation id on the store's epoch surface so an
+    // in-process consumer can detect a producer restart: a change of a present id is
+    // a global datum break (RTA-3).  When the producer does not stamp one (0), the
     // store field stays absent and the consumer never reacts (byte-identical).
     if (sol.generation_id != 0) store.setGenerationId(sol.generation_id);
 
-    // RTA-11: product-time stamp of this epoch, and the per-channel staleness
-    // probe.  A key whose last emit is further back than the horizon is treated as
-    // a FIRST SIGHTING on its channel (baseline reseed, no jump/forced bump) — the
-    // return after a multi-hour vanish is a first-sighting-after-gap, not a fault.
-    // Product time only (deterministic under replay); maps are populated only when
-    // the horizon is armed, so the OFF path is byte-identical.
+    // Product-time stamp of this epoch and the per-channel staleness probe (RTA-11).
+    // On the phase and code channels, a key whose last emit is further back than the
+    // horizon skips the value-jump test (and, for code, the structural triggers) and
+    // its baseline is overwritten with the new value: a return after a long absence
+    // is not treated as a fault.  A forced datum change still steps the counter on
+    // such a return, on all three channels; the clock channel does not check
+    // staleness at all.  Product time only (deterministic under replay); the maps
+    // are populated only when the horizon is armed, so the OFF path is byte-identical.
     const double epoch_s = sol.epoch_time.week * 604800.0 + sol.epoch_time.tow;
     auto staleKey = [&](const std::map<std::string, double>& last_seen,
                         const std::string& key) {
@@ -268,14 +270,14 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
 
     // --- Code-bias discontinuity pre-pass (H1) ----------------------------
     // Build this epoch's per-(constellation, signal) satellite set and each
-    // satellite's distinct-band tuple FROM THE SOLUTION ITSELF, so the datum
-    // re-reference detection is reproducible on replay with nothing extra
-    // serialized.  The emitted code_bias_m keys are exactly the producer's
-    // registered (sat, signal) shared columns — the same set the per-(const,
-    // signal) sum-to-zero and the per-sat IF pin are built over — so a set or
-    // band-tuple change here is precisely a datum re-reference.  The
-    // constellation key is the satellite ID's leading char, matching
-    // NetworkSbasis::constellationOf used by the producer's sum-to-zero rows.
+    // satellite's distinct-band tuple from the emitted solution alone, so replay
+    // reproduces the datum re-reference detection with nothing extra serialized.
+    // The emitted code_bias_m keys are the producer's registered (sat, signal)
+    // shared columns, the same set that the per-(const, signal) sum-to-zero and the
+    // per-sat IF pin are built over, so a change of set or band tuple here is a
+    // datum re-reference.  The constellation key is the satellite ID's leading
+    // char, matching NetworkSbasis::constellationOf in the producer's sum-to-zero
+    // rows.
     std::map<std::string, std::set<std::string>> cur_code_satset;  // "const|signal" -> sats
     std::map<std::string, std::vector<char>>     cur_band_tuple;   // "sat" -> sorted distinct band digits
     for (const auto& s : sol.sats) {
@@ -289,8 +291,8 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
         }
         cur_band_tuple[s.sat].assign(bands.begin(), bands.end());  // std::set<char> is sorted-unique
     }
-    // Channels whose satellite set changed vs the previous emit.  First-sighting
-    // channels (absent from prev) are intentionally excluded — no step yet.
+    // Channels whose satellite set changed since the previous emit.  First-sighting
+    // channels (absent from prev) are excluded: there is no step yet.
     std::set<std::string> changed_channels;
     for (const auto& [chan, sats] : cur_code_satset) {
         const auto it = prev_code_satset_.find(chan);
@@ -301,13 +303,12 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
     // --- Clock set-change pre-pass (sum-to-zero datum signalling) ---------
     // Under Σδtˢ=0 the clock gauge is re-imposed on each epoch's satellite set,
     // so a membership change redistributes the departing/arriving common-mode
-    // onto every survivor — a genuine datum re-reference the pivot channel never
-    // signals (there is no pivot).  Derived from the emitted epoch itself like
-    // the code set trigger, so replay reproduces the counters with no new
-    // serialization.  First-sighting constellations (absent from prev) are
-    // excluded — no consumer holds their old datum yet.  State is only tracked
-    // when the toggle is armed (OFF path byte-identical, including the
-    // serialized emitter section).
+    // onto every survivor.  That is a datum re-reference the pivot channel does not
+    // signal, since there is no pivot.  Derived from the emitted epoch like the code
+    // set trigger, so replay reproduces the counters with no new serialization.
+    // First-sighting constellations (absent from prev) are excluded: no consumer
+    // holds their old datum yet.  State is tracked only when the toggle is armed,
+    // so the OFF path is byte-identical, including the serialized emitter section.
     std::set<char> clock_set_changed;
     std::map<char, std::set<std::string>> cur_clock_satset;
     if (clock_disc_on_set_change_) {
@@ -320,27 +321,27 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
         }
     }
 
-    // --- Card JT: the per-SIGNAL phase-bias common mode (de-commoned jump test) --
-    // Standing invariant #5: a satellite-COMMON phase-bias move is absorbed by a
-    // consumer's own receiver phase clock, so the quantity that lands in a consumer
-    // ambiguity is the step MINUS the network's median step on that signal.  The raw
-    // test is frame-blind — CST §4 measured a −1.451 m L1W frame move hiding a
-    // +1.409 m per-satellite step under a 0.0476 m bar.
+    // --- Per-signal phase-bias common mode for the de-commoned jump test (card JT) --
+    // A phase-bias move common to all satellites on a signal is absorbed by a
+    // consumer's receiver phase clock (invariant #5), so the quantity that reaches a
+    // consumer ambiguity is the step minus the network's median step on that signal.
+    // The raw test cannot see a frame move: a common move can hide a per-satellite
+    // step of similar size and opposite sign (CST §4).
     //
-    // Population = exactly the jump test's own population, one epoch earlier: keys
-    // carrying a baseline that is not stale under the staleness horizon (a first
-    // sighting or a beyond-horizon return contributes nothing, mirroring staleKey).
-    // The median is taken WITHIN each signal — L1W and L2W phase biases do not share
-    // a common mode (the band-differential part is a different receiver state), and
-    // one median over a mixed population leaks a band-differential move into every
-    // cell.  Computed BEFORE the emit loop, i.e. against the baselines the loop is
-    // about to overwrite.  Nothing here runs (and nothing is allocated) when the knob
-    // is off, so the OFF path is byte-identical.
+    // The population is the jump test's own population: keys with a baseline that is
+    // not stale under the staleness horizon (a first sighting or a beyond-horizon
+    // return contributes nothing, as in staleKey).  The median is taken within each
+    // signal: L1W and L2W phase biases do not share a common mode (the
+    // band-differential part is a different receiver state), and one median over a
+    // mixed population would leak a band-differential move into every cell.  This
+    // runs before the emit loop, against the baselines the loop is about to
+    // overwrite.  With the knob off nothing here runs or allocates, so the OFF path
+    // is byte-identical.
     std::map<std::string, double> pb_common_by_signal;   // signal -> median ΔPB (m)
     std::map<std::string, int>    pb_common_pop;         // signal -> population size
     pb_jump_decommon_events_.clear();
-    // Card MS: per-emit scratch for the mark-scope census (both stay empty/zero
-    // under the legacy satellite scope, so that path allocates nothing).
+    // Per-emit scratch for the mark-scope census (card MS).  Both stay empty or zero
+    // under the legacy satellite scope, so that path allocates nothing.
     mark_scope_events_.clear();
     mark_channel_tally_ = MarkChannelTally{};
     if (disc_jump_test_decommon_) {
@@ -362,22 +363,22 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
     }
 
     // Whether a constellation's datum was force-bumped this emit (A2 per-
-    // constellation scoping).  An empty-arg markDatumChange sets force_all_bump_
-    // (every constellation — the pre-A2 global bump); a scoped call bumps only the
-    // named constellations.
+    // constellation scoping).  markDatumChange with an empty set sets
+    // force_all_bump_, which bumps every constellation (the pre-A2 global bump); a
+    // scoped call bumps only the named constellations.
     auto constForced = [&](char cst) {
         return force_all_bump_ || forced_bump_consts_.count(cst) != 0;
     };
-    // Whether a specific SATELLITE was retro-bumped this emit (B1 markSatDiscontinuity):
-    // a post-emit QC tier flagged its corrections as contaminated last epoch, so its
-    // phase/code/clock counters step now — per-satellite, not constellation-wide.
-    // Card MS: under the per-channel scope the mark applies only to the channels
-    // the marking site named; a channel it did not name is SUPPRESSED, counted,
-    // and gets a MARK_SCOPE event row (invariant #7's decoupling identity).  The
-    // channel's own jump test is untouched and remains the backstop — a phase
-    // bias that genuinely re-realizes under a clock-only mark is still declared
-    // by the `value_jump` branch below.  Under the legacy scope the mask is never
-    // consulted and this reduces to the original set lookup exactly.
+    // Whether a specific satellite was retro-bumped this emit (B1
+    // markSatDiscontinuity): a post-emit QC tier flagged its corrections as
+    // contaminated last epoch, so its phase, code and clock counters step now, for
+    // that satellite only.  Under the per-channel scope (card MS) the mark applies
+    // only to the channels the marking site named; an unnamed channel is suppressed,
+    // counted, and gets a MARK_SCOPE event row (the decoupling identity of
+    // invariant #7).  The channel's own jump test still runs as the backstop: a phase
+    // bias that re-realizes under a clock-only mark is still declared by the
+    // `value_jump` branch below.  Under the legacy scope the mask is not consulted and this is
+    // the plain set lookup.
     auto satForced = [&](const std::string& sat, DiscChannel chan) {
         if (forced_bump_sats_.count(sat) == 0) return false;
         if (!disc_mark_scope_channel_) return true;
@@ -393,8 +394,8 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
             return true;
         }
         // One row per (satellite, suppressed channel) per emit, not per signal:
-        // the CODE and PHASE channels are visited once per signal.  The vector is
-        // at most 3 × (marked satellites) long, so the scan is free.
+        // the code and phase channels are visited once per signal.  The vector holds
+        // at most 3 × (marked satellites) entries, so the linear scan is cheap.
         const bool already =
             std::any_of(mark_scope_events_.begin(), mark_scope_events_.end(),
                         [&](const MarkScopeEvent& e) {
@@ -416,44 +417,47 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
             SsrClockCorrection rec;
             rec.sat           = s.sat;
             rec.c0            = s.clock_c0_m;
-            rec.c1            = s.clock_c1_m_s;   // B3b: two-state clock-model drift (0 when clock_model off ⇒ ZOH)
+            rec.c1            = s.clock_c1_m_s;   // two-state clock-model drift (B3b); 0 with clock_model off (zero-order hold)
             rec.c2            = 0.0;
             rec.received_time = sol.epoch_time;
             rec.epoch_time    = sol.epoch_time;
             rec.iod_ssr       = sol.iod_ssr;
-            // RTF-2 (Card 4 plumbing): carry the per-sat broadcast-anchor IODE +
-            // RTS-orbit echo VALUES from the solution into the wire struct so the
-            // live closed loop AND file replay stamp the store identically.  All
-            // three default to the "unstamped" sentinel (-1 / -1 / {0,0}) in sp3
-            // mode (Card 5 populates them in brdc_rts), so getOrbitClock's clock
-            // gate stays byte-identical (a standalone clock's clock_iode inherits
-            // the paired orbit anchor — Card 3).
+            // Carry the per-sat broadcast-anchor IODE and the RTS-orbit echo values
+            // from the solution into the wire struct, so the live closed loop and
+            // file replay stamp the store identically (RTF-2, Card 4 plumbing).  In
+            // sp3 mode all three hold the "unstamped" sentinel (-1 / -1 / {0,0});
+            // Card 5 populates them in brdc_rts.  getOrbitClock's clock gate is
+            // therefore byte-identical in sp3 mode (a standalone clock's clock_iode
+            // inherits the paired orbit anchor, Card 3).
             rec.iode          = s.clock_iode;
             rec.orbit_iod_ssr = s.orbit_iod_ssr;
             rec.orbit_epoch   = s.orbit_epoch;
-            // M4 (contract v2): carry the per-sat combined CODE-correction σ + code/phase
-            // correlation into the store record so the live closed loop AND file replay
-            // stamp it identically.  Both default 0 (unstamped) unless
-            // network.emit_combined_sigma populated them ⇒ byte-identical store otherwise.
+            // Carry the per-sat combined code-correction σ and the code/phase
+            // correlation into the store record, so the live closed loop and file
+            // replay stamp them identically (M4, contract v2).  Both stay 0
+            // (unstamped) unless network.emit_combined_sigma populated them, so the
+            // store is otherwise byte-identical.
             rec.combined_code_sigma_m = s.sigcc_m;
             rec.code_phase_corr       = s.rho;
 
-            // Clock discontinuity bookkeeping (A2): bump on a scoped datum change
-            // for THIS satellite's constellation (a clock-pivot handover).  First
-            // sighting records only (counter stays 0) so the consumer's
-            // noteSsrDiscontinuity reacts only to CHANGES.  Gated on emit_clock_disc_
-            // so a pre-A2 store is byte-identical (rec.disc_counter stays 0).
+            // Clock discontinuity bookkeeping (A2): step the counter on a datum
+            // change scoped to this satellite's constellation (a clock-pivot
+            // handover), on a B1 satellite mark, or on a clock-set change.  A first
+            // sighting only records the satellite (counter stays 0), so the
+            // consumer's noteSsrDiscontinuity reacts only to changes.  Gated on
+            // emit_clock_disc_, so a pre-A2 store is byte-identical
+            // (rec.disc_counter stays 0).
             if (emit_clock_disc_) {
                 int&       cctr        = clock_disc_counter_[s.sat];  // value-inits to 0
                 const bool seen_before = seen_clock_sats_.count(s.sat) != 0;
-                // RTA-11 fix: the clock counter has ONLY datum-change components
-                // (no magnitude jump test), so a genuine clock datum move — a
-                // pivot handover / re-declaration, or under the sum-to-zero datum
-                // a constellation clock-set change (clock_disc_on_set_change) —
-                // must still step it even when the satellite returns beyond the
-                // staleness horizon: a consumer that kept its state across the
-                // gap needs the reset.  (staleKey only exists to suppress the
-                // SPURIOUS jump test on the phase/code channels.)
+                // The clock counter has only datum-change triggers (no magnitude
+                // jump test), and it does not check staleness (RTA-11): a clock
+                // datum move (a pivot handover or re-declaration, or under the
+                // sum-to-zero datum a constellation clock-set change,
+                // clock_disc_on_set_change) steps it even when the satellite returns
+                // beyond the staleness horizon, because a consumer that kept its
+                // state across the gap needs the reset.  staleKey exists only to
+                // suppress a spurious jump test on the phase and code channels.
                 if (seen_before && !s.sat.empty()
                     && (constForced(s.sat[0]) || satForced(s.sat, kDiscChanClock)
                         || clock_set_changed.count(s.sat[0]) != 0)) ++cctr;
@@ -464,9 +468,9 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
 
             store.pushClock(rec, header);
 
-            // B1: per-satellite URA quality channel (EWMA(σ̂0)×formal clock σ, computed
-            // by the driver).  Only pushed when the producer populated it (emit_ura on);
-            // absent otherwise so the store is byte-identical.
+            // Per-satellite URA quality channel (B1): EWMA(σ̂0) × formal clock σ,
+            // computed by the driver.  Pushed only when the producer populated it
+            // (emit_ura on); absent otherwise, so the store is byte-identical.
             if (s.has_ura) {
                 SsrUra ura;
                 ura.sat           = s.sat;
@@ -485,8 +489,8 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
 
             // The per-satellite ionosphere-free pin re-references when this
             // satellite's distinct-band set changes (a band drops, or it falls
-            // to a single distinct frequency → the all-ones gauge), even with
-            // NO (const,signal) membership change → step all its code biases.
+            // to a single distinct frequency and takes the all-ones gauge), even
+            // without a (const,signal) membership change; all its code biases step.
             const auto bt_it = prev_band_tuple_.find(s.sat);
             const bool sat_band_changed =
                 (bt_it != prev_band_tuple_.end() && cur_band_tuple[s.sat] != bt_it->second);
@@ -495,31 +499,31 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
                 const std::string key  = s.sat + "|" + signal;
                 const std::string chan = std::string(1, s.sat[0]) + "|" + signal;
 
-                // Bump on a forced (clock-pivot) datum change, a per-(const,
-                // signal) sum-to-zero set re-reference, or this satellite's IF-
-                // pin band-set change.  First sighting records the bias and
-                // leaves the counter at 0 — the consumer's noteSsrDiscontinuity
-                // reacts only to CHANGES, so a steady counter never triggers.
+                // Step on a forced (clock-pivot) datum change, a per-(const,
+                // signal) sum-to-zero set re-reference, this satellite's IF-pin
+                // band-set change, or the opt-in value jump.  A first sighting
+                // records the bias and leaves the counter at 0; the consumer's
+                // noteSsrDiscontinuity reacts only to changes, so a steady counter
+                // never triggers.
                 int&       ctr           = code_disc_counter_[key];  // value-inits to 0 on first sight
                 const auto cb_last_it    = last_code_bias_.find(key);
                 const bool have_baseline = (cb_last_it != last_code_bias_.end());
                 const bool fresh         = have_baseline && !staleKey(code_last_seen_s_, key);
                 const bool forced        = (!s.sat.empty() && constForced(s.sat[0]))
-                                           || satForced(s.sat, kDiscChanCodeBias);  // B1 retro-bump (per-sat, card MS: code channel)
-                // Opt-in magnitude test (network.code_bias_disc_jump_test): the
-                // phase jump test applied to code, catching the weak-separation
-                // VALUE wander the structural triggers cannot see (they detect
-                // gauge re-references only, not the estimate walking).  Same
-                // fresh-baseline suppression as phase.
+                                           || satForced(s.sat, kDiscChanCodeBias);  // per-sat retro-bump on the code channel (B1, card MS)
+                // Opt-in magnitude test (network.code_bias_disc_jump_test): the phase
+                // jump test applied to code.  It catches value wander under weak
+                // separation, which the structural triggers cannot see (they detect
+                // gauge re-references, not the estimate drifting).  A stale baseline
+                // suppresses it, as on the phase side.
                 const bool value_jump = code_bias_jump_test_ && have_baseline
                     && std::abs(bias - cb_last_it->second) > discThresholdM(s.sat, signal);
-                // RTA-11 fix: a genuine forced datum change steps the counter even
-                // on a beyond-horizon return (the consumer may still hold
-                // old-datum state), but the STRUCTURAL re-reference signals
-                // (per-(const,signal) sum-to-zero channel change, IF-pin band-set
-                // change) and the opt-in value-jump test are suppressed on a stale
-                // baseline — exactly like the phase jump test — since they are
-                // computed against stale state.
+                // A forced datum change steps the counter even on a beyond-horizon
+                // return, since the consumer may still hold old-datum state (RTA-11).
+                // The structural re-reference triggers (per-(const,signal)
+                // sum-to-zero channel change, IF-pin band-set change) and the opt-in
+                // value-jump test are suppressed on a stale baseline, as the phase
+                // jump test is, because they compare against stale state.
                 if (have_baseline && (forced
                         || (fresh && (changed_channels.count(chan) || sat_band_changed
                                       || value_jump)))) {
@@ -541,34 +545,34 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
             for (const auto& [signal, npb] : s.phase_bias) {
                 const std::string key = s.sat + "|" + signal;
 
-                // Discontinuity bookkeeping (stream state the estimator can't
-                // know): bump on the first jump beyond threshold, or on a forced
-                // datum change.  First sighting records the bias and leaves the
-                // counter at 0 — the consumer's noteSsrDiscontinuity only reacts
-                // to CHANGES, so a steady counter never triggers a reset.
+                // Discontinuity bookkeeping (stream state the estimator does not
+                // know): step on a jump beyond the threshold or on a forced datum
+                // change.  A first sighting records the bias and leaves the counter
+                // at 0; the consumer's noteSsrDiscontinuity reacts only to changes,
+                // so a steady counter never triggers a reset.
                 int& ctr = disc_counter_[key];   // value-inits to 0 on first sight
                 const auto last_it       = last_phase_bias_.find(key);
                 const bool have_baseline = (last_it != last_phase_bias_.end());
                 const bool fresh         = have_baseline && !staleKey(phase_last_seen_s_, key);
                 const bool forced        = (!s.sat.empty() && constForced(s.sat[0]))
-                                           || satForced(s.sat, kDiscChanPhaseBias); // B1 retro-bump (per-sat, card MS: phase channel)
-                // RTA-11 fix: a genuine forced datum change (clock-pivot handover /
-                // global re-declaration) steps the counter even on a beyond-horizon
-                // return — a consumer with an unbroken carrier arc across the gap
-                // still needs the reset signal.  The JUMP TEST, by contrast, is
-                // suppressed on a stale baseline: an hours-stale comparison would
-                // mint a spurious bump on the satellite's mere re-appearance.
+                                           || satForced(s.sat, kDiscChanPhaseBias); // per-sat retro-bump on the phase channel (B1, card MS)
+                // A forced datum change (clock-pivot handover or global
+                // re-declaration) steps the counter even on a beyond-horizon return,
+                // because a consumer with an unbroken carrier arc across the gap still
+                // needs the reset (RTA-11).  The jump test is suppressed on a stale
+                // baseline: a comparison against an hours-old value would produce a
+                // spurious bump when the satellite reappears.
                 //
-                // Card JT: when armed, the test screens the DE-COMMONED step; the
+                // With card JT armed, the test screens the de-commoned step; the
                 // threshold, the population and the forced/fresh structure above are
-                // untouched.  A cell already FORCED is declared regardless and is not
-                // classified — the census counts only declarations this knob decides.
+                // unchanged.  A forced cell is declared regardless and is not
+                // classified: the census counts only declarations this knob decides.
                 bool value_jump = false;
                 if (fresh) {
-                    // Card CLV: the satellite's declared level step (the C-record lvl=
-                    // token) is removed first: the clock record moved by the same amount,
-                    // so the phase side did not step.  0 on an unarmed wire, so this is
-                    // the pre-card difference bit for bit.
+                    // The satellite's declared level step (the C-record lvl= token) is
+                    // removed first: the clock record moved by the same amount, so the
+                    // phase side did not step (card CLV).  It is 0 on an unarmed wire,
+                    // so the difference is then bit-identical to the pre-card one.
                     const double raw_d = (npb.bias_m - last_it->second) - s.level_step_m;
                     const double bar   = discThresholdM(s.sat, signal);
                     const bool   raw_over = std::abs(raw_d) > bar;
@@ -581,8 +585,8 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
                         const auto pop_it = pb_common_pop.find(signal);
                         const int  pop    = (pop_it != pb_common_pop.end()) ? pop_it->second : 0;
                         if (pop < kDiscDecommonMinSats) {
-                            // A thin signal's median is not a frame: fall back to the
-                            // RAW test, exactly as a missing baseline does, and count it.
+                            // Too few samples on this signal to estimate a common
+                            // mode: fall back to the raw test and record the fallback.
                             value_jump = raw_over;
                             if (!forced) {
                                 pb_jump_decommon_events_.push_back(
@@ -615,14 +619,14 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
                 entry.signal_integer        = npb.signal_integer;
                 entry.wide_lane_integer     = npb.wide_lane_integer;
                 entry.discontinuity_counter = ctr;
-                entry.sigma_m               = npb.sigma_m;   // B1b: 0 unless emit_phase_bias_sigma populated it (gauge-exact); no wire record, in-process store only.
-                entry.combined_sigma_m      = npb.sigc_m;     // M4: combined phase-correction σ (clock+phasebias); 0 unless emit_combined_sigma populated it.
-                // Card PBH: the hold generation, stamped through from the emitted
-                // epoch.  0 unless networkPbHold held this key (knob OFF ⇒ every
-                // entry reads 0 ⇒ the consumer's pre-card path, byte-identical).
-                // The hold ran BEFORE this function, so the value-jump test above
-                // has already screened the HELD value, which is what the consumer
-                // receives — the declaration and the payload agree by construction.
+                entry.sigma_m               = npb.sigma_m;   // 0 unless emit_phase_bias_sigma populated it (gauge-exact); in-process store only, no wire record (B1b)
+                entry.combined_sigma_m      = npb.sigc_m;     // combined phase-correction σ (clock + phase bias); 0 unless emit_combined_sigma populated it (M4)
+                // Hold generation, passed through from the emitted epoch (card PBH).
+                // 0 unless networkPbHold held this key; with the knob off every entry
+                // reads 0 and the consumer takes its pre-card path (byte-identical).
+                // The hold runs before this function, so the value-jump test above
+                // has screened the held value, which is what the consumer receives:
+                // the declaration and the payload agree.
                 entry.hold_generation       = npb.hold_generation;
                 rec.bias_per_signal[signal] = entry;
             }
@@ -630,42 +634,40 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
         }
     }
 
-    // Replace (never merge) the previous-epoch code-bias trackers with this
-    // epoch's — a channel/satellite that vanishes then returns is a clean
-    // first-sighting on both live and a fresh replay process, so the counters
-    // reproduce deterministically.
+    // Replace (never merge) the previous-epoch code-bias trackers with this epoch's:
+    // a channel or satellite that disappears and returns is then a first sighting
+    // both live and in a fresh replay process, so the counters reproduce
+    // deterministically.
     prev_code_satset_ = std::move(cur_code_satset);
     prev_band_tuple_  = std::move(cur_band_tuple);
     if (clock_disc_on_set_change_) prev_clock_satset_ = std::move(cur_clock_satset);
 
-    // Forced-bump consumption (RT0-5 seam, P0-1 precedent: the emitter's stream
-    // state must describe the last EMITTED product).  A constellation's forced
-    // datum bump is consumed ONLY if at least one of its satellites was in THIS
-    // epoch's emission; a constellation with ZERO satellites here (its sats were
-    // stripped by the runaway quarantine, or all set below the horizon) keeps the
-    // flag PENDING so the bump lands at the first emit where it reappears.
-    // Consuming it now would lose the discontinuity signal entirely: none of the
-    // constellation's (sat,signal) keys were processed above, so no counter
-    // stepped, and on its return the consumer would integrate new-datum values
-    // against old-datum ambiguity state with no notification.
+    // Forced-bump consumption (RT0-5 seam; as in P0-1, the emitter's stream state
+    // describes the last emitted product).  A constellation's forced datum bump is
+    // consumed only if at least one of its satellites was in this epoch's emission.
+    // A constellation with no satellites here (removed by the runaway quarantine,
+    // or all set below the horizon) keeps the flag pending, so the bump lands at
+    // the first emit where it reappears.  Consuming it now would lose the
+    // discontinuity signal: none of the constellation's (sat,signal) keys were
+    // processed above, so no counter stepped, and on its return the consumer would
+    // combine new-datum values with old-datum ambiguity state without notice.
     //
-    // Replay-deterministic by construction: the pending state is a pure function
-    // of (the emitted epoch sequence, the markDatumChange calls), and the product
-    // file reproduces both — the E-line datum_consts are recorded on the TRIGGER
-    // epoch (even for a constellation pruned from that epoch) and the replayed
-    // epochs are the same pruned epochs, so a fresh replay emitter defers and
-    // lands the bump on exactly the same epochs.  In the normal case (every
-    // flagged constellation present) everything clears here, exactly as before.
+    // This is replay-deterministic: the pending state is a function of the emitted
+    // epoch sequence and the markDatumChange calls, and the product file reproduces
+    // both.  The E-line datum_consts are recorded on the trigger epoch (even for a
+    // constellation pruned from that epoch) and the replayed epochs are the same
+    // pruned epochs, so a fresh replay emitter defers and lands the bump on the same
+    // epochs.  When every flagged constellation is present, everything clears here.
     std::set<char> present_consts;
     for (const auto& s : sol.sats)
         if (!s.sat.empty()) present_consts.insert(s.sat[0]);
     if (force_all_bump_) {
-        // The global (empty-arg) bump forces EVERY constellation.  A TRACKED
-        // constellation (one with previously-emitted keys — i.e. a consumer may
-        // hold old-datum state for it) that is absent from this epoch would lose
-        // the bump, so demote it to the scoped pending set; it lands at its next
-        // actual emit.  "Tracked" derives from the emitter's own emitted-key
-        // state, itself a pure function of the emitted sequence (replay-safe).
+        // The global (empty-set) bump forces every constellation.  A tracked
+        // constellation (one with previously emitted keys, for which a consumer may
+        // hold old-datum state) that is absent from this epoch would lose the bump,
+        // so it moves to the scoped pending set and lands at its next emit.
+        // "Tracked" is derived from the emitter's own emitted-key state, which is a
+        // function of the emitted sequence and therefore replay-safe.
         auto pendIfAbsent = [&](char cst) {
             if (present_consts.count(cst) == 0) forced_bump_consts_.insert(cst);
         };
@@ -681,26 +683,28 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
         if (present_consts.count(*it)) it = forced_bump_consts_.erase(it);   // landed above
         else ++it;                                                           // pending
     }
-    // B1 retro-bump: consumed by this one emit.  The driver only marks satellites
-    // present in the (post-quarantine) epoch — an absent flagged sat stays pending
-    // DRIVER-side (ura_retro_sats) and is neither marked nor serialized in this
-    // epoch's R record, so mark == land and replay re-marks exactly the landed sats.
+    // The B1 retro-bump is consumed by this emit.  The driver marks only satellites
+    // present in the post-quarantine epoch; an absent flagged satellite stays
+    // pending on the driver side (ura_retro_sats) and is neither marked nor
+    // serialized in this epoch's R record.  Every mark therefore lands, and replay
+    // re-marks the same satellites.
     forced_bump_sats_.clear();
-    forced_bump_chan_.clear();   // card MS: the mask map is kept in step with the set
+    forced_bump_chan_.clear();   // the mask map is kept in step with the set (card MS)
 }
 
 void NetworkProductEmitter::serializeState(std::ostream& os) const {
-    // Header carries the construction parameters so a restore into a
-    // differently-configured emitter fails (belt-and-suspenders on top of the
-    // snapshot's config fingerprint).  fmt "{}" = shortest round-trip double.
-    // v1 (three parameters) is written whenever the two optional discontinuity
-    // channels are OFF, so a default-config snapshot is byte-identical to
-    // pre-channel builds and old snapshots restore into off-emitters; v2 appends
-    // the two channel flags only when one is armed.
+    // The header carries the construction parameters, so a restore into a
+    // differently configured emitter fails (a second check in addition to the
+    // snapshot's config fingerprint).  fmt "{}" writes the shortest round-trip
+    // double.  v1 (three parameters) is written when both optional discontinuity
+    // channels are off and the fractional-cycle mode is not armed, so a
+    // default-config snapshot is byte-identical to pre-channel builds and old
+    // snapshots restore into emitters with the channels off; v2 appends the two
+    // channel flags when either is armed.
     if (disc_threshold_frac_cycles_ > 0.0) {
-        // v3 = the v2 fields + the H3 per-λ fractional-cycle threshold.  Written
-        // ONLY when the frac mode is armed, so a legacy (frac==0) snapshot stays v1
-        // or v2 and is byte-identical to a pre-H3 build.
+        // v3 = the v2 fields plus the H3 per-λ fractional-cycle threshold.  Written
+        // only when the fractional mode is armed, so a legacy (frac == 0) snapshot
+        // stays v1 or v2 and is byte-identical to a pre-H3 build.
         os << "EMITTER,v3," << fmt::format("{}", disc_threshold_m_) << ','
            << (emit_clock_disc_ ? 1 : 0) << ','
            << fmt::format("{}", staleness_horizon_s_) << ','
@@ -759,8 +763,8 @@ void NetworkProductEmitter::serializeState(std::ostream& os) const {
         os << "elc," << k << ',' << fmt::format("{}", v) << '\n';
     for (const auto& [k, v] : clock_last_seen_s_)
         os << "elk," << k << ',' << fmt::format("{}", v) << '\n';
-    // RT0-5/B1 pending forced-bump state — the deferred datum bumps that MUST
-    // land after a resume.  efa is written unconditionally so an all-defaults
+    // Pending forced-bump state (RT0-5, B1): the deferred datum bumps that still
+    // have to land after a resume.  efa is always written, so an all-defaults
     // emitter still round-trips a non-empty section.
     os << "efa," << (force_all_bump_ ? 1 : 0) << '\n';
     if (!forced_bump_consts_.empty()) {
@@ -768,10 +772,11 @@ void NetworkProductEmitter::serializeState(std::ostream& os) const {
         for (char c : forced_bump_consts_) os << c;
         os << '\n';
     }
-    // Card MS: under the per-channel scope the mark's CHANNEL MASK is part of the
-    // pending state — without it a resume would land a narrow mark as a wide one.
-    // The third field is written ONLY under that scope, so a legacy (satellite-
-    // scope) snapshot is byte-identical to a pre-MS build and restores into any.
+    // Under the per-channel scope the mark's channel mask is part of the pending
+    // state; without it a resume would land a mark on fewer channels as a mark on
+    // all channels (card MS).  The third field is written only under that scope, so
+    // a legacy (satellite-scope) snapshot is byte-identical to a pre-MS build and
+    // restores into either scope.
     for (const auto& s : forced_bump_sats_) {
         os << "efs," << s;
         if (disc_mark_scope_channel_) {
@@ -790,8 +795,9 @@ bool NetworkProductEmitter::restoreState(std::istream& is) {
     if (!line.empty() && line.back() == '\r') line.pop_back();
     {
         const std::vector<std::string> h = splitStateLine(line);
-        // v1 = the three legacy parameters (both optional channels implicitly
-        // OFF); v2 appends the code-bias jump-test + clock set-change flags.
+        // v1 = the three legacy parameters (both optional channels implicitly off);
+        // v2 appends the code-bias jump-test and clock set-change flags; v3 appends
+        // the fractional-cycle threshold to v2.
         const bool v1 = (h.size() == 5 && h[0] == "EMITTER" && h[1] == "v1");
         const bool v2 = (h.size() == 7 && h[0] == "EMITTER" && h[1] == "v2");
         const bool v3 = (h.size() == 8 && h[0] == "EMITTER" && h[1] == "v3");
@@ -804,10 +810,11 @@ bool NetworkProductEmitter::restoreState(std::istream& is) {
             return false;
         if (v3 && !parseStateD(h[7], frac))
             return false;
-        // Parameter mismatch = the snapshotting producer ran a different emitter
-        // config than this one — the stream state would be interpreted under the
-        // wrong rules (jump threshold, clock channel, staleness horizon, optional
-        // discontinuity channels, per-λ fractional-cycle threshold).  Cold.
+        // A parameter mismatch means the snapshotting producer ran a different
+        // emitter config, and the stream state would be interpreted under the wrong
+        // rules (jump threshold, clock channel, staleness horizon, optional
+        // discontinuity channels, per-λ fractional-cycle threshold).  The restore
+        // fails and the emitter starts cold.
         if (thr != disc_threshold_m_ || (clk != 0) != emit_clock_disc_
             || stale != staleness_horizon_s_
             || (cbj != 0) != code_bias_jump_test_
@@ -820,7 +827,7 @@ bool NetworkProductEmitter::restoreState(std::istream& is) {
     std::map<std::string, int>    st_disc, st_clock_disc, st_code_disc;
     std::map<std::string, double> st_last_pb, st_last_cb;
     std::set<std::string>         st_seen_clock, st_forced_sats;
-    std::map<std::string, unsigned> st_forced_chan;   // card MS: mark -> channel mask
+    std::map<std::string, unsigned> st_forced_chan;   // mark -> channel mask (card MS)
     std::map<std::string, std::set<std::string>> st_satset;
     std::map<std::string, std::vector<char>>     st_band;
     std::map<char, std::set<std::string>>        st_clock_satset;
@@ -888,8 +895,9 @@ bool NetworkProductEmitter::restoreState(std::istream& is) {
             if (f.size() != 2 || f[1].empty()) return false;
             for (char c : f[1]) st_forced_consts.insert(c);
         } else if (tag == "efs") {
-            // Card MS: 2 fields = a legacy (satellite-scope) mark; 3 = the mark
-            // plus its channel mask.  Both accepted so a snapshot crosses the knob.
+            // 2 fields = a legacy (satellite-scope) mark; 3 = the mark plus its
+            // channel mask (card MS).  Both are accepted, so a snapshot restores
+            // under either knob setting.
             if ((f.size() != 2 && f.size() != 3) || f[1].empty()) return false;
             st_forced_sats.insert(f[1]);
             if (f.size() == 3) {
@@ -919,7 +927,7 @@ bool NetworkProductEmitter::restoreState(std::istream& is) {
     force_all_bump_     = st_force_all;
     forced_bump_consts_ = std::move(st_forced_consts);
     forced_bump_sats_   = std::move(st_forced_sats);
-    forced_bump_chan_   = std::move(st_forced_chan);   // card MS (empty on a legacy snapshot)
+    forced_bump_chan_   = std::move(st_forced_chan);   // empty on a legacy snapshot (card MS)
     return true;
 }
 

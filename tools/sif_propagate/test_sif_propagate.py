@@ -234,17 +234,17 @@ def test_occupation_mode(reg):
     """[4] 'latest' occupation mode (NGS datasheet convention).
 
     CORV00USA has a break at the 2019-07 antenna swap: the window covering
-    2010.0 is 1998-04-26..2019-08-03, the LATEST is 2019-08-04..open.  The NGS
-    datasheet AH2488 (NAD83(2011) epoch 2010.00) is built from the LATEST
+    2010.0 is 1998-04-26..2019-08-03, the 'latest' one is 2019-08-04..open.  The
+    NGS datasheet AH2488 (NAD83(2011) epoch 2010.00) is built from the 'latest'
     occupation propagated linearly back, so only that route closes on the
-    published value (0.4 mm, vs 32.8 mm for the covering window -- the closure
+    published value (0.4 mm, vs 32.8 mm for the covering window; the closure
     through the epoch-matched ITRF2020->NAD83(2011) Helmert is demonstrated in
     corv_worked_example.py, which is not run here to keep this test
     dependency-free).
     """
     print("[4] OCCUPATION selection modes")
-    # (b) CORV latest + no-periodic at 2010.0 == the linear propagation of the
-    #     current occupation: X20 + V*(2010.0 - 2020.0).
+    # (b) CORV 'latest' + no-periodic at 2010.0 equals the linear propagation of
+    #     the current occupation: X20 + V*(2010.0 - 2020.0).
     expect = (-2498423.3133, -3802819.9155, 4454736.7162)
     corv = reg.find("CORV00USA")
     if check(corv is not None, "CORV00USA found"):

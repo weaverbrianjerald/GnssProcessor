@@ -1,40 +1,41 @@
-"""Part-B SPP reference runs — single-frequency broadcast vs ionosphere-free precise.
+"""Part-B SPP reference runs: single-frequency broadcast vs ionosphere-free precise.
 
-The only *graded* part of the exam whose reference solution the processor cannot
-produce: ``gnss_processor`` has no WLS/SPP estimator mode, so the two Part-B legs
-are solved author-side by ``gnss_simulator spp-reference``, which reads the
-shipped RINEX back through the production ``RinexParser`` (the student's view) and
-runs an epoch-wise elevation-weighted Gauss-Newton WLS.  Its outputs
-(``truth_spp.csv`` per epoch + ``truth_spp_summary.json`` stats) are pure numbers;
-this viewer is their dashboard.  It is truth-only — no ``state_trace`` join — so it
-draws on a truth dir alone and auto-skips when ``--truth-dir`` is unset.
+This is the only graded part of the exam whose reference solution the processor
+cannot produce: ``gnss_processor`` has no WLS/SPP estimator mode, so the two
+Part-B legs are solved author-side by ``gnss_simulator spp-reference``, which
+reads the shipped RINEX back through the production ``RinexParser`` (the
+student's view) and runs an epoch-wise elevation-weighted Gauss-Newton WLS.  Its
+outputs (``truth_spp.csv`` per epoch + ``truth_spp_summary.json`` stats) are
+plain numbers; this viewer is their dashboard.  It uses truth only (no
+``state_trace`` join), so it draws on a truth dir alone and auto-skips when
+``--truth-dir`` is unset.
 
 Panels:
 
   (a) 3D error vs time for both legs on a log axis, with each leg's median;
-  (b) the hourly-mean ladder — leg 1 tracks the storm's VTEC, leg 2 is flat
+  (b) the hourly-mean ladder: leg 1 tracks the storm's VTEC, leg 2 is flat
       (code IF cancels first-order iono; scintillation is phase-only);
-  (c) signed E/N/U on ONE shared scale — leg 1's error is almost entirely Up
+  (c) signed E/N/U on one shared scale: leg 1's error is almost entirely Up
       (the iono projects onto the vertical), leg 2's is not;
   (d) the four paired A/B ablations (Klobuchar, TGD, broadcast-vs-precise orbits,
-      OSB) as per-epoch differences about their mean — the rubric's credit items.
+      OSB) as per-epoch differences about their mean (the rubric's credit items).
       **Figure off by default** (``show_ablations``); the numbers stay in the
       read-out;
   (d2) formal σ3D vs realised 3D error as a per-leg **scatter** on log-log axes,
-      with a 1:1 reference and each leg's correlation — the covariance-honesty
-      exhibit;
+      with a 1:1 reference and each leg's correlation (the covariance
+      calibration panel);
   (e) receiver clock: the leg-1-minus-leg-2 ``c·dt`` difference, i.e. the
-      common-mode ionosphere the single-frequency solution hides in its clock.
+      common-mode ionosphere the single-frequency solution absorbs into its clock.
       **Figure off by default** (``show_clock_difference``); the median stays in
-      the read-out. The "each leg about its own median" panel still draws;
-  (f) satellites used + PDOP per leg — leg 1 screens the broadcast-unhealthy G01,
+      the read-out.  The per-leg detrended clock panel still draws;
+  (f) satellites used + PDOP per leg: leg 1 screens the broadcast-unhealthy G01,
       leg 2 keeps it (the precise products carry it).
 
 Statistics are computed from ``truth_spp.csv`` itself, since the grading bands are
 keyed to *that file* at the student's chosen epochs.  ``truth_spp_summary.json``
 is read only for the model ledger (estimator / modeled / unmodeled prose) and is
-cross-checked against the computed medians — a mismatch means the summary is
-stale relative to the CSV and says so in the read-out.
+cross-checked against the computed medians; a mismatch means the summary is
+stale relative to the CSV, and the read-out says so.
 
 Pairing note (matches the C++ ``paired_mean_delta_3d_m``): the precise-orbit twin
 is the **no-TGD** variant, so the broadcast orbit/clock ablation is
@@ -174,12 +175,12 @@ def build_exam_spp_reference(ctx, *, show_ablations: bool = False,
                              show_clock_difference: bool = False) -> ViewerResult:
     """Part-B reference dashboard.
 
-    ``show_ablations`` / ``show_clock_difference`` default **off** (professor
-    review 2026-08-06: the dashboard was too crowded).  Both are figure-level
-    switches only -- the ablation table and the clock-difference median stay in
-    the text read-out either way, so nothing is lost from the grader record.
-    Turn them back on by binding the partial, the way ``run_report._registry_for``
-    already does for the standardized residual panels.
+    ``show_ablations`` / ``show_clock_difference`` default **off** to keep the
+    dashboard readable.  Both are figure-level switches only: the ablation table
+    and the clock-difference median stay in the text read-out either way, so
+    nothing is lost from the grader record.  They are enabled by binding a
+    partial, as ``run_report._registry_for`` does for the standardized residual
+    panels.
     """
     spp = ec.require_truth(ctx, "truth_spp.csv")
     if "week" not in spp.columns or "tow_s" not in spp.columns:
@@ -222,16 +223,16 @@ def build_exam_spp_reference(ctx, *, show_ablations: bool = False,
     figures.append(Figure(name="Part-B 3D error", axes=[axa], width=13, height=4.4))
 
     # ------------------------------------------------------- (b) hourly ladder
-    # Step-drawn so each bar spans its hour; this is the panel that shows leg 1
-    # tracking the VTEC while leg 2 ignores the storm entirely.
+    # One point per hour, joined by a line; this panel shows leg 1 tracking the
+    # VTEC while leg 2 stays flat through the storm.
     h1 = _hourly_mean(hours, l1_3d)
     h2 = _hourly_mean(hours, if_3d)
     if h1 and h2:
-        # An arc that starts/ends mid-hour leaves a stub bucket (the hero's last
-        # hour holds ONE epoch).  A 1-sample mean is not an hourly mean: quoting
-        # the range over it turned leg 2's genuinely flat 2.5-3.4 m ladder into a
-        # spurious "2.5 -> 5.2 m". Stub buckets stay on the plot, drawn dashed and
-        # excluded from the quoted range.
+        # An arc that starts or ends mid-hour leaves a stub bucket (as small as
+        # one epoch).  A stub's mean is not an hourly mean and can distort the
+        # quoted range, so buckets below half the modal size (_full_hours) are
+        # excluded from the quoted range and named in its note.  They stay on the
+        # plotted lines, drawn like every other hour.
         full = _full_hours(h1, h2)
         axb = Axes(title="Hourly mean 3D error — leg 1 tracks the storm's VTEC, leg 2 is flat",
                    xlabel="Hour of day (GPS scale)", ylabel="mean 3D error (m)",
@@ -262,9 +263,9 @@ def build_exam_spp_reference(ctx, *, show_ablations: bool = False,
         figures.append(Figure(name="Hourly ladder", axes=[axb], width=13, height=3.8))
 
     # -------------------------------------------------------------- (c) E/N/U
-    # Both legs on ONE shared symmetric scale — the whole point is that leg 1's
-    # error is a vertical bias and leg 2's is not; per-axes autoscaling would
-    # hide exactly that.
+    # Both legs on one shared symmetric scale: the panel shows that leg 1's error
+    # is a vertical bias and leg 2's is not, which per-axes autoscaling would
+    # hide.
     have_enu = all(c in spp.columns for c in
                    ("l1_e_m", "l1_n_m", "l1_u_m", "if_e_m", "if_n_m", "if_u_m"))
     if have_enu:
@@ -291,9 +292,9 @@ def build_exam_spp_reference(ctx, *, show_ablations: bool = False,
         figures.append(Figure(name="ENU by leg", axes=[axc1, axc2], width=13, height=7.0))
 
     # ------------------------------------------------------- (d) A/B ablations
-    # Statistics are always computed (they feed the read-out); the FIGURE is
-    # opt-in — four overlaid difference traces are the densest panel here and the
-    # numbers below carry the same information.
+    # Statistics are always computed (they feed the read-out); the figure is
+    # opt-in, because four overlaid difference traces are the densest panel here
+    # and the numbers below carry the same information.
     ab_rows = []
     axd = Axes(title="Paired A/B ablations (per-epoch Δ3D; dotted = mean)",
                xlabel="GPS Time", ylabel="Δ 3D error (m)", legend=Legend(loc="best"))
@@ -318,29 +319,28 @@ def build_exam_spp_reference(ctx, *, show_ablations: bool = False,
 
     # ------------------------------------ (d2) formal sigma vs realised error
     # Part B asks students to document a stochastic model at three epochs of
-    # their choosing, so the reference publishes what each leg's model actually
-    # yields per epoch.  The punchline is the RATIO: leg 2's formal sigma
-    # describes its error (the iono cancels, so what is left really is noise),
-    # while leg 1's does not -- its error is a systematic the covariance cannot
-    # see, so it reports a SMALLER sigma than leg 2 while being several times
-    # worse.  That is the Part-B/D lesson in the covariance domain.
-    # Drawn as a SCATTER of realised error against formal sigma (log-log), one
-    # cloud per leg, rather than four overlaid time series (professor request,
-    # 2026-08-06).  Two independent things are readable off it, and they are not
-    # the same question:
+    # their choosing, so the reference publishes what each leg's model yields per
+    # epoch.  The key figure is the ratio err/σ3D: leg 2's formal sigma describes
+    # its error (the iono cancels, so what remains is noise), while leg 1's does
+    # not.  Leg 1's error is a systematic the covariance cannot see, so it
+    # reports a smaller sigma than leg 2 while being several times worse (the
+    # Part-B/D lesson in the covariance domain).
+    # Drawn as a scatter of realised error against formal sigma (log-log), one
+    # cloud per leg, rather than four overlaid time series.  Two separate
+    # questions are readable off it:
     #
-    #   * DISTANCE FROM 1:1 = is the covariance honest.  Leg 2 sits on the line
-    #     (median err/sigma3D 0.91x); leg 1 sits a factor ~4.5 ABOVE it, because
-    #     its error is an ionospheric systematic the stochastic model cannot see.
-    #     This is the Part-B/D lesson and it is what the ratio in the box states.
-    #   * CORRELATION = does sigma track the error epoch to epoch.  Measured on
-    #     the hero: leg 1 r_log +0.37, leg 2 +0.03 -- i.e. WEAK for both, and
-    #     weakest for the honest leg.  That is not a contradiction: leg 2's sigma
-    #     is nearly constant (geometry-driven) while its error is noise, so there
-    #     is little covariation to find.  A leg can be perfectly calibrated in
-    #     magnitude and still uncorrelated in time.
+    #   * Distance from 1:1: whether the covariance is calibrated in magnitude.
+    #     On the reference arc leg 2 sits on the line (median err/sigma3D about
+    #     0.9) and leg 1 several times above it, because its error is an
+    #     ionospheric systematic the stochastic model cannot see.  The ratio in
+    #     the text box states this.
+    #   * Correlation: whether sigma tracks the error epoch to epoch.  It is weak
+    #     for both legs on the reference arc, and weakest for leg 2.  That is
+    #     consistent: leg 2's sigma is nearly constant (geometry-driven) while its
+    #     error is noise, so there is little covariation to find.  A leg can be
+    #     calibrated in magnitude and still uncorrelated in time.
     #
-    # Correlation is reported per leg both ways -- Pearson on log10 (the plotted
+    # Correlation is reported per leg both ways: Pearson on log10 (the plotted
     # coordinates) and Spearman rho (rank, outlier-robust).
     sig_rows = []
     if all(c in spp.columns for c in ("l1_sig_e_m", "l1_sig_n_m", "l1_sig_u_m")):
@@ -370,7 +370,7 @@ def build_exam_spp_reference(ctx, *, show_ablations: bool = False,
             axg.traces.append(Scatter(
                 x=s3[fin], y=e3[fin], color=color, size=7, alpha=0.30,
                 label=f"{lbl}  (r_log {r_log:+.2f}, ρ {rho:+.2f}, n {n})"))
-        # 1:1 reference — "the covariance is honest" — spanning the pooled range.
+        # 1:1 reference (error equal to formal sigma), spanning the pooled range.
         if np.isfinite(lo) and np.isfinite(hi) and lo > 0 and hi > lo:
             axg.traces.append(Line(x=[lo, hi], y=[lo, hi], color=_C_REF, style="--",
                                    width=1.2, label="1:1 (error = σ3D)"))
@@ -407,14 +407,13 @@ def build_exam_spp_reference(ctx, *, show_ablations: bool = False,
                                          label=f"median {cdt_med:+.2f} m"))
             axe1.traces += storm
             axes_e.append(axe1)
-        # Each leg about its own DE-TRENDED baseline.  Removing the median alone was
-        # enough while the simulated receiver clock was a constant bias; since the
-        # truth clock drifts (see the exam ANSWER_KEY receiver-clock note) it ramps
-        # ~13 km over a 12 h arc, which is ~600x the ~22 m of real leg-to-leg
-        # structure — the panel autoscales to the ramp and both legs collapse onto
-        # one straight line with the physics at sub-pixel scale.  Fit and subtract a
-        # straight line per leg (the oscillator's bias + frequency offset, which is
-        # nuisance here) and what is left is exactly what the panel is about.
+        # Each leg about its own detrended baseline.  The simulated truth clock
+        # drifts (see the exam ANSWER_KEY receiver-clock note): about 13 km over a
+        # 12 h arc, roughly 600x the ~22 m of leg-to-leg structure.  With only the
+        # median removed, the panel autoscales to the ramp and both legs collapse
+        # onto one straight line.  A straight line fitted per leg (the
+        # oscillator's bias + frequency offset, a nuisance here) is subtracted
+        # instead, leaving the structure the panel is meant to show.
         def _detrend(y):
             good = np.isfinite(y)
             if good.sum() < 3:
@@ -425,7 +424,7 @@ def build_exam_spp_reference(ctx, *, show_ablations: bool = False,
             return r - np.nanmedian(r)
 
         d1, d2_ = _detrend(c1), _detrend(c2)
-        # Report the removed rate so the ramp is disclosed, not silently hidden.
+        # Report the removed rate (leg 1's fit) in the title so the ramp is disclosed.
         dt_s = 1.0
         if t is not None and len(t) > 1:
             try:

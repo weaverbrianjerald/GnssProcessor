@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Self-contained per-epoch QC dashboard for any network producer run.
 
-Reduces the run's standard trace CSVs to time-series and writes ONE static
-HTML file (inline SVG charts, hover tooltips, light/dark aware) — no server,
-no dependencies; open it directly in a browser.
+Reduces the run's standard trace CSVs to time series and writes a single
+static HTML file (inline SVG charts, hover tooltips, light/dark aware): no
+server, no dependencies; open it directly in a browser.
 
 Usage:
     python scripts/qc_dashboard.py <run_dir> [-o out.html]
@@ -95,7 +95,7 @@ def reduce_run(logs):
                 s = abs(d1 - d0)
                 step_by_tow[t1].append(s)
                 all_steps.append(s)
-                # Attribute each adjacent DD step to BOTH baseline endpoints and to its
+                # Attribute each adjacent DD step to both baseline endpoints and to its
                 # sat / reference-sat, so a churn source shows up ranked (the UFPR/POAL
                 # signature the iono-deweight card diagnoses).
                 if sta_a:

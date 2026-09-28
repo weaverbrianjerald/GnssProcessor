@@ -1,18 +1,18 @@
-"""Closed-loop held-out consumer viewer -- did the products recover integers?
+"""Closed-loop held-out consumer viewer: did the products recover integers?
 
-Reads ``closed_loop_trace.csv`` (the PPP-RTK NETWORK producer's closed-loop
+Reads ``closed_loop_trace.csv`` (the PPP-RTK network producer's closed-loop
 integer-recovery harness: a held-out user station consuming the network's own
 products epoch-by-epoch) and shows whether, and how well, the user recovers:
 
-  1. **Position error** -- 3D error on a log axis with 1 dm / 5 cm reference
-     lines: the convergence of the held-out user fed the network products.
-  2. **East / North / Up** -- the error decomposed, to read out any vertical bias.
-  3. **Ambiguity resolution** -- the LAMBDA ratio per epoch, integers fixed, and
+  1. **Position error**: 3D error on a log axis with 1 dm / 5 cm reference
+     lines, showing the convergence of the held-out user fed the network products.
+  2. **East / North / Up**: the error decomposed, to read out any vertical bias.
+  3. **Ambiguity resolution**: the LAMBDA ratio per epoch, integers fixed, and
      the epochs AR actually accepted a fix.
 
-The headline question -- "does our own user engine recover integers from our own
-products on an independent station?" -- is answered by the fix rate and the
-converged-window position in the summary.
+The central question, whether the user engine recovers integers from the
+network's own products on an independent station, is answered by the fix rate
+and the converged-window position in the summary.
 """
 
 from __future__ import annotations

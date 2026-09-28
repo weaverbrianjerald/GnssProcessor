@@ -87,11 +87,11 @@ def ascii_only(s: str) -> str:
     return "".join(m.get(ch, ch) for ch in s if ch in m or ord(ch) < 128)
 
 
-# Unicode -> LaTeX.  C++ comments freely use Greek, sub/superscripts, and math
+# Unicode to LaTeX. C++ comments freely use Greek, sub/superscripts, and math
 # operators; pdflatex (no fontenc/Greek text font) cannot typeset those raw, so
-# we map the ones we know and DROP anything else (incl. the U+FFFD that a
-# non-UTF-8 source byte decodes to).  A generated table must never break the
-# build, so unknown non-ASCII is silently discarded rather than passed through.
+# the known ones are mapped and anything else is dropped (including the U+FFFD
+# that a non-UTF-8 source byte decodes to). A generated table must never break
+# the build, so unknown non-ASCII is silently discarded rather than passed through.
 _GREEK = {
     "alpha": "α", "beta": "β", "gamma": "γ", "delta": "δ", "epsilon": "ε",
     "zeta": "ζ", "eta": "η", "theta": "θ", "iota": "ι", "kappa": "κ",

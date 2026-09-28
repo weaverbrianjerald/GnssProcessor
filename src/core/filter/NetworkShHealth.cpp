@@ -1,7 +1,7 @@
 /**
  * @file NetworkShHealth.cpp
- * @brief Implementation of @ref networkShHealth — the SB_T1A block relocated VERBATIM
- *        (dedent-4, zero substitution) out of Application::runNetwork at INC-11b.
+ * @brief Implementation of @ref networkShHealth: the SB_T1A block, moved verbatim
+ *        (dedented by 4, no substitutions) out of Application::runNetwork (INC-11b).
  */
 
 #include "filter/NetworkShHealth.hpp"
@@ -15,7 +15,7 @@
 #include "filter/NetworkPriorResidual.hpp"   // prior-residual census (SPEC_prior_residual_census)
 #include "filter/NetworkIonoDeweightGate.hpp"
 #include "filter/NetworkPivotHandover.hpp"
-#include "filter/NetworkRhsAttrib.hpp"   // INC-5 flight-recorder trip latch
+#include "filter/NetworkRhsAttrib.hpp"   // flight-recorder trip latch (INC-5)
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
 #include "math/Coordinates.hpp"
@@ -55,48 +55,49 @@ void networkShHealth(
     double pl_now_s,
     double& first_vce_s,
     int& last_vce_hour) {
-    // --- Alias preamble: mechanically-derived run-TU aliases (+ reconstructions). --
+    // --- Alias preamble: run-TU aliases derived mechanically (+ reconstructions). --
     auto& sh_model = setup.sh_model;
     auto& sh_model2 = setup.sh_model2;   // Iono-2 dual-layer second shell (null unless armed)
     auto& stations = setup.stations;
     auto& vtec_sh_health_trace = traces.vtec_sh_health_trace;
     auto& carry_vce_trace      = traces.carry_vce_trace;
     const double pl_var_floor  = ctx.knobs.pl_var_floor;  // lock-in guard; 0 = off
-    const double pb_var_floor  = ctx.knobs.pb_var_floor;  // B4: D2 phase-bias carry floor; 0 = off
-    const double cb_var_floor  = ctx.knobs.cb_var_floor;  // B4: D2 code-bias carry floor;  0 = off
+    const double pb_var_floor  = ctx.knobs.pb_var_floor;  // D2 phase-bias carry floor; 0 = off (B4)
+    const double cb_var_floor  = ctx.knobs.cb_var_floor;  // D2 code-bias carry floor;  0 = off (B4)
     const bool   carry_vce     = ctx.knobs.carry_vce;
     auto& n_emitted = ctx.counters.n_emitted;
     auto& sh_a00_was_in_band = ctx.carry.sh_a00_was_in_band;
     const GlobalVtecShConfig& shc = config_.getGlobalVtecShConfig();
-    // P1-2: engage/release thresholds, echoed into the IONO_DW event rows so a
-    // reader sees the z-score against the gate it was judged by.
+    // Engage/release thresholds, written into the IONO_DW event rows so that each
+    // row shows the z-score next to the threshold it was tested against (P1-2).
     const IonoConstraintDeweightConfig& idw_cfg = config_.getIonoConstraintDeweightConfig();
 
 
-    // --- T1a: SH-field health probe + a₀₀ physical-band divergence WARN ---
-    // (a) Always-on a₀₀ band WARN — fires whenever the SH field is active, so a
-    //     diverging mean VTEC is visible even without the trace armed.  a₀₀ IS the
-    //     mean VTEC (TECU) because P̄₀₀ ≡ 1; the SH↔slant misfit that drives the
-    //     divergence is otherwise absorbed silently into the ambiguities.  Read-only.
+    // --- T1a: SH-field health probe + a₀₀ physical-band divergence warning ---
+    // (a) a₀₀ band warning, active whenever the SH field is active, so a diverging
+    //     mean VTEC is visible without the trace armed.  a₀₀ is the mean VTEC
+    //     (TECU) because P̄₀₀ ≡ 1; without this warning the SH↔slant misfit that
+    //     drives the divergence is absorbed into the ambiguities unreported.
+    //     Read-only.
     if (sh_model && shc.a00_warn_low_tecu < shc.a00_warn_high_tecu) {
         double a00 = std::numeric_limits<double>::quiet_NaN();
         try { a00 = x_s(est.vtecCoeffColumn(0, 0, 'C')); } catch (...) {}
-        // Dual-layer: the physical band bounds the TOTAL mean VTEC — the
-        // layer SUM (the split is separately anchored; its health is the
-        // a00_l2 column of the health trace, not this WARN).
+        // Dual-layer: the physical band bounds the total mean VTEC, the sum of
+        // the layers (the split is anchored separately; its health is the
+        // a00_l2 column of the health trace, not this warning).
         if (sh_model2 && std::isfinite(a00)) {
             try { a00 += x_s(est.vtecCoeffColumn(0, 0, 'C', 1)); } catch (...) {}
         }
         if (std::isfinite(a00)) {
             const bool in_band =
                 (a00 >= shc.a00_warn_low_tecu && a00 <= shc.a00_warn_high_tecu);
-            // INC-5 flight-recorder trigger
-            // (docs/SPEC_prefit_census_observability.md §7): the a00-BAND era.
-            // Distinct from the SH GATE era above it in the pipeline — the WARN
-            // fires on the FIRST out-of-band epoch while the gate waits
-            // sh_gate_min_epochs, so this is the earliest of the four triggers
-            // and the one most likely to catch a discharge in progress.
-            // SB_T1A precedes SB_FRAMEDIAG, so the trip lands this same epoch.
+            // Flight-recorder trigger for the a00-band era
+            // (docs/SPEC_prefit_census_observability.md §7, INC-5).  It is
+            // separate from the SH gate era earlier in the pipeline: this trigger
+            // fires on the first out-of-band epoch, while the gate waits
+            // sh_gate_min_epochs, so it is the earliest of the four triggers and
+            // the most likely to catch a discharge in progress.  SB_T1A precedes
+            // SB_FRAMEDIAG, so the trip lands in the same epoch.
             networkRhsTripEdge(ctx, "a00_band", !in_band);
             if (!in_band && (sh_a00_was_in_band || n_emitted % 60 == 0)) {
                 log->warn("Network (SH-iono): a₀₀ = {:.1f} TECU OUTSIDE physical band "
@@ -111,22 +112,21 @@ void networkShHealth(
         }
     }
 
-    // (b) Full health metrics + station-adaptive deweight gate — ONE post-solve
-    //     SH↔slant sweep feeding both consumers (H1 dedup).
+    // (b) Full health metrics and the station-adaptive deweight gate, both fed by
+    //     one post-solve SH↔slant sweep (H1 dedup).
     //     The SH health trace (shc.trace) writes one row per emitted epoch: a₀₀
     //     (+σ), coefficient RMS by degree, that RMS relative to the per-degree Kaula
     //     prior σ (σ_n = kaula/n, σ₀ = a₀₀ prior σ), and the network-wide SH→slant
-    //     misfit reconstructed at POSTERIOR geometry (mean/rms/max |residual| +
+    //     misfit reconstructed at posterior geometry (mean/rms/max |residual| and
     //     3σ-exceedance counts over LOS and stations).
-    //     The station-adaptive deweight (v2) needs, per present station, the SAME
-    //     standardized slant residual r/σ — its per-station RMS √mean((r/σ)²) is the
-    //     gate's observe() input.  Both are derived from ONE reconstruct + degree-15
-    //     SH evaluation per LOS: the gate accumulator is within-station (order-free),
-    //     so folding it in is byte-identical to the old separate loop.  Gate-off (or
-    //     a datum-change epoch) ⇒ no observe()/advance() ⇒ byte-identical; and with
-    //     the trace on (the lineage recipe) the gate now rides the trace's existing
-    //     sweep at ~zero marginal cov-consumer cost (the +303 reconstructStation
-    //     calls/ep and duplicate SH sweep are gone).
+    //     The station-adaptive deweight (v2) uses the same standardized slant
+    //     residual r/σ per present station: its per-station RMS √mean((r/σ)²) is
+    //     the gate's observe() input.  Both come from one station reconstruction
+    //     and one SH evaluation per LOS.  The gate accumulates within a station,
+    //     so sharing the sweep does not change its result.  With the gate off, or
+    //     on a datum-change epoch, observe() and advance() are not called and the
+    //     output is byte-identical; with the trace on, the gate adds no
+    //     reconstructStation calls or SH evaluations of its own.
     const bool sh_want_trace = vtec_sh_health_trace.is_open();
     const bool sh_want_gate  = iono_deweight.adaptive() && !datum_changed;
     if (sh_model && (sh_want_trace || sh_want_gate)) {
@@ -142,7 +142,7 @@ void networkShHealth(
             } catch (...) { coeff_ok = false; }
         }
         // Iono-2 dual-layer: the second shell's solved coefficients, for the
-        // misfit-vs-SUM sweep + the armed-only health columns.
+        // misfit sweep against the layer sum and the armed-only health columns.
         Eigen::VectorXd coeff2;
         double a00_l2 = 0.0;
         std::vector<double> deg2_sumsq;
@@ -228,8 +228,8 @@ void networkShHealth(
                     const double lon_sf = g.ipp_lon_rad - lon_sun;
                     double sh_slant =
                         sh_model->vtec(coeff, g.ipp_lat_rad, lon_sf) * g.mapping * tecu_to_L1m;
-                    // Dual-layer: the misfit is against the layer SUM — the
-                    // second shell at its OWN pierce geometry.
+                    // Dual-layer: the misfit is taken against the sum of the
+                    // layers, with the second shell at its own pierce geometry.
                     if (sh_model2) {
                         const IppGeometry g2 = computeIppGeometry(
                             stations[i].ecef, gt->second.second, Re,
@@ -243,8 +243,8 @@ void networkShHealth(
                     if (!std::isfinite(resid)) continue;
                     const double sig = std::max(
                         iw.floor_m, shc.representation_sigma_tecu * g.mapping * tecu_to_L1m);
-                    // Deweight gate: this LOS's standardized residual (same sig>0
-                    // guard the old separate loop used before dividing).
+                    // Deweight gate: this LOS's standardized residual (guarded on
+                    // sig > 0 before dividing).
                     if (sh_want_gate && sig > 0.0) {
                         const double sr = resid / sig;
                         zz_gate += sr * sr; ++nn_gate;
@@ -261,7 +261,7 @@ void networkShHealth(
                 if (sta_present) ++n_sta;
                 if (sta_gt3) ++n_sta_gt3;
                 // Feed the deweight gate this station's standardized-residual RMS
-                // (serial station order — same as the old separate loop).
+                // (stations in serial order).
                 if (sh_want_gate && nn_gate > 0)
                     iono_deweight.observe(stations[i].name, std::sqrt(zz_gate / nn_gate));
             }
@@ -297,8 +297,8 @@ void networkShHealth(
                 vtec_sh_health_trace
                     << ',' << fmt::format("{:.4f}", (ksig > 0.0) ? rms / ksig : 0.0);
             }
-            // Iono-2 dual-layer (armed-only columns, matching the header):
-            // the split anchor's health — layer-2 a₀₀ + per-degree RMS.
+            // Iono-2 dual-layer (armed-only columns, matching the header): the
+            // health of the split anchor, layer-2 a₀₀ and per-degree RMS.
             if (sh_model2) {
                 vtec_sh_health_trace << ',' << fmt::format("{:.3f}", a00_l2);
                 for (int n = 0; n <= sh_model2->maxDegree(); ++n) {
@@ -310,18 +310,20 @@ void networkShHealth(
             }
             vtec_sh_health_trace << '\n';
             // Advance the deweight gate one clean epoch (EWMA + robust z +
-            // hysteresis + slew).  Gate-off ⇒ never runs ⇒ byte-identical.
+            // hysteresis + slew).  With the gate off this does not run, so the
+            // output is byte-identical.
             if (sh_want_gate) {
                 iono_deweight.advance(true);
-                // --- SPEC_day129_frame_guards P1-2 -------------------------
-                // This is the ONE serial site the gate's threading contract
-                // allows a read from (advance/observe mutate; the assembly is
-                // parallel).  Harvest the weight field for the epoch-status row
-                // and emit each engage/release as a discrete IONO_DW event, so
-                // "did a deweight release wave land at the collapse epoch?" is
-                // answerable from the traces instead of from run-END totals
-                // (326 engage / 307 release over the whole day tells you
-                // nothing about WHEN).  Pure trace — no decision reads it.
+                // --- Deweight weight-field harvest (SPEC_day129_frame_guards P1-2) ---
+                // aggregate() and lastTransitions() are read here, on the serial
+                // site that calls advance(), as the gate's threading contract
+                // requires (observe/advance mutate; the parallel assembly only
+                // reads weight()).  The weight field goes to the epoch-status row,
+                // and each engage/release is emitted as a discrete IONO_DW event,
+                // so the timing of a release wave relative to a collapse epoch can
+                // be read from the traces; run-end engage/release totals do not
+                // show when transitions happened.  Trace only: no decision reads
+                // these values.
                 const auto agg = iono_deweight.aggregate();
                 ctx.carry.ep_dw_engaged = agg.n_engaged;
                 ctx.carry.ep_dw_zero    = agg.n_zero;
@@ -339,21 +341,18 @@ void networkShHealth(
         }
     }
 
-    // NOTE (H1 dedup): the station-adaptive SH-VTEC-constraint deweight gate
-    // update USED to live here as a SECOND per-station reconstruct + degree-15
-    // SH sweep, identical to the health-trace sweep above (its own comment
-    // conceded "the SAME resid/σ").  It added +303 reconstructStation
-    // cov-consumer calls/ep plus a duplicate SH-eval sweep.  It is now FUSED
-    // into the single sweep above: observe() per station + advance() once, from
-    // the same per-LOS resid/σ.  See the merged block guarded on
-    // (sh_want_trace || sh_want_gate).
+    // The station-adaptive SH-VTEC-constraint deweight gate has no sweep of its
+    // own: it is fed from the merged sweep above (observe() per station, then
+    // advance() once, from the same per-LOS resid/σ), in the block guarded on
+    // (sh_want_trace || sh_want_gate) (H1 dedup).
 
-    // M2 (LS-VCE): advance the carry-variance monitor for this emitted epoch —
-    // apply exponential forgetting and set the clean-epoch gate (a datum /
-    // pivot handover contaminates every carried prior, so the whole epoch's
-    // rows are dropped).  On the content-hour roll, flush the just-completed
-    // hour's σ̂ for every (family, constellation) to network_carry_vce.csv.
-    // All gated on carry_vce ⇒ OFF is byte-identical.
+    // Carry-variance monitor, LS-VCE (M2): advance it for this emitted epoch,
+    // which applies exponential forgetting and sets the clean-epoch flag (a
+    // datum or pivot handover contaminates every carried prior, so all rows of
+    // such an epoch are dropped).  When the content hour rolls over, the
+    // completed hour's σ̂ for every (family, constellation) is written to
+    // network_carry_vce.csv.  Everything here is gated on network.carry_vce;
+    // with it off the output is byte-identical.
     if (carry_vce) {
         if (first_vce_s < 0.0) first_vce_s = pl_now_s;
         const int cur_hour = static_cast<int>((pl_now_s - first_vce_s) / 3600.0);
@@ -390,19 +389,19 @@ void networkShHealth(
         carry_vce_est.beginEpoch(pl_now_s, !datum_changed);
     }
 
-    // PRIOR-RESIDUAL CENSUS (docs/SPEC_prior_residual_census.md §6): advance the
-    // census alongside the VCE monitor above — this is the ONE point in the epoch
-    // that precedes every feed (SB_LEVELING's pl/zwd/rxcb harvest and
-    // SB_STASH_STATUS's pb/cb snapshot both run later), which is what makes the
-    // PREDICT-THEN-UPDATE contract enforceable: beginEpoch FREEZES the
-    // through-previous-epoch σ̂₀ that this epoch's rows are standardized against,
-    // so no row can calibrate against itself.
+    // Prior-residual census (docs/SPEC_prior_residual_census.md §6): advanced
+    // next to the VCE monitor because this is the point in the epoch that
+    // precedes every feed (the pl/zwd/rxcb harvest in SB_LEVELING and the pb/cb
+    // snapshot in SB_STASH_STATUS both run later).  That order enforces the
+    // predict-then-update contract: beginEpoch freezes the σ̂₀ through the
+    // previous epoch, against which this epoch's rows are standardized, so no
+    // row calibrates against itself.
     //
-    // The census passes `clean = true` UNCONDITIONALLY — deliberately NOT
-    // `!datum_changed`.  A datum-changed epoch is exactly the FRAME population
-    // this card exists to MEASURE (standing invariant #7's re-coupling edge on
-    // the carry layer); dropping it, as the variance-component monitor correctly
-    // does, would discard the rows the census was built for.
+    // The census passes `clean = true` unconditionally, not `!datum_changed`.
+    // A datum-changed epoch belongs to the frame population the census is
+    // meant to measure (invariant #7's re-coupling edge on the carry layer);
+    // dropping it, as the variance-component monitor does, would discard the
+    // rows the census exists for.
     if (prires_est.enabled())
         prires_est.beginEpoch(pl_now_s, se.time.tow);
 }

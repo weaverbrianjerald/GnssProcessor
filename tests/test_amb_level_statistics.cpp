@@ -1,8 +1,10 @@
 /**
  * @file test_amb_level_statistics.cpp
- * @brief ALC-STAT: production-detector null experiments and nuisance witnesses.
+ * @brief Null experiments and nuisance witnesses for the production ambiguity-level
+ *        detector, AmbLevelCheck (ALC-STAT).
  *
- * Fixed seeds, independent observation-level noise, unchanged n=20/k=4/floors.
+ * Fixed seeds, independent observation-level noise, and the detector's default
+ * settings (n=20, k=4, floors) left unchanged.
  * These characterize assumptions; they do not calibrate field false alarms.
  */
 #include <gtest/gtest.h>
@@ -142,7 +144,7 @@ TEST(AmbLevelStatistics, StreamingCensusIncludesOverlapAndTripClears) {
 }
 
 TEST(AmbLevelStatistics, CorrectAmbiguitiesWithCodeOffsetAreNotAnAmbiguityNull) {
-    // True ambiguity errors are zero; a common +0.5 m CODE-only nuisance remains.
+    // True ambiguity errors are zero; a common +0.5 m code-only nuisance remains.
     const auto code = constantWindow(0, 0, 0.5, 0.5);
     const auto ambiguity = constantWindow(-0.5, -0.5, 0, 0);
     EXPECT_EQ(code.test, AmbLevelCheck::Test::Wl);

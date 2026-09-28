@@ -3,11 +3,10 @@
  * @brief Unit tests for the shared covariance re-reference primitives
  *        (CovReReference::applyBssd / enforcePsd).
  *
- * These characterize the behaviour extracted in W6a so the extraction is
- * provably behaviour-preserving:
- *   - applyBssd reproduces a hand-computed subtract-and-freeze T·P·Tᵀ and
- *     matches PivotManager::applyCovarianceReReference bit-for-bit (the static
- *     method now delegates to it);
+ * These characterize the primitives extracted in W6a:
+ *   - applyBssd reproduces a hand-computed subtract-and-freeze T·P·Tᵀ
+ *     (PivotManager::applyCovarianceReReference delegates to it, so the two
+ *     are the same code path; this file does not call PivotManager);
  *   - enforcePsd leaves a PSD matrix's values intact (only symmetrizing) and
  *     repairs an indefinite matrix to PSD via the epsilon ridge, returning a
  *     non-positive min-LDLT-diagonal as the product-quality flag.

@@ -1,4 +1,4 @@
-"""gnssviz.eval -- truth-referenced position scoring for the regression suite.
+"""gnssviz.eval: truth-referenced position scoring for the regression suite.
 
 This subpackage is the data layer behind the "standard test run" harness: it
 maps a processor run's ``state_trace.csv`` to an ENU position error against an
@@ -8,13 +8,13 @@ regression gating.
 
 Two pieces:
 
-* :mod:`gnssviz.eval.truth` -- ``TruthSource`` backends.  ``SinexTruth``
+* :mod:`gnssviz.eval.truth`: ``TruthSource`` backends.  ``SinexTruth``
   (primary; an IGS/ITRF SINEX or SSC, consumed nowhere in the C++ engine, so a
   fully independent grader) and ``SifTruth`` (fallback + cross-check; a faithful
   port of the C++ ``resolveStationCoordinate``).  ``CompositeTruth`` chains
   SINEX -> SIF.
 
-* :mod:`gnssviz.eval.metrics` -- ENU error of a ``state_trace.csv`` vs a truth
+* :mod:`gnssviz.eval.metrics`: ENU error of a ``state_trace.csv`` vs a truth
   ECEF, with a convergence window, packaged as :class:`PositionMetrics`.
 
 See ``docs/test_suite.md`` for the design and the frame/epoch caveats.

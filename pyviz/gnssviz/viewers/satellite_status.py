@@ -1,4 +1,4 @@
-"""NRCAN-style satellite-status viewer -- the port of ``plotSatelliteStatus.m``.
+"""NRCAN-style satellite-status viewer: the port of ``plotSatelliteStatus.m``.
 
 One figure per constellation: a (satellite x epoch) raster coloured by the
 integer ``status_code`` (0 Clean, 1 Pivot, 2 Slip, 3 CodeOutlier, 4 BelowMask,
@@ -53,8 +53,8 @@ def build_satellite_status(ctx) -> ViewerResult:
     has_elev = "elevation_deg" in df.columns
 
     # "Used" systems only: a constellation present in the trace but entirely
-    # NoModel (code 7) -- e.g. an active_systems entry with no signal_priorities,
-    # so every satellite is skipped -- carries no information and is dropped from
+    # NoModel (code 7), for example an active_systems entry with no signal_priorities
+    # so every satellite is skipped, carries no information and is dropped from
     # the default view.  Keep a system if it has any non-NoModel sample (which
     # subsumes "has any Clean data").
     _NOMODEL = 7

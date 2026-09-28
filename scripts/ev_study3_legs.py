@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""EVENT HARNESS Study 3 driver — the BAND-SCOPED response leg matrix (§Z).
+"""Event Harness Study 3 driver: the band-scoped response leg matrix (§Z).
 
 Study 1 measured that the persistent ~0.45-cycle level floor an erase or a
-whole-satellite refloat leaves is bought by the BAND SCOPE and nothing else on
+whole-satellite refloat leaves is bought by the band scope and nothing else on
 the erase path: restrict either to 2 of 3 bands and the floor becomes ~0.05.
-This matrix grades the PRODUCTION knobs that make that the default response:
+This matrix grades the production knobs that make that the default response:
 
     network.raim_erase_band_scope        = min_keep_one
     network.cycle_slip.refloat_band_scope = implicated
 
-Every leg resumes from the SAME snapshot as the §6/§9 validation legs
+Every leg resumes from the same snapshot as the §6/§9 validation legs
 (``runs/evseed_quiet6h`` ep0665, 61 epochs, event at +10) and is graded against
-the SAME null, so the warm-resume seam transient cancels.  Legs that differ only
-in the two knobs are direct A/Bs; the OFF arms are the §6/§9 legs already on
+the same null, so the warm-resume seam transient cancels. Legs that differ only
+in the two knobs are direct A/Bs; the off arms are the §6/§9 legs already on
 disk (``evleg_null``, ``evleg_erase``, ``evleg_s2_erase``, ``evleg_s3_erase``,
-``evleg_slip``) — nothing is re-run that already exists at the same settings.
+``evleg_slip``): nothing is re-run that already exists at the same settings.
 
     python scripts/ev_study3_legs.py make
     python scripts/ev_study3_legs.py run z_a1erase_on z_a2erase_on z_a3erase_on
@@ -38,14 +38,14 @@ EPOCHS = 60
 AT_EP = 10
 
 ARC1 = ("S21000SIM", "G10")     # the validation arc (mean elevation 14.2 deg)
-ARC2 = ("S50000SIM", "G31")     # different station, HIGH elevation (81.3 deg)
+ARC2 = ("S50000SIM", "G31")     # different station, high elevation (81.3 deg)
 ARC3 = ("S40000SIM", "G31")     # arc2's satellite at a LOW station (13.8 deg)
 
 # The three bands of a GPS triple arc on this posture, and the cycle counts the
-# card names for the all-band injected slip.  LLI is raised on ALL THREE because
+# card names for the all-band injected slip. LLI is raised on all three because
 # that is the only detector that implicates the whole arc: the IF-TD pair and MW
-# both act on (L1C, L2W) and would leave L5Q pinned by their NATURAL scope, i.e.
-# they never reach the all-band fallback this leg exists to price.  A receiver
+# both act on (L1C, L2W) and would leave L5Q pinned by their natural scope, i.e.
+# they never reach the all-band fallback this leg exists to price. A receiver
 # loss of lock on the whole satellite is exactly the physical case.
 TRIPLE = [("L1C", 10.0), ("L2W", 8.0), ("L5Q", 6.0)]
 
@@ -76,9 +76,9 @@ LEGS = [
      "ALL-BAND injected slip, knobs off — the control for the fallback"),
     ("z_slip3_on", [_slip(*ARC1, s, d) for s, d in TRIPLE], True,
      "ALL-BAND injected slip, knobs on — what the kept band COSTS"),
-    # flag_lli OMITTED here on purpose: `runs/evleg_slip` (the §6(2) control this
-    # is A/B'd against) does not set it, and a control that differed in two
-    # variables would grade the LLI tier, not the band scope.
+    # flag_lli is left out here on purpose: `runs/evleg_slip` (the §6(2) control
+    # this leg is graded against) does not set it, and a control that differed in
+    # two variables would grade the LLI tier, not the band scope.
     ("z_slip1_on", [_slip(*ARC1, "L1C", 10.0, lli=False)], True,
      "single-band slip control — the knobs must not perturb evleg_slip"),
 ]
@@ -95,10 +95,10 @@ def _patch(legdir, events, bscope):
     """Post-process the generated leg.json: arm the knobs and (for a multi-event
     leg) replace the single-event schedule event_leg.py wrote.
 
-    event_leg.py takes ONE --event; the all-band slip needs three at the same
-    tow.  The tow it derived is recorded in leg_meta.json, so the multi-event
-    schedule is written against the SAME epoch the single-event one would have
-    fired on — the legs stay directly comparable.
+    event_leg.py takes one --event; the all-band slip needs three at the same
+    tow. The tow it derived is recorded in leg_meta.json, so the multi-event
+    schedule is written against the same epoch the single-event one would have
+    fired on, so the legs stay directly comparable.
     """
     cfg_path = os.path.join(legdir, "leg.json")
     meta_path = os.path.join(legdir, "leg_meta.json")
@@ -129,7 +129,7 @@ def cmd_make(args):
         if events is None:
             cmd += ["null"]
         else:
-            # The FIRST event carries the schedule; _patch rewrites the array for
+            # The first event carries the schedule; _patch rewrites the array for
             # a multi-event leg (and is a no-op rewrite for a single one).
             cmd += ["make-leg", "--event", json.dumps(events[0])]
         cmd += ["--seed-run", SEED, "--snapshot-ep", str(SNAP_EP),

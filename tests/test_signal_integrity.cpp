@@ -1,37 +1,36 @@
 /**
  * @file test_signal_integrity.cpp
- * @brief FLICKER / GAP SIGNAL INTEGRITY (docs/SPEC_flicker_gap_integrity.md) — the
- *        per-line-of-sight band-state classifier, the unvetted PHASE demotion, the
- *        regain refloat and the re-vet window.
+ * @brief Tests for flicker/gap signal integrity (docs/SPEC_flicker_gap_integrity.md):
+ *        the per-line-of-sight band-state classifier, the demotion of unvetted phase,
+ *        the regain refloat and the re-vet window.
  *
- * What is worth testing here is what can go wrong SILENTLY.  The field defect this
- * card guards against — G21 @ MBAR00UGA, DOY-129 19:22-19:26 — is a semi-codeless
- * L2W loop slipping ~6 and ~4 cycles with NO receiver flag on either, in windows
- * where MW (needs Welford history), IF-TD (needs three consecutive epochs) and GF
- * (doctrine-barred at 30 s) are ALL structurally blind.  Nothing observes the event;
- * the whole card is bookkeeping over presence, and bookkeeping that quietly does
- * nothing looks exactly like bookkeeping that works.  Every case below pins a
- * decision with no other observable:
+ * The tests target failures that produce no other symptom.  The motivating field case
+ * (G21 at MBAR00UGA, DOY-129 19:22-19:26) is a semi-codeless L2W loop slipping ~6 and
+ * ~4 cycles with no receiver flag, in windows where MW (needs Welford history), IF-TD
+ * (needs three consecutive epochs) and GF (not used at 30 s by policy) are all blind.
+ * No detector observes the event; the card is bookkeeping over presence, and
+ * bookkeeping that does nothing looks the same as bookkeeping that works.  Each case
+ * below pins a decision that has no other observable:
  *
- *   1. a band that vanishes while the line of sight stays present must be seen as a
- *      FLICKER, and its return must refloat EVERY band of that LOS — not just the one
- *      that flickered, because across a loss of lock every counter is arbitrary at once;
- *   2. the demoted window must run from the transition epoch through the epoch that
- *      COMPLETES the vet (K = 3 ⇒ four demoted epochs), which is what makes the vet end
- *      exactly when MW and IF-TD come back online rather than one epoch before;
- *   3. CODE rows must never be touched — they are slip-immune and they are what
- *      re-anchors the float, so demoting them would defeat the recovery it protects;
- *   4. a band gone LONGER than the flicker window must leave the reference set, or a
- *      permanently single-frequency arc would sit demoted for the rest of its life
- *      (the standing-SF policy is explicitly deferred, spec section 7);
- *   5. a re-entry after a real outage must be ASSERTED and not acted on, and the
- *      census must separate an EVER-DUAL arc running single-frequency (the audit
- *      answer) from one that was born that way;
- *   6. OFF must be structurally inert — no band map, no sigma map, no counter, and an
+ *   1. a band that vanishes while the line of sight stays present is a flicker, and its
+ *      return (FlickerRegain) refloats every band of that LOS, not only the one that
+ *      flickered, because across a loss of lock every band's cycle count is arbitrary;
+ *   2. the demoted window runs from the transition epoch through the epoch that
+ *      completes the vet (K = 3 gives four demoted epochs), so the vet ends when MW and
+ *      IF-TD are live again rather than one epoch before;
+ *   3. code rows are never touched: they are slip-immune and they re-anchor the float,
+ *      so demoting them would defeat the recovery the demotion protects;
+ *   4. a band gone longer than the flicker window leaves the reference set; otherwise a
+ *      permanently single-frequency arc would stay demoted for the rest of its life
+ *      (the standing single-frequency policy is deferred, spec section 7);
+ *   5. a re-entry after a real outage is asserted with a counter and not acted on, and
+ *      the census separates an ever-dual arc running single-frequency (the audit
+ *      answer) from one that was born single-frequency;
+ *   6. off is structurally inert: no band map, no sigma map, no counter, and an
  *      observation set the seam has not touched.
  *
- * The classifier is exercised directly as a free function: it reads `modeled[i]`,
- * `present[]` and the config, and gets real StateManagers only because the refloat
+ * The classifier is called directly as a free function: it reads `modeled[i]`,
+ * `present[]` and the config.  Real StateManagers are used only because the refloat
  * path marks pending-reseed flags and the WITHHOLD path prunes phase-bias states.
  */
 
@@ -79,8 +78,8 @@ fs::path writeTempConfig(const std::string& tag, const std::string& body) {
 
 /// A minimal loadable PPP-RTK network config, with @p net_extra spliced into the
 /// network block.  `carry_invariant` is on in every case so the INC-3 funnel feed is
-/// live — the loader warns and the refloat degrades to a counter otherwise, which is
-/// its own (separately asserted) behaviour.
+/// live; without it the loader warns and the refloat degrades to a counter, which is
+/// a separate (separately asserted) behaviour.
 std::string networkConfig(const std::string& net_extra) {
     return std::string("{\n")
         + "  \"processing\": {\n"
@@ -103,8 +102,8 @@ std::string networkConfig(const std::string& net_extra) {
         "}\n";
 }
 
-/// Load a config through the real loader (so every INERT-guard and clamp runs) and
-/// hand back the owned GnssConfig.
+/// Load a config through the real loader (so every INERT guard and clamp runs) and
+/// return the owned GnssConfig.
 std::unique_ptr<GnssConfig> loadCfg(LogManager& log, const std::string& tag,
                                     const std::string& net_extra) {
     auto cfg = std::make_unique<GnssConfig>();
@@ -115,7 +114,7 @@ std::unique_ptr<GnssConfig> loadCfg(LogManager& log, const std::string& tag,
     return cfg;
 }
 
-/// Arm the block.  @p scale <= 1 with @p refloat false is the spec's CENSUS-ONLY leg.
+/// Arm the block.  @p scale <= 1 with @p refloat false is the spec's census-only leg.
 std::string armed(double scale = 10.0, int revet = 3, int flicker = 5,
                   bool refloat = true, bool withhold = false,
                   bool resume_vet = true) {
@@ -138,16 +137,16 @@ GnssTime epochAt(double tow) {
     return t;
 }
 
-/// One satellite's observation with exactly the listed PHASE bands present, each with
-/// its matching code.  The code entries are the control for "CODE rows untouched":
-/// they are always present, on every band, in every scenario.
+/// One satellite's observation with exactly the listed phase bands present.  Code is
+/// present on both bands in every scenario; it is the control for "code rows
+/// untouched".
 PppObservation obsWith(const std::string& sat,
                        const std::vector<std::string>& phase_bands,
                        int lli_bits = 0) {
     PppObservation o;
     o.satellite = sat;
     o.elevation = 45.0;
-    o.observed[kC1] = 2.0e7;      // code is ALWAYS present on both bands
+    o.observed[kC1] = 2.0e7;      // code is always present on both bands
     o.observed[kC2] = 2.0e7;
     o.raw_observed[kC1] = 2.0e7;
     o.raw_observed[kC2] = 2.0e7;
@@ -173,7 +172,7 @@ struct Rig {
         stations[0].sm = std::make_unique<StateManager>(kPppCoreSize, log, cfg);
     }
 
-    /// Run ONE epoch with the given per-satellite band sets.
+    /// Run one epoch with the given per-satellite band sets.
     void step(NetworkRunContext& ctx, const GnssConfig& cfg,
               const std::vector<PppObservation>& obs) {
         NetworkRunTraces traces(fs::temp_directory_path());  // no stream opened ⇒ no I/O
@@ -185,7 +184,7 @@ struct Rig {
         ++ep;
     }
 
-    /// This epoch's published PHASE sigma scale for @p sat (1.0 = full weight).
+    /// This epoch's published phase sigma scale for @p sat (1.0 = full weight).
     double scaleFor(const std::string& sat) const {
         const auto it = stations[0].phase_sigma_scale.find(sat);
         return it == stations[0].phase_sigma_scale.end() ? 1.0 : it->second;
@@ -201,23 +200,23 @@ struct Rig {
 // 1. The measured shape: a band flickers out and back while the LOS never leaves
 // ---------------------------------------------------------------------------
 //
-// This is G21 @ MBAR verbatim — L2W gone for one epoch with L1C and a healthy S1C
-// throughout.  No producer-registered gap exists for it, so nothing downstream will
-// ever call it a recovery; MW and GF both need the SAME dual pair on both sides of a
-// step, and the missing band is exactly what breaks that.  The regain must therefore
-// refloat BOTH bands: the following epoch carried a +4-cycle L2W slip that no
-// detector flagged, and an L1 LLI at the same re-entry proves the L1 counter moved
-// too.  Refloating only the band that flickered would be the same absence-of-evidence
-// claim the card exists to refuse.
+// The G21 at MBAR case: L2W gone for one epoch while L1C and a valid S1C stay present.
+// No producer-registered gap exists for it, so nothing downstream treats it as a
+// recovery; MW and GF both need the same dual pair on both sides of a step, and the
+// missing band breaks that.  The regain therefore refloats both bands: in the field
+// case the following epoch carried a +4-cycle L2W slip that no detector flagged, and
+// an L1 LLI at the same re-entry shows that the L1 cycle count moved too.  Refloating
+// only the flickered band would treat absence of evidence as evidence of continuity.
 TEST(NetworkSignalIntegrity, FlickeredBandReturnsAndRefloatsEveryBandOfTheLineOfSight) {
     LogManager lm;
     auto cfg = loadCfg(lm, "flicker", armed());
     NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
 
-    // Five full-band epochs: the birth epoch is a transition (demoted, contributes no
-    // vet sample), then three vet epochs, and full weight resumes on the epoch AFTER
-    // the vet completes — 1 + K + 1.
+    // Five full-band epochs (1 + K + 1): the birth epoch is a transition and
+    // contributes no vet sample, three vet epochs complete the vet, and one more
+    // epoch follows, so the arc is converged.  A never-converged arc is exempt from
+    // demotion (case 9), so these epochs carry full weight throughout.
     for (int k = 0; k < 5; ++k) r.step(ctx, *cfg, {obsWith("G21", {kL1, kL2})});
     ASSERT_DOUBLE_EQ(1.0, r.scaleFor("G21")) << "a settled dual arc must carry full phase weight";
     ASSERT_TRUE(r.slipped.empty()) << "a quiet arc must not touch the slip funnel";
@@ -236,9 +235,9 @@ TEST(NetworkSignalIntegrity, FlickeredBandReturnsAndRefloatsEveryBandOfTheLineOf
     EXPECT_TRUE(r.funnelHas("G21", kL1))
         << "the SURVIVING band must refloat too: across a loss of lock every band's "
            "counter is arbitrary at once, and nothing can bound the sizes";
-    // The regain is a RAW observable event (a band physically vanished and came back),
-    // so the Iono-2 v3k erase-policy split must ERASE this LOS's GM deviation rather
-    // than D5-KEEP a level carried across a loss of lock.
+    // The regain is a raw observable event (a band vanished and came back), so the
+    // Iono-2 v3k erase-policy split erases this LOS's GM deviation rather than keeping
+    // (D5) a level carried across a loss of lock.
     EXPECT_EQ(r.slipped, r.slipped_raw)
         << "a regain must land in the RAW provenance set, not only in the funnel";
 }
@@ -247,13 +246,13 @@ TEST(NetworkSignalIntegrity, FlickeredBandReturnsAndRefloatsEveryBandOfTheLineOf
 // 2. The vet window ends exactly when monitoring begins
 // ---------------------------------------------------------------------------
 //
-// K = 3 is not a taste parameter.  MW needs two time-difference samples and IF-TD
+// K = 3 follows from the detectors: MW needs two time-difference samples and IF-TD
 // needs three consecutive epochs, so at K = 3 both are live for at least one epoch
-// BEFORE the phase returns to full weight.  That requires the demoted window to run
-// from the transition epoch THROUGH the epoch that completes the vet — four epochs,
-// which is the spec's own §6D arithmetic for the 19:25:30 regain ("demoted phase
+// before the phase returns to full weight.  That requires the demoted window to run
+// from the transition epoch through the epoch that completes the vet, four epochs
+// in all, matching the spec's §6D arithmetic for the 19:25:30 regain ("demoted phase
 // through 19:27:00").  Counting the transition epoch as vet sample #1 would end the
-// window one epoch early, exactly where the +4-cycle slip landed.
+// window one epoch early, on the epoch where the field case's +4-cycle slip landed.
 TEST(NetworkSignalIntegrity, DemotionSpansTheTransitionEpochThroughVetCompletion) {
     LogManager lm;
     auto cfg = loadCfg(lm, "vet", armed(/*scale=*/10.0, /*revet=*/3));
@@ -280,16 +279,16 @@ TEST(NetworkSignalIntegrity, DemotionSpansTheTransitionEpochThroughVetCompletion
 }
 
 // ---------------------------------------------------------------------------
-// 3. Only PHASE is demoted; CODE is never touched
+// 3. Only phase is demoted; code is never touched
 // ---------------------------------------------------------------------------
 //
-// The demotion exists so an UNMONITORABLE phase cannot poison the shared clock /
-// bias / iono states at full weight.  Code is slip-immune, and it is the only thing
-// that re-anchors the float to a bounded error (tens of cycles) after a recovery —
-// deweighting it would remove the recovery mechanism along with the hazard.  The map
-// is keyed by SATELLITE and the phase/code split happens at the fold on the row's own
-// signal type, so this test pins the contract the fold depends on: the published key
-// is the bare satellite id, never a signal-qualified one.
+// The demotion keeps a phase that cannot be monitored from corrupting the shared
+// clock, bias and iono states at full weight.  Code is slip-immune, and it is the
+// only input that re-anchors the float to a bounded error (tens of cycles) after a
+// recovery; deweighting it would remove the recovery mechanism along with the hazard.
+// The map is keyed by satellite and the phase/code split happens at the fold on the
+// row's own signal type, so this test pins the contract the fold depends on: the
+// published key is the bare satellite id, never a signal-qualified one.
 TEST(NetworkSignalIntegrity, DemotionMapIsKeyedBySatelliteSoOnlyPhaseRowsCanMatch) {
     LogManager lm;
     auto cfg = loadCfg(lm, "codesafe", armed());
@@ -305,22 +304,21 @@ TEST(NetworkSignalIntegrity, DemotionMapIsKeyedBySatelliteSoOnlyPhaseRowsCanMatc
            "em.signal_types[r][0] == 'L', so a signal-qualified key would match nothing";
     EXPECT_DOUBLE_EQ(10.0, m.begin()->second);
     // The observations themselves are untouched under the default (deweight)
-    // disposition: both codes AND the surviving phase are still there for PASS B.
+    // disposition: both codes and the surviving phase are still there for PASS B.
     EXPECT_EQ(1u, r.modeled[0][0].observed.count(kC1));
     EXPECT_EQ(1u, r.modeled[0][0].observed.count(kC2));
     EXPECT_EQ(1u, r.modeled[0][0].observed.count(kL1));
 }
 
 // ---------------------------------------------------------------------------
-// 4. A band gone longer than the flicker window LEAVES the reference set
+// 4. A band gone longer than the flicker window leaves the reference set
 // ---------------------------------------------------------------------------
 //
-// Without this the arc would be DEGRADED — and hence demoted — for the rest of its
-// life the moment it permanently lost a band.  That is the standing single-frequency
-// policy question the spec deliberately defers to after the census (§7), and a card
-// is not entitled to answer a deferred question by omission.  The arc must instead
-// re-vet on its REDUCED set and go back to full weight, while `ever_dual` keeps it
-// visible in the audit census.
+// Otherwise an arc that permanently lost a band would stay Degraded, and so demoted,
+// for the rest of its life.  That is the standing single-frequency policy question
+// the spec defers until after the census (§7), and this card does not answer it by
+// default.  The arc instead re-vets on its reduced set and returns to full weight,
+// while `ever_dual` keeps it visible in the audit census.
 TEST(NetworkSignalIntegrity, BandGoneBeyondTheFlickerWindowReducesTheReferenceSet) {
     LogManager lm;
     auto cfg = loadCfg(lm, "perm", armed(/*scale=*/10.0, /*revet=*/2, /*flicker=*/2));
@@ -330,9 +328,9 @@ TEST(NetworkSignalIntegrity, BandGoneBeyondTheFlickerWindowReducesTheReferenceSe
     for (int k = 0; k < 4; ++k) r.step(ctx, *cfg, {obsWith("G21", {kL1, kL2})});  // 1 + K + 1, K = 2
     ASSERT_DOUBLE_EQ(1.0, r.scaleFor("G21"));
 
-    // L2W gone for good.  The window is INCLUSIVE — a band is still a flicker
-    // candidate while `now - missing_since <= flicker_max_ep` — so with
-    // flicker_max_ep = 2 the reference set is reduced on the FOURTH missing epoch.
+    // L2W gone for good.  The window is inclusive (a band is still a flicker
+    // candidate while `now - missing_since <= flicker_max_ep`), so with
+    // flicker_max_ep = 2 the reference set is reduced on the fourth missing epoch.
     for (int k = 0; k < 4; ++k) r.step(ctx, *cfg, {obsWith("G21", {kL1})});
     EXPECT_EQ(1, ctx.counters.sig.band_dropped_perm);
     EXPECT_EQ(0, ctx.counters.sig.band_regain);
@@ -342,23 +340,23 @@ TEST(NetworkSignalIntegrity, BandGoneBeyondTheFlickerWindowReducesTheReferenceSe
     for (int k = 0; k < 3; ++k) r.step(ctx, *cfg, {obsWith("G21", {kL1})});
     EXPECT_DOUBLE_EQ(1.0, r.scaleFor("G21"))
         << "a genuinely single-frequency arc must re-stabilise, not stay demoted forever";
-    // …but the census still knows what it used to be.  This counter IS the spec's
-    // INC-0 audit answer: an EVER-DUAL arc contributing single-frequency.
+    // …but the census still records that it was dual.  This counter is the spec's
+    // INC-0 audit answer: an ever-dual arc contributing single-frequency.
     EXPECT_GT(ctx.counters.sig.sf_continuation_epochs, 0);
     EXPECT_EQ(0, ctx.counters.sig.standing_sf_arcs)
         << "this arc was born dual — it must not be counted in the born-single class";
 }
 
 // ---------------------------------------------------------------------------
-// 5. A real outage is a RE-ENTRY: asserted, bucketed, and deliberately NOT acted on
+// 5. A real outage is a re-entry: asserted, bucketed, and not acted on
 // ---------------------------------------------------------------------------
 //
 // The spec's premise is that a true re-entry already refloats through the funnel
 // (Card G measured "0 bridged"), so this card's instruction is "no change, but assert
 // it with a counter".  Acting anyway would push ~1.7 extra funnel entries per epoch
-// into a channel the Iono-2 v3k erase policy is tuned on — so the honest move is to
-// MEASURE the premise and let the number decide the next card.  The gap bucketing is
-// what makes the measurement comparable to Card G's own re-entry totals.
+// into a channel the Iono-2 v3k erase policy is tuned on, so the card measures the
+// premise and leaves the decision to a later card.  The gap bucketing makes the
+// measurement comparable to Card G's own re-entry totals.
 TEST(NetworkSignalIntegrity, ReentryIsAssertedAndBucketedButNeverRefloated) {
     LogManager lm;
     auto cfg = loadCfg(lm, "reentry", armed());
@@ -388,11 +386,11 @@ TEST(NetworkSignalIntegrity, ReentryIsAssertedAndBucketedButNeverRefloated) {
 // 6. A born-single arc is counted apart from a degraded one
 // ---------------------------------------------------------------------------
 //
-// The BSHM/G07 class — an arc that was never once observed dual.  Folding it into the
-// degraded count would inflate the audit answer with arcs that never degraded at all,
-// and the two have opposite policy consequences: a degraded arc is a hazard this card
-// demotes, a standing single-frequency arc is a deferred policy question (spec §7)
-// that must NOT be silently demoted forever.
+// The BSHM/G07 class: an arc never observed dual.  Folding it into the degraded count
+// would inflate the audit answer with arcs that never degraded, and the two have
+// opposite policy consequences: a degraded arc is a hazard this card demotes, while a
+// standing single-frequency arc is a deferred policy question (spec §7) and must not
+// be demoted permanently by default.
 TEST(NetworkSignalIntegrity, StandingSingleFrequencyArcsAreCountedSeparatelyAndStabilise) {
     LogManager lm;
     auto cfg = loadCfg(lm, "standingsf", armed(/*scale=*/10.0, /*revet=*/2));
@@ -415,10 +413,10 @@ TEST(NetworkSignalIntegrity, StandingSingleFrequencyArcsAreCountedSeparatelyAndS
 //
 // A zero-weight phase row would still contribute its live H column to the local
 // block, so its ambiguity column would enter A_r carrying no information and trip the
-// per-station positive-definiteness guard — turning a per-arc demotion into a
-// WHOLE-STATION exclusion, the exact hard drop the fallback doctrine forbids.
+// per-station positive-definiteness guard.  That would turn a per-arc demotion into a
+// whole-station exclusion, the hard drop the fallback-over-drop rule forbids.
 // Removing the observable instead makes the column all-zero, which the existing
-// dead-column scan already drops cleanly.  Code observables must survive untouched.
+// dead-column scan drops.  Code observables stay untouched.
 TEST(NetworkSignalIntegrity, WithholdRemovesPhaseObservablesAndKeepsEveryCodeObservable) {
     LogManager lm;
     auto cfg = loadCfg(lm, "withhold",
@@ -445,8 +443,8 @@ TEST(NetworkSignalIntegrity, WithholdRemovesPhaseObservablesAndKeepsEveryCodeObs
 // ---------------------------------------------------------------------------
 //
 // Spec §6C runs an INC-0 leg before any action is armed.  With no separate "demote"
-// knob that leg is expressed as census + unvetted_sigma_scale <= 1 + no refloat, so
-// the expression has to actually work: full telemetry, zero mechanism.
+// knob, that leg is expressed as census + unvetted_sigma_scale <= 1 + no refloat, and
+// this test checks that the combination gives full telemetry with no mechanism active.
 TEST(NetworkSignalIntegrity, CensusOnlyLegCountsWithoutChangingAnyWeightOrFunnel) {
     LogManager lm;
     auto cfg = loadCfg(lm, "censusonly",
@@ -469,17 +467,17 @@ TEST(NetworkSignalIntegrity, CensusOnlyLegCountsWithoutChangingAnyWeightOrFunnel
 }
 
 // ---------------------------------------------------------------------------
-// 9. A never-converged arc is EXEMPT — which is what keeps cold start exempt
+// 9. A never-converged arc is exempt, which also exempts cold start
 // ---------------------------------------------------------------------------
 //
-// A phase row's damage potential is its weight times the TIGHTNESS of the state it
-// updates.  A brand-new arc has none: its ambiguity is diffuse (σ 1000 m) and it has
-// no accumulated carry chord, so its own priors ALREADY are the demotion and "slip at
-// epoch 1" is not even a defined event.  Vetting it would buy nothing and cost
-// convergence.  Expressing that as "the arc has never completed a re-vet" makes cold
-// start exempt by PRINCIPLE rather than by a special case — at cold start every arc
-// is un-converged — while still exempting a genuinely rising satellite mid-run.  The
-// census must keep counting it either way, or the exemption becomes invisible.
+// A phase row's potential for damage is its weight times the tightness of the state
+// it updates.  A new arc has none: its ambiguity is diffuse (σ 1000 m) and it has no
+// accumulated carry chord, so its own priors already act as the demotion and "slip at
+// epoch 1" is not a defined event.  Vetting it would cost convergence and gain
+// nothing.  Expressing the rule as "the arc has never completed a re-vet" exempts cold
+// start without a special case (at cold start every arc is un-converged), and also
+// exempts a satellite rising mid-run.  The census still counts such arcs, so the
+// exemption stays visible.
 TEST(NetworkSignalIntegrity, NeverConvergedArcIsExemptFromDemotionButStillCensused) {
     LogManager lm;
     auto cfg = loadCfg(lm, "birth", armed(/*scale=*/10.0, /*revet=*/3));
@@ -505,16 +503,15 @@ TEST(NetworkSignalIntegrity, NeverConvergedArcIsExemptFromDemotionButStillCensus
 }
 
 // ---------------------------------------------------------------------------
-// 10. A warm resume vets EVERYTHING for the re-vet window
+// 10. A warm resume vets every arc for the re-vet window
 // ---------------------------------------------------------------------------
 //
-// This is the one case the per-arc rule structurally cannot see: a resumed run starts
-// with an EMPTY band map, so every arc looks like a first sighting and would be
-// exempted by case 9 — while the snapshot has in fact restored fully TIGHT carries.
-// Meanwhile no detector state is serialized at all (neither MW Welford counts nor
-// IF-TD arc history), so the first epochs are network-wide detector blindness against
-// warm state: the flicker hazard at scale.  The override must therefore be carried
-// independently of the arcs, and must expire on its own.
+// The per-arc rule cannot see this case: a resumed run starts with an empty band map,
+// so every arc looks like a first sighting and would be exempted by case 9, although
+// the snapshot has restored tight carries.  No detector state is serialized (neither
+// MW Welford counts nor IF-TD arc history), so in the first epochs every detector in
+// the network is blind while the state is warm: the flicker hazard at network scale.
+// The override is therefore carried independently of the arcs and expires on its own.
 TEST(NetworkSignalIntegrity, WarmResumeVetsEveryArcForTheRevetWindowThenExpires) {
     LogManager lm;
     auto cfg = loadCfg(lm, "resume", armed(/*scale=*/10.0, /*revet=*/3));
@@ -533,22 +530,22 @@ TEST(NetworkSignalIntegrity, WarmResumeVetsEveryArcForTheRevetWindowThenExpires)
     EXPECT_EQ(3, ctx.counters.sig.resume_warmup_los_epochs);
     EXPECT_EQ(0, ctx.carry.si_resume_warmup_ep) << "the override expires on its own";
 
-    // Past the window the arc is back to the ordinary birth exemption — it has still
-    // never converged IN THIS RUN, so it is not demoted for that reason alone.
+    // Past the window the arc falls back to the ordinary birth exemption: it has not
+    // yet converged in this run, so it is not demoted.
     r.step(ctx, *cfg, {obsWith("G21", {kL1, kL2})});
     EXPECT_DOUBLE_EQ(1.0, r.scaleFor("G21"));
 }
 
 // ---------------------------------------------------------------------------
-// 11. Disarmed is STRUCTURALLY inert
+// 11. Disarmed is structurally inert
 // ---------------------------------------------------------------------------
 //
-// Invariant #6 wants byte-identity from STRUCTURE, not from a numerically neutral
+// Invariant #6 requires byte-identity by structure, not by a numerically neutral
 // value: with the card off no band map is allocated, no sigma map is published, no
-// counter moves and no observable is touched, so the assembly reads exactly the
-// pre-card `em.R_v.cwiseInverse()` with zero additional floating-point operations.
-// The action knobs are set here deliberately — the loader must disarm them for want
-// of the census master rather than let them act behind a classifier that never ran.
+// counter moves and no observable is touched, so the assembly reads the pre-card
+// `em.R_v.cwiseInverse()` with no additional floating-point operations.  The action
+// knobs are set on purpose: the loader disarms them when the census master is off,
+// rather than letting them act behind a classifier that never ran.
 TEST(NetworkSignalIntegrity, DisarmedIsStructurallyInertEvenWithActionKnobsSet) {
     LogManager lm;
     auto cfg = loadCfg(lm, "off",

@@ -3,12 +3,14 @@
  * @brief Non-causal cycle-slip integer recovery from two-sided GF + MW windows.
  *
  * Given a flagged reset boundary, this kernel re-derives geometry-free (GF) and
- * Melbourne-Wübbena (MW) series on BOTH sides of the boundary from the resident
+ * Melbourne-Wübbena (MW) series on both sides of the boundary from the resident
  * raw RINEX record, fits each with the @ref JumpGapFitter, and attributes the
  * carrier-phase step to a per-frequency integer slip @f$(dN_1, dN_2)@f$.  This
- * is the offline (non-causal) analogue of the causal MW/TurboEdit detectors:
- * it can use future epochs a streaming detector cannot, which is exactly what
- * the smoother cycle-slip bridge needs.
+ * is the offline (non-causal) analogue of the causal MW/TurboEdit detectors: it
+ * uses epochs after the boundary, which a streaming detector cannot, and is
+ * intended for the smoother cycle-slip bridge.  No production code calls it yet
+ * (the knob processing.enable_noncausal_slip_bridge is parsed but not read); its
+ * caller is tests/test_slip_bridge_kernel.cpp.
  *
  * Attribution algebra (sig1 = higher frequency by construction):
  *   - GF step:  @f$ \lambda_1 dN_1 - \lambda_2 dN_2 = \Delta\text{GF} @f$
@@ -17,10 +19,10 @@
  *     @f$ dN_2 = \text{round}\big((\Delta\text{GF} - \lambda_1 dN_{WL})/(\lambda_1-\lambda_2)\big) @f$,
  *     @f$ dN_1 = dN_2 + dN_{WL} @f$.
  *
- * The GF/MW per-epoch formulas mirror the verified causal kernels
- * (@c TurboEditResolver::computeGfMeters, @c MwSlipDetector::computeMwMeters);
- * the @f$\lambda_1@f$-in-numerator form above is the documented easy-to-get-wrong
- * step and is covered by integer-injection unit tests.
+ * The GF/MW per-epoch formulas mirror the causal kernels
+ * (@c TurboEditResolver::computeGfMeters, @c MwSlipDetector::computeMwMeters).
+ * The @f$\lambda_1 dN_{WL}@f$ term in the @f$dN_2@f$ numerator is the step most
+ * easily written wrong; integer-injection unit tests cover it.
  */
 #pragma once
 
@@ -33,7 +35,7 @@
 
 namespace GnssProcessor {
 
-class PppUtils;  // borrowed; carries GLONASS FDMA slot map (never recompute FCN)
+class PppUtils;  // borrowed; carries the GLONASS FDMA slot map, so no FCN is recomputed here
 
 /**
  * @brief Recovers a per-frequency integer cycle-slip from two-sided windows.
@@ -47,8 +49,8 @@ public:
     /// Recovered integer slip and the supporting fit diagnostics.
     struct RecoveredSlip {
         bool ok{false};          ///< True iff a slip was confidently recovered.
-        int dN1{0};              ///< Integer slip on the HIGHER-frequency signal (@c sig1).
-        int dN2{0};              ///< Integer slip on the LOWER-frequency signal (@c sig2).
+        int dN1{0};              ///< Integer slip on the higher-frequency signal (@c sig1).
+        int dN2{0};              ///< Integer slip on the lower-frequency signal (@c sig2).
         int dN_wl{0};            ///< Wide-lane integer @f$ dN_1 - dN_2 @f$.
         double frac_resid_cyc{0};///< Max rounding residual (cycles) across GF / WL.
         double gf_step_m{0};     ///< Fitted GF step (metres).

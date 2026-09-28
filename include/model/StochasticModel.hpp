@@ -4,21 +4,23 @@
  * @file StochasticModel.hpp
  * @brief Measurement stochastic (weighting) model for GNSS observables.
  *
- * Encapsulates the three weighting strategies available for code and
+ * Encapsulates the four weighting strategies available for code and
  * carrier-phase observations:
- *  - **Constant**  � use the a-priori ?� directly, no geometry scaling.
- *  - **Elevation** � classic  ?� / sin�(el)  weighting.
- *  - **SNR**       — variance-additive form: σ² = a² + b²·10^(-CN0/10),
+ *  - **Constant**: the a-priori σ² is used directly, with no geometry scaling.
+ *  - **Elevation**: σ² / sin^(2p)(el), with p the code or phase elevation
+ *                     power (p = 1 gives the classic σ² / sin²(el)).
+ *  - **SNR**: variance-additive form σ² = a² + b²·10^(-CN0/10),
  *                     with code-only chip-rate per-band scaling, Wieser
- *                     hybrid 1/sin²(el) elevation amplification on top,
- *                     and a synthesised CN0 fallback when the receiver-
- *                     reported S-observable is missing.  See
- *                     SnrModelParams in GnssConfig.hpp for the formula
- *                     details and references.
+ *                     hybrid elevation amplification on top, and a
+ *                     synthesised CN0 fallback when the receiver-reported
+ *                     S-observable is missing.  See SnrModelParams in
+ *                     GnssConfig.hpp for the parameters and references.
+ *  - **SatelliteBlock**: zenith σ from the satellite's ATX block type,
+ *                     scaled per frequency band and tracking attribute,
+ *                     then elevation-amplified.
  *
- * The class is configured once from GnssConfig and then called by PppModel
- * for every individual variance computation.  It replaces the ad-hoc
- * variance logic that was previously scattered across PppModel methods.
+ * The class is configured once from GnssConfig; PppModel holds one instance
+ * and calls it for every individual variance computation.
  */
 
 #include "config/GnssConfig.hpp"
@@ -46,8 +48,8 @@ namespace GnssProcessor {
         /**
          * @brief Construct from global configuration.
          *
-         * Reads the stochastic model type, default noise values and
-         * SNR model parameters from @p config.
+         * Reads the stochastic model type, the SNR and satellite-block model
+         * parameters and the code and phase elevation powers from @p config.
          *
          * @param config  Read-only global GNSS processing configuration.
          * @param log_mgr Logging manager for trace/debug output.
@@ -59,23 +61,30 @@ namespace GnssProcessor {
          *
          * Depending on the configured StochasticModelType the variance is:
          *  - **Constant**:  @p default_var  (no scaling).
-         *  - **Elevation**:  @p default_var / sin�(@p elevation_deg).
-         *  - **SNR**: (a + b � 10^(?SNR/10))� using the matching RINEX 'S'
-         *    observable from @p measurements; if no SNR is found, falls back
-         *    to the Elevation result.
+         *  - **Elevation**:  @p default_var / sin^(2p)(@p elevation_deg), with p
+         *    the phase elevation power for 'L' rows and the code elevation
+         *    power otherwise.
+         *  - **SNR**: a² + b²·10^(-CN0/10), with CN0 read from the matching
+         *    RINEX 'S' observable in @p measurements (synthesised from
+         *    elevation when absent or non-positive) and clamped to the
+         *    configured range, scaled per band for code, then divided by
+         *    sin^(2p)(el) as in the Elevation model.
+         *  - **SatelliteBlock**: without satellite information this overload
+         *    returns the Elevation result.
          *
-         * For Doppler ('D') and SNR ('S') observable types the returned
-         * variance is always the @p default_var (possibly elevation-scaled
-         * when the elevation model is active) because the SIGMA-? model is
-         * defined only for code and phase observables.
+         * An empty @p obs_type returns @p default_var.  Under the SNR model,
+         * Doppler ('D') and SNR ('S') observable types get the Elevation
+         * result for @p default_var, because the SIGMA-ε model is defined
+         * only for code and phase observables.
          *
          * @param obs_type      RINEX observable key (e.g. "C1W", "L1C", "D1C").
          * @param measurements  All measurements for the current satellite/epoch
          *                      (used to look up 'S' observables for SNR model).
          * @param elevation_deg Satellite elevation angle in degrees.
-         * @param default_var   A-priori variance (m�) from the default noise
+         * @param default_var   A-priori variance (m²) from the default noise
          *                      parameters.
-         * @return Computed variance in m� (or Hz� / (m/s)� for Doppler).
+         * @return Computed variance in m² (for Doppler, in the units of
+         *         @p default_var: Hz² or (m/s)²).
          */
         double computeVariance(const std::string& obs_type,
                                const ObsValueMap<double>& measurements,
@@ -87,17 +96,23 @@ namespace GnssProcessor {
          *
          * When the active model is SatelliteBlock, uses @p satellite and
          * @p antennas to look up the ATX block type and derive a
-         * block/frequency-dependent zenith noise, then applies 1/sin�(el)
-         * scaling.  For other model types the additional parameters are
-         * ignored and the result is identical to the 4-argument overload.
+         * block/frequency-dependent zenith noise, then applies the elevation
+         * amplification (1/sin²(el) at the default power of 1.0).  Code
+         * always takes this path; phase takes it only when
+         * SatBlockNoiseParams::apply_to_phase is set, and otherwise uses
+         * default_phase_std_m² with elevation amplification; other types get
+         * elevation amplification of @p default_var.  For other model types
+         * the additional parameters are ignored and the result is identical
+         * to the 4-argument overload.
          *
          * @param obs_type      RINEX observable key (e.g. "C1W", "L1C").
          * @param measurements  All measurements for this satellite/epoch.
          * @param elevation_deg Satellite elevation angle in degrees.
-         * @param default_var   Fallback variance (m�) when block lookup fails.
+         * @param default_var   Variance (m²) used for non-code, non-phase
+         *                      types and by the other model types.
          * @param satellite     Satellite identifier (e.g. "G04").
          * @param antennas      Parsed ATX antenna entries for block lookup.
-         * @return Computed variance in m�.
+         * @return Computed variance in m².
          */
         double computeVariance(const std::string& obs_type,
                                const ObsValueMap<double>& measurements,
@@ -121,13 +136,11 @@ namespace GnssProcessor {
          *
          *   var_actual = var_zen / sin^(2·power)(elev)
          *
-         * with @c power = @c code_elevation_power_ for @c 'C…' rows
-         * and @c phase_elevation_power_ for @c 'L…' rows (and code's
-         * power as a default for everything else).  Empty obs_type
-         * uses the code power.  Near-zero elevations are clipped to
-         * avoid amplifying to infinity — anything below the
-         * configured elevation mask should be filtered upstream of
-         * this function anyway.
+         * with @c power = @c phase_elevation_power_ for @c 'L…' rows and
+         * @c code_elevation_power_ for everything else (code, Doppler, and
+         * an empty obs_type).  When sin(elev) ≤ 1e-6 the variance is returned
+         * unscaled rather than amplified toward infinity; observations below
+         * the elevation mask are expected to be filtered upstream.
          */
         double computeElevation(const std::string& obs_type,
                                 double default_var,
@@ -141,19 +154,20 @@ namespace GnssProcessor {
          *  1. Resolve CN0: read the matching @c S<band><attr>
          *     observable from @p measurements, or synthesise it from
          *     elevation (see @c synthesizeCn0FromElevation) when the
-         *     S-observable is absent / non-positive.
+         *     S-observable is absent or non-positive.
          *  2. Clamp CN0 to @c [snr_floor_dbhz, snr_ceil_dbhz].
          *  3. Compute base variance:
          *       σ² = a² + b²·10^(-CN0/10)
          *     using the (a, b) pair appropriate to code or phase.
-         *  4. Apply chip-rate per-band scaling on **code only**
+         *  4. Apply chip-rate per-band scaling on code only
          *     (reusing @c SatBlockNoiseParams::code::freq_band_scale).
-         *     Phase σ² in this model is band-flat — chip rate doesn't
-         *     enter the PLL noise formula.  Per-band phase structure
+         *     Phase σ² in this model is band-flat, because chip rate does
+         *     not enter the PLL noise formula.  Per-band phase structure
          *     lives in the SatelliteBlock model only, under
          *     @c SatBlockNoiseParams::phase::freq_band_scale.
-         *  5. Apply Wieser hybrid elevation amplification:
-         *     σ²_final = σ² / sin²(el), uniformly to code and phase.
+         *  5. Apply Wieser hybrid elevation amplification through
+         *     computeElevation: σ²_final = σ² / sin^(2p)(el), with the code
+         *     or phase power (σ² / sin²(el) at the default p = 1.0).
          */
         double computeSnr(const std::string& obs_type,
                           const ObsValueMap<double>& measurements,
@@ -165,15 +179,15 @@ namespace GnssProcessor {
          *        a typical antenna gain pattern.
          *
          * Used when the receiver-reported @c S-observable is missing
-         * for a given measurement.  Linear-in-(1 - sin θ) drop from a
-         * zenith maximum mirrors textbook antenna patterns
+         * for a given measurement.  CN0 drops linearly in (1 - sin θ)
+         * from a zenith maximum, following textbook antenna patterns
          * (Misra & Enge 2011 §6.2):
          *   CN0(θ) ≈ CN0_max - K·(1 - sin θ)
-         * with @c CN0_max ≈ 50 dBHz and @c K ≈ 15 dB hard-coded as
-         * receiver-class-typical defaults.  This keeps the noise
-         * model coherent at the boundary where some sats have S
-         * observables and others don't, instead of discontinuously
-         * switching to a different functional form.
+         * with @c CN0_max = 50 dBHz and @c K = 15 dB hard-coded as
+         * receiver-class-typical defaults (sin θ is clipped at 0).  The
+         * noise model therefore stays continuous between satellites that
+         * report S observables and those that do not, instead of switching
+         * to a different functional form.
          */
         double synthesizeCn0FromElevation(double elevation_deg) const;
 
@@ -181,7 +195,10 @@ namespace GnssProcessor {
          * @brief Compute variance under the SatelliteBlock model.
          *
          * Looks up the satellite's ATX block type, selects a zenith noise
-         * based on block and frequency band, then applies 1/sin�(el).
+         * based on block type, scales it by the frequency-band and
+         * tracking-attribute factors, then applies the elevation
+         * amplification of computeElevation (1/sin²(el) at the default
+         * power of 1.0).
          */
         double computeSatBlock(const std::string& obs_type,
                                double elevation_deg,
@@ -192,8 +209,8 @@ namespace GnssProcessor {
         StochasticModelType model_type_;    ///< Active weighting strategy.  Each model defines its own per-observable handling for phase vs code (see GnssConfig::getStochasticModel() docstring).
         SnrModelParams      snr_params_;    ///< Parameters for the SNR model.
         SatBlockNoiseParams sat_block_params_; ///< Parameters for the satellite-block model.
-        double code_elevation_power_;       ///< σ-power for code elevation amplification (1.0 = legacy csc²(θ) on variance).
-        double phase_elevation_power_;      ///< σ-power for phase elevation amplification (0.5 = gentler csc(θ) on variance).
+        double code_elevation_power_;       ///< σ-power for code elevation amplification (default 1.0 = csc²(θ) on variance).
+        double phase_elevation_power_;      ///< σ-power for phase elevation amplification (default 1.0 = csc²(θ) on variance, as for code; 0.5 selects the gentler csc(θ)).
         LogManager&         log_manager_;   ///< Logging manager reference.
     };
 

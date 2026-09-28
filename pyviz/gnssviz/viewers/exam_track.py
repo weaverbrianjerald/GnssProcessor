@@ -1,21 +1,21 @@
-"""Plan-view track — truth vs recovered trajectory in a fixed local ENU frame.
+"""Plan-view track: truth vs recovered trajectory in a fixed local ENU frame.
 
 Joins ``truth_position.csv`` against the processor's ``state_trace.csv`` on the
 integer ``(week, tow-ms)`` grid (SPEC R5) and draws the horizontal trajectory in
-a **local East/North frame about a single fixed origin** — the first matched
-truth point — so 1 m East reads the same as 1 m North (``aspect_equal``).  Unlike
-the time-series accuracy panels this is a *spatial* plot (``x_is_datetime`` is
-off), so the storm window is shown by recolouring the affected track segment
-rather than by the usual paired :class:`VLine`s.
+a local East/North frame about a single fixed origin, the first matched truth
+point, so 1 m East reads the same as 1 m North (``aspect_equal``).  Unlike the
+time-series accuracy panels this is a spatial plot (``x_is_datetime`` is off),
+so the storm window is shown by recolouring the affected track segment rather
+than by the usual paired :class:`VLine`s.
 
   * KINEMATIC (SPEC R7): the grey truth path and the blue recovered path overlaid
     E-vs-N, with green/red start/end markers and the storm-window portion of the
     estimate recoloured amber (the same muted amber the time-series viewers use).
   * STATIC: the recovered ENU points scattered about the (single) truth point at
-    the origin, coloured by epoch index through a viridis ramp + colorbar, so the
-    convergence walk and the steady-state cluster are both legible.
+    the origin, coloured by epoch index through a viridis ramp and colorbar, so
+    the convergence walk and the steady-state cluster are both legible.
 
-Both origins are the SAME fixed geodetic point (truth lat/lon/h at the first
+Both origins are the same fixed geodetic point (truth lat/lon/h at the first
 matched epoch); the truth and estimate ECEF are each rotated into that one frame
 via :func:`gnssviz.geodesy.ecef_to_enu` so the horizontal offset is exact.
 """
@@ -36,10 +36,10 @@ _C_EST = (0.15, 0.35, 0.75)       # blue
 _C_START = (0.00, 0.60, 0.00)     # green
 _C_END = (0.85, 0.15, 0.15)       # red
 _C_ORIGIN = (0.0, 0.0, 0.0)       # black (static truth point)
-_C_BOUND = (0.85, 0.20, 0.20)     # red — the k-sigma bound
-_C_CORR = (0.15, 0.35, 0.75)      # blue — corridor fill
-_C_ALONG = (0.10, 0.45, 0.20)     # green — along-track
-_C_CROSS = (0.55, 0.20, 0.65)     # purple — cross-track
+_C_BOUND = (0.85, 0.20, 0.20)     # red, the k-sigma bound
+_C_CORR = (0.15, 0.35, 0.75)      # blue, corridor fill
+_C_ALONG = (0.10, 0.45, 0.20)     # green, along-track
+_C_CROSS = (0.55, 0.20, 0.65)     # purple, cross-track
 
 def _ellipse_rings(cx, cy, C2, k, scale, n_pts=40):
     """NaN-separated ring vertices for k-sigma ellipses at each (cx, cy)."""
@@ -149,16 +149,17 @@ def build_exam_track(ctx) -> ViewerResult:
             sig_along = ec.proj_sigma(C2, tvec)
 
             # (i) Plan view with the k-sigma corridor.  A 2 cm bound on a 300 km
-            # track is ~7 parts in 1e8 -- invisible at true scale -- so the
-            # corridor is EXAGGERATED by a factor chosen to make the median bound
-            # ~1.5% of the track's bounding box, snapped to a 1/2/5 decade.  The
-            # factor is stated in the axes title and the legend; nothing here is
-            # to scale, and it must never be read as one.
+            # track is about 7 parts in 1e8, invisible at true scale, so the
+            # corridor is exaggerated by a factor chosen to make the median bound
+            # about 1.5% of the track's bounding box, snapped to a 1/2/5 decade.
+            # The factor is stated in the axes title and the legend; nothing here
+            # is to scale, and it is not to be read as one.
             span = max(float(np.nanmax(eT) - np.nanmin(eT)),
                        float(np.nanmax(nT) - np.nanmin(nT)), 1.0)
-            # Scale off the STEADY-STATE p90, not the whole-arc median: the filter's
-            # convergence transient carries sigma ~2.5 m against a steady-state ~0.6 cm,
-            # and letting it into the factor made one opening ellipse 450 km across.
+            # Scale off the steady-state p90, not the whole-arc median: the filter's
+            # convergence transient carries sigma about 2.5 m against a steady-state
+            # about 0.6 cm, and letting it into the factor made one opening ellipse
+            # 450 km across.
             skip = min(ec.converge_skip(ctx), max(0, len(sig_cross) - 2))
             exag = ec.exaggeration(k * sig_cross, span, skip=skip)
 
@@ -189,7 +190,7 @@ def build_exam_track(ctx) -> ViewerResult:
             figures.append(Figure(name="Track error bounds", axes=[axc],
                                   width=7.5, height=7.0))
 
-            # (ii) The same bounds at TRUE scale, which only reads in the
+            # (ii) The same bounds at true scale, which only reads in the
             # track-relative frame: cross- and along-track error against their own
             # +/- k*sigma envelopes.  This is the panel to quote a number from.
             tow = first_col(m, "tow_s_truth", "tow_s", "tow")

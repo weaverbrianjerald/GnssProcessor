@@ -1,7 +1,7 @@
 /**
  * @file NetworkDatumGraph.cpp
- * @brief The datum graph census — see NetworkDatumGraph.hpp for the design
- *        argument (docs/SPEC_datum_graph_census.md).
+ * @brief The datum graph census.  The design argument is in NetworkDatumGraph.hpp
+ *        (docs/SPEC_datum_graph_census.md).
  *
  * Measure-only.  Nothing here writes a weight, a state, a datum row or a
  * decision: the file reads the epoch's registration sets and admitted support,
@@ -9,14 +9,13 @@
  * spectral observation the solve glue handed forward, and writes rows, events
  * and counters.
  *
- * ## Why the whole file is order-independent
+ * ## Order independence
  *
  * Every container walked here is either an ordered associative container or is
  * sorted before use, and the union-find result is reduced through a sort with an
- * explicit tie-break.  The census must produce the same CSV bytes for the same
- * epoch regardless of thread count and of the order the driver happened to
- * assemble stations in — otherwise a diagnostic would be the one thing in the
- * run that is not reproducible.
+ * explicit tie-break.  The census therefore produces the same CSV bytes for the
+ * same epoch regardless of thread count and of the order in which the driver
+ * assembled the stations, so the diagnostic is as reproducible as the solve.
  */
 
 #include "filter/NetworkDatumGraph.hpp"
@@ -41,7 +40,7 @@ namespace GnssProcessor {
 namespace {
 
 // ===========================================================================
-//  Union-find (Deo 1974's forest, path-compressed, union by size)
+//  Union-find (Deo 1974's forest, path halving, union by size)
 // ===========================================================================
 
 class UnionFind {
@@ -82,10 +81,10 @@ private:
 // ===========================================================================
 
 /// Constellation letter of a "SAT/FAMILY" identity, or of a bare satellite id.
-/// '?' whenever the leading token does not look like a satellite (an
-/// `observed only` direction named by its column label rather than by an
-/// identity lands there, deliberately: attributing it to a constellation we did
-/// not parse would be a guess).
+/// Returns '?' when the leading token is not an uppercase letter followed by two
+/// digits.  An `observed only` direction named by its column label rather than by
+/// an identity lands there on purpose: its constellation was not parsed, so
+/// assigning one would be a guess.
 char consOfIdentity(const std::string& id) {
     if (id.empty()) return '?';
     const unsigned char c0 = static_cast<unsigned char>(id[0]);
@@ -96,8 +95,9 @@ char consOfIdentity(const std::string& id) {
     return id[0];
 }
 
-/// Join identity tokens for a single CSV field (`;` separated — the file's
-/// delimiter is `,`, and `emitEvent` already sanitizes commas out of details).
+/// Join identity tokens for a single CSV field, `;` separated: the file's
+/// delimiter is `,`, and `emitEvent` already replaces commas in details.  Tokens
+/// beyond @p cap collapse to a `+N` token.
 std::string joinIds(const std::vector<std::string>& v, std::size_t cap = 12) {
     std::string s;
     std::size_t n = 0;
@@ -113,9 +113,10 @@ std::string joinIds(const std::vector<std::string>& v, std::size_t cap = 12) {
     return s;
 }
 
-/// Per-identity event rate limit, in PROCESSED epochs — the PREFIT / MDB /
-/// block-Baarda convention, so a persistent finding logs its identity
-/// persistently instead of once at the start of a 24 h run.
+/// Per-identity event rate limit, in processed epochs (the PREFIT / MDB /
+/// block-Baarda convention).  A persistent finding re-emits its identity once per
+/// holdoff instead of once at the start of the run.  A holdoff of 0 allows every
+/// event.
 bool holdoffAllows(NetworkRunContext& ctx, const std::string& key, long long seq,
                    long long holdoff) {
     auto& last = ctx.carry.dg_event_last;
@@ -125,8 +126,8 @@ bool holdoffAllows(NetworkRunContext& ctx, const std::string& key, long long seq
     return true;
 }
 
-/// Render one constellation's component roster for the CSV, honouring the
-/// "≤ 4 listed + count" contract (the COUNT k is a column of its own and is
+/// Render one constellation's component roster for the CSV, under the
+/// "≤ 4 listed + count" contract (the count k is a column of its own and is
 /// never truncated).
 std::string renderComps(const NetDatumGraphConsCensus& t1,
                         const std::vector<NetStation>& stations) {
@@ -153,15 +154,15 @@ std::string renderComps(const NetDatumGraphConsCensus& t1,
 } // namespace
 
 // ===========================================================================
-//  TIER 1 — component multiplicity
+//  Tier 1: component multiplicity
 // ===========================================================================
 
 std::map<char, NetDatumGraphConsCensus>
 netDatumGraphComponents(const std::vector<NetDatumGraphEdge>& edges) {
     // Per constellation: vertex ids for the stations and the satellites that
-    // actually carry an edge.  A vertex with no edge is not a component of
-    // anything — counting an untracked satellite or a station that folded
-    // nothing would inflate k with vertices that carry no datum.
+    // carry an edge.  A vertex with no edge belongs to no component; counting an
+    // untracked satellite or a station that folded nothing would inflate k with
+    // vertices that carry no datum.
     struct Build {
         UnionFind                  uf;
         std::map<int, int>         sta_v;   // station index  -> vertex
@@ -189,7 +190,7 @@ netDatumGraphComponents(const std::vector<NetDatumGraphEdge>& edges) {
         t1.n_sats     = static_cast<int>(b.sat_v.size());
         t1.n_edges    = b.n_edges;
 
-        // Reduce to components.  Both source maps are ORDERED, so the first
+        // Reduce to components.  Both source maps are ordered, so the first
         // station / satellite reaching a root is the smallest one in it and the
         // sample identities are deterministic without a second pass.
         std::map<int, NetDatumGraphComponent> comp;
@@ -222,7 +223,7 @@ netDatumGraphComponents(const std::vector<NetDatumGraphEdge>& edges) {
 }
 
 // ===========================================================================
-//  TIER 2 — channel-family code support
+//  Tier 2: channel-family code support
 // ===========================================================================
 
 std::string netDatumGraphFamily(std::string_view signal) {
@@ -237,11 +238,11 @@ std::vector<NetDatumGraphPrediction> netDatumGraphChannelFamilies(
     const std::vector<std::pair<std::string, std::string>>& registered_code_keys,
     const std::map<std::string, int>& code_support) {
     // Accumulate every (sat, family) cell touched by either registration set.
-    // Cells with no phase bias are dropped at the end — they cannot host a
-    // b<->I trade — but they must be accumulated first, because a cell's code
-    // count and its phase count arrive from different sources.
+    // Cells with no phase bias cannot host a b<->I trade and are dropped at the
+    // end, but they are accumulated first because a cell's code count and its
+    // phase count arrive from different sources.
     std::map<std::string, NetDatumGraphPrediction> cell;
-    std::map<char, int> cb_by_cons;   // the code-bias LAYER precondition
+    std::map<char, int> cb_by_cons;   // the code-bias layer precondition
 
     const auto touch = [&](const std::string& sat, const std::string& family)
         -> NetDatumGraphPrediction& {
@@ -284,7 +285,7 @@ std::vector<NetDatumGraphPrediction> netDatumGraphChannelFamilies(
     }
     // `cell` is ordered by "SAT|FAMILY", which is the same order as
     // "SAT/FAMILY" for every id built here, so `out` is already ascending by
-    // id() — asserted by the unit suite rather than assumed.
+    // id().  The unit suite asserts this.
     return out;
 }
 
@@ -302,13 +303,13 @@ std::vector<std::string> netDatumGraphDetailIds(std::string_view detail) {
                                                               : comma - pos);
         pos = (comma == std::string_view::npos) ? detail.size() + 1 : comma + 1;
         if (tok.empty()) continue;
-        // "LABEL:span" — the LABEL itself contains colons ("PB:E03:L5X"), so the
-        // span is what follows the LAST colon.
+        // "LABEL:span": the label itself contains colons ("PB:E03:L5X"), so the
+        // span is what follows the last colon.
         const std::size_t last = tok.rfind(':');
         if (last == std::string_view::npos) continue;
         const std::string_view label = tok.substr(0, last);
-        // Only the two BIAS kinds carry a signal, and therefore a family; a
-        // clock or SH participant contributes no identity at all.
+        // Only the two bias kinds carry a signal, and therefore a family; a
+        // clock or SH participant contributes no identity.
         if (label.rfind("PB:", 0) != 0 && label.rfind("CB:", 0) != 0) continue;
         const std::size_t p1 = label.find(':');
         const std::size_t p2 = label.find(':', p1 + 1);
@@ -322,14 +323,15 @@ std::vector<std::string> netDatumGraphDetailIds(std::string_view detail) {
 }
 
 // ===========================================================================
-//  INC-1 — the reconciliation
+//  Reconciliation (INC-1)
 // ===========================================================================
 
 NetDatumGraphContingency netDatumGraphReconcile(
     const std::vector<std::string>& predicted_ids,
     const std::vector<NetDatumGraphDir>& dirs) {
     NetDatumGraphContingency out;
-    // std::set gives the dedup AND the ascending order both output lists need.
+    // std::set gives both the dedup and the ascending order that the two
+    // prediction lists need.
     const std::set<std::string> pred(predicted_ids.begin(), predicted_ids.end());
     std::set<std::string> matched;
 
@@ -345,10 +347,9 @@ NetDatumGraphContingency netDatumGraphReconcile(
             continue;
         }
         // Observed only.  Name the direction by its own identities when it has
-        // them (they simply matched nothing predicted) and by its heaviest
-        // column when it has none — an anonymous cell would make the honest
-        // boundary of the predictor unreadable, which is the one thing this cell
-        // exists to show.
+        // them (they matched no prediction) and by its heaviest column when it
+        // has none, so that each entry in this cell, which shows the limit of
+        // the predictor, can be read.
         out.obs_only.push_back(d.ids.empty()
                                    ? (d.top_label.empty() ? std::string("unnamed")
                                                           : d.top_label)
@@ -385,18 +386,19 @@ void networkDatumGraphCensus(
     const NetDatumGraphSpectral& spec = ctx.carry.dg_spec;
     ++ctr.epochs;
 
-    // --- the ERA boundary ---------------------------------------------------
+    // --- the era boundary ---------------------------------------------------
     // A datum re-reference retires the frame every carried quantity is expressed
-    // in — SBC re-seeds its continuity targets there for the same reason — so the
-    // `predicted only` roster starts over.  Without this a KP-load-bearing
-    // identity would be reported exactly once per RUN and the map's stability
-    // across the day (spec §6.4) would be unreadable.
+    // in (SBC re-seeds its continuity targets there for the same reason), so the
+    // `predicted only` roster starts over.  Each era then reports its own
+    // identities (the KP-load-bearing map when KP is armed) instead of each
+    // identity appearing once per run, and the map's stability across the day
+    // (spec §6.4) can be read.
     if (datum_changed) ctx.carry.dg_pred_only_era.clear();
 
     // ------------------------------------------------------------------------
     //  Support: the admitted (station, satellite) edges and the per-cell code
-    //  support, in ONE pass over `modeled`.  See the header banner for why this
-    //  and not the assembled row stacks.
+    //  support, in one pass over `modeled`.  The header banner explains why this
+    //  source is used and not the assembled row stacks.
     // ------------------------------------------------------------------------
     std::set<std::string> reg_cb;
     for (const auto& [sat, sig] : registered_code_keys)
@@ -407,8 +409,8 @@ void networkDatumGraphCensus(
     edges.reserve(modeled.size() * 24);
     for (std::size_t i = 0; i < modeled.size(); ++i) {
         // A station that did not fold into the normals this epoch contributes no
-        // information to the reduced system and therefore no edge — its
-        // observations exist but no datum rests on them.
+        // information to the reduced system and therefore no edge: its
+        // observations exist, but no datum rests on them.
         if (i >= est_index_of.size() || est_index_of[i] < 0) continue;
         for (const auto& ob : modeled[i]) {
             if (ob.satellite.empty()) continue;
@@ -420,9 +422,9 @@ void networkDatumGraphCensus(
                 if (!ob.modeled.count(code)) continue;
                 supported = true;
                 if (code.empty() || code[0] != 'C') continue;
-                // Only observables backing a REGISTERED code column count as
-                // support — that restriction is what makes zero_keys imply
-                // zero_support exactly (NetworkDatumGraph.hpp).
+                // Only observables backing a registered code column count as
+                // support; that restriction makes zero_keys imply zero_support
+                // exactly (NetworkDatumGraph.hpp).
                 if (!reg_cb.count(netDatumGraphSupportKey(ob.satellite, code))) continue;
                 ++code_support[netDatumGraphSupportKey(ob.satellite,
                                                        netDatumGraphFamily(code))];
@@ -434,30 +436,30 @@ void networkDatumGraphCensus(
     ctr.edges += static_cast<long long>(edges.size());
 
     // ------------------------------------------------------------------------
-    //  TIER 1 — component multiplicity, and the per-constellation gauge count d
+    //  Tier 1: component multiplicity, and the per-constellation gauge count d
     // ------------------------------------------------------------------------
     const std::map<char, NetDatumGraphConsCensus> tier1 = netDatumGraphComponents(edges);
 
     std::map<char, int> d_of;
     const char* datum_mode = "pin";
     if (!plan.clock_pivot.empty()) {
-        // PIN mode: exactly one satellite-clock pin per constellation, and
+        // Pin mode: one satellite-clock pin per constellation, and
         // declared_dimension counts them.
         for (const auto& [cons, sat] : plan.clock_pivot) {
             (void)sat;
             if (!cons.empty()) d_of[cons[0]] = 1;
         }
     } else if (config_.networkClockDatumBroadcastAnchored()) {
-        // Every satellite carries its OWN anchor, so a disjoint component is
+        // Every satellite carries its own anchor, so a disjoint component is
         // still gauged and fragmentation predicts nothing extra.  d = 0 is a
         // statement about this datum, not an omission.
         datum_mode = "brdc_anchor";
     } else {
-        // SUM-TO-ZERO: one all-ones gauge row per constellation, folded before
-        // the gate.  The multiplicity statement is the same as PIN's (one gauge
-        // per constellation, assumed to serve one component) even though
-        // declared_dimension reads 0 — which is exactly what the loader WARN
-        // names.
+        // Sum-to-zero (every remaining case): one all-ones gauge row per
+        // constellation, folded before the gate.  The multiplicity statement is
+        // the same as in pin mode (one gauge per constellation, assumed to serve
+        // one component) although declared_dimension reads 0; the loader warns
+        // about this when the census is armed under the sum-to-zero datum.
         datum_mode = "sum_to_zero";
         for (const auto& s : registered_clock_sats)
             if (!s.empty()) d_of[s[0]] = 1;
@@ -476,7 +478,7 @@ void networkDatumGraphCensus(
     if (max_k_epoch > 1) ++ctr.epochs_frag;
 
     // ------------------------------------------------------------------------
-    //  TIER 2 — channel-family code support
+    //  Tier 2: channel-family code support
     // ------------------------------------------------------------------------
     const std::vector<NetDatumGraphPrediction> cells =
         netDatumGraphChannelFamilies(shared_phase_keys, registered_code_keys, code_support);
@@ -492,23 +494,23 @@ void networkDatumGraphCensus(
     ctr.pred_support += static_cast<long long>(support_ids.size());
 
     // ------------------------------------------------------------------------
-    //  INC-1 — the reconciliation
+    //  Reconciliation (INC-1)
     // ------------------------------------------------------------------------
     const char* obs_src = "absent";
     if (!spec.valid) {
-        // The epoch never reached a rank evaluation — and note that a gate
-        // WITHHOLD skips the epoch before SB_FRAMEDIAG, so those epochs do not
-        // reach this seam at all and are not counted here either (the teardown
-        // line names that gap against n_gate_evaluated).
+        // The epoch never reached a rank evaluation.  A gate withhold skips the
+        // epoch before SB_FRAMEDIAG, so withheld epochs do not reach this seam at
+        // all and are not counted here either; the teardown line reports that
+        // gap against n_gate_evaluated.
         ++ctr.epochs_no_spectral;
     } else if (!spec.dirs.empty()) {
         obs_src = "sbc";
     } else if (spec.extras() > 0) {
         // Extras exist but nothing named them: SBC disarmed, or armed and
-        // refused before it could attribute.  COUNT-level reconciliation only —
-        // every prediction then lands in `predicted only` for want of a
-        // right-hand side, which is a statement about the ARMING, not about the
-        // predictor, and the column says which.
+        // refused before it could attribute.  Reconciliation is count-level
+        // only: every prediction then lands in `predicted only` for want of a
+        // right-hand side, which reflects the arming rather than the predictor,
+        // and the obs_src column records which case applies.
         obs_src = "count";
         ++ctr.epochs_count_only;
     } else {
@@ -530,7 +532,7 @@ void networkDatumGraphCensus(
     if (quiet) ++ctr.epochs_quiet;
 
     // ------------------------------------------------------------------------
-    //  INC-2 — events (DATUMGRAPH tier)
+    //  Events, DATUMGRAPH tier (INC-2)
     // ------------------------------------------------------------------------
     const auto emit = [&](const char* event, const std::string& key,
                           const std::string& sat, std::optional<double> stat,
@@ -551,9 +553,9 @@ void networkDatumGraphCensus(
                          cons, t1.k, d, (t1.k - 1) * d, datum_mode, t1.n_stations,
                          t1.n_sats, renderComps(t1, stations)));
     }
-    // `predicted AND observed` and `observed only` — a NEW identity always emits
-    // (the holdoff map has no entry for it) and a persisting one re-emits once
-    // per holdoff, so a reader can see duration without reading 120 rows/hour.
+    // `predicted and observed` and `observed only`: an identity with no holdoff
+    // entry yet always emits, and a persisting one re-emits once per holdoff, so
+    // its duration is visible without one event per epoch.
     for (const auto& id : cont.pred_observed)
         emit("dg_pred_observed", "po|" + id, id.substr(0, id.find('/')),
              std::nullopt, std::nullopt, "explain",
@@ -564,8 +566,9 @@ void networkDatumGraphCensus(
              "unexplained",
              fmt::format("id={} src={} observed={} declared={} predictions={}", id,
                          obs_src, spec.observed, spec.declared, pred_ids.size()));
-    // `predicted only` — FIRST sighting per (sat, family) per ERA, per spec §3.
-    // With KP armed this is the KP-load-bearing map; without it, over-prediction.
+    // `predicted only`: one event at the first sighting of each (sat, family) per
+    // era, per spec §3, not subject to the holdoff.  With KP armed this is the
+    // KP-load-bearing map; without it, over-prediction.
     for (const auto& id : cont.pred_only) {
         if (!ctx.carry.dg_pred_only_era.insert(id).second) continue;
         ++ctr.events;
@@ -578,7 +581,7 @@ void networkDatumGraphCensus(
     }
 
     // ------------------------------------------------------------------------
-    //  INC-2 — network_datum_graph.csv (one row per epoch per constellation)
+    //  network_datum_graph.csv, one row per epoch per constellation (INC-2)
     // ------------------------------------------------------------------------
     const double ms = std::chrono::duration<double, std::milli>(
                           std::chrono::steady_clock::now() - t_begin).count();
@@ -587,9 +590,9 @@ void networkDatumGraphCensus(
 
     if (traces.datum_graph_trace.is_open()) {
         // Attribute every per-identity list to its constellation so one row can
-        // be read on its own.  A constellation appears when tier 1 saw it OR any
+        // be read on its own.  A constellation appears when tier 1 saw it or any
         // list names it; '?' collects the directions whose participants carry no
-        // satellite (SH-only modes), which must be visible somewhere.
+        // satellite (SH-only modes), so that they still appear in the trace.
         struct Row {
             const NetDatumGraphConsCensus* t1{nullptr};
             std::vector<std::string> pred, pred_obs, pred_only, obs_only, sup;

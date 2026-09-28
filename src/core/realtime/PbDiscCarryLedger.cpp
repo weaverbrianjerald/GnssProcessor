@@ -1,7 +1,7 @@
 /**
  * @file PbDiscCarryLedger.cpp
- * @brief Card CC (A): carry-vs-reset decision for a declared phase-bias step.
- *        See the header for the algebra and the refusal branches.
+ * @brief Carry-vs-reset decision for a declared phase-bias step (card CC, A).
+ *        The header holds the algebra and the refusal branches.
  */
 
 #include "realtime/PbDiscCarryLedger.hpp"
@@ -34,10 +34,10 @@ PbDiscCarryLedger::Decision PbDiscCarryLedger::react(StateManager& sm, const std
     if (!bump && !flip) return d;
     ++ctr_.events;
 
-    // The refusal ladder.  Every branch takes the EXISTING reset — the same
-    // StateManager call the pre-card reaction makes, so the fallback is the
-    // old behaviour to the byte (resetAmbiguity itself refuses an unknown key
-    // with a debug line, exactly as before).
+    // The refusal ladder.  Every branch takes the existing reset, the same
+    // StateManager call the reset reaction (resetOnPhaseBiasDisc) makes, so the
+    // fallback is byte-identical to that path (resetAmbiguity itself refuses an
+    // unknown key with a debug line, as it does there).
     auto refuse = [&](Action why, uint64_t& ctr) {
         ++ctr;
         sm.resetAmbiguity(amb_key, reset_std_m);
@@ -56,7 +56,7 @@ PbDiscCarryLedger::Decision PbDiscCarryLedger::react(StateManager& sm, const std
         return refuse(Action::ResetUnknownKey, ctr_.reset_unknown_key);
 
     // The carry: amb_new = amb − Δ, Δ = applied_now − applied_prev.  A bump and
-    // a flip in the same epoch are one translation — Δ already spans both.
+    // a flip in the same epoch are one translation, since Δ already spans both.
     d.delta_m = applied_now_m - prev->second;
     if (!sm.shiftAmbiguity(amb_key, -d.delta_m))
         return refuse(Action::ResetUnknownKey, ctr_.reset_unknown_key);   // unreachable after the index check; defensive

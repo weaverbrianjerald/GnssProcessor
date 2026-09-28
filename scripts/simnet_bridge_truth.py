@@ -1,29 +1,30 @@
-"""Truth audit of relevel delta-bridge REPLACE events against the sim fixture.
+"""Truth audit of relevel delta-bridge replace events against the sim fixture.
 
 Joins a run's ``bridge_replace`` event rows (logs/network_events.csv, tier
-T1_if_slip — requires network.trace_events) against the fixture's per-station
+T1_if_slip, requires network.trace_events) against the fixture's per-station
 ``truth_slips.csv``, per band, and classifies every applied bridge:
 
-  correct  — every solved band's float delta within --tol cyc of the cumulative
-             truth delta in the +-window around the FLAG epoch (tow - lag_s);
-  wrong    — some solved band off by more than --tol;
-  phantom  — no truth slip in the window on any solved band, yet some
+  correct  - every solved band's float delta within --tol cyc of the cumulative
+             truth delta in the +-window around the flag epoch (tow - lag_s);
+  wrong    - some solved band off by more than --tol;
+  phantom  - no truth slip in the window on any solved band, yet some
              |delta| >= --tol (the bridge invented a slip);
-  trivial  — no truth slip and every |delta| < --tol (a near-zero refinement).
+  trivial  - no truth slip and every |delta| < --tol (a near-zero refinement).
 
 Validation: on runs/camp60_f4 (bridge v2, 32 applies) this reproduces the
 SPEC_slip_relevel_walk s8.2 scratch audit: 25 correct / 7 wrong / 0 phantom
-(identical at window 15 and 90; the worst wrong row reads 8.12 cyc here vs
-the scratch join's 3.5 — a double-slip window detail on one row).
+(identical at window 15 and 90; the worst wrong row reads 8.12 cyc here versus
+the scratch join's 3.5, a difference traced to a double-slip window detail on
+one row).
 
 Usage:
   python scripts/simnet_bridge_truth.py <run_dir> <fixture_dir>
       [--window-s 15] [--tol 0.5] [--json out.json]
 
 Traps this join inherits from the family (see simnet_iono_interaction.py):
-tow is quantized to int seconds; truth is per-station DIRECTORY files; the
+tow is quantized to int seconds; truth is per-station directory files; the
 detail field is ';'-separated with self-describing key=value tokens from
-route= onward (v2 rows have no route= token — treated as route "mw").
+route= onward (v2 rows have no route= token, treated as route "mw").
 """
 import argparse
 import csv

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""EVENT HARNESS Study 1 driver — make + run the erase-vs-refloat leg matrix.
+"""Event harness study 1 driver: builds and runs the erase-vs-refloat leg matrix.
 
-One leg per (arc, mode).  Every leg resumes from the SAME snapshot as the
+One leg per (arc, mode).  Every leg resumes from the same snapshot as the
 validation legs (``runs/evseed_quiet6h`` ep0665) with the same config except
 ``network.inject``, so ``scripts/event_grade.py`` can difference any of them
-against the single NULL leg.
+against the single null leg.
 
     python scripts/ev_study1_legs.py make            # write every leg.json
     python scripts/ev_study1_legs.py run  <name> ... # run these legs (<=3 at a time)
@@ -28,30 +28,30 @@ EPOCHS = 60
 AT_EP = 10
 
 # (leg name, station, satellite, arc_erase mode | None for the null)
-# A mode may carry a BAND SCOPE as "<mode>@<L..;L..>" (rung 2): the scoped legs
+# A mode may carry a band scope as "<mode>@<L..;L..>" (rung 2): the scoped legs
 # free/erase only those signals, reproducing the 2-of-3 scope a real IF-TD
 # detector refloat used on the validation slip leg.
 ARC1 = ("S21000SIM", "G10")     # the validation arc (mean elevation 14.2 deg)
-ARC2 = ("S50000SIM", "G31")     # different station, HIGH elevation (mean 81.3 deg)
-ARC3 = ("S40000SIM", "G31")     # arc2's satellite at a LOW-elevation station (13.8 deg)
+ARC2 = ("S50000SIM", "G31")     # different station, high elevation (mean 81.3 deg)
+ARC3 = ("S40000SIM", "G31")     # arc2's satellite at a low-elevation station (13.8 deg)
 
 LEGS = [
-    # byte-identity gate: a NULL leg on the new exe must reproduce evleg_null
+    # byte-identity gate: a null leg on the new exe must reproduce evleg_null
     ("s1_nullgate", None, None, None),
-    # arc 1 — the four diagnostic modes (erase / slip / null reuse the validation legs)
+    # arc 1: the four diagnostic modes (erase / slip / null reuse the validation legs)
     ("s1_free",     ARC1[0], ARC1[1], "free_epoch"),
     ("s1_keepiono", ARC1[0], ARC1[1], "erase_keep_iono"),
     ("s1_noreseed", ARC1[0], ARC1[1], "erase_no_reseed"),
     ("s1_nofunnel", ARC1[0], ARC1[1], "erase_no_funnel"),
-    # arc 2 — the decisive contrast on a different station
+    # arc 2: the decisive contrast on a different station
     ("s2_erase",    ARC2[0], ARC2[1], "erase"),
     ("s2_free",     ARC2[0], ARC2[1], "free_epoch"),
     ("s2_noreseed", ARC2[0], ARC2[1], "erase_no_reseed"),
-    # arc 3 — the decisive contrast on a LOW-elevation arc
+    # arc 3: the decisive contrast on a low-elevation arc
     ("s3_erase",    ARC3[0], ARC3[1], "erase"),
     ("s3_free",     ARC3[0], ARC3[1], "free_epoch"),
     ("s3_noreseed", ARC3[0], ARC3[1], "erase_no_reseed"),
-    # rung 2 — BAND SCOPE: the same actions on 2 of 3 bands (the slip leg's scope)
+    # rung 2: band scope, the same actions on 2 of 3 bands (the slip leg's scope)
     ("s1_free_l12",  ARC1[0], ARC1[1], "free_epoch@L1C;L2W"),
     ("s1_erase_l12", ARC1[0], ARC1[1], "erase@L1C;L2W"),
     ("s2_free_l12",  ARC2[0], ARC2[1], "free_epoch@L1C;L2W"),

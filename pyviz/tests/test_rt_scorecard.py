@@ -2,7 +2,7 @@
 
 Follows the suite convention of real files in a tmp dir (no mocks): a synthetic
 ``state_trace.csv`` whose error decays through the 1.0/0.5/0.2 m rungs but never
-holds 0.1 m, plus a comment-bearing run config carrying the reference — the
+holds 0.1 m, plus a comment-bearing run config carrying the reference, in the
 ``config/sbf_replay_covl145.json`` shape.
 """
 import json
@@ -55,7 +55,7 @@ def _write_run_config(path, ref, app_mode="real_time"):
 
 
 def test_suffix_converged_index_semantics():
-    # A dip below thr that later diverges must NOT count as converged.
+    # A dip below thr that later diverges does not count as converged.
     e = np.array([5.0, 0.3, 0.3, 2.0, 0.4, 0.4, 0.4])
     assert _suffix_converged_index(e, 0.5) == 4
     assert _suffix_converged_index(e, 0.2) is None
@@ -95,9 +95,9 @@ def test_scorecard_metrics_and_figures(tmp_path):
     assert m["conv"][0.1] is None
     idx = [m["conv"][t] for t in THRESHOLDS if m["conv"][t] is not None]
     assert idx == sorted(idx)
-    # Pure-up error: steady-state U ~ +hold, E/N ~ 0, H << U.  The window opens
+    # Pure-up error: steady-state U ~ +hold, E/N ~ 0, H << U. The window opens
     # at the ≤1.0 m rung so the mean carries the 1.0→0.15 decay tail by design;
-    # the MEDIAN sits on the floor.
+    # the median sits on the floor.
     st = m["stats"]
     assert st["U"]["p50"] == pytest.approx(0.15, abs=0.02)
     assert st["U"]["mean"] > 0.15 and st["U"]["mean"] < 0.30

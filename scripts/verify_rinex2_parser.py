@@ -2,10 +2,10 @@
 """
 Reference parser for RINEX 2.xx mixed observation files.
 
-Mirrors the algorithm now implemented in src/core/rinex/RinexParser.cpp so we
-can sanity-check expected outputs (epoch counts, sat counts per epoch, the
-observation values for a known satellite) against the real cit11290.24o
-test fixture without having to spin up the full MSVC build.
+Mirrors the algorithm implemented in src/core/rinex/RinexParser.cpp to sanity-check
+expected outputs (epoch counts, sat counts per epoch, the observation values for a
+known satellite) against the real cit11290.24o test fixture without spinning up the
+full MSVC build.
 
 Run:
     python scripts/verify_rinex2_parser.py [path/to/file.YYo]

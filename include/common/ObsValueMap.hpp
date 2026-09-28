@@ -8,30 +8,29 @@
  * A RINEX observation file declares, in its header, the ordered set of
  * observation codes recorded for each GNSS system (the @c "SYS / # / OBS TYPES"
  * records).  Every epoch/satellite record then carries a value for some subset
- * of those declared codes.  The legacy representation stored each record's
- * values in three @c std::map<std::string,…> instances (measurements,
- * variances, LLI), which meant — per observation — three red-black trees, a
- * separate heap node per code (~36 node allocations), and a fresh copy of the
- * obs-code string in every node.  At 305 stations × a full day × ~30 satellites
- * that per-observation overhead (~2.7 KB) dominates the working set.
+ * of those declared codes.  Storing each record's values in three
+ * @c std::map<std::string,…> instances (measurements, variances, LLI) costs,
+ * per observation, three red-black trees, a heap node per code (about 36 node
+ * allocations) and a copy of the obs-code string in every node, about 2.7 KB
+ * per observation.  At network scale (hundreds of stations over a full day)
+ * that overhead dominates the working set.
  *
- * @c ObsValueMap collapses that to:
+ * @c ObsValueMap reduces that to:
  *   - one @b shared @c ObsCodeIndex per (file, system): the obs-code strings and
- *     their code→index mapping live exactly @b once and are referenced
- *     (@c shared_ptr) by every observation of that system, surviving the copies
- *     that @c MultiRinexSync makes when grouping/synchronising epochs and the
- *     long-lived @c synced_ store the network solve holds; and
+ *     their code→index mapping are stored once and referenced (@c shared_ptr)
+ *     by every observation of that system, including the copies that
+ *     @c MultiRinexSync makes when grouping and synchronising epochs and the
+ *     long-lived @c synced_ store held by the network solve; and
  *   - one flat @c std::vector<T> per channel, indexed by the shared layout, with
- *     a sentinel marking absent codes — a single heap allocation instead of a
+ *     a sentinel marking absent codes: a single heap allocation instead of a
  *     tree of nodes.
  *
- * The container deliberately mirrors the subset of the @c std::map API the
- * codebase actually exercises on these channels (@c operator[], @c at, @c count,
- * @c find, range-for, @c size, @c empty, @c clear, assignment) so the parser and
- * the many downstream consumers compile against it with no call-site churn.
- * Iteration is in @b sorted code order to match @c std::map exactly, preserving
- * any consumer logic that depends on deterministic key ordering (and keeping
- * results bit-identical).
+ * The container mirrors the subset of the @c std::map API used on these
+ * channels (@c operator[], @c at, @c count, @c find, range-for, @c size,
+ * @c empty, @c clear, assignment), so the parser and the downstream consumers
+ * compile against it without call-site changes.  Iteration is in sorted code
+ * order, the same as @c std::map, so consumer logic that depends on key order
+ * behaves as before and results stay bit-identical.
  */
 
 #include <algorithm>
@@ -128,9 +127,9 @@ namespace GnssProcessor {
      *
      * Measurement and variance values are never NaN and LLI flags are 0..9, so
      * these sentinels never collide with real data.  @c operator[] inserts a
-     * value-initialised (0) entry — matching @c std::map — which is distinct
-     * from the absent sentinel, so a code touched via @c operator[] reads back
-     * as present even when its value is 0.
+     * value-initialised (0) entry, as @c std::map does; 0 is distinct from the
+     * absent sentinel, so a code touched via @c operator[] reads back as
+     * present even when its value is 0.
      */
     template <typename T> struct ObsAbsent;
     template <> struct ObsAbsent<double> {
@@ -149,7 +148,7 @@ namespace GnssProcessor {
      * channels use.  Backed by a shared @c ObsCodeIndex (the obs-code strings)
      * and a flat @c std::vector<T> (the values, sentinel for holes).  Copies are
      * cheap: the value vector is cloned (one allocation) and the layout pointer's
-     * refcount is bumped — the obs-code strings are never re-cloned.
+     * reference count is incremented; the obs-code strings are not copied.
      *
      * @tparam T @c double for measurements/variances, @c int for LLI flags.
      */
@@ -220,20 +219,19 @@ namespace GnssProcessor {
          * @brief Insert-or-access (matches @c std::map::operator[]).
          *
          * If @p code is absent it is inserted with a value-initialised (0) mapped
-         * value — growing a private layout when none is attached — and a
+         * value (creating a private layout when none is attached), and a
          * reference to that slot is returned.
          */
         T& operator[](const std::string& code) {
             if (!layout) layout = std::make_shared<ObsCodeIndex>();
             int i = layout->find(code);
             if (i < 0) {
-                // Inserting a code the layout doesn't yet know.  If the layout is
-                // shared (the RINEX bulk path shares one table across every
-                // observation of a system), copy-on-write so growing it here can
-                // never mutate the table other observations rely on.  In practice
-                // the RINEX path only ever writes already-declared codes, so this
-                // never triggers there; it makes ad-hoc / future writes safe by
-                // construction rather than by convention.
+                // The code is not in the layout yet.  If the layout is shared (the
+                // RINEX bulk path shares one table across every observation of a
+                // system), copy it first so that growing it here cannot change the
+                // table other observations use.  The RINEX path writes only
+                // declared codes and never reaches this branch; the copy keeps
+                // ad-hoc and streaming writes safe without relying on that.
                 if (layout.use_count() > 1)
                     layout = std::make_shared<ObsCodeIndex>(*layout);
                 i = layout->getOrAdd(code);
@@ -246,8 +244,8 @@ namespace GnssProcessor {
         }
 
         /**
-         * @brief Materialise a real @c std::map (for the few sinks — e.g.
-         *        @c PppObservation — that still hold @c std::map channels).
+         * @brief Materialise a real @c std::map, for the sinks that still hold
+         *        @c std::map channels (for example @c PppObservation).
          */
         std::map<std::string, T> toStdMap() const {
             std::map<std::string, T> out;

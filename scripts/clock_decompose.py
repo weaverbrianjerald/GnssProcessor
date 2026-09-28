@@ -4,23 +4,23 @@
     python scripts/clock_decompose.py <run_dir> [tail_seconds=3600]
 
 Reads ``<run>/logs/network_solution.csv`` CLK rows over the final window and
-reports, per satellite (cross-sat de-medianed first — the datum-invariant read):
+reports, per satellite (cross-sat de-medianed first, for a datum-invariant read):
 
-* ``|linear drift|`` (m/hour)   — the PHYSICAL clock class (af1, us/day scale;
-  on this producer it lives mostly in the COD a-priori the state is linearized
-  against, so it is NOT what q_clock constrains);
-* ``post-linear residual`` (cm) — everything a linear fit does not explain:
-  clock noise + estimation churn + emit-anchor tension;
-* ``2nd-diff sigma_eq`` (cm/step) — drift-immune white-equivalent step noise;
-  under WFM, q1 = sigma_eq^2 / dt — compare against the Hadamard card's
-  measured q1 (~3.5e-3 GPS) and against filter.process_noise.sat_clock_q.
+* ``|linear drift|`` (m/hour): the physical clock class (af1, on a us/day
+  scale). On this producer it lives mostly in the COD a-priori the state is
+  linearized against, so it is not what q_clock constrains.
+* ``post-linear residual`` (cm): everything a linear fit does not explain,
+  i.e. clock noise plus estimation churn plus emit-anchor tension.
+* ``2nd-diff sigma_eq`` (cm/step): drift-immune white-equivalent step noise.
+  Under WFM, q1 = sigma_eq^2 / dt; compare against the Hadamard card's
+  measured q1 (about 3.5e-3 for GPS) and against filter.process_noise.sat_clock_q.
 
-METRIC TRAP this tool exists to prevent (2026-07-31): a plain temporal std of
-the emitted clock is DOMINATED by the linear drift (~2-7 m/h -> ~0.3 m std per
-30 min window alone).  Any historical "clock wander" number computed without a
-per-sat de-trend (e.g. the lever-C 0.368 m reading) conflates physical drift
-with estimation churn.  Grade clock changes on the DE-TRENDED columns, and on
-total_IF per the promotion-ledger convention — never raw rms_clock_m.
+A plain temporal std of the emitted clock is dominated by the linear drift
+(about 2 to 7 m/h, so about 0.3 m std over a 30 min window from drift alone),
+so a "clock wander" number computed without a per-satellite de-trend conflates
+physical drift with estimation churn. Grade clock changes on the de-trended
+columns above, and on total_IF per the promotion-ledger convention, not on
+raw rms_clock_m.
 """
 import csv
 import math

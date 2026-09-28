@@ -5,7 +5,7 @@ a :class:`Figure` out of prepared data) and the *backends* (which know a plottin
 library and render a :class:`Figure` to pixels).  Nothing in this module imports
 matplotlib / plotly: a :class:`Figure` is pure data, fully picklable, trivially
 unit-testable, and identical whether it is later drawn by the matplotlib backend
-(static report PNGs, today) or a future plotly backend (interactive / real-time).
+(static report PNGs) or the plotly backend (interactive).
 
 The vocabulary intentionally tracks what the MATLAB viewer suite actually draws
 (``plot`` / ``area`` / ``yline`` / ``imagesc`` / ``text`` / dual y-axis / log y /
@@ -19,7 +19,7 @@ Coordinate conventions
 * :class:`TextBox` uses *axes-fraction* coordinates (0..1), like MATLAB's
   ``'Units','normalized'`` text.
 * :class:`Raster` mirrors MATLAB ``imagesc``: ``grid`` is ``(n_rows, n_cols)``
-  with row 0 drawn at the TOP (``YDir='reverse'``), columns spread *uniformly*
+  with row 0 drawn at the top (``YDir='reverse'``), columns spread *uniformly*
   across the time span ``[x[0], x[-1]]`` regardless of real epoch gaps, and
   ``NaN`` cells left transparent.
 """
@@ -74,7 +74,7 @@ class TextBox:
     """Text anchored in axes-fraction coords (MATLAB ``'Units','normalized'``).
 
     Set ``data_coords=True`` to place the text at *data* coordinates instead
-    (``x``/``y`` are then data values, e.g. lon/lat on a geo axes) — used for
+    (``x``/``y`` are then data values, e.g. lon/lat on a geo axes); used for
     on-map station labels.
     """
     x: float
@@ -121,7 +121,7 @@ class Scatter:
 
     When ``c`` is given, points are coloured by that per-point scalar through the
     axes ``cmap`` / ``clim`` (the mappable is surfaced for a colorbar) instead of
-    the flat ``color`` — used by the geo viewers to colour station/pierce-point
+    the flat ``color``; the geo viewers use this to colour station/pierce-point
     markers by a value (e.g. slant iono).  ``edgecolor`` / ``linewidth`` draw a
     marker outline (e.g. a white ring around a coloured station dot).
     """
@@ -227,15 +227,15 @@ class Polygon:
 
 @dataclass
 class RgbImage:
-    """A georeferenced truecolor image pinned to a DATA-coordinate extent.
+    """A georeferenced truecolor image pinned to a data-coordinate extent.
 
     Unlike :class:`RgbRaster` (``imagesc``-style: columns spread *uniformly*
     across a time span, row 0 at the top, per-row labels), an ``RgbImage`` places
-    the pixels at an explicit ``extent = (x0, x1, y0, y1)`` in data coordinates --
-    e.g. a satellite basemap behind a lon/lat track.  Row 0 of ``rgb`` is the TOP
+    the pixels at an explicit ``extent = (x0, x1, y0, y1)`` in data coordinates,
+    e.g. a satellite basemap behind a lon/lat track.  Row 0 of ``rgb`` is the top
     (max-y) row.  Drawn *below* other traces via a low :attr:`zorder` (a basemap).
 
-    ``encoded`` optionally carries the SAME pixels already compressed (e.g. the
+    ``encoded`` optionally carries the same pixels already compressed (e.g. the
     vendored JPEG) so a backend can embed them verbatim (small offline HTML)
     instead of re-encoding; ``rgb`` stays the canonical array both backends and
     tests use.
@@ -253,7 +253,7 @@ class RgbImage:
 class Mesh:
     """A georeferenced scalar grid drawn with ``pcolormesh`` (lon × lat).
 
-    ``lon`` (length ``n_col``) and ``lat`` (length ``n_row``) are cell-CENTRE
+    ``lon`` (length ``n_col``) and ``lat`` (length ``n_row``) are cell-centre
     coordinates; ``grid`` is ``(n_row, n_col)`` with ``NaN`` cells transparent.
     Coloured through the *axes* ``cmap`` / ``clim`` (set on the :class:`Axes`),
     with the mappable surfaced so a colorbar can attach.  Used on a ``geo`` axes

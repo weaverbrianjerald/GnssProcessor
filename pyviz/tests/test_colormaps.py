@@ -36,8 +36,8 @@ def test_parula_falls_back_to_viridis_without_matplotlib():
 
 
 def test_turbo_is_a_real_rainbow_not_the_viridis_fallback():
-    # turbo gained a real anchor table (2026-08-06) so both backends render the
-    # genuine colours from the same array.
+    # turbo has a real anchor table (added 2026-08-06), so both backends render
+    # the same colours from the same array.
     t = strip_colormap("turbo", 32)
     assert not np.allclose(t, strip_colormap("viridis", 32))
     assert t.shape == (32, 3) and t.min() >= 0.0 and t.max() <= 1.0

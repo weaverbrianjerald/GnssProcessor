@@ -5,13 +5,14 @@
  * @brief Internal JSON-parsing helpers shared by the GnssConfig section
  *        loaders.
  *
- * Extracted from the original anonymous namespace at the top of
- * @c GnssConfig.cpp so that @c GnssConfigLoad.cpp and any future
- * config-loading translation units can share the exact same
- * "<i>new path or legacy key, otherwise default</i>" semantics.
+ * Shared by @c GnssConfig.cpp, @c GnssConfigLoad.cpp and
+ * @c GnssConfigLoadNetwork.cpp, so every config-loading translation unit
+ * applies the same "<i>new path or legacy key, otherwise default</i>"
+ * semantics.  The simulator's @c SimConfig.cpp also uses @c jval and
+ * @c resolvePath, so both config dialects read JSON the same way.
  *
  * The helpers live in the @c GnssProcessor::detail namespace; nothing
- * here is intended for use outside the config loader.
+ * here is intended for use outside these config loaders.
  */
 
 #include <algorithm>
@@ -43,20 +44,20 @@ inline std::string joinStrings(const std::vector<std::string>& v,
 
 /// @brief Recursively overlay @p overlay onto @p base, in place.
 ///
-/// The merge rule for @c "extends" config inheritance, and the rule is
-/// deliberately asymmetric:
-///  - **object vs object** -> merge key-by-key, recursively.  This is what makes
-///    a delta config able to set @c network.raim without restating the other
-///    ~80 keys of the @c network section.
-///  - **everything else** -> the overlay value REPLACES the base value outright.
+/// The merge rule for @c "extends" config inheritance.  The rule is
+/// asymmetric on purpose:
+///  - **object vs object** -> merge key-by-key, recursively.  This lets a delta
+///    config set @c network.raim without restating the rest of the @c network
+///    section.
+///  - **everything else** -> the overlay value replaces the base value outright.
 ///
-/// Arrays replace rather than concatenate, and that is a safety property, not a
-/// convenience: @c network.stations is an array, and a base roster silently
-/// concatenating with a child roster would produce duplicate stations, a
-/// different station ORDER (the warm-resume fingerprint hashes the roster in
-/// order), and a station count that matches no intended regime.  The same goes
-/// for @c processing.active_systems and @c signal_priorities.  A child that
-/// wants "the base roster plus one" must state the whole roster.
+/// Arrays replace rather than concatenate, and that is a safety property: the
+/// roster @c network.stations is an array, and concatenating a base roster with
+/// a child roster would produce duplicate stations, a different station order
+/// (the warm-resume fingerprint hashes the roster in order), and a station count
+/// that matches no intended regime.  The same holds for
+/// @c processing.active_systems and @c signal_priorities.  A child that needs
+/// "the base roster plus one" states the whole roster.
 ///
 /// A null overlay value replaces too, so a child can explicitly blank a string
 /// the base set (e.g. reset an inherited @c state_snapshot_path to "").
@@ -92,9 +93,8 @@ inline const nlohmann::json* resolvePath(const nlohmann::json& root,
 /// Read a scalar value from JSON trying @p newPath (dot-separated) first,
 /// then @p legacyKey (top-level), then returning @p defaultVal.
 ///
-/// This is the workhorse used by every section loader to keep the
-/// hierarchical and legacy-flat JSON layouts both working from a single
-/// settings line.
+/// Every section loader uses this to accept both the hierarchical and the
+/// legacy flat JSON layouts from a single settings line.
 template <typename T>
 T jval(const nlohmann::json& root, const std::string& newPath,
        const std::string& legacyKey, const T& defaultVal) {
@@ -105,12 +105,12 @@ T jval(const nlohmann::json& root, const std::string& newPath,
     return defaultVal;
 }
 
-/// @brief Was a scalar EXPLICITLY set, under either spelling?
+/// @brief Report whether a scalar is explicitly set, under either spelling.
 ///
-/// Same lookup order as @ref jval, but reports presence instead of a value —
-/// the discriminator a precedence rule needs when "absent" and "set to the
-/// default value" must be told apart (e.g. deciding whether a scattered legacy
-/// key should shadow the scoped @c network.process_noise table).
+/// Same lookup order as @ref jval, but reports presence instead of a value.
+/// A precedence rule needs this when "absent" and "set to the default value"
+/// must be told apart (e.g. deciding whether a scattered legacy key should
+/// shadow the scoped @c network.process_noise table).
 inline bool jhas(const nlohmann::json& root, const std::string& newPath,
                  const std::string& legacyKey) {
     if (resolvePath(root, newPath)) return true;

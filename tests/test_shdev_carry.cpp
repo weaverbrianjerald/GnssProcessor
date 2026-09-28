@@ -1,17 +1,16 @@
 /**
  * @file test_shdev_carry.cpp
- * @brief Iono-2 / T5v2 unit gates for the EXACT per-LOS SH-deviation update
- *        (@ref shDevExactUpdate) — the closed-form scalar posterior of the
- *        Gauss–Markov representativeness deviation from the solved pin
- *        functional.
+ * @brief Unit gates for the exact per-LOS SH-deviation update
+ *        (@ref shDevExactUpdate), the closed-form scalar posterior of the
+ *        Gauss–Markov representativeness deviation given the solved pin
+ *        functional (Iono-2, T5v2).
  *
- * The T5 v1 scalar filter was falsified as CIRCULAR (Jul-10 2026): it treated
- * the pin-regularized residual as an independent floor-noise observation, so
- * its variance collapsed to floor² after one update regardless of how little
- * information the epoch actually carried.  These gates pin the v2 closed form
- * to its drop-in-derivable limits and PROVE the non-collapse property the v1
- * lacked — the falsifier the memory called for ("an exact-state version would
- * differ").
+ * The T5 v1 scalar filter was falsified as circular: it treated the
+ * pin-regularized residual as an independent floor-noise observation, so its
+ * variance collapsed to floor² after one update regardless of how little
+ * information the epoch carried.  These gates check the v2 closed form against
+ * its analytically derivable limits and show that its variance does not
+ * collapse under weak data, unlike v1.
  *
  * Model under test (all one unit frame):
  *   prior d ~ N(d_pred, P);  pin row u − d = ε, ε ~ N(0, f²);  data-only
@@ -34,7 +33,7 @@ using namespace GnssProcessor;
 namespace {
 
 // Forward-model helper: the solved posterior (û, V̂) of u given the data-only
-// estimate (u0, U) and the RHS-shifted pin row (d_pred, P, f²) — the exact
+// estimate (u0, U) and the RHS-shifted pin row (d_pred, P, f²).  This is the
 // two-Gaussian fusion the network solve performs after Schur-eliminating d.
 struct SolvedPin { double u_hat; double v_hat; };
 SolvedPin solvePin(double u0, double U, double d_pred, double P, double f2) {
@@ -49,20 +48,20 @@ TEST(ShDevExactUpdate, ClosedFormLimits) {
     const double a = P + f2;
 
     // U → ∞ (uninformative epoch): the solve returns û = d_pred (the row is the
-    // only handle on u), V̂ = a.  The update must be a NO-OP on the variance.
+    // only handle on u), V̂ = a.  The update leaves the variance unchanged.
     {
         const auto [d, Pp] = shDevExactUpdate(d_pred, P, d_pred, a, f2);
         EXPECT_DOUBLE_EQ(d, d_pred);
         EXPECT_DOUBLE_EQ(Pp, P);
     }
-    // V̂ ≥ a numerically (degenerate) — same no-information treatment.
+    // V̂ ≥ a numerically (degenerate): the same no-information treatment.
     {
         const auto [d, Pp] = shDevExactUpdate(d_pred, P, 1.7, a * 1.01, f2);
         EXPECT_DOUBLE_EQ(Pp, P);
         // Mean still blends toward the reported û with the predicted gain.
         EXPECT_NEAR(d, d_pred + (P / a) * (1.7 - d_pred), 1e-15);
     }
-    // U → 0 (data pins u exactly at u_true): P⁺ = P·f²/a — the classic scalar
+    // U → 0 (data pins u exactly at u_true): P⁺ = P·f²/a, the standard scalar
     // KF update of d against a floor-noise observation of its true value.
     {
         const auto [d, Pp] = shDevExactUpdate(d_pred, P, 1.0, 0.0, f2);
@@ -80,11 +79,11 @@ TEST(ShDevExactUpdate, ClosedFormLimits) {
     }
 }
 
-// THE non-collapse falsifier: under a weak-data stream (per-epoch data-only
-// variance U ≫ f²) the v1 circular recursion collapses its variance to ~f²
-// after one update, while the exact v2 recursion holds P near the honest
-// steady state set by U, τ, and σ_ss — information accumulates at the true
-// rate instead of the incestuous one.
+// Non-collapse test: under a weak-data stream (per-epoch data-only variance
+// U ≫ f²) the circular v1 recursion collapses its variance to ~f² after one
+// update, while the exact v2 recursion holds P near the steady state set by U,
+// τ and σ_ss.  Information accumulates at the rate the data supports instead of
+// being counted again on every epoch.
 TEST(ShDevExactUpdate, NonCollapseVsCircularV1) {
     const double f2 = 0.0025;        // floor² (e.g. 0.05² m² mapped)
     const double sig_ss2 = 0.64;     // GM steady-state variance
@@ -105,24 +104,24 @@ TEST(ShDevExactUpdate, NonCollapseVsCircularV1) {
         const double Kf = P_v1 / (P_v1 + f2);
         P_v1 *= (1.0 - Kf);
     }
-    // v1 collapse: P ≈ f²-scale after the very first update (the σ-incest).
+    // v1 collapse: P is at f² scale after the first update.
     EXPECT_LT(P_v1, 3.0 * f2);
-    // v2 honesty: P stays far above the floor — bounded below by the exact
-    // single-epoch information rate (P⁺ ≥ P·(U+f²)/(U+P+f²) with the GM leak
-    // re-inflating each epoch).  With U = 144·f² the steady state must sit
-    // orders of magnitude above the collapsed v1.
+    // v2: P stays well above the floor, bounded below by the exact single-epoch
+    // information rate (P⁺ = P·(U+f²)/(U+P+f²), with the GM leak re-inflating P
+    // each epoch).  With U = 144·f² the steady state is about 39·f² (≈0.097),
+    // roughly 40 times the collapsed v1 value.
     EXPECT_GT(P_v2, 30.0 * f2);
     EXPECT_GT(P_v2, 20.0 * P_v1);
-    // And it still ACCUMULATES: the steady state is below the no-update GM
-    // steady state (information does flow, at the honest rate).
+    // Information still accumulates: the steady state is below the no-update GM
+    // steady state.
     EXPECT_LT(P_v2, sig_ss2);
 }
 
 // Bayesian consistency: iterating {solve → exact update} with no GM leak
-// reproduces the batch information sum EXACTLY — the recursion's information
-// form is 1/P⁺ = 1/P + 1/(U+f²) (each epoch is one independent observation of
-// d at variance U+f², the pin noise plus the data-only noise), so after k
-// epochs 1/P = 1/P₀ + k/(U+f²) to machine precision.
+// reproduces the batch information sum.  The recursion's information form is
+// 1/P⁺ = 1/P + 1/(U+f²) (each epoch is one independent observation of d at
+// variance U+f², the pin noise plus the data-only noise), so after k epochs
+// 1/P = 1/P₀ + k/(U+f²) up to rounding (the test allows 1e-6 relative).
 TEST(ShDevExactUpdate, InformationAddsAtBatchRateWithoutLeak) {
     const double f2 = 0.0025, U = 0.36, P0 = 0.64;
     double P = P0;
@@ -136,9 +135,10 @@ TEST(ShDevExactUpdate, InformationAddsAtBatchRateWithoutLeak) {
 }
 
 // ---------------------------------------------------------------------------
-// Iono-2 v3 (SPEC_iono2_mechB_v3): contract-enforcing de-mean of the carried
-// deviation priors — the anti-ratchet for the (common vertical deviation ↔ a00)
-// exact quasi-null pair.  These gates pin the projection properties.
+// Contract-enforcing de-mean of the carried deviation priors (Iono-2 v3,
+// SPEC_iono2_mechB_v3).  It keeps the common vertical deviation and a00, an
+// exact quasi-null pair, from ratcheting against each other.  These gates check
+// the projection properties.
 // ---------------------------------------------------------------------------
 
 namespace {
@@ -202,13 +202,13 @@ TEST(ShDevDemean, BelowGlobalThresholdUntouched) {
     }
 }
 
-// A station below the per-station threshold keeps its (globally de-meaned)
-// values — no station mean is removed for it — while qualifying stations zero.
+// A station below the per-station threshold keeps its globally de-meaned values
+// (no station mean is removed for it), while qualifying stations go to zero mean.
 TEST(ShDevDemean, ThinStationKeepsGlobalOnlyResidual) {
     std::vector<std::tuple<std::string, double, double, double>> rows;
     for (int i = 0; i < 6; ++i)
         rows.emplace_back("AAAA|G0" + std::to_string(i), 2.0 + 0.1 * i, 4.0, 100.0);
-    rows.emplace_back("THIN|G07", 9.0, 4.0, 100.0);  // 1 LOS — below min_station 4
+    rows.emplace_back("THIN|G07", 9.0, 4.0, 100.0);  // 1 LOS, below min_station 4
     auto m = makeCarry(rows);
     auto ref = m;
     const auto st = shDevDemean(m, 4, 4);
@@ -224,7 +224,7 @@ TEST(ShDevDemean, ColdEntriesExcludedAndUnmodified) {
     std::vector<std::tuple<std::string, double, double, double>> rows;
     for (int i = 0; i < 5; ++i)
         rows.emplace_back("AAAA|G0" + std::to_string(i), 1.0, 4.0, 100.0);
-    rows.emplace_back("AAAA|G09", 500.0, 4.0, 0.0);  // cold — huge dev must not bias g
+    rows.emplace_back("AAAA|G09", 500.0, 4.0, 0.0);  // cold; its large dev must not bias g
     auto m = makeCarry(rows);
     const auto st = shDevDemean(m, 4, 4);
     EXPECT_TRUE(st.applied);
@@ -236,7 +236,7 @@ TEST(ShDevDemean, ColdEntriesExcludedAndUnmodified) {
 // v3k erase-policy split: the D5-only response keeps the accumulated level and
 // re-taps the variance to steady state; the subsequent GM aging step is a no-op
 // on that variance (λ²σ_ss² + (1−λ²)σ_ss² = σ_ss²) while the mean decays
-// normally — the retap discards confidence, never the level.
+// normally.  The retap discards confidence, not the level.
 TEST(ShDevD5Retap, KeepsLevelRetapsVarianceAgingIdempotent) {
     ShDevCarry dc;
     dc.dev = 3.7; dc.var = 0.9; dc.var_ss = 25.0; dc.t_s = 100.0;

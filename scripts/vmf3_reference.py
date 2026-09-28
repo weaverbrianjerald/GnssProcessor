@@ -108,7 +108,7 @@ def vmf3(lat: float, lon: float, doy: float, el: float, ah: float, aw: float,
 
 def main() -> int:
     arrs = load_arrays()
-    # Test inputs — bake these into the C++ unit test.
+    # Test inputs: bake these into the C++ unit test.
     lat = 0.5            # rad (~28.6°N)
     lon = 1.0            # rad (~57.3°E)
     doy = 100.0

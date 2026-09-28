@@ -137,14 +137,14 @@ def exam_fixture(tmp_path):
                 l1u = 9.0 + 0.5 * i
                 l13 = (1.5 ** 2 + 0.8 ** 2 + l1u ** 2) ** 0.5
                 if3 = 2.6 + 0.05 * i
-                # The precise-orbit twin pairs against the NO-TGD variant (that is
+                # The precise-orbit twin pairs against the no-TGD variant (that is
                 # what the C++ broadcast_minus_precise_orbits differences), so its
                 # offset hangs off l1_notgd, not off the canonical leg 1.
                 l1_notgd = l13 - 1.46
-                # Formal sigmas: leg 1 reports a SMALLER sigma than leg 2 while
-                # being ~4x worse (its error is an unmodelled iono systematic the
-                # covariance cannot see) -- the real hero run behaves this way and
-                # the viewer's err/sigma ratio panel keys off it.
+                # Formal sigmas: leg 1 reports a smaller sigma than leg 2 while
+                # being about 4x worse (its error is an unmodelled iono systematic
+                # the covariance cannot see); the reference run behaves this way,
+                # and the viewer's err/sigma ratio panel keys off it.
                 sp.append(
                     f"{_WEEK},{tw:.3f},9,1.42,29995.5,-1.50,0.80,{l1u:.4f},{l13:.4f},"
                     f"0.88,0.87,2.03,0.69,"
@@ -183,10 +183,10 @@ def exam_fixture(tmp_path):
                 "truth": {"gps_galileo_isb_m": 8.0 if galileo else 0.0, "zwd_m": 0.15,
                           "final_position_ecef_m": [_X0, _Y0, _Z0]},
                 "noise": {"seed": 20240315},
-                # Station-keeping prefix (2026-08-06): the disclosed window Parts B/C
-                # solve as a fixed point, and what exam_static_window keys off.  The
-                # fixture's truth is not actually stationary there, which does not
-                # matter -- the viewer only needs the window to select epochs.
+                # Station-keeping prefix: the disclosed window Parts B/C solve as a
+                # fixed point, and what exam_static_window keys off.  The fixture's
+                # truth is not actually stationary there; the viewer only needs the
+                # window to select epochs.
                 "static_segment": {"n_epochs": 3, "tow_start_s": _TOW0,
                                    "tow_end_s": _TOW0 + 2 * _STEP,
                                    "duration_s": 2 * _STEP,
@@ -200,9 +200,9 @@ def exam_fixture(tmp_path):
 
         # --- state_trace.csv (processor solution) ---
         # ``state_cov`` toggles the off-diagonal position covariance the processor
-        # has emitted since 2026-07-24 (cov_xy/xz/yz).  Off => the pre-change
-        # schema, which the ellipse/corridor code must degrade past cleanly rather
-        # than fabricate an orientation from the diagonal.
+        # emits (cov_xy/xz/yz).  Off selects the schema without those columns,
+        # which the ellipse/corridor code must degrade past cleanly rather than
+        # fabricate an orientation from the diagonal.
         cols = ["week", "tow_s", "x_m", "y_m", "z_m", "x_std_m", "y_std_m", "z_std_m"]
         if state_cov:
             cols += ["cov_xy_m2", "cov_xz_m2", "cov_yz_m2"]

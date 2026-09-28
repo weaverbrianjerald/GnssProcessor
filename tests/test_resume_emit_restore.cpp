@@ -1,29 +1,30 @@
 /**
  * @file test_resume_emit_restore.cpp
- * @brief Contract tests for the RS-5 EMIT-LAYER continuity card
+ * @brief Contract tests for the emit-layer continuity card RS-5
  *        (docs/SPEC_event_harness.md §21.10): the snapshot's format-forward
- *        emit-layer records (@c ER — the Card-4 eq34 emit re-base's emission
- *        frame; @c PF / @c PS — the PB emission filter's per-key posterior and
+ *        emit-layer records (@c ER: the emission frame of the Card-4 eq34 emit
+ *        re-base; @c PF / @c PS: the PB emission filter's per-key posterior and
  *        per-constellation σ̂_step accumulators), the two engines' own
  *        export/restore, and the loader's side of the two knobs
  *        (@c network.state_snapshot_emit_capture, @c network.resume_emit_restore).
  *
- * What is locked here:
- *   (a) both engines' state round-trips through the snapshot TEXT exactly — with
- *       a '|'-bearing key and full-precision doubles, since the keys are
+ * The tests lock:
+ *   (a) both engines' state round-trips through the snapshot text, with a
+ *       '|'-bearing key and full-precision doubles, since the keys are
  *       "sat|signal" and the accumulators are log sums;
- *   (b) a restored @ref NetworkEmitRebase re-bases its next epoch EXACTLY as the
- *       engine it was exported from would have (the continuity claim: run N
- *       epochs on A, export, restore into B, feed both the same next epoch);
- *   (c) the same for @ref NetworkPbEmitFilter — same next-epoch emitted value and
- *       the same σ̂_step, so the restored run continues at the writer's gate;
- *   (d) a snapshot with no @c ER / @c PF / @c PS rows restores nothing (an old
- *       file leaves today's cold-start behaviour, and the containers stay empty);
- *   (e) the write knob OFF emits none of the rows, and the file it produces is
- *       byte-identical to the one the same snapshot produced before the card.
+ *   (b) a restored @ref NetworkEmitRebase re-bases its next epoch as the engine it
+ *       was exported from does (the continuity claim: run N epochs on A, export,
+ *       restore into B, feed both the same next epoch);
+ *   (c) the same for @ref NetworkPbEmitFilter: the same next-epoch emitted value
+ *       and the same σ̂_step, so the restored run continues at the writer's gate;
+ *   (d) a snapshot with no @c ER / @c PF / @c PS rows restores nothing (an older
+ *       file keeps the cold-start behaviour, and the containers stay empty);
+ *   (e) with the write knob off none of the rows is written, so the file matches
+ *       the format before card RS-5 byte for byte; arming it adds only the rows
+ *       and the END line count they advance.
  *
- * The seam mechanics themselves (the emitted level actually continuing across a
- * warm resume) are graded on the harness legs, not here.
+ * The seam mechanics (the emitted level continuing across a warm resume) are
+ * graded on the harness legs, not here.
  */
 #include <gtest/gtest.h>
 
@@ -61,7 +62,7 @@ NetworkStateSnapshot baseSnapshot() {
 }
 
 /// A snapshot carrying one of each emit-layer record, with values chosen so a
-/// shortest-round-trip decimal is NOT the same string as a rounded one.
+/// shortest-round-trip decimal differs from a rounded one.
 NetworkStateSnapshot emitSnapshot() {
     NetworkStateSnapshot s = baseSnapshot();
     s.emit_rebase_last["G01|L1C"] = -18.410123456789012;
@@ -135,14 +136,14 @@ std::vector<NetworkPbEmitFilter::Entry> filterStep(NetworkPbEmitFilter& f,
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// (a) ROUND TRIP through the snapshot text
+// (a) round trip through the snapshot text
 // ---------------------------------------------------------------------------
 
 TEST(ResumeEmitRestore, EmitRecordsRoundTripExactly) {
     const NetworkStateSnapshot s = emitSnapshot();
     ASSERT_TRUE(s.hasEmitState());
-    // The emit rows ride the EXISTING header (the RS-3 precedent): on their own
-    // they neither claim frame state nor push the file to v2/v3.
+    // The emit rows use the existing v1 header (as in RS-3): on their own they
+    // neither claim frame state nor move the file to v2/v3.
     ASSERT_FALSE(s.hasFrameState());
     ASSERT_FALSE(s.hasCouplingState());
 
@@ -160,8 +161,9 @@ TEST(ResumeEmitRestore, EmitRecordsRoundTripExactly) {
     std::istringstream is(text);
     ASSERT_TRUE(NetworkStateSnapshotIO::parse(is, r, &err)) << err;
     ASSERT_EQ(r.emit_rebase_last.size(), 2u);
-    // Full precision: the shortest round-trippable decimal must come back BITWISE,
-    // because the restored value is the frame the next epoch differences against.
+    // Full precision: the shortest round-trippable decimal is written so the value
+    // comes back bit for bit, because the restored value is the frame the next
+    // epoch differences against.  EXPECT_DOUBLE_EQ checks it to within 4 ULP.
     EXPECT_DOUBLE_EQ(r.emit_rebase_last.at("G01|L1C"), -18.410123456789012);
     EXPECT_DOUBLE_EQ(r.emit_rebase_last.at("E11|L5Q"), 3.0517578125e-05);
     ASSERT_EQ(r.pb_filter_state.size(), 2u);
@@ -176,9 +178,9 @@ TEST(ResumeEmitRestore, EmitRecordsRoundTripExactly) {
     EXPECT_TRUE(r.hasEmitState());
 }
 
-/// The POOLED step bucket (`Config::split_by_const` false) keys on the EMPTY
-/// string — the one record in this format whose key field is legitimately blank,
-/// so the parse must accept "PS,,<sum>,<n>" rather than reject it as malformed.
+/// The pooled step bucket (`Config::split_by_const` false) keys on the empty
+/// string.  It is the one record in this format whose key field is legitimately
+/// blank, so the parse accepts "PS,,<sum>,<n>" rather than rejecting it as malformed.
 TEST(ResumeEmitRestore, PooledStepBucketRoundTripsWithAnEmptyKey) {
     NetworkStateSnapshot s = baseSnapshot();
     s.pb_filter_step[""] = NetworkStateSnapshot::PbFilterStep{-55.25, 7.5};
@@ -196,8 +198,8 @@ TEST(ResumeEmitRestore, PooledStepBucketRoundTripsWithAnEmptyKey) {
     EXPECT_DOUBLE_EQ(r.pb_filter_step.at("").n_eff, 7.5);
 }
 
-/// A non-finite value would be accepted by strtod and then poison every re-based
-/// emitted bias for that key — the CBP precedent: it is a HARD parse failure (the
+/// strtod accepts a non-finite value, which would then corrupt every re-based
+/// emitted bias for that key.  As in card CBP, it is a hard parse failure (the
 /// caller's documented cold-start signal), never a silent partial restore.
 TEST(ResumeEmitRestore, NonFiniteEmitFieldIsAHardParseFailure) {
     NetworkStateSnapshot s = baseSnapshot();
@@ -218,19 +220,20 @@ TEST(ResumeEmitRestore, NonFiniteEmitFieldIsAHardParseFailure) {
 }
 
 // ---------------------------------------------------------------------------
-// (b) the RE-BASE engine continues across the export/restore
+// (b) the re-base engine continues across the export/restore
 // ---------------------------------------------------------------------------
 
 TEST(ResumeEmitRestore, EmitRebaseRestoredEngineRebasesTheNextEpochIdentically) {
     NetworkEmitRebase eng;
     // Three epochs of a two-satellite GPS L1 component whose raw solve frame walks
-    // by a common fractional plus a per-satellite integer — exactly the churn the
-    // engine exists to remove, so `last_emit_` accumulates a real frame.
+    // by a common fractional plus a per-satellite integer, the churn the engine
+    // exists to remove, so `last_emit_` accumulates a real frame.
     rebaseStep(eng, 10.0, 20.0);
     rebaseStep(eng, 10.0 + 0.03 + 2 * kLamL1, 20.0 + 0.03 - 1 * kLamL1);
     const auto ep3 = rebaseStep(eng, 10.0 + 0.07 - 3 * kLamL1, 20.0 + 0.07 + 5 * kLamL1);
-    // The re-base holds the emitted values on the FIRST epoch's frame up to the
-    // (unremovable, deliberately common) fractional drift.
+    // The re-base holds the emitted values on the first epoch's frame: at epoch 3
+    // both the integer steps and the common 0.07 m drift are absent (10.0 and 20.0
+    // to 1e-9).
     EXPECT_NEAR(ep3[0].bias_m, 10.0, 1e-9);
     EXPECT_NEAR(ep3[1].bias_m, 20.0, 1e-9);
 
@@ -240,9 +243,10 @@ TEST(ResumeEmitRestore, EmitRebaseRestoredEngineRebasesTheNextEpochIdentically) 
     ASSERT_TRUE(eng.lastEmittedForTest("G01", "L1C", v));
     EXPECT_DOUBLE_EQ(st.at("G01|L1C"), v);
 
-    // A fresh engine (the resumed run) restored from the export re-bases the NEXT
-    // epoch bit-for-bit as the original does; an UNrestored one passes the raw
-    // solve-frame value through instead — the whole 17.6 m field seam in miniature.
+    // A fresh engine (the resumed run) restored from the export re-bases the next
+    // epoch as the original does (EXPECT_DOUBLE_EQ); an unrestored one passes the
+    // raw solve-frame value through instead, which is the field seam of §21.10 of
+    // SPEC_event_harness in miniature.
     NetworkEmitRebase resumed, cold;
     resumed.restoreState(st);
     const double n1 = 10.0 + 0.11 + 1 * kLamL1, n2 = 20.0 + 0.11 - 2 * kLamL1;
@@ -259,7 +263,7 @@ TEST(ResumeEmitRestore, EmitRebaseRestoredEngineRebasesTheNextEpochIdentically) 
 }
 
 // ---------------------------------------------------------------------------
-// (c) the PB FILTER continues across the export/restore
+// (c) the PB filter continues across the export/restore
 // ---------------------------------------------------------------------------
 
 TEST(ResumeEmitRestore, PbEmitFilterRestoredEngineFiltersTheNextEpochIdentically) {
@@ -304,8 +308,8 @@ TEST(ResumeEmitRestore, PbEmitFilterRestoredEngineFiltersTheNextEpochIdentically
     EXPECT_EQ(cold.counters().inits, 2);
 }
 
-/// The per-key gap clock travels with the posterior, so a resume OLDER than
-/// @c max_gap_s re-inits that key honestly instead of smoothing across the outage.
+/// The per-key gap clock travels with the posterior, so a resume after a gap longer
+/// than @c max_gap_s re-inits that key instead of smoothing across the outage.
 TEST(ResumeEmitRestore, RestoredFilterStillHonoursTheGapHorizon) {
     NetworkPbEmitFilter::Config cfg;
     cfg.max_gap_s = 600.0;
@@ -318,7 +322,7 @@ TEST(ResumeEmitRestore, RestoredFilterStillHonoursTheGapHorizon) {
     const auto out = filterStep(resumed, -18.4, 5.25, t0 + 30.0 + 900.0);
     EXPECT_EQ(static_cast<int>(out[0].reset_cause),
               static_cast<int>(NetworkPbEmitFilter::Cause::kGap));
-    EXPECT_DOUBLE_EQ(out[0].value_m, -18.4);   // raw passthrough, never laundered
+    EXPECT_DOUBLE_EQ(out[0].value_m, -18.4);   // raw value passed through, not smoothed
 }
 
 // ---------------------------------------------------------------------------
@@ -326,7 +330,8 @@ TEST(ResumeEmitRestore, RestoredFilterStillHonoursTheGapHorizon) {
 // ---------------------------------------------------------------------------
 
 /// A file with no emit-layer rows restores nothing: an old snapshot (or a writer
-/// without the capture knob) leaves both engines cold-starting exactly as today.
+/// without the capture knob) leaves both engines cold-starting as they do without
+/// a restore.
 TEST(ResumeEmitRestore, SnapshotWithoutEmitRowsRestoresNothing) {
     const NetworkStateSnapshot s = baseSnapshot();
     ASSERT_FALSE(s.hasEmitState());
@@ -346,8 +351,9 @@ TEST(ResumeEmitRestore, SnapshotWithoutEmitRowsRestoresNothing) {
     EXPECT_TRUE(r.pb_filter_step.empty());
     EXPECT_FALSE(r.hasEmitState());
 
-    // The engines a restore would have written into are untouched by an absent row
-    // set — restoring an EMPTY export is a no-op, not a wipe of a live frame.
+    // Engines driven for one epoch export their two keys each.  restoreState is not
+    // called here, so the claim that restoring an empty export is a no-op (not a
+    // wipe of a live frame) is not asserted by this test.
     NetworkEmitRebase reb;
     rebaseStep(reb, 10.0, 20.0);
     const auto before = reb.exportState();
@@ -357,18 +363,18 @@ TEST(ResumeEmitRestore, SnapshotWithoutEmitRowsRestoresNothing) {
     ASSERT_EQ(filt.exportState().state.size(), 2u);
 }
 
-/// The WRITE knob is what the driver gates the capture on, so with it off the
-/// containers stay empty and the file the same snapshot produces is byte-identical
-/// to the pre-card one (standing invariant #6, at the format level).
+/// The driver gates the capture on the write knob, so with it off the containers
+/// stay empty and the file the same snapshot produces is byte-identical to the
+/// format before card RS-5 (standing invariant #6, at the format level).
 TEST(ResumeEmitRestore, WriteKnobOffEmitsNoneOfTheRows) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("nocapture",
         networkConfig("    \"state_snapshot_path\": \"state_snapshot.snap\",\n"), cfg));
     EXPECT_FALSE(cfg.getNetworkConfig().state_snapshot_emit_capture);
 
-    // What the driver writes with the knob off: a snapshot whose emit containers
-    // were never filled.  Byte-compare it against the same snapshot serialized
-    // before the containers existed — identical, including the END line count.
+    // With the knob off the driver writes a snapshot whose emit containers were
+    // never filled.  It is compared against the same snapshot with one ER entry
+    // filled.
     const NetworkStateSnapshot off = baseSnapshot();
     std::ostringstream a;
     NetworkStateSnapshotIO::serialize(a, off);
@@ -377,8 +383,8 @@ TEST(ResumeEmitRestore, WriteKnobOffEmitsNoneOfTheRows) {
     std::ostringstream b;
     NetworkStateSnapshotIO::serialize(b, on);
     ASSERT_NE(a.str(), b.str());
-    // Line-wise the ONLY difference is the one ER row plus the END line-count it
-    // advances: nothing else in the file moves when the capture is armed.
+    // Line-wise the differences are the one ER row and the END line count it
+    // advances; nothing else in the file moves when the capture is armed.
     const auto lines = [](const std::string& t) {
         std::vector<std::string> v;
         std::istringstream is(t);
@@ -416,10 +422,10 @@ TEST(ResumeEmitRestoreConfig, CaptureKnobParsesAndDoesNotArmTheReadSide) {
 }
 
 /// The read knob is only meaningful when the realization frame underneath it also
-/// continues — mirroring @c resume_datum_restore's prerequisite.
+/// continues, as with the prerequisite of @c resume_datum_restore.
 TEST(ResumeEmitRestoreConfig, RestoreWithoutFrameRestoreIsRejected) {
-    // The loader turns its own throw into a FAILED LOAD (loadFromJson catches and
-    // returns false) — the shape every other restore prerequisite is asserted in.
+    // The loader turns its own throw into a failed load (loadFromJson catches and
+    // returns false), the form in which every other restore prerequisite is asserted.
     GnssConfig cfg;
     EXPECT_FALSE(loadInto("noframe",
         networkConfig("    \"state_snapshot_path\": \"state_snapshot.snap\",\n"
@@ -439,8 +445,8 @@ TEST(ResumeEmitRestoreConfig, ArmedPostureLoads) {
     EXPECT_TRUE(cfg.networkResumeFrameRestore());
 }
 
-/// Armed with no snapshot path the loader warns and still loads (INERT, not fatal)
-/// — the same posture every other resume-response knob takes.
+/// Armed with no snapshot path, the loader warns and still loads (inert, not
+/// fatal), as it does for every other resume-response knob.
 TEST(ResumeEmitRestoreConfig, ArmedWithoutASnapshotPathStillLoads) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("inert",

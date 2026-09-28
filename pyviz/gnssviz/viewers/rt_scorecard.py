@@ -1,7 +1,7 @@
 """Truth-referenced run scorecard against a *surveyed* reference position.
 
 The exam dashboard grades a run against the GnssSimulator answer key; a rooftop
-/ field run has no answer key — but a **static receiver on a surveyed mark**
+/ field run has no answer key, but a **static receiver on a surveyed mark**
 has the next best thing: the config's ``receiver.reference_position_ecef``.
 This viewer is the headline accuracy panel for such runs (the real-time replay
 and live-rooftop lineages foremost), grading the ``state_trace`` solution about
@@ -22,11 +22,11 @@ Panels
     (``σ3D = sqrt(x_std² + y_std² + z_std²)``, rotation-invariant) and the
     convergence ladder marked;
 (c) post-convergence horizontal (E, N) scatter, time-coloured, with 50 % / 95 %
-    error circles — the "how big is the puddle" workshop figure;
+    error circles: the "how big is the puddle" workshop figure;
 (d) post-convergence horizontal & 3D error CDFs.
 
 Convergence is *suffix-stable*: converged-at-``thr`` means the 3D error stays
-``≤ thr`` from that epoch to the END of the run (a dip that later diverges does
+``≤ thr`` from that epoch to the end of the run (a dip that later diverges does
 not count).  The ladder is 1.0 / 0.5 / 0.2 / 0.1 m; steady-state statistics run
 from the coarsest achieved rung (falling back to the second half, flagged in
 the summary, when even 1.0 m is never held).
@@ -103,7 +103,7 @@ def _suffix_converged_index(err3d: np.ndarray, thr: float) -> Optional[int]:
 def compute_metrics(ctx) -> Optional[dict]:
     """All scorecard quantities from ``state_trace.csv`` + the reference.
 
-    Returns ``None`` when no reference resolves or the trace is unusable —
+    Returns ``None`` when no reference resolves or the trace is unusable;
     callers (the viewer, :func:`rt_banner_html`) degrade to skip/empty.
     """
     ref = resolve_reference(ctx)
@@ -208,10 +208,11 @@ def build_rt_scorecard(ctx) -> ViewerResult:
     st = m["stats"]
     figures = []
 
-    # Convergence ladder VLines.  Only the FINEST achieved rung carries a label:
+    # Convergence ladder VLines.  Only the finest achieved rung carries a label:
     # the rungs sit seconds apart on a 1 Hz run, and both backends draw VLine
-    # labels as top-anchored annotations, so a label per rung overprints into
-    # mush.  The full ladder is in the banner chips + summary text instead.
+    # labels as top-anchored annotations, so a label per rung overlaps into an
+    # unreadable stack.  The full ladder is in the banner chips + summary text
+    # instead.
     conv_lines, labelled = [], False
     for thr in reversed(THRESHOLDS):                # fine -> coarse
         i = m["conv"][thr]

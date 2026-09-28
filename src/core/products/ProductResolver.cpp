@@ -2,13 +2,14 @@
  * @file ProductResolver.cpp
  * @brief Implements automatic GNSS product and RINEX data resolution and download.
  *
- * Mirrors the MATLAB downloadMGEX / downloadRINEX strategy:
- *  - Compute date range (obs day ± 1 for orbits, obs day for clocks/bias/erp).
+ * Follows the MATLAB downloadMGEX / downloadRINEX strategy:
+ *  - Compute the date range: obs day ± 1 for orbits and clocks, the obs day for
+ *    biases, broadcast navigation and the GIM, and a backward day search for ERP.
  *  - Build IGS long-name filenames using the configured analysis centre prefix
  *    and product type (FIN/RAP/ULT).
  *  - Check local cache; download from CDDIS and decompress if missing.
  *
- * On-disk layout (date-first, since the production-mode rewrite):
+ * On-disk layout (date-first):
  * @code
  *   data_root/
  *     <YYYY-DOY>/                      e.g. "2024-129"
@@ -19,15 +20,16 @@
  *     static/                          date-independent static products
  *       atx/igs20.atx
  *       nc/EOT20_load.nc
- *     cache/<YYYY-DOY>/                raw downloads — kept until manually purged
+ *     cache/<YYYY-DOY>/                raw downloads and intermediates
  *       *.gz, *.crx, *.crx.gz, etc.
  * @endcode
  *
- * The "ready" tree under each YYYY-DOY/ directory is what gets pushed to
- * GnssConfig and consumed by ProductParser. The cache/ tree is only for
- * intermediate artifacts (compressed downloads pre-decompression, Hatanaka
- * .crx pre-conversion). A failed crx2rnx leaves the .crx in cache/ so the
- * user can debug or retry without re-downloading.
+ * The ready tree under each YYYY-DOY/ directory is what is passed to GnssConfig
+ * and consumed by ProductParser. The cache/ tree holds only intermediate
+ * artifacts (compressed downloads before decompression, Hatanaka .crx before
+ * conversion); DataDownloader removes a .gz after a successful decompression
+ * unless keep_zip_after_unzip is set. A failed crx2rnx leaves the .crx in
+ * cache/, so the conversion can be investigated or retried without a new download.
  */
 
 #include "products/ProductResolver.hpp"
@@ -55,9 +57,9 @@ ProductResolver::ProductResolver(const DownloadConfig& dl_config,
 // ---------------------------------------------------------------------------
 
 namespace {
-    /// "YYYY-DOY" form, e.g. "2024-129" — the per-date directory name used
-    /// throughout the production layout. Matches the standard IGS DOY-based
-    /// archive convention while remaining human-readable in a shell prompt.
+    /// "YYYY-DOY" form, e.g. "2024-129": the per-date directory name used
+    /// throughout the production layout. It follows the IGS DOY-based archive
+    /// convention and stays readable in a shell prompt.
     std::string dateDirName(int year, int doy) {
         char buf[16];
         std::snprintf(buf, sizeof(buf), "%04d-%03d", year, doy);
@@ -73,10 +75,10 @@ namespace {
 } // anonymous namespace
 
 void ProductResolver::ensureDirectories() {
-    // Top-level static/ (.atx, .nc) and cache/ (raw downloads) — created lazily
-    // here so a fresh data_root is fully populated. The per-date YYYY-DOY/
-    // directories are created on demand inside resolveProduct / resolveBrdc /
-    // resolveRinex (we don't know the date set until resolve() runs).
+    // Creates the top-level static/ (.atx, .nc) and cache/ (raw downloads)
+    // directories so a fresh data_root is complete. The per-date YYYY-DOY/
+    // directories are created on demand during resolveProduct / resolveBrdc /
+    // resolveRinex, because the date set is known only once resolve() runs.
     std::filesystem::create_directories(config_.data_root / "static" / "atx");
     std::filesystem::create_directories(config_.data_root / "static" / "nc");
     std::filesystem::create_directories(config_.data_root / "cache");
@@ -100,8 +102,8 @@ int ProductResolver::gpsWeekFromDate(int year, int doy) {
 }
 
 std::string ProductResolver::typeSeg(const std::string& product_type) {
-    // Map product_type to the long-name convention segment.
-    // FIN -> MGXFIN, RAP -> OPSRAP, ULT -> OPSULT (default FIN).
+    // Map product_type to the long-name convention segment:
+    // RAP -> OPSRAP, ULT -> OPSULT, anything else (FIN) -> MGXFIN.
     if (product_type == "RAP") return "OPSRAP";
     if (product_type == "ULT") return "OPSULT";
     return "MGXFIN";
@@ -118,13 +120,13 @@ std::string ProductResolver::buildProductFilename(const std::string& tag,
 
     // PREFIX0TYPE_YYYYDOY0000_01D_RATE_PRODUCT.EXT.gz
     if (tag == "orb") {
-        // RTB-4: ultra-rapids are 02D products released 6-hourly with start
-        // hours 00/06/12/18 UTC (see the span-convention block above
-        // buildUltOrbFilename).  The single-name form built here is the
-        // (D, 00) anchor — the file whose OBSERVED half covers the whole
-        // requested day — with the per-centre sampling token (COD publishes
-        // 05M, the IGS combined ULT is 15M).  Start-hour walk-back and the
-        // alternate-token fallback live in resolveUltOrbits.
+        // Ultra-rapids are 02D products released 6-hourly with start hours
+        // 00/06/12/18 UTC (see the span-convention block above
+        // buildUltOrbFilename). The single name built here is the (D, 00)
+        // anchor, the file whose observed half covers the whole requested
+        // day, with the per-centre sampling token (COD publishes 05M, the IGS
+        // combined ULT is 15M). The start-hour walk-back and the
+        // alternate-token fallback are in resolveUltOrbits (RTB-4).
         if (typ == "ULT") {
             const int y = std::stoi(yyyydoy.substr(0, 4));
             const int d = std::stoi(yyyydoy.substr(4, 3));
@@ -173,47 +175,43 @@ std::string ProductResolver::buildProductUrl(const std::string& tag,
 // ---------------------------------------------------------------------------
 // Ultra-rapid (ULT) orbit naming + resolution
 //
-// SPAN-CONVENTION ASSUMPTION (load-bearing — every ordering decision below
-// follows from it):
+// Span-convention assumption. Every ordering decision below follows from it:
 //
 //   <SRC>0OPSULT_<YYYYDDDHHMM>_02D_<SMP>_ORB.SP3.gz
 //
 //   * 02D = 48 h of orbit nodes starting at the filename epoch YYYYDDDHHMM
 //     (start hours 00/06/12/18 UTC, MM always 00).
-//   * The 48 h split into 24 h OBSERVED followed by 24 h PREDICTED; the
-//     filename epoch is the start of the OBSERVED half.
+//   * The 48 h are 24 h observed followed by 24 h predicted; the filename
+//     epoch is the start of the observed half.
 //   * Release latency ≈ filename epoch + ~27 h (the observed half ends at
 //     epoch + 24 h; ~3 h of processing latency follow).
 //
-// The repository's prior knowledge is consistent with (but less specific
-// than) this: the pre-fix comment here stated that a day's 00:00 ULT file
-// "covers that whole day" plus the next (i.e. 48 h from the filename epoch),
-// and docs/rt_service_conventions.md treats RTB-4 ultra-rapids as carrying a
-// predicted portion whose file identity is a datum.  Nothing in the tree
-// contradicts the 24 h + 24 h split or the epoch-starts-observed-half rule;
-// they are standard IGS ultra-rapid convention (the legacy igu files carried
-// the same 24 h observed / 24 h predicted structure).
+// The 24 h + 24 h split and the epoch-starts-observed-half rule are standard
+// IGS ultra-rapid convention (the legacy igu files had the same structure).
+// docs/rt_service_conventions.md is consistent with them: it treats RTB-4
+// ultra-rapids as carrying a predicted portion whose file identity is a datum.
+// Nothing in the tree contradicts them.
 //
 // Consequences:
 //   * The (D, 00) file is the best archived-replay source for day D: its
-//     OBSERVED half is exactly [D 00:00, D+1 00:00) and its predicted half
-//     provides the post-midnight interpolation margin — no next-day fetch.
-//   * Walking the start epoch back 6 h at a time degrades day-D coverage
-//     gracefully (observed until D 18:00 / 12:00 / 06:00, then fully
-//     predicted), which is exactly the live-session ladder: at wall-clock
-//     time T the newest published start epoch is the latest s with
-//     s + ~27 h <= T, up to ~33 h old just before a release lands.
-//   * A previous-day file is needed only for the PRE-midnight interpolation
-//     margin, and only when the obs-day pick starts exactly at D 00:00.
+//     observed half is [D 00:00, D+1 00:00) and its predicted half provides
+//     the post-midnight interpolation margin, so no next-day fetch is needed.
+//   * Each 6 h step back in start epoch reduces day-D coverage by 6 h
+//     (observed until D 18:00 / 12:00 / 06:00, then fully predicted), which
+//     matches the live-session sequence: at wall-clock time T the newest
+//     published start epoch is the latest s with s + ~27 h <= T, up to ~33 h
+//     old just before a release.
+//   * A previous-day file is needed only for the pre-midnight interpolation
+//     margin, and only when the obs-day pick starts at D 00:00.
 // ---------------------------------------------------------------------------
 
 std::string ProductResolver::ultSamplingToken(const std::string& product_source) {
-    // Per-centre ULT orbit sampling.  CODE publishes 5-minute ultra-rapids
-    // (COD0OPSULT_*_02D_05M) — consistent with this resolver's COD FIN/RAP
-    // primary being 05M — while the IGS combined ultra-rapid is 15-minute
-    // (IGS0OPSULT_*_02D_15M).  Unknown centres default to the IGS-combined
-    // 15M: the alternate-token fallback in resolveUltOrbits self-heals a
-    // wrong guess at the cost of one extra 404.
+    // Per-centre ULT orbit sampling. CODE publishes 5-minute ultra-rapids
+    // (COD0OPSULT_*_02D_05M), consistent with the 05M COD FIN/RAP primary
+    // name in this resolver; the IGS combined ultra-rapid is 15-minute
+    // (IGS0OPSULT_*_02D_15M). Unknown centres default to the IGS-combined
+    // 15M; when that is wrong, the alternate-token fallback in
+    // resolveUltOrbits finds the file at the cost of one extra 404.
     if (product_source == "COD") return "05M";
     if (product_source == "IGS") return "15M";
     return "15M";
@@ -257,12 +255,12 @@ std::vector<std::filesystem::path> ProductResolver::resolveUltOrbits(int year, i
     const std::string primary_tok = ultSamplingToken(config_.product_source);
     const std::string alt_tok     = ultAlternateSamplingToken(primary_tok);
 
-    // Probe / download one start-epoch candidate.  Both sampling tokens are
-    // checked in the ready cache first (a prior run may have landed the
-    // alternate), then downloaded primary-token first.  Every attempted
-    // download name is appended to @p tried for failure diagnostics.  The
-    // file lands under its OWN filename-date directory, consistent with the
-    // date-first layout.
+    // Probe / download one start-epoch candidate. Both sampling tokens are
+    // checked in the ready cache first (a prior run may have stored the
+    // alternate), then downloaded primary token first. Every attempted
+    // download name is appended to @p tried for failure diagnostics. The
+    // file is stored under the date directory of its own filename epoch,
+    // consistent with the date-first layout.
     auto tryCandidate = [&](const UltStartEpoch& c,
                             std::vector<std::string>& tried) -> std::filesystem::path {
         const std::string ddir = dateDirName(c.year, c.doy);
@@ -312,10 +310,10 @@ std::vector<std::filesystem::path> ProductResolver::resolveUltOrbits(int year, i
         return {};
     }
 
-    // Obs-day file FIRST: SP3 epoch dedup in ProductParser::parseSp3 is
-    // first-file-wins in parse order (and parse order is this return order,
-    // preserved through setProductPaths / getPathsByExtension), so the
-    // obs-day file's nodes — observed for a (D, 00) pick — serve day D.
+    // The obs-day file goes first: SP3 epoch dedup in ProductParser::parseSp3
+    // keeps the first file in parse order, and parse order is this return
+    // order (preserved through setProductPaths / getPathsByExtension), so the
+    // obs-day file's nodes (observed, for a (D, 00) pick) serve day D.
     std::vector<std::filesystem::path> resolved;
     resolved.push_back(obs_path);
 
@@ -328,10 +326,10 @@ std::vector<std::filesystem::path> ProductResolver::resolveUltOrbits(int year, i
                   : "walked-back start — day-D coverage degrades toward the predicted half");
 
     // --- Previous-day margin file (pre-midnight interpolation nodes) ---
-    // Needed only when the obs-day pick starts exactly at D 00:00; a
-    // walked-back pick already carries nodes before midnight.  Anchored at
-    // (D-1, 18): the freshest file whose start precedes D 00:00.  Parsed
-    // SECOND, so of its 48 h only the pre-midnight nodes survive dedup.
+    // Needed only when the obs-day pick starts at D 00:00; a walked-back
+    // pick already carries nodes before midnight. Anchored at (D-1, 18):
+    // the newest file whose start precedes D 00:00. It is parsed second,
+    // so of its 48 h only the pre-midnight nodes survive dedup.
     if (obs_start_on_day) {
         auto [py, pd] = shiftDate(year, doy, -1);
         std::vector<std::string> prev_tried;
@@ -407,13 +405,12 @@ std::vector<std::filesystem::path> ProductResolver::resolveProduct(
             continue;
         }
 
-        // For orbits, try an alternate-name fallback (typically a 404 on the
-        // primary).  FIN/RAP: the 15M re-issue of the 01D name.  ULT: the
-        // ALTERNATE sampling token at the same 02D name — a 01D rebuild is
-        // guaranteed dead for a 02D-only product class.  (The ULT resolve
-        // path normally goes through resolveUltOrbits, which does its own
-        // token fallback; this branch keeps any direct resolveProduct("orb")
-        // caller correct.)
+        // For orbits, try an alternate name when the primary download fails
+        // (typically a 404). FIN/RAP: the 15M re-issue of the 01D name. ULT:
+        // the alternate sampling token at the same 02D name, since a 01D name
+        // never exists for this 02D-only product class. The ULT resolve path
+        // normally goes through resolveUltOrbits, which does its own token
+        // fallback; this branch keeps a direct resolveProduct("orb") caller correct.
         if (tag == "orb") {
             std::string fallback_filename;
             if (eff_type == "ULT") {
@@ -462,7 +459,7 @@ std::vector<std::filesystem::path> ProductResolver::resolveProduct(
 }
 
 // ---------------------------------------------------------------------------
-// ERP (Earth-rotation) — real-time-aware latency + backward-date search
+// ERP (Earth rotation): real-time-aware latency and backward date search
 // ---------------------------------------------------------------------------
 
 std::pair<int, int> ProductResolver::shiftDate(int year, int doy, int delta) {
@@ -477,30 +474,30 @@ std::pair<int, int> ProductResolver::shiftDate(int year, int doy, int delta) {
 std::filesystem::path ProductResolver::resolveErp(int year, int doy) {
     auto log = log_manager_.getLogger("resolver");
 
-    // ERP latency selection. A live real-time session cannot obtain a FINAL
-    // ERP for the current day — it does not exist yet at ~2-week FIN latency —
-    // so prefer the short-latency RAPID product, whose polar motion / UT1 is
+    // ERP latency selection. A live real-time session cannot obtain a final
+    // ERP for the current day (at ~2-week FIN latency it does not exist yet),
+    // so it uses the short-latency rapid product, whose polar motion / UT1 is
     // current to within the pole-tide error budget. The live predicate is
-    // !download_clocks ALONE: a session that skips the precise CLK is live
-    // regardless of whether it also pins precise ultra-rapid orbits (RTB-4
+    // !download_clocks alone: a session that skips the precise CLK is live
+    // whether or not it also pins precise ultra-rapid orbits (RTB-4
     // realtime.use_precise_orbits re-arms download_orbits while clocks stay
-    // on the live/network source — keying on both flags would send that
-    // config on a doomed FIN walk-back and drop the pole tide). An
-    // explicitly-set RAP/ULT product_type is honoured as-is.
+    // on the live/network source). Keying on both flags would send that
+    // config into a FIN walk-back that cannot succeed and drop the pole tide.
+    // An explicitly set RAP product_type is used as is; ULT is handled below.
     std::string erp_type = config_.product_type;
     if (!config_.download_clocks && erp_type == "FIN") {
         erp_type = "RAP";
         log->info("Real-time live source: using RAPID ERP (FINAL not yet "
                   "available for the current day)");
     }
-    // m3: ultra-rapid has no dedicated ERP benefit — polar motion (~mas/day) and
-    // UT1 (~ms/day) drift far below the pole-tide error budget over the day-scale
-    // latency gap, so a ULT session takes the RAPID ERP, whose IGS long-name
-    // grammar (OPSRAP, 01D) is validated and resolves via the walk-back below.
-    // The OPSULT ERP long name this resolver would otherwise build was never
-    // validated against the CODE/IGS archives (ultra-rapids are 02D, not the 01D
-    // period the ERP branch of buildProductFilename emits), so route around it
-    // rather than ship an unverified name that would 404 and drop the pole tide.
+    // An ultra-rapid session also takes the rapid ERP. Ultra-rapid gives no
+    // ERP benefit: polar motion (~mas/day) and UT1 (~ms/day) drift far below
+    // the pole-tide error budget over the day-scale latency gap. The rapid
+    // long-name grammar (OPSRAP, 01D) is validated and resolves via the
+    // walk-back below. The OPSULT ERP long name that buildProductFilename
+    // would otherwise build was never validated against the CODE/IGS archives
+    // (ultra-rapids are 02D, not the 01D period its ERP branch emits); a
+    // wrong name would 404 and drop the pole tide (m3).
     if (erp_type == "ULT") {
         erp_type = "RAP";
         log->info("Ultra-rapid session: using RAPID ERP (no dedicated ultra-rapid "
@@ -510,9 +507,9 @@ std::filesystem::path ProductResolver::resolveErp(int year, int doy) {
 
     // Walk backward from the session day to the most recent available ERP.
     // Polar motion (~a few mas/day) and UT1-UTC (~ms/day) drift slowly, so an
-    // ERP a few days old — flat-extrapolated to the session epoch by
-    // Planetary::interpolateErp — biases the pole tide by well under a mm,
-    // versus omitting the ~25 mm-radial correction entirely when erps_ is empty.
+    // ERP a few days old, flat-extrapolated to the session epoch by
+    // Planetary::interpolateErp, biases the pole tide by well under a mm,
+    // against losing the ~25 mm-radial correction entirely when erps_ is empty.
     constexpr int kErpMaxAgeDays = 7;
     for (int back = 0; back <= kErpMaxAgeDays; ++back) {
         auto [y, d] = shiftDate(year, doy, -back);
@@ -551,15 +548,14 @@ std::filesystem::path ProductResolver::resolveBrdc(const std::string& yyyydoy) {
 // ---------------------------------------------------------------------------
 // Observation RINEX
 //
-// The download flow is split into two distinct phases:
-//   1. Hatanaka phase: try .crx.gz at each rate. Each rate's failure mode is
-//      tracked separately:
-//        - Download failure (404, auth, network) → silently try next rate.
-//        - Download success but crx2rnx failed   → hard error, do NOT mask
-//          by trying .rnx.gz. The user has a misconfigured crx2rnx; falling
-//          through would hide that.
-//   2. Plain RINEX phase: only entered if every Hatanaka rate failed at the
-//      DOWNLOAD step (not the conversion step). Tries .rnx.gz at each rate.
+// After a ready-file probe (phase 0), the download runs in two phases:
+//   1. Hatanaka phase: try .crx.gz at each rate. The two failure modes are
+//      handled differently:
+//        - Download failure (404, auth, network) → try the next rate.
+//        - Download success but crx2rnx failure  → hard error; .rnx.gz is not
+//          tried, because falling through would hide a misconfigured crx2rnx.
+//   2. Plain RINEX phase: entered only if every Hatanaka rate failed at the
+//      download step (not the conversion step). Tries .rnx.gz at each rate.
 // ---------------------------------------------------------------------------
 
 std::filesystem::path ProductResolver::resolveRinex(const std::string& yyyydoy, int year) {
@@ -596,12 +592,11 @@ std::filesystem::path ProductResolver::resolveRinex(const std::string& yyyydoy, 
 
     const std::vector<std::string> rate_list = { "30S", "15S", "01S" };
 
-    // Phase 0: short-circuit if a converted .rnx for any rate is
-    // already sitting in ready_dir from a prior run.  Without this
-    // every re-run re-invokes crx2rnx and re-stages the output, which
-    // is wasted work and noisy in the log.  We probe both Hatanaka
-    // and plain naming because either may have produced the ready
-    // file on the original run.
+    // Phase 0: return early if a converted .rnx for any rate is already in
+    // ready_dir from a prior run. Without this, every re-run invokes crx2rnx
+    // again and re-stages the output, which costs time and adds log noise.
+    // Both the Hatanaka and the plain download produce the same ready name
+    // (*_MO.rnx), so one probe per rate covers either origin.
     {
         std::error_code ec;
         if (std::filesystem::exists(ready_dir, ec)) {
@@ -624,30 +619,29 @@ std::filesystem::path ProductResolver::resolveRinex(const std::string& yyyydoy, 
         std::string url = cddis_dir + filename;
 
         // Decompress into the cache (intermediate .crx); convert into ready_dir.
-        // We pass cache_dir as both dirs to downloadAndDecompress because the
-        // .crx is an intermediate, not a ready artifact.
+        // cache_dir is passed as both directories to downloadAndDecompress
+        // because the .crx is an intermediate, not a ready artifact.
         auto crx_path = downloader_.downloadAndDecompress(url, cache_dir, cache_dir);
         if (crx_path.empty()) {
-            // Download failed (404 most common — try next rate).
+            // Download failed (most often a 404); try the next rate.
             continue;
         }
 
-        // crx2rnx writes the .rnx next to the .crx by convention. Convert in-
+        // crx2rnx writes the .rnx next to the .crx by convention. Convert in
         // place inside the cache, then move the .rnx to the ready_dir.
         auto rnx_in_cache = downloader_.convertCrxToRnx(crx_path, config_.crx2rnx_path);
         if (rnx_in_cache.empty()) {
-            // crx2rnx itself failed. The downloader has already logged the
-            // exit code + captured stderr. We treat this as a hard error
-            // for this run — falling through to .rnx.gz would mask the
-            // underlying crx2rnx setup problem. Set a sticky flag and
-            // bail out of the Hatanaka phase.
+            // crx2rnx itself failed; the downloader has already logged the
+            // exit code and captured stderr. This is a hard error for the run:
+            // falling through to .rnx.gz would hide the crx2rnx setup problem.
+            // Set a sticky flag and leave the Hatanaka phase.
             log->error("RINEX: crx2rnx conversion failed for {} (see downloader log for details)",
                        crx_path.filename().string());
             crx_conversion_failure = true;
             break;
         }
 
-        // Move the converted .rnx into the ready dir.  Windows
+        // Move the converted .rnx into the ready dir. On Windows
         // std::filesystem::rename fails when the target exists; the
         // copy_file fallback uses overwrite_existing so re-runs after a
         // partial stage still succeed.
@@ -749,21 +743,22 @@ bool ProductResolver::resolve(ResolvedPaths& resolved) {
 
     // --- Resolve products ---
     if (config_.download_products) {
-        // Orbits/clocks are gated separately: a live real-time session sources
-        // them from broadcast+SSR, so skip the SP3/CLK fetch while still pulling
-        // the obs-day BIA/ERP/BRDC the engine needs.
+        // Orbits and clocks are gated separately from the rest: a live
+        // real-time session sources them from broadcast+SSR, so the SP3/CLK
+        // fetch is skipped while the obs-day BIA/ERP/BRDC the engine needs
+        // are still pulled.
         std::vector<std::filesystem::path> orb_paths, clk_paths;
-        // RTB-4: orbit and clock fetches are gated independently — a live session
-        // sources them from broadcast+SSR, but a "precise (ULT) orbits + network
-        // clocks" config pulls SP3 while still skipping the precise CLK.
+        // Orbit and clock fetches are also gated independently of each other,
+        // so a "precise (ULT) orbits + network clocks" config pulls SP3 while
+        // still skipping the precise CLK (RTB-4).
         if (config_.download_orbits) {
             if (config_.product_type == "ULT") {
-                // Ultra-rapids are 48 h files: the generic prev/obs/next fetch
-                // over-fetches (next-day file redundant) and, worse, parses the
-                // prev-day file first so its PREDICTED half wins the
-                // first-file-wins SP3 dedup over the obs-day OBSERVED half.
-                // Dedicated fetch: obs-day file FIRST, then one previous-day
-                // margin file.  See resolveUltOrbits.
+                // Ultra-rapids are 48 h files. The generic prev/obs/next fetch
+                // over-fetches (the next-day file is redundant) and parses the
+                // prev-day file first, so its predicted half would win the
+                // first-file-wins SP3 dedup over the obs-day observed half.
+                // The dedicated fetch takes the obs-day file first, then one
+                // previous-day margin file. See resolveUltOrbits.
                 orb_paths = resolveUltOrbits(year, doy);
             } else {
                 orb_paths = resolveProduct("orb", orb_dates, orb_weeks);
@@ -776,8 +771,8 @@ bool ProductResolver::resolve(ResolvedPaths& resolved) {
         else
             log->info("Real-time live/network clock source: skipping CLK download");
         auto bia_paths = resolveProduct("dcb", day_dates, day_weeks);
-        // ERP: real-time-aware (RAPID + most-recent-available) so a live "today"
-        // session does not silently lose the pole tide / EOP frame.
+        // ERP: real-time-aware (rapid, most recent available), so a live
+        // current-day session keeps the pole tide and the EOP frame.
         auto erp_path  = resolveErp(year, doy);
 
         for (auto& p : orb_paths) resolved.product_paths.push_back(std::move(p));
@@ -793,8 +788,8 @@ bool ProductResolver::resolve(ResolvedPaths& resolved) {
             log->warn("Broadcast navigation file not obtained for {}", yd_obs);
         }
 
-        // ATX (static, not downloaded). Lives in static/atx/ by convention but
-        // the user can point atx_path anywhere — we trust whatever they set.
+        // ATX (static, not downloaded). By convention it lives in static/atx/,
+        // but atx_path may point anywhere; any existing path is used as set.
         if (!config_.atx_path.empty() && std::filesystem::exists(config_.atx_path)) {
             resolved.product_paths.push_back(config_.atx_path);
         }

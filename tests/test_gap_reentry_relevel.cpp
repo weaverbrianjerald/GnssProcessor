@@ -1,51 +1,44 @@
 /**
  * @file test_gap_reentry_relevel.cpp
- * @brief Card G RESPONSE — @c networkSlipDrainGapReentry, the wired
- *        invariant-#1 answer to an arc that re-enters across a tracking break
- *        with its stiff zero-q leveling level still bridged
+ * @brief Card G response: @c networkSlipDrainGapReentry, the wired invariant-#1
+ *        response to an arc that re-enters across a tracking break while its stiff
+ *        zero-q leveling level is still bridged
  *        (docs/SPEC_slip_qc_hardening.md §G3/W1).
  *
- * ## What is under test, and what is deliberately NOT
+ * ## What is under test, and what is not
  *
- * The drain is a pure decision layer over @ref GapResumption records: it reads
- * this epoch's resumptions, applies three gates (raw level SHIFTED, RINEX LLI on
- * the return epoch, and — behind a sub-knob — an UNMEASURABLE re-entry), and for
- * a slipped verdict marks BOTH bands' ambiguities exactly as a detected slip
- * would.  Every test here drives it with hand-built resumptions, so the
- * qualification pass that PRODUCES those records is out of scope (it has its own
- * coverage in tests/test_network_slip_qc.cpp, suite SlipQcQualify) and the
- * decision logic is pinned without a network, a solve or a RINEX file.
+ * The drain is a pure decision layer over @ref GapResumption records: it reads this
+ * epoch's resumptions, applies three gates (raw level shifted, RINEX LLI on the
+ * return epoch, and, behind a sub-knob, an unmeasurable re-entry), and for a slipped
+ * verdict marks the ambiguities of both bands as a detected slip would.  Every test
+ * drives it with hand-built resumptions, so the qualification pass that produces
+ * those records is out of scope (it is covered in tests/test_network_slip_qc.cpp,
+ * suite SlipQcQualify), and the decision logic is pinned without a network, a solve
+ * or a RINEX file.
  *
- * ## ⚠ The case the first cut got wrong (2026-09-09) — and why it is here twice
+ * ## State absent at drain time
  *
- * The drain originally mirrored the MW/LLI drain's @c refloat_signal and walked
- * the station's LIVE ambiguity map for a (satellite, signal) match.  For a
- * RE-ENTRY that is the wrong question by construction: the arc left the model
- * set, so its ambiguity column was pruned with the gap, and PASS B's measurement
- * pre-pass re-creates it only AFTER the PASS-A slip drains.  The walk matched
- * nothing — a 12 h / 63-station field arm reported 396 SLIPPED verdicts, 775
- * signals with "no live ambiguity", ZERO freed, and came back BYTE-IDENTICAL to
- * its OFF control.  The old harness built the state and never built a CARRY, so
- * it tested the one configuration the field never presents.  It now builds the
- * carry by default (that is what a re-entry threatens) and
- * @c StateAbsentAtDrainTimeIsTheCommonCaseAndStillFrees pins the field's actual
- * shape: carry in-window, NO state, both bands freed on the synthesised key.
+ * A re-entering arc has left the model set, so its ambiguity column was pruned with
+ * the gap, and PASS B's measurement pre-pass re-creates it only after the PASS-A slip
+ * drains.  A drain that looks for a live ambiguity (as the MW/LLI drain's
+ * @c refloat_signal does) therefore matches nothing.  The drain keys on the leveling
+ * carry entry instead and latches the synthesised ambiguity key.  The harness builds
+ * the carry by default (it is what a re-entry threatens), and
+ * @c StateAbsentAtDrainTimeIsTheCommonCaseAndStillFrees pins the field case: carry
+ * in-window, no state, both bands freed on the synthesised key.
  *
- * ## The negative controls are the point
+ * ## Negative controls
  *
- * Four of the thirteen cases assert that NOTHING happens: the knob off, a clean
- * measured return, an unmeasurable return with the conservative sub-knob off,
- * and (post-fix) a return with no carry — or an expired one — to protect.  A
- * response that frees an arc is cheap to write and expensive to be wrong
- * about — freeing re-levels the arc from ONE epoch of code, which is invariant
- * #1's own RE-COUPLING edge (the metre-class level walk of
- * docs/SPEC_slip_relevel_walk.md) — so the tests that matter most are the ones
- * proving the population is not wider than the evidence.
+ * Four of the thirteen cases assert that nothing happens: the knob off, a clean
+ * measured return, an unmeasurable return with the conservative sub-knob off, and a
+ * return with no carry (or an expired one) to protect.  Freeing an arc re-levels it
+ * from one epoch of code, which is the re-coupling edge of invariant #1 (the
+ * metre-class level walk of docs/SPEC_slip_relevel_walk.md), so these cases bound
+ * the freed population by the evidence.
  *
- * Every case also asserts the COUNTERS, not just the state: a drain that marked
- * the right arcs while reporting zeros would be indistinguishable from dead
- * wiring in the run-end line, which is precisely the failure standing invariant
- * #4 exists to expose.
+ * Every case also asserts the counters, not just the state: a drain that marked the
+ * right arcs while reporting zeros would look the same as dead wiring in the run-end
+ * line, which is the failure standing invariant #4 exists to expose.
  */
 
 #include <gtest/gtest.h>
@@ -83,16 +76,15 @@ std::shared_ptr<spdlog::logger> nullLogger() {
         "test_gap_reentry", std::make_shared<spdlog::sinks::null_sink_mt>());
 }
 
-/// One station carrying a leveling entry for both bands of @ref kSat — the thing
-/// a re-entry actually threatens — plus (optionally) the live ambiguity states,
-/// and the epoch scaffolding the drain needs.  Nothing here is opened for
-/// writing: the traces object is constructed over a scratch path and its event
-/// stream stays closed, so @c emitEvent is a no-op and the test does not touch
-/// the filesystem.
+/// One station carrying a leveling entry for both bands of @ref kSat (the state a
+/// re-entry threatens), optionally the live ambiguity states, and the epoch
+/// scaffolding the drain needs.  Nothing here is opened for writing: the traces
+/// object is constructed over a scratch path and its event stream stays closed, so
+/// @c emitEvent is a no-op and the test does not touch the filesystem.
 ///
-/// @c with_states defaults TRUE only so the pre-existing cases keep testing what
-/// they were written to test; the FIELD posture is @c false (see the file
-/// banner), and it is pinned explicitly below.
+/// @c with_states defaults to true so the earlier cases keep testing what they were
+/// written to test; the field posture is @c false (see the file banner), and it is
+/// pinned explicitly below.
 struct Harness {
     LogManager                 log_manager;
     GnssConfig                 config;
@@ -107,8 +99,8 @@ struct Harness {
     std::map<std::tuple<int, std::string, std::string>, LocalCarry>  local_carry;
     /// Continuous-GPS seconds of this epoch, and the FLD63 chain's max-gap
     /// window.  The default carry is stamped 210 s back (7 × 30 s epochs = the
-    /// default `gap_epochs`), i.e. comfortably INSIDE the window, which is
-    /// exactly the state the PASS-B inject would have folded across the break.
+    /// default `gap_epochs`), well inside the window: the state the PASS-B inject
+    /// would fold across the break.
     double                     pl_now_s{271200.0};
     double                     pl_max_gap_s{900.0};
     SyncedEpoch                se;
@@ -187,7 +179,7 @@ struct Harness {
             {0, StateKeys::makeAmbiguityKey(kSat, sig)});
         return it == relevel.free_cause.end() ? 0 : it->second;
     }
-    /// The closure the run-end Card-G line asserts (SlipQcCounters block comment).
+    /// The closure the run-end card G line asserts (SlipQcCounters block comment).
     long long bucketSum() const {
         return counters.gap_reentry_freed_shifted + counters.gap_reentry_freed_lli
              + counters.gap_reentry_freed_unmeas + counters.gap_reentry_no_relevel
@@ -196,16 +188,15 @@ struct Harness {
 };
 
 // ===========================================================================
-// The poison case: a SHIFTED re-entry on a warm leveling carry
+// The slipped case: a shifted re-entry on a warm leveling carry
 // ===========================================================================
 
-// The measured field defect (runs/fldf3_pl2, BSHM00ISR/G22 @ TOW 271200): the
-// raw MW/GF level moved across the break, LLI was set on both bands, and no
-// detector fired that epoch because none can run on a return epoch.  BOTH bands
-// must come out marked pending-reseed AND latched into the free set — the mark
-// alone is consumed by the PASS-B pre-pass before the leveling inject reads it
-// (SPEC_slip_relevel_walk §6), so the latch is what actually delivers the free
-// epoch.
+// Modelled on the field defect (runs/fldf3_pl2, BSHM00ISR/G22 @ TOW 271200): the raw
+// MW/GF level moved across the break, LLI was set on both bands, and no detector
+// fired that epoch because none can run on a return epoch.  Both bands come out
+// marked pending-reseed and latched into the free set.  The mark alone is consumed
+// by the PASS-B pre-pass before the leveling inject reads it
+// (SPEC_slip_relevel_walk §6), so the latch is what delivers the free epoch.
 TEST(GapReentryRelevel, ShiftedReturnFreesBothBandsOnAWarmLevelingCarry) {
     Harness h;
     h.addResumption(/*measurable=*/true, /*shifted=*/true, /*lli1=*/1, /*lli2=*/1);
@@ -223,7 +214,7 @@ TEST(GapReentryRelevel, ShiftedReturnFreesBothBandsOnAWarmLevelingCarry) {
     EXPECT_EQ(h.counters.gap_reentry_dd_marked, 0);
 
     // Counters (invariant #4): one resumption, two arcs, both attributed to the
-    // SHIFTED gate because it is the strongest evidence present.
+    // shifted gate because it is the strongest evidence present.
     EXPECT_EQ(h.counters.gap_reentry_verdicts, 1);
     EXPECT_EQ(h.counters.gap_reentry_arcs, 2);
     EXPECT_EQ(h.counters.gap_reentry_freed_shifted, 2);
@@ -238,49 +229,45 @@ TEST(GapReentryRelevel, ShiftedReturnFreesBothBandsOnAWarmLevelingCarry) {
     EXPECT_EQ(h.counters.relevel_free_marked, 2);
 }
 
-// ⚠ THE FIELD CASE, and the one the first cut could not act on.  A real
-// re-entering arc has NO ambiguity state at drain time — the column was pruned
-// with the gap and PASS B's measurement pre-pass re-creates it AFTER every
-// PASS-A slip drain — while its leveling CARRY entry is alive and in-window,
-// which is precisely why the inject would bridge the break.  The response must
-// therefore key off the carry and latch the SYNTHESISED ambiguity key (the same
-// format the inject site and the Card-G arc classification use), or it is inert
-// on 100 % of the population it exists for.  Measured before the fix: 396
-// SLIPPED verdicts, 775 signals "with no live ambiguity", 0 freed, and a 12 h
-// field A/B byte-identical to its control.
+// The field case.  A real re-entering arc has no ambiguity state at drain time (the
+// column was pruned with the gap, and PASS B's measurement pre-pass re-creates it
+// after every PASS-A slip drain), while its leveling carry entry is alive and
+// in-window, which is why the inject would bridge the break.  The response therefore
+// keys off the carry and latches the synthesised ambiguity key (the format the inject
+// site and the card G arc classification use); a response keyed on the live state
+// would be inert on the whole population it exists for.
 TEST(GapReentryRelevel, StateAbsentAtDrainTimeIsTheCommonCaseAndStillFrees) {
     Harness h(/*with_states=*/false);
     ASSERT_TRUE(h.stations.front().sm->getAmbiguities().empty());
     h.addResumption(/*measurable=*/true, /*shifted=*/true, /*lli1=*/1, /*lli2=*/1);
     h.run(/*carry_invariant=*/false, /*carry_warm=*/true, /*relevel_armed=*/true);
 
-    // The latch is keyed on the string, so it lands even with no column yet —
-    // and the PASS-B inject reads it after the pre-pass has created one.
+    // The latch is keyed on the string, so it lands even with no column yet, and the
+    // PASS-B inject reads it after the pre-pass has created one.
     EXPECT_TRUE(h.freed(kSig1));
     EXPECT_TRUE(h.freed(kSig2));
     EXPECT_EQ(h.cause(kSig1) & RelevelEpochState::kCauseGap, RelevelEpochState::kCauseGap);
     EXPECT_EQ(h.cause(kSig2) & RelevelEpochState::kCauseGap, RelevelEpochState::kCauseGap);
     EXPECT_EQ(h.counters.relevel_free_marked, 2);
-    // No pending-reseed mark: a mark on an absent key would sit in the set and
-    // be consumed by some LATER epoch's pre-pass — a response acting on history.
+    // No pending-reseed mark: a mark on an absent key would sit in the set and be
+    // consumed by some later epoch's pre-pass, a response acting on stale evidence.
     EXPECT_FALSE(h.pendingReseed(kSig1));
     EXPECT_FALSE(h.pendingReseed(kSig2));
 
     EXPECT_EQ(h.counters.gap_reentry_verdicts, 1);
     EXPECT_EQ(h.counters.gap_reentry_arcs, 2);
     EXPECT_EQ(h.counters.gap_reentry_state_absent, 2);   // the expected majority
-    EXPECT_EQ(h.counters.gap_reentry_no_carry, 0);       // ⚠ NOT the old `no_arc` verdict
+    EXPECT_EQ(h.counters.gap_reentry_no_carry, 0);       // not counted as a missing carry
     EXPECT_EQ(h.counters.gap_reentry_freed_shifted, 2);
     EXPECT_EQ(h.counters.gap_reentry_arcs, h.bucketSum());
 }
 
 // The other half of the re-partition: with nothing to protect there is no
-// response to make.  Two ways to have nothing — no carry entry at all (a truly
-// new arc), and an entry whose gap already exceeds phase_leveling_max_gap_s (THE
-// CLIFF: the inject skips it and the arc solves free anyway).  Both must land in
-// `no_carry`, OUTSIDE the closure, and latch nothing: freeing here would be a
-// gratuitous re-level from one epoch of code, which is invariant #1's own
-// RE-COUPLING edge.
+// response to make.  There are two ways to have nothing: no carry entry at all (a new
+// arc), and an entry whose gap already exceeds phase_leveling_max_gap_s (the inject
+// skips it and the arc solves free anyway).  Both land in `no_carry`, outside the
+// closure, and latch nothing: freeing here would be an unneeded re-level from one
+// epoch of code, the re-coupling edge of invariant #1.
 TEST(GapReentryRelevel, NoCarryAndExpiredCarryAreBothLeftAlone) {
     {
         Harness none(/*with_states=*/false);
@@ -311,11 +298,11 @@ TEST(GapReentryRelevel, NoCarryAndExpiredCarryAreBothLeftAlone) {
     }
 }
 
-// Under carry_invariant the vehicle is the C3c funnel, which is keyed on the
-// SAME synthesised ambiguity string — so the re-entry must reach it with no
-// state and (since the DD chord test needs the carry driver, a runNetwork local
-// that does not reach this seam) with no leveling carry either: every re-entry
-// is protectable there, the conservative direction.
+// Under carry_invariant the vehicle is the C3c funnel, which is keyed on the same
+// synthesised ambiguity string, so the re-entry reaches it with no state and with no
+// leveling carry either (the DD chord test needs the carry driver, a runNetwork local
+// that does not reach this seam).  Every re-entry counts as protectable there, which
+// is the conservative direction.
 TEST(GapReentryRelevel, CarryInvariantFunnelTakesTheSynthesisedKeyWithNoState) {
     Harness h(/*with_states=*/false);
     h.dropCarry(kSig1);
@@ -333,12 +320,11 @@ TEST(GapReentryRelevel, CarryInvariantFunnelTakesTheSynthesisedKeyWithNoState) {
     EXPECT_EQ(h.counters.gap_reentry_arcs, h.bucketSum());
 }
 
-// Under carry_invariant the vehicle is the Card-4 C3c funnel, and the loader
+// Under carry_invariant the vehicle is the C3c funnel (card 4), and the loader
 // disarms relevel_free_epoch there (the leveling local carry is superseded and
-// structurally empty).  The response must still fire — into the funnel — and the
-// arcs must be counted as answered BY DESIGN, not as a response that failed to
-// land.  That distinction is the whole reason gap_reentry_dd_only is separate
-// from gap_reentry_no_relevel.
+// structurally empty).  The response still fires, into the funnel, and the arcs are
+// counted as answered by design, not as a response that failed to land.  That
+// distinction is why gap_reentry_dd_only is separate from gap_reentry_no_relevel.
 TEST(GapReentryRelevel, CarryInvariantRoutesToTheC3cFunnelAndIsNotAFailedResponse) {
     Harness h;
     h.addResumption(/*measurable=*/true, /*shifted=*/true, /*lli1=*/0, /*lli2=*/0);
@@ -356,9 +342,9 @@ TEST(GapReentryRelevel, CarryInvariantRoutesToTheC3cFunnelAndIsNotAFailedRespons
     EXPECT_TRUE(h.relevel.free_ambs.empty());
 }
 
-// The interlock the loader WARNS about instead of disarming: on the leveling
-// vehicle without relevel_free_epoch the mark cannot survive to the inject, so
-// the arcs must be counted as NOT ACTED rather than silently reported as freed.
+// The interlock the loader warns about instead of disarming: on the leveling vehicle
+// without relevel_free_epoch the mark cannot survive to the inject, so the arcs are
+// counted as not acted on rather than reported as freed.
 TEST(GapReentryRelevel, LevelingVehicleWithoutTheFreeEpochLatchCountsTheLoss) {
     Harness h;
     h.addResumption(/*measurable=*/true, /*shifted=*/true, /*lli1=*/0, /*lli2=*/0);
@@ -371,9 +357,9 @@ TEST(GapReentryRelevel, LevelingVehicleWithoutTheFreeEpochLatchCountsTheLoss) {
     EXPECT_EQ(h.counters.relevel_free_marked, 0);
 }
 
-// A cold carry has nothing stale to refloat, so the verdict is DIAGNOSTIC — the
-// same split Card E had to make when reporting only refloats made the MW/LLI arm
-// look dead (limitation L3).
+// A cold carry has nothing stale to refloat, so the verdict is diagnostic only.  This
+// is the same split card E makes between detections and refloats; reporting refloats
+// alone makes a cold MW/LLI arm look dead (limitation L3).
 TEST(GapReentryRelevel, ColdCarryCountsTheDetectionWithoutActing) {
     Harness h;
     h.addResumption(/*measurable=*/true, /*shifted=*/true, /*lli1=*/1, /*lli2=*/1);
@@ -391,18 +377,17 @@ TEST(GapReentryRelevel, ColdCarryCountsTheDetectionWithoutActing) {
 }
 
 // ===========================================================================
-// The LLI sub-gate — the receiver's own verdict about the break
+// The LLI sub-gate: the receiver's own verdict about the break
 // ===========================================================================
 
-// A re-entry whose raw level did NOT clear the empirical gate but whose return
-// epoch asserts LLI is still slipped: the level test is a *sub-threshold* test
-// across an unbounded break, and the receiver is telling us it lost lock.  With
-// the sub-knob off the same stream must leave the arc alone — that pair is the
-// gate's own negative control, and without it "freed" could just mean "the drain
-// frees everything it is handed".
+// A re-entry whose raw level did not clear the empirical gate but whose return epoch
+// asserts LLI is still slipped: the level test is a sub-threshold test across an
+// unbounded break, and the receiver reports a loss of lock.  With the sub-knob off the
+// same stream leaves the arc alone.  That pair is the gate's own negative control;
+// without it "freed" could just mean "the drain frees everything it is handed".
 TEST(GapReentryRelevel, LliOnReturnFreesOnlyUnderItsSubKnob) {
     {
-        Harness on;                                    // gap_reentry_lli defaults TRUE
+        Harness on;                                    // gap_reentry_lli defaults to true
         ASSERT_TRUE(on.params.gap_reentry_lli);
         on.addResumption(/*measurable=*/true, /*shifted=*/false, /*lli1=*/1, /*lli2=*/0);
         on.run(false, true, true);
@@ -428,12 +413,11 @@ TEST(GapReentryRelevel, LliOnReturnFreesOnlyUnderItsSubKnob) {
 // The two negative controls that bound the population
 // ===========================================================================
 
-// A MEASURED, unshifted, unflagged return is the benign case Card G counts as
-// `clean_bridged` and calls "the intended behaviour": the level demonstrably did
-// NOT move across the break, so bridging the carry is correct and the response
-// must not touch it.  This is the test that keeps the response from degenerating
-// into refloat-always — the posture SPEC_lane_slip_response measured 16 points
-// worse on settled EWL at-own-integer than an evidence-gated keep.
+// A measured, unshifted, unflagged return is the benign case card G counts as
+// `clean_bridged` and calls "the intended behaviour": the level did not move across
+// the break, so bridging the carry is correct and the response leaves it alone.  This
+// test keeps the response evidence-gated rather than refloat-always (the two postures
+// are compared on settled EWL at-own-integer in SPEC_lane_slip_response).
 TEST(GapReentryRelevel, CleanMeasuredReturnIsLeftBridged) {
     Harness h;
     h.addResumption(/*measurable=*/true, /*shifted=*/false, /*lli1=*/0, /*lli2=*/0);
@@ -448,11 +432,11 @@ TEST(GapReentryRelevel, CleanMeasuredReturnIsLeftBridged) {
     EXPECT_EQ(h.bucketSum(), 0);
 }
 
-// An UNMEASURABLE return (no pre-gap dual-band level, no LLI) carries no
-// evidence at all.  Default OFF: absence of evidence is never evidence of a
-// slip.  Under the conservative sub-knob it becomes a reset — and the counter
-// attributes it to the `unmeas` gate, not to `shifted`, so the run-end line can
-// separate "we saw a jump" from "we could not check".
+// An unmeasurable return (no pre-gap dual-band level, no LLI) carries no evidence at
+// all.  Off by default: absence of evidence is not evidence of a slip.  Under the
+// conservative sub-knob it becomes a reset, and the counter attributes it to the
+// `unmeas` gate, not to `shifted`, so the run-end line separates "a jump was seen"
+// from "the level could not be checked".
 TEST(GapReentryRelevel, UnmeasurableReturnActsOnlyUnderTheConservativeSubKnob) {
     {
         Harness off;                                   // default
@@ -477,9 +461,9 @@ TEST(GapReentryRelevel, UnmeasurableReturnActsOnlyUnderTheConservativeSubKnob) {
     }
 }
 
-// The default-OFF / byte-identity contract (standing invariant #6).  With the
-// master arm down the drain must not read a single resumption, whatever they
-// say — this is the property the OFF arm of the field A/B rests on.
+// The default-off / byte-identity contract (standing invariant #6).  With the master
+// arm off the drain reads no resumption, whatever they say; the off arm of the field
+// A/B rests on this property.
 TEST(GapReentryRelevel, MasterArmOffTouchesNothing) {
     Harness h;
     h.params.gap_reentry = false;
@@ -505,20 +489,18 @@ TEST(GapReentryRelevel, MasterArmOffTouchesNothing) {
 // ===========================================================================
 
 // A single-band return has no sig2, and a satellite with no carried level can be
-// responded to by nothing.  Both are counted so the arc ledger closes:
-// `no_carry` is deliberately OUTSIDE `arcs`, because an arc the inject would not
-// bridge cannot be freed, cold-skipped or not-acted.
+// responded to by nothing.  Both are counted so the arc ledger closes: `no_carry` is
+// deliberately outside `arcs`, because an arc the inject would not bridge cannot be
+// freed, cold-skipped or not-acted.
 //
-// ⚠ Semantics changed with the 2026-09-09 wiring fix: the ghost below used to
-// qualify as `no_arc` because it had no live AMBIGUITY; it now qualifies as
-// `no_carry` because it has no CARRY.  The numbers are the same and the test
-// still bounds the population, but it is now testing the right absence.
+// The ghost satellite below counts as `no_carry` because it has no carry entry; a
+// missing live ambiguity is not the criterion (see the file banner).
 TEST(GapReentryRelevel, SingleBandAndNoCarryClosureIsHonest) {
     Harness h;
-    // sig2 empty (single-band return) — one arc only.
+    // sig2 empty (single-band return): one arc only.
     h.addResumption(/*measurable=*/true, /*shifted=*/true, /*lli1=*/1, /*lli2=*/0,
                     /*dual=*/false);
-    // A satellite with no carried level at this station — two signals named,
+    // A satellite with no carried level at this station: two signals named, and
     // nothing the PASS-B inject could bridge.
     GapResumption ghost;
     ghost.station = 0;
@@ -541,10 +523,10 @@ TEST(GapReentryRelevel, SingleBandAndNoCarryClosureIsHonest) {
     EXPECT_FALSE(h.freed(kSig2));                    // never named by the resumption
 }
 
-// The legacy pivot's ambiguities are GAUGE-PINNED: refloating one moves the
-// frame every emitted phase bias references, which is the datum-slip
-// re-reference path and not this one.  Skipped and COUNTED — a silent skip would
-// read as "no re-entries at the datum station", which is a different fact.
+// The legacy pivot's ambiguities are gauge-pinned: refloating one moves the frame
+// every emitted phase bias references, which is the datum-slip re-reference path and
+// not this one.  The arc is skipped and counted; an uncounted skip would read as "no
+// re-entries at the datum station", which is a different fact.
 TEST(GapReentryRelevel, GaugePinnedPivotIsSkippedAndCounted) {
     Harness h;
     h.addResumption(/*measurable=*/true, /*shifted=*/true, /*lli1=*/1, /*lli2=*/1);

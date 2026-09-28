@@ -1,7 +1,7 @@
 """Build-time tests for the network fault-QC flag-rate viewer (L3, pyviz half).
 
 Exercises ``build_network_flag_rates`` against synthetic ``network_flag_rates.csv``
-fixtures -- calibration verdicts, the zero-opportunity (no div-by-zero) path, the
+fixtures: calibration verdicts, the zero-opportunity (no div-by-zero) path, the
 T6 blank-alpha row, the optional ``network_run_summary.csv`` companion, and the
 :class:`ViewerSkip` paths.  Figures are *built* (spec objects), not rendered.
 """

@@ -4,12 +4,11 @@
  *        (@c network.raim_station_factor + @c raim_rate_hygiene;
  *        `SPEC_t3_null_derivation.md` §6/§7.5).
  *
- * Both knobs are measure-only and default-OFF; the loader side locks the
+ * Both knobs are measure-only and off by default.  The loader tests cover the
  * defaults, the reject bands (τ ≤ 0, ratio ≤ 1), and the raim /
- * trace_flag_rates interlocks.  The kernel side pins the §7.5 trimmed
- * variance component: the E[w·v²] = r_i identity, the trim's both-sums
- * semantics, and the no-checkable-redundancy sentinel ("unavailable is
- * not 0").  The declaration behavior (EWMA, depart/return) is graded on
+ * trace_flag_rates interlocks.  The kernel tests cover the §7.5 trimmed
+ * variance component: the E[w·v²] = r_i identity, the trim acting on both
+ * sums, and the no-checkable-redundancy sentinel ("unavailable is not 0").  The declaration behavior (EWMA, depart/return) is graded on
  * the pareref_on fixture against the t3_null_fit reference, not here.
  */
 
@@ -147,8 +146,9 @@ TEST(StationFactorKernel, ScaleInflationReadsAsFactor) {
 
 TEST(StationFactorKernel, TrimRemovesSpikeFromBothSums) {
     // One slip-class spike must not set the slow scale: with the spike trimmed
-    // from BOTH sums the factor returns to the clean rows' value (the §7.5
-    // "robust variant is not cosmetic" requirement).
+    // from both sums the factor returns to the clean rows' value.  Untrimmed, the
+    // factor is (10 + 400) / 11 ≈ 37.3 (§7.5: the untrimmed form is
+    // outlier-sensitive, and the robust variant is not cosmetic).
     std::vector<StationFactorRow> rows;
     for (int k = 0; k < 10; ++k) rows.push_back({1.0, 1.0, 1.0});
     rows.push_back({400.0, 1.0, 20.0});   // the spike (r_std 20)
@@ -159,8 +159,9 @@ TEST(StationFactorKernel, TrimRemovesSpikeFromBothSums) {
 }
 
 TEST(StationFactorKernel, NoCheckableRedundancyIsSentinelNotZero) {
-    // All rows uncheckable (r_i ~ 0): the factor is UNAVAILABLE, never 0 — a 0
-    // would read as "perfect station" to any consumer of the trace.
+    // All rows uncheckable (Σr_i ≤ 1e-9): the factor is the unavailable sentinel
+    // (negative), never 0, since a 0 would read as a perfect station to any
+    // consumer of the trace.
     std::vector<StationFactorRow> rows;
     for (int k = 0; k < 5; ++k) rows.push_back({1e-9, 1e-12, 0.5});
     EXPECT_LT(stationVarianceFactor(rows, 0.0), 0.0);
@@ -168,7 +169,7 @@ TEST(StationFactorKernel, NoCheckableRedundancyIsSentinelNotZero) {
 }
 
 TEST(StationFactorKernel, LowRedundancyRowCannotBiasTheRatio) {
-    // The s0g argument, pinned: an r_i ~ 0 row contributes ~0 to numerator AND
+    // The s0g argument: an r_i ~ 0 row contributes ~0 to both numerator and
     // denominator, so including it barely moves the factor.
     std::vector<StationFactorRow> rows;
     for (int k = 0; k < 10; ++k) rows.push_back({2.0, 1.0, 1.4});

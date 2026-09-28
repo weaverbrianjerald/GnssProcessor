@@ -4,18 +4,18 @@
  *
  * The RTCM decode guards in test_rtcm_logger_lifetime.cpp exercise this header
  * only indirectly, and only for "did not crash". These tests pin the three
- * properties the header actually promises, each of which a plausible wrong fix
- * would violate while still passing a crash-only test:
+ * properties the header promises; a plausible wrong fix could violate each one
+ * and still pass a crash-only test:
  *
- *   1. NEVER NULL — a dropped registry yields a usable logger, not nullptr.
- *   2. THE MESSAGE SURVIVES — it is emitted to the fallback, not swallowed.
- *      A fix shaped `if (auto l = spdlog::default_logger()) l->warn(...)` is
- *      crash-free and silently loses the diagnostic; only an output-bound
- *      assertion tells the two apart.
- *   3. PER-CALL RESOLUTION — a logger swapped between calls is honoured. This
- *      is what distinguishes the helper from the cached-accessor shape it
- *      replaces, and it is precisely the property that MSVC v18's
- *      static-conditional miscompile destroyed at RinexNavParser's navLog().
+ *   1. Never null: a dropped registry yields a usable logger, not nullptr.
+ *   2. The message survives: it is emitted to the fallback, not discarded.
+ *      A fix shaped `if (auto l = spdlog::default_logger()) l->warn(...)` does
+ *      not crash but loses the diagnostic; only an assertion on the output
+ *      tells the two apart.
+ *   3. Per-call resolution: a logger swapped between calls is used. This
+ *      distinguishes the helper from the cached function-local static accessor
+ *      it replaces, the shape that faulted in RinexNavParser's navLog() under
+ *      MSVC v18 (VS 2026).
  */
 
 #include <gtest/gtest.h>
@@ -57,8 +57,8 @@ TEST(SafeLoggerTest, NamedLoggerIsNonNullWithRegistryDropped) {
 }
 
 TEST(SafeLoggerTest, FallbackIsNotRegistered) {
-    // A registered fallback could be torn out by the very drop_all() that made
-    // it necessary — the defect it exists to prevent.
+    // A registered fallback would be removed by the same drop_all() that makes it
+    // necessary, which is the failure it exists to prevent.
     DroppedRegistry guard;
     const auto fb = Logging::safeDefaultLogger();
     ASSERT_NE(fb, nullptr);
@@ -71,13 +71,13 @@ TEST(SafeLoggerTest, FallbackIsStableAcrossCalls) {
 }
 
 // ============================================================================
-// 2. The message survives — degraded, not dropped
+// 2. The message survives: degraded, not dropped
 // ============================================================================
 
-// The fallback must own a REAL sink. A fallback constructed without one is
-// crash-free, satisfies "never null", and silently discards every diagnostic —
-// so this cannot be checked by capturing output, because the capture sink is
-// itself a sink the test adds. It has to be asserted on the logger directly.
+// The fallback owns a real sink. A fallback constructed without one does not
+// crash, satisfies "never null", and discards every diagnostic. Capturing output
+// cannot detect that, because the capture sink is itself a sink the test adds,
+// so the sink list is asserted on the logger directly.
 TEST(SafeLoggerTest, FallbackOwnsARealSink) {
     DroppedRegistry guard;
     const auto fb = Logging::safeDefaultLogger();
@@ -161,7 +161,7 @@ TEST(SafeLoggerTest, NamedLookupFallsBackOnceItsLoggerIsDropped) {
 }
 
 // ============================================================================
-// Guard hygiene — the guard itself must not leak state into later tests
+// Guard hygiene: the guard itself leaves no state behind for later tests
 // ============================================================================
 
 TEST(SafeLoggerTest, GuardRestoresDefaultAndNamedLoggers) {

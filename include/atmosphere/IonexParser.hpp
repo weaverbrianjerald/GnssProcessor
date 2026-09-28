@@ -7,8 +7,8 @@
  * Reads an IONEX file (e.g. a CODE final GIM,
  * @c COD0OPSFIN_<YYYYDOY>0000_01D_01H_GIM.INX) into an IonexData structure: the
  * grid definition plus a time-ordered series of VTEC maps and, when present,
- * their RMS companion maps.  The parser performs no interpolation — see
- * GlobalIonosphereMap for slant-delay queries.
+ * their RMS companion maps.  The parser performs no interpolation; slant-delay
+ * queries go through GlobalIonosphereMap.
  */
 
 #include "logging/LogManager.hpp"
@@ -48,7 +48,7 @@ namespace GnssProcessor {
         int    n_lon = 0;                ///< Number of longitude columns.
 
         double height_km = 450.0;        ///< Single-layer shell height (IONEX HGT1).
-        double base_radius_km = 6371.0;  ///< IONEX BASE RADIUS.
+        double base_radius_km = 6371.0;  ///< Base radius (km), from the IONEX "BASE RADIUS" record.
         int    exponent = -1;            ///< Stored integers scale to TECU by 10^exponent.
 
         std::vector<IonexMap> maps;      ///< VTEC/RMS maps, ascending in epoch.

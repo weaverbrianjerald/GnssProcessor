@@ -1,33 +1,33 @@
 #!/usr/bin/env python3
-"""LV-6 gate G2 — censusOperator{GIM}, the sampling-matched GIM reference.
+"""LV-6 gate G2: censusOperator{GIM}, the sampling-matched GIM reference.
 
 `docs/SPEC_level_authority_internal.md` §4 G2 / §5.2.  The gate is
 
     settled  L_cs(t) - censusOperator{GIM}(t)  stable within +/- 2 TECU
     and the offset in the raw-realization window  -10 .. -20 vertical TECU
-    (outside -25 .. +5 falsifies the C4 confound model: STOP, no fold card)
+    (outside -25 .. +5 falsifies the C4 confound model: stop rule, no fold card)
 
-WHY THE REFERENCE IS NOT THE PLANETARY MEAN.  §5.2's adversary pass killed the
-naive "fleet median vs GIM global mean" grade: the network sees one
-hemisphere-ish footprint, so their difference carries the ROSTER'S GEOGRAPHY
-(several TECU, diurnal) on top of the level.  The reference must therefore be
-the GIM pushed through the SAME operator the census applies to its own
-observable -- same stations, same pierce points, same weights, same two-tier
-reduction.  This script is that operator.  It prints the planetary mean too,
-purely to show how large the sampling term it removes actually is.
+Why the reference is not the planetary mean.  The §5.2 adversary pass rejected
+the naive "fleet median vs GIM global mean" grade: the network sees roughly one
+hemisphere's footprint, so that difference carries the roster's geography
+(several TECU, diurnal) on top of the level.  The reference is therefore the
+GIM pushed through the same operator the census applies to its own observable:
+same stations, same pierce points, same weights, same two-tier reduction.  This
+script is that operator.  It also prints the planetary mean, to show how large
+the sampling term it removes is.
 
-SAMPLING COMES FROM THE RUN, NOT FROM A RE-DERIVATION.  With
+Sampling comes from the run, not from a re-derivation.  With
 `network.level_authority_los_dump` armed the census publishes every LOS it
 reduced (station, satellite, IPP lat/lon, thin-shell mapping, information
-weight).  We evaluate the GIM at those pierce points with those weights.  A
-re-derived "all satellites above the mask" set would be a DIFFERENT sample --
-the census keeps only MATURE CS-GF states -- and would reintroduce, in
-miniature, exactly the sampling error §5.2 rejected.  Without the dump this
-script refuses to grade rather than quietly approximating.
+weight), and the GIM is evaluated at those pierce points with those weights.  A
+re-derived "all satellites above the mask" set would be a different sample (the
+census keeps only mature CS-GF states) and would reintroduce, on a smaller
+scale, the sampling error §5.2 rejected.  Without the dump this script refuses
+to grade rather than approximate.
 
-UNITS.  The census's `v_tecu` is already VERTICAL (it divides the slant value
+Units.  The census's `v_tecu` is already vertical (it divides the slant value
 by the mapping), and an IONEX map is vertical TEC, so the two sides are
-directly comparable and NO mapping is applied to the reference.  The mapping
+directly comparable and no mapping is applied to the reference.  The mapping
 column is carried in the dump for provenance and for the self-test.
 
 Usage
@@ -35,9 +35,12 @@ Usage
       [--ionex PATH] [--settled-from 7200] [--min-los 4]
   python scripts/census_gim_operator.py --selftest
 
+Exit status: 0 = G2 pass, 1 = G2 fail, 2 = stop rule (offset outside -25 .. +5);
+over several run dirs, the largest.
+
 Caveats
-  * GIM is a product with a few-TECU error of its own and leans on data-free
-    ocean/southern interpolation; this is a level COMPARISON, never truth.
+  * GIM is a product with a few-TECU error of its own and relies on data-free
+    ocean/southern interpolation; this is a level comparison, not truth.
     G1 (sim) is the only truth-graded venue.  GIM stays diagnostics-only
     (standing directive).
 """
@@ -87,9 +90,9 @@ def sample_map(grid, lat, lon):
 def gim_at(maps, sod, lat, lon):
     """Sun-fixed interpolated GIM vertical TECU, matching the C++ reader.
 
-    GlobalIonosphereMap.cpp:89-97 rotates the query longitude by the Earth's
-    rotation between each bracketing map epoch and the query time, then blends.
-    Skipping that shift costs ~0.2 TECU and is free to get right.
+    GlobalIonosphereMap::interpolateVtec rotates the query longitude by the
+    Earth's rotation between each bracketing map epoch and the query time, then
+    blends linearly in time.  Skipping that shift costs ~0.2 TECU.
     """
     if not maps:
         return float("nan")
@@ -106,11 +109,13 @@ def gim_at(maps, sod, lat, lon):
 
 
 def level_authority_reduce(sta_rows, min_los):
-    """Transliteration of include/filter/NetworkRobustStats.hpp:111-133.
+    """Transliteration of levelAuthorityReduce in include/filter/NetworkRobustStats.hpp.
 
-    Tier 1: per-station information-weighted mean.  Tier 2: fleet MEDIAN.
-    Returns (level, disp, n_sta, n_los), or None when no station qualifies --
-    never 0.0 ("unavailable is not 0").
+    Tier 1: per-station information-weighted mean (stations with fewer than
+    min_los rows or a non-positive weight sum are skipped).  Tier 2: fleet
+    median; disp is 1.4826 * MAD of the station means.  Returns
+    (level, disp, n_sta, n_los), or None when no station qualifies, never 0.0
+    ("unavailable is not 0").
     """
     means, n_los = [], 0
     for rows in sta_rows.values():
@@ -210,7 +215,7 @@ def grade(run_dir, ionex, settled_from, min_los):
 
 
 def _selftest():
-    # 1. reduction algebra — mirrors tests/test_level_authority.cpp
+    # 1. reduction algebra, mirroring tests/test_level_authority.cpp
     r = level_authority_reduce({"a": [(10.0, 1.0), (20.0, 1.0)],
                                 "b": [(30.0, 1.0), (30.0, 1.0)],
                                 "c": [(100.0, 1.0), (100.0, 1.0)]}, 2)
@@ -222,7 +227,7 @@ def _selftest():
     print("reduction: weighted-mean-then-median, info weights, min_los, "
           "unavailable-is-None all OK")
 
-    # 2. sampler — a constant field returns that constant for ANY point/weights
+    # 2. sampler: a constant field returns that constant at any point
     grid = {la: (-180.0, 5.0, [7.5] * 73) for la in (-10.0, -5.0, 0.0, 5.0, 10.0)}
     for lat, lon in ((0.0, 0.0), (3.3, -177.0), (-8.0, 179.9)):
         assert abs(sample_map(grid, lat, lon) - 7.5) < 1e-9, (lat, lon)
@@ -231,13 +236,15 @@ def _selftest():
     assert abs(sample_map(g2, 0.0, 0.0) - 2.0) < 1e-9, sample_map(g2, 0.0, 0.0)
     print("sampler: constant-field invariance and node exactness OK")
 
-    # 3. co-rotation is exactly zero at a map epoch, and 15 deg/h away from it
+    # 3. co-rotation is zero at a map epoch, and 15 deg/h away from it
     maps = [(0, grid), (3600, grid)]
     assert abs(gim_at(maps, 0, 0.0, 0.0) - 7.5) < 1e-9
     assert abs(EARTH_ROT_DEG_PER_SEC * 3600.0 - 15.0) < 1e-12
     print("co-rotation: 15.000 deg/h, no shift at a map epoch, OK")
 
-    # 4. the reference is VERTICAL — no mapping is applied anywhere
+    # 4. the reference is vertical: no mapping is applied anywhere (this check
+    #    scans this file's own source, so no text in it may contain the
+    #    multiply or divide by the mapping column)
     src = open(os.path.abspath(__file__), encoding="utf-8").read()
     assert "/ float(r[\"mapping\"])" not in src and "* float(r[\"mapping\"])" not in src
     print("units: the operator never applies the mapping column (both sides vertical) OK")

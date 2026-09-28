@@ -23,10 +23,10 @@ namespace GnssProcessor {
             || l.rfind("BACC_", 0) == 0
             || l.rfind("BGYR_", 0) == 0
             || l.rfind("IONO:", 0) == 0
-            // Any state StateManager::getStateLabels() left unnamed
-            // ("STATE_<i>") is keyed by raw index, which is unstable across
-            // prune/grow — eliminate it per epoch rather than fragment one
-            // physical parameter into many across epochs.
+            // A state StateManager::getStateLabels() leaves unnamed
+            // ("STATE_<i>") is keyed by raw index, which changes across
+            // prune and grow.  It is eliminated per epoch so that one physical
+            // parameter is not split into several global parameters.
             || l.rfind("STATE_", 0) == 0;
     }
 
@@ -37,7 +37,7 @@ namespace GnssProcessor {
     bool NeqAccumulator::resetMatchesArc_(const std::string& arc_base,
                                           const std::set<std::string>& reset_satellites) {
         if (reset_satellites.empty()) return false;
-        // arc_base == "AMB:<sat>_<signal>" — pull the satellite token.
+        // arc_base is "AMB:<sat>_<signal>"; extract the satellite token.
         if (arc_base.size() <= 4) return false;
         const std::string body = arc_base.substr(4);   // after "AMB:"
         const auto us = body.find('_');
@@ -69,14 +69,15 @@ namespace GnssProcessor {
                                     const std::set<std::string>& reset_satellites) {
         const Eigen::Index m = meas.innovations.size();
         const Eigen::Index n = meas.H.cols();
-        // Any epoch we cannot fold into the system is a gap in the accumulated
-        // NEQ; clear the arc-presence set so the next usable epoch restarts the
-        // affected ambiguity arcs (conservative — avoids masking a real gap and
-        // merging two physically-distinct arcs across the skipped epoch).
+        // An epoch that cannot be folded into the system is a gap in the
+        // accumulated NEQ.  The arc-presence set is cleared so the next usable
+        // epoch starts new arcs for the affected ambiguities.  This is
+        // conservative: it avoids merging two physically distinct arcs across
+        // the skipped epoch.
         if (m == 0 || meas.H.rows() != m ||
             static_cast<Eigen::Index>(labels.size()) != n) {
             prev_epoch_arcs_.clear();
-            return;   // dimension mismatch → skip this epoch (logged by caller)
+            return;   // empty or mismatched dimensions: skip this epoch (the caller checks and logs a label-count mismatch before calling)
         }
 
         // --- Active columns: those with any nonzero design-matrix entry. ---
@@ -100,9 +101,9 @@ namespace GnssProcessor {
         const bool dense_r = (meas.R_full.rows() == m && meas.R_full.cols() == m);
         if (dense_r) {
             Eigen::LDLT<Eigen::MatrixXd> rldlt(meas.R_full);
-            // Skip an ill-posed R: LDLT.info() catches NaN/structural failure,
-            // and isPositive() rejects an indefinite (negative-pivot) block — a
-            // dense R must be SPD to give a valid weight.
+            // Skip an ill-posed R: LDLT.info() catches NaN and structural
+            // failure, and isPositive() rejects an indefinite (negative-pivot)
+            // block.  A dense R has to be SPD to give a valid weight.
             if (rldlt.info() != Eigen::Success || !rldlt.isPositive()) {
                 prev_epoch_arcs_.clear();
                 return;
@@ -159,11 +160,11 @@ namespace GnssProcessor {
         const Eigen::Index nl = static_cast<Eigen::Index>(lidx.size());
         if (ng == 0) {
             // No retained parameter is touched this epoch, so its rows
-            // constrain only (eliminated) locals and contribute nothing to the
-            // retained system.  Do NOT count them in n_obs_: dof, n_local_ and
-            // ltpl_ must all be drawn from the same epoch population or σ̂₀²
-            // (= WSSR/dof) is biased.  (Effectively never fires — position is
-            // always retained — but keeps the accounting exact.)
+            // constrain only eliminated locals and contribute nothing to the
+            // retained system.  They are not counted in n_obs_: dof, n_local_
+            // and ltpl_ have to be drawn from the same epochs, or σ̂₀²
+            // (= WSSR/dof) is biased.  In practice this branch does not run,
+            // because position is always retained; it keeps the accounting exact.
             return;
         }
 
@@ -202,10 +203,10 @@ namespace GnssProcessor {
                 lldlt.compute(Nll);
             }
             if (lldlt.info() != Eigen::Success) {
-                // Local block unrecoverably singular — drop this epoch rather
-                // than corrupt the system by losing the local cross terms.  Do
-                // NOT count its rows in n_obs_ (nothing was folded into
-                // ltpl_/N_), keeping dof and WSSR drawn from the same epochs.
+                // The local block is singular even after the ridge.  The epoch
+                // is dropped rather than folded without its local cross terms.
+                // Its rows are not counted in n_obs_ (nothing was added to
+                // ltpl_ or N_), so dof and WSSR stay drawn from the same epochs.
                 return;
             }
             const Eigen::MatrixXd Nll_inv_Nlg = lldlt.solve(Ngl.transpose());  // nl×ng
@@ -282,7 +283,7 @@ namespace GnssProcessor {
         const double seuw = (std::isfinite(sol.sigma0_sq) && sol.sigma0_sq > 0.0)
             ? std::sqrt(sol.sigma0_sq) : std::numeric_limits<double>::quiet_NaN();
 
-        // -------- Human-readable .asc (imitates the M-PAGES .nrm ASCII dump) --------
+        // -------- Human-readable .asc (modelled on the M-PAGES .nrm ASCII dump) --------
         {
             std::ofstream asc(stem.string() + ".asc", std::ios::out | std::ios::trunc);
             if (!asc.is_open()) return false;

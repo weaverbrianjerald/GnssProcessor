@@ -274,8 +274,9 @@ bool RtStateSnapshotIO::write(const std::filesystem::path& path,
         }
     }
     // Atomic replace (the RTB-7 pattern: MSVC rename maps to
-    // MoveFileExW(REPLACE_EXISTING); the remove+rename branch is the
-    // portability backstop for implementations refusing an existing target).
+    // MoveFileExW(REPLACE_EXISTING)).  The remove+rename branch is a portability
+    // fallback for implementations that refuse an existing target; it is not
+    // atomic, since the target is briefly absent between the two calls.
     std::error_code ec;
     std::filesystem::rename(tmp, path, ec);
     if (ec) {

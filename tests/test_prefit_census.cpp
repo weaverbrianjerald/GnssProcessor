@@ -1,37 +1,37 @@
 /**
  * @file test_prefit_census.cpp
- * @brief PREFIT CENSUS / STRUCTURAL FUSE / SEED-BIRTH TRIPWIRE / TOPOLOGY
- *        LEDGER / FLIGHT RECORDER (docs/SPEC_prefit_census_observability.md).
+ * @brief Prefit census, structural fuse, seed-birth tripwire, topology ledger and
+ *        flight recorder (docs/SPEC_prefit_census_observability.md).
  *
- * The card exists because the producer's only always-on consistency statistic is
- * a POST-fit one, and free ambiguities plus free local states launder prefit
- * inconsistency out of it by construction.  Era-2's injector — a steady
- * +1.88e5 m prefit code innovation on (BSHM00ISR, G07), folded at w ≈ 2 every
- * epoch for minutes — produced a clean post-fit σ̂₀ the whole time.
+ * The producer's only always-on consistency statistic is a post-fit one, and free
+ * ambiguities plus free local states absorb prefit inconsistency out of it by
+ * construction.  Example (era 2): a steady +1.88e5 m prefit code innovation on
+ * (BSHM00ISR, G07), folded at w ≈ 2 every epoch for minutes, left the post-fit σ̂₀
+ * clean throughout.
  *
- * What is worth testing here is not "does the arithmetic run" but the claims
- * that fail SILENTLY if they are wrong:
+ * The tests target claims that would fail silently if wrong, not whether the
+ * arithmetic runs:
  *
- *   1. THE METRIC IS COMMON-MODE-REMOVED.  A raw-|y| screen would fire on every
- *      1 ms receiver clock step (3e5 m on EVERY row of a station at once, and a
- *      perfectly legitimate quantity the white clock state absorbs exactly).
- *      The centred metric must be ~0 there and 2.6e5 on a single parked cell in
- *      the SAME station.  Get this backwards and the instrument is a
- *      false-positive generator with a weight cap attached.
- *   2. PINS AND COUPLING ROWS ARE NOT DATA.  A healthy gauge pin runs s ≈ 1e7
- *      by design; letting one into the pool drowns the census and would make
- *      the fuse cut the datum.
- *   3. THE FUSE CAPS, IT DOES NOT DROP (the prefer-fallback directive), and it
- *      caps to exactly an S_fuse-equivalent standardized load — so the row
- *      keeps its sign and its ordering.
- *   4. A THIN TYPE HAS NO CENTRE.  Three rows do not make a median; treating a
- *      missing centre as m = 0 would turn every sparse station into an
- *      exceedance (and, with the fuse armed, into a solve change).
- *   5. STRUCTURAL OFF-INERTNESS.  Every increment is default-OFF and must leave
+ *   1. The metric has the common mode removed.  A raw-|y| screen would fire on every
+ *      1 ms receiver clock step (3e5 m on every row of a station at once, a
+ *      legitimate quantity the white clock state absorbs exactly).  The centred
+ *      metric is ~0 there and large (1.88e5 m × √w, 2.7e5 at the era-2 w ≈ 2) on a
+ *      single parked cell in the same station.  With this reversed, the instrument
+ *      would generate false positives and the fuse would cap their weights.
+ *   2. Pins and coupling rows are not data.  A healthy gauge pin runs s ≈ 1e7 by
+ *      design; admitting one into the pool would swamp the census and make the fuse
+ *      cut the datum.
+ *   3. The fuse caps rows and does not drop them (the prefer-fallback directive).
+ *      It caps to exactly an S_fuse-equivalent standardized load, so the row keeps
+ *      its sign and its ordering.
+ *   4. A thin type has no centre.  Three rows do not make a median; treating a
+ *      missing centre as m = 0 would turn every sparse station into an exceedance
+ *      (and, with the fuse armed, into a solve change).
+ *   5. Structural inertness when off.  Every increment is off by default and leaves
  *      the weights bit-identical and the counters at zero.
- *   6. THE RECORDER LATCH IS AN ERA LATCH, not a fire log: one trip per era,
- *      re-armed when the era clears — otherwise a 95-minute withhold era would
- *      dump 190 attribution frames.
+ *   6. The recorder latch is an era latch, not a fire log: one trip per era, re-armed
+ *      when the era clears.  Otherwise a 95-minute withhold era would write 190
+ *      attribution frames.
  */
 
 #include <gtest/gtest.h>
@@ -65,11 +65,11 @@ using namespace GnssProcessor;
 namespace {
 
 // ---------------------------------------------------------------------------
-//  Column layout used by every fixture below.  Four shared columns is enough to
-//  exercise all four DATA classes plus both pin classes:
+//  Column layout used by every fixture below.  Four shared columns suffice to
+//  exercise all four data classes plus both pin classes:
 //    0 CLK:G07      (a labelled column of no family the classifier splits on)
-//    1 CB:G07:C1W   (the CODE discriminator)
-//    2 PB:G07:L1C   (the PHASE discriminator)
+//    1 CB:G07:C1W   (the code discriminator)
+//    2 PB:G07:L1C   (the phase discriminator)
 //    3 SH:C:0:0     (the SH<->slant tie)
 // ---------------------------------------------------------------------------
 constexpr int kCols = 4;
@@ -86,7 +86,7 @@ SharedColumnMap makeColumnMap() {
 }
 
 /// Row recipe: which shared column it touches, its innovation and its weight.
-/// `local` marks a row with NO shared partial (the pin classes).
+/// col = -1 marks a row with no shared partial (the pin classes).
 struct RowSpec {
     int    col;      // shared column, or -1 for a local-only row
     double y;
@@ -115,7 +115,7 @@ StationAssembly makeStation(const std::vector<RowSpec>& rows,
     return R;
 }
 
-/// n identical code rows plus, optionally, one displaced row appended last.
+/// n identical code rows; a caller appends any displaced row itself.
 std::vector<RowSpec> codeRows(int n, double y, double w) {
     return std::vector<RowSpec>(static_cast<std::size_t>(n), RowSpec{ kCb, y, w });
 }
@@ -207,12 +207,11 @@ int countEvents(const fs::path& csv, const std::string& want) {
 //  1. The metric: common mode removed, not raw
 // ===========================================================================
 //
-// The whole design rests on this one line.  A 1 ms receiver clock step puts
-// |y| = 3e5 m on EVERY row of a station at once and is absorbed EXACTLY by the
-// white receiver-clock state — URUM00CHN and INEG00MEX both do it on the very
-// leg this card is validated against.  A parked cell displaces ONE row against
-// its station's own median.  Raw magnitude cannot tell those apart; the centred
-// statistic separates them by five decades.
+// The design depends on this property.  A 1 ms receiver clock step puts |y| = 3e5 m
+// on every row of a station at once and is absorbed exactly by the white
+// receiver-clock state; such steps occur on the validation leg.  A parked cell
+// displaces one row against its station's own median.  Raw magnitude cannot tell
+// the two apart; the centred statistic separates them (0 against 3.76e5 here).
 TEST(PrefitCensusObservability, CentredMetricCancelsAClockStepAndKeepsAParkedCell) {
     const SharedColumnMap cm = makeColumnMap();
 
@@ -229,10 +228,10 @@ TEST(PrefitCensusObservability, CentredMetricCancelsAClockStepAndKeepsAParkedCel
     for (int i = 0; i < 6; ++i)
         EXPECT_DOUBLE_EQ(prefitStandardizedDeviation(R.y(i), R.w(i), m), 0.0)
             << "the clock-step rows must vanish under centring, row " << i;
-    // 1.88e5 m x sqrt(4) = 3.76e5 — the era-2 cell's order of magnitude.
+    // 1.88e5 m x sqrt(4) = 3.76e5, the era-2 cell's order of magnitude.
     EXPECT_NEAR(prefitStandardizedDeviation(R.y(6), R.w(6), m), 3.76e5, 1.0);
 
-    // …and the raw screen this replaces would have flagged all SEVEN rows.
+    // …and the raw screen this replaces would have flagged all seven rows.
     for (Eigen::Index i = 0; i < R.y.size(); ++i)
         EXPECT_GT(prefitStandardizedDeviation(R.y(i), R.w(i), 0.0), 1000.0);
 }
@@ -242,9 +241,9 @@ TEST(PrefitCensusObservability, CentredMetricCancelsAClockStepAndKeepsAParkedCel
 // ===========================================================================
 //
 // A healthy pivot pin carries w = 1e10 against a zero innovation and would
-// contribute s ~ 1e7 the moment it entered a pool.  A Card-1 coupling row is a
-// statement about the CARRY, not a measurement.  Both must be invisible to the
-// census — and, more sharply, to the fuse, which would otherwise cap the datum.
+// contribute s ~ 1e7 as soon as it entered a pool.  A card-1 coupling row is a
+// statement about the carry, not a measurement.  Both are excluded from the census
+// and, more importantly, from the fuse, which would otherwise cap the datum.
 TEST(PrefitCensusObservability, PinAndCouplingRowsAreExcludedFromEveryPool) {
     const SharedColumnMap cm = makeColumnMap();
     const std::vector<RowSpec> rows = {
@@ -270,26 +269,26 @@ TEST(PrefitCensusObservability, PinAndCouplingRowsAreExcludedFromEveryPool) {
     EXPECT_FALSE(isDataRowClass(NetRowClass::LocalPinRow));
     EXPECT_FALSE(isDataRowClass(NetRowClass::CplRow));
 
-    // Exactly one row per DATA class reached a pool; the three excluded classes
-    // contributed nothing at all.
+    // Exactly one row per data class reached a pool; the three excluded classes
+    // contributed nothing.
     const PrefitStationCentres c = prefitStationCentres(cm, R);
     for (int t = 0; t < kNetDataClasses; ++t) EXPECT_EQ(c.n[t], 1) << "class " << t;
 
-    // The row's satellite comes from the first LABELLED shared column it touches.
+    // The row's satellite comes from the first labelled shared column it touches.
     std::string sat;
     classifyRow(cm, R, 0, &sat);
     EXPECT_EQ(sat, "G07");
 }
 
 // ===========================================================================
-//  3. iono_sh_row is NOT centred; a thin type has NO centre
+//  3. iono_sh_row is not centred; a thin type has no centre
 // ===========================================================================
 //
-// The SH<->slant tie carries no receiver clock, so subtracting a median off it
-// would remove the very field offset the row exists to observe.  Conversely a
-// type with three rows has no trustworthy median: treating the absent centre as
-// m = 0 would turn every sparse station into an exceedance — and with the fuse
-// armed, into a silent solve change.
+// The SH<->slant tie carries no receiver clock, so subtracting a median from it
+// would remove the field offset the row exists to observe.  Conversely, a type with
+// three rows has no reliable median: treating the absent centre as m = 0 would turn
+// every sparse station into an exceedance and, with the fuse armed, into a silent
+// solve change.
 TEST(PrefitCensusObservability, ShTiesAreUncentredAndThinTypesHaveNoCentre) {
     const SharedColumnMap cm = makeColumnMap();
     std::vector<RowSpec> rows(4, RowSpec{ kSh, 2.0, 1.0 });   // 4 identical SH ties
@@ -312,7 +311,7 @@ TEST(PrefitCensusObservability, ShTiesAreUncentredAndThinTypesHaveNoCentre) {
 }
 
 // ===========================================================================
-//  4. The fuse caps to an S_fuse-equivalent load — and never drops a row
+//  4. The fuse caps to an S_fuse-equivalent load and never drops a row
 // ===========================================================================
 TEST(PrefitCensusObservability, FuseCapsToSFuseEquivalentLoadAndKeepsTheRow) {
     LogManager log;
@@ -335,7 +334,7 @@ TEST(PrefitCensusObservability, FuseCapsToSFuseEquivalentLoadAndKeepsTheRow) {
     EXPECT_EQ(capped, 1);
 
     // The capped row still exists, still carries its sign, and now contributes
-    // EXACTLY an S_fuse-equivalent standardized load.
+    // exactly an S_fuse-equivalent standardized load.
     EXPECT_DOUBLE_EQ(R.y(6), 1.0e5) << "the fuse must not touch the innovation";
     EXPECT_GT(R.w(6), 0.0) << "a cap is not a drop (prefer-fallback directive)";
     const double s_pre = 1.0e5 * std::sqrt(4.0);
@@ -354,9 +353,9 @@ TEST(PrefitCensusObservability, FuseCapsToSFuseEquivalentLoadAndKeepsTheRow) {
 //  5. Fuse exclusions: pin weights and centre-less types
 // ===========================================================================
 //
-// Both exclusions are load-bearing and both are counted rather than silent.  A
-// pin at w = 1e10 would be capped to nothing (destroying the datum); a row whose
-// type has no median would be measured against a fabricated m = 0.
+// Both exclusions are necessary, and both are counted.  A pin at w = 1e10 would be
+// capped to nothing (removing the datum); a row whose type has no median would be
+// measured against an invented m = 0.
 TEST(PrefitCensusObservability, FuseSkipsPinWeightsAndCentrelessTypes) {
     LogManager log;
     auto cfg = loadCfg(log, "fuse_skip", "    \"prefit_fuse_sigma\": 1000.0,\n");
@@ -364,14 +363,14 @@ TEST(PrefitCensusObservability, FuseSkipsPinWeightsAndCentrelessTypes) {
     NetworkRunTraces traces(scratchDir("fuse_skip"));
     const SharedColumnMap cm = makeColumnMap();
 
-    // A pin-weight DATA row (w >= 1e6) with a huge innovation, a code pool
+    // A pin-weight data row (w >= 1e6) with a huge innovation, a code pool
     // deliberately one row short of a centre, and an SH tie that needs none.
     std::vector<RowSpec> rows = {
         { kPb, 1.0e6, 1.0e8 },    // pin/constraint weight regime: skipped
         { kCb, 1.0e5, 4.0 },      // its type has only 3 rows -> no centre
         { kCb, 0.0, 4.0 },
         { kCb, 0.0, 4.0 },
-        { kSh, 1.0e4, 1.0 },      // SH tie, uncentred, s = 1e4 -> FUSED
+        { kSh, 1.0e4, 1.0 },      // SH tie, uncentred, s = 1e4 -> capped
     };
     StationAssembly R = makeStation(rows);
     const Eigen::VectorXd w0 = R.w;
@@ -387,17 +386,16 @@ TEST(PrefitCensusObservability, FuseSkipsPinWeightsAndCentrelessTypes) {
 }
 
 // ===========================================================================
-//  5b. The fuse DOMAIN keeps phase out by default
+//  5b. The fuse domain keeps phase out by default
 // ===========================================================================
 //
-// Recorded deviation from SPEC §4 ("DATA-class rows only"), on measured
-// evidence: a phase row's prefit innovation carries its arc's FREE ambiguity
-// linearization point, so on a warm-resume epoch — every arc re-seeded at once —
-// healthy rows reach s ~ 1e5 (MRO100AUS phase median −4248 m, two epochs after
-// resume on the FT63 leg-19 replay).  Capping those would slow every new arc for
-// no fault.  The default domain is therefore the classes with no free per-row
-// absorber; widening it is a deliberate arm, and the cost of NOT widening it is
-// counted rather than assumed.
+// Recorded deviation from SPEC §4 ("DATA-class rows only"), on measured evidence: a
+// phase row's prefit innovation carries its arc's free ambiguity linearization
+// point, so on a warm-resume epoch, with every arc re-seeded at once, healthy rows
+// reach s ~ 1e5 (a phase median of −4248 m two epochs after a resume on the FT63
+// leg-19 replay).  Capping those would slow every new arc with no fault present.
+// The default domain is therefore the classes with no free per-row absorber;
+// widening it is a deliberate arm, and what the narrower domain skips is counted.
 TEST(PrefitCensusObservability, FuseDomainExcludesPhaseByDefaultAndCountsWhatItGaveUp) {
     EXPECT_EQ(parseDataClassMask("code,sh"),
               dataClassBit(NetRowClass::ObsCode) | dataClassBit(NetRowClass::IonoShRow));
@@ -420,10 +418,10 @@ TEST(PrefitCensusObservability, FuseDomainExcludesPhaseByDefaultAndCountsWhatItG
               dataClassBit(NetRowClass::ObsCode) | dataClassBit(NetRowClass::IonoShRow));
 
     NetworkRunTraces traces(scratchDir("fuse_domain"));
-    // A station mid-resume: every phase row displaced from a pathological median,
-    // plus one genuinely parked CODE row.
+    // A station mid-resume: every phase row displaced from an extreme median, plus
+    // one parked code row.
     std::vector<RowSpec> rows = codeRows(6, 0.0, 4.0);
-    rows.push_back({ kCb, 1.0e5, 4.0 });                       // code: IN domain, capped
+    rows.push_back({ kCb, 1.0e5, 4.0 });                       // code: in domain, capped
     for (int i = 0; i < 5; ++i) rows.push_back({ kPb, -4248.0, 8000.0 });
     rows.push_back({ kPb, 0.0, 8000.0 });                      // a freshly seeded arc
     StationAssembly R = makeStation(rows);
@@ -440,7 +438,7 @@ TEST(PrefitCensusObservability, FuseDomainExcludesPhaseByDefaultAndCountsWhatItG
 }
 
 // ===========================================================================
-//  6. OFF is structurally inert
+//  6. Off is structurally inert
 // ===========================================================================
 TEST(PrefitCensusObservability, DefaultsAreOffAndTheFuseIsStructurallyInert) {
     LogManager log;
@@ -471,7 +469,7 @@ TEST(PrefitCensusObservability, DefaultsAreOffAndTheFuseIsStructurallyInert) {
     EXPECT_EQ(ctx.counters.pc.fuse_rows, 0);
 
     // The trip latch is equally inert: an unarmed recorder never records an era,
-    // so a later ARMED run cannot inherit a stale one.
+    // so a later armed run cannot inherit a stale one.
     EXPECT_FALSE(networkRhsTripEdge(ctx, "sh_gate", true));
     EXPECT_EQ(ctx.counters.pc.rec_consults, 0);
     EXPECT_TRUE(ctx.carry.rhs_trip_pending.empty());
@@ -481,9 +479,10 @@ TEST(PrefitCensusObservability, DefaultsAreOffAndTheFuseIsStructurallyInert) {
 //  7. Event rate limiting is per (event, station, satellite, class)
 // ===========================================================================
 //
-// A parked cell must log its identity PERSISTENTLY — its duration is half the
-// evidence — without writing 120 rows an hour.  The holdoff is in PROCESSED
-// epochs, so the test drives ctx.counters.n_loop_epochs the way the driver does.
+// A parked cell keeps logging its identity for as long as it persists (its duration
+// is part of the evidence), without writing 120 rows an hour at 30 s.  The holdoff
+// counts processed epochs, so the test drives ctx.counters.n_loop_epochs the way the
+// driver does.
 TEST(PrefitCensusObservability, EventsAreRateLimitedPerCellAndResumeAfterTheHoldoff) {
     LogManager log;
     auto cfg = loadCfg(log, "holdoff",
@@ -510,9 +509,9 @@ TEST(PrefitCensusObservability, EventsAreRateLimitedPerCellAndResumeAfterTheHold
     }
     traces.events_trace.flush();
 
-    // Every epoch CAPPED (the fuse is not rate limited — it is a weight action)…
+    // Every epoch is capped (the fuse is a weight action and is not rate limited)…
     EXPECT_EQ(ctx.counters.pc.fuse_capped, 12);
-    // …but only epochs 0, 5 and 10 SPOKE.
+    // …but only epochs 0, 5 and 10 write an event.
     EXPECT_EQ(ctx.counters.pc.fuse_events, 3);
     EXPECT_EQ(ctx.counters.pc.fuse_events_held, 9);
     EXPECT_EQ(countEvents(csv, "prefit_fused"), 3);
@@ -522,10 +521,10 @@ TEST(PrefitCensusObservability, EventsAreRateLimitedPerCellAndResumeAfterTheHold
 //  8. The census walk: exceedance events name the cell, births are births
 // ===========================================================================
 //
-// INC-1 and INC-3 ride the same walk.  The birth test is the sharp one: a LOS
-// present -> absent -> present is a BIRTH (its per-LOS states were re-created),
-// while a LOS present in consecutive epochs is not — and the FIRST walked epoch
-// must seed the map rather than declare the whole network newborn.
+// INC-1 and INC-3 share the same walk.  The birth test is the stricter one: a LOS
+// present -> absent -> present is a birth (its per-LOS states were re-created),
+// while a LOS present in consecutive epochs is not, and the first walked epoch seeds
+// the map rather than declaring the whole network newborn.
 TEST(PrefitCensusObservability, CensusNamesTheCellAndBirthNeedsAPriorAbsence) {
     LogManager log;
     auto cfg = loadCfg(log, "walk",
@@ -558,7 +557,7 @@ TEST(PrefitCensusObservability, CensusNamesTheCellAndBirthNeedsAPriorAbsence) {
         rows.push_back({ kCb, 1.0e5, 4.0 });
         return std::vector<StationAssembly>{ makeStation(rows) };
     };
-    // The same station with NO satellite-labelled rows at all (the LOS vanishes).
+    // The same station with no satellite-labelled rows at all (the LOS vanishes).
     auto absentEpoch = [] {
         std::vector<RowSpec> rows(6, RowSpec{ kSh, 0.0, 1.0 });
         return std::vector<StationAssembly>{ makeStation(rows) };
@@ -581,7 +580,7 @@ TEST(PrefitCensusObservability, CensusNamesTheCellAndBirthNeedsAPriorAbsence) {
     EXPECT_EQ(ctx.counters.pc.births, 0);
     EXPECT_EQ(ctx.counters.pc.exceedances, 2);
 
-    // The epoch scalars the status row picks up, on an ESTABLISHED-cell epoch:
+    // The epoch scalars the status row picks up, on an established-cell epoch:
     // the code class carries the whole signal, the phase class is empty, and the
     // run maximum names the cell.
     const int cd = static_cast<int>(NetRowClass::ObsCode);
@@ -592,24 +591,23 @@ TEST(PrefitCensusObservability, CensusNamesTheCellAndBirthNeedsAPriorAbsence) {
     EXPECT_NE(ctx.counters.pc.max_s_id.find("G07"), std::string::npos);
 
     walk(absentEpoch(), 1060.0, 2);   // the LOS vanishes
-    walk(parkedEpoch(), 1090.0, 3);   // …and returns: THIS is a birth
+    walk(parkedEpoch(), 1090.0, 3);   // …and returns: this is a birth
     EXPECT_EQ(ctx.counters.pc.births, 1);
     EXPECT_EQ(ctx.counters.pc.birth_events, 1)
         << "a born cell at s = 2e5 must trip the tighter seed threshold";
 
-    // BIRTHS ARE NOT EXCEEDANCES.  The birth epoch must NOT add an INC-1
-    // exceedance — a fresh arc is seeded to ~0 innovation against whatever level
-    // its station carries, and counting that was measured at 666 false events an
-    // hour on the FT63 leg.  It is handed to INC-3 and the hand-off is counted.
+    // Births are not exceedances.  The birth epoch adds no INC-1 exceedance: a fresh
+    // arc is seeded to ~0 innovation against whatever level its station carries, and
+    // counting it gave 666 false events an hour on the FT63 leg.  The row is handed
+    // to INC-3 and the hand-off is counted.
     EXPECT_EQ(ctx.counters.pc.exceedances, 2)
         << "the birth epoch must not raise an INC-1 exceedance";
     EXPECT_GT(ctx.counters.pc.rows_born_deferred, 0);
     EXPECT_EQ(ctx.counters.pc.cells_born_deferred, 1);
 
-    // …and on the BIRTH epoch the same columns read ZERO, because every row of
-    // the only cell present was deferred.  That is the point: the columns
-    // describe established cells, so "max_s = 0" here means "nothing established
-    // was misbehaving", not "nothing happened".
+    // …and on the birth epoch the same columns read zero, because every row of the
+    // only cell present was deferred.  The columns describe established cells, so
+    // "max_s = 0" here means "no established cell exceeded", not "nothing happened".
     EXPECT_DOUBLE_EQ(ctx.carry.ep_pc_max_s[cd], 0.0);
     EXPECT_EQ(ctx.carry.ep_pc_n_gt_1000[cd], 0);
 
@@ -619,17 +617,16 @@ TEST(PrefitCensusObservability, CensusNamesTheCellAndBirthNeedsAPriorAbsence) {
 }
 
 // ===========================================================================
-//  8b. The EVENT domain keeps phase out of the event channel by default
+//  8b. The event domain keeps phase out of the event channel by default
 // ===========================================================================
 //
-// Measured on the FT63 leg-19 replay at threshold 1e3: obs_code raised 6 events
-// and all six were the era-2 injector (BSHM00ISR G07/G16); iono_sh_row raised 51
-// with one 40x outlier that was also BSHM; obs_phase raised 608 across 55
-// stations, none of them findings.  A phase row's prefit innovation is
-// ARC-SPECIFIC — it carries that arc's ambiguity linearization point — so a
-// station's phase rows are not a common-mode population and their median is not
-// a centre.  The COLUMNS still report phase; only the event channel is narrowed,
-// and the suppression is counted.
+// Measured on the FT63 leg-19 replay at threshold 1e3: obs_code raised 6 events,
+// all from the era-2 injector (BSHM00ISR G07/G16); iono_sh_row raised 51, with one
+// 40x outlier also at BSHM; obs_phase raised 608 across 55 stations, none of them
+// real faults.  A phase row's prefit innovation is arc-specific (it carries that
+// arc's ambiguity linearization point), so a station's phase rows are not a
+// common-mode population and their median is not a centre.  The columns still
+// report phase; only the event channel is narrowed, and the suppression is counted.
 TEST(PrefitCensusObservability, EventDomainExcludesPhaseButColumnsStillReportIt) {
     LogManager log;
     auto cfg = loadCfg(log, "evdomain",
@@ -653,9 +650,9 @@ TEST(PrefitCensusObservability, EventDomainExcludesPhaseButColumnsStillReportIt)
     stations[0].name = "CAS100ATA";
     const std::vector<int> est_index_of{ 0 };
 
-    // One parked CODE cell and one wild PHASE cell, both far over threshold.
+    // One parked code cell and one extreme phase cell, both far over threshold.
     std::vector<RowSpec> rows = codeRows(6, 0.0, 4.0);
-    rows.push_back({ kCb, 1.0e5, 4.0 });                         // code: EVENTS
+    rows.push_back({ kCb, 1.0e5, 4.0 });                         // code: raises an event
     for (int i = 0; i < 5; ++i) rows.push_back({ kPb, 177037.0, 8000.0 });
     rows.push_back({ kPb, -3317.0, 8000.0 });                    // phase: columns only
     std::vector<StationAssembly> a{ makeStation(rows) };
@@ -670,20 +667,20 @@ TEST(PrefitCensusObservability, EventDomainExcludesPhaseButColumnsStillReportIt)
         << "the phase suppression must be counted, not silent";
     EXPECT_EQ(countEvents(csv, "prefit_exceedance"), 1);
 
-    // …and the phase COLUMN still carries the number, so nothing is hidden.
+    // …and the phase column still carries the number, so nothing is hidden.
     const int ph = static_cast<int>(NetRowClass::ObsPhase);
     EXPECT_GT(ctx.carry.ep_pc_max_s[ph], 1.0e6);
     EXPECT_EQ(ctx.carry.ep_pc_n_gt_1000[ph], 1);
 }
 
 // ===========================================================================
-//  9. The topology ledger: a tie-row count change is an EVENT
+//  9. The topology ledger: a tie-row count change is an event
 // ===========================================================================
 //
-// Era-2's entire story was one such change — "BSHM +1 tie row, gate weight
-// 0 -> 0.25" — and the only trace of it in the run was an aggregate counter.
-// The ledger must also SEED silently: a first sighting is not a topology change,
-// or every cold start would emit one event per station per column.
+// The era-2 fault was one such change ("BSHM +1 tie row, gate weight 0 -> 0.25"),
+// and without the ledger the run recorded it only in an aggregate counter.  The
+// ledger seeds silently: a first sighting is not a topology change, otherwise every
+// cold start would emit one event per station per column.
 TEST(PrefitCensusObservability, TopologyLedgerSeedsSilentlyThenEventsTieRowDeltas) {
     LogManager log;
     auto cfg = loadCfg(log, "topo",
@@ -727,10 +724,10 @@ TEST(PrefitCensusObservability, TopologyLedgerSeedsSilentlyThenEventsTieRowDelta
     walk(epochWithTies(0), 1090.0, 3);            // …and cuts them all
     EXPECT_EQ(ctx.counters.pc.topo_tie_events, 2);
 
-    // THE RE-COUPLING EDGE.  A station whose ties are all cut must still hold a
-    // ZERO entry in the ledger, or its return reads as a first sighting and the
-    // valve's other edge is silent — which is precisely the half of the era-2
-    // story that had no record.  (Proposed standing invariant #7: BOTH edges.)
+    // The re-coupling edge.  A station whose ties are all cut still holds a zero
+    // entry in the ledger; otherwise its return would read as a first sighting and
+    // the valve's other edge would go unrecorded, as the era-2 return did.
+    // (Both edges, per invariant #7.)
     walk(epochWithTies(4), 1120.0, 4);
     EXPECT_EQ(ctx.counters.pc.topo_tie_events, 3)
         << "0 -> 4 is a RE-COUPLING event, not a first sighting";
@@ -741,13 +738,13 @@ TEST(PrefitCensusObservability, TopologyLedgerSeedsSilentlyThenEventsTieRowDelta
 }
 
 // ===========================================================================
-//  10. The recorder latch is an ERA latch
+//  10. The recorder latch is an era latch
 // ===========================================================================
 //
-// The SH health gate has held an era for 95+ minutes on this data.  A latch that
-// fired per EPOCH would write ~190 attribution frame sets for one event; a latch
-// that never re-armed would miss the next era entirely.  One trip per era, and
-// the era clears when the condition does.
+// The SH health gate can hold an era for 95+ minutes (measured on DOY-129).  A latch
+// that fired per epoch would write ~190 attribution frame sets for one event; a
+// latch that never re-armed would miss the next era.  The latch trips once per era,
+// and the era clears when the condition does.
 TEST(PrefitCensusObservability, TripLatchFiresOncePerEraAndReArmsWhenItClears) {
     LogManager log;
     auto cfg = loadCfg(log, "trip", "    \"rhs_attrib_on_trip\": true,\n");

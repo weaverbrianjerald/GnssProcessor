@@ -1,32 +1,32 @@
 #!/usr/bin/env python3
-"""Card Q3 ladder leg — one table per arm, scraped from the run console (SPEC §8).
+"""Card Q3 ladder leg: one table per arm, scraped from the run console (SPEC §8).
 
-Everything here is an ON-PATH COUNTER or a run-end statistic the producer itself
-emitted; nothing is recomputed from the product (that is
+Every value here is an on-path counter or a run-end statistic the producer
+itself emitted; nothing is recomputed from the product (that is
 ``scripts/product_step_census.py``'s job, and duplicating it would give two
 numbers that can silently disagree).  Standing invariant #4: the counters, not
-the absence of crashes, are the evidence — so an arm whose ``folded_anchored``
-is 0 prints as INERT no matter how clean the rest reads.
+the absence of crashes, are the evidence, so an arm whose ``folded_anchored``
+is 0 prints as inert no matter how clean the rest reads.
 
 Columns, and why each is here:
-  q, floors        the armed posture — a table without it cannot be re-derived
+  q, floors        the armed posture: a table without it cannot be re-derived
   fold / stat      §2.1's two independently-selectable halves (the bisection axes)
   anch / loose     invariant #4's denominator
-  floor%           the deviation-#1 consistency cap ACTUALLY binding (§7.4: at the
+  floor%           the deviation-#1 consistency cap actually binding (§7.4: at the
                    bottom rungs it is supposed to)
-  trips            split by reason — they are not interchangeable evidence
-  res / marks      the adapt-and-EMIT half, and the wire tie-out's numerator
-  mean sqrtS       the guard's denominator SCALE ⇒ what k costs in METRES here.
+  trips            split by reason: they are not interchangeable evidence
+  res / marks      the adapt-and-emit half, and the wire tie-out's numerator
+  mean sqrtS       the guard's denominator scale: what k costs in metres here.
                    This is the number that makes a fixed k mean different things
                    at different rungs (§3's k re-derivation).
-  k_m              k * mean sqrtS — the bar in metres
+  k_m              k * mean sqrtS: the bar in metres
   guard s0         sqrt(sum w^2 / n): the guard's own sigma0 on its own statistic
-  s0_clk           the census's per-family sigma0 — the independent instrument.
-                   Only comparable ACROSS arms now that the census projects the
+  s0_clk           the census's per-family sigma0: the independent instrument.
+                   Comparable across arms only now that the census projects the
                    same way the guard does.
-  s0_code          post-fit code sigma0 — the pre-registered "flat" gate
-  Sum|mu|          CLK-R's drained common mode: the GAUGE channel (never a quality
-                   number; it RISES when the fold stops doing the datum's work)
+  s0_code          post-fit code sigma0: the pre-registered "flat" gate
+  Sum|mu|          CLK-R's drained common mode: the gauge channel (never a quality
+                   number; it rises when the fold stops doing the datum's work)
 
 Usage: python scripts/q3_ladder_grade.py <run_dir> [run_dir ...] [--ladders]
 """
@@ -82,8 +82,8 @@ def grade(run):
     d["stat"] = st or ("post" if d["fold"] == "gf" else "raw")
     g = re.search(r"guard ladder over (\d+) ANCHORED row\(s\)\): mean √S = ([\d.]+) m ⇒ the armed "
                   r"k = ([\d.]+) is a ([\d.]+) m bar at this rung; mean \|ê\| = ([\d.]+) m; "
-                  # NB: the console is CRLF, so anchor on a lookahead for the line
-                  # break rather than on `$` — `$` sits AFTER the \r and never matches.
+                  # The console is CRLF, so anchor on a lookahead for the line
+                  # break rather than on `$`: `$` sits after the \r and never matches.
                   r"guard σ̂₀ = √\(Σw²/n\) = ([\d.]+)\.  \|w\| ladder: ([^\r\n]*?)\.  "
                   r"\|ê\| ladder: ([^\r\n]*?)\.(?=[\r\n])",
                   s)
@@ -122,7 +122,7 @@ def main():
                 d.get("k_m"), d.get("gs0"), d.get("s0_clk"), d.get("s0_code"),
                 d.get("summu"), d.get("maxw"))
         print("  ".join(cell(v, i) for i, v in enumerate(vals)))
-        # Only meaningful for an ARMED arm: a control has no anchor to be inert.
+        # Only meaningful for an armed arm: a control has no anchor to be inert.
         if d.get("q") is not None and d.get("anch") in (None, "0"):
             print(f"    ** {d['arm']}: anchor folded ZERO anchored rows — INERT (invariant #4)")
     if want_lad:

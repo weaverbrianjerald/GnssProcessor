@@ -7,7 +7,7 @@
  * This header provides a small collection of constexpr constants grouped under
  * `GnssProcessor::Constants`. Values are expressed in SI units unless otherwise noted.
  *
- * Note: These are compile-time constants and intended for use in calculations where
+ * Note: these are compile-time constants, intended for use in calculations where
  * precise, documented units are required.
  */
 
@@ -116,7 +116,7 @@ namespace GnssProcessor {
         constexpr double GAL_E5_FREQ = 1191.795e6;           // Galileo E5 AltBOC frequency (Hz)
 
         /** @brief Galileo E1 wavelength (m) = c / f. */
-        constexpr double GAL_E1_WAVELENGTH = SPEED_OF_LIGHT / GAL_E1_FREQ;   // E1 wavelength (m, ~0.191 m)
+        constexpr double GAL_E1_WAVELENGTH = SPEED_OF_LIGHT / GAL_E1_FREQ;   // E1 wavelength (m, ~0.190 m)
 
         /** @brief Galileo E5a wavelength (m) = c / f. */
         constexpr double GAL_E5A_WAVELENGTH = SPEED_OF_LIGHT / GAL_E5A_FREQ; // E5a wavelength (m, ~0.255 m)
@@ -162,13 +162,13 @@ namespace GnssProcessor {
         constexpr double GLONASS_G3_WAVELENGTH = SPEED_OF_LIGHT / GLONASS_G3_BASE_FREQ; // G3 wavelength (m, ~0.249 m)
 
         // ---------------------------------------------------------------------
-        // GLONASS CDMA signals (L3 defined above; G1a on band 4, G2a on band 6)
+        // GLONASS CDMA signals (G3 defined above; G1a on band 4, G2a on band 6)
         // ---------------------------------------------------------------------
 
-        /** @brief GLONASS G1a CDMA frequency (Hz) – RINEX band 4. */
+        /** @brief GLONASS G1a CDMA frequency (Hz), RINEX band 4. */
         constexpr double GLONASS_G1A_FREQ = 1600.995e6;       // GLONASS G1a CDMA frequency (Hz)
 
-        /** @brief GLONASS G2a CDMA frequency (Hz) – RINEX band 6. */
+        /** @brief GLONASS G2a CDMA frequency (Hz), RINEX band 6. */
         constexpr double GLONASS_G2A_FREQ = 1248.06e6;        // GLONASS G2a CDMA frequency (Hz)
 
         /** @brief GLONASS G1a wavelength (m) = c / f. */
@@ -181,22 +181,22 @@ namespace GnssProcessor {
         // BeiDou (BDS) - frequencies (Hz) and wavelengths (m)
         // ---------------------------------------------------------------------
 
-        /** @brief BeiDou B1I frequency (Hz) – RINEX band 2. */
+        /** @brief BeiDou B1I frequency (Hz), RINEX band 2. */
         constexpr double BDS_B1_FREQ = 1561.098e6;           // BeiDou B1I frequency (Hz)
 
-        /** @brief BeiDou B1C frequency (Hz) – RINEX band 1 (same as GPS L1). */
+        /** @brief BeiDou B1C frequency (Hz), RINEX band 1 (same as GPS L1). */
         constexpr double BDS_B1C_FREQ = 1575.42e6;           // BeiDou B1C frequency (Hz)
 
-        /** @brief BeiDou B2a frequency (Hz) – RINEX band 5 (same as GPS L5 / Galileo E5a). */
+        /** @brief BeiDou B2a frequency (Hz), RINEX band 5 (same as GPS L5 / Galileo E5a). */
         constexpr double BDS_B2A_FREQ = 1176.45e6;           // BeiDou B2a frequency (Hz)
 
-        /** @brief BeiDou B2b frequency (Hz) – RINEX band 7 (same as Galileo E5b). */
+        /** @brief BeiDou B2b frequency (Hz), RINEX band 7 (same as Galileo E5b). */
         constexpr double BDS_B2_FREQ = 1207.14e6;            // BeiDou B2b frequency (Hz)
 
-        /** @brief BeiDou B2(a+b) AltBOC frequency (Hz) – RINEX band 8. */
+        /** @brief BeiDou B2(a+b) AltBOC frequency (Hz), RINEX band 8. */
         constexpr double BDS_B2AB_FREQ = 1191.795e6;         // BeiDou B2(a+b) AltBOC frequency (Hz)
 
-        /** @brief BeiDou B3 frequency (Hz) – RINEX band 6. */
+        /** @brief BeiDou B3 frequency (Hz), RINEX band 6. */
         constexpr double BDS_B3_FREQ = 1268.52e6;            // BeiDou B3 frequency (Hz)
 
         /** @brief BeiDou B1I wavelength (m) = c / f. */
@@ -230,7 +230,7 @@ namespace GnssProcessor {
         /** @brief QZSS L5 frequency (Hz). */
         constexpr double QZSS_L5_FREQ = 1176.45e6;           // QZSS L5 frequency (Hz)
 
-        /** @brief QZSS L6 / LEX frequency (Hz) – RINEX band 6. */
+        /** @brief QZSS L6 / LEX frequency (Hz), RINEX band 6. */
         constexpr double QZSS_L6_FREQ = 1278.75e6;           // QZSS L6/LEX frequency (Hz)
 
         /** @brief QZSS L1 wavelength (m) = c / f. */
@@ -256,7 +256,7 @@ namespace GnssProcessor {
         constexpr double SBAS_L5_FREQ = 1176.45e6;           // SBAS L5 frequency (Hz)
 
         /** @brief SBAS L1 wavelength (m) = c / f. */
-        constexpr double SBAS_L1_WAVELENGTH = SPEED_OF_LIGHT / SBAS_L1_FREQ; // L1 wavelength (m, ~0.191 m)
+        constexpr double SBAS_L1_WAVELENGTH = SPEED_OF_LIGHT / SBAS_L1_FREQ; // L1 wavelength (m, ~0.190 m)
 
         /** @brief SBAS L5 wavelength (m) = c / f. */
         constexpr double SBAS_L5_WAVELENGTH = SPEED_OF_LIGHT / SBAS_L5_FREQ; // L5 wavelength (m, ~0.255 m)

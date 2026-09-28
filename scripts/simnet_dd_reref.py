@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""REFERENCE-SATELLITE re-referencing of the DD-integer grade (SPEC_amb_iono_split_overcount §6.12, 2026-09-06).
+"""Reference-satellite re-referencing of the DD-integer grade (SPEC_amb_iono_split_overcount §6.12, 2026-09-06).
 
-The producer's DD trace (network_dd_fractional.csv, filter/NetworkDdFrac.cpp) forms every chord against ONE
-reference satellite per (constellation, signal): the lexically-lowest satellite present at >= 2 stations, i.e.
-G01 / E02 for the whole day.  Every graded chord therefore inherits that satellite's own between-station SD
+The producer's DD trace (network_dd_fractional.csv, filter/NetworkDdFrac.cpp) forms every chord against a
+single reference satellite per (constellation, signal): the lexically-lowest satellite present at >= 2 stations,
+i.e. G01 / E02 for the whole day.  Every graded chord therefore inherits that satellite's own between-station SD
 ambiguity error, and when the reference leaves and returns (eclipse exclusion: G01 twice a day at the GPS
-period, E02 at the Galileo period) every chord in the trace is re-referenced to a satellite whose legs were
-just reborn at every station.  That is what the "post-eclipse network-wide DD episode" of §6.11 was.
+period, E02 at the Galileo period), every chord in the trace is re-referenced to a satellite whose legs were
+just reborn at every station.  §6.11's "post-eclipse network-wide DD episode" is this re-referencing artifact.
 
 Per (epoch, constellation, signal, sta_a, sta_b) the trace gives e_i = DD error of sat_i against the ref, and
-e_i = s_i - s_ref with s the between-station SD ambiguity error of a satellite, so the ref's share is COMMON to
+e_i = s_i - s_ref with s the between-station SD ambiguity error of a satellite, so the ref's share is common to
 the group and cancels in any between-satellite difference.  Three grades per hour and constellation:
 
   as-traced   med|e_i|                        what every grade before 2026-09-06 reported
   common      med|c|,  c = median_i e_i        ~ -s_ref when most legs are good: the reference's share
   ref-free    med|e_i - c| and round0 %        the reference cancelled robustly (groups with >= 3 sats)
-  oldest-ref  med|e_i - e_j|, j = the sat with the LONGEST continuous presence at (a,b) on this signal
+  oldest-ref  med|e_i - e_j|, j = the sat with the longest continuous presence at (a,b) on this signal
 
 plus the ref-free error by the graded satellite's own leg age (epochs of continuous presence at the pair),
 which is the per-satellite convergence that remains once the instrument's reference is removed.

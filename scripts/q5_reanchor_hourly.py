@@ -2,21 +2,21 @@
 """Re-anchor an already-run Q5 consumer-replay arm onto a different truth ECEF.
 
 Phase 0 of ``docs/SPEC_day129_frame_guards.md`` graded consumer NRMG00NCL against
-the RINEX header ``APPROX POSITION XYZ``.  That coordinate is stale by ~12 years
-of plate motion (0.632 m; see ``scripts/q5_make_replay_arm.py``), so the absolute
-levels in the Phase-0 / Q5 tables carried it as a constant bias.  This tool
-replaces the anchor **without re-running anything**:
+the RINEX header ``APPROX POSITION XYZ``.  That coordinate is stale by about 12
+years of plate motion (0.632 m; see ``scripts/q5_make_replay_arm.py``), so the
+absolute levels in the Phase-0 / Q5 tables carried it as a constant bias.  This
+tool replaces the anchor without re-running anything:
 
 ``logs/closed_loop_trace.csv`` records, per epoch, the position error as a local
-ENU triple at the OLD truth.  The ENU rotation is orthonormal, so the estimated
+ENU triple at the old truth.  The ENU rotation is orthonormal, so the estimated
 ECEF position is recoverable exactly::
 
     pos = truth_old + R(llh_old) @ [east, north, up]
 
 and the run can then be re-graded against any other truth.  The only loss is the
 trace's own 0.1 mm print quantization, four orders of magnitude below the shift
-being corrected -- and ``--selfcheck`` measures it rather than assuming it
-(re-anchoring onto the OLD truth must reproduce the C++-written
+being corrected; ``--selfcheck`` measures it rather than assuming it
+(re-anchoring onto the old truth must reproduce the C++-written
 ``consumer_replay_hourly.csv``).
 
 Only the anchor changes
@@ -25,19 +25,19 @@ The statistics are ports of ``Application::runConsumerReplay``
 (``src/core/app/ApplicationConsumerReplay.cpp``): ``HourBand::quantile``'s linear
 interpolation, same column order, same 4-decimal print.
 
-Band MEMBERSHIP is taken from the run's own ``consumer_replay_hourly.csv`` ``n``
+Band membership is taken from the run's own ``consumer_replay_hourly.csv`` ``n``
 column rather than recomputed from the timestamps.  The driver's index is
 ``(int)((now_s - hour0_s) / 3600.0)`` on a ``tow`` that carries sub-microsecond
 residue from the calendar->GPS conversion, so an epoch landing exactly on an hour
 boundary falls to the low side about half the time: the DOY-129 arms band as
-121/119/120 repeating, not 120/120/120.  That is a one-epoch-in-120 effect that
-changes no conclusion, but recomputing the boundaries here would mix a banding
-change into a truth change.  The bands are contiguous and time-ordered, so the
-``n`` sequence determines membership exactly.  Without that file (or if the
-counts do not sum to the trace length) the tool falls back to timestamp banding
-and says so.
+121/119/120 repeating, not 120/120/120.  The effect is one epoch in 120 and
+changes no conclusion.  Recomputing the boundaries here would mix
+that banding effect into a truth change, so instead the bands are read back from
+the run's own file: they are contiguous and time-ordered, so the ``n`` sequence
+determines membership exactly.  Without that file (or if the counts do not sum
+to the trace length) the tool falls back to timestamp banding and says so.
 
-Output goes to ``logs/consumer_replay_hourly_itrf.csv`` -- a SIBLING of the C++
+Output goes to ``logs/consumer_replay_hourly_itrf.csv``, a sibling of the C++
 file, never an overwrite, so the run's own artifact stays intact.
 
 Usage
@@ -78,7 +78,7 @@ def ecef_to_llh(ecef):
     """Port of ``Coordinates::ecefToLlh`` (Bowring seed + <=10 fixed-point steps).
 
     Ported rather than reused from ``gnssviz.geodesy`` so the null-transform
-    self-check compares against the SAME iteration the C++ ran; a different but
+    self-check compares against the same iteration the C++ ran; a different but
     equally valid solver would leave a residue the check could not distinguish
     from a real defect.
     """
@@ -195,7 +195,7 @@ def hours_from_time(rows):
 # --------------------------------------------------------------------------
 
 def read_arm_truth(armdir: Path):
-    """The truth the run was ACTUALLY graded against, from its own config.
+    """The truth the run was actually graded against, from its own config.
 
     Read from the arm's config rather than assumed, so an arm generated before
     the truth upgrade and one generated after both re-anchor correctly.

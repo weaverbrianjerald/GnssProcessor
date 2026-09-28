@@ -1,11 +1,11 @@
 #!/usr/bin/env python
-"""Generate an N-run HTML comparison report for PPP-RTK NETWORK legs.
+"""Generate an N-run HTML comparison report for PPP-RTK network legs.
 
-``run_compare.py`` lays run B against run A.  A validation card is usually
-graded over a *family* of legs, though -- the DOY-129 reference day, the
-frame-guards leg that re-ran the same window armed, the s2z realization arm --
+``run_compare.py`` lays run B against run A. A validation card is usually
+graded over a *family* of legs, though (the DOY-129 reference day, the
+frame-guards leg that re-ran the same window armed, the s2z realization arm),
 and reading three pair-wise reports to answer one question is the friction this
-driver removes.  The **first** directory is the reference; every ratio and
+driver removes. The **first** directory is the reference; every ratio and
 agreement statistic is quoted against it.
 
 Examples
@@ -30,7 +30,7 @@ Comparators (``--only``)
                  epochs shaded in its own colour, vertical lines at the
                  structural frame events (CB excursion, code-datum reseed, pivot
                  handover, clock-basis change, SH-gate engage/release).
-``events``       per-tier event counts AND per-epoch rates, ratio'd against the
+``events``       per-tier event counts and per-epoch rates, ratio'd against the
                  reference (>3x or new is called out).
 ``keyed``        network_pf_keyed.csv STA pools reduced to a robust-z against
                  each key's own pre-onset baseline and joined to the
@@ -54,7 +54,7 @@ def _split_spec(spec: str):
     """``"path"`` or ``"path=label"`` -> ``(path, label|None)``.
 
     ``=`` is the separator (never ``:``) so a Windows drive letter is safe; only
-    the LAST ``=`` splits, so a path containing one still resolves.
+    the last ``=`` splits, so a path containing one still resolves.
     """
     if "=" in spec:
         path, _, label = spec.rpartition("=")

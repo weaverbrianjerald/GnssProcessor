@@ -1,29 +1,31 @@
 /**
  * @file test_network_sbasis_complete.cpp
- * @brief Unit tests for SBC — the per-epoch S-basis dimension completion
+ * @brief Unit tests for SBC, the per-epoch S-basis dimension completion
  *        (@c network.sbasis_complete → NetworkSbasis::completeSbasisDimension).
  *
- * Background (FT63 GPS+Galileo, DOY-129, 2026-08): the declared S-basis
- * dimension counts the structural gauges only (per-constellation clock), but a
- * multi-constellation epoch REALIZES additional near-null directions — per-
- * satellite phase-bias↔slant-iono trades confined to one receiver channel
- * family (the Galileo C/Q-vs-X tracking split), eigenvector components ∝ μ_σ,
- * resisted only by the SH-VTEC prior (λ ≈ 1e-6 ≪ cutoff).  The gate then
- * withheld whole epochs (observed 4/5 vs declared 2) or Card PA soft-anchored
- * columns.  The completion derives the realized dimension and constrains each
- * extra direction along its own unit eigenvector at its CARRIED level, so:
+ * The declared S-basis dimension counts the structural gauges only
+ * (per-constellation clock), but a multi-constellation epoch can realize further
+ * near-null directions: per-satellite phase-bias↔slant-iono trades confined to one
+ * receiver channel family (the Galileo C/Q-vs-X tracking split), with eigenvector
+ * components ∝ μ_σ, resisted only by the SH-VTEC prior (λ ≈ 1e-6 ≪ cutoff).  On
+ * such an epoch the rank gate observes more null directions than declared and
+ * withholds the epoch, or card PA soft-anchors columns (FT63 GPS+Galileo,
+ * DOY-129).  The completion derives the realized dimension and constrains each
+ * extra direction along its own unit eigenvector at its carried level, so:
  *
- *  - exactly the deficient combination is pinned (nothing estimable moves);
- *  - the pinned combination HOLDS instead of stepping (continuity target);
- *  - the gate still runs UNCHANGED against the declared structural dimension
+ *  - only the deficient combination is pinned (nothing estimable moves);
+ *  - the pinned combination holds its level instead of stepping (continuity
+ *    target);
+ *  - the gate still runs, unchanged, against the declared structural dimension
  *    and passes because the folded rows lift the extras above the cutoff.
  *
  * These tests pin the selection arithmetic (same cutoff math as the gate), the
- * eigenvector/target contract (sign-invariant), every refusal path (cap /
- * degenerate split / K2 weight margin — each refusal folds NOTHING), the
+ * eigenvector/target contract (sign-invariant), every refusal path (cap,
+ * degenerate split, K2 weight margin; each refusal folds nothing), the
  * fold-then-gate integration, and the loader contract of the two knobs.
  * Spectra are planted directly (diagonal, or spectral synthesis for a mixed
- * eigenvector) — the completion's own input — so decade placement is exact.
+ * eigenvector), since the spectrum is the completion's own input; decade
+ * placement is therefore exact.
  */
 
 #include <gtest/gtest.h>
@@ -46,8 +48,8 @@
 namespace GnssProcessor {
 namespace {
 
-/// A planted spectrum as a diagonal matrix — eigenvectors are the unit basis
-/// vectors, so the expected rows/targets are exact.
+/// A planted spectrum as a diagonal matrix: the eigenvectors are the unit basis
+/// vectors, so the expected rows and targets are exact.
 Eigen::MatrixXd planted(const std::vector<double>& ev) {
     Eigen::MatrixXd D = Eigen::MatrixXd::Zero(static_cast<Eigen::Index>(ev.size()),
                                               static_cast<Eigen::Index>(ev.size()));
@@ -71,12 +73,12 @@ constexpr double kTol = 1e-9;   // the default rank-gate tolerance
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// Selection arithmetic — the completion counts with the gate's own cutoff and
+// Selection arithmetic: the completion counts with the gate's own cutoff and
 // leaves both "nothing extra" cases alone.
 // ---------------------------------------------------------------------------
 
 TEST(NetworkSbasisCompleteTest, CleanEpochYieldsNoRows) {
-    // λmax 1e6, cutoff 1e-3: two structural gauges at 1e-10, weakest REAL
+    // λmax 1e6, cutoff 1e-3: two structural gauges at 1e-10, weakest estimable
     // direction at 1e-2 (above cutoff).  observed == declared ⇒ no completion.
     NetworkSbasis sb;
     const auto M = planted({1e-10, 1e-10, 1e-2, 1e6});
@@ -92,7 +94,7 @@ TEST(NetworkSbasisCompleteTest, CleanEpochYieldsNoRows) {
 
 TEST(NetworkSbasisCompleteTest, OverSpecifiedIsTheGatesVerdictNotOurs) {
     // observed < declared (a tolerance below the config's gauge depth): the
-    // completion must do NOTHING — the gate's "over-specified" throw is the
+    // completion does nothing.  The gate's "over-specified" throw is the
     // calibration signal, and folding rows could mask it.
     NetworkSbasis sb;
     const auto M = planted({1.0, 2.0, 1e6});
@@ -110,7 +112,7 @@ TEST(NetworkSbasisCompleteTest, OverSpecifiedIsTheGatesVerdictNotOurs) {
 
 TEST(NetworkSbasisCompleteTest, ExtraDirectionConstrainedAtCarriedLevel) {
     // λmax 1e6 ⇒ cutoff 1e-3.  One structural gauge at 1e-10 (machine-zero
-    // scale), one EXTRA at 1e-5 — the measured FT63 class: below the cutoff,
+    // scale) and one extra at 1e-5, the class measured on FT63: below the cutoff,
     // above the 1e-14·λmax = 1e-8 degeneracy floor, 5 decades off the gauge.
     NetworkSbasis sb;
     const auto M = planted({1e-10, 1e-5, 1e6});
@@ -122,7 +124,7 @@ TEST(NetworkSbasisCompleteTest, ExtraDirectionConstrainedAtCarriedLevel) {
     EXPECT_EQ(c.observed, 2);
     ASSERT_EQ(c.H.rows(), 1);
     ASSERT_EQ(c.dirs.size(), 1u);
-    // The row is ±e_1 (the 1e-5 column).  The CONSTRAINT is sign-invariant:
+    // The row is ±e_1 (the 1e-5 column).  The constraint is sign-invariant:
     // H x = z with H = s·e₁ᵀ, z = s·x_prev(1) for s = ±1.
     EXPECT_NEAR(std::abs(c.H(0, 1)), 1.0, 1e-9);
     EXPECT_NEAR(std::abs(c.H(0, 0)), 0.0, 1e-9);
@@ -179,8 +181,8 @@ TEST(NetworkSbasisCompleteTest, MissingCarryMeansZeroTargets) {
 }
 
 // ---------------------------------------------------------------------------
-// Fold-then-gate integration: the completion exists so the UNCHANGED gate
-// passes at the declared structural dimension.
+// Fold-then-gate integration: with the completion's rows folded, the unchanged
+// gate passes at the declared structural dimension.
 // ---------------------------------------------------------------------------
 
 TEST(NetworkSbasisCompleteTest, FoldedRowsLiftTheGateToDeclared) {
@@ -201,7 +203,7 @@ TEST(NetworkSbasisCompleteTest, FoldedRowsLiftTheGateToDeclared) {
 }
 
 // ---------------------------------------------------------------------------
-// Refusal paths — each folds NOTHING and reports its cause (the driver counts
+// Refusal paths: each folds nothing and reports its cause (the driver counts
 // them separately and lets the gate withhold).
 // ---------------------------------------------------------------------------
 
@@ -214,7 +216,7 @@ TEST(NetworkSbasisCompleteTest, BurstBeyondCapRefuses) {
     EXPECT_EQ(c.n_extra, 0);
     EXPECT_EQ(c.H.rows(), 0);
     EXPECT_EQ(c.observed, 3) << "the realized dimension is still reported";
-    // Uncapped (<= 0) admits the same burst — the diagnostic arm.
+    // Uncapped (<= 0) admits the same burst; this is the diagnostic arm.
     const auto d = sb.completeSbasisDimension(M, 0, kTol, Eigen::VectorXd(),
                                               nullptr, 0);
     EXPECT_FALSE(d.capped);
@@ -225,25 +227,26 @@ TEST(NetworkSbasisCompleteTest, UnseparatedExtrasAreSkippedNotEpochFatal) {
     NetworkSbasis sb;
     // (a) Extra within a decade of the declared gauge: the eigenvectors of a
     // near-degenerate cluster mix, so a row could re-target a pin-owned
-    // combination — SKIPPED (left to the drop-and-heal), nothing folded.
+    // combination.  It is skipped (left to the drop-and-heal) and nothing is
+    // folded.
     const auto Ma = planted({1e-6, 5e-6, 1e6});
     const auto ca = sb.completeSbasisDimension(Ma, 1, kTol, Eigen::VectorXd(),
                                                nullptr, 6);
     EXPECT_TRUE(ca.degenerate);
     EXPECT_EQ(ca.n_skipped, 1);
     EXPECT_EQ(ca.n_extra, 0);
-    // (b) Extra AT machine zero with a declared gauge at EXACTLY 0.0: the
-    // relative test alone (10·0 = 0) would admit it — the absolute floor
-    // (1e-14·λmax = 1e-8 here) must catch it.  This is the orphaned-exact-
-    // gauge class, deliberately left to Card PA.
+    // (b) Extra at machine zero with a declared gauge at exactly 0.0: the
+    // relative test alone (10·0 = 0) would admit it, so the absolute floor
+    // (1e-14·λmax = 1e-8 here) catches it.  This is the orphaned-exact-gauge
+    // class, left to card PA by design.
     const auto Mb = planted({0.0, 1e-12, 1e6});
     const auto cb = sb.completeSbasisDimension(Mb, 1, kTol, Eigen::VectorXd(),
                                                nullptr, 6);
     EXPECT_TRUE(cb.degenerate);
     EXPECT_EQ(cb.n_skipped, 1);
     EXPECT_EQ(cb.n_extra, 0);
-    // (c) With NO declared gauges (constraint-realized clock datums) there is
-    // nothing to mix with: an exact-zero extra IS completable.
+    // (c) With no declared gauges (constraint-realized clock datums) there is
+    // nothing to mix with, so an extra at machine zero is completable.
     const auto Mc = planted({1e-12, 1e6});
     const auto cc = sb.completeSbasisDimension(Mc, 0, kTol, Eigen::VectorXd(),
                                                nullptr, 6);
@@ -253,12 +256,12 @@ TEST(NetworkSbasisCompleteTest, UnseparatedExtrasAreSkippedNotEpochFatal) {
 }
 
 TEST(NetworkSbasisCompleteTest, OrphanPlusTradeComposesWithTheHeal) {
-    // The measured FT63 gg withhold-cluster shape: declared gauge at machine
-    // zero, ONE orphaned exact gauge in the same cluster (1.5e-10 — inside a
-    // decade of the gauge AND below the 1e-8 floor), and ONE separated weak
-    // trade (1e-5).  The completion must skip the orphan, constrain the
-    // trade, and leave the gate throwing by exactly the skip — the
-    // drop-and-heal's remaining job.
+    // The withhold-cluster shape measured on FT63 (gg): declared gauge at
+    // machine zero, one orphaned exact gauge in the same cluster (1.5e-10,
+    // inside a decade of the gauge and below the 1e-8 floor), and one separated
+    // weak trade (1e-5).  The completion skips the orphan, constrains the trade,
+    // and leaves the gate throwing by exactly the skipped direction, which
+    // remains for the drop-and-heal.
     NetworkSbasis sb;
     const auto M = planted({1e-10, 1.5e-10, 1e-5, 1e6});
     const auto c = sb.completeSbasisDimension(M, 1, kTol, Eigen::VectorXd(),
@@ -266,13 +269,13 @@ TEST(NetworkSbasisCompleteTest, OrphanPlusTradeComposesWithTheHeal) {
     EXPECT_TRUE(c.degenerate);
     EXPECT_EQ(c.n_skipped, 1);
     ASSERT_EQ(c.n_extra, 1);
-    // The constrained row is the TRADE's eigenvector (column 2), not the
+    // The constrained row is the trade's eigenvector (column 2), not the
     // orphan's.
     EXPECT_NEAR(std::abs(c.H(0, 2)), 1.0, 1e-9);
-    // After folding, the gate still counts gauge + orphan — observed 2 vs
-    // declared 1: it throws (the heal's cue), but by ONE direction instead of
-    // two, which is the composition that un-sticks the PA5-insufficiency
-    // epochs.
+    // After folding, the gate still counts gauge + orphan (observed 2 against
+    // declared 1) and throws, which cues the drop-and-heal, but by one direction
+    // instead of two.  That composition is what lets the drop-and-heal resolve
+    // the PA5-insufficiency epochs.
     const Eigen::MatrixXd M2 =
         M + NetworkSbasis::kSbasisCompleteWeight * c.H.transpose() * c.H;
     int observed = -1;
@@ -283,9 +286,9 @@ TEST(NetworkSbasisCompleteTest, OrphanPlusTradeComposesWithTheHeal) {
 
 TEST(NetworkSbasisCompleteTest, WeightWithinTwoDecadesOfCutoffRefuses) {
     NetworkSbasis sb;
-    // λmax 1e14 ⇒ cutoff 1e5: kSbasisCompleteWeight (1e3) sits BELOW it — a
-    // folded row could not even lift its direction past the gate, let alone
-    // clear the K2 two-decade margin.  Extra at 1e2 (below cutoff, above the
+    // λmax 1e14 ⇒ cutoff 1e5: kSbasisCompleteWeight (1e3) sits below it, so a
+    // folded row could not lift its direction past the gate, let alone clear the
+    // K2 two-decade margin.  Extra at 1e2 (below cutoff, above the
     // 1e-14·λmax = 1.0 floor, 12 decades off the gauge).
     const auto M = planted({1e-10, 1e2, 1e14});
     const auto c = sb.completeSbasisDimension(M, 1, kTol, Eigen::VectorXd(),
@@ -295,8 +298,8 @@ TEST(NetworkSbasisCompleteTest, WeightWithinTwoDecadesOfCutoffRefuses) {
 }
 
 // ---------------------------------------------------------------------------
-// Loader contract — default OFF (byte-identical), documented cap default, the
-// uncapped diagnostic spelling parses.
+// Loader contract: off by default (byte-identical), documented cap default of 6,
+// and the uncapped diagnostic spelling parses.
 // ---------------------------------------------------------------------------
 
 namespace {

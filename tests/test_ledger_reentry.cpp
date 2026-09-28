@@ -1,35 +1,35 @@
 /**
  * @file test_ledger_reentry.cpp
- * @brief Card SID phase 3 — the gap RE-ENTRY RESPONSE driven by the arc ledger's
- *        ADMITTED lifecycle (`network.ledger_reentry`, R5 of the build brief).
+ * @brief Tests for the gap re-entry response driven by the arc ledger's admitted
+ *        lifecycle (`network.ledger_reentry`, R5 of the build brief; Card SID
+ *        phase 3).
  *
  * ## What is under test
  *
  * Phases 1 and 2 built the roster and the ledger and gave the ledger one reader.
- * Phase 3 makes the ledger the POPULATION of the response, which is the first
- * time anything the ledger says changes the solve.  Three things therefore have
- * to be pinned before that population is trusted:
+ * Phase 3 makes the ledger the population of the response, so the ledger's
+ * content changes the solve.  Three parts are checked:
  *
- *  - the POPULATION itself: the admitted Gap-to-Reentered set, restricted to
- *    modelled signals and to the carry horizon.  It is a QUERY on the ledger's
- *    admitted timestamps, not a step, because the admitted machine is advanced
- *    once per epoch far downstream of the response;
- *  - the VERDICT LOOKUP and the response it drives: an arc whose satellite has a
+ *  - the population itself: the admitted Gap-to-Reentered set, restricted to
+ *    modelled signals and to the carry horizon.  It is a query on the ledger's
+ *    admitted timestamps, not a step, because the admitted machine advances
+ *    once per epoch well downstream of the response;
+ *  - the verdict lookup and the response it drives: an arc whose satellite has a
  *    row-level `shifted` resumption is freed, and the response is keyed by the
  *    same (station, satellite, signal) as the population, so card GRK's
- *    `gap_reentry_unreachable` cannot be fed from this path;
- *  - the NO-VERDICT policy: an arc no raw tier saw is bridged and counted under
- *    `bridge`, and freed under `refloat` when the existing unmeasurable sub-knob
- *    admits it.  That population is the whole reason the phase exists (phase 1
- *    measured it as tens of thousands of raw-Tracking / admitted-Gap arcs), so
- *    the two policies must be separable by counters alone.
+ *    `gap_reentry_unreachable` cannot be incremented from this path;
+ *  - the no-verdict policy: an arc that no raw tier saw is bridged and counted
+ *    under `bridge`, and freed under `refloat` when the existing unmeasurable
+ *    sub-knob admits it.  Phase 1 measured this population as tens of thousands
+ *    of raw-Tracking / admitted-Gap arcs, and it is the reason for phase 3, so
+ *    the two policies must be distinguishable from the counters alone.
  *
- * The prune edge of R3 is pinned on the ledger itself (the horizon death), where
+ * The prune edge of R3 (the horizon death) is checked on the ledger itself, where
  * it can be driven without a network.
  *
- * Everything below drives the machine and the drain directly: no station build,
- * no RINEX, no solve.  The traces object is constructed over a scratch path and
- * its streams stay closed, so no file is written.
+ * All cases drive the machine and the drain directly: no station build, no RINEX,
+ * no solve.  The traces object is constructed over a scratch path and its streams
+ * stay closed, so no file is written.
  */
 
 #include <gtest/gtest.h>
@@ -73,7 +73,7 @@ ArcLedger::Key K(int sta, const char* sat, const char* sig) {
     return ArcLedger::Key{ sta, std::string(sat), std::string(sig) };
 }
 
-/// Advance the ADMITTED lifecycle by one epoch over @p admitted.
+/// Advance the admitted lifecycle by one epoch over @p admitted.
 void admit(ArcLedger& led, long long ep, const std::set<ArcLedger::Key>& admitted) {
     led.beginEpoch(ep, static_cast<double>(ep) * kDt);
     std::vector<std::pair<ArcLedger::Key, ArcStep>> edges;
@@ -137,12 +137,12 @@ struct Harness {
         const std::set<ArcLedger::Key> both{ K(0, kSat, kSig1), K(0, kSat, kSig2) };
         long long ep = 0;
         for (int i = 0; i < n_epochs; ++i, ++ep) admit(ledger, ep, both);
-        // A station that contributes NO admitted row is frozen by the machine, so
-        // the gap has to be opened with the station still present: one other arc
-        // of the same station keeps it in the admitted set.
+        // The machine freezes a station that contributes no admitted row, so the
+        // gap is opened with the station still present: one other arc of the same
+        // station keeps it in the admitted set.
         const std::set<ArcLedger::Key> keeper{ K(0, "G01", kSig1) };
         for (int i = 0; i < gap_ep; ++i, ++ep) admit(ledger, ep, keeper);
-        // The return epoch: the drain runs UPSTREAM of the admitted advance, so
+        // The return epoch: the drain runs upstream of the admitted advance, so
         // the ledger is still open at this index and the population is a query.
         ledger.beginEpoch(ep, static_cast<double>(ep) * kDt);
         pl_now_s = static_cast<double>(ep) * kDt;
@@ -153,7 +153,7 @@ struct Harness {
         return ep;
     }
 
-    /// Push one ROW-level resumption for @ref kSat at station 0.
+    /// Push one row-level resumption for @ref kSat at station 0.
     void addRowResumption(bool measurable, bool shifted, int lli1, int lli2,
                           long long gap_epochs = 3) {
         GapResumption g;
@@ -191,14 +191,12 @@ struct Harness {
 }  // namespace
 
 // ===========================================================================
-// R1 / R5 (a): the POPULATION
+// The population (R1 / R5 (a))
 // ===========================================================================
 
-// The population is the ADMITTED Gap-to-Reentered set: an arc that was admitted,
-// then missed at least one epoch, and is admitted again now.  An arc that never
-// left is not in it, and neither is one whose first admission is this epoch —
-// both of those are exactly the mistakes the two earlier "answered" inferences
-// made in the other direction.
+// The population is the admitted Gap-to-Reentered set: an arc that was admitted,
+// then missed at least one epoch, and is admitted again now.  It excludes an arc
+// that never left and an arc whose first admission is this epoch.
 TEST(LedgerReentryTest, PopulationIsTheAdmittedGapToReenteredSet) {
     ArcLedger led;
     led.configure(3900.0, kArcLedgerForgetEp);
@@ -225,9 +223,10 @@ TEST(LedgerReentryTest, PopulationIsTheAdmittedGapToReenteredSet) {
     EXPECT_EQ(pop.outside_horizon, 0);
 }
 
-// The CARRY horizon bounds it: past `phase_leveling_max_gap_s` the PASS-B inject
-// would not fold the level across the break either, so there is nothing for the
-// response to protect.  Counted, not silently dropped (standing invariant 4).
+// The carry horizon bounds the population: past `phase_leveling_max_gap_s` the
+// PASS-B inject does not fold the level across the break either, so the response
+// has nothing to protect.  Such a return is counted, not dropped silently
+// (standing invariant 4).
 TEST(LedgerReentryTest, ReturnPastTheCarryHorizonIsCountedAndLeftOut) {
     ArcLedger led;
     led.configure(3900.0, kArcLedgerForgetEp);
@@ -247,9 +246,9 @@ TEST(LedgerReentryTest, ReturnPastTheCarryHorizonIsCountedAndLeftOut) {
     EXPECT_EQ(pop.outside_horizon, 1);
 }
 
-// R5 (d): a per-signal return of a signal the roster does not call Modelled is
-// not in the population at all.  The population is built from the MODELLED arcs,
-// so the restriction is upstream of the response: the drain never sees the arc.
+// A per-signal return of a signal the roster does not classify as Modelled is not
+// in the population (R5 (d)).  The population is built from the modelled arcs, so
+// the restriction is upstream of the response and the drain never sees the arc.
 TEST(LedgerReentryTest, NonModelledSignalIsNotInThePopulation) {
     ArcLedger led;
     led.configure(3900.0, kArcLedgerForgetEp);
@@ -258,7 +257,7 @@ TEST(LedgerReentryTest, NonModelledSignalIsNotInThePopulation) {
     const ArcLedger::Key keeper       = K(0, "G01", kSig1);
 
     // Both signals have an admitted history and both return after a gap; only the
-    // MODELLED one is offered to the population builder, which is what
+    // modelled one is offered to the population builder, as
     // signalRosterModelledArcs does at the call site.
     admit(led, 0, { modelled, not_modelled, keeper });
     admit(led, 1, { keeper });
@@ -272,7 +271,7 @@ TEST(LedgerReentryTest, NonModelledSignalIsNotInThePopulation) {
 }
 
 // ===========================================================================
-// R1 / R5 (b): an arc with a ROW-LEVEL verdict is freed under `shifted`
+// An arc with a row-level `shifted` verdict is freed (R1 / R5 (b))
 // ===========================================================================
 
 TEST(LedgerReentryTest, ShiftedRowVerdictFreesTheLedgerArc) {
@@ -293,16 +292,16 @@ TEST(LedgerReentryTest, ShiftedRowVerdictFreesTheLedgerArc) {
     EXPECT_EQ(h.counters.ledger_reentry_freed, 1);
     EXPECT_EQ(h.counters.ledger_reentry_bridged, 0);
     EXPECT_EQ(h.outcomeOf(kSig1), ArcReentryOutcome::Freed);
-    // Card GRK's counter cannot be fed on this path: the response key IS the
+    // This path cannot increment Card GRK's counter: the response key is the
     // ledger arc's key, so the two halves cannot name the band differently.
     EXPECT_EQ(h.counters.gap_reentry_unreachable, 0);
     // The band that tracked through is not in the population and is untouched.
     EXPECT_FALSE(h.freed(kSig2));
 }
 
-// The negative control on the same bed: the raw tier saw the return and called it
-// CLEAN, so the arc is bridged by design and counted apart from the arcs nothing
-// looked at.  That separation is the finding the split exists to make.
+// Negative control on the same bed: the raw tier saw the return and classified it
+// clean, so the arc is bridged by design and counted separately from the arcs no
+// tier examined.  Keeping the two apart is the purpose of the split.
 TEST(LedgerReentryTest, CleanRowVerdictBridgesAndIsCountedApart) {
     Harness h;
     const ArcLedger::Key arc = K(0, kSat, kSig1);
@@ -322,11 +321,11 @@ TEST(LedgerReentryTest, CleanRowVerdictBridgesAndIsCountedApart) {
 }
 
 // ===========================================================================
-// R2 / R5 (c): the NO-VERDICT population and its two policies
+// The no-verdict population and its two policies (R2 / R5 (c))
 // ===========================================================================
 
-// `bridge` is today's behaviour made visible: the arc is left to the PASS-B
-// inject and nothing is freed, but it is counted and separable.
+// `bridge` keeps the existing behaviour and makes it visible: the arc is left to
+// the PASS-B inject and nothing is freed, but it is counted separately.
 TEST(LedgerReentryTest, NoVerdictArcIsBridgedAndCountedUnderBridge) {
     Harness h;
     const ArcLedger::Key arc = K(0, kSat, kSig1);
@@ -346,8 +345,8 @@ TEST(LedgerReentryTest, NoVerdictArcIsBridgedAndCountedUnderBridge) {
     EXPECT_EQ(h.outcomeOf(kSig1), ArcReentryOutcome::BridgedNoVerdict);
 }
 
-// `refloat` treats it as UNMEASURABLE, which the existing sub-knob then decides.
-// With the sub-knob ON the arc is freed.
+// `refloat` treats the arc as unmeasurable, which the existing sub-knob then
+// decides.  With the sub-knob on, the arc is freed.
 TEST(LedgerReentryTest, NoVerdictArcIsFreedUnderRefloatWithTheUnmeasurableSubKnob) {
     Harness h;
     const ArcLedger::Key arc = K(0, kSat, kSig1);
@@ -365,9 +364,9 @@ TEST(LedgerReentryTest, NoVerdictArcIsFreedUnderRefloatWithTheUnmeasurableSubKno
     EXPECT_EQ(h.outcomeOf(kSig1), ArcReentryOutcome::Freed);
 }
 
-// …and with the sub-knob at its loader DEFAULT (off) the policy is counted and
-// INERT.  Pinned deliberately: an operator who arms `refloat` alone on the
-// working posture gets the `bridge` behaviour, and the run-end line says so.
+// With the sub-knob at its loader default (off) the policy is counted and inert.
+// An operator who arms `refloat` alone on the working posture gets the `bridge`
+// behaviour, and the run-end line reports it.
 TEST(LedgerReentryTest, RefloatIsInertWhileTheUnmeasurableSubKnobIsOff) {
     Harness h;
     const ArcLedger::Key arc = K(0, kSat, kSig1);
@@ -383,8 +382,8 @@ TEST(LedgerReentryTest, RefloatIsInertWhileTheUnmeasurableSubKnobIsOff) {
     EXPECT_EQ(h.counters.ledger_reentry_freed, 0);
 }
 
-// The dispositions partition the population exactly: that closure is what makes a
-// zero in any one of them readable (standing invariant 4).
+// The dispositions partition the population exactly; with that closure, a zero in
+// any one of them is meaningful (standing invariant 4).
 TEST(LedgerReentryTest, DispositionsPartitionThePopulation) {
     Harness h;
     h.openGap(3, 2, { K(0, kSat, kSig1), K(0, kSat, kSig2) });
@@ -404,12 +403,12 @@ TEST(LedgerReentryTest, DispositionsPartitionThePopulation) {
 }
 
 // ===========================================================================
-// R3: the prune and expiry edges
+// The prune and expiry edges (R3)
 // ===========================================================================
 
-// R5 (e): the horizon prune is a DEATH edge with a reason.  The ledger reports it
-// on the admitted side exactly as it does on the raw one, so the carry's own gap
-// prune has an edge to be reported against.
+// The horizon prune is a death edge with a reason (R5 (e)).  The ledger reports it
+// on the admitted side as it does on the raw side, so the carry's own gap prune
+// has an edge to be reported against.
 TEST(LedgerReentryTest, HorizonPruneEmitsArcDeathOnTheAdmittedSide) {
     ArcLedger led;
     led.configure(/*horizon_s=*/300.0, kArcLedgerForgetEp);   // 10 epochs at 30 s
@@ -435,9 +434,9 @@ TEST(LedgerReentryTest, HorizonPruneEmitsArcDeathOnTheAdmittedSide) {
     EXPECT_GT(death_gap, 10);
 }
 
-// R3(b): the state-vector prune is a MARK, not a transition, and the arc's next
-// admitted re-entry carries it.  The prune itself is untouched; this only records
-// that the column the return lands on is a fresh one.
+// The state-vector prune is a mark, not a transition, and the arc's next admitted
+// re-entry carries it (R3(b)).  The prune itself is unchanged; the mark only
+// records that the return lands on a fresh column.
 TEST(LedgerReentryTest, StatePruneMarkTravelsOnTheNextReentry) {
     ArcLedger led;
     led.configure(3900.0, kArcLedgerForgetEp);
@@ -459,8 +458,8 @@ TEST(LedgerReentryTest, StatePruneMarkTravelsOnTheNextReentry) {
     ASSERT_EQ(pop.arcs.size(), 1u);
     EXPECT_TRUE(pop.arcs.front().state_recreated);
 
-    // …and the admitted edge carries it once, then clears it: the mark describes
-    // ONE gap and must not leak into the next.
+    // The admitted edge carries the mark once, then clears it: the mark describes
+    // one gap and must not carry over into the next.
     std::vector<std::pair<ArcLedger::Key, ArcStep>> edges2;
     led.admitEpoch({ arc, keeper }, edges2);
     bool saw = false;
@@ -473,8 +472,8 @@ TEST(LedgerReentryTest, StatePruneMarkTravelsOnTheNextReentry) {
     EXPECT_FALSE(led.find(arc)->state_pruned);
 }
 
-// An unknown key is not marked: a key the ledger has never seen is not an arc it
-// can say anything about, and inventing a record would manufacture a population.
+// An unknown key is not marked: the ledger has no arc for a key it has never seen,
+// and creating a record for it would add a spurious member to the population.
 TEST(LedgerReentryTest, StatePruneMarkOnAnUnknownArcIsRefused) {
     ArcLedger led;
     led.configure(3900.0, kArcLedgerForgetEp);
@@ -484,12 +483,12 @@ TEST(LedgerReentryTest, StatePruneMarkOnAnUnknownArcIsRefused) {
 }
 
 // ===========================================================================
-// R6: the OFF path
+// The off path (R6)
 // ===========================================================================
 
-// Unarmed, the drain takes its arc list from the raw tier exactly as before and
-// every phase-3 counter stays zero.  The outcome sink is still written, because
-// the unified census has to be comparable across the flip.
+// With the knob off, the drain takes its arc list from the raw tier and the
+// phase-3 counters stay zero.  The outcome sink is still written, so the unified
+// census stays comparable between the off and on settings.
 TEST(LedgerReentryTest, UnarmedTheRawTierStillDrivesAndPhase3CountersStayZero) {
     Harness h;
     h.openGap(3, 2, { K(0, kSat, kSig1) });
@@ -500,7 +499,7 @@ TEST(LedgerReentryTest, UnarmedTheRawTierStillDrivesAndPhase3CountersStayZero) {
     h.run();
 
     EXPECT_TRUE(h.freed(kSig1));
-    EXPECT_TRUE(h.freed(kSig2));             // the raw tier frees BOTH bands
+    EXPECT_TRUE(h.freed(kSig2));             // the raw tier frees both bands
     EXPECT_EQ(h.counters.ledger_reentry_arcs, 0);
     EXPECT_EQ(h.counters.ledger_reentry_no_verdict, 0);
     EXPECT_EQ(h.counters.gap_reentry_freed_shifted, 2);

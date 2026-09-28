@@ -4,20 +4,20 @@
  *
  * The contract: a NetworkSolutionEpoch written to disk and read back is
  * bit-identical in every consumed field, and replaying the parsed records
- * through a fresh NetworkProductEmitter reproduces the SAME SsrCorrectionStore
- * the live producer builds — discontinuity counters included, even across a
- * datum change (the one piece of stream state the epoch struct does not carry,
- * serialized as the per-epoch datum_changed flag).  This is what lets the
- * consumer AR-frame work replay products without re-running the network.
+ * through a fresh NetworkProductEmitter reproduces the SsrCorrectionStore the
+ * live producer builds, discontinuity counters included, even across a datum
+ * change (the one piece of stream state the epoch struct does not carry,
+ * serialized as the per-epoch datum_changed flag).  This lets consumer AR-frame
+ * work replay products without re-running the network.
  */
 
 #include <gtest/gtest.h>
 
 #include "products/NetworkProductIO.hpp"
 #include "products/NetworkProductEmitter.hpp"
-#include "products/NetworkStateSnapshot.hpp"   // RTB-7: snapshot + warm-resume gate
+#include "products/NetworkStateSnapshot.hpp"   // snapshot + warm-resume gate (RTB-7)
 #include "products/SsrCorrectionStore.hpp"
-#include "logging/CsvRotator.hpp"   // P1: size-based service-CSV rotation
+#include "logging/CsvRotator.hpp"   // size-based service-CSV rotation (P1)
 
 #include <filesystem>
 #include <fstream>
@@ -66,7 +66,7 @@ std::string tempFile(const char* name) {
     return (std::filesystem::temp_directory_path() / name).string();
 }
 
-/// Exact on-disk bytes of @p path (binary — no newline translation), for
+/// Exact on-disk bytes of @p path (binary, no newline translation), for
 /// byte-identity checks and for re-serving captured content in chunks.
 std::string readAllBytes(const std::string& path) {
     std::ifstream in(path, std::ios::binary);
@@ -74,11 +74,11 @@ std::string readAllBytes(const std::string& path) {
                        std::istreambuf_iterator<char>());
 }
 
-/// Non-comment (DATA) bytes of @p path: every line not starting with '#',
-/// newline-joined.  The handoff-§7 schema fix made the '#' legend grammar-
-/// complete, so the header legitimately contains every key= token NAME; byte
-/// probes about the WIRE (a token present / absent / counted once on data
-/// lines) must search these bytes, not the whole file.
+/// Non-comment (data) bytes of @p path: every line not starting with '#',
+/// newline-joined.  The '#' legend is grammar-complete (handoff §7 schema), so
+/// the header contains every key= token name; byte probes about the wire (a
+/// token present, absent, or counted once on data lines) search these bytes,
+/// not the whole file.
 std::string dataBytes(const std::string& path) {
     std::ifstream in(path);
     std::string   out, line;
@@ -88,8 +88,8 @@ std::string dataBytes(const std::string& path) {
 }
 
 /// Append raw bytes to @p path (binary), closing the stream so the bytes are
-/// on disk when the tail polls — simulates a producer flush boundary at an
-/// arbitrary (including mid-line) byte offset.
+/// on disk when the tail polls.  Simulates a producer flush boundary at an
+/// arbitrary byte offset, including mid-line.
 void appendBytes(const std::string& path, const std::string& bytes) {
     std::ofstream out(path, std::ios::binary | std::ios::app);
     out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
@@ -97,10 +97,11 @@ void appendBytes(const std::string& path, const std::string& bytes) {
 
 // ---------------------------------------------------------------------------
 
-// RT0-4: the optional per-epoch wall-clock generation-time (G record) round-trips
-// exactly when the producer stamped it, and is ABSENT — byte-identical to the
-// pre-RT0-4 format — when it did not (generation_time left {0,0}).  A fixed
-// (non-wall-clock) stamp keeps the test deterministic.
+// The optional per-epoch wall-clock generation time (G record) round-trips
+// exactly when the producer stamped it, and is absent when it did not
+// (generation_time left {0,0}); the unstamped output is byte-identical to the
+// format without G records (RT0-4).  A fixed, non-wall-clock stamp keeps the
+// test deterministic.
 TEST(NetworkProductIoTest, GenerationTimeRoundTripsAndIsOptional) {
     const std::string path = tempFile("gnss_netprod_gentime.txt");
     std::filesystem::remove(path);
@@ -108,7 +109,7 @@ TEST(NetworkProductIoTest, GenerationTimeRoundTripsAndIsOptional) {
     NetworkSolutionEpoch stamped = makeEpoch(kT0, /*pb01=*/-0.7);
     stamped.generation_time = GnssTime{2313, 259212.5};        // 12.5 s after the content epoch
     NetworkSolutionEpoch unstamped = makeEpoch(GnssTime{2313, 259230.0}, /*pb01=*/-0.7);
-    // unstamped.generation_time stays the default {0,0} — no G record expected.
+    // unstamped.generation_time stays the default {0,0}: no G record expected.
 
     {
         NetworkProductWriter w(path);
@@ -129,14 +130,14 @@ TEST(NetworkProductIoTest, GenerationTimeRoundTripsAndIsOptional) {
     EXPECT_EQ(recs[1].epoch.generation_time.week, 0);
     EXPECT_DOUBLE_EQ(recs[1].epoch.generation_time.tow, 0.0);
 
-    // Byte-level: exactly ONE 'G' data line in the whole file (only the stamped
-    // epoch wrote one); the unstamped epoch's block is byte-identical to pre-RT0-4.
+    // Byte level: one 'G' data line in the whole file (only the stamped epoch
+    // wrote one); the unstamped epoch's block matches the format without G records.
     std::string content;
     {
         std::ifstream in(path);
         content.assign((std::istreambuf_iterator<char>(in)),
                        std::istreambuf_iterator<char>());
-    }   // close the stream before remove() — Windows locks an open file
+    }   // close the stream before remove(): Windows locks an open file
     std::size_t count = 0, pos = 0;
     while ((pos = content.find("\nG,", pos)) != std::string::npos) { ++count; pos += 3; }
     EXPECT_EQ(count, 1u);
@@ -152,8 +153,8 @@ TEST(NetworkProductIoTest, RoundTripsEveryField) {
 
     NetworkSolutionEpoch sol = makeEpoch(kT0, /*pb01=*/-0.7);
 
-    // A third satellite with NO clock (has_clock=false) — exercises the
-    // clock-absent path: it must round-trip with has_clock=false.
+    // A third satellite with no clock exercises the clock-absent path: it
+    // round-trips with has_clock=false.
     NetworkSatSolution g3;
     g3.sat              = "G03";
     g3.has_clock        = false;
@@ -209,7 +210,8 @@ TEST(NetworkProductIoTest, RoundTripsEveryField) {
 }
 
 // Replaying a serialized product sequence reproduces the live store, including
-// the discontinuity counter across a forced datum change AND an auto bias jump.
+// the discontinuity counter across a forced datum change and an automatic bias
+// jump.
 TEST(NetworkProductIoTest, ReplayReproducesLiveStore) {
     const std::string path = tempFile("gnss_netprod_equiv.txt");
     std::filesystem::remove(path);
@@ -236,7 +238,7 @@ TEST(NetworkProductIoTest, ReplayReproducesLiveStore) {
             const NetworkSolutionEpoch sol = makeEpoch(t, s.pb01);
             if (s.datum_changed) emit_live.markDatumChange();
             emit_live.emitToStore(sol, store_live);
-            w.write(sol, s.datum_changed);   // serialize the SAME sequence
+            w.write(sol, s.datum_changed);   // serialize the same sequence
             last_t = t;
             t.tow += 30.0;
         }
@@ -301,10 +303,10 @@ TEST(NetworkProductIoTest, ReplayReproducesLiveStore) {
     std::filesystem::remove(path);
 }
 
-// A2: the clock discontinuity counter (per-satellite) is recomputed on replay from
-// the serialized datum_changed flag + the per-constellation affected set (E-line
-// field 8).  A per-constellation scoped datum change must bump ONLY the affected
-// constellation's clocks, and replay must reproduce that scoping byte-for-byte.
+// The per-satellite clock discontinuity counter is recomputed on replay from the
+// serialized datum_changed flag and the per-constellation affected set (E-line
+// field 8).  A datum change scoped to one constellation bumps only that
+// constellation's clocks, and replay reproduces the scoping byte-for-byte (A2).
 TEST(NetworkProductIoTest, ClockDiscReplayReproducesScopedCounters) {
     const std::string path = tempFile("gnss_netprod_clkdisc.txt");
     std::filesystem::remove(path);
@@ -355,7 +357,7 @@ TEST(NetworkProductIoTest, ClockDiscReplayReproducesScopedCounters) {
     for (const NetworkProductRecord& r : recs)
         NetworkProductReader::replay(r, store_disk, emit_disk);
 
-    // GPS clock bumped once; Galileo untouched — live and replayed agree.
+    // GPS clock bumped once, Galileo untouched; live and replayed agree.
     EXPECT_EQ(emit_live.clockDiscontinuityCounter("G01"), 1);
     EXPECT_EQ(emit_live.clockDiscontinuityCounter("E11"), 0);
     EXPECT_EQ(emit_disk.clockDiscontinuityCounter("G01"), 1);
@@ -366,12 +368,13 @@ TEST(NetworkProductIoTest, ClockDiscReplayReproducesScopedCounters) {
     std::filesystem::remove(path);
 }
 
-// RT0-5 seam × replay: a scoped datum change recorded on an epoch whose affected
-// constellation was PRUNED from the emission (runaway quarantine) pends in the
-// emitter and lands at the constellation's next emitted epoch.  The file records
-// the datum_consts on the TRIGGER epoch (even for the pruned constellation) and
-// the replayed epochs are the same pruned epochs, so a fresh replay emitter
-// (makeReplayEmitter) defers identically and reproduces the counters byte-for-byte.
+// Quarantine seam and replay (RT0-5): a scoped datum change recorded on an epoch
+// whose affected constellation was pruned from the emission (runaway quarantine)
+// pends in the emitter and lands at the constellation's next emitted epoch.  The
+// file records the datum_consts on the trigger epoch (including the pruned
+// constellation) and the replayed epochs are the same pruned epochs, so a fresh
+// replay emitter (makeReplayEmitter) defers identically and reproduces the
+// counters byte-for-byte.
 TEST(NetworkProductIoTest, QuarantinedDatumChangeDefersAndReplays) {
     const std::string path = tempFile("gnss_netprod_quarantine.txt");
     std::filesystem::remove(path);
@@ -391,7 +394,7 @@ TEST(NetworkProductIoTest, QuarantinedDatumChangeDefersAndReplays) {
     };
 
     // 1: G+E          2: E only (GPS quarantined), datum change {'G','E'}
-    // 3: G+E (return) 4: G+E (steady — the landed bump must not repeat)
+    // 3: G+E (return) 4: G+E (steady; the landed bump must not repeat)
     struct Step { bool gps; std::set<char> consts; };
     const Step steps[] = { {true, {}}, {false, {'G', 'E'}}, {true, {}}, {true, {}} };
 
@@ -412,13 +415,13 @@ TEST(NetworkProductIoTest, QuarantinedDatumChangeDefersAndReplays) {
             const bool dc = !s.consts.empty();
             if (dc) emit_live.markDatumChange(s.consts);
             emit_live.emitToStore(sol, store_live);
-            w.write(sol, dc, s.consts);   // consts recorded on the TRIGGER epoch
+            w.write(sol, dc, s.consts);   // consts recorded on the trigger epoch
             t.tow += 30.0;
         }
     }
 
     // Live semantics: E consumed its flag at the trigger epoch; G's pended across
-    // the pruned epoch and landed at the return epoch — each exactly once.
+    // the pruned epoch and landed at the return epoch; each bumped once.
     EXPECT_EQ(emit_live.clockDiscontinuityCounter("G01"), 1);
     EXPECT_EQ(emit_live.clockDiscontinuityCounter("E11"), 1);
     EXPECT_EQ(emit_live.codeBiasDiscontinuityCounter("G01", "C1C"), 1);
@@ -440,7 +443,7 @@ TEST(NetworkProductIoTest, QuarantinedDatumChangeDefersAndReplays) {
     for (const NetworkProductRecord& r : recs)
         NetworkProductReader::replay(r, store_disk, emit_disk);
 
-    // Replay reproduces the deferred counters exactly — emitter and store level.
+    // Replay reproduces the deferred counters exactly, at emitter and store level.
     for (const char* sat : {"G01", "E11"}) {
         EXPECT_EQ(emit_disk.clockDiscontinuityCounter(sat),
                   emit_live.clockDiscontinuityCounter(sat)) << sat;
@@ -455,12 +458,12 @@ TEST(NetworkProductIoTest, QuarantinedDatumChangeDefersAndReplays) {
     std::filesystem::remove(path);
 }
 
-// H3: the per-λ fractional-cycle threshold travels in the S contract (discfrac=)
-// so a consumer's replay emitter recomputes the phase-bias discontinuity counters
-// byte-for-byte.  A 0.055 m step crosses the 0.25λ L1 gate (4.76 cm) but not the L5
-// gate (6.37 cm); if discfrac did NOT round-trip, the replay emitter would fall back
-// to the flat 0.05 m gate and (wrongly) fire L5 too — so this pins both the round-trip
-// and the makeReplayEmitter wiring.
+// The per-λ fractional-cycle threshold travels in the S contract (discfrac=), so
+// a consumer's replay emitter recomputes the phase-bias discontinuity counters
+// byte-for-byte (H3).  A 0.055 m step crosses the 0.25λ L1 gate (4.76 cm) but not
+// the L5 gate (6.37 cm).  Without the discfrac round-trip the replay emitter falls
+// back to the flat 0.05 m gate and also fires L5, so the test pins both the
+// round-trip and the makeReplayEmitter wiring.
 TEST(NetworkProductIoTest, PerLambdaThresholdReplayReproducesCounters) {
     const std::string path = tempFile("gnss_netprod_perlambda.txt");
     std::filesystem::remove(path);
@@ -511,17 +514,17 @@ TEST(NetworkProductIoTest, PerLambdaThresholdReplayReproducesCounters) {
     for (const NetworkProductRecord& r : recs)
         NetworkProductReader::replay(r, store_disk, emit_disk);
 
-    // Replay reproduces the per-λ decision exactly — NOT the flat-gate L5 false-fire.
+    // Replay reproduces the per-λ decision exactly, without the flat-gate L5 false fire.
     EXPECT_EQ(emit_disk.discontinuityCounter("G01", "L1C"), 1);
     EXPECT_EQ(emit_disk.discontinuityCounter("G01", "L5Q"), 0);
 
     std::filesystem::remove(path);
 }
 
-// Code-bias discontinuity counters are NOT serialized; they are recomputed from
-// the per-epoch satellite-set + band composition (set-change, IF-pin band-tuple
-// change) plus the serialized datum_changed flag.  A sequence with a rise, a
-// set, a forced bump, and a vanish-then-return must replay byte-for-byte.
+// Code-bias discontinuity counters are not serialized; they are recomputed from
+// the per-epoch satellite set and band composition (set change, IF-pin band-tuple
+// change) plus the serialized datum_changed flag.  A sequence with a rise, a set,
+// a forced bump, and a vanish-then-return replays byte-for-byte.
 TEST(NetworkProductIoTest, CodeBiasReplayReproducesCounters) {
     const std::string path = tempFile("gnss_netprod_cbias.txt");
     std::filesystem::remove(path);
@@ -592,9 +595,10 @@ TEST(NetworkProductIoTest, CodeBiasReplayReproducesCounters) {
     std::filesystem::remove(path);
 }
 
-// B1 (P0-2/P1-3): the per-satellite retro-bump is serialized as an R record and
-// reproduced on replay — bumping ONLY the named satellite's phase/code/clock counters,
-// so a run with the retro-bump off writes the pre-B1 format byte-for-byte.
+// The per-satellite retro-bump is serialized as an R record and reproduced on
+// replay, bumping only the named satellite's phase, code and clock counters.  A
+// run with the retro-bump off writes no R record, so its format is unchanged
+// byte-for-byte (B1, P0-2/P1-3).
 TEST(NetworkProductIoTest, RetroBumpPerSatReplayReproducesCounters) {
     const std::string path = tempFile("gnss_netprod_retro.txt");
     std::filesystem::remove(path);
@@ -642,7 +646,7 @@ TEST(NetworkProductIoTest, RetroBumpPerSatReplayReproducesCounters) {
     for (const NetworkProductRecord& r : recs)
         NetworkProductReader::replay(r, store_disk, emit_disk);
 
-    // G01 bumped once on all three channels; G02 untouched — live == replayed.
+    // G01 bumped once on all three channels, G02 untouched; live == replayed.
     EXPECT_EQ(emit_live.discontinuityCounter("G01", "L1C"), 1);
     EXPECT_EQ(emit_disk.discontinuityCounter("G01", "L1C"), 1);
     EXPECT_EQ(emit_disk.codeBiasDiscontinuityCounter("G01", "C1W"), 1);
@@ -654,8 +658,8 @@ TEST(NetworkProductIoTest, RetroBumpPerSatReplayReproducesCounters) {
     std::filesystem::remove(path);
 }
 
-// B1/B3b: the per-sat URA (U record) and clock-model drift C1 (C-line field 4)
-// round-trip through the file, and replay pushes the URA into the store.
+// The per-satellite URA (U record) and clock-model drift C1 (C-line field 4)
+// round-trip through the file, and replay pushes the URA into the store (B1/B3b).
 TEST(NetworkProductIoTest, UraAndClockDriftRoundTrip) {
     const std::string path = tempFile("gnss_netprod_ura.txt");
     std::filesystem::remove(path);
@@ -697,25 +701,26 @@ TEST(NetworkProductIoTest, UraAndClockDriftRoundTrip) {
 
 // ---------------------------------------------------------------------------
 
-// Card 4 (RTF-2): the brdc_rts clock ephemeris-anchor IODE and RTS-orbit echo
-// serialize as self-describing key=value tokens on the C line (iode=/oiod=/
-// oepoch=), round-trip exactly, and — crucially — REPLAY stamps them onto the
-// store's merged OrbitClockCorrection so a file-replayed product gates the clock
-// on the producer's broadcast baseline identically to the live closed loop.  A
-// second sat left at the default sentinel (clock_iode = -1) writes NO token.
+// The brdc_rts clock ephemeris-anchor IODE and RTS-orbit echo serialize as
+// self-describing key=value tokens on the C line (iode=/oiod=/oepoch=) and
+// round-trip exactly.  Replay stamps them onto the store's merged
+// OrbitClockCorrection, so a file-replayed product gates the clock on the
+// producer's broadcast baseline in the same way as the live closed loop.  A
+// second satellite left at the default sentinel (clock_iode = -1) writes no
+// token (Card 4, RTF-2).
 TEST(NetworkProductIoTest, ClockIodeAndOrbitEchoRoundTripAndStamp) {
     const std::string path = tempFile("gnss_netprod_iode.txt");
     std::filesystem::remove(path);
 
     NetworkSolutionEpoch sol = makeEpoch(kT0, /*pb01=*/-0.7);
-    // G01: stamped like a brdc_rts producer — broadcast IODE 42, estimated against
-    // RTS orbit IOD-SSR 7 at a slightly earlier content epoch.  Also give it a
-    // non-zero C1 drift so the key=value tokens sit AFTER a positional c1 field.
+    // G01: stamped like a brdc_rts producer (broadcast IODE 42, estimated against
+    // RTS orbit IOD-SSR 7 at a slightly earlier content epoch).  A non-zero C1
+    // drift places the key=value tokens after a positional c1 field.
     sol.sats[0].clock_iode    = 42;
     sol.sats[0].orbit_iod_ssr = 7;
     sol.sats[0].orbit_epoch   = GnssTime{2313, 259100.5};
     sol.sats[0].clock_c1_m_s  = -0.0025;
-    // G02: unstamped (default clock_iode = -1) — must write no iode= token.
+    // G02: unstamped (default clock_iode = -1); writes no iode= token.
 
     {
         NetworkProductWriter w(path);
@@ -741,14 +746,15 @@ TEST(NetworkProductIoTest, ClockIodeAndOrbitEchoRoundTripAndStamp) {
     EXPECT_EQ(g2.orbit_iod_ssr, -1);
     EXPECT_EQ(g2.orbit_epoch.week, 0);
 
-    // The stamped sat's tokens are present; the unstamped sat's C line has none.
+    // The stamped satellite's tokens are present.
     const std::string content = readAllBytes(path);
     EXPECT_NE(content.find("iode=42"), std::string::npos);
     EXPECT_NE(content.find("oiod=7"), std::string::npos);
     EXPECT_NE(content.find("oepoch=2313:259100.5"), std::string::npos);
 
     // Replay stamps the store: getOrbitClock on the standalone clock reports the
-    // producer's clock_iode (WINS over the -1 orbit-inherit) + the orbit echo.
+    // producer's clock_iode (which takes precedence over the -1 inherited from the
+    // orbit) and the orbit echo.
     SsrCorrectionStore    store;
     NetworkProductEmitter emit;
     NetworkProductReader::replay(recs[0], store, emit);
@@ -769,11 +775,11 @@ TEST(NetworkProductIoTest, ClockIodeAndOrbitEchoRoundTripAndStamp) {
     std::filesystem::remove(path);
 }
 
-// Card 4 (RTF-2): the iode=/oiod= key=value tokens coexist with the RTA-4
-// serialized disc counters — with serialize_disc_counters armed the C line
-// carries the ALWAYS-written c1 (field 4) + clock disc counter (field 5) BEFORE
-// the key=value tokens, and the reader parses BOTH the positional counter and
-// the trailing IODE.  This is the field-ordering stress case.
+// The iode=/oiod= key=value tokens coexist with the RTA-4 serialized disc
+// counters.  With serialize_disc_counters armed, the C line carries the
+// always-written c1 (field 4) and the clock disc counter (field 5) before the
+// key=value tokens, and the reader parses both the positional counter and the
+// trailing IODE.  This is the field-ordering stress case (Card 4, RTF-2).
 TEST(NetworkProductIoTest, ClockIodeCoexistsWithSerializedDiscCounters) {
     const std::string path = tempFile("gnss_netprod_iode_disc.txt");
     std::filesystem::remove(path);
@@ -810,7 +816,7 @@ TEST(NetworkProductIoTest, ClockIodeCoexistsWithSerializedDiscCounters) {
     const auto recs = NetworkProductReader::read(path, &ok);
     ASSERT_TRUE(ok);
     ASSERT_EQ(recs.size(), 2u);
-    // Both the serialized clock disc counter AND the stamped IODE parse back.
+    // Both the serialized clock disc counter and the stamped IODE parse back.
     EXPECT_EQ(recs[0].epoch.sats[0].clock_iode, 15);
     EXPECT_EQ(recs[0].epoch.sats[0].orbit_iod_ssr, 4);
     EXPECT_DOUBLE_EQ(recs[0].epoch.sats[0].clock_c1_m_s, 0.01);   // positional c1
@@ -823,9 +829,10 @@ TEST(NetworkProductIoTest, ClockIodeCoexistsWithSerializedDiscCounters) {
     std::filesystem::remove(path);
 }
 
-// Card 4 (RTF-2): the sp3-mode sentinel (clock_iode = -1) writes NO iode=/oiod=/
-// oepoch= token, so a producer that never sets it is BYTE-IDENTICAL to a run that
-// explicitly leaves the fields at their sentinel — the twin-file invariant.
+// The sp3-mode sentinel (clock_iode = -1) writes no iode=/oiod=/oepoch= token, so
+// a producer that never sets the fields is byte-identical to a run that
+// explicitly leaves them at their sentinels: the twin-file invariant (Card 4,
+// RTF-2).
 TEST(NetworkProductIoTest, ClockIodeSentinelTwinFileByteIdentical) {
     const std::string a = tempFile("gnss_netprod_iode_a.txt");
     const std::string b = tempFile("gnss_netprod_iode_b.txt");
@@ -834,7 +841,7 @@ TEST(NetworkProductIoTest, ClockIodeSentinelTwinFileByteIdentical) {
 
     // File A: plain makeEpoch (fields at their in-struct defaults).
     { NetworkProductWriter w(a); ASSERT_TRUE(w.good()); w.write(makeEpoch(kT0, -0.7)); }
-    // File B: the SAME epoch with the Card-4 fields explicitly at their sentinels.
+    // File B: the same epoch with the Card-4 fields explicitly at their sentinels.
     NetworkSolutionEpoch sol = makeEpoch(kT0, -0.7);
     for (auto& s : sol.sats) {
         s.clock_iode    = -1;
@@ -855,9 +862,10 @@ TEST(NetworkProductIoTest, ClockIodeSentinelTwinFileByteIdentical) {
     std::filesystem::remove(b);
 }
 
-// B6 (P1-1): the v2 S-basis contract header (S line, including realized per-
-// constellation pivots + a-priori product id) round-trips, and checkContract
-// accepts a matching consumer expectation while flagging a mismatched one.
+// The v2 S-basis contract header (S line, including the realized
+// per-constellation pivots and the a-priori product id) round-trips, and
+// checkContract accepts a matching consumer expectation and flags a mismatched
+// one (B6, P1-1).
 TEST(NetworkProductIoTest, SbasisContractRoundTripAndCheck) {
     const std::string path = tempFile("gnss_netprod_contract.txt");
     std::filesystem::remove(path);
@@ -921,17 +929,17 @@ TEST(NetworkProductIoTest, SbasisContractRoundTripAndCheck) {
     std::filesystem::remove(v1);
 }
 
-// Handoff-§7 schema fix: the '#' legend must declare EVERY field the writer can
-// emit.  On the DOY-129 reference run every P record carried a 7th field
-// (sigma=) against a 6-name legend, so a schema-faithful consumer silently
-// dropped the phase-bias σ.  This test arms EVERY optional emit channel at once
-// and mechanically checks each data line against the legend grammar:
+// The '#' legend declares every field the writer can emit (handoff §7 schema).
+// A consumer that follows the schema drops any field the legend does not
+// declare; the P record's sigma= field is the case that motivated the test.
+// This test arms every optional emit channel at once and checks each data line
+// against the legend grammar:
 //   * its record tag is legended;
 //   * its positional field count fits the legend (brackets stripped; a legend
 //     token containing "..." makes that tag variadic);
 //   * every key=value field's key is declared on that tag's legend line.
-// A new emitted field without a matching legend extension fails here — the
-// regression gate for the whole defect class, not just the sigma= instance.
+// A new emitted field without a matching legend extension fails here, on any
+// record type, not only sigma=.
 TEST(NetworkProductIoTest, HeaderLegendDeclaresEveryEmittedField) {
     const std::string path = tempFile("gnss_netprod_legend.txt");
     std::filesystem::remove(path);
@@ -957,7 +965,7 @@ TEST(NetworkProductIoTest, HeaderLegendDeclaresEveryEmittedField) {
     c.age_scale_k                = 1e-6;
     c.cb_pin_pair["G"]           = "C1C-C2L";
     c.gf_pin_pair["G"]           = "C1C-C2L";
-    c.disc_jump_test_decommon    = true;   // Card JT: discdecom=
+    c.disc_jump_test_decommon    = true;   // discdecom= (Card JT)
     c.present                    = true;
 
     // An epoch arming every optional record / field channel.
@@ -993,7 +1001,7 @@ TEST(NetworkProductIoTest, HeaderLegendDeclaresEveryEmittedField) {
         emit.emitToStore(sol, store);
         w.write(sol, /*datum_changed=*/true, /*datum_consts=*/{'G'},
                 /*retro_sats=*/{"G01"}, /*disc_source=*/&emit);       // disc fields on C/B/P
-        w.writeContract(c);                                           // RTA-5 mid-file S line
+        w.writeContract(c);                                           // mid-file S line (RTA-5)
     }
 
     auto split = [](const std::string& line) {
@@ -1022,7 +1030,7 @@ TEST(NetworkProductIoTest, HeaderLegendDeclaresEveryEmittedField) {
         while (std::getline(in, line)) {
             if (line.empty()) continue;
             if (line[0] != '#') { data_lines.push_back(line); continue; }
-            // A legend line is "# <TAG>,..." — a single-char tag then a comma.
+            // A legend line is "# <TAG>,...": a single-character tag, then a comma.
             if (line.size() < 4 || line[3] != ',') continue;   // banner / prose lines
             std::string body = line.substr(2);
             const auto  paren = body.find('(');                // strip "(...)" annotation
@@ -1065,13 +1073,13 @@ TEST(NetworkProductIoTest, HeaderLegendDeclaresEveryEmittedField) {
             EXPECT_LE(n_pos, g.max_positional) << "positional overflow on tag " << tag << ": " << dl;
     }
 
-    // The test itself must keep emitting every record type — a channel silently
-    // dropped from the arming set would hollow the sweep out.
+    // The test itself keeps emitting every record type; a channel dropped from
+    // the arming set would leave that record type unchecked.
     for (const char* t : {"E", "C", "B", "P", "G", "I", "R", "U", "S", "H"})
         EXPECT_EQ(tags_seen.count(t), 1u) << "test no longer emits record type " << t;
 
-    // The specific reference-run defect, pinned forever: the P legend line
-    // declares the σ tokens a producer with emit_phase_bias_sigma armed writes.
+    // The P legend line declares the σ tokens that a producer with
+    // emit_phase_bias_sigma armed writes.
     ASSERT_EQ(legend.count("P"), 1u);
     EXPECT_EQ(legend["P"].keys.count("sigma"), 1u);
     EXPECT_EQ(legend["P"].keys.count("sigc"), 1u);
@@ -1083,9 +1091,9 @@ TEST(NetworkProductIoTest, HeaderLegendDeclaresEveryEmittedField) {
     EXPECT_TRUE(ok);
     ASSERT_EQ(recs.size(), 1u);
 
-    // v1 parity: a v1 header carries the SAME grammar-complete legend (the two
-    // headers differ only in banner + S line), so legend drift between the two
-    // paths is impossible.
+    // v1 parity: a v1 header carries the same grammar-complete legend (the two
+    // headers differ only in the banner and the S line), so the two paths
+    // cannot drift apart.
     const std::string v1 = tempFile("gnss_netprod_legend_v1.txt");
     std::filesystem::remove(v1);
     { NetworkProductWriter w(v1); ASSERT_TRUE(w.good()); w.write(makeEpoch(kT0, 0.1)); }
@@ -1103,12 +1111,13 @@ TEST(NetworkProductIoTest, HeaderLegendDeclaresEveryEmittedField) {
     std::filesystem::remove(v1);
 }
 
-// §1.5 (day-129 frame-guards report): the S contract can declare the code-bias
-// IF pin pair — the signal pair the emitted OSB stream is internally consistent
-// in.  It round-trips (v2 header + RTA-5 re-broadcast), checkContract flags a
-// consumer whose declared pair sits outside the product frame (the measured
-// mixed-pair regime), an UNDECLARED consumer never mismatches on it, and a
-// producer that does not declare it writes the S line byte-for-byte (no token).
+// The S contract can declare the code-bias IF pin pair, the signal pair in which
+// the emitted OSB stream is internally consistent (§1.5, day-129 frame-guards
+// report).  It round-trips (v2 header and RTA-5 re-broadcast); checkContract
+// flags a consumer whose declared pair sits outside the product frame (the
+// mixed-pair regime); a consumer that declares no pair never mismatches on it;
+// and a producer that does not declare it writes no token, so its S line is
+// unchanged byte-for-byte.
 TEST(NetworkProductIoTest, CbPinPairTravelsInContractAndChecks) {
     const std::string path = tempFile("gnss_netprod_cbpin.txt");
     std::filesystem::remove(path);
@@ -1124,7 +1133,7 @@ TEST(NetworkProductIoTest, CbPinPairTravelsInContractAndChecks) {
         NetworkProductWriter w(path, c);
         ASSERT_TRUE(w.good());
         w.write(makeEpoch(kT0, /*pb01=*/-0.7));
-        w.writeContract(c);                    // RTA-5 re-broadcast, same grammar
+        w.writeContract(c);                    // re-broadcast, same grammar (RTA-5)
         w.write(makeEpoch(GnssTime{kT0.week, kT0.tow + 30.0}, /*pb01=*/-0.7));
     }
 
@@ -1142,7 +1151,7 @@ TEST(NetworkProductIoTest, CbPinPairTravelsInContractAndChecks) {
     EXPECT_EQ(recs[1].contract_refresh.cb_pin_pair.at("G"), "C1C-C2L");
 
     // Consumer declaring the matching pair for GPS only: compatible (the file's
-    // extra Galileo entry is not a mismatch — clock_pivot_sat semantics).
+    // extra Galileo entry is not a mismatch, as with clock_pivot_sat).
     SbasisContract expect_ok = c;
     expect_ok.cb_pin_pair.clear();
     expect_ok.cb_pin_pair["G"] = "C1C-C2L";
@@ -1150,7 +1159,7 @@ TEST(NetworkProductIoTest, CbPinPairTravelsInContractAndChecks) {
     EXPECT_TRUE(NetworkProductReader::checkContract(parsed, expect_ok, &mism));
     EXPECT_TRUE(mism.empty());
 
-    // Consumer whose pair sits OUTSIDE the product frame: flagged.
+    // Consumer whose pair sits outside the product frame: flagged.
     SbasisContract expect_bad = expect_ok;
     expect_bad.cb_pin_pair["G"] = "C1W-C2W";
     mism.clear();
@@ -1164,8 +1173,8 @@ TEST(NetworkProductIoTest, CbPinPairTravelsInContractAndChecks) {
     mism.clear();
     EXPECT_TRUE(NetworkProductReader::checkContract(parsed, expect_none, &mism));
 
-    // Undeclared producer: no cbpin= token anywhere — the S line is
-    // byte-identical to a pre-§1.5 producer's.
+    // Undeclared producer: no cbpin= token anywhere, so the S line is the same
+    // as that of a producer without the §1.5 declaration.
     const std::string bare = tempFile("gnss_netprod_cbpin_bare.txt");
     std::filesystem::remove(bare);
     SbasisContract c0 = c;
@@ -1179,18 +1188,19 @@ TEST(NetworkProductIoTest, CbPinPairTravelsInContractAndChecks) {
     std::filesystem::remove(bare);
 }
 
-// Odijk rd 3b (network.code_bias_gf_datum): the GEOMETRY-FREE datum pair.  Its
-// presence on the S line is what tells a consumer that the emitted code biases are
-// the SLANT-posture estimable function — pinned pair identically the datum, content
-// only from j >= 3, each satellite's geometry-free bias absorbed by the ionosphere
-// (Table 8) — rather than the single-layer one, on a byte-identical record layout.
-// It round-trips (v2 header + RTA-5 re-broadcast), checkContract flags a consumer
-// that expects the GF datum against a single-layer file (the severe direction: the
-// two disagree about what the B records ARE, not merely which frame they are in),
-// an undeclared consumer never mismatches, and a single-layer producer writes the S
-// line byte-for-byte with no token.  The parser also accepts the '+'-joined
-// per-family value form (docs/SPEC_family_gf_datum.md) verbatim, so a future
-// multi-family product survives a round-trip through today's reader.
+// The geometry-free datum pair (network.code_bias_gf_datum, Odijk rd 3b).  Its
+// presence on the S line tells a consumer that the emitted code biases are the
+// slant-posture estimable function (the pinned pair is identically the datum,
+// content only from j >= 3, each satellite's geometry-free bias absorbed by the
+// ionosphere, Table 8) rather than the single-layer one; the record layout is
+// the same in both cases.  It round-trips (v2 header and RTA-5 re-broadcast);
+// checkContract flags a consumer that expects the GF datum against a
+// single-layer file (the severe direction: the two disagree about what the B
+// records are, not only about their frame); a consumer that declares nothing
+// never mismatches; and a single-layer producer writes no token, so its S line
+// is unchanged byte-for-byte.  The parser also accepts the '+'-joined
+// per-family value form (docs/SPEC_family_gf_datum.md) verbatim, so a
+// multi-family product round-trips through the current reader.
 TEST(NetworkProductIoTest, GfPinPairTravelsInContractAndChecks) {
     const std::string path = tempFile("gnss_netprod_gfpin.txt");
     std::filesystem::remove(path);
@@ -1208,7 +1218,7 @@ TEST(NetworkProductIoTest, GfPinPairTravelsInContractAndChecks) {
         NetworkProductWriter w(path, c);
         ASSERT_TRUE(w.good());
         w.write(makeEpoch(kT0, /*pb01=*/-0.7));
-        w.writeContract(c);                    // RTA-5 re-broadcast, same grammar
+        w.writeContract(c);                    // re-broadcast, same grammar (RTA-5)
         w.write(makeEpoch(GnssTime{kT0.week, kT0.tow + 30.0}, /*pb01=*/-0.7));
     }
 
@@ -1221,8 +1231,8 @@ TEST(NetworkProductIoTest, GfPinPairTravelsInContractAndChecks) {
     ASSERT_EQ(parsed.gf_pin_pair.size(), 2u);
     EXPECT_EQ(parsed.gf_pin_pair.at("G"), "C1C-C2W");
     EXPECT_EQ(parsed.gf_pin_pair.at("E"), "C1C-C5Q");
-    // cbpin= and gfpin= coexist: the gfpin branch must dispatch before the bare-':'
-    // realized-pivot fallback, exactly as cbpin= does (both values contain a ':').
+    // cbpin= and gfpin= coexist: the gfpin branch dispatches before the bare-':'
+    // realized-pivot fallback, as cbpin= does (both values contain a ':').
     EXPECT_EQ(parsed.cb_pin_pair.at("G"), "C1C-C2W");
     EXPECT_TRUE(parsed.decl.clock_pivot_sat.empty());
     // The re-broadcast stamped the second epoch's contract_refresh too.
@@ -1237,7 +1247,7 @@ TEST(NetworkProductIoTest, GfPinPairTravelsInContractAndChecks) {
     EXPECT_TRUE(NetworkProductReader::checkContract(parsed, expect_ok, &mism));
     EXPECT_TRUE(mism.empty());
 
-    // Consumer that declares nothing never mismatches on the GF pair — silence on
+    // Consumer that declares nothing never mismatches on the GF pair; no token on
     // the wire reads as "single-layer", the safe default.
     SbasisContract expect_none = c;
     expect_none.gf_pin_pair.clear();
@@ -1245,8 +1255,8 @@ TEST(NetworkProductIoTest, GfPinPairTravelsInContractAndChecks) {
     EXPECT_TRUE(NetworkProductReader::checkContract(parsed, expect_none, &mism));
 
     // Single-layer producer: no gfpin= token, and a consumer expecting the GF datum
-    // is flagged against it — the case that must never pass silently, because the
-    // consumer would apply the two-direction S-transform to one-direction biases.
+    // is flagged against it.  Passing this case would let the consumer apply the
+    // two-direction S-transform to one-direction biases.
     const std::string bare = tempFile("gnss_netprod_gfpin_bare.txt");
     std::filesystem::remove(bare);
     SbasisContract c0 = c;
@@ -1285,10 +1295,10 @@ TEST(NetworkProductIoTest, GfPinPairTravelsInContractAndChecks) {
     std::filesystem::remove(fam);
 }
 
-// L14: csvSanitize must make an arbitrary string safe for one CSV field — every
-// ',' becomes ';' and a comma-free string is unchanged.  network_contract_check.csv
-// writes mismatch strings through this, so a future mismatch message containing a
-// comma cannot break the column grid.
+// csvSanitize makes an arbitrary string safe for one CSV field: every ',' becomes
+// ';' and a comma-free string is unchanged.  network_contract_check.csv writes
+// mismatch strings through it, so a mismatch message containing a comma cannot
+// break the column grid (L14).
 TEST(NetworkProductIoTest, CsvSanitizeReplacesCommas) {
     EXPECT_EQ(NetworkProductReader::csvSanitize("reference_receiver_id: A vs B"),
               "reference_receiver_id: A vs B");                 // comma-free unchanged
@@ -1297,11 +1307,11 @@ TEST(NetworkProductIoTest, CsvSanitizeReplacesCommas) {
     EXPECT_EQ(NetworkProductReader::csvSanitize(",,"), ";;");
 }
 
-// The replay-emitter construction parameters travel IN the contract: a consumer
-// building its emitter via makeReplayEmitter(parsed) — with no out-of-band
-// knowledge of the producer's config — must reproduce the clock discontinuity
+// The replay-emitter construction parameters travel in the contract: a consumer
+// that builds its emitter with makeReplayEmitter(parsed), with no out-of-band
+// knowledge of the producer's config, reproduces the clock discontinuity
 // counters byte-for-byte.  A v1 file (no contract) yields the default emitter,
-// reproducing the pre-B6 replay behavior (clock channel silent).
+// whose clock channel is silent (the replay behaviour without B6).
 TEST(NetworkProductIoTest, ReplayEmitterFromContractReproducesClockDisc) {
     const std::string path = tempFile("gnss_netprod_replayctor.txt");
     std::filesystem::remove(path);
@@ -1360,8 +1370,8 @@ TEST(NetworkProductIoTest, ReplayEmitterFromContractReproducesClockDisc) {
     EXPECT_EQ(store_disk.getClockDiscontinuity("G01").value_or(-1), 1);
     EXPECT_EQ(store_disk.getClockDiscontinuity("E11").value_or(-1), 0);
 
-    // v1 file: makeReplayEmitter of an absent contract = default emitter — the
-    // clock channel stays silent exactly as pre-B6 replay did.
+    // v1 file: makeReplayEmitter of an absent contract gives the default emitter,
+    // so the clock channel stays silent (the replay behaviour without B6).
     const std::string v1 = tempFile("gnss_netprod_replayctor_v1.txt");
     std::filesystem::remove(v1);
     {
@@ -1384,13 +1394,13 @@ TEST(NetworkProductIoTest, ReplayEmitterFromContractReproducesClockDisc) {
     std::filesystem::remove(v1);
 }
 
-// The two optional replay-emitter channel flags (code_bias_jump_test — the
-// opt-in CODE-bias magnitude jump test — and clock_disc_on_set_change — the
-// sum-to-zero clock-set datum-move signal) travel in the S contract as trailing
-// cbjump=1 / clkset=1 key=value tokens, written ONLY when armed.  Guards the
-// default-OFF byte-identity discipline at the wire level: an OFF S line carries
-// NEITHER token (byte-identical to the pre-channel format), and the armed file
-// differs from the off file by EXACTLY those token bytes and nothing else.
+// The two optional replay-emitter channel flags, code_bias_jump_test (the opt-in
+// code-bias magnitude jump test) and clock_disc_on_set_change (the sum-to-zero
+// clock-set datum-move signal), travel in the S contract as trailing cbjump=1 /
+// clkset=1 key=value tokens, written only when armed.  This checks default-off
+// byte identity at the wire level: an off S line carries neither token (the
+// format without the channels), and the armed file differs from the off file by
+// those token bytes and nothing else.
 TEST(NetworkProductIoTest, ContractRoundTripOptionalDiscChannels) {
     const std::string on  = tempFile("gnss_netprod_channels_on.txt");
     const std::string off = tempFile("gnss_netprod_channels_off.txt");
@@ -1401,7 +1411,7 @@ TEST(NetworkProductIoTest, ContractRoundTripOptionalDiscChannels) {
     base.decl.reference_receiver_id = "CIT100USA";
     base.disc_threshold_m           = 0.05;
     base.present                    = true;
-    // ON: both channels armed.  OFF: the same contract with both at the default.
+    // On: both channels armed.  Off: the same contract with both at the default.
     SbasisContract armed = base;
     armed.code_bias_jump_test      = true;
     armed.clock_disc_on_set_change = true;
@@ -1435,16 +1445,16 @@ TEST(NetworkProductIoTest, ContractRoundTripOptionalDiscChannels) {
     EXPECT_FALSE(parsed_off.code_bias_jump_test);
     EXPECT_FALSE(parsed_off.clock_disc_on_set_change);
 
-    // Byte identity (OFF): neither token appears anywhere on the off file's
-    // WIRE (data lines; the grammar-complete legend names both tokens).
+    // Byte identity (off): neither token appears on the off file's wire (data
+    // lines; the grammar-complete legend names both tokens).
     const std::string off_bytes = readAllBytes(off);
     const std::string off_data  = dataBytes(off);
     EXPECT_EQ(off_data.find("cbjump="), std::string::npos);
     EXPECT_EQ(off_data.find("clkset="), std::string::npos);
 
-    // Byte surgery (ON): deleting exactly ",cbjump=1,clkset=1" from the armed
-    // file reproduces the off file byte-for-byte — arming the flags adds those
-    // bytes and changes NOTHING else in the header or the epoch blocks.
+    // Byte surgery (on): deleting ",cbjump=1,clkset=1" from the armed file
+    // reproduces the off file byte-for-byte, so arming the flags adds those bytes
+    // and changes nothing else in the header or the epoch blocks.
     std::string on_bytes = readAllBytes(on);
     const std::string tokens = ",cbjump=1,clkset=1";
     const std::size_t tpos   = on_bytes.find(tokens);
@@ -1456,12 +1466,12 @@ TEST(NetworkProductIoTest, ContractRoundTripOptionalDiscChannels) {
     std::filesystem::remove(off);
 }
 
-// The third IsbDatum enumerator (BroadcastAnchoredPerSatellite — the brdc_rts
-// broadcast-anchored clock gauge) rides the EXISTING static_cast<int>
-// serialization path as wire int 2 and must round-trip.  The anchors ARE the
-// gauge in this mode, so the realized clock_pivot_sat list is EMPTY — the S
-// line is exactly the 11 positional fields, and the empty pivot list must
-// round-trip too (no phantom pivot entries on the consumer side).
+// The third IsbDatum enumerator (BroadcastAnchoredPerSatellite, the brdc_rts
+// broadcast-anchored clock gauge) uses the existing static_cast<int>
+// serialization path as wire int 2 and round-trips.  The anchors are the gauge
+// in this mode, so the realized clock_pivot_sat list is empty: the S line is the
+// 11 positional fields, and the empty pivot list round-trips too (no spurious
+// pivot entries on the consumer side).
 TEST(NetworkProductIoTest, ContractRoundTripBroadcastAnchoredIsbDatum) {
     const std::string path = tempFile("gnss_netprod_contract_brdcanchor.txt");
     std::filesystem::remove(path);
@@ -1469,7 +1479,7 @@ TEST(NetworkProductIoTest, ContractRoundTripBroadcastAnchoredIsbDatum) {
     SbasisContract c;
     c.decl.reference_receiver_id = "CIT100USA";
     c.decl.isb_datum = SbasisDeclaration::IsbDatum::BroadcastAnchoredPerSatellite;
-    // No clock_pivot_sat entries — the anchor-free datum publishes no pivots.
+    // No clock_pivot_sat entries: the anchor-free datum publishes no pivots.
     c.apriori_product_id = "BRDC00IGS_RTS";   // non-empty (comma-free) so the S
                                               // line has no trailing empty field
     c.present            = true;
@@ -1492,8 +1502,8 @@ TEST(NetworkProductIoTest, ContractRoundTripBroadcastAnchoredIsbDatum) {
     EXPECT_TRUE(parsed.decl.clock_pivot_sat.empty());        // empty pivot list round-trips
 
     // Wire level: the S line's isb_datum positional field (reader f[5]) is "2",
-    // and with no pivots and no optional key=value tokens the line is exactly
-    // the 11 positional fields — nothing new was invented for enumerator 2.
+    // and with no pivots and no optional key=value tokens the line is the 11
+    // positional fields; enumerator 2 adds no field of its own.
     const std::string content = readAllBytes(path);
     const std::size_t s_pos   = content.find("\nS,");
     ASSERT_NE(s_pos, std::string::npos);
@@ -1506,8 +1516,8 @@ TEST(NetworkProductIoTest, ContractRoundTripBroadcastAnchoredIsbDatum) {
     ASSERT_EQ(f.size(), 11u);
     EXPECT_EQ(f[5], "2");
 
-    // checkContract: a consumer declaring the SAME datum passes; one expecting
-    // the legacy pin datum is flagged — the enum participates in the contract.
+    // checkContract: a consumer declaring the same datum passes; one expecting
+    // the legacy pin datum is flagged, so the enum participates in the contract.
     std::vector<std::string> mism;
     EXPECT_TRUE(NetworkProductReader::checkContract(parsed, c, &mism));
     EXPECT_TRUE(mism.empty());
@@ -1520,10 +1530,10 @@ TEST(NetworkProductIoTest, ContractRoundTripBroadcastAnchoredIsbDatum) {
     std::filesystem::remove(path);
 }
 
-// T3b: the ensemble (anchor-free Σ_r z=0) phase-bias datum round-trips through the S
-// contract — the on-disk declaration must carry amb_datum (S-line field 4), not silently
-// default to the pivot-receiver frame, so a consumer knows the emitted bias references the
-// receiver ENSEMBLE (and is not integer-recoverable).
+// The ensemble (anchor-free Σ_r z=0) phase-bias datum round-trips through the S
+// contract.  The on-disk declaration carries amb_datum (S-line field 4) instead of
+// defaulting to the pivot-receiver frame, so a consumer knows the emitted bias
+// references the receiver ensemble and is not integer-recoverable (T3b).
 TEST(NetworkProductIoTest, ContractRoundTripEnsembleAmbDatum) {
     const std::string path = tempFile("gnss_netprod_contract_ensembleamb.txt");
     std::filesystem::remove(path);
@@ -1563,8 +1573,8 @@ TEST(NetworkProductIoTest, ContractRoundTripEnsembleAmbDatum) {
     ASSERT_GE(f.size(), 5u);
     EXPECT_EQ(f[4], "1");
 
-    // checkContract: a consumer declaring the SAME datum passes; one expecting the
-    // legacy pivot datum is flagged — the enum participates in the contract.
+    // checkContract: a consumer declaring the same datum passes; one expecting the
+    // legacy pivot datum is flagged, so the enum participates in the contract.
     std::vector<std::string> mism;
     EXPECT_TRUE(NetworkProductReader::checkContract(parsed, c, &mism));
     SbasisContract pivot = c;
@@ -1576,17 +1586,17 @@ TEST(NetworkProductIoTest, ContractRoundTripEnsembleAmbDatum) {
     std::filesystem::remove(path);
 }
 
-// The AmbDatum enumerators are serialized as BARE POSITIONAL INTEGERS in S-line
+// The AmbDatum enumerators are serialized as bare positional integers in S-line
 // field 4, so their numeric values are wire format, not an implementation detail:
-// reordering the enum silently re-interprets every product ever written (a stored
-// eq34 file would read back as the ensemble datum, and vice versa).  Nothing else
-// pins them — `ContractRoundTripEnsembleAmbDatum` pins 1 and the eq34 consumer suite
-// pins 2, but neither states that the SET is frozen.  Compile-time, so it costs
+// reordering the enum re-interprets every product already written (a stored eq34
+// file would read back as the ensemble datum, and vice versa).
+// `ContractRoundTripEnsembleAmbDatum` pins 1 and the eq34 consumer suite pins 2,
+// but only these asserts pin the whole set.  They are compile-time, so they cost
 // nothing and cannot be skipped.
 //
 // Wire-value contract: 0 = PivotReceiverZeroAmbiguity (legacy single-pivot),
 // 1 = SumToZeroPerReceiver (Fix A ensemble), 2 = SingleReceiverChain (Card 3 eq34).
-// APPEND new realizations; never insert or reorder.
+// Append new realizations; do not insert or reorder.
 static_assert(static_cast<int>(SbasisDeclaration::AmbDatum::PivotReceiverZeroAmbiguity) == 0,
               "AmbDatum wire value 0 is frozen — it is S-line field 4 on every stored product");
 static_assert(static_cast<int>(SbasisDeclaration::AmbDatum::SumToZeroPerReceiver) == 1,
@@ -1594,12 +1604,11 @@ static_assert(static_cast<int>(SbasisDeclaration::AmbDatum::SumToZeroPerReceiver
 static_assert(static_cast<int>(SbasisDeclaration::AmbDatum::SingleReceiverChain) == 2,
               "AmbDatum wire value 2 is frozen — it is S-line field 4 on every stored product");
 
-// The eq34 declaration must survive the wire as value 2.  Companion to
-// ContractRoundTripEnsembleAmbDatum above: that one covers the ensemble datum, this
-// one covers Card 3's, whose PRODUCER-side population was missing entirely until
-// 2026-08-13 (the per-solve decl flipped but the SERIALIZED contract had no eq34
-// branch, so every eq34 product on record declared the legacy pivot datum it was not
-// using — see docs/SPEC_sbasis_realization_contract.md §D).
+// The eq34 declaration survives the wire as value 2.  Companion to
+// ContractRoundTripEnsembleAmbDatum above, which covers the ensemble datum; this
+// test covers the Card 3 datum.  The serialized contract has its own eq34 branch,
+// separate from the per-solve declaration; without it an eq34 product declares the
+// legacy pivot datum it does not use (docs/SPEC_sbasis_realization_contract.md §D).
 TEST(NetworkProductIoTest, ContractRoundTripEq34AmbDatum) {
     const std::string path = tempFile("gnss_netprod_contract_eq34amb.txt");
     std::filesystem::remove(path);
@@ -1626,10 +1635,8 @@ TEST(NetworkProductIoTest, ContractRoundTripEq34AmbDatum) {
     EXPECT_EQ(static_cast<int>(parsed.decl.amb_datum), 2);
     EXPECT_EQ(parsed.decl.eq34_datum_receiver, "POHN00FSM");
 
-    // The self-contradiction the defect produced must be impossible: a product that
-    // carries pdr= (eq34 datum receiver) while declaring the legacy pivot datum.
-    // pdr= is the field a consumer was told to read INSTEAD of amb_datum while the
-    // producer was broken; the two must now agree.
+    // A product must not carry pdr= (eq34 datum receiver) while declaring the
+    // legacy pivot datum: pdr= and amb_datum agree on the S line.
     const std::string content = readAllBytes(path);
     const std::size_t s_pos   = content.find("\nS,");
     ASSERT_NE(s_pos, std::string::npos);
@@ -1645,9 +1652,9 @@ TEST(NetworkProductIoTest, ContractRoundTripEq34AmbDatum) {
     std::filesystem::remove(path);
 }
 
-// T3d: the optional per-phase-bias σ (B1b) round-trips through the P record as a
-// key=value token (sigma=), coexisting with the positional disc field; and a bias with
-// σ=0 emits NO token (byte-identical to the pre-T3d wire).
+// The optional per-phase-bias σ (B1b) round-trips through the P record as a
+// key=value token (sigma=), coexisting with the positional disc field; a bias with
+// σ=0 emits no token, so its line is byte-identical to the wire without σ (T3d).
 TEST(NetworkProductIoTest, PhaseBiasSigmaRoundTrip) {
     const std::string path = tempFile("gnss_netprod_pbsigma.txt");
     std::filesystem::remove(path);
@@ -1660,7 +1667,7 @@ TEST(NetworkProductIoTest, PhaseBiasSigmaRoundTrip) {
     with_sigma.bias_m = -0.7; with_sigma.signal_integer = true;
     with_sigma.wide_lane_integer = 1; with_sigma.sigma_m = 0.012345;
     g.phase_bias["L1C"] = with_sigma;
-    NetworkPhaseBias no_sigma;      // σ == 0 → NO token (OFF-path byte-identity)
+    NetworkPhaseBias no_sigma;      // σ == 0 → no token (off-path byte identity)
     no_sigma.bias_m = 1.5; no_sigma.signal_integer = false; no_sigma.wide_lane_integer = -2;
     g.phase_bias["L2W"] = no_sigma;
     sol.sats.push_back(g);
@@ -1673,7 +1680,7 @@ TEST(NetworkProductIoTest, PhaseBiasSigmaRoundTrip) {
 
     const std::string content = dataBytes(path);   // wire probes: data lines only
     EXPECT_NE(content.find("sigma=0.012345"), std::string::npos);   // armed bias carries it
-    // The σ==0 L2W bias emits no token: exactly one "sigma=" on the wire.
+    // The σ==0 L2W bias emits no token: one "sigma=" on the wire.
     EXPECT_EQ(content.find("sigma=", content.find("sigma=") + 1), std::string::npos);
 
     bool ok = false;
@@ -1691,9 +1698,9 @@ TEST(NetworkProductIoTest, PhaseBiasSigmaRoundTrip) {
     std::filesystem::remove(path);
 }
 
-// M4 (contract v2): the combined-correction σ tokens (P-record sigc=, C-record
-// sigcc=/rho=) survive a write→read round-trip, coexist with the B1b sigma= token
-// on the same P line, and emit NOTHING when their value is 0 (OFF-path byte-identity).
+// The combined-correction σ tokens (P-record sigc=, C-record sigcc=/rho=) survive
+// a write→read round-trip, coexist with the B1b sigma= token on the same P line,
+// and emit nothing when their value is 0 (off-path byte identity).  (M4, contract v2)
 TEST(NetworkProductIoTest, CombinedSigmaRoundTrip) {
     const std::string path = tempFile("gnss_netprod_combsigma.txt");
     std::filesystem::remove(path);
@@ -1729,7 +1736,7 @@ TEST(NetworkProductIoTest, CombinedSigmaRoundTrip) {
     EXPECT_NE(content.find("sigc=0.0026"), std::string::npos);
     EXPECT_NE(content.find("sigcc=0.037"), std::string::npos);
     EXPECT_NE(content.find("rho=0.73"),   std::string::npos);
-    // Exactly one sigc= / sigcc= / rho= (G01 armed; G02 and L2W emit none).
+    // One sigc= / sigcc= / rho= each (G01 armed; G02 and L2W emit none).
     EXPECT_EQ(content.find("sigc=",  content.find("sigc=")  + 1), std::string::npos);
     EXPECT_EQ(content.find("sigcc=", content.find("sigcc=") + 1), std::string::npos);
     EXPECT_EQ(content.find("rho=",   content.find("rho=")   + 1), std::string::npos);
@@ -1754,8 +1761,8 @@ TEST(NetworkProductIoTest, CombinedSigmaRoundTrip) {
     std::filesystem::remove(path);
 }
 
-// M4 (contract v2): the age-scaling coefficient rides the S-line agek= token, only
-// when non-zero, and round-trips through the v2 header contract.
+// The age-scaling coefficient travels in the S-line agek= token, only when
+// non-zero, and round-trips through the v2 header contract (M4, contract v2).
 TEST(NetworkProductIoTest, CombinedSigmaAgekRoundTrip) {
     const std::string path  = tempFile("gnss_netprod_agek.txt");
     const std::string pathz = tempFile("gnss_netprod_agek_zero.txt");
@@ -1786,7 +1793,7 @@ TEST(NetworkProductIoTest, CombinedSigmaAgekRoundTrip) {
     ASSERT_TRUE(parsed.present);
     EXPECT_NEAR(parsed.age_scale_k, 0.0625, 1e-12);
 
-    // agek == 0 ⇒ no token (byte-identity vs a pre-M4 v2 header).
+    // agek == 0 ⇒ no token (byte-identical to a v2 header without M4).
     SbasisContract zero = contract;
     zero.age_scale_k = 0.0;
     {
@@ -1800,13 +1807,13 @@ TEST(NetworkProductIoTest, CombinedSigmaAgekRoundTrip) {
     std::filesystem::remove(pathz);
 }
 
-// Producer datum-stability (Jul 2026): with cbjump=1 in the contract,
-// makeReplayEmitter arms the opt-in CODE-bias magnitude jump test on the replay
-// emitter — a 0.2 m value step (same sat set, same band tuple, no datum change:
-// every structural trigger silent) bumps the replayed store's code-bias
-// discontinuity exactly as it did on the live producer.  The SAME epoch data
-// under a flag-false contract replays with NO bump: the behavior travels in the
-// contract, not the epoch records, so a consumer needs no out-of-band config.
+// With cbjump=1 in the contract, makeReplayEmitter arms the opt-in code-bias
+// magnitude jump test on the replay emitter.  A 0.2 m value step (same satellite
+// set, same band tuple, no datum change, so every structural trigger is silent)
+// bumps the replayed store's code-bias discontinuity as it did on the live
+// producer.  The same epoch data under a flag-false contract replays with no
+// bump: the behaviour travels in the contract, not the epoch records, so a
+// consumer needs no out-of-band config (producer datum stability).
 TEST(NetworkProductIoTest, ReplayEmitterHonoursJumpTestFlag) {
     auto codeEpoch = [](const GnssTime& t, double bias) {
         NetworkSolutionEpoch sol;
@@ -1821,7 +1828,7 @@ TEST(NetworkProductIoTest, ReplayEmitterHonoursJumpTestFlag) {
     // above the 0.05 m threshold and invisible to the structural triggers.
     const double biases[] = {0.10, 0.30};
 
-    // The SAME epoch sequence written under two contracts (flag on / off).
+    // The same epoch sequence written under two contracts (flag on / off).
     auto writeProduct = [&](const std::string& path, const SbasisContract& c) {
         NetworkProductWriter w(path, c);
         ASSERT_TRUE(w.good());
@@ -1847,7 +1854,7 @@ TEST(NetworkProductIoTest, ReplayEmitterHonoursJumpTestFlag) {
     writeProduct(p_on,  con_on);
     writeProduct(p_off, con_off);
 
-    // Live reference: an emitter constructed as the armed producer's — the value
+    // Live reference: an emitter constructed like the armed producer's; the value
     // step bumps the code counter once (0 at first sight, 1 after the jump).
     {
         SsrCorrectionStore    store_live;
@@ -1884,8 +1891,9 @@ TEST(NetworkProductIoTest, ReplayEmitterHonoursJumpTestFlag) {
         EXPECT_EQ(*d, 1);   // the replayed store carries the bump
     }
 
-    // Off file: the SAME records under a flag-false contract -> NO bump on the
-    // emitter or in the store (the counter exists — first sighting — but stays 0).
+    // Off file: the same records under a flag-false contract -> no bump on the
+    // emitter or in the store (the counter exists from the first sighting but
+    // stays 0).
     {
         bool           ok = false;
         SbasisContract parsed;
@@ -1900,17 +1908,17 @@ TEST(NetworkProductIoTest, ReplayEmitterHonoursJumpTestFlag) {
         EXPECT_EQ(emit.codeBiasDiscontinuityCounter("G01", "C1C"), 0);
         const auto d = store.getCodeBiasDiscontinuity("G01", "C1C");
         ASSERT_TRUE(d.has_value());
-        EXPECT_EQ(*d, 0);   // steady counter — no discontinuity signalled
+        EXPECT_EQ(*d, 0);   // steady counter: no discontinuity signalled
     }
 
     std::filesystem::remove(p_on);
     std::filesystem::remove(p_off);
 }
 
-// RTA-3: the optional solution-generation id round-trips as an I record, reaches
-// the replayed store's epoch surface, and is deterministic across replays of the
-// same file (the id comes out of the file, not out of process state).  A file
-// written without it carries NO I record — byte-identical to pre-RTA-3.
+// The optional solution-generation id round-trips as an I record, reaches the
+// replayed store's epoch surface, and is deterministic across replays of the same
+// file (the id comes from the file, not from process state).  A file written
+// without it carries no I record, so its format is unchanged (RTA-3).
 TEST(NetworkProductIoTest, GenerationIdRoundTripsAndReplaysDeterministically) {
     const std::string path = tempFile("gnss_netprod_genid.txt");
     std::filesystem::remove(path);
@@ -1946,7 +1954,7 @@ TEST(NetworkProductIoTest, GenerationIdRoundTripsAndReplaysDeterministically) {
         EXPECT_EQ(*store.getGenerationId(), kGid) << "pass " << pass;
     }
 
-    // Byte-level: exactly one I line per stamped epoch.
+    // Byte level: one I line per stamped epoch.
     std::string content;
     {
         std::ifstream in(path);
@@ -1958,7 +1966,7 @@ TEST(NetworkProductIoTest, GenerationIdRoundTripsAndReplaysDeterministically) {
     EXPECT_EQ(count, 2u);
     std::filesystem::remove(path);
 
-    // OFF path: an unstamped run writes NO I record (byte-identical format).
+    // Off path: an unstamped run writes no I record (byte-identical format).
     const std::string off = tempFile("gnss_netprod_genid_off.txt");
     std::filesystem::remove(off);
     { NetworkProductWriter w(off); ASSERT_TRUE(w.good()); w.write(makeEpoch(kT0, -0.7)); }
@@ -1976,11 +1984,11 @@ TEST(NetworkProductIoTest, GenerationIdRoundTripsAndReplaysDeterministically) {
     std::filesystem::remove(off);
 }
 
-// RTA-4: with serialize_disc_counters armed, the writer appends the POST-EMIT
-// counter values queried from the same emitter that just pushed the epoch — so
-// per epoch they are IDENTICAL to what the live store received — the reader
-// parses them back, a full-file replay recompute agrees with them (self-check
-// silent, no adoption), and the replayed store round-trips byte-for-byte.
+// With serialize_disc_counters armed, the writer appends the post-emit counter
+// values queried from the emitter that just pushed the epoch, so per epoch they
+// equal what the live store received.  The reader parses them back, a full-file
+// replay recompute agrees with them (self-check silent, no adoption), and the
+// replayed store round-trips byte-for-byte (RTA-4).
 TEST(NetworkProductIoTest, SerializedDiscCountersMatchStoreAndReplay) {
     const std::string path = tempFile("gnss_netprod_disc_vals.txt");
     std::filesystem::remove(path);
@@ -2001,7 +2009,7 @@ TEST(NetworkProductIoTest, SerializedDiscCountersMatchStoreAndReplay) {
             const NetworkSolutionEpoch sol = makeEpoch(t, s.pb01);
             if (s.dc) emit_live.markDatumChange();
             emit_live.emitToStore(sol, store_live);
-            w.write(sol, s.dc, {}, {}, &emit_live);   // RTA-4: counters post-emit
+            w.write(sol, s.dc, {}, {}, &emit_live);   // counters post-emit (RTA-4)
             live_phase_ctr.push_back(emit_live.discontinuityCounter("G01", "L1C"));
             t.tow += 30.0;
         }
@@ -2019,7 +2027,7 @@ TEST(NetworkProductIoTest, SerializedDiscCountersMatchStoreAndReplay) {
         EXPECT_EQ(recs[i].serialized_disc.phase.at("G01|L1C"), live_phase_ctr[i])
             << "epoch " << i;
     }
-    // ...and the FINAL epoch's serialized values equal the live STORE record
+    // ...and the final epoch's serialized values equal the live store record
     // values on all three channels (the emitToStore == wire equivalence).
     const auto& last = recs.back().serialized_disc;
     ASSERT_TRUE(store_live.getPhaseBias("G01", "L1C").has_value());
@@ -2050,10 +2058,10 @@ TEST(NetworkProductIoTest, SerializedDiscCountersMatchStoreAndReplay) {
     std::filesystem::remove(path);
 }
 
-// RTA-4: a TAIL reader (joins mid-file) recomputes 0 from a first sighting, but
-// the serialized values carry the producer's truth — replay detects the
-// disagreement, ADOPTS the file's values, and the reconstructed store records
-// carry them without a from-epoch-1 replay.
+// A tail reader (joining mid-file) recomputes 0 from a first sighting, while the
+// serialized values carry the producer's counters.  Replay detects the
+// disagreement and adopts the file's values, and the reconstructed store records
+// carry them without a replay from epoch 1 (RTA-4).
 TEST(NetworkProductIoTest, SerializedDiscCountersAdoptedOnTailJoin) {
     const std::string path = tempFile("gnss_netprod_disc_tail.txt");
     std::filesystem::remove(path);
@@ -2080,7 +2088,7 @@ TEST(NetworkProductIoTest, SerializedDiscCountersAdoptedOnTailJoin) {
     ASSERT_TRUE(ok);
     ASSERT_EQ(recs.size(), 3u);
 
-    // Tail join: replay ONLY the last record with a fresh emitter.  The recompute
+    // Tail join: replay only the last record with a fresh emitter.  The recompute
     // sees a first sighting (0 everywhere); adoption installs the file's values.
     SsrCorrectionStore    store_tail;
     NetworkProductEmitter emit_tail(0.05, /*emit_clock_disc=*/true);
@@ -2096,8 +2104,8 @@ TEST(NetworkProductIoTest, SerializedDiscCountersAdoptedOnTailJoin) {
     EXPECT_EQ(store_tail.getPhaseBias("G01", "L1C")->discontinuity_counter,
               store_live.getPhaseBias("G01", "L1C")->discontinuity_counter);
 
-    // OFF path: a file written WITHOUT the counters (disc_source null) keeps the
-    // old field counts — no serialized_disc content parses back.
+    // Off path: a file written without the counters (disc_source null) keeps the
+    // field counts without them, and no serialized_disc content parses back.
     const std::string off = tempFile("gnss_netprod_disc_off.txt");
     std::filesystem::remove(off);
     { NetworkProductWriter w(off); ASSERT_TRUE(w.good()); w.write(makeEpoch(kT0, -0.7)); }
@@ -2111,12 +2119,12 @@ TEST(NetworkProductIoTest, SerializedDiscCountersAdoptedOnTailJoin) {
     std::filesystem::remove(path);
 }
 
-// RTA-5: repeated S lines are accepted positionally — each receipt updates the
-// reader's current contract state (contract_out ends as the LAST one), is
-// surfaced per epoch via contract_refresh so a consumer can run checkContract on
-// EVERY receipt, and never feeds the replay emitter (replay of the same epochs
-// with and without the re-broadcast is identical).  The RTA-3 gid= trailing
-// field round-trips through the S grammar.
+// Repeated S lines are accepted positionally (RTA-5).  Each receipt updates the
+// reader's current contract state (contract_out ends as the last one), is
+// surfaced per epoch through contract_refresh so a consumer can run
+// checkContract on every receipt, and never feeds the replay emitter (replay of
+// the same epochs with and without the re-broadcast is identical).  The RTA-3
+// gid= trailing field round-trips through the S grammar.
 TEST(NetworkProductIoTest, RepeatedSLinesUpdateContractPositionally) {
     const std::string path = tempFile("gnss_netprod_srebroadcast.txt");
     const std::string twin = tempFile("gnss_netprod_srebroadcast_twin.txt");
@@ -2128,7 +2136,7 @@ TEST(NetworkProductIoTest, RepeatedSLinesUpdateContractPositionally) {
     a.decl.clock_pivot_sat["G"]  = "G05";
     a.disc_threshold_m           = 0.05;
     a.emit_clock_disc            = true;
-    a.generation_id              = 777u;   // RTA-3 gid= travels in the S line
+    a.generation_id              = 777u;   // gid= travels in the S line (RTA-3)
     a.present                    = true;
 
     SbasisContract b = a;
@@ -2139,7 +2147,7 @@ TEST(NetworkProductIoTest, RepeatedSLinesUpdateContractPositionally) {
         NetworkProductWriter w(path, a);
         ASSERT_TRUE(w.good());
         w.write(makeEpoch(kT0, -0.7));
-        w.writeContract(b);                 // RTA-5 mid-file re-broadcast
+        w.writeContract(b);                 // mid-file re-broadcast (RTA-5)
         w.write(makeEpoch(t2, -0.7));
     }
     {   // Twin without the re-broadcast: replay must be byte-identical to it.
@@ -2154,7 +2162,7 @@ TEST(NetworkProductIoTest, RepeatedSLinesUpdateContractPositionally) {
     const auto recs = NetworkProductReader::read(path, &parsed, &ok);
     ASSERT_TRUE(ok);
     ASSERT_EQ(recs.size(), 2u);
-    // Reader's final contract state is the LAST S line.
+    // Reader's final contract state is the last S line.
     ASSERT_TRUE(parsed.present);
     EXPECT_EQ(parsed.decl.clock_pivot_sat.at("G"), "G07");
     EXPECT_EQ(parsed.generation_id, 777u);
@@ -2164,7 +2172,7 @@ TEST(NetworkProductIoTest, RepeatedSLinesUpdateContractPositionally) {
     ASSERT_TRUE(recs[1].contract_refresh.present);
     EXPECT_EQ(recs[1].contract_refresh.decl.clock_pivot_sat.at("G"), "G07");
     // Per-receipt checkContract with a pivot-less expectation (pivots evolve;
-    // convention fields + the run's single generation id are run-constant).
+    // convention fields and the run's single generation id are run-constant).
     SbasisContract expect = a;
     expect.decl.clock_pivot_sat.clear();
     for (const auto& r : recs) {
@@ -2193,10 +2201,10 @@ TEST(NetworkProductIoTest, RepeatedSLinesUpdateContractPositionally) {
     std::filesystem::remove(twin);
 }
 
-// RTA-11: the staleness horizon travels in the contract (stale= field), so
+// The staleness horizon travels in the contract (stale= field), so
 // makeReplayEmitter reproduces the horizon-armed counters from the file alone; a
-// default contract (horizon 0) replays with the legacy keep-forever baseline —
-// and checkContract flags the construction divergence.
+// default contract (horizon 0) replays with the legacy keep-forever baseline,
+// and checkContract flags the construction divergence (RTA-11).
 TEST(NetworkProductIoTest, StalenessHorizonTravelsInContract) {
     const std::string path = tempFile("gnss_netprod_stale.txt");
     std::filesystem::remove(path);
@@ -2205,7 +2213,7 @@ TEST(NetworkProductIoTest, StalenessHorizonTravelsInContract) {
     c.decl.reference_receiver_id = "CIT100USA";
     c.disc_threshold_m           = 0.05;
     c.emit_clock_disc            = true;
-    c.staleness_horizon_s        = 100.0;   // RTA-11 replay-emitter parameter
+    c.staleness_horizon_s        = 100.0;   // replay-emitter parameter (RTA-11)
     c.present                    = true;
 
     // e1, then a 200 s (> horizon) gap into e2 whose phase bias moved by ~4.9 m:
@@ -2250,8 +2258,8 @@ TEST(NetworkProductIoTest, StalenessHorizonTravelsInContract) {
     EXPECT_FALSE(NetworkProductReader::checkContract(parsed, other, &mism));
     EXPECT_FALSE(mism.empty());
 
-    // Control: a default (horizon-0) emitter replaying the same records mints the
-    // legacy spurious bump — the divergence the contract field exists to prevent.
+    // Control: a default (horizon-0) emitter replaying the same records produces
+    // the legacy spurious bump, the divergence the contract field prevents.
     SsrCorrectionStore    store_v1;
     NetworkProductEmitter emit_v1(c.disc_threshold_m, c.emit_clock_disc);
     for (const auto& r : recs) NetworkProductReader::replay(r, store_v1, emit_v1);
@@ -2260,10 +2268,10 @@ TEST(NetworkProductIoTest, StalenessHorizonTravelsInContract) {
     std::filesystem::remove(path);
 }
 
-// RTA-12: the contract identity fields (frame=/cepoch=/atx=/oref=) round-trip
-// through the S grammar — v2 header AND RTA-5 mid-file re-broadcast (shared
-// writeSLine_) — and are ABSENT from the S line when empty, so a producer that
-// declares none of them writes a byte-identical pre-RTA-12 header.
+// The contract identity fields (frame=/cepoch=/atx=/oref=) round-trip through
+// the S grammar, in the v2 header and in the RTA-5 mid-file re-broadcast (shared
+// writeSLine_), and are absent from the S line when empty, so a producer that
+// declares none of them writes the header unchanged byte-for-byte (RTA-12).
 TEST(NetworkProductIoTest, IdentityFieldsTravelInContractAndAreOptional) {
     const std::string path = tempFile("gnss_netprod_identity.txt");
     std::filesystem::remove(path);
@@ -2273,7 +2281,7 @@ TEST(NetworkProductIoTest, IdentityFieldsTravelInContractAndAreOptional) {
     c.decl.clock_pivot_sat["G"]  = "G05";
     c.disc_threshold_m           = 0.05;
     c.emit_clock_disc            = true;
-    c.frame_id                   = "IGS20";      // RTA-12 identity fields
+    c.frame_id                   = "IGS20";      // identity fields (RTA-12)
     c.coord_epoch                = "2024.5";
     c.atx_id                     = "igs20.atx";
     c.orbit_ref                  = "CoM";
@@ -2284,7 +2292,7 @@ TEST(NetworkProductIoTest, IdentityFieldsTravelInContractAndAreOptional) {
         NetworkProductWriter w(path, c);
         ASSERT_TRUE(w.good());
         w.write(makeEpoch(kT0, -0.7));
-        w.writeContract(c);              // RTA-5 re-broadcast, same grammar
+        w.writeContract(c);              // re-broadcast, same grammar (RTA-5)
         w.write(makeEpoch(t2, -0.7));
     }
 
@@ -2307,8 +2315,8 @@ TEST(NetworkProductIoTest, IdentityFieldsTravelInContractAndAreOptional) {
     std::filesystem::remove(path);
 
     // Absent-when-empty: a contract with no identity declarations writes an S
-    // line without any of the four tokens — byte-identical to pre-RTA-12
-    // (the gid=/stale= optionality pattern).
+    // line without any of the four tokens, byte-identical to the format without
+    // RTA-12 (the gid=/stale= optionality pattern).
     const std::string off = tempFile("gnss_netprod_identity_off.txt");
     std::filesystem::remove(off);
     SbasisContract bare = c;
@@ -2338,11 +2346,11 @@ TEST(NetworkProductIoTest, IdentityFieldsTravelInContractAndAreOptional) {
     std::filesystem::remove(off);
 }
 
-// RTA-12: checkContract compares each identity field ONLY when the consumer
-// expectation declares it non-empty (the apriori_product_id semantics) —
-// undeclared always passes (including against a bare pre-RTA-12 file), a
-// declared match passes, and each declared mismatch fails with a per-field
-// message.
+// checkContract compares each identity field only when the consumer expectation
+// declares it non-empty (the apriori_product_id semantics): an undeclared field
+// always passes (also against a file without identity fields), a declared match
+// passes, and each declared mismatch fails with a per-field message.  A declared
+// field against a file that does not carry it is a mismatch (RTA-12).
 TEST(NetworkProductIoTest, IdentityFieldsCheckedOnlyWhenDeclared) {
     SbasisContract file;
     file.decl.reference_receiver_id = "CIT100USA";
@@ -2369,7 +2377,7 @@ TEST(NetworkProductIoTest, IdentityFieldsCheckedOnlyWhenDeclared) {
     EXPECT_TRUE(NetworkProductReader::checkContract(file, file, &mism));
     EXPECT_TRUE(mism.empty());
 
-    // Declared mismatch, one field at a time: exactly one message, naming the field.
+    // Declared mismatch, one field at a time: one message, naming the field.
     const struct { std::string SbasisContract::* member; const char* tag; } cases[] = {
         { &SbasisContract::frame_id,    "frame_id"    },
         { &SbasisContract::coord_epoch, "coord_epoch" },
@@ -2385,8 +2393,8 @@ TEST(NetworkProductIoTest, IdentityFieldsCheckedOnlyWhenDeclared) {
         EXPECT_NE(mism[0].find(cse.tag), std::string::npos) << mism[0];
     }
 
-    // Declared against a file that DOESN'T carry the field (pre-RTA-12 producer):
-    // the pin mismatches loudly instead of silently passing.
+    // Declared against a file that does not carry the field (a producer without
+    // RTA-12): the pin reports a mismatch instead of passing.
     SbasisContract bare_file = file;
     bare_file.atx_id.clear();
     SbasisContract pin = undeclared;
@@ -2397,10 +2405,10 @@ TEST(NetworkProductIoTest, IdentityFieldsCheckedOnlyWhenDeclared) {
     EXPECT_NE(mism[0].find("atx_id"), std::string::npos);
 }
 
-// RTA-6(a): flush() makes the just-written epoch visible on disk while the
-// writer is still open (the property a live tail depends on), and a flushed
-// run's final bytes are IDENTICAL to an unflushed twin — flushing changes no
-// bytes, only when they reach disk.
+// flush() makes the just-written epoch visible on disk while the writer is still
+// open (the property a live tail depends on), and a flushed run's final bytes
+// equal those of an unflushed twin: flushing changes when bytes reach disk, not
+// the bytes (RTA-6(a)).
 TEST(NetworkProductIoTest, WriterFlushPerEpochChangesNoBytes) {
     const std::string a = tempFile("gnss_netprod_flush_a.txt");
     const std::string b = tempFile("gnss_netprod_flush_b.txt");
@@ -2413,7 +2421,7 @@ TEST(NetworkProductIoTest, WriterFlushPerEpochChangesNoBytes) {
         ASSERT_TRUE(w.good());
         w.write(makeEpoch(kT0, -0.7));
         w.flush();
-        // Visible NOW, writer still open — a live tail can read the epoch block.
+        // Visible now, with the writer still open: a live tail can read the epoch block.
         const std::string visible = readAllBytes(a);
         EXPECT_NE(visible.find("\nE,"), std::string::npos);
         w.write(makeEpoch(t2, -0.7));
@@ -2431,9 +2439,9 @@ TEST(NetworkProductIoTest, WriterFlushPerEpochChangesNoBytes) {
     std::filesystem::remove(b);
 }
 
-// RTA-6(b): the tail consumes a growing file incrementally — complete lines
-// only (a torn line is buffered until its newline arrives), an epoch completes
-// when the NEXT epoch's E line lands, and every epoch is delivered exactly once.
+// The tail consumes a growing file incrementally: complete lines only (a torn
+// line is buffered until its newline arrives), an epoch completes when the next
+// epoch's E line lands, and every epoch is delivered exactly once (RTA-6(b)).
 TEST(NetworkProductTailTest, DeliversEpochsIncrementallyExactlyOnce) {
     const std::string scratch = tempFile("gnss_netprod_tail_scratch.txt");
     const std::string path    = tempFile("gnss_netprod_tail_live.txt");
@@ -2452,7 +2460,7 @@ TEST(NetworkProductTailTest, DeliversEpochsIncrementallyExactlyOnce) {
     }
     const std::string content = readAllBytes(scratch);
 
-    // Locate the DATA E lines (line-initial "E,"; every header/legend line
+    // Locate the data E lines (line-initial "E,"; every header/legend line
     // starts with '#', so it cannot false-match).
     std::vector<std::size_t> e_pos;
     for (std::size_t p = content.find("\nE,"); p != std::string::npos;
@@ -2461,17 +2469,17 @@ TEST(NetworkProductTailTest, DeliversEpochsIncrementallyExactlyOnce) {
     ASSERT_EQ(e_pos.size(), 4u);
 
     NetworkProductTail tail(path);
-    EXPECT_TRUE(tail.poll().empty());   // file does not exist yet — quiet no-op
+    EXPECT_TRUE(tail.poll().empty());   // file does not exist yet: quiet no-op
 
-    // Chunk 1: header + all of epoch 1 + a PARTIAL epoch-2 E line ("E,23...").
-    // Epoch 1 is not yet complete (its terminator hasn't fully arrived) and the
-    // torn line must be buffered, never parsed.
+    // Chunk 1: header, all of epoch 1, and a partial epoch-2 E line ("E,23...").
+    // Epoch 1 is not yet complete (its terminating E line has not fully arrived)
+    // and the torn line is buffered, not parsed.
     appendBytes(path, content.substr(0, e_pos[1] + 4));
     EXPECT_TRUE(tail.poll().empty());
     EXPECT_TRUE(tail.healthy());
 
-    // Chunk 2: the rest of epoch 2's E line + epoch 2's body.  The completed E
-    // line terminates epoch 1 — delivered exactly once, with full fidelity.
+    // Chunk 2: the rest of epoch 2's E line and epoch 2's body.  The completed E
+    // line terminates epoch 1, which is delivered once with every field intact.
     appendBytes(path, content.substr(e_pos[1] + 4, e_pos[2] - (e_pos[1] + 4)));
     {
         const auto recs = tail.poll();
@@ -2483,7 +2491,7 @@ TEST(NetworkProductTailTest, DeliversEpochsIncrementallyExactlyOnce) {
         EXPECT_DOUBLE_EQ(recs[0].epoch.sats[0].phase_bias.at("L1C").bias_m, -0.7);
     }
 
-    // Chunk 3: epochs 3 and 4 in one burst — epochs 2 and 3 complete; epoch 4
+    // Chunk 3: epochs 3 and 4 in one burst.  Epochs 2 and 3 complete; epoch 4
     // stays pending until a successor E line arrives (live-tail semantics).
     appendBytes(path, content.substr(e_pos[2]));
     {
@@ -2500,11 +2508,11 @@ TEST(NetworkProductTailTest, DeliversEpochsIncrementallyExactlyOnce) {
     std::filesystem::remove(path);
 }
 
-// RTA-6(b) mid-file join: a tail that starts at the CURRENT end of file (missed
-// the v2 header + earlier epochs) must (i) pick up the contract from the NEXT
-// S line (RTA-5 re-broadcast), (ii) adopt discontinuity-counter VALUES from the
-// wire (RTA-4, serialize_disc_counters) instead of replaying from the start,
-// and (iii) surface the RTA-3 generation id per epoch.
+// Mid-file join (RTA-6(b)): a tail that starts at the current end of file, having
+// missed the v2 header and earlier epochs, (i) picks up the contract from the
+// next S line (RTA-5 re-broadcast), (ii) adopts discontinuity-counter values from
+// the wire (RTA-4, serialize_disc_counters) instead of replaying from the start,
+// and (iii) surfaces the RTA-3 generation id per epoch.
 TEST(NetworkProductTailTest, MidFileJoinAdoptsCountersAndPicksUpContract) {
     const std::string path = tempFile("gnss_netprod_tail_join.txt");
     std::filesystem::remove(path);
@@ -2527,17 +2535,17 @@ TEST(NetworkProductTailTest, MidFileJoinAdoptsCountersAndPicksUpContract) {
     ASSERT_TRUE(w->good());
     auto produce = [&](const Step& s) {
         NetworkSolutionEpoch sol = makeEpoch(t, s.pb01);
-        sol.generation_id = 777u;                       // RTA-3 id on every epoch
+        sol.generation_id = 777u;                       // id on every epoch (RTA-3)
         if (s.dc) emit_live.markDatumChange();
         emit_live.emitToStore(sol, store_live);
-        w->write(sol, s.dc, {}, {}, &emit_live);        // RTA-4 counters on the wire
+        w->write(sol, s.dc, {}, {}, &emit_live);        // counters on the wire (RTA-4)
         t.tow += 30.0;
     };
     produce({-0.70, false});
     produce({-0.71, true});
     w->flush();   // pre-join content on disk
 
-    // Consumer (re)start: join at the current end — header S + epochs 1-2 unseen.
+    // Consumer (re)start: join at the current end; header S and epochs 1-2 unseen.
     NetworkProductTail tail(path, /*start_at_end=*/true);
     SsrCorrectionStore store_tail;
     EXPECT_TRUE(tail.pollInto(store_tail).empty());
@@ -2551,7 +2559,7 @@ TEST(NetworkProductTailTest, MidFileJoinAdoptsCountersAndPicksUpContract) {
 
     const auto recs = tail.pollInto(store_tail);
     ASSERT_EQ(recs.size(), 1u);            // epoch 3 (epoch 4 pending)
-    // (i) contract from the NEXT S line, stamped on the joined epoch too.
+    // (i) contract from the next S line, stamped on the joined epoch too.
     ASSERT_TRUE(tail.contract().present);
     EXPECT_EQ(tail.contract().decl.reference_receiver_id, "CIT100USA");
     EXPECT_EQ(tail.contract().generation_id, 777u);
@@ -2559,8 +2567,8 @@ TEST(NetworkProductTailTest, MidFileJoinAdoptsCountersAndPicksUpContract) {
     ASSERT_TRUE(recs[0].contract_refresh.present);
     // (iii) generation id surfaces per epoch.
     EXPECT_EQ(recs[0].epoch.generation_id, 777u);
-    // (ii) adopted counter VALUES: a fresh tail emitter recomputes 0 (first
-    // sighting), but the wire carries the producer's post-emit truth.
+    // (ii) adopted counter values: a fresh tail emitter recomputes 0 (first
+    // sighting), but the wire carries the producer's post-emit values.
     ASSERT_TRUE(store_tail.getPhaseBias("G01", "L1C").has_value());
     EXPECT_EQ(store_tail.getPhaseBias("G01", "L1C")->discontinuity_counter, 2);
     EXPECT_EQ(store_tail.getPhaseBias("G01", "L1C")->discontinuity_counter,
@@ -2572,13 +2580,13 @@ TEST(NetworkProductTailTest, MidFileJoinAdoptsCountersAndPicksUpContract) {
     EXPECT_EQ(tail.epochsDelivered(), 1u);
     EXPECT_TRUE(tail.healthy());
 
-    w.reset();   // close before remove — Windows locks an open file
+    w.reset();   // close before remove: Windows locks an open file
     std::filesystem::remove(path);
 }
 
-// RTA-6(b) truncation/rotation: a file-size SHRINK (producer restart truncated
-// the file) makes the tail warn, reopen from the start with fresh parse state,
-// and deliver the NEW run's epochs.
+// Truncation/rotation (RTA-6(b)): a file-size shrink (a producer restart
+// truncated the file) makes the tail warn, reopen from the start with fresh parse
+// state, and deliver the new run's epochs.
 TEST(NetworkProductTailTest, TruncationReopensFromStart) {
     const std::string path = tempFile("gnss_netprod_tail_rot.txt");
     std::filesystem::remove(path);
@@ -2593,7 +2601,7 @@ TEST(NetworkProductTailTest, TruncationReopensFromStart) {
     SsrCorrectionStore store;
     EXPECT_EQ(tail.pollInto(store).size(), 3u);   // epochs 1-3 (epoch 4 pending)
 
-    {   // Producer restart: NetworkProductWriter truncates and writes a SHORTER run.
+    {   // Producer restart: NetworkProductWriter truncates and writes a shorter run.
         NetworkProductWriter w(path);
         ASSERT_TRUE(w.good());
         GnssTime t = kT0; t.tow += 7200.0;
@@ -2619,8 +2627,8 @@ TEST(NetworkProductIoTest, MissingFileReportsNotOk) {
 }
 
 // ---------------------------------------------------------------------------
-// RTA-10: product-level epoch-status heartbeat (H record,
-// network.emit_epoch_status_record).
+// Product-level epoch-status heartbeat (H record,
+// network.emit_epoch_status_record; RTA-10).
 // ---------------------------------------------------------------------------
 
 namespace {
@@ -2636,7 +2644,7 @@ NetworkProducerStatus makeStatus(const GnssTime& t, NetworkProducerStatus::State
     return st;
 }
 /// Count line-initial occurrences of "H," in @p content (all data lines are
-/// newline-preceded — the file starts with a '#' banner line).
+/// newline-preceded, because the file starts with a '#' banner line).
 std::size_t countHLines(const std::string& content) {
     std::size_t n = 0;
     for (std::size_t p = content.find("\nH,"); p != std::string::npos;
@@ -2646,12 +2654,12 @@ std::size_t countHLines(const std::string& content) {
 }
 } // namespace
 
-// The armed writer emits exactly one H per epoch with the documented grammar; an
-// emitted epoch's own H (matching week/tow, written right before its E line)
-// attaches to that epoch's record, while a fully WITHHELD epoch is an H with NO
-// E line that attaches to nothing.  The un-asked writer emits no H at all, and
-// stripping the H lines from the armed file reproduces the OFF file's bytes
-// EXACTLY — the H record is purely additive.
+// The armed writer emits one H per epoch with the documented grammar.  An emitted
+// epoch's own H (matching week/tow, written right before its E line) attaches to
+// that epoch's record, while a fully withheld epoch is an H with no E line that
+// attaches to nothing.  A writer not asked for the heartbeat emits no H, and
+// stripping the H lines from the armed file reproduces the off file's bytes
+// exactly, so the H record is purely additive.
 TEST(NetworkProductIoTest, EpochStatusHeartbeatRoundTripsAndIsPurelyAdditive) {
     const std::string path = tempFile("gnss_netprod_hbeat.txt");
     const std::string twin = tempFile("gnss_netprod_hbeat_twin.txt");
@@ -2673,7 +2681,7 @@ TEST(NetworkProductIoTest, EpochStatusHeartbeatRoundTripsAndIsPurelyAdditive) {
         w.writeEpochStatus(h3);
         w.write(makeEpoch(t3, -0.7));
     }
-    {   // OFF twin: identical epochs, heartbeat never requested.
+    {   // Off twin: identical epochs, heartbeat never requested.
         NetworkProductWriter w(twin);
         ASSERT_TRUE(w.good());
         w.write(makeEpoch(kT0, -0.7));
@@ -2682,7 +2690,7 @@ TEST(NetworkProductIoTest, EpochStatusHeartbeatRoundTripsAndIsPurelyAdditive) {
 
     bool ok = false;
     const auto recs = NetworkProductReader::read(path, &ok);
-    ASSERT_TRUE(ok);                        // H is a KNOWN tag (parse added with the writer)
+    ASSERT_TRUE(ok);                        // H is a known tag (the reader parses it)
     ASSERT_EQ(recs.size(), 2u);             // the withheld H creates no record
 
     ASSERT_TRUE(recs[0].epoch_status.has_value());
@@ -2698,8 +2706,8 @@ TEST(NetworkProductIoTest, EpochStatusHeartbeatRoundTripsAndIsPurelyAdditive) {
     EXPECT_EQ(recs[1].epoch_status->withheld, "C;R");
     EXPECT_DOUBLE_EQ(recs[1].epoch_status->time.tow, t3.tow);
 
-    // Byte level: exactly three H lines when armed, zero when not — and the armed
-    // file minus its H lines IS the OFF file, byte for byte (purely additive).
+    // Byte level: three H lines when armed, zero when not, and the armed file
+    // minus its H lines is the off file, byte for byte (purely additive).
     const std::string armed = readAllBytes(path);
     const std::string off   = readAllBytes(twin);
     EXPECT_EQ(countHLines(armed), 3u);
@@ -2776,10 +2784,10 @@ TEST(NetworkProductIoTest, EpochStatusReplayMatchesTwinWithoutHLines) {
     std::filesystem::remove(twin);
 }
 
-// The tail surfaces the LATEST heartbeat — including a fully withheld epoch's
-// standalone H, which completes no record — and an H line terminates the epoch
-// under assembly (bounding the live latency of the preceding emitted epoch
-// across a withheld stretch).  Store surface: setProducerStatus/getProducerStatus
+// The tail surfaces the latest heartbeat, including a fully withheld epoch's
+// standalone H, which completes no record.  An H line terminates the epoch under
+// assembly, which bounds the live latency of the preceding emitted epoch across a
+// withheld stretch.  Store surface: setProducerStatus/getProducerStatus
 // round-trips what the runRealTime wiring pushes.
 TEST(NetworkProductTailTest, HeartbeatSurfacesLatestStatusAcrossWithheldEpochs) {
     const std::string scratch = tempFile("gnss_netprod_hbeat_tail_scratch.txt");
@@ -2793,7 +2801,7 @@ TEST(NetworkProductTailTest, HeartbeatSurfacesLatestStatusAcrossWithheldEpochs) 
     const auto h2 = makeStatus(t2, NetworkProducerStatus::State::WithheldSigma0, 12.5, 0, "*");
     const auto h3 = makeStatus(t3, NetworkProducerStatus::State::Partial, 4.2, 2, "C");
 
-    // Capture the pieces so they can be re-served incrementally: the header +
+    // Capture the pieces so they can be re-served incrementally: the header and
     // first block, then the standalone withheld H, then the next block.
     std::string part1, part2, part3;
     {
@@ -2863,7 +2871,7 @@ TEST(NetworkProductTailTest, HeartbeatSurfacesLatestStatusAcrossWithheldEpochs) 
 }
 
 // ===========================================================================
-// P1: size-based service-CSV rotation (logging/CsvRotator) — the helper the
+// Size-based service-CSV rotation (logging/CsvRotator, P1): the helper the
 // network producer's epoch loop applies to network_trace.csv /
 // network_solution.csv / network_service_health.csv.
 // ===========================================================================
@@ -2899,8 +2907,9 @@ std::vector<std::string> dataRows(const std::filesystem::path& p, const std::str
 
 }  // namespace
 
-// Threshold 0 (the default) is a strict no-op: nothing rotated, no suffix file
-// created, the stream keeps appending — the rotation-OFF run stays byte-identical.
+// Threshold 0 (the default) is a strict no-op: nothing is rotated, no suffix file
+// is created, and the stream keeps appending, so a run with rotation off stays
+// byte-identical.
 TEST(CsvRotatorTest, OffThresholdIsStrictNoOp) {
     namespace fs = std::filesystem;
     const fs::path dir  = rotatorScratchDir("gnss_csv_rot_off");
@@ -2952,7 +2961,7 @@ TEST(CsvRotatorTest, RolloverShiftsChainRewritesHeaderAndDeletesOldest) {
 
     EXPECT_GE(rotations, 3);   // rolled repeatedly, not just once
 
-    // Chain shape: live + .1 + .2 exist; .3 must NOT (keep=2 caps the chain).
+    // Chain shape: live, .1 and .2 exist; .3 does not (keep=2 caps the chain).
     const fs::path g1(live.string() + ".1"), g2(live.string() + ".2"),
                    g3(live.string() + ".3");
     EXPECT_TRUE(fs::exists(live));
@@ -2960,15 +2969,15 @@ TEST(CsvRotatorTest, RolloverShiftsChainRewritesHeaderAndDeletesOldest) {
     ASSERT_TRUE(fs::exists(g2));
     EXPECT_FALSE(fs::exists(g3));
 
-    // Header re-write + chain order: dataRows checks each generation's header;
-    // oldest-first concatenation (.2, .1, live) must be strictly consecutive
-    // row indices — rows are neither lost nor duplicated across a roll (only
+    // Header re-write and chain order: dataRows checks each generation's header;
+    // the oldest-first concatenation (.2, .1, live) has strictly consecutive row
+    // indices, so rows are neither lost nor duplicated across a roll (only
     // generations older than .keep are dropped).
     std::vector<std::string> all;
     for (const fs::path& p : {g2, g1, live}) {
         const auto rows = dataRows(p, header);   // also asserts the header of every generation
-        // Rolled generations are always full; the LIVE file may legitimately hold
-        // only its header when the very last row triggered the roll.
+        // Rolled generations are always non-empty; the live file may hold only its
+        // header when the last row triggered the roll.
         if (p != live) EXPECT_FALSE(rows.empty()) << p.string();
         all.insert(all.end(), rows.begin(), rows.end());
     }
@@ -3021,10 +3030,10 @@ TEST(CsvRotatorTest, RotateCsvSuffixesSparseChainAndKeepClamp) {
     fs::remove_all(dir, ec);
 }
 
-// m4: the staged-rename order (live -> .rotating, then shift, then .rotating ->
-// .1) must leave no ".rotating" scratch behind on success, clear a stale scratch
-// from a crashed prior roll (step 1) rather than colliding with it, and preserve
-// the live file's rows across the roll.
+// The staged-rename order (live -> .rotating, then shift, then .rotating -> .1)
+// leaves no ".rotating" scratch behind on success, clears a stale scratch from a
+// crashed prior roll (step 1) instead of colliding with it, and preserves the
+// live file's rows across the roll (m4).
 TEST(CsvRotatorTest, RotateCsvSuffixesStagingCleansScratchAndPreservesData) {
     namespace fs = std::filesystem;
     const fs::path dir  = rotatorScratchDir("gnss_csv_rot_stage");
@@ -3056,11 +3065,11 @@ TEST(CsvRotatorTest, RotateCsvSuffixesStagingCleansScratchAndPreservesData) {
 }
 
 // =============================================================================
-// RTB-7: NetworkStateSnapshot — serialize/parse round-trip, atomic write,
+// NetworkStateSnapshot (RTB-7): serialize/parse round-trip, atomic write,
 // warm/cold resume gate, and the quality-ramp lift rule.
 // =============================================================================
 
-/// A snapshot with at least one entry in EVERY state group (incl. a VtecSh
+/// A snapshot with at least one entry in every state group (incl. a VtecSh
 /// shared-carry entry with the sh_* fields and an emitter blob).
 NetworkStateSnapshot makeFullSnapshot() {
     NetworkStateSnapshot s;
@@ -3099,20 +3108,20 @@ NetworkStateSnapshot makeFullSnapshot() {
     s.ura_retro_sats = {"G13", "E09"};
     s.retro_active   = {"G13"};
     s.c1_zoh_active  = {"C21"};
-    s.relevel_iode   = {{"G01", 10}, {"E11", 7}};   // Card 6 re-level baselines
-    s.eph_cutover_disc_pending = {"C21"};           // Card 6 pending forced disc
+    s.relevel_iode   = {{"G01", 10}, {"E11", 7}};   // re-level baselines (Card 6)
+    s.eph_cutover_disc_pending = {"C21"};           // pending forced disc (Card 6)
 
-    // §18.12 Card-1 coupling regressors (format v3): the shared-column
-    // DICTIONARY plus one packed regression per carried row, keyed on exactly
-    // the L / Z keys above (the parser refuses an orphan QL/QZ, so these must
+    // Card-1 coupling regressors (format v3; see §18.12 for the design): the
+    // shared-column dictionary plus one packed regression per carried row, keyed
+    // on the L / Z keys above (the parser refuses an orphan QL/QZ, so these
     // reference local_carry[{7,"G01","L1C"}] and zwd_carry[7]).  Entry order
-    // inside a row is HARVEST order and is preserved verbatim — it is observable
+    // inside a row is harvest order and is preserved verbatim; it is observable
     // at the ulp, since buildCplRow accumulates rhs += coeff*s_prev in vector
-    // order — so ids are deliberately NOT monotone here.  The dictionary carries
-    // a Clock column (empty signal), a PhaseBias column, and a VtecSh column
-    // (empty sat, sh_layer as its OWN field, never the D record's "L1"-in-sat
-    // hack).  QR is the write-epoch clock-refloat set, which no other record in
-    // the file can carry (a hard-refloated sat is skip-stashed).
+    // order, so the ids here are deliberately not monotone.  The dictionary carries a Clock
+    // column (empty signal), a PhaseBias column, and a VtecSh column (empty sat,
+    // sh_layer in its own field, not the D record's "L1"-in-sat encoding).  QR is
+    // the write-epoch clock-refloat set, which no other record in the file can
+    // carry (a hard-refloated satellite is skip-stashed).
     s.coupling_dict = {
         {0, "G01", "",    0, 0, 'C', 0, -0.9718706123456789, 1.7312e-05},
         {2, "G01", "L1C", 0, 0, 'C', 0, -1.2178912315598864, 8.128093975162085e-07},
@@ -3122,10 +3131,10 @@ NetworkStateSnapshot makeFullSnapshot() {
     s.coupling_zrows[7]                = {{1, 0.331}, {0, -0.0042}};
     s.clock_refloat_sats = {"G14", "G17"};
 
-    // A REAL emitter blob (round-trips through restoreState in the driver),
-    // carrying a PENDING forced datum bump: G is tracked (first emit), then a
-    // G-scoped markDatumChange lands on an E-only epoch — the RT0-5 seam keeps
-    // the G flag pending, and the snapshot must preserve it.
+    // A real emitter blob (round-trips through restoreState in the driver),
+    // carrying a pending forced datum bump: G is tracked (first emit), then a
+    // G-scoped markDatumChange lands on an E-only epoch.  The RT0-5 seam keeps
+    // the G flag pending, and the snapshot preserves it.
     SsrCorrectionStore store;
     NetworkProductEmitter em(0.05, /*emit_clock_disc=*/true, /*staleness=*/100.0);
     em.emitToStore(makeEpoch(GnssTime{2313, 259230.0}, /*pb01=*/-0.7), store);
@@ -3136,7 +3145,7 @@ NetworkStateSnapshot makeFullSnapshot() {
     NetworkSatSolution e11;
     e11.sat = "E11"; e11.has_clock = true; e11.clock_c0_m = 1.0;
     eonly.sats.push_back(e11);
-    em.emitToStore(eonly, store);   // G absent -> its forced bump stays PENDING
+    em.emitToStore(eonly, store);   // G absent -> its forced bump stays pending
     std::ostringstream blob;
     em.serializeState(blob);
     s.emitter_state = blob.str();
@@ -3214,13 +3223,13 @@ TEST(NetworkStateSnapshotTest, SerializeParseRoundTripsEveryGroup) {
     EXPECT_EQ(r.c1_zoh_active, s.c1_zoh_active);
     EXPECT_EQ(r.relevel_iode, s.relevel_iode);                       // Card 6
     EXPECT_EQ(r.eph_cutover_disc_pending, s.eph_cutover_disc_pending);// Card 6
-    // §18.12 coupling regressors: the dictionary field-for-field, then whole-
-    // container equality on the rows (std::vector<std::pair<int,double>>
-    // compares element-wise IN ORDER, which is the property that matters — the
-    // restored row must be bit-for-bit the write epoch's harvest, in harvest
-    // order).  The format-contract detail (traps, negative cases, the loader
-    // interlocks) lives in tests/test_resume_coupling_restore.cpp; this suite
-    // only keeps its "every group" claim true.
+    // Coupling regressors (§18.12): the dictionary field-for-field, then
+    // whole-container equality on the rows.  std::vector<std::pair<int,double>>
+    // compares element-wise in order, which is the required property: the
+    // restored row is bit-for-bit the write epoch's harvest, in harvest order.
+    // The format-contract detail (traps, negative cases, the loader interlocks)
+    // lives in tests/test_resume_coupling_restore.cpp; this suite only keeps its
+    // "every group" claim true.
     ASSERT_EQ(r.coupling_dict.size(), s.coupling_dict.size());
     for (size_t i = 0; i < s.coupling_dict.size(); ++i) {
         SCOPED_TRACE(i);
@@ -3238,8 +3247,8 @@ TEST(NetworkStateSnapshotTest, SerializeParseRoundTripsEveryGroup) {
     EXPECT_EQ(r.coupling_zrows, s.coupling_zrows);
     EXPECT_EQ(r.clock_refloat_sats, s.clock_refloat_sats);
     EXPECT_TRUE(r.hasCouplingState());
-    // Emitter blob verbatim — and it restores into a matching emitter with the
-    // PENDING G datum bump intact: G's next emit after the round trip lands it.
+    // Emitter blob verbatim; it restores into a matching emitter with the pending
+    // G datum bump intact, and G's next emit after the round trip lands it.
     EXPECT_EQ(r.emitter_state, s.emitter_state);
     NetworkProductEmitter em(0.05, true, 100.0);
     std::istringstream eis(r.emitter_state);
@@ -3249,7 +3258,7 @@ TEST(NetworkStateSnapshotTest, SerializeParseRoundTripsEveryGroup) {
     em.emitToStore(makeEpoch(GnssTime{2313, 259290.0}, /*pb01=*/-0.7), st);
     EXPECT_EQ(em.clockDiscontinuityCounter("G01"), 1);   // pending bump landed
     EXPECT_EQ(em.clockDiscontinuityCounter("G02"), 1);
-    // ...exactly once (consumed by that emit).
+    // ...once (consumed by that emit).
     em.emitToStore(makeEpoch(GnssTime{2313, 259320.0}, /*pb01=*/-0.7), st);
     EXPECT_EQ(em.clockDiscontinuityCounter("G01"), 1);
 }
@@ -3275,7 +3284,8 @@ TEST(NetworkStateSnapshotTest, EmptySnapshotRoundTrips) {
     EXPECT_EQ(r.config_fingerprint, 7u);
 }
 
-// Corrupt / truncated files fail the parse — the caller's cold-start signal.
+// Corrupt or truncated files fail the parse, which is the caller's cold-start
+// signal.
 TEST(NetworkStateSnapshotTest, CorruptOrTruncatedFileFailsParse) {
     const NetworkStateSnapshot s = makeFullSnapshot();
     std::ostringstream os;
@@ -3284,12 +3294,12 @@ TEST(NetworkStateSnapshotTest, CorruptOrTruncatedFileFailsParse) {
 
     NetworkStateSnapshot r;
     std::string err;
-    // Truncated: cut the END terminator (crash mid-write of a NON-atomic file).
+    // Truncated: cut the END terminator (crash mid-write of a non-atomic file).
     {
         std::istringstream is(full.substr(0, full.size() - 10));
         EXPECT_FALSE(NetworkStateSnapshotIO::parse(is, r, &err));
     }
-    // Truncated INSIDE the emitter section.
+    // Truncated inside the emitter section.
     {
         const std::size_t pos = full.find("EMITTER,");
         ASSERT_NE(pos, std::string::npos);
@@ -3330,7 +3340,7 @@ TEST(NetworkStateSnapshotTest, CorruptOrTruncatedFileFailsParse) {
 }
 
 // Atomic write: replaces an existing snapshot in one step, leaves no .tmp
-// behind, and the replaced file reads back as the NEW snapshot.
+// behind, and the replaced file reads back as the new snapshot.
 TEST(NetworkStateSnapshotTest, WriteAtomicallyReplacesExisting) {
     namespace fs = std::filesystem;
     const std::string path = tempFile("gnss_netsnap_atomic.txt");
@@ -3346,7 +3356,7 @@ TEST(NetworkStateSnapshotTest, WriteAtomicallyReplacesExisting) {
 
     NetworkStateSnapshot b = makeFullSnapshot();
     b.n_emitted = 2;
-    ASSERT_TRUE(NetworkStateSnapshotIO::write(path, b, &err)) << err;   // target EXISTS
+    ASSERT_TRUE(NetworkStateSnapshotIO::write(path, b, &err)) << err;   // target exists
     EXPECT_FALSE(fs::exists(path + ".tmp"));
 
     NetworkStateSnapshot r;
@@ -3366,7 +3376,7 @@ TEST(NetworkStateSnapshotTest, WarmResumeGate) {
     const double horizon = 120.0;
     std::string why;
 
-    // Fresh + matching => WARM.
+    // Fresh and matching => warm.
     EXPECT_TRUE(NetworkStateSnapshotIO::warmResumeAllowed(
         s, 0xDEADBEEFULL, snap_s + 30.0, horizon, &why)) << why;
     // Boundary: age == horizon is still warm; just past it is cold.
@@ -3375,32 +3385,32 @@ TEST(NetworkStateSnapshotTest, WarmResumeGate) {
     EXPECT_FALSE(NetworkStateSnapshotIO::warmResumeAllowed(
         s, 0xDEADBEEFULL, snap_s + horizon + 0.5, horizon, &why));
     EXPECT_NE(why.find("stale"), std::string::npos);
-    // Fingerprint mismatch => COLD even when fresh.
+    // Fingerprint mismatch => cold even when fresh.
     EXPECT_FALSE(NetworkStateSnapshotIO::warmResumeAllowed(
         s, 0xBADC0DEULL, snap_s + 30.0, horizon, &why));
     EXPECT_NE(why.find("fingerprint"), std::string::npos);
-    // Resuming AT or BEFORE the snapshot epoch => COLD (double-fold hazard).
+    // Resuming at or before the snapshot epoch => cold (the epoch would be folded twice).
     EXPECT_FALSE(NetworkStateSnapshotIO::warmResumeAllowed(
         s, 0xDEADBEEFULL, snap_s, horizon, &why));
     EXPECT_FALSE(NetworkStateSnapshotIO::warmResumeAllowed(
         s, 0xDEADBEEFULL, snap_s - 30.0, horizon, &why));
 }
 
-// RTB-7(b): the quality-ramp lift rule — the emitted-epoch horizon is
-// max(warmup_epochs, pl_warmup), the EWMA update count must reach
-// warmup_epochs, and a structurally-unavailable EWMA waives the count.
+// The quality-ramp lift rule (RTB-7(b)): the emitted-epoch horizon is
+// max(warmup_epochs, pl_warmup), the EWMA update count must reach warmup_epochs,
+// and a structurally unavailable EWMA waives the count.
 TEST(NetworkStateSnapshotTest, WarmupRampLiftRule) {
     // warmup_epochs=10, pl_warmup=6 (EWMA structurally available).
     EXPECT_FALSE(networkWarmupRampLifted(9, 10, 6, 100, true));    // below epoch horizon
     EXPECT_FALSE(networkWarmupRampLifted(10, 10, 6, 9, true));     // EWMA not stabilized
     EXPECT_TRUE(networkWarmupRampLifted(10, 10, 6, 10, true));     // both satisfied
     // pl_warmup dominates the epoch horizon when larger: EWMA updates only
-    // begin once the carry is warm, so the lift waits for BOTH.
+    // begin once the carry is warm, so the lift waits for both.
     EXPECT_FALSE(networkWarmupRampLifted(10, 4, 12, 100, true));   // n < max(4,12)
     EXPECT_FALSE(networkWarmupRampLifted(12, 4, 12, 3, true));     // updates < warmup_epochs
     EXPECT_TRUE(networkWarmupRampLifted(12, 4, 12, 4, true));
     // Structurally unavailable EWMA (emit_ura/raim/phase_leveling not all
-    // armed): the epoch horizon alone decides — no statistic to wait for.
+    // armed): the epoch horizon alone decides; there is no statistic to wait for.
     EXPECT_FALSE(networkWarmupRampLifted(9, 10, 6, 0, false));
     EXPECT_TRUE(networkWarmupRampLifted(10, 10, 6, 0, false));
     // warmup_epochs=0 with a floor: the ramp still waits for the phase-leveling

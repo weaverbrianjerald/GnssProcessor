@@ -145,8 +145,8 @@ def test_cli_exam_report_has_sections_and_banner(exam_fixture, tmp_path):
 
 
 def test_plotly_log_axis_limits_are_exponents(tmp_path):
-    # Plotly expresses a LOG axis's `range` in EXPONENTS; matplotlib uses data units.
-    # Viewers speak data units, so the backend must convert -- passing 35 straight
+    # Plotly expresses a log axis's `range` in exponents; matplotlib uses data units.
+    # Viewers speak data units, so the backend must convert: passing 35 straight
     # through renders the axis top at 10^35 (observed as a 1e32 y-limit on the
     # station-keeping panel, whose data tops out near 10 m).
     from gnssviz.backends import get_backend
@@ -157,7 +157,7 @@ def test_plotly_log_axis_limits_are_exponents(tmp_path):
     gofig = get_backend("plotly").render(Figure(name="log", axes=[ax], width=6, height=3))
     rng = gofig.layout.yaxis.range
     assert rng is not None
-    # log10(0.2) = -0.699, log10(35) = 1.544 -- NOT the raw 0.2/35.
+    # log10(0.2) = -0.699, log10(35) = 1.544, not the raw 0.2/35.
     assert abs(rng[0] - math.log10(0.2)) < 1e-9, rng
     assert abs(rng[1] - math.log10(35.0)) < 1e-9, rng
 
@@ -172,9 +172,9 @@ def test_plotly_linear_axis_limits_are_untouched(tmp_path):
 
 
 def test_exam_dashboard_drops_the_crowding_viewers(exam_fixture, tmp_path):
-    # Dashboard composition (professor review 2026-08-06): a fixed set of viewers
-    # that duplicate a panel above them, or are internal QC strips, is off by
-    # default on the EXAM dashboard only.
+    # Dashboard composition: a fixed set of viewers that duplicate a panel above
+    # them, or are internal QC strips, is off by default on the exam dashboard
+    # only.
     import run_report
     truth, logs = exam_fixture()
     out = tmp_path / "dashboard.html"

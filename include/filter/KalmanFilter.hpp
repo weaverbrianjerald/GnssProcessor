@@ -108,8 +108,9 @@ namespace GnssProcessor {
         /**
          * @brief Current body-to-ECEF attitude C_b^e.
          *
-         * Maintained by predictImu() and by attitude error-state feedback after
-         * GNSS updates.
+         * Written by setAttitude() (the IMU aiding source, after each aided
+         * prediction), by predictImu() (which has no callers) and by attitude
+         * error-state feedback after GNSS updates.
          */
         const Eigen::Matrix3d& getAttitude() const { return C_b_e_; }
 
@@ -208,9 +209,13 @@ namespace GnssProcessor {
          * @brief Screen post-fit residuals for outliers and inconsistency.
          *
          * @param meas_update Measurement used for the update (flags may be set).
-         * @param x_prev Pre-update state estimate.
-         * @param P_prev Pre-update covariance.
-         * @return {residuals pass validation, corrective action was applied}.
+         * @param[in,out] x_prev Pre-update state estimate; edited in place on the
+         *        outlier path (@ref handlePhaseOutlier).
+         * @param[in,out] P_prev Pre-update covariance; edited in place on the
+         *        outlier path (@ref handlePhaseOutlier, or a full covariance reset).
+         * @return {outlier found, complete reset}.  A complete reset also sets
+         *         the first flag.  On an outlier, @ref update returns
+         *         UpdateResult::NeedsMeasurementRebuild.
          */
         std::pair<bool, bool> validatePostFitResiduals(EpochMeasurement& meas_update, Eigen::VectorXd& x_prev, Eigen::MatrixXd& P_prev);
 

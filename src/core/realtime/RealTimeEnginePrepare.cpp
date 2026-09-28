@@ -2,13 +2,14 @@
  * @file RealTimeEnginePrepare.cpp
  * @brief Measurement-set conditioning seams for RealTimeEngine::processEpoch.
  *
- * Everything that reshapes the epoch's observation set or the filter's
- * starting point between computeModels and the KF predict.
+ * Steps that reshape the epoch's observation set or the filter's starting
+ * point after computeModels and before the KF predict.
  *
- * seedClockFromWls and regaugeBssd are MUTUALLY EXCLUSIVE by construction
- * (hasClock() vs !hasClock()): under BSSD the filter carries no receiver
- * clock state to seed, which is exactly why the re-gauge exists.  Both
- * self-gate, so the driver calls both unconditionally.
+ * seedClockFromWls and regaugeBssd are mutually exclusive by construction:
+ * the seed requires hasClock(), the re-gauge requires !hasClock() (and BSSD
+ * enabled).  Under BSSD the filter carries no receiver clock state to seed,
+ * and the re-gauge exists for that case.  Each self-gates, so the driver
+ * calls both unconditionally.
  */
 
 #include "realtime/RealTimeEngine.hpp"
@@ -20,7 +21,8 @@
 namespace GnssProcessor {
 
 /**
- * @brief Drop broadcast-grade satellites from the precise SSR PPP-RTK solution.
+ * @brief Drop broadcast-grade satellites (@c broadcast_only set) from the precise SSR
+ *        PPP-RTK solution when the corrections-ready gate's drop_broadcast_grade is set.
  *
  * Relocated verbatim from the pre-cut RealTimeEngine::processEpoch
  * (frozen lines 1235-1244); see scripts/rt_seam_verify.py.
@@ -43,7 +45,9 @@ void RealTimeEngine::dropBroadcastGrade(RtEpochContext& ctx) {
 }
 
 /**
- * @brief WLS receiver-clock seed. Self-gated on hasClock() -- mutually exclusive with regaugeBssd().
+ * @brief WLS receiver-clock seed.  Self-gated on hasClock(), so it never runs together with
+ *        regaugeBssd().  Overwrites the KF clock with the WLS clock when they differ by at
+ *        least 0.05 ms (about 15 km), after a data gap, or on the first epoch.
  *
  * Relocated verbatim from the pre-cut RealTimeEngine::processEpoch
  * (frozen lines 1249-1271); see scripts/rt_seam_verify.py.
@@ -64,7 +68,7 @@ void RealTimeEngine::seedClockFromWls(RtEpochContext& ctx) {
             const double kf_clock = (sv.size() > static_cast<Eigen::Index>(clk_idx))
                                     ? sv(clk_idx) : 0.0;
 
-            constexpr double kJumpThresh = 0.00005 * 299792458.0; // 0.5 ms
+            constexpr double kJumpThresh = 0.00005 * 299792458.0; // 0.05 ms (5e-5 s), about 14.99 km
             const double delta = wls_clock - kf_clock;
             const bool should_seed = (std::abs(delta) >= kJumpThresh)
                                      || gap_detected || first_epoch_;
@@ -81,7 +85,10 @@ void RealTimeEngine::seedClockFromWls(RtEpochContext& ctx) {
 }
 
 /**
- * @brief BSSD code/phase re-gauge: remove the bulk receiver clock. Self-gated on !hasClock() -- mutually exclusive with seedClockFromWls().
+ * @brief BSSD code/phase re-gauge: remove the bulk receiver clock.  Self-gated on
+ *        enableBetweenSatelliteSd() and !hasClock(), so it never runs together with
+ *        seedClockFromWls().  Subtracts the median code innovation (metres) from every
+ *        code and phase observable; a common-mode shift leaves the SD observations unchanged.
  *
  * Relocated verbatim from the pre-cut RealTimeEngine::processEpoch
  * (frozen lines 1300-1333); see scripts/rt_seam_verify.py.

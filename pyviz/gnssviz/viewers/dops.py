@@ -1,4 +1,4 @@
-"""DOP / satellite-count viewer -- the port of ``plotDops.m``.
+"""DOP / satellite-count viewer: the port of ``plotDops.m``.
 
 Reads ``dop_trace.csv`` (one row per epoch) and produces three figures:
   1. used-satellites: per-constellation stacked area + bold total overlay;

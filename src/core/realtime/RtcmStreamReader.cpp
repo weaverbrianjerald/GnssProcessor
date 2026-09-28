@@ -60,8 +60,8 @@ uint32_t RtcmStreamReader::crc24q(const uint8_t* data, size_t len) {
 // ---------------------------------------------------------------------------
 
 void RtcmStreamReader::feed(const uint8_t* data, size_t len) {
-    // RTB-1(b): stamp the transport hand-off.  Every frame completed by these
-    // bytes inherits this receipt instant (see lastFrameReceipt).
+    // Stamp the transport hand-off.  Every frame extracted before the next feed()
+    // carries this receipt instant; see lastFrameReceipt (RTB-1(b)).
     last_feed_time_ = std::chrono::steady_clock::now();
     buf_.insert(buf_.end(), data, data + len);
 }
@@ -112,16 +112,16 @@ std::optional<std::vector<uint8_t>> RtcmStreamReader::nextFrame() {
                           | (static_cast<uint32_t>(frame[3 + payload_len + 2]));
 
         if (computed != received) {
-            // CRC mismatch  skip this preamble byte and keep scanning.
+            // CRC mismatch: skip this preamble byte and keep scanning.
             buf_.pop_front();
             ++bytes_discarded_;
             continue;
         }
 
-        // Good frame  remove from buffer and return.
+        // Good frame: remove it from the buffer and return it.
         for (size_t i = 0; i < frame_len; ++i) buf_.pop_front();
         ++frames_extracted_;
-        last_frame_receipt_ = last_feed_time_;   // RTB-1(b): receipt stamp
+        last_frame_receipt_ = last_feed_time_;   // receipt stamp (RTB-1(b))
         return frame;
     }
 }

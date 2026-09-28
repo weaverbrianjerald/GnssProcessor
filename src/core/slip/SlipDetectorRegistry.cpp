@@ -3,11 +3,11 @@
  * @brief Factory implementation for cycle-slip detectors.
  *
  * Holds the kind→creator table (a Meyers singleton, mirroring
- * @c baselineFixturePresets) and the string↔kind mapping.  Only detectors
- * whose .cpp is compiled into @c gnss_core are registered; the staged
- * geometry-free and ionosphere-free-phase detectors are intentionally absent,
- * so @c createEnabled degrades gracefully (warn + skip) if a config selects
- * them before they are finished and added to CMakeLists.txt.
+ * @c baselineFixturePresets) and the string↔kind mapping.  The table registers
+ * MW, GRAPHIC and EWL.  The geometry-free detector is staged (not compiled) and
+ * the ionosphere-free-phase detector is built directly by the network path, so
+ * neither has a creator; @c createEnabled warns and skips either if a config
+ * selects it.
  */
 
 #include "slip/SlipDetectorRegistry.hpp"
@@ -64,12 +64,11 @@ SlipDetectorRegistry::creators() {
           [](const GnssConfig& c, LogManager& l) -> std::unique_ptr<ISlipDetector> {
               return std::make_unique<EwlSlipDetector>(c, l);
           } },
-        // GeometryFree is STAGED — its .cpp is excluded from the build, so no
-        // creator is registered here.  IonoFreePhase IS compiled, but it is
-        // instantiated directly on the network path (ApplicationNetworkSetup,
-        // gated on network.cycle_slip.if_phase_td), not through this registry,
-        // so no creator is registered for it here either.  createEnabled warns
-        // and skips both if a config requests them.
+        // No creator for GeometryFree: it is staged and its .cpp is excluded from
+        // the build.  No creator for IonoFreePhase either: it is compiled, but the
+        // network path instantiates it directly (ApplicationNetworkSetup, gated on
+        // network.cycle_slip.if_phase_td).  createEnabled warns and skips both if a
+        // config requests them.
     };
     return table;
 }

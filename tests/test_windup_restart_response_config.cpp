@@ -7,18 +7,19 @@
  * The knob wires the invariant-#1 response to an accumulated-mode restart: an
  * exact integer-cycle step on every signal of the satellite, MW-blind (the
  * step is band-common, so ΔWL = 0), while the carried ambiguity and the
- * zero-q leveling level survive at their pre-gap values.  Two interlocks,
- * each a distinct armed-but-inert posture if missing (standing invariant #4):
+ * zero-q leveling level survive at their pre-gap values.  Two interlocks; a
+ * missing prerequisite would leave the knob armed but inert (standing
+ * invariant #4):
  *
  *  - without @c estimation.accumulate_phase_windup there is no accumulator
- *    and therefore no restart verdict — the ledger the drain consumes is
- *    structurally empty (fractional mode WRAPS instead of restarting);
+ *    and therefore no restart verdict, so the ledger the drain consumes is
+ *    always empty (fractional mode wraps instead of restarting);
  *  - without @c network.phase_leveling there is no zero-q carried level for
- *    the restart to poison — the response would mark arcs whose stale value
- *    does not exist.
+ *    the restart to corrupt, so the response would mark arcs that hold no
+ *    stale value.
  *
  * Both are warn-and-disarm rather than load errors, matching the sibling
- * relevel knobs.  What is locked here is the END STATE of the flags; the
+ * relevel knobs.  These tests check the final state of the flags; the
  * drain's own behaviour is graded on a run (counters + closure line), not
  * here.
  */
@@ -99,8 +100,8 @@ TEST(WindupRestartResponseConfig, ArmsOnTheSupportedPosture) {
 }
 
 TEST(WindupRestartResponseConfig, DisarmsWithoutAccumulatedMode) {
-    // Fractional wind-up WRAPS instead of restarting: the verdict the drain
-    // responds to does not exist, so the armed knob is a structural zero.
+    // Fractional wind-up wraps instead of restarting: the verdict the drain
+    // responds to never occurs, so an armed knob could never act.
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("noacc", networkConfig("", kNetArmed), cfg));
     EXPECT_FALSE(cfg.accumulatePhaseWindUp());
@@ -108,7 +109,7 @@ TEST(WindupRestartResponseConfig, DisarmsWithoutAccumulatedMode) {
 }
 
 TEST(WindupRestartResponseConfig, DisarmsWithoutPhaseLeveling) {
-    // No zero-q carried level => nothing stale for the restart to poison.
+    // No zero-q carried level => nothing stale for the restart to corrupt.
     GnssConfig cfg;
     const char* net =
         "    \"phase_leveling\": false,\n"

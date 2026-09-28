@@ -1,43 +1,43 @@
 /**
  * @file test_anchor_slip_handover.cpp
- * @brief ANCHOR-SLIP HANDOVER (network.cycle_slip.anchor_slip_handover,
- *        docs/SPEC_event_harness.md §12.6/§12.7) — the staging seam, the
+ * @brief Tests for the anchor-slip handover (network.cycle_slip.anchor_slip_handover,
+ *        docs/SPEC_event_harness.md §12.6/§12.7): the staging seam, the
  *        directive precedence contract and the one-epoch lifetime.
  *
- * The defect this card closes is entirely invisible at the site where it happens.
- * A slip response frees an arc; the arc happens to be the one realizing a
- * (sat, signal) phase-bias family's gauge; the sticky election re-elects the same
- * station; and the family's datum is silently re-drawn from an arc whose level is
- * about to be rebuilt from one epoch of code.  Nothing errors, no counter moves,
- * and the damage (measured: 157 T4 erases of HEALTHY arcs elsewhere, 10.7 m on the
- * station clock, a 9 m step in the satellite's emitted clock) surfaces as an
- * outlier cascade with no attribution back to the slip.
+ * A slip response frees an arc.  When that arc realizes the gauge of a (sat, signal)
+ * phase-bias family, the sticky election re-elects the same station and re-draws the
+ * family's datum from an arc whose level is about to be rebuilt from one epoch of
+ * code.  No error and no counter reports this at the slip site; the effect appears
+ * later as an outlier cascade with no attribution back to the slip.  With the knob on,
+ * the slip stages a handover directive that retires the incumbent at the same epoch's
+ * election.
  *
- * So every case here pins a decision that has no other observable:
+ * Each case pins a decision that has no other observable:
  *
- *   1. a freed ANCHOR arc stages exactly one directive per (sat, signal) family,
- *      and a freed NON-anchor arc stages none — the whole discrimination the card
- *      rests on (a station that anchors nothing can slip 27 times and the network
- *      does not notice; one that anchors 18 families cascades alone with 14);
- *   2. the same holds through the DD invariant-carry funnel, which is the freed-set
- *      vehicle on carry_invariant lineages where the leveling latch is empty;
- *   3. `anchorFor` must find a PRODUCTION directive on a completely unarmed run —
- *      the injector's `armed` flag gates the harness schedule, not this card, and a
- *      lookup that silently required it would make the knob a no-op in every real
- *      posture;
- *   4. an INJECTED directive must win over a production one for the same family:
- *      a harness leg that scripts a `cold` handover is testing the cold branch, and
- *      a production `continuous` directive shadowing it would quietly invert the leg;
- *   5. both vectors clear at the SAME per-epoch point, on an unarmed run too — a
+ *   1. a freed anchor arc stages exactly one directive per (sat, signal) family, and
+ *      a freed non-anchor arc stages none; the card rests on this discrimination,
+ *      because a slip at a station that anchors nothing does not touch any gauge;
+ *   2. the same holds through the DD invariant-carry funnel, which carries the freed
+ *      set on carry_invariant lineages where the leveling latch is empty, and a family
+ *      named by both vehicles is staged once;
+ *   3. `anchorFor` finds a production directive on an unarmed run: the injector's
+ *      `armed` flag gates the harness schedule, not this card, and a lookup that
+ *      required it would make the knob a no-op in every production posture;
+ *   4. an injected directive takes precedence over a production one for the same
+ *      family: a harness leg that scripts a `cold` handover tests the cold branch, and
+ *      a production `continuous` directive shadowing it would turn the leg into a
+ *      continuous one;
+ *   5. both vectors clear at the same per-epoch point, on an unarmed run too; a
  *      directive that survived its epoch would re-ban the family at every later
  *      election (invariant #7's decoupling edge);
- *   6. the election consuming a staged directive must actually MOVE the anchor and
- *      count the branch it took, cold outcomes included (a cold outcome IS a gauge
- *      re-realization; hiding it inside a continuous total is the failure the
- *      counters exist to prevent);
- *   7. the knob must default OFF and survive a round trip through the loader.
+ *   6. the election consuming a staged directive moves the anchor and counts the
+ *      branch it took, cold outcomes included (a cold outcome is a gauge
+ *      re-realization, and the counters exist so that it is not hidden inside a
+ *      continuous total);
+ *   7. the knob defaults off, survives a round trip through the loader, and is
+ *      disarmed under the ensemble phase datum.
  *
- * The election is exercised directly: it reads only station NAMES, the candidate
+ * The election is exercised directly: it reads only station names, the candidate
  * census and the handover ledger, never a StateManager (see
  * tests/test_eq34_reattach_hygiene.cpp for the same construction).
  */
@@ -85,7 +85,7 @@ struct Census {
 /// @param sats      satellites every station tracks
 /// @param signals   phase signals every station tracks on each satellite
 /// @param coverage  per-station ranking key; the election walks `cand_set` in
-///                  DESCENDING coverage, so the first eligible non-banned station
+///                  descending coverage, so the first eligible non-banned station
 ///                  in that order is the successor.
 Census makeCensus(const std::vector<std::string>& names,
                   const std::vector<std::string>& sats,
@@ -179,14 +179,14 @@ struct Loaded {
 }  // namespace
 
 // ===========================================================================
-// 1–2: the staging seam — which freed arcs are gauge arcs
+// Cases 1–2: the staging seam, which freed arcs are gauge arcs
 // ===========================================================================
 
 TEST(AnchorSlipHandoverStage, FreedAnchorArcStagesOnePerFamily) {
     const std::vector<std::string> sats{"G10", "G27"};
     const std::vector<std::string> sigs{kSigA, kSigB};
     auto c = makeCensus({"S29", "S06"}, sats, sigs, {9, 7});
-    // S29 anchors every family; the slip frees BOTH of its G10 bands.
+    // S29 anchors every family; the slip frees both of its G10 bands.
     const auto inc = incumbency(sats, sigs, "S29");
 
     NetworkInjectState inject;
@@ -197,8 +197,8 @@ TEST(AnchorSlipHandoverStage, FreedAnchorArcStagesOnePerFamily) {
     ASSERT_EQ(inject.anchor_now_slip.size(), 2u);
     EXPECT_EQ(families(inject.anchor_now_slip),
               (std::vector<std::string>{"G10_L1C", "G10_L2W"}));
-    // CONTINUOUS is the cure; a directive that asked for cold would re-realize the
-    // gauge, which is the very thing the card exists to avoid.
+    // The staged directive asks for the continuous branch; a directive that asked
+    // for cold would re-realize the gauge, which the card exists to avoid.
     for (const auto& d : inject.anchor_now_slip) EXPECT_FALSE(d.cold);
     // The injector's own vector is untouched.
     EXPECT_TRUE(inject.anchor_now.empty());
@@ -212,8 +212,8 @@ TEST(AnchorSlipHandoverStage, FreedNonAnchorArcStagesNothing) {
     const auto inc = incumbency(sats, sigs, "S29");
 
     NetworkInjectState inject;
-    // S06 (index 1) slips the same satellite — it anchors nothing, so the family's
-    // gauge is untouched and the slip is an ordinary arc refloat.
+    // S06 (index 1) slips on the same satellite.  It anchors nothing, so the
+    // family's gauge is untouched and the slip is an ordinary arc refloat.
     const int n = networkStageAnchorSlipHandovers(
             c.stations, inc, freed(1, "G10", sigs), {}, inject);
 
@@ -234,8 +234,8 @@ TEST(AnchorSlipHandoverStage, DdInvariantFunnelIsTheOtherVehicleAndDoesNotDouble
                   c.stations, inc, {}, freed(0, "G10", sigs), a), 2);
     EXPECT_EQ(a.anchor_now_slip.size(), 2u);
 
-    // Both vehicles naming the same family must stage it ONCE — `anchorFor` returns
-    // the first match, so a duplicate would silently shadow the ledger readback.
+    // Both vehicles naming the same family stage it once: `anchorFor` returns the
+    // first match, so a duplicate would shadow the ledger readback.
     NetworkInjectState b;
     EXPECT_EQ(networkStageAnchorSlipHandovers(
                   c.stations, inc, freed(0, "G10", sigs), freed(0, "G10", sigs), b), 2);
@@ -262,7 +262,7 @@ TEST(AnchorSlipHandoverStage, EmptyInputsAndOutOfRangeIndicesAreInert) {
 }
 
 // ===========================================================================
-// 3–4: the lookup contract
+// Cases 3–4: the lookup contract
 // ===========================================================================
 
 TEST(AnchorSlipHandoverLookup, ProductionDirectiveIsFoundOnAnUnarmedRun) {
@@ -285,7 +285,7 @@ TEST(AnchorSlipHandoverLookup, ProductionDirectiveIsFoundOnAnUnarmedRun) {
 TEST(AnchorSlipHandoverLookup, InjectedDirectiveWinsForTheSameFamily) {
     NetworkInjectState inject;
     inject.armed = true;
-    InjectAnchorDirective scripted;      // the harness leg: force the COLD branch
+    InjectAnchorDirective scripted;      // the harness leg: force the cold branch
     scripted.sat = "G10";
     scripted.signal = "all";
     scripted.cold = true;
@@ -314,7 +314,7 @@ TEST(AnchorSlipHandoverLookup, InjectedDirectiveWinsForTheSameFamily) {
 }
 
 // ===========================================================================
-// 5: the one-epoch lifetime
+// Case 5: the one-epoch lifetime
 // ===========================================================================
 
 TEST(AnchorSlipHandoverLifetime, BothVectorsClearPerEpochIncludingUnarmedRuns) {
@@ -324,9 +324,9 @@ TEST(AnchorSlipHandoverLifetime, BothVectorsClearPerEpochIncludingUnarmedRuns) {
     fs::create_directories(dir);
     NetworkRunTraces traces(dir);
 
-    // An UNARMED run: `networkInjectEpoch` returns early, and the production card
-    // is the only writer.  The clear must still happen, or the ban re-fires at
-    // every later election (invariant #7's decoupling edge).
+    // An unarmed run: `networkInjectEpoch` returns early, and the production card
+    // is the only writer.  The clear still happens there; without it the ban would
+    // re-fire at every later election (invariant #7's decoupling edge).
     ASSERT_FALSE(ctx.inject.armed);
     InjectAnchorDirective d;
     d.sat = "G10";
@@ -348,7 +348,7 @@ TEST(AnchorSlipHandoverLifetime, BothVectorsClearPerEpochIncludingUnarmedRuns) {
 }
 
 // ===========================================================================
-// 6: the election actually consumes it — and counts the branch it took
+// Case 6: the election consumes the directive and counts the branch it took
 // ===========================================================================
 
 TEST(AnchorSlipHandoverElection, StagedBanMovesTheAnchorAndTakesTheContinuousBranch) {
@@ -359,7 +359,7 @@ TEST(AnchorSlipHandoverElection, StagedBanMovesTheAnchorAndTakesTheContinuousBra
     const std::string amb = StateKeys::makeAmbiguityKey("G10", kSigA);
 
     // The successor has a converged carried value_abs, so the continuous branch is
-    // available: it is pinned in the OUTGOING frame and the family does not step.
+    // available: it is pinned in the outgoing frame and the family does not step.
     AnchorHandoverLedger ledger;
     ledger.value_abs[{1, amb}] = {12.5 /*value*/, 1e-6 /*var*/, 1e-3 /*var_first*/};
 
@@ -403,7 +403,8 @@ TEST(AnchorSlipHandoverElection, ColdOutcomeIsCountedNotHidden) {
 
     // The successor's carried value is too poorly determined to be a datum, so the
     // election falls back to the cold pin.  The handover still happens, but the
-    // gauge DOES re-realize — the card must say so rather than report a cure.
+    // gauge re-realizes, and the directive's counters report that as a cold
+    // fallback rather than as a continuous handover.
     AnchorHandoverLedger ledger;
     ledger.value_abs[{1, amb}] = {12.5, 1.0 /*var >> max_var*/, 1e-3};
 
@@ -436,7 +437,7 @@ TEST(AnchorSlipHandoverElection, ColdOutcomeIsCountedNotHidden) {
 TEST(AnchorSlipHandoverElection, NoSuccessorLeavesTheFamilyUnpinnedAndSaysSo) {
     const std::vector<std::string> sats{"G10"};
     const std::vector<std::string> sigs{kSigA};
-    // ONE station tracks the family: the ban leaves no candidate at all.
+    // One station tracks the family: the ban leaves no candidate at all.
     auto c = makeCensus({"S29"}, sats, sigs, {9});
     auto inc = incumbency(sats, sigs, "S29");
     const std::string amb = StateKeys::makeAmbiguityKey("G10", kSigA);
@@ -462,7 +463,7 @@ TEST(AnchorSlipHandoverElection, NoSuccessorLeavesTheFamilyUnpinnedAndSaysSo) {
 }
 
 TEST(AnchorSlipHandoverElection, NullDirectiveSetLeavesTheStickyIncumbentInPlace) {
-    // The knob-OFF control for the two cases above: identical inputs, no directive.
+    // The knob-off control for the cases above: identical inputs, no directive.
     const std::vector<std::string> sats{"G10"};
     const std::vector<std::string> sigs{kSigA};
     auto c = makeCensus({"S29", "S06"}, sats, sigs, {9, 7});
@@ -487,7 +488,7 @@ TEST(AnchorSlipHandoverElection, NullDirectiveSetLeavesTheStickyIncumbentInPlace
 }
 
 // ===========================================================================
-// 7: the loader
+// Case 7: the loader
 // ===========================================================================
 
 TEST(AnchorSlipHandoverConfig, DefaultsOffAndArmsFromJson) {
@@ -503,9 +504,9 @@ TEST(AnchorSlipHandoverConfig, DefaultsOffAndArmsFromJson) {
     }
     {
         // The card acts inside networkElectPhaseAnchors, which is the `else` arm of
-        // the phase-datum mode dispatch — under the ensemble datum there is no
-        // per-family anchor to hand over, so the loader must DISARM rather than let
-        // an inert knob be graded as a null result (invariant #4).
+        // the phase-datum mode dispatch.  Under the ensemble datum there is no
+        // per-family anchor to hand over, so the loader disarms the knob rather than
+        // let an inert knob be graded as a null result (invariant #4).
         Loaded ens("ens",
                    "    \"phase_datum_ensemble\": true,\n"
                    "    \"cycle_slip\": { \"anchor_slip_handover\": true },\n");

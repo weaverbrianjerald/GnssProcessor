@@ -5,22 +5,22 @@
  * AmbiguityResolver implements the Modified LAMBDA method (Chang et al. 2005):
  * an LDL^T decomposition of the float covariance, an integer Z-transform that
  * decorrelates the lattice, a Schnorr-Euchner integer least-squares search,
- * and a bootstrap success-rate gate.  These are the numerical heart of PPP-RTK
- * ambiguity fixing and were previously untested — a silent regression here
- * would corrupt every fix without any obvious symptom.
+ * and a bootstrap success-rate gate.  These kernels carry the numerics of PPP-RTK
+ * ambiguity fixing; a regression in them would corrupt every fix without an
+ * obvious symptom.
  *
- * The kernels are private static members.  Rather than drive them through the
- * public resolve() entry point (which needs a full StateManager + observation
- * set), we exercise them directly through MlambdaTestAccess, a shim befriended
+ * The kernels are private static members.  Instead of driving them through the
+ * public resolve() entry point (which needs a full StateManager and observation
+ * set), the tests call them directly through MlambdaTestAccess, a shim befriended
  * in AmbiguityResolver.hpp.  Every expected value below is analytic or
  * hand-derived:
  *
  *   - Convention pinned by hand on a 2x2: the factorization is Q = Lᵀ·D·L
- *     (NOT L·D·Lᵀ), with L unit lower-triangular.
+ *     (not L·D·Lᵀ), with L unit lower-triangular.
  *   - Reduction yields a unimodular integer Z whose factors represent ZᵀQZ.
  *   - Search returns the m globally-nearest lattice points, ascending.
  *   - An exactly-integer float vector is a fixed point of the full pipeline
- *     (residual 0) for any SPD Q — a back-transform round-trip check.
+ *     (residual 0) for any SPD Q; this checks the back-transform round trip.
  *   - Bootstrap rate is ∏ erf(1/(2√(2·dᵢ))) with documented edge cases.
  */
 
@@ -34,7 +34,7 @@
 
 namespace GnssProcessor {
 
-// Befriended in AmbiguityResolver.hpp — forwards to the private static MLAMBDA
+// Befriended in AmbiguityResolver.hpp; forwards to the private static MLAMBDA
 // kernels so they can be tested in isolation with synthetic matrices.
 struct MlambdaTestAccess {
     static bool ldl(const Eigen::MatrixXd& Q, Eigen::MatrixXd& L, Eigen::VectorXd& d) {
@@ -70,8 +70,8 @@ Eigen::MatrixXd reconstruct(const Eigen::MatrixXd& L, const Eigen::VectorXd& d) 
 // ldlDecompose
 // ---------------------------------------------------------------------------
 
-// LDL^T factorization reproduces the input SPD matrix and produces a
-// unit lower-triangular L.  Exact factor values pinned on the 2x2.
+// The LDL factorization (Q = Lᵀ·D·L) reproduces the input SPD matrix and produces
+// a unit lower-triangular L.  Exact factor values pinned on the 2x2.
 TEST(MlambdaLdlTest, ReconstructsKnownSpdMatrices) {
     Eigen::MatrixXd Q(2, 2);
     Q << 2.0, 1.0,
@@ -311,7 +311,7 @@ TEST(MlambdaBootstrapTest, MatchesErfProductAndEdgeCases) {
 }
 
 // ---------------------------------------------------------------------------
-// KalmanFilter::josephPseudoUpdate — the pure static Joseph-form measurement
+// KalmanFilter::josephPseudoUpdate: the pure static Joseph-form measurement
 // update kernel (public; called directly).  S = H·P·Hᵀ + R, K = P·Hᵀ·S⁻¹,
 // x⁺ = x + K·innov, P⁺ = (I−KH)·P·(I−KH)ᵀ + K·R·Kᵀ (symmetrized).
 // ---------------------------------------------------------------------------

@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """Fractional-cycle histogram of the network cross-station DD ambiguities (B5).
 
-The network producer, with ``network.trace_dd_fractional`` on, writes
-``logs/network_dd_fractional.csv`` — the between-station double-differenced
-undifferenced float ambiguities per (constellation, signal), now including the
-fractional-cycle residual ``frac_cyc = dd_cyc - round(dd_cyc)`` (P1-2).  This is
-the go/no-go instrument for float-bias user AR: if the emitted phase biases are
-AR-grade, the DD ambiguities cluster on integers and ``frac_cyc`` piles up near
-0 (equivalently ±0.5 is empty).  A smeared, flat histogram means the bias
-product does not yet support <0.1-cycle user AR.
+With ``network.trace_dd_fractional`` on, the network producer writes
+``logs/network_dd_fractional.csv``: the between-station double-differenced
+undifferenced float ambiguities per (constellation, signal), including the
+fractional-cycle residual ``frac_cyc = dd_cyc - round(dd_cyc)`` (P1-2). This is
+the go/no-go instrument for float-bias user AR: when the emitted phase biases
+are AR-grade, the DD ambiguities cluster on integers and ``frac_cyc`` piles up
+near 0 (equivalently, density at ±0.5 is empty). A smeared, flat histogram
+means the bias product does not yet support <0.1-cycle user AR.
 
 Usage:
   python view_network_dd_fractional.py <run_dir> [--signal L1C] [--save out.png]
   <run_dir> contains logs/network_dd_fractional.csv
 
-Prints a per-(const,signal) text histogram + robust spread always; renders a
-matplotlib figure when matplotlib is available (or is asked to --save).
+Prints a per-(const,signal) text histogram and robust spread always; renders a
+matplotlib figure when matplotlib is available, or when asked with --save.
 GLONASS and the pivot station are already excluded producer-side.
 """
 import argparse
@@ -38,7 +38,7 @@ def load(path):
 
     frac[key]   -> list of frac_cyc (wrapped to (-0.5, 0.5])
     sigma[key]  -> list of dd_sigma_cyc (T2a formal DD σ, cycles; only rows with a
-                   positive value — −1 marks "covariance unavailable")
+                   positive value; −1 marks "covariance unavailable")
     series[key] -> {(sat, ref, sta_a, sta_b): [dd_cyc over epochs]} for time-stability
     """
     frac = defaultdict(list)
@@ -56,7 +56,7 @@ def load(path):
                 continue
             key = (row["cons"], row["signal"])
             frac[key].append(wrap_half(fc))
-            # T2a formal DD σ (cycles) — optional column; −1/absent = unavailable.
+            # Optional column holding the T2a formal DD σ (cycles); −1 or absent means unavailable.
             try:
                 ds = float(row["dd_sigma_cyc"])
                 if ds > 0.0:
@@ -90,9 +90,9 @@ def circular_R(vals):
 
 
 def series_stability(smap):
-    """Median (and 90th-pct) over series of the per-series std of dd_cyc — how much a
-    fixed (sat,pair,signal) DD wanders in time.  A drifting float (root-cause signature)
-    shows a large per-series std even when the pooled histogram looks tight."""
+    """Median (and 90th-pct) over series of the per-series std of dd_cyc: how much a
+    fixed (sat,pair,signal) DD wanders in time. A drifting float shows a large
+    per-series std even when the pooled histogram looks tight."""
     stds = []
     for vals in smap.values():
         if len(vals) < 2:
@@ -146,8 +146,7 @@ def main():
     print(f"Network DD fractional-cycle histogram: {path}")
     print("UNIFORM BENCHMARK (no integer information): mean|frac|=0.250  P(<0.1)=0.200  R=0.00")
     print("  AR-grade biases pull mean|frac| << 0.25, P(<0.1) >> 0.20, R >> 0, and calib ~ 1.")
-    # Pooled (all (const,signal)) headline, so a single number is comparable to the audit
-    # benchmark (mean|frac|=0.247, P(<0.1)=0.209 on runs/net305_10ep_audit).
+    # Pooled headline (all (const,signal)) for comparison to the uniform benchmark above.
     pooled = [v for k in keys for v in frac[k]]
     if pooled:
         pmean = sum(abs(v) for v in pooled) / len(pooled)
@@ -158,12 +157,13 @@ def main():
         vals = frac[(cst, sig)]
         near = sum(1 for v in vals if abs(v) < 0.1) / len(vals)
         mean_abs = sum(abs(v) for v in vals) / len(vals)
-        emp = robust_std(vals)                       # robust std of the FRACTIONS (unif ~0.29)
+        emp = robust_std(vals)                       # robust std of the fractions (uniform ~0.29)
         smed, sp90, ns = series_stability(series.get((cst, sig), {}))
-        # σ calibration (the doc's χ² intent): compare the per-series TEMPORAL scatter of
+        # σ calibration (the doc's χ² intent): compare the per-series temporal scatter of
         # dd_cyc (how much a fixed (sat,pair,signal) DD wanders epoch-to-epoch) to the formal
-        # DD σ.  calib = temporal_scatter / formal_σ: ~1 = honest; >>1 = formal σ overconfident
-        # (the σ-incest signature); <<1 = conservative (typical during warmup).
+        # DD σ.  calib = temporal_scatter / formal_σ: about 1 means the formal σ matches;
+        # much greater than 1 means the formal σ is overconfident; much less than 1 is
+        # conservative (typical during warmup).
         svals = sigma.get((cst, sig), [])
         med_sig = (sorted(svals)[len(svals) // 2] if svals else 0.0)
         calib = (smed / med_sig) if med_sig > 0.0 else float("nan")

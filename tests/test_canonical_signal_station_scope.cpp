@@ -3,26 +3,26 @@
  * @brief Contract tests for `processing.canonical_signal_priority_stations`
  *        (card CSL section 6, the four-station split).
  *
- * CSL section 4 left the consumer's gain complete with four of the six stations
- * that move to L1W, with equal first-epoch margins at three of them, so a
- * coverage floor cannot split them further and the next split needs a per-station
+ * Per CSL section 4, four of the six stations that move to L1W carry the whole
+ * consumer gain, and three of them have equal first-epoch margins, so a coverage
+ * floor cannot split them further and the next split needs a per-station
  * override.  @c PppModel::canonicalRuleForStation is that override: it decides
  * which rule each station hands to @c PppModel::decideCanonicalPicks.
  *
- * What is pinned here:
- *   (a) an EMPTY list is the pre-card default — the configured rule applies at
- *       every station, under either rule, so an absent key changes nothing;
- *   (b) a NON-EMPTY list is a scope that decides on its own: a listed station
+ * Covered here:
+ *   (a) an empty list is the default: the configured rule applies at every
+ *       station, under either rule, so an absent key changes nothing;
+ *   (b) a non-empty list is a scope that decides on its own: a listed station
  *       runs `priority` and every other station runs `count`, whatever the
- *       global rule says, so a list alone arms the scope and the global rule
- *       cannot silently widen it;
+ *       global rule says, so the list alone arms the scope and the global rule
+ *       cannot widen it;
  *   (c) the comparison is case-insensitive and whole-string (no prefix match);
- *   (d) the empty station label — the off-network path, which has no label — is
+ *   (d) the empty station label (the off-network path, which has no label) is
  *       never a member of a non-empty scope.
  *
- * The rule is pure — no config, no logger, no observations — so these cases carry
- * no fixture.  That a run applies it per station is the run's own "Canonical
- * latch for ..." line, graded on the arms, not here.
+ * The rule is pure (no config, no logger, no observations), so these cases carry
+ * no fixture.  Whether a run applies it per station is shown by the run's own
+ * "Canonical latch for ..." line, graded on the arms, not here.
  */
 #include <gtest/gtest.h>
 
@@ -64,8 +64,7 @@ TEST(CanonicalSignalStationScope, EmptyListLeavesTheGlobalRuleEverywhere) {
 }
 
 TEST(CanonicalSignalStationScope, EmptyListAndEmptyLabelStillTakesTheGlobalRule) {
-    // The off-network path carries no station label and must keep behaving as it
-    // did before the card.
+    // The off-network path carries no station label and keeps the global rule.
     EXPECT_EQ(ruleAt(CanonicalSignalRule::Priority, kNone, ""),
               CanonicalSignalRule::Priority);
     EXPECT_EQ(ruleAt(CanonicalSignalRule::Count, kNone, ""),
@@ -91,7 +90,7 @@ TEST(CanonicalSignalStationScope, ListedStationsRunPriorityAndTheRestRunCount) {
 
 TEST(CanonicalSignalStationScope, TheScopeDecidesOnItsOwnWhateverTheGlobalRule) {
     // A list with the global rule left at `count` still puts the listed stations
-    // on `priority`: the list IS the arming, which is what makes an arm of this
+    // on `priority`: the list is the arming, which is what makes an arm of this
     // knob a one-line delta against its base.
     EXPECT_EQ(ruleAt(CanonicalSignalRule::Count, kFour, "WIND00NAM"),
               CanonicalSignalRule::Priority);
@@ -135,8 +134,8 @@ TEST(CanonicalSignalStationScope, MatchingIsWholeStringNotAPrefix) {
 TEST(CanonicalSignalStationScope, AnUnlabelledStationIsNeverInsideAScope) {
     EXPECT_EQ(ruleAt(CanonicalSignalRule::Priority, kFour, ""),
               CanonicalSignalRule::Count);
-    // Even if the list itself carried an empty entry (the loader drops those, so
-    // this is belt and braces).
+    // The same holds if the list itself carries an empty entry (the loader drops
+    // those, so this is a second guard).
     const std::vector<std::string> with_empty{ "", "KOKV00USA" };
     EXPECT_EQ(ruleAt(CanonicalSignalRule::Priority, with_empty, ""),
               CanonicalSignalRule::Count);

@@ -1,17 +1,17 @@
-"""Simulated-network truth scorecard — the grader's verdict, displayed not re-graded.
+"""Simulated-network truth scorecard: the grader's verdict, displayed, not re-graded.
 
 The synthetic minimum-network fixture (docs/SPEC_synthetic_minimum_network.md) is
-the one ABSOLUTE grade the network producer has: ``scripts/simnet_grade.py``
+the one absolute grade the network producer has: ``scripts/simnet_grade.py``
 transforms injected truth into the producer's realized S-basis and compares the
-emitted wire against it.  This viewer *displays* that verdict — it never
-re-derives a number, exactly as ``exam_scorecard`` displays the Verifier's.
+emitted wire against it. This viewer displays that verdict; it never re-derives
+a number, exactly as ``exam_scorecard`` displays the Verifier's.
 
 Inputs (both written by ``scripts/simnet_report.py`` into the run's log dir):
 
   ``simnet_grade.json``   machine-readable channel grades (required)
   ``simnet_grade.txt``    the grader's full console readout (optional; appended
-                          verbatim because its caveat text — census-first,
-                          void-consumer, inert-tier warnings — IS the scorecard's
+                          verbatim because its caveat text (census-first,
+                          void-consumer, inert-tier warnings) is the scorecard's
                           fine print and must not drift from the grader)
 """
 
@@ -32,7 +32,7 @@ def _stats_line(s, unit=""):
 
 
 def _vf_line(vf, n):
-    """The grader's own calibration verdict thresholds — quoted, not invented."""
+    """The grader's own calibration verdict thresholds, quoted, not invented."""
     if vf is None:
         return "vf n/a"
     verdict = ("CALIBRATED" if 0.5 <= vf <= 2.0 else
@@ -97,7 +97,7 @@ def build_simnet_scorecard(ctx) -> ViewerResult:
         lines.append(f"consumer       : VOID ({con.get('refused')}) — correction set "
                      "empty, the number would grade the consumer alone")
 
-    # The grader's full console readout, verbatim — the caveats live there.
+    # The grader's full console readout, verbatim: the caveats live there.
     txt = ctx.path("simnet_grade.txt")
     if os.path.exists(txt) and os.path.getsize(txt) > 0:
         lines.append("")

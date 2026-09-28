@@ -1,8 +1,8 @@
 /**
  * @file test_clock_level_carry.cpp
- * @brief Card CLV (docs/refound/CLV_clock_level_2026-09-22.md): the satellite clock
- *        LEVEL, estimated from the code alone and re-based into the carry
- *        (@c network.clock_level_carry).  Suite @c ClockLevelCarryTest.
+ * @brief Tests for the satellite clock level, estimated from the code alone and
+ *        re-based into the carry (@c network.clock_level_carry).  Suite
+ *        @c ClockLevelCarryTest (card CLV, docs/refound/CLV_clock_level_2026-09-22.md).
  *
  * What is pinned here:
  *  - the level direction (+1 on the satellite clock, +1 on each of its phase biases) is
@@ -26,7 +26,7 @@
  *    be declared as phase-bias discontinuities.
  *
  * Station rows follow the production sign convention: MeasurementModel.cpp writes the
- * satellite clock with a -1 partial on code AND phase rows and the satellite phase
+ * satellite clock with a -1 partial on both code and phase rows and the satellite phase
  * bias with a +1 partial on phase rows only, and networkSplitStation_ copies those
  * columns verbatim into the shared border (the same convention the NetworkEstimatorTest
  * fixtures use).
@@ -170,14 +170,14 @@ double rowResidual(const PendCplRow& row, const Eigen::VectorXd& s) {
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// R1: the level direction on the reduced shared border.
+// The level direction on the reduced shared border (R1).
 // ---------------------------------------------------------------------------
 
 // With phase rows only, every level direction is in the null space of the reduced
 // normals: the ambiguities and receiver clocks are reduced out, the pivot's pinned
 // ambiguities keep -clk + pb observed, and the level leaves -clk + pb unchanged.  The
-// clock ALONE is not in it (the pinned phase rows see it), so the null space is not a
-// trivially empty statement.  With code rows added, the level is observed.
+// clock alone is not in it (the pinned phase rows see it), so the null-space check is
+// not vacuous.  With code rows added, the level is observed.
 TEST(ClockLevelCarryTest, LevelDirectionIsBlindToPhaseAndSeenByCode) {
     NetworkEstimator est;
     const Net n = makeNet(est, /*S=*/4, /*R=*/5);
@@ -210,7 +210,7 @@ TEST(ClockLevelCarryTest, LevelDirectionIsBlindToPhaseAndSeenByCode) {
 // An ambiguity's exact regression is on the phase side (-clock + phase bias) of its own
 // satellite, plus the receiver-clock cross terms every other satellite's clock carries;
 // the clock gauge makes the clock coefficients sum to zero.  Such a row is blind to
-// every between-satellite level CONTRAST (each satellite's clock-plus-phase-bias
+// every between-satellite level contrast (each satellite's clock-plus-phase-bias
 // sensitivity is the same).  With the time update at the legacy clock rate
 // q = 1e-3 m^2/s against a clock carried at the Q3 anchor's variance floor (1e-5 m^2),
 // kappa_clk = 1e-5 / (1e-5 + 0.03) keeps 0.03 percent of every clock coefficient, the
@@ -255,7 +255,7 @@ TEST(ClockLevelCarryTest, TimeUpdateTurnsAnAmbiguityRowIntoALevelStatement) {
 }
 
 // ---------------------------------------------------------------------------
-// R2: the code-only information.
+// The code-only information (R2).
 // ---------------------------------------------------------------------------
 
 TEST(ClockLevelCarryTest, InformationAccumulatesDecaysAndFloors) {
@@ -385,7 +385,7 @@ TEST(ClockLevelCarryTest, FilterArmsAccumulatesBreaksAndCaps) {
 }
 
 // ---------------------------------------------------------------------------
-// R3 / R5: the re-base moves every carried reference of the satellite, nothing else.
+// The re-base moves every carried reference of the satellite, nothing else (R3, R5).
 // ---------------------------------------------------------------------------
 
 TEST(ClockLevelCarryTest, ReBaseMovesEveryCarriedReferenceAlongTheLevel) {
@@ -451,9 +451,9 @@ TEST(ClockLevelCarryTest, ReBaseMovesEveryCarriedReferenceAlongTheLevel) {
     EXPECT_EQ(clockLevelShiftCarry(carry, {}), 0);
 }
 
-// R4: every coupling row keeps its residual when the border and its s_prev move
-// together along the level, including a row the Card-1d time update shrank and a row
-// with terms on another satellite, so the re-base never pulls a carried row.
+// Every coupling row keeps its residual when the border and its s_prev move together
+// along the level, including a row the Card-1d time update shrank and a row with terms
+// on another satellite, so the re-base never pulls a carried row (R4).
 TEST(ClockLevelCarryTest, CouplingRowsKeepTheirResidualUnderTheReBase) {
     NetworkEstimator est;
     const Net n = makeNet(est, /*S=*/3, /*R=*/1);

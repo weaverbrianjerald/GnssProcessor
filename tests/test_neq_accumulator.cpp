@@ -2,15 +2,16 @@
  * @file test_neq_accumulator.cpp
  * @brief Unit tests for the cross-session normal-equation accumulator (item #13B).
  *
- * The headline guarantee is EXACTNESS of the per-epoch Schur reduction: feeding
- * a multi-epoch batch through the accumulator (each epoch carrying a global
- * position block plus an epoch-local receiver-clock parameter) and solving the
- * reduced normal system reproduces — to machine precision — a single dense
- * stacked least-squares solve over [position + one clock per epoch], with the
- * clocks marginalized out.  The dense reference is assembled completely
- * independently from the raw design rows, so agreement is a genuine cross-check
- * of the marginalization identities (normal matrix, RHS, AND the post-fit
- * weighted SSR that drives σ̂₀²).  A second test pins the arc-stamping logic.
+ * The main test checks that the per-epoch Schur reduction is exact: a multi-epoch
+ * batch fed through the accumulator (each epoch carrying a global position block and
+ * an epoch-local receiver-clock parameter) and solved from the reduced normal system
+ * reproduces, to machine precision, a single dense stacked least-squares solve over
+ * [position + one clock per epoch] with the clocks marginalized out.  The dense
+ * reference is assembled independently from the raw design rows, so agreement
+ * cross-checks the marginalization identities for the normal matrix, the RHS and the
+ * post-fit weighted SSR that drives σ̂₀².  A second test covers the arc stamping, and
+ * a third checks that an epoch touching no retained parameter adds nothing to
+ * n_obs or dof.
  */
 
 #include <gtest/gtest.h>
@@ -165,8 +166,8 @@ TEST(NeqAccumulator, ResetStartsNewAmbiguityArc) {
 }
 
 // ---------------------------------------------------------------------------
-// Accounting: an epoch that touches no retained (global) parameter must NOT
-// inflate n_obs/dof — otherwise σ̂₀² (= WSSR/dof) is biased downward.
+// Accounting: an epoch that touches no retained (global) parameter does not add to
+// n_obs or dof; counting it would bias σ̂₀² (= WSSR/dof) downward.
 // ---------------------------------------------------------------------------
 TEST(NeqAccumulator, AllLocalEpochDoesNotInflateObsCount) {
     std::mt19937 gen(777);
@@ -174,7 +175,7 @@ TEST(NeqAccumulator, AllLocalEpochDoesNotInflateObsCount) {
     NeqAccumulator acc;
     const std::vector<std::string> labels = { "POS_X", "POS_Y", "CLK" };
 
-    // Two normal epochs (3 obs each) that DO constrain position.
+    // Two normal epochs (3 obs each) that constrain position.
     Eigen::Index good_rows = 0;
     for (int e = 0; e < 2; ++e) {
         const Eigen::Index m = 3;
@@ -189,7 +190,7 @@ TEST(NeqAccumulator, AllLocalEpochDoesNotInflateObsCount) {
     }
 
     // One all-local epoch: only the CLK column is active (position partials 0),
-    // so ng==0 and the epoch must be dropped from the retained system entirely.
+    // so ng==0 and the epoch is dropped from the retained system entirely.
     {
         EpochMeasurement e;
         const Eigen::Index m = 4;
@@ -204,7 +205,7 @@ TEST(NeqAccumulator, AllLocalEpochDoesNotInflateObsCount) {
 
     const NeqAccumulator::Solution sol = acc.solve();
     ASSERT_TRUE(sol.ok);
-    EXPECT_EQ(sol.n_obs, static_cast<std::size_t>(good_rows));  // 6, NOT 10
+    EXPECT_EQ(sol.n_obs, static_cast<std::size_t>(good_rows));  // 6, not 10
     EXPECT_EQ(sol.n_local, 2u);                                 // one CLK per good epoch
     EXPECT_NEAR(sol.dof, static_cast<double>(good_rows) - 2.0 - 2.0, 1e-9);
 }

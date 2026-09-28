@@ -1,31 +1,31 @@
-"""Network fault-QC flag-rate viewer -- realized reject rate vs implied alpha.
+"""Network fault-QC flag-rate viewer: realized reject rate vs implied alpha.
 
-Reads ``network_flag_rates.csv`` (the PPP-RTK NETWORK producer's per-QC-tier
-*aggregate* fault-detection tallies) and compares, for every DIA/RAIM tier, the
-**realized** flag rate against the **implied** false-alarm probability alpha that
-the tier's threshold was calibrated to.  A tier flagging far more (or far fewer)
-than its implied alpha is mis-calibrated: too tight and it ejects good data, too
-loose and it lets faults through.
+Reads ``network_flag_rates.csv`` (the PPP-RTK network producer's per-QC-tier
+aggregate fault-detection tallies) and compares, for every DIA/RAIM tier, the
+realized flag rate against the implied false-alarm probability alpha that the
+tier's threshold was calibrated to. A tier flagging far more (or far fewer)
+than its implied alpha is mis-calibrated: too tight ejects good data, too
+loose lets faults through.
 
 Tiers (T1..T6, T3c) are the successive fault screens: chi-square / NIS gates,
-per-satellite RAIM, shared-parameter DIA, etc.  ``T6`` carries no calibrated
-threshold (``has_alpha==0``), so its ``implied_alpha`` is blank -- it is shown as
-a realized rate only, with no calibration ratio.
+per-satellite RAIM, shared-parameter DIA, and so on. ``T6`` carries no
+calibrated threshold (``has_alpha==0``), so its ``implied_alpha`` is blank and
+it is shown as a realized rate only, with no calibration ratio.
 
 Two panels:
 
-  1. **Rate vs alpha** -- one row per tier on a shared log-x axis; a short segment
-     joins the realized rate (filled) to the implied alpha (hollow-ish) marker so
-     mis-calibration reads as a long segment.  Tiers with no exposure this run
-     (``opportunities==0``) draw hollow "no exposure" markers.  Vertical guides
+  1. Rate vs alpha: one row per tier on a shared log-x axis; a short segment
+     joins the realized rate (filled) to the implied alpha (hollow) marker, so
+     mis-calibration reads as a long segment. Tiers with no exposure this run
+     (``opportunities==0``) draw hollow "no exposure" markers. Vertical guides
      mark the 1e-3 and 1e-6 alpha decades.
-  2. **Table** -- a monospace tier | opp | flags | rate | alpha | ratio read-out;
+  2. Table: a monospace tier | opp | flags | rate | alpha | ratio read-out;
      when the companion ``network_run_summary.csv`` is present it appends the
      run's sync/emit/withhold counts, including ``withheld_frac`` (the sigma0
-     withhold fraction -- the V3 pass metric).
+     withhold fraction, the V3 pass metric).
 
-This is a *run aggregate* view: the counts are totals over the whole run.  The
-per-event TIMING -- which epoch each flag fired in -- lives in the separate
+This is a run-aggregate view: the counts are totals over the whole run. The
+per-event timing, which epoch each flag fired in, lives in the separate
 per-epoch QC traces, not here.
 """
 

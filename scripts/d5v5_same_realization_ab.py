@@ -1,30 +1,32 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""SAME-REALIZATION A/B for the D5 v5 card: two legs off ONE snapshot, arm-to-arm.
+"""Same-realization A/B for the D5 v5 card: two legs restored from one snapshot,
+compared arm to arm.
 
-Why this is not ``d5v5_seam_ab.py``.  That script grades each arm against the
-continuous seed it resumed from, which works only inside the seed's own span.  The
-pre-registered window here (+120..+240 epochs past a seed that ends at +116) has NO
-seed overlap, so every channel is read DIRECTLY between the two arms instead.  For a
-same-realization pair that is the stronger statistic anyway: both legs restore the
+Differs from ``d5v5_seam_ab.py``, which grades each arm against the continuous seed
+it resumed from and so only holds inside the seed's own span. The pre-registered
+window here (+120..+240 epochs past a seed that ends at +116) has no seed overlap,
+so every channel is read directly between the two arms instead. For a
+same-realization pair this is the stronger statistic: both legs restore the
 identical snapshot, so the ambiguity/datum realization, the station set and the
-observation stream are common, and the arm-to-arm difference is the knob and nothing
-else.  (The 6 h independent-cold-start twin could not say this — its phase-bias tail
-was one satellite's level realized differently, the standing-invariant-#5 confound.)
+observation stream are common, and the arm-to-arm difference is only the knob under
+test. (A 6 h independent-cold-start twin cannot make that claim: its phase-bias
+tail reflected one satellite's level realized differently between the two starts,
+the standing invariant #5 confound.)
 
 Channels, all over the pre-registered epoch window:
 
-  CONSUMER   ``logs/closed_loop_trace.csv``.  Two readings:
-             - de-biased 3D mean, each arm de-biased by its OWN MEDIAN ENU over the
-               window (a static coordinate realization at the hold-out station is not
-               the knob — standing invariant #5);
-             - the DIRECT arm-to-arm 3D separation per epoch, which the de-biased
-               means cannot see: two arms that drift apart TOGETHER keep identical
-               spreads.  Reported, not gated.
-  WIRE       ``products.txt``.  Satellite clock as the DATUM-INVARIANT CONTRAST (each
-             arm's per-epoch median over satellites removed FIRST, then differenced),
-             and per-signal phase bias as raw |delta| — legitimate here only because
-             the two arms share one restored datum realization.
+  CONSUMER   ``logs/closed_loop_trace.csv``. Two readings:
+             - de-biased 3D mean, each arm de-biased by its own median ENU over the
+               window (a static coordinate realization at the hold-out station is
+               not the knob under test, per standing invariant #5);
+             - the direct arm-to-arm 3D separation per epoch, which the de-biased
+               means cannot see: two arms that drift apart together keep identical
+               spreads. Reported, not gated.
+  WIRE       ``products.txt``. Satellite clock as a datum-invariant contrast (each
+             arm's per-epoch median over satellites removed first, then
+             differenced), and per-signal phase bias as a raw |delta|, valid here
+             only because the two arms share one restored datum realization.
   ZWD        ``logs/network_zwd.csv`` per station, |ON - OFF| on the stations and
              epochs present in both.
   STATUS     ``logs/network_epoch_status.csv`` dispositions, so withheld-epoch

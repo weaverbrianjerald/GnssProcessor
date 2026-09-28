@@ -2,33 +2,37 @@
 /**
  * @file NetworkEmitStore.hpp
  * @brief Emit / store / product-write + closed-loop consume for the PPP-RTK network
- *        producer — the BACK half of the emit pipeline (the front half, solution
+ *        producer: the back half of the emit pipeline (the front half, solution
  *        preparation, is @ref networkSolPrep).
  *
  * Consumes the prepared @ref NetworkSolutionEpoch (and the datum-bump / withheld /
  * retro state @ref networkSolPrep returned) and finalizes the epoch:
- *   - Card-4 phase-D emit-layer frame RE-BASE (+ M5 PB emission-continuity filter)
- *     on the emitted phase biases, baked into @c sol before the store push so a
+ *   - with the SH health gate engaged, writes only the withheld H heartbeat and
+ *     returns (no store push, no product write, no closed-loop consume);
+ *   - the Card-4 phase-D emit-layer frame re-base (+ M5 PB emission-continuity filter)
+ *     on the emitted phase biases, the CLK-R clock emission re-base, the card CLV
+ *     level-step declaration, the RS-4 warm-resume phase-bias seam mark and the PBH
+ *     phase-bias hold, all baked into @c sol before the store push so a
  *     NetworkProductIO replay reproduces the emitter disc counters;
- *   - @c emitToStore + the RTA-5 periodic S-contract re-broadcast;
+ *   - @c emitToStore, the card SID signal-roster declaration, the JT and MS event
+ *     drains, and the RTA-5 periodic S-contract re-broadcast;
  *   - the RTA-10 per-epoch heartbeat + the on-disk product write (+ RTA-6 flush);
  *   - the emitted-epoch bookkeeping (n_emitted, grade-metric / last-emit anchors,
  *     the R12 within-epoch T2 flag-rate commit);
- *   - the CLOSED-LOOP consume: supply this epoch's SH-VTEC slant iono to the
+ *   - the closed-loop consume: supply this epoch's SH-VTEC slant iono to the
  *     held-out consumer, run it against the fresh store, accumulate the AR / 3D-error
- *     metrics; and the per-satellite solution CSV.
+ *     metrics and drain the consumer traces; and the per-satellite solution CSV.
  *
- * Seeded at decomposition INC-11 (2026-07-22), which relocated the SB_EMITSTORE
- * block VERBATIM out of Application::runNetwork (dedent-only, zero substitution).
- * Produces NO crossing locals (void); every carry / emit-side object / run
+ * Relocated from Application::runNetwork at decomposition INC-11 (the SB_EMITSTORE
+ * block).  Returns nothing to the caller; every carry / emit-side object / run
  * accumulator is an explicit reference into the caller's state.
  *
- * ⚠ ORDERING CONTRACT — runs AFTER @ref networkSolPrep (consumes its result) and
- * BEFORE the SB_IONODIAG/RAIM diagnostics + the epoch stash.  It MUTATES @c sol (the
- * re-base), the emitter / product_writer (store push + on-disk write), persistent
- * carries (n_emitted / first_emit_content_s / last_emit_content_s / the pivot
- * refresh) and the run-level closed-loop accumulators.  The caller keeps the
- * @c subBegin/subEnd(SB_EMITSTORE) brackets.
+ * Ordering contract: runs after @ref networkSolPrep (consumes its result) and
+ * before the SB_IONODIAG/RAIM diagnostics + the epoch stash.  It mutates @c sol (the
+ * re-bases and the hold), the emitter / product_writer (store push + on-disk write),
+ * persistent carries (n_emitted / first_emit_content_s / last_emit_content_s / the
+ * contract pivot refresh) and the run-level closed-loop accumulators.  The caller keeps
+ * the @c subBegin/subEnd(SB_EMITSTORE) brackets.
  */
 
 #include "app/NetworkSetupResult.hpp"        // NetworkSetupResult
@@ -55,15 +59,16 @@ namespace spdlog { class logger; }
 namespace GnssProcessor {
 
 class GnssConfig;
-struct NetworkRunContext;   // app/NetworkRunContext.hpp — included in the .cpp only
-struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp — included in the .cpp only
+struct NetworkRunContext;   // app/NetworkRunContext.hpp (included in the .cpp only)
+struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp (included in the .cpp only)
 
 /**
  * @brief Emit, store, write and closed-loop-consume this epoch's solution.  See the
  *        file banner for the full step list and the ordering contract.  Parameters
  *        beyond ctx/config_/log/traces/setup carry the epoch-local assembly state,
  *        the five @ref NetworkSolPrepResult locals (@c sol is re-based in place), the
- *        emit-rebase / PB-filter engines, and the run-level closed-loop accumulators.
+ *        emit-rebase / PB-filter / clock-rebase engines, and the run-level closed-loop
+ *        accumulators.
  */
 void networkEmitStore(
     NetworkRunContext& ctx,

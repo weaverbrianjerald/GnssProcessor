@@ -1,102 +1,105 @@
 #pragma once
 /**
  * @file NetworkGrossLos.hpp
- * @brief Card GL — the GROSS LINE-OF-SIGHT screen for the PPP-RTK network
- *        producer (docs/SPEC_event_harness.md §24.18).
+ * @brief Gross line-of-sight screen for the PPP-RTK network producer (card GL,
+ *        docs/SPEC_event_harness.md §24.18).
  *
- * ## The blind spot this closes
+ * ## Coverage gap addressed
  *
- * Every post-fit tier the producer owns screens CARRIED-AMBIGUITY PHASE rows and
- * nothing else.  The admission test is one line — `NetworkRaim.cpp:328`:
+ * Every other post-fit tier of the producer screens carried-ambiguity phase rows
+ * only.  The admission test is one line in @c networkPostFitRaim (NetworkRaim.cpp):
  *
  * @code
  *   if (std::abs(R.A_r(row, pa.col)) <= 0.5) continue;  // not a phase row of this ambiguity
  * @endcode
  *
- * An uncombined phase row carries @f$+1@f$ on its ambiguity column; a CODE row
- * carries exactly zero on every ambiguity column.  So a code row can never enter
- * the σ̂₀ pool, never contribute to a cell's @c r_max, never appear in the
- * median-polish table, and can never reach the cross-station consensus or the
- * isolated-arc attribution.  A gross CODE error on one line of sight is therefore
- * structurally invisible to post-fit RAIM — not rare, not under-weighted,
- * *unreachable*.
+ * An uncombined phase row carries @f$+1@f$ on its ambiguity column; a code row
+ * carries zero on every ambiguity column.  A code row therefore never enters the
+ * σ̂₀ pool, never contributes to a cell's @c r_max, never appears in the
+ * median-polish table, and never reaches the cross-station consensus or the
+ * isolated-arc attribution.  A gross code error on one line of sight is out of
+ * reach of post-fit RAIM altogether, not merely under-weighted.
  *
- * The one tier that DOES visit the row is the MDB rider, and its statistic is a
- * RELIABILITY number, @f$\delta_0\sigma_i/\sqrt{r_i}@f$ — "how large a fault
- * could hide here" — which never reads @f$v_i@f$ at all.  Its action column is the
- * string literal @c "observe" (`NetworkMdb.cpp:286`) and its own header says
- * "nothing downstream reads @c mdb_event_m".
+ * The one tier that visits the row is the MDB rider, and its statistic is a
+ * reliability number, @f$\delta_0\sigma_i/\sqrt{r_i}@f$ (the largest fault that
+ * could stay hidden there), which never reads @f$v_i@f$.  Its action column is
+ * the string literal @c "observe" (NetworkMdb.cpp), and NetworkMdb.hpp states
+ * that no decision reads its @c mdb_event_m threshold.
  *
- * Measured consequence (§24.15 R5, §24.17): on `runs/_cm_pvb` the line of sight
- * (DJIG00DJI, G06) ran post-fit code residuals of −75 … −142 m on three signals
- * for 31 epochs; `network_raim.csv` filed ZERO rows for that station or satellite
- * in the window, `n_adapt` was 0, and MDB observed twice.  Over six hours such
- * lines are admitted at birth, never acted on, and grow until a whole station is
- * poisoned — BSHM00ISR at hour 5 of `runs/_cm_c10`: station code rms 54 m, ZWD
- * 197 m.
+ * Field cases (§24.15 R5, §24.17): without this screen, a line of sight with
+ * post-fit code residuals of tens to hundreds of metres on every signal is
+ * admitted, never acted on, and can grow until the whole station's solution
+ * degrades.
  *
- * ## What the screen is
+ * ## The screen
  *
- * A per (station, satellite) LINE-OF-SIGHT state machine over the post-fit CODE
- * residuals, with an EVENT at each edge (standing invariant #7) and run-end
+ * A per (station, satellite) line-of-sight state machine over the post-fit code
+ * residuals, with an event at each edge (standing invariant #7) and run-end
  * counters on every denominator (standing invariant #4):
  *
- *  - **Statistic.**  @f$r_i = |v_i|\sqrt{w_i}@f$ with @f$w_i = 1/\sigma_i^2@f$ —
- *    each code row standardized by its OWN σ, so the bar @ref
- *    NetworkConfig::gross_los_k reads literally as "this observation missed by k
- *    of its own sigmas".  The pooled robust σ̂₀ is deliberately NOT the
- *    denominator: on the hour a station is being poisoned the pool inflates, and
- *    a screen normalized by it would disarm itself exactly when it is needed.
- *    (That is the same property that makes RAIM's σ̂₀ the right choice for
- *    ambient PHASE misfit and the wrong one here.)
+ *  - **Statistic.**  @f$r_i = |v_i|\sqrt{w_i}@f$ with @f$w_i = 1/\sigma_i^2@f$:
+ *    each code row is standardized by its own σ, so the bar @ref
+ *    NetworkConfig::gross_los_k means "this observation missed by k of its own
+ *    sigmas".  The pooled robust σ̂₀ is not the denominator: while a station is
+ *    degrading, the pool inflates, and a screen normalized by it would lose
+ *    sensitivity when it is needed.  (The same property makes RAIM's σ̂₀ the right
+ *    normalization for ambient phase misfit and the wrong one here.)
  *  - **Declaration.**  At least @ref NetworkConfig::gross_los_min_rows of the
- *    LOS's own code rows over the bar in the same epoch, for @ref
- *    NetworkConfig::gross_los_epochs CONSECUTIVE epochs.  A gross line of sight
- *    is wrong on every code band at once (a range error, not a dispersive one);
- *    one heavy-tailed row is one band's multipath.  Absence resets the streak —
+ *    LOS's own code rows over the bar in the same epoch (under
+ *    @c network.gross_los_min_rows_rule = available, at least
+ *    min(gross_los_min_rows, the LOS's code rows)), for @ref
+ *    NetworkConfig::gross_los_epochs consecutive epochs.  A gross line of sight is
+ *    wrong on every code band at once (a range error, not a dispersive one); a
+ *    single heavy-tailed row is one band's multipath.  Absence resets the streak:
  *    an unobserved epoch is not evidence either way, the same rule RAIM's
  *    isolated-arc persistence gate uses.
- *  - **Response (the DECOUPLING edge).**  Exactly the refloat vocabulary the T4
- *    attribution erase already owns, so the two responses cannot drift: erase the
- *    LOS's entries in @c ctx.carry.local_carry (its zero-q phase levels), erase
- *    @c ctx.carry.iono_carry / @c iono_blk_carry for the LOS (so its slant iono
- *    re-draws from the SH tie rather than from a value estimated jointly with a
- *    level that is no longer trusted), mark its ambiguities pending-reseed, and
- *    from the NEXT assembly fold its CODE rows at σ × @ref
- *    NetworkConfig::gross_los_deweight.  A CAP, not a drop (prefer-fallback): the
- *    row keeps its sign and still re-anchors the float if the LOS's phase side
- *    goes away.  PHASE rows are untouched — they have their own responses.
- *  - **Release (the RE-COUPLING edge).**  The LOS's worst code row under @ref
+ *  - **Response (the decoupling edge).**  The refloat vocabulary the T4
+ *    attribution erase already uses, so the two responses stay consistent: erase
+ *    the LOS's entries in @c ctx.carry.local_carry (its zero-q phase levels),
+ *    erase @c ctx.carry.iono_carry / @c iono_blk_carry for the LOS (so its slant
+ *    iono re-draws from the SH tie rather than from a value estimated jointly with
+ *    a level that is no longer trusted), and mark its ambiguities pending-reseed.
+ *    Under @c network.gross_los_bound those entries are held at their
+ *    pre-declaration values instead of erased (see @ref networkGrossLosAct).
+ *    From the next assembly on, the LOS's code rows fold at σ × @ref
+ *    NetworkConfig::gross_los_deweight.  This is a cap, not a drop
+ *    (prefer-fallback): the row keeps its sign and still re-anchors the float if
+ *    the LOS's phase side goes away.  Phase rows are untouched; they have their
+ *    own responses.
+ *  - **Release (the re-coupling edge).**  The LOS's worst code row under @ref
  *    NetworkConfig::gross_los_clear_sigma for @ref
- *    NetworkConfig::gross_los_clear_epochs consecutive epochs lifts the
- *    deweight, with its own event.  The gap between the two bars is hysteresis;
- *    the loader warns if it is absent.
+ *    NetworkConfig::gross_los_clear_epochs consecutive epochs lifts the deweight,
+ *    with its own event.  The gap between the two bars is the hysteresis; the
+ *    loader warns if it is absent.
  *  - **Expiry (invariant #1's absent-satellite edge).**  A declared LOS unseen
  *    for longer than @ref NetworkConfig::gross_los_max_gap_s expires with its own
- *    event.  The next sighting is a new arc with a new ambiguity and the old
- *    evidence cannot speak for it; without this a set-and-forget deweight would
- *    ride a fresh arc silently.
+ *    event.  The next sighting is a new arc with a new ambiguity, and the old
+ *    evidence does not apply to it; without the expiry, a deweight set once would
+ *    carry over to a fresh arc unnoticed.
  *
- * **The epoch always EMITS.**  Nothing here withholds, drops a station or drops a
- * satellite — this is adapt-and-emit, and a withhold would be graded as an
- * adaptation failure.
+ * The epoch always emits: this is adapt-and-emit, and an epoch withhold would be
+ * graded as an adaptation failure.  The per-LOS screen never drops a station or a
+ * satellite.  Two optional sub-rules prune individual satellites from an
+ * emission while every other satellite still emits: the GL-2 wire withhold
+ * (@c network.gross_los_sat_wire_withhold) and the RF-3b B3 emission exclusion
+ * (@c network.gross_los_emit_exclude).
  *
  * ## Contract
  *
- * Default-OFF; OFF the seam is not called, no state is allocated, the assembly's
- * code-scale map is never populated and the run is BYTE-IDENTICAL (standing
- * invariant #6).  NOT fingerprinted: the knob does not change what any carried
- * state MEANS, only which rows are trusted this epoch, so a snapshot written with
- * it off stays readable with it on.
+ * Off by default.  With it off, the seam returns on entry, no state is allocated,
+ * the assembly's code-scale map is never populated, and the run is
+ * byte-identical (standing invariant #6).  Not fingerprinted: the knob changes
+ * which rows are trusted this epoch, not what any carried state means, so a
+ * snapshot written with it off stays readable with it on.
  *
- * Seam contract per CLAUDE.md: a free function over the run context, owning NO
- * state — the streaks, the declared set and every counter are references into
- * @c NetworkRunContext.  Ordering is the RAIM one and for the same reason: it
- * MUST run AFTER the joint solve and the carry harvest (erasing a @c local_carry
- * entry IS the refloat, and an entry erased before the harvest would simply be
- * re-stashed), and it is placed immediately after @ref networkPostFitRaim inside
- * the caller's @c SB_RAIM bracket.  The erases are idempotent, so a line of sight
- * that RAIM already refloated this epoch is not harmed by a second visit.
+ * Seam contract per CLAUDE.md: a free function over the run context that owns no
+ * state; the streaks, the declared set and every counter are references into
+ * @c NetworkRunContext.  The response half must run after the joint solve and
+ * the carry harvest, for the same reason as RAIM: erasing a @c local_carry entry
+ * is the refloat, and an entry erased before the harvest would be re-stashed.  The
+ * caller places that call immediately after @ref networkPostFitRaim inside its
+ * @c SB_RAIM bracket.  The erases are idempotent, so a second visit to a line of
+ * sight that RAIM already refloated this epoch has no further effect.
  */
 
 #include "filter/NetworkEstimator.hpp"   // NetworkEstimator (reconstructStation / labels)
@@ -117,96 +120,93 @@ namespace spdlog { class logger; }
 namespace GnssProcessor {
 
 class GnssConfig;
-struct NetworkRunContext;   // app/NetworkRunContext.hpp — included in the .cpp only
-struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp — included in the .cpp only
+struct NetworkRunContext;   // app/NetworkRunContext.hpp, included in the .cpp only
+struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cpp only
 
 /**
  * @brief Run-end telemetry for the gross-LOS screen (standing invariant #4).
  *
- * The DENOMINATORS are the point, exactly as for @c NetworkRaimCiTallies: they
- * make four states distinguishable that all otherwise read as "the screen found
- * nothing".
+ * The denominators matter, as for @c NetworkRaimCiTallies: they separate four
+ * states that would otherwise all read as "the screen found nothing".
  *
  *  - @c epochs == 0                        → the seam never ran (call-site gate).
- *  - @c epochs > 0, @c los_screened == 0   → it ran and the census was EMPTY (no
- *                                            code row reached it — dead wiring).
+ *  - @c epochs > 0, @c los_screened == 0   → it ran and the census was empty (no
+ *                                            code row reached it: dead wiring).
  *  - @c los_screened > 0, @c los_over == 0 → it screened real residuals and
- *                                            nothing cleared the bar (zero
- *                                            opportunity, not zero capability).
+ *                                            nothing cleared the bar (no
+ *                                            opportunity, not no capability).
  *  - @c los_over > 0, @c declared == 0     → evidence existed but never persisted
- *                                            @c gross_los_epochs epochs.
+ *                                            for @c gross_los_epochs epochs.
  *
- * Every member stays at zero unless @c ctx.knobs.gl_on, so an OFF run allocates
- * nothing and reports nothing.
+ * Every member stays at zero unless @c ctx.knobs.gl_on, so an unarmed run
+ * allocates nothing and reports nothing.
  */
 struct NetworkGrossLosTallies {
     long long epochs = 0;            ///< Seam passes with the screen armed.
     long long stations_screened = 0; ///< Station-epochs that produced at least one code row.
     long long los_screened = 0;      ///< (station, satellite) LOS-epochs screened.
-    long long rows_screened = 0;     ///< CODE rows visited.
+    long long rows_screened = 0;     ///< Code rows visited.
     long long los_over = 0;          ///< LOS-epochs whose evidence cleared the bar.
     long long declared = 0;          ///< Declarations (decoupling edges).
     long long cleared = 0;           ///< Releases (re-coupling edges).
     long long expired = 0;           ///< Declarations retired on the absent-satellite edge.
-    long long suppressed_warmup = 0; ///< LOS-epochs whose evidence was complete but the MATURITY horizon held the declaration.
-    long long suppressed_station = 0;///< LOS-epochs whose evidence was complete but the WHOLE-STATION stand-down held the declaration.
+    long long suppressed_warmup = 0; ///< LOS-epochs with complete evidence whose declaration the maturity horizon held.
+    long long suppressed_station = 0;///< LOS-epochs with complete evidence whose declaration the whole-station stand-down, or a standing station-level declaration (RF-3b B4), held.
     long long standdowns = 0;        ///< Station-epochs the stand-down fired on.
     std::map<std::string, long long> standdown_by_station;  ///< Stand-down station-epochs per station name.
-    // --- GL-2 (§24.19), all zero unless network.gross_los_sat_standdown ------
-    long long sat_standdowns = 0;      ///< SATELLITE stand-down edges (decoupling).
+    // --- Satellite stand-down (GL-2, §24.19); all zero unless network.gross_los_sat_standdown
+    long long sat_standdowns = 0;      ///< Satellite stand-down edges (decoupling).
     long long sat_released = 0;        ///< Satellite release edges (re-coupling).
     long long sat_epochs = 0;          ///< Epochs with at least one satellite stood down.
-    long long sat_epoch_max = 0;       ///< Most satellites simultaneously stood down.
-    long long sat_los_suppressed = 0;  ///< Per-LOS declarations refused because their SATELLITE was down.
-    long long sat_los_released = 0;    ///< Standing per-LOS declarations released because their satellite went down.
+    long long sat_epoch_max = 0;       ///< Most satellites stood down at the same time.
+    long long sat_los_suppressed = 0;  ///< Per-LOS declarations refused because their satellite was stood down.
+    long long sat_los_released = 0;    ///< Standing per-LOS declarations released because their satellite was stood down.
     long long sat_wire_withheld = 0;   ///< Satellite-epochs actually pruned from an emission (counted at the prune, in NetworkSolPrep).
     std::map<std::string, long long> sat_standdown_by_sat;  ///< Stand-down edges per satellite.
     long long currently_gross = 0;   ///< Declared and not yet cleared, at run end.
     long long max_concurrent = 0;    ///< Largest simultaneous declared set over the run.
-    long long rows_deweighted = 0;   ///< CODE rows actually folded at the deweighted σ (counted in the assembly).
-    long long amb_refloated = 0;     ///< Carried ambiguity levels erased + marked pending-reseed.
+    long long rows_deweighted = 0;   ///< Code rows actually folded at the deweighted σ (counted in the assembly).
+    long long amb_refloated = 0;     ///< Ambiguity columns the declaration response reached: erased and marked pending-reseed, or held under @c network.gross_los_bound.
     long long iono_erased = 0;       ///< Per-LOS iono carry entries erased (either vehicle).
     double    r_max = 0.0;           ///< Largest standardized code residual any screened LOS reached.
     double    v_abs_max_m = 0.0;     ///< Largest |v| (metres) any screened LOS reached.
     std::map<std::string, long long> declared_by_station;   ///< Declarations per station name.
     std::map<std::string, long long> declared_by_sat;       ///< Declarations per satellite.
-    // --- RF-3b (docs/refound/RF-3_code_row_qc_2026-09-22.md §4 B5, requirement F6).
-    //     Maintained in BOTH states of every RF-3b sub-knob, so an arm that does not
-    //     arm a rule still reports the population that rule would have reached.
-    long long los_over_short = 0;    ///< B1's population: LOS-epochs whose evidence clears the bar under the AVAILABLE rule while the LOS has FEWER code rows than @c gross_los_min_rows — unreachable under the fixed rule.  Counted whatever the rule is.
-    long long bound_los_epochs = 0;  ///< B2: LOS-epochs on which a hold was re-applied over the carry (0 unless @c network.gross_los_bound).
-    long long bound_amb_held = 0;    ///< B2: carried ambiguity entries frozen at a declaration.
-    long long bound_iono_held = 0;   ///< B2: per-LOS iono carry entries frozen at a declaration.
-    double    folded_v_abs_max_m = 0.0;  ///< B5: the largest |v| (m) reached by a row that was actually FOLDED at the deweight — the F2 alarm (445.48 m on `runs/_rap_rf3_gl1`).  0 when nothing was ever folded.
-    long long declare_latency_sum_ep = 0;///< B5: summed per-episode latency, in screened epochs, from the LOS's first over-bar epoch to its declaration.
-    long long declare_latency_max_ep = 0;///< B5: the largest such latency.
-    long long emit_excluded = 0;     ///< B3: satellite-epochs whose contributor set lost a declared line of sight at the DECLARING epoch.
-    long long emit_withheld = 0;     ///< B3: satellite-epochs actually pruned from an emission because too few contributors remained.
-    long long emit_disc_marked = 0;  ///< B3: satellite-epochs emitted with a per-satellite discontinuity mark instead of being withheld.
-    long long sta_declared = 0;      ///< B4: STATION-level declarations.
-    long long sta_released = 0;      ///< B4: STATION-level releases.
-    long long sta_los_epochs = 0;    ///< B4: station-epochs spent under a standing station declaration.
-    std::map<std::string, long long> sta_declared_by_station;  ///< B4: station declarations per station name.
+    // --- Counters of the RF-3b sub-rules (docs/refound/RF-3_code_row_qc_2026-09-22.md
+    //     §4 B5, requirement F6).
+    //     The B5 counters (los_over_short, folded_v_abs_max_m, the latencies) are kept
+    //     whether or not the sub-rule they describe is armed, so an arm that leaves a rule
+    //     off still reports the population that rule would have reached.  The B2, B3 and
+    //     B4 counters stay zero unless their own knob is armed.
+    long long los_over_short = 0;    ///< Population of B1: LOS-epochs whose evidence clears the bar under the available rule while the LOS has fewer code rows than @c gross_los_min_rows, which the fixed rule cannot reach.  Counted under either rule.
+    long long bound_los_epochs = 0;  ///< LOS-epochs on which a hold was re-applied over the carry (B2; 0 unless @c network.gross_los_bound).
+    long long bound_amb_held = 0;    ///< Carried ambiguity entries frozen at a declaration (B2).
+    long long bound_iono_held = 0;   ///< Per-LOS iono carry entries frozen at a declaration (B2).
+    double    folded_v_abs_max_m = 0.0;  ///< Largest |v| (m) reached by a row that was actually folded at the deweight (B5, the requirement F2 alarm).  0 when nothing was ever folded.
+    long long declare_latency_sum_ep = 0;///< Summed per-episode latency, in over-bar screened epochs, from the LOS's first over-bar epoch to its declaration (B5).
+    long long declare_latency_max_ep = 0;///< Largest such latency (B5).
+    long long emit_excluded = 0;     ///< Satellite-epochs with at least one declared line of sight (or declared station) among their contributors, counted every screened epoch the declaration stands (B3; 0 unless @c network.gross_los_emit_exclude).
+    long long emit_withheld = 0;     ///< Satellite-epochs actually pruned from an emission because too few contributors remained (B3).
+    long long emit_disc_marked = 0;  ///< Satellite-epochs emitted with a per-satellite discontinuity mark instead of being withheld (B3).
+    long long sta_declared = 0;      ///< Station-level declarations (B4).
+    long long sta_released = 0;      ///< Station-level releases (B4).
+    long long sta_los_epochs = 0;    ///< Station-epochs spent under a standing station declaration (B4).
+    std::map<std::string, long long> sta_declared_by_station;  ///< Station declarations per station name (B4).
 };
 
 /**
- * @brief PURE: restore a folded code row's NOMINAL standardized residual.
+ * @brief Pure function: restore a folded code row's nominal standardized residual.
  *
- * ⚠ The one-liner that stops the response from laundering its own release test.
- *
- * A declared line of sight's code rows are folded at @f$\sigma \times f@f$, i.e.
+ * Without this correction the response would defeat its own release test.  A
+ * declared line of sight's code rows are folded at @f$\sigma \times f@f$, i.e.
  * @f$w \to w/f^2@f$, so the measured @f$|v|\sqrt{w}@f$ reads @f$f@f$ times
- * SMALLER than the same residual at nominal weight.  With the default @f$f=100@f$
- * a 144 m residual reads 1.3 σ — comfortably under the 3 σ release bar, one epoch
- * after the very same line of sight was declared at 125 σ.
+ * smaller than the same residual at nominal weight.  With the default
+ * @f$f=100@f$, a 144 m residual declared at 125 σ reads 1.3 σ one epoch later,
+ * under the 3 σ release bar.  The line of sight then alternates between declare
+ * and clear every other epoch: the deweight is on half the time, and its carried
+ * level is erased at every declaration.
  *
- * MEASURED, not hypothesised (the first `runs/_gl_on6`, DJIG00DJI/G06):
- * declare TOW 265500 at 125.6 σ with |v| 143.8 m → **clear** 265560 at 1.28 σ
- * with |v| still **144.7 m** → declare 265620 → clear 265680.  A two-epoch limit
- * cycle in which the deweight is on half the time and the line of sight's carried
- * level is erased for ever.
- *
- * The undo is exact because the fold is exact and happens in exactly one place
+ * The undo is exact because the fold is exact and happens in one place
  * (`Application::networkSplitStation_`), with the factor taken from the same
  * @c NetStation::gl_code_sigma_scale map this seam reads before republishing it.
  *
@@ -217,16 +217,16 @@ struct NetworkGrossLosTallies {
 double networkGrossLosUndoDeweight(double r_folded, double scale);
 
 /**
- * @brief One CODE row of a line of sight, as the pure decision rule sees it.
+ * @brief One code row of a line of sight, as the pure decision rule sees it.
  */
 struct GrossLosSample {
-    std::string signal;      ///< Signal label from the row's @c CB: / @c PB: column; EMPTY when the posture gives the row no such column (external biases, or the W6 datum signal).
-    double      r{0.0};      ///< @f$|v|\sqrt{w}@f$ — the residual in units of the row's OWN σ.
-    double      v_m{0.0};    ///< The SIGNED residual, metres (event detail only).
+    std::string signal;      ///< Signal label from the row's @c CB: / @c PB: column; empty when the posture gives the row no such column (external biases, or the W6 datum signal).
+    double      r{0.0};      ///< @f$|v|\sqrt{w}@f$: the residual in units of the row's own σ.
+    double      v_m{0.0};    ///< The signed residual, metres (event detail only).
 };
 
 /**
- * @brief The per-epoch verdict on ONE line of sight.  @see networkGrossLosAssess
+ * @brief The per-epoch verdict on one line of sight.  @see networkGrossLosAssess
  */
 struct GrossLosVerdict {
     bool        over{false};     ///< The epoch's evidence clears the declaration bar.
@@ -235,46 +235,48 @@ struct GrossLosVerdict {
     int         n_over{0};       ///< Code rows above @c k.
     double      r_max{0.0};      ///< Largest standardized residual on the LOS.
     double      v_abs_max{0.0};  ///< Largest |v| (metres) on the LOS.
-    std::string signals;         ///< ';'-joined DISTINCT non-empty signal labels of the rows over @c k (event detail).
-    /// RF-3b B1: the bar this verdict was taken at — @c min_rows under the FIXED rule,
-    /// @c min(min_rows, n_rows) under the AVAILABLE one.  In the event detail so a
-    /// declaration states the bar it cleared rather than the configured constant.
+    std::string signals;         ///< ';'-joined distinct non-empty signal labels of the rows over @c k (event detail).
+    /// The bar this verdict was taken at: @c min_rows under the fixed rule,
+    /// @c min(min_rows, n_rows) under the available one (RF-3b B1).  Written to the
+    /// event detail so a declaration states the bar it cleared rather than the
+    /// configured constant.
     int         min_rows_eff{0};
-    /// RF-3b B5: the evidence clears the AVAILABLE bar and the LOS has fewer code rows
-    /// than the configured @c min_rows — the population the fixed rule cannot reach.
-    /// Computed under BOTH rules, so an arm with the fixed rule still reports it.
+    /// The evidence clears the available bar and the LOS has fewer code rows than the
+    /// configured @c min_rows: the population the fixed rule cannot reach (RF-3b B5).
+    /// Computed under either rule, so an arm with the fixed rule still reports it.
     bool        short_over{false};
 };
 
 /**
- * @brief PURE: adjudicate one line of sight's code rows for THIS epoch.
+ * @brief Pure function: adjudicate one line of sight's code rows for this epoch.
  *
- * The rule is deliberately a free function so it is unit-testable without a
- * network, following the @c networkRaimEraseBandScope precedent.
+ * The rule is a free function so it can be unit-tested without a network,
+ * following the @c networkRaimEraseBandScope precedent.
  *
- * Two deliberate edges:
- *  - **Counted as ROWS, not distinct signal labels.**  A code row of a posture
- *    whose satellite code biases are supplied externally, and the W6 datum
- *    signal's rows even when they are estimated, carry no @c CB: column and so
- *    have an EMPTY signal label; a distinct-label test would silently under-count
- *    exactly there and the screen would be inert on the postures that need it
- *    most.  The distinct labels that were over the bar still reach the event.
- *  - **@c under_clear is NOT `!over`.**  The release bar is far below the
- *    declaration bar, and the band between them is neither evidence to declare
- *    nor evidence to release — a line of sight sitting there keeps its current
- *    disposition, which is what makes the hysteresis real rather than nominal.
- *    An empty row set is @c under_clear = false for the same reason: absence is
- *    not evidence of health (standing invariant #1).
+ * Two edge cases:
+ *  - **Counted as rows, not distinct signal labels.**  A code row of a posture
+ *    whose satellite code biases are supplied externally, and a row of the W6
+ *    datum signal even when its bias is estimated, carry no @c CB: column and so
+ *    have an empty signal label.  A distinct-label test would under-count exactly
+ *    there, and the screen would be inert on the postures it is meant for.  The
+ *    distinct labels that were over the bar still reach the event.
+ *  - **@c under_clear is not `!over`.**  The release bar is far below the
+ *    declaration bar, and the band between them is evidence neither to declare nor
+ *    to release: a line of sight sitting there keeps its current disposition,
+ *    which is what gives the hysteresis effect.  An empty row set gives
+ *    @c under_clear = false for the same reason: absence is not evidence of health
+ *    (standing invariant #1).
  *
  * @param rows        This LOS's code rows this epoch (may be empty).
  * @param k           Declaration bar, in units of the row's own σ.
  * @param min_rows    Rows that must clear @p k together (≥ 1).
  * @param clear_sigma Release bar, same units.
- * @param min_rows_available RF-3b B1 (@c network.gross_los_min_rows_rule): read the bar
- *                    as @c min(min_rows, the LOS's code rows this epoch) instead of the
- *                    constant, so a line of sight with fewer rows than the constant is
- *                    reachable while one with more keeps the multi-band corroboration.
- *                    @ref GrossLosVerdict::short_over is filled under BOTH rules.
+ * @param min_rows_available Read the bar as @c min(min_rows, the LOS's code rows this
+ *                    epoch) instead of the constant, so a line of sight with fewer rows
+ *                    than the constant is reachable while one with more keeps the
+ *                    multi-band corroboration (RF-3b B1,
+ *                    @c network.gross_los_min_rows_rule).
+ *                    @ref GrossLosVerdict::short_over is filled under either rule.
  * @return The verdict.
  */
 GrossLosVerdict networkGrossLosAssess(const std::vector<GrossLosSample>& rows,
@@ -291,11 +293,11 @@ struct GrossLosState {
     double declared_tow{0.0};   ///< TOW of the declaration that is currently standing.
     double last_seen_s{0.0};    ///< Continuous seconds stamp of the last epoch this LOS produced a code row.
     long long n_declared{0};    ///< Declarations over the run for this LOS (an episode counter, not a flag).
-    /// RF-3b B5: TOW of the epoch that opened the CURRENT over-bar streak (0 = none) —
-    /// the per-episode latency's origin, so a declaration can state how long the
-    /// evidence stood before it acted rather than only when it acted.
+    /// TOW of the epoch that opened the current over-bar streak (0 = none; RF-3b B5).
+    /// The origin of the per-episode latency, so a declaration states how long the
+    /// evidence stood before the response acted, not only when it acted.
     double first_over_tow{0.0};
-    /// RF-3b B5: screened epochs since @ref first_over_tow, the same latency in epochs.
+    /// Over-bar screened epochs since @ref first_over_tow: the same latency in epochs (RF-3b B5).
     int    first_over_age_ep{0};
 };
 
@@ -304,39 +306,41 @@ enum class GrossLosEdge {
     None,       ///< No edge this epoch.
     Declare,    ///< Decoupling edge: the LOS became gross.
     Clear,      ///< Re-coupling edge: the LOS was released.
-    Suppressed  ///< The evidence was COMPLETE and a guard held the declaration (never silent: it has its own counters).
+    Suppressed  ///< The evidence was complete and a guard held the declaration (counted, never silent).
 };
 
 /**
- * @brief PURE: advance one line of sight's state machine by one SCREENED epoch.
+ * @brief Pure function: advance one line of sight's state machine by one screened epoch.
  *
- * Only called for an epoch in which the LOS produced code rows; absence is
- * handled by the caller (the streak reset and, past @c gross_los_max_gap_s, the
- * expiry edge), because "unobserved" is not a transition of this machine.
+ * Called only for an epoch in which the LOS produced code rows.  The caller
+ * handles absence (the streak reset and, past @c gross_los_max_gap_s, the expiry
+ * edge), because "unobserved" is not a transition of this machine.
  *
- * A CLEAR is never blocked by @p allow_declare.  Releasing a line of sight the data
- * says is healthy is always safe, and a guard that also froze the release edge would
- * strand a response with no way out — standing invariant #7's re-coupling edge
- * failing CLOSED instead of open.
+ * @p allow_declare never blocks a clear.  Releasing a line of sight the data show
+ * to be healthy is always safe, and a guard that also froze the release edge would
+ * leave a response with no exit (standing invariant #7's re-coupling edge failing
+ * closed).
  *
- * When @p allow_declare is false the completed streak is HELD at @p declare_epochs
- * rather than discarded or allowed to grow: the evidence is real, so throwing it away
- * would make the guard a memory hole, and letting it accumulate would make the gate's
- * opening a burst of simultaneous declarations across every line of sight that
- * waited.  Held, the line of sight declares on the first qualifying epoch after the
- * gate opens and on no earlier one.
+ * When @p allow_declare is false, the completed streak is held at
+ * @p declare_epochs, neither discarded nor allowed to grow.  The evidence is real,
+ * so discarding it would lose it, and letting it accumulate would turn the guard's
+ * opening into a burst of simultaneous declarations across every line of sight
+ * that waited.  With the streak held, the line of sight declares on the first
+ * qualifying epoch after the guard opens and on no earlier one.
  *
  * @param s             [in/out] the LOS's carried state.
  * @param v             This epoch's verdict.
  * @param declare_epochs Consecutive over-bar epochs required (≥ 1).
  * @param clear_epochs   Consecutive under-bar epochs required (≥ 1).
  * @param tow           This epoch's TOW (stamps a declaration).
- * @param allow_declare False when a guard forbids a NEW declaration this epoch — the
- *                      MATURITY horizon (@c network.gross_los_warmup_epochs) or the
- *                      WHOLE-STATION stand-down (@c network.gross_los_max_station_frac).
+ * @param allow_declare False when a guard forbids a new declaration this epoch: the
+ *                      maturity horizon (@c network.gross_los_warmup_epochs), the
+ *                      whole-station stand-down (@c network.gross_los_max_station_frac),
+ *                      a stood-down satellite (GL-2) or a standing station-level
+ *                      declaration (RF-3b B4).
  * @return the edge, if any; @c GrossLosEdge::Suppressed when a guard held a
- *         COMPLETE declaration (a population with its own run-end counter, so a
- *         guard is never silent — standing invariant #4).
+ *         complete declaration (a population with its own run-end counter, so a
+ *         guard is never silent: standing invariant #4).
  */
 GrossLosEdge networkGrossLosStep(GrossLosState& s, const GrossLosVerdict& v,
                                  int declare_epochs, int clear_epochs, double tow,
@@ -345,14 +349,15 @@ GrossLosEdge networkGrossLosStep(GrossLosState& s, const GrossLosVerdict& v,
 /**
  * @brief RF-3b B3: which half of the screen a call runs.
  *
- * The screen has always had two halves with opposite ordering constraints.  The
- * DECISION (assess the post-fit code rows, advance the state machine, emit both
- * edges, publish the deweight) needs only the solved epoch and must land BEFORE the
- * emission if a declaration is to reach the epoch it declares; the RESPONSE (erase or
- * hold the carried level, erase the per-LOS iono, mark pending-reseed) must land AFTER
- * the carry harvest or the harvest simply re-stashes what it removed.  With
- * @c network.gross_los_emit_exclude OFF both run in one call at the post-harvest site,
- * which is today's behaviour byte for byte; ON they are split across the epoch.
+ * The screen has two halves with opposite ordering constraints.  The decision
+ * (assess the post-fit code rows, advance the state machine, emit both edges,
+ * publish the deweight) needs only the solved epoch, and must run before the
+ * emission for a declaration to reach the epoch it declares.  The response (erase
+ * or hold the carried level, erase the per-LOS iono, mark pending-reseed) must run
+ * after the carry harvest, or the harvest re-stashes what it removed.  With
+ * @c network.gross_los_emit_exclude off, both run in one call at the post-harvest
+ * site and the output is byte-identical to the unsplit screen; with it on, they
+ * are split across the epoch.
  */
 enum class GrossLosPhase {
     Full,    ///< (default) decide and respond in one call at the post-harvest site.
@@ -361,21 +366,23 @@ enum class GrossLosPhase {
 };
 
 /**
- * @brief RF-3b B3: apply the response the @c Decide phase deferred.
+ * @brief RF-3b B3: apply the response the decision half deferred.
  *
- * Runs at the post-harvest site.  For every line of sight the decision declared this
- * epoch it applies the carry response (the erase, or the HOLD under
- * @c network.gross_los_bound); for every one it released or expired it drops the hold;
- * and for every line of sight still declared it re-applies the hold over whatever the
- * harvest re-stashed, which is what keeps the folded code row's residual a measure of
- * the fault rather than a random walk.
+ * Runs at the post-harvest site: at the end of a @c Full pass, or from the
+ * driver's @c Act call when the seam is split.  For every line of sight declared
+ * this epoch (directly, or through a station-level declaration) it applies the
+ * carry response: the erase, or the hold under @c network.gross_los_bound.  For
+ * every one released or expired it drops the hold.  Under the hold, while any
+ * carried level is held, it re-applies the held entries (levels and iono) over
+ * whatever the harvest re-stashed, which keeps the folded code row's residual a
+ * measure of the fault rather than a random walk.
  *
- * A no-op when the screen is off or the seam was not split.
+ * Returns immediately when the screen is off.
  *
  * @param ctx      [in/out] the carry (the two maps the response reaches, the holds) and counters.
  * @param log      "main_log".
  * @param stations [in/out] @c sm->markAmbiguityPendingReseed on a declaration.
- * @param asm_res  Per-station assembly — the ambiguity pool the response walks.
+ * @param asm_res  Per-station assembly: the ambiguity pool the response walks.
  */
 void networkGrossLosAct(NetworkRunContext& ctx,
                         const std::shared_ptr<spdlog::logger>& log,
@@ -386,25 +393,28 @@ void networkGrossLosAct(NetworkRunContext& ctx,
  * @brief Run the gross-LOS screen for this epoch (the seam).
  *
  * Walks each station in the solve once, forms @f$v = y - A_s x_s - A_r x_r@f$,
- * classifies every DATA row with the SAME family rule @c networkPostfitSigma0
+ * classifies every data row with the same family rule @c networkPostfitSigma0
  * uses (SH-touching rows excluded, coupling rows excluded, a row touching an
- * ambiguity column or a @c PB: column is PHASE, a remaining row touching a
- * @c CB: or @c CLK: column is CODE), bins the code rows per satellite, and drives
- * the state machine above.
+ * ambiguity column or a @c PB: column is phase, a remaining row touching a
+ * @c CB: or @c CLK: column and naming a satellite is code), bins the code rows
+ * per satellite, and drives the state machine above.
  *
- * ⚠ MUTATES persistent carries.  It erases @c ctx.carry.local_carry entries and
- * marks StateManager ambiguities pending-reseed for every declared LOS, erases
- * @c ctx.carry.iono_carry / @c iono_blk_carry for it, and rewrites
- * @c ctx.carry.gl_gross / @c gl_state, which the NEXT epoch's assembly reads
- * through @c NetStation::gl_code_sigma_scale.  It therefore MUST run AFTER the
- * carry harvest and BEFORE the epoch stash tail — the caller places it
- * immediately after @ref networkPostFitRaim inside the @c SB_RAIM bracket.
+ * Mutates persistent carries.  The response erases (or, under
+ * @c network.gross_los_bound, holds) @c ctx.carry.local_carry entries and marks
+ * StateManager ambiguities pending-reseed for every declared LOS, and erases (or
+ * holds) @c ctx.carry.iono_carry / @c iono_blk_carry for it.  The decision
+ * rewrites @c ctx.carry.gl_state (and @c gl_sta_state, @c gl2_sat_down), which
+ * the next epoch's assembly reads through @c NetStation::gl_code_sigma_scale.
+ * The response must therefore run after the carry harvest and before the epoch
+ * stash tail; the caller places the @c Full or @c Act call immediately after
+ * @ref networkPostFitRaim inside the @c SB_RAIM bracket.  A @c Decide call runs
+ * earlier, before the emission (see @ref GrossLosPhase).
  *
  * No-op (not even a state allocation) unless @c ctx.knobs.gl_on.
  *
  * @param ctx           [in/out] knobs, carry (streaks + declared set + the two
  *                      carry maps it erases from) and counters.
- * @param config_       Live config — the @c network.gross_los_* block.
+ * @param config_       Live config: the @c network.gross_los_* block.
  * @param log           "main_log": one summary line per epoch with any edge.
  * @param traces        GROSSLOS-tier events (both edges + expiry).
  * @param se            This epoch (week/TOW stamp).
@@ -415,7 +425,7 @@ void networkGrossLosAct(NetworkRunContext& ctx,
  * @param asm_res       Per-station assembly (A_s / A_r / y / w / pl_amb / qc_amb).
  * @param est_index_of  Station → reduced-system index (< 0 = absent from the solve).
  * @param now_s         Continuous seconds (week·604800 + TOW) for the gap edge.
- * @param phase         RF-3b B3: which half to run.  @c Full is today's single call.
+ * @param phase         RF-3b B3: which half to run.  @c Full runs both in one call.
  */
 void networkGrossLosScreen(NetworkRunContext& ctx,
                            const GnssConfig& config_,
@@ -431,20 +441,22 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
                            GrossLosPhase phase = GrossLosPhase::Full);
 
 /**
- * @brief Republish each station's CODE-row σ scale from the declared set.
+ * @brief Republish each station's code-row σ scale from the declared set.
  *
- * The deweight actuator is the exact CODE counterpart of the signal-integrity
- * card's @c NetStation::phase_sigma_scale, and it obeys the same thread-safety
- * contract: this function runs SERIALLY, before the parallel PASS-B produce, and
- * the assembly only find-reads the map.  An empty map is the OFF path — the
+ * The deweight actuator is the code counterpart of the signal-integrity card's
+ * @c NetStation::phase_sigma_scale, and it follows the same thread-safety
+ * contract: this function runs serially, before the parallel PASS-B produce, and
+ * the assembly only find-reads the map.  An empty map is the off path: the
  * assembly's guard is `if (!st.gl_code_sigma_scale.empty())`, so an unarmed run
- * performs the exact @c cwiseInverse weights with zero extra floating-point
+ * keeps the exact @c cwiseInverse weights with no extra floating-point
  * operations.
  *
- * Idempotent, and cheap: it clears and rebuilds from @c ctx.carry.gl_state, whose
- * declared subset is O(number of currently gross lines of sight).
+ * Idempotent and cheap: it rebuilds every map from @c ctx.carry.gl_state (the
+ * declared lines of sight) and @c ctx.carry.gl_sta_state (the declared stations,
+ * one entry per satellite last screened there), so the work is O(number of
+ * currently declared lines of sight).
  *
- * @param ctx      Run context (reads @c carry.gl_state and @c knobs).
+ * @param ctx      Run context (reads @c carry.gl_state, @c carry.gl_sta_state and @c knobs).
  * @param stations [in/out] each station's @c gl_code_sigma_scale.
  */
 void networkGrossLosPublishScales(NetworkRunContext& ctx,

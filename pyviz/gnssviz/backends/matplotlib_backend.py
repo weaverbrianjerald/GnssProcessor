@@ -1,14 +1,14 @@
 """Matplotlib implementation of the rendering :class:`Backend`.
 
 Interprets a :class:`gnssviz.figures.Figure` into a matplotlib ``Figure``.  This
-is the *only* module in the package that imports matplotlib; the plotly backend
+is the one module in the package that imports matplotlib; the plotly backend
 interprets the same specs without touching this file.
 
 Fidelity notes vs the MATLAB suite
 ----------------------------------
 * :class:`Raster` / :class:`RgbRaster` are drawn with ``imshow`` over a date-num
-  ``extent`` so columns spread uniformly across the time span -- exactly how
-  MATLAB ``imagesc`` lays out the (sat x epoch) grid -- with untracked cells
+  ``extent`` so columns spread uniformly across the time span, the same layout
+  MATLAB ``imagesc`` uses for the (sat x epoch) grid, with untracked cells
   transparent and ``YDir`` reversed (row 0 at the top).
 * Dual y-axis (``axis == 'right'``) uses a cached ``twinx``.
 * A figure-level colorbar/categorical legend is drawn once for raster figures;
@@ -437,9 +437,9 @@ def _axis_has_positive(ax, which: str) -> bool:
     """True if the drawn artists put any finite positive value on ``which`` axis.
 
     Used to gate ``set_*scale("log")``: matplotlib defers the "no positive
-    values" error to draw/savefig time, so we must decide *before* enabling the
-    log scale.  On any inspection error we return True (leave the spec honoured)
-    so this guard can only ever prevent a crash, never introduce one.
+    values" error to draw/savefig time, so the decision has to be made before
+    enabling the log scale. On any inspection error this returns True (leaving
+    the spec honoured), so the guard can only prevent a crash, never cause one.
     """
     try:
         idx = 1 if which == "y" else 0

@@ -1,34 +1,35 @@
 /**
  * @file test_station_marker_to_arp.cpp
- * @brief Card UPO — the roster-site marker -> antenna-reference-point reduction
- *        (`network.station_marker_to_arp`).
+ * @brief The roster-site marker -> antenna-reference-point reduction
+ *        (`network.station_marker_to_arp`, card UPO).
  *
- * A network station is held FIXED at `network.stations[].position_ecef`, and
- * that value is a published coordinate (IGS SSC/SINEX, NGS SIF, a surveyed RINEX
- * header), which by convention references the MONUMENT.  The observations refer
- * to the antenna and the ATX phase-centre model is defined relative to the
- * antenna reference point, `ANTENNA: DELTA H/E/N` above the monument.  The
- * reduction is the same `Coordinates::markerToArp` the held-out consumer's TRUTH
- * has used since 2026-07-29, so the two paths must agree exactly for the same
- * inputs — that agreement is what makes the producer and the grader share one
- * frame.
+ * A network station is held fixed at `network.stations[].position_ecef`, a
+ * published coordinate (IGS SSC/SINEX, NGS SIF, a surveyed RINEX header) that by
+ * convention references the monument.  The observations refer to the antenna,
+ * and the ATX phase-centre model is defined relative to the antenna reference
+ * point, `ANTENNA: DELTA H/E/N` above the monument.  The reduction is the same
+ * `Coordinates::markerToArp` call that reduces the held-out consumer's truth, so
+ * the two paths agree exactly for the same inputs and the producer and the
+ * grader share one frame.
  *
- * Locked here (spec docs/refound/UPO_consumer_up_offset_2026-09-22.md §4, U4):
+ * Covered here (spec docs/refound/UPO_consumer_up_offset_2026-09-22.md §4, U4):
  *
  *   1. the roster-site reduction takes the header fields in RINEX (H, E, N)
  *      order, at a real roster site with a large eccentricity (GRAZ00AUT,
  *      1.964 m) and at one with a three-component eccentricity (KRGG00ATF);
- *   2. it is an EXACT (bitwise) no-op at a zero eccentricity, which is what
- *      keeps an all-zero roster (the sim bed) byte-identical when armed;
+ *   2. it is a bitwise no-op at zero eccentricity, which keeps an all-zero
+ *      roster (the sim bed) byte-identical when armed;
  *   3. it equals the consumer-truth path for the same inputs, argument for
  *      argument;
  *   4. an absent `ANTENNA: DELTA H/E/N` record is distinguishable from a
- *      recorded 0/0/0 one (`RinexParser::hasAntennaDeltaHen`), because the first
- *      is a coordinate that CANNOT be reduced (reported) and the second is a
+ *      recorded 0/0/0 one (`RinexParser::hasAntennaDeltaHen`): the first is a
+ *      coordinate that cannot be reduced (and is reported), the second a
  *      reduction that is a no-op;
- *   5. the toggle parses from both key spellings and defaults OFF.
+ *   5. the toggle defaults off and parses from the nested
+ *      `network.station_marker_to_arp` key.  The loader also accepts the flat
+ *      `network_station_marker_to_arp` spelling, which is not exercised here.
  *
- * Suite: StationMarkerToArpTest (one suite per file — ownership rule).
+ * Suite: StationMarkerToArpTest (one suite per file, per the suite ownership rule).
  */
 
 #include <gtest/gtest.h>
@@ -53,7 +54,7 @@ namespace fs = std::filesystem;
 namespace {
 
 /// GRAZ00AUT (2024-129 field roster): configured ITRF2020 monument coordinate
-/// and its RINEX header eccentricity — the largest on the roster.
+/// and its RINEX header eccentricity, the largest on the roster.
 const Eigen::Vector3d kGrazMonument(4194423.4920, 1162703.0403, 4647245.6154);
 const Eigen::Vector3d kGrazHen(1.9640, 0.0000, 0.0000);
 
@@ -131,10 +132,9 @@ fs::path writeNetworkConfig(const std::string& tag, const std::string& network_e
 
 } // namespace
 
-// (1) Order: the header's first field is UP.  A roster site reduced by GRAZ's
-// 1.964 m eccentricity gains exactly that much geodetic height and moves
-// nowhere horizontally — a transposed (H, E, N) would split the metre across
-// east/north instead.
+// (1) Order: the header's first field is up.  A roster site reduced by GRAZ's
+// 1.964 m eccentricity gains that much geodetic height and does not move
+// horizontally; a transposed (H, E, N) would move it east or north instead.
 TEST(StationMarkerToArpTest, RosterSiteReductionTakesHenInRinexOrder) {
     const Eigen::Vector3d arp = rosterSitePosition(kGrazMonument, kGrazHen);
 
@@ -154,9 +154,9 @@ TEST(StationMarkerToArpTest, RosterSiteReductionTakesHenInRinexOrder) {
     EXPECT_NEAR(enu.z(), kKrggHen(0), 1e-9);   // U is header field 1
 }
 
-// (1b) Direction: the antenna sits ABOVE the monument, so a station reduced to
-// its ARP is held higher, never lower.  The sign is what carried the whole
-// standing Up offset of the consumer.
+// (1b) Direction: the antenna sits above the monument, so a station reduced to
+// its ARP is held higher, never lower.  This sign sets the direction of the
+// consumer's standing Up offset that card UPO addresses.
 TEST(StationMarkerToArpTest, ReductionRaisesTheStation) {
     const Eigen::Vector3d arp = rosterSitePosition(kGrazMonument, kGrazHen);
     EXPECT_GT(Coordinates::ecefToLlh(arp).h_m, Coordinates::ecefToLlh(kGrazMonument).h_m);
@@ -164,8 +164,8 @@ TEST(StationMarkerToArpTest, ReductionRaisesTheStation) {
 }
 
 // (2) Byte identity: a station whose header records 0/0/0 (every sim-bed
-// station) must come out of the armed path bitwise unchanged, or arming the
-// knob would perturb a roster it has no business moving.
+// station) comes out of the armed path bitwise unchanged, so arming the knob
+// does not perturb a roster with no eccentricities.
 TEST(StationMarkerToArpTest, ZeroEccentricityIsExactNoOp) {
     const Eigen::Vector3d zero = Eigen::Vector3d::Zero();
     const Eigen::Vector3d out = rosterSitePosition(kGrazMonument, zero);
@@ -174,11 +174,11 @@ TEST(StationMarkerToArpTest, ZeroEccentricityIsExactNoOp) {
     EXPECT_EQ(out.z(), kGrazMonument.z());
 }
 
-// (3) The roster path and the consumer-TRUTH path are the same reduction.  The
-// consumer's truth is reduced at ApplicationNetworkSetup's closed-loop block
+// (3) The roster path and the consumer-truth path are the same reduction.  The
+// consumer's truth is reduced in ApplicationNetworkSetup's closed-loop block
 // with `Coordinates::markerToArp(configured, parser->getAntennaDeltaHen())`; the
-// roster reduction must be that call, argument for argument, or the producer
-// and its grader would sit in two different frames.
+// roster reduction is that call, argument for argument, so the producer and its
+// grader share one frame.
 TEST(StationMarkerToArpTest, AgreesWithTheConsumerTruthPath) {
     for (const auto& c : { std::pair<Eigen::Vector3d, Eigen::Vector3d>{ kGrazMonument, kGrazHen },
                            std::pair<Eigen::Vector3d, Eigen::Vector3d>{ kKrggMonument, kKrggHen },
@@ -194,9 +194,9 @@ TEST(StationMarkerToArpTest, AgreesWithTheConsumerTruthPath) {
     }
 }
 
-// (4) An ABSENT record is not a zero record.  Both leave getAntennaDeltaHen at
-// zero, so the reduction cannot tell them apart — hasAntennaDeltaHen is what
-// lets the setup report the station it could not reduce (requirement U1).
+// (4) An absent record is not a zero record.  Both leave getAntennaDeltaHen at
+// zero, so the reduction cannot tell them apart; hasAntennaDeltaHen lets the
+// setup report the station it could not reduce (requirement U1).
 TEST(StationMarkerToArpTest, AbsentHeaderRecordIsDistinguishableFromZero) {
     const auto dir = fs::temp_directory_path() / "gnss_marker_arp";
     fs::create_directories(dir);
@@ -232,7 +232,7 @@ TEST(StationMarkerToArpTest, AbsentHeaderRecordIsDistinguishableFromZero) {
     }
 }
 
-// (5) The toggle: default OFF (byte-identical), and it parses from the dotted
+// (5) The toggle: off by default (byte-identical), and it parses from the dotted
 // `network.station_marker_to_arp` spelling the configs use.
 TEST(StationMarkerToArpTest, ToggleDefaultsOffAndParses) {
     {

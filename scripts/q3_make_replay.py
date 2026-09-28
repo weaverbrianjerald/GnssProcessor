@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Generate consumer-REPLAY configs for Card Q3 ladder arms (SPEC §8.4 gate 3).
+"""Generate consumer-replay configs for Card Q3 ladder arms (SPEC §8.4 gate 3).
 
 The live closed-loop consumer runs inside the producer arm and is one
-instrument; the replay is the SECOND, and it differs in a way that matters here:
-it re-reads the emitted product stream from disk, so it sees exactly the
-discontinuity marks the wire actually carries.  A guard whose marks do not land
-on the wire looks fine to the live consumer (which is fed in-process) and shows
-up in the replay — which is precisely the failure mode Q3's own trap list opens
-with (`markSatDiscontinuity` alone is replay-invisible).
+instrument; the replay is a second, independent one: it re-reads the emitted
+product stream from disk, so it sees only the discontinuity marks the wire
+actually carries. A guard whose marks do not land on the wire looks fine to the
+live consumer (fed in-process) but shows up in the replay, which is the failure
+mode Q3's own trap list opens with (`markSatDiscontinuity` alone is
+replay-invisible).
 
-One knob per config: `network.closed_loop.replay_products_path`.  The producer
+One knob per config: `network.closed_loop.replay_products_path`. The producer
 never runs (`runNetwork` short-circuits before setup), so a replay cannot
 perturb the producer artifact it reads.
 

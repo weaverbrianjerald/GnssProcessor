@@ -1,35 +1,35 @@
 #!/usr/bin/env python3
-"""Audit the single-pivot phase-bias gauge: which clock re-realizations were AVOIDABLE.
+"""Audit the single-pivot phase-bias gauge: which clock re-realizations were avoidable.
 
-Two modes, and the important one needs NO truth:
+Two modes, and the important one needs no truth:
 
-  --run <dir>       POST-HOC AUDIT, works on FIELD runs.  Classifies every
+  --run <dir>       Post-hoc audit, works on field runs. Classifies every
                     phase-bias column removal in network_events.csv as
-                      PIVOT-ONLY  (PB removed, CLK retained)  -> AVOIDABLE defect
+                      PIVOT-ONLY  (PB removed, CLK retained)  -> avoidable defect
                       SAT-LEFT    (PB + CLK [+ CB] removed)   -> legitimate
                     and ties each to any CLK_STEP mark in the same epoch.
 
-  --fixture <dir>   PLANNER, sim only.  Ranks candidate clock_datum_station by how
+  --fixture <dir>   Planner, sim only. Ranks candidate clock_datum_station by how
                     many satellites they lose mid-arc, because that count is very
                     nearly the number of avoidable network-wide gauge events the
                     run will suffer.
 
 ## The defect
 
-With `network.phase_datum_prioritized` OFF (the default), the network's shared
+With `network.phase_datum_prioritized` off (the default), the network's shared
 phase-bias set is taken from `stations.front()`:
 
     if (!phase_datum_prioritized) {
         shared_phase_keys.clear();
         for (const auto& kv : stations.front().sm->getSatPhaseBiasStates())
             shared_phase_keys.insert(kv.first);
-    }                                    -- ApplicationNetwork.cpp:1627-1630
+    }                                    (ApplicationNetwork.cpp:1627-1630)
 
-and `stations.front()` IS the clock datum station (`clock_datum_station` becomes
-`roster.reference`, ApplicationNetworkSetup.cpp:181-186).  So when the PIVOT
+and `stations.front()` is the clock datum station (`clock_datum_station` becomes
+`roster.reference`, ApplicationNetworkSetup.cpp:181-186). So when the pivot
 alone loses a satellite, that satellite's phase-bias columns are removed
-**network-wide** even though every other station is still tracking it.  The
-released direction has nowhere to go and the satellite CLOCK absorbs it.
+network-wide even though every other station is still tracking it. The
+released direction has nowhere to go and the satellite clock absorbs it.
 
 That is standing invariant #7 with an unbounded decoupling edge: nothing bounds
 what the clock can absorb when the column goes, and the re-coupling edge (each
@@ -37,46 +37,46 @@ station's ambiguity refloating) is unmanaged and staggered over several epochs.
 
 ## Measured (docs/SPEC_pivot_visibility_gauge_defect.md)
 
-24-station sim fixture, truth-clean, `phase_datum_prioritized` OFF:
+24-station sim fixture, truth-clean, `phase_datum_prioritized` off:
 
 | datum station | loses | PB-only removals | CLK_STEP | peak cell resid |
 |---|---|---|---|---|
 | S12000SIM | G15 @303510 | G15 x3 @303510 | -12.06 m | 2214 |
 | S13000SIM | G07 @304290 | G07 x3 @304290 | -13.19 m | 1882 |
-| S06000SIM | nothing | **none** | **none** | **36** |
+| S06000SIM | nothing | none | none | 36 |
 
 and at 60 stations, 6 of 6 PB-only removals matched a datum-station satellite
 loss to the epoch, while all 3 PB+CLK+CB removals were satellites genuinely
-leaving the network.  The discriminator this script implements is that clean.
+leaving the network. The discriminator this script implements is that clean.
 
-## What NOT to conclude
+## What not to conclude
 
 `network.phase_datum_prioritized: true` removes the specific excursion (peak
-2214 -> 112) and is NET-HARMFUL on the same fixture: the datum-free satellite
-clock contrast degrades 3.07 -> 18.66 m rms and CLK_STEP marks go 1 -> 15.  The
-cheap remedy measured here is DATUM ELECTION, not that knob.
+2214 -> 112) and is net-harmful on the same fixture: the datum-free satellite
+clock contrast degrades 3.07 -> 18.66 m rms and CLK_STEP marks go 1 -> 15. The
+cheap remedy measured here is datum election, not that knob.
 
 ## QUEUE item 2 plumbing (2026-08-21)
 
-  --config <json>   FIELD-CONFIG PREFLIGHT.  Flattens the config through its
-                    "extends" chain (scripts/gnss_config_chain.py — the same
+  --config <json>   Field-config preflight. Flattens the config through its
+                    "extends" chain (scripts/gnss_config_chain.py, the same
                     merge the loader performs) and checks the datum-station
-                    DECLARATION: explicitly set (the empty-string default is
+                    declaration: explicitly set (the empty-string default is
                     stations.front(), the polar trap), present in the roster,
                     not polar while an equatorial alternative exists (--allow-
                     polar overrides; §9.8 measured 8x wander from a polar
                     pivot), and the marking channel armed (emit_clock_disc +
-                    clock_disc_jump_test — an unmarked re-realization is
-                    SILENT to the consumer).  Visibility CONTINUITY cannot be
-                    checked statically on a field config — that is what --run
-                    grades post-hoc, truth-free; run it on every arm.
+                    clock_disc_jump_test; an unmarked re-realization is
+                    silent to the consumer). Visibility continuity cannot be
+                    checked statically on a field config; that is what --run
+                    grades post-hoc, truth-free, so run it on every arm.
                     Exit 1 on any failed check (harness-gate semantics, same
                     as --run's avoidable-removal gate).
 
   The election itself (used by scripts/simnet_make_producer_config.py):
-  rank by mid-arc LOSSES, then |geocentric latitude| among ties (the §9.8
+  rank by mid-arc losses, then |geocentric latitude| among ties (the §9.8
   equatorial preference, now enforced rather than advised), then name for
-  determinism — the elected value lands in the config and is therefore
+  determinism. The elected value lands in the config and is therefore
   fingerprint-stable (NetworkRunContext.cpp:564: the datum station is in the
   warm-resume fingerprint, so election must never vary for a fixed roster).
 """
@@ -164,16 +164,16 @@ def audit_run(run_dir):
 
 
 def geocentric_lat_deg(ecef):
-    """Geocentric latitude in degrees — precision is irrelevant for a tiebreak."""
+    """Geocentric latitude in degrees; precision is irrelevant for a tiebreak."""
     x, y, z = ecef
     return math.degrees(math.atan2(z, math.hypot(x, y)))
 
 
 def compute_rank(fixture_dir, constellations=None, roster=None):
-    """The election ranking, no printing: mid-arc LOSSES first, |latitude| among
+    """The election ranking, no printing: mid-arc losses first, |latitude| among
     ties (§9.8: 8x wander from a polar pivot), then name for determinism (the
     elected value is warm-resume-fingerprinted, so a fixed roster must always
-    elect the same station).  `roster` restricts candidates (e.g. the
+    elect the same station). `roster` restricts candidates (e.g. the
     post-stride surviving set in the config generator)."""
     man_p = os.path.join(fixture_dir, "network_fixture.json")
     if not os.path.exists(man_p):
@@ -231,7 +231,7 @@ EQUATORIAL_LAT_DEG = 30.0
 
 
 def preflight_config(cfg_path, allow_polar=False):
-    """Static field-config preflight (QUEUE item 2).  Returns (n_fail, report dict)."""
+    """Static field-config preflight (QUEUE item 2). Returns (n_fail, report dict)."""
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from gnss_config_chain import load_config, ConfigChainError
     print(f"\n-- preflight {cfg_path} " + "-" * max(4, 55 - len(cfg_path)))
@@ -272,7 +272,7 @@ def preflight_config(cfg_path, allow_polar=False):
                            "  Re-elect, or pass --allow-polar to accept."))
             else:
                 print(f"  datum '{datum}' lat {lat:+.1f} deg — geometry OK")
-    # Marking channel: without these, an avoidable re-realization is SILENT to
+    # Marking channel: without these, an avoidable re-realization is silent to
     # the consumer (the --run audit flags exactly this population).
     for knob in ("emit_clock_disc", "clock_disc_jump_test"):
         if not net.get(knob, False):

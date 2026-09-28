@@ -1,9 +1,9 @@
 """Build-time tests for the N-run comparators (synthetic runs).
 
 Three synthetic run dirs under ``tmp_path`` are populated with schema-faithful
-stub traces.  Every assertion keys off a *constructed* effect -- a leg that
-withholds epochs the reference emitted, a tier whose RATE is 5x the reference's,
-a station whose keyed pool jumps only at the onset epoch -- so the tests pin the
+stub traces.  Every assertion keys off a constructed effect: a leg that
+withholds epochs the reference emitted, a tier whose rate is 5x the reference's,
+a station whose keyed pool jumps only at the onset epoch, so the tests pin the
 comparator's answer, not merely that a figure was produced.  Comparators are
 exercised through their build functions directly (spec objects, not rendered), so
 these stay fast and backend-free.
@@ -202,7 +202,7 @@ def test_dispositions_column_axis_is_a_regular_time_grid(tmp_path):
     res = compare_dispositions(_runs(tmp_path, "early", "late"))
     raster = next(t for t in res.figures[0].axes[0].traces if isinstance(t, Raster))
     assert raster.grid.shape[1] == 120          # 110-epoch offset + 10 epochs
-    # The gap columns are painted on NEITHER row.
+    # The gap columns are painted on neither row.
     assert np.isnan(raster.grid[:, 50]).all()
     assert "regular 30 s grid" in res.summary
     assert "only-early 10, only-late 10" in res.summary
@@ -258,7 +258,7 @@ def test_tracks_a00_axis_shades_out_of_band(tmp_path):
 
 
 def test_tracks_gate_levels_are_inside_the_y_limit(tmp_path):
-    """A reference line parked outside the limits is invisible AND collapses layout."""
+    """A reference line parked outside the limits is invisible and collapses layout."""
     a = _leg(tmp_path, "leg")
     _epoch_status(a, n=12, sigma0=1.0, ceiling=6.0)    # sigma0 far below the gate
     ax0 = compare_tracks(_runs(tmp_path, "leg")).figures[0].axes[0]
@@ -272,7 +272,7 @@ def test_tracks_skip_without_any_input(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-#  (c) events -- RATES, not raw counts
+#  (c) events: rates, not raw counts
 # --------------------------------------------------------------------------- #
 def test_events_ratio_is_rate_normalized_not_count_based(tmp_path):
     """Twice the epochs at the same rate must read 1.00x, not 2x."""
@@ -280,7 +280,7 @@ def test_events_ratio_is_rate_normalized_not_count_based(tmp_path):
     _epoch_status(a, n=10)
     _epoch_status(b, n=20)
     _events(a, n=10, per_epoch={"T3_raim": 1})
-    _events(b, n=20, per_epoch={"T3_raim": 1})   # 2x the COUNT, same rate
+    _events(b, n=20, per_epoch={"T3_raim": 1})   # 2x the count, same rate
     res = compare_events(_runs(tmp_path, "ref", "long"))
     raim = next(ln for ln in res.summary.splitlines() if ln.startswith("T3_raim"))
     assert "1.00x" in raim
@@ -427,7 +427,7 @@ def test_run_comparators_are_not_in_the_single_ctx_registry():
 def test_module_is_not_wired_into_the_viewer_registry_module():
     """It stays out of ``viewers/__init__`` on purpose (wrong call signature).
 
-    Asserted against the file's SOURCE: importing this test module already binds
+    Asserted against the file's source: importing this test module already binds
     the submodule as an attribute of the package, so ``hasattr`` would pass
     whether or not ``__init__`` ever mentions it.
     """

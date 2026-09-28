@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""RF-NS -- the S-basis null-space read.
+"""RF-NS: the S-basis null-space read.
 
-Grades ONE network run directory for *why* the ``NetworkSbasis`` rank gate
+Grades one network run directory for why the ``NetworkSbasis`` rank gate
 withheld: it names every near-null direction by the shared parameters that
 span it, classifies it into a family, and crosses each withheld epoch with the
 events (held-basis handovers, arc births/deaths, column adds/removes,
@@ -9,18 +9,18 @@ readmissions, clock-anchor decouples) in its immediate neighbourhood.
 
 Inputs, all under ``<run_dir>/logs/`` (missing files are skipped, not fatal):
 
-  network_estimability.csv  the gate's eigen-census -- EPOCH rows carry
+  network_estimability.csv  the gate's eigen-census: epoch rows carry
                             (n_shared, declared_dim, ev_max, cutoff, n_below),
-                            DIR rows carry one eigenvalue plus up to eight
-                            ``FAMILY|SAT|SIGNAL=weight`` labels.  The dump is
+                            dir rows carry one eigenvalue plus up to eight
+                            ``FAMILY|SAT|SIGNAL=weight`` labels. The dump is
                             budgeted (``network.trace_estimability_budget``);
                             with the historical budget of 6 it covers ignition
                             only, which is exactly the gap this script's
                             ``--tow-min/--tow-max`` windowing exists to expose.
   network_epoch_status.csv  disposition per epoch (the withhold ground truth).
   network_events.csv        GATE sbc_skip / sbc_engage / phase_heal /
-                            gate_withheld -- the per-epoch attribution that
-                            exists on EVERY epoch, budget or no budget.
+                            gate_withheld: the per-epoch attribution that
+                            exists on every epoch, budget or no budget.
   network_phase_anchor.csv  the elected (sat,signal) -> anchor station map.
   network_amb_state.csv     per-arc carry rows incl. birth / drop / erase.
 
@@ -45,13 +45,13 @@ EPOCH_S = 30.0
 # direction family classification
 # --------------------------------------------------------------------------
 # A census DIR row's col1..col8 are "FAMILY|SAT|SIGNAL=weight" (CLK has no
-# SIGNAL).  The classifier below is deliberately structural -- it asks what the
-# WEIGHTS say, not what we expect to find -- because the whole point of the read
-# is to separate "a phase datum is momentarily unpinned" (a DECLARATION fix)
-# from anything else (a rank read).
+# SIGNAL). The classifier below is deliberately structural: it reads the
+# weights rather than a fixed expectation, because the read's purpose is to
+# separate "a phase datum is momentarily unpinned" (a declaration fix) from
+# anything else (a rank read).
 CLS_CB_ORPHAN = "CB-orphan"     # one code-bias column, essentially alone
 CLS_CLK_FLAT = "CLK-flat"       # all-clock, weights ~ 1/sqrt(n_clk): the datum itself
-CLS_SAT_LUMP = "sat-lump"       # ONE satellite's CLK + its own PB columns
+CLS_SAT_LUMP = "sat-lump"       # one satellite's CLK + its own PB columns
 CLS_PB_PAIR = "PB-pair"         # two satellites' PB columns (a handover pair)
 CLS_PB_BROAD = "PB-broad"       # many satellites' PB, low weights
 CLS_MIXED = "mixed"
@@ -96,7 +96,7 @@ def classify(entries):
         return (CLS_CLK_FLAT if wmax < 0.30 else CLS_SAT_LUMP), sats, sigs
     if len(sats) == 1:
         return CLS_SAT_LUMP, sats, sigs
-    # one satellite dominates AND carries the CLK component -> still a sat lump
+    # one satellite dominates and carries the CLK component: still a sat lump
     dom = Counter(s for _f, s, _g, w in top if s)
     if len(dom) == 1 and any(f == "CLK" and s in dom for f, s, _g, _w in entries):
         return CLS_SAT_LUMP, sats, sigs

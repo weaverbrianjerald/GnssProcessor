@@ -1,6 +1,6 @@
 /**
  * @file NetworkInject.cpp
- * @brief EVENT HARNESS — producer-side fault injector (see NetworkInject.hpp).
+ * @brief Event harness: producer-side fault injector (see NetworkInject.hpp).
  */
 #include "filter/NetworkInject.hpp"
 
@@ -34,25 +34,25 @@ namespace GnssProcessor {
             return started(ev, tow) && tow < ev.tow + ev.duration_s - kTowGuard;
         }
 
-        /// @brief True on the FIRST epoch at or after the event's tow.
+        /// @brief True on the first epoch at or after the event's tow.
         bool isOnsetEpoch(const NetworkInjectEvent& ev, double tow, bool already) {
             return !already && started(ev, tow);
         }
 
         /**
-         * @brief Add @p step_m metres of NON-DISPERSIVE range to one observation.
+         * @brief Add @p step_m metres of non-dispersive range to one observation.
          *
          * Code observables (@c C*) take the metres directly; phase observables
-         * (@c L*) take @c step_m/lambda cycles, because RINEX phase is in CYCLES
-         * at this site and @c PppModel::computeModels derives BOTH
+         * (@c L*) take @c step_m/lambda cycles, because RINEX phase is in cycles
+         * at this site and @c PppModel::computeModels derives both
          * @c PppObservation::observed (metres, via the wavelength) and
-         * @c raw_observed (cycles, what MW / GF / IF-TD read) from this one entry.
-         * A phase code whose wavelength does not resolve is LEFT ALONE and not
-         * counted — an unmoved observable must never be reported as touched.
+         * @c raw_observed (cycles, read by MW, GF and IF-TD) from this one entry.
+         * A phase code whose wavelength does not resolve is left unchanged and
+         * not counted, so the count includes only observables that moved.
          *
          * Shared by @c sat_clock_step (all stations, one satellite) and
          * @c rx_clock_step (one station, all satellites): the two kinds differ
-         * only in which index they sweep, which is exactly the duality between a
+         * only in which index they sweep, which is the duality between a
          * satellite-clock jump and a receiver-clock jump.
          *
          * @return Observables actually moved.
@@ -109,9 +109,9 @@ namespace GnssProcessor {
             if (e.kind == "anchor_handover")list += " mode=" + e.mode;
             if (e.kind == "sat_clock_step" || e.kind == "rx_clock_step")
                 list += fmt::format(" step={:.3f}m", e.step_m);
-            // SIM-ONLY ORACLE AMBIGUITY PIN: the scope IS the event, so it belongs
-            // in the arming line — a leg whose scope silently differed from the one
-            // the operator wrote would be graded as the intended arm.
+            // Oracle ambiguity pin (simulation only): the scope defines the event, so
+            // it is printed in the arming line; otherwise a leg whose scope differed
+            // from the one the operator wrote would be graded as the intended arm.
             if (e.kind == "oracle_pin")
                 list += fmt::format(" scope={} sigma={:.2e}m", e.scope, e.sigma_m);
         }
@@ -127,19 +127,18 @@ namespace GnssProcessor {
                                           SyncedEpoch& scratch) {
         auto& st = ctx.inject;
 
-        // The staged directives are strictly one-epoch objects (invariant #7's
-        // decoupling edge: a directive that survived its epoch would fire again
-        // on every later election).  ALL THREE clear at this one point, AHEAD of
-        // the armed guard: `anchor_now_slip` is staged by the PRODUCTION
-        // anchor-slip handover card (network.cycle_slip.anchor_slip_handover),
-        // which runs on unarmed runs where the injector returns early.  Clearing
-        // three already-empty containers is not a solve-visible act, so the
-        // unarmed path stays byte-identical.
+        // The staged directives live for one epoch; a directive that survived its
+        // epoch would act again at every later election.  All three vectors are
+        // cleared here, ahead of the armed guard, because `anchor_now_slip` is
+        // staged by the production anchor-slip handover
+        // (network.cycle_slip.anchor_slip_handover), which also runs on unarmed
+        // runs where the injector returns early.  Clearing empty containers does
+        // not affect the solve, so the unarmed path stays byte-identical.
         st.anchor_now.clear();
         st.arc_erase_now.clear();
         st.anchor_now_slip.clear();
 
-        if (!st.armed) return se_raw;          // byte-identical path: no copy, no branch
+        if (!st.armed) return se_raw;          // byte-identical path: no copy
 
         const double tow = se_raw.time.tow;
 
@@ -157,7 +156,7 @@ namespace GnssProcessor {
 
         const SyncedEpoch* out = &se_raw;
         if (!obs_due.empty()) {
-            scratch = se_raw;                  // the ONE copy, only when something is due
+            scratch = se_raw;                  // the only copy, taken only when something is due
             out = &scratch;
         }
 
@@ -195,10 +194,10 @@ namespace GnssProcessor {
                     for (auto& o : sit->second) {
                         if (o.satellite != e.sat) continue;
                         if (!o.measurements.count(e.signal)) continue;
-                        // RINEX phase is in CYCLES here; computeModels multiplies by
-                        // the wavelength downstream, so ONE write moves both the
+                        // RINEX phase is in cycles here; computeModels multiplies by
+                        // the wavelength downstream, so one write moves both the
                         // metre-valued design row and the cycle-valued MW/GF/IF-TD feed.
-                        // A STEP, not a ramp: the same delta every epoch from tow on.
+                        // A step, not a ramp: the same delta every epoch from tow on.
                         o.measurements[e.signal] += e.delta_cycles;
                         if (e.flag_lli && onset)
                             o.lli_flags[e.signal] |= 0x1;   // "lost lock since last epoch"
@@ -211,7 +210,8 @@ namespace GnssProcessor {
             } else if (e.kind == "sat_clock_step") {
                 // y = L~ - (rho - c.dt^s + ...).  Adding step_m to every code
                 // observable and step_m/lambda cycles to every phase observable of
-                // this satellite IS adding step_m to the a-priori satellite clock.
+                // this satellite is equivalent to adding step_m to the a-priori
+                // satellite clock.
                 for (auto& [sta, vec] : scratch.by_station)
                     for (auto& o : vec) {
                         if (o.satellite != e.sat) continue;
@@ -220,16 +220,17 @@ namespace GnssProcessor {
                 if (touched && onset)
                     row(e, "injected", e.step_m,
                         fmt::format("clock_step_onset;rows={}", touched));
-            } else {   // rx_clock_step — the exact DUAL of sat_clock_step
+            } else {   // rx_clock_step, the exact dual of sat_clock_step
                 // Same residual, other index: y = L~ - (rho + c.dt_r - c.dt^s + ...),
-                // so adding step_m metres to EVERY code observable and step_m/lambda
-                // cycles to EVERY phase observable of EVERY satellite AT ONE STATION
-                // is adding step_m to that station's receiver clock c.dt_r.  A
-                // receiver clock jump is station-common and NON-DISPERSIVE, and it is
-                // PERSISTENT — the same delta every epoch from tow on, never a
-                // one-epoch spike (a receiver that steps its clock does not step it
-                // back).  Nothing here is satellite- or band-scoped; the loader
-                // refuses a `sat` or a `signal` so that stays true.
+                // so adding step_m metres to every code observable and step_m/lambda
+                // cycles to every phase observable of every satellite at one station
+                // is equivalent to adding step_m to that station's receiver clock
+                // c.dt_r.  A receiver clock jump is station-common and
+                // non-dispersive, and it persists: the same delta is applied every
+                // epoch from tow on, never as a one-epoch spike (a receiver that
+                // steps its clock does not step it back).  Nothing here is
+                // satellite- or band-scoped; the loader refuses a `sat` or a
+                // `signal` for this kind.
                 long long n_sats = 0;
                 auto sit = scratch.by_station.find(e.station);
                 if (sit != scratch.by_station.end())
@@ -255,7 +256,7 @@ namespace GnssProcessor {
             }
         }
 
-        // --- outage RELEASE row (the re-coupling edge, invariant #7) ----------------
+        // --- outage release row (the re-coupling edge, invariant #7) ----------------
         for (std::size_t i = 0; i < st.events.size(); ++i) {
             const auto& e = st.events[i];
             if (e.kind != "outage" || !st.onset_logged[i]) continue;
@@ -275,7 +276,7 @@ namespace GnssProcessor {
                 d.signal = e.signal.empty() ? "all" : e.signal;
                 d.cold   = (e.mode == "cold");
                 st.anchor_now.push_back(std::move(d));
-                // The ledger entry is closed AFTER the election, at readback.
+                // The ledger entry is closed after the election, at readback.
             } else if (e.kind == "arc_erase") {
                 InjectArcErase a;
                 a.station  = e.station;
@@ -294,9 +295,9 @@ namespace GnssProcessor {
                         }
                 }
                 st.arc_erase_now.push_back(std::move(a));
-                // The ledger entry is closed by the CONSUMER (the T4 block for
-                // every erase mode, the PASS-A drain for free_epoch) — a
-                // directive that no seam could act on must still reach the
+                // The ledger entry is closed by the consumer (the T4 block for
+                // every erase mode, the PASS-A drain for free_epoch), so a
+                // directive that no seam could act on still reaches the
                 // never-fired hard error.
             }
         }
@@ -334,9 +335,9 @@ namespace GnssProcessor {
                   st.n_arc_erase_acted, by_mode);
 
         if (!never.empty()) {
-            // The simulator's scripted-schedule rule: an exam fixture must never
-            // silently not exist.  A leg whose event did not fire would be graded
-            // as a null and reported as "the event had no effect".
+            // Same rule as the simulator's scripted schedule: a leg whose event did
+            // not fire would otherwise be graded as a null and reported as "the
+            // event had no effect".
             for (const auto& s : never)
                 log->error("Network (fault inject): FAIL — {}.  Check the station/sat "
                            "names against the roster, the signal against the RINEX "

@@ -1,33 +1,35 @@
-"""Spillway forensics on network_dd_fractional.csv — the 2026-08-02 root-cause kit.
+"""Spillway forensics on network_dd_fractional.csv (root-cause kit, 2026-08-02).
 
 Four analyses on the traced between-station DDs (all datum-invariant, standing
 invariant #5). Run as:
 
     python scripts/grade_dd_spillway.py <run_dir> [tow_min]
 
-1. AGE BINS   — med|step|, med dd_sigma_cyc, med|frac| conditioned on key age.
-                (dd_sigma_cyc is CARRY-BLIND — jointConditionalCovariance carries
-                no dd-prior term, only the mean path has the kappa correction —
-                so a flat sigma does NOT mean no accumulation.)
-2. STRUCTURE  — D(k) = med|dd(t+k)-dd(t)|^2 on mature series (age>=25).
-                Converged: flat ~sqrt(2)*noise.  Random walk: ~k^0.5.
-                Measured 2026-08-02: k^0.75 with a 30-60 min knee at 35-40 cyc —
-                a persistent drift, not noise and not convergence.
-3. CROSS-BAND — same-epoch step ratio in METERS between bands, ref-free
-                (cross-sat differences cancel each signal pool's lexical ref).
-                common-cycle (dN1=dN2): lambda2/lambda1 = 1.2833 (L1/L2)
-                raw iono in observable : (f1/f2)^2     = 1.6469
-                geometric (datum/clock): 1.0
-                Measured: 1.275-1.291 = the COMMON-CYCLE signature, i.e. the
-                iono-representation residual is squeezed into the ambiguity
-                pair along the WL-preserving direction at ~6.18 cyc per meter
-                (c = delta*(l1 + a2*l2)/(l1^2 + l2^2), the projection of the
-                iono direction onto the common-cycle direction).
-4. PAIR RANK  — med mature step per station pair.  Measured: organized by
-                iono-gradient geometry (equatorial-anomaly / cross-sector pairs
-                5-8 cyc/ep; same-sector or high-lat pairs 0.6-1.4), i.e. the
-                drift is TRUE SKY structure a deg-8 SH surface cannot follow,
-                not a self-generated gauge wander.
+1. Age bins:   med|step|, med dd_sigma_cyc, med|frac| conditioned on key age.
+               dd_sigma_cyc is carry-blind: jointConditionalCovariance carries
+               no dd-prior term, only the mean path has the kappa correction,
+               so a flat sigma does not mean no accumulation.
+2. Structure:  D(k) = med|dd(t+k)-dd(t)|^2 on mature series (age>=25).
+               Converged looks flat at sqrt(2)*noise; a random walk grows as
+               k^0.5. Measured 2026-08-02: k^0.75 with a 30-60 min knee at
+               35-40 cyc, consistent with a persistent drift rather than noise
+               or convergence.
+3. Cross-band: same-epoch step ratio in meters between bands, ref-free (the
+               cross-satellite difference cancels each signal pool's lexical
+               reference satellite). Reference ratios:
+               common-cycle (dN1=dN2): lambda2/lambda1 = 1.2833 (L1/L2)
+               raw iono in observable : (f1/f2)^2     = 1.6469
+               geometric (datum/clock): 1.0
+               Measured 1.275-1.291, matching the common-cycle ratio: the
+               iono-representation residual projects onto the ambiguity pair
+               along the widelane-preserving direction, at about 6.18 cyc per
+               meter (c = delta*(l1 + a2*l2)/(l1^2 + l2^2), the projection of
+               the iono direction onto the common-cycle direction).
+4. Pair rank:  med mature step per station pair. Measured: the ranking follows
+               iono-gradient geometry (equatorial-anomaly / cross-sector pairs
+               at 5-8 cyc/ep; same-sector or high-latitude pairs at 0.6-1.4),
+               consistent with sky structure that a degree-8 spherical-harmonic
+               surface cannot follow, rather than a self-generated gauge wander.
 """
 import csv
 import math

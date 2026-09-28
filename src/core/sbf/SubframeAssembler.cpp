@@ -2,12 +2,13 @@
  * @file SubframeAssembler.cpp
  * @brief Raw navigation subframe -> BroadcastEphemeris assembly.
  *
- * Bit primitives (getbitu/getbits/setbitu/getbits2/getbitg) mirror RTKLIB
- * rtkcmn.c exactly; the per-constellation field offsets follow the
- * RTKLIB-grounded research spec (IS-GPS-200, Galileo OS SIS ICD, BDS-SIS-ICD).
- * Angular elements are converted from semicircles to radians (× π) to match
- * the engine's KeplerianEphemeris convention; BeiDou toe/toc stay on native
- * BDT.  The emitted struct is identical in shape to the decoded-Nav decoders,
+ * The bit primitives getbitu, getbits and setbitu mirror RTKLIB rtkcmn.c;
+ * getbitu2 and getbits2 merge fields split across two bit ranges in the same way
+ * as RTKLIB.  The per-constellation field offsets follow the RTKLIB decoders and
+ * the interface specifications (IS-GPS-200, Galileo OS SIS ICD, BDS-SIS-ICD).
+ * Angular elements are converted from semicircles to radians (× π) to match the
+ * KeplerianEphemeris convention; BeiDou toe and toc stay on native BDT.  The
+ * emitted struct has the same shape as the output of the decoded-Nav decoders,
  * so LiveEphemerisStore consumes it unchanged.
  */
 
@@ -53,7 +54,9 @@ int32_t getbits2(const uint8_t* buff, int p1, int l1, int p2, int l2) {
     return static_cast<int32_t>(getbitu2(buff, p1, l1, p2, l2));
 }
 
-// Resolve a full GPS/GST week from the block WNc + the toe rollover guard.
+// Returns the GPS/GST week of toe: the block's WNc, moved back or forward one week
+// when toe and the message TOW are more than half a week apart.  Returns 0 when
+// WNc is not positive.
 int resolveWeek(int wnc, double tow_s, double toes) {
     if (wnc <= 0) return 0;
     int week = wnc;
@@ -76,7 +79,7 @@ std::optional<BroadcastEphemeris> SubframeAssembler::consume(const RawNavMessage
     case System::QZSS:    return consumeGps(msg, sat);
     case System::Galileo: return consumeGal(msg, sat);
     case System::BeiDou:  return consumeBds(msg, sat);
-    default:              return std::nullopt;   // GLONASS raw assembly: follow-up
+    default:              return std::nullopt;   // GLONASS raw assembly not implemented
     }
 }
 
@@ -134,7 +137,7 @@ std::optional<BroadcastEphemeris> SubframeAssembler::consumeGps(const RawNavMess
     const int    iode3  = static_cast<int>(getbitu(b3, 216, 8));
     const double idot   = getbits(b3, 224, 14) * P2(43) * kPi;
 
-    // Consistency gate (RTKLIB): IODE(SF2)==IODE(SF3)==IODC&0xFF.
+    // Consistency check, as in RTKLIB: IODE(SF2) == IODE(SF3) == IODC & 0xFF.
     if (iode2 != iode3 || iode2 != (iodc & 0xFF)) return std::nullopt;
     if (iode2 == sat.last_emitted_iode) return std::nullopt;     // already emitted this IODE
 
@@ -163,11 +166,12 @@ std::optional<BroadcastEphemeris> SubframeAssembler::consumeGps(const RawNavMess
 std::optional<BroadcastEphemeris> SubframeAssembler::consumeGal(const RawNavMessage& msg, PerSat& sat) {
     if (msg.words.size() < 8) return std::nullopt;
 
-    // STAGE A: pack the 256-bit page (even 120 + odd 120 + pad) and rebuild the
-    // 128-bit logical word = even data (page bits 2..113) ++ odd data (122..137).
+    // Pack the 256-bit page (even half 120 bits, odd half 120 bits, padding) and
+    // rebuild the 128-bit word: even-page data (page bits 2..113) followed by
+    // odd-page data (page bits 122..137).
     uint8_t page[32] = {0};
     for (int k = 0; k < 8; ++k) setbitu(page, 32 * k, 32, msg.words[k]);
-    if (getbitu(page, 1, 1) != 0) return std::nullopt;       // alert page — skip
+    if (getbitu(page, 1, 1) != 0) return std::nullopt;       // alert page: skip
     const int wt = static_cast<int>(getbitu(page, 2, 6));
     if (wt > 5) return std::nullopt;                          // only word types 0..5 wanted
 
@@ -253,15 +257,16 @@ std::optional<BroadcastEphemeris> SubframeAssembler::consumeGal(const RawNavMess
 std::optional<BroadcastEphemeris> SubframeAssembler::consumeBds(const RawNavMessage& msg, PerSat& sat) {
     if (msg.words.size() < 10) return std::nullopt;
 
-    // Pack the 10 words at a 32-bit stride with NO shift and parity left in
-    // place, matching RTKLIB decode_cmpraw — the decode_bds_d1 field offsets
-    // below are defined against exactly this 320-bit layout.  (The BeiDou
-    // preamble 0x712 lands in bits 0..10; FraID at bit 15.)
+    // Copy the 10 words at a 32-bit stride, unshifted and with the parity bits
+    // kept, as RTKLIB decode_cmpraw does.  The decode_bds_d1 field offsets below
+    // are defined against this 320-bit layout; any shift or parity stripping
+    // invalidates them.  (The BeiDou preamble 0x712 lands in bits 0..10, FraID
+    // at bit 15.)
     uint8_t buf[40] = {0};
     for (int i = 0; i < 10; ++i) setbitu(buf, 32 * i, 32, msg.words[i]);
 
     const int id = static_cast<int>(getbitu(buf, 15, 3));     // FraID
-    if (id < 1 || id > 3) return std::nullopt;                // D1 ephemeris is SF1/2/3 (GEO D2 differs)
+    if (id < 1 || id > 3) return std::nullopt;                // SF1..SF3 hold the D1 ephemeris (GEO D2 differs)
     sat.slots[id].assign(buf, buf + 40);
 
     if (!sat.slots.count(1) || !sat.slots.count(2) || !sat.slots.count(3))
@@ -304,7 +309,8 @@ std::optional<BroadcastEphemeris> SubframeAssembler::consumeBds(const RawNavMess
     const double omega0= getbits2(b3, 211, 21, 240, 11) * P2(31) * kPi;
     const double omega = getbits2(b3, 251, 11, 270, 21) * P2(31) * kPi;
 
-    // Completeness: the toe spanning SF2(2 MSB)+SF3(15 LSB) must equal toc.
+    // Consistency check: toe, split across SF2 (2 MSBs) and SF3 (15 LSBs), must
+    // equal toc to within 1 s, so all three subframes belong to one ephemeris set.
     if (std::abs(toes - toc) > 1.0) return std::nullopt;
     if (aode == sat.last_emitted_iode) return std::nullopt;
 

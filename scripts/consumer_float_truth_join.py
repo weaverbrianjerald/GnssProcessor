@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Join the closed-loop CONSUMER's float ambiguities to the simulator's TRUTH integers and
+"""Join the closed-loop consumer's float ambiguities to the simulator's truth integers and
 measure the fixability of the integer-natured combinations (per-band SD, WL, EWL, NL).
 
-WHY
+Why
 ---
 On the synthetic quiet 24 h bed the held-out consumer (``network.closed_loop``) runs
-``ar_mode 1`` every epoch and fixes NOTHING (ratio ~ 1.0).  Its per-band float sigma is
+``ar_mode 1`` every epoch and fixes nothing (ratio ~ 1.0). Its per-band float sigma is
 0.29-0.45 cycles, far too loose for a direct per-band LAMBDA but not obviously too loose
-for a WL / EWL / NL cascade.  This measures what such a cascade would actually see.
+for a WL / EWL / NL cascade. This measures what such a cascade would actually see.
 
-TRUTH SEMANTICS
----------------
+Truth semantics
+----------------
 ``<fixture>/<station>/truth_ambiguities.csv`` = ``satellite,signal,N_int,wavelength_m``.
 The simulator (src/sim/main.cpp) writes it commented as
 
@@ -23,29 +23,29 @@ and the phase observable it belongs to is (same file, the ``row.values`` block)
     L_b = (P + tropo + m7 + ant + bias_phase + rxb_phase + isb - I_b
            + windup_m + lambda_b * N + np + np_scint + mp_phase) / lambda_b
 
-so ``N_int`` is the PURE INTEGER.  Every bias is a separate additive metres term:
-``bias_phase`` = satellite observable-specific phase OSB (satellite-dependent, does NOT
-cancel between satellites), ``rxb_phase`` = this station's receiver phase bias (satellite-
-INDEPENDENT, cancels exactly in a between-satellite SD), ``isb`` = GPS->Gal inter-system
-bias (constellation-common).  Hence only a WITHIN-CONSTELLATION between-satellite SD is
-comparable to truth.  ``truth_slips.csv`` is checked: on a bed with zero slips the recorded
-integer is the true integer all day.
+so ``N_int`` is the pure integer. Every bias is a separate additive metres term:
+``bias_phase`` is the satellite observable-specific phase OSB (satellite-dependent, does
+not cancel between satellites), ``rxb_phase`` is this station's receiver phase bias
+(satellite-independent, cancels exactly in a between-satellite SD), ``isb`` is the
+GPS->Gal inter-system bias (constellation-common). Hence only a within-constellation
+between-satellite SD is comparable to truth. ``truth_slips.csv`` is checked: on a bed with
+zero slips the recorded integer is the true integer all day.
 
-THE GAUGE INTEGER (why the raw SD error is tens of cycles)
-----------------------------------------------------------
-The producer's per-(sat,signal) phase-bias gauge is pinned at an ANCHOR receiver's own
-absolute ambiguity estimate, so the emitted phase bias carries that anchor's integer.  The
+The gauge integer (why the raw SD error is tens of cycles)
+------------------------------------------------------------
+The producer's per-(sat,signal) phase-bias gauge is pinned at an anchor receiver's own
+absolute ambiguity estimate, so the emitted phase bias carries that anchor's integer. The
 consumer's ambiguity state therefore converges to
     N_consumer - N_anchor + (float error of both sides)
-and the SD error against truth is  e = -(N_anchor,i - N_anchor,ref) + eps  --  an exact
-INTEGER plus the real (producer + consumer) float residue ``eps``.  That integer is a gauge
-artefact that cancels in the wire->consumer loop, so:
-  * the UNWRAPPED std of ``e`` measures the gauge, not fixability (reported for
+and the SD error against truth is  e = -(N_anchor,i - N_anchor,ref) + eps, an exact
+integer plus the real (producer + consumer) float residue ``eps``. That integer is a gauge
+artefact that cancels in the wire-to-consumer loop, so:
+  * the unwrapped std of ``e`` measures the gauge, not fixability (reported for
     completeness, flagged);
-  * the WRAPPED residue eps = e - round(e) is the fixability quantity.
+  * the wrapped residue eps = e - round(e) is the fixability quantity.
 Per-band and WL/EWL wrapping is legitimate (a band difference of integers is an integer).
-The NL is NOT: (f1*n1 - f2*n2)/(f1-f2) = n1 + n_WL*f2/(f1-f2) is only an integer when
-n_WL = 0, i.e. the NL is defined modulo 1 ONLY once the widelane is fixed.  Both forms are
+The NL is not: (f1*n1 - f2*n2)/(f1-f2) = n1 + n_WL*f2/(f1-f2) is only an integer when
+n_WL = 0, i.e. the NL is defined modulo 1 only once the widelane is fixed. Both forms are
 reported and the amplification identity is printed.
 
 Usage
@@ -96,14 +96,14 @@ def wrap(e):
 
 
 def stat_block(e, wrappable=True):
-    """Statistics for ambiguity errors in CYCLES of the named channel.
+    """Statistics for ambiguity errors in cycles of the named channel.
 
     Unwrapped moments (gauge-contaminated, see module docstring) plus, when the channel is
-    integer-shift invariant, the wrapped residue statistics -- each quoted against its own
+    integer-shift invariant, the wrapped residue statistics, each quoted against its own
     size-matched uniform null:
       |frac| p50 null 0.25 ; P(|frac|<0.15) null 0.30 ; P(|frac|<0.25) null 0.50 ;
       circular resultant R = |mean(exp(2 pi i e))| with uniform null E[R] ~ sqrt(pi/(4n)).
-    ``mu`` is the resultant's DIRECTION mapped to [-0.5, 0.5): R is a concentration test,
+    ``mu`` is the resultant's direction mapped to [-0.5, 0.5): R is a concentration test,
     not a location test, so a large R at a large |mu| is a common non-integer offset, not
     integer content.
     """
@@ -146,7 +146,7 @@ def nl_from(e1, e2, f1, f2):
     B_IF = lam_NL*N1 - (f2/(f1+f2))*lam2*N_WL, so e_NL = e_IF/lam_NL with
     e_IF = (f1^2 lam1 e1 - f2^2 lam2 e2)/(f1^2-f2^2).  Since f^2*lam = c*f this reduces to
     the closed form below (asserted in __main__ against the metres derivation).
-    Expanding: e_NL = e1 + (f2/(f1-f2))*(e1-e2)  --  the widelane residue enters amplified
+    Expanding: e_NL = e1 + (f2/(f1-f2))*(e1-e2): the widelane residue enters amplified
     by f2/(f1-f2) (3.53x on GPS L1/L2, 3.33x on Galileo E1/E5a).
     """
     return (f1 * np.asarray(e1) - f2 * np.asarray(e2)) / (f1 - f2)
@@ -257,10 +257,10 @@ def count_rt_resets(run_dir):
 def compute(per_epoch, truthN):
     """Per-epoch between-satellite SD errors.
 
-    Reference: ONE satellite per (epoch, constellation) -- the one present in BOTH float
-    and truth on EVERY band of that constellation with the smallest sum-of-float-std.  A
-    single reference across bands is REQUIRED for the lanes to be defined (a per-band
-    reference would mix two different reference errors into e_WL).  A secondary per-band
+    Reference: one satellite per (epoch, constellation), the one present in both float
+    and truth on every band of that constellation with the smallest sum-of-float-std. A
+    single reference across bands is required for the lanes to be defined (a per-band
+    reference would mix two different reference errors into e_WL). A secondary per-band
     reference (min std on that band alone) is kept for the per-band table.
     """
     tows = sorted(per_epoch)
@@ -321,7 +321,7 @@ def compute(per_epoch, truthN):
                 for s in common:
                     e1, e2 = e_by_band[bhi][s], e_by_band[blo][s]
                     if lane == "NL":
-                        # raw (task formula: the gauge integers ride through -> NOT
+                        # raw (task formula: the gauge integers ride through, so it is not
                         # wrappable) and integer-removed (the per-band gauge integers
                         # rounded away, i.e. "NL given the recovered widelane").
                         lane_e[(const, "NL_raw")].append((tow, s, nl_from(e1, e2, f1, f2)))
@@ -348,8 +348,8 @@ def window_filter(recs, tow0, lo_h, hi_h):
 
 
 def demeaned(recs, tow0, lo_h, hi_h):
-    """Per-epoch mean removed -- a reference-FREE view (it removes the reference
-    satellite's own error, common to every chord by construction).  UNWRAPPED only:
+    """Per-epoch mean removed: a reference-free view (it removes the reference
+    satellite's own error, common to every chord by construction). Unwrapped only:
     removing a group's own centre shrinks a wrapped |residual| ~42 % on pure noise."""
     lo, hi = tow0 + lo_h * 3600.0, tow0 + hi_h * 3600.0
     per = defaultdict(list)
@@ -391,9 +391,9 @@ def _segment(pts, min_len):
 
 
 def arc_stats(per_epoch, truthN, tow0, lo_h, hi_h, min_len=40):
-    """Is the wrapped residue NOISE (averages down) or a stable per-arc BIAS?
+    """Is the wrapped residue noise (averages down) or a stable per-arc bias?
 
-    Uses ONE fixed reference satellite per constellation -- the most-tracked one in the
+    Uses one fixed reference satellite per constellation, the most-tracked one in the
     window, so every chord and every lane shares it and each is a continuous series.
     """
     lo, hi = tow0 + lo_h * 3600.0, tow0 + hi_h * 3600.0

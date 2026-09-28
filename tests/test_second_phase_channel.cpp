@@ -1,33 +1,35 @@
 /**
  * @file test_second_phase_channel.cpp
- * @brief Contract tests for the SECOND PHASE CHANNEL (card SID phase 6a,
+ * @brief Contract tests for the second phase channel (card SID phase 6a,
  *        docs/refound/SID_signal_identity_2026-09-22.md section 4).
  *
  * With `network.second_phase_channel` a network station contributes, as ordinary
  * float-ambiguity phase rows, every allow-listed band-1 carrier phase it reports
  * besides the one its canonical latch selected, so the L1C and L1W satellite
- * phase-bias families stop competing for the same stations.
+ * phase-bias families share stations instead of competing for them.
  *
- * What is pinned here — the PURE kernels, the roster and the loader, i.e.
- * everything a defect could hide in that does not need a network solve:
+ * The file pins the pure kernels, the roster and the loader, which is every part
+ * that can be tested without a network solve:
  *
- *   (a) the ALLOW-LIST grammar: a 3-character PHASE type on band 1, and nothing
+ *   (a) the allow-list grammar: a 3-character phase type on band 1 and nothing
  *       else.  A code type belongs to card SCC and a band-2 entry to phase 6b;
- *   (b) SECOND-PHASE SELECTION: allow-list order, no duplicates, never the latched
- *       phase itself, never a phase the station does not report, and EMPTY when the
- *       band has no latched phase (that is the FALLBACK case, which adds nothing);
- *   (c) the CELL EDGES of standing invariant #7, including the one the invariant
- *       was written for: a station that drops out entirely CLOSES its cells, so its
+ *   (b) second-phase selection: allow-list order, no duplicates, never the latched
+ *       phase itself, never a phase the station does not report, and empty when the
+ *       band has no latched phase (the fallback case, which adds nothing);
+ *   (c) the cell edges of standing invariant #7, including the case the invariant
+ *       was written for: a station that drops out entirely closes its cells, so its
  *       return reads as a re-coupling rather than as a first sighting;
- *   (d) the WITNESS (R8): a slip on ONE channel is an integer in
- *       (latched minus second), a slip common to both cancels;
- *   (e) the ROSTER's `modelled_extra`: filled only when armed, band 1 only, the
- *       latch required present, the allow list respected, and the modelled phase
- *       itself untouched (phase 2's tracker keeps reading it);
- *   (f) the LOADER contract: default OFF, the default allow-list, a refused entry
- *       dropped and named, the sigma scale's floor of 1, the three interlocks
- *       (channel_mode `all`, the float vehicle with a held basis, and a list with
- *       fewer than two admitted entries), and the closed-loop consumer pinned OFF.
+ *   (d) the witness (R8): a slip on one channel appears as an integer step in
+ *       (latched minus second), and a slip common to both cancels;
+ *   (e) the roster's `modelled_extra`: filled only when armed, band 1 only, the
+ *       latched phase required present, the allow list respected, and the modelled
+ *       phase itself unchanged (the phase-2 tracker keeps reading it);
+ *   (f) the loader contract: default off, the default allow-list, a refused entry
+ *       dropped and named, the sigma scale's floor of 1, the interlocks that disarm
+ *       the knob (the leveling vehicle, the float vehicle without a held basis, and
+ *       a list with fewer than two admitted entries), channel_mode `all` subsuming
+ *       the knob rather than disarming it, the gap-tier and IF-TD warnings, and the
+ *       closed-loop consumer pinned off.
  *
  * The mechanism itself (which rows enter the solve, which families reach the wire)
  * is graded on the arms by the card's own gates.
@@ -97,7 +99,7 @@ std::string networkConfig(const std::string& network_extra,
 /// at a time without the loader disarming the card for an unrelated reason.
 /// `ambiguity_vehicle: float_kf` has its own prerequisites (phase leveling, the
 /// conditional coupling and the full shared covariance it rests on), which the
-/// loader checks first and which would otherwise fail the load underneath us.
+/// loader checks first; without them the load itself would fail.
 const char* kVehicle =
     "    \"ambiguity_vehicle\": \"float_kf\",\n"
     "    \"phase_leveling\": true,\n"
@@ -191,9 +193,9 @@ TEST(SecondPhaseChannelTest, ARepeatedAllowListEntryIsNotARepeatedRow) {
 }
 
 TEST(SecondPhaseChannelTest, NoLatchedPhaseMeansNothingIsAddedBecauseThatIsTheFallback) {
-    // R1: the latch decides what "second" means.  An allow-listed phase arriving
-    // with no latched phase beside it is the FALLBACK case, counted by the serial
-    // sweep and never promoted to the only phase of the band.
+    // The latch decides what "second" means.  An allow-listed phase arriving with
+    // no latched phase beside it is the fallback case, counted by the serial sweep
+    // and never promoted to the only phase of the band (R1).
     const std::set<std::string> reported{ "L1C", "L1W" };
     EXPECT_TRUE(secondPhaseCompanions(reported, "", kDefaultList).empty());
 }
@@ -223,8 +225,8 @@ TEST(SecondPhaseChannelTest, ReportsBothEdgesOfTheOpenCellSet) {
 }
 
 TEST(SecondPhaseChannelTest, AStationDroppingOutClosesEveryCellItHeld) {
-    // The exact failure standing invariant #7 names: a station with zero rows must
-    // not vanish from the map silently and return as a first sighting.
+    // The failure standing invariant #7 names: a station with zero rows does not
+    // leave the map without an edge and then return as a first sighting.
     const std::set<std::string> prev{ "G01|L1W|PB", "G02|L1W|PB" };
     std::vector<std::string> opened, closed;
     secondPhaseCellEdges(prev, {}, &opened, &closed);
@@ -322,8 +324,8 @@ TEST(SecondPhaseChannelTest, TheRosterHonoursTheNetworkSignalAllowList) {
 }
 
 TEST(SecondPhaseChannelTest, ASecondPhaseIsNotReportedAsAnExcludedSignal) {
-    // It is MODELLED, so it must not appear in the excluded list with a reason —
-    // otherwise the roster's own census would count the card's own rows as unused.
+    // The second phase is modelled, so it does not appear in the excluded list;
+    // otherwise the roster's census would count the card's rows as unused.
     const std::vector<std::string> tracked{ "C1C", "L1C", "L1W" };
     const std::vector<RosterLatchRow> latch{ { 'L', "L1C" }, { 'C', "C1C" } };
     const BandRoster on = band1(tracked, latch, kDefaultList, true);
@@ -337,7 +339,7 @@ TEST(SecondPhaseChannelTest, ASecondPhaseIsNotReportedAsAnExcludedSignal) {
         (void)why;
         if (sig == "L1W") found = true;
     }
-    EXPECT_TRUE(found);   // unarmed it IS an excluded tracked signal
+    EXPECT_TRUE(found);   // unarmed, it is an excluded tracked signal
 }
 
 // --------------------------------------------------------------------------
@@ -387,11 +389,11 @@ TEST(SecondPhaseChannelTest, IsDisarmedOnTheFloatVehicleWithoutTheHeldBasis) {
 }
 
 TEST(SecondPhaseChannelTest, IsSubsumedByChannelModeAllRatherThanRefused) {
-    // Card SID phase 6b replaced this card's channel_mode refusal with SUBSUMPTION:
-    // the widening adds every admitted phase attribute of every selected band, which
-    // contains this card's allow-listed band-1 set, so the knob stays armed, its
-    // allow-list is ignored and only its sigma scale still reads.  The resolved row
-    // predicate is what every downstream site tests.
+    // channel_mode `all` subsumes this knob instead of disarming it (card SID phase
+    // 6b): the widening adds every admitted phase attribute of every selected band,
+    // which contains the allow-listed band-1 set, so the knob stays armed, its
+    // allow-list is ignored and only its sigma scale is read.  Downstream sites test
+    // the resolved row predicate.
     LogManager log;
     const fs::path p = writeTempConfig("chanall",
         networkConfig(kArmable, "    \"channel_mode\": \"all\",\n"));
@@ -462,9 +464,9 @@ TEST(SecondPhaseChannelTest, ParsesALegalSigmaScale) {
 }
 
 TEST(SecondPhaseChannelTest, WarnsRatherThanRefusesWithoutThePerSignalGapTier) {
-    // R6: the per-signal gap re-entry tier is the only ROW-LEVEL response a
-    // second-phase arc's re-entry has, but its absence is a warning and not a
-    // refusal — the knob stays armed and the run-end readout restates it.
+    // The per-signal gap re-entry tier is the only row-level response to the
+    // re-entry of a second-phase arc, but its absence is a warning, not a refusal:
+    // the knob stays armed and the run-end readout restates the warning (R6).
     LogManager log;
     const fs::path p = writeTempConfig("noper", networkConfig(kArmable));
     GnssConfig cfg;
@@ -489,8 +491,8 @@ TEST(SecondPhaseChannelTest, DoesNotWarnWhenThePerSignalGapTierIsArmed) {
 }
 
 TEST(SecondPhaseChannelTest, WarnsWhenTheIfTdTierCannotFormANonDegeneratePair) {
-    // R4: two band-1 phases share a frequency, so with if_phase_td_pairs not "all"
-    // that tier's single pair is degenerate and it produces no rows at all.
+    // Two band-1 phases share a frequency, so with if_phase_td_pairs other than
+    // "all" that tier's single pair is degenerate and produces no rows (R4).
     LogManager log;
     const fs::path p = writeTempConfig("iftd",
         networkConfig(std::string(kArmable) +
@@ -503,7 +505,7 @@ TEST(SecondPhaseChannelTest, WarnsWhenTheIfTdTierCannotFormANonDegeneratePair) {
 }
 
 TEST(SecondPhaseChannelTest, TheClosedLoopConsumerIsPinnedOff) {
-    // The card is a PRODUCER-side mechanism: it exists so the satellite families
+    // The card is a producer-side mechanism: it exists so the satellite families
     // share the network's stations, and a consumer is one station with no family
     // to support (R6).
     LogManager log;

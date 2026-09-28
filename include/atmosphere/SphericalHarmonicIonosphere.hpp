@@ -5,31 +5,33 @@
  * @brief Single-layer spherical-harmonic VTEC model + shared IPP geometry, for
  *        the co-estimated global ionosphere of the PPP-RTK network producer.
  *
- * The network producer can estimate its OWN global ionosphere — a single-layer
- * spherical-harmonic VTEC field — jointly with the satellite code biases (W6
- * OSB), so it no longer needs to import an external GIM (`.INX`).  This is the
- * CODE/Schaer recipe: a sun-fixed spherical-harmonic VTEC expansion
+ * The network producer can estimate its own global ionosphere, a single-layer
+ * spherical-harmonic VTEC field, jointly with the satellite code biases (W6
+ * OSB), so it does not need to import an external GIM (`.INX`).  This is the
+ * CODE/Schaer formulation: a sun-fixed spherical-harmonic VTEC expansion
  *
  *   VTEC(β, s) = Σ_{n=0}^{N} Σ_{m=0}^{n} P̄_nm(sin β)
  *                            · [ a_nm cos(m s) + b_nm sin(m s) ]   [TECU]
  *
- * where β is geographic latitude of the ionospheric pierce point (IPP), s is the
- * sun-fixed longitude (λ_ipp − λ_mean_sun), and P̄_nm are normalized associated
- * Legendre functions chosen so the real surface harmonics
- * {P̄_nm cos(mλ), P̄_nm sin(mλ)} are orthonormal under (1/4π)∫dΩ (the convention
- * a Gram-matrix test in the unit suite pins down).
+ * where β is the latitude of the ionospheric pierce point (IPP; see the
+ * convention note on @ref IppGeometry), s is the sun-fixed longitude
+ * (λ_ipp − λ_mean_sun), and P̄_nm are normalized associated Legendre functions
+ * chosen so the real surface harmonics {P̄_nm cos(mλ), P̄_nm sin(mλ)} are
+ * orthonormal under (1/4π)∫dΩ (a Gram-matrix test in the unit suite checks this
+ * convention).  Because P̄_00 = 1 and every other harmonic integrates to zero
+ * over the sphere, a_00 is the global mean VTEC of the field.
  *
  * This header provides three reusable, filter-free pieces (Stage 0 of
  * docs/network_global_sh_iono_design_2026-06-29.md):
- *   1. @ref computeIppGeometry — the single-layer pierce-point geometry
- *      (elevation, thin-shell mapping, IPP lat/lon), extracted so the SH model
- *      and the legacy @ref GlobalIonosphereMap share ONE implementation.
- *   2. @ref meanSunLongitude — the sub-solar (mean-sun) geographic longitude,
- *      used to rotate the field into a sun-fixed frame.
- *   3. @ref SphericalHarmonicIonosphere — the basis (P̄_nm), VTEC synthesis, and
+ *   1. @ref computeIppGeometry: the single-layer pierce-point geometry
+ *      (elevation, thin-shell mapping, IPP lat/lon), shared by the SH model and
+ *      the legacy @ref GlobalIonosphereMap so both use one implementation.
+ *   2. @ref meanSunLongitude: the sub-solar geographic longitude, used to rotate
+ *      the field into a sun-fixed frame.
+ *   3. @ref SphericalHarmonicIonosphere: the basis (P̄_nm), VTEC synthesis, and
  *      the analytic partials ∂VTEC/∂coeff used by the network row builder.
  *
- * The class owns NO estimator state — the SH coefficients live in
+ * The class owns no estimator state; the SH coefficients live in
  * @ref NetworkEstimator's shared border (SharedParamKind::VtecSh).
  */
 
@@ -46,32 +48,30 @@ namespace GnssProcessor {
 /// line of sight.  Angles in radians; @c valid is false below the horizon or on
 /// a degenerate mapping.
 ///
-/// @par IPP latitude convention — read this before reusing @c ipp_lat_rad
-/// The shell is a SPHERE of radius @f$R_e + H@f$ and the IONEX / SH grids are
+/// @par IPP latitude convention (read before reusing @c ipp_lat_rad)
+/// The shell is a sphere of radius @f$R_e + H@f$ and the IONEX / SH grids are
 /// tabulated on it, so the latitude that indexes them is a spherical
-/// (geocentric) one.  But @ref computeIppGeometry propagates it by spherical
-/// trigonometry from the receiver's GEODETIC latitude
+/// (geocentric) one.  @ref computeIppGeometry, however, propagates it by
+/// spherical trigonometry from the receiver's geodetic latitude
 /// (@c Coordinates::ecefToLlh), because that is the IONEX / RTKLIB @c ionppp
-/// convention.  The seed therefore carries the ellipsoid and the propagation
-/// does not: this value is neither a strict geodetic latitude nor a strictly
-/// geocentric chain.  The two conventions differ by up to 0.192° (11.5′)
-/// near 45°, so "geodetic" and "geocentric" are both wrong labels for it —
-/// hence the deliberately bare wording on the field below.
+/// convention.  The seed carries the ellipsoid and the propagation does not, so
+/// this value is neither a strict geodetic latitude nor a strictly geocentric
+/// one.  The two conventions differ by up to 0.192° (11.5′) near 45°, so
+/// neither label fits, and the field below is described without one.
 ///
-/// That is correct for the consumers that index a spherical grid or basis with
+/// This is correct for the consumers that index a spherical grid or basis with
 /// it (the IONEX bilinear lookup, the P̄_nm(sin β) basis).  The one consumer
 /// that leaves the shell is @c HigherOrderIonosphere, which rebuilds a
-/// Cartesian IPP as R·(cos φ cos λ, cos φ sin λ, sin φ) — consistent with the
-/// sphere, but inheriting the seed offset as
-/// ~23 km of along-shell displacement where it samples the magnetic field.
-/// Immaterial for a cm-level term; do not silently reuse the value anywhere
-/// 0.2° of latitude would matter.
+/// Cartesian IPP as R·(cos φ cos λ, cos φ sin λ, sin φ): consistent with the
+/// sphere, but inheriting the seed offset as about 23 km of along-shell
+/// displacement where it samples the magnetic field.  That is immaterial for a
+/// cm-level term; do not reuse the value where 0.2° of latitude matters.
 struct IppGeometry {
     double elevation_rad = 0.0;   ///< Satellite elevation at the receiver.
     double azimuth_rad   = 0.0;   ///< Satellite azimuth (North→East).
     double mapping       = 0.0;   ///< Thin-shell VTEC→STEC mapping 1/cos(z').
-    double ipp_lat_rad   = 0.0;   ///< Latitude of the IPP on the shell — see the
-                                  ///< convention note above.  NOT plain geodetic.
+    double ipp_lat_rad   = 0.0;   ///< Latitude of the IPP on the shell; see the
+                                  ///< convention note above.  Not plain geodetic.
     double ipp_lon_rad   = 0.0;   ///< Longitude of the IPP on the shell (unambiguous:
                                   ///< geodetic and geocentric longitude are equal).
     bool   valid         = false; ///< False if the LOS is below the horizon / degenerate.
@@ -80,8 +80,8 @@ struct IppGeometry {
 /**
  * @brief Single-layer ionospheric pierce-point geometry.
  *
- * Reproduces the geometry block of @ref GlobalIonosphereMap::slantIonoDelay
- * exactly (so the two share one source of truth): the satellite elevation /
+ * This is the geometry @ref GlobalIonosphereMap::slantIonoDelay uses (it calls
+ * this function, so the two share one implementation): the satellite elevation /
  * azimuth in the receiver's local ENU frame, the thin-shell mapping
  * @f$1/\cos z'@f$ with @f$\sin z' = \frac{R_e}{R_e+H}\cos(el)@f$, and the IPP
  * latitude / longitude on the single-layer shell.
@@ -97,15 +97,17 @@ IppGeometry computeIppGeometry(const Eigen::Vector3d& rx_pos_ecef,
                                double earth_radius_m, double shell_height_m);
 
 /**
- * @brief Sub-solar (mean-sun) geographic longitude at @p time.
+ * @brief Sub-solar geographic longitude at @p time.
  *
  * Returns the ECEF longitude of the point directly beneath the Sun
  * (@f$\lambda_{ss} = \alpha_\odot - \mathrm{GMST}@f$), used to convert a
  * geographic IPP longitude to the sun-fixed longitude @f$s = \lambda_{ipp} -
- * \lambda_{ss}@f$ the field is expanded in.  Lightweight closed-form (NOAA-style
- * low-order solar series + GMST) — accurate to well under 1° including the
- * equation of time, which is all a sun-fixed VTEC frame needs (the field
- * coefficients are estimated, so a small consistent offset is absorbed).
+ * \lambda_{ss}@f$ the field is expanded in.  Despite the function name, the Sun's
+ * right ascension @f$\alpha_\odot@f$ is the apparent one, so the equation of
+ * time is included (the true Sun, not the mean Sun).  Closed form (NOAA-style
+ * low-order solar series + GMST), accurate to well under 1°, which is sufficient
+ * for a sun-fixed VTEC frame: the field coefficients are estimated, so a small
+ * consistent offset is absorbed into them.
  *
  * @param time GNSS epoch (GPS time scale; the GPS−UT1 offset costs < 0.1°).
  * @return Sub-solar longitude in radians, wrapped to [−π, π].
@@ -178,15 +180,15 @@ private:
 struct GlobalVtecShConfig;  // config/GnssConfigTypes.hpp
 
 /**
- * @brief One shell of the (possibly dual-layer) co-estimated SH-VTEC field — a
+ * @brief One shell of the (possibly dual-layer) co-estimated SH-VTEC field: a
  *        non-owning view bundling the basis model with the per-shell geometry
  *        and prior scalars every consumer site needs (Iono-2 mechanism A).
  *
  * Every site that evaluates the field (pin-row builder, prior injector, carry
- * stash, deviation harvest, health sweep, consumer supply) loops the SAME
- * @ref shLayers list, so a shell can never be evaluated at another shell's
- * geometry — the single-layer path builds a one-entry list from the legacy
- * config fields and stays byte-identical.
+ * stash, deviation harvest, health sweep, consumer supply) loops over the same
+ * @ref shLayers list, so a shell is never evaluated at another shell's geometry.
+ * The single-layer path builds a one-entry list from the legacy config fields
+ * and stays byte-identical.
  */
 struct ShLayer {
     const SphericalHarmonicIonosphere* model = nullptr;  ///< Basis (non-owning, non-null).

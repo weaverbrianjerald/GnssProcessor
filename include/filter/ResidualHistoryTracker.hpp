@@ -3,65 +3,64 @@
 /**
  * @file ResidualHistoryTracker.hpp
  * @brief Per-(satellite, signal) post-fit residual history with EWMA
- *        statistics, used to corroborate the spatial pivot-slip
- *        detector with a temporal "is this row anomalous against its
- *        own track record" signal.
+ *        statistics.  It corroborates the spatial pivot-slip detector
+ *        with a temporal test: whether a row is anomalous against its
+ *        own track record.
  *
  * @section motivation Motivation
  *
  * The Kalman filter's standard post-fit residual check at
- * @c KalmanFilter::checkPostFitResiduals examines residuals
- * **across satellites at one epoch** — a coherent offset on most
- * non-pivot rows of a BSSD constellation/band group is the spatial
- * signature of a pivot slip.  But spatial coherence alone has two
- * failure modes:
+ * @c KalmanFilter::checkPostFitResiduals examines residuals across
+ * satellites at one epoch: a coherent offset on most non-pivot rows
+ * of a BSSD constellation/band group is the spatial signature of a
+ * pivot slip.  Spatial coherence alone has two failure modes:
  *  - A genuine atmospheric event (storm front, scintillation) that
- *    shifts many sats simultaneously can mimic the spatial pattern.
- *  - A pivot slip that happens to coincide with one anomalous
- *    satellite can still produce coherent-looking residuals on the
- *    remaining rows even though the pivot is the actual problem.
+ *    shifts many satellites at once can mimic the spatial pattern.
+ *  - A pivot slip that coincides with one anomalous satellite can
+ *    still produce coherent-looking residuals on the remaining rows,
+ *    even though the pivot is the actual problem.
  *
  * @c ResidualHistoryTracker adds a temporal axis: each
  * (satellite, signal) row's post-fit residual is fed into an
- * exponentially-weighted moving mean and variance.  When the
- * spatial detector identifies a candidate pivot-slip group, the
- * tracker is queried to see what fraction of the group's rows are
- * **also** historically anomalous (z-score above threshold against
- * each row's own EWMA statistics).  Spatial AND temporal evidence
- * agreeing → high-confidence pivot slip; spatial alone → medium
- * confidence.
+ * exponentially weighted moving mean and variance.  When the spatial
+ * detector identifies a candidate pivot-slip group, the tracker is
+ * queried for the fraction of the group's rows that are also
+ * anomalous against their own history (z-score above threshold
+ * against each row's EWMA statistics).  Spatial and temporal
+ * evidence in agreement gives a high-confidence pivot slip; spatial
+ * evidence alone gives medium confidence.
  *
  * @section design Design
  *
  * The statistics are computed in the EWMA-Welford style
- * (Finch 2009) to avoid storing a full ring buffer:
+ * (Finch 2009), which needs no ring buffer:
  *
  *   δ      = r_k − μ_{k-1}
  *   μ_k    = μ_{k-1} + α · δ
  *   σ²_k   = (1 − α) · (σ²_{k-1} + α · δ²)
  *
- * with @c α the forgetting factor (≈ 0.05 → ≈30-epoch effective
- * window).  The implementation tracks a sample count @c n in
- * addition to (μ, σ²) so a "warm-up" guard can suppress the
- * historical test on cold starts and immediately after resets,
- * where the statistics aren't yet meaningful.
+ * with @c α the forgetting factor (0.05 gives an effective window of
+ * about 1/α = 20 epochs).  The implementation also tracks a sample
+ * count @c n next to (μ, σ²), so a warm-up guard can suppress the
+ * historical test on cold starts and immediately after resets, where
+ * the statistics are not yet meaningful.
  *
  * @section resets Resets
  *
  * Three event classes invalidate per-(sat, signal) history and
- * must trigger a tracker reset:
- *  - **Cycle slip / ambiguity reset.**  Post-slip residuals are
- *    relative to a freshly-seeded ambiguity, not comparable to
- *    pre-slip values.  Reset that single (sat, signal).
+ * require a tracker reset:
+ *  - **Cycle slip or ambiguity reset.**  Post-slip residuals are
+ *    relative to a freshly seeded ambiguity and are not comparable
+ *    to pre-slip values.  Reset that single (sat, signal).
  *  - **Pivot handover.**  Every BSSD residual in the affected
- *    constellation/signal pair is now relative to a different
- *    pivot.  Reset the whole constellation/signal group.
- *  - **Satellite acquisition.**  Implicitly handled — first-time
- *    record() creates a fresh entry with @c n = 1.
+ *    constellation/signal pair is now relative to a different pivot.
+ *    Reset the whole constellation/signal group.
+ *  - **Satellite acquisition.**  Handled implicitly: the first
+ *    record() for a row creates a fresh entry with @c n = 1.
  *
- * Reset hooks are exposed publicly; the higher-level driver
- * (Application or KalmanFilter) calls them in lockstep with the
- * existing slip and pivot machinery.
+ * The reset hooks are public; the higher-level driver (Application
+ * or KalmanFilter) calls them in lockstep with the existing slip and
+ * pivot machinery.
  */
 
 #include "logging/LogManager.hpp"
@@ -75,18 +74,17 @@ namespace GnssProcessor {
      * @class ResidualHistoryTracker
      * @brief EWMA-based per-row residual statistics with anomaly queries.
      *
-     * Beyond the spatial pivot-slip support described in the file
-     * header, the tracker also carries a per-(sat, signal)
-     * consecutive-rejection counter.  Callers bump it via
+     * Besides the spatial pivot-slip support described in the file
+     * header, the tracker carries a per-(sat, signal)
+     * consecutive-rejection counter.  Callers increment it through
      * @c recordRejection whenever the Kalman filter excludes a row as
-     * an outlier; it is cleared automatically inside @c record() (a
-     * kept row breaks the streak) and by every reset hook (slip,
-     * pivot handover, full clear).  The combined "EWMA mean drift
-     * AND/OR persistent rejections" signal is exposed through
-     * @c evaluateStuckBias and is used by the code-bias-reset path in
-     * @c KalmanFilter to break out of the closed loop where an
-     * over-converged sat-bias state keeps causing its own code rows
-     * to be rejected.
+     * an outlier; it is cleared inside @c record() (a kept row breaks
+     * the streak) and by every reset hook (slip, pivot handover, full
+     * clear).  The combined signal (EWMA mean drift, persistent
+     * rejections, or both) is exposed through @c evaluateStuckBias and
+     * is used by the code-bias reset path in @c KalmanFilter to break
+     * the closed loop in which an over-converged sat-bias state keeps
+     * causing its own code rows to be rejected.
      */
     class ResidualHistoryTracker {
     public:
@@ -94,13 +92,13 @@ namespace GnssProcessor {
          * @brief Configuration for the residual-history tracker.
          *
          * Mirrors the @c estimation.residual_history JSON section.
-         * When @c enabled is false, all record/evaluate calls become
-         * no-ops and queries return non-warmed-up evaluations so the
+         * When @c enabled is false, all record/evaluate calls are
+         * no-ops and queries return non-warmed-up evaluations, so the
          * existing pivot-slip path proceeds unchanged.
          */
         struct Config {
-            bool   enabled            = false; ///< Master toggle.  Default off — opt in via config.
-            double alpha              = 0.05;  ///< EWMA forgetting factor; ≈30-epoch effective window.
+            bool   enabled            = false; ///< Master toggle.  Off by default; enabled through config.
+            double alpha              = 0.05;  ///< EWMA forgetting factor; effective window about 1/α = 20 epochs.
             std::size_t warmup_n      = 20;    ///< Min samples before z-tests are emitted.
             double z_threshold        = 4.0;   ///< |z| above this counts as a temporal outlier.
             double fraction_threshold = 0.5;   ///< Group-level fraction above which the tracker corroborates a pivot-slip request.
@@ -110,8 +108,8 @@ namespace GnssProcessor {
          * @brief Result of evaluating one observation against its history.
          *
          * @c warmed_up is false (and @c is_outlier always false) when
-         * the tracker is disabled or the per-row sample count hasn't
-         * reached @c warmup_n yet.
+         * the tracker is disabled or the per-row sample count has not
+         * reached @c warmup_n.
          */
         struct Evaluation {
             bool   warmed_up = false; ///< True when the per-row history has @c n ≥ @c warmup_n.
@@ -123,7 +121,7 @@ namespace GnssProcessor {
          * @brief Per-row diagnostic statistics.
          */
         struct Stats {
-            std::size_t n;       ///< Sample count (number of record() calls since last reset).
+            std::size_t n;       ///< Sample count (number of record() calls since the last reset).
             double      mean;    ///< EWMA mean (m).
             double      std_dev; ///< EWMA standard deviation (m); 0 when n < 2.
             std::size_t consecutive_rejections; ///< Number of consecutive epochs the row has been outlier-rejected since the last kept update.
@@ -134,80 +132,80 @@ namespace GnssProcessor {
          *
          * @c stuck is true when either:
          *  - the row's consecutive-rejection streak has reached the
-         *    caller's @c min_streak threshold (the row is being
-         *    rejected every epoch — classic stuck-bias signature
-         *    where the bias state's variance has collapsed around a
-         *    wrong value and the outlier gate keeps blocking
-         *    updates), OR
-         *  - the row's history is warmed up AND its EWMA mean's
-         *    magnitude exceeds @c floor_m (the bias has drifted
-         *    enough that even the kept rows show a persistent
-         *    nonzero residual mean — the bias state is converging
-         *    too slowly to absorb the drift).
+         *    caller's @c min_streak threshold (the row is rejected
+         *    every epoch: the typical stuck-bias signature, where the
+         *    bias state's variance has collapsed around a wrong value
+         *    and the outlier gate keeps blocking updates), or
+         *  - the row's history is warmed up and the magnitude of its
+         *    EWMA mean exceeds @c floor_m (the bias has drifted far
+         *    enough that even the kept rows show a persistent nonzero
+         *    residual mean; the bias state converges too slowly to
+         *    absorb the drift).
          *
-         * Both triggers are considered, so a row that is
-         * intermittently rejected with a coherent residual sign
-         * still trips the check.  @c ewma_mean / @c streak fields
-         * are populated unconditionally for the caller's log line.
+         * Both triggers are evaluated, so a row that is rejected
+         * intermittently with a coherent residual sign still trips the
+         * check.  @c streak and @c warmed_up are filled whenever the row
+         * has an entry; @c ewma_mean and @c ewma_std only when it is
+         * warmed up (otherwise 0).
          */
         struct StuckBiasEvaluation {
             bool        warmed_up = false; ///< True when the per-row EWMA has @c n ≥ @c warmup_n.
             bool        stuck     = false; ///< True when either trigger fires.
             double      ewma_mean = 0.0;   ///< Current EWMA mean (m); valid when @c warmed_up.
-            double      ewma_std  = 0.0;   ///< Current EWMA std (m); valid when @c warmed_up.
+            double      ewma_std  = 0.0;   ///< Current EWMA standard deviation (m); valid when @c warmed_up.
             std::size_t streak    = 0;     ///< Current consecutive-rejection streak.
         };
 
         ResidualHistoryTracker(const Config& cfg, LogManager& log_mgr);
 
-        /// Whether the tracker is configured-enabled.  Hot-path callers
+        /// Whether the tracker is enabled in its config.  Hot-path callers
         /// can short-circuit on this without touching the maps.
         bool isEnabled() const { return cfg_.enabled; }
 
         /// Push a post-fit residual into the (@p sat, @p signal) history.
-        /// No-op when the tracker is disabled.  Also clears the
-        /// consecutive-rejection streak for the row: by definition a
-        /// row that has a post-fit residual was kept this epoch, so
-        /// any prior streak is broken.
+        /// No-op when the tracker is disabled or @p residual_m is not
+        /// finite.  Also clears the row's consecutive-rejection streak:
+        /// a row with a post-fit residual was kept this epoch, so any
+        /// earlier streak is broken.
         void record(const std::string& sat, const std::string& signal, double residual_m);
 
-        /// Bump the consecutive-rejection counter for (@p sat, @p signal).
+        /// Increment the consecutive-rejection counter for (@p sat, @p signal).
         /// Called by the Kalman filter's outlier handler whenever a
-        /// code row is excluded; the streak is read back via
+        /// code row is excluded; the streak is read back through
         /// @c evaluateStuckBias.  No-op when the tracker is disabled.
         ///
         /// Note: phase rejections trigger an immediate ambiguity
-        /// reset (which calls @c resetSatSignal and wipes the
-        /// streak), so in practice the counter only accumulates on
-        /// code rows.  Keeping the API signal-agnostic avoids
-        /// coupling the tracker to a signal-type convention.
+        /// reset (which calls @c resetSatSignal and clears the
+        /// streak), so in practice the counter accumulates only on
+        /// code rows.  The API stays signal-agnostic so the tracker
+        /// does not depend on a signal-type convention.
         void recordRejection(const std::string& sat, const std::string& signal);
 
         /// Evaluate @p residual_m against the current (@p sat, @p signal)
-        /// statistics.  Returns @c warmed_up=false / @c is_outlier=false
-        /// when the tracker is disabled or the row hasn't accumulated
+        /// statistics.  Returns @c warmed_up=false and @c is_outlier=false
+        /// when the tracker is disabled or the row has not accumulated
         /// enough samples.
         Evaluation evaluate(const std::string& sat,
                             const std::string& signal,
                             double residual_m) const;
 
-        /// Reset all (@p sat, ?) entries — used on a satellite-wide
-        /// reset.  No-op for unknown satellites.
+        /// Reset all (@p sat, *) entries, for a satellite-wide reset.
+        /// No-op for unknown satellites.
         void resetSatellite(const std::string& sat);
 
-        /// Reset a single (@p sat, @p signal) entry — used after a
+        /// Reset a single (@p sat, @p signal) entry, after a
         /// per-(sat, signal) cycle slip.  No-op for unknown rows.
         void resetSatSignal(const std::string& sat, const std::string& signal);
 
         /// Reset every (sat, signal) entry whose @c sat starts with the
         /// given constellation prefix character ('G', 'E', 'C', 'R',
-        /// 'J', 'S') AND whose signal matches @p signal.  Called on
-        /// pivot handover where every BSSD residual in the affected
+        /// 'J', 'S') and whose signal matches @p signal.  Called on a
+        /// pivot handover, where every BSSD residual in the affected
         /// constellation/signal group is now relative to a new pivot.
         ///
-        /// Pass an empty @p signal to match every signal — the
-        /// constellation-wide nuke option, useful when a handover
-        /// affects all bands of the constellation simultaneously.
+        /// An empty @p signal matches every signal and clears the whole
+        /// constellation, for a handover that affects all bands of the
+        /// constellation at once.
         void resetConstellationSignal(char constellation_prefix,
                                       const std::string& signal);
 
@@ -221,11 +219,11 @@ namespace GnssProcessor {
         /// Evaluate whether the (@p sat, @p signal) row's bias state
         /// looks stuck.  Returns @c stuck=true when either the
         /// consecutive-rejection streak has reached @p min_streak
-        /// (≥ 1; 0 disables the streak trigger) OR the warmed-up
+        /// (≥ 1; 0 disables the streak trigger) or the warmed-up
         /// EWMA mean's magnitude exceeds @p floor_m (> 0; ≤ 0
         /// disables the mean-drift trigger).  Returns a zero-filled
         /// result when the tracker is disabled or the row has no
-        /// history; callers should treat that as "not stuck".
+        /// entry; callers treat that as "not stuck".
         StuckBiasEvaluation evaluateStuckBias(const std::string& sat,
                                                const std::string& signal,
                                                double      floor_m,
@@ -234,11 +232,10 @@ namespace GnssProcessor {
         /**
          * @brief Aggregate digest across every tracked (sat, signal).
          *
-         * Empty when nothing has been recorded yet.  Used by
-         * @c KalmanFilter to emit a once-per-epoch info-level
-         * summary on clean commits, so users can see at a glance
-         * whether the tracker is warmed up and what the typical
-         * residual scale across rows looks like.
+         * Empty when nothing has been recorded yet.  @c KalmanFilter
+         * logs it once per epoch at info level on clean commits, which
+         * shows whether the tracker is warmed up and the typical
+         * residual scale across rows.
          */
         struct Summary {
             std::size_t entry_count = 0; ///< Number of (sat, signal) entries currently tracked.

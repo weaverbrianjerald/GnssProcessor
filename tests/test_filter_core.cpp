@@ -2,32 +2,31 @@
  * @file test_filter_core.cpp
  * @brief Unit tests for StateManager dynamic state-vector bookkeeping.
  *
- * StateManager is, per CLAUDE.md, the single source of truth for state
- * layout — every piece of dynamic state (ambiguities, per-satellite
- * ionosphere, code biases, sat biases, system time offsets) goes through
- * its add / remove / prune APIs and the index maps it owns.  Drift in
- * those maps silently corrupts the filter, so the surface is worth
- * pinning down with explicit assertions.
+ * StateManager is the single source of truth for state layout (CLAUDE.md):
+ * every dynamic state (ambiguities, per-satellite ionosphere, code biases,
+ * satellite biases, system time offsets) is added, removed and pruned through
+ * its APIs, and it owns the key-to-index maps.  An inconsistent map corrupts
+ * the filter without any error, so these tests assert the maps explicitly.
  *
- * Scope (smoke + key invariants):
- *   - Construction: state vector / covariance sized correctly under the
- *     default GnssConfig, expected core indices.
- *   - State-vector / covariance round-trips.
- *   - addAmbiguity / removeAmbiguity / pruneAmbiguitiesExcept: state size
- *     changes by ±1, indices reflow correctly after row removal, key→
- *     index lookups are consistent.
- *   - Same for per-satellite ionosphere, receiver code-bias, and sat-bias
- *     state categories.
- *   - getProcessNoiseMatrix / getTransitionMatrix shape and finite-ness.
+ * Scope (smoke tests and key invariants):
+ *   - Construction: state vector and covariance sized correctly under the
+ *     default GnssConfig; expected core indices.
+ *   - State-vector and covariance round-trips.
+ *   - addAmbiguity / removeAmbiguity / pruneAmbiguitiesExcept: the state size
+ *     changes by ±1, indices reflow correctly after row removal, and key→index
+ *     lookups are consistent.
+ *   - The same for the per-satellite ionosphere, receiver code-bias and
+ *     satellite-bias state categories.
+ *   - Variance re-inflation of code-bias and system-time-offset states.
+ *   - getProcessNoiseMatrix / getTransitionMatrix shape and finiteness.
  *
- * NOT covered here (intentionally deferred):
- *   - KalmanFilter::predict / update.  The KalmanFilter constructor
- *     requires a PppModel reference, and PppModel pulls in
- *     ProductParser + RinexParser + their full setup.  That construction
- *     chain is too heavy for the "smoke + key invariants" tier; the
- *     predict() math is itself a thin wrapper over StateManager's F / Q
- *     getters (x = F·x, P = F·P·Fᵀ + Q), which are tested here directly.
- *     A future integration-test pass can build the full chain.
+ * Not covered here:
+ *   - KalmanFilter::predict / update.  The KalmanFilter constructor requires a
+ *     PppModel reference, and PppModel needs ProductParser, RinexParser and
+ *     their full setup, which is too heavy for this tier.  predict() is a thin
+ *     wrapper over StateManager's F and Q getters (x = F·x, P = F·P·Fᵀ + Q),
+ *     and those getters are tested here directly.  An integration test can
+ *     build the full chain.
  */
 
 #include <gtest/gtest.h>
@@ -166,12 +165,12 @@ TEST(StateManagerTest, AddAmbiguityGrowsStateAndAssignsIndex) {
     EXPECT_NEAR(x(static_cast<Eigen::Index>(idx)), 12.5, 1e-12);
 }
 
-// removeStateAtIndex must decrement the indices of EVERY dynamic map sitting
-// above the removed slot — ambiguity, code-bias, sat-bias, sat-PHASE-bias (W2),
-// sat-CLOCK (W4-S2b), and ionosphere.  A missing decrement loop silently
-// corrupts the survivor->index mapping.  Seed each map with a distinct sentinel
-// value, remove the FIRST dynamic state (forcing every other dynamic state to
-// shift down by one), and assert each survivor's key still resolves to the slot
+// removeStateAtIndex decrements the indices above the removed slot in all six
+// dynamic maps: ambiguity, code-bias, sat-bias, sat-phase-bias (W2), sat-clock
+// (W4-S2b) and ionosphere.  A missing decrement loop leaves a survivor's key
+// pointing at the wrong slot.  Each map is seeded with a distinct sentinel
+// value, the first dynamic state is removed (so every other dynamic state
+// shifts down by one), and each survivor's key must still resolve to the slot
 // holding its sentinel.
 TEST(StateManagerTest, RemovalDecrementsAllSixDynamicMaps) {
     StateManagerHarness h;
@@ -179,8 +178,8 @@ TEST(StateManagerTest, RemovalDecrementsAllSixDynamicMaps) {
 
     const size_t base = sm.getStateSize();
 
-    // Add the to-be-removed phase-bias state FIRST so removing it shifts all
-    // five other dynamic maps (and the surviving phase-bias entry) downward.
+    // The phase-bias state to be removed is added first, so removing it shifts
+    // the five other dynamic maps (and the surviving phase-bias entry) down.
     const size_t victim = sm.addSatPhaseBiasState("G05|L1C|PB", 500.0);
     EXPECT_EQ(victim, base);
 
@@ -304,12 +303,12 @@ TEST(StateManagerTest, RenameAmbiguityRefusesCollisionAndMissingKey) {
     sm.addAmbiguity("G01_L1C", 1.0);
     sm.addAmbiguity("G02_L1C", 2.0);
 
-    // New key already exists — refuse.
+    // The new key already exists: refused.
     EXPECT_FALSE(sm.renameAmbiguity("G01_L1C", "G02_L1C"));
     EXPECT_GE(sm.getAmbiguityIndex("G01_L1C"), 0);
     EXPECT_GE(sm.getAmbiguityIndex("G02_L1C"), 0);
 
-    // Old key not present — refuse.
+    // The old key is not present: refused.
     EXPECT_FALSE(sm.renameAmbiguity("does_not_exist", "G99_L1C"));
 }
 
@@ -430,20 +429,19 @@ TEST(StateManagerTest, ReinflateCodeBiasVarianceRefusesFrozenAndAbsent) {
     EXPECT_EQ(sm.getStateSize(), sz);
 }
 
-// The system-time-offset (ISB) counterpart of reinflateCodeBiasVariance: when
-// a consumed constellation clock datum steps (producer datum discontinuity),
-// the receiver's inter-system hardware offset did NOT change — only the gauge
-// it is referenced to did.  The consumer therefore reinflates the ISB variance
-// and severs its cross-covariance so the next update re-absorbs the common-
-// mode step in one epoch, while the state VALUE must be preserved.  This test
-// guards all three parts of that contract: value kept, diagonal reset, and the
-// (ISB, rest) covariance partition broken.
+// The system-time-offset (ISB) counterpart of reinflateCodeBiasVariance.  When
+// a consumed constellation clock datum steps (a producer datum discontinuity),
+// the receiver's inter-system hardware offset is unchanged; only the gauge it
+// is referenced to moves.  The consumer therefore re-inflates the ISB variance
+// and zeroes its cross-covariance so the next update absorbs the common-mode
+// step in one epoch, and keeps the state value.  The test checks all three
+// parts: value kept, diagonal reset, and the (ISB, rest) covariance zeroed.
 TEST(StateManagerTest, ReinflateSystemTimeOffsetPreservesValueAndSetsDiag) {
     StateManagerHarness h;
     auto& sm = h.state_manager;
 
-    // ISB states are ctor-allocated (one per non-GPS active system); no add
-    // call needed.  Grab two so we can plant a cross-covariance between them.
+    // ISB states are allocated by the constructor (one per non-GPS active
+    // system).  Two are used so that a cross-covariance can be set between them.
     const size_t gal_idx = sm.getSystemTimeOffsetIndex("Galileo");
     const size_t glo_idx = sm.getSystemTimeOffsetIndex("GLONASS");
     ASSERT_NE(gal_idx, std::numeric_limits<size_t>::max());
@@ -476,12 +474,12 @@ TEST(StateManagerTest, ReinflateSystemTimeOffsetPreservesValueAndSetsDiag) {
     EXPECT_DOUBLE_EQ(P2(ri, ri), 9.0);    // neighbour ISB untouched
 }
 
-// An unknown / absent system name must be a strict no-op: "GPS" is the
-// reference constellation (never allocated an ISB), and "IRNSS" is not in the
-// active-system set at all.  Neither call may disturb the state vector or any
-// covariance entry — a stray reinflation on a non-existent index would either
-// corrupt an unrelated state or crash, and the H1/datum consumer calls this
-// for whatever constellation the wire names, so the guard is load-bearing.
+// An unknown or absent system name is a strict no-op: "GPS" is the reference
+// constellation (no ISB is allocated for it), and "IRNSS" is not in the
+// active-system set.  Neither call may change the state vector or any
+// covariance entry.  A re-inflation on a non-existent index would corrupt an
+// unrelated state or crash, and the H1/datum consumer calls this for whatever
+// constellation the wire names.
 TEST(StateManagerTest, ReinflateSystemTimeOffsetUnknownSystemIsNoOp) {
     StateManagerHarness h;
     auto& sm = h.state_manager;
@@ -509,12 +507,11 @@ TEST(StateManagerTest, ReinflateSystemTimeOffsetUnknownSystemIsNoOp) {
     EXPECT_EQ((P2 - P).cwiseAbs().maxCoeff(), 0.0);
 }
 
-// Non-positive new_variance falls back to initial_std.system_time_offset²
-// (cold-start uncertainty) instead of freezing or corrupting the row.  The
-// ctor seeds the ISB diagonal at exactly that same value, so the diagonal is
-// first moved OFF the default — otherwise a silent no-op would pass the
-// assertion.  The value-preservation and row/col-zeroing contract must hold
-// on the fallback path too.
+// A non-positive new_variance falls back to initial_std.system_time_offset²
+// (the cold-start uncertainty) instead of freezing or corrupting the row.  The
+// constructor seeds the ISB diagonal at that same value, so the test first
+// moves the diagonal off the default; otherwise a no-op would also pass.  The
+// value is kept and the row and column are zeroed on the fallback path too.
 TEST(StateManagerTest, ReinflateSystemTimeOffsetFallsBackOnNonPositiveVariance) {
     StateManagerHarness h;
     auto& sm = h.state_manager;

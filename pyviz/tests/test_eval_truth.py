@@ -1,4 +1,4 @@
-"""Tests for gnssviz.eval.truth -- SINEX + SIF readers and propagation."""
+"""Tests for gnssviz.eval.truth: SINEX + SIF readers and propagation."""
 
 from __future__ import annotations
 

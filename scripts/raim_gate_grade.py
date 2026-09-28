@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """Field-gate grader for the RAIM pool re-host card (docs/SPEC_raim_pool_rehost.md).
 
-The card's whole point is that a QC tier read ARMED and screened nothing, so the
-**denominators are the deliverable** (SPEC §5, standing invariant #4).  This
+The card's premise is that a QC tier read as armed and screened nothing, so the
+denominators are the deliverable (SPEC §5, standing invariant #4).  This
 grader reads them off a finished run directory and, given two run dirs, answers
 the three questions the field gates ask:
 
-  1. **Is the screen live?**  ⚠ CORRECTION (SPEC §7.3, 2026-09-14): the ``sigma0``
-     column of ``logs/network_epoch_status.csv`` is the WITHIN-EPOCH tier's
-     ``sigma0_adapt`` (NetworkStashStatus.cpp:530, pooled over ``pl_amb`` — empty on a
-     ``carry_invariant`` lineage), NOT the re-hosted post-fit screen's statistic; the
+  1. **Is the screen live?**  Correction (SPEC §7.3, 2026-09-14): the ``sigma0``
+     column of ``logs/network_epoch_status.csv`` is the within-epoch tier's
+     ``sigma0_adapt`` (NetworkStashStatus.cpp:530, pooled over ``pl_amb``, empty on a
+     ``carry_invariant`` lineage), not the re-hosted post-fit screen's statistic; the
      re-hosted σ̂₀ is read from the run-end tally and, per epoch, from the emitted
      URA ratio against a twin (``emit_ura`` scales by ``ura_sigma0_ewma``).  The
      paragraph below describes what the column was believed to be.
@@ -18,19 +18,19 @@ the three questions the field gates ask:
      ``NetworkRaim.cpp`` (``sigma0 = max(raim_sigma0_floor, 1.4826*median|r|)``
      when the pool is non-empty, and the bare ``1.0`` initializer when it is
      empty).  On a ``carry_invariant`` lineage without the re-host it is
-     **identically 1.0** for every warm epoch -- that constant IS the defect,
+     identically 1.0 for every warm epoch: that constant is the defect,
      visible on the instrument.  ``0.0`` marks an epoch where the seam never ran
      at all (pre-``carry_warm``).
 
-     ⚠ σ̂₀ is FLOORED at ``raim_sigma0_floor`` (default 1.0), so the value 1.0
-     alone cannot distinguish "empty pool" from "clean epoch".  The run-end
+     σ̂₀ is floored at ``raim_sigma0_floor`` (default 1.0), so the value 1.0
+     alone cannot distinguish an empty pool from a clean epoch.  The run-end
      ``pool_cells`` tally is the authority on liveness; this script reports the
      fraction of warm epochs strictly above the floor as the practical signal.
 
   2. **Does the R1 emission coupling fire?**  σ̂₀ feeds (a) the A4 withhold
-     (``raim_withhold_sigma0``) -- read off the epoch ``disposition`` column --
+     (``raim_withhold_sigma0``), read off the epoch ``disposition`` column,
      and (b) ``ura_sigma0_ewma``, which scales the emitted URA one epoch later.
-     Both sit OUTSIDE the refloat knob, so a "measure-only" arm is not
+     Both sit outside the refloat knob, so a measure-only arm is not
      emission-neutral.  URA is read from the ``U`` records of ``products.txt``.
 
   3. **Did the estimate move?**  The screen alone must not.  ``--records``
@@ -39,8 +39,8 @@ the three questions the field gates ask:
      "identical except where a withhold fired" is checkable rather than asserted.
 
 Also tallies T3/T4 event rates from ``logs/network_events.csv`` (the T4
-attribution tier is structurally ~0 on this lineage today -- the re-host is meant
-to make it live, so the count is reported, never assumed) and the run-end
+attribution tier is structurally near zero on this lineage today; the re-host is
+meant to make it live, so the count is reported, never assumed) and the run-end
 ``Network (RAIM pool re-host)`` telemetry block from ``stdout.txt``.
 
 Usage:
@@ -64,8 +64,8 @@ _TELEM = [
     ("epochs_pool_cells",
      r"RAIM pool re-host\): (\d+) seam pass\(es\), (\d+) station-epoch\(s\) with a "
      r"live census, (\d+) ambiguity cell\(s\) screened"),
-    # ⚠ the number patterns must NOT be [-\d.]+ : these values end a sentence, so a
-    # greedy dot class swallows the trailing full stop and float() then raises.
+    # The number patterns must not be [-\d.]+: these values end a sentence, so a
+    # greedy dot class would swallow the trailing full stop and float() then raises.
     ("sigma0",
      r"RAIM pool re-host\): .?.?0 over (\d+) live-pool epoch\(s\) .{0,4} mean "
      r"(-?\d+(?:\.\d+)?), max (-?\d+(?:\.\d+)?)"),
@@ -165,7 +165,7 @@ def read_epoch_status(run: Path, floor: float = 1.0) -> dict:
 
 
 def read_events(run: Path) -> dict:
-    """T3 / T4 (and every other tier's) event counts from the QC event trace."""
+    """Event counts per tier (including T3 / T4) from the QC event trace."""
     p = run / "logs" / "network_events.csv"
     if not p.is_file():
         return {}
@@ -185,18 +185,18 @@ def read_events(run: Path) -> dict:
 
 
 def read_dd(run: Path) -> dict:
-    """Chord LIFETIME distribution + ``dd_sigma_cyc`` from the DD-fraction trace.
+    """Chord lifetime distribution and ``dd_sigma_cyc`` from the DD-fraction trace.
 
-    R4's predicted failure mode for the refloat actuator is CHURN: indiscriminate
-    membership exclusion from ``A_old`` pins mean chord lifetime low and inflates
-    ``dd_sigma_cyc`` (the D5 v4 record: 4.3 epochs / ~3.9 cyc).  So both are read
+    R4's predicted failure mode for the refloat actuator is churn: indiscriminate
+    membership exclusion from ``A_old`` pins chord lifetime low and inflates
+    ``dd_sigma_cyc`` (the D5 v4 record: 4.3 epochs / ~3.9 cyc).  Both are read
     off ``logs/network_dd_fractional.csv`` and compared leg-vs-leg.
 
-    ⚠ A chord is keyed on ``(signal, sat_i, sta_a, sta_b)`` and NOT on ``ref_sat``:
+    A chord is keyed on ``(signal, sat_i, sta_a, sta_b)``, not on ``ref_sat``:
     the trace's reference satellite rotates on its own (SPEC_amb_iono §6.12/§6.13),
     so folding it into the identity would count reference rotations as chord
     deaths and manufacture churn that the estimator never saw.  Lifetime is the
-    run length in CONSECUTIVE traced epochs; a chord seen in N separate runs
+    run length in consecutive traced epochs; a chord seen in N separate runs
     contributes N lifetimes.
     """
     p = run / "logs" / "network_dd_fractional.csv"
@@ -318,21 +318,21 @@ def compare_records(a: Path, b: Path, kinds=("C", "B", "P"),
         "per_sat_p50": {s: _pct(v, 50) for s, v in sorted(per_sat.items())},
     }
     # --- the σ̂₀ EWMA, recovered from the emitted URA ------------------------
-    # There is NO per-epoch trace of the post-fit RAIM σ̂₀ on this posture:
-    # network_raim.csv writes only FLAGGED cells ("quiet epochs emit nothing"),
-    # the epoch-status `sigma0` column is the WITHIN-EPOCH tier's statistic, and
-    # the L13 per-cell trace is a separate unarmed knob.  But the emitted URA is
+    # There is no per-epoch trace of the post-fit RAIM σ̂₀ on this posture:
+    # network_raim.csv writes only flagged cells ("quiet epochs emit nothing"),
+    # the epoch-status `sigma0` column is the within-epoch tier's statistic, and
+    # the L13 per-cell trace is a separate unarmed knob.  The emitted URA is
     #
     #     ura(sat) = max(1, ura_sigma0_ewma) * sqrt(var(sat))
     #
     # and `var` is a property of the solve.  So on an arm where the solve is
-    # identical to its control, the per-epoch RATIO of the two runs' URA is
-    # exactly the ratio of their EWMAs -- and the control's EWMA is pinned at the
-    # 1.0 floor precisely because its pool is empty.  The ratio therefore READS
+    # identical to its control, the per-epoch ratio of the two runs' URA is
+    # exactly the ratio of their EWMAs, and the control's EWMA is pinned at the
+    # 1.0 floor precisely because its pool is empty.  The ratio therefore reads
     # the leg's EWMA directly, with no extra knob and no extra run.
     #
-    # ⚠ Two caveats, both structural: the EWMA is clipped by `max(1, .)`, so
-    # nothing below 1 is recoverable; and the scale lands one epoch LATE (the
+    # Two caveats, both structural: the EWMA is clipped by `max(1, .)`, so
+    # nothing below 1 is recoverable, and the scale lands one epoch late (the
     # EWMA updates post-emit), so epoch k's URA carries the EWMA through k-1.
     # The inversion sigma0_k = (ewma_k - (1-alpha)*ewma_{k-1})/alpha is reported
     # only where both EWMAs are above the clip.

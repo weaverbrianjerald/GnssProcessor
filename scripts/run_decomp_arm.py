@@ -4,7 +4,7 @@
 Companion to compare_network_run.py (see docs/network_decomposition_plan.md §9).
 Creates <run_dir>, executes the processor with CWD=<run_dir> so the logs/ tree and any
 relative-path artifacts (e.g. the ARM-8 state snapshot) land inside it, tees stdout+stderr to
-run.log, and writes wall.txt as "exit=N" — the two file names the harness maskspec expects.
+run.log, and writes wall.txt as "exit=N" (the two file names the harness maskspec expects).
 
 Usage:
     python scripts/run_decomp_arm.py <exe> <config.json> <run_dir> [--force]

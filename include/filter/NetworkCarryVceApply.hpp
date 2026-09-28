@@ -1,28 +1,29 @@
 #pragma once
 /**
  * @file NetworkCarryVceApply.hpp
- * @brief M2 v2 (@c network.carry_vce_apply) — LASER's variance-factor iteration
- *        applied to the network carry-row stochastic model.
+ * @brief LASER's variance-factor iteration applied to the network carry-row
+ *        stochastic model (@c network.carry_vce_apply, M2 v2).
  *
- * The M2 monitor (@ref NetworkCarryVce) measured the hand carry floors 30–120×
- * optimistic on quiet epochs, and the M3 floor ladder proved the consequence: a
- * 40× floor swing moved the formal dd_σ by 14 % with IDENTICAL actual behaviour,
- * i.e. the formal covariance the products carry (URA channel included) is a
- * FLOOR ARTIFACT at the carry level.  This class closes the loop the monitor
- * left open, by the standard positivity-guaranteed route:
+ * The M2 monitor (@ref NetworkCarryVce) measures the carry residuals against the
+ * hand carry floors, and on quiet epochs finds those floors optimistic by more than
+ * an order of magnitude.  The M3 floor ladder showed that the formal DD sigma then
+ * follows the floor rather than the data (a 40× floor change moved the formal dd_σ
+ * by 14 % with identical actual behaviour), so the formal covariance in the
+ * products, the URA channel included, is set by the floor at the carry level.
+ * This class feeds the monitor's estimate back into the fold variances by the
+ * standard positivity-guaranteed method:
  *
- *   NGS LASER Guide v2.7 slides 5-93..5-95 (PDF pp. 405–407) — variance-component
+ *   NGS LASER Guide v2.7 slides 5-93..5-95 (PDF pp. 405–407): variance-component
  *   estimation "by use of factors" (Koch 1999 §§3.6.1–3.6.2; Lucas 1985).  Each
  *   observation group @f$i@f$ carries a multiplicative variance factor
  *   @f$\alpha_i^2@f$; the factor is updated from the group's estimated variance
  *   of unit weight as
  *   @f[ (\alpha_i^2)_j \;=\; (\hat\sigma_i^2)_{j-1}\,(\alpha_i^2)_{j-1}, @f]
  *   and the iteration has converged when every @f$\hat\sigma_i^2 \approx 1@f$.
- *   Positive by construction — the factor is a product of positive numbers, so no
- *   iteration can drive a variance negative.  Slide 5-96 is why BIQUUE is out of
- *   scope PERMANENTLY: it adds an iteration-death mode (Cholesky termination on a
- *   transient negative component) and agreed with the factor method in every LASER
- *   test.
+ *   The factor is a product of positive numbers, so no iteration can drive a
+ *   variance negative.  BIQUUE is permanently out of scope (slide 5-96): it adds
+ *   a failure mode (Cholesky termination on a transient negative component) and
+ *   agreed with the factor method in every LASER test.
  *
  * ## Streaming form, per (family × constellation) group @c g
  *
@@ -30,67 +31,66 @@
  *   target_g       = robust_floor_g / hand_fold_var_g       both from the M2 monitor
  *   step           = clamp( target_g / α²_g , [1/slew, slew] )
  *   α²_g          <- clamp( α²_g · step , [1, apply_max] )
- *   fold_var       = hand model evaluated as today, then × α²_g   at every fold site
+ *   fold_var       = hand model evaluated as before, then × α²_g   at every fold site
  *   sigma_hat_post = target_g / α²_g                        -> 1 at convergence
  * ```
  *
- * @c sigma_hat_post IS LASER's @f$\hat\sigma_i^2@f$ — the variance of unit weight
- * of group g under the weights the solve ACTUALLY used — so the readout the slide
- * prescribes is emitted per group per epoch (@c network_carry_vce_apply.csv).
+ * @c sigma_hat_post is LASER's @f$\hat\sigma_i^2@f$, the variance of unit weight
+ * of group g under the weights the solve used, and is emitted per group per epoch
+ * as the slide prescribes (@c network_carry_vce_apply.csv).
  *
- * ## Why the target is lag-free (and why that is not a detail)
+ * ## Why the target has no lag
  *
- * Both halves of @c target are α²-INDEPENDENT: @c robust_floor is the χ²₁-corrected
- * geometric mean of ê² alone, and @c hand_fold_var is the geometric mean of the
- * fold variance as the HAND model formed it (the monitor is fed both, see
- * @c NetworkCarryVce::addRow).  So the update is a first-order tracker of a fixed
- * point, not a closed feedback loop through a lagged measurement.
+ * Both halves of @c target are independent of α²: @c robust_floor is the
+ * χ²₁-corrected geometric mean of ê² alone, and @c hand_fold_var is the geometric
+ * mean of the fold variance as the hand model formed it (the monitor is fed both,
+ * see @c NetworkCarryVce::addRow).  The update is therefore a first-order tracker
+ * of a fixed point, not a feedback loop closed through a lagged measurement.
  *
- * That distinction is load-bearing.  Had the step been driven by
- * @f$\hat\sigma^2@f$ measured from the standardized residuals — the naive reading
- * of 5-95 — the loop would close through the monitor's exponential window, whose
- * MEAN LAG is @f$\varphi/(1-\varphi) \approx 86@f$ epochs at the default 60-epoch
- * half-life.  A saturated 5 %/epoch ramp against an 86-epoch lag overshoots its
- * target by @f$e^{86\ln 1.05} \approx 67\times@f$ before it can see itself, then
- * rings.  With an α²-independent target the same ramp approaches monotonically and
- * STOPS, because @c step is formed against the CURRENT α².
+ * This matters for stability.  A step driven by @f$\hat\sigma^2@f$ measured from
+ * the standardized residuals (the direct reading of 5-95) would close the loop
+ * through the monitor's exponential window, whose mean lag is
+ * @f$\varphi/(1-\varphi) \approx 86@f$ epochs at the default 60-epoch half-life.
+ * A saturated 5 %/epoch ramp against an 86-epoch lag overshoots its target by
+ * @f$e^{86\ln 1.05} \approx 66\times@f$ before the effect reaches the measurement,
+ * then oscillates.  With a target independent of α², the same ramp approaches
+ * monotonically and stops, because @c step is formed against the current α².
  *
- * ## Guards (each is a standing invariant, not a tuning choice)
+ * ## Guards (each follows a standing invariant; none is a tuning choice)
  *
- * - **Inflate-only, structurally**: @f$\alpha^2 \ge 1@f$ relative to the hand
- *   floor.  The dangerous direction is DEFLATION — a stiffer-than-truth prior is
- *   the lock-in mechanism of record (standing invariant #1; the DOY-129 pivot-CB
- *   ratchet, q_cb = 1e-10 ⇒ a 49 m step with τ = 3.79 h).  Looser-than-truth is
- *   safe-but-slower.  The clamp kills that whole failure class by construction
- *   rather than by tuning.  Note this bounds α² BELOW at 1, it does not make α²
- *   monotone: the factor descends freely back toward 1 as the window forgets an
- *   event era (the anti-ratchet, and the iono-2 v3 demean precedent).
+ * - **Inflate-only**: @f$\alpha^2 \ge 1@f$ relative to the hand floor, enforced by
+ *   the clamp.  Deflation is the dangerous direction: a prior stiffer than the
+ *   truth locks in a stale value (standing invariant #1; the DOY-129 pivot-CB
+ *   ratchet), while a looser prior only converges more slowly.  The clamp bounds
+ *   α² below at 1 but does not make it monotone: the factor falls back toward 1
+ *   as the window forgets an event era (the anti-ratchet property, as in the
+ *   iono-2 v3 demean).
  * - **Slew limiter** (@c apply_slew, default 1.05 per epoch, both directions).
- *   Era-2's lesson is that a ramp AT the configured rate limit still discharges,
- *   so the ramp is explicitly NOT the safety argument here — the inflate-only
- *   clamp is.  The slew exists to keep the solve's conditioning quiet.
+ *   A ramp at the configured rate limit can still discharge (era-2), so the slew
+ *   is not the safety argument; the inflate-only clamp is.  The slew keeps the
+ *   solve's conditioning smooth.
  * - **Freeze on a contaminated epoch** (the monitor's own @c clean gate) and below
- *   @c apply_min_rows effective rows per group.  A frozen group is FLAGGED in the
- *   trace and counted, never silent (census convention).
- * - **Every clamp and freeze edge is an EVENT with an identity** — standing
- *   invariant #7: this class is itself a coupling mechanism (it changes how much
- *   information a carried prior injects), so it is instrumented as one at BOTH
- *   edges.
+ *   @c apply_min_rows effective rows per group.  A frozen group is flagged in the
+ *   trace and counted (census convention).
+ * - **Every clamp and freeze edge is an event with an identity** (standing
+ *   invariant #7).  This class changes how much information a carried prior
+ *   injects, so it is a coupling mechanism and is instrumented at both edges.
  *
- * ## What it deliberately does NOT do
+ * ## Out of scope
  *
- * No deflation below the hand floors; no measurement-side R adaptation (the era-2
- * ground — adaptive-q on the MEASUREMENT side was falsified, the PREDICTION side
- * is where this lives and where it stays); no per-satellite factors (constellation
- * pooling only — the D5 population precedent); no Rate component (the field is
- * ALWAYS rate-frozen by constant-gap collinearity, so Floor-only); no BIQUUE.
+ * No deflation below the hand floors.  No measurement-side R adaptation: adaptive
+ * q on the measurement side was falsified in era-2, and this class acts on the
+ * prediction side only.  No per-satellite factors: factors are pooled per
+ * constellation (the D5 population precedent).  No Rate component: the field is
+ * always rate-frozen by constant-gap collinearity, so only the Floor is scaled.
+ * No BIQUUE.
  *
  * ## Isolation / testing
  *
- * Pure numeric leaf class over @ref NetworkCarryVce — no @c ApplicationNetwork
- * coupling, no state it does not own.  Driven directly from
+ * Pure numeric leaf class over @ref NetworkCarryVce, with no @c ApplicationNetwork
+ * coupling and no state it does not own.  Tested directly in
  * @c tests/test_carry_vce_apply.cpp against a monitor fed synthetic rows of known
- * truth, the standalone-class precedent of @c test_network_carry_vce.
+ * truth, following the standalone-class pattern of @c test_network_carry_vce.
  */
 
 #include "filter/NetworkCarryVce.hpp"
@@ -109,10 +109,10 @@ namespace GnssProcessor {
 /**
  * @brief LASER 5-95 variance-factor iteration over the carry families (M2 v2).
  *
- * One instance per producer run, living in @c NetworkRunContext::carry (the α²
- * state is cross-epoch by construction).  Default-constructed it is INERT:
- * @ref enabled is false, @ref factor returns exactly 1.0, and no call site
- * changes a byte.
+ * One instance per producer run, held in @c NetworkRunContext::carry (the α²
+ * state persists across epochs).  A default-constructed instance is inert:
+ * @ref enabled is false, @ref factor returns exactly 1.0, and no call site's
+ * output changes.
  */
 class NetworkCarryVceApply {
 public:
@@ -125,7 +125,7 @@ public:
         kNumFamilies = 3
     };
 
-    /// Why a group did not step this epoch (@c "" ⇒ it did).
+    /// Why a group did not step this epoch (@c kNone, whose name is "", means it stepped).
     enum class Freeze : int {
         kNone = 0,
         kEpochDirty,   ///< the epoch was contaminated (datum handover / reref storm).
@@ -146,7 +146,7 @@ public:
         Freeze      freeze = Freeze::kWarmup;  ///< this epoch's freeze state.
         bool        at_ceiling = false;        ///< α² is pinned at @c apply_max.
         bool        at_unit    = false;        ///< α² is pinned at the inflate-only floor of 1.
-        // --- run tallies (standing invariant #4: a live wire must be countable) ---
+        // --- run tallies (standing invariant #4: an active path must be countable) ---
         long long   n_steps      = 0; ///< epochs the factor was allowed to move.
         long long   n_frozen     = 0; ///< epochs frozen (any reason).
         long long   n_slew_up    = 0; ///< steps clipped by the slew limiter, inflating.
@@ -156,7 +156,7 @@ public:
         double      alpha2_max   = 1.0; ///< largest α² reached over the run.
     };
 
-    /// One clamp / freeze EDGE (standing invariant #7 — both edges, with identity).
+    /// One clamp / freeze edge (standing invariant #7: both edges, with identity).
     struct Edge {
         int         family = -1;
         char        sys    = '\0';
@@ -179,7 +179,7 @@ public:
      * @param slew       per-epoch maximum factor step, × and ÷ (values ≤ 1 are
      *                   treated as "no limit", i.e. 1 step to target).
      * @param alpha2_max ceiling on α² (≥ 1; a smaller value is raised to 1).
-     * @param min_rows   freeze a group below this many EFFECTIVE (forgetting-
+     * @param min_rows   freeze a group below this many effective (forgetting-
      *                   weighted) monitor rows.
      */
     void configure(const std::vector<std::string>& families,
@@ -206,8 +206,8 @@ public:
     }
 
     /**
-     * @brief The variance factor a fold site must multiply into its hand fold
-     *        variance — exactly 1.0 when the path is off, the family is unarmed,
+     * @brief The variance factor a fold site multiplies into its hand fold
+     *        variance; exactly 1.0 when the path is off, the family is unarmed,
      *        or the group has no factor yet.
      *
      * O(1) array read with no allocation and no locking: safe to call from the
@@ -231,20 +231,20 @@ public:
     }
 
     /**
-     * @brief Advance every armed group's factor by ONE LASER 5-95 iteration.
+     * @brief Advance every armed group's factor by one LASER 5-95 iteration.
      *
-     * MUST be called exactly once per epoch, AFTER every feed into @p mon for
-     * that epoch and BEFORE the next epoch's folds — that ordering is what makes
-     * the contract "the fold of epoch N is scaled by α² estimated from every
-     * clean carry row through epoch N−1" true, and it is the only ordering under
-     * which no row can calibrate against its own fold.
+     * Call exactly once per epoch, after every feed into @p mon for that epoch
+     * and before the next epoch's folds.  With that ordering the fold of epoch N
+     * is scaled by α² estimated from every clean carry row through epoch N−1,
+     * and no row can calibrate against its own fold; no other ordering gives
+     * both.
      *
      * @param mon    the M2 monitor (read-only).
-     * @param clean  false on a contaminated epoch ⇒ every group FREEZES.  Mirrors
-     *               @c NetworkCarryVce::beginEpoch's gate, because a datum
-     *               handover's re-levels are not carry noise and a factor that
-     *               ate them would be inflating on a frame step.
-     * @param edges  appended with every clamp/freeze EDGE crossed this epoch
+     * @param clean  false on a contaminated epoch ⇒ every group freezes.  Mirrors
+     *               @c NetworkCarryVce::beginEpoch's gate: a datum handover's
+     *               re-levels are not carry noise, and a factor fed with them
+     *               would inflate on a frame step.
+     * @param edges  appended with every clamp/freeze edge crossed this epoch
      *               (both directions).  Never cleared by this call.
      */
     void stepEpoch(const NetworkCarryVce& mon, bool clean,
@@ -277,10 +277,10 @@ public:
 
             if (freeze != Freeze::kNone) {
                 ++g.n_frozen;
-                // The readout stays LIVE while frozen: sigma_hat_post is still the
-                // honest "how far off is the model we are folding at", it just did
-                // not act this epoch.  A blank column here would read as "no data"
-                // when the truth is "data, deliberately not applied".
+                // The readout stays current while frozen: sigma_hat_post still
+                // measures how far the folded model is from the data; the factor
+                // just did not act this epoch.  A blank column would read as "no
+                // data" when the data exist and were not applied.
                 if (e.hand_fold_var > 0.0 && std::isfinite(e.hand_fold_var)
                     && std::isfinite(e.robust_floor))
                     g.target = e.robust_floor / e.hand_fold_var;
@@ -305,8 +305,8 @@ public:
             double a2 = g.alpha2 * step;
             if (!std::isfinite(a2) || !(a2 > 0.0)) a2 = g.alpha2;
 
-            // INFLATE-ONLY.  Deflation below the hand floor is the lock-in
-            // direction (standing invariant #1) and is structurally unreachable.
+            // Inflate-only.  Deflation below the hand floor is the lock-in
+            // direction (standing invariant #1); the clamp makes it unreachable.
             const bool was_unit    = g.at_unit;
             const bool was_ceiling = g.at_ceiling;
             if (a2 < 1.0)          a2 = 1.0;

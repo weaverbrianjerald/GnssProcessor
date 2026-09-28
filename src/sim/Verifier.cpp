@@ -105,15 +105,15 @@ VerifierResult Verifier::run(const VerifierConfig& cfg) {
     const double win0 = sc.count("storm_window_start_tow_s") ? sc["storm_window_start_tow_s"] : 0.0;
     const double win1 = sc.count("storm_window_end_tow_s") ? sc["storm_window_end_tow_s"] : 0.0;
     const bool kine = sc.count("kinematic") && sc["kinematic"] > 0.5;
-    // Mode-aware position gates.  Gated on the MEDIAN 3D error (robust to the brief
-    // re-convergence transients a cycle slip causes — a competent engine recovers in a
-    // few epochs) plus the 90th percentile; a *missed* slip leaves a PERSISTENT bias
-    // that raises the median too, so this still discriminates.  Static ~cm/dm with
-    // slips+multipath; kinematic ~dm.  ZWD is less observable kinematically.
-    // Calibrated to a dataset with cycle slips + marine multipath: float PPP recovers
-    // the static truth to ~dm (cm would require ambiguity fixing), and slips drag the
-    // ZWD a touch.  The reference solution sets the achievable bar; the gates still
-    // catch a solution that misses slips or ignores multipath (>0.25 m).
+    // Mode-aware position gates on the median 3D error and the 90th percentile.  The
+    // median tolerates the brief re-convergence transient after a cycle slip (an engine
+    // that handles slips recovers in a few epochs); a missed slip leaves a persistent
+    // bias that raises the median as well, so the gate still separates the two.
+    // Static is ~cm/dm with slips and multipath, kinematic ~dm; ZWD is less observable
+    // kinematically.  Calibrated to a dataset with cycle slips and marine multipath:
+    // float PPP recovers the static truth to ~dm (cm would require ambiguity fixing),
+    // and slips move the ZWD slightly.  The reference solution sets the achievable bar;
+    // the gates still catch a solution that misses slips or ignores multipath (>0.25 m).
     const double pos_med_gate = kine ? 0.35 : 0.13;
     const double pos_p90_gate = kine ? 0.55 : 0.22;
     const double zwd_floor = kine ? 0.06 : 0.03;
@@ -138,10 +138,10 @@ VerifierResult Verifier::run(const VerifierConfig& cfg) {
         }
     }
 
-    // Per-epoch truth ZWD (optional).  When present, the ZWD gate becomes an RMS over
-    // every graded epoch instead of a single final-epoch comparison — required once the
-    // injected wet delay varies with time, where "the last epoch's value" is meaningless.
-    // Absent (older datasets, external submissions) => legacy final-epoch behaviour.
+    // Per-epoch truth ZWD (optional).  When present, the ZWD gate is an RMS over every
+    // graded epoch instead of a single final-epoch comparison, which is required once the
+    // injected wet delay varies with time.  When absent (older datasets, external
+    // submissions), the legacy final-epoch comparison is used.
     std::map<long long, double> tzwd;
     if (ttropo.ok) {
         const int tti = colIndex(ttropo, "tow_s"), tzi = colIndex(ttropo, "zwd_m");
@@ -158,9 +158,9 @@ VerifierResult Verifier::run(const VerifierConfig& cfg) {
               s_zs = colIndex(state, "z_std_m"), s_gal = colIndex(state, "Galileo_m"),
               s_gals = colIndex(state, "Galileo_std_m"), s_tro = colIndex(state, "tropo_m"),
               s_tros = colIndex(state, "tropo_std_m");
-    // y_m/z_m are dereferenced unconditionally below (the error vector), so they
-    // are mandatory too — a missing/misspelled y_m or z_m header (s_y/s_z == -1)
-    // must fail gracefully here, not index row[-1] later.
+    // y_m/z_m are dereferenced unconditionally below (the error vector), so they are
+    // mandatory too: a missing or misspelled y_m or z_m header (s_y/s_z == -1) fails
+    // here instead of indexing row[-1] later.
     if (s_tow < 0 || s_x < 0 || s_y < 0 || s_z < 0 || s_xs < 0) { fail("state_trace.csv missing position/std columns"); return r; }
 
     const double deg = Constants::PI / 180.0;
@@ -227,9 +227,9 @@ VerifierResult Verifier::run(const VerifierConfig& cfg) {
         max3d = std::max(max3d, e3);
         errs.push_back(e3);
 
-        // s_ys/s_zs are OPTIONAL columns not covered by the ragged-row guard above,
-        // so bounds-check per row (a truncated external submission can cut a row off
-        // after x_std_m) — fall back to xs rather than read out of bounds.
+        // s_ys/s_zs are optional columns not covered by the ragged-row guard above, so
+        // they are bounds-checked per row (a truncated external submission can end a row
+        // after x_std_m); a missing value falls back to xs.
         const double xs = std::atof(row[s_xs].c_str());
         const double ys = (s_ys >= 0 && s_ys < (int)row.size()) ? std::atof(row[s_ys].c_str()) : xs;
         const double zs = (s_zs >= 0 && s_zs < (int)row.size()) ? std::atof(row[s_zs].c_str()) : xs;
@@ -304,11 +304,11 @@ VerifierResult Verifier::run(const VerifierConfig& cfg) {
     }
 
     // --- Gate 4: ZWD recovery. -----------------------------------------------
-    // With a per-epoch truth series (truth_tropo.csv) grade the RMS of
+    // With a per-epoch truth series (truth_tropo.csv), the gate grades the RMS of
     // (estimated - truth) across every steady-state epoch: once the injected wet delay
-    // varies with time, comparing only the FINAL epoch to a single constant measures
-    // nothing.  Without the series, fall back to the historical final-epoch comparison
-    // so older datasets and external submissions still grade.
+    // varies with time, comparing the final epoch to a single constant is not a test.
+    // Without the series it falls back to the final-epoch comparison, so older
+    // datasets and external submissions still grade.
     if (have_tro && have_zwd_series && zwd_n > 0) {
         const double rms = std::sqrt(zwd_sse / zwd_n);
         const double tol = std::max(zwd_floor, k * last_tros);
@@ -328,7 +328,7 @@ VerifierResult Verifier::run(const VerifierConfig& cfg) {
             "recovered " + fmt("%.3f", last_tro) + " vs truth " + fmt("%.3f", zwd_truth));
     }
 
-    // --- Gate 5: storm-window flatness (test 4 — dual-freq cancels). ---------
+    // --- Gate 5: storm-window flatness (test 4: dual-freq cancels). ----------
     if (sn > 0 && qn > 0) {
         std::sort(storm_errs.begin(), storm_errs.end());
         std::sort(quiet_errs.begin(), quiet_errs.end());
@@ -337,10 +337,10 @@ VerifierResult Verifier::run(const VerifierConfig& cfg) {
         std::string msg = "storm flatness: storm-window median 3D " + fmt("%.3f", sm) + " m vs quiet " +
                           fmt("%.3f", qm) + " m (mean " + fmt("%.3f", sstorm / sn) + " vs " +
                           fmt("%.3f", squiet / qn) + ")";
-        // The storm cancels in the IF combination, so storm-window median ~ quiet median; the
-        // absolute margin tolerates cycle-slip recovery transients landing in either window
-        // (the internal IF residual + the storm-on/off control already prove cancellation —
-        // this gate only needs to catch a GROSS storm-induced bias from a mis-formed IF).
+        // The storm cancels in the IF combination, so storm-window median ~ quiet median.  The
+        // absolute margin tolerates cycle-slip recovery transients landing in either window.
+        // The internal IF residual and the storm-on/off control already test cancellation;
+        // this gate only has to catch a gross storm-induced bias from a mis-formed IF.
         if (sm <= 2.0 * qm + 0.15) pass(msg + " — storm cancels in dual-freq (no position bias)");
         else fail(msg + " — storm biases the dual-frequency position (should cancel)");
         chk("storm_flatness", sm <= 2.0 * qm + 0.15, sm, 2.0 * qm + 0.15, "m",
@@ -349,7 +349,7 @@ VerifierResult Verifier::run(const VerifierConfig& cfg) {
         info("storm flatness: no storm window in the steady-state span — skipped");
     }
 
-    // --- Gate 6: residual floor (test 7 — non-zero, anti-circularity). -------
+    // --- Gate 6: residual floor (test 7: non-zero, anti-circularity). --------
     if (resid.ok) {
         const int r_tow = colIndex(resid, "tow_s"), r_sig = colIndex(resid, "signal"),
                   r_res = colIndex(resid, "residual_m");
@@ -378,8 +378,8 @@ VerifierResult Verifier::run(const VerifierConfig& cfg) {
             fail(msg + " — phase residual ~0: the solution re-inverted the sim model (circular)");
         else
             info(msg + " — outside the nominal band (check noise model)");
-        // Failure branch is ONLY pr<=5e-4 (re-inverted); the info branch is not a
-        // failure, so the check passes whenever the phase floor is non-zero.
+        // The only failure branch is pr<=5e-4 (re-inverted); the info branch is not a
+        // failure, so the check passes whenever the phase floor is non-zero (gate 0.5 mm).
         chk("residual_floor", pr > 5.0e-4, pr * 1000.0, 0.5, "mm",
             "phase-IF RMS; code-IF RMS " + fmt("%.2f", cr) + " m");
     } else {

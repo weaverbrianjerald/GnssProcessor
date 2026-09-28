@@ -1,15 +1,16 @@
 /**
  * @file test_reinflate_never_shrinks.cpp
- * @brief Card OWD (O2): every StateManager variance re-inflation RAISES and never shrinks.
+ * @brief Every StateManager variance re-inflation raises the variance and never shrinks
+ *        it (card OWD, O2).
  *
  * The seven re-inflations (receiver code bias, inter-system bias, slant ionosphere and its
- * rate, satellite code bias, satellite phase bias, satellite clock) used to SET the
- * diagonal to the request, so a state whose variance was larger than the request was
- * deflated: information the data never supplied.  The rule is now the maximum of the
- * current and the requested variance, the row and column still zeroed (the partition is
- * broken as before) and the value untouched, with a raised / kept counter per
- * re-inflation.  Also here: the inter-system biases a clock re-reference re-inflates
- * (a reference step takes every allocated one, observed that epoch or not).
+ * rate, satellite code bias, satellite phase bias, satellite clock) set the diagonal to
+ * the maximum of the current and the requested variance.  Setting it to the request
+ * alone would deflate a larger variance, adding information the data never supplied.
+ * The row and column are zeroed (the partition is broken), the value is untouched, and
+ * each re-inflation has a raised / kept counter.  Also tested: the inter-system biases a
+ * clock re-reference re-inflates (a reference step takes every allocated one, observed
+ * that epoch or not).
  */
 #include <gtest/gtest.h>
 
@@ -69,8 +70,8 @@ void expectDecoupled(const StateManager& sm, Eigen::Index idx, Eigen::Index othe
 
 }  // namespace
 
-// Receiver code bias: a larger current variance is KEPT (the pre-OWD rule deflated it to the
-// request), a smaller one is raised to the request; each counted once.
+// Receiver code bias: a larger current variance is kept, a smaller one is raised to the
+// request; each is counted once.
 TEST(ReinflateNeverShrinks, CodeBiasKeepsALargerAndRaisesASmallerVariance) {
     Harness h;
     const auto a = static_cast<Eigen::Index>(h.sm.addCodeBiasState("GPS_DCB", 0.0));
@@ -244,8 +245,8 @@ TEST(ReinflateNeverShrinks, SummaryNamesEveryReinflation) {
               "sat_phase_bias raised=0 kept=0 | sat_clock raised=1 kept=0");
 }
 
-// A reference (GPS) re-reference re-inflates EVERY allocated ISB, observed that epoch or
-// not; a non-reference step only its own; each ISB at most once.
+// A reference (GPS) re-reference re-inflates every allocated ISB, observed that epoch or
+// not; a non-reference step re-inflates only its own; each ISB appears at most once.
 TEST(ReinflateNeverShrinks, ReferenceStepReinflatesEveryAllocatedIsb) {
     const std::map<std::string, size_t> allocated = {{"BeiDou", 11}, {"Galileo", 10}};
     EXPECT_EQ(RealTimeEngine::isbReinflationSet(true, {}, allocated),

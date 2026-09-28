@@ -12,7 +12,7 @@
 
 #include "config/GnssConfig.hpp"
 #include "products/ProductParser.hpp"
-#include "products/SignalDeclaration.hpp"   // Card SID phase 5: the declared roster
+#include "products/SignalDeclaration.hpp"   // the declared signal roster (card SID phase 5)
 #include "logging/LogManager.hpp"
 #include "rinex/RinexParser.hpp"
 #include "filter/StateManager.hpp"
@@ -107,9 +107,9 @@ namespace GnssProcessor {
          * @param state Current PPP state (not modified).
          * @param modeled_obs Output, one entry per processed observable.
          * @param drop_reasons Optional map naming why each dropped satellite
-         *        failed (BelowMask / NoProduct / NoModel), so callers such as the
-         *        satellite-status trace can distinguish failure modes instead of
-         *        one undifferentiated bucket.  nullptr disables tracking.
+         *        failed (BelowMask / NoProduct / NoModel / Eclipsing), so callers
+         *        such as the satellite-status trace can distinguish failure modes
+         *        instead of one undifferentiated bucket.  nullptr disables tracking.
          * @return true if at least one observation succeeded.
          */
         bool computeModels(const std::vector<RinexObservation>& observations,
@@ -120,14 +120,21 @@ namespace GnssProcessor {
         /**
          * @brief Compute ionospheric delay for a single observation path.
          *
-         * Uses the internal Ionosphere model, or the Klobuchar fallback.
+         * Returns 0 when @p measurements contain the first two signals of the
+         * system's priority list, because the iono-free combination then removes
+         * the delay.  Otherwise returns the Klobuchar delay from the optional
+         * Ionosphere model, or 0 when that model is not constructed
+         * (model_corrections.enable_klobuchar_ionosphere off), the eight Klobuchar
+         * coefficients are not loaded, or the frequency or the system's priority
+         * list is missing.
          *
          * @param time GNSS time of the observation.
          * @param rx_pos Receiver ECEF position (m).
          * @param sat_pos Satellite ECEF position (m).
          * @param freq_type Frequency or signal identifier (e.g. "L1", "C1C").
          * @param system GNSS system.
-         * @param measurements Observed code/phase values, if the model needs them.
+         * @param measurements Observed code/phase values keyed by signal; they show
+         *        whether an iono-free combination is available.
          * @return Slant ionospheric delay along the ray path (m).
          */
         double computeIonosphericDelay(const GnssTime& time, const Eigen::Vector3d& rx_pos,
@@ -135,16 +142,19 @@ namespace GnssProcessor {
             System system, const std::map<std::string, double>& measurements) const;
 
         /**
-         * @brief Rescale GLONASS observation values to a common frequency reference.
+         * @brief Scale a GLONASS carrier-phase count by the FDMA frequency ratio.
          *
-         * GLONASS is FDMA, so raw measurements are rescaled to the nominal
-         * frequency reference the rest of the chain expects.
+         * Returns @p observed_data × f_k / f_ref, with f_k the satellite's channel
+         * frequency for @p freq_type and f_ref the channel-0 base frequency.  The
+         * ratio is dimensionless, so the unit is unchanged; for a count in cycles
+         * this converts a count at f_ref into a count at f_k.
          *
-         * @param observed_data Raw observed value (m).
+         * @param observed_data Observed value (cycles).
          * @param freq_type Frequency identifier (e.g. "L1", "L2").
-         * @param system GNSS system; must be GLONASS to rescale.
+         * @param system GNSS system; other systems are returned unchanged.
          * @param satellite Satellite identifier (e.g. "R01").
-         * @return Rescaled measurement (m).
+         * @return Scaled value (cycles).  The input is returned unchanged for
+         *         non-GLONASS systems, empty inputs or invalid frequencies.
          */
         double rescaleGlonassObservation(double observed_data, const std::string& freq_type,
             System system, const std::string& satellite) const;
@@ -194,8 +204,8 @@ namespace GnssProcessor {
             return antenna_.enableWindUpTracing(log_dir);
         }
 
-        /// @brief Arm the per-receiver phase wind-up census.  Telemetry only —
-        ///        it cannot move a byte of the solve.
+        /// @brief Arm the per-receiver phase wind-up census.  Telemetry only: the
+        ///        solve is byte-identical with it armed.
         void enableWindUpCensus(double wu_gap_s, double carry_gap_s) {
             antenna_.enableWindUpCensus(wu_gap_s, carry_gap_s);
         }
@@ -243,26 +253,26 @@ namespace GnssProcessor {
         }
 
         /**
-         * @brief The model's own @ref PppUtils — the SEEDED one.
+         * @brief The model's own @ref PppUtils, the instance whose GLONASS slot map
+         *        @ref setGlonassSlots seeds.
          *
-         * Card ALC needs carrier wavelengths in a seam that holds only the
-         * engine, and a locally constructed @c PppUtils would carry the built-in
-         * default GLONASS slot table rather than the one @ref setGlonassSlots
-         * pushed from the live ephemeris store.  Handing out the model's own
-         * instance is the only way a caller gets the frequencies the MEASUREMENT
-         * MODEL actually used.  Read-only: the slot map is still written through
-         * @ref setGlonassSlots alone.
+         * A locally constructed @c PppUtils carries the built-in default GLONASS
+         * slot table, not the one @ref setGlonassSlots pushed from the live
+         * ephemeris store, so a caller that needs the carrier wavelengths the
+         * measurement model used reads them through this instance.  Card ALC uses
+         * it from a seam that holds only the engine.  Read-only: the slot map is
+         * written only through @ref setGlonassSlots.
          *
          * @return The model's utility helper (frequencies, wavelengths, system ids).
          */
         const PppUtils& pppUtils() const { return ppp_utils_; }
 
         /**
-         * @brief GLONASS FDMA channel k for a satellite, from the SEEDED slot map.
+         * @brief GLONASS FDMA channel k for a satellite, from the seeded slot map.
          *
          * Reads the map @ref setGlonassSlots populated, so callers holding only a
-         * const PppModel& (e.g. StateInitializer) get the true current channel
-         * instead of their own un-seeded default table.
+         * const PppModel& (e.g. StateInitializer) get the current channel instead
+         * of their own unseeded default table.
          *
          * @param satellite GLONASS satellite id ("R07").
          * @return Channel k in [-7,+6], or -999 if the slot is unknown.
@@ -297,8 +307,8 @@ namespace GnssProcessor {
         }
 
         /**
-         * @brief Card GAL (R6): the route the receiver antenna correction of a signal
-         *        takes to an ATX frequency (forwards to Antenna).
+         * @brief The route the receiver antenna correction of a signal takes to an
+         *        ATX frequency (forwards to Antenna; card GAL, R6).
          * @param signal  RINEX observation code.
          * @param system  GNSS system of the observation.
          * @param out_key [out, optional] The ATX frequency key used, empty when none.
@@ -315,8 +325,8 @@ namespace GnssProcessor {
          *
          * True means the PCO/PCV comes from the radome-agnostic "NONE"
          * calibration of the same physical antenna because the specific radome
-         * code is uncalibrated — standard IGS/EPN practice, mm-level.  The
-         * network driver reports it as a startup diagnostic.
+         * code is uncalibrated.  This is standard IGS/EPN practice, with an error
+         * at the mm level.  The network driver reports it as a startup diagnostic.
          *
          * @param out_detail [out,optional] Human-readable substitution detail.
          * @return True iff the antenna matched only through radome→NONE.
@@ -384,9 +394,9 @@ namespace GnssProcessor {
          * Routes both the orbit and clock overlays, via @ref setSsrOrbitStore and
          * @ref setSsrClockStore.  nullptr (the default) uses the process-wide
          * singleton, so every non-harness caller is byte-identical.  The network
-         * closed-loop consumer points this at the producer's OWNED store, letting
-         * a held-out station consume freshly-emitted satellite clocks without
-         * polluting global state.
+         * closed-loop consumer points this at a store the producer owns, so a
+         * held-out station consumes freshly emitted satellite clocks without
+         * writing them into the process-wide singleton.
          *
          * @param store Non-owning store pointer (must outlive this model), or
          *        nullptr for the singleton.
@@ -397,12 +407,12 @@ namespace GnssProcessor {
         }
 
         /**
-         * @brief Route ONLY the SSR ORBIT overlay at @p store.
+         * @brief Route only the SSR orbit overlay at @p store.
          *
-         * Hits the RAC-delta application in Geometry::getSatellitePV; the clock
-         * path keeps its current routing.  This is how the standalone
-         * network-consumer wiring keeps orbits on the external RTS stream
-         * (singleton) while clocks come from the injected network-product store
+         * Affects the RAC-delta application in Geometry::getSatellitePV; the clock
+         * path keeps its current routing.  The standalone network-consumer wiring
+         * uses it to keep orbits on the external RTS stream (the singleton) while
+         * clocks come from the injected network-product store
          * (processing.network_consumer.orbit_source = "external").
          *
          * @param store Non-owning store pointer (must outlive this model), or
@@ -417,7 +427,7 @@ namespace GnssProcessor {
         }
 
         /**
-         * @brief Route ONLY the SSR CLOCK overlay at @p store.
+         * @brief Route only the SSR clock overlay at @p store.
          *
          * Covers both satellite-clock consumers behind this model: geometry's
          * internal GnssCorrections (emission-time refinement) and the model's own
@@ -435,19 +445,20 @@ namespace GnssProcessor {
          * @brief Keep carrier phase on broadcast-grade satellites instead of
          *        gating them to code-only.
          *
-         * computeModels normally drops every phase observable for a satellite
-         * whose range model is metre-level (broadcast clock, no precise CLK, no
-         * SSR clock — the broadcast_only flag): at mm phase precision the float
-         * ambiguity is inseparable from the clock error, so phase cannot help a
-         * single-receiver PPP user.  The brdc_rts NETWORK PRODUCER is the
-         * exception — it ESTIMATES the satellite clock (per-sat state Δδtˢ against
-         * the broadcast a-priori), so its stations' phase carries exactly the
+         * computeModels normally drops every phase observable of a satellite whose
+         * range model is metre-level (broadcast clock, no precise CLK, no SSR
+         * clock; the broadcast_only flag): at mm phase precision the float
+         * ambiguity cannot be separated from the clock error, so phase does not
+         * help a single-receiver PPP user.  The brdc_rts network producer is the
+         * exception: it estimates the satellite clock (a per-satellite state Δδtˢ
+         * against the broadcast a priori), so its stations' phase carries the
          * information the estimator needs.
          *
-         * ApplicationNetwork sets this on PRODUCER station models only, when
-         * network.apriori_source == brdc_rts.  It MUST NOT be set on the
-         * closed-loop CONSUMER: its broadcast-grade sats genuinely cannot use
-         * phase, and sats that did get a network clock are not broadcast_only.
+         * The network station setup (ApplicationNetworkSetup) sets this on
+         * producer station models only, true when network.apriori_source ==
+         * brdc_rts.  Do not set it on the closed-loop consumer: its broadcast-grade
+         * satellites cannot use phase, and satellites that did get a network clock
+         * are not broadcast_only.
          *
          * @param suppressed true keeps phase; false (default) restores the
          *        code-only gate, byte-identical.
@@ -477,7 +488,7 @@ namespace GnssProcessor {
          *
          * A const read of what @ref setSignalAllowlist installed, so the signal
          * roster can record an allow-list exclusion as a per-station reason rather
-         * than re-deriving the coverage gate.  An EMPTY map, or a constellation
+         * than re-deriving the coverage gate.  An empty map, or a constellation
          * absent from it, means every tracked code of that constellation is
          * admitted, which is the byte-identical default.
          *
@@ -507,7 +518,7 @@ namespace GnssProcessor {
          * @struct CanonicalCandidate
          * @brief One channel offered to the canonical-signal decision (card CSL).
          *
-         * The caller supplies these in PRIORITY-LIST ORDER, already filtered by
+         * The caller supplies these in priority-list order, already filtered by
          * the network coverage allowlist and already resolved to a band name, so
          * the decision itself is a pure function of counts and order.
          */
@@ -532,37 +543,37 @@ namespace GnssProcessor {
         /**
          * @brief Decide the per-(band, obs-type) canonical signals (card CSL).
          *
-         * Pure: no member state, no logging, no I/O — the rule the network
-         * producer's latch is built from, exposed so it can be pinned directly
+         * Pure (no member state, no logging, no I/O): the rule the network
+         * producer's latch is built from, exposed so tests can pin it directly
          * (tests/test_canonical_signal_latch.cpp).
          *
          * Candidates with a non-positive count, an empty band or an obs-type
          * that is neither 'C' nor 'L' are ignored.  Within a (band, obs-type)
          * the candidate order is the caller's priority-list order.
          *
-         *  - @c CanonicalSignalRule::Count — the highest count wins and a tie
-         *    goes to the earlier candidate, i.e. the historical rule exactly.
-         *  - @c CanonicalSignalRule::Priority — the FIRST candidate whose count
+         *  - @c CanonicalSignalRule::Count: the highest count wins and a tie goes
+         *    to the earlier candidate (the historical rule, unchanged).
+         *  - @c CanonicalSignalRule::Priority: the first candidate whose count
          *    is at least @p min_coverage times the largest count of that (band,
-         *    obs-type) wins.  Afterwards, and only when @p code_follows_phase,
-         *    every CODE row follows its band's PHASE tracking attribute, if a
-         *    code candidate with that attribute exists and clears the same
-         *    floor; the displaced pick becomes the runner-up.
+         *    obs-type) wins.  Afterwards, and only when @p code_follows_phase is
+         *    true, each code row takes the tracking attribute of its band's phase
+         *    pick, if a code candidate with that attribute exists and clears the
+         *    same floor; the displaced pick becomes the runner-up.
          *
-         * The runner-up is defined under the SAME rule: what would have been
-         * latched had the winner not been offered (so under @c Count it is the
-         * second-highest count, and under @c Priority the next eligible entry of
-         * the priority list, its floor recomputed over the remaining candidates).
+         * The runner-up is defined under the same rule: what would have been
+         * latched had the winner not been offered (under @c Count the
+         * second-highest count, under @c Priority the next eligible entry of the
+         * priority list, with the floor recomputed over the remaining candidates).
          *
          * @param candidates   Channels in priority-list order (any band, any type).
          * @param rule         The decision rule.
          * @param min_coverage Coverage floor for @c Priority; clamped to [0, 1]
          *                     internally, unread under @c Count.
-         * @param code_follows_phase Card CSL-3: true (the default, and the CSL-1
-         *                     behaviour) runs the follow clause above; false
-         *                     leaves each CODE row on the pick the priority rule
-         *                     made from the code's own list.  Unread under
-         *                     @c Count, which never had the clause.
+         * @param code_follows_phase true (the default, and the CSL-1 behaviour)
+         *                     runs the follow clause above; false leaves each code
+         *                     row on the pick the priority rule made from the
+         *                     code's own list (card CSL-3).  Unread under
+         *                     @c Count, which has no follow clause.
          * @return (band, obs-type) → pick, for every (band, obs-type) that had at
          *         least one candidate with a positive count.
          */
@@ -576,17 +587,15 @@ namespace GnssProcessor {
          * @brief Scope the canonical-signal rule to a station list (card CSL-2).
          *
          * Pure: the per-station half of @ref decideCanonicalPicks' rule argument.
-         * CSL section 4 left the consumer's gain complete with four of the six
-         * stations that move to L1W, with equal first-epoch margins at three of
-         * them, so a coverage floor cannot split them further and the next split
-         * needs a per-station override.
+         * A coverage floor cannot separate stations whose first-epoch margins are
+         * equal, so selecting the priority rule at some of them needs a
+         * per-station override (card CSL section 4).
          *
-         * An EMPTY @p priority_stations is the pre-card default: @p rule applies
-         * at every station.  A non-empty list is a SCOPE, and it decides on its
-         * own: a listed station runs @c CanonicalSignalRule::Priority and every
-         * other station runs @c CanonicalSignalRule::Count, whatever @p rule says.
-         * That is the card's definition, so a list alone is sufficient to arm the
-         * scope and @p rule cannot silently widen it.
+         * An empty @p priority_stations is the default: @p rule applies at every
+         * station.  A non-empty list is a scope and decides on its own: a listed
+         * station runs @c CanonicalSignalRule::Priority and every other station
+         * runs @c CanonicalSignalRule::Count, whatever @p rule says.  A list alone
+         * therefore arms the scope, and @p rule cannot widen it.
          *
          * The comparison is case-insensitive and the empty station label (the
          * off-network path, which has no label) is never a member.
@@ -604,13 +613,13 @@ namespace GnssProcessor {
         /**
          * @brief Export the locked canonical-signal latch (RS-8, §21.16).
          *
-         * One entry per DECIDED (constellation, band, obs-type) triple, in
-         * @c constellation_canonical_ iteration order (deterministic — nested
-         * @c std::map).  A constellation not yet decided contributes nothing, and
-         * so does the degenerate case of one decided with an EMPTY candidate set
-         * (no admitted priority signal was tracked at its first epoch): such a
-         * constellation restores as UNDECIDED and re-decides, which is exactly the
-         * pre-card behaviour for it.
+         * One entry per decided (constellation, band, obs-type) triple, in
+         * @c constellation_canonical_ iteration order (deterministic, since both
+         * levels are @c std::map).  A constellation not yet decided contributes
+         * nothing, and neither does one decided with an empty candidate set (no
+         * admitted priority signal was tracked at its first epoch).  Such a
+         * constellation restores as undecided and is decided again from the
+         * resume epoch, as on a run without a restore.
          *
          * @return The flat rows; empty before the first processed epoch.
          */
@@ -620,40 +629,44 @@ namespace GnssProcessor {
          * @brief The candidate channels the latch decided on, retained for card SID.
          *
          * @c decideConstellationCanonicals builds one @ref CanonicalCandidate per
-         * admitted priority-list channel, in priority order, with that channel's
-         * satellite count at the constellation's first observed epoch, and hands
-         * them to @ref decideCanonicalPicks.  The candidates are the only input from
-         * which a SECOND rule can be evaluated, so card SID's "what would the count
-         * rule have latched here" counter needs them outside the class.
+         * admitted priority-list channel that at least one satellite observes, in
+         * priority order, with that channel's satellite count at the
+         * constellation's first observed epoch, and hands them to
+         * @ref decideCanonicalPicks.  The candidates are the only input from which
+         * a second rule can be evaluated, so card SID's counter of what the count
+         * rule would have latched needs them outside the class.
          *
-         * Retained ONLY when @c network.signal_roster is armed, so an unarmed run
-         * allocates nothing and is byte-identical; the retention is a pure store
-         * that no decision reads.  Filled at the constellation's decision epoch and
-         * never revised, exactly like the latch itself.
+         * Retained only when @c network.signal_roster is armed, so an unarmed run
+         * allocates nothing and is byte-identical; no decision reads the stored
+         * candidates.  Filled at the constellation's decision epoch and never
+         * revised, like the latch itself.
          *
          * @return Constellation display name -> its candidates, in priority order.
-         *         Empty on any run that did not arm the knob, and on any
-         *         constellation that has not been decided yet.
+         *         Empty on any run that did not arm the knob, for a constellation
+         *         that has not been decided yet, and for one whose latch
+         *         @ref restoreCanonicalSignals restored (no tally ran for it).
          */
         const std::map<std::string, std::vector<CanonicalCandidate>>&
         canonicalCandidates() const { return canonical_candidates_; }
 
         /**
-         * @brief Restore a previously exported canonical-signal latch (RS-8, §21.16).
+         * @brief Restore a canonical-signal latch that @ref exportCanonicalSignals
+         *        wrote (RS-8, §21.16).
          *
          * Refills @c constellation_canonical_ from @p entries and marks every
-         * constellation they name DECIDED, so @c decideConstellationCanonicals'
-         * first-epoch guard leaves it alone instead of re-deciding it from the
-         * resume epoch's satellite counts — the defect §21.16 names (at a warm
-         * resume GAMB00PYF flipped L2X→L2W and CPVG00CPV L2W→L2X, the L2X tracker
-         * set changed, and the eq34 L2X component lost its datum receiver).
+         * constellation they name as decided, so the first-epoch guard of
+         * @c decideConstellationCanonicals does not re-decide it from the resume
+         * epoch's satellite counts.  Re-deciding at a warm resume can flip a
+         * station's latched signal (for example L2X to L2W), which changes the set
+         * of stations tracking that signal and can leave its component without a
+         * datum receiver (§21.16).
          *
-         * Each restored constellation is also marked AUDIT-PENDING: the next
-         * @c decideConstellationCanonicals call runs its tally diagnostically —
-         * writing nothing — and counts the entries that differ from what this
-         * station WOULD have decided at that epoch
-         * (@ref canonicalAuditDisagreements).  That audit is the only behaviour a
-         * restore adds beyond the latch itself, and it is read-only.
+         * Each restored constellation is also marked audit-pending: the next
+         * @c decideConstellationCanonicals call that sees the constellation runs
+         * its tally diagnostically, writes nothing, and counts the entries that
+         * differ from what this station would have decided at that epoch
+         * (@ref canonicalAuditDisagreements).  The audit is read-only and is the
+         * only behaviour a restore adds beyond the latch itself.
          *
          * Emits the canonical-signal rider on @c main_log, tagged @c restored.
          *
@@ -666,69 +679,71 @@ namespace GnssProcessor {
 
         /**
          * @struct DeclaredLatchCounters
-         * @brief Card SID phase 5: the consumer's latch against the producer's
-         *        DECLARED roster, one named class each (standing invariant 4).
+         * @brief The consumer's latch compared with the producer's declared roster,
+         *        one named counter per class (card SID phase 5; standing
+         *        invariant 4).
          *
-         * Every class carries a denominator, so a zero can be read: @c compared 0
-         * means no declaration reached the latch at all, which is dead wiring and
-         * not agreement.
+         * Every class has a denominator, so a zero can be read: @c compared 0
+         * means no declaration reached the latch, which is dead wiring, not
+         * agreement.
          */
         struct DeclaredLatchCounters {
-            long long compared{ 0 };      ///< (band, obs type) cells the declaration named (denominator).
-            long long agree{ 0 };         ///< the own-rule latch IS the first declared signal this station tracks.
+            long long compared{ 0 };      ///< (band, obs type) cells the declaration names and this station latched (denominator).
+            long long agree{ 0 };         ///< the own-rule latch is the first declared signal this station tracks.
             long long differ{ 0 };        ///< it is not, but the station does track a declared signal.
-            long long own_not_declared{ 0 };///< of those, the own-rule signal is not declared AT ALL: the network carries no family for it.
+            long long own_not_declared{ 0 };///< compared cells whose own-rule signal is not declared at all (the network carries no family for it); overlaps @c differ and @c none_tracked.
             long long none_tracked{ 0 };  ///< no declared signal of that cell is tracked here (the own rule stands).
-            long long from_roster{ 0 };   ///< cells the ARMED latch took from the declaration.
-            long long own_rule{ 0 };      ///< cells the armed latch left on the station's own rule.
-            bool      armed{ false };     ///< the latch ACTED (network.closed_loop.roster_latch).
+            long long from_roster{ 0 };   ///< cells the acting latch took from the declaration.
+            long long own_rule{ 0 };      ///< cells left on the station's own rule, acting or not, including latched cells the declaration does not name.
+            bool      armed{ false };     ///< the latch may follow the declaration (network.closed_loop.roster_latch with a present declaration).
             bool      seen{ false };      ///< a declaration was handed to the model at all.
         };
 
         /**
-         * @brief Card SID phase 5: hand the producer's DECLARED signal roster to
-         *        the latch (@c network.closed_loop.roster_latch).
+         * @brief Hand the producer's declared signal roster to the latch
+         *        (@c network.closed_loop.roster_latch; card SID phase 5).
          *
          * Copied, not referenced: the store that owns it is mutex-guarded and
          * shared, and the latch is decided once per constellation.  Setting it has
-         * no effect on a constellation that is already decided, which is the
-         * point: the declaration must arrive before the first processed epoch or
-         * it is too late, and the counters say so.
+         * no effect on a constellation that is already decided, so the
+         * declaration has to arrive before the first processed epoch; the counters
+         * show a late arrival (@c compared stays 0).
          *
-         * With @p act false the declaration is COMPARED and counted and the latch
-         * is left exactly where the station's own rule put it (phase 5a, E3, which
-         * needs no consumer knob); with @p act true the latch FOLLOWS it where the
-         * station tracks a declared signal (phase 5b, C1).
+         * With @p act false the declaration is compared and counted, and the latch
+         * stays where the station's own rule put it (phase 5a, E3, which needs no
+         * consumer knob).  With @p act true the latch follows the declaration
+         * wherever the station tracks a declared signal (phase 5b, C1).
          *
          * @param decl The declaration; @c present false clears it.
-         * @param act  Whether the latch may be changed by it.
+         * @param act  Whether the declaration may change the latch; ignored when
+         *             @c decl.present is false.
          */
         void setDeclaredSignalRoster(const NetworkSignalDeclaration& decl, bool act);
 
-        /// @brief Card SID phase 5: the latch-against-declaration census.
+        /// @brief The latch-against-declaration census (card SID phase 5).
         const DeclaredLatchCounters& declaredLatchCounters() const {
             return declared_latch_;
         }
 
         /**
-         * @brief The CODE signal this station LATCHED on one RINEX band digit.
+         * @brief The code signal this station latched on one RINEX band digit.
          *
          * A const read of @c constellation_canonical_, which
          * @c decideConstellationCanonicals fills on the constellation's first observed
          * epoch and then locks for the run (or which @ref restoreCanonicalSignals
-         * refills at a warm resume).  Card SCC needs it OUTSIDE this class: the
+         * refills at a warm resume).  Card SCC reads it outside this class: the
          * receiver side (R2) routes a band-1 code through an inter-signal state exactly
          * when it is not the station's latched canonical code, and the row-weight seam
          * (R5) has to reach the same verdict from the assembly.
          *
-         * Keyed on the signal's own BAND DIGIT rather than on the band NAME the map
-         * uses, because that name is constellation-specific ("L1" on GPS, "E1" on
-         * Galileo, "B1C" on BeiDou) while the card's scope — "band 1" — is the digit in
+         * Keyed on the signal's own band digit rather than on the band name the map
+         * uses, because the name is constellation-specific ("L1" on GPS, "E1" on
+         * Galileo, "B1C" on BeiDou) while the card's scope, band 1, is the digit in
          * the RINEX code.  The two are 1:1 within a constellation: the prefix table
          * maps each "C<digit>" to exactly one band name.
          *
-         * An EMPTY return means the latch does not know this cell yet, which every
-         * caller must read as "change nothing" — not as "no signal is canonical".
+         * An empty return means the latch does not know this cell yet; callers must
+         * read it as "change nothing", not as "no signal is canonical".
          *
          * @param system     System name string, e.g. "GPS".
          * @param band_digit RINEX band digit, e.g. '1'.
@@ -746,27 +761,27 @@ namespace GnssProcessor {
         }
 
         /**
-         * @brief The PHASE signal this station LATCHED on one RINEX band digit.
+         * @brief The phase signal this station latched on one RINEX band digit.
          *
-         * The exact analogue of @ref latchedCanonicalCodeOnBandDigit over the 'L'
-         * entries of @c constellation_canonical_, and read the same way: filled on
+         * The analogue of @ref latchedCanonicalCodeOnBandDigit over the 'L'
+         * entries of @c constellation_canonical_, with the same lifetime: filled on
          * the constellation's first observed epoch, locked for the run, refilled by
-         * @ref restoreCanonicalSignals at a warm resume.  Card GRK needs it OUTSIDE
+         * @ref restoreCanonicalSignals at a warm resume.  Card GRK reads it outside
          * this class: the arc-level slip tracker picks one phase per band from the
          * raw record, the carried ambiguity is keyed on the latch, and the gap
          * re-entry response cannot reach an arc when the two disagree.
          *
-         * The LATCH rather than the epoch's admitted row set is the right source for
-         * that comparison, because the admitted set is per epoch: a returning arc's
-         * phase can be withheld from it for the first epochs by the admission or
-         * readmit machinery, which is exactly the re-entry epoch the tracker has to
-         * name correctly.  The latch does not move.
+         * The latch, not the epoch's admitted row set, is the source for that
+         * comparison, because the admitted set is per epoch: the admission or
+         * readmit logic can withhold a returning arc's phase from it for the first
+         * epochs, and those are the re-entry epochs the tracker has to name
+         * correctly.  The latch does not move.
          *
-         * Keyed on the signal's own BAND DIGIT rather than on the band NAME the map
+         * Keyed on the signal's own band digit rather than on the band name the map
          * uses, for the reason given on the code accessor.
          *
-         * An EMPTY return means the latch does not know this cell yet, which every
-         * caller must read as "change nothing" - not as "no signal is canonical".
+         * An empty return means the latch does not know this cell yet; callers must
+         * read it as "change nothing", not as "no signal is canonical".
          *
          * @param system     System name string, e.g. "GPS".
          * @param band_digit RINEX band digit, e.g. '1'.
@@ -787,8 +802,10 @@ namespace GnssProcessor {
          * @brief Set the label this model prints in the canonical-signal rider (RS-8).
          *
          * The network producer sets it to the station name at construction; the
-         * single-receiver paths leave it empty and the rider prints "-".  Log-only —
-         * nothing else reads it.
+         * single-receiver paths leave it empty and the rider prints "-".  The label
+         * is also the station name @ref canonicalRuleForStation matches against the
+         * priority-station scope (card CSL-2), so it can change the rule the latch
+         * is decided under; an empty label is never in the scope.
          *
          * @param label Station / receiver label.
          */
@@ -804,13 +821,13 @@ namespace GnssProcessor {
         long long canonicalAuditEntries() const { return canon_audit_entries_; }
 
         /**
-         * @brief Canonical entries the restore audit found DISAGREEING (RS-8, §21.16).
+         * @brief Canonical entries the restore audit found disagreeing (RS-8, §21.16).
          *
-         * A restored (band, obs-type) whose signal differs from the one this
-         * station's first post-resume epoch would have picked — exactly the flips
-         * §21.16 measured.  A nonzero count is the defect being PREVENTED, not an
-         * error; a zero count on a leg that resumed is the invariant-#4 reading that
-         * the seam epoch happened to agree with the writer.
+         * Counts restored (band, obs-type) entries whose signal differs from the one
+         * this station's first post-resume epoch would have picked: the flips
+         * §21.16 describes.  A nonzero count is a flip the restore prevented, not an
+         * error.  On a leg that resumed, a zero count is the invariant #4 reading
+         * that the seam epoch agreed with the writer.
          *
          * @return Disagreeing entries; 0 on any run that never restored a latch.
          */
@@ -845,8 +862,8 @@ namespace GnssProcessor {
 
     private:
         // Test seam: PppModelCanonicalTestAccess (tests/test_resume_signal_canon_restore.cpp)
-        // reaches decideConstellationCanonicals + the latch members so the RS-8 restore's
-        // contract — the first-epoch guard must NOT re-decide a restored latch — can be
+        // reaches decideConstellationCanonicals and the latch members, so the RS-8 restore
+        // contract (the first-epoch guard does not re-decide a restored latch) can be
         // pinned without a full geometry / product chain.  Defined only in gnss_tests.
         friend struct PppModelCanonicalTestAccess;
         // Test seam: PppModelDeclaredLatchTestAccess (tests/test_ledger_emit.cpp)
@@ -864,7 +881,7 @@ namespace GnssProcessor {
 
         PppUtils ppp_utils_;                   /**< Utility helpers for PPP math and constants. */
         std::optional<Ionosphere> ionosphere_; /**< Klobuchar fallback model.  Constructed only when @c model_corrections.enable_klobuchar_ionosphere is true; std::nullopt otherwise.  Constructing it pulls in another @c Model::Geometry plus a Klobuchar coefficient parse, both of which are wasted in IF / DD / PPP-RTK-uncombined where Klobuchar is never queried. */
-        const GlobalIonosphereMap* gim_{ nullptr }; /**< Non-owning pointer to the GIM that supplies absolute STEC and IPP geometry for the higher-order correction.  Injected via @c setGim() by the Application driver once both the PppModel and the GIM exist.  Nullptr when higher-order ionosphere is disabled or no IONEX product resolved — in which case @c computeHigherOrderIonoCorrection returns 0 m and the modeled values reduce to the first-order-only path. */
+        const GlobalIonosphereMap* gim_{ nullptr }; /**< Non-owning pointer to the GIM that supplies absolute STEC and IPP geometry for the higher-order correction.  Injected via @c setGim() by the Application driver once both the PppModel and the GIM exist.  Nullptr when higher-order ionosphere is disabled or no IONEX product resolved; @c computeHigherOrderIonoCorrection then returns 0 m and the modeled values reduce to the first-order-only path. */
         HigherOrderIonosphere higher_order_iono_; /**< Stateless physics helper for the second- and third-order ionospheric delay formulae.  Always constructed; @c computeHigherOrderIonoCorrection consults @c gim_ and the config toggle to decide whether to evaluate. */
         Model::Geometry geometry_;             /**< Geometry and satellite interpolation helpers. */
         Antenna antenna_;                      /**< Antenna model for receiver and satellite corrections. */
@@ -874,21 +891,22 @@ namespace GnssProcessor {
         const std::map<std::string, std::vector<std::string>> signal_priorities_; /**< Signal priority lists (by system). */
         std::vector<double> klobuchar_coeffs_;  /**< Klobuchar coefficients (if available) */
 
-        /// Satellites already logged as phase-gated (broadcast-grade clock →
-        /// code-only).  Without this the info line fires once per epoch per
-        /// satellite for the whole run; we log once per satellite per session.
+        /// Satellites already logged as phase-gated (broadcast-grade clock, so
+        /// code-only).  The info line is logged once per satellite per session
+        /// instead of once per epoch.
         mutable std::set<std::string> sats_phase_gated_;
 
-        /// Card 5 (RTF-1 / plan D1): when true, @c computeModels KEEPS carrier phase
-        /// on broadcast-grade satellites (the brdc_rts network producer estimates the
-        /// satellite clock, so phase is informative) instead of the default code-only
-        /// gate.  Set via @ref setBroadcastPhaseGateSuppressed on producer station
-        /// models only; the default @c false is byte-identical for every other caller.
+        /// When true, @c computeModels keeps carrier phase on broadcast-grade
+        /// satellites (the brdc_rts network producer estimates the satellite clock,
+        /// so phase is informative) instead of applying the default code-only gate.
+        /// Set via @ref setBroadcastPhaseGateSuppressed on producer station models
+        /// only; the default @c false is byte-identical for every other caller
+        /// (card 5, RTF-1 / plan D1).
         bool broadcast_phase_gate_suppressed_{false};
 
-        /// Satellites already logged as phase-RETAINED under the gate-suppressed
-        /// (brdc_rts producer) mode — the one-shot companion to @c sats_phase_gated_,
-        /// so the operator sees the mode once per satellite, not once per epoch.
+        /// Satellites already logged as phase-retained under the gate-suppressed
+        /// (brdc_rts producer) mode: the one-shot companion to @c sats_phase_gated_,
+        /// so the mode is logged once per satellite, not once per epoch.
         mutable std::set<std::string> sats_phase_retained_;
 
         /**
@@ -908,9 +926,9 @@ namespace GnssProcessor {
         std::set<std::string> constellation_canonical_decided_; /**< Constellations whose canonical set is locked. */
 
         /**
-         * @brief Card SID phase 1: the candidates the latch decided on, retained.
+         * @brief The candidates the latch decided on, retained (card SID phase 1).
          *
-         * Filled at the constellation's decision epoch ONLY when
+         * Filled at the constellation's decision epoch only when
          * @c network.signal_roster is armed, and read only by
          * @ref canonicalCandidates.  Nothing in the decision path reads it, so an
          * unarmed run neither allocates nor branches differently.
@@ -918,27 +936,29 @@ namespace GnssProcessor {
         std::map<std::string, std::vector<CanonicalCandidate>> canonical_candidates_;
 
         /**
-         * @brief Card SID phase 5: the producer's declared signal roster, as the
-         *        consumer received it (@ref setDeclaredSignalRoster).
+         * @brief The producer's declared signal roster as the consumer received it
+         *        (@ref setDeclaredSignalRoster; card SID phase 5).
          *
-         * @c present false (the default and every pre-card wire) makes the whole
-         * comparison unreachable, so a consumer of a legacy stream is unchanged.
+         * @c present false (the default, and any wire that carries no declaration)
+         * makes the whole comparison unreachable, so a consumer of such a stream is
+         * unchanged.
          */
         NetworkSignalDeclaration declared_roster_;
-        /// Card SID phase 5b: whether the latch may FOLLOW the declaration.
+        /// Whether the latch may follow the declaration (card SID phase 5b).
         bool declared_roster_act_{ false };
-        /// Card SID phase 5: the census of the comparison (@ref declaredLatchCounters).
+        /// The census of the comparison (@ref declaredLatchCounters; card SID phase 5).
         DeclaredLatchCounters declared_latch_;
 
         /**
-         * @brief Card SID phase 5 (E3 / C1): compare this constellation's picks
-         *        with the declaration, count every class, and: only under
-         *        @ref declared_roster_act_: move the latch onto it.
+         * @brief Compare this constellation's picks with the declaration, count
+         *        every class and, only under @ref declared_roster_act_, move the
+         *        latch onto it (card SID phase 5, E3 / C1).
          *
          * @param cons       Constellation display name.
          * @param band_table The system's RINEX-prefix to band-name table.
          * @param candidates The channels the latch decided on, in priority order.
-         * @param best       The picks, MUTATED only when the latch acts.
+         * @param chosen     The picks, (band, obs-type) -> signal; modified only
+         *                   when the latch acts.
          */
         void applyDeclaredLatch_(
             const std::string& cons,
@@ -947,18 +967,19 @@ namespace GnssProcessor {
             std::map<std::pair<std::string, char>, std::string>& chosen);
 
         /**
-         * @brief Constellations whose latch was RESTORED and not yet audited (RS-8).
+         * @brief Constellations whose latch was restored and not yet audited (RS-8).
          *
          * Populated only by @ref restoreCanonicalSignals.  The next
-         * @c decideConstellationCanonicals call runs the tally for such a
-         * constellation diagnostically — comparing, never writing — then erases it,
-         * so the audit costs exactly one extra tally per restored constellation and
-         * is unreachable on a run that never restores.
+         * @c decideConstellationCanonicals call that sees such a constellation runs
+         * its tally diagnostically (it compares and never writes), then erases it,
+         * so the audit costs one extra tally per restored constellation and is
+         * unreachable on a run that never restores.
          */
         std::set<std::string> constellation_canonical_audit_pending_;
-        long long canon_audit_entries_{ 0 };   /**< RS-8: restored entries the audit compared. */
-        long long canon_audit_disagree_{ 0 };  /**< RS-8: restored entries the first epoch's tally would have picked differently. */
-        /// RS-8 rider label (@ref setCanonicalTraceLabel); empty off the network path.
+        long long canon_audit_entries_{ 0 };   /**< Restored entries the audit compared (RS-8). */
+        long long canon_audit_disagree_{ 0 };  /**< Restored entries the first post-resume tally would have picked differently (RS-8). */
+        /// Station label for the canonical-signal rider (RS-8) and the CSL-2 station
+        /// scope (@ref setCanonicalTraceLabel); empty off the network path.
         std::string canonical_trace_label_;
 
         /**
@@ -984,9 +1005,17 @@ namespace GnssProcessor {
          *        the first epoch's observations.
          *
          * For each not-yet-decided constellation, counts how many satellites
-         * observe each priority-list signal this epoch.  Per (band, obs_type) the
-         * highest count wins, ties broken by signal_priorities_ order.  The
-         * constellation is then marked decided, so later epochs are no-ops.
+         * observe each admitted priority-list signal this epoch and passes the
+         * counts, in priority order, to @ref decideCanonicalPicks under this
+         * station's rule (@ref canonicalRuleForStation).  Under the default
+         * @c CanonicalSignalRule::Count the highest count per (band, obs_type)
+         * wins, ties broken by signal_priorities_ order.  When a declared roster
+         * is present, @ref applyDeclaredLatch_ compares the picks with it and
+         * moves them only under @ref declared_roster_act_.  The constellation is
+         * then marked decided, so later epochs are no-ops for it.  A restored
+         * constellation still pending the audit
+         * (@ref constellation_canonical_audit_pending_) is tallied once more
+         * without changing its latch.
          *
          * @param observations Observations for the current epoch.
          */
@@ -1028,22 +1057,30 @@ namespace GnssProcessor {
         /**
          * @brief Select individual code/phase signals per band (PPP-RTK uncombined).
          *
-         * @param companion_out Optional; card SCC (R1).  When non-null and
+         * Under `channel_mode` "all" on the network path (card SID phase 6b, R1),
+         * the channel widening fills both output sets instead, with every admitted
+         * extra code or phase channel it adds on a selected band whose selected
+         * signal of that type is present this epoch; the two knob-driven additions
+         * described below are then skipped.
+         *
+         * @param companion_out Optional (card SCC, R1).  When non-null and
          *        `network.second_code_channel` is armed on the network path, receives
-         *        the allow-listed band-1 CODE signals this call added BESIDES the one
-         *        the band map selected.  Those keys are also in @p selected_signals —
-         *        the measurement model needs all three of observed / modeled /
-         *        variances to accept a row — so the set is what tells every downstream
-         *        consumer which rows are companions (the Melbourne-Wubbena guard, R4,
-         *        and the cell telemetry, R7).  Left untouched when the knob is off, so
-         *        an unarmed run never allocates.
-         * @param second_phase_out Optional; card SID phase 6a (R1).  When non-null and
+         *        the allow-listed band-1 code signals this call added besides the one
+         *        the band map selected.  Those keys are also in @p selected_signals
+         *        (the measurement model accepts a row only with all three of
+         *        observed / modeled / variances), so the set is what tells every
+         *        downstream consumer which rows are companions (the Melbourne-Wubbena
+         *        guard, R4, and the cell telemetry, R7).  Left untouched when neither
+         *        the knob nor the `channel_mode` "all" widening applies, so such a run
+         *        never allocates.
+         * @param second_phase_out Optional (card SID phase 6a, R1).  When non-null and
          *        `network.second_phase_channel` is armed on the network path, receives
-         *        the allow-listed band-1 PHASE signals this call added BESIDES the one
+         *        the allow-listed band-1 phase signals this call added besides the one
          *        the latch selected.  Same contract as @p companion_out: the keys are
          *        also in @p selected_signals, and the set is what makes a second-phase
          *        row distinguishable downstream (the sigma scale, R5, and the cell
-         *        telemetry, R7).  Left untouched when the knob is off.
+         *        telemetry, R7).  Left untouched when neither the knob nor the
+         *        `channel_mode` "all" widening applies.
          */
         bool selectUncombinedSignals(const RinexObservation& obs, const std::string& system_str,
             const std::map<std::string, std::pair<std::string, std::string>>& freq_band_to_signal,
@@ -1079,9 +1116,12 @@ namespace GnssProcessor {
         /**
          * @brief Base modeled range shared by the iono-free and uncombined paths.
          *
-         * Covers geometric range, satellite clock, relativistic correction, dry
-         * troposphere, antenna PCO/PCV, code/phase bias, Shapiro delay,
-         * atmospheric loading, solid tide and pole tide.
+         * Covers geometric range, satellite clock, relativistic correction, slant
+         * dry troposphere, antenna PCO/PCV and, on phase rows, phase wind-up (both
+         * through Antenna::getAntennaCorrection), code/phase bias (when enabled),
+         * Shapiro delay, ocean tidal and atmospheric pressure loading, and solid
+         * tide.  The pole tide is not included: both callers add
+         * @ref computePoleTideProjection separately.
          *
          * @param obs           RINEX observation (satellite ID, system, time).
          * @param ppp_obs       PppObservation with LOS vector and mapping factors.
@@ -1095,21 +1135,22 @@ namespace GnssProcessor {
             const std::string& signal_type) const;
 
         /**
-         * @brief Additive phase-variance term (m²) for a (sat, signal)
-         *        whose receiver ATX correction was frequency-fallback-
-         *        substituted.
+         * @brief Additive phase-variance term (m²) for a (sat, signal) whose ATX
+         *        correction was frequency-fallback-substituted on the satellite or
+         *        the receiver side (@ref wasAtxSubstituted).
          *
          * Returns 0 for code rows, non-substituted signals, or when
          * model_corrections.atx_substitution_phase_std_m ≤ 0 (the default).
-         * Otherwise @f$(\sigma_\mathrm{atx}/\sin\,\mathrm{el})^2@f$, added to the
-         * stochastic-model phase variance BEFORE any iono-free combination so the
-         * IF coefficients propagate it automatically.
+         * Otherwise @f$(\sigma_\mathrm{atx}/\sin\,\mathrm{el})^2@f$, with sin(el)
+         * floored at 0.05 (about 2.9°), added to the stochastic-model phase
+         * variance before any iono-free combination so the IF coefficients
+         * propagate it.
          *
-         * This targets the azimuthally-symmetric, elevation-dependent receiver-PCV
-         * residual a substituted antenna pattern leaves behind — common across
-         * satellites and aliasing into ZWD / station height.  It is NOT the
-         * per-satellite slowly-varying bias that the ambiguity_q_substituted_atx
-         * random walk already absorbs.
+         * The term targets the azimuthally symmetric, elevation-dependent
+         * receiver-PCV residual a substituted antenna pattern leaves behind, which
+         * is common across satellites and aliases into ZWD and station height.  It
+         * is not the per-satellite, slowly varying bias that the
+         * ambiguity_q_substituted_atx random walk already absorbs.
          *
          * @param signal        RINEX-3 code (e.g. "L8X"); 'C…' rows return 0.
          * @param satellite     Satellite identifier (e.g. "E18").
@@ -1126,8 +1167,9 @@ namespace GnssProcessor {
          * @brief Compute pole-tide LOS projection shared by iono-free and uncombined paths.
          * @param rx_pos Receiver ECEF position.
          * @param time   Epoch time.
-         * @param los    LOS unit vector (receiver?satellite).
-         * @return Pole tide correction projected onto the LOS (meters).
+         * @param los    LOS unit vector (receiver→satellite).
+         * @return Pole-tide site displacement projected onto -LOS (meters); 0 when
+         *         the pole tide is disabled in config.
          */
         double computePoleTideProjection(const Eigen::Vector3d& rx_pos,
             const GnssTime& time,
@@ -1144,7 +1186,8 @@ namespace GnssProcessor {
         /**
          * @brief Process a single iono-free code or phase pair and write results into ppp_obs.
          *
-         * Extracted from the inner lambda of processIonoFreeObservation.
+         * Called by processIonoFreeObservation once per code pair and once per
+         * phase pair.
          *
          * @return true if the pair was successfully modeled.
          */

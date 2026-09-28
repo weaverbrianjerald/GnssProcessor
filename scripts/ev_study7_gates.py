@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Study 7 storm-arm gates (SPEC_event_harness s16.4-s16.5; promoted from the manager scratchpad 2026-09-11) W1/W2/G4/W3(handovers) for arm B against A (scope OFF) and C (cbscope3).
-Usage: cb4_grade.py <B run name> [A run name] [C run name]"""
+"""Study 7 storm-arm gates (SPEC_event_harness s16.4-s16.5): W1 (consumer position error), W2 (the 4.99 h fallout), G4 (wrong-narrowing census) and W3 (phase-anchor handovers), for arm B against baseline A (scope off) and C (cbscope3).
+Usage: ev_study7_gates.py <B run name> [A run name] [C run name]"""
 import csv, collections, math, sys, os
 R = 'C:/GnssProcessor/runs/'; FX = 'C:/GnssProcessor/runs/simnet60_campaign_wu93/'
 B = sys.argv[1]; A = sys.argv[2] if len(sys.argv) > 2 else 'golden_sim_campaign_zwdblk_mwevid'

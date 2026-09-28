@@ -9,24 +9,24 @@
  *
  *     PppModel(rov), PppModel(ref) → BRSD → BSSD → KF
  *
- * BRSD differences out terms common to both receivers — satellite
- * clock, satellite phase bias, common-mode atmospheric residual on
- * short baselines, satellite antenna PCO/PCV — and leaves a per-sat
- * residual containing the rover position error, the rover-vs-reference
+ * BRSD removes the terms common to both receivers (satellite clock,
+ * satellite phase bias, the common-mode atmospheric residual on short
+ * baselines, satellite antenna PCO/PCV).  The per-satellite residual
+ * that remains holds the rover position error, the rover-minus-reference
  * receiver clock offset, the float ambiguity term, and the small
- * residual atmosphere on longer baselines.  Downstream BSSD then
+ * residual atmosphere on longer baselines.  The downstream BSSD step
  * cancels the receiver clock offset and produces DD measurements.
  *
- * The rover-side LOS is preserved (rather than @c los_rov - @c los_ref)
+ * The output carries the rover-side LOS (not @c los_rov - @c los_ref)
  * because in DD baseline mode only the rover position is estimated;
  * the reference station LOS does not multiply any state variable, and
  * would cancel pairwise in the BSSD layer's geometry partial anyway.
  *
- * Stateless / pure: each @c apply() call is independent of every other.
- * No caching, no member variables — single static method.  Variance
- * propagation assumes per-receiver observation noise is independent
- * (a standard assumption that holds for thermal noise; multipath
- * correlations would invalidate it but are not modeled here).
+ * Stateless and pure: each @c apply() call is independent of every
+ * other.  There is no caching and no member variable; the class is a
+ * single static method.  Variance propagation assumes per-receiver
+ * observation noise is independent.  This holds for thermal noise;
+ * multipath correlation would violate it and is not modeled.
  */
 
 #include "common/PppTypes.hpp"
@@ -40,10 +40,10 @@ namespace GnssProcessor {
     /**
      * @brief Output of a single between-receiver SD operation.
      *
-     * Carries the differenced residual and variance, the metadata
-     * needed by downstream BSSD pivot differencing, and the
-     * rover-side LOS used to form the geometry partial w.r.t. the
-     * rover position state.
+     * Holds the differenced residual and variance, the metadata that
+     * downstream BSSD pivot differencing reads, and the rover-side LOS
+     * used to form the geometry partial with respect to the rover
+     * position state.
      */
     struct BrsdObservation {
         std::string satellite;                            ///< Satellite ID (e.g. "G09").
@@ -68,10 +68,10 @@ namespace GnssProcessor {
     /**
      * @brief Stateless between-receiver SD transform.
      *
-     * One static @c apply() per (rov, ref, signal) tuple.  No instance
-     * state, no configuration — the BRSD layer is mathematically a
-     * pure operation.  Aliasing policy and band/code selection are
-     * caller responsibilities; this class just performs the math.
+     * One static @c apply() call per (rov, ref, signal) tuple.  The
+     * class has no instance state and no configuration, since the BRSD
+     * layer is a pure operation.  The caller owns the aliasing policy
+     * and the band/code selection; this class performs the arithmetic.
      */
     class BrsdTransform {
     public:

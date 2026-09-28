@@ -1,18 +1,18 @@
-"""Measurement-residual strip viewer -- the port of ``plotResidualStrip.m``.
+"""Measurement-residual strip viewer, the port of ``plotResidualStrip.m``.
 
 (satellite x epoch) raster of per-satellite measurement residuals from
-``measurement_residuals.csv``, styled after the satellite-status strip.  The
-MATLAB script splits each constellation into *separate* Code and Phase figures
+``measurement_residuals.csv``, styled after the satellite-status strip. The
+MATLAB script splits each constellation into separate Code and Phase figures
 (``GPS Code``, ``GPS Phase``, ``Galileo Code``, ...), one strip-chart tile per
 signal of that measurement type, so each tile stays tall enough to read
-individual satellite rows.  Each tile is a (satellite x epoch) raster coloured
+individual satellite rows. Each tile is a (satellite x epoch) raster coloured
 by the residual value on a symmetric blue->white->red diverging map; cells where
 a satellite is not tracked stay transparent.
 
 ``plot_value`` selects which CSV column to render (defaulting to the MATLAB
 default):
   * ``'standardized'`` -> ``standardized_residual`` (sigma units; one global
-    +/-5 sigma colour limit -- the natural cross-signal default);
+    +/-5 sigma colour limit, the natural cross-signal default);
   * ``'residual'``     -> ``residual_m`` (raw post-fit residual, meters); code
     figures get a 10x looser colour limit than phase figures so the visual
     scale is comparable;
@@ -20,11 +20,11 @@ default):
     code/phase scaling).
 
 BSSD rows are logged as ``"<primary>-<pivot>"``; the primary is kept as the row
-satellite (so one physical sat reads as a single row across pivot handovers) and
--- when ``show_pivot_rows`` is True (the MATLAB default) -- one synthetic
+satellite (so one physical sat reads as a single row across pivot handovers).
+When ``show_pivot_rows`` is True (the MATLAB default), one synthetic
 ``residual=0`` row per (week, tow_s, pivot, signal) is inserted so the pivot's
 row shows as the neutral mid-colour during its tenure instead of going
-transparent.  Synthetic pivot rows are tagged with ``residual_std_m = NaN`` and
+transparent. Synthetic pivot rows are tagged with ``residual_std_m = NaN`` and
 excluded from the per-tile mu/sigma annotation and the text summary.
 
 Built on the shared :func:`gnssviz.strip.build_sat_epoch_strip` renderer, called
@@ -51,7 +51,7 @@ _SYS_PREFIX = {
     "C": "BeiDou", "J": "QZSS", "S": "SBAS",
 }
 
-# (label, signal prefix, code-vs-phase colour-limit scale) -- code signals start
+# (label, signal prefix, code-vs-phase colour-limit scale): code signals start
 # with 'C', phase signals with 'L'.  ``code_scale`` matches the MATLAB
 # ``codeScaleFactor`` default (10x looser limit for code in m-valued modes).
 _MEAS_TYPES = (
@@ -202,7 +202,7 @@ def _melt(df: pd.DataFrame, value_col: str) -> pd.DataFrame:
     the strip renderer; drop blank signals and non-finite values.
 
     ``annot`` is False for synthetic pivot rows (residual_std_m = NaN) so the
-    per-tile mu/sigma/N read-out excludes them -- matching MATLAB's realMask --
+    per-tile mu/sigma/N read-out excludes them (matching MATLAB's realMask)
     while the cells still render.
     """
     sig = df["signal"].astype(str)
@@ -280,7 +280,7 @@ viewer = Viewer(
     title="Measurement residual strip",
     required_csvs=("measurement_residuals.csv",),
     build=build_residual_strip,
-    # Off by default in the report -- the per-signal (sat x epoch) rasters are
+    # Off by default in the report: the per-signal (sat x epoch) rasters are
     # heavy and redundant with the measurement_residuals line plots.  Enable on
     # demand with ``run_report.py --only residual_strip`` (or ``--all``).
     default_enabled=False,

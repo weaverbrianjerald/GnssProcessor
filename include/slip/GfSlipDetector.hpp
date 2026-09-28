@@ -5,23 +5,23 @@
  * @file GfSlipDetector.hpp
  * @brief Geometry-free (GF) cycle slip detector using second-order time-differencing.
  *
- * @note STATUS: STAGED / INCOMPLETE — not compiled or wired into the pipeline.
- *       This detector is intentionally excluded from the build (see
- *       CMakeLists.txt) and has no instantiation path in Application. It is
- *       kept (not abandoned) for a planned use: high-rate (>=1 Hz) real-time
- *       cycle-slip *repair* alongside the MW detector. The high-rate
- *       requirement is intrinsic — at low rates the slowly varying
- *       ionospheric residual contaminates the GF combination and the
- *       second-order time difference no longer isolates the slip. The MW
- *       detector currently provides slip detection with good performance, so
- *       this remains future work. The GF math here has also been reused by
- *       slip/IonoVariabilityMonitor (which IS compiled and active).
+ * @note Status: staged and incomplete; not compiled and not wired into the
+ *       pipeline.  The detector is excluded from the build (see CMakeLists.txt)
+ *       and has no instantiation path in Application.  It is kept for a planned
+ *       use: high-rate (>=1 Hz) real-time cycle-slip repair alongside the MW
+ *       detector.  The high-rate requirement is intrinsic: at low rates the
+ *       slowly varying ionospheric residual contaminates the GF combination and
+ *       the second-order time difference no longer isolates the slip.  Slip
+ *       detection is provided by the MW detector, so this remains future work.
+ *       The GF math here is also used by slip/IonoVariabilityMonitor, which is
+ *       compiled and active.
  *
  * The GF observable (L1 - L2 in meters) is geometry-free but contains the
  * ionospheric delay, which varies slowly over time.  A second-order time
- * difference eliminates linear and quadratic trends:
+ * difference removes the constant (ambiguity) and linear terms and reduces a
+ * quadratic trend to a constant:
  *
- *   TD2_GF(t) = GF(t) - 2·GF(t-1) + GF(t-2) ? noise + slip
+ *   TD2_GF(t) = GF(t) - 2·GF(t-1) + GF(t-2) ≈ noise + slip
  *
  * This avoids the need for a pivot satellite (BSSD) and its associated
  * complexity (pivot selection, pivot changes, constellation coupling).
@@ -29,17 +29,19 @@
  * The detector maintains per-satellite GF arc statistics with a
  * MAD-based adaptive threshold, similar to the MW detector.
  *
- * Robustness features to avoid false-positive cascades:
- *   - Ionospheric variability index (IVI): a cross-satellite MAD of TD2
- *     values is tracked per constellation.  When the IVI exceeds a
- *     threshold the ionosphere is deemed active and GF detections are
- *     suppressed (flagged but not emitted as slips).
- *   - Anti-echo cooldown: after an arc reset, detections are suppressed
- *     for a configurable number of epochs so the TD2 echo signature of a
- *     prior event cannot retrigger.
- *   - Oscillation guard: consecutive opposite-sign detections on the same
- *     arc (equal-but-opposite magnitudes) are suppressed as likely echo
- *     artifacts or ionospheric scintillation.
+ * Safeguards against false-positive cascades:
+ *   - Ionospheric variability index (IVI): per constellation and epoch,
+ *     median(|TD2|) plus the MAD-derived sigma of |TD2| across satellites.
+ *     When the IVI reaches @c kIviThreshold the ionosphere is deemed active
+ *     and GF detections are suppressed (traced and logged, but not returned
+ *     as slips).
+ *   - Anti-echo cooldown: after a detected slip the arc restarts, and the
+ *     first @c kCooldownEpochs TD2 tests on the new arc are suppressed so the
+ *     TD2 echo signature of the prior event cannot retrigger.
+ *   - Oscillation guard: a detection whose TD2 is opposite in sign and
+ *     similar in magnitude to the previous slip on the same arc (within
+ *     @c kOscillationTolerance) is suppressed as a likely echo artifact or
+ *     ionospheric scintillation.
  */
 
 #include "common/PppTypes.hpp"
@@ -60,7 +62,7 @@ namespace GnssProcessor {
      */
     struct GfSlipResult {
         std::string satellite;         ///< Satellite identifier (e.g. "G01").
-        std::string signal;            ///< Signal that slipped (e.g. "L2W"), empty if ambiguous.
+        std::string signal;            ///< Signal that slipped (e.g. "L2W"), empty if ambiguous (always empty from detect(), which reports both signals of the pair).
         std::string amb_key;           ///< Ambiguity key to reset (e.g. "G01_L2W").
         bool iono_stable{ true };      ///< True if ionosphere was stable when detected.
     };
@@ -73,8 +75,9 @@ namespace GnssProcessor {
      *   GF(t) = L1(t, meters) - L2(t, meters)
      * per satellite, then forms a second-order time difference:
      *   TD2_GF(t) = GF(t) - 2·GF(t-1) + GF(t-2)
-     * This cancels the ionospheric delay up to quadratic order, leaving
-     * only noise (and any cycle-slip discontinuity).
+     * This cancels the ambiguity and the linear part of the ionospheric
+     * delay (a quadratic part leaves a constant), leaving mainly noise and
+     * any cycle-slip discontinuity.
      *
      * A MAD-based adaptive threshold flags outliers as slips.  Multiple
      * safeguards prevent false-positive cascades during ionospheric
@@ -170,13 +173,14 @@ namespace GnssProcessor {
         /** Maximum number of recent TD values for MAD computation. */
         static constexpr size_t kGfWindowSize = 30;
 
-        /** Minimum epochs before adaptive threshold is used. */
+        /** Minimum TD2 window entries before the adaptive threshold is used;
+         *  no detection is made on an arc before then. */
         static constexpr size_t kMinEpochsForAdaptive = 5;
 
         /** MAD sigma multiplier for adaptive threshold. */
         static constexpr double kMadSigmaMultiplier = 6.0;
 
-        /** Minimum slip threshold in meters (roughly 1 L1 wavelength). */
+        /** Minimum slip threshold in meters (about half an L1 wavelength, 0.19 m). */
         static constexpr double kMinThresholdM = 0.10;
 
         /** Maximum inter-epoch gap (seconds) before arc reset. */
@@ -185,14 +189,15 @@ namespace GnssProcessor {
         /** Anti-echo cooldown after a slip detection (epochs). */
         static constexpr size_t kCooldownEpochs = 3;
 
-        /** Ionospheric Variability Index threshold (meters).
-         *  When the cross-satellite MAD of |TD2| exceeds this value the
-         *  ionosphere is deemed active and GF detections are suppressed. */
+        /** Ionospheric variability index threshold (meters).
+         *  When a constellation's IVI (median plus MAD-derived sigma of |TD2|
+         *  across its satellites) reaches this value, the ionosphere is deemed
+         *  active and that constellation's GF detections are suppressed. */
         static constexpr double kIviThreshold = 0.06;
 
-        /** Oscillation guard: ratio of current TD2 to last slip TD2.
-         *  If   last_slip_td2 / td2_gf ? [-1.0-tol, -1.0+tol]  the
-         *  detection is likely an echo and is suppressed. */
+        /** Oscillation guard tolerance on the ratio of the current TD2 to the
+         *  last slip's TD2.  If  td2_gf / last_slip_td2 ∈ (-1.0-tol, -1.0+tol)
+         *  the detection is likely an echo and is suppressed. */
         static constexpr double kOscillationTolerance = 0.3;
 
         /**
@@ -220,14 +225,15 @@ namespace GnssProcessor {
         /**
          * @brief Compute ionospheric variability index for a constellation.
          *
-         * Collects all current-epoch |TD2| values for arcs in the given
-         * constellation and returns the MAD of those values.  High IVI
-         * means the ionosphere is active across multiple satellites,
-         * which is unlikely to be caused by cycle slips.
+         * Takes the current-epoch TD2 values of the arcs in one constellation
+         * and returns median(|TD2|) plus the MAD-derived sigma of |TD2|.  A high
+         * IVI means the ionosphere is active across multiple satellites, which
+         * cycle slips are unlikely to cause.
          *
-         * @param constellation_td2 Vector of |TD2| values for all arcs
-         *                          in a constellation this epoch.
-         * @return IVI in meters, or 0.0 if insufficient data.
+         * @param constellation_td2 TD2 values (signed; the absolute value is
+         *                          taken inside) for all arcs in a constellation
+         *                          this epoch.
+         * @return IVI in meters, or 0.0 when fewer than 3 values are given.
          */
         static double computeIvi(const std::vector<double>& constellation_td2);
 

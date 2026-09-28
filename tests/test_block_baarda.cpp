@@ -1,51 +1,47 @@
 /**
  * @file test_block_baarda.cpp
- * @brief BLOCKFORMAL — the (station, satellite) LOS block outlier census
- *        (docs/SPEC_redundancy_census.md), BB-INC-0: the residual-cofactor kernel.
+ * @brief Tests for the (station, satellite) LOS block outlier census (BLOCKFORMAL,
+ *        docs/SPEC_redundancy_census.md), starting with the residual-cofactor kernel
+ *        (BB-INC-0).
  *
- * LASER Guide v2.7 slide 5-98 states the gap this card exists to close: there is
- * "not necessarily a one-to-one correspondence between large residuals and
- * outliers".  ONE physical fault on ONE line of sight — multipath, a wet radome
- * lobe, an unflagged slip — lands on every band's code and phase row at once and
- * is then SMEARED by the adjustment across all of them.  The producer's tiers
- * straddle exactly that unit: per-row w-tests sit below it, station-level median
- * polish sits above it, and nothing in between can say WHICH LOS carried a fault.
- * That is the gap that made the 78-station mass refloat unattributable.
+ * LASER Guide v2.7 slide 5-98 notes that there is "not necessarily a one-to-one
+ * correspondence between large residuals and outliers".  One physical fault on one
+ * line of sight (multipath, a wet radome lobe, an unflagged slip) enters every band's
+ * code and phase row at once, and the adjustment then spreads it across all of them.
+ * The producer's QC tiers sit on either side of that unit: per-row w-tests below it,
+ * station-level median polish above it.  Neither can say which LOS carried a fault.
  *
- * INC-0 lands the one primitive the middle tier needs and nothing else:
+ * INC-0 adds the one primitive the middle tier needs:
  * @ref NetworkNormalEquations::blockResidualCofactor, the b×b residual cofactor
- * @f$Q_{\tilde e,B} = (P^{-1} - A N^{-} A^\top)_{BB}@f$ — @ref rowRedundancy with
- * the off-diagonals KEPT.  What is worth testing is therefore not "does the
- * arithmetic run" but the four claims that fail silently if they are wrong:
+ * @f$Q_{\tilde e,B} = (P^{-1} - A N^{-} A^\top)_{BB}@f$, which is @ref rowRedundancy
+ * with the off-diagonals kept.  The tests cover four properties that fail silently
+ * when wrong:
  *
- *   1. It is the REAL cofactor — against an independent DENSE GLS oracle, not
- *      against the kernel's own Schur reduction.  A wrong marginalization still
- *      returns a plausible symmetric matrix and nobody can tell.
- *   2. A BLOCK'S cofactor does not depend on how many of the station's rows were
- *      handed over with it.  The sweep passes one LOS at a time; a kernel that
- *      re-derived normals from the rows it was given would be wrong in exactly
- *      the way that never shows up on a full-station call.
- *   3. It is DATUM-INVARIANT (standing invariant 5 / SPEC §10.5).  Residual
- *      quadratic forms must not care which clock got pinned, and the datum frame
- *      enters this kernel through a caller-supplied covariance — the one place a
- *      frame error could hide.
- *   4. THE SMEARING IS REAL AND THE OFF-DIAGONALS ARE WHERE IT LIVES.  This is
- *      the card's entire thesis, and if it does not hold on a hand-built network
- *      it holds nowhere: an unflagged half-cycle slip on both bands leaves EVERY
- *      w-test in the network silent while the block statistic is 2.4× over its
- *      threshold — and the same slip with the opposite sign on band 2 is caught
- *      by the row tier at 24σ.  Identical fault magnitude, opposite verdicts,
- *      and the only thing that distinguishes them is the off-diagonal structure
- *      this kernel returns.
+ *   1. It is the true cofactor, checked against an independent dense GLS oracle
+ *      rather than the kernel's own Schur reduction.  A wrong marginalization still
+ *      returns a plausible symmetric matrix.
+ *   2. A block's cofactor does not depend on how many of the station's rows are
+ *      passed with it.  The sweep passes one LOS at a time; a kernel that re-derived
+ *      normals from the rows it was given would pass every full-station call and
+ *      fail here.
+ *   3. It is datum-invariant (standing invariant 5, SPEC §10.5).  Residual quadratic
+ *      forms do not depend on which clock is pinned, and the datum frame enters this
+ *      kernel through a caller-supplied covariance, so a frame error would show here.
+ *   4. The smearing is real and lives in the off-diagonals.  An unflagged half-cycle
+ *      slip of the same sign on both bands leaves every w-test in the network below
+ *      its critical value while the block statistic is 2.4× over its threshold; the
+ *      same slip with the opposite sign on band 2 is caught by the row tier at 24σ.
+ *      The fault magnitude is identical, the verdicts are opposite, and only the
+ *      off-diagonal structure returned by this kernel distinguishes the two.
  *
- * Plus the contract that keeps the census honest: a fully-leveraged block comes
- * back SINGULAR rather than clamped, because that singularity IS the consumer's
- * UNCHECKABLE test (SPEC §3).  @ref rowRedundancy clamps @f$r_i@f$ into [0,1] and
- * must; this method must not, or an uninvertible block gets silently inverted
- * through instead of counted.
+ * Contract: a fully-leveraged block is returned singular rather than clamped,
+ * because that singularity is the consumer's UNCHECKABLE test (SPEC §3).
+ * @ref rowRedundancy clamps @f$r_i@f$ into [0,1]; this method does not, so an
+ * uninvertible block is counted instead of inverted.
  *
- * NOT tested here, because INC-0 wires nothing: the sweep (INC-1), the
- * corroboration join (INC-2), the smearing fraction (INC-3), the config knobs.
+ * Not tested here, because INC-0 wires nothing: the sweep (INC-1), the
+ * corroboration join (INC-2), the smearing fraction (INC-3) and the config knobs.
+ * The second suite in this file (BlockBaardaSweepTest) covers INC-1..3.
  */
 
 #include <gtest/gtest.h>
@@ -69,21 +65,20 @@ namespace GnssProcessor {
 namespace {
 
 // ---------------------------------------------------------------------------
-//  Critical values — REFERENCE POINTS ONLY.
+//  Critical values, used as reference points only.
 //
 //  These tabular numbers are exact for the constructions below (Gaussian by
-//  fiat, sigma0 known = 1), which is what makes them usable inside a unit test.
-//  They are NOT an endorsement of tabular critical values in the sweep: SPEC
-//  rule §2.1 is "empirical critical values, never tabular", because D5 measured
-//  the Gaussian tail wrong by orders of magnitude on real residuals.  INC-1
-//  ships an empirical exceedance ladder per family; nothing here imports
-//  Snow & Schaffrin's F(alpha, b, r).
+//  construction, sigma0 known = 1), which is why a unit test may use them.  The
+//  sweep does not use tabular critical values: SPEC rule §2.1 requires empirical
+//  critical values, because on real residuals the Gaussian tail is wrong by orders
+//  of magnitude (D5).  INC-1 keeps an empirical exceedance ladder per family;
+//  nothing here uses Snow & Schaffrin's F(alpha, b, r).
 // ---------------------------------------------------------------------------
 constexpr double kCrit1D = 3.2905;      ///< |w| critical value, alpha = 0.001
 constexpr double kCritChi2B4 = 18.4668; ///< chi2 with 4 dof, alpha = 0.001
 
 // ===========================================================================
-//  Dense GLS oracle — deliberately independent of the arrowhead kernel.
+//  Dense GLS oracle, independent of the arrowhead kernel by design.
 // ===========================================================================
 
 /// Stacked system + its residual cofactor Q = P^-1 - A (A'WA + Prior)^-1 A'.
@@ -91,7 +86,7 @@ struct DenseGls {
     Eigen::MatrixXd A;      ///< rows × params
     Eigen::VectorXd w;      ///< per-row information weight (1/sigma^2)
     Eigen::MatrixXd cov;    ///< (A'WA + Prior)^-1
-    Eigen::MatrixXd Q;      ///< residual cofactor over ALL rows
+    Eigen::MatrixXd Q;      ///< residual cofactor over all rows
 
     /// The least-squares residuals of an observation vector.
     Eigen::VectorXd residuals(const Eigen::VectorXd& y) const {
@@ -133,7 +128,7 @@ double relDiff(const Eigen::MatrixXd& a, const Eigen::MatrixXd& b) {
 }
 
 // ===========================================================================
-//  Toy A — the census's two-station system (small, well-conditioned, no gauge).
+//  Toy A: the census's two-station system (small, well-conditioned, no gauge).
 // ===========================================================================
 
 struct TwoStationToy {
@@ -182,25 +177,25 @@ TwoStationToy buildTwoStation(NetworkNormalEquations& neq) {
         w.segment(k * m, m) = t.w[k];
     }
     t.dense = finishDense(A, w);
-    // The kernel's datum-frame shared covariance IS the shared block of the
-    // dense inverse: no gauge here, so nothing is pinned or zeroed.
+    // The kernel's datum-frame shared covariance is the shared block of the
+    // dense inverse: there is no gauge here, so nothing is pinned or zeroed.
     t.cov_free = t.dense.cov.topLeftCorner(ns, ns);
     return t;
 }
 
 // ===========================================================================
-//  Toy B — a physically-shaped network with a real rank-1 clock gauge.
+//  Toy B: a physically shaped network with a rank-1 clock gauge.
 //
 //  kR stations × kS satellites, four rows per LOS (code/phase × two bands),
-//  which is the block this card enumerates.  Shared = per-satellite clock;
-//  local = receiver clock, per-satellite slant iono, per-(satellite, band)
+//  which is the block this card enumerates.  Shared: per-satellite clock.
+//  Local: receiver clock, per-satellite slant iono, per-(satellite, band)
 //  ambiguity.  The iono and ambiguity priors stand in for the SH tie and the
-//  phase-leveling carry — without them the LOS block is rank-deficient on its
-//  own and every phase row is uncheckable, which is a different card.
+//  phase-leveling carry; without them the LOS block is rank-deficient on its
+//  own and every phase row is uncheckable, which is outside this card.
 //
-//  Its null space is the classic one: adding a constant to every receiver clock
-//  AND every satellite clock leaves every row unchanged, so the shared block is
-//  rank-deficient by exactly one and needs a datum pin.
+//  The null space is the usual one: adding a constant to every receiver clock
+//  and every satellite clock leaves every row unchanged, so the shared block is
+//  rank-deficient by one and needs a datum pin.
 // ===========================================================================
 
 constexpr int kR = 3;                         ///< stations
@@ -246,7 +241,7 @@ struct LosNet {
     Eigen::VectorXd w[kR];
     std::size_t slot[kR]{};
     Eigen::MatrixXd cov_free;   ///< datum-frame shared cov, pinned col zeroed
-    DenseGls dense;             ///< the pinned column DROPPED outright
+    DenseGls dense;             ///< the pinned column dropped outright
     Eigen::Index pin_col{0};
     std::vector<Eigen::Index> keep;  ///< dense parameter columns retained
 
@@ -263,7 +258,7 @@ struct LosNet {
         }
     }
 
-    /// The same LOS's rows in the DENSE stack.
+    /// The same LOS's rows in the dense stack.
     std::vector<Eigen::Index> denseRows(int r, int k) const {
         return {globalRow(r, k, kC1), globalRow(r, k, kC2),
                 globalRow(r, k, kL1), globalRow(r, k, kL2)};
@@ -322,12 +317,11 @@ LosNet buildLosNet(NetworkNormalEquations& neq, Eigen::Index pin_col) {
         for (std::size_t i = 0; i < cols.size(); ++i) prior(base + cols[i]) = info[i];
     }
 
-    // The datum: a Dirichlet pin on one satellite clock, exactly as the driver
-    // realizes it.  The kernel then treats that column as EXACT by zeroing its
-    // row/col in the shared covariance — which is what the dense oracle does by
-    // DROPPING the column outright.  The two agree in the pin -> infinity limit,
-    // and kPin sits far enough above the normals' scale to make that exact to
-    // ~1e-13 relative.
+    // The datum: a Dirichlet pin on one satellite clock, as the driver realizes
+    // it.  The kernel then treats that column as exact by zeroing its row/col in
+    // the shared covariance; the dense oracle drops the column outright.  The two
+    // agree in the pin -> infinity limit, and kPin sits far enough above the
+    // normals' scale for agreement to ~1e-13 relative.
     Eigen::MatrixXd pin_info = Eigen::MatrixXd::Zero(kS, kS);
     pin_info(pin_col, pin_col) = kPin;
     neq.addSharedInfo(pin_info, Eigen::VectorXd::Zero(kS));
@@ -364,7 +358,7 @@ double blockStatistic(const Eigen::MatrixXd& Q_block, const Eigen::VectorXd& e_b
 }  // namespace
 
 // ===========================================================================
-//  1. It is the real residual cofactor (dense GLS oracle) — SPEC §7.1
+//  1. It is the true residual cofactor (dense GLS oracle), SPEC §7.1
 // ===========================================================================
 
 TEST(BlockBaardaTest, BlockCofactorMatchesDenseGls) {
@@ -381,9 +375,9 @@ TEST(BlockBaardaTest, BlockCofactorMatchesDenseGls) {
             for (Eigen::Index j = 0; j < m; ++j)
                 EXPECT_NEAR(Q(i, j), t.dense.Q(k * m + i, k * m + j), 1e-10)
                     << "station " << k << " entry (" << i << "," << j << ")";
-        // Exactly symmetric, not merely symmetric to tolerance: the consumer
-        // factorizes this matrix, and an LDL^T of an asymmetric input is a
-        // silently wrong quadratic form rather than an error.
+        // Exactly symmetric, not symmetric to a tolerance: the consumer
+        // factorizes this matrix, and an LDL^T of an asymmetric input yields a
+        // wrong quadratic form without any error.
         for (Eigen::Index i = 0; i < m; ++i)
             for (Eigen::Index j = 0; j < m; ++j)
                 EXPECT_EQ(Q(i, j), Q(j, i));
@@ -391,15 +385,15 @@ TEST(BlockBaardaTest, BlockCofactorMatchesDenseGls) {
 }
 
 // ===========================================================================
-//  2. A block's cofactor does not depend on what was handed over WITH it
+//  2. A block's cofactor does not depend on which other rows are passed with it
 // ===========================================================================
 
 TEST(BlockBaardaTest, SubsetOfRowsReturnsExactlyThatSubBlock) {
-    // The sweep passes ONE LOS at a time.  The covariance comes from the cached
+    // The sweep passes one LOS at a time.  The covariance comes from the cached
     // factors, which already hold every row of every station, so a two-row call
     // must return the same numbers as the corresponding corner of the four-row
-    // call.  A kernel that re-derived normals from the rows it was handed would
-    // pass every full-station test and fail only here — where it matters.
+    // call.  A kernel that re-derived normals from the rows it was given would
+    // pass every full-station test and fail only here.
     NetworkNormalEquations neq(TwoStationToy::kNs);
     const TwoStationToy t = buildTwoStation(neq);
 
@@ -420,8 +414,8 @@ TEST(BlockBaardaTest, SubsetOfRowsReturnsExactlyThatSubBlock) {
     EXPECT_LT(relDiff(part, subBlock(full, pick)), 1e-14);
     EXPECT_LT(relDiff(part, subBlock(t.dense.Q, pick)), 1e-10);
 
-    // b = 1 is the scalar w-test's denominator — the row tier is this method's
-    // special case, not a parallel instrument.
+    // b = 1 gives the scalar w-test's denominator: the row tier is a special case
+    // of this method, not a separate instrument.
     for (Eigen::Index i = 0; i < TwoStationToy::kM; ++i) {
         const Eigen::MatrixXd one = neq.blockResidualCofactor(
             t.slot[0], t.A_s[0].row(i), t.A_r[0].row(i),
@@ -432,7 +426,7 @@ TEST(BlockBaardaTest, SubsetOfRowsReturnsExactlyThatSubBlock) {
 }
 
 // ===========================================================================
-//  3. The diagonal IS rowRedundancy — the two tiers are one instrument
+//  3. The diagonal reproduces rowRedundancy: the two tiers are one instrument
 // ===========================================================================
 
 TEST(BlockBaardaTest, DiagonalReproducesRowRedundancy) {
@@ -455,7 +449,7 @@ TEST(BlockBaardaTest, DiagonalReproducesRowRedundancy) {
 }
 
 // ===========================================================================
-//  4. Rank-deficient datum: matches the dense fit with the pin DROPPED
+//  4. Rank-deficient datum: matches the dense fit with the pin dropped
 // ===========================================================================
 
 TEST(BlockBaardaTest, RankDeficientDatumMatchesDenseGls) {
@@ -463,8 +457,8 @@ TEST(BlockBaardaTest, RankDeficientDatumMatchesDenseGls) {
     // clock gauge).  The kernel sees a Dirichlet pin plus a zeroed covariance
     // row/col; the oracle sees that parameter removed from the model entirely.
     // Those are the same estimator, and the block cofactor must agree across all
-    // twelve LOS blocks — this is the only test where the datum machinery is
-    // between the kernel and the truth.
+    // twelve LOS blocks.  This is the only test in which the datum machinery sits
+    // between the kernel and the reference.
     NetworkNormalEquations neq(kS);
     const LosNet net = buildLosNet(neq, /*pin_col=*/0);
 
@@ -483,14 +477,14 @@ TEST(BlockBaardaTest, RankDeficientDatumMatchesDenseGls) {
 }
 
 // ===========================================================================
-//  5. Datum invariance — standing invariant 5 / SPEC §10.5
+//  5. Datum invariance: standing invariant 5, SPEC §10.5
 // ===========================================================================
 
 TEST(BlockBaardaTest, BlockCofactorIsDatumInvariant) {
-    // Residual quadratic forms are gauge-free: which satellite clock realizes
-    // the datum must not move a single digit of the cofactor.  The datum enters
-    // this kernel through a caller-supplied covariance, so a frame error would
-    // land HERE and nowhere else — and it would look like a plausible matrix.
+    // Residual quadratic forms are gauge-free: the choice of satellite clock that
+    // realizes the datum must not change the cofactor (tolerance 1e-9 relative).
+    // The datum enters this kernel only through a caller-supplied covariance, so
+    // a frame error would appear here, as a plausible-looking matrix.
     NetworkNormalEquations neq_a(kS), neq_b(kS);
     const LosNet a = buildLosNet(neq_a, /*pin_col=*/0);
     const LosNet b = buildLosNet(neq_b, /*pin_col=*/2);
@@ -510,18 +504,18 @@ TEST(BlockBaardaTest, BlockCofactorIsDatumInvariant) {
 }
 
 // ===========================================================================
-//  6. THE SMEARING — the reason this card exists, as a unit test (SPEC §7.2)
+//  6. Smearing, the card's motivating case, as a unit test (SPEC §7.2)
 // ===========================================================================
 
 TEST(BlockBaardaTest, SmearedFaultIsSilentPerRowAndLoudPerBlock) {
-    // The motivating fault, physically: an unflagged HALF-CYCLE slip on both
-    // bands of one LOS.  It is absorbed almost entirely by that LOS's ambiguity
-    // and iono states and smeared over all four of its rows, so no single row
-    // stands out — but it violates the near -0.87 correlation the cofactor
-    // holds between the two phase rows, and the block sees that immediately.
+    // The motivating fault: an unflagged half-cycle slip on both bands of one
+    // LOS.  That LOS's ambiguity and iono states absorb almost all of it, and
+    // the remainder is spread over its four rows, so no single row stands out.
+    // The residual pattern does violate the near -0.87 correlation the cofactor
+    // holds between the two phase rows, and the block statistic detects that.
     //
-    // The SPEC's wording is "a fault split evenly across 4 rows"; a real slip is
-    // the more faithful version of the same claim and is what gets run here.
+    // The SPEC describes "a fault split evenly across 4 rows"; a physical slip
+    // is a closer model of the same case and is what this test injects.
     NetworkNormalEquations neq(kS);
     const LosNet net = buildLosNet(neq, /*pin_col=*/0);
     constexpr int kFaultSta = 0, kFaultSat = 3;
@@ -533,10 +527,9 @@ TEST(BlockBaardaTest, SmearedFaultIsSilentPerRowAndLoudPerBlock) {
         neq.blockResidualCofactor(net.slot[kFaultSta], Bs, Br, bw, net.cov_free);
     const std::vector<Eigen::Index> rows = net.denseRows(kFaultSta, kFaultSat);
 
-    // Every row of this block is genuinely checkable on its own — the effect
-    // below is smearing, NOT an uncheckable cell hiding a fault (that is the
-    // redundancy census's tier, and conflating the two would make this test
-    // prove the wrong thing).
+    // Every row of this block is checkable on its own (r > 0.3), so the effect
+    // below is smearing and not an uncheckable cell hiding a fault.  Uncheckable
+    // cells belong to the redundancy census's tier, a different claim.
     for (Eigen::Index i = 0; i < 4; ++i)
         EXPECT_GT(bw(i) * Q(i, i), 0.3) << "row " << i << " is not checkable";
 
@@ -552,31 +545,31 @@ TEST(BlockBaardaTest, SmearedFaultIsSilentPerRowAndLoudPerBlock) {
         return eb;
     };
 
-    // ---- same sign on both bands: EVERY w-test in the network is silent -----
+    // ---- same sign on both bands: every w-test in the network stays quiet ---
     const Eigen::VectorXd e_same = inject(0.5, 0.5);
     const Eigen::VectorXd w_same = wTests(net.dense, e_same);
     EXPECT_LT(w_same.maxCoeff(), kCrit1D)
         << "the row tier must be blind to this fault for the test to mean anything";
     const double T_same = blockStatistic(Q, blockRes(e_same));
     EXPECT_GT(T_same, kCritChi2B4) << "the block tier must see it";
-    // Measured 43.7 against a 18.47 threshold — a 2.4x margin, asserted loosely
-    // so the test tracks the claim rather than the toy's last digit.
+    // Measured 43.7 against the 18.47 threshold (a 2.4x margin).  The bound is
+    // loose so the test tracks the claim rather than the toy's last digit.
     EXPECT_GT(T_same, 30.0);
 
-    // ---- opposite sign, IDENTICAL magnitude: the row tier catches it --------
+    // ---- opposite sign, identical magnitude: the row tier catches it --------
     // Same fault size, same rows, same block cofactor.  The only difference is
-    // the sign pattern, which is precisely what the off-diagonals encode: a
-    // diagonal-only statistic cannot tell these two cases apart, and it must.
+    // the sign pattern, which is what the off-diagonals encode; a diagonal-only
+    // statistic cannot tell these two cases apart.
     const Eigen::VectorXd e_opp = inject(0.5, -0.5);
     const Eigen::VectorXd w_opp = wTests(net.dense, e_opp);
     EXPECT_GT(w_opp.maxCoeff(), 5.0 * kCrit1D);  // measured 24.1, i.e. 7.3x
     EXPECT_GT(blockStatistic(Q, blockRes(e_opp)), T_same);
 
-    // ---- the converse: independent faults must NOT pool into a clean block --
-    // Three sibling LOS blocks at the SAME station each take a 1 m code fault.
+    // ---- the converse: independent faults do not pool into a clean block ----
+    // Three sibling LOS blocks at the same station each take a 1 m code fault.
     // The block statistic is local: it must not accumulate its station's total
-    // misfit, or every block at a bad station would flag and the tier would be
-    // no better than the station-level polish it sits under.
+    // misfit, or every block at a faulted station would flag and the tier would
+    // add nothing over the station-level polish above it.
     Eigen::VectorXd y = Eigen::VectorXd::Zero(net.dense.A.rows());
     for (int k = 0; k < 3; ++k) y(globalRow(kFaultSta, k, kC1)) += 1.0;
     const Eigen::VectorXd e_multi = net.dense.residuals(y);
@@ -597,15 +590,15 @@ TEST(BlockBaardaTest, SmearedFaultIsSilentPerRowAndLoudPerBlock) {
 }
 
 // ===========================================================================
-//  7. A fully-leveraged block comes back SINGULAR, not clamped (SPEC §3)
+//  7. A fully-leveraged block is returned singular, not clamped (SPEC §3)
 // ===========================================================================
 
 TEST(BlockBaardaTest, FullyLeveragedBlockIsSingularAndNotClamped) {
-    // Two rows, each feeding its OWN otherwise-unconstrained local state: both
-    // are absorbed exactly, both have r ~ 0, and the block cofactor is ~0 —
-    // singular, uninvertible, UNCHECKABLE.  rowRedundancy clamps r into [0,1]
-    // and must; this method must NOT clamp, because the singularity is the only
-    // signal the consumer has that the block may never be inverted through.
+    // Two rows, each feeding its own otherwise-unconstrained local state: both
+    // are absorbed exactly, both have r ~ 0, and the block cofactor is ~0, that
+    // is, singular and UNCHECKABLE.  rowRedundancy clamps r into [0,1]; this
+    // method does not clamp, because the singularity is the consumer's only
+    // signal that the block must not be inverted.
     constexpr Eigen::Index ns = 1;
     constexpr double kWhisper = 1e-9;  // just enough to factorize N_rr
     NetworkNormalEquations neq(ns);
@@ -628,8 +621,8 @@ TEST(BlockBaardaTest, FullyLeveragedBlockIsSingularAndNotClamped) {
 
     const Eigen::MatrixXd Q = neq.blockResidualCofactor(s1, A1s, A1r, w1, cov_free);
     ASSERT_EQ(Q.rows(), 2);
-    // P^-1 is the identity here, so a healthy block would be O(1).  This one is
-    // numerically zero: any conditioning test the consumer applies rejects it.
+    // P^-1 is the identity here, so a well-conditioned block would be O(1).  This
+    // one is numerically zero: any conditioning test the consumer applies rejects it.
     EXPECT_LT(Q.cwiseAbs().maxCoeff(), 1e-6);
     const Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(Q);
     EXPECT_LT(std::abs(es.eigenvalues()(1)), 1e-6)
@@ -657,10 +650,10 @@ TEST(BlockBaardaTest, ShapeContractAndValidation) {
         Eigen::VectorXd(0), t.cov_free);
     EXPECT_EQ(none.size(), 0);
 
-    // A non-positive weight puts a non-finite entry on the diagonal ON PURPOSE
-    // (header note 1): rowRedundancy would clamp such a row to r = 0, which is
-    // indistinguishable from a healthy uncheckable riser, whereas an infinite
-    // cofactor entry fails the caller's finiteness test outright.
+    // A non-positive weight puts a non-finite entry on the diagonal by design
+    // (header note 1): rowRedundancy would clamp such a row to r = 0, which looks
+    // the same as a valid uncheckable row, whereas an infinite cofactor entry
+    // fails the caller's finiteness test outright.
     Eigen::VectorXd w_bad = t.w[0];
     w_bad(2) = 0.0;
     const Eigen::MatrixXd Q_bad =
@@ -684,20 +677,20 @@ TEST(BlockBaardaTest, ShapeContractAndValidation) {
 
 
 // ===========================================================================
-//  INC-1..3 — the sweep, the ladder, the calibration and the smearing fraction
+//  INC-1..3: the sweep, the ladder, the calibration and the smearing fraction
 //
-//  A separate suite because it drives a different object: everything above tests
-//  the KERNEL (an Eigen quantity), everything below tests the ACCUMULATOR (a
-//  pure-numeric leaf driven with synthetic blocks of known truth, the
-//  NetworkPriorResidual pattern).  Both live in this file because they are one
-//  card, and the project's rule is one suite NAME to one file — not one suite
-//  per file.
+//  A separate suite because it drives a different object: the tests above cover
+//  the kernel (an Eigen quantity); the tests below cover the accumulator (a
+//  pure-numeric leaf driven with synthetic blocks of known truth, following the
+//  NetworkPriorResidual pattern).  Both live in this file because they belong to
+//  one card; the project's rule is that each suite name is owned by one file, not
+//  that each file holds one suite.
 // ===========================================================================
 
 namespace {
 
-/// Deterministic draws.  A fixed seed, because a statistical test that fails one
-/// run in twenty is worse than no test at all.
+/// Deterministic draws.  The seed is fixed so that the statistical tests do not
+/// fail intermittently.
 struct Rng {
     std::mt19937_64 g{20260804u};
     std::normal_distribution<double> nd{0.0, 1.0};
@@ -707,11 +700,11 @@ struct Rng {
         for (int i = 0; i < k; ++i) { const double z = normal(); s += z * z; }
         return s;
     }
-    /// Student-t with @p nu degrees of freedom — the D5 heavy-tail reality.
+    /// Student-t with @p nu degrees of freedom: the heavy-tailed case measured by D5.
     double studentT(int nu) { return normal() / std::sqrt(chi2(nu) / nu); }
 };
 
-/// A synthetic block drawn from the NULL at a known scale: T_B = s0^2 * chi2_b/b.
+/// A synthetic block drawn from the null at a known scale: T_B = s0^2 * chi2_b/b.
 NetworkBlockBaarda::Input nullBlock(Rng& rng, int b, double sigma0,
                                     const char* sat = "G01") {
     NetworkBlockBaarda::Input in;
@@ -738,13 +731,13 @@ void feedNull(NetworkBlockBaarda& acc, Rng& rng, int b, double sigma0,
 }  // namespace
 
 // ---------------------------------------------------------------------------
-//  The chi-square-b rescaling — the correction SPEC 3's literal recipe omits
+//  The chi-square-b rescaling, a correction the literal recipe in SPEC 3 omits
 // ---------------------------------------------------------------------------
 
 TEST(BlockBaardaSweepTest, Chi2GeoMeanMatchesTheClosedForm) {
-    // 2*exp(psi(b/2)).  If this drifts, every sigma0 in the card drifts with it
-    // and the whole ladder silently re-scales — so it is pinned against
-    // independently computed values, not against its own recurrence.
+    // 2*exp(psi(b/2)).  An error here shifts every sigma0 in the card and
+    // re-scales the whole ladder, so it is pinned against independently computed
+    // values rather than against its own recurrence.
     EXPECT_NEAR(blockChi2GeoMean(1),  0.2807297417756531,  1e-9);
     EXPECT_NEAR(blockChi2GeoMean(2),  1.1229189670878104,  1e-9);
     EXPECT_NEAR(blockChi2GeoMean(3),  2.0743278106186143,  1e-9);
@@ -752,19 +745,19 @@ TEST(BlockBaardaSweepTest, Chi2GeoMeanMatchesTheClosedForm) {
     EXPECT_NEAR(blockChi2GeoMean(6),  5.0325736616727479,  1e-9);
     EXPECT_NEAR(blockChi2GeoMean(8),  7.0235223323914848,  1e-9);
     EXPECT_NEAR(blockChi2GeoMean(12), 11.0150756589518970, 1e-8);
-    // b = 1 must return NetworkCarryVce's OWN constant bit-for-bit, so the
-    // rescaling factor is exactly 1.0 there and the D5 feed is unchanged.
+    // b = 1 returns NetworkCarryVce's own constant bit-for-bit, so the rescaling
+    // factor is exactly 1.0 there and the D5 feed is unchanged.
     EXPECT_EQ(blockChi2GeoMean(1), kBlockChi2GeoMean1);
     EXPECT_EQ(blockChi2GeoMean(0), kBlockChi2GeoMean1);   // degenerate input, no NaN
 }
 
 TEST(BlockBaardaSweepTest, Sigma0RecoversTheScaleAtEveryBlockSize) {
-    // THE REASON THE RESCALING EXISTS.  NetworkCarryVce inverts the geometric
-    // mean of a chi-square_1 variate, but T_B*b is chi-square_b.  Without the
-    // correction a b = 8 family reports sqrt(7.0235/(8*0.28073)) = 1.77x the true
-    // scale — a plausible number, a silently re-scaled ladder, and a bias that
-    // MOVES with the constellation's band plan.  Every block size must recover
-    // the same scale from the same underlying sigma0.
+    // Why the rescaling exists: NetworkCarryVce inverts the geometric mean of a
+    // chi-square_1 variate, but T_B*b is chi-square_b.  Without the correction a
+    // b = 8 family reports sqrt(7.0235/(8*0.28073)) = 1.77x the true scale, a
+    // plausible number that re-scales the ladder with a bias that changes with
+    // the constellation's band plan.  Every block size must recover the same
+    // scale from the same underlying sigma0.
     constexpr double kSigma0 = 2.0;
     for (int b : {1, 2, 4, 8}) {
         Rng rng;
@@ -777,10 +770,10 @@ TEST(BlockBaardaSweepTest, Sigma0RecoversTheScaleAtEveryBlockSize) {
 }
 
 TEST(BlockBaardaSweepTest, Sigma0IsUnbiasedOnAMixedBlockSizePopulation) {
-    // The real population: one constellation's lines of sight carry 2, 4, 6 or 8
+    // The field population: one constellation's lines of sight carry 2, 4, 6 or 8
     // rows depending on how many bands each satellite is tracked on.  A
-    // correction that only worked one size at a time would still leave THIS
-    // biased — and this is the case that actually occurs in the field.
+    // correction that worked only one size at a time would still leave this
+    // mixed population biased.
     constexpr double kSigma0 = 1.5;
     Rng rng;
     NetworkBlockBaarda acc({"G"}, 0.0, 50.0);
@@ -796,12 +789,12 @@ TEST(BlockBaardaSweepTest, Sigma0IsUnbiasedOnAMixedBlockSizePopulation) {
 }
 
 // ---------------------------------------------------------------------------
-//  SPEC 7.3 — the null ladder, and the heavy-tail failure mode it must preserve
+//  SPEC 7.3: the null ladder, and the heavy-tail failure mode it must preserve
 // ---------------------------------------------------------------------------
 
 TEST(BlockBaardaSweepTest, GaussianNullLadderMatchesTheChiSquareTail) {
     // With sigma0 converged, t_B == T_B == chi-square_b/b, so the ladder
-    // occupancies ARE the chi-square tail and nothing else.  Reference values
+    // occupancies are the chi-square tail.  Reference values
     // computed independently (4e6 Monte-Carlo draws): for b = 4,
     // P(T > 1) = 0.4060, P(T > 2) = 0.0913, P(T > 3) = 0.0174.
     Rng rng;
@@ -816,18 +809,18 @@ TEST(BlockBaardaSweepTest, GaussianNullLadderMatchesTheChiSquareTail) {
     EXPECT_NEAR(L.frac(1), 0.0913, 0.01);    // > 2
     EXPECT_NEAR(L.frac(2), 0.0174, 0.006);   // > 3
     // The calibration indicator reads 1.0 when the scale has converged, and it is
-    // b-INVARIANT by construction — a raw geometric mean of t_B would read
-    // 2*exp(psi(2))/4 = 0.763 here and would move with the band plan.
+    // b-invariant by construction; a raw geometric mean of t_B would read
+    // 2*exp(psi(2))/4 = 0.763 here and would change with the band plan.
     EXPECT_NEAR(L.geoT(), 1.0, 0.05);
 }
 
 TEST(BlockBaardaSweepTest, HeavyTailOverOccupiesTheLadderWhileTheScaleReadsConverged) {
-    // THE D5 FAILURE MODE, PRESERVED AT BLOCK LEVEL — and the whole reason SPEC
-    // 2.1 forbids tabular critical values.  Student-t (nu = 3) rows produce a
-    // family whose SCALE calibrates perfectly (geo_cal ~ 1, so every "is it
-    // calibrated?" check passes) while the far tail is over-occupied by nearly an
-    // order of magnitude against the Gaussian.  A tabular F(alpha, b, r) prices
-    // that tail at the Gaussian rate and is wrong by exactly that factor.
+    // The D5 failure mode, reproduced at block level; it is why SPEC 2.1 forbids
+    // tabular critical values.  Student-t (nu = 3) rows produce a family whose
+    // scale calibrates correctly (geo_cal ~ 1, so every calibration check passes)
+    // while the far tail is over-occupied by nearly an order of magnitude against
+    // the Gaussian.  A tabular F(alpha, b, r) prices that tail at the Gaussian
+    // rate and is wrong by that factor.
     Rng rng;
     NetworkBlockBaarda acc({"G"}, 0.0, 50.0);
     auto tBlock = [&]() {
@@ -851,9 +844,9 @@ TEST(BlockBaardaSweepTest, HeavyTailOverOccupiesTheLadderWhileTheScaleReadsConve
     EXPECT_NEAR(L.geoT(), 1.0, 0.06);
     // ...and the tail is nothing like Gaussian.  Reference (4e6 draws): t_3 gives
     // P(> 4) = 0.0952 and P(> 8) = 0.0424, against chi-square_1's 0.0454 / 0.0047.
-    // Measured here: 2.17x at the 4-rung and ~9x at the 8-rung.  The bound is
-    // set below the measurement, not at it — this test exists to catch the
-    // correction being LOST, not to pin a Monte-Carlo digit.
+    // Measured here: 2.17x at the 4-rung and ~9x at the 8-rung.  The bounds sit
+    // below the measurement: the test detects loss of the heavy-tail excess, not
+    // a Monte-Carlo digit.
     EXPECT_GT(L.frac(3), 1.8 * 0.0454)
         << "the 4-rung must be well over the Gaussian tail";
     EXPECT_GT(L.frac(5), 5.0 * 0.0047)
@@ -861,7 +854,7 @@ TEST(BlockBaardaSweepTest, HeavyTailOverOccupiesTheLadderWhileTheScaleReadsConve
 }
 
 // ---------------------------------------------------------------------------
-//  SPEC 7.4 — label partition, uncheckable counting, predict-then-update
+//  SPEC 7.4: label partition, uncheckable counting, predict-then-update
 // ---------------------------------------------------------------------------
 
 TEST(BlockBaardaSweepTest, LabelPartitionSumsAndUncheckableCounting) {
@@ -890,18 +883,18 @@ TEST(BlockBaardaSweepTest, LabelPartitionSumsAndUncheckableCounting) {
         sum_unchk += L.n_uncheckable;
         sum_rows  += L.n_rows;
     }
-    // The partition is EXACT: every block landed in exactly one label's ladder.
+    // The partition is exact: every block lands in exactly one label's ladder.
     EXPECT_EQ(sum, 600);
     EXPECT_EQ(acc.epochBlocks(), 600);
-    // An uncheckable block is COUNTED with its rows, never inverted, never
-    // calibrated (SPEC 3).  It must not vanish from the denominators, or
-    // "uncheckable" would read as "absent".
+    // An uncheckable block is counted with its rows but never inverted or used
+    // for calibration (SPEC 3).  It stays in the denominators so that
+    // "uncheckable" does not read as "absent".
     EXPECT_EQ(sum_unchk, expect_unchk);
     EXPECT_EQ(acc.epochUncheckable(), expect_unchk);
     EXPECT_EQ(sum_rows, expect_rows);
 
-    // A block whose constellation was never requested enters NOTHING — not even
-    // a denominator, because it is not part of this run's population.
+    // A block whose constellation was not requested enters nothing, not even a
+    // denominator, because it is not part of this run's population.
     NetworkBlockBaarda::Input alien = nullBlock(rng, 4, 1.0, "E11");
     const NetworkBlockBaarda::BlockStat st = acc.addBlock(alien);
     EXPECT_FALSE(st.accepted);
@@ -911,11 +904,10 @@ TEST(BlockBaardaSweepTest, LabelPartitionSumsAndUncheckableCounting) {
 
 TEST(BlockBaardaSweepTest, PredictThenUpdateNeverLetsABlockStandardizeItself) {
     // The D5 v2 ordering contract.  Epoch 0 has no history, so every block in it
-    // is RAW FORMAL (sigma0 == 1, t_B == T_B) however many blocks it carries —
-    // the calibration those blocks build is visible only from the NEXT epoch.
-    // Reversing the order would let a loud epoch inflate its own sigma0 and
-    // standardize itself back to quiet, which is exactly how a self-calibrating
-    // detector goes blind.
+    // is raw formal (sigma0 == 1, t_B == T_B) however many blocks it carries;
+    // the calibration those blocks build is visible only from the next epoch.
+    // The reverse order would let a loud epoch inflate its own sigma0 and
+    // standardize itself back to quiet, which blinds a self-calibrating detector.
     Rng rng;
     NetworkBlockBaarda acc({"G"}, 0.0, /*min_rows=*/100.0);
     acc.beginEpoch(0.0, 0.0);
@@ -934,7 +926,7 @@ TEST(BlockBaardaSweepTest, PredictThenUpdateNeverLetsABlockStandardizeItself) {
 }
 
 // ---------------------------------------------------------------------------
-//  SPEC 3 — the UNCHECKABLE guard on the cofactor
+//  SPEC 3: the UNCHECKABLE guard on the cofactor
 // ---------------------------------------------------------------------------
 
 TEST(BlockBaardaSweepTest, CheckabilityGuardRejectsSingularAndNonFiniteBlocks) {
@@ -947,31 +939,31 @@ TEST(BlockBaardaSweepTest, CheckabilityGuardRejectsSingularAndNonFiniteBlocks) {
     EXPECT_FALSE(sing);
     EXPECT_FALSE(nonfin);
 
-    // A fully-leveraged block — the cofactor collapsed to ~0 — must be REJECTED,
-    // not inverted.  This is the block analogue of r < eps, and it is the ONLY
-    // signal the consumer gets that the block may never be inverted through.
+    // A fully-leveraged block (cofactor collapsed to ~0) is rejected, not
+    // inverted.  This is the block analogue of r < eps, and it is the consumer's
+    // only signal that the block must not be inverted.
     EXPECT_FALSE(blockCofactorIsCheckable(Eigen::MatrixXd::Zero(2, 2),
                                           kBlockCofactorRcondEps, &sing, &nonfin));
     EXPECT_TRUE(sing);
 
-    // Rank-deficient but not zero: two rows carrying the SAME information.
+    // Rank-deficient but not zero: two rows carrying the same information.
     Eigen::MatrixXd dup(2, 2);
     dup << 1.0, 1.0,
            1.0, 1.0;
     EXPECT_FALSE(blockCofactorIsCheckable(dup, kBlockCofactorRcondEps, &sing, &nonfin));
     EXPECT_TRUE(sing);
 
-    // A non-positive row weight puts an infinity on the diagonal ON PURPOSE (the
-    // kernel's contract), so the finiteness half catches it separately — a
-    // different defect from a rank deficiency, and counted separately.
+    // A non-positive row weight puts an infinity on the diagonal by design (the
+    // kernel's contract), so the finiteness check catches it.  That is a
+    // different defect from a rank deficiency and is counted separately.
     Eigen::MatrixXd inf = good;
     inf(1, 1) = std::numeric_limits<double>::infinity();
     EXPECT_FALSE(blockCofactorIsCheckable(inf, kBlockCofactorRcondEps, &sing, &nonfin));
     EXPECT_TRUE(nonfin);
 
-    // A NEGATIVE pivot is a definiteness failure, not a small number: the
+    // A negative pivot is a definiteness failure, not a small number: the
     // cofactor of a PSD quantity cannot have one, and its quadratic form would
-    // not even be a norm.
+    // not be a norm.
     Eigen::MatrixXd indef(2, 2);
     indef << 1.0, 3.0,
              3.0, 1.0;
@@ -983,14 +975,13 @@ TEST(BlockBaardaSweepTest, CheckabilityGuardRejectsSingularAndNonFiniteBlocks) {
 }
 
 // ---------------------------------------------------------------------------
-//  INC-3 — the smearing fraction, the card's unique deliverable
+//  INC-3: the smearing fraction, the output only this card provides
 // ---------------------------------------------------------------------------
 
 TEST(BlockBaardaSweepTest, BlockOnlyCountsExactlyTheRowInvisiblePopulation) {
     // SPEC 8.4: block_only / blocks_flagged "decides whether a response card is
-    // ever worth writing".  The definition has to be exact — a fraction that
-    // quietly counted the wrong population would send that decision the wrong
-    // way with nothing to notice it by.
+    // ever worth writing".  The definition has to be exact, because a fraction
+    // over the wrong population would steer that decision with no visible sign.
     NetworkBlockBaarda acc({"G"}, 0.0, /*min_rows=*/0.0, /*report_sigma=*/4.0);
     acc.beginEpoch(0.0, 0.0);
     auto block = [&](double T, double max_row_T) {
@@ -1004,21 +995,21 @@ TEST(BlockBaardaSweepTest, BlockOnlyCountsExactlyTheRowInvisiblePopulation) {
     ASSERT_TRUE(acc.sigma0Warm(0));
     const double s2 = acc.sigma0(0) * acc.sigma0(0);
 
-    // LOUD block, every row individually quiet — the smeared fault this card
-    // exists to find, and the only population no existing tier can see.
+    // Loud block, every row individually quiet: the smeared fault this card
+    // targets, and the only population no other tier can see.
     const auto smeared = block(10.0 * s2, 1.0 * s2);
     EXPECT_TRUE(smeared.reported);
     EXPECT_TRUE(smeared.block_only);
-    // LOUD block with a loud row — the row tier already sees this one, so it is
-    // NOT part of the invisible population and must not inflate the fraction.
+    // Loud block with a loud row: the row tier already sees this one, so it is
+    // not part of the row-invisible population and must not inflate the fraction.
     const auto obvious = block(10.0 * s2, 9.0 * s2);
     EXPECT_TRUE(obvious.reported);
     EXPECT_FALSE(obvious.block_only);
-    // QUIET block with a loud row: not reported at all (the row tier's business).
+    // Quiet block with a loud row: not reported at all (the row tier's case).
     const auto rowonly = block(1.0 * s2, 9.0 * s2);
     EXPECT_FALSE(rowonly.reported);
     EXPECT_FALSE(rowonly.block_only);
-    // Exactly ON the threshold is NOT loud — strict, so a threshold never flags.
+    // A block exactly at the threshold is not loud: the comparison is strict.
     const auto edge = block(4.0 * s2, 0.1 * s2);
     EXPECT_FALSE(edge.reported);
 
@@ -1029,8 +1020,8 @@ TEST(BlockBaardaSweepTest, BlockOnlyCountsExactlyTheRowInvisiblePopulation) {
     EXPECT_DOUBLE_EQ(L.blockOnlyFraction(), 0.5);
     EXPECT_EQ(acc.epochReported(), 2);
     EXPECT_EQ(acc.epochBlockOnly(), 1);
-    // The worst block keeps its identity AND whether it was row-invisible: a
-    // ladder occupancy nobody can chase back to a satellite is not a finding.
+    // The worst block keeps its identity and whether it was row-invisible, so a
+    // ladder occupancy can be traced back to a satellite.
     EXPECT_EQ(L.max_sat, "G01");
     EXPECT_EQ(L.max_b, 4);
     EXPECT_NEAR(L.max_t, 10.0, 1e-9);
@@ -1038,11 +1029,10 @@ TEST(BlockBaardaSweepTest, BlockOnlyCountsExactlyTheRowInvisiblePopulation) {
 }
 
 TEST(BlockBaardaSweepTest, SizeHistogramAndCompositionMakeANullResultReadable) {
-    // Invariant #4 in this card's sharpest form: a run whose blocks were ALL
-    // b = 1 produces a ladder identical to the scalar w-test and an INC-3
-    // fraction of 0 BY CONSTRUCTION.  Without the size histogram that reads as
-    // "no smearing found" when what actually happened is "there was never a
-    // block to smear across".
+    // Invariant #4 applied to this card: a run whose blocks are all b = 1
+    // produces a ladder identical to the scalar w-test and an INC-3 fraction of
+    // 0 by construction.  Without the size histogram that reads as "no smearing
+    // found" when the actual cause is "no multi-row block to smear across".
     NetworkBlockBaarda acc({"G"}, 0.0, 0.0);
     acc.beginEpoch(0.0, 0.0);
     Rng rng;
@@ -1064,20 +1054,20 @@ TEST(BlockBaardaSweepTest, SizeHistogramAndCompositionMakeANullResultReadable) {
     const auto& h = acc.sizeHistogram();
     EXPECT_EQ(h[0], 5);                        // b = 1
     EXPECT_EQ(h[3], 3);                        // b = 4
-    EXPECT_EQ(h[kBlockBaardaMaxB], 1);         // overflow: a b > 8 block is VISIBLE
+    EXPECT_EQ(h[kBlockBaardaMaxB], 1);         // overflow bin: a b > 8 block is counted
     EXPECT_EQ(acc.runCodeOnlyBlocks(), 5);
     EXPECT_EQ(acc.runMixedBlocks(), 3);
     EXPECT_EQ(acc.runPhaseOnlyBlocks(), 1);
 }
 
 // ---------------------------------------------------------------------------
-//  INC-2 — the corroboration join and its b-cell
+//  INC-2: the corroboration join and its b-cell
 // ---------------------------------------------------------------------------
 
 TEST(BlockBaardaSweepTest, ContingencyBCellIsLoudAndRawFlat) {
-    // SPEC 8.3 grades the b-cell: blocks the statistic calls loud AND the raw
-    // observables say did NOT move.  Its meaning depends entirely on the join
-    // landing in the right cell — and every cell is a different conclusion.
+    // SPEC 8.3 grades the b-cell: blocks the statistic calls loud while the raw
+    // observables show no step.  Each cell supports a different conclusion, so
+    // the join must place every block in the right one.
     NetworkBlockBaarda acc({"G"}, 0.0, /*min_rows=*/0.0, /*report_sigma=*/4.0,
                            /*corroborate=*/true);
     acc.setCorroborator([](int /*station*/, std::string_view sat) {
@@ -1096,7 +1086,7 @@ TEST(BlockBaardaSweepTest, ContingencyBCellIsLoudAndRawFlat) {
     acc.beginEpoch(30.0, 30.0);
     ASSERT_TRUE(acc.sigma0Warm(0));
     const double s2 = acc.sigma0(0) * acc.sigma0(0);
-    push("G01", 50.0 * s2);   // loud + raw FLAT     -> THE B-CELL
+    push("G01", 50.0 * s2);   // loud + raw flat     -> the b-cell
     push("G01", 50.0 * s2);
     push("G02", 50.0 * s2);   // loud + raw stepped  -> corroborated
     push("G03", 50.0 * s2);   // loud + no evidence  -> unjudgeable
@@ -1112,9 +1102,9 @@ TEST(BlockBaardaSweepTest, ContingencyBCellIsLoudAndRawFlat) {
     EXPECT_EQ(c[1][static_cast<int>(PriorResidualCorrob::Stepped)], 0);
     EXPECT_EQ(c[1][static_cast<int>(PriorResidualCorrob::NoEvidence)], 0);
 
-    // Unarmed corroboration leaves the whole table at ZERO rather than silently
-    // filling the no_evidence column — "we did not ask" and "we asked and there
-    // was no evidence" are different findings and must not share a cell.
+    // Unarmed corroboration leaves the whole table at zero rather than filling
+    // the no_evidence column: "not asked" and "asked, no evidence" are different
+    // findings and must not share a cell.
     NetworkBlockBaarda off({"G"}, 0.0, 0.0, 4.0, /*corroborate=*/false);
     off.beginEpoch(0.0, 0.0);
     NetworkBlockBaarda::Input in;
@@ -1126,11 +1116,11 @@ TEST(BlockBaardaSweepTest, ContingencyBCellIsLoudAndRawFlat) {
 }
 
 // ---------------------------------------------------------------------------
-//  SPEC 7.5 — OFF is structurally inert
+//  SPEC 7.5: off is structurally inert
 // ---------------------------------------------------------------------------
 
 TEST(BlockBaardaSweepTest, OffIsStructurallyInert) {
-    // The defaults are OFF and the master predicate the driver reads is false, so
+    // The defaults are off and the master predicate the driver reads is false, so
     // an unarmed run never enters the sweep or the emission translation unit.
     GnssConfig cfg;
     const NetworkConfig& nc = cfg.getNetworkConfig();
@@ -1146,11 +1136,11 @@ TEST(BlockBaardaSweepTest, OffIsStructurallyInert) {
     EXPECT_FALSE(k.bb_on);
     EXPECT_FALSE(k.bb_corrob);
 
-    // The master is the AND of the arm and a LIVE HOST: this card has no
-    // scheduler of its own, so arming it behind a dead redundancy census must
-    // resolve to OFF rather than to a silent zero-block run.  (The loader
-    // hard-errors on that config; this is the belt-and-braces half, and it is
-    // what protects a hand-built NetworkConfig in a test.)
+    // The master predicate is the AND of the arm and a live host: this card has
+    // no scheduler of its own, so arming it with the redundancy census off
+    // resolves to off rather than to a zero-block run.  (The loader hard-errors
+    // on that config; this second check covers a NetworkConfig built by hand, as
+    // in a test.)
     {
         NetworkConfig armed = nc;
         armed.block_baarda = true;
@@ -1170,8 +1160,8 @@ TEST(BlockBaardaSweepTest, OffIsStructurallyInert) {
     EXPECT_FALSE(carry.bb.enabled());
     EXPECT_TRUE(carry.bb_hits.empty());
     EXPECT_TRUE(carry.bb_event_last.empty());
-    // ...and it accepts nothing, so a mis-wired feed site cannot silently
-    // populate a ladder nobody asked for.
+    // ...and it accepts nothing, so a mis-wired feed site cannot populate a
+    // ladder that was not requested.
     NetworkBlockBaarda::Input in;
     in.station = 0; in.sat = "G01"; in.b = 4; in.T = 1e9;
     carry.bb.beginEpoch(0.0, 0.0);
@@ -1187,12 +1177,11 @@ TEST(BlockBaardaSweepTest, OffIsStructurallyInert) {
 
 
 // ---------------------------------------------------------------------------
-//  SPEC 6 — the loader tripwires
+//  SPEC 6: the loader tripwires
 //
-//  Both are HARD ERRORS, not silent disarms, and that choice is the whole point:
-//  a config that asks for this card and gets an empty run is the exact
-//  "live counter over dead wiring" failure the project keeps paying for.  A
-//  silent disarm would produce a clean summary indistinguishable from "this
+//  Both are hard errors rather than silent disarms.  A config that asks for this
+//  card and gets an empty run is a live counter over dead wiring (invariant #4):
+//  a silent disarm would produce a clean summary indistinguishable from "this
 //  network has no smeared faults".
 // ---------------------------------------------------------------------------
 
@@ -1245,9 +1234,9 @@ bool bbLoadFails(const std::string& tag, const std::string& extra) {
 }  // namespace
 
 TEST(BlockBaardaSweepTest, LoaderHardErrorsWithoutASweepHost) {
-    // THE tripwire.  This card has no scheduler by design (SPEC 4) — it rides the
-    // redundancy census's swept stations.  Armed with that census off it would
-    // enumerate zero blocks and print a clean summary, so the loader refuses.
+    // The main tripwire.  This card has no scheduler by design (SPEC 4); it uses
+    // the redundancy census's swept stations.  Armed with that census off it
+    // would enumerate zero blocks and print a clean summary, so the loader refuses.
     EXPECT_TRUE(bbLoadFails("nohost", "    \"block_baarda\": true,\n"));
 
     // Either half of the census predicate is a live host: there is no
@@ -1268,12 +1257,12 @@ TEST(BlockBaardaSweepTest, LoaderHardErrorsWithoutASweepHost) {
 }
 
 TEST(BlockBaardaSweepTest, LoaderHardErrorsOnCorroborationWithoutTheCard) {
-    // The join runs INSIDE the sweep, so arming it alone produces no blocks, no
+    // The join runs inside the sweep, so arming it alone produces no blocks, no
     // contingency table and no warning at run time.
     EXPECT_TRUE(bbLoadFails("corrob_alone",
                             "    \"block_baarda_corroborate\": true,\n"));
     // An empty family list would drop every block for want of a family and
-    // report zero with no warning — the same failure by a different route.
+    // report zero with no warning: the same failure by a different route.
     EXPECT_TRUE(bbLoadFails("nofam", "    \"block_baarda\": true,\n"
                                      "    \"redundancy_census_stride\": 10,\n"
                                      "    \"block_baarda_families\": \"\",\n"));
@@ -1281,10 +1270,10 @@ TEST(BlockBaardaSweepTest, LoaderHardErrorsOnCorroborationWithoutTheCard) {
 
 TEST(BlockBaardaSweepTest, LoaderAutoArmsGapInstrumentForTheCorroborationJoin) {
     // INC-2 reads the raw MW/GF step verdicts, and nothing else in a bare config
-    // computes them — without gap_instrument every contingency cell would land in
-    // 'no_evidence' and SPEC 8.3's b-cell would be structurally unmeasurable.
-    // Deliberately NOT mw_lli_corroborate: that is a DECISION card and would
-    // perturb the very population being measured.
+    // computes them.  Without gap_instrument every contingency cell would land in
+    // 'no_evidence' and SPEC 8.3's b-cell could not be measured.  The loader does
+    // not arm mw_lli_corroborate: that is a decision card and would change the
+    // population being measured.
     GnssConfig cfg;
     ASSERT_TRUE(bbLoads("autoarm", "    \"block_baarda\": true,\n"
                                    "    \"block_baarda_corroborate\": true,\n"
@@ -1296,8 +1285,7 @@ TEST(BlockBaardaSweepTest, LoaderAutoArmsGapInstrumentForTheCorroborationJoin) {
     EXPECT_FALSE(nc.slip_qc.lli_corroborate)
         << "a DECISION card must never be auto-armed by a measure-only census";
 
-    // ...and it does NOT arm it when the join is off: this card buys nothing it
-    // does not need.
+    // ...and it does not arm gap_instrument when the join is off.
     GnssConfig plain;
     ASSERT_TRUE(bbLoads("noautoarm", "    \"block_baarda\": true,\n"
                                      "    \"redundancy_census_stride\": 10,\n", plain));

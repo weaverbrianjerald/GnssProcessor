@@ -5,27 +5,26 @@
  *
  * Meas3Ranges is the compact replacement for MeasEpoch (4027): same 1 mm / 0.001
  * cycle / 1 dB-Hz resolution at roughly a quarter of the byte size.  The size
- * reduction comes from a differential encoding — full @em reference epochs are
+ * reduction comes from a differential encoding: full @em reference epochs are
  * emitted only every N seconds (the interval is carried in the block and is
- * controlled on the receiver by @c setMeas3MaxRefInterval); the epochs in
+ * controlled on the receiver by @c setMeas3MaxRefInterval), and the epochs in
  * between are @em delta epochs that encode only the change since the applicable
- * reference epoch.  A delta epoch therefore cannot be decoded until its
- * reference epoch has been seen and cached — which is why this decoder owns
- * persistent cross-block state, unlike the otherwise stateless @c SbfParser.
+ * reference epoch.  A delta epoch cannot be decoded until its reference epoch
+ * has been seen and cached, so this decoder owns persistent cross-block state,
+ * unlike the otherwise stateless @c SbfParser.
  *
- * The wire format of Meas3 is deliberately omitted from the public SBF
- * Reference Guide (it points implementers at the proprietary @c sbfread_meas.c
- * shipped in RxTools).  This implementation is a clean-room port of the
- * independent open-source decoder in the rtklibexplorer/RTKLIB @c demo5 fork
- * (@c src/rcv/septentrio.c, @c decode_meas3ranges, added 2024), adapted to emit
- * the engine's @c RinexObservation type and validated bit-exactly against the
- * 4027 MeasEpoch blocks present for the same epochs in a live mosaic-X5 capture
- * (pseudorange agreement < 1 mm, carrier phase < 0.002 cycles, identical
- * observation sets).
+ * The public SBF Reference Guide does not document the Meas3 wire format; it
+ * refers implementers to the proprietary @c sbfread_meas.c shipped in RxTools.
+ * This implementation is a clean-room port of the independent open-source
+ * decoder in the rtklibexplorer/RTKLIB @c demo5 fork (@c src/rcv/septentrio.c,
+ * @c decode_meas3ranges, added 2024), adapted to emit the engine's
+ * @c RinexObservation type.  It was validated against the 4027 MeasEpoch blocks
+ * present for the same epochs in a live mosaic-X5 capture: pseudorange agreement
+ * < 1 mm, carrier phase < 0.002 cycles, identical observation sets.
  *
  * Only the @b code and @b phase observables are reconstructed here.  The
- * Meas3Ranges companions — Meas3CN0HiRes (4110, fractional C/N0), Meas3Doppler
- * (4111) and Meas3MP/Meas3PP (4112/4113) — are not decoded; the coarse 1 dB-Hz
+ * Meas3Ranges companions (Meas3CN0HiRes 4110 with fractional C/N0, Meas3Doppler
+ * 4111, and Meas3MP/Meas3PP 4112/4113) are not decoded; the coarse 1 dB-Hz
  * C/N0 carried in 4109 is emitted as the @c S observable.
  *
  * SBF is little-endian; this decoder assumes a little-endian host (x64/MSVC),
@@ -47,8 +46,8 @@ namespace GnssProcessor {
  * delta epochs resolve against the most recent reference epoch.  Because the
  * realtime path constructs a fresh @c SbfParser per frame (and @c SbfParser is
  * the natural caller), the cross-frame reference state is held here behind a
- * process-wide @c instance() accessor — the same pattern the codebase uses for
- * the other cross-frame SBF/RTCM decode state (@c LiveEphemerisStore,
+ * process-wide @c instance() accessor, the same pattern used for the other
+ * cross-frame SBF/RTCM decode state (@c LiveEphemerisStore,
  * @c SsrCorrectionStore).  @c reset() drops all state (used by tests).
  */
 class Meas3Decoder {

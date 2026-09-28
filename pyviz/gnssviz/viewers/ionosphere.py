@@ -1,39 +1,39 @@
-"""Ionosphere / slant-iono viewer -- the port of ``plotIonosphere.m``.
+"""Ionosphere and slant-iono viewer, a port of ``plotIonosphere.m``.
 
-Reads ``ionosphere_trace.csv`` (the PPP-RTK uncombined Kalman filter's per-
-satellite slant ionosphere delay state) and produces the same five figures plus
-console summary the MATLAB script draws:
+Reads ``ionosphere_trace.csv`` (the per-satellite slant ionosphere delay state of
+the PPP-RTK uncombined Kalman filter) and produces the five figures and the
+console summary that the MATLAB script draws:
 
-  1. Slant ionosphere delay (m) -- one tile (axes) per constellation, one
-     NaN-gap-aware line per satellite coloured by PRN, hollow-black pivot rings on
+  1. Slant ionosphere delay (m): one tile (axes) per constellation, one
+     NaN-gap-aware line per satellite coloured by PRN, hollow black pivot rings on
      the value line, and thin grey vertical lines at every BSSD pivot handover.
-  2. VTEC (vertical iono = slant / mapping factor) -- same per-system layout.
-  3. State sigma (m) on a *log* y-axis -- the convergence monitor (no pivot rings).
+  2. VTEC (vertical iono = slant / mapping factor), in the same per-system layout.
+  3. State sigma (m) on a log y-axis, as a convergence monitor (no pivot rings).
   4. Per-satellite small multiples: slant +/-1 sigma envelope (gap-aware
      :class:`Band`), the mean line, pivot rings, and a top-right mu/sigma stat box;
      capped at the first 36 satellites like the MATLAB ``maxPerFig``.
   5. Sky plot per constellation: a :class:`PolarScatter` of (azimuth, zenith
      angle) coloured by slant iono through one shared colour scale (2nd/98th
-     percentile robust limits), compass-north zero / clockwise, with elevation
-     ring labels.
+     percentile limits), zero at compass north, clockwise, with elevation ring
+     labels.
 
 BSSD pivot re-referencing
 -------------------------
 In PPP-RTK BSSD the slant-iono state for a non-pivot satellite X is
-``I_X - I_pivot``; every pivot rotation injects a synthetic per-satellite jump of
-``I_old_pivot - I_new_pivot`` that is not real ionosphere.  Matching the MATLAB
-default (``ionoReferenceMode = 'firstPivot'``), this viewer re-references the time
-series to the first pivot seen per constellation so handovers read as continuous
-lines; VTEC is recomputed from the re-referenced slant through the mapping factor.
-Handover epochs are still marked with vertical lines on figures 1-3.  Set the
-``iono_reference_mode`` kwarg of :func:`build_ionosphere` to ``'rawBssd'`` to view
+``I_X - I_pivot``; every pivot rotation injects a per-satellite jump of
+``I_old_pivot - I_new_pivot`` that is not ionosphere.  As in the MATLAB default
+(``ionoReferenceMode = 'firstPivot'``), this viewer re-references the time series
+to the first pivot seen per constellation, so handovers read as continuous lines;
+VTEC is recomputed from the re-referenced slant through the mapping factor.
+Handover epochs are still marked with vertical lines on figures 1-3.  Setting the
+``iono_reference_mode`` kwarg of :func:`build_ionosphere` to ``'rawBssd'`` shows
 the raw filter state with the handover jumps intact.
 
 Fidelity notes
 --------------
 * Gap breaks: a NaN row is inserted whenever ``dt > gapFactor * median(dt)`` for a
-  series (``gapFactor = 3``), exactly as ``insertGapBreaks`` does, so handover /
-  reseed holes render as breaks rather than bridges.
+  series (``gapFactor = 3``), as ``insertGapBreaks`` does, so handover and reseed
+  holes render as breaks rather than bridges.
 * ``std`` in the stat read-outs is the MATLAB *sample* std (``ddof=1``), and 0.0
   for a single sample (MATLAB ``std`` of one element is 0, not NaN).
 * Mapping factor and VTEC are derived from the trace columns when present (this
@@ -79,15 +79,15 @@ def build_ionosphere(ctx, *, plot_style: str = "lines",
     Parameters
     ----------
     plot_style:
-        ``'lines'`` (MATLAB default) -- one gap-aware line per satellite; or
-        ``'scatter'`` -- markers only (useful when sample spacing varies wildly).
+        ``'lines'`` (MATLAB default): one gap-aware line per satellite; or
+        ``'scatter'``: markers only (useful when sample spacing varies widely).
     iono_reference_mode:
-        ``'firstPivot'`` (MATLAB default) -- re-reference each constellation to
-        its first-seen pivot so handover jumps are removed; or ``'rawBssd'`` --
+        ``'firstPivot'`` (MATLAB default): re-reference each constellation to
+        its first-seen pivot so handover jumps are removed; or ``'rawBssd'``:
         show the raw BSSD filter state with the jumps intact.
     show_pivot_markers:
-        Draw a hollow-black ring on every epoch a satellite served as BSSD pivot
-        (figures 1 and 4 only -- where the ring sits on the slant value line).
+        Draw a hollow black ring on every epoch a satellite served as BSSD pivot
+        (figures 1 and 4 only, where the ring sits on the slant value line).
     show_handover_lines:
         Draw a thin grey vertical line at each pivot handover on figures 1-3.
     """
@@ -120,7 +120,7 @@ def build_ionosphere(ctx, *, plot_style: str = "lines",
     # --- GPS week/tow -> datetime (pure GPS time, no leap offset) ---
     df = add_utc(df)
 
-    # --- Collect handovers BEFORE re-referencing, then apply re-reference ---
+    # --- Collect handovers first, then apply the re-reference ---
     handovers = _collect_pivot_handovers(df)
     n_handovers = sum(len(v) for v in handovers.values())
     if iono_reference_mode.lower() == "firstpivot" and n_handovers > 0:
@@ -213,7 +213,7 @@ def _plot_by_system(df, value_col, value_label, fig_title, sys_present,
                 traces.append(Scatter(x=t, y=v, size=18, marker="o", color=c,
                                       label=sat, show_in_legend=False))
 
-            # Pivot ring overlay -- only meaningful on the slant value line.
+            # Pivot ring overlay, drawn only on the slant value line.
             if show_pivot_markers and value_col == "iono_m":
                 piv = sub["is_pivot"].to_numpy(float) > 0
                 if piv.any():
@@ -405,14 +405,14 @@ def _collect_pivot_handovers(df) -> dict:
 def _re_reference_to_first_pivot(df):
     """Re-reference BSSD iono states to the first pivot seen per constellation.
 
-    Walk epochs chronologically per constellation, accumulating a running offset
-    ``O = I_pivot(now) - I_pivot(first)``.  At each handover P_old -> P_new, the
-    new pivot's stored value at the LAST epoch in P_old's frame is
-    ``I_P_new - I_P_old`` -- exactly the increment to O.  O is then added to every
-    row at the current epoch (the pivot row's raw 0 becomes O, its iono delay in
-    the first-pivot reference).  ``std_m`` is intentionally NOT re-propagated
-    (the displayed sigma is a lower bound).  VTEC is recomputed from the
-    re-referenced slant through the mapping factor.
+    Epochs are walked chronologically per constellation, accumulating a running
+    offset ``O = I_pivot(now) - I_pivot(first)``.  At each handover
+    P_old -> P_new, the new pivot's stored value at the last epoch in P_old's
+    frame is ``I_P_new - I_P_old``, which is the increment to O.  O is then added
+    to every row at the current epoch (the pivot row's raw 0 becomes O, its iono
+    delay in the first-pivot reference).  ``std_m`` is deliberately not
+    re-propagated, so the displayed sigma is a lower bound.  VTEC is recomputed
+    from the re-referenced slant through the mapping factor.
     """
     if "pivot_satellite" not in df.columns:
         return df
@@ -536,7 +536,7 @@ def _system_of_letter(sat):
 
 
 def _thin_shell_mapping_factor(el_deg):
-    """Single-layer iono mapping factor (slant/vertical) -- ``thinShellMappingFactor``."""
+    """Single-layer iono mapping factor (slant/vertical), as ``thinShellMappingFactor``."""
     el = np.asarray(el_deg, dtype=float) * np.pi / 180.0
     sin_zp = (_RE / (_RE + _H)) * np.cos(el)
     cos_zp = np.sqrt(np.maximum(0.0, 1.0 - sin_zp ** 2))
@@ -548,7 +548,7 @@ def _thin_shell_mapping_factor(el_deg):
 
 
 def _viridis(n):
-    """Viridis (n,3) RGB array -- reuse the strip-colormap anchor tables."""
+    """Viridis (n,3) RGB array, taken from the strip-colormap anchor tables."""
     from ..colormaps import strip_colormap
     return strip_colormap("viridis", n)
 

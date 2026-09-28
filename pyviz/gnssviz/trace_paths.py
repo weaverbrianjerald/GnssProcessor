@@ -1,14 +1,14 @@
-"""Trace-folder resolution -- the Python analogue of ``gnssVizLogDir`` /
+"""Trace-folder resolution: the Python analogue of ``gnssVizLogDir`` /
 ``gnssTracePath``.
 
 A :class:`TraceContext` binds one run's log folder and hands out CSV paths and
-presence checks.  Unlike the MATLAB version it is an explicit object rather than
-session-global ``appdata`` -- a viewer is handed a context, which keeps the data
-layer free of hidden global state (and makes it safe to render two runs at once,
-e.g. a post-processing run and its smoother trace).
+presence checks. Unlike the MATLAB version it is an explicit object rather
+than session-global ``appdata``: a viewer is handed a context, which keeps
+the data layer free of hidden global state, and makes it safe to render two
+runs at once (for example a post-processing run and its smoother trace).
 
-The default-folder search order mirrors ``gnssVizLogDir``: the first existing of
-``C:\\GnssProcessor\\logs`` -> the Release log dir -> the Debug log dir.
+The default-folder search order mirrors ``gnssVizLogDir``: the first existing
+of ``C:\\GnssProcessor\\logs``, the Release log dir, the Debug log dir.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ class TraceContext:
                  run_config: Optional[str] = None,
                  ref_ecef=None):
         self.log_dir = os.path.abspath(log_dir) if log_dir else default_log_dir()
-        #: Optional path to the NETWORK run's config JSON -- lets the geographic
+        #: Optional path to the network run's config JSON: lets the geographic
         #: viewers resolve station positions/roles when no roster CSV was emitted.
         self.network_config = os.path.abspath(network_config) if network_config else None
         #: Optional data root searched for an IONEX GIM (the ionosphere backdrop).
@@ -58,7 +58,7 @@ class TraceContext:
         #: viewers light up; when unset they auto-skip (a plain processor run is
         #: unchanged).  Mirrors the ``network_config`` / ``data_root`` pattern.
         self.truth_dir = os.path.abspath(truth_dir) if truth_dir else None
-        #: Optional path to THIS run's processor config JSON (comments tolerated,
+        #: Optional path to this run's processor config JSON (comments tolerated,
         #: read via :mod:`gnssviz.runconfig`).  Supplies the surveyed reference
         #: position (``receiver.reference_position_ecef``) to the
         #: ``rt_scorecard`` viewer and the ``app_mode`` to the report title.
@@ -118,11 +118,12 @@ class TraceContext:
     def has_data(self, csv_name: str) -> bool:
         """``True`` if the CSV exists and has at least one *data* row.
 
-        A zero-byte OR header-only trace means the logger was enabled but never
-        fired (e.g. ``wls_trace.csv`` on a run without WLS reseeds).  pandas can
-        read a header-only file but viewers then index empty arrays, so -- like
-        ``view_all`` treating ``readtable`` errors as absent -- skip them.  Only
-        the first two lines are read, so this is cheap even on large traces.
+        A zero-byte or header-only trace means the logger was enabled but never
+        fired (for example ``wls_trace.csv`` on a run without WLS reseeds).
+        pandas can read a header-only file but viewers then index empty arrays,
+        so skip them, the same way ``view_all`` treats ``readtable`` errors as
+        absent. Only the first two lines are read, so this is cheap even on
+        large traces.
         """
         p = self.path(csv_name)
         try:

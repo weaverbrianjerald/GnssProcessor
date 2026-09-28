@@ -1,12 +1,12 @@
 #!/usr/bin/env python
-"""Independent check of the DD-ambiguity wander against the ESTIMATED SLANT IONOSPHERE (SPEC_amb_iono §6.15.3a).
+"""Independent check of the DD-ambiguity wander against the estimated slant ionosphere (SPEC_amb_iono §6.15.3a).
 
-If the per-band DD wander were iono-borne it must appear in the estimated slant iono of the same chords over the
+If the per-band DD wander were iono-borne it should appear in the estimated slant iono of the same chords over the
 same arcs.  network_ionosphere.csv carries iono_total_m = x_lin + x_r (the full state, metres of L1 delay), so the
 frame caveat on iono_m (x_r alone) does not apply here.  For every chord (sat_i, ref_sat, sta_a, sta_b) of the DD
 trace's L1 rows, form  DD_I(t) = [I(a,i) - I(a,ref)] - [I(b,i) - I(b,ref)]  and take, per contiguous arc (same
 rules as dd_arc_stability.py: gap <= --gap-ep, first --trim epochs dropped, >= --min-arc epochs, settled >= h6),
-the MAD and the tail-median drift, in metres AND in L1 cycles (/0.190294) so it reads beside e1's MAD.
+the MAD and the tail-median drift, in metres and in L1 cycles (/0.190294) so it reads beside e1's MAD.
 Also printed: the single-LOS iono_total_m arc MAD (per station-satellite) for scale.
 
 Usage: python iono_arc_wander.py <run_dir> [--settle-h 6] [--min-arc 20] [--gap-ep 2] [--trim 10]
@@ -80,8 +80,8 @@ def main():
     print(line('DD iono over the chords', cm, cd, 'm'))
     print(line('DD iono in L1 cycles', [x / LAM1 for x in cm], [x / LAM1 for x in cd], 'cyc'))
     # joint test on the same chords: per arc, regress the DD-ambiguity deviation e1 (cycles) on the DD-iono
-    # deviation (in L1 cycles).  If the ambiguity wander COMPENSATED an iono-state error the slope would be -1
-    # (phase held, iono wrong); if the iono state TRACKED a real change the ambiguity would not move (slope 0).
+    # deviation (in L1 cycles).  A slope of -1 means the ambiguity wander compensated an iono-state error
+    # (phase held, iono wrong); a slope of 0 means the iono state tracked a real change and the ambiguity held.
     amb = defaultdict(dict)
     with io.open(os.path.join(a.run_dir, 'logs', 'network_dd_fractional.csv'), encoding='utf-8', errors='replace') as f:
         for row in csv.DictReader(f):
@@ -102,7 +102,7 @@ def main():
     ss = sorted(slopes); cc = sorted(corrs)
     print(f'  joint per-arc regression e1(cyc) on DD-iono(cyc): slope p50 {q(ss,.5):+.3f} (p10 {q(ss,.1):+.3f}, p90 {q(ss,.9):+.3f}), corr p50 {q(cc,.5):+.3f} (n {len(ss)})   [-1 = ambiguity compensating an iono-state error; 0 = unrelated]')
 
-    # A/B decomposition (pre-registered, SPEC s6.15.3a item 5): per chord-epoch with BOTH bands,
+    # A/B decomposition (pre-registered, SPEC s6.15.3a item 5): per chord-epoch with both bands,
     #   e_i = A + B*(lambda_i/lambda_1)  =>  B = (e2 - e1)/(lambda2/lambda1 - 1),  A = e1 - B
     # then regress the arc deviations of A and of B separately on the DD-iono deviation (L1 cycles).
     LAM2 = 0.244210

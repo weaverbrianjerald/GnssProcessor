@@ -2,13 +2,14 @@
  * @file meas3_xcheck.cpp
  * @brief Cross-validate the Meas3Ranges (4109) decoder against MeasEpoch (4027).
  *
- * A Septentrio receiver can be configured to log BOTH the legacy MeasEpoch
- * (4027) and the compact Meas3Ranges (4109) blocks for the same epochs.  When
- * such a capture is available this tool decodes both and compares the
- * reconstructed code / phase observables per (satellite, RINEX code), giving a
- * ground-truth check on the differential Meas3 decoder with no external
- * reference.  Agreement is expected at the encodings' shared resolution:
- * pseudorange ~1 mm, carrier phase ~0.001 cycles.
+ * A Septentrio receiver can log the legacy MeasEpoch (4027) and the compact
+ * Meas3Ranges (4109) blocks for the same epochs.  For such a capture this tool
+ * decodes both and compares the reconstructed code and phase observables per
+ * (satellite, RINEX code), which checks the differential Meas3 decoder against
+ * MeasEpoch with no external reference.  Agreement is expected at the
+ * encodings' shared resolution: pseudorange ~1 mm, carrier phase ~0.001
+ * cycles.  A difference above 0.02 m (code) or 0.02 cycles (phase) counts as
+ * a mismatch.
  *
  * Usage:  gnss_meas3_xcheck <path-to-sbf-dump>
  */
@@ -66,7 +67,7 @@ int main(int argc, char** argv) {
         else if (bn == 4109) collect(parser.getObservations(), m3_code[tow], m3_phase[tow]);
     }
 
-    // Compare on epochs decoded by BOTH paths.
+    // Compare only epochs for which both block types produced code observables.
     int n_code = 0, n_phase = 0, bad_code = 0, bad_phase = 0;
     int only_me = 0, only_m3 = 0, n_epochs = 0;
     double worst_code = 0.0, worst_phase = 0.0;

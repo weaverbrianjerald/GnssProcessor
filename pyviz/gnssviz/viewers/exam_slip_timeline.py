@@ -1,23 +1,23 @@
-"""Cycle-slip timeline — the exam's answer key of where the phase breaks are.
+"""Cycle-slip timeline: the exam's answer key of where the phase breaks are.
 
 Reads the GnssSimulator answer key ``truth_slips.csv`` (bound via ``--truth-dir``)
 and lays every injected cycle slip out on a per-satellite lane vs GPS time, so the
 recovered solution's slip handling can be graded against ground truth (SPEC §4.2 /
 R4).  Each slip is drawn once, coloured + shaped by its class
-(:data:`gnssviz.viewers.exam_common.SLIP_CLASS_COLORS`) — flagged (LLI=1),
-unflagged (LLI=0, must be caught via MW/GF), scripted (hand-authored gotcha), or
-false-alarm (Δ=0, LLI-only) — with the marker size scaled by ``|Δcycles|`` so a
+(:data:`gnssviz.viewers.exam_common.SLIP_CLASS_COLORS`): flagged (LLI=1),
+unflagged (LLI=0, must be caught via MW/GF), scripted (hand-authored edge case), or
+false-alarm (Δ=0, LLI-only), with the marker size scaled by ``|Δcycles|`` so a
 40-cycle jump reads bigger than a 1-cycle one.  The storm window is overlaid as
 paired dashed :class:`VLine`s.
 
 Because the lanes are categorical (one integer lane per PRN-sorted satellite) the
-lane→satellite key is drawn as left-edge text (placed in axes-fraction coords so
+lane-to-satellite key is drawn as left-edge text (placed in axes-fraction coords so
 it lands identically under both backends) and repeated in the summary.  The
 summary also breaks the slips down by class and by signal, names the largest jump,
-and flags any ``(satellite, signal)`` **burst** — three or more slips on
+and flags any ``(satellite, signal)`` **burst**: three or more slips on
 consecutive epochs (epoch spacing = ``interval_s`` from ``truth_scalars``).
 
-Pure data layer: emits :mod:`gnssviz.figures` specs only — no plotting library.
+Pure data layer: emits :mod:`gnssviz.figures` specs only, no plotting library.
 """
 
 from __future__ import annotations
@@ -103,8 +103,8 @@ def build_exam_slip_timeline(ctx) -> ViewerResult:
                 label=(cls if first else None), show_in_legend=first))
             first = False
 
-    # Lane→satellite labels at the left edge.  data_coords=False maps to
-    # axes-fraction in BOTH backends; with ylim fixed to (-0.5, n-0.5) lane i sits
+    # Lane-to-satellite labels at the left edge.  data_coords=False maps to
+    # axes-fraction in both backends; with ylim fixed to (-0.5, n-0.5) lane i sits
     # at fraction (i+0.5)/n, so a fractional label lands exactly on its row.
     for s in sats:
         i = lane_of[s]

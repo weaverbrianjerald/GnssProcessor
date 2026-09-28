@@ -3,24 +3,22 @@
  * @brief RINEX 3 blank-padded satellite numbers (card RXP,
  *        docs/refound/RXP_rinex3_blank_prn_2026-09-21.md).
  *
- * A RINEX 3 record may write its satellite number blank-padded — "G 7" for
- * "G07" — and 16 of the 310 observation files of DOY-129 do.  Both readers took
- * the first three characters verbatim, so such an identifier matched no orbit,
- * no product record and no other station's satellite, and every satellite
- * numbered below 10 left that station with no warning (four stations of the
- * 59-station roster contributed none).  The RINEX 2 path of the observation
- * parser has always normalized the blank (its @c extractSatsFromLine lambda);
- * the fix applies the same rule on the RINEX 3 paths of the observation parser
- * and of the navigation parser, unconditionally.
+ * A RINEX 3 record may write its satellite number blank-padded, "G 7" for "G07";
+ * 16 of the 310 DOY-129 observation files do.  Taken verbatim, such an identifier
+ * matches no orbit, no product record and no other station's satellite, so every
+ * satellite numbered below 10 drops out of that station without a warning.  The
+ * RINEX 2 path of the observation parser normalizes the blank (its
+ * @c extractSatsFromLine lambda); the RINEX 3 paths of the observation parser and of
+ * the navigation parser apply the same rule, unconditionally.
  *
- * What is pinned here:
+ * Checked here:
  *   (a) an observation epoch mixing "G 7" and "G17" parses to G07 and G17, with
  *       each satellite's measurements landing on its own codes;
  *   (b) a navigation record written "G 7" is keyed G07, so it matches the
  *       observation of the same satellite;
  *   (c) an already-zero-padded file is unchanged by the normalization.
  *
- * Suite: Rinex3BlankPrnTest (one suite per file — ownership rule).
+ * Suite: Rinex3BlankPrnTest (one suite per file, per the suite ownership rule).
  */
 
 #include <gtest/gtest.h>
@@ -44,8 +42,8 @@ namespace {
 
 /// Minimal RINEX 3.04 observation file: one epoch, three GPS satellites.  The
 /// identifiers are written exactly as given, so a caller can pass the
-/// blank-padded form the defect is about.  Observation slots are EXACTLY 16
-/// chars (F14.3 value + LLI + SNR), built programmatically.
+/// blank-padded form under test.  Observation slots are exactly 16 chars
+/// (F14.3 value + LLI + SNR), built programmatically.
 std::filesystem::path writeObsFixture(const std::filesystem::path& dir,
                                       const std::string& name,
                                       const std::vector<std::string>& sat_ids) {
@@ -144,13 +142,13 @@ const char* kNavHdrV3 =
 } // namespace
 
 // --------------------------------------------------------------------------
-// (a) the observation path — the defect card RXP names
+// (a) the observation path (the defect named in card RXP)
 // --------------------------------------------------------------------------
 
 TEST(Rinex3BlankPrnTest, BlankPaddedNumberIsZeroPaddedAndKeepsItsMeasurements) {
     const auto dir = testDir();
-    // One epoch carrying "G 7" and "G17" together, exactly as the affected
-    // files of DOY-129 write them.
+    // One epoch carrying "G 7" and "G17" together, as the affected DOY-129 files
+    // write them.
     const auto obs = writeObsFixture(dir, "blank_G_30S_MO.rnx", { "G 7", "G17" });
     LogManager lm;
     GnssConfig cfg;
@@ -160,8 +158,8 @@ TEST(Rinex3BlankPrnTest, BlankPaddedNumberIsZeroPaddedAndKeepsItsMeasurements) {
     ASSERT_TRUE(rp.parse());
     const auto& v = rp.getObservations();
 
-    // The blank-padded record must arrive under the canonical identifier — the
-    // form every orbit, clock, bias and state key in the project uses.
+    // The blank-padded record arrives under the canonical identifier, the form
+    // that every orbit, clock, bias and state key in the project uses.
     EXPECT_EQ(satelliteIds(v), (std::set<std::string>{ "G07", "G17" }));
 
     const auto* g07 = findSat(v, "G07");
@@ -199,7 +197,7 @@ TEST(Rinex3BlankPrnTest, ZeroPaddedFileIsUnchangedByTheNormalization) {
 }
 
 // --------------------------------------------------------------------------
-// (b) the navigation path — the same one-line shape in the other reader
+// (b) the navigation path: the same identifier field in the other reader
 // --------------------------------------------------------------------------
 
 TEST(Rinex3BlankPrnTest, NavigationRecordWithABlankNumberIsKeyedZeroPadded) {

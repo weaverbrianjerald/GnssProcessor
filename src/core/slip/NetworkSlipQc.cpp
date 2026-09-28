@@ -1,17 +1,20 @@
 /**
  * @file NetworkSlipQc.cpp
  * @brief Serial slip-QC drains of the network run loop: the phase-leveling T0
- *        repair drain, the MW-detect / LLI refloat drain, and the IF-phase
- *        triple-difference driver.
+ *        repair drain, the MW-detect / LLI refloat drain with its delta-bridge
+ *        kernels, the IF-phase triple-difference driver, the wind-up restart
+ *        drain, the injected arc-free drain and the gap re-entry drains, plus
+ *        the band-scope decision they share.
  *
- * Decomposition INC-6 (2026-07-16) — bodies relocated VERBATIM from the
- * SB_SLIP block of ApplicationNetwork.cpp (see
- * docs/network_decomposition_plan.md).  The PASS-A parallel
- * scan that FILLS PassABuffers stays in the run TU until INC-7 (Assembly);
- * the SB_SLIP D0b timer bracket also stays there, wrapping the scan plus
- * these three calls.  Each function opens with a short alias block binding
- * the former runNetwork() local names (buffer slots, trace stream, event
- * forwarder) so the moved code is textually unchanged.
+ * The first three drains were moved here from the SB_SLIP block of
+ * ApplicationNetwork.cpp at decomposition INC-6 (see
+ * docs/network_decomposition_plan.md).  The PASS-A parallel scan that fills
+ * PassABuffers, and the calls into the drains below, live in
+ * Application::networkPassASlipScan_ (ApplicationNetworkAssembly.cpp, INC-7);
+ * the SB_SLIP D0b timer bracket in ApplicationNetwork.cpp wraps that call.
+ * The three relocated drains open with a short alias block that binds the
+ * former runNetwork() local names (buffer slots, trace stream, event
+ * forwarder), so the relocated code reads with its original names.
  */
 
 #include "slip/NetworkSlipQc.hpp"
@@ -31,7 +34,7 @@
 namespace GnssProcessor {
 
 // ---------------------------------------------------------------------------
-// §Z BAND-SCOPED DETECTOR REFLOAT (docs/SPEC_event_harness.md)
+// Band-scoped detector refloat (docs/SPEC_event_harness.md §Z)
 // ---------------------------------------------------------------------------
 BandScopeDecision networkSlipBandScope(const std::set<std::string>& live_bands,
                                        const std::set<std::string>& implicated,
@@ -46,9 +49,9 @@ BandScopeDecision networkSlipBandScope(const std::set<std::string>& live_bands,
         d.single_band = true;
         return d;
     }
-    // Does the arc still keep an anchor after THIS drain, given what earlier
-    // drains already latched?  If so it needs no help - do not perturb the
-    // pre-knob instruction stream.
+    // A live band that this drain does not implicate and no earlier drain has
+    // freed still anchors the arc.  Then the scope has nothing to do: return the
+    // no-op decision so the run follows the unscoped path unchanged.
     for (const auto& b : live_bands)
         if (implicated.count(b) == 0 && already_freed.count(b) == 0) return d;
     // Bands an earlier drain already freed cannot be un-freed.
@@ -56,10 +59,10 @@ BandScopeDecision networkSlipBandScope(const std::set<std::string>& live_bands,
     for (const auto& b : live_bands)
         if (already_freed.count(b) == 0) candidates.insert(b);
     if (candidates.empty()) {
-        // Every band was already gone before this drain ran.  Nothing this
-        // response can do; the arc lost its anchor upstream.  Counted rather
-        // than silent - a nonzero tally means an earlier freeing site is not
-        // routed through the scope (invariant #4).
+        // Every band was already freed before this drain ran, so the arc lost its
+        // anchor upstream and this response cannot restore it.  The case is
+        // counted: a nonzero tally means an earlier freeing site is not routed
+        // through the scope (invariant #4).
         d.too_late = true;
         return d;
     }
@@ -68,9 +71,9 @@ BandScopeDecision networkSlipBandScope(const std::set<std::string>& live_bands,
     // dN1 - dN2 = dMW/lam_WL  and  lam1*dN1 - lam2*dN2 = dGF  separate exactly.
     // lam2 is recovered from the pair's own wide-lane wavelength
     // (lam_WL = lam1*lam2/(lam2-lam1)), so nothing outside RawSlipObs is
-    // consulted and FDMA stays exact.  `pair_changed` refuses the row for the
-    // reason the struct documents: the step was formed on a DIFFERENT lane than
-    // the one we would convert into.
+    // consulted and FDMA stays exact.  A verdict with `pair_changed` set is
+    // refused, for the reason the struct documents: its step was formed on a
+    // different lane than the one the conversion would use.
     std::map<std::string, double> dn_cyc;
     if (obs && verdict && obs->dual && verdict->measured && !verdict->pair_changed
         && obs->lambda_wl_m > 0.0 && obs->lam1_m > 0.0
@@ -87,9 +90,9 @@ BandScopeDecision networkSlipBandScope(const std::set<std::string>& live_bands,
         }
     }
 
-    // Smallest MEASURED |dN| among the SURVIVORS wins the pin.  A band with no
-    // evidence never out-ranks a measured one - absence of evidence is not
-    // innocence.
+    // The surviving band with the smallest measured |dN| is pinned (a tie goes
+    // to the lexically lower band).  A band with no evidence never outranks a
+    // measured one, since missing evidence does not show that a band is clean.
     for (const auto& b : candidates) {
         const auto it = dn_cyc.find(b);
         if (it == dn_cyc.end()) continue;
@@ -103,8 +106,10 @@ BandScopeDecision networkSlipBandScope(const std::set<std::string>& live_bands,
     if (!d.measured) {
         // No usable raw evidence (single-band raw row, a gap, a changed pair, or
         // survivors that are all off the primary pair): keep the lexically
-        // lowest survivor.  Deterministic, and the lowest band is the shortest
-        // wavelength - the smallest metric level error per retained cycle.
+        // lowest survivor.  Deterministic; for GPS the lowest band is also the
+        // shortest wavelength, so a retained cycle costs the smallest metric
+        // level error.  For Galileo and BeiDou, band 5 sorts before bands 6-8
+        // but has the longest wavelength of them.
         d.keep        = *candidates.begin();
         d.keep_dn_cyc = 0.0;
     }
@@ -114,10 +119,11 @@ BandScopeDecision networkSlipBandScope(const std::set<std::string>& live_bands,
 
 namespace {
 
-/// SS-Z: the signals of (i, sat) an EARLIER drain already freed this epoch.  Both
-/// freeing vehicles are read - `relevel->free_ambs` (the phase-leveling latch the
-/// PASS-B inject actually consumes) and the Card-4 `carry_slipped_ambs` funnel -
-/// because which one is live is a posture decision the scope must not depend on.
+/// The signals of (i, sat) that an earlier drain already freed this epoch (SS-Z).
+/// Both freeing paths are read, `relevel->free_ambs` (the phase-leveling latch the
+/// PASS-B inject consumes) and the `carry_slipped_ambs` funnel of the invariant
+/// carry (Card 4), because which one is live depends on the posture and the scope
+/// must not.
 std::set<std::string> bandScopeFreedSoFar(
         int i, const std::string& sat,
         const RelevelEpochState* relevel,
@@ -135,11 +141,11 @@ std::set<std::string> bandScopeFreedSoFar(
     return out;
 }
 
-/// SS-Z site wrapper: resolve the arc's LIVE band set from the state manager and
-/// the bands already freed this epoch, run the pure decision, fold the counters,
-/// and return the band the caller must SKIP.  Empty string = free everything,
-/// i.e. the pre-knob path - which is also what an unarmed run always gets, so
-/// every call site stays byte-identical off.
+/// Call-site wrapper for the band scope (SS-Z): read the arc's live bands from the
+/// state manager and the bands already freed this epoch, run the pure decision,
+/// update the counters, and return the band the caller skips.  An empty string
+/// means free every band, which is the unscoped path; an unarmed run always gets
+/// it, so every call site is byte-identical with the knob off.
 std::string bandScopeKeepAt(bool on, const NetStation& sta, int i,
                             const std::string& sat,
                             const std::set<std::string>& implicated,
@@ -171,18 +177,18 @@ std::string bandScopeKeepAt(bool on, const NetStation& sta, int i,
     if (!d.scoped) return {};
     ++cnt.bscope_arcs;
     ++cnt.bscope_kept;
-    // What THIS drain actually spares: its own implicated bands minus the pin
-    // (the pin is always one of them - a survivor outside `implicated` would have
-    // meant the arc still had an anchor and the scope would not have acted).
+    // Count what this drain frees: its implicated live bands minus the pin.  The
+    // pin is always one of them, because a survivor outside `implicated` would
+    // leave the arc an anchor and the scope would not have acted.
     long long freed_now = 0;
     for (const auto& b : implicated)
         if (live.count(b) && b != d.keep) ++freed_now;
     cnt.bscope_freed += freed_now;
     if (d.measured) ++cnt.bscope_measured;
-    // Every live band covered => this IS the all-band case by definition: the
-    // scope acts only then, so the counter and bscope_arcs coincide BY
-    // CONSTRUCTION.  Kept separate because it is the line the run-end clause has
-    // to name - "a truly-slipped band stayed pinned this many times".
+    // The scope acts only when every live band is covered, which is the all-band
+    // case, so this counter always equals bscope_arcs.  It is kept separate
+    // because the run-end report names it: the number of times a band that may
+    // have truly slipped stayed pinned.
     ++cnt.bscope_all_band_fallback;
     return d.keep;
 }
@@ -197,30 +203,30 @@ void networkSlipDrainT0Repairs(const PassABuffers& pa, const GnssConfig& config_
                                         LocalCarry>& local_carry,
                                const SyncedEpoch& se,
                                const std::shared_ptr<spdlog::logger>& log) {
-    // Alias block (INC-6 migration mechanic) — the relocated body reads the
-    // PASS-A buffer under its former local name.
+    // Alias block (INC-6): the relocated body reads the PASS-A buffer under its
+    // former local name.
     const auto& sta_repairs = pa.sta_repairs;
-    // Phase-leveling T0 (serial, station-ordered → deterministic), applied
-    // BEFORE PASS-B reads the carry to build the prior.
-    //   • REPAIR  — a confident, sane-magnitude integer (frac ≤ frac_max AND
-    //     |dN| ≤ dn_max): shift the carried value continuously
-    //     (value_abs += dN·λ, variance unchanged, covariance-preserving).
-    //   • LEAVE   — a less-confident emitted repair (frac/magnitude reject):
-    //     do nothing.  This is the data-driven choice for the BIA-less network:
-    //     the float wide-lane's emitted-but-low-confidence repairs are
-    //     predominantly FALSE positives (e.g. a re-initialising arc reporting
-    //     dN=675 at frac≈0.27), so acting on them — REFLOAT or DROP — discards
-    //     a GOOD carry and measurably degrades the products, whereas leaving
-    //     them matches carry-only.  The residual lock-in risk on a RARE
-    //     real-but-rejected slip is bounded by phase_leveling_var_floor_m2 and
-    //     the max-gap drop, and is properly resolved by Increment 3's
-    //     cross-station RAIM consensus (which CAN tell a real slip from a
-    //     single-station false positive — something a per-station T0 cannot).
-    //     Wiring external BIA into the network MW would make the wide-lane
-    //     integer trustworthy and let this become a REFLOAT.
-    // The resolver's `reset_sats` is likewise NOT acted on (BIA-less, it is a
-    // liberal catch-all of tens of sats/epoch).  The pivot (stations[0]) is
-    // never touched (its gauge-pinned ambiguities are Increment-4 territory).
+    // Phase-leveling T0, applied serially in station order (deterministic) before
+    // PASS B reads the carry to build the prior.
+    //   • Repair: a confident integer of sane magnitude (frac ≤ frac_max and
+    //     |dN| ≤ dn_max) shifts the carried value continuously
+    //     (value_abs += dN·λ; variance unchanged, covariance preserved).
+    //   • Leave: a less confident emitted repair (rejected on frac or magnitude)
+    //     is not acted on.  This is the data-driven choice for the BIA-less
+    //     network: the float wide-lane's low-confidence repairs are mostly false
+    //     positives, so acting on them (refloat or drop) discards a good carry
+    //     and measurably degrades the products, while leaving them matches
+    //     carry-only.  The lock-in risk from a rare real slip rejected here is
+    //     bounded by phase_leveling_var_floor_m2 and the max-gap drop, and is
+    //     left to the cross-station RAIM consensus (Increment 3), which can tell
+    //     a real slip from a single-station false positive; a per-station T0
+    //     cannot.  External BIA in the network MW would make the wide-lane
+    //     integer reliable enough to turn this branch into a refloat.
+    // The resolver's `reset_sats` is not acted on either: without BIA it is a
+    // liberal catch-all of tens of satellites per epoch.  The loop starts at
+    // i_lo: on the legacy datum (i_lo = 1) the pivot stations[0], whose
+    // gauge-pinned ambiguities belong to Increment 4, is not touched; under the
+    // prioritized datum i_lo = 0 and station 0 is processed like any other.
     int n_t0_repairs = 0, n_t0_left = 0;
     std::string t0_detail;
     const double t0_frac_max = config_.networkCycleSlipTurboEditFracMax();
@@ -233,7 +239,7 @@ void networkSlipDrainT0Repairs(const PassABuffers& pa, const GnssConfig& config_
             if (it == local_carry.end()) continue;
             const int adn = (r.dN < 0) ? -r.dN : r.dN;
             if (r.frac <= t0_frac_max && adn <= t0_dn_max) {
-                it->second.value_abs += static_cast<double>(r.dN) * r.lambda;  // REPAIR
+                it->second.value_abs += static_cast<double>(r.dN) * r.lambda;  // repair
                 ++n_t0_repairs;
                 if (n_t0_repairs <= 12)
                     t0_detail += fmt::format("{}{}/{}/{} dN={} f={:.2f}",
@@ -241,7 +247,7 @@ void networkSlipDrainT0Repairs(const PassABuffers& pa, const GnssConfig& config_
                                              stations[i].name, r.satellite, r.signal,
                                              r.dN, r.frac);
             } else {
-                ++n_t0_left;  // LEAVE (untrusted integer — likely a float-MW false positive)
+                ++n_t0_left;  // leave (untrusted integer, likely a float-MW false positive)
                 if (n_t0_left <= 6)
                     log->debug("Network[phase-leveling T0]: TOW {:.1f} LEFT low-confidence "
                                "{}/{}/{} dN={} frac={:.2f} (untrusted; carry kept)",
@@ -265,7 +271,7 @@ DeltaBridgeSolve networkSlipDeltaBridgeSolve(double dn_wl_cyc, double sigma_wl_c
         !std::isfinite(dif_m) || !std::isfinite(sigma_if_m) ||
         !(lambda_wl_m > 0.0) || !(lambda_if_m > 0.0))
         return r;
-    // Band frequencies from the two wavelengths alone (per-satellite exact —
+    // Band frequencies from the two wavelengths alone (exact per satellite,
     // GLONASS FDMA included): 1/λ_WL = (f1−f2)/c, 1/λ_IF = (f1+f2)/c.
     constexpr double c = 299792458.0;
     const double f1 = 0.5 * c * (1.0 / lambda_wl_m + 1.0 / lambda_if_m);
@@ -274,16 +280,16 @@ DeltaBridgeSolve networkSlipDeltaBridgeSolve(double dn_wl_cyc, double sigma_wl_c
     const double lam1 = c / f1, lam2 = c / f2;
     // δ_IF = β1·ΔN1 − β2·ΔN2 with β_j = λ_WL·f_j/(f1+f2); β1 − β2 ≡ λ_IF.
     const double beta1 = lambda_wl_m * f1 / (f1 + f2);
-    // FLOAT solve (a bridge, never an integer fix):
+    // Float solve (a bridge, never an integer fix):
     //   ΔN2 = (δ_IF − β1·ΔN_WL)/λ_IF;   ΔN1 = ΔN2 + ΔN_WL.
-    // (The β1-times-ΔN_WL-over-λ_IF step is this kernel's analogue of the GF
-    //  kernel's documented λ1-in-numerator trap — integer-injection tested.)
+    // (The β1·ΔN_WL/λ_IF term is this kernel's counterpart of the GF kernel's
+    //  documented λ1-in-numerator error; an integer-injection test covers it.)
     const double dn2 = (dif_m - beta1 * dn_wl_cyc) / lambda_if_m;
     const double dn1 = dn2 + dn_wl_cyc;
     if (!std::isfinite(dn1) || !std::isfinite(dn2)) return r;
     if (std::abs(dn1) > max_abs_cyc || std::abs(dn2) > max_abs_cyc) return r;
-    // Variance propagation (independent σ_IF [m], σ_WL [cyc]); the 1/λ_IF²
-    // factor is the ~9× amplification the bridged prior must honestly carry.
+    // Variance propagation (independent σ_IF [m], σ_WL [cyc]).  The 1/λ_IF²
+    // factor is an amplification of about 9× in σ, which the bridged prior carries.
     const double beta2 = beta1 - lambda_if_m;
     const double v2 = (sigma_if_m * sigma_if_m + beta1 * beta1 * sigma_wl_cyc * sigma_wl_cyc)
                       / (lambda_if_m * lambda_if_m);
@@ -301,8 +307,8 @@ BridgeV3Solve networkSlipBridgeV3Solve(const RelevelPend& pd, double rho_if_gf,
                                        double max_abs_cyc, double max_sigma_cyc) {
     BridgeV3Solve r;
     if (!(pd.lambda_wl > 0.0) || !(pd.lambda_if > 0.0)) return r;
-    // Band frequencies from the two wavelengths alone (the v2 derivation —
-    // per-satellite exact, GLONASS FDMA included).
+    // Band frequencies from the two wavelengths alone, as in the v2 kernel
+    // (exact per satellite, GLONASS FDMA included).
     constexpr double c = 299792458.0;
     const double f1 = 0.5 * c * (1.0 / pd.lambda_wl + 1.0 / pd.lambda_if);
     const double f2 = 0.5 * c * (1.0 / pd.lambda_if - 1.0 / pd.lambda_wl);
@@ -313,7 +319,8 @@ BridgeV3Solve networkSlipBridgeV3Solve(const RelevelPend& pd, double rho_if_gf,
 
     double dn1, dn2, v1, v2, cov12 = 0.0;
     if (pd.has_dn) {
-        // E2 route: the v2 closed form, verbatim math.
+        // With a WL integer (the E2 route): the v2 closed form, same math as
+        // networkSlipDeltaBridgeSolve.
         if (!std::isfinite(pd.dif_m) || !std::isfinite(pd.sigma_if_m)) return r;
         dn2 = (pd.dif_m - beta1 * pd.dn_wl) / pd.lambda_if;
         dn1 = dn2 + pd.dn_wl;
@@ -323,10 +330,12 @@ BridgeV3Solve networkSlipBridgeV3Solve(const RelevelPend& pd, double rho_if_gf,
         v1  = (pd.sigma_if_m * pd.sigma_if_m
                + beta2 * beta2 * pd.sigma_wl * pd.sigma_wl)
               / (pd.lambda_if * pd.lambda_if);
-        // E4 over-determination screen: a wrong detector-rounded WL integer
-        // (±1 cyc) sits 2.5–5σ off the E1+E4 float plane — the propagated σ
-        // cannot see it (the mw_only lesson: propagation carries measurement
-        // noise, not hypothesis risk), the plane residual can.
+        // Over-determination screen with the GF equation (E4): a wrong
+        // detector-rounded WL integer (±1 cyc) sits 2.5–5σ off the E1+E4 float
+        // plane.  The propagated σ cannot show it, because propagation carries
+        // measurement noise and not the risk of a wrong integer (the mw_only
+        // lesson); the plane residual can.  Above kBridgePlaneResidMax the
+        // bridge is rejected.
         if (pd.has_gf && std::isfinite(pd.dgf_m) && pd.sigma_gf_m > 0.0) {
             const double pred = lam1 * dn1 - lam2 * dn2;
             const double sres = std::sqrt(pd.sigma_gf_m * pd.sigma_gf_m
@@ -337,8 +346,9 @@ BridgeV3Solve networkSlipBridgeV3Solve(const RelevelPend& pd, double rho_if_gf,
             }
         }
     } else if (pd.has_gf) {
-        // E1+E4 route: [β1 −β2; λ1 −λ2]·ΔN = [δIF; dGF], full 2×2 covariance
-        // propagation with the shared-noise off-diagonal ρ·σIF·σGF.
+        // Without a WL integer, solve the IF and GF equations (the E1+E4 route):
+        // [β1 −β2; λ1 −λ2]·ΔN = [δIF; dGF], with full 2×2 covariance propagation
+        // and the shared-noise off-diagonal ρ·σIF·σGF.
         if (!std::isfinite(pd.dif_m) || !std::isfinite(pd.sigma_if_m) ||
             !std::isfinite(pd.dgf_m) || !(pd.sigma_gf_m > 0.0)) return r;
         const double det = -beta1 * lam2 + beta2 * lam1;  // ≈ −0.046 m² (GPS)
@@ -356,7 +366,7 @@ BridgeV3Solve networkSlipBridgeV3Solve(const RelevelPend& pd, double rho_if_gf,
                 + a12 * a22 * sgf * sgf;
         r.used_gf = true;
     } else {
-        return r;   // no second equation yet — keep pending
+        return r;   // no second equation yet: keep pending
     }
     if (!std::isfinite(dn1) || !std::isfinite(dn2)) return r;
     if (std::abs(dn1) > max_abs_cyc || std::abs(dn2) > max_abs_cyc) return r;
@@ -368,10 +378,10 @@ BridgeV3Solve networkSlipBridgeV3Solve(const RelevelPend& pd, double rho_if_gf,
     r.shift1_m = lam1 * dn1;  r.shift2_m = lam2 * dn2;
     r.var1_m2 = lam1 * lam1 * v1;  r.var2_m2 = lam2 * lam2 * v2;
 
-    // Stage 2: chain band 3 from the EWL integer.  dn_ewl_b3 was NORMALIZED at
-    // fill time to ΔN3 − ΔN_shared, so the chain is sign-free here; the λ3
-    // derivation folds the EWL wavelength against the shared band's own
-    // (1/λ3 = 1/λ_shared ± 1/λ_EWL, + when band 3 is the higher frequency).
+    // Stage 2: chain band 3 from the EWL integer.  dn_ewl_b3 is normalized at
+    // fill time to ΔN3 − ΔN_shared, so the chain needs no sign handling here.
+    // λ3 follows from the shared band's wavelength and the EWL wavelength:
+    // 1/λ3 = 1/λ_shared ± 1/λ_EWL, with + when band 3 is the higher frequency.
     if (pd.has_ewl && (pd.ewl_shared_band == 1 || pd.ewl_shared_band == 2)
         && pd.lambda_ewl > 0.0) {
         const double lam_sh = (pd.ewl_shared_band == 1) ? lam1 : lam2;
@@ -384,7 +394,7 @@ BridgeV3Solve networkSlipBridgeV3Solve(const RelevelPend& pd, double rho_if_gf,
             const double dn3 = dn_sh + pd.dn_ewl_b3;
             const double v3 = v_sh + pd.sigma_ewl * pd.sigma_ewl;
             (void)cov12;  // band-3 var uses the shared band's own var; the
-                          // cross term to the OTHER band is not carried (the
+                          // cross term to the other band is not carried (the
                           // replace is diagonal by design).
             if (std::isfinite(dn3) && std::abs(dn3) <= max_abs_cyc
                 && std::sqrt(v3) <= max_sigma_cyc) {
@@ -404,7 +414,7 @@ bool networkSlipFillEwlSlot(RelevelPend& pd, const MwBridgeCand& cand,
     if (pd.has_ewl) return false;
     const bool s1_shared = (cand.sig1 == pd.sig1 || cand.sig1 == pd.sig2);
     const bool s2_shared = (cand.sig2 == pd.sig1 || cand.sig2 == pd.sig2);
-    if (s1_shared == s2_shared) return false;  // both shared (IS the IF pair) or disjoint
+    if (s1_shared == s2_shared) return false;  // both shared (it is the IF pair) or disjoint
     const std::string& shared = s1_shared ? cand.sig1 : cand.sig2;
     const std::string& band3  = s1_shared ? cand.sig2 : cand.sig1;
     if (!pd.sig3.empty() && band3 != pd.sig3) return false;
@@ -450,8 +460,9 @@ BridgeReplaceOutcome networkSlipBridgeV3Replace(
     const bool apply3 = do3 && it3 != carry.end() && bs.lam3_m > 0.0;
     if (apply3) {
         L3 = pd.pre3 + bs.shift3_m;
-        // NO partial apply: a band-3 corroboration failure rejects the whole
-        // bridge — a half-replaced LOS mixes pre-slip and free-re-level frames.
+        // No partial apply: a band-3 corroboration failure rejects the whole
+        // bridge, because a half-replaced LOS would mix pre-slip and free
+        // re-level frames.
         if (std::abs(L3 - it3->second.value_abs) / bs.lam3_m > corrob_cyc)
             return BridgeReplaceOutcome::CorrobReject;
     }
@@ -487,16 +498,16 @@ BridgeReplaceOutcome networkSlipBridgeReplace(
     const double lam1 = c / f1, lam2 = c / f2;
     const double L1 = pd.pre1 + bs.shift1_m;
     const double L2 = pd.pre2 + bs.shift2_m;
-    // CORROBORATION (§8.1): the bridged level must agree with the interim v1
-    // free re-level.  Correct bridges err <= 0.5 cyc against truth and the free
-    // level sits within ~2 cyc, while the audit's wrong bridges erred
-    // 6-113 cyc — agreement separates the populations.
+    // Corroboration (§8.1): the bridged level must agree with the interim v1
+    // free re-level to within corrob_cyc.  Correct bridges err <= 0.5 cyc
+    // against truth and the free level sits within ~2 cyc, while wrong bridges
+    // erred 6–113 cyc in the audit, so agreement separates the populations.
     if (std::abs(L1 - it1->second.value_abs) / lam1 > corrob_cyc ||
         std::abs(L2 - it2->second.value_abs) / lam2 > corrob_cyc)
         return BridgeReplaceOutcome::CorrobReject;
-    // REPLACE: the local-step mutation discipline — value + var only; the
-    // coupling regression and last_seen belong to the current harvest and a
-    // pure level re-base leaves both valid.
+    // Replace value and var only (the local-step mutation rule).  The coupling
+    // regression and last_seen belong to the current harvest, and a pure level
+    // re-base leaves both valid.
     it1->second.value_abs = L1;  it1->second.var = pd.pre_var1 + bs.var1_m2;
     it2->second.value_abs = L2;  it2->second.var = pd.pre_var2 + bs.var2_m2;
     return BridgeReplaceOutcome::Applied;
@@ -528,15 +539,15 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                                const CommonBandEpoch* common_band) {
     // Alias block (INC-6 migration mechanic).
     const auto& sta_mw_refloat = pa.sta_mw_refloat;
-    // §Z: band-scoped refloat (docs/SPEC_event_harness.md).  Off ⇒ every
-    // bandScopeKeepAt below returns "" and the instruction stream is the pre-knob one.
+    // Band-scoped refloat (docs/SPEC_event_harness.md §Z).  With it off, every
+    // bandScopeKeepAt below returns "" and the drain runs the unscoped path unchanged.
     const bool bscope_on = config_.getNetworkConfig().cycle_slip_refloat_band_scope
                                == NetworkRefloatBandScope::Implicated;
-    // SIM-ONLY ORACLE: this epoch's continuous-GPS seconds, the frame the truth
-    // table is indexed in (same expression as the wind-up drain's now_s).
+    // Sim-only oracle: this epoch's continuous GPS seconds, the time frame the
+    // truth table is indexed in (the same expression as the wind-up drain's now_s).
     const double oracle_now_s =
         static_cast<double>(se.time.week) * 604800.0 + se.time.tow;
-    // Thin event forwarder — textual copy of the run-TU lambda, so the moved
+    // Thin event forwarder, a textual copy of the run-TU lambda, so the moved
     // emitEvent call sites are unchanged (same rows, same order).
     auto emitEvent = [&](const char* tier, const char* event,
                          const std::string& sat, const std::string& station,
@@ -545,36 +556,40 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
         traces.emitEvent(se.time, tier, event, sat, station, statistic, threshold,
                          action, detail);
     };
-    // MW DETECTOR (mw_detect) → refloat: the iono-safe complement to IF-phase TD.
-    // Two signals, neither of which uses the geometry-free ionosphere (so both stay
-    // valid at the 30 s product rate, unlike the TurboEdit MW+GF integer REPAIR):
-    //   (a) a CONFIDENT wide-lane integer jump collected in PASS A (sta_mw_refloat);
-    //   (b) the receiver's own LLI loss-of-lock flag (bit 0) on a carried signal —
-    //       the ground truth a receiver sets on a cycle slip / re-acquisition (this
-    //       is what a real slip like G23@GAMB carries when MW/IF can't see it).
-    // Either REFLOATS the affected ambiguity (marks it pending-reseed so PASS B
-    // re-estimates it from this epoch's data) — never applying an integer, so a wrong
-    // wide-lane integer can never bias the gauge.  Serial, station-ordered →
-    // deterministic.  The refloat is meaningful only when the carry is warm; cold, the
-    // detection is diagnostic (the free per-epoch estimate needs no reseed).  Pivot
-    // (stations[0]) is never touched (its ambiguities are gauge-pinned).
+    // MW detector (mw_detect) → refloat: the iono-safe complement to the IF-phase TD.
+    // Two signals, neither of which uses the geometry-free ionosphere, so both stay
+    // valid at the 30 s product rate (unlike the TurboEdit MW+GF integer repair):
+    //   (a) a confident wide-lane integer jump collected in PASS A (sta_mw_refloat);
+    //   (b) the receiver's own LLI loss-of-lock flag (bit 0) on a carried signal,
+    //       which the receiver sets on a cycle slip or re-acquisition and which
+    //       also marks real slips that MW and IF cannot see.
+    // Either one refloats the affected ambiguity (marks it pending-reseed so PASS B
+    // re-estimates it from this epoch's data) and never applies an integer, so a
+    // wrong wide-lane integer cannot bias the gauge.  Serial and station-ordered,
+    // hence deterministic.  The refloat matters only when the carry is warm; cold,
+    // the detection is diagnostic (the free per-epoch estimate needs no reseed).
+    // On the legacy pivot datum refloat_signal never touches stations[0], whose
+    // ambiguities are gauge-pinned: the station loop starts at i_lo = 1, or, with
+    // datum_station_detect armed, station 0's detections take the network
+    // re-reference path below.  Under the prioritized datum (i_lo = 0) station 0
+    // is refloated like any other station.
     if (config_.networkCycleSlipMwDetect()) {
-        // Card E: MATCHED (a detection landed on a live ambiguity) and REFLOATED
-        // (the warm carry was actually reset) are separate facts.  Conflating
-        // them is exactly what made every cold run report zero MW/LLI events
-        // while still feeding the C3c funnel (limitation L3).
+        // Matched (a detection landed on a live ambiguity) and refloated (the warm
+        // carry was reset) are recorded separately (Card E).  A cold run matches,
+        // and feeds the C3c funnel, without refloating; the separate flag lets it
+        // still report its MW/LLI events, with action "diagnostic" (limitation L3).
         struct SignalAction { bool matched{false}; bool refloated{false};
-            // SIM-ONLY ORACLE (network.cycle_slip.oracle_relevel): the arc was
-            // ANSWERED by a truth-fed level repair (or a truth-fed false-alarm
-            // keep) instead of being freed.  `refloated` stays FALSE — nothing
-            // was refloated — so every downstream gate that keys on it (the
-            // bridge candidate push, the refloat counters) is correctly bypassed;
-            // the event row's action is overridden from these instead.
+            // Sim-only oracle (network.cycle_slip.oracle_relevel): the arc was
+            // handled by a truth-fed level repair (or a truth-fed false-alarm
+            // keep) instead of being freed.  `refloated` stays false, since
+            // nothing was refloated, so every downstream gate that keys on it (the
+            // bridge candidate push, the refloat counters) is bypassed; the event
+            // row's action is taken from these fields instead.
             bool oracle_handled{false}; bool oracle_repaired{false};
             std::string oracle_detail; };
-        // §7.6(c): `cause` is the lane observatory's freeing-cause bit
-        // (RelevelEpochState::kCauseMw / kCauseLli) — measure-only tag, OR-merged
-        // so a doubly-freed key keeps both bits.
+        // `cause` is the lane observatory's freeing-cause bit, §7.6(c)
+        // (RelevelEpochState::kCauseMw / kCauseLli): a measure-only tag, OR-merged
+        // so that a key freed twice keeps both bits.
         auto refloat_signal = [&](int i, const std::string& sat,
                                   const std::string& signal,
                                   std::uint8_t cause) -> SignalAction {
@@ -585,18 +600,18 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                 if (!parts || parts->satellite != sat) continue;
                 if (parts->signal == signal) {
                     act.matched = true;
-                    // SIM-ONLY ORACLE slip response (include/slip/NetworkSlipOracle.hpp):
-                    // a perfect repair REPLACES the free.  When it handles the arc,
-                    // EVERY freeing action below is skipped — C3c funnel insert,
-                    // pending-reseed mark, free_ambs latch, bridge-pend void —
-                    // and only the event row survives, with an oracle action.
-                    // Null (and unreachable) unless the sim-only knob is armed.
+                    // Sim-only oracle slip response (include/slip/NetworkSlipOracle.hpp):
+                    // a perfect repair replaces the free.  When the oracle handles
+                    // the arc, every freeing action below is skipped (C3c funnel
+                    // insert, pending-reseed mark, free_ambs latch, bridge-pend
+                    // void) and only the event row remains, with an oracle action.
+                    // `oracle` is null unless the sim-only knob is armed.
                     if (oracle) {
                         OracleOutcome oc = OracleOutcome::NotHandled;
                         std::string det;
                         // `cause` is this site's own tier bit (kCauseMw for the
-                        // wide-lane drain, kCauseLli for the receiver's LLI) —
-                        // it steers only the false-alarm KEEP attribution.
+                        // wide-lane drain, kCauseLli for the receiver's LLI); it
+                        // affects only the attribution of a false-alarm keep.
                         if (networkSlipOracleHandle(*oracle, i, sat, signal,
                                                     oracle_now_s, cause, det, oc)) {
                             act.oracle_handled  = true;
@@ -605,24 +620,24 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                             continue;
                         }
                     }
-                    // Card 4 C3c: feed the DD invariant carry from epoch 1,
-                    // independent of the legacy carry's warm gate (the DD carry is
-                    // live throughout; pending-reseed cannot serve it — PASS-B
-                    // MeasurementModel consumes+clears it before the fold).
+                    // Feed the DD invariant carry from epoch 1, independent of the
+                    // legacy carry's warm gate (Card 4 C3c).  The DD carry is live
+                    // throughout, and pending-reseed cannot serve it: the PASS-B
+                    // MeasurementModel consumes and clears the mark before the fold.
                     if (carry_invariant) carry_slipped_ambs.insert({i, amb_key});
                     // Legacy phase-leveling refloat: only meaningful once warm.
                     if (carry_warm) { sm.markAmbiguityPendingReseed(amb_key); act.refloated = true;
-                        // SPEC_slip_relevel_walk: the mark alone never delivered the
-                        // free epoch (PASS-B consumes it pre-inject) — latch the set
-                        // the inject site actually reads.
+                        // The mark alone does not deliver the free epoch, because
+                        // PASS B consumes it before the inject; also latch the set
+                        // the inject site reads (SPEC_slip_relevel_walk).
                         if (relevel) {
                             relevel->free_ambs.insert({i, amb_key});
                             relevel->free_cause[{i, amb_key}] |= cause;
                             ++qc_cnt.relevel_free_marked;
                         }
-                        // Bridge v2: a fresh mark on this (station, sat) makes any
-                        // outstanding pend's pre-slip capture STALE — void it (the
-                        // T1 flag path re-creates its own pend after this).
+                        // Bridge v2: a fresh mark on this (station, sat) makes the
+                        // pre-slip capture of any outstanding pend stale, so void it
+                        // (the T1 flag path re-creates its own pend after this).
                         if (relevel_pend)
                             for (auto pit = relevel_pend->begin(); pit != relevel_pend->end();)
                                 if (std::get<0>(pit->first) == i
@@ -635,30 +650,31 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
             }
             return act;
         };
-        // Card L: the LLI qualification is armed only when the toggle is on AND
-        // this epoch actually has raw evidence.  Without evidence LLI stays
-        // decisive — a gate that fires on missing data would be worse than the
-        // chatter it is meant to fix.
+        // The LLI qualification (Card L) is armed only when the toggle is on and
+        // this epoch has raw evidence.  Without evidence an LLI stays decisive: a
+        // gate that fires on missing data would do more harm than the LLI chatter
+        // it is meant to filter.
         const bool lli_qual = qc.lli_corroborate && raw.computed;
 
-        // §9.7.10 datum-station slip detect (network.cycle_slip.datum_station_detect):
+        // Datum-station slip detect, §9.7.10 (network.cycle_slip.datum_station_detect):
         // armed iff the caller passed the queues (legacy pivot datum only).  A slip
-        // detected at station 0 cannot be answered with refloat_signal — its
-        // ambiguities are gauge-pinned, and the level every emitted phase bias of
-        // that satellite references just moved.  The response is a NETWORK
-        // re-reference, split across the two edges invariant #7 names:
+        // detected at station 0 cannot be answered with refloat_signal: its
+        // ambiguities are gauge-pinned, and the level that every emitted phase bias
+        // of that satellite references has just moved.  The response is a network
+        // re-reference, split across the two edges that invariant #7 names:
         //   queue edge (here, at detection): sat → pb queue (this epoch's stash
-        //   HARD-skips its PhaseBias carry) + amb queue + datum_slip event/count;
-        //   apply edge (the block below, at the FIRST drain after that skip-stash
-        //   consumed): all-station ambiguity reseed + local-carry erase + disc
-        //   mark + datum_reref event/count — so the integers re-reference in the
-        //   SAME solve the bias re-seeds.
+        //   skips its PhaseBias carry entirely) + amb queue + datum_slip
+        //   event/count;
+        //   apply edge (the block below, at the first drain after that skip-stash
+        //   was consumed): all-station ambiguity reseed + local-carry erase + disc
+        //   mark + datum_reref event/count, so the integers re-reference in the
+        //   same solve in which the bias re-seeds.
         const bool datum_active = datum_pb_reref_sats && datum_amb_reref_sats
                                   && datum_mark_sats;
         auto datum_slip_detect = [&](const std::string& sat, const std::string& detail) {
             const bool fresh = datum_amb_reref_sats->insert(sat).second;
             datum_pb_reref_sats->insert(sat);
-            if (!fresh) return;   // already queued and not yet applied — dedupe
+            if (!fresh) return;   // already queued and not yet applied: dedupe
             ++qc_cnt.datum_slip_detections;
             emitEvent("T0_mw_detect", "datum_slip", sat, stations[0].name,
                       std::nullopt, std::nullopt, "queue_reref", detail);
@@ -669,11 +685,11 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                       se.time.tow, stations[0].name, sat, detail);
         };
         // Apply edge.  A sat still pending in the pb queue (its detection epoch was
-        // WITHHELD, so the stash never consumed the skip) stays deferred — the two
-        // edges cannot decouple across withholds.  Station 0 itself is never
-        // reseeded: the pin at the new phase level IS the new reference.  Absent
-        // stations are reseeded too — a pending-reseed mark persists until that
-        // station's PASS B next runs, which is exactly its re-coupling edge.
+        // withheld, so the stash never consumed the skip) stays deferred, so the
+        // two edges cannot come apart across withholds.  Station 0 itself is not
+        // reseeded: its pin at the new phase level is the new reference.  Absent
+        // stations are reseeded too: a pending-reseed mark persists until that
+        // station's PASS B next runs, which is its re-coupling edge.
         if (datum_active && !datum_amb_reref_sats->empty()) {
             for (auto it = datum_amb_reref_sats->begin();
                  it != datum_amb_reref_sats->end();) {
@@ -695,8 +711,8 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                     }
                 }
                 datum_mark_sats->insert(sat);
-                // §7.7 handover cross-guard: the network-wide reseed is a family
-                // frame step on every signal of `sat` — the T4-side lane
+                // Handover cross-guard, §7.7: the network-wide reseed is a family
+                // frame step on every signal of `sat`, and the T4-side lane
                 // measurement must not difference a pre-step capture against a
                 // post-step re-level.  Measure-only tag.
                 if (relevel) relevel->datum_reref_sats.insert(sat);
@@ -716,8 +732,8 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
         int n_mw = 0, n_lli = 0, n_lli_supp = 0;
         std::string mw_detail;
         // --- Bridge v2 pend sweep (once per epoch, serial): expire stale pends
-        // and REPLACE the ones whose MW integer arrived same-epoch at the T1
-        // flag (their corroborating free re-level was harvested last epoch).
+        // and replace the ones whose MW integer arrived in the same epoch as the
+        // T1 flag (their corroborating free re-level was harvested last epoch).
         const bool bridge_v2 = relevel_pend && bridge_local_carry
                             && carry_warm
                             && config_.networkCycleSlipRelevelDeltaBridge();
@@ -819,7 +835,7 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
             if (!present[i]) continue;
             // (a) confident wide-lane integer slips detected in PASS A.  A satellite
             // can slip on several signal-pairs at once (multi-freq); refloat every
-            // band but count / log / emit ONCE per (station, satellite).
+            // band but count, log and emit once per (station, satellite).
             std::set<std::string> mw_done;
             for (const auto& cand : sta_mw_refloat[i]) {
                 const auto& sat  = cand.sat;
@@ -827,25 +843,25 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                 const auto& sig2 = cand.sig2;
                 if (datum_active && i == 0) {
                     // Datum station: a confident WL integer jump takes the network
-                    // re-reference path — never refloat_signal (pinned ambiguities).
+                    // re-reference path, not refloat_signal (pinned ambiguities).
                     if (mw_done.insert(sat).second)
                         datum_slip_detect(sat, "MW;" + sig1 + ";" + sig2);
                     continue;
                 }
-                // Bridge v2 intercept BEFORE the mark: the belated MW integer for
-                // a slip T1 already flagged (and freed) 1-2 epochs ago.  Fill the
-                // waiting pend and REPLACE immediately (the corroborating free
+                // Bridge v2 intercept, before the mark: the belated MW integer for
+                // a slip that T1 already flagged (and freed) 1-2 epochs ago.  Fill
+                // the waiting pend and replace immediately (the corroborating free
                 // re-level was harvested at least one epoch ago).  On Applied the
-                // normal mark/free path is SUPPRESSED — the slip's event already
-                // fired at the flag epoch, and a second free would discard the
-                // just-replaced level.  Every other outcome falls through to
-                // today's path (the arc frees again — conservative).
+                // normal mark/free path is skipped: the slip's event already fired
+                // at the flag epoch, and a second free would discard the level just
+                // replaced.  Every other outcome falls through to the normal path
+                // (the arc is freed again, the conservative choice).
                 //
-                // MW EVIDENCE REFLOAT: an evidence-admitted candidate may carry
-                // NO usable integer (dn_wl is 0 and meaningless there).  Every
-                // branch below consumes cand.dn_wl as a measured step, so the
-                // whole intercept is skipped for those — filling has_dn with a
-                // zero would BRIDGE the carried level by zero, i.e. assert the
+                // MW evidence refloat: an evidence-admitted candidate may carry no
+                // usable integer (dn_wl is 0 and meaningless there).  Every branch
+                // below consumes cand.dn_wl as a measured step, so the whole
+                // intercept is skipped for those candidates: filling has_dn with a
+                // zero would bridge the carried level by zero, i.e. assert that the
                 // slip did not move it, which is worse than not bridging at all.
                 // Byte-identical with the knob off: the legacy gate requires
                 // slip_wl_known, so integer_known is true for every candidate it
@@ -863,15 +879,15 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                         relevel_pend->erase(pit);
                         if (outcome == BridgeReplaceOutcome::Applied) {
                             if (mw_done.insert(sat).second) ++qc_cnt.mw_detections;
-                            continue;   // suppress the second free — level replaced
+                            continue;   // skip the second free: the level was replaced
                         }
                     } else if (bridge_v3_ewl && pit == relevel_pend->end()) {
-                        // Bridge v3 E3, belated: an EWL candidate whose pair
-                        // shares exactly one band with a waiting (sta, sat)
-                        // pend fills its band-3 slot.  No replace here — the
+                        // Belated EWL for bridge v3 (E3): an EWL candidate whose
+                        // pair shares exactly one band with a waiting (sta, sat)
+                        // pend fills its band-3 slot.  No replace here: the
                         // sweep (or the belated IF-pair MW) closes the (1,2)
-                        // plane; the EWL alone cannot.  The σ floor is mapped
-                        // at the pend's FLAG-epoch elevation.
+                        // plane, which the EWL alone cannot.  The σ floor is
+                        // mapped at the pend's flag-epoch elevation.
                         for (auto& [k3, pd3] : *relevel_pend) {
                             if (std::get<0>(k3) != i || std::get<1>(k3) != sat)
                                 continue;
@@ -890,27 +906,26 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                         }
                     }
                 }
-                // §Z: MW names a PAIR, so on a 3-band arc it already leaves the
-                // third pinned and the scope is a no-op.  On a 2-band arc the
-                // pair IS the arc — that is the all-band case.
+                // MW names a pair, so on a 3-band arc it already leaves the third
+                // band pinned and the band scope (§Z) is a no-op.  On a 2-band arc
+                // the pair is the whole arc, which is the all-band case.
                 const std::string bs_keep =
                     bandScopeKeepAt(bscope_on, stations[i], i, sat, { sig1, sig2 },
                                     &raw, relevel, &carry_slipped_ambs, qc_cnt);
-                // A satellite can carry SEVERAL MW pairs in one epoch and the
-                // detection row is one per SATELLITE, so a keep decided on the
-                // SECOND pair would never reach the trace (measured: 20 silent
-                // keeps on the quiet null leg, whose MW fires on (L1C,L5Q) and
-                // (L1C,L2W) of the same arc).  Give it its own row — invariant
-                // #7 wants an identity at the edge, not a counter alone.
+                // A satellite can carry several MW pairs in one epoch (e.g.
+                // (L1C,L5Q) and (L1C,L2W) of the same arc) while the detection row
+                // is one per satellite, so a keep decided on a later pair would not
+                // reach the trace.  Such a keep gets its own row: invariant #7 asks
+                // for an identity at the edge, not only a counter.
                 if (!bs_keep.empty() && mw_done.count(sat))
                     emitEvent("T0_mw_detect", "band_scope", sat, stations[i].name,
                               std::nullopt, std::nullopt, "keep",
                               sig1 + ";" + sig2 + ";band_scope=implicated;kept="
                                   + bs_keep);
-                // §14 COMMON-BAND SCOPE: this pair may free only its bands that
-                // the epoch's ONE verdict implicated.  Null verdict (knob off) or
-                // no narrowed verdict for this (station, satellite) ⇒ true for
-                // both bands ⇒ the pre-knob instruction stream.
+                // Common-band scope (§14): this pair may free only those of its
+                // bands that the epoch's single verdict implicated.  With a null
+                // verdict (knob off), or no narrowed verdict for this (station,
+                // satellite), both calls return true and the unscoped path runs.
                 const bool cb1 = commonBandMayFree(common_band, i, sat, sig1);
                 const bool cb2 = commonBandMayFree(common_band, i, sat, sig2);
                 const auto a = (bs_keep == sig1 || !cb1) ? SignalAction{}
@@ -919,14 +934,14 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                 const auto b = (bs_keep == sig2 || !cb2) ? SignalAction{}
                              : refloat_signal(i, sat, sig2,
                                               RelevelEpochState::kCauseMw);
-                // Bridge v2: the same-epoch candidate (MW and T1 firing together)
-                // is deferred into the IF-TD driver, which stores the integer IN
-                // the pend it creates this epoch; the replace then runs at the
-                // NEXT epoch's sweep, once the corroborating free re-level exists.
-                // cand.integer_known for the same reason as the intercept above:
-                // the deferred path stores dn_wl in the pend it creates and
-                // replaces from it next epoch, so an unknown integer must not
-                // enter (byte-identical off — see the intercept comment).
+                // Bridge v2: a same-epoch candidate (MW and T1 firing together) is
+                // deferred to the IF-TD driver, which stores the integer in the
+                // pend it creates this epoch; the replace then runs at the next
+                // epoch's sweep, once the corroborating free re-level exists.
+                // cand.integer_known is required for the same reason as in the
+                // intercept above: the deferred path replaces from the stored
+                // dn_wl, so an unknown integer must not enter (byte-identical with
+                // the knob off, see the intercept comment).
                 if (relevel && carry_warm && config_.networkCycleSlipRelevelDeltaBridge()
                     && cand.integer_known && (a.refloated || b.refloated))
                     relevel->mw_cands.push_back(MwBridgeCand{
@@ -936,24 +951,24 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                         cand.lambda_wl});
                 const bool matched   = a.matched   || b.matched;
                 const bool refloated = a.refloated || b.refloated;
-                // SIM-ONLY ORACLE: the detection is unchanged (same population,
-                // same row), only the ACTION and the detail differ — so the arm
-                // and its control are directly comparable in network_events.csv.
+                // Sim-only oracle: the detection is unchanged (same population,
+                // same row) and only the action and the detail differ, so an
+                // oracle arm and its control compare directly in network_events.csv.
                 const bool orc_h = a.oracle_handled || b.oracle_handled;
                 const bool orc_r = a.oracle_repaired || b.oracle_repaired;
-                // The event is one row per SATELLITE but the oracle decides per
-                // BAND, so the detail must come from the band the ACTION names —
-                // a "oracle_repair" row carrying the other band's "delta=0;n=0"
-                // would make the trace disagree with itself.
+                // The event is one row per satellite but the oracle decides per
+                // band, so the detail comes from the band the action names; an
+                // "oracle_repair" row carrying the other band's "delta=0;n=0"
+                // would contradict itself.
                 const std::string orc_detail =
                     a.oracle_repaired ? a.oracle_detail
                   : b.oracle_repaired ? b.oracle_detail
                   : a.oracle_handled  ? a.oracle_detail : b.oracle_detail;
-                // MW EVIDENCE REFLOAT: an evidence-admitted row carries its own
-                // provenance so the population is separable in the trace without
-                // re-deriving the rule — tier, event and action are UNCHANGED
-                // (this is the same detection, admitted by a second gate), and
-                // legacy rows are byte-for-byte what they were.
+                // MW evidence refloat: an evidence-admitted row carries its
+                // provenance, so the population can be separated in the trace
+                // without re-deriving the rule.  Tier, event and action are
+                // unchanged (it is the same detection, admitted by a second gate),
+                // and legacy rows are byte-identical.
                 const std::string ev_detail =
                     cand.via_evidence
                         ? fmt::format(";src=evidence;ratio={:.1f};n={};int={}",
@@ -979,13 +994,13 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
             }
             // (b) receiver LLI loss-of-lock (bit 0) on any carried phase signal.
             // modeled[i] holds one entry per satellite; refloat every LLI'd band but
-            // count / emit ONCE per satellite (an LLI on both L1 and L2 is one slip).
+            // count and emit once per satellite (an LLI on both L1 and L2 is one slip).
             const bool credible =
                 !lli_qual || (i < static_cast<int>(raw.lli_credible.size())
                               && raw.lli_credible[static_cast<std::size_t>(i)] != 0);
             for (const auto& obs : modeled[i]) {
-                // Card L qualification is a per-(station, satellite) decision, so
-                // establish "does this satellite assert LLI at all" before acting.
+                // The LLI qualification (Card L) is a per-(station, satellite)
+                // decision, so first establish whether this satellite asserts LLI.
                 bool asserts = false;
                 for (const auto& [code, lli] : obs.lli_flags)
                     if (!code.empty() && code[0] == 'L' && (lli & 1)) { asserts = true; break; }
@@ -1000,13 +1015,13 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                         corr_mw    = vit->second.mw_step;
                         corr_gf    = vit->second.gf_step && !corr_mw;
                     }
-                    // Scope honesty: the shared observables are formed on the
-                    // PRIMARY dual-frequency pair, so an LLI asserted only on a
-                    // band OUTSIDE that pair (e.g. L5 on an L1/L2-primary arc)
-                    // is not something MW/GF can witness.  Counted separately so
-                    // "uncorroborated" never silently absorbs "unwitnessable" —
-                    // a nonzero off-pair count is the trigger to widen the
-                    // corroboration primitive to every tracked pair.
+                    // The shared observables are formed on the primary
+                    // dual-frequency pair, so MW/GF cannot witness an LLI asserted
+                    // only on a band outside that pair (e.g. L5 on an
+                    // L1/L2-primary arc).  Such assertions are counted separately
+                    // (lli_offpair) so that "uncorroborated" does not absorb
+                    // "unwitnessable"; a nonzero off-pair count is the signal to
+                    // widen the corroboration primitive to every tracked pair.
                     if (measurable) {
                         bool on_pair = false;
                         for (const auto& r : raw.rows[static_cast<std::size_t>(i)]) {
@@ -1020,12 +1035,12 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                     }
                 }
                 const bool corroborated = corr_mw || corr_gf;
-                // ACT when the assertion is corroborated by the receiver's own
-                // observables (decisive at ANY station — this is what keeps a real
-                // multi-satellite re-lock intact, spec M3), or when the station's
-                // LLI is still credible (spec M1 — do NOT require corroboration
-                // everywhere; that would forfeit the G23@GAMB class of catches
-                // where MW and IF genuinely cannot see the slip).
+                // Act when the assertion is corroborated by the receiver's own
+                // observables, which is decisive at any station, so a real
+                // multi-satellite re-lock is acted on even at a non-credible
+                // station (spec M3); or when the station's LLI is still credible
+                // (spec M1).  Corroboration is not required everywhere, because
+                // that would lose the slips that MW and IF cannot see.
                 const bool act = !lli_qual || corroborated || credible;
 
                 if (lli_qual) {
@@ -1041,9 +1056,9 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                         ++qc_cnt.lli_suppressed;
                         if (h) ++h->lli_suppressed;
                         ++n_lli_supp;
-                        // M4: never silent.  The suppressed assertion is a row of
-                        // its own, carrying the station's credibility score so the
-                        // top-offenders list is reconstructible from the trace.
+                        // A suppressed assertion still gets its own event row (spec
+                        // M4), carrying the station's credibility score so the
+                        // top-offenders list can be rebuilt from the trace.
                         emitEvent("T0_mw_detect", "lli_slip", obs.satellite,
                                   stations[i].name,
                                   h ? std::optional<double>(h->lli_frac_ewma) : std::nullopt,
@@ -1058,10 +1073,10 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                 }
 
                 if (datum_active && i == 0) {
-                    // Datum station: a qualified LLI assertion (the Card-L
-                    // suppression above applies identically — a chattering pivot
-                    // receiver must not re-reference the network repeatedly)
-                    // takes the network re-reference path.
+                    // Datum station: a qualified LLI assertion takes the network
+                    // re-reference path.  The Card-L suppression above applies here
+                    // too, so a chattering pivot receiver cannot re-reference the
+                    // network repeatedly.
                     datum_slip_detect(obs.satellite,
                                       corr_mw ? "LLI;mw_step"
                                               : (corr_gf ? "LLI;gf_step" : "LLI"));
@@ -1071,9 +1086,10 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                 bool matched = false, refloated = false;
                 bool orc_h = false, orc_r = false;
                 std::string orc_detail;
-                // §Z: the receiver can assert LLI on EVERY band of the satellite —
-                // a whole-satellite loss of lock — which is the case the scope
-                // exists for.  Collect the implicated set FIRST, then decide once.
+                // The receiver can assert LLI on every band of the satellite (a
+                // whole-satellite loss of lock), which is the case the band scope
+                // exists for (§Z).  Collect the implicated set first, then decide
+                // once.
                 std::set<std::string> lli_impl;
                 if (bscope_on)
                     for (const auto& [code, lli] : obs.lli_flags)
@@ -1086,20 +1102,20 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                 for (const auto& [code, lli] : obs.lli_flags) {
                     if (code.empty() || code[0] != 'L' || !(lli & 1)) continue;
                     if (!bs_keep_lli.empty() && code == bs_keep_lli) continue;
-                    // §14: an LLI band is ALWAYS implicated by the rule, so this
-                    // guard never fires on a band the receiver flagged — it is
-                    // here because the LLI loop and the MW loop must obey the
-                    // same one verdict (the per-epoch-union invariant).
+                    // The §14 rule always implicates an LLI band, so this guard
+                    // never fires on a band the receiver flagged.  It is here
+                    // because the LLI loop and the MW loop must follow the same
+                    // single verdict (the per-epoch-union invariant).
                     if (!commonBandMayFree(common_band, i, obs.satellite, code)) continue;
                     const auto sa = refloat_signal(i, obs.satellite, code,
                                                    RelevelEpochState::kCauseLli);
                     if (sa.matched)   matched   = true;
                     if (sa.refloated) refloated = true;
-                    // SIM-ONLY ORACLE: an LLI can be asserted on several bands of
-                    // one satellite and each is handled INDEPENDENTLY (a slip on
-                    // L1C only shifts L1C).  The event stays one-per-satellite,
-                    // so it carries the detail of the band its ACTION names — the
-                    // first REPAIRED band, else the first handled one.
+                    // Sim-only oracle: an LLI can be asserted on several bands of
+                    // one satellite, and each is handled independently (a slip on
+                    // L1C shifts only L1C).  The event stays one per satellite, so
+                    // it carries the detail of the band its action names: the
+                    // first repaired band, else the first handled one.
                     if (sa.oracle_handled) {
                         orc_h = true;
                         if (sa.oracle_repaired && !orc_r) {
@@ -1164,7 +1180,7 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
     // Alias block (INC-6 migration mechanic).
     const auto& sta_if_resets   = pa.sta_if_resets;
     auto&       if_slip_trace   = traces.if_slip_trace;
-    // Thin event forwarder — textual copy of the run-TU lambda (see above).
+    // Thin event forwarder, a textual copy of the run-TU lambda (see above).
     auto emitEvent = [&](const char* tier, const char* event,
                          const std::string& sat, const std::string& station,
                          std::optional<double> statistic, std::optional<double> threshold,
@@ -1172,39 +1188,42 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
         traces.emitEvent(se.time, tier, event, sat, station, statistic, threshold,
                          action, detail);
     };
-    // IF-phase triple-difference slip detection + refloat (this increment).
-    // Each non-pivot station's detector ran in DEFERRED mode above: it computed
-    // the between-satellite, between-epoch ionosphere-free phase double
-    // differences (ΔΔφ_IF) per (sat, signal-pair) and cached them, but did NOT
-    // flag.  The driver decides, elevation-aware and per (station, signal-pair):
+    // IF-phase triple-difference slip detection and refloat.  In the PASS-A scan
+    // each station's detector ran in deferred mode: it computed the
+    // between-satellite, between-epoch ionosphere-free phase double differences
+    // (ΔΔφ_IF) per (sat, signal pair) and cached them without flagging.  This
+    // driver decides, elevation-aware and per (station, signal pair):
     //
-    //  1. CENTER — pool ΔΔφ_IF across ALL present non-pivot stations BY SIGNAL
-    //     PAIR, take the median `med` (raw m): the network common-mode (frame /
-    //     datum wobble), which is elevation-independent, so it is removed in raw
-    //     space.
-    //  2. SCALE — normalize each residual to a zenith-equivalent, z = (dd−med)·
+    //  1. Centre: pool ΔΔφ_IF by signal pair across all present stations that have
+    //     a detector, and take the median `med` (raw m).  That is the network
+    //     common mode (frame / datum wobble); it does not depend on elevation, so
+    //     it is removed in raw space.
+    //  2. Scale: normalize each residual to a zenith equivalent, z = (dd−med)·
     //     sin(el) = (dd−med)/ifElevMap, so satellites at every elevation share one
-    //     scale.  The pooled s_pool = 1.4826·median(|z|) is the warmup PRIOR; each
-    //     (station, pair) also keeps an EWMA of its OWN z-scale (if_pair_scale).
+    //     scale.  The pooled s_pool = 1.4826·median(|z|) is the warm-up prior; each
+    //     (station, pair) also keeps an EWMA of its own z-scale (if_pair_scale).
     //     The effective scale shrinks from the pool toward the station's EWMA as
-    //     that station-pair accumulates clean samples (empirical-Bayes, weight
-    //     count/(count+κ)) — so a quiet reference station and a noisy modernized-
-    //     signal station each get their OWN envelope, not one pooled threshold set
-    //     by the majority (the fix for the L5Q/L2L over-firing).
-    //  3. THRESHOLD sat i — max(k·s_eff·ifElevMap(el_i), floor_frac·λ_IF(1,1)):
-    //     the empirical term re-inflated to sat i's elevation, the physical
-    //     (1,1)-integer floor kept in raw m so a real slip is caught at ANY
+    //     that station-pair accumulates clean samples (empirical Bayes, weight
+    //     count/(count+κ)), so a quiet reference station and a noisy modernized-
+    //     signal station each get their own envelope instead of one pooled
+    //     threshold set by the majority, which over-fires on L5Q/L2L.
+    //  3. Threshold for sat i: max(k·s_eff·ifElevMap(el_i), floor_frac·λ_IF(1,1)),
+    //     the empirical term re-inflated to sat i's elevation, with the physical
+    //     (1,1)-integer floor kept in raw m so a real slip is caught at any
     //     elevation.  Flag if |dd_i − med| exceeds it.
-    //  4. A flagged arc has its detector gradient reset (fresh arc next epoch —
-    //     arc hygiene, every epoch) and, when the carry is active, BOTH band
-    //     ambiguities marked pending-reseed so PASS B refloats them.  Clean
-    //     survivors then update the station-pair EWMA (slips excluded, so the
-    //     scale never absorbs the event it must catch).
+    //  4. A flagged arc has its detector gradient reset (a fresh arc next epoch,
+    //     whatever the carry state) and, when the carry is warm, both band
+    //     ambiguities are marked pending-reseed so PASS B refloats them (less any
+    //     band the band scope or the common-band scope keeps).  Clean survivors
+    //     then update the station-pair EWMA; slips are excluded, so the scale does
+    //     not absorb the events it has to catch.
     //
-    // The detector's own reference-satellite common-mode slip keys (which the
-    // per-pair pool cannot see) are folded in too.  Thresholds are deliberately
-    // loose; the sharp pass is a future post-estimation phase validation, not yet
-    // built.  Serial, station-ordered → deterministic.  Pivot has no detector.
+    // The detector's own reference-satellite common-mode slip keys, which the
+    // per-pair pool cannot see, are folded in too.  Thresholds are deliberately
+    // loose; the sharper pass is left to a post-estimation phase validation that
+    // is not built yet.  Serial and station-ordered, hence deterministic.  On the
+    // legacy datum the pivot has no detector; under the prioritized datum every
+    // station has one.
     if (config_.networkCycleSlipIfPhaseTd()) {
         const double k_mad        = config_.networkCycleSlipIfPhaseTdKMad();
         const double floor_frac   = config_.networkCycleSlipIfPhaseTdFloorFrac();
@@ -1212,38 +1231,38 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
         const double ewma_alpha   = config_.networkCycleSlipIfPhaseTdEwmaAlpha();
         const double shrink_kappa = config_.networkCycleSlipIfPhaseTdShrinkKappa();
 
-        // SIM-ONLY ORACLE outcome for one flagged IF pair — see refloat_signal's
-        // SignalAction.  `handled` is ANY band; the pend gate below uses it,
-        // because a bridge replace that re-bases one band while the other was
-        // truth-repaired would overwrite the repair with a pre-slip level.
-        // §14.10 PAIR WIDTH.  `first` (default) is the pre-knob detector: ONE
-        // pair per satellite, the first two distinct phase bands, so every other
-        // pair is unwatched and the equal-count trap the common-band scope's
-        // IF-TD veto exists to close is open on all of them.  `all` evaluates
-        // every pair; each rides its OWN gradient chain in the detector and its
-        // OWN pool here (`by_pair` is keyed by pair kind already), so the first
+        // Pair width, §14.10 rule: `first` (default) is the pre-knob detector, one
+        // pair per satellite (its first two distinct phase bands).  Every other
+        // pair is then unwatched, and the equal-count case that the common-band
+        // scope's IF-TD veto exists to close stays open on all of them.  `all`
+        // evaluates every pair, each on its own gradient chain in the detector and
+        // its own pool here (`by_pair` is already keyed by pair kind), so the first
         // pair's samples, centre, scale and thresholds are unchanged and the new
         // pairs are a pure addition.
         const bool iftd_all_pairs =
             config_.networkCycleSlipIfPhaseTdPairs() == NetworkIfPhaseTdPairs::All;
 
+        // Sim-only oracle outcome for one flagged IF pair (see refloat_signal's
+        // SignalAction).  `handled` is set when any band was handled; the pend gate
+        // below uses it, because a bridge replace that re-bases one band while the
+        // other was truth-repaired would overwrite the repair with a pre-slip level.
         struct PairAction { bool handled{false}; bool repaired{false};
                             bool freed{false}; std::string detail;
-                            /// §14.12: the pair's own bands the COMMON-BAND verdict
-                            /// refused this epoch.  Invariant #7 wants an identity
-                            /// at the edge, not just a counter — without it a
-                            /// scoped pair refloat and an unscoped one write the
-                            /// same row, which is exactly how the LLI-epoch gap
-                            /// stayed invisible.  Empty ⇒ nothing was refused ⇒ no
-                            /// token ⇒ the pre-knob row text.
+                            /// Bands of this pair that the common-band verdict
+                            /// refused this epoch, per §14.12 and invariant #7 (an
+                            /// identity at the edge, not only a counter): without
+                            /// it a scoped pair refloat and an unscoped one would
+                            /// write the same row.  Empty when nothing was refused;
+                            /// the row then carries no token and keeps the pre-knob
+                            /// text.
                             std::string cb_kept; };
         const double oracle_now_s =
             static_cast<double>(se.time.week) * 604800.0 + se.time.tow;
         // Refloat both band ambiguities of (sat, sig1, sig2) at station i (only
-        // when the carry is active; cold, the detection is diagnostic only).
-        // §Z: band-scoped refloat.  An IF-TD pair on a 3-band arc already leaves
-        // the third band pinned; on a 2-BAND arc the pair IS the arc, and that is
-        // where the scope acts (keeping the pair's least-suspect band).
+        // when the carry is warm; cold, the detection is diagnostic only).
+        // Band-scoped refloat (§Z rule): an IF-TD pair on a 3-band arc already
+        // leaves the third band pinned; on a 2-band arc the pair is the whole arc,
+        // and that is where the scope acts (keeping the pair's least-suspect band).
         const bool bscope_on = config_.getNetworkConfig().cycle_slip_refloat_band_scope
                                    == NetworkRefloatBandScope::Implicated;
         auto bandScopeKeepIf = [&](int i, const std::string& sat,
@@ -1263,13 +1282,14 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
             for (const auto& [amb_key, sidx] : sm.getAmbiguities()) {
                 const auto parts = StateKeys::parseAmbiguityKey(amb_key);
                 if (!parts || parts->satellite != sat) continue;
-                if (!keep.empty() && parts->signal == keep) continue;   // §Z pinned
-                // §14 COMMON-BAND SCOPE: free (this pair's bands ∩ implicated).
-                // Null verdict (knob off) or no narrowed verdict ⇒ true ⇒ the
-                // pre-knob instruction stream.
+                if (!keep.empty() && parts->signal == keep) continue;   // kept pinned (§Z rule)
+                // Common-band scope, §14 rule: free (this pair's bands ∩ implicated).
+                // With a null verdict (knob off) or no narrowed verdict the call
+                // returns true and the unscoped path runs.
                 if (!commonBandMayFree(common_band, i, sat, parts->signal)) {
-                    // §14.12: name it, but only for a band of THIS pair — the
-                    // satellite's other bands were never this drain's to free.
+                    // Record the refused band (the §14.12 token), but only for a
+                    // band of this pair: the satellite's other bands were never
+                    // this drain's to free.
                     if (parts->signal == sig1 || parts->signal == sig2) {
                         if (!pact.cb_kept.empty()) pact.cb_kept += "+";
                         pact.cb_kept += parts->signal;
@@ -1277,9 +1297,9 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                     continue;
                 }
                 if (parts->signal == sig1 || parts->signal == sig2) {
-                    // SIM-ONLY ORACLE: each BAND is handled independently (the
-                    // IF combination cannot localize the slip, but truth can) —
-                    // handled ⇒ skip every freeing action for this band.
+                    // Sim-only oracle: each band is handled independently (the IF
+                    // combination cannot localize the slip, but truth can); a
+                    // handled band skips every freeing action.
                     if (oracle) {
                         OracleOutcome oc = OracleOutcome::NotHandled;
                         std::string det;
@@ -1288,9 +1308,9 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                                                     RelevelEpochState::kCauseIfTd,
                                                     det, oc)) {
                             pact.handled = true;
-                            // The event names ONE action for the pair, so its
-                            // detail must be the band that action describes: the
-                            // first REPAIRED band, else the first handled one.
+                            // The event names one action for the pair, so its
+                            // detail is that of the band the action describes: the
+                            // first repaired band, else the first handled one.
                             if (oc == OracleOutcome::Repaired && !pact.repaired) {
                                 pact.repaired = true;
                                 pact.detail   = det;
@@ -1300,7 +1320,7 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                             continue;
                         }
                     }
-                    // Card 4 C3c: feed the DD carry from epoch 1 (see refloat_signal).
+                    // Feed the DD carry from epoch 1 (Card 4 C3c; see refloat_signal).
                     if (carry_invariant) carry_slipped_ambs.insert({i, amb_key});
                     if (carry_warm) {
                         pact.freed = true;
@@ -1314,8 +1334,8 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                             if (bridge_cnt) ++bridge_cnt->relevel_free_marked;
                         }
                         // Bridge v2: a fresh mark voids any outstanding pend for
-                        // this (station, sat) — its pre-slip capture is stale.
-                        // The T1 flag path re-creates its own pend AFTER this.
+                        // this (station, sat), whose pre-slip capture is now stale.
+                        // The T1 flag path re-creates its own pend after this.
                         if (relevel_pend)
                             for (auto pit = relevel_pend->begin();
                                  pit != relevel_pend->end();)
@@ -1330,17 +1350,18 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
             return pact;
         };
 
-        // Pool this epoch's ΔΔφ_IF by signal pair across present non-pivot stations.
-        // Carry elevation (for the stochastic normalization) and the per-sat (1,1)
-        // IF wavelength (for the physical floor — exact even for GLONASS FDMA).
-        // is_ref marks the constellation REFERENCE satellite, whose dd is identically
-        // 0 by construction.  Carried per sample so the robust SCALE below can drop it
-        // (§6.14.5 defect 2); it stays in `samples` for the centering median and for
+        // Pool this epoch's ΔΔφ_IF by signal pair across the present stations that
+        // have a detector.  Each sample carries its elevation (for the stochastic
+        // normalization) and the per-sat (1,1) IF wavelength (for the physical
+        // floor, exact even for GLONASS FDMA).  is_ref marks the constellation
+        // reference satellite, whose dd is identically 0 by construction; it is
+        // carried per sample so the robust scale below can drop it (see §6.14.5
+        // defect 2), and it stays in `samples` for the centring median and for
         // thresholding, so the flag population is unchanged.
-        // §14.10: `state_key` is the detector chain the sample rode, so a flag
-        // restarts that chain alone (resetSatelliteInState) instead of the
-        // satellite's every pair — which is what keeps the pair decisions
-        // independent.  Unused under `first`, where there is one chain per system.
+        // `state_key` is the detector chain the sample rode (§14.10 rule), so a flag
+        // restarts that chain alone (resetSatelliteInState) instead of every pair
+        // of the satellite, which keeps the pair decisions independent.  Unused
+        // under `first`, where there is one chain per system.
         struct PairSample { int sta; std::string sat, sig1, sig2; double dd, el, lambda;
                             bool is_ref; std::string state_key; };
         std::map<std::string, std::vector<PairSample>> by_pair;
@@ -1370,15 +1391,15 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
         int n_if_arcs = 0, n_sparse = 0, n_warm_sp = 0;
         std::string if_detail;
 
-        // --- SPEC_slip_relevel_walk §8.2: bridge v2, PEND side ---------------
-        // The flag epoch only CAPTURES: the pre-slip carry (this PASS-A map
-        // still holds the previous harvest) and the measured δIF with its
-        // empirical σ — only this scope has (dd − med) and s_eff·emap.  The
-        // arc then takes the v1 free epoch.  The REPLACE (with the §8.1
-        // corroboration against that free level) runs in the MW drain when the
-        // confident WL integer arrives — measured 1–2 epochs later; a
-        // same-epoch MW candidate is stored IN the pend (cand_idx below) and
-        // replaced at the next epoch's sweep.
+        // --- Bridge v2, pend side: SPEC_slip_relevel_walk §8.2 -----------------
+        // The flag epoch only captures: the pre-slip carry (this PASS-A map still
+        // holds the previous harvest) and the measured δIF with its empirical σ,
+        // since only this scope has (dd − med) and s_eff·emap.  The arc then takes
+        // the v1 free epoch.  The replace (with the §8.1 corroboration against
+        // that free level) runs in the MW drain when the confident WL integer
+        // arrives, measured at 1–2 epochs later; a same-epoch MW candidate is
+        // stored in the pend (cand_idx below) and replaced at the next epoch's
+        // sweep.
         const bool bridge_on = relevel && bridge_local_carry && bridge_cnt
                             && relevel_pend && carry_warm
                             && config_.networkCycleSlipRelevelDeltaBridge();
@@ -1398,19 +1419,19 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
         const double br_gf_floor  = config_.networkCycleSlipRelevelBridgeGfSigmaFloorM();
         const double br_ewl_floor = config_.networkCycleSlipRelevelBridgeEwlSigmaFloorCyc();
         // Elevation map for the EWL σ floor: the single-epoch EWL-MW noise is
-        // NL-code-driven, ~1/sin(el); clamp low so a horizon arc cannot explode.
+        // NL-code-driven, ~1/sin(el); sin(el) is clamped at 0.15 so a horizon arc
+        // keeps a bounded floor.
         auto ewlFloorEff = [&](double el_deg) {
             const double s = std::sin(el_deg * 0.017453292519943295);
             return br_ewl_floor / std::max(s, 0.15);
         };
         for (auto& [pair, samples] : by_pair) {
-            // (1) Network common-mode center: median of the raw DDs (m).
-            // (2) Pooled elevation-normalized robust scale — see below.
-            // Both live in ifTdPoolStats (NetworkSlipQc.hpp) so the common-band
-            // scope's read-only flag PREVIEW (SPEC_event_harness §14) runs the
-            // identical arithmetic; the expressions are verbatim what this loop
-            // computed inline before, and the order statistics are
-            // order-independent, so the flag population is unchanged.
+            // (1) Network common-mode centre: median of the raw DDs (m).
+            // (2) Pooled elevation-normalized robust scale (see below).
+            // Both live in ifTdPoolStats (NetworkSlipQc.hpp), so the common-band
+            // scope's read-only flag preview (SPEC_event_harness §14 rule) runs the
+            // same arithmetic; its order statistics do not depend on the order in
+            // which the samples arrive.
             std::vector<double> pool_dd, pool_el;
             std::vector<char>   pool_ref;
             pool_dd.reserve(samples.size());
@@ -1424,27 +1445,26 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
             const IfTdPairPool pstat = ifTdPoolStats(pool_dd, pool_el, pool_ref);
             const double med = pstat.med;
 
-            // (2) Pooled elevation-normalized robust scale (zenith-equiv m):
+            // (2) Pooled elevation-normalized robust scale (zenith-equivalent m):
             //     s_pool = 1.4826·median(|z|), z = (dd−med)/ifElevMap(el).
-            //     The constellation REFERENCE satellite is EXCLUDED here: its dd is
-            //     identically 0 by construction (grad(ref) = OMC(ref) − OMC(ref) = 0),
-            //     so it contributes an exact structural zero that sits at the centre of
-            //     the distribution and DEFLATES the MAD.  Measured on
-            //     runs/nonint_losblock24h_hv (24 h, 60 sta): those zeros are 12.5 % of
-            //     all samples and the settled s_epoch p50 reads 0.01190 m with them vs
-            //     0.01416 m without — a 16.0 % deflation.  The reference carries no
-            //     information about the noise this threshold is meant to track, and the
-            //     pool arm can never flag it anyway (|dd − med| ≈ 0) — the separate
-            //     per-station reference gate (tier T1r) is what screens it.
-            //     §6.14.5 defect 2.  Fallback: if excluding leaves nothing (a pair whose
-            //     only sample IS the reference), keep the full set rather than emit a
-            //     zero scale — s_eff would then collapse onto the physical floor.
+            //     The constellation reference satellite is excluded from the scale:
+            //     its dd is identically 0 by construction (grad(ref) = OMC(ref) −
+            //     OMC(ref) = 0), an exact structural zero at the centre of the
+            //     distribution that deflates the MAD (by 16.0 % in a 24 h, 60-station
+            //     run where those zeros were 12.5 % of all samples).  The reference
+            //     carries no information about the noise this threshold tracks, and
+            //     the pool arm cannot flag it anyway (|dd − med| ≈ 0); the separate
+            //     per-station reference gate (tier T1r) screens it.  See §6.14.5
+            //     defect 2.  Fallback: if excluding leaves nothing (every sample is
+            //     the reference), the full set is used so that the median is never
+            //     taken over an empty set.  Reference samples are identically 0, so
+            //     the pooled scale is then 0.
             const double s_pool = pstat.s_pool;
             if (static_cast<int>(samples.size()) < min_pool) ++n_sparse;
 
-            // Group the pair's samples by station (ordered → deterministic) so each
-            // station-pair thresholds with its OWN shrunk scale, then updates its
-            // OWN EWMA once this epoch's flags are known.
+            // Group the pair's samples by station (ordered, hence deterministic) so
+            // each station-pair thresholds with its own shrunk scale, then updates
+            // its own EWMA once this epoch's flags are known.
             std::map<int, std::vector<const PairSample*>> by_sta;
             for (const auto& s : samples) by_sta[s.sta].push_back(&s);
 
@@ -1452,8 +1472,8 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                 auto& sc = stations[sta].if_pair_scale[pair];
 
                 // Empirical-Bayes shrinkage: pool prior (cold) → station EWMA (warm).
-                // Shared with the common-band scope's flag preview (§14).  `w` is
-                // kept for the trace column alone — ifTdShrunkScale re-derives it.
+                // Shared with the common-band scope's flag preview (§14 rule).  `w`
+                // is kept only for the trace column; ifTdShrunkScale re-derives it.
                 const double w = static_cast<double>(sc.count) /
                                  (static_cast<double>(sc.count) + shrink_kappa);
                 const double s_eff =
@@ -1468,23 +1488,25 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                     const double abs_dev = std::abs(sp->dd - med);
                     const bool   flagged = (abs_dev > thr);
                     if (trace_flag_rates) { ++fr_if_slip.opp; if (flagged) ++fr_if_slip.flag; }  // B8/T1
-                    // §14.10 run-end telemetry, knob-independent (invariant #4).
+                    // Per-pair run-end telemetry (§14.10 rule), knob-independent
+                    // (invariant #4).
                     IfTdPairTally* tally = pair_tally ? &(*pair_tally)[pair] : nullptr;
                     if (tally) { ++tally->evaluated; if (flagged) ++tally->flagged; }
                     if (flagged) {
-                        // §14.10: restart THIS pair's chain only.  Resetting the
-                        // satellite would discard the other pairs' clean gradient
-                        // histories and make one pair's decision depend on
-                        // another's flag — the independence the per-pair-kind
-                        // pools exist for.  Under `first` there is one chain per
-                        // system and the two calls do the same thing.
+                        // Restart only this pair's chain (§14.10 rule).  Resetting
+                        // the satellite would discard the other pairs' clean
+                        // gradient histories and make one pair's decision depend
+                        // on another's flag, which the per-pair-kind pools exist
+                        // to prevent.  Under `first` there is one chain per system
+                        // and the two calls do the same thing.
                         if (iftd_all_pairs)
                             stations[sp->sta].if_slip->resetSatelliteInState(sp->state_key,
                                                                              sp->sat);
                         else
                             stations[sp->sta].if_slip->resetSatellite(sp->sat);  // restart arc
-                        // §Z: ONE call — it folds counters, so the event row
-                        // reads the hoisted value rather than re-deciding.
+                        // Band scope (§Z rule): called once, because it updates
+                        // counters; the event row reads the hoisted value instead
+                        // of deciding again.
                         const std::string bs_keep =
                             bandScopeKeepIf(sp->sta, sp->sat, sp->sig1, sp->sig2);
                         const auto pact =
@@ -1500,28 +1522,28 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                                       : (sp->sig1 + ";" + sp->sig2))
                                   + (bs_keep.empty() ? std::string{}
                                        : ";band_scope=implicated;kept=" + bs_keep)
-                                  // §14.10: which PAIR fired.  Added only under
-                                  // `all`, where a satellite has several rows per
-                                  // epoch and sig1;sig2 alone no longer identifies
-                                  // the evaluation — so the `first` rows stay the
+                                  // Which pair fired (§14.10 rule).  Added only
+                                  // under `all`, where a satellite has several rows
+                                  // per epoch and sig1;sig2 alone does not identify
+                                  // the evaluation, so `first` rows keep the
                                   // pre-knob text byte for byte.
                                   + (iftd_all_pairs
                                        ? ";pair=" + sp->sig1 + "+" + sp->sig2
                                        : std::string{})
-                                  // §14.12: what the common-band verdict refused
-                                  // this drain.  Absent unless a verdict actually
+                                  // What the common-band verdict refused in this
+                                  // drain (§14.12 rule).  Absent unless a verdict
                                   // restricted it, so every unscoped row keeps the
                                   // pre-knob text.
                                   + (pact.cb_kept.empty() ? std::string{}
                                        : ";cb_kept=" + pact.cb_kept));
-                        // Bridge v2, flagged path: CREATE (or refresh — the
-                        // refloat_pair above just voided any stale one) the pend
-                        // with the pre-slip capture + this δIF.  A station whose
-                        // IF-TD refsat rebased this epoch is frame-invalid — no
-                        // pend, the arc keeps the plain free epoch.
-                        // SIM-ONLY ORACLE: with the level truth-repaired there is
+                        // Bridge v2, flagged path: create the pend (or refresh it;
+                        // refloat_pair above just voided any stale one) with the
+                        // pre-slip capture and this δIF.  A station whose IF-TD
+                        // refsat rebased this epoch is frame-invalid: no pend, and
+                        // the arc keeps the plain free epoch.
+                        // Sim-only oracle: with the level truth-repaired there is
                         // nothing to bridge, and a later replace would overwrite
-                        // the repair with `pre_slip + shift` — no pend.
+                        // the repair with `pre_slip + shift`, so no pend is made.
                         if (bridge_on && !pact.handled) {
                             if (!sta_if_resets[sp->sta].empty()) {
                                 ++bridge_cnt->bridge_fallback_refsat;
@@ -1557,14 +1579,14 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                                         ci->second->consumed = true;
                                         ++bridge_cnt->bridge_joint;   // same-epoch pairings
                                     }
-                                    // Bridge v3 E4: the same-pair GF-phase TD
-                                    // (geometry/clock-free) with the station's
-                                    // OWN empirical step scale — closes the
-                                    // (1,2) plane at the first sweep without
+                                    // Bridge v3 (E4): the same-pair GF-phase TD
+                                    // (geometry- and clock-free) with the
+                                    // station's own empirical step scale closes
+                                    // the (1,2) plane at the first sweep without
                                     // waiting for the MW integer.  The raw
-                                    // primary pair must BE this IF pair (true
-                                    // for GPS and GAL on the triple posture);
-                                    // a mismatch or a gap re-birth (no adjacent
+                                    // primary pair has to be this IF pair (true
+                                    // for GPS and GAL on the triple posture); a
+                                    // mismatch or a gap re-birth (no adjacent
                                     // predecessor) keeps the pend E2-only.
                                     if (br_gf_on
                                         && sp->sta < static_cast<int>(
@@ -1592,10 +1614,10 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                                             ++bridge_cnt->bridge_gf_captured;
                                         }
                                     }
-                                    // Bridge v3 E3: record the third band and
-                                    // capture its PRE-SLIP carry NOW — a belated
+                                    // Bridge v3 (E3): record the third band and
+                                    // capture its pre-slip carry now; a belated
                                     // capture would read the interim free
-                                    // re-level, not the pre-slip level.
+                                    // re-level instead of the pre-slip level.
                                     if (br_ewl_on) {
                                         for (const auto& [k3, i3] :
                                              stations[sp->sta].sm->getAmbiguities()) {
@@ -1618,8 +1640,8 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                                             break;
                                         }
                                         // Same-epoch EWL integer (the common
-                                        // case — the unlocked MW path publishes
-                                        // the instantly-roundable EWL at the
+                                        // case: the unlocked MW path publishes
+                                        // the instantly roundable EWL at the
                                         // flag epoch, and the MW drain ran
                                         // before this driver).
                                         for (auto& c3 : relevel->mw_cands)
@@ -1643,28 +1665,28 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                             if_detail += fmt::format("{}{}/{}_{}_{}", if_detail.empty() ? "" : ", ",
                                                      stations[sp->sta].name, sp->sat, sp->sig1, sp->sig2);
                     } else if (!sp->is_ref) {
-                        // §6.14.5 defect 2, WARM half: the reference's structural
-                        // zero never flags (|dd − med| ≈ 0 by construction), so it
-                        // always lands here and deflates s_epoch — which is the
-                        // quantity the 16.0 % measurement was made on (p50 0.01190 m
-                        // shipped vs 0.01416 m excluded).  s_eff = w·ewma + (1−w)·s_pool,
-                        // so BOTH halves must drop it or the scale stays biased once
-                        // the station-pair goes warm.  Excluding it also stops sc.count
-                        // (the shrinkage weight) from crediting a non-observation.
+                        // Warm half of §6.14.5 defect 2: the reference's structural
+                        // zero never flags (|dd − med| ≈ 0 by construction), so
+                        // without the is_ref guard it would always land here and
+                        // deflate s_epoch, the quantity the 16.0 % deflation was
+                        // measured on.  s_eff = w·ewma + (1−w)·s_pool, so both
+                        // halves have to drop it or the scale stays biased once the
+                        // station-pair goes warm.  Excluding it also keeps sc.count
+                        // (the shrinkage weight) from counting a non-observation.
                         clean_zabs.push_back(abs_dev / emap);
-                        // Delta bridge, MW-only path: REMOVED after the truth
-                        // audit (SPEC_slip_relevel_walk §8.1) — an MW candidate
-                        // whose IF sample did NOT flag is dominated by the MW
-                        // FALSE-ALARM population on a healthy arc (44 wrong + 16
-                        // no-truth of 73 applied bridges, deltas to ±199 cyc at
-                        // cm-tight propagated σ: the propagation carries the
-                        // measurement noise, not the hypothesis risk).  The
-                        // candidate stays unconsumed and is counted unpaired;
-                        // the bands stay in the free set — the safe response.
+                        // No delta bridge on the MW-only path (truth audit,
+                        // SPEC_slip_relevel_walk §8.1 rule): an MW candidate whose
+                        // IF sample did not flag is dominated by MW false alarms on
+                        // an unslipped arc (of 73 applied bridges, 44 wrong and 16
+                        // without truth, with deltas up to ±199 cyc at cm-level
+                        // propagated σ; propagation carries measurement noise, not
+                        // the risk of a wrong hypothesis).  The candidate stays
+                        // unconsumed and is counted as unpaired, and its bands stay
+                        // in the free set, which is the safe response.
                     }
-                    // Deep-investigation row: the full decision context for this
-                    // (station, sat, pair) sample.  sc.ewma_scale / sc.count are the
-                    // decision-time (pre-update) values used to form s_eff.
+                    // Trace row with the full decision context for this (station,
+                    // sat, pair) sample.  sc.ewma_scale and sc.count are the
+                    // decision-time (pre-update) values that s_eff is formed from.
                     if (if_slip_trace.is_open())
                         if_slip_trace
                             << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
@@ -1678,11 +1700,11 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                             << fmt::format("{:.6f}", thr) << ',' << fmt::format("{:.6f}", floor_m) << ','
                             << fmt::format("{:.6f}", abs_dev) << ',' << (flagged ? 1 : 0) << ','
                             << (carry_warm ? 1 : 0) << ','
-                            // §22: the detector's own reference flag.  On a reference
-                            // arc dd is identically 0, so `flagged` above is
-                            // structurally false and the pooled test carries no
-                            // information — which is exactly what the common-band
-                            // scope's reference-arc clause reacts to.  Trace-only.
+                            // The detector's own reference flag (§22 column).  On a
+                            // reference arc dd is identically 0, so `flagged` above
+                            // is structurally false and the pooled test carries no
+                            // information; the common-band scope's reference-arc
+                            // clause reacts to that.  Trace-only.
                             << (sp->is_ref ? 1 : 0) << '\n';
                 }
 
@@ -1699,8 +1721,9 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
             }
         }
 
-        // Delta bridge: candidates whose (station,sat,pair) never met an IF-TD
-        // sample this epoch — their bands stay in the free set (safe fallback).
+        // Delta bridge: candidates whose (station, sat, pair) met no IF-TD sample
+        // this epoch are counted as unpaired; their bands stay in the free set
+        // (safe fallback).
         if (bridge_on)
             for (const auto& c : relevel->mw_cands)
                 if (!c.consumed) ++bridge_cnt->bridge_fallback_unpaired;
@@ -1722,17 +1745,18 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                                         : (sig1 + ";" + sig2))
                           + (bs_keep.empty() ? std::string{}
                                : ";band_scope=implicated;kept=" + bs_keep));
-                // Edge-1 piece 2 (network.mark_refsat_reset_disc; nullptr ⇒ OFF ⇒
-                // byte-identical).  Queue the satellite for a per-sat discontinuity
-                // mark at its next actual emit.  Gated on carry_warm for the same
-                // reason the event's action field is: while the carry is cold the
-                // detection is DIAGNOSTIC — no refloat happened, so there is no
-                // datum re-reference for a consumer to react to, and marking one
-                // would be a fabricated event.
-                // SIM-ONLY ORACLE: an arc answered by a truth repair was NOT
-                // re-referenced, so a disc mark here would be a fabricated event
-                // (the same argument the carry_warm gate makes).  A pair where
-                // one band was still freed keeps its mark.
+                // Queue the satellite for a per-sat discontinuity mark at its next
+                // actual emit (network.mark_refsat_reset_disc, Edge-1 piece 2;
+                // refsat_mark_sats is null when off, which keeps the run
+                // byte-identical).  Gated on carry_warm for the same reason as the
+                // event's action field: while the carry is cold the detection is
+                // diagnostic and no refloat happened, so there is no datum
+                // re-reference for a consumer to react to, and a mark would report
+                // an event that did not happen.
+                // Sim-only oracle: an arc answered by a truth repair was not
+                // re-referenced either, so it gets no mark (the same argument as
+                // the carry_warm gate).  A pair where one band was still freed
+                // keeps its mark.
                 if (refsat_mark_sats && carry_warm && (pact.freed || !pact.handled))
                     refsat_mark_sats->insert(sat);
                 ++n_if_arcs;
@@ -1769,9 +1793,10 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
                                    NetworkSlipOracle* oracle,
                                    const RawSlipEpoch* bscope_raw) {
     if (!config_.networkCycleSlipWindupRestartRefloat()) return;
-    // §Z: THE whole-satellite site — an accumulator restart steps every signal of
-    // the satellite, so the implicated set IS the arc and the scope always acts
-    // (invariant #7's decoupling edge bounded: the LOS keeps a level anchor).
+    // The whole-satellite site of the band scope (§Z rule): an accumulator restart
+    // steps every signal of the satellite, so the implicated set is the whole arc,
+    // and the scope acts on every multi-band arc that still has a pinned band.
+    // That bounds invariant #7's decoupling edge: the LOS keeps a level anchor.
     const bool bscope_on = config_.getNetworkConfig().cycle_slip_refloat_band_scope
                                == NetworkRefloatBandScope::Implicated;
     const double now_s = static_cast<double>(se.time.week) * 604800.0 + se.time.tow;
@@ -1780,8 +1805,8 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
     std::string detail;
     for (int i = i_lo; i < n_sta_total && i < static_cast<int>(stations.size()); ++i) {
         // Absent station: its model was not evaluated this epoch, so its ledger
-        // holds no fresh entry — leave it for the return epoch, where the
-        // continued gap fires a FRESH restart that overwrites the stale one.
+        // holds no fresh entry.  It is left for the return epoch, where the
+        // continued gap fires a fresh restart that overwrites the stale one.
         if (i < static_cast<int>(present.size()) && !present[i]) continue;
         if (!stations[i].model || !stations[i].sm) continue;
         const auto& ledger = stations[i].model->wuRestarts();
@@ -1789,10 +1814,10 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
         for (const auto& [sat, rec] : ledger) {
             ++qc_cnt.wu_restart_events;
             if (rec.epoch_s != now_s) {
-                // A restart from an EARLIER epoch (ledger survived an epoch
-                // nobody drained — e.g. the knob path raced a withheld epoch).
-                // The step it describes was already absorbed by whatever
-                // happened since; responding NOW would refloat a healthy arc.
+                // A restart from an earlier epoch (the ledger survived an epoch
+                // that nothing drained, e.g. the knob path raced a withheld
+                // epoch).  The step it describes has been absorbed by whatever
+                // happened since, and responding now would refloat a clean arc.
                 ++qc_cnt.wu_restart_stale;
                 traces.emitEvent(se.time, "T0_windup", "wu_restart", sat,
                                  stations[static_cast<std::size_t>(i)].name,
@@ -1810,9 +1835,9 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
             }
             StateManager& sm = *stations[static_cast<std::size_t>(i)].sm;
             int matched = 0;
-            // §Z: the implicated set is EVERY live band, resolved inside the
-            // helper; passing the live set is the same thing said twice, so the
-            // wrapper is handed an "all" marker built from the arc itself.
+            // Band scope (§Z rule): the implicated set is every live band of the
+            // satellite, built here from the arc itself; it equals the live set
+            // the helper resolves internally.
             std::string bs_keep;
             if (bscope_on) {
                 std::set<std::string> impl;
@@ -1825,17 +1850,17 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
                                           i, sat, impl, bscope_raw, relevel,
                                           &carry_slipped_ambs, qc_cnt);
             }
-            // SIM-ONLY ORACLE: this is the WHOLE-SATELLITE site — a restart steps
-            // every signal of the satellite — so each SIGNAL is offered to the
-            // oracle independently (truth localizes what the band-common model
-            // step cannot).  A signal with no truth jump in the window follows the
-            // false-alarm policy; the rest fall through to today's refloat.
+            // Sim-only oracle: a restart steps every signal of the satellite, so
+            // each signal is offered to the oracle independently (truth localizes
+            // what the band-common model step cannot).  A signal with no truth
+            // jump in the window follows the false-alarm policy; signals the
+            // oracle does not handle fall through to the normal refloat.
             bool orc_h = false, orc_r = false, orc_freed = false;
             std::string orc_detail;
             for (const auto& [amb_key, sidx] : sm.getAmbiguities()) {
                 const auto parts = StateKeys::parseAmbiguityKey(amb_key);
                 if (!parts || parts->satellite != sat) continue;
-                if (!bs_keep.empty() && parts->signal == bs_keep) continue;  // §Z pinned
+                if (!bs_keep.empty() && parts->signal == bs_keep) continue;  // kept (§Z rule)
                 ++matched;
                 if (oracle) {
                     OracleOutcome oc = OracleOutcome::NotHandled;
@@ -1844,9 +1869,9 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
                                                 now_s, RelevelEpochState::kCauseWindup,
                                                 det, oc)) {
                         orc_h = true;
-                        // One row per (station, satellite): the detail is the
-                        // band the ACTION names — first repaired, else first
-                        // handled (see the MW site).
+                        // One row per (station, satellite): the detail is that of
+                        // the band the action names, the first repaired, else the
+                        // first handled (see the MW site).
                         if (oc == OracleOutcome::Repaired && !orc_r) {
                             orc_r = true;
                             orc_detail = det;
@@ -1856,8 +1881,8 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
                         continue;
                     }
                 }
-                // Card 4 C3c: the DD invariant carry owns its own funnel and is
-                // live from epoch 1 (see refloat_signal).
+                // The DD invariant carry owns its own funnel and is live from
+                // epoch 1 (Card 4 C3c; see refloat_signal).
                 if (carry_invariant) carry_slipped_ambs.insert({i, amb_key});
                 if (carry_warm) {
                     orc_freed = true;
@@ -1870,13 +1895,13 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
                     }
                 }
             }
-            // A restart is a MODEL step, not a slip: any outstanding bridge
-            // pend's pre-slip capture predates the step and its replace would
-            // re-inject a pre-restart-frame value — void it (the same rule the
-            // raw-slip drains apply on a fresh mark).
-            // SIM-ONLY ORACLE: with every signal truth-repaired nothing was
-            // marked, so there is no stale capture to void (voiding one would
-            // discard a pend the arc still needs).
+            // A restart is a model step, not a slip: any outstanding bridge
+            // pend's pre-slip capture predates the step, and its replace would
+            // re-inject a value in the pre-restart frame, so the pend is voided
+            // (the rule the raw-slip drains apply on a fresh mark).
+            // Sim-only oracle: when the oracle handled every signal nothing was
+            // marked, so there is no stale capture to void, and voiding would
+            // discard a pend the arc still needs.
             if (carry_warm && relevel_pend && (orc_freed || !orc_h))
                 for (auto pit = relevel_pend->begin(); pit != relevel_pend->end();)
                     if (std::get<0>(pit->first) == i && std::get<1>(pit->first) == sat) {
@@ -1892,9 +1917,10 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
             } else if (!carry_warm) {
                 ++qc_cnt.wu_restart_cold;
             } else {
-                // Warm but no live ambiguity matched the satellite — the arc
-                // is not in this epoch's estimation set; count as refloated=0
-                // via the event row's action so closure still holds.
+                // Warm, but no live ambiguity matched the satellite: the arc is
+                // not in this epoch's estimation set.  It is counted under
+                // wu_restart_refloated with zero arcs and the event row's action
+                // is "no_arc", so the counters still partition wu_restart_events.
                 ++qc_cnt.wu_restart_refloated;
             }
             traces.emitEvent(se.time, "T0_windup", "wu_restart", sat,
@@ -1922,7 +1948,7 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
 }
 
 // ---------------------------------------------------------------------------
-// EVENT HARNESS Study 1: the injected free_epoch arc response (SS9).
+// Event harness, Study 1: the injected free_epoch arc response (SS9).
 // Mirrors refloat_signal's freeing actions for a scripted (station, satellite),
 // with no LocalCarry erase, no iono co-erase and no RAIM funnel queue.
 // ---------------------------------------------------------------------------
@@ -1954,18 +1980,18 @@ void networkSlipDrainInjectedFree(const std::vector<InjectArcErase>& arc_free,
                 if (!parts || parts->satellite != d.sat) continue;
                 if (!d.coversSignal(parts->signal)) continue;   // band scope
                 ++matched;
-                // Card 4 C3c: the DD invariant carry owns its own funnel and is
-                // live from epoch 1 (refloat_signal's contract, verbatim).
+                // The DD invariant carry owns its own funnel and is live from
+                // epoch 1 (Card 4 C3c; the same contract as refloat_signal).
                 if (carry_invariant) carry_slipped_ambs.insert({ i, amb_key });
                 if (carry_warm) {
                     sm.markAmbiguityPendingReseed(amb_key);
                     if (relevel) {
                         relevel->free_ambs.insert({ i, amb_key });
-                        // No detector saw anything - the cause bits describe the
-                        // TIER that freed the arc, and this one is the harness.
-                        // T4Attrib is the closest true statement (it is the tier
-                        // whose decision is being emulated) and keeps the lane
-                        // observatory's cause histogram readable.
+                        // No detector saw anything: the cause bits describe the
+                        // tier that freed the arc, and here that is the harness.
+                        // kCauseT4Attrib is the closest accurate tag (T4
+                        // attribution is the tier whose decision is emulated) and
+                        // keeps the lane observatory's cause histogram readable.
                         relevel->free_cause[{ i, amb_key }] |=
                             RelevelEpochState::kCauseT4Attrib;
                     }
@@ -2025,8 +2051,8 @@ void networkSlipDrainInjectedFree(const std::vector<InjectArcErase>& arc_free,
 
 namespace {
 
-/// The strongest evidence behind one gap re-entry verdict, in the PRIORITY the
-/// freed counters partition on (a single re-entry can satisfy several gates;
+/// The strongest evidence behind one gap re-entry verdict, in the priority order
+/// the freed counters partition on (a single re-entry can satisfy several gates;
 /// the event's `cause` field keeps all of them).
 enum class GapCause { Shifted, Lli, Unmeas };
 
@@ -2044,45 +2070,47 @@ struct GapArcOutcome {
 };
 
 /**
- * @brief Free ONE (station, satellite, signal) arc at a gap re-entry.
+ * @brief Free one (station, satellite, signal) arc at a gap re-entry.
  *
  * The response body shared by the row-level tier (Card G) and the per-signal
  * rider (Card GRS): both answer the same question about the same carry, and a
- * second copy of this ladder is exactly how the two tiers would drift apart.
- * Counters land in @p led so each tier keeps its own closed partition; the
- * caller emits the event, because only it knows the tier's identity fields.
+ * single copy keeps the two tiers from drifting apart.  Counters land in @p led
+ * so each tier keeps its own closed partition; the caller emits the event,
+ * because only it knows the tier's identity fields.
  *
  * @param i                  App station index (already screened against i_lo).
  * @param satellite          Satellite id.
  * @param sig                The one signal this call responds on (band-scoped).
- * @param sm                 That station's state manager, MUTATED (pending-reseed mark).
- * @param carry_invariant    Card-4 DD invariant carry vehicle armed.
+ * @param sm                 That station's state manager, mutated (pending-reseed mark).
+ * @param carry_invariant    The Card-4 DD invariant carry vehicle is armed.
  * @param carry_warm         The legacy phase-leveling carry is warm.
- * @param carry_slipped_ambs C3c funnel, INSERTED into under @p carry_invariant.
- * @param local_carry        The leveling carry map, READ-ONLY (the "anything to protect?" oracle).
- * @param pl_now_s           This epoch's continuous-GPS seconds.
+ * @param carry_slipped_ambs C3c funnel, inserted into under @p carry_invariant.
+ * @param local_carry        The leveling carry map, read-only; it answers "is
+ *                           there anything to protect?".
+ * @param pl_now_s           This epoch's continuous GPS seconds.
  * @param pl_max_gap_s       @c network.phase_leveling_max_gap_s.
  * @param cause_bits         Free-cause bits for the lane observatory's histogram.
  * @param primary            Strongest evidence (the freed buckets' partition key).
  * @param led                This tier's ledger, accumulated into.
- * @param qc_cnt             Run-end counters (only @c relevel_free_marked here).
+ * @param qc_cnt             Run-end counters (only @c relevel_free_marked and
+ *                           @c gap_reentry_unreachable here).
  * @param relevel            Free-epoch latch, or nullptr when relevel_free_epoch is off.
- * @param present_sigs       Card GRK: the phase signals of this (station,
- *                           satellite) that are PRESENT this epoch with a
- *                           matching code, used ONLY to qualify
- *                           @c gap_reentry_unreachable.  Null (the default)
- *                           keeps the broader count, which is what a posture
- *                           without the per-signal list can honestly state.
- * @param count_unreachable  Card GRK: whether this call may feed
- *                           @c gap_reentry_unreachable at all.  TRUE only from
- *                           the ROW-LEVEL tier, whose key is the tracker's band
- *                           signal and can therefore disagree with the carried
- *                           one.  The per-signal tier passes FALSE: there the
- *                           returning SIGNAL is the key, so a key mismatch
- *                           cannot occur, and a return on a signal the station
- *                           does not model would otherwise be scored against a
- *                           same-band carry that tracked through the break and
- *                           has no break of its own.
+ * @param present_sigs       The phase signals of this (station, satellite) that
+ *                           are present this epoch with a matching code, used
+ *                           only to qualify @c gap_reentry_unreachable (Card
+ *                           GRK).  Null (the default) keeps the broader count,
+ *                           which is what a posture without the per-signal list
+ *                           can state.
+ * @param count_unreachable  Whether this call may feed @c gap_reentry_unreachable
+ *                           at all (Card GRK).  True only from the row-level
+ *                           tier, whose key is the tracker's band signal and can
+ *                           therefore differ from the carried one.  The
+ *                           per-signal tier passes false: there the returning
+ *                           signal is the key, so a key mismatch cannot occur,
+ *                           and a return on a signal the station does not model
+ *                           would otherwise be scored against a same-band carry
+ *                           that tracked through the break and has no break of
+ *                           its own.
  * @return The outcome; @c reached false means the arc had no carry to protect.
  */
 GapArcOutcome gapReentryRespondArc(
@@ -2096,24 +2124,22 @@ GapArcOutcome gapReentryRespondArc(
     const std::set<std::string>* present_sigs = nullptr,
     bool count_unreachable = true) {
     GapArcOutcome out;
-    // ⚠ THE KEY IS SYNTHESISED, NOT LOOKED UP — see the header banner.
-    // The first cut mirrored the MW/LLI drain's refloat_signal and
-    // walked the live ambiguity map.  That mirror is structurally wrong
-    // for a RE-ENTRY: the arc left the model set, so its ambiguity
-    // column was pruned with the gap and PASS B's measurement pre-pass
-    // (MeasurementModel::ensureRequiredStates) re-creates it only AFTER
-    // this drain.  The walk matched nothing, and a 12 h field arm came
-    // back byte-identical to its control with 396 SLIPPED verdicts and
-    // 0 freed.  This is the key format the PASS-B inject site reads and
-    // the one the Card-G arc classification synthesises, so a freed arc
-    // reads `shifted_fresh` there by construction.
+    // The key is synthesized, not looked up (see the banner in
+    // NetworkSlipQc.hpp).  Walking the live ambiguity map, as the MW/LLI
+    // drain's refloat_signal does, cannot work for a re-entry: the arc left the
+    // model set, so its ambiguity column was pruned with the gap, and PASS B's
+    // measurement pre-pass (MeasurementModel::ensureRequiredStates) re-creates
+    // it only after this drain, so a walk would match and free nothing.  This is
+    // the key format the PASS-B inject site reads and the one the Card-G arc
+    // classification synthesizes, so a freed arc reads `shifted_fresh` there by
+    // construction.
     const std::string amb_key = StateKeys::makeAmbiguityKey(satellite, sig);
 
-    // "Is there anything to protect?" is a question about the CARRY.
-    // A LocalCarry entry still inside the max-gap window is exactly
-    // what the PASS-B inject would fold across the break — the same
-    // `pl_bridged` predicate the Card-G classification applies, so the
-    // instrument and the response cannot disagree about the population.
+    // "Is there anything to protect?" is a question about the carry.  A
+    // LocalCarry entry still inside the max-gap window is what the PASS-B
+    // inject would fold across the break.  This is the `pl_bridged` predicate
+    // the Card-G classification applies, so the instrument and the response
+    // agree on the population.
     {
         const auto cit = local_carry.find(std::make_tuple(i, satellite, sig));
         if (cit != local_carry.end()) {
@@ -2124,40 +2150,39 @@ GapArcOutcome gapReentryRespondArc(
     // Under carry_invariant the DD chord test would need
     // NetworkInvariantCarryDriver, a runNetwork local that does not
     // reach this seam (ctx carries carry_sat_vertex / carry_group_id,
-    // not the driver).  So every re-entry is treated as PROTECTABLE
-    // there — the conservative direction: the C3c funnel insert is
-    // idempotent and an arc with no carried chord re-taps fresh, which
-    // is what it would have done anyway.  The cost is that
-    // gap_reentry_no_carry cannot separate the two on that vehicle; the
-    // DD ledger (gap_shifted_bridged / _fresh) still can, from the driver.
+    // not the driver).  So every re-entry is treated as protectable
+    // there, the conservative direction: the C3c funnel insert is
+    // idempotent, and an arc with no carried chord re-taps fresh, as it
+    // would have anyway.  The cost is that gap_reentry_no_carry cannot
+    // separate the two cases on that vehicle; the DD ledger
+    // (gap_shifted_bridged / _fresh) can, from the driver.
     if (!(out.pl_bridged || carry_invariant)) {
         ++led.no_carry;
-        // Card GRK: WHY there was no carry under this key.  A LocalCarry entry
-        // for the same (station, satellite) on ANOTHER signal of the SAME band,
-        // still inside the max-gap window, is exactly what the PASS-B inject
-        // will fold across this break, and this response cannot reach it
-        // because the tracker named the band by one signal while the carry is
-        // keyed on the station's canonical one.  That is the UNREACHABLE
-        // population, not an arc with nothing to protect, and it is counted in
-        // both states of network.cycle_slip.tracker_modeled_first so the run
-        // end can state the knob's target population either way.  The map key
-        // is (station index, satellite, signal) and orders lexicographically,
-        // so one lower_bound walks this station-satellite group alone.
+        // Why there was no carry under this key (Card GRK).  A LocalCarry entry
+        // for the same (station, satellite) on another signal of the same band,
+        // still inside the max-gap window, is what the PASS-B inject will fold
+        // across this break, and this response cannot reach it: the tracker
+        // named the band by one signal while the carry is keyed on the station's
+        // canonical one.  That is the unreachable population, not an arc with
+        // nothing to protect.  It is counted in both states of
+        // network.cycle_slip.tracker_modeled_first, so the run end can state the
+        // knob's target population either way.  The map key is (station index,
+        // satellite, signal) and orders lexicographically, so one lower_bound
+        // walks this station-satellite group alone.
         //
-        // The carried signal must also be TRACKED this epoch.  Without that
-        // clause the count takes arcs whose carried signal is simply absent
-        // from the record: at BSHM00ISR / G14, TOW 270390 the station reports
-        // C1C, C1L, L1L, C2L, L2L, C5Q and L5Q, so the tracker's fallback to
-        // L1L / L2L is the right choice, the carried L1C / L2W arcs have no row
-        // at all this epoch, and their own return is the per-signal tier's
-        // business rather than a response this tier declined to make.
+        // The carried signal must also be tracked this epoch.  Otherwise the
+        // count would take arcs whose carried signal is absent from the record:
+        // for a station that reports C1C, C1L, L1L, C2L, L2L, C5Q and L5Q the
+        // tracker's fallback to L1L / L2L is the right choice, the carried
+        // L1C / L2W arcs have no row that epoch, and their own return belongs to
+        // the per-signal tier rather than being a response this tier declined.
         //
-        // And only the ROW-LEVEL tier may score it.  In the per-signal tier the
-        // returning SIGNAL is the key, so the two halves cannot name the band
+        // Only the row-level tier may score it.  In the per-signal tier the
+        // returning signal is the key, so the two halves cannot name the band
         // differently; a return there on a signal the station does not model
-        // (L2L where the station carries L2W) legitimately finds no carry, and
+        // (L2L where the station carries L2W) correctly finds no carry, and
         // counting it against the modelled same-band carry would score an arc
-        // that tracked THROUGH this break and has no break of its own.
+        // that tracked through this break and has no break of its own.
         for (auto it = (count_unreachable
                             ? local_carry.lower_bound(std::make_tuple(i, satellite,
                                                                       std::string{}))
@@ -2171,7 +2196,7 @@ GapArcOutcome gapReentryRespondArc(
             if (present_sigs != nullptr && present_sigs->count(other) == 0) continue;
             const double gap_s = pl_now_s - it->second.last_seen_s;
             if (gap_s >= 0.0 && gap_s <= pl_max_gap_s) {
-                ++qc_cnt.gap_reentry_unreachable;              // once per ARC
+                ++qc_cnt.gap_reentry_unreachable;              // once per arc
                 break;
             }
         }
@@ -2180,17 +2205,17 @@ GapArcOutcome gapReentryRespondArc(
     ++led.arcs;
     out.reached = true;
 
-    // Does the state exist YET?  Usually NOT — that IS the defect, so it
-    // is counted rather than assumed.  The free-epoch latch is keyed on
-    // the string and survives to the inject either way; only the
-    // pending-reseed mark needs a live state, because a mark on an
-    // absent key would sit in the set and be consumed by some later
-    // epoch's pre-pass — a response acting on history.
+    // Whether the state exists yet is counted, not assumed; usually it does
+    // not (the column was pruned with the gap, see above).  The free-epoch
+    // latch is keyed on the string and survives to the inject either way.
+    // Only the pending-reseed mark needs a live state, because a mark on an
+    // absent key would sit in the set until some later epoch's pre-pass
+    // consumed it, a response acting on an old event.
     out.state_live = sm.getAmbiguities().count(amb_key) != 0;
     if (!out.state_live) ++led.state_absent;
 
-    // Card 4 C3c: the DD invariant carry owns its own funnel and is
-    // live from epoch 1 (refloat_signal's contract, unchanged).
+    // The DD invariant carry owns its own funnel and is live from
+    // epoch 1 (Card 4 C3c; the same contract as refloat_signal).
     if (carry_invariant) {
         carry_slipped_ambs.insert({i, amb_key});
         ++led.dd_marked;
@@ -2206,17 +2231,17 @@ GapArcOutcome gapReentryRespondArc(
     if (!carry_warm) {
         ++led.cold_skipped;
     } else if (!relevel && carry_invariant) {
-        // The leveling local carry is superseded and structurally EMPTY
-        // under carry_invariant (the loader disarms relevel_free_epoch
-        // there for exactly that reason), so the C3c funnel insert above
-        // IS the whole response and nothing is missing.  A separate
-        // bucket from `no_relevel`: one is by design, the other is a
-        // response that could not land.
+        // Under carry_invariant the leveling local carry is superseded and
+        // structurally empty (which is why the loader disarms
+        // relevel_free_epoch there), so the C3c funnel insert above is the
+        // whole response and nothing is missing.  The bucket is separate
+        // from `no_relevel`: this one is by design, the other is a response
+        // that could not land.
         ++led.dd_only;
     } else if (!relevel) {
-        // The mark alone never delivered the free epoch (PASS-B consumes
-        // it pre-inject) — say so instead of reporting a response that
-        // cannot land.
+        // The mark alone does not deliver the free epoch (PASS B consumes
+        // it before the inject), so this bucket records that instead of
+        // reporting a response that cannot land.
         ++led.no_relevel;
     } else if (primary == GapCause::Shifted) {
         ++led.freed_shifted;
@@ -2232,10 +2257,10 @@ GapArcOutcome gapReentryRespondArc(
     return out;
 }
 
-/// Card GRK: this epoch's raw row for (station @p i, @p satellite), or null.
+/// This epoch's raw row for (station @p i, @p satellite), or null (Card GRK).
 ///
-/// The row carries the per-signal list @c gap_reentry_unreachable qualifies on.
-/// Looked up by a linear scan because a station's row vector holds one entry per
+/// The row carries the per-signal list that @c gap_reentry_unreachable qualifies
+/// on.  A linear scan suffices: a station's row vector holds one entry per
 /// tracked satellite (tens), and it is walked once per resumption.
 const RawSlipObs* gapReentryFindRow(const RawSlipEpoch& raw, int i,
                                     const std::string& satellite) {
@@ -2247,8 +2272,8 @@ const RawSlipObs* gapReentryFindRow(const RawSlipEpoch& raw, int i,
 
 /// The phase signals of @p row that are present with a matching code, or an
 /// empty set when the row carries no per-signal list (the Card GRS tier
-/// unarmed).  An empty set is passed to the responder as a NULL pointer, which
-/// keeps the broader unreachable count rather than silently reporting zero.
+/// unarmed).  An empty set is passed to the responder as a null pointer, which
+/// keeps the broader unreachable count instead of reporting a zero.
 std::set<std::string> gapReentryPresentSignals(const RawSlipObs* row) {
     std::set<std::string> out;
     if (row != nullptr)
@@ -2257,8 +2282,8 @@ std::set<std::string> gapReentryPresentSignals(const RawSlipObs* row) {
 }
 
 /// Void any outstanding bridge pend on (station, satellite): a fresh mark makes
-/// its pre-slip capture STALE, so a later replace would re-inject a level from
-/// before the break.  The same rule the raw-slip drains apply, one helper.
+/// its pre-slip capture stale, so a later replace would re-inject a level from
+/// before the break.  The raw-slip drains apply the same rule.
 void gapReentryVoidPends(int i, const std::string& satellite,
                          std::map<std::tuple<int, std::string, std::string>,
                                   RelevelPend>* relevel_pend,
@@ -2272,7 +2297,7 @@ void gapReentryVoidPends(int i, const std::string& satellite,
 }
 
 // ---------------------------------------------------------------------------
-// Card SID phase 3: the shared lookup helpers
+// Shared lookup helpers (Card SID phase 3)
 // ---------------------------------------------------------------------------
 
 /// Record one arc's response outcome for the unified census (R4).  Null sink ⇒
@@ -2283,7 +2308,7 @@ void sidRecordOutcome(ArcReentryOutcomeMap* sink, int i, const std::string& sat,
     (*sink)[ArcLedger::Key{ i, sat, sig }] = o;
 }
 
-/// (station, satellite) -> this epoch's ROW-level resumption, for the per-arc
+/// (station, satellite) -> this epoch's row-level resumption, for the per-arc
 /// verdict lookup.  A satellite produces at most one row resumption per epoch
 /// (the raw pass keys its history on the satellite), so the map is injective.
 std::map<std::pair<int, std::string>, const GapResumption*>
@@ -2294,7 +2319,7 @@ sidIndexRowResumptions(const RawSlipEpoch& raw) {
     return out;
 }
 
-/// (station, satellite, signal) -> this epoch's PER-SIGNAL resumption.
+/// (station, satellite, signal) -> this epoch's per-signal resumption.
 std::map<std::tuple<int, std::string, std::string>, const SigResumption*>
 sidIndexSigResumptions(const RawSlipEpoch& raw) {
     std::map<std::tuple<int, std::string, std::string>, const SigResumption*> out;
@@ -2303,7 +2328,7 @@ sidIndexSigResumptions(const RawSlipEpoch& raw) {
     return out;
 }
 
-/// The row-level tier's verdict for ONE arc of that satellite's return.
+/// The row-level tier's verdict for one arc of that satellite's return.
 ///
 /// The LLI read is band-scoped: the row carries one flag per band of its primary
 /// pair, so the arc's own signal picks the flag.  A modelled signal that is not
@@ -2315,7 +2340,7 @@ struct SidVerdict {
     bool shifted{false};
     bool lli{false};
     bool unmeas{false};
-    bool from_signal{false};///< the verdict came from the PER-SIGNAL tier.
+    bool from_signal{false};///< the verdict came from the per-signal tier.
     GapCause primary{GapCause::Unmeas};
     std::string cause_txt;
 };
@@ -2372,8 +2397,9 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
                                 ArcReentryOutcomeMap* sid_out,
                                 ArcLedger* arc_ledger) {
     if (!qc.gap_reentry) return;
-    // Card SID phase 3: armed, the POPULATION is the ledger's and the raw list is
-    // only the verdict source, so an epoch with no raw resumption still has work.
+    // With the ledger armed (Card SID phase 3), the population is the ledger's and
+    // the raw list is only the verdict source, so an epoch with no raw resumption
+    // still has work.
     const bool ledger_driven = (sid != nullptr && sid->armed);
     if (raw.resumptions.empty() && !ledger_driven) return;
     int n_resp = 0;
@@ -2384,23 +2410,22 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
     GapReentryLedger led;
     // The resumption list is built station-ordered by the qualify pass, and this
     // walk touches only station i's own StateManager plus the two epoch-scoped
-    // sets — serial, in that order, so it is deterministic.
+    // sets, serially in that order, so it is deterministic.
     for (const auto& g : raw.resumptions) {
         const int i = g.station;
         if (i < 0 || i >= n_sta_total || i >= static_cast<int>(stations.size())) continue;
         if (i < static_cast<int>(present.size()) && !present[i]) continue;
-        // --- the verdict, in the cause PRIORITY the counters are split on ----
-        // A single re-entry can satisfy several gates (the field's poison case
-        // is shifted AND LLI-flagged on both bands); the PRIMARY cause is the
+        // --- the verdict, in the cause priority the counters are split on ----
+        // A single re-entry can satisfy several gates (in field data a re-entry
+        // can be shifted and LLI-flagged on both bands); the primary cause is the
         // strongest evidence, so the three freed counters partition the freed
         // population exactly while the event's `cause` field keeps all of them.
         const bool lli_set  = qc.gap_reentry_lli && (g.lli1 != 0 || g.lli2 != 0);
         const bool unmeas   = qc.gap_reentry_unmeasurable && !g.measurable;
         if (!g.shifted && !lli_set && !unmeas) {
-            // A clean re-entry is bridged BY DESIGN.  Recorded so the unified
-            // census (R4) can tell "bridged because a tier looked and found
-            // nothing" from "bridged because nothing looked", which is the
-            // distinction phases 1 and 2 could not make.
+            // A clean re-entry is bridged by design.  It is recorded so the
+            // unified census (R4) can tell "bridged because a tier looked and
+            // found nothing" from "bridged because nothing looked".
             for (const std::string& s : { g.sig1, g.sig2 })
                 if (!s.empty())
                     sidRecordOutcome(sid_out, i, g.satellite, s,
@@ -2408,10 +2433,10 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
             continue;
         }
         ++led.verdicts;
-        // The legacy pivot's ambiguities are GAUGE-PINNED: refloating one would
-        // move the frame every emitted phase bias references, which is the
+        // The legacy pivot's ambiguities are gauge-pinned: refloating one would
+        // move the frame that every emitted phase bias references, which is the
         // datum-slip re-reference path (MW drain), not this one.  Skipped and
-        // counted rather than silently dropped.
+        // counted (pivot_skipped).
         if (i < i_lo) { ++led.pivot_skipped; continue; }
         std::string cause_txt;
         std::uint8_t cause_bits = RelevelEpochState::kCauseGap;
@@ -2426,34 +2451,35 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
         }
         const GapCause primary = g.shifted ? GapCause::Shifted
                                            : (lli_set ? GapCause::Lli : GapCause::Unmeas);
-        // Card SID phase 3: armed, this tier's DETECTIONS, VERDICTS and TRACES are
-        // everything above — unchanged, so an A/B can still read what the raw tier
-        // saw — and the RESPONSE moves to the ledger loop below.
+        // With the ledger armed (Card SID phase 3), this tier's detections,
+        // verdicts and traces are everything above, unchanged so an A/B can still
+        // read what the raw tier saw, and the response moves to the ledger loop
+        // below.
         if (ledger_driven) continue;
         StateManager& sm = *stations[static_cast<std::size_t>(i)].sm;
         bool voided_pends = false;
-        // Card GRK: the signals this (station, satellite) actually tracks this
-        // epoch, which is what qualifies the unreachable count.  Built once per
-        // resumption and shared by both bands.
+        // The signals this (station, satellite) tracks this epoch, which qualify
+        // the unreachable count (Card GRK).  Built once per resumption and shared
+        // by both bands.
         const std::set<std::string> present_sigs =
             gapReentryPresentSignals(gapReentryFindRow(raw, i, g.satellite));
         const std::set<std::string>* present_ptr =
             present_sigs.empty() ? nullptr : &present_sigs;
-        // --- Card SID phase 6b (R3): the EXTRA CHANNELS of the same two bands ------
-        // This tier keys on the satellite and frees the TRACKER's one phase per band.
-        // That is the whole modelled set on a one-channel-per-band posture, and under
-        // `processing.channel_mode: all` it is not: the station also carries every
+        // --- Extra channels of the same two bands (Card SID phase 6b, R3) --------
+        // This tier keys on the satellite and frees the tracker's one phase per band.
+        // That is the whole modelled set on a one-channel-per-band posture, but not
+        // under `processing.channel_mode: all`: there the station also carries every
         // other admitted phase attribute of those bands, each an ordinary float arc
-        // with its own carried level, and a whole-row gap took all of them down
-        // together.  The per-signal tier cannot pick them up either, because it skips
-        // by construction every satellite this tier already owns (`row_resumed`), so
-        // without this the extra arcs fold their level across the break with no
-        // response at all — standing invariant #1.
+        // with its own carried level, and a whole-row gap takes all of them down
+        // together.  The per-signal tier cannot pick them up either, because it
+        // skips by construction every satellite this tier already owns
+        // (`row_resumed`); without this block the extra arcs would fold their level
+        // across the break with no response (standing invariant #1).
         //
-        // The set is the station's own republished second-phase CELLS, which is the
-        // selection's own output, restricted to this satellite and to the two bands
-        // that actually broke (band scoping, as the rest of the tier).  It is EMPTY on
-        // every posture with no extra family, so the loop below is then exactly
+        // The set is the station's republished second-phase cells (the selection's
+        // own output), restricted to this satellite and to the two bands that broke
+        // (band scoping, as in the rest of the tier).  It is empty on every posture
+        // with no extra family, so the loop below then runs over exactly
         // `{sig1, sig2}` and the behaviour is unchanged.
         std::vector<std::string> sigs6b{ g.sig1, g.sig2 };
         {
@@ -2483,11 +2509,11 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
                              out.reached ? ArcReentryOutcome::Freed
                                          : ArcReentryOutcome::NoCarry);
             if (!out.reached) continue;   // no carry to protect: the inject would not bridge it
-            // One event per ARC reached (invariant #7's re-coupling edge needs
-            // an identity, not just a count).  `statistic` is the raw ΔMW in
-            // metres when the break was measurable and BLANK otherwise — a
-            // fabricated 0.0 would read as "the level did not move", the exact
-            // absence-of-evidence claim Card G exists not to make.
+            // One event per arc reached (invariant #7's re-coupling edge needs
+            // an identity, not only a count).  `statistic` is the raw ΔMW in
+            // metres when the break was measurable and blank otherwise: a 0.0
+            // would read as "the level did not move", an absence-of-evidence
+            // claim that Card G is designed not to make.
             traces.emitEvent(se.time, "T0_gap", "reentry_relevel", g.satellite,
                              stations[static_cast<std::size_t>(i)].name,
                              g.measurable ? std::optional<double>(g.d_mw) : std::nullopt,
@@ -2498,15 +2524,15 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
                                          g.measurable ? fmt::format("{:.4f}", g.d_gf)
                                                       : std::string{},
                                          g.lli1, g.lli2, cause_txt,
-                                         // WHY this arc qualified as protectable, and
-                                         // whether the column existed yet: the two facts
-                                         // the first cut got wrong, per event.
+                                         // Why this arc qualified as protectable, and
+                                         // whether the column existed yet, recorded
+                                         // per event.
                                          out.pl_bridged ? "pl" : "dd",
                                          out.state_live ? "live" : "absent"));
             // A fresh mark on this (station, sat) makes any outstanding bridge
-            // pend's pre-slip capture STALE — the same rule the raw-slip drains
-            // apply, for the same reason (its replace would re-inject a level
-            // from before the break).  Once per resumption, not per band.
+            // pend's pre-slip capture stale; the raw-slip drains apply the same
+            // rule for the same reason (its replace would re-inject a level from
+            // before the break).  Once per resumption, not per band.
             if (carry_warm && !voided_pends) {
                 voided_pends = true;
                 gapReentryVoidPends(i, g.satellite, relevel_pend, qc_cnt);
@@ -2520,15 +2546,16 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
     }
 
     // ----------------------------------------------------------------------
-    // Card SID phase 3: the RESPONSE, over the LEDGER's admitted population
+    // The response over the ledger's admitted population (Card SID phase 3)
     // ----------------------------------------------------------------------
     //
-    // This loop owns the whole population's CENSUS, including the arcs it hands
-    // to the per-signal tier, so `ledger_reentry_arcs` is a denominator counted
-    // exactly once and the three dispositions below partition it.  The response
-    // itself is the same shared responder the raw tiers call, keyed by the SAME
-    // (station, satellite, signal) as the ledger arc — so a key mismatch cannot
-    // occur and `gap_reentry_unreachable` is never fed from here.
+    // This loop owns the census of the whole population, including the arcs it
+    // hands to the per-signal tier, so `ledger_reentry_arcs` is a denominator
+    // counted exactly once, and the four dispositions below (freed, bridged,
+    // no_carry, pivot_skipped) partition it.  The response itself is the shared
+    // responder the raw tiers call, keyed by the same (station, satellite,
+    // signal) as the ledger arc, so a key mismatch cannot occur and
+    // `gap_reentry_unreachable` is not fed from here.
     if (ledger_driven) {
         qc_cnt.ledger_reentry_outside_horizon += sid->outside_horizon;
         qc_cnt.ledger_reentry_not_modelled    += sid->not_modelled;
@@ -2541,8 +2568,8 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
             ++qc_cnt.ledger_reentry_arcs;
             if (a.state_recreated) ++qc_cnt.ledger_reentry_state_recreated;
 
-            // Verdict lookup, keyed by the ARC IDENTITY.  The per-signal tier's
-            // verdict wins where it exists: its key IS the returning signal, so it
+            // Verdict lookup, keyed by the arc identity.  The per-signal tier's
+            // verdict wins where it exists: its key is the returning signal, so it
             // is the sharper statement, and the raw pass already de-duplicates the
             // two populations by satellite.
             const auto sit = sig_index.find(std::make_tuple(i, a.satellite, a.signal));
@@ -2567,14 +2594,14 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
                 else                                  ++qc_cnt.ledger_reentry_v_unmeas;
             } else {
                 ++qc_cnt.ledger_reentry_no_verdict;
-                // Card SID phase 4a (S1): ATTRIBUTE the no-verdict return.  Phase 3
-                // measured this population (87 of 301 returns in 6 h) and named it a
-                // screen-side decoupling: the modelled row of a signal disappears
-                // while `raw_observed` keeps it and the satellite stays modelled, so
-                // neither raw tier sees a break.  The reason mask stamped on the
-                // ADMITTED GAP that preceded this return says which screen removed
-                // the row.  Read off the arc, not off the step: the mask was written
-                // when the gap opened and has survived it untouched.
+                // Attribute the no-verdict return (Card SID phase 4a, S1).  This
+                // population is a screen-side decoupling: the modelled row of a
+                // signal disappears while `raw_observed` keeps it and the satellite
+                // stays modelled, so neither raw tier sees a break.  The reason mask
+                // stamped on the admitted gap that preceded this return says which
+                // screen removed the row.  It is read off the arc, not off the
+                // step: the mask was written when the gap opened and survives it
+                // unchanged.
                 if (arc_ledger != nullptr) {
                     if (qc_cnt.ledger_reentry_nv_reason.empty())
                         qc_cnt.ledger_reentry_nv_reason.assign(kArcReasonCount, 0);
@@ -2589,8 +2616,8 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
             }
 
             // The gauge-pinned legacy pivot: its ambiguities are pinned, so a
-            // local refloat is meaningless there.  Counted, not silently dropped.
-            // Tested BEFORE the tier routing so the four dispositions partition
+            // local refloat has no meaning there, and the arc is counted instead.
+            // Tested before the tier routing so the four dispositions partition
             // the population exactly: arcs = freed + bridged + no_carry +
             // pivot_skipped, whichever tier made the response.
             if (i < i_lo) { ++qc_cnt.ledger_reentry_pivot_skipped; continue; }
@@ -2598,11 +2625,11 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
             // it does unarmed: its band scoping, its counters, its event.
             if (v.has && v.from_signal) continue;
 
-            // R2: the NO-VERDICT policy.  `bridge` is today's behaviour made
-            // visible; `refloat` routes the arc down the UNMEASURABLE path, which
-            // network.cycle_slip.gap_reentry_relevel_unmeasurable then decides —
-            // so with that sub-knob off `refloat` is counted and inert, and the
-            // loader says so.
+            // No-verdict policy (R2): `bridge` is the default behaviour, made
+            // visible; `refloat` routes the arc down the unmeasurable path, which
+            // network.cycle_slip.gap_reentry_relevel_unmeasurable then decides.
+            // With that sub-knob off, `refloat` is counted and inert; the
+            // loader's startup line states the dependency.
             const bool respond = v.has || (sid->refloat_no_verdict
                                            && qc.gap_reentry_unmeasurable);
             const char* nv_action = "bridge";
@@ -2633,11 +2660,11 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
 
             const std::string& sta_name = stations[static_cast<std::size_t>(i)].name;
             if (!v.has) {
-                // THE EDGE INVARIANT 7 ASKS FOR on the no-verdict half: the
-                // population no instrument could see before now has an identity,
-                // a gap length and an action, in both policies.  Throttled on the
-                // ledger's own per (station, transition) holdoff so the stream
-                // stays bounded at 305 stations.
+                // The edge invariant #7 asks for, on the no-verdict half: every
+                // arc of this population gets an identity, a gap length and an
+                // action, in both policies.  Throttled by the ledger's own per
+                // (station, transition) holdoff so the stream stays bounded at
+                // 305 stations.
                 if (arc_ledger == nullptr
                     || arc_ledger->eventAllowed(i, ArcTransition::Reentry)) {
                     ++qc_cnt.ledger_reentry_events;
@@ -2655,8 +2682,8 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
                 }
             }
             if (!out.reached) continue;
-            // The RE-COUPLING edge, in the tier's own vocabulary so the existing
-            // refloat instruments count it: `src=ledger` separates these rows from
+            // The re-coupling edge, in the tier's own vocabulary so the existing
+            // refloat instruments count it; `src=ledger` separates these rows from
             // the raw-driven ones without re-deriving the population.
             traces.emitEvent(se.time, "T0_gap", "reentry_relevel", a.satellite,
                              sta_name, std::nullopt, std::nullopt, out.action,
@@ -2705,7 +2732,7 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
 }
 
 // ---------------------------------------------------------------------------
-// Card GRS: the PER-SIGNAL gap re-entry response
+// Per-signal gap re-entry response (Card GRS)
 // ---------------------------------------------------------------------------
 void networkSlipDrainGapReentryPerSignal(
     std::vector<NetStation>& stations, const std::vector<bool>& present,
@@ -2720,9 +2747,10 @@ void networkSlipDrainGapReentryPerSignal(
     const ArcReentryEpoch* sid, ArcReentryOutcomeMap* sid_out) {
     if (!qc.gap_reentry || !qc.gap_reentry_per_signal) return;
     if (raw.sig_resumptions.empty()) return;
-    // Card SID phase 3: the decoupling-edge trace below is unchanged in both
-    // states; armed, the RESPONSE runs over the ledger arcs that carry one of
-    // this tier's verdicts, and the row-level drain owns the census.
+    // The decoupling-edge trace below is the same in both ledger states (Card SID
+    // phase 3).  With the ledger armed, the response runs over the ledger arcs
+    // that carry one of this tier's verdicts, and the row-level drain owns the
+    // census.
     const bool ledger_driven = (sid != nullptr && sid->armed);
     std::set<std::tuple<int, std::string, std::string>> sid_pop;
     if (ledger_driven)
@@ -2739,16 +2767,16 @@ void networkSlipDrainGapReentryPerSignal(
         if (i < 0 || i >= n_sta_total || i >= static_cast<int>(stations.size())) continue;
         if (i < static_cast<int>(present.size()) && !present[i]) continue;
         const std::string& sta_name = stations[static_cast<std::size_t>(i)].name;
-        // --- the verdict, the row-level ladder applied to ONE signal ---------
-        // `lli` is the LLI of THIS signal at the return epoch, not of the row's
-        // primary pair: on the field's measured case only the signal that never
-        // dropped carried the flag, so reading the pair would have attributed
-        // the receiver's verdict to the wrong band.
+        // --- the verdict, the row-level ladder applied to one signal ---------
+        // `lli` is the LLI of this signal at the return epoch, not of the row's
+        // primary pair: in the measured field case only the signal that never
+        // dropped carried the flag, so reading the pair would attribute the
+        // receiver's verdict to the wrong band.
         const bool lli_set = qc.gap_reentry_lli && (g.lli != 0);
         const bool unmeas  = qc.gap_reentry_per_signal_unmeasurable && !g.measurable;
-        // THE DECOUPLING EDGE (invariant #7): every per-signal re-entry gets an
-        // event, clean ones included.  A tier whose only visible rows are its
-        // own actions cannot be audited for what it declined to act on.
+        // The decoupling edge (invariant #7): every per-signal re-entry gets an
+        // event, clean ones included, so the tier can be audited for what it
+        // declined to act on as well as for its actions.
         const bool pl_bridged = [&] {
             const auto cit = local_carry.find(std::make_tuple(i, g.satellite, g.signal));
             if (cit == local_carry.end()) return false;
@@ -2766,18 +2794,19 @@ void networkSlipDrainGapReentryPerSignal(
                                      g.partner_through ? 1 : 0, g.lli,
                                      pl_bridged ? "bridged" : "fresh"));
         if (!g.shifted && !lli_set && !unmeas) {
-            // Clean: bridged BY DESIGN, and recorded so the unified census (R4)
-            // can separate that from an arc nothing looked at.
+            // Clean: bridged by design, and recorded so the unified census (R4)
+            // can separate it from an arc nothing looked at.
             sidRecordOutcome(sid_out, i, g.satellite, g.signal,
                              ArcReentryOutcome::BridgedVerdict);
             continue;
         }
         ++led.verdicts;
         if (i < i_lo) { ++led.pivot_skipped; continue; }   // gauge-pinned legacy pivot
-        // Card SID phase 3: the population is the ledger's.  A raw per-signal
-        // resumption whose arc is NOT in the admitted population (the estimator
-        // never lost the row, or the gap outran the carry horizon) is detected,
-        // verdicted and traced exactly as before, and not responded to.
+        // With the ledger armed, the population is the ledger's (Card SID phase
+        // 3).  A raw per-signal resumption whose arc is not in the admitted
+        // population (the estimator never lost the row, or the gap outran the
+        // carry horizon) is still detected, given a verdict and traced, but gets
+        // no response.
         if (ledger_driven
             && !sid_pop.count(std::make_tuple(i, g.satellite, g.signal))) continue;
         std::string cause_txt;
@@ -2792,18 +2821,16 @@ void networkSlipDrainGapReentryPerSignal(
         }
         const GapCause primary = g.shifted ? GapCause::Shifted
                                            : (lli_set ? GapCause::Lli : GapCause::Unmeas);
-        // BAND-SCOPED: only the signal that actually broke is freed.  The other
-        // bands of this satellite tracked through, so their carried levels are
-        // still valid and freeing them would inject exactly the response cost
+        // Band-scoped: only the signal that broke is freed.  The other bands of
+        // this satellite tracked through, so their carried levels are still
+        // valid, and freeing them would add the response cost that
         // SPEC_lane_slip_response measures (the slip cost of a whole-satellite
         // refloat is 100 % response-inflicted).
-        // Card GRK: this tier does NOT feed gap_reentry_unreachable.  Its key IS
+        // This tier does not feed gap_reentry_unreachable (Card GRK).  Its key is
         // the returning signal, so the tracker and the carry cannot disagree
         // about which signal names the band; a return on a signal the station
-        // does not model finds no carry for the honest reason, and the modelled
-        // same-band carry it would otherwise be scored against tracked through
-        // this break.  Measured: 40 of these on the 6 h field arm (23 clean, 17
-        // shifted), e.g. MAJU00MHL / G08 / L2L at TOW 260250.
+        // does not model correctly finds no carry, and the modelled same-band
+        // carry it would otherwise be scored against tracked through this break.
         const GapArcOutcome out =
             gapReentryRespondArc(i, g.satellite, g.signal,
                                  *stations[static_cast<std::size_t>(i)].sm,
@@ -2821,9 +2848,9 @@ void networkSlipDrainGapReentryPerSignal(
             else             ++qc_cnt.ledger_reentry_no_carry;
         }
         if (!out.reached) continue;   // no carry to protect: the inject would not bridge it
-        // THE RE-COUPLING EDGE: `scope=signal` is what separates these rows from
-        // the row-level tier's in network_events.csv, so a grader can count the
-        // two populations apart without re-deriving them.
+        // The re-coupling edge: `scope=signal` separates these rows from the
+        // row-level tier's in network_events.csv, so a grader can count the two
+        // populations apart without re-deriving them.
         traces.emitEvent(se.time, "T0_gap", "reentry_relevel", g.satellite, sta_name,
                          g.measurable ? std::optional<double>(g.d_gf) : std::nullopt,
                          g.measurable ? std::optional<double>(g.gate_gf) : std::nullopt,

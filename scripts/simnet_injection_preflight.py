@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Injection PRE-FLIGHT: is the mechanism you are about to inject at even ALIVE?
+"""Injection preflight: checks whether the mechanism under test is live before
+a fault is injected at it.
 
-A synthetic event-injection bench answers "does the response mechanism work".  It
-can only answer that if the mechanism RUNS on the lineage under test.  On this
-codebase a large, documented set of QC mechanisms is INERT BY CONSTRUCTION under
-`network.carry_invariant` (Card 4), because the carry vehicle they were hosted on
-no longer exists.  The producer's own startup banner says so:
+A synthetic event-injection bench answers "does the response mechanism work".
+It can only answer that if the mechanism runs on the lineage under test. On
+this codebase a large, documented set of QC mechanisms is inert by construction
+under `network.carry_invariant` (Card 4), because the carry vehicle they were
+hosted on no longer exists. The producer's own startup banner states this:
 
     "Card 4 (M1) INVARIANT CARRY ON - the DD cycle-basis z-store time-links the
      S-system-invariant double differences ..., SUPERSEDING the PhaseBias shared
@@ -14,13 +15,13 @@ no longer exists.  The producer's own startup banner says so:
     -- src/core/config/GnssConfigLoadNetwork.cpp:6548
 
 Injecting a fault at a superseded mechanism produces the worst possible outcome:
-the run completes, the counters read zero, and the result reads as "the guard
-failed to catch it" when the guard was never wired.  That mistake has already
-been paid for twice on post-fit RAIM (docs/SPEC_raim_pool_rehost.md, two
-independent kills) and once on eq34 INC-2 (537 framed re-hosts, byte-identical
-output).  Standing invariant #4 covers the weaker version of this ("0 driven /
-0 folded means the wiring is inert"); the supersession class is worse, because
-the counters can be NON-zero and specific while the actuation is still inert.
+the run completes, the counters read zero, and the result reads as the guard
+failing to catch the fault when the guard was never wired (docs/SPEC_raim_pool_rehost.md
+documents two such kills on post-fit RAIM; eq34 INC-2 is a third, 537 framed
+re-hosts with byte-identical output). Standing invariant #4 covers the weaker
+version of this ("0 driven / 0 folded means the wiring is inert"); the
+supersession class is worse, because the counters can be non-zero and specific
+while the actuation is still inert.
 
 This checker is offline, reads only the config (flattened through its `extends`
 chain exactly as the loader does), and changes nothing.
@@ -29,25 +30,27 @@ chain exactly as the loader does), and changes nothing.
     python scripts/simnet_injection_preflight.py <cfg> --target slip raim_postfit
     python scripts/simnet_injection_preflight.py <cfg> --json out.json
 
-Exit code 0 = every requested target is LIVE.  1 = at least one is INERT or
-DEGRADED (so a CI harness cannot spend hours on a dead arm).  2 = usage/IO error.
+Exit code 0 means every requested target is live. 1 means at least one is inert
+or degraded (so a CI harness does not spend hours on a dead arm). 2 is a
+usage/IO error.
 
-SCOPE.  This reads config only.  It proves a mechanism is NOT structurally
-disabled; it does NOT prove it has POWER (whether a fault actually reaches the
-statistic).  Power is what the injection arms measure, and under Card 4 it is
-explicitly unproven for RAIM -- the local ambiguity column is free each epoch and
-the time-link lives in the DD chord's prior, so tension may be absorbed locally
-and never reach a residual (SPEC_raim_pool_rehost.md R2).  LIVE here means
-"worth spending compute on", not "will detect".
+Scope: this reads config only. It proves a mechanism is not structurally
+disabled; it does not prove it has power (whether a fault actually reaches the
+statistic). Power is what the injection arms measure, and under Card 4 it is
+unproven for RAIM: the local ambiguity column is free each epoch and the
+time-link lives in the DD chord's prior, so tension may be absorbed locally and
+never reach a residual (SPEC_raim_pool_rehost.md R2). Live here means "worth
+spending compute on", not "will detect".
 """
 import argparse
 import json
 import os
 import sys
 
-# Windows consoles default to cp1252, which cannot encode the report's '⚠' and would
-# raise UnicodeEncodeError mid-report — after the verdict has scrolled past.  Same
-# guard scripts/simnet_grade.py:65 carries, for the same reason.
+# Windows consoles default to cp1252, which cannot encode the report's warning
+# glyph and would raise UnicodeEncodeError mid-report, after the verdict has
+# already scrolled past. scripts/simnet_grade.py:65 carries the same guard, for
+# the same reason.
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
@@ -77,13 +80,14 @@ def derive(cfg):
     derivations a reader reconstructs wrongly from the JSON alone.
     """
     d = {}
-    # NetworkRunContext.cpp:164 - and carry_invariant without eq34 is a HARD LOAD
-    # ERROR (GnssConfigLoadNetwork.cpp:6129-6135), so the conjunct is defensive.
+    # NetworkRunContext.cpp:164: carry_invariant without eq34 is a hard load
+    # error (GnssConfigLoadNetwork.cpp:6129-6135), so the conjunct is defensive.
     d["eq34"] = _b(cfg, "network.phase_datum_eq34")
     d["carry_invariant"] = d["eq34"] and _b(cfg, "network.carry_invariant")
     d["carry_invariant_requested"] = _b(cfg, "network.carry_invariant")
-    # ApplicationNetwork.cpp:1428 - carry_warm = pl_on && (...).  phase_leveling is
-    # NECESSARY; the remaining conjuncts can only make it later, never true without it.
+    # ApplicationNetwork.cpp:1428: carry_warm = pl_on && (...). phase_leveling is
+    # a necessary condition; the remaining conjuncts can only make it true later,
+    # never true without it.
     d["phase_leveling"] = _b(cfg, "network.phase_leveling")
     d["carry_warm_possible"] = d["phase_leveling"]
     d["raim"] = _b(cfg, "network.raim")
@@ -115,9 +119,10 @@ def assess(d):
         out.append({"target": target, "state": state, "why": why, "fix": fix})
 
     # ---- slip detection ----------------------------------------------------------
-    # NetworkSlipQc.cpp:160-162 / :464-465 - neither carry_invariant nor carry_warm
-    # gates DETECTION; they select the ACTION TARGET only.  So *_detections increments
-    # on a Card-4 lineage while *_refloats stays 0, and that asymmetry is deliberate.
+    # NetworkSlipQc.cpp:160-162 / :464-465: neither carry_invariant nor carry_warm
+    # gates detection; they only select the action target. So *_detections
+    # increments on a Card-4 lineage while *_refloats stays 0, and that asymmetry
+    # is deliberate.
     det = [k for k in ("mw_detect", "if_phase_td", "turbo_edit") if d[k]]
     if not det:
         add("slip_detect", INERT,
@@ -129,7 +134,7 @@ def assess(d):
             f"detectors armed: {', '.join(det)}; detection is NOT gated by "
             f"carry_invariant/carry_warm (NetworkSlipQc.cpp:160-162)")
 
-    # The legacy refloat ACTION is carry_warm-gated even though detection is not.
+    # The legacy refloat action is carry_warm-gated even though detection is not.
     if det:
         if d["carry_warm_possible"]:
             add("slip_refloat_legacy", LIVE,
@@ -217,7 +222,7 @@ def assess(d):
     elif d["we_ci"]:
         add("raim_we_code_iono", LIVE, "code + iono pools populate; own triggers apply")
 
-    # ---- the A4 withhold, which is NOT where the spec implies ---------------------
+    # ---- the A4 withhold, which does not fire where the spec implies --------------
     if d["withhold_sigma0"] > 0:
         if not (d["raim_within_epoch"] and d["carry_warm_possible"]):
             add("a4_withhold", INERT,
@@ -242,13 +247,13 @@ def assess(d):
 
     # eq34 hygiene knobs superseded by Card 4 are handled by eq34_hygiene(): they are
     # confounders, not injection targets, so they get their own report block and do
-    # NOT move the exit code.
+    # not move the exit code.
     return out
 
 
 def eq34_hygiene(cfg, d):
     """Armed-but-superseded eq34 hygiene knobs (reported separately: they are not
-    injection TARGETS, they are confounders that cost wall-clock for nothing)."""
+    injection targets, they are confounders that cost wall-clock time for nothing)."""
     checks = [
         ("network.phase_datum_eq34_pin_round",
          "NetworkChainDatum.cpp:136-137 `&& !carry_invariant`"),

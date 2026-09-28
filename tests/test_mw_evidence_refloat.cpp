@@ -1,27 +1,27 @@
 /**
  * @file test_mw_evidence_refloat.cpp
- * @brief MW EVIDENCE REFLOAT (network.cycle_slip.mw_evidence_refloat) — the
- *        PASS-A admission rule and the detector-side strength export it reads.
+ * @brief Tests for the MW evidence refloat (network.cycle_slip.mw_evidence_refloat):
+ *        the PASS-A admission rule and the detector-side strength export it reads.
  *
- * The defect this card fixes: PASS A admits an MW refloat candidate only on the
- * T0 integer-REPAIR gate (known non-zero integer whose rounding residual is within
- * network.cycle_slip.turbo_edit_frac_max), on a DETECT-ONLY path whose consumer —
- * the refloat drain — never applies the integer.  Rounding cleanliness is the wrong
- * question there: a -99 cycle L5 slip flagged at 78x its own adaptive threshold,
- * integer KNOWN, residual 0.183 cycles (1.07 m on the 5.86 m wide lane, inside that
- * lane's own 1 sigma) was refused, and so was the same event on a second lane at
- * 8.9x with an unknown integer.  Both silently.
+ * Without the knob, PASS A admits an MW refloat candidate only on the T0
+ * integer-repair gate (a known non-zero integer whose rounding residual is within
+ * network.cycle_slip.turbo_edit_frac_max), although the path is detect-only: its
+ * consumer, the refloat drain, never applies the integer.  Rounding cleanliness does
+ * not decide whether a slip happened.  On that gate alone, a -99 cycle L5 slip flagged
+ * at 78x its own adaptive threshold, integer known, residual 0.183 cycles (1.07 m on
+ * the 5.86 m wide lane, inside that lane's own 1 sigma) is refused, and so is the same
+ * event on a second lane at 8.9x with an unknown integer.  The test values below come
+ * from that event.
  *
- * Two gate families here, matching the two halves of the build:
- *   - MwEvidenceAdmit — the pure rule (@ref networkMwAdmitCandidate).  Legacy
- *     behaviour must be bit-unchanged, the evidence half must be off unless armed,
- *     and each of its four refusals (BIA lane / immature arc / weak ratio / no
- *     ratio published) must actually refuse.
- *   - MwEvidenceDetectorExport — that @c MwSlipDetector actually PUBLISHES the
- *     ratio, the arc maturity and the lane class on its principal emission path.
- *     A rule with nothing to read is dead wiring (invariant #4), and the fields
- *     default to NaN / 0 / false, which is exactly what a silent detector looks
- *     like to the rule.
+ * Two gate families, matching the two halves of the build:
+ *   - MwEvidenceAdmit: the pure rule (@ref networkMwAdmitCandidate).  Legacy
+ *     behaviour is bit-unchanged, the evidence half acts only when armed, and each
+ *     of its four refusals (BIA lane, immature arc, weak ratio, no ratio published)
+ *     refuses.
+ *   - MwEvidenceDetectorExport: @c MwSlipDetector publishes the ratio, the arc
+ *     maturity and the lane class on its principal emission path.  A rule with
+ *     nothing to read is dead wiring (invariant #4), and the fields default to
+ *     NaN / 0 / false, which is what a silent detector looks like to the rule.
  *
  * Pure unit gates: a hand-fed detector, no estimator, no network.
  */
@@ -60,9 +60,9 @@ MwAdmitDecision admit(bool wl_known, int dn, double frac,
 }
 
 // ---------------------------------------------------------------------------------
-// Detector fixture: a GPS satellite with BOTH phase and code per band — the MW
+// Detector fixture: a GPS satellite with both phase and code per band.  The MW
 // combination needs the code, so a phase-only observation forms no arc at all.  No
-// BIA product is loaded, so these arcs run the UNDIFFERENCED (bias-free) path: they
+// BIA product is loaded, so these arcs run the undifferenced (bias-free) path: they
 // never integer-lock, and every flag leaves by the unlocked-arc emission site.
 // ---------------------------------------------------------------------------------
 PppObservation mwObs(const std::string& sat, double tow,
@@ -88,13 +88,13 @@ std::map<std::string, double> dualGps(double l1c, double l2c, double rho_m) {
 }  // namespace
 
 // =================================================================================
-// MwEvidenceAdmit — the pure PASS-A admission rule.
+// MwEvidenceAdmit: the pure PASS-A admission rule.
 // =================================================================================
 
-// Today's gate, unchanged, and it does NOT need the knob: a known non-zero integer
-// whose residual is inside turbo_edit_frac_max is admitted exactly as before.  The
-// evidence bookkeeping must not claim it — via_evidence is the `src=evidence`
-// population and a legacy admission is not one.
+// The legacy gate, unchanged and independent of the knob: a known non-zero integer
+// whose residual is inside turbo_edit_frac_max is admitted.  The evidence
+// bookkeeping does not claim it: via_evidence is the `src=evidence` population and a
+// legacy admission is not part of it.
 TEST(MwEvidenceAdmit, LegacyIntegerGateAdmitsWithAndWithoutTheKnob) {
     for (bool knob : { false, true }) {
         const auto d = admit(/*wl_known=*/true, /*dn=*/-99, /*frac=*/0.02,
@@ -108,9 +108,9 @@ TEST(MwEvidenceAdmit, LegacyIntegerGateAdmitsWithAndWithoutTheKnob) {
     }
 }
 
-// The measured miss, knob OFF: integer known, residual 0.183 > 0.15, flagged at 78x
-// threshold on a mature bias-free lane.  Refused — and, before this card, refused
-// with no counter and no event row.  The census must now name it.
+// The measured miss, knob off: integer known, residual 0.183 > 0.15, flagged at 78x
+// threshold on a mature bias-free lane.  It is refused, and the census counts the
+// refusal (drop_loose) and the would-admit verdict.
 TEST(MwEvidenceAdmit, LooseKnownIntegerIsDroppedAndCountedWithKnobOff) {
     const auto d = admit(/*wl_known=*/true, /*dn=*/99, /*frac=*/0.183,
                          /*ratio=*/78.0, /*n_arc=*/40, /*bia=*/false,
@@ -119,14 +119,14 @@ TEST(MwEvidenceAdmit, LooseKnownIntegerIsDroppedAndCountedWithKnobOff) {
     EXPECT_FALSE(d.admitted);
     EXPECT_TRUE(d.drop_loose);
     EXPECT_FALSE(d.drop_unknown);
-    // The rule itself is evaluated with the knob off — that IS the would-admit
-    // census, and it is how the card is sized before anyone arms it.
+    // The rule itself is evaluated with the knob off; that evaluation is the
+    // would-admit census, which sizes the card's effect before it is armed.
     EXPECT_TRUE(d.evidence_ok);
     EXPECT_TRUE(d.would_admit);
     EXPECT_FALSE(d.admit_evidence) << "the knob is off: the rule must not act";
 }
 
-// The same result with the knob ARMED: admitted, and marked as the evidence
+// The same result with the knob armed: admitted, and marked as the evidence
 // population so its event row can carry src=evidence.
 TEST(MwEvidenceAdmit, LooseKnownIntegerIsAdmittedViaEvidenceWithKnobOn) {
     const auto d = admit(/*wl_known=*/true, /*dn=*/99, /*frac=*/0.183,
@@ -140,9 +140,9 @@ TEST(MwEvidenceAdmit, LooseKnownIntegerIsAdmittedViaEvidenceWithKnobOn) {
     EXPECT_FALSE(d.drop_loose)  << "admitted results are in no drop bucket";
 }
 
-// The second lane of the same measured event: 8.9x threshold, integer UNKNOWN.
-// The legacy gate cannot see it at all (it has no integer to grade); the evidence
-// rule does, because the consumer never wanted the integer.
+// The second lane of the same measured event: 8.9x threshold, integer unknown.
+// The legacy gate cannot admit it (it has no integer to grade); the evidence rule
+// can, because the consumer does not use the integer.
 TEST(MwEvidenceAdmit, UnknownIntegerIsDroppedOffAndAdmittedOn) {
     const auto off = admit(/*wl_known=*/false, /*dn=*/0, /*frac=*/0.5,
                            /*ratio=*/8.9, /*n_arc=*/40, /*bia=*/false, false);
@@ -158,8 +158,8 @@ TEST(MwEvidenceAdmit, UnknownIntegerIsDroppedOffAndAdmittedOn) {
     EXPECT_FALSE(on.drop_unknown);
 }
 
-// A zero integer that IS known and clean is not a slip at all: no admission, and it
-// belongs in neither drop bucket (nothing was refused — nothing was detected).
+// A known, clean zero integer is not a slip: no admission, and it belongs in
+// neither drop bucket (nothing was detected, so nothing was refused).
 TEST(MwEvidenceAdmit, KnownZeroCleanIntegerIsNeitherAdmittedNorCountedAsADrop) {
     const auto d = admit(/*wl_known=*/true, /*dn=*/0, /*frac=*/0.01,
                          /*ratio=*/kNaN, /*n_arc=*/40, /*bia=*/false, true);
@@ -169,11 +169,11 @@ TEST(MwEvidenceAdmit, KnownZeroCleanIntegerIsNeitherAdmittedNorCountedAsADrop) {
 }
 
 // The four refusals of the evidence half, each isolated: a single fact is spoiled
-// and the rule must refuse on it even with the knob armed.
+// and the rule refuses on it even with the knob armed.
 TEST(MwEvidenceAdmit, EvidenceRefusesBiaLaneImmatureWeakAndUnpublishedRatio) {
     // BIA-corrected lane: single-differenced against the detector's own MW pivot,
     // so a pivot S-transform re-reference presents as a synchronous multi-satellite
-    // step.  That is the measured false-alarm population — refuse the class.
+    // step.  That is the measured false-alarm population, so the class is refused.
     const auto bia = admit(true, 99, 0.183, /*ratio=*/78.0, /*n_arc=*/40,
                            /*bia=*/true, /*knob_on=*/true);
     EXPECT_FALSE(bia.evidence_ok);
@@ -192,30 +192,30 @@ TEST(MwEvidenceAdmit, EvidenceRefusesBiaLaneImmatureWeakAndUnpublishedRatio) {
     EXPECT_FALSE(weak.evidence_ok);
     EXPECT_FALSE(weak.admitted);
 
-    // No ratio published by the emitting path.  NaN must REFUSE, not compare
-    // truthy — every NaN comparison is false, so the >= alone would already
-    // refuse, but the isfinite check is the intent and is pinned here.
+    // No ratio published by the emitting path: NaN refuses.  Every NaN comparison
+    // is false, so the >= alone would already refuse, but the isfinite check states
+    // the intent and is pinned here.
     const auto nan_r = admit(true, 99, 0.183, /*ratio=*/kNaN, 40, false, true);
     EXPECT_FALSE(nan_r.evidence_ok);
     EXPECT_FALSE(nan_r.admitted);
     EXPECT_TRUE(nan_r.drop_loose);
 }
 
-// The boundaries are inclusive on both gates (>= , >=), and the legacy frac gate
-// stays inclusive (<=) exactly as the pre-card expression was.
+// The boundaries are inclusive on both evidence gates (>=, >=), and the legacy frac
+// gate is inclusive (<=).
 TEST(MwEvidenceAdmit, GateBoundariesAreInclusive) {
     EXPECT_TRUE(admit(true, 99, 0.183, kRatioMin, kMinArc, false, true).evidence_ok);
     EXPECT_TRUE(admit(true, 5, kFracMax, kNaN, 0, false, false).admit_legacy);
 }
 
 // =================================================================================
-// MwEvidenceDetectorExport — MwSlipDetector publishes what the rule reads.
+// MwEvidenceDetectorExport: MwSlipDetector publishes what the rule reads.
 // =================================================================================
 
 // The principal emission path (unlocked arc, bias-free lane).  Drive a quiet arc,
 // then step the second band by 40 cycles: dN_WL = N1 - N2 moves by -40, i.e. ~34 m
-// on the 0.862 m wide lane, far above any adaptive threshold.  The flag must carry
-// a finite ratio well past the production gate, the arc's sample count AT THE FLAG
+// on the 0.862 m wide lane, far above any adaptive threshold.  The flag carries a
+// finite ratio well past the production gate, the arc's sample count at the flag
 // (read before the erase), and the lane class that keeps it eligible.
 TEST(MwEvidenceDetectorExport, UnlockedFlagPublishesRatioArcEpochsAndLaneClass) {
     LogManager log;
@@ -265,9 +265,9 @@ TEST(MwEvidenceDetectorExport, UnlockedFlagPublishesRatioArcEpochsAndLaneClass) 
         << "with the knob off, admission is the legacy gate and nothing else";
 }
 
-// A quiet arc publishes NOTHING: no result rows at all, so the fields never reach
-// the rule.  The complement of the gate above — it pins that the export is a
-// property of FLAGS, not a per-epoch side channel.
+// A quiet arc publishes nothing: no result rows at all, so the fields never reach
+// the rule.  This complements the gate above and pins that the export is a property
+// of flags, not a per-epoch side channel.
 TEST(MwEvidenceDetectorExport, QuietArcEmitsNoResultsAtAll) {
     LogManager log;
     GnssConfig cfg;

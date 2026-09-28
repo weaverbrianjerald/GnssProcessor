@@ -27,8 +27,8 @@ double continuousSeconds(const GnssTime& t) {
 }
 
 // BeiDou toe is stored on the native BDT scale (BDT week 0 = GPS week 1356,
-// BDT = GPS − 14 s).  This offset maps a BDT-continuous-seconds value up to
-// GPS-continuous seconds for honest cross-system epoch comparisons.
+// BDT = GPS − 14 s).  This offset maps a BDT-continuous-seconds value to
+// GPS-continuous seconds so epochs compare correctly across systems.
 constexpr double kBdtToGpsOffsetSec = 1356.0 * 604800.0 + 14.0;
 
 // toe of any record expressed in GPS-continuous seconds (for selection).
@@ -60,23 +60,23 @@ double normalizeTk(double tk) {
 }
 
 // Map a decoded broadcast ephemeris's issue-of-data onto the IGS-SSR
-// (RTCM 4076) "GNSS IOD" matching convention — an 8-bit field (IDF012) whose
-// per-constellation DEFINITION differs from the raw broadcast field stored in
+// (RTCM 4076) "GNSS IOD" matching convention: an 8-bit field (IDF012) whose
+// per-constellation definition differs from the raw broadcast field stored in
 // BroadcastEphemeris::iode.  The SSR overlay gate (SsrCorrectionStore::
-// iodeMatches) compares THIS value against ssr->iode, so it must be the same
+// iodeMatches) compares this value against ssr->iode, so it has to be the
 // quantity the IGS-SSR provider encoded:
-//   GPS / QZSS : the 8-bit LNAV IODE — already the SSR convention (passthrough).
+//   GPS / QZSS : the 8-bit LNAV IODE, already the SSR convention (passthrough).
 //   Galileo    : the low 8 bits of the 10-bit I/NAV IODnav (spec: "8 LSBs of
-//                IODnav") — the SSR field is only 8 bits wide.
+//                IODnav"); the SSR field is 8 bits wide.
 //   BeiDou     : a toe-derived value, mod(toe_sow / 720, 240), per IGS-SSR v1.00
 //                (which references the BDS toe / DF505).  The broadcast AODE that
-//                consumeBds stores in eph.iode is a DIFFERENT quantity and would
-//                NEVER match, so it is deliberately ignored here.
+//                consumeBds stores in eph.iode is a different quantity that would
+//                never match, so it is not used here.
 //   GLONASS    : passthrough (excluded from active_systems).
 // The raw eph.iode is left intact for the store's IODE-transition (demote)
-// bookkeeping; only the value handed to the SSR gate is normalised here, so the
-// convention lives in exactly one place regardless of which decoder (SBF
-// SubframeAssembler or RTCM RtcmNavDecoder) produced the ephemeris.
+// bookkeeping.  Only the value handed to the SSR gate is normalised here, so the
+// convention lives in one place whichever decoder (SBF SubframeAssembler or
+// RTCM RtcmNavDecoder) produced the ephemeris.
 int ssrMatchIode(const BroadcastEphemeris& eph) {
     switch (eph.system) {
     case System::Galileo:
@@ -91,10 +91,11 @@ int ssrMatchIode(const BroadcastEphemeris& eph) {
     }
 }
 
-// Max usable |t − toe| per system ≈ the broadcast fit interval × ~2 margin.
-// Beyond this an extrapolated orbit/clock is junk; reject (sat skipped) rather
-// than emit a silently-wrong position.  Sized so a legitimately old record
-// (GPS toe can be ~2 h out just before the next upload) is NEVER rejected.
+// Maximum usable |t − toe| per system, about the broadcast fit interval with a
+// margin of about 2.  Beyond it the extrapolated orbit/clock is unusable, so the
+// satellite is skipped instead of receiving a wrong position.  Sized so that a
+// legitimately old record (a GPS toe can be about 2 h away just before the next
+// upload) is not rejected.
 double maxEphAgeForSystem(System s) {
     switch (s) {
     case System::GPS:
@@ -107,12 +108,12 @@ double maxEphAgeForSystem(System s) {
 }
 
 // Diagnostic: a receiver-assembled ephemeris and an IGS-stream ephemeris for the
-// SAME satellite at the SAME IODnav decode the SAME on-air data set, so every
-// orbital element MUST be bit-identical.  When the source-priority gate is about
-// to ignore a receiver record that collides at the same IODnav with the held IGS
-// record, log any element that differs — this localises the receiver-vs-network
-// divergence to a specific field on a live capture (vs inferring a decode bug).
-// Quiet (emits nothing) when the two agree, which is the expected case.
+// same satellite at the same IODnav decode the same on-air data set, so every
+// orbital element is expected to be bit-identical.  When the source-priority gate
+// is about to ignore a receiver record that collides at the same IODnav with the
+// held IGS record, each element that differs beyond its tolerance is logged at
+// debug level, which localises a receiver-vs-network divergence to a specific
+// field on a live capture.  Nothing is logged when the two agree.
 void logSameIodeEphDiff(const std::string& sat,
                         const BroadcastEphemeris& igs,
                         const BroadcastEphemeris& rcv) {
@@ -177,38 +178,37 @@ void LiveEphemerisStore::insert(const BroadcastEphemeris& eph, bool from_igs) {
     const double cur_toe = toeGpsContinuous(it->second.current);
     constexpr double kToeEpsilonSec = 1.0;
 
-    // --- Source priority: the IGS broadcast stream is AUTHORITATIVE over the
+    // --- Source priority: the IGS broadcast stream takes priority over the
     // receiver's own nav ---
     // The IGS-RTS SSR orbit/clock delta is computed against IGS broadcast
-    // ephemeris, so the rover MUST pair it with the SAME IGS broadcast.  Even at
-    // an identical IODE the receiver's locally-assembled orbit carries slightly
-    // different fit parameters (and the SBF Galileo I/NAV assembly was observed
-    // live to diverge by 100 m+), so IGS-SSR applied on top of a receiver
-    // ephemeris is INCONSISTENT — the SD residual becomes the IGS-vs-receiver
-    // broadcast difference and detonates the frame.  Hence a RECEIVER record
-    // never overwrites a current IGS record at an equal-or-older toe; it is
-    // accepted only when it is a genuine update (toe strictly newer by more than
-    // a constellation refresh) the IGS stream has not relayed — i.e. the IGS feed
-    // has STALLED on this satellite — so a dead IGS stream still degrades to
-    // receiver nav rather than stranding the satellite.  (Freshest-toe alone did
-    // not catch the live failure because the receiver overwrite was at EQUAL toe.)
+    // ephemeris, so the rover pairs it with that same IGS broadcast.  Even at an
+    // identical IODE the receiver's locally assembled orbit carries different fit
+    // parameters (the SBF Galileo I/NAV assembly has differed by more than 100 m),
+    // so IGS-SSR applied on top of a receiver ephemeris is inconsistent: the SD
+    // residual becomes the IGS-vs-receiver broadcast difference and corrupts the
+    // frame.  A receiver record therefore does not replace a current IGS record
+    // unless it is an update the IGS stream has not relayed, with a toe at least
+    // kIgsStallFallbackSec newer (the IGS feed has stalled on this satellite).
+    // A dead IGS stream then degrades to receiver nav instead of stranding the
+    // satellite.  The freshest-toe rule below does not cover this case, because
+    // the receiver record usually arrives at an equal toe.
     //
-    // The threshold is the GLONASS nominal toe step (1800 s), so the comparison
-    // must be STRICT: a receiver record exactly ONE GLONASS cycle newer is a
-    // legitimate fresh update the IGS feed simply hasn't relayed, and must be
-    // allowed through (an inclusive bound would block it and delay recovery a
-    // full extra cycle).  When IGS is alive inc_toe−cur_toe stays well under one
-    // cycle, so the receiver is ignored regardless.  (A per-system stall window
-    // would be tighter still; revisit if a constellation's cadence demands it.
-    // GLONASS iode is always −1, so the IODE-change demote below never fires for
-    // it — its current/previous tracking is purely toe-based, which is correct.)
+    // The threshold is the GLONASS nominal toe step (1800 s), and a receiver
+    // record exactly one GLONASS cycle newer is a legitimate update the IGS feed
+    // has not relayed.  The rejection test is therefore strict (inc_toe <
+    // cur_toe + 1800 s), so that record is accepted; an inclusive bound would
+    // delay recovery by a full cycle.  While IGS is alive, inc_toe − cur_toe
+    // stays well under one cycle and the receiver record is ignored.  A
+    // per-system stall window would be tighter; it is not implemented.  GLONASS
+    // iode is always −1, so the IODE-change demote below never fires for it and
+    // its current/previous tracking is purely toe-based, which is correct.
     constexpr double kIgsStallFallbackSec = 1800.0;   // 30 min: IGS clearly stalled on this sat
     if (!from_igs && it->second.current_from_igs) {
         if (inc_toe < cur_toe + kIgsStallFallbackSec) {
-            // Same-IODnav collision: the two should be bit-identical.  Log any
-            // element that differs so a live SBF capture pinpoints the actual
+            // Same-IODnav collision: the two are expected to be bit-identical.
+            // Any element that differs is logged so a live SBF capture shows the
             // receiver-vs-network divergence (the SBF I/NAV field decode itself
-            // diffs clean against RTCM 1046, so this localises whatever remains).
+            // matches RTCM 1046, so this localises whatever remains).
             if (eph.iode == it->second.current.iode
                 && eph.system != System::GLONASS)
                 logSameIodeEphDiff(eph.satellite, it->second.current, eph);
@@ -224,13 +224,14 @@ void LiveEphemerisStore::insert(const BroadcastEphemeris& eph, bool from_igs) {
                       eph.satellite, inc_toe - cur_toe);
     }
 
-    // Freshest-toe wins WITHIN the accepted source.  Reject an incoming record
-    // whose reference epoch is OLDER than the one held (a stale same-source
-    // re-broadcast) — the retained current (and its previous) stay intact, so the
-    // SSR IODE re-reference still finds the version a lagging SSR delta names.
-    // Tolerate sub-second jitter / an equal-epoch re-broadcast so a same-toe
-    // refresh still overwrites in place.  (inc_toe / cur_toe / kToeEpsilonSec are
-    // computed above for the source-priority gate.)
+    // Freshest toe wins for records that pass the source check.  An incoming
+    // record whose reference epoch is older than the held one by more than
+    // kToeEpsilonSec (a stale re-broadcast) is rejected; the retained current
+    // and previous records stay intact, so the SSR IODE re-reference still finds
+    // the version a lagging SSR delta names.  Sub-second jitter and an
+    // equal-epoch re-broadcast pass, so a same-toe refresh overwrites in place.
+    // (inc_toe, cur_toe and kToeEpsilonSec are computed above for the
+    // source-priority gate.)
     if (inc_toe < cur_toe - kToeEpsilonSec) {
         if (auto lg = spdlog::get("rt_engine"))
             lg->debug("EPH-STALE-INSERT {} rejected: incoming toe {:.0f}s older than held "
@@ -238,17 +239,18 @@ void LiveEphemerisStore::insert(const BroadcastEphemeris& eph, bool from_igs) {
                       eph.satellite, cur_toe - inc_toe, eph.iode, it->second.current.iode);
         return;
     }
-    // Demote the current record to "previous" only when the IODE changes, so
+    // The current record is demoted to "previous" only when the IODE changes, so
     // an IODE transition keeps the orbit valid just before the cutover.
     if (it->second.current.iode != eph.iode) {
         // Diagnostic: a broadcast-ephemeris cutover.  The SSR orbit/clock delta
         // is referenced to a specific broadcast version (iode_ssr); each cutover
         // steps the broadcast baseline the delta is applied to, so a residual
         // saw-tooth that lines up with these events is the ephemeris-turnover
-        // mechanism.  Galileo I/NAV cuts over every few minutes vs GPS ~2 h, so
-        // expect far more EPH-IODE-CHANGE lines for E# than G#.  rt_engine is
-        // registered in the global spdlog registry by LogManager (debug level);
-        // guard the get() since a cutover can arrive before logging is wired up.
+        // mechanism.  Galileo I/NAV cuts over every few minutes against about
+        // 2 h for GPS, so EPH-IODE-CHANGE lines are far more frequent for E#
+        // than for G#.  rt_engine is registered in the global spdlog registry by
+        // LogManager (debug level); get() is guarded because a cutover can
+        // arrive before logging is set up.
         if (auto lg = spdlog::get("rt_engine"))
             lg->debug("EPH-IODE-CHANGE {} iode {} -> {} (toe tow {:.0f} -> {:.0f})",
                       eph.satellite, it->second.current.iode, eph.iode,
@@ -287,11 +289,11 @@ const BroadcastEphemeris& LiveEphemerisStore::pick(const SatRecord& rec,
 const BroadcastEphemeris& LiveEphemerisStore::pickForSsr(const SatRecord& rec,
                                                          const GnssTime& time,
                                                          int ssr_iode) {
-    // Re-reference: when the SSR delta names a version we still hold, return THAT
-    // record (current or the retained previous) so orbit and clock are applied
-    // against the ephemeris the correction was computed for.  Across a cutover
-    // the receiver can be a version ahead of the SSR stream; without this the
-    // current-vs-SSR IODE mismatch would drop the satellite to broadcast-grade.
+    // Re-reference: when the SSR delta names a retained version, that record
+    // (current or previous) is returned, so orbit and clock are applied against
+    // the ephemeris the correction was computed for.  Across a cutover the
+    // receiver can be a version ahead of the SSR stream; without this the
+    // current-vs-SSR IODE mismatch would drop the satellite to broadcast grade.
     if (ssr_iode >= 0) {
         if (ssrMatchIode(rec.current) == ssr_iode) return rec.current;
         if (rec.previous && ssrMatchIode(*rec.previous) == ssr_iode) return *rec.previous;
@@ -435,15 +437,15 @@ LiveEphemerisStore::computeSatellitePV(const std::string& sat, const GnssTime& t
         eph = pickForSsr(it->second, time, ssr_iode);   // copy under lock; integrate outside
     }
 
-    // Staleness guard + EPH-PICK diagnostic.  Computed AFTER pickForSsr so the
+    // Staleness guard and EPH-PICK diagnostic.  Computed after pickForSsr so the
     // IODE current/previous re-referencing is preserved.  age = query − toe with
-    // BOTH operands on GPS-continuous seconds.  The BDT offset does NOT cancel
-    // automatically: `time` is GPS-scale but BeiDou's kepler.toe is stored on
-    // its native BDT week (BDT week 0 = GPS week 1356), so toeGpsContinuous must
-    // lift it to GPS scale first — otherwise every BeiDou sat reads ~1356 weeks
-    // (~26 years) stale and is wrongly skipped.  Reject an ephemeris extrapolated
-    // beyond its fit window (never-refreshed sat / obs desync) rather than emit a
-    // silently-wrong orbit.
+    // both operands in GPS-continuous seconds.  The BDT offset does not cancel:
+    // `time` is on the GPS scale but BeiDou's kepler.toe is stored on its native
+    // BDT week (BDT week 0 = GPS week 1356), so toeGpsContinuous lifts it to the
+    // GPS scale first; without that every BeiDou satellite would read about 1356
+    // weeks (about 26 years) stale and be skipped.  An ephemeris extrapolated
+    // beyond its fit window (never-refreshed satellite, obs desync) is rejected
+    // instead of producing a wrong orbit.
     const double toe_c = toeGpsContinuous(eph);
     const double age = continuousSeconds(time) - toe_c;
     if (!std::isfinite(age) || std::abs(age) > maxEphAgeForSystem(eph.system)) {
@@ -491,14 +493,14 @@ LiveEphemerisStore::computeSatelliteClock(const std::string& sat, const GnssTime
         eph = pickForSsr(it->second, time, ssr_iode);   // copy under lock; evaluate outside
     }
 
-    // Staleness guard (mirrors computeSatellitePV; no warn here to avoid
-    // double-logging the same sat/epoch the PV path already flagged): an
-    // ephemeris beyond its fit window yields no clock so the satellite drops
-    // rather than carrying an extrapolated wrong value.
+    // Staleness guard, as in computeSatellitePV but without the warning, which
+    // the PV path already logs for the same satellite and epoch.  An ephemeris
+    // beyond its fit window yields no clock, so the satellite drops instead of
+    // carrying an extrapolated wrong value.
     {
-        // GPS-continuous on both sides — toeGpsContinuous lifts BeiDou's BDT toe
-        // (see computeSatellitePV); a raw kepler.toe here would read ~1356 weeks
-        // stale and silently drop every BeiDou clock.
+        // GPS-continuous on both sides: toeGpsContinuous lifts BeiDou's BDT toe
+        // (see computeSatellitePV).  A raw kepler.toe here would read about 1356
+        // weeks stale and drop every BeiDou clock without a message.
         const double toe_c = toeGpsContinuous(eph);
         const double age = continuousSeconds(time) - toe_c;
         if (!std::isfinite(age) || std::abs(age) > maxEphAgeForSystem(eph.system))
@@ -521,8 +523,8 @@ LiveEphemerisStore::computeSatelliteClock(const std::string& sat, const GnssTime
 
     // Keplerian (GPS / Galileo / BeiDou / QZSS): af0 + af1·dt + af2·dt², with
     // dt = t − toc on the satellite's native scale.  BeiDou toc is on BDT, so
-    // the query epoch is shifted down to BDT exactly as keplerPosition does for
-    // the node term — keeping the clock and orbit scales self-consistent.
+    // the query epoch is shifted to BDT as keplerPosition does for the node
+    // term, which keeps the clock and orbit scales consistent.
     const KeplerianEphemeris& k = eph.kepler;
     double q = continuousSeconds(time);
     if (eph.system == System::BeiDou) q -= kBdtToGpsOffsetSec;
@@ -534,13 +536,13 @@ LiveEphemerisStore::computeSatelliteClock(const std::string& sat, const GnssTime
 std::optional<double>
 LiveEphemerisStore::ephCutoverShiftMetres(const std::string& sat, const GnssTime& time,
                                           int old_iode) const {
-    const auto now = computeSatelliteClock(sat, time);            // freshest (default pick)
-    if (!now) return std::nullopt;                               // nothing held for this sat
+    const auto now = computeSatelliteClock(sat, time);            // default pick (toe closest to time)
+    if (!now) return std::nullopt;                               // nothing usable held for this sat
     const auto old = computeSatelliteClock(sat, time, old_iode); // pinned to the old version
-    // pickForSsr FALLS BACK to the freshest record when @p old_iode is no longer
-    // retained (current/previous); detect that fallback via the reported IODE, so a
-    // silent re-level against the wrong baseline is impossible — the caller forces a
-    // per-sat discontinuity on nullopt instead.
+    // pickForSsr falls back to the default pick when @p old_iode is no longer
+    // retained (current/previous).  The fallback is detected through the reported
+    // IODE, so no re-level runs against the wrong baseline; on nullopt the caller
+    // forces a per-satellite discontinuity instead.
     if (!old || old->iode != old_iode) return std::nullopt;
     if (now->iode == old_iode) return 0.0;                       // no roll (defensive; caller pre-checks)
     return Constants::SPEED_OF_LIGHT * (now->bias - old->bias);

@@ -1,30 +1,31 @@
 /**
  * @file test_disc_mark_scope.cpp
- * @brief Card MS — `network.disc_mark_scope` (`sat` | `channel`): a per-satellite
- *        discontinuity MARK bumps only the generation of the CHANNEL that moved.
+ * @brief `network.disc_mark_scope` (`sat` | `channel`): with `channel`, a
+ *        per-satellite discontinuity mark bumps only the generation of the channel
+ *        that moved (card MS).
  *
- * `markSatDiscontinuity` drops a satellite into one `forced_bump_sats_` set and
- * `satForced()` is read by the CLOCK, the CODE-BIAS and the PHASE-BIAS emit
- * blocks alike, so a clock-only guard (the Q3 anchor decouple, the CLK-R step
- * test) declares a phase-bias discontinuity that never happened — measured on
- * RF-0hv as 117 EMPTY declarations out of 390 (CST §7.1).
+ * In the `sat` scope, `markSatDiscontinuity` puts a satellite into one
+ * `forced_bump_sats_` set, and `satForced()` is read by the clock, code-bias and
+ * phase-bias emit blocks alike.  A clock-only guard (the Q3 anchor decouple, the
+ * CLK-R step test) therefore also declares a phase-bias discontinuity that did not
+ * happen; 117 of 390 declarations on RF-0hv were of this kind (CST §7.1).
  *
- * What is locked here:
- *   - under the DEFAULT `sat` scope a mark bumps all three generations, exactly
- *     as before, whatever channel mask the call site passes (byte-identical);
- *   - under `channel` a clock-only mark leaves the PHASE and CODE generations
+ * The tests lock:
+ *   - under the default `sat` scope a mark bumps all three generations, whatever
+ *     channel mask the call site passes (byte-identical to the build before card MS);
+ *   - under `channel` a clock-only mark leaves the phase and code generations
  *     untouched, and a code-bias mark leaves the clock and phase untouched;
- *   - two sites marking the same satellite in one epoch OR their masks;
- *   - the RE-COUPLING edge: the emitter's own per-(sat, signal) phase jump test
- *     still declares a genuine phase-bias step under a clock-only mark — the
- *     narrowed scope must not trade a false declaration for a missed one;
+ *   - two sites marking the same satellite in one epoch combine their masks by OR;
+ *   - the re-coupling edge: the emitter's own per-(sat, signal) phase jump test
+ *     still declares a real phase-bias step under a clock-only mark, so the
+ *     narrowed scope does not replace a false declaration with a missed one;
  *   - the suppression census: one MARK_SCOPE-bound event per (sat, channel) per
  *     emit (not per signal), with the mask the marking sites asked for, and the
  *     applied-mark tally per channel;
  *   - the pending-mark state round-trips its channel mask, and a legacy
  *     (2-field `efs,`) snapshot still restores;
- *   - the config parse (`sat` / `channel` / an unknown value falls back) and the
- *     S-contract token `discscope=channel` with an OFF contract byte-identical.
+ *   - the config parse (`sat`, `channel`, and fallback on an unknown value) and the
+ *     S-contract token `discscope=channel`, with the S line byte-identical when off.
  */
 
 #include <gtest/gtest.h>
@@ -112,10 +113,10 @@ TEST(DiscMarkScopeTest, SatScopeBumpsAllThreeWhateverMaskIsPassed) {
     e.emitToStore(msEpoch(kMsT), store);                    // first sight: records only
 
     GnssTime t = kMsT; t.tow += 30.0;
-    e.markSatDiscontinuity({ "G32" }, Chan::kDiscChanClock);   // a NARROW mask…
+    e.markSatDiscontinuity({ "G32" }, Chan::kDiscChanClock);   // a narrow mask
     e.emitToStore(msEpoch(t), store);
-    // …and under the legacy scope all three generations step anyway: byte-identical
-    // to a pre-card build, which is what makes the default safe.
+    // Under the legacy scope all three generations step anyway, byte-identical to a
+    // build before card MS; that is what makes the default safe.
     EXPECT_EQ(e.clockDiscontinuityCounter("G32"), 1);
     EXPECT_EQ(e.codeBiasDiscontinuityCounter("G32", "C1W"), 1);
     EXPECT_EQ(e.discontinuityCounter("G32", "L1W"), 1);
@@ -130,16 +131,16 @@ TEST(DiscMarkScopeTest, ChannelScopeBumpsOnlyTheMarkedChannel) {
     ASSERT_TRUE(e.discMarkScopeChannel());
     e.emitToStore(msEpoch(kMsT), store);
 
-    // A CLOCK-only mark — the Q3 anchor decouple's shape.
+    // A clock-only mark, as the Q3 anchor decouple issues.
     GnssTime t = kMsT; t.tow += 30.0;
     e.markSatDiscontinuity({ "G32" }, Chan::kDiscChanClock);
     e.emitToStore(msEpoch(t), store);
     EXPECT_EQ(e.clockDiscontinuityCounter("G32"), 1);
-    EXPECT_EQ(e.codeBiasDiscontinuityCounter("G32", "C1W"), 0);   // NOT declared
-    EXPECT_EQ(e.discontinuityCounter("G32", "L1W"), 0);           // NOT declared — the 117 EMPTY cells
+    EXPECT_EQ(e.codeBiasDiscontinuityCounter("G32", "C1W"), 0);   // not declared
+    EXPECT_EQ(e.discontinuityCounter("G32", "L1W"), 0);           // not declared (the empty declarations of CST §7.1)
     EXPECT_EQ(e.clockDiscontinuityCounter("G12"), 0);             // and still per-satellite
 
-    // A CODE-BIAS-only mark — the cb_excursion_reinit shape.
+    // A code-bias-only mark, as cb_excursion_reinit issues.
     t.tow += 30.0;
     e.markSatDiscontinuity({ "G12" }, Chan::kDiscChanCodeBias);
     e.emitToStore(msEpoch(t), store);
@@ -169,9 +170,9 @@ TEST(DiscMarkScopeTest, TwoSitesMarkingOneSatelliteOrTheirMasks) {
 }
 
 TEST(DiscMarkScopeTest, AnUnmigratedCallerStillGetsTheFullSatelliteScope) {
-    // The default argument — what a replay's R record and any un-migrated site ask
-    // for.  It must keep declaring all three even under `channel`, or a replay would
-    // silently under-declare.
+    // The default argument, which a replay's R record and any un-migrated call site
+    // use, declares all three channels even under `channel`; otherwise a replay would
+    // under-declare without any signal.
     SsrCorrectionStore store;
     NetworkProductEmitter e = makeEmitter(true);
     e.emitToStore(msEpoch(kMsT), store);
@@ -185,16 +186,17 @@ TEST(DiscMarkScopeTest, AnUnmigratedCallerStillGetsTheFullSatelliteScope) {
 }
 
 // ---------------------------------------------------------------------------
-// The RE-COUPLING edge: the jump test is still the backstop.
+// The re-coupling edge: the jump test is still the backstop.
 // ---------------------------------------------------------------------------
 TEST(DiscMarkScopeTest, PhaseJumpTestStillDeclaresUnderAClockOnlyMark) {
     SsrCorrectionStore store;
     NetworkProductEmitter e = makeEmitter(true);
     e.emitToStore(msEpoch(kMsT, /*g32_pb=*/0.10), store);
 
-    // A clock-only mark AND a genuine 1.409 m phase-bias step on the same satellite
-    // — the TOW 276810 shape.  The mark does not declare phase; the emitter's own
-    // jump test does, so the declaration survives the narrowed scope.
+    // A clock-only mark and a real 1.409 m phase-bias step (0.10 to 1.509 m) on the
+    // same satellite, the pattern seen at TOW 276810.  The mark does not declare
+    // phase; the emitter's own jump test does, so the declaration survives the
+    // narrowed scope.
     GnssTime t = kMsT; t.tow += 30.0;
     e.markSatDiscontinuity({ "G32" }, Chan::kDiscChanClock);
     e.emitToStore(msEpoch(t, /*g32_pb=*/1.509), store);
@@ -210,7 +212,7 @@ TEST(DiscMarkScopeTest, PhaseJumpTestStillDeclaresUnderAClockOnlyMark) {
 TEST(DiscMarkScopeTest, SuppressedMarksAreCountedOncePerSatAndChannel) {
     SsrCorrectionStore store;
     NetworkProductEmitter e = makeEmitter(true);
-    // Two code signals and two phase signals so a per-SIGNAL census would double up.
+    // Two code signals and two phase signals, so a per-signal census would double up.
     auto ep = [](const GnssTime& t) {
         NetworkSolutionEpoch sol;
         sol.epoch_time = t; sol.iod_ssr = 3; sol.provider_id = 42; sol.solution_id = 1;
@@ -239,7 +241,7 @@ TEST(DiscMarkScopeTest, SuppressedMarksAreCountedOncePerSatAndChannel) {
     }
     EXPECT_EQ(suppressed.count(static_cast<unsigned>(Chan::kDiscChanCodeBias)), 1u);
     EXPECT_EQ(suppressed.count(static_cast<unsigned>(Chan::kDiscChanPhaseBias)), 1u);
-    // The APPLIED tally: the clock once (per satellite), code/phase never.
+    // The applied tally: the clock once (per satellite), code and phase never.
     EXPECT_EQ(e.markChannelTally().clk, 1);
     EXPECT_EQ(e.markChannelTally().cb, 0);
     EXPECT_EQ(e.markChannelTally().pb, 0);
@@ -259,8 +261,8 @@ TEST(DiscMarkScopeTest, SuppressedMarksAreCountedOncePerSatAndChannel) {
 // The pending-mark state round-trips its mask.
 // ---------------------------------------------------------------------------
 TEST(DiscMarkScopeTest, PendingMarkStateRoundTripsTheChannelMaskAndAcceptsLegacy) {
-    // A mark that has NOT been consumed by an emit is pending state; a resume must
-    // land it with the SAME scope or a narrow mark returns as a wide one.
+    // A mark not yet consumed by an emit is pending state.  A resume restores it with
+    // its channel mask; otherwise a narrow mark would come back as a wide one.
     NetworkProductEmitter src = makeEmitter(true);
     src.markSatDiscontinuity({ "G32" }, Chan::kDiscChanClock);
     std::ostringstream os;
@@ -274,8 +276,9 @@ TEST(DiscMarkScopeTest, PendingMarkStateRoundTripsTheChannelMaskAndAcceptsLegacy
     SsrCorrectionStore store;
     dst.emitToStore(msEpoch(kMsT), store);                 // first sight records baselines
     GnssTime t = kMsT; t.tow += 30.0;
-    // The restored mark lands on the FIRST emit after the restore; re-issue nothing.
-    // (The first emit above consumed it, so re-mark to prove the mask survived.)
+    // The restored mark lands on the first emit after the restore, which consumed it
+    // above.  The serialized mask is checked through the blob (`efs,G32,1`); here a
+    // clock-only mark is re-issued to check the channel scope on the restored emitter.
     dst.markSatDiscontinuity({ "G32" }, Chan::kDiscChanClock);
     dst.emitToStore(msEpoch(t), store);
     EXPECT_EQ(dst.clockDiscontinuityCounter("G32"), 1);
@@ -353,9 +356,9 @@ TEST(DiscMarkScopeTest, SLineDeclaresTheScopeAndOffIsByteIdentical) {
         << "an OFF producer writes the pre-MS S line byte-for-byte";
     EXPECT_EQ(b, a + ",discscope=channel");
 
-    // The legend is grammar-complete by contract and names the field in BOTH files —
-    // pinning it here is what keeps the v1-header lineages' only products.txt
-    // difference a documented one.
+    // The legend is grammar-complete by contract and names the field in both files.
+    // Pinning it here keeps the only products.txt difference on v1-header lineages a
+    // documented one.
     const std::string legend = pick(without_p, "# S,");
     EXPECT_NE(legend.find("[,discscope=channel]"), std::string::npos) << legend;
     EXPECT_EQ(pick(with_p, "# S,"), legend);
@@ -366,8 +369,8 @@ TEST(DiscMarkScopeTest, SLineDeclaresTheScopeAndOffIsByteIdentical) {
     NetworkProductReader::read(without_p.string(), &parsed_off, &ok);  ASSERT_TRUE(ok);
     EXPECT_TRUE(parsed_on.disc_mark_scope_channel);
     EXPECT_FALSE(parsed_off.disc_mark_scope_channel);
-    // It reaches the replay emitter's construction (even though the R record cannot
-    // carry the channel set — see the field's Doxygen and the card's open item).
+    // The flag reaches the replay emitter's construction, although the R record cannot
+    // carry the channel set (see the field's Doxygen and the open item of card MS).
     EXPECT_TRUE(NetworkProductReader::makeReplayEmitter(parsed_on).discMarkScopeChannel());
     EXPECT_FALSE(NetworkProductReader::makeReplayEmitter(parsed_off).discMarkScopeChannel());
     fs::remove(with_p, ec); fs::remove(without_p, ec);

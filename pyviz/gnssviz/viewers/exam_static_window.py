@@ -1,45 +1,43 @@
-"""Station-keeping window — what a FIXED-POINT solve recovers over the first 10 minutes.
+"""Station-keeping window: what a fixed-point solve recovers over the first 10 minutes.
 
 The exam's opening epochs are truth-stationary (`scenario_summary.json` ->
 ``static_segment``; ``trajectory.static_prefix_s`` in the sim config), and the brief
 discloses that, so Parts B and C both ask for a single static position over exactly
-this window.  This viewer is the author-side answer to those items: it takes the same
-three solutions the dashboard already shows per-epoch and collapses each one over the
+this window.  This viewer answers those items directly: it takes the same three
+solutions the dashboard already shows per-epoch and collapses each one over the
 window the way a student would, then draws what averaging did and did not fix.
 
-  (a) per-epoch 3D error across the window on a log axis.  Each solution's
-      **static** fix value lives in the read-out box (and as the stars in the
-      scatter panels) -- the dotted overlay lines were REMOVED 2026-08-31 on
-      professor review: they read as data series and confused more than they
-      explained.  A solution whose static value sits well below its per-epoch
-      curve was noise-limited and averaging paid; one whose value lands in the
-      middle of its curve was bias-limited and averaging bought nothing.
-      A linear companion panel repeats the precise solutions (leg 1 dropped,
-      same rule as the scatter zoom) with the y-range scaled to the static-fix
-      errors, so the convergence tail reads at true scale instead of being
-      compressed by the log axis or squashed by the first convergence epochs;
+  (a) per-epoch 3D error across the window on a log axis.  Each solution's static
+      fix value is in the read-out box (and as the stars in the scatter panels);
+      dotted overlay lines are not drawn, since they read as a data series and are
+      easy to mistake for one.  A solution whose static value sits well below its
+      per-epoch curve was noise-limited and averaging paid; one whose value lands
+      in the middle of its curve was bias-limited and averaging bought nothing.
+      A linear companion panel repeats the precise solutions (leg 1 dropped, same
+      rule as the scatter zoom) with the y-range scaled to the static-fix errors,
+      so the convergence tail reads at true scale instead of being compressed by
+      the log axis or squashed by the first convergence epochs;
   (b) the same result decomposed into horizontal scatter about truth, at leg-1
       scale and again zoomed to the precise solutions, with the static fix marked.
 
 The teaching point the rubric grades (ANSWER_KEY, Part B's station-keeping item):
-averaging N epochs beats the NOISE down by ~sqrt(N) and does nothing whatever to a
-BIAS common to every epoch in the window.  Leg 1's ionospheric error is exactly such
-a bias, so its static fix is as wrong as its epoch-wise fixes while now carrying a
-confidently small formal sigma -- Part D's covariance lesson from the other side.
+averaging N epochs reduces noise by about sqrt(N) and does nothing to a bias common
+to every epoch in the window.  Leg 1's ionospheric error is such a bias, so its
+static fix is as wrong as its epoch-wise fixes while now carrying a confidently
+small formal sigma: Part D's covariance lesson from the other side.
 
 Truth-only inputs plus the processor trace; auto-skips without ``--truth-dir``, and
 without a ``static_segment`` (an instance with no station-keeping prefix has nothing
 to draw).
 
-OPTIONAL fourth solution -- a TRULY STATIC PPP: when the log dir also carries
+Optional fourth solution, a truly static PPP: when the log dir also carries
 ``state_trace_static.csv`` (a separate gnss_processor run over the window's
 trimmed RINEX with ``filter.process_noise.position_q = 0``), it is drawn as
-"PPP-static".  Its per-epoch curve is the static filter converging, and its fix
-is the LAST epoch's state -- the fixed-point solution with every window epoch
-assimilated into one constant position (the window mean would re-pollute it
-with the convergence transient).  This is the honest PPP counterpart to the
-legs' averaged fixes; the kinematic run's window mean stays as the upper-bound
-caveat row.
+"PPP-static".  Its per-epoch curve is the static filter converging, and its fix is
+the last epoch's state: the fixed-point solution with every window epoch
+assimilated into one constant position (the window mean would reintroduce the
+convergence transient).  This is the PPP counterpart to the legs' averaged fixes;
+the kinematic run's window mean stays as the upper-bound caveat row.
 """
 
 from __future__ import annotations
@@ -72,12 +70,12 @@ def _window(ctx):
 
 
 def _collapse(name, e, n, u, color):
-    """One solution over the window -> the numbers a fixed-point solve produces.
+    """One solution over the window: the numbers a fixed-point solve produces.
 
     The window truth is a single point, so the static solution's error is exactly the
-    MEAN of the per-epoch errors -- no need to reconstruct positions.  ``scatter`` is
-    the per-epoch spread about that mean (the part averaging removes); ``bias`` is the
-    mean itself (the part it cannot touch).
+    mean of the per-epoch errors, with no need to reconstruct positions.  ``scatter``
+    is the per-epoch spread about that mean (the part averaging removes); ``bias`` is
+    the mean itself (the part it cannot touch).
     """
     e, n, u = (np.asarray(v, float) for v in (e, n, u))
     fin = np.isfinite(e) & np.isfinite(n) & np.isfinite(u)
@@ -173,12 +171,12 @@ def build_exam_static_window(ctx) -> ViewerResult:
     ppp = _ppp_errors(ctx, tow0, tow1)
     if ppp is not None:
         e, n, u, t = ppp
-        # Labelled "kinematic float" on purpose: the processor estimates a NEW position
-        # every epoch (carrier-phase float PPP), so its window mean is not the static
-        # solve the exam asks for -- a true fixed point carries one position instead of
-        # 21 and is better determined.  Read this series as an upper bound on the
-        # static item, and note that over the FIRST 21 epochs it is dominated by
-        # filter convergence, not noise.
+        # Labelled "kinematic float": the processor estimates a new position every
+        # epoch (carrier-phase float PPP), so its window mean is not the static solve
+        # the exam asks for; a true fixed point carries one position instead of 21 and
+        # is better determined.  Read this series as an upper bound on the static
+        # item; over the first 21 epochs it is dominated by filter convergence, not
+        # noise.
         s = _collapse("PPP (kinematic float)", e, n, u, _C_PPP)
         if s:
             s["t"] = t
@@ -187,15 +185,15 @@ def build_exam_static_window(ctx) -> ViewerResult:
             sols.append(s)
             t_axis = t_axis if t_axis is not None else t
 
-    # The truly static PPP (optional second trace -- module docstring).
+    # The truly static PPP (optional second trace, see module docstring).
     ppps = _ppp_errors(ctx, tow0, tow1, trace_name="state_trace_static.csv")
     if ppps is not None:
         e, n, u, t = ppps
         s = _collapse("PPP-static (true fixed point)", e, n, u, _C_PPPS)
         if s:
-            # The static filter's LAST epoch IS the fixed-point solution (all
+            # The static filter's last epoch is the fixed-point solution (all
             # window epochs assimilated into one constant position); the mean
-            # would re-pollute it with the convergence transient.
+            # would reintroduce the convergence transient.
             s["bias_e"] = float(s["e"][-1])
             s["bias_n"] = float(s["n_"][-1])
             s["bias_u"] = float(s["u"][-1])
@@ -239,14 +237,14 @@ def build_exam_static_window(ctx) -> ViewerResult:
             for s in sols)
         + f"\naveraging {sols[0]['n']} epochs: noise /{np.sqrt(sols[0]['n']):.1f}, bias /1"))
 
-    # Linear companion: the log axis is the honest cross-leg comparison, but it
-    # compresses the very thing the window is watched for -- the filter walking
-    # down to its static fix.  Re-draw only the precise solutions (leg 1 dropped
-    # when anything else is present, the scatter zoom's rule) on a linear axis,
-    # with the y-range scaled to the static-fix errors rather than the first
-    # convergence epochs (which would otherwise own 90% of the panel and squash
-    # the fixes onto the x-axis; the clipped early epochs are on the log panel
-    # above).
+    # Linear companion: the log axis gives a fair cross-leg comparison, but it
+    # compresses the thing the window is watched for: the filter converging to
+    # its static fix.  Re-draw only the precise solutions (leg 1 dropped when
+    # anything else is present, the scatter zoom's rule) on a linear axis, with
+    # the y-range scaled to the static-fix errors rather than the first
+    # convergence epochs (which would otherwise dominate the panel and squash
+    # the fixes onto the x-axis); the clipped early epochs are on the log panel
+    # above.
     precise_ts = [s for s in sols if s is not sols[0]] or sols
     vmax = max(float(np.nanmax(s["per_epoch"])) for s in precise_ts)
     fixes = [s["bias"] for s in precise_ts if np.isfinite(s["bias"]) and s["bias"] > 0]
@@ -270,15 +268,16 @@ def build_exam_static_window(ctx) -> ViewerResult:
                           axes=[axa, axl], width=13, height=9.2))
 
     # ------------------------------------------------------- (b) E/N scatter
-    # Two panels because the solutions differ by ~3 decades: one at leg-1 scale so
-    # the comparison is honest, one zoomed so the precise fixes are more than a dot.
+    # Two panels because the solutions differ by about three decades: one at
+    # leg-1 scale for a fair comparison, one zoomed so the precise fixes are
+    # more than a dot.
     full = max(float(np.nanmax(np.abs(np.concatenate([s["e"], s["n_"]])))) for s in sols)
     precise = [s for s in sols if s is not sols[0]] or sols
     zoom = max(float(np.nanmax(np.abs(np.concatenate([s["e"], s["n_"]])))) for s in precise)
-    # The horizontal view alone would MISLEAD on this dataset: leg 1's error is
+    # The horizontal view alone would mislead on this dataset: leg 1's error is
     # vertical-dominated (the ionosphere projects onto Up), so in plan view it sits
-    # among the precise solutions while being metres wrong.  Carry each static fix's
-    # E/N/U in the box so the plane cannot be read as the whole story.
+    # among the precise solutions while being metres wrong.  The static fix's E/N/U
+    # values are in the box so the plan view is not read as the whole picture.
     note = ("star = the static (window-mean) fix, + = truth\n"
             "static fix E / N / U (m):\n"
             + "\n".join(f"  {s['name'][:30]:<30}{s['bias_e']:+7.2f}{s['bias_n']:+7.2f}"

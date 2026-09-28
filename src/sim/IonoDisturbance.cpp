@@ -19,10 +19,9 @@ constexpr double kIonoConstant = 40.3;     // m * Hz^2 per (el/m^2); file-local 
 constexpr double kTecuToElectrons = 1.0e16; // electrons/m^2 per TECU
 constexpr double kKmPerDegLat = 111.195;    // mean great-circle km per degree
 
-// Shortest signed longitude difference in degrees, in (-180, 180].  The scenario
-// sits at lon ~-178 (right on the +/-180 dateline), so every IPP-vs-centre
-// longitude delta is wrapped explicitly rather than relying on the (fragile)
-// invariant that no longitude is ever normalized.
+// Shortest signed longitude difference in degrees, in (-180, 180].  A scenario can sit
+// on the +/-180 dateline (e.g. lon ~-178), so every IPP-vs-centre longitude delta is
+// wrapped explicitly instead of assuming that no longitude is ever normalized.
 double wrapDeg180(double d) {
     d = std::fmod(d + 180.0, 360.0);
     if (d < 0.0) d += 360.0;
@@ -87,7 +86,7 @@ IonoSample IonoDisturbance::evaluate(double rx_lat_deg, double rx_lon_deg,
     const double az_tid = cfg_.tid_azimuth_deg * deg;
     const double d_along = dlat_km * std::cos(az_tid) + dlon_km * std::sin(az_tid);
     const double k = 2.0 * Constants::PI / cfg_.tid_wavelength_km;
-    // Temporal phase with an optional linear-period CHIRP across the window: the
+    // Temporal phase with an optional linear-period chirp across the window: the
     // instantaneous period sweeps P0 (high-rate) -> P1 (low-rate).  The phase is the
     // time-integral of the instantaneous angular frequency (a log for a linear ramp),
     // so the sinusoid stays continuous as its frequency slides.
@@ -110,10 +109,10 @@ IonoSample IonoDisturbance::evaluate(double rx_lat_deg, double rx_lon_deg,
 
     double dvtec_tid;
     if (cfg_.tid_pulse_count > 0) {
-        // --- PULSE-TRAIN TID: a few sporadic ~10-min bumps, not a continuous wave. --
+        // --- Pulse-train TID: a few sporadic ~10-min bumps, not a continuous wave. --
         // Up to tid_pulse_count raised-cosine bumps of width tid_pulse_duration_s,
-        // spaced evenly across the storm window; the storm-wide raised cosine W is NOT
-        // applied (the bumps ARE the envelope).  Most TID satellites carry the smooth
+        // spaced evenly across the storm window.  The storm-wide raised cosine W is not
+        // applied; the bumps are the envelope.  Most TID satellites carry the smooth
         // bump; the one satellite given tid_period_override_s>0 has that bump filled
         // with a rapid temporal carrier (its flicker), so it fluctuates epoch-to-epoch
         // while the others rise and fall once over ~10 min.
@@ -140,7 +139,7 @@ IonoSample IonoDisturbance::evaluate(double rx_lat_deg, double rx_lon_deg,
     }
 
     // --- Quiet from the caller (already slant); storm vertical -> slant. ------
-    // Extra low-elevation emphasis: obliquity^sed_elev_exp ON TOP of the standard
+    // Extra low-elevation emphasis: obliquity^sed_elev_exp on top of the standard
     // obliquity, so low-elevation rays see a much larger storm (0 => plain mapping).
     // storm_gain leaves "stable" satellites (gain 0) on the quiet background only.
     const double elev_emphasis = (cfg_.sed_elev_exp != 0.0)
@@ -152,19 +151,20 @@ IonoSample IonoDisturbance::evaluate(double rx_lat_deg, double rx_lon_deg,
     s.dstec_sed_tecu = cfg_.sed_bulk ? dvtec_sed * s.obliquity * elev_emphasis
                                      : dvtec_sed * slant_gain;
     // Explicit per-satellite pulses (tid_vtec_explicit >= 0) are pre-summed by the
-    // caller and mapped with the STANDARD obliquity only, so the configured amplitude
+    // caller and mapped with the standard obliquity only, so the configured amplitude
     // (vertical TECU) maps predictably to slant.  Otherwise use the internal TID model.
     s.dstec_tid_tecu = (tid_vtec_explicit >= 0.0)
                            ? tid_vtec_explicit * s.obliquity * storm_gain
                            : dvtec_tid * slant_gain;
-    // Turbulence: mapped by the standard obliquity like the explicit pulses, and NOT
-    // gated by storm_gain -- the caller only supplies it for the satellites it listed,
-    // so gating again would silently zero it on any ray the storm-gain hash calls
-    // "stable".  Deliberately NOT multiplied by the time window either: a rough field
-    // is rough for the whole pass, not only at the window's raised-cosine peak.
+    // Turbulence: mapped by the standard obliquity like the explicit pulses, and not
+    // gated by storm_gain.  The caller supplies it only for the satellites it listed,
+    // so gating again would zero it on any ray the storm-gain hash calls "stable".  It
+    // is not multiplied by the storm time window either: a rough field stays rough
+    // for the whole pass, not only at the window's raised-cosine peak.
     s.dstec_turb_tecu = turb_vtec * s.obliquity;
-    // Floor the TOTAL at zero: turbulence is signed and can be large, and a negative
-    // total slant TEC is unphysical (it would hand out a phase delay and a code advance).
+    // The total is floored at zero: turbulence is signed and can be large, and a
+    // negative total slant TEC is unphysical (it would give a phase delay and a code
+    // advance).
     s.stec_total_tecu = std::max(0.0, s.stec_quiet_tecu + s.dstec_sed_tecu
                                       + s.dstec_tid_tecu + s.dstec_turb_tecu);
     return s;
@@ -194,24 +194,24 @@ double IonoDisturbance::turbVtec(const std::string& prn, const GnssTime& t) cons
         const double u2 = (mix(h ^ (k + 1ULL)) >> 11) * (1.0 / 9007199254740992.0);
         return std::sqrt(-2.0 * std::log(u1)) * std::cos(2.0 * Constants::PI * u2);
     };
-    // CORRELATED, not white.  A white series inflects at EVERY epoch, which does not
-    // look like a real disturbed arc: the observed G5 state turns over every couple of
-    // epochs, i.e. it has structure on a 60-120 s scale.  A short moving average over
-    // adjacent epochs' draws produces exactly that (lag-1 correlation 2/3 for MA(3)) and
-    // stays STATELESS -- still a pure function of (sat, epoch), so it consumes no RNG
-    // stream and remains reproducible under any evaluation order.
+    // Correlated, not white.  A white series inflects at every epoch, unlike a real
+    // disturbed arc, which turns over every couple of epochs (structure on a 60-120 s
+    // scale, as in the observed G5 state).  A moving average over adjacent epochs'
+    // draws gives that (lag-1 correlation 2/3 for MA(3)) and stays stateless: still a
+    // pure function of (sat, epoch), so it consumes no RNG stream and is reproducible
+    // under any evaluation order.
     // Normalised by sqrt(3) so the smoothing does not change the marginal sigma.
     const std::uint64_t step = static_cast<std::uint64_t>(
         std::llround(cfg_.turb_step_s > 0.0 ? cfg_.turb_step_s * 1000.0 : 30000.0));
     const double z = (draw(ms) + draw(ms - step) + draw(ms - 2ULL * step))
                      / std::sqrt(3.0);
 
-    // Per-satellite severity in [0.6, 1.4], stable across the pass: the storm does not
-    // rough up every affected ray equally, and a spread makes the QC plot honest.
+    // Per-satellite severity in [0.6, 1.4], constant across the pass: the storm does not
+    // disturb every affected ray equally, and the spread keeps the QC plot realistic.
     const double sev = 0.6 + 0.8 * ((mix(h) >> 11) * (1.0 / 9007199254740992.0));
 
     // Episodic envelope: raised cosine over the turbulence window, so the arc is smooth
-    // early and rough later (the post-sunset blow-up the ADIS reference shows).  A
+    // early and rough later (the post-sunset growth seen in the ADIS reference).  A
     // non-positive duration means "whole arc", i.e. no envelope.
     double env = 1.0;
     if (cfg_.turb_window_duration_s > 0.0) {

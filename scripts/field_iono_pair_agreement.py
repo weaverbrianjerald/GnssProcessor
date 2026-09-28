@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
-"""FIELD — cross-station iono-field agreement from raw GF (SPEC §9.10).
+"""Field: cross-station iono-field agreement from raw GF (SPEC §9.10).
 
-Two stations tracking the SAME satellite sample nearby columns of the same
-ionosphere (IPP separation ~ their baseline for MEO geometry).  If the field
-the network co-estimates is coherent at those scales, their vertical-mapped
-GF RATES must agree; disagreement measures the station-local content (phase
-multipath, mapping error at low elevation) that the iono states — and through
-the level exchanges, the clock/CB commons — are forced to absorb.
+Two stations tracking the same satellite sample nearby columns of the same
+ionosphere (IPP separation approximately their baseline for MEO geometry).  If
+the field the network co-estimates is coherent at those scales, their
+vertical-mapped GF rates must agree; disagreement measures the station-local
+content (phase multipath, mapping error at low elevation) that the iono
+states, and through the level exchanges the clock/CB commons, are forced to
+absorb.
 
-Method (raw observables only — no estimator output, so this is an INPUT
+Method (raw observables only, no estimator output, so this is an input
 property, not a fit property): per (station,sat), LLI-clean dual rows from
 network_slip_raw.csv; 300 s GF increments mapped to vertical by the thin-shell
 obliquity 1/M(el), h = 450 km; per station-pair-satellite series with >= 1 h of
 joint epochs: Pearson corr + relative rms of the difference.  Aggregated by
-baseline bin x elevation class (both high vs one-low/one-high — the user's
+baseline bin x elevation class (both high vs one-low/one-high, the user's
 "one high elevation and one low elevation ~1000 km apart" case).
 
 Usage:

@@ -1,4 +1,4 @@
-"""Tests for gnssviz.eval.regression -- truth cross-check + golden gate."""
+"""Tests for gnssviz.eval.regression: truth cross-check and golden gate."""
 
 from __future__ import annotations
 
@@ -89,8 +89,8 @@ def _nan_metric(station, cell):
 
 
 def test_nan_metric_is_a_regression_not_a_silent_pass():
-    # A diverged current run (all-NaN) vs a healthy golden MUST regress -- the
-    # magnitude tests alone would silently pass it.
+    # A diverged current run (all-NaN) against a healthy golden must be flagged as a
+    # regression: the magnitude tests alone would pass it silently.
     golden = [_metric("JPLM", "baseline", (0.014, -0.004, 0.055), 0.061)]
     current = [_nan_metric("JPLM", "baseline")]
     deltas, n_reg = compare_metrics(current, golden)

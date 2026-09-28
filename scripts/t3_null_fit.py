@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
 """T3-class null calibration: diagnose the statistic, not the threshold.
 
-QUEUE item 4 (`docs/QUEUE_principled_replacements.md`) — the bandaid being
-replaced is a Gaussian 6σ quantile applied to
+QUEUE item 4 (`docs/QUEUE_principled_replacements.md`): the bandaid being
+replaced is a Gaussian 6-sigma quantile applied to
 
     S_c = max_{i∈c} |z_i|  /  max(floor, 1.4826 · median_{j∈P} |z_j|)
 
 where c is a (station, satellite) cell, P is the epoch's network-wide pool of
 post-fit phase-residual rows, and z = |v|·√w (·/√r_i only when
-`network.raim_redundancy_normalize` is armed — it is OFF by default).
+`network.raim_redundancy_normalize` is armed; it is off by default).
 
-The card's finding, and why this script exists: **S_c is invariant to any
-COMMON rescaling of z**, because the same factor multiplies numerator and
-denominator.  So no global variance-model fix and no recalibrated k can move
-its false-alarm rate — only the RELATIVE structure of the pool can.  This tool
+The card's finding, and why this script exists: S_c is invariant to any
+common rescaling of z, because the same factor multiplies numerator and
+denominator. So no global variance-model fix and no recalibrated k can move
+its false-alarm rate; only the relative structure of the pool can. This tool
 measures that structure and reports what a correctly stratified null gives.
 
 Reads `<run>/logs/network_station_residuals.csv` (armed by
-`network.trace_station_residuals`), which is exactly the T3 cell population —
-one row per (epoch, station, satellite) with s_raw, s_norm, sigma0.  Cross-checks
+`network.trace_station_residuals`), which is the T3 cell population: one row
+per (epoch, station, satellite) with s_raw, s_norm, sigma0. Cross-checks
 against `network_flag_rates.csv` when present.
 
     python scripts/t3_null_fit.py --run runs/pareref_on
@@ -26,14 +26,14 @@ against `network_flag_rates.csv` when present.
     python scripts/t3_null_fit.py --run runs/pareref_on --strata station,epoch
     python scripts/t3_null_fit.py --selftest
 
-⚠ Grade on a SETTLED window.  The residual scale on the 24-sta fixture rises
-through ignition (epoch-median s_raw 0.84 first third → 1.82 last third), so a
-short arm measures convergence, not the null.  `--warmup-s` (default 1800)
+Grade on a settled window. The residual scale on the 24-sta fixture rises
+through ignition (epoch-median s_raw 0.84 first third to 1.82 last third), so a
+short arm measures convergence, not the null. `--warmup-s` (default 1800)
 drops the head.
 
-⚠ The verification arm must be SAME-REGIME, different-seed (QUEUE item 4): the
-60-sta fixture is LEGACY-N and a different posture, and fitting on one regime
-while verifying on the other conflates REGIME with STATISTIC.
+The verification arm must be same-regime, different-seed (QUEUE item 4): the
+60-sta fixture is legacy-N and a different posture, and fitting on one regime
+while verifying on the other conflates regime with statistic.
 """
 
 from __future__ import annotations
@@ -55,10 +55,10 @@ except (AttributeError, OSError):
     pass
 
 # --- the reference null of the cell statistic ------------------------------------
-# A cell is a max over the (station,sat)'s carried-ambiguity phase rows.  Under the
+# A cell is a max over the (station,sat)'s carried-ambiguity phase rows. Under the
 # ideal null those are standard normals, so the cell statistic is max_{n_c}|z|.
-# Median of that max, by n_c — used to put a fitted stratum scale on a "1.0 = nominal"
-# footing.  Closed form: median m solves (2Φ(m)−1)^n = 1/2.
+# Median of that max, by n_c: used to put a fitted stratum scale on a "1.0 = nominal"
+# footing. Closed form: median m solves (2Φ(m)−1)^n = 1/2.
 _DEF_NC = 3  # GPS triple-frequency uncombined: L1C / L2W / L5Q phase rows per cell
 
 
@@ -81,15 +81,15 @@ def median_max_abs_normal(n: int) -> float:
 
 
 def cell_alpha(k: float, n_c: int) -> float:
-    """Per-cell false-alarm probability of max_{n_c}|z| > k under an EXACT null."""
+    """Per-cell false-alarm probability of max_{n_c}|z| > k under an exact null."""
     return 1.0 - (2.0 * phi_cdf(k) - 1.0) ** n_c
 
 
 def implied_scale(rate: float, k: float) -> float:
     """The scale c a Gaussian null would need to produce `rate` at threshold k.
 
-    Solves 2(1−Φ(k/c)) = rate.  If c is flat in k the residue is SCALE; if c rises
-    with k the residue is SHAPE and no recalibrated constant can fix it.
+    Solves 2(1−Φ(k/c)) = rate. If c is flat in k the residue is scale error; if c
+    rises with k the residue is shape error and no recalibrated constant can fix it.
     """
     if rate <= 0.0:
         return float("nan")
@@ -117,7 +117,7 @@ def denom_noise_sd(m: int) -> float:
 def exact_k(alpha: float, n_c: int) -> float:
     """Exact-null threshold: P(max_{n_c}|z| > k) = alpha with sigma-hat identically 1.
 
-    Solves 1 − (2Φ(k)−1)^n_c = α in closed form, so it is good at any α — a brute
+    Solves 1 − (2Φ(k)−1)^n_c = α in closed form, so it is good at any α; a brute
     Monte Carlo cannot resolve a 1e-6 quantile without ~1e8 draws.
     """
     target = (1.0 - alpha) ** (1.0 / n_c)          # = 2Φ(k) − 1
@@ -138,15 +138,15 @@ def corrected_k(alpha: float, n_c: int, m_denom: int, trials: int = 40_000,
     σ̂ = max(floor, 1.4826·median|z|) over m_denom rows, so the statistic is
     studentized and its tail is fatter than the exact-null one.
 
-    The denominator is Monte-Carlo'd (drawing the pool and taking its ACTUAL
-    median — at small m the sampling distribution of a median is skewed and
+    The denominator is Monte-Carlo'd (drawing the pool and taking its actual
+    median: at small m the sampling distribution of a median is skewed and
     bounded below, so a Gaussian surrogate puts mass near zero and produces
-    absurd quantiles), but the NUMERATOR is then integrated in closed form:
+    absurd quantiles), but the numerator is then integrated in closed form:
 
         P(S > k) = E_σ̂[ 1 − (2Φ(k σ̂) − 1)^n_c ]
 
     so the accuracy does not degrade at small α the way a brute-force quantile
-    of simulated ratios does.  Pass ``m_denom <= 0`` for the exact null.
+    of simulated ratios does. Pass ``m_denom <= 0`` for the exact null.
     """
     if m_denom <= 0:
         return exact_k(alpha, n_c)
@@ -306,16 +306,16 @@ def sweep_strata(cells: Cells, idx, strata, keyfns, n_c, sweeps=1, min_n=20):
     """Multiplicative robust scale model, fitted by repeated median sweeps.
 
     One sweep per stratum in order; `sweeps > 1` re-visits them (median polish on
-    log s_raw, in multiplicative form).  Returns (denominators, per-stratum maps).
-    A single pass is a LOWER bound on what the model can absorb — the strata are
+    log s_raw, in multiplicative form). Returns (denominators, per-stratum maps).
+    A single pass is a lower bound on what the model can absorb: the strata are
     not orthogonal, so the first pass leaves cross-terms behind.
     """
     import numpy as np                  # in-tree; the pure-Python path timed out at 1e6 cells
     mref = median_max_abs_normal(n_c)
     y = np.asarray([cells.s_raw[i] for i in idx], dtype=float)
-    # Materialize each stratum's group code ONCE.  The pure-Python version called the
+    # Materialize each stratum's group code once. The pure-Python version called the
     # key lambda inside every sweep for every row, which is what made a 305-station run
-    # (1.0e6 cells) exceed 50 minutes — see SPEC_t3_null_derivation §12.1b.
+    # (1.0e6 cells) exceed 50 minutes; see SPEC_t3_null_derivation §12.1b.
     codes, levels = {}, {}
     for s in strata:
         kf = keyfns[s]
@@ -350,7 +350,7 @@ def sweep_strata(cells: Cells, idx, strata, keyfns, n_c, sweeps=1, min_n=20):
 
 
 def split_half_oos(cells: Cells, idx, strata, keyfns, n_c, sweeps):
-    """Fit the TRANSFERABLE strata on the first half, score the second.
+    """Fit the transferable strata on the first half, score the second.
 
     Epoch factors cannot transfer (they are a within-run nuisance), so they are
     refitted on the held-out half; only station/satellite factors carry a claim.
@@ -478,9 +478,9 @@ def diagnose(run: Path, warmup_s: float, n_c: int, strata: list[str],
         for ln in curve_line(v):
             print(f"        {ln}")
         # is the slow factor a stable property, or noise?
-        # ⚠ The cut MUST be hoisted out of the comprehension.  Inlining
+        # The cut is hoisted out of the comprehension. Inlining
         # `sorted({cells.tow[j] for j in idx})` in the filter re-evaluates it once per
-        # element — O(N²), which is ~6.5e11 operations on a 305-station field run and was
+        # element, O(N^2), which is ~6.5e11 operations on a 305-station field run and was
         # measured as a >50-minute hang (SPEC_t3_null_derivation §12.1b).
         _tows_all = sorted({cells.tow[j] for j in idx})
         _cut2 = _tows_all[len(_tows_all) // 2]
@@ -519,7 +519,7 @@ def diagnose(run: Path, warmup_s: float, n_c: int, strata: list[str],
 
 def transfer(fit_run: Path, ver_run: Path, warmup_s: float, n_c: int,
              strata: list[str], sweeps: int = 4):
-    """Fit stratum scales on one arm, apply to another.  The honest test."""
+    """Fit stratum scales on one arm and apply them to another, unseen arm."""
     fc = load_cells(fit_run); fi = fc.settled(warmup_s)
     vc = load_cells(ver_run); vi = vc.settled(warmup_s)
     print(f"\n{'='*78}\n  TRANSFER   fit {fit_run}  →  verify {ver_run}\n{'='*78}")
@@ -536,7 +536,7 @@ def transfer(fit_run: Path, ver_run: Path, warmup_s: float, n_c: int,
     lab = []
     for s in strata:
         if s == "epoch":
-            # epoch factors cannot transfer between runs — refit per verify epoch
+            # epoch factors cannot transfer between runs, so refit per verify epoch
             resid = [vc.s_raw[i] / denom[j] for j, i in enumerate(vi)]
             g = defaultdict(list)
             for j, i in enumerate(vi):
@@ -572,8 +572,8 @@ def transfer(fit_run: Path, ver_run: Path, warmup_s: float, n_c: int,
 def _simulate_pool(rng, n_sta, n_ep, n_c, cells_per_sta, sta_scale):
     """One synthetic run: returns per-cell (s_raw, sigma0_epoch, station).
 
-    Mirrors the shipped construction exactly — the epoch's sigma0 is the floored
-    1.4826·median over the network-wide ROW pool, and the cell is the max over
+    Mirrors the shipped construction exactly: the epoch's sigma0 is the floored
+    1.4826·median over the network-wide row pool, and the cell is the max over
     that (station,sat)'s n_c rows.
     """
     out = []
@@ -591,7 +591,7 @@ def _simulate_pool(rng, n_sta, n_ep, n_c, cells_per_sta, sta_scale):
 
 
 def _selftest() -> None:
-    """Synthetic pools with known structure — the instrument must tell them apart."""
+    """Synthetic pools with known structure that the instrument must tell apart."""
     rng = random.Random(4242)
     n_c, n_sta, n_ep, per_sta = _DEF_NC, 24, 60, 8
     mref = median_max_abs_normal(n_c)

@@ -4,7 +4,9 @@
  *
  * Initializes PPP state, computes satellite/receiver geometry, applies corrections
  * (orbits, clocks, tides, troposphere, ionosphere, antenna) and forms the
- * iono-free combinations the estimator consumes.
+ * observations the estimator consumes: iono-free combinations, or per-signal
+ * rows on the uncombined path (processing.uncombined_enabled, forced on for the
+ * PPP-RTK family and the baseline modes).
  *
  * Decomposed into focused helpers:
  *  - Signal selection:   buildFrequencyBandMap, selectUncombinedSignals,
@@ -73,12 +75,11 @@ const std::map<std::string, std::vector<std::pair<std::string, std::string>>>& g
 
 /// Maps system name + FrequencyMode to the target frequency bands for pair formation.
 const std::map<std::string, std::map<FrequencyMode, std::vector<std::string>>>& getBandMap() {
-    // FrequencyMode::Independent shares All's candidate band list — the two
-    // differ only in the per-satellite sideband pruning that
-    // activeFrequencyBands() applies downstream.  Deriving Independent from All
-    // here (rather than duplicating the lists) keeps them structurally
-    // identical and is what the static coarse-filter consumers
-    // (getAllowedBandDigits) read for the band-digit superset.
+    // FrequencyMode::Independent uses All's candidate band list; the two differ
+    // only in the per-satellite sideband pruning that activeFrequencyBands()
+    // applies downstream.  Independent is copied from All below instead of listed
+    // separately, so the two lists cannot diverge, and the static coarse filter
+    // (getAllowedBandDigits) reads that list as the band-digit superset.
     static const std::map<std::string, std::map<FrequencyMode, std::vector<std::string>>> table = [] {
         std::map<std::string, std::map<FrequencyMode, std::vector<std::string>>> t = {
             {"GPS",     {{FrequencyMode::Dual, {"L1", "L2"}}, {FrequencyMode::Triple, {"L1", "L2", "L5"}}, {FrequencyMode::All, {"L1", "L2", "L5"}}}},
@@ -105,14 +106,14 @@ const char* frequencyModeLabel(FrequencyMode m) {
     }
 }
 
-/// Drop the E5/B2 *sidebands* from @p bands when this satellite also reports
-/// the coherent **wideband** (RINEX band 8: Galileo E5 alt-BOC, BeiDou
-/// B2(a+b)).  Realises FrequencyMode::Independent: the wideband is the joint
-/// coherent processing of those same sidebands, so keeping all three feeds
-/// correlated rows to the diagonal-R filter as if independent — over-counting
-/// the band.  When the wideband is NOT observed for this satellite the
-/// sidebands are retained (graceful fallback: no band is lost).  No-op for
-/// systems without a band-8 wideband (GPS, GLONASS, QZSS, SBAS).
+/// Drop the E5/B2 sidebands from @p bands when this satellite also reports the
+/// coherent wideband (RINEX band 8: Galileo E5 AltBOC, BeiDou B2(a+b)).
+/// Implements FrequencyMode::Independent: the wideband is the joint coherent
+/// processing of the same sidebands, so keeping all three would feed correlated
+/// rows to the diagonal-R filter as independent ones and over-count the band.
+/// When the wideband is not observed for this satellite, the sidebands are kept
+/// and no band is lost.  No-op for systems without a band-8 wideband (GPS,
+/// GLONASS, QZSS, SBAS).
 void pruneRedundantSidebands(const std::string& system_str,
                              std::vector<std::string>& bands,
                              const ObsValueMap<double>& measurements) {
@@ -124,11 +125,11 @@ void pruneRedundantSidebands(const std::string& system_str,
     const auto sit = kSidebands.find(system_str);
     if (sit == kSidebands.end()) return;
 
-    // Require the wideband *phase* (band-8 L-observable).  Phase is the
+    // Require the wideband phase (a band-8 L observable).  Phase is the
     // precision- and ambiguity-critical observable this redundancy concerns,
-    // and AltBOC being "available" as a replacement for the sidebands means
-    // its carrier is tracked.  If only band-8 code (C8) were present we keep
-    // the sidebands so the E5/B2 carrier is not lost.
+    // and the wideband can replace the sidebands only when its carrier is
+    // tracked.  With band-8 code (C8) alone, the sidebands are kept so the E5/B2
+    // carrier is not lost.
     bool wideband_observed = false;
     for (const auto& kv : measurements) {
         const std::string& sig = kv.first;            // e.g. "L8Q", "L8X"
@@ -221,8 +222,8 @@ std::vector<std::string> activeFrequencyBands(
             ProductCache::getInstance().getErpsShared(),
             ProductCache::getInstance().getBiasesShared(),
             rinex_parser),
-        // ionosphere_ is std::optional — constructed in the body below
-        // only when the Klobuchar fallback is actually requested.
+        // ionosphere_ is a std::optional, constructed in the body below
+        // only when the Klobuchar fallback is enabled.
         antenna_(config, product_parser, log_manager, rinex_parser),
         stochastic_model_(config, log_manager),
         signal_priorities_(config.getSignalPriorities()),
@@ -249,11 +250,12 @@ std::vector<std::string> activeFrequencyBands(
 
         // Ocean pole tide (IERS 2010 Sec. 7.1.5 / Desai 2002): interpolate the
         // six per-station load coefficients from the global opole grid into
-        // gnss_corrections_ — the SAME instance whose computePoleTideCorrection
-        // is invoked per-epoch by computePoleTideProjection (the Geometry-owned
-        // GnssCorrections that handles OTL/solid tide is a different object and
-        // does NOT compute the pole tide).  Gated by enable_ocean_pole_tide;
-        // default off never touches the grid, so runs stay byte-identical.
+        // gnss_corrections_, the instance whose computePoleTideCorrection
+        // computePoleTideProjection calls each epoch.  The Geometry-owned
+        // GnssCorrections that handles OTL and solid tide is a separate object
+        // and does not compute the pole tide.  Gated by enable_ocean_pole_tide;
+        // with it off (the default) the grid is never read and runs are
+        // byte-identical.
         if (config.getModelCorrections().enable_ocean_pole_tide) {
             auto log = log_manager_.getLogger("ppp_model");
             const Eigen::Vector3d opt_ecef = rinex_parser_.getApproxPositionXyz();
@@ -315,11 +317,13 @@ std::vector<std::string> activeFrequencyBands(
     }
 
     /**
-     * @brief Initialize a PppState with sensible defaults from RINEX and configuration.
+     * @brief Initialize a PppState with default values from RINEX and the configuration.
      *
-     * Populates position (optionally applying receiver antenna H/E/N offset from RINEX),
-     * epoch time, clock bias, troposphere ZWD and (for PPP-RTK) a starting ionospheric zenith delay.
-     * If an existing state looks valid it is left unchanged.
+     * Populates position (a configured reference position, or the RINEX marker position with
+     * the receiver antenna H/E/N offset applied), epoch time, clock bias and troposphere ZWD.
+     * No zenith ionosphere state is set: in PPP-RTK mode, MeasurementModel creates per-satellite
+     * slant ionosphere states as satellites appear.  A state whose position is nonzero, free of
+     * NaN and within 1e9 m of the geocentre, with a 5-row core covariance, is left unchanged.
      *
      * @param state Output PppState to initialize (modified in-place).
      */
@@ -353,10 +357,10 @@ std::vector<std::string> activeFrequencyBands(
             }
             else if (Eigen::Vector3d marker_pos = rinex_parser_.getApproxPositionXyz();
                      marker_pos.norm() > 1e3 && !marker_pos.hasNaN()) {
-                // Apply antenna H/E/N offset to get antenna phase center position.
+                // Apply the antenna H/E/N offset to move from the marker to the ARP.
                 // RINEX APPROX POSITION XYZ is the marker position.
-                // ANTENNA: DELTA H/E/N gives the offset from marker to ARP in local frame.
-                // Note: H = Up, E = East, N = North
+                // ANTENNA: DELTA H/E/N gives the offset from marker to ARP in the local frame
+                // (H = Up, E = East, N = North).
                 Eigen::Vector3d hen = rinex_parser_.getAntennaDeltaHen();
 
                 if (hen.norm() > 1e-6) {
@@ -430,8 +434,8 @@ std::vector<std::string> activeFrequencyBands(
         }
         const double cov = std::min(1.0, std::max(0.0, min_coverage));
 
-        // The rule itself, optionally with one signal withheld — that second
-        // form IS the runner-up ("what would have been latched instead").
+        // The rule itself, optionally with one signal withheld.  With the winner
+        // withheld it returns the runner-up (what would have been latched instead).
         auto choose = [&](const std::vector<const CanonicalCandidate*>& v,
                           const std::string& withheld) -> const CanonicalCandidate* {
             if (rule == CanonicalSignalRule::Priority) {
@@ -446,7 +450,7 @@ std::vector<std::string> activeFrequencyBands(
                 return nullptr;
             }
             // Count: strictly-greater replacement over the priority order, so the
-            // earlier (higher-priority) entry keeps a tie — the historical rule.
+            // earlier (higher-priority) entry keeps a tie (the historical rule).
             const CanonicalCandidate* best = nullptr;
             for (const auto* c : v) {
                 if (c->signal == withheld) continue;
@@ -465,11 +469,11 @@ std::vector<std::string> activeFrequencyBands(
                                       run ? run->count : 0 };
         }
         if (rule != CanonicalSignalRule::Priority) return out;
-        // Card CSL-3: with the follow clause off, every CODE row keeps the pick
-        // the priority rule already made from the CODE's own list above — the
-        // same first-in-the-list-with-coverage decision the phase got, with no
-        // reference to the phase's attribute.  Nothing else in the rule changes,
-        // so a station whose two lists agree latches identically either way.
+        // With the follow clause off, each code row keeps the pick the priority
+        // rule made from the code's own list above: the same
+        // first-in-the-list-with-coverage decision the phase got, without reference
+        // to the phase's attribute.  Nothing else in the rule changes, so a station
+        // whose two lists agree latches identically either way (card CSL-3).
         if (!code_follows_phase) return out;
 
         // The code follows the phase's tracking attribute where that code exists
@@ -529,13 +533,13 @@ std::vector<std::string> activeFrequencyBands(
         const auto& system_to_bands = getSystemToBands();
 
         for (const auto& [cons, sat_obs_list] : by_cons) {
-            // RS-8 (docs/SPEC_event_harness.md §21.16): a constellation whose latch
-            // was RESTORED runs this tally ONCE more, diagnostically — it writes
-            // nothing, and only counts how many entries the restore overrode.  That
-            // audit is the instrument for "this resume WOULD have re-decided the
-            // latch", which is otherwise unobservable (a pre-card run simply
-            // re-decided, on a logger that is 0 bytes in every run).  Unreachable
-            // without a restore, so every other run keeps the original guard exactly.
+            // A constellation whose latch was restored from a snapshot runs this
+            // tally once more, diagnostically: it writes nothing and only counts the
+            // restored entries this tally would have decided differently.  That
+            // audit is the only record that a resume would have re-decided the
+            // latch.  It is unreachable without a restore, so every other run takes
+            // the original guard unchanged.  See docs/SPEC_event_harness.md §21.16
+            // (RS-8).
             const bool already_decided = constellation_canonical_decided_.count(cons) > 0;
             const bool audit_only = already_decided
                                     && constellation_canonical_audit_pending_.count(cons) > 0;
@@ -550,7 +554,7 @@ std::vector<std::string> activeFrequencyBands(
             if (sit == system_to_bands.end()) continue;
 
             // Tally every admitted priority-list channel of this constellation at
-            // this epoch, IN PRIORITY ORDER, then hand the ordered candidates to
+            // this epoch, in priority order, and pass the ordered candidates to
             // the pure rule (card CSL).  Under the default
             // CanonicalSignalRule::Count that rule is the historical one: per
             // (band, obs_type) the highest observation count wins, and because
@@ -563,9 +567,9 @@ std::vector<std::string> activeFrequencyBands(
                 if (sig.size() < 3) continue;
                 const char obs_type = sig[0];
                 if (obs_type != 'C' && obs_type != 'L') continue;
-                // Network coverage gate: a sparsely-tracked code is not a
+                // Network coverage gate: a sparsely tracked code is not a
                 // canonical candidate, so the per-band pick falls through to the
-                // best ADMITTED channel (e.g. L1W excluded network-wide ⇒ L1C).
+                // best admitted channel (e.g. L1C when L1W is excluded network-wide).
                 if (!signalAdmitted(cons, sig)) continue;
 
                 // Resolve which band this signal belongs to via the
@@ -584,16 +588,16 @@ std::vector<std::string> activeFrequencyBands(
                 candidates.push_back(CanonicalCandidate{ sig, band_name, obs_type, count });
             }
 
-            // Card CSL-2: the rule is scoped per STATION.  With no list configured
-            // this is config_.canonicalSignalRule() exactly, so the pre-card path
-            // is byte-identical; with one, the listed stations decide under
-            // 'priority' and the rest under 'count'.
+            // The rule is scoped per station (card CSL-2).  With no station list
+            // configured this is config_.canonicalSignalRule() unchanged, so the
+            // output is byte-identical to the unscoped rule; with a list, the listed
+            // stations decide under 'priority' and the rest under 'count'.
             const auto station_rule =
                 canonicalRuleForStation(config_.canonicalSignalRule(),
                                         config_.canonicalSignalPriorityStations(),
                                         canonical_trace_label_);
-            // Card CSL-3: the follow clause is the CODE half of the priority
-            // rule, so it rides the same call.  True is the CSL-1 behaviour.
+            // The follow clause is the code half of the priority rule, so it is
+            // passed in the same call; true is the CSL-1 behaviour (card CSL-3).
             const auto picks = decideCanonicalPicks(candidates, station_rule,
                                                     config_.canonicalSignalMinCoverage(),
                                                     config_.canonicalSignalCodeFollowsPhase());
@@ -605,13 +609,14 @@ std::vector<std::string> activeFrequencyBands(
             for (const auto& [key, pick] : picks)
                 best[key] = Candidate{ pick.signal, pick.count };
 
-            // Card SID phase 5 (E3 / C1): the producer's DECLARED roster.  The
-            // comparison always runs when a declaration reached this model; the
-            // latch MOVES only under network.closed_loop.roster_latch, so a phase-5a
-            // consumer counts and is byte-identical.  Placed BEFORE the summary
-            // below so every trace line states the latch this station will actually
-            // use, never the one its own rule would have chosen.  Unreachable
-            // without a declaration, which is every pre-card wire.
+            // Compare the picks with the producer's declared roster (card SID
+            // phase 5, E3 / C1).  The comparison runs whenever a declaration reached
+            // this model, except in the audit pass; the latch moves only under
+            // network.closed_loop.roster_latch, so with the knob off the comparison
+            // only counts and the output is byte-identical.  It runs before the
+            // summary below so every trace line states the latch this station will
+            // use, not the one its own rule would have chosen.  Unreachable without
+            // a declaration.
             std::string declared_note;
             if (declared_roster_.present && !audit_only) {
                 std::map<std::pair<std::string, char>, std::string> chosen;
@@ -640,10 +645,10 @@ std::vector<std::string> activeFrequencyBands(
             }
 
             if (audit_only) {
-                // RS-8 audit: compare, count, log — and LEAVE the latch alone.  A
-                // disagreement is the defect being prevented: the kept signal is the
-                // writer's, the tallied one is what THIS run would have latched from
-                // the resume epoch's satellite counts.
+                // Audit pass (RS-8): compare, count and log, and leave the latch
+                // unchanged.  A disagreement is the case the restore prevents: the
+                // kept signal is the snapshot writer's, and the tallied one is what
+                // this run would have latched from the resume epoch's satellite counts.
                 std::string disagreements;
                 long long n_seen = 0, n_diff = 0;
                 const auto cit = constellation_canonical_.find(cons);
@@ -677,28 +682,27 @@ std::vector<std::string> activeFrequencyBands(
             for (const auto& [key, cand] : best)
                 constellation_canonical_[cons][key] = cand.signal;
             constellation_canonical_decided_.insert(cons);
-            // Card SID phase 1: retain the candidate list so the observatory can
-            // evaluate a SECOND rule over the same first-epoch counts (the
-            // "what would the count rule have latched here" class).  A pure store
-            // behind the knob: nothing in this function or below it reads it, and
-            // an unarmed run neither allocates nor branches differently.
+            // Retain the candidate list so the observatory can evaluate a second
+            // rule over the same first-epoch counts, such as what the count rule
+            // would have latched here (card SID phase 1).  A pure store behind
+            // network.signal_roster: nothing on the latch path reads it, and with the
+            // knob off nothing is allocated and no branch changes.
             if (config_.networkSignalRoster()) canonical_candidates_[cons] = candidates;
 
             log_manager_.getLogger("ppp_model")->info(
                 "Canonical signals locked for {} ({} sats this epoch): {}",
                 cons, sat_obs_list.size(), summary);
-            // RS-8 rider (§21.16): the SAME decision on main_log, which every run
-            // actually writes — the ppp_model logger is 0 bytes in every run, which
-            // is why a warm resume silently re-deciding this latch survived the whole
-            // RS card series unseen.  Trace-class: products byte-identical.
+            // The same decision on main_log, which every run writes; the ppp_model
+            // log is empty (0 bytes) in every run, so the line above is not seen.
+            // Trace-class: products are byte-identical (RS-8, §21.16).
             log_manager_.getLogger("main_log")->info(
                 "Canonical signals decided for {} station '{}' ({} sats this epoch): {}",
                 cons, canonical_trace_label_.empty() ? "-" : canonical_trace_label_,
                 sat_obs_list.size(), summary);
-            // Card SID phase 5b: a latch the DECLARATION moved says so on the same
-            // logger that carries the decision, so an arm of the knob is readable
-            // from the trace rather than from the counters alone.  Silent when the
-            // declaration changed nothing, so an inert arm adds no bytes.
+            // A latch that the declaration moved is logged on the same logger as the
+            // decision, so an armed run can be read from the trace as well as from
+            // the counters.  Silent when the declaration changed nothing, so an
+            // inert arm adds no bytes (card SID phase 5b).
             if (!declared_note.empty())
                 log_manager_.getLogger("main_log")->info(
                     "Canonical latch FOLLOWS the producer's declared roster for {} station "
@@ -706,11 +710,11 @@ std::vector<std::string> activeFrequencyBands(
                     cons, canonical_trace_label_.empty() ? "-" : canonical_trace_label_,
                     declared_note);
 
-            // Card CSL: one line per station and constellation naming the latch
-            // AND its runner-up with both counts, under EITHER rule, so a run
-            // states which tracking attribute every band actually carries and by
-            // what margin the alternative lost.  Trace-class — nothing downstream
-            // reads it, and products / event ledgers are unaffected.
+            // One line per station and constellation naming the latch and its
+            // runner-up with both counts, under either rule, so a run states which
+            // tracking attribute each band carries and by what margin the
+            // alternative lost (card CSL).  Trace-class: nothing downstream reads
+            // it, and products and event ledgers are unaffected.
             std::string latch_detail;
             for (const auto& [key, pick] : picks) {
                 if (!latch_detail.empty()) latch_detail += ", ";
@@ -721,15 +725,14 @@ std::vector<std::string> activeFrequencyBands(
                               : " over " + pick.runner_up + "("
                                 + std::to_string(pick.runner_up_count) + ")";
             }
-            // Card CSL-2: the rule NAMED here is the one this station actually
-            // decided under, not the global key — a scoped run whose line said
-            // "priority" at a station running 'count' would be the trace lying
-            // about the lever under test.  With no scope the two are the same
-            // value, so an unscoped run's bytes are unchanged.
-            // Card CSL-3: the follow setting is NAMED only when it is off.  The
-            // default line therefore stays byte-identical, and a run that armed
-            // the knob says so on the same line that states the latch — which is
-            // the trace an arm of the code half is read from.
+            // The rule named here is the one this station decided under, not the
+            // global key, so a scoped run never reports 'priority' at a station
+            // running 'count'.  With no scope the two are the same value, so an
+            // unscoped run's line is unchanged (card CSL-2).
+            // The follow setting is named only when it is off: the default line
+            // stays byte-identical, and a run that turned the clause off says so on
+            // the line that states the latch, which is where an arm of the code
+            // half is read (card CSL-3).
             log_manager_.getLogger("main_log")->info(
                 "Canonical latch for {} station '{}' (rule={}{}{}, min_coverage={:.2f}, "
                 "{} sats this epoch): {}",
@@ -762,10 +765,11 @@ std::vector<std::string> activeFrequencyBands(
         const auto cit = declared_roster_.bands.find(cons);
         if (cit == declared_roster_.bands.end()) return;   // nothing declared here
 
-        // The band NAME of a signal, through the same prefix table the candidate
-        // walk above used.  Resolving it from the SIGNAL rather than from the
-        // declaration's band digit keeps one rule in the file: the digit and the
-        // name are 1:1 within a constellation, but only this table states it.
+        // The band name of a signal, through the same prefix table the candidate
+        // walk in decideConstellationCanonicals uses.  Resolving it from the signal
+        // instead of from the declaration's band digit keeps one mapping rule in
+        // the file: digit and name are 1:1 within a constellation, but only this
+        // table states it.
         const auto bandNameOf = [&](const std::string& sig) -> std::string {
             for (const auto& [pattern, name] : band_table)
                 if (sig.find(pattern) == 0) return name;
@@ -784,9 +788,9 @@ std::vector<std::string> activeFrequencyBands(
                 const std::vector<std::string>& decl_list =
                     (type == 'L') ? row.phase : row.code;
                 if (decl_list.empty()) continue;
-                // The declaration's own ORDER is the priority list here: the first
-                // declared signal this station tracks wins, which is card CSL's rule
-                // keyed to the producer's statement instead of to the config list.
+                // The declaration's own order is the priority list here: the first
+                // declared signal this station tracks wins.  This is the card CSL
+                // rule keyed to the producer's declaration instead of the config list.
                 std::string pick;
                 for (const std::string& sig : decl_list)
                     if (tracked(sig, type)) { pick = sig; break; }
@@ -799,12 +803,12 @@ std::vector<std::string> activeFrequencyBands(
                 if (own == chosen.end()) continue;   // this station latched nothing here
                 handled.insert(key);
                 ++declared_latch_.compared;
-                // The class card MSC saw as dropouts, and it is independent of
-                // what the latch then does: this station latched a signal the
-                // network declares no family for, so the correction it needs is
-                // structurally absent rather than late.  Counted before the
-                // branch below, because a station that tracks NONE of the
-                // declared signals is exactly the worst case of it.
+                // This station latched a signal for which the network declares no
+                // family, so the correction it needs is absent from the wire, not
+                // late (the dropouts of card MSC).  The count does not depend on
+                // what the latch then does.  It is taken before the branch below
+                // because a station that tracks none of the declared signals is
+                // the worst case of this class.
                 if (std::find(decl_list.begin(), decl_list.end(), own->second)
                     == decl_list.end())
                     ++declared_latch_.own_not_declared;
@@ -858,9 +862,9 @@ std::vector<std::string> activeFrequencyBands(
             touched.insert(e.constellation);
             ++n;
         }
-        // The DECIDED mark is the whole point of the card: without it the guard at
+        // Mark each restored constellation decided: without the mark, the guard at
         // the top of decideConstellationCanonicals re-runs the tally at the first
-        // processed epoch and overwrites everything just restored.
+        // processed epoch and overwrites the restored entries.
         for (const auto& cons : touched) {
             constellation_canonical_decided_.insert(cons);
             constellation_canonical_audit_pending_.insert(cons);
@@ -882,10 +886,10 @@ std::vector<std::string> activeFrequencyBands(
                                  PppState& state,
                                  std::vector<PppObservation>& modeled_obs,
                                  std::map<std::string, DropReason>* drop_reasons) {
-        // Helper: record a drop reason for `sat` if the caller supplied a map.
-        // Resilient to re-entry: if the same sat fails on a different signal
-        // later in the loop, the last reason wins -- callers care about
-        // "what's the final disposition of this sat for this epoch".
+        // Record a drop reason for `sat` if the caller supplied a map.  If the
+        // same sat fails on a different signal later in the loop, the last reason
+        // wins: callers read the map as the final disposition of each sat for
+        // this epoch.
         auto note_drop = [&](const std::string& sat, DropReason r) {
             if (drop_reasons && !sat.empty() && r != DropReason::None) {
                 (*drop_reasons)[sat] = r;
@@ -896,11 +900,11 @@ std::vector<std::string> activeFrequencyBands(
             return false;
         }
 
-        // First-epoch-only: decide the canonical (band, type) → signal map
-        // for each constellation based on which priority-list signal is
-        // most-observed across all of its satellites.  Subsequent epochs
-        // skip already-decided constellations.  See the cache member doc
-        // for rationale.
+        // Decide the canonical (band, type) → signal map for each constellation
+        // at the first epoch it is seen, from how many of its satellites observe
+        // each priority-list signal (under the default count rule the
+        // most-observed signal wins).  Later epochs skip decided constellations.
+        // See the cache member doc for the rationale.
         decideConstellationCanonicals(observations);
 
         modeled_obs.clear();
@@ -969,17 +973,20 @@ std::vector<std::string> activeFrequencyBands(
             }
 
             // --- Signal selection ---
-            // Failure here is the classic E11/E12 case: sat is geometrically
-            // fine, above the mask, has products and observations, but no
-            // usable (BIA-covered / ATX-covered / canonical-band) signal
-            // pair could be assembled for positioning.  Surface as NoModel.
+            // Failure here (the E11/E12 case) means the sat passed geometry (above
+            // the mask, with products and observations) but no usable
+            // (BIA-covered, ATX-covered, canonical-band) signal pair could be
+            // assembled for positioning.  Reported as NoModel.
             std::vector<std::pair<std::string, std::string>> selected_signals;
             bool is_iono_free;
             std::string comb_type;
-            // Card SCC (R1): the companion codes this call adds, if any, land on the
-            // observation so every downstream consumer can tell a companion row from a
-            // canonical one — the Melbourne-Wubbena guard (R4) and the cell telemetry
-            // (R7).  The set stays empty unless the knob is armed on the network path.
+            // The companion codes (card SCC, R1) and second phases (card SID phase
+            // 6a, R1) this call adds, if any, are recorded on the observation so
+            // downstream consumers can tell those rows from canonical ones (the
+            // Melbourne-Wubbena guard, R4; the sigma scale, R5; the cell telemetry,
+            // R7).  The sets stay empty unless network.second_code_channel,
+            // network.second_phase_channel or channel_mode "all" applies on the
+            // network path.
             if (!selectSignals(obs, system_str, selected_signals, is_iono_free, comb_type,
                                &ppp_obs.companion_codes, &ppp_obs.second_phases)) {
                 note_drop(obs.satellite, DropReason::NoModel);
@@ -997,11 +1004,11 @@ std::vector<std::string> activeFrequencyBands(
                     if (!sp.second.empty()) selected_keys.insert(sp.second);
                 }
 
-                // Preserve ALL raw RINEX code+phase measurements in raw_observed
-                // regardless of signal_mode.  The MW cycle slip detector uses
-                // raw_observed to form all possible dual-frequency MW pairs,
-                // enabling multi-frequency slip detection (e.g. L1/L2/L5) even
-                // when signal_mode restricts the KF to dual-frequency only.
+                // Keep every raw RINEX code and phase measurement in raw_observed,
+                // whatever the signal_mode.  The MW cycle-slip detector forms all
+                // dual-frequency MW pairs from raw_observed, so multi-frequency
+                // slip detection (e.g. L1/L2/L5) works even when signal_mode
+                // restricts the KF to two frequencies.
                 for (const auto& [key, val] : ppp_obs.observed) {
                     if (key.size() >= 2 && (key[0] == 'C' || key[0] == 'L') &&
                         key.find('_') == std::string::npos) {
@@ -1068,12 +1075,12 @@ std::vector<std::string> activeFrequencyBands(
 
             // --- Broadcast-grade gate: code-only ---
             // With a metre-level range model (broadcast clock, no precise CLK, no
-            // SSR clock) the float ambiguity cannot be separated from the clock /
-            // orbit error, so phase cannot improve the position and modelling it
-            // at phase noise corrupts the filter.  Drop every phase observable —
-            // raw "L1C" and IF "L1C_L2W" — so the KF sees code only and creates no
-            // ambiguity states.  raw_observed stays intact for the MW slip
-            // detector's bookkeeping.
+            // SSR clock) the float ambiguity cannot be separated from the clock and
+            // orbit error, so phase cannot improve the position, and modelling it
+            // at phase noise makes the filter inconsistent.  Drop every phase
+            // observable (raw "L1C" and IF "L1C_L2W") so the KF sees code only and
+            // creates no ambiguity states.  raw_observed stays intact for the MW
+            // slip detector's bookkeeping.
             ppp_obs.broadcast_only = geom.broadcast_only;
             // Ephemeris freshness for the real-time BSSD pivot selector (inert /
             // 0 in post-processing, where the live store is empty so this returns
@@ -1097,11 +1104,11 @@ std::vector<std::string> activeFrequencyBands(
                         "broadcast products)", obs.satellite);
                 }
             } else if (geom.broadcast_only && broadcast_phase_gate_suppressed_) {
-                // brdc_rts network producer.  The satellite's a-priori clock is
-                // broadcast-grade, but the network ESTIMATES the clock (Δδtˢ vs
-                // that a-priori), so carrier phase is informative and RETAINED —
-                // the code-only erase above is skipped.  One-shot per satellite so
-                // the operator sees the mode without per-epoch spam.
+                // brdc_rts network producer: the satellite's a-priori clock is
+                // broadcast-grade, but the network estimates the clock (Δδtˢ
+                // against that a-priori), so carrier phase is informative and is
+                // kept; the code-only erase above is skipped.  Logged once per
+                // satellite, so the mode is visible without a line per epoch.
                 if (sats_phase_retained_.insert(obs.satellite).second) {
                     log_manager_.getLogger("ppp_model")->info(
                         "Broadcast-grade clock for {} — carrier phase RETAINED (brdc_rts "
@@ -1118,8 +1125,8 @@ std::vector<std::string> activeFrequencyBands(
                 // is the PPP single-signal fallback: selectIonoFreePairs fails,
                 // selectSignals picks single signals, and with no
                 // processSingleSignalObservation the sat falls through empty.
-                // Report NoModel with context rather than dropping silently and
-                // leaving the sat-status trace to guess.
+                // Report NoModel with context instead of dropping the sat silently,
+                // so the sat-status trace carries the reason.
                 note_drop(obs.satellite, DropReason::NoModel);
                 log_manager_.getLogger("ppp_model")->debug(
                     "Sat {} {} dropped with empty modeled set: "
@@ -1141,20 +1148,6 @@ std::vector<std::string> activeFrequencyBands(
         return true;
     }
 
-    /**
-     * @brief Select candidate signal pairs for one observation.
-     *
-     * Uses the configured priority lists and band mappings to choose code/phase
-     * pairs for iono-free combination or single/uncombined processing.
-     *
-     * @param obs Input observation record.
-     * @param system_str GNSS system string (e.g. "GPS").
-     * @param selected_signals Output (signal1, signal2) pairs; one member may be
-     *        empty for single/uncombined selections.
-     * @param is_iono_free Output; true when a dual or triple IF combination exists.
-     * @param comb_type Output: "single", "dual", "triple" or "uncombined".
-     * @return true if useful signals were selected.
-     */
     // --- Signal selection: decomposed helpers ---
 
     bool PppModel::buildFrequencyBandMap(
@@ -1176,12 +1169,13 @@ std::vector<std::string> activeFrequencyBands(
 
         // Which frequency bands this system may use.
         //
-        // Uncombined PPP-RTK with lock_signals_to_clock_ref (the default) admits
-        // only the two bands matching the BIA satellite-clock reference
-        // observables, avoiding extra IFB states and keeping the measurement model
-        // consistent with the clock/bias products.  Without the lock, or with no
-        // clock-ref info for this system, fall back to FrequencyMode::All for
-        // uncombined or the configured signal_mode for combined.
+        // On the uncombined path with estimation.lock_signals_to_clock_ref (off by
+        // default), only the two bands matching the BIA satellite-clock reference
+        // observables are admitted, which avoids extra IFB states and keeps the
+        // measurement model consistent with the clock/bias products.  Without the
+        // lock, or with no clock-ref info for this system, both the uncombined and
+        // the combined path use the band list of the configured frequency_mode
+        // (legacy key signal_mode).
         std::vector<std::string> clock_ref_bands;  // populated only when lock is active
         const std::vector<std::string>* allowed_bands_ptr = nullptr;
         // When the clock-ref lock is active, maps each RINEX band digit
@@ -1390,24 +1384,23 @@ std::vector<std::string> activeFrequencyBands(
                 best_phase, found_phase ? "ok" : "missing");
         }
 
-        // channel_mode "all" → augment with every other tracking-mode
-        // channel on the already-selected bands.  buildFrequencyBandMap
-        // picks the priority-best code and phase per band; this loop
-        // adds the remaining channels (e.g. L1W alongside L1C, or C1W
-        // alongside C1C) so each becomes its own KF state ambiguity.
-        // Channels whose band isn't in @p freq_bands are skipped — we
-        // only widen the channel dimension, not the band dimension.
-        // No-op for channel_mode "single"; the canonical priority-best
-        // selection is what that mode asks for.
+        // channel_mode "all": add every other tracking-mode channel on the
+        // already-selected bands.  buildFrequencyBandMap picks one code and one
+        // phase per band; this loop adds the remaining channels (e.g. L1W beside
+        // L1C, or C1W beside C1C), each as its own KF row and each phase channel
+        // with its own ambiguity state.  Channels whose band is not in
+        // @p freq_bands are skipped: only the channel dimension widens, not the
+        // band dimension.  No-op for channel_mode "single", which asks for the
+        // canonical priority-best selection.
         const bool channel_all = (config_.getChannelMode() == ChannelMode::All);
-        // Card SID phase 6b (R1): the widening is the ONE entry on the network path,
-        // and it SUBSUMES cards SCC and SID phase 6a.  Every extra channel it adds is
-        // reported through the same two sets those cards fill, so that everything
-        // downstream — the receiver inter-signal code state, the two sigma scales, the
-        // Melbourne-Wubbena guard, the cell telemetry and both of invariant 7's edges —
-        // keeps working unchanged and one predicate answers for both mechanisms.
-        // A channel is NON-CANONICAL exactly when the band map did not select it for
-        // its band, which is the same test card SCC's receiver side applies.
+        // On the network path the widening is the single entry for extra channels
+        // and subsumes cards SCC and SID phase 6a (card SID phase 6b, R1).  Each
+        // extra channel it adds is reported through the same two sets those cards
+        // fill, so every downstream reader (the receiver inter-signal code state, the
+        // two sigma scales, the Melbourne-Wubbena guard, the cell telemetry and both
+        // edges of invariant #7) works unchanged and one predicate serves both
+        // mechanisms.  A channel is non-canonical when the band map did not select it
+        // for its band, the same test card SCC's receiver side applies.
         const bool subsume =
             channel_all && config_.getProcessingMode() == ProcessingMode::PPP_RTK_Network;
         if (channel_all) {
@@ -1433,12 +1426,12 @@ std::vector<std::string> activeFrequencyBands(
                         selected_signals.emplace_back(sig, "");
                         already.insert(sig);
                         if (subsume) {
-                            // The band's CANONICAL row must be present this epoch for
-                            // the added one to be a SECOND: with it absent this is the
-                            // fallback case, which the per-epoch sweep counts and which
-                            // the receiver side routes by the same signal-against-latch
-                            // test, so the two cannot disagree about which state a row
-                            // belongs to.
+                            // The added row is a second channel only when the band's
+                            // canonical row of the same type is present this epoch.
+                            // With it absent this is the fallback case, which the
+                            // per-epoch sweep counts and the receiver side routes by
+                            // the same signal-against-latch test, so the two agree on
+                            // which state a row belongs to.
                             auto bit = freq_band_to_signal.find(band);
                             std::string canon;
                             if (bit != freq_band_to_signal.end())
@@ -1460,39 +1453,42 @@ std::vector<std::string> activeFrequencyBands(
             }
         }
 
-        // --- Card SCC: the SECOND CODE CHANNEL --------------------------------
-        // (docs/refound/SCC_second_code_channel_2026-09-21.md, R1.)  One canonical
-        // code per station and band means a satellite's C1W code bias is supported
-        // only by the stations that latched C1W, so the C1C and C1W satellite
-        // families compete for the same roster rather than sharing it.  Add, as
-        // CODE-ONLY rows, every allow-listed band-1 code this station reports for
-        // this satellite besides the one the band map already selected.
+        // --- Second code channel (card SCC) ----------------------------------
+        // One canonical code per station and band means a satellite's C1W code bias
+        // is supported only by the stations that latched C1W, so the C1C and C1W
+        // satellite families compete for the same roster instead of sharing it.
+        // Add, as code-only rows, every allow-listed band-1 code this station
+        // reports for this satellite besides the one the band map already selected.
+        // See docs/refound/SCC_second_code_channel_2026-09-21.md (R1).
         //
-        // WHY NOT the channel_mode=All widening above.  That one adds the PHASE
-        // channel too (each becoming its own ambiguity and phase-bias column) and
-        // every tracking attribute, admitted or not; this card wants ONE extra code
-        // row and nothing else, which is why the loader refuses the two together.
+        // Why not the channel_mode=All widening above: it also adds the phase
+        // channels (each with its own ambiguity and phase-bias column) and every
+        // admitted tracking attribute, not only the allow-listed ones, while card SCC
+        // adds one extra code row and nothing else.  With channel_mode all the
+        // loader keeps this knob armed and the widening subsumes it (last paragraph).
         //
-        // WHY BAND 1 ONLY.  A band-2 companion would make the network.sat_isc_state
+        // Why band 1 only: a band-2 companion would make the network.sat_isc_state
         // bridging roster non-empty for the first time; the loader refuses a band-2
         // allow-list entry and the card defers it (§4).  The allow-list is validated
-        // at load, so membership here already implies "3-char code type on band 1".
+        // at load, so membership here already implies a 3-character code type on
+        // band 1.
         //
         // The added key goes into selected_signals because the measurement model
         // needs all three of observed / modeled / variances to accept a row, and it
-        // is ALSO reported through @p companion_out: that set is what makes a
+        // is also reported through @p companion_out: that set is what makes a
         // companion row distinguishable downstream, and R4's Melbourne-Wubbena
-        // guard and R7's cell telemetry both read it.  obs.raw_observed is filled
-        // from every raw key regardless and is untouched by this block.
+        // guard and R7's cell telemetry both read it.  raw_observed is filled in
+        // computeModels from every raw key and is untouched by this block.
         //
-        // NETWORK ONLY, and ARMED ONLY: off the network path or with the knob down
-        // the block is skipped whole, so the selection is byte-identical.
+        // Runs only on the network path with network.second_code_channel armed;
+        // otherwise the block is skipped whole and the selection is byte-identical.
         //
-        // SUBSUMED under `channel_mode: all` (card SID phase 6b, R1): the widening
+        // Subsumed under `channel_mode: all` (card SID phase 6b, R1): the widening
         // above has already added every admitted code of every selected band and
-        // reported it through @p companion_out, so running this block too would append
-        // a DUPLICATE row for each allow-listed one.  The allow-list is ignored there
-        // by design; only the sigma scale still reads.
+        // reported it through @p companion_out, so running this block as well would
+        // append a duplicate row for each allow-listed code.  There the allow-list
+        // (network.second_code_signals) is ignored by design, and only the sigma
+        // scale (network.second_code_sigma_scale) still applies.
         if (config_.networkSecondCodeChannel() && !subsume
             && config_.getProcessingMode() == ProcessingMode::PPP_RTK_Network) {
             for (const auto& band : freq_bands) {
@@ -1500,19 +1496,19 @@ std::vector<std::string> activeFrequencyBands(
                 if (band_it == freq_band_to_signal.end()) continue;
                 const std::string& best_code = band_it->second.first;
                 // Band 1 is the card's scope, tested on the signal's own RINEX band
-                // DIGIT: the band NAME is constellation-specific ("L1" on GPS, "E1" on
-                // Galileo, "B1C" on BeiDou) while the digit is what the allow-list and
-                // the receiver-side latch test both speak.
+                // digit: the band name is constellation-specific ("L1" on GPS, "E1" on
+                // Galileo, "B1C" on BeiDou), while the allow-list and the receiver-side
+                // latch test both use the digit.
                 if (best_code.size() < 2 || best_code[1] != '1') continue;
-                // The band's selected code must be PRESENT this epoch, not merely
-                // named: with it missing there is no canonical row for the companion
-                // to accompany, and a lone second code is the FALLBACK case the
+                // The band's selected code must be present this epoch, not only
+                // named: without it there is no canonical row for the companion to
+                // accompany, and a lone second code is the fallback case, which the
                 // receiver side handles and counts separately.
                 if (!obs.measurements.count(best_code)) continue;
                 // What this station reports for this satellite, filtered by the
-                // network coverage gate — the same gate the band map and the
-                // channel_mode widening both apply, so a non-admitted channel can
-                // never enter through this path either.
+                // network coverage gate (the same gate the band map and the
+                // channel_mode widening apply), so a non-admitted channel cannot
+                // enter through this path either.
                 std::set<std::string> reported;
                 for (const auto& [sig, val] : obs.measurements) {
                     (void)val;
@@ -1532,45 +1528,45 @@ std::vector<std::string> activeFrequencyBands(
             }
         }
 
-        // --- Card SID phase 6a: the SECOND PHASE CHANNEL -------------------------
-        // (docs/refound/SID_signal_identity_2026-09-22.md section 4, R1.)  The PHASE
-        // twin of the block above.  One carrier phase per station and band means a
-        // satellite's L1W phase bias rests on the 18 stations that latched L1W: a
-        // median of 4 carried stations per column-epoch, 23.6 per cent of
-        // satellite-epochs with a clock record and no L1W phase bias, and every one of
-        // card EV7's 13 coverage-gate drop edges on an L1W key.  Add, as ordinary
-        // PHASE rows, every allow-listed band-1 phase this station reports for this
-        // satellite besides the one the latch already selected.
+        // --- Second phase channel (card SID phase 6a) --------------------------
+        // The phase counterpart of the block above.  One carrier phase per station
+        // and band means a satellite's L1W phase bias rests only on the stations that
+        // latched L1W, which leaves it thinly supported (the coverage figures,
+        // including card EV7's coverage-gate drop edges, are in the card).  Add, as
+        // ordinary phase rows, every allow-listed band-1 phase this station reports
+        // for this satellite besides the one the latch already selected.  See
+        // docs/refound/SID_signal_identity_2026-09-22.md section 4 (R1).
         //
-        // WHAT THE ADDED KEY BECOMES.  Everything downstream of `selected_signals` is
-        // per SIGNAL: the measurement model allocates an ordinary float ambiguity
+        // What the added key becomes: everything downstream of `selected_signals` is
+        // per signal.  The measurement model allocates an ordinary float ambiguity
         // "<sat>_<signal>" and the shared per-(satellite, signal) phase-bias state of
-        // that signal's EXISTING family, so an L1W row at an L1C station joins the L1W
-        // family rather than creating one.  Nothing here allocates a receiver
-        // inter-signal PHASE state, and nothing may: a float ambiguity already absorbs
-        // an arbitrary constant per arc, so such a state would sit in the null space of
-        // the normal equations (the audit's risk 5).  This is the one structural
-        // difference from card SCC, whose code rows had no such absorber.
+        // that signal's existing family, so an L1W row at an L1C station joins the
+        // L1W family instead of creating one.  Nothing here allocates a receiver
+        // inter-signal phase state, and none may be added: a float ambiguity already
+        // absorbs an arbitrary constant per arc, so such a state would sit in the
+        // null space of the normal equations (the audit's risk 5).  This is the one
+        // structural difference from card SCC, whose code rows have no such absorber.
         //
-        // WHY NOT the channel_mode=All widening above.  That one widens every selected
-        // band to every tracking attribute, code side included and admitted or not;
-        // this card wants a BOUNDED, allow-listed band-1 phase set, which is why the
-        // loader refuses the two together.
+        // Why not the channel_mode=All widening above: it widens every selected band
+        // to every admitted tracking attribute, code side included, while phase 6a
+        // adds a bounded, allow-listed band-1 phase set.  With channel_mode all the
+        // loader keeps this knob armed and the widening subsumes it (last paragraph).
         //
-        // WHY BAND 1 ONLY.  Band 2 is phase 6b, which lifts the channel_mode interlock
-        // rather than working around it; the allow-list is validated at load, so
-        // membership here already implies "3-character phase type on band 1".
+        // Why band 1 only: band 2 is left to phase 6b, which lifts the channel_mode
+        // interlock instead of working around it.  The allow-list is validated at
+        // load, so membership here already implies a 3-character phase type on
+        // band 1.
         //
-        // THE FALLBACK CASE IS NOT ADDED.  An allow-listed phase arriving with no
-        // latched phase of that band beside it is not a SECOND phase — the latch
-        // decides what "second" means, and promoting it would silently make it the
-        // only one.  The serial PASS-A sweep counts those occurrences
+        // The fallback case is not added.  An allow-listed phase with no latched
+        // phase of that band beside it is not a second phase: the latch defines what
+        // "second" means, and adding the row would silently make it the band's only
+        // phase.  The serial PASS-A sweep counts those occurrences
         // (`spc_fallback_rows`) and does nothing else with them.
         //
-        // NETWORK ONLY, and ARMED ONLY: off the network path or with the knob down the
-        // block is skipped whole, so the selection is byte-identical.
+        // Runs only on the network path with network.second_phase_channel armed;
+        // otherwise the block is skipped whole and the selection is byte-identical.
         //
-        // SUBSUMED under `channel_mode: all` (card SID phase 6b, R1), for the same
+        // Subsumed under `channel_mode: all` (card SID phase 6b, R1) for the same
         // reason as the block above: the widening has already added every admitted
         // phase of every selected band and reported it through @p second_phase_out.
         if (config_.networkSecondPhaseChannel() && !subsume
@@ -1580,15 +1576,15 @@ std::vector<std::string> activeFrequencyBands(
                 if (band_it == freq_band_to_signal.end()) continue;
                 const std::string& best_phase = band_it->second.second;
                 // Band 1 is this phase's scope, tested on the signal's own RINEX band
-                // DIGIT: the band NAME is constellation-specific ("L1" on GPS, "E1" on
-                // Galileo) while the digit is what the allow-list speaks.
+                // digit: the band name is constellation-specific ("L1" on GPS, "E1" on
+                // Galileo), while the allow-list uses the digit.
                 if (best_phase.size() < 2 || best_phase[1] != '1') continue;
-                // The band's latched phase must be PRESENT this epoch, not merely
-                // named: with it missing this is the FALLBACK case above.
+                // The band's latched phase must be present this epoch, not only
+                // named; without it this is the fallback case described above.
                 if (!obs.measurements.count(best_phase)) continue;
                 // What this station reports for this satellite, filtered by the network
-                // coverage gate — the same gate the band map and the channel_mode
-                // widening both apply, so a non-admitted channel can never enter here.
+                // coverage gate (the same gate the band map and the channel_mode
+                // widening apply), so a non-admitted channel cannot enter here either.
                 std::set<std::string> reported;
                 for (const auto& [sig, val] : obs.measurements) {
                     (void)val;
@@ -1629,8 +1625,8 @@ std::vector<std::string> activeFrequencyBands(
         // typical wide pairs (GPS L1/L2, BeiDou B1I/B3) sit at K ≈ 3, but pairs
         // separated by only ~15 MHz (BeiDou B1C/B1I, B2I/B2b/B2ab variants) yield
         // K ≈ 50–80, which turns ~0.3 m code noise into ~15–25 m IF noise.  The
-        // cap is checked once per band pair below — code and phase share the
-        // same K because the band frequency is attribute-independent.
+        // cap is checked once per band pair below; code and phase share the same
+        // K because the band frequency does not depend on the tracking attribute.
         constexpr double kMaxIfNoiseFactor = 10.0;
         auto if_noise_factor = [&](const std::string& sig) -> double {
             if (sig.empty()) return std::numeric_limits<double>::quiet_NaN();
@@ -1642,7 +1638,8 @@ std::vector<std::string> activeFrequencyBands(
                 const auto& b1 = target_bands[i];
                 const auto& b2 = target_bands[j];
 
-                // Anchor policy: in triple/all modes, at least one band must be the anchor (first band).
+                // Anchor policy: in triple, all and independent modes, at least one
+                // band must be the anchor (the first band).
                 const auto sm = config_.getFrequencyMode();
                 const bool use_anchor = (sm == FrequencyMode::Triple || sm == FrequencyMode::All || sm == FrequencyMode::Independent) && target_bands.size() >= 2;
                 if (use_anchor && b1 != target_bands.front() && b2 != target_bands.front()) {
@@ -1664,7 +1661,7 @@ std::vector<std::string> activeFrequencyBands(
                 const auto& s2 = freq_band_to_signal.at(b2);
 
                 // Frequency-separation check.  Use the code signal if available,
-                // else the phase signal — frequency is band-level, so the K is
+                // else the phase signal; frequency is band-level, so K is
                 // identical for both.
                 const std::string check_sig1 = !s1.first.empty() ? s1.first : s1.second;
                 const std::string check_sig2 = !s2.first.empty() ? s2.first : s2.second;
@@ -1694,11 +1691,10 @@ std::vector<std::string> activeFrequencyBands(
                 // constellation-wide, so under mixed L5 capability (say 4 of 11
                 // GPS sats tracking L5Q) the canonical locks in L5Q and every
                 // (L1, L5) candidate names a signal the other sats never measure.
-                // processIonoFreeObservation aborts the whole sat on the first
-                // missing-pair hit, so a sat with a good (C1W, C2W) pair would
-                // drop merely because (C1W, C5Q) lacked C5Q.  Guarding pair
-                // construction against the per-sat measurement set gives non-L5
-                // sats only (L1, L2) and L5-capable sats both.
+                // Guarding pair construction against the per-sat measurement set
+                // gives non-L5 sats only (L1, L2) and L5-capable sats both.
+                // processIonoFreeObservation also skips a pair whose measurements
+                // are missing, as a second guard.
                 const bool code_ok  = !s1.first.empty()  && !s2.first.empty()
                                    && obs.measurements.count(s1.first)
                                    && obs.measurements.count(s2.first);
@@ -1794,9 +1790,27 @@ std::vector<std::string> activeFrequencyBands(
     }
 
     // ===================================================================
-    // selectSignals — top-level orchestrator
+    // selectSignals: top-level orchestrator
     // ===================================================================
 
+    /**
+     * @brief Select candidate signal pairs for one observation.
+     *
+     * Uses the configured priority lists and band mappings to choose code/phase
+     * pairs for iono-free combination or single/uncombined processing.
+     *
+     * @param obs Input observation record.
+     * @param system_str GNSS system string (e.g. "GPS").
+     * @param selected_signals Output (signal1, signal2) pairs; one member may be
+     *        empty for single/uncombined selections.
+     * @param is_iono_free Output; true when a dual or triple IF combination exists.
+     * @param comb_type Output: "single", "dual", "triple" or "uncombined".
+     * @param companion_out Optional; receives the companion codes the uncombined
+     *        selection adds (card SCC).  See selectUncombinedSignals.
+     * @param second_phase_out Optional; receives the second phases the uncombined
+     *        selection adds (card SID phase 6a).  See selectUncombinedSignals.
+     * @return true if useful signals were selected.
+     */
     bool PppModel::selectSignals(const RinexObservation& obs, const std::string& system_str,
         std::vector<std::pair<std::string, std::string>>& selected_signals,
         bool& is_iono_free, std::string& comb_type,
@@ -1826,12 +1840,11 @@ std::vector<std::string> activeFrequencyBands(
                     (sig_pair.second.empty() ? "none" : sig_pair.second) + ")";
                 if (band != freq_bands.back()) available_signals += ", ";
             }
-            // The bracketed list is what actually entered obs.observed
-            // for this satellite — that's the authoritative truth.  In
-            // earlier code an "effective_mode = All" was logged when
-            // uncombined mode override-promoted signal_mode to All, but
-            // band selection now respects signal_mode (or clock-ref
-            // bands) directly, so the parenthetical was misleading.
+            // The bracketed list is the per-band code/phase map this
+            // satellite's selection starts from.  The mode printed is the
+            // configured frequency_mode (legacy signal_mode): band selection
+            // follows it (or the clock-ref bands) directly, with no
+            // promotion to All on the uncombined path.
             const char* clock_ref_note =
                 (config_.isUncombinedEnabled() && config_.lockSignalsToClockRef())
                     ? " (clock-ref-locked)" : "";
@@ -1860,12 +1873,11 @@ std::vector<std::string> activeFrequencyBands(
                 // the freq_band_to_signal, noise-factor and code/phase
                 // availability checks, so this falls through to the single-signal
                 // path.  PPP mode has no processSingleSignalObservation, so the
-                // sat drops with empty modeled and shows as "NoModel".  Log at info so
-                // the user can see this fired without enabling
-                // ppp_model debug logging.  The per-pair rejection
-                // reasons (missing band, noise-K cap, etc.) are
-                // logged at debug inside selectIonoFreePairs itself --
-                // bump ppp_model to debug to see them.
+                // sat drops with an empty modeled set and shows as "NoModel".
+                // Logged at info so the fallback is visible without ppp_model
+                // debug logging; the per-pair rejection reasons (missing band,
+                // noise-K cap, etc.) are logged at debug inside
+                // selectIonoFreePairs.
                 log_manager_.getLogger("ppp_model")->info(
                     "selectIonoFreePairs failed for {} {} -- falling back to "
                     "single-signal mode (freq_bands=[{}], mode={}).  This "
@@ -1930,11 +1942,11 @@ std::vector<std::string> activeFrequencyBands(
         if (s <= 0.0) return 0.0;                                 // feature disabled (default)
         if (signal.empty() || signal.front() != 'L') return 0.0;  // carrier-phase rows only
         if (!antenna_.wasAtxSubstituted(satellite, signal, system)) return 0.0;
-        // 1/sin² elevation amplification, matching the phase thermal term so the
-        // inflation stays meaningful relative to the (also 1/sin²-scaled) thermal
-        // variance at low elevation — where the substituted-PCV residual and its
-        // ZWD/height aliasing are worst.  Clamp sin(el) below ~2.9° (the elevation
-        // mask filters these rows upstream anyway) to avoid blow-up.
+        // 1/sin² elevation amplification, matching the phase thermal term, so the
+        // inflation keeps its weight against the (also 1/sin²-scaled) thermal
+        // variance at low elevation, where the substituted-PCV residual and its
+        // ZWD/height aliasing are largest.  sin(el) is clamped at 0.05 (about 2.9°)
+        // to bound the factor; the elevation mask removes such rows upstream anyway.
         double sin_el = std::sin(elevation_deg * Constants::PI / 180.0);
         constexpr double kMinSin = 0.05;
         if (sin_el < kMinSin) sin_el = kMinSin;
@@ -1949,13 +1961,13 @@ std::vector<std::string> activeFrequencyBands(
         const double slant_dry_delay = geom.tropo_zhd * ppp_obs.mf_d;
 
         const std::string rx_antenna_type = rinex_parser_.getReceiverAntennaType();
-        // RTB-5(c): under realtime.honor_ssr_reference_point, skip the
-        // satellite-PCO range term for satellites whose APPLIED SSR orbit
-        // correction this epoch is APC-referenced (legacy-SSR dialect) — the
-        // corrected orbit already points at the phase center, so the CoM->APC
-        // PCO would double-count 0.6-2.6 m along the LOS.  Geometry records
-        // the per-satellite flag at the orbit-overlay apply sites; with the
-        // toggle off (default) nothing is recorded and this is always false.
+        // Under realtime.honor_ssr_reference_point, skip the satellite-PCO range
+        // term for satellites whose applied SSR orbit correction this epoch is
+        // APC-referenced (legacy-SSR dialect): the corrected orbit already points
+        // at the phase center, so the CoM->APC PCO would count 0.6-2.6 m along
+        // the LOS twice.  Geometry records the per-satellite flag where the orbit
+        // overlay is applied; with the toggle off (the default) nothing is
+        // recorded and this is always false (RTB-5(c)).
         const bool skip_sat_pco =
             config_.getRealTimeConfig().honor_ssr_reference_point
             && geometry_.ssrOrbitApcApplied(obs.satellite);
@@ -2022,11 +2034,11 @@ std::vector<std::string> activeFrequencyBands(
 
             // Per-signal higher-order ionosphere correction (I₂ + I₃),
             // applied before the IF combination so the IF-residual term
-            // c₁·I_h(f₁) + c₂·I_h(f₂) lands in the modeled value
-            // automatically (rather than being smeared into the
-            // first-order iono state or the float ambiguity).  No-op
-            // unless model_corrections.enable_higher_order_ionosphere is
-            // on and a GIM is loaded — see PppModel::setGim and
+            // c₁·I_h(f₁) + c₂·I_h(f₂) enters the modeled value instead of
+            // being absorbed by the first-order iono state or the float
+            // ambiguity.  No-op unless
+            // model_corrections.enable_higher_order_ionosphere is on and a
+            // GIM is loaded; see PppModel::setGim and
             // computeHigherOrderIonoCorrection.
             const double i_h_corr = computeHigherOrderIonoCorrection(
                 obs.time, geom.rx_pos, geom.sat_pos, frequencies[j], meas_type);
@@ -2039,14 +2051,16 @@ std::vector<std::string> activeFrequencyBands(
                 : (meas_type == 'C' ? n.code_std_m * n.code_std_m : n.phase_std_m * n.phase_std_m);
             variances[j] = stochastic_model_.computeVariance(type, obs.measurements, geom.elevation, fallback_var,
                 obs.satellite, antenna_.getAntennas());
-            // Inflate (phase only) for a substituted receiver ATX before the IF
-            // combination below, so the c₁²/c₂² propagation carries it into the
-            // combined variance.  No-op unless atx_substitution_phase_std_m > 0.
+            // Phase-only inflation for a substituted receiver ATX, placed before
+            // the IF combination so the c₁²/c₂² propagation would carry it into
+            // the combined variance (no-op unless atx_substitution_phase_std_m > 0).
+            // Not applied on the iono-free path: the call below is commented out.
             //variances[j] += phaseAtxSubstitutionVarInflation(type, obs.satellite, obs.system, geom.elevation); // not needed
-            // Per-signal zenith variance — stashed for MwSlipDetector even though the
-            // iono-free aggregation below only stores the combined variance under
-            // ref_type.  Without this stash, MW slip detection in iono-free PPP mode
-            // has no per-signal noise prior and falls back to the global-default zenith.
+            // Per-signal zenith variance, stored for MwSlipDetector although the
+            // iono-free aggregation below stores only the combined variance under
+            // ref_type.  Without it, MW slip detection in iono-free PPP mode has no
+            // per-signal noise prior and falls back to the global default zenith
+            // variance.
             ppp_obs.zenith_variances[type] = stochastic_model_.computeVariance(
                 type, obs.measurements, 90.0, fallback_var,
                 obs.satellite, antenna_.getAntennas());
@@ -2123,14 +2137,13 @@ std::vector<std::string> activeFrequencyBands(
                     obs.satellite, system_str, pair.first, pair.second);
                 return false;  // programming error in selectIonoFreePairs
             }
-            // Defensive: skip individual pairs whose measurements aren't
-            // present for THIS sat rather than aborting the whole sat.
-            // The structural fix lives in selectIonoFreePairs (per-sat
-            // measurement guard before pushing candidates); this branch
-            // is a belt-and-braces in case any caller proposes a pair
-            // that the canonical map says should exist but this sat
-            // didn't actually measure.  Empty code_pairs && phase_pairs
-            // after the loop is caught by the post-loop check below.
+            // Skip individual pairs whose measurements are not present for
+            // this sat instead of aborting the whole sat.  selectIonoFreePairs
+            // already guards its candidates against the per-sat measurement
+            // set; this branch is a second guard for a caller that proposes a
+            // pair the canonical map names but this sat did not measure.  If
+            // both code_pairs and phase_pairs end up empty, the post-loop
+            // check below catches it.
             if (!obs.measurements.count(pair.first) || !obs.measurements.count(pair.second)) {
                 log_manager_.getLogger("ppp_model")->debug(
                     "Skipping pair for {} {}: {} present={}, {} present={}",
@@ -2166,7 +2179,7 @@ std::vector<std::string> activeFrequencyBands(
             success = processIonoFreePair(obs, ppp_obs, system_str, p, 'L', geom, pole_tide_corr, comb_type) || success;
         }
 
-        // Remove raw RINEX measurements — only combined keys (containing '_') should remain.
+        // Move raw RINEX measurements to raw_observed; only combined keys (containing '_') stay.
         for (auto it = ppp_obs.observed.begin(); it != ppp_obs.observed.end(); ) {
             if (it->first.find('_') == std::string::npos) {
                 ppp_obs.raw_observed[it->first] = it->second;
@@ -2180,11 +2193,12 @@ std::vector<std::string> activeFrequencyBands(
     }
 
     // Each signal gets the same corrections as the iono-free path (range, sat
-    // clock, tropo, antenna, bias, Shapiro, solid/pole tide, relativistic,
-    // atmospheric loading) but forms no dual-frequency combination.  The
-    // ionosphere is deliberately NOT applied: the modeled value is geometry plus
-    // corrections only, and MeasurementModel adds the per-satellite slant iono
-    // state scaled by the frequency coefficient.
+    // clock, relativistic, hydrostatic tropo, antenna, bias, Shapiro, solid,
+    // ocean and pole tide, atmospheric loading, higher-order ionosphere) but
+    // forms no dual-frequency combination.  The first-order ionosphere is not
+    // modelled here: the modeled value is geometry plus corrections, and
+    // MeasurementModel adds the per-satellite slant iono state scaled by the
+    // frequency coefficient.
     bool PppModel::processUncombinedObservation(const RinexObservation& obs, PppState& state,
         PppObservation& ppp_obs, const std::string& system_str,
         const std::vector<std::pair<std::string, std::string>>& selected_signals,
@@ -2208,12 +2222,14 @@ std::vector<std::string> activeFrequencyBands(
                 continue;
             }
 
-            // Skip CODE signals that have no BIA product entry when required.
-            // Phase measurements are always kept — the float ambiguity absorbs
-            // any time-constant satellite phase bias from missing BIA coverage.
-            // When estimate_sat_biases is enabled, code signals are also kept
-            // because a per-satellite bias state absorbs the uncorrected delay.
-            // MW slip detection is unaffected (it uses raw_observed).
+            // Skip code signals that have no BIA product entry when
+            // estimation.require_bia_for_signals is set and biases are applied
+            // (model_corrections.enable_code_phase_bias).  Phase measurements are
+            // always kept: the float ambiguity absorbs any time-constant satellite
+            // phase bias left by missing BIA coverage.  With estimate_sat_biases
+            // on, code signals are also kept, because a per-satellite bias state
+            // absorbs the uncorrected delay.  MW slip detection is unaffected (it
+            // uses raw_observed).
             const char meas_type_pre = type[0];
             if (meas_type_pre == 'C'
                 && config_.requireBiaForSignals()
@@ -2226,14 +2242,13 @@ std::vector<std::string> activeFrequencyBands(
                 continue;
             }
 
-            // Skip signals lacking strict ATX coverage when the user
-            // has set @c model_corrections.require_atx_coverage.  Both
-            // satellite and receiver antenna entries must supply
-            // finite PCO and populated PCV for this signal's exact
-            // frequency — no fallback chain.  Used to make the ATX
-            // file an authoritative whitelist when "all" signals are
-            // requested but only an ATX-curated subset should
-            // actually process.
+            // Skip signals without strict ATX coverage when
+            // @c model_corrections.require_atx_coverage is set.  Both the
+            // satellite and the receiver antenna entries must supply a
+            // finite PCO and a populated PCV for this signal's exact
+            // frequency, with no fallback chain.  This makes the ATX file
+            // an authoritative allowlist when "all" signals are requested
+            // but only an ATX-curated subset should be processed.
             if (config_.getModelCorrections().require_atx_coverage
                 && !antenna_.hasFullAtxCoverage(obs.satellite, type, obs.system)) {
                 log_manager_.getLogger("ppp_model")->debug(
@@ -2254,11 +2269,10 @@ std::vector<std::string> activeFrequencyBands(
 
             // Per-signal higher-order ionosphere correction (I₂ + I₃).
             // In uncombined / PPP-RTK mode the first-order ionosphere is
-            // estimated as a per-satellite slant state, so subtracting
-            // I_h here means the state cleanly represents I₁ only —
-            // higher-order content no longer leaks into it.  No-op when
-            // disabled or no GIM is wired up; see
-            // PppModel::computeHigherOrderIonoCorrection.
+            // estimated as a per-satellite slant state; modelling I_h here
+            // keeps higher-order content out of that state, so it
+            // represents I₁ only.  No-op when disabled or when no GIM is
+            // set; see PppModel::computeHigherOrderIonoCorrection.
             const double i_h_corr = computeHigherOrderIonoCorrection(
                 obs.time, geom.rx_pos, geom.sat_pos, freq, meas_type);
 
@@ -2289,9 +2303,9 @@ std::vector<std::string> activeFrequencyBands(
                 obs.satellite, antenna_.getAntennas());
             // Phase-only inflation for a substituted receiver ATX (no-op unless
             // atx_substitution_phase_std_m > 0).  Applied to the elevation-scaled
-            // KF variance only — the zenith variance feeding MwSlipDetector is left
-            // untouched, since the slowly-varying PCV bias cancels in epoch
-            // differencing and must not desensitise slip detection.
+            // KF variance only; the zenith variance feeding MwSlipDetector is left
+            // unchanged, because the slowly varying PCV bias cancels in epoch
+            // differencing and inflating it there would desensitise slip detection.
             variance += phaseAtxSubstitutionVarInflation(type, obs.satellite, obs.system, geom.elevation);
 
             ppp_obs.observed[type] = observed_value;
@@ -2332,9 +2346,10 @@ std::vector<std::string> activeFrequencyBands(
             q.stec_tecu, frequency_hz, meas_type);
     }
 
-    // Returns 0 when a dual- or triple-frequency iono-free combination is
-    // available (the delay is already removed); otherwise falls back to
-    // Klobuchar or the internal ionosphere model.
+    // Returns 0 when the first two (or three) priority-list signals are all
+    // measured, i.e. an iono-free combination is available and removes the
+    // delay.  Otherwise returns the Klobuchar delay, or 0 when the Klobuchar
+    // model is disabled or its eight coefficients are missing.
     double PppModel::computeIonosphericDelay(const GnssTime& time,
         const Eigen::Vector3d& rx_pos,
         const Eigen::Vector3d& sat_pos,
@@ -2364,10 +2379,10 @@ std::vector<std::string> activeFrequencyBands(
             return 0.0; // Ionosphere-free, no delay
         }
         if (!ionosphere_.has_value()) {
-            // Klobuchar is gated off in model_corrections — the row needing
-            // a single-frequency a-priori delay just gets 0.  In typical
-            // post-processed runs this path never fires (IF / DD / PPP-RTK
-            // uncombined all bypass it earlier in this function).
+            // Klobuchar is disabled in model_corrections
+            // (enable_klobuchar_ionosphere), so a row that needs a
+            // single-frequency a-priori delay gets 0.  The iono-free, DD and
+            // uncombined PPP-RTK paths do not call this function.
             return 0.0;
         }
         if (klobuchar_coeffs_.size() != 8) {
@@ -2419,9 +2434,15 @@ std::vector<std::string> activeFrequencyBands(
         return combination;
     }
 
-    // GLONASS is FDMA, so measured cycles are scaled to a reference frequency to
-    // be comparable across satellites.  Returns the input unchanged for non-GLONASS
-    // or invalid frequencies.
+    // GLONASS is FDMA, so a cycle count depends on the satellite's channel
+    // frequency.  Returns @p observed_data × f_k / f_ref, with f_k the satellite's
+    // channel frequency for @p freq_type and f_ref the channel-0 base frequency
+    // (PppUtils::getReferenceFrequency).  The ratio is dimensionless, so the result
+    // has the input's unit: cycles, as the trace line labels them (a range in
+    // metres does not depend on the carrier frequency).  For cycles this converts a
+    // count at f_ref into a count at f_k; the opposite direction is f_ref / f_k.
+    // Returns the input unchanged for non-GLONASS systems, empty inputs or invalid
+    // frequencies.
     double PppModel::rescaleGlonassObservation(double observed_data, const std::string& freq_type,
         System system, const std::string& satellite) const {
         if (system != System::GLONASS) {

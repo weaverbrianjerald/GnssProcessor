@@ -4,10 +4,10 @@
  *        (@ref rxCbInjectGate, docs/SPEC_rx_cb_carry.md).
  *
  * The gate is the read-only half of the carry's event response: the produce
- * phase is parallel, so a breach is answered by WITHHOLDING the fold (the
- * serial harvest then overwrites the stale entry — the implicit drop).  These
- * gates pin the decision table: gap staleness, RW variance inflation, the
- * k·sigma innovation gate with its variance guard, and NaN/degenerate safety.
+ * phase is parallel, so a breach is answered by withholding the fold, and the
+ * serial harvest then overwrites the stale entry (an implicit drop).  These
+ * tests cover the decision table: gap staleness, RW variance inflation, the
+ * k·sigma innovation gate with its variance guard, and NaN/degenerate inputs.
  */
 
 #include <gtest/gtest.h>
@@ -21,7 +21,7 @@ using namespace GnssProcessor;
 
 namespace {
 
-// Nominal fold: fresh carry, small innovation — variance inflates by q·gap.
+// Nominal fold: fresh carry, small innovation; the variance inflates by q·gap.
 TEST(RxCbInjectGate, FoldsWithInflatedVariance) {
     double var_eff = 0.0;
     const auto act = rxCbInjectGate(/*gap=*/30.0, /*max_gap=*/900.0,
@@ -40,7 +40,7 @@ TEST(RxCbInjectGate, SkipsStaleGap) {
 
 // The innovation gate: |innov| just under k·sqrt(var_eff+guard) folds, just
 // over withholds.  With var_eff ~ 1e-4 and guard 0.25 the threshold is
-// dominated by the guard: 10*sqrt(0.2501) ~ 5.001 m — receiver-reset scale.
+// dominated by the guard: 10*sqrt(0.2501) ~ 5.001 m, the scale of a receiver reset.
 TEST(RxCbInjectGate, InnovationGateBoundary) {
     double var_eff = 0.0;
     const double thr = 10.0 * std::sqrt(1e-4 + 0.25);

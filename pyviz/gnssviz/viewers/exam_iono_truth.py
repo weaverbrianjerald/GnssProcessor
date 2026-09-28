@@ -1,10 +1,10 @@
-"""Truth-referenced ionospheric storm — the exam's injected-iono answer key.
+"""Truth-referenced ionospheric storm: the exam's injected-iono answer key.
 
 Reads the GnssSimulator answer key ``truth_atmo.csv`` (the per-satellite slant
-ionosphere the synthesizer *injected*, bound to a
+ionosphere the synthesizer injected, bound to a
 :class:`~gnssviz.trace_paths.TraceContext` via ``--truth-dir``) and shows the
-storm exactly as it was written into the observations, so the reviewer can read
-the injected disturbance off the same time base as the recovered solution:
+storm as it was written into the observations, so the reviewer can read the
+injected disturbance off the same time base as the recovered solution:
 
   1. A symmetric ``imagesc``-style :class:`Raster` of the storm slant delay
      ``dI_L1_m`` over (satellite rows × epoch columns), drawn in **turbo** on a
@@ -12,14 +12,14 @@ the injected disturbance off the same time base as the recovered solution:
      depletion (negative) lobes separate by colour; NaN (satellite not visible
      that epoch) cells stay transparent, so each satellite's arc shows as a
      coloured band across the storm window.
-  2. A per-satellite ``dI_L1`` spaghetti plot vs GPS time — one gap-aware line per
+  2. A per-satellite ``dI_L1`` spaghetti plot vs GPS time: one gap-aware line per
      satellite coloured by PRN, the storm window drawn as paired :class:`VLine`s,
      and the storm peak (from ``scenario_summary.json`` when present, else the
-     ``argmax`` of ``dI_L1``) called out with a ring + stat box.
+     ``argmax`` of ``dI_L1``) called out with a ring and stat box.
 
 ``dI_L1`` is the storm-only slant delay (``stec_total − stec_quiet`` scaled to L1
-metres); the quiet Klobuchar background is deliberately *not* drawn here — this
-viewer isolates the injected disturbance the processor must ride through.
+metres); the quiet Klobuchar background is not drawn here, since this viewer
+isolates the injected disturbance the processor must ride through.
 """
 
 from __future__ import annotations
@@ -40,16 +40,16 @@ _SYS_RANK = {"G": 0, "E": 1, "R": 2, "C": 3, "J": 4, "S": 5}
 _GAP_FACTOR = 3.0                       # NaN-break a line when dt > 3*median(dt)
 _PEAK_RING = (0.0, 0.0, 0.0)
 
-#: Vertical trim applied to BOTH sat×epoch rasters (total slant iono + storm
+#: Vertical trim applied to both sat×epoch rasters (total slant iono + storm
 #: enhancement).  They carry ~30 satellite rows of a smooth field, so the shared
-#: strip height is more than they need and it crowds the dashboard; 0.8 keeps
-#: every row legible while giving back 20% of the page (professor request,
-#: 2026-08-06).  The per-satellite spaghetti panel below is unaffected.
+#: strip height is more than they need and crowds the dashboard; 0.8 keeps every
+#: row legible while giving back 20% of the page.  The per-satellite spaghetti
+#: panel below is unaffected.
 _RASTER_HEIGHT_SCALE = 0.8
 
 
 # --------------------------------------------------------------------------- #
-#  Small helpers (local — no cross-viewer imports beyond exam_common)
+#  Small helpers (local, no cross-viewer imports beyond exam_common)
 # --------------------------------------------------------------------------- #
 def _prn_order(sats):
     """Unique satellite IDs ordered by (system rank, numeric PRN); rest last."""
@@ -143,16 +143,16 @@ def _iono_raster(df, sats, value_col, *, diverging, title, cbar_label,
                  width=13.0, height_scale=1.0):
     """A (sat × epoch) :class:`Raster` of ``value_col`` from truth_atmo.
 
-    Both tiles use **turbo** (professor request, 2026-08-06): the reader is
-    resolving fine structure inside a narrow band of a mostly-saturated field,
-    not ranking magnitudes, and the rainbow buys real perceptual resolution
-    there.  ``diverging`` still controls the *scaling* -- a symmetric ``±vmax``
-    range so zero lands mid-colormap for the storm delta, versus ``[0, vmax]``
-    clamped at zero for the total delay.  Note the trade this makes on the delta
-    tile: turbo's midpoint is green, not neutral, so the enhancement/depletion
-    sign flip reads as a colour change rather than as a pass through white.  Swap
-    the diverging branch back to ``"rdbu"`` if the zero crossing ever matters more
-    than the fine structure.
+    Both tiles use **turbo**: the reader is resolving fine structure inside a
+    narrow band of a mostly-saturated field, not ranking magnitudes, and the
+    rainbow buys real perceptual resolution there.  ``diverging`` still
+    controls the scaling: a symmetric ``±vmax`` range so zero lands
+    mid-colormap for the storm delta, versus ``[0, vmax]`` clamped at zero for
+    the total delay.  Turbo's midpoint is green, not neutral, so on the delta
+    tile the enhancement/depletion sign flip reads as a colour change rather
+    than as a pass through white.  Swap the diverging branch back to
+    ``"rdbu"`` if the zero crossing needs to matter more than the fine
+    structure.
 
     ``height_scale`` trims the shared satellite-strip height (0.8 = 20% shorter);
     the tiles are otherwise taller than these two need.  Returns ``None`` if the
@@ -201,27 +201,27 @@ def build_exam_iono_truth(ctx) -> ViewerResult:
     sat_color = color_by_prn(df["satellite"].tolist())
     figures: list = []
 
-    # ---- Figure 1: TOTAL slant iono I_L1 (quiet Klobuchar + storm) ---------- #
-    # The realistic full slant delay riding on every ray — the background a
-    # single-frequency (Part B) student must model/remove; it is NOT zero away
-    # from the storm.  Sequential (all-positive) map, clamped at 0.
+    # ---- Figure 1: total slant iono I_L1 (quiet Klobuchar + storm) ---------- #
+    # The full slant delay riding on every ray: the background a single-frequency
+    # (Part B) student must model or remove; it is not zero away from the storm.
+    # Sequential (all-positive) map, clamped at 0.
     fig_total = _iono_raster(df, sats, "I_L1_m", diverging=False,
                              title="Total slant iono I_L1 (Klobuchar + storm)",
                              cbar_label="I_L1 (m)", height_scale=_RASTER_HEIGHT_SCALE)
     if fig_total is not None:
         figures.append(fig_total)
 
-    # ---- Figure 2: storm ENHANCEMENT dI_L1 (total − quiet), diverging ------- #
-    # The injected disturbance ON TOP of the quiet background — ~0 outside the
-    # storm window by construction; the symmetric caxis shows enhancement vs
-    # depletion lobes.
+    # ---- Figure 2: storm enhancement dI_L1 (total − quiet), diverging ------- #
+    # The injected disturbance on top of the quiet background: about 0 outside
+    # the storm window by construction; the symmetric caxis shows enhancement
+    # vs depletion lobes.
     fig_delta = _iono_raster(df, sats, "dI_L1_m", diverging=True,
                              title="Storm enhancement dI_L1 (total - quiet)",
                              cbar_label="dI_L1 (m)", height_scale=_RASTER_HEIGHT_SCALE)
     if fig_delta is not None:
         figures.append(fig_delta)
 
-    # ---- Figure 3: per-satellite TOTAL I_L1 spaghetti + storm peak ---------- #
+    # ---- Figure 3: per-satellite total I_L1 spaghetti + storm peak ---------- #
     val_col = "I_L1_m" if "I_L1_m" in df.columns else "dI_L1_m"
     is_total = val_col == "I_L1_m"
     ax_s = Axes(title=("Per-satellite total slant iono I_L1 with storm peak"
@@ -242,10 +242,10 @@ def build_exam_iono_truth(ctx) -> ViewerResult:
     traces += ec.storm_vlines(ctx)
 
     peak = _storm_peak(ctx, df)
-    # On a TOTAL-I_L1 plot the visible maximum is the bulk (GIM) ionosphere, not the
-    # small synthetic overlay — so the ring must mark the max TOTAL slant TEC (which is
-    # what the eye reads as "the peak"), NOT the overlay dI_L1 peak.  The overlay peak
-    # stays in the text box, clearly labelled, so both numbers are available.
+    # On a total-I_L1 plot the visible maximum is the bulk (GIM) ionosphere, not
+    # the small synthetic overlay, so the ring marks the max total slant TEC
+    # (what the eye reads as "the peak"), not the overlay dI_L1 peak.  The
+    # overlay peak stays in the text box, labelled, so both numbers are available.
     tec_peak = None
     if is_total:
         tot = df["I_L1_m"].to_numpy(float)
@@ -295,9 +295,9 @@ def _summary(df, sats, peak) -> str:
         instorm = (pd.to_numeric(df["in_storm_window"], errors="coerce").fillna(0.0)
                    > 0.5).to_numpy()
         out.append(f"In-storm samples : {int(instorm.sum())} of {len(df)}")
-    # Total slant iono (Klobuchar background + storm) — the delay that is NOT zero
-    # away from the storm and that a single-freq student must model (cancels in the
-    # dual-freq IF combination, so dual-freq PPP is flat).
+    # Total slant iono (Klobuchar background + storm): the delay that is not zero
+    # away from the storm and that a single-freq student must model (cancels in
+    # the dual-freq IF combination, so dual-freq PPP is flat).
     if "I_L1_m" in df.columns:
         il1 = df["I_L1_m"].to_numpy(float)
         if instorm is not None:

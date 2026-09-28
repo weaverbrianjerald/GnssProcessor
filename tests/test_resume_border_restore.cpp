@@ -1,48 +1,48 @@
 /**
  * @file test_resume_border_restore.cpp
- * @brief Contract tests for the RS-7 DENSE-BORDER continuity card
+ * @brief Contract tests for the RS-7 dense-border continuity card
  *        (docs/SPEC_event_harness.md §21.14): the read knob
  *        @c network.resume_border_restore, its interlocks, and the restore
  *        convention it applies to the snapshot's @c QK / @c QP records.
  *
- * THE DEFECT.  Under @c network.shared_carry_full_cov the D2 shared carry
- * (satellite clocks, code biases, phase biases) folds as ONE dense information
- * block @f$\Lambda=(P_{prev}+Q)^{-1}@f$.  A warm resume restored that block's
- * VALUES and per-key variances (the @c D records) but never its
- * cross-covariance, so at the first warm fold every carried key missed
- * @c SharedCarryCov::row and degraded to the legacy per-key diagonal — the C1
- * line's "warm resume restored N diagonal carries".  The block was in the file
- * all along (the @c QK keys + @c QP lower-triangle rows written by
- * @c network.state_snapshot_coupling_capture); the only reader was gated behind
+ * The defect.  Under @c network.shared_carry_full_cov the D2 shared carry
+ * (satellite clocks, code biases, phase biases) folds as one dense information
+ * block @f$\Lambda=(P_{prev}+Q)^{-1}@f$.  Without a border restore, a warm resume
+ * restores that block's values and per-key variances (the @c D records) but not
+ * its cross-covariance, so at the first warm fold every carried key misses
+ * @c SharedCarryCov::row and falls back to the per-key diagonal; the C1 dense
+ * border run-end line counts these diagonal folds.  The block is in the file (the
+ * @c QK keys and @c QP lower-triangle rows written by
+ * @c network.state_snapshot_coupling_capture); its other reader is
  * @c network.resume_coupling_restore, which the loader refuses on a
- * @c carry_invariant field lineage because it hard-requires Card 1f.
+ * @c carry_invariant field lineage because it requires Card 1f.
  *
- * THE SPLIT, which is the whole card, and the reason a test guards it.  One
- * capture knob writes TWO independent populations:
- *   * the coupling ROWS (@c QL / @c QZ) are per-row REGRESSIONS @f$M_r@f$ on
+ * The split, which is the substance of the card and the reason a test guards it.
+ * One capture knob writes two independent populations:
+ *   * the coupling rows (@c QL / @c QZ) are per-row regressions @f$M_r@f$ on
  *     the border.  A truncated one breaks the family identity
- *     @f$M^Tg_s=-g_r(c)@f$ — every coupling row then observes the clock gauge
- *     and the W5 null-space gate withholds the epoch — so they need 1f's
+ *     @f$M^Tg_s=-g_r(c)@f$: every coupling row then observes the clock gauge
+ *     and the W5 null-space gate withholds the epoch.  They therefore need 1f's
  *     repair and stay behind @c resume_coupling_restore;
- *   * the @c QK / @c QP block is a COVARIANCE.  It carries no regression, no
+ *   * the @c QK / @c QP block is a covariance.  It carries no regression, no
  *     gauge identity and no family sum, so it needs neither
  *     @c carry_conditional_coupling nor 1f.
- * If a later edit "tidies" the new knob under the old interlock the field
- * lineage silently loses its border again, and the only symptom is a run-end
- * counter — hence @ref ResumeBorderRestore.RestoreDoesNotRequireCard1f.
+ * If a later edit put the new knob under the old interlock, the field lineage
+ * would lose its border again with only a run-end counter to show it; hence
+ * @ref ResumeBorderRestore.RestoreDoesNotRequireCard1f.
  *
- * What is locked here: the default; the @c resume_frame_restore prerequisite
- * (the border is expressed IN the realization frame — the RS-6 argument); the
- * warn-DISARM without @c shared_carry_full_cov (nothing consumes the block, so
- * an armed knob would be silently inert — invariant #4); the independence from
- * Card 1f and from conditional coupling; and the restore convention itself —
- * which keys are kept, which are dropped ROW AND COLUMN, that the rebuilt @c P
+ * Tested here: the default; the @c resume_frame_restore prerequisite (the border
+ * is expressed in the realization frame, the RS-6 argument); the warn-and-disarm
+ * without @c shared_carry_full_cov (nothing consumes the block, so an armed knob
+ * would be inert without any message, invariant #4); the independence from
+ * Card 1f and from conditional coupling; and the restore convention itself:
+ * which keys are kept, which are dropped (row and column), that the rebuilt @c P
  * is symmetric from the stored lower triangle, and that a snapshot without
- * @c QK / @c QP rows restores NOTHING rather than something partial.
+ * @c QK / @c QP rows restores nothing rather than something partial.
  *
- * The seam mechanics themselves (the first fold actually running the dense
- * path, the rx-CB gate share, the code-bias level, the ZWD sink) are graded on
- * the §21.14 harness legs, not here.
+ * The seam mechanics (the first fold running the dense path, the rx-CB gate
+ * share, the code-bias level, the ZWD sink) are graded on the §21.14 harness
+ * legs, not here.
  */
 #include <gtest/gtest.h>
 
@@ -81,7 +81,7 @@ NetworkStateSnapshot baseSnapshot() {
 
 /// A snapshot carrying a three-key dense border plus the matching D rows, with
 /// values chosen so a shortest-round-trip decimal differs from a rounded one.
-/// The third key deliberately has NO live carry in @ref liveCarry below, so the
+/// The third key has no live carry in @ref liveCarry below, so the
 /// drop path is exercised by every restore test that uses it.
 NetworkStateSnapshot borderSnapshot() {
     NetworkStateSnapshot s = baseSnapshot();
@@ -94,8 +94,8 @@ NetworkStateSnapshot borderSnapshot() {
 
 /// The live D2 carry the restore intersects against: the first two keys of
 /// @ref borderSnapshot, plus an SH coefficient that must never reach the dense
-/// block (VtecSh's carry is the diagonal pre-gate fold — @ref sharedCarryKey
-/// has no key for the (n,m,trig) family at all).
+/// block (VtecSh's carry is the diagonal pre-gate fold, and @ref sharedCarryKey
+/// has no key for the (n,m,trig) family).
 std::vector<CarryPrior> liveCarry() {
     std::vector<CarryPrior> v;
     CarryPrior clk;
@@ -122,14 +122,15 @@ std::vector<CarryPrior> liveCarry() {
     return v;
 }
 
-/// The restore the driver performs (NetworkRunContext.cpp, the §18.12 (2a) block
-/// now reached by @c resume_border_restore as well), reproduced here so the
-/// CONVENTION is locked by a test rather than by a comment: intersect the
-/// snapshot's key list with the keys that have a live NON-VtecSh carry, keep the
-/// snapshot's row ORDER, drop the rest row AND column, and mirror the stored
-/// lower triangle into a symmetric @c P.  @c ok is the driver's own
-/// `nk > 0 && finite` screen — false means it leaves @c prev_carry_cov alone and
-/// the fold degrades exactly as before.
+/// The restore the driver performs (NetworkRunContext.cpp, the dense D2 covariance
+/// side-car block of SPEC_synthetic_minimum_network §18.12 (2a), which
+/// @c resume_border_restore also reaches), reproduced here so the convention is
+/// fixed by a test rather than by a comment: intersect the snapshot's key list
+/// with the keys that have a live non-VtecSh carry, keep the snapshot's row
+/// order, drop the rest (row and column), and mirror the stored lower triangle
+/// into a symmetric @c P.  @c ok is the driver's `nk > 0 && finite` screen;
+/// false means the driver leaves @c prev_carry_cov alone and the fold degrades
+/// per key as without the restore.
 SharedCarryCov restoreBorder(const NetworkStateSnapshot& snap,
                              const std::vector<CarryPrior>& prev_carry,
                              std::size_t* dropped, bool* ok) {
@@ -213,9 +214,9 @@ const char* kBorderBase =
 // =============================================================================
 // The loader contract.
 //
-// NOTE: GnssConfig::loadFromJson CATCHES std::runtime_error and returns false,
-// logging the message, so a refusal is asserted as a FAILED LOAD and never by
-// message text — the shape every sibling resume suite uses.
+// Note: GnssConfig::loadFromJson catches std::runtime_error, logs the message and
+// returns false, so a refusal is asserted as a failed load and never by message
+// text, as in every sibling resume suite.
 // =============================================================================
 
 /// The byte-identity floor: a stock network run does not restore a border.
@@ -229,7 +230,8 @@ TEST(ResumeBorderRestore, DefaultIsOff) {
 /// the datum the same solve realizes, so the block is only meaningful once the
 /// pre-seam realization continues.  Without the frame restore the first election
 /// re-realizes that frame and the restored cross-covariance would describe a
-/// level the writer never held — invariant #1's stale-stiff-prior-across-a-jump.
+/// level the writer never held (invariant #1: a stiff prior carried stale across
+/// a jump).  The loader refuses this configuration.
 TEST(ResumeBorderRestore, RestoreRequiresFrameRestore) {
     GnssConfig cfg;
     EXPECT_FALSE(loadInto("noframe",
@@ -238,9 +240,10 @@ TEST(ResumeBorderRestore, RestoreRequiresFrameRestore) {
                       "    \"resume_border_restore\": true,\n"), cfg));
 }
 
-/// ⚠ Invariant #4.  With shared_carry_full_cov OFF every key folds through the
-/// per-key diagonal path BY CONSTRUCTION, so nothing would ever read the restored
-/// block: the knob must warn and DISARM, not load armed-and-silently-inert.
+/// Invariant #4.  With shared_carry_full_cov off, every key folds through the
+/// per-key diagonal path by construction, so nothing would read the restored
+/// block.  The loader warns and disarms the knob rather than loading it armed
+/// and inert.
 TEST(ResumeBorderRestore, RestoreWithoutFullCovWarnsAndDisarms) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("nofullcov",
@@ -251,12 +254,12 @@ TEST(ResumeBorderRestore, RestoreWithoutFullCovWarnsAndDisarms) {
         << "an armed-but-unconsumed border restore must be disarmed, not carried";
 }
 
-/// ⚠ THE CARD.  network.resume_coupling_restore hard-requires
+/// The central contract of the card.  network.resume_coupling_restore requires
 /// carry_coupling_gauge_project (Card 1f) because it also restores the coupling
-/// ROWS, whose truncation breaks Mᵀg_s = −g_r(c).  A COVARIANCE block carries no
-/// regression and no gauge identity, so the border restore must load WITHOUT 1f
-/// — that is exactly what makes it reachable on the carry_invariant field
-/// lineage, where 1f is out of regime and resume_coupling_restore is refused.
+/// rows, whose truncation breaks Mᵀg_s = −g_r(c).  A covariance block carries no
+/// regression and no gauge identity, so the border restore loads without 1f.
+/// That makes it reachable on the carry_invariant field lineage, where 1f is out
+/// of regime and resume_coupling_restore is refused.
 TEST(ResumeBorderRestore, RestoreDoesNotRequireCard1f) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("no1f",
@@ -280,8 +283,8 @@ TEST(ResumeBorderRestore, RestoreDoesNotRequireConditionalCoupling) {
 }
 
 /// The §21.14 leg posture: the field lineage's own carry, the frame restore, the
-/// border restore, and resume_coupling_restore explicitly OFF (the loader would
-/// refuse it here) — this must load clean.
+/// border restore, and resume_coupling_restore explicitly off (the loader would
+/// refuse it here).  This loads clean.
 TEST(ResumeBorderRestore, ArmedFieldPostureLoads) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("armed",
@@ -302,7 +305,7 @@ TEST(ResumeBorderRestore, ArmedFieldPostureLoads) {
 // The restore convention.
 // =============================================================================
 
-/// The restore is driven by the knob ALONE: a snapshot's QK/QP rows rebuild the
+/// The restore is driven by the knob alone: a snapshot's QK/QP rows rebuild the
 /// dense block for every key that also has a live carry, at the snapshot's own
 /// row order, symmetric from the stored lower triangle, bit-exact.
 TEST(ResumeBorderRestore, QkQpRowsRebuildTheDenseBlockBitExact) {
@@ -317,7 +320,7 @@ TEST(ResumeBorderRestore, QkQpRowsRebuildTheDenseBlockBitExact) {
     bool ok = false;
     const SharedCarryCov cov = restoreBorder(r, liveCarry(), &dropped, &ok);
     ASSERT_TRUE(ok);
-    // G12|CLK has no live carry: dropped ROW AND COLUMN, never zero-filled.
+    // G12|CLK has no live carry: dropped (row and column), never zero-filled.
     EXPECT_EQ(dropped, 1u);
     ASSERT_EQ(cov.row.size(), 2u);
     EXPECT_EQ(cov.row.count("G12|CLK"), 0u);
@@ -329,7 +332,7 @@ TEST(ResumeBorderRestore, QkQpRowsRebuildTheDenseBlockBitExact) {
                      1.2345678901234e-04);
     EXPECT_DOUBLE_EQ(cov.P(static_cast<Eigen::Index>(b), static_cast<Eigen::Index>(b)),
                      3.0517578125e-04);
-    // Stored lower-triangle only; the restore must mirror it.
+    // Only the lower triangle is stored; the restore mirrors it.
     EXPECT_DOUBLE_EQ(cov.P(static_cast<Eigen::Index>(b), static_cast<Eigen::Index>(a)),
                      2.0e-05);
     EXPECT_DOUBLE_EQ(cov.P(static_cast<Eigen::Index>(a), static_cast<Eigen::Index>(b)),
@@ -337,10 +340,11 @@ TEST(ResumeBorderRestore, QkQpRowsRebuildTheDenseBlockBitExact) {
     EXPECT_TRUE(cov.P.isApprox(cov.P.transpose()));
 }
 
-/// A snapshot with no QK/QP rows restores NOTHING — the file a writer without
-/// network.state_snapshot_coupling_capture produces.  The block must be left
-/// EMPTY (the fold then degrades per key exactly as it does today), never
-/// partially populated: the run-end line reports this as INERT.
+/// A snapshot with no QK/QP rows (the file a writer without
+/// network.state_snapshot_coupling_capture produces) restores nothing.  The block
+/// is left empty (the fold then degrades per key, as without the restore), never
+/// partially populated.  The driver's restore-time warning calls the knob INERT
+/// for the run, and the run-end line flags 0 keys restored.
 TEST(ResumeBorderRestore, SnapshotWithoutQkQpRestoresNothing) {
     const NetworkStateSnapshot s = baseSnapshot();
     std::ostringstream os;
@@ -361,7 +365,7 @@ TEST(ResumeBorderRestore, SnapshotWithoutQkQpRestoresNothing) {
     EXPECT_EQ(cov.P.size(), 0);
 }
 
-/// Every key gone (a resume whose D rows all departed) is the OTHER inert case:
+/// Every key gone (a resume whose D rows all departed) is the other inert case:
 /// nk == 0 fails the driver's screen, so prev_carry_cov is left untouched rather
 /// than replaced by an empty block that would claim a dense fold it cannot do.
 TEST(ResumeBorderRestore, NoLiveKeyLeavesTheBlockUntouched) {
@@ -381,10 +385,10 @@ TEST(ResumeBorderRestore, NoLiveKeyLeavesTheBlockUntouched) {
     EXPECT_TRUE(cov.row.empty());
 }
 
-/// SH-VTEC never enters the dense block — its carry is the diagonal pre-gate
-/// fold, and @ref sharedCarryKey has no key for the (n,m,trig) family at all, so
-/// a VtecSh entry must not contribute a live key (it would alias onto the bare
-/// `sat` fallback, which for an SH coefficient is the EMPTY string).
+/// SH-VTEC never enters the dense block: its carry is the diagonal pre-gate
+/// fold, and @ref sharedCarryKey has no key for the (n,m,trig) family, so a
+/// VtecSh entry contributes no live key (it would alias onto the bare `sat`
+/// fallback, which for an SH coefficient is the empty string).
 TEST(ResumeBorderRestore, VtecShCarryNeverEntersTheBorder) {
     NetworkStateSnapshot s = borderSnapshot();
     s.carry_cov_keys.push_back("");        // what a VtecSh key would collapse to

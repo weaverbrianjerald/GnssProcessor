@@ -1,11 +1,11 @@
 #pragma once
 /**
  * @file NetworkProducerAr.hpp
- * @brief Producer-side network ambiguity-resolution diagnostic (Phase 2, LOG ONLY)
+ * @brief Producer-side network ambiguity-resolution diagnostic (Phase 2, log only)
  *        plus the one-shot full-arrowhead normal-equation export.
  *
- * Runs on the FINAL (post-adaptation) network solution, entirely READ-ONLY — it
- * neither re-pins the datum nor re-solves, so the network solution is byte-identical
+ * Runs on the final accepted network solution and only reads it: it neither
+ * re-pins the datum nor re-solves, so the network solution is byte-identical
  * whether this block runs or not.  Two cooperating pieces:
  *
  *  1. **Producer network AR, Phase 2** (`network.ambiguity_resolution.enable` +
@@ -13,26 +13,25 @@
  *     independent between-station double-difference basis (star topology per
  *     (const,signal), GPS+Galileo only), builds the exact DD covariance from
  *     @ref NetworkEstimator::jointConditionalCovariance, converts to cycles, and runs
- *     @ref ils::ilsFix purely to LOG how many integers the network COULD fix (with the
+ *     @ref ils::ilsFix only to log how many integers the network could fix (with the
  *     median DD formal-σ and float-fraction convergence gauges).  The DD ambiguities
- *     are datum-INVARIANT, so the fix attempt is independent of the phase-bias datum.
+ *     are datum-invariant, so the fix attempt is independent of the phase-bias datum.
  *     With `network.ambiguity_resolution.trace` also armed it writes every DD of the
  *     basis to `logs/network_producer_ar.csv` (@ref kProducerArHeader) with its
  *     identity, float value, formal σ, subset membership and returned integer, so the
  *     search can be graded against simulator truth offline
- *     (`scripts/simnet_producer_ar_grade.py`) — a fix COUNT is not a grade.  The run-end
- *     readout is the "Network (producer AR, Phase 2 log-only)" clause in
+ *     (`scripts/simnet_producer_ar_grade.py`); a fix count alone is not a grade.  The
+ *     run-end readout is the "Network (producer AR, Phase 2 log-only)" clause in
  *     filter/NetworkTeardown.cpp, fed by the `ctx.counters.netar_*` tallies.
- *  2. **One-shot NEQ export** (`network.neq_export_epoch`): a post-solve read-only dump
- *     of the assembled arrowhead normal equations (border N_ss raw+reduced + RHS, each
- *     station's N_sr / N_rr / u_r, shared + local column labels) as row-major
- *     little-endian double `.bin` for offline spectral / weak-direction attribution.
- *     Fires on exactly one epoch per run; the solution is untouched.
+ *  2. **One-shot NEQ export** (`network.neq_export_epoch`): a post-solve, read-only dump
+ *     of the assembled arrowhead normal equations (border N_ss raw and reduced, with
+ *     RHS; each station's N_sr / N_rr / u_r; shared and local column labels) as
+ *     row-major little-endian double `.bin` for offline spectral / weak-direction
+ *     attribution.  Fires on one epoch per run; the solution is untouched.
  *
- * Seeded at decomposition INC-9b (2026-07-22), which relocated the SB_NETAR block
- * VERBATIM out of Application::runNetwork (see docs/network_decomposition_plan.md, the
- * SOLVE-REGION decomposition).  Owns NO state.  The caller keeps the
- * @c subBegin/subEnd(SB_NETAR) brackets.
+ * Relocated out of Application::runNetwork's SB_NETAR block at decomposition INC-9b
+ * (see docs/network_decomposition_plan.md, the SOLVE-REGION decomposition).  Owns no
+ * state.  The caller keeps the @c subBegin/subEnd(SB_NETAR) brackets.
  */
 
 #include "filter/NetworkEstimator.hpp"   // NetworkEstimator
@@ -52,20 +51,20 @@ namespace spdlog { class logger; }
 namespace GnssProcessor {
 
 class GnssConfig;
-class PppUtils;             // common/PppUtils.hpp — only a unique_ptr<>& param here
-struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp — included in the .cpp only
-struct NetworkRunContext;  // app/NetworkRunContext.hpp — included in the .cpp only
+class PppUtils;             // common/PppUtils.hpp; only a unique_ptr<>& param here
+struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cpp only
+struct NetworkRunContext;  // app/NetworkRunContext.hpp, included in the .cpp only
 
 /**
  * @brief Pure helpers for the Phase-2 ILS cap permutation (unit-tested in
  *        tests/test_producer_ar_trace.cpp).
  *
- * Extracted out of @ref networkProducerAr for ONE reason: the ILS is handed a
- * CAPPED, RE-ORDERED copy of the DD basis, so @c ils::IlsResult::kept indexes the
- * SEARCH vector and not the basis — and a trace that maps those indices back
- * naively labels the wrong satellite with the wrong integer while looking
- * perfectly well-formed.  Both steps are pure functions of their inputs so the
- * mapping can be proven on a fabricated case instead of on a 24 h run.
+ * They are separate from @ref networkProducerAr because the ILS receives a
+ * capped, re-ordered copy of the DD basis: @c ils::IlsResult::kept indexes the
+ * search vector, not the basis, and a trace that maps those indices back
+ * directly would label the wrong satellite with the wrong integer while still
+ * looking well-formed.  Both steps are pure functions of their inputs, so the
+ * mapping can be tested on a constructed case rather than on a 24 h run.
  */
 namespace netar {
 
@@ -73,9 +72,8 @@ namespace netar {
  * @brief Indices of the @p cap lowest-formal-σ DDs, i.e. the search subset.
  *
  * Sorts 0..n-1 ascending by @f$Q_{aa}@f$ (the standard partial-AR ordering) and
- * truncates to @p cap.  @p cap <= 0 or >= n returns the IDENTITY permutation
- * un-sorted — the uncapped path must leave the basis order alone, because that is
- * the order the legacy (pre-trace) search consumed.
+ * truncates to @p cap.  @p cap <= 0 or >= n returns the identity permutation,
+ * unsorted: the uncapped search consumes the basis in its original order.
  *
  * @param Q_cyc  DD covariance in cycles²; only the diagonal is read.
  * @param cap    Search-dimension cap (@c network.ambiguity_resolution.ils_max_dim).
@@ -83,8 +81,8 @@ namespace netar {
  */
 std::vector<int> lowestSigmaOrder(const Eigen::MatrixXd& Q_cyc, int cap);
 
-/// Per-basis-DD outcome of one epoch's search — what the trace's
-/// @c in_subset / @c fixed_int / @c kept columns carry.
+/// Per-basis-DD outcome of one epoch's search: the content of the trace's
+/// @c in_subset / @c fixed_int / @c kept columns.
 struct DdFixLabel {
     bool   in_subset = false;  ///< This DD entered the (possibly capped) ILS search.
     bool   kept      = false;  ///< The ILS returned an integer for it.
@@ -96,13 +94,13 @@ struct DdFixLabel {
  *
  * @param n_dd       Size of the full DD basis (the trace's row population).
  * @param search_of  Search row ↦ basis index (from @ref lowestSigmaOrder).
- * @param kept       @c IlsResult::kept — indices into the SEARCH vector.
- * @param afix       @c IlsResult::afix — integers in @p kept order.
+ * @param kept       @c IlsResult::kept: indices into the search vector.
+ * @param afix       @c IlsResult::afix: integers in @p kept order.
  * @return One label per basis DD, indexed 0..n_dd-1.
  *
- * Out-of-range entries in @p search_of / @p kept are dropped rather than trusted,
- * and a @p kept longer than @p afix stops at @p afix — a mis-sized result must
- * lose rows, never mislabel them.
+ * Out-of-range entries in @p search_of / @p kept are dropped, and a @p kept
+ * longer than @p afix stops at the length of @p afix, so a mis-sized result
+ * loses rows instead of mislabelling them.
  */
 std::vector<DdFixLabel> mapFixToBasis(int n_dd,
                                       const std::vector<int>& search_of,
@@ -112,26 +110,30 @@ std::vector<DdFixLabel> mapFixToBasis(int n_dd,
 } // namespace netar
 
 /**
- * @brief Run the log-only producer-AR + NEQ-export tail for this epoch.
+ * @brief Run the log-only producer-AR and NEQ-export tail for this epoch.
  *
- * @param ctx           [in] counters (read-only `n_emitted` gate) + config-independent
- *                      run state; taken whole for seam-family uniformity.
+ * @param ctx           [in,out] run context: reads `counters.n_emitted` (the
+ *                      min_epochs and NEQ-export gates) and
+ *                      `knobs.carry_aware_covariance`, and adds to the
+ *                      `counters.netar_*` run-end tallies.  Taken whole for
+ *                      seam-family uniformity.
  * @param config_       Reconstructs `nc = config_.getNetworkConfig()` and
  *                      `netar = nc.ambiguity_resolution`.
- * @param log           "main_log": the Phase-2 AR summary + NEQ-export info rows.
+ * @param log           "main_log": the Phase-2 AR summary and NEQ-export info rows.
  * @param traces        Trace-stream owner; the seam writes @c producer_ar_trace
  *                      (one row per DD, @ref kProducerArHeader) when
  *                      @c network.ambiguity_resolution.trace is armed.
  * @param se            Current synced epoch (week/TOW for the log rows).
  * @param est           Post-solve estimator (const): reconstructStation /
  *                      jointConditionalCovariance / normals / column labels.
- * @param x_s           Post-fit shared solution vector (gate + non-empty guards).
+ * @param x_s           Post-fit shared solution vector (non-empty guard and the
+ *                      per-station reconstruction).
  * @param stations      This run's network stations (float-amb reconstruction source).
  * @param est_index_of  Per-station estimator-slot map (< 0 = not in this epoch).
  * @param asm_res       Per-station assembly results (h2local for local-column labels).
  * @param plan          S-basis plan (shared_datum for the conditional covariance).
  * @param ar_ppp_utils  Wavelength oracle for the DD cycle conversion (may be null when
- *                      AR is disabled — the block guards on it).
+ *                      AR is disabled; the AR block is skipped when it is null).
  * @param log_dir_      Output root for the NEQ-export artifacts (log_dir_/neq_export).
  */
 void networkProducerAr(NetworkRunContext& ctx,

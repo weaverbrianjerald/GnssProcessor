@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
-"""Fetch + vendor the satellite-imagery basemap for the exam ``exam_map`` viewer.
+"""Fetch and vendor the satellite-imagery basemap for the exam ``exam_map`` viewer.
 
 The exam dashboard's *Geographic context* panel draws the SAR vessel track over a
-basemap of the Fiji region.  By default that basemap is the vendored Natural-Earth
-coastline (filled land / ocean).  This script fetches a real **satellite-imagery**
+basemap of the Fiji region. By default that basemap is the vendored Natural-Earth
+coastline (filled land / ocean). This script fetches a real satellite-imagery
 raster once and vendors it next to the coastline, so the dashboard can draw photo
-imagery *fully offline* (embedded base64 in the HTML report) — no render-time
+imagery fully offline (embedded base64 in the HTML report): no render-time
 network, no cartopy/contextily/tile-server dependency (same philosophy as
-``coastline.py``).  Run it only when (re)generating the asset; the committed
+``coastline.py``). Run it only when (re)generating the asset; the committed
 ``assets/basemap_esri_fiji.*`` is what the report actually uses.
 
 Source: Esri "World Imagery" (ArcGIS REST ``export``), EPSG:4326 (plate carree)
 so lon/lat map linearly to x/y and the raster aligns pixel-for-pixel with the
-viewer's equal-aspect *degrees* axes.  Attribution — required, and drawn on the
-map by the viewer — is "Esri, Maxar, Earthstar Geographics".
+viewer's equal-aspect *degrees* axes. Attribution, required and drawn on the
+map by the viewer, is "Esri, Maxar, Earthstar Geographics".
 
-Dateline: the Fiji scenarios straddle +/-180.  A single EPSG:4326 export cannot
-span the dateline (it needs xmin < xmax), so we fetch the two halves either side
-of 180 and stitch them.  The vendored extent is expressed in a **continuous
-0-360 longitude** convention (176 .. 185 degE) — exactly the convention
-``exam_map``'s regional panel plots in — so the seam at 180 is contiguous.
+Dateline: the Fiji scenarios straddle +/-180. A single EPSG:4326 export cannot
+span the dateline (it needs xmin < xmax), so the script fetches the two halves
+either side of 180 and stitches them. The vendored extent is expressed in a
+continuous 0-360 longitude convention (176 .. 185 degE), the same convention
+``exam_map``'s regional panel plots in, so the seam at 180 is contiguous.
 
 Usage (from the repo, with the project venv):
     venv/Scripts/python.exe pyviz/scripts/fetch_satellite.py

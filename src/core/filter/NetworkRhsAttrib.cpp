@@ -4,28 +4,27 @@
  *
  * Exactness argument, per station r and row class c: the kernel's reduced RHS is
  *   ũ_s = u_s − Σ_r N_sr N_rr⁻¹ u_r  (+ DD-fold corrections),
- * and every u vector is a SUM over folded rows/priors.  With the epoch's FINAL
- * N_sr / N_rr (all classes' information present), the map u ↦ ũ_s is linear, so
- * splitting u by class and pushing each part through the same reduction is an
- * exact decomposition:  Σ_c ũ_s^c ≡ ũ_s.  The DD folds are recomputed per input
- * block with the identical algebra the kernel uses (G·M·(z_free − ẑ)); the
- * datum pins act on the solve's COPY of the reduced system and are therefore
- * reported as a separate section, excluded from the kernel-level closure.
+ * and every u vector is a sum over folded rows and priors.  With the epoch's
+ * final N_sr / N_rr (all classes' information present), the map u ↦ ũ_s is
+ * linear, so splitting u by class and pushing each part through the same
+ * reduction is an exact decomposition:  Σ_c ũ_s^c ≡ ũ_s.  The DD folds are
+ * recomputed per input block with the algebra the kernel uses
+ * (G·M·(z_free − ẑ)).  The datum pins act on the solve's copy of the reduced
+ * system, so they are reported as a separate section and excluded from the
+ * kernel-level closure.
  *
- * Known caveat (self-detecting): a within-epoch RAIM replay rebuilds the kernel
- * from mutated row stacks after the shared-info captures ran; the closure row
- * then reports the mismatch instead of the dump silently lying.  On the FT63
- * stack that tier is carry_warm-gated (inert with leveling OFF).
+ * Known caveat, detected by the closure row: a within-epoch RAIM replay
+ * rebuilds the kernel from modified row stacks after the shared-info captures
+ * ran, and the closure row then reports the mismatch.  That RAIM tier is
+ * carry_warm-gated, so it is inert with phase leveling off.
  *
  * Structure (SPEC_prefit_census_observability INC-0 / INC-5):
- *   - the row classifier + shared-column label pass are HOISTED to
- *     filter/NetworkRowClassify — one classifier shared with the census, the
+ *   - the row classifier and the shared-column label pass live in
+ *     filter/NetworkRowClassify, one classifier shared with the census, the
  *     fuse and the topology ledger;
- *   - the decomposition itself runs off a @ref NetworkAttribFrame, so the SAME
- *     code path serves the live epoch and a RETAINED previous epoch.  The frame
- *     is a pure re-binding of what the body always read — the live path stores
- *     POINTERS to the caller's assemblies, so it copies only the kernel blocks
- *     it would have read by reference anyway.
+ *   - the decomposition runs off a @ref NetworkAttribFrame, so one code path
+ *     serves the live epoch and a retained previous epoch.  The live path stores
+ *     pointers to the caller's assemblies and copies only the kernel blocks.
  */
 
 #include "filter/NetworkRhsAttrib.hpp"
@@ -60,9 +59,10 @@ struct AttribRow {
     double norm{0.0};     ///< 2-norm of the full reduced contribution
 };
 
-/// Family bucket of one shared column, for the dumped per-family norms.
-/// (@ref NetColFam is the hoisted classifier's enum; the dump's column ORDER is
-/// sh/pb/cb/clk and is part of the CSV contract.)
+/// 2-norm of @p v over the shared columns of family @p want, for the dumped
+/// per-family norms.  (@ref NetColFam is the enum of the classifier in
+/// NetworkRowClassify; the dump's column order sh/pb/cb/clk is part of the CSV
+/// contract.)
 double famNorm(const NetworkAttribFrame& f, const std::vector<NetColFam>& fam,
                const Eigen::VectorXd& v, NetColFam want) {
     double s = 0.0;
@@ -119,9 +119,9 @@ void networkAttribCaptureFrame(NetworkAttribFrame& out, const SyncedEpoch& se,
     out.c00_l1 = cm.c00_l1;
     out.c00_l2 = cm.c00_l2;
 
-    // ADMISSION PREDICATE (appears twice — keep the two copies textually
-    // identical): folded into the kernel this epoch, block built, dimensions
-    // agree.  The second pass fills asm_ptr and must select exactly the same
+    // Admission predicate: folded into the kernel this epoch, block built,
+    // dimensions agree.  It appears twice; keep the two copies textually
+    // identical.  The second pass fills asm_ptr and must select the same
     // stations in the same order, or a station would be paired with another
     // station's kernel blocks.  It is written twice rather than hoisted because
     // asm_own reallocates while the first pass fills it, so the pointers cannot
@@ -138,7 +138,7 @@ void networkAttribCaptureFrame(NetworkAttribFrame& out, const SyncedEpoch& se,
         out.ur.push_back(kernel.stationLocalRhs(slot));
         if (own_assemblies) out.asm_own.push_back(R);
     }
-    // Pointers LAST: asm_own may reallocate while it is being filled.
+    // Pointers are taken last because asm_own may reallocate while it is filled.
     out.asm_ptr.reserve(out.sta_name.size());
     if (own_assemblies) {
         for (const StationAssembly& R : out.asm_own) out.asm_ptr.push_back(&R);
@@ -170,8 +170,9 @@ void networkRhsAttribDump(const NetworkAttribFrame& f,
     const Eigen::Index n = f.n;
     const Eigen::Index c00_l1 = f.c00_l1, c00_l2 = f.c00_l2;
 
-    // Per-column family + satellite, re-derived from the frame's OWN labels
-    // (the classifier's parse — one truth, INC-0).
+    // Per-column family and satellite, re-derived from the frame's own labels
+    // with the same prefix parse as buildSharedColumnMap (NetworkRowClassify;
+    // INC-0).
     SharedColumnMap cm;
     cm.n = n;
     cm.label = f.label;
@@ -233,7 +234,7 @@ void networkRhsAttribDump(const NetworkAttribFrame& f,
         auto& amb_lbl = slot_amb_label[slot];
         for (const auto& pa : R.pl_amb) amb_lbl[pa.col] = pa.sat + ":" + pa.signal;
 
-        // Class accumulators (u_s part, u_r part) for THIS station.
+        // Class accumulators (u_s part, u_r part) for this station.
         std::map<std::string, std::pair<Eigen::VectorXd, Eigen::VectorXd>> per;
         auto acc = [&](const std::string& cls) -> auto& {
             auto it = per.find(cls);
@@ -411,9 +412,9 @@ void networkRhsAttribDump(const NetworkAttribFrame& f,
     }
 
     // ---- per-row forensic dump, every station -------------------------------
-    // (w, y, h_c00 separately, so a weight flip and an innovation flip are
-    // distinguishable at a glance — the class/station sums cannot separate
-    // them.)  ~3–4k rows per armed epoch; diagnostics-only.
+    // w, y and h_c00 are written separately so a weight change and an
+    // innovation change can be told apart; the class/station sums cannot
+    // separate them.  About 3–4k rows per armed epoch; diagnostics-only.
     std::vector<std::string> row_dump;
     for (std::size_t k = 0; k < f.asm_ptr.size(); ++k) {
         const StationAssembly& R = *f.asm_ptr[k];
@@ -454,8 +455,9 @@ void networkRhsAttribDump(const NetworkAttribFrame& f,
         };
         for (const auto& [cls, v] : cls_total) emit("TOTAL", cls, "", "", v, "");
         for (const auto& r : rows_out) {
-            // Station/sat rows re-emit only scalars; rebuild a sparse two-entry
-            // vector for the shared emit path (norms already captured in r.norm).
+            // Station/sat rows hold only scalars, so they are written directly
+            // rather than through emit(): the family-norm fields stay empty and
+            // the total norm comes from r.norm.
             o << f.week << ',' << fmt::format("{:.3f}", f.tow) << ','
               << (r.sat.empty() ? "STA" : "STASAT") << ',' << r.cls << ','
               << r.sta << ',' << r.sat << ','
@@ -531,7 +533,7 @@ bool networkRhsTripEdge(NetworkRunContext& ctx, const char* kind, bool active) {
     if (active && !was) {
         eras.insert(key);
         ++ctx.counters.pc.rec_trips;
-        // First writer wins: the FIRST era to trip in an epoch names the dump.
+        // First writer wins: the first era to trip in an epoch names the dump.
         if (ctx.carry.rhs_trip_pending.empty()) ctx.carry.rhs_trip_pending = key;
         return true;
     }
@@ -578,7 +580,7 @@ void networkRhsAttribTrip(NetworkRunContext& ctx, const GnssConfig& config_,
         }
     }
 
-    // --- 2. retain THIS epoch for the next one -------------------------------
+    // --- 2. retain this epoch for the next one -------------------------------
     if (!nc.rhs_attrib_on_trip_prev) return;
     if (static_cast<int>(stations.size()) > std::max(0, nc.rhs_attrib_prev_max_stations)) {
         if (!ctx.carry.rhs_prev_oversize_logged) {

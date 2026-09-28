@@ -90,50 +90,52 @@ StateInitializer::resolveReceiverBias(const std::string& obs_signal,
     if (sys_char == '\0') return result;
 
     // -----------------------------------------------------------------------
-    // Card SCC (docs/refound/SCC_second_code_channel_2026-09-21.md, R2): the
-    // receiver INTER-SIGNAL code bias of a second band-1 code.
+    // Receiver inter-signal code bias of a second band-1 code (card SCC, R2;
+    // docs/refound/SCC_second_code_channel_2026-09-21.md).
     //
     // With `network.second_code_channel` a station contributes every allow-listed
     // band-1 code it tracks, not only the one its canonical latch selected.  The
     // per-band keying below cannot represent that: C1C and C1W share a band digit,
-    // so both resolve to "<sys>_DCB" with the SAME coefficient and the second code
-    // would ASSERT a zero receiver inter-signal bias, pushing the whole difference
-    // into the satellite column.  Card B5D is the record of what that costs.
+    // so both resolve to "<sys>_DCB" with the same coefficient, and the second code
+    // would assert a zero receiver inter-signal bias and push the whole difference
+    // into the satellite column (card B5D records the cost).
     //
-    // So a band-1 code that is not this station's LATCHED canonical code gets its
-    // own per-(receiver, system, signal) state with UNIT coefficient — an ABSOLUTE
-    // receiver delay in the frame the clock and ionosphere datum leave free, not
-    // the ionosphere-referenced difference the DCB state carries.  The one null
-    // direction that opens (every receiver inter-signal bias against every
-    // satellite one) is closed by the satellite family's own time-linked
-    // sum-to-zero row, which is why the card changes no datum row (R3).
+    // A band-1 code that is not this station's latched canonical code therefore
+    // gets its own per-(receiver, system, signal) state with unit coefficient: an
+    // absolute receiver delay in the frame that the clock and ionosphere datum
+    // leave free, not the ionosphere-referenced difference the DCB state carries.
+    // The null direction this opens (every receiver inter-signal bias against
+    // every satellite one) is closed by the satellite family's own time-linked
+    // sum-to-zero row, so the card changes no datum row (R3).
     //
-    // WHICH ROWS.  Both the R1 companions AND a fallback code that arrives without
-    // its canonical beside it: the test is the SIGNAL against the latch, not how
-    // the row entered, so the two cases cannot disagree about which state a row
-    // belongs to.  An UNDECIDED latch (empty, before the constellation's first
-    // observed epoch, or for a band this station never latched) keeps today's
-    // behaviour — a code is only "second" relative to a known first.
+    // Rows covered: both the R1 companions and a fallback code that arrives
+    // without its canonical code beside it.  The test compares the signal with the
+    // latch, not the way the row entered, so the two cases cannot disagree about
+    // which state a row belongs to.  An undecided latch (empty: before the
+    // constellation's first observed epoch, or for a band this station never
+    // latched) keeps the per-band keying; a code is "second" only relative to a
+    // known first.
     //
-    // NOT GLONASS: its FDMA per-slot group delay is a different state family with
-    // its own datum, handled in the branch below, and "C1C" is a legal GLONASS code
-    // that would otherwise match an allow-list written for GPS.  This sits BEFORE
-    // that branch and before the clock-reference lookup because the inter-signal
-    // correction is a pure per-signal receiver delay: it needs no pin pair.
+    // GLONASS is excluded: its FDMA per-slot group delay is a different state
+    // family with its own datum, handled in the branch below, and "C1C" is a legal
+    // GLONASS code that would otherwise match an allow-list written for GPS.  This
+    // block sits before that branch and before the clock-reference lookup because
+    // the inter-signal correction is a pure per-signal receiver delay and needs no
+    // pin pair.
     //
-    // OFF ⇒ the whole block is skipped ⇒ byte-identical.
+    // With the knob off the whole block is skipped, so the output is byte-identical.
     //
-    // CARD SID PHASE 6b (R2) GENERALISES THE PREDICATE.  With
-    // `processing.channel_mode: all` on the network path a station contributes every
-    // ADMITTED code attribute of every selected band, not an allow-listed band-1 pair,
-    // and the per-band keying below would assert a zero receiver inter-signal bias on
-    // every one of them — on band 2 and above as well, where the RF-0d geometry-free
-    // pin also asserts the satellite side to zero, which is card B5D's class twice
-    // over.  So under the widening the test drops the allow-list and the band-1
-    // restriction and keeps exactly what makes a row a SECOND one: an admitted code
-    // that is not that band's latched canonical code, on any band digit.  Everything
-    // else (the unit coefficient, the absolute frame, the GLONASS exclusion, the
-    // undecided-latch fall-through) is unchanged.
+    // Card SID phase 6b (R2) generalises the predicate.  With
+    // `processing.channel_mode: all` on the network path a station contributes
+    // every admitted code attribute of every selected band, not an allow-listed
+    // band-1 pair, and the per-band keying below would assert a zero receiver
+    // inter-signal bias on each of them.  On band 2 and above the RF-0d
+    // geometry-free pin also asserts the satellite side to zero, which repeats
+    // the card B5D defect on both sides.  Under the widening the test therefore
+    // drops the allow-list and the band-1 restriction and keeps only what makes a
+    // row a second one: an admitted code that is not that band's latched canonical
+    // code, on any band digit.  The rest (unit coefficient, absolute frame,
+    // GLONASS exclusion, undecided-latch fall-through) is unchanged.
     const bool chan_all = config_.networkChannelModeAll();
     if ((config_.networkSecondCodeChannel() || chan_all) && system != System::GLONASS
         && obs_signal.size() == 3 && obs_signal[0] == 'C'
@@ -160,31 +162,30 @@ StateInitializer::resolveReceiverBias(const std::string& obs_signal,
     // FDMA: each GLONASS slot transmits on a distinct carrier frequency
     // (f = f_base + k*df), so the receiver group delay differs per slot.  A
     // single per-band IFB/DCB state cannot represent that, which is why the
-    // legacy path below excludes GLONASS.  When enable_glonass_ifb is set we
-    // instead emit one bias state per (FDMA band, slot k) with unit coefficient.
+    // per-band path below excludes GLONASS.  With enable_glonass_ifb set, this
+    // branch instead emits one bias state per (FDMA band, slot k) with unit
+    // coefficient.
     //
     // Datum: the central channel k=0 is the held reference (no state).  In
     // undifferenced PPP its constant is absorbed by the GLONASS ISB (a hard
-    // anchor when a k=0 sat is up, otherwise a soft ISB/mean-IFB gauge).  Under
-    // BSSD these columns survive the receiver-block zeroing (two sats on
-    // different slots do NOT cancel), but only the inter-slot DIFFERENCES are
-    // measurement-determined; the common offset of the {IFB(k)} set is an
-    // unobservable gauge held softly by the per-slot prior.  That gauge lives in
-    // the SD null space, so letting it drift does not affect position — it is
-    // benign by construction.  Only the FDMA bands (G1='1', G2='2') are slot-
-    // dependent;
-    // the CDMA bands (G3/G4/G6) have a fixed frequency and keep the legacy
-    // per-band treatment.
+    // anchor when a k=0 satellite is up, otherwise a soft ISB/mean-IFB gauge).
+    // Under BSSD these columns survive the receiver-block zeroing (two satellites
+    // on different slots do not cancel), but only the inter-slot differences are
+    // determined by the measurements; the common offset of the {IFB(k)} set is an
+    // unobservable gauge held softly by the per-slot prior.  That gauge lies in
+    // the SD null space, so its drift does not affect position.  Only the FDMA
+    // bands (G1='1', G2='2') are slot-dependent; the CDMA bands (G3/G4/G6) have a
+    // fixed frequency and keep the per-band treatment.
     //
-    // This runs BEFORE the clock-reference lookup below because GLONASS usually
+    // This runs before the clock-reference lookup below because GLONASS usually
     // has no SATELLITE_CLOCK_REFERENCE_OBSERVABLES entry in the .BIA product
-    // (empty reference pair), which would otherwise early-return and never reach
-    // any IFB logic.
+    // (empty reference pair), which would return early and never reach any IFB
+    // logic.
     if (system == System::GLONASS && config_.enableGlonassIfb()) {
         const char band = (obs_signal.size() >= 2) ? obs_signal[1] : '\0';
         if (band == '1' || band == '2') {           // FDMA bands only
-            // Resolve k from the model's SEEDED PppUtils (RINEX header / live
-            // broadcast), not this class's own un-seeded instance whose
+            // Resolve k from the model's seeded PppUtils (RINEX header / live
+            // broadcast), not from this class's own unseeded instance, whose
             // getGlonassChannel would fall back to the stale default table.
             const int k = ppp_model_.getGlonassChannel(satellite);
             if (k < -7 || k > 6) return result;      // unknown slot -> no IFB column
@@ -208,13 +209,13 @@ StateInitializer::resolveReceiverBias(const std::string& obs_signal,
     const char band_2 = (ref.sig2.size() >= 2) ? ref.sig2[1] : '\0';
     if (band_j == '\0' || band_1 == '\0' || band_2 == '\0') return result;
 
-    // Non-reference band: independent IFB state.  GLONASS is excluded HERE:
-    // its FDMA per-channel receiver delay cannot be captured by a single
-    // per-band IFB state shared across slots — that would be unphysical and
-    // bias every channel.  The estimable per-(band,slot) treatment lives in the
-    // enable_glonass_ifb branch above; when that flag is off a non-reference
-    // GLONASS band carries no IFB state and its delay is absorbed by the
-    // per-(sat,signal) bias path / residual de-weighting.
+    // Non-reference band: independent IFB state, key "<system>_IFB<band>".
+    // GLONASS is excluded here: its FDMA per-channel receiver delay cannot be
+    // represented by one per-band IFB state shared across slots, which would bias
+    // every channel.  The per-(band, slot) treatment is the enable_glonass_ifb
+    // branch above; with that flag off, a non-reference GLONASS band carries no
+    // IFB state and its delay is absorbed by the per-(sat, signal) bias path and
+    // residual de-weighting.
     if (band_j != band_1 && band_j != band_2) {
         if (system == System::GLONASS) return result;   // no FDMA per-band IFB
         result.state_key   = sys + "_IFB" + band_j;
@@ -222,7 +223,8 @@ StateInitializer::resolveReceiverBias(const std::string& obs_signal,
         return result;
     }
 
-    // Reference band: GF-IF coefficient against the system DCB state
+    // Reference band (either band of the clock-reference pair): GF-IF coefficient
+    // against the system DCB state, key "<system>_DCB".
     const double f1 = ppp_utils_.getFrequency(ref.sig1, system, satellite);
     const double f2 = ppp_utils_.getFrequency(ref.sig2, system, satellite);
     if (!(std::isfinite(f1) && f1 > 0.0 && std::isfinite(f2) && f2 > 0.0))
@@ -290,7 +292,7 @@ double StateInitializer::computeRawResidual(const PppObservation& obs,
         }
     }
 
-    // Receiver code bias (DCB / IFB  code only, uncombined)
+    // Receiver code bias (DCB / IFB; code only, uncombined)
     double code_bias = 0.0;
     if (config_.estimateIfb() && config_.isUncombinedEnabled()
         && !ref_type.empty() && ref_type[0] == 'C') {
@@ -333,25 +335,24 @@ std::optional<double> StateInitializer::computeIonosphereSeed(const PppObservati
         if (!obs.modeled.count(key)) continue;
         // Only use code signals with valid BIA coverage.  Otherwise
         // (P - mod) carries the raw satellite hardware bias, which
-        // shows up after differencing as (bias_band1 - bias_band2)
+        // appears after differencing as (bias_band1 - bias_band2)
         // divided by (alpha1 - alpha2).  For BeiDou MGEX products
-        // that ship zero-valued C2I/C6I entries (now treated as
-        // missing by buildBiasIndex), this would inject 30–60 m
-        // of error into the iono seed and propagate via the per-row
-        // predicted into every sat-bias and ambiguity seed for the
-        // satellite.
+        // that ship zero-valued C2I/C6I entries (treated as missing
+        // by buildBiasIndex), this would put 30–60 m of error into
+        // the iono seed and, through the per-row prediction, into
+        // every sat-bias and ambiguity seed for the satellite.
         if (!ppp_model_.hasBiasEntry(obs.satellite, key)) continue;
-        // Coverage honesty (bias_coverage_requires_apply): this gate's
-        // contract is "the .BIA value has been REMOVED from (P - mod)".
-        // An entry that is loaded but not applied (enable_code_phase_bias
-        // off, e.g. forced by the estimate_iono_sh coupling and inherited
-        // by the derived closed-loop consumer) leaves the raw hardware
-        // bias in the innovation — exactly the error class this gate
-        // exists to keep out of the seed.  The network producer keeps
-        // legacy presence semantics, matching
-        // MeasurementModel::biaCoversSignal (its code rows are handled by
-        // network-estimated code-bias states, and an armed producer's
-        // emission stays byte-identical).
+        // Coverage requires application (bias_coverage_requires_apply):
+        // the gate's contract is that the .BIA value has been removed
+        // from (P - mod).  An entry that is loaded but not applied
+        // (enable_code_phase_bias off, e.g. forced by the
+        // estimate_iono_sh coupling and inherited by the derived
+        // closed-loop consumer) leaves the raw hardware bias in the
+        // innovation, which is the error this gate keeps out of the
+        // seed.  The network producer keeps presence semantics,
+        // matching MeasurementModel::biaCoversSignal (its code rows are
+        // handled by network-estimated code-bias states, and an armed
+        // producer's emission stays byte-identical).
         if (config_.getModelCorrections().bias_coverage_requires_apply
             && config_.getProcessingMode() != ProcessingMode::PPP_RTK_Network
             && !config_.getModelCorrections().enable_code_phase_bias) continue;
@@ -393,59 +394,57 @@ std::optional<double> StateInitializer::computeIonosphereSeed(const PppObservati
 }
 
 // ===========================================================================
-// Card LV-1 — bias-free per-LOS iono seeding
+// Bias-free per-LOS iono seeding (card LV-1)
 // (docs/SPEC_level_information_budget.md)
 // ===========================================================================
 //
-// WHAT THE RAW SEED IS.  computeIonosphereSeed above returns the geometry-free
+// The raw seed.  computeIonosphereSeed above returns the geometry-free
 // combination of product-referenced code residuals,
 //
 //     raw = ((P1 − mod1) − (P2 − mod2)) / (α1 − α2)
 //         = I_los  +  (d_{r,1} − d_{r,2})/(α1 − α2)          [m of L1 slant]
 //
-// `mod` carries the satellite side and the geometry but NOT the receiver DCB, so
-// the SECOND term — the station's own GF hardware bias — rides into EVERY seed of
-// that station.  Measured on DOY-129 (61 GPS stations, scripts/extcb_gim_verdict.py):
-// mean ≈ −15 slant-TECU with continent-clustered spread (std ≈ 21 TECU).  The
-// downstream consequence is not confined to the iono state: initializeCodeBiases
-// below subtracts (α_b − α_1)·x(iono) when it seeds the receiver DCB, so with a
-// bias-IN iono seed the receiver's whole GF lump is booked into the ionosphere and
-// the DCB linearization point is left near zero — the opposite of the physical
-// split.
+// `mod` carries the satellite side and the geometry but not the receiver DCB, so
+// the second term, the station's own GF hardware bias, enters every seed of that
+// station.  On the DOY-129 field network it is of the order of tens of slant TECU
+// and clustered by continent (scripts/extcb_gim_verdict.py).  The effect is not
+// confined to the iono state: initializeCodeBiases below subtracts
+// (α_b − α_1)·x(iono) when it seeds the receiver DCB, so with the bias left in the
+// iono seed the receiver's whole GF lump is booked into the ionosphere and the DCB
+// linearization point is left near zero, the opposite of the physical split.
 //
-// THE REFRAME.  Replace the station-common content with the field's own value at
+// The reframe replaces the station-common content with the field's own value at
 // each line of sight's pierce point:
 //
 //     seed' = raw − median_r(raw)  +  m(el)·VTEC_SH(IPP)
 //
 // The median (not the mean) is the robust station-common estimate, and it is a
-// direct estimate of that receiver's GF bias — the run logs it once per station
-// for exactly that reason (cross-check against extcb_gim_verdict.py's bias_TECU).
+// direct estimate of that receiver's GF bias; the run logs it once per station
+// for that reason (cross-check against extcb_gim_verdict.py's bias_TECU).
 //
-// SCOPE HONESTY (read this before predicting a level change).  On the NETWORK path
-// the per-station StateManager vector is a frozen LINEARIZATION POINT: it is
-// written once at setup, never written back from the solve, and every row that
-// touches a local column forms its RHS against it with that row's own A_r
-// coefficient (data rows through em.innovations; the SH↔slant tie through
-// innov = −x(iono_idx)).  Shifting x_lin on local column c by δ therefore gives
-// y → y − A_r e_c δ, hence u_s → u_s − N_sr e_c δ and u_r → u_r − N_rr e_c δ, and
-// the reduced RHS b_red = u_s − N_sr N_rr⁻¹ u_r is EXACTLY invariant — the shared
-// solution does not move and x_r absorbs the shift, so the ABSOLUTE estimate
-// x_lin + x_r is unchanged too (proven Aug-1 2026; the per-epoch absolute network
-// solve deliberately carries NO Kalman prior on the local nuisances, so there is
-// no row pulling a GPS/Galileo iono column toward its seed).  This reframe is
-// consequently NOT a level actuator through the seed's "stiffness" — that channel
-// does not exist here.  What it DOES change is every consumer that reads a PREFIT
-// quantity in the x_lin frame:
-//   * the receiver-DCB linearization point (via initializeCodeBiases, above), and
-//     with it the rx-CB carry's inject-time innovation gate, which tests
-//     |value_abs − x_lin(cb)| — a prefit, frame-dependent screen that WITHHOLDS
-//     rows (measured ~58 % skips on the EXT-CB arms);
+// Scope.  On the network path the per-station StateManager vector is a frozen
+// linearization point: it is written once at setup, never written back from the
+// solve, and every row that touches a local column forms its RHS against it with
+// that row's own A_r coefficient (data rows through em.innovations; the SH↔slant
+// tie through innov = −x(iono_idx)).  Shifting x_lin on local column c by δ
+// gives y → y − A_r e_c δ, hence u_s → u_s − N_sr e_c δ and
+// u_r → u_r − N_rr e_c δ, and the reduced RHS b_red = u_s − N_sr N_rr⁻¹ u_r is
+// exactly invariant.  The shared solution does not move and x_r absorbs the
+// shift, so the absolute estimate x_lin + x_r is unchanged as well.  The
+// per-epoch absolute network solve carries no Kalman prior on the local
+// nuisances, so no row pulls a GPS/Galileo iono column toward its seed.  The
+// reframe is therefore not a level actuator through the seed's "stiffness";
+// that channel does not exist here.  It changes every consumer that reads a
+// prefit quantity in the x_lin frame:
+//   * the receiver-DCB linearization point (via initializeCodeBiases, above),
+//     and with it the rx-CB carry's inject-time innovation gate, which tests
+//     |value_abs − x_lin(cb)|, a prefit, frame-dependent screen that withholds
+//     rows;
 //   * the prefit census / fuse screens, which threshold prefit residuals;
 //   * the GLONASS local-nuisance anchors, whose rows pull toward x_lin with y = 0
 //     (GPS-only postures never build them).
-// Those are row-set effects, and row-set changes DO move the solve.  Grade this
-// card on them — not on a seed-frame gradient.
+// These are row-set effects, and row-set changes do move the solve.  Evaluate
+// the card on them, not on a seed-frame gradient.
 
 std::optional<double> StateInitializer::stationSeedOffset(std::vector<double>& seeds,
                                                            int min_sats) {
@@ -539,7 +538,7 @@ bool StateInitializer::initializeInterSystemBiases(const std::vector<PppObservat
         system_residuals["GPS"].empty()) {
         log_manager_.getLogger("state_initializer")->warn(
             "{}Cannot initialize ISB: no GPS code observations", epoch_prefix);
-        return false;   // retry next epoch — do NOT latch as initialized
+        return false;   // retry next epoch; the caller does not latch as initialized
     }
 
     double gps_median = computeMedian(system_residuals["GPS"]);
@@ -561,7 +560,7 @@ bool StateInitializer::initializeInterSystemBiases(const std::vector<PppObservat
     }
 
     state_manager_.setStateVector(x_updated);
-    return true;   // GPS reference present — ISB seeds are final
+    return true;   // GPS reference present, so the ISB seeds are final
 }
 
 // ===========================================================================
@@ -569,22 +568,22 @@ bool StateInitializer::initializeInterSystemBiases(const std::vector<PppObservat
 // ===========================================================================
 //
 // The receiver clock state is the GPS-referenced offset (ISB carries every
-// other system's delta), so the estimator that has NOT been fed a code clock
-// yet holds x(clock)=0.  On the network path nothing pre-solves it before
+// other system's delta), so an estimator that has not yet been fed a code clock
+// holds x(clock)=0.  On the network path nothing pre-solves it before
 // ambiguities are first seeded, so computeAmbiguitySeed subtracts clk_term=0
-// and the whole free-running clock offset leaks uniformly into every cold
-// ambiguity seed.  Seeding x(clock) = median GPS code residual removes it.
+// and the whole free-running clock offset enters every cold ambiguity seed
+// uniformly.  Seeding x(clock) = median GPS code residual removes it.
 //
-// This deliberately mirrors initializeInterSystemBiases's GPS-code collection:
-// that routine already computes exactly this median (its gps_median reference)
-// but only uses it as a per-system subtraction anchor and discards it — the
-// discarded value is the clock the network path never writes.
+// The GPS-code collection mirrors initializeInterSystemBiases: that routine
+// computes the same median (its gps_median reference) but uses it only as a
+// per-system subtraction anchor and then discards it.  The discarded value is
+// the clock that the network path otherwise never writes.
 
 bool StateInitializer::seedColdReceiverClock(const std::vector<PppObservation>& observations,
     const std::string& epoch_prefix) {
 
     if (!state_manager_.hasClock())
-        return true;   // no clock state in this configuration — nothing to seed or retry
+        return true;   // no clock state in this configuration: nothing to seed or retry
 
     // Sub-micron threshold below which the clock state is treated as cold
     // (state-init 0.0).  A real seeded receiver clock (PPP path, or a later
@@ -599,7 +598,7 @@ bool StateInitializer::seedColdReceiverClock(const std::vector<PppObservation>& 
             "{}Cold receiver-clock seed skipped: clock already {:.3f} m (not cold)",
             epoch_prefix,
             x(static_cast<Eigen::Index>(state_manager_.getClockIndex())));
-        return true;   // already seeded (e.g. PPP path) — latch, do not overwrite
+        return true;   // already seeded (e.g. PPP path): latch, do not overwrite
     }
 
     std::vector<double> gps_residuals;
@@ -626,7 +625,7 @@ bool StateInitializer::seedColdReceiverClock(const std::vector<PppObservation>& 
         log_manager_.getLogger("state_initializer")->warn(
             "{}Cannot pre-seed cold receiver clock: no GPS code observations this epoch",
             epoch_prefix);
-        return false;   // retry next epoch — do NOT latch
+        return false;   // retry next epoch; the caller does not latch
     }
 
     const double clock_seed = computeMedian(gps_residuals);
@@ -799,26 +798,27 @@ void StateInitializer::initializeCodeBiases(const std::vector<PppObservation>& o
 
     Eigen::VectorXd x_updated = x;
     for (const auto& [key, sv] : samples) {
-        // --- RS-9 (docs/SPEC_event_harness.md §21.18) ------------------------
+        // Linearization-point restore (RS-9; docs/SPEC_event_harness.md §21.18).
         // A warm resume that restored this station's rx-CB carry restored the
-        // carry's NUMERATOR and left the reference it is judged against cold:
-        // the inject gate's statistic is |value_abs − x_lin(cb)| against a fixed
-        // 5.13 m bar, and x_lin(cb) is exactly the one-shot seed computed below
-        // — from the RESUME epoch's code instead of the writer's first epoch.
-        // With the override installed, the covered key takes the writer's
-        // linearization point and the seed below is not computed at all.  An
-        // EXACT solve no-op by construction (a code bias enters linearly, so an
-        // x_lin shift is absorbed by the state; project_network_xlin_invariance)
-        // — the only consumer of the value is the gate.  network.rx_code_bias_
-        // datum is the one mechanism whose RHS also reads x_lin (η = λ(0 −
-        // x_lin)); the loader refuses that pair, so it cannot be reached here.
-        // Scoped to the keys the map CARRIES a reference for.  The RL rows pair 1:1
-        // with the RC rows, so a key absent here is one with no rx-CB carry — the
-        // gate never differences anything against its x_lin, and it simply takes
-        // today's seed (a GPS L1/L2/L5 station holds GPS_DCB, carried, and
-        // GPS_IFB5, not).  `uncovered` therefore counts only the case that WOULD
-        // matter — a carried key whose restored reference could not be applied —
-        // and must read 0.
+        // carry's numerator but not the reference it is judged against: the
+        // inject gate's statistic is |value_abs − x_lin(cb)| against a fixed
+        // 5.13 m bar, and x_lin(cb) is the one-shot seed computed below, taken
+        // from the resume epoch's code instead of the writer's first epoch.
+        // With the override installed, a covered key takes the writer's
+        // linearization point and the median seed below is not computed.  This
+        // is an exact solve no-op by construction (a code bias enters linearly,
+        // so an x_lin shift is absorbed by the state;
+        // project_network_xlin_invariance); the only consumer of the value is
+        // the gate.  network.rx_code_bias_datum is the one mechanism whose RHS
+        // also reads x_lin (η = λ(0 − x_lin)); the loader refuses that pair, so
+        // it cannot be reached here.
+        // Only keys the map carries a reference for are overridden.  The RL rows
+        // pair 1:1 with the RC rows, so a key absent here has no rx-CB carry, the
+        // gate never differences anything against its x_lin, and it takes the
+        // median seed (a GPS L1/L2/L5 station holds GPS_DCB, carried, and
+        // GPS_IFB5, not).  `uncovered` therefore counts only a carried key whose
+        // restored reference could not be applied (such a key falls through to
+        // the median seed); it should read 0.
         if (codeBiasSeedOverrideCovers(code_bias_seed_override_, key)) {
             bool seeded = false;
             const auto ovr = resolveCodeBiasSeedOverride(code_bias_seed_override_, key);

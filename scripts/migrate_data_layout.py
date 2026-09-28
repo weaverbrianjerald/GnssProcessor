@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """migrate_data_layout.py
 
-One-shot migrator from the legacy *flat* GNSS data layout to the
-unified *date-first* layout used by ``PathResolver`` and
-``ProductResolver`` after the layout-unification refactor.
+One-shot migration from the legacy flat GNSS data layout to the
+date-first layout that ``PathResolver`` and ``ProductResolver`` read.
 
 ============================================================
 Layouts
@@ -25,8 +24,9 @@ Legacy flat layout (input)::
         absolute/                  *.rnx
         baseline/short/<exp>/      per-experiment obs files
 
-Some sites also use a top-level ``orbit/clock/...`` (no ``products/``
-intermediate) — the script detects either form.
+The product subdirectories may also sit directly under ``<root>``
+(``<root>/orbit/``, ``<root>/clock/``, ...) without the ``products/``
+level; both forms are scanned.
 
 Date-first layout (output)::
 
@@ -54,10 +54,12 @@ Usage
     # Preview without touching anything.
     python scripts/migrate_data_layout.py --dry-run C:/GnssProcessor/data_production
 
-The script is idempotent: re-running on an already-migrated root is
-a no-op (everything's "already at destination").  Files whose
-filename can't be parsed for a YYYYDOY (e.g. README.md) are left
-alone with a one-line note.
+The script is idempotent: a second run on a migrated root finds no
+legacy files and moves nothing.  Files whose name carries no parseable
+YYYYDOY (or, for observations, no station ID) stay where they are and
+are not reported.  The exception is a ``.md`` / ``.txt`` file at the
+top of ``products/`` or ``observations/``, which the cleanup step
+moves to ``<root>/`` (see ``prune_empty``).
 """
 
 from __future__ import annotations
@@ -73,22 +75,22 @@ from pathlib import Path
 # Date-extraction helpers (mirror PathResolver::extractYyyyDoy)
 # ---------------------------------------------------------------------
 
-# NOTE on the long-name regex: only a non-digit on the LEFT side is
-# required, matching PathResolver::extractYyyyDoy.  The trailing
-# characters in IGS long-names are typically more digits (the HHMM
-# field), so a (?!\d) lookahead would reject every product file.
+# The long-name regex requires a non-digit only before the match, as
+# PathResolver::extractYyyyDoy does.  In IGS long names the YYYYDOY is
+# usually followed by more digits (the HHMM field), so a (?!\d)
+# lookahead would reject every product file.
 _RE_LONGNAME_YYYYDOY = re.compile(r"(?<![0-9])(\d{4})(\d{3})")
-# RINEX-2 short name station prefix can contain underscores in some
-# local fixtures (e.g. "233_3210.23o"); accept any 4-char prefix
-# matching the SSSSDDDH.YYO shape.
+# The RINEX-2 short-name station prefix contains underscores in some
+# local fixtures (e.g. "233_3210.23o"), so any 4-character prefix is
+# accepted in front of the SSSSDDDH.YYO shape.
 _RE_RINEX2_SHORTNAME = re.compile(r"^.{4}(\d{3})\d\.(\d{2})[odODnNgG]$")
 
 def _strip_compress_suffix(name: str) -> str:
     """Strip a single compression suffix (.gz / .Z) for regex matching.
 
-    Migration needs to extract dates and stations from raw downloads
-    too (e.g. "cit11290.24d.gz") — the regex shapes are easier to
-    write against the bare RINEX/IGS filename.
+    Dates and stations are also extracted from raw downloads (e.g.
+    "cit11290.24d.gz"); the regexes are written against the bare
+    RINEX/IGS filename.
     """
     lower = name.lower()
     if lower.endswith(".gz"):
@@ -107,7 +109,7 @@ def extract_yyyydoy(name: str) -> tuple[int, int] | None:
     their decompressed counterparts.
     """
     bare = _strip_compress_suffix(name)
-    # RINEX-2 short name first (YYYY/DOY straddle the dot).
+    # RINEX-2 short name first (DOY before the dot, two-digit year after it).
     m = _RE_RINEX2_SHORTNAME.match(bare)
     if m:
         doy = int(m.group(1))
@@ -131,17 +133,19 @@ def date_dir_name(year: int, doy: int) -> str:
 # ---------------------------------------------------------------------
 
 _RE_OBS_LONGNAME = re.compile(r"^([A-Za-z0-9]{9})_R_\d{11}_", re.IGNORECASE)
-# RINEX-2 short name: SSSSDDDH.YYO, where the SSSS station ID can
-# contain underscores in some local fixtures (e.g. "233_3210.23o").
+# Matches the RINEX-2 short name SSSSDDDH.YYO; the 4-character station
+# ID contains underscores in some local fixtures (e.g. "233_3210.23o").
 _RE_OBS_SHORTNAME = re.compile(r"^([A-Za-z0-9_]{4})\d{3}\d\.\d{2}[odODnNgG]$",
                                re.IGNORECASE)
 
 def extract_station(name: str) -> str | None:
     """Pull the station identifier (lower-cased) from an obs filename.
 
-    Returns the 9-char IGS long-name (SSSSCCCNNN) when available, the
-    4-char short-name station ID otherwise, or @c None when the name
-    doesn't match any known RINEX naming convention.  A trailing
+    Returns the 9-character IGS long-name station ID (4-character
+    station, monument and receiver digits, 3-letter country code; e.g.
+    cit100usa) when present, the 4-character short-name station ID
+    otherwise, or @c None when the name matches neither RINEX naming
+    convention.  A trailing
     @c .gz / @c .Z is stripped first so raw cache downloads work.
     """
     bare = _strip_compress_suffix(name)
@@ -175,9 +179,10 @@ class Mover:
         if not src.exists():
             return
         if dst.exists():
-            # Idempotency: leave the destination alone, drop the source
-            # if it's a duplicate (same size).  Don't silently overwrite —
-            # if sizes differ the user wants to know.
+            # The destination is never overwritten.  A source of the same
+            # size counts as a duplicate and is deleted (listed, not
+            # deleted, on a dry run); a source of a different size is
+            # left in place and reported on stderr as a conflict.
             if src.resolve() == dst.resolve():
                 self.untouched += 1
                 return
@@ -204,20 +209,21 @@ class Mover:
 # Migration steps
 # ---------------------------------------------------------------------
 
-# Subdirs at the legacy layout's top level that are known to hold
-# date-keyed product files.  Includes some non-canonical aliases the
-# user may have created on the side (e.g. "bia" / "clk" / "sp3" /
-# "rnx").  Anything not in this list is left for migrate_observations
-# or migrate_static to handle.
+# Product subdirs of the legacy layout (under <root> or <root>/products)
+# that hold date-keyed product files, including the non-canonical
+# aliases "sp3" / "clk" / "bia" / "rnx" found in hand-built trees.
+# Subdirs not listed here are left to migrate_observations or
+# migrate_static.
 _DATE_KEYED_PRODUCT_SUBDIRS = (
     "orbit", "clock", "dcb", "erp", "brdc",
     "sp3", "clk", "bia", "rnx",  # non-canonical aliases
 )
 _OBS_PRODUCT_SUBDIRS = ("rinex",)
 
-# File extensions that denote decompressed products.  Used to classify
-# each file under a legacy product subdir as either "ready" (move to
-# <YYYY-DOY>/products/) or "raw" (move to cache/<YYYY-DOY>/).
+# Extensions of decompressed products.  A file under a legacy product
+# subdir with one of these extensions is "ready" and moves to
+# <YYYY-DOY>/products/; any other file is "raw" and moves to
+# cache/<YYYY-DOY>/.
 _PRODUCT_READY_EXT = (".sp3", ".clk", ".bia", ".bsx", ".erp", ".rnx")
 
 def _candidate_product_root(root: Path) -> list[Path]:
@@ -228,12 +234,12 @@ def _candidate_product_root(root: Path) -> list[Path]:
 def _classify_product_target(root: Path, entry: Path) -> Path | None:
     """Decide where a legacy product file belongs in the date-first tree.
 
-    Returns the absolute destination path or @c None if the file
-    can't be classified (no YYYYDOY in the name).  The classification
-    rule:
+    Returns the absolute destination path, or @c None when the name
+    carries no YYYYDOY.  Classification (extensions case-insensitive):
       - decompressed product extension (@c .SP3, @c .CLK, @c .BIA,
         @c .BSX, @c .ERP, @c .rnx) → @c <root>/<YYYY-DOY>/products/
-      - everything else (.gz, .Z, raw .crx) → @c <root>/cache/<YYYY-DOY>/
+      - everything else (.gz, .Z, raw .crx, any other extension)
+        → @c <root>/cache/<YYYY-DOY>/
     """
     name = entry.name
     yd = extract_yyyydoy(name)
@@ -253,11 +259,11 @@ def migrate_products(root: Path, mover: Mover) -> None:
     """Move date-keyed product files into <root>/<YYYY-DOY>/products/
     (decompressed) or <root>/cache/<YYYY-DOY>/ (raw .gz / .crx).
 
-    Recursively walks every legacy product subdir under @c <root> and
-    @c <root>/products/ so files in zip/, unzip/, or other ad-hoc
-    layouts (@c bia/, @c clk/, @c sp3/, @c rnx/) all get placed
-    correctly.  Files seen more than once via overlapping scan roots
-    are deduped on resolved-path.
+    Walks every legacy product subdir under @c <root> and
+    @c <root>/products/ recursively, so files in zip/, unzip/ or the
+    alias subdirs (@c bia/, @c clk/, @c sp3/, @c rnx/) are all placed.
+    A file reached through more than one scan root is handled once
+    (deduplicated on resolved path).
     """
     seen: set[Path] = set()
     for prod_root in _candidate_product_root(root):
@@ -280,23 +286,26 @@ def migrate_products(root: Path, mover: Mover) -> None:
 def migrate_observations(root: Path, mover: Mover) -> None:
     """Move obs files into <root>/<YYYY-DOY>/obs/<station>/.
 
-    Sources searched (deduped by resolved-path):
+    Sources searched recursively (deduplicated by resolved path):
       - <root>/observations/**
-      - <root>/products/rinex/{zip,unzip}/
+      - <root>/products/rinex/** and <root>/rinex/**, each only when it
+        has a zip/ or unzip/ subdir
 
-    Specifically NOT scanned: <root>/rinex/, where users may keep
-    ad-hoc debug subsets (e.g. trimmed 1-hour RINEX for fast
-    profiling).  Touching that would break explicit observation_path
-    overrides pointing into it.  rglob is used so we pick up nested
-    fixture subdirs (@c absolute/, @c baseline/short/...).
+    A rinex/ directory without zip/ or unzip/ is not scanned: it may
+    hold ad-hoc debug subsets (e.g. trimmed 1-hour RINEX for fast
+    profiling) that explicit observation_path overrides point into.
+    A rinex/ that does have zip/ or unzip/ is scanned in full,
+    including any other subdirs under it.  rglob picks up nested
+    fixture subdirs (@c absolute/, @c baseline/short/...).  Raw files
+    (.crx, .crx.gz, .gz, .Z) go to cache/<YYYY-DOY>/ instead; @c .md /
+    @c .txt files and names without a date or station are skipped.
     """
     obs_search_roots: list[Path] = []
     if (root / "observations").is_dir():
         obs_search_roots.append(root / "observations")
-    # Add any <prod_root>/rinex/ that looks like a canonical product
-    # cache (has zip/ or unzip/ subdirs) — that signature distinguishes
-    # the bootstrap-produced layout from a user-curated subset like
-    # <root>/rinex/debug/ that we must not touch.
+    # A zip/ or unzip/ subdir marks <prod_root>/rinex/ as a
+    # bootstrap-produced product cache rather than a user-curated
+    # subset such as <root>/rinex/debug/.
     for prod_root in _candidate_product_root(root):
         legacy_rinex = prod_root / "rinex"
         if (legacy_rinex / "zip").is_dir() or (legacy_rinex / "unzip").is_dir():
@@ -347,45 +356,47 @@ def migrate_static(root: Path, mover: Mover) -> None:
 def prune_empty(root: Path, mover: Mover) -> None:
     """Remove now-empty legacy directories.  Skipped on dry-run.
 
-    A README.md that lives at the top of @c <root>/products/ or
-    @c <root>/observations/ would otherwise keep those legacy roots
-    permanently non-empty.  We move such README files (and any other
-    @c .md / @c .txt files whose only purpose was documenting the old
-    layout) to @c <backup-name>.legacy alongside the now-empty parent
-    so the user sees them at the top level — they were docs, not data.
+    A README.md at the top of @c <root>/products/ or
+    @c <root>/observations/ would keep those legacy roots non-empty.
+    Every @c .md / @c .txt file at the top of either root is therefore
+    moved to @c <root>/<legacy-root-name>_README<suffix>.legacy (e.g.
+    @c products_README.md.legacy), so the notes stay visible at the
+    top level.  When that destination already exists, the source file
+    is deleted without comparison; two files with the same suffix at
+    the top of one legacy root map to the same destination, so the
+    second one is deleted.
     """
     if mover.dry_run:
         return
 
-    # Step 1: relocate top-of-tree README/.txt notes that are part of
-    # the legacy layout's docstring scaffolding.
+    # Step 1: move the top-level README/.txt notes of the legacy roots.
     for legacy_top in (root / "products", root / "observations"):
         if not legacy_top.is_dir():
             continue
         for entry in legacy_top.iterdir():
             if entry.is_file() and entry.suffix.lower() in (".md", ".txt"):
-                # Suffix the destination so multiple legacy roots'
-                # README.md don't collide.
+                # The legacy root's name in the destination keeps the
+                # README.md of products/ and observations/ apart.
                 dst = root / f"{legacy_top.name}_README{entry.suffix}.legacy"
                 if not dst.exists():
                     print(f"  preserve  {entry.relative_to(root)}  ->  {dst.relative_to(root)}")
                     shutil.move(str(entry), str(dst))
                 else:
-                    # Already preserved on a prior run; drop the duplicate.
+                    # Already preserved (by a prior run or an earlier
+                    # file in this loop); delete the source.
                     entry.unlink()
 
-    # Step 2: rmdir bottom-up.  We collect every directory under the
-    # legacy tops (and any flat-root product subdirs that are siblings
-    # to the new layout, e.g. data_production/orbit/), sort by depth
-    # (deepest first), and rmdir each.  rmdir refuses to delete
-    # non-empty dirs, so a hand-curated leftover is silently left
-    # alone.
+    # Step 2: rmdir bottom-up.  Every directory under the legacy tops
+    # (including flat-root product subdirs next to the new layout, e.g.
+    # data_production/orbit/) is collected, sorted deepest first, and
+    # passed to rmdir.  rmdir refuses non-empty directories, so any
+    # leftover file keeps its directory in place without a message.
     legacy_dirs: list[Path] = []
     legacy_tops: list[Path] = [root / "products", root / "observations"]
     # Also prune flat-root product subdirs (e.g. <root>/orbit/,
     # <root>/clock/, <root>/atx/, <root>/nc/, <root>/rinex/zip/, ...).
-    # We only walk subdirs we know belong to the legacy layout — never
-    # the new <YYYY-DOY>/, static/, or cache/ trees.
+    # Only subdirs named by the legacy layout are walked, never the new
+    # <YYYY-DOY>/, static/ or cache/ trees.
     for sub in _DATE_KEYED_PRODUCT_SUBDIRS + _OBS_PRODUCT_SUBDIRS + ("atx", "nc"):
         d = root / sub
         if d.is_dir():

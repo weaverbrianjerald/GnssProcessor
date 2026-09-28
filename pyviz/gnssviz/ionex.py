@@ -1,4 +1,4 @@
-"""Minimal IONEX (global ionosphere map) reader -- pure-Python, no deps.
+"""Minimal IONEX (global ionosphere map) reader: pure Python, no dependencies.
 
 The ionosphere pierce-point viewer can draw a faint *reference* VTEC field
 behind the network's own pierce-point estimates: the CODE global IONEX the run

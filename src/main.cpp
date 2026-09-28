@@ -2,9 +2,9 @@
 
 #include <string>
 
-// Pick a scenario config from argv[1]; fall back to ppp_rtk when run
-// with no arguments (matches Visual Studio "Run" with no launch args).
-// See config/README.md for the list of scenarios.
+// The scenario config path is argv[1]. With no arguments (for example, a Visual Studio
+// launch without arguments), config/ppp_rtk_internal.json is used.
+// config/README.md lists the scenarios.
 int main(int argc, char** argv) {
     const std::string cfg_path = (argc >= 2)
         ? std::string(argv[1])

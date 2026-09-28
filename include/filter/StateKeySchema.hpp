@@ -4,37 +4,32 @@
  * @file StateKeySchema.hpp
  * @brief Single source of truth for every dynamic state-vector key format.
  *
- * @c StateManager owns the state vector and exposes a handful of
- * <tt>std::map<std::string, size_t></tt> indices that grow at runtime —
+ * @c StateManager owns the state vector and exposes several
+ * <tt>std::map<std::string, size_t></tt> indices that grow at runtime:
  * ambiguities, per-satellite ionosphere, receiver code biases (IFB / DCB),
  * per-satellite signal biases, inter-system time offsets, and (in baseline
- * mode) double-difference ambiguities.  Each map keys a piece of opaque,
- * caller-formatted text to a row of the state vector.
+ * mode) double-difference ambiguities.  Each map sends a caller-formatted
+ * key string to a row of the state vector.
  *
- * Historically the format of those key strings was implicit, with key
- * construction (string concatenation) and key parsing (<tt>find()</tt> +
- * <tt>substr()</tt>) scattered across @c MeasurementModel,
- * @c StateInitializer, @c StateManager, @c AmbiguityResolver, and
- * @c DdPivotManager.  Different categories used different delimiters
- * (<tt>'_'</tt> vs <tt>'|'</tt>), and the parsers mostly had no bounds
- * checking — small format changes silently broke distant callers.
- *
- * This header centralizes all of that.  Every key category has:
+ * The key categories use different delimiters (<tt>'_'</tt> and
+ * <tt>'|'</tt>), and the keys are built and read in @c MeasurementModel,
+ * @c StateInitializer, @c StateManager, @c AmbiguityResolver and
+ * @c DdPivotManager.  An ad hoc <tt>find()</tt> + <tt>substr()</tt> parse
+ * without bounds checks breaks silently when a format changes, so the
+ * formats are defined here.  Every key category has:
  *   - A documented format string (verbatim, with example).
  *   - A @c make<i>Category</i>Key(...) builder.
  *   - A matching @c parse<i>Category</i>Key(...) helper that returns
  *     <tt>std::optional</tt> of a small "<tt>...Parts</tt>" struct, or
  *     @c std::nullopt on malformed input.
  *
- * The makers here MUST be the only producers of the on-the-wire key
- * strings stored in @c StateManager.  Code that needs to parse an
- * existing key MUST go through the parsers here; raw <tt>find('|')</tt>
- * walks belong in a museum of unhappy bug reports.
+ * Key strings stored in @c StateManager are to be built with the makers
+ * here, and code that reads an existing key is to use the parsers here
+ * rather than its own <tt>find('|')</tt> walk.
  *
- * @note The header is intentionally lightweight — every function is
- *       inline, no extra translation unit required.  Add a new category
- *       by following the pattern: format comment -> @c Parts struct ->
- *       @c make / @c parse pair -> grep call sites and migrate.
+ * @note Every function is inline, so the header needs no translation unit.
+ *       A new category follows the same pattern: format comment, @c Parts
+ *       struct, @c make / @c parse pair, then migration of the call sites.
  */
 
 #include <optional>
@@ -70,17 +65,16 @@ inline constexpr std::string_view kGlonassFcnMarker = "_k";
 /// Receiver differential code bias infix in code-bias keys ("GPS_DCB").
 inline constexpr std::string_view kDcbInfix = "DCB";
 
-/// Receiver PHASE-bias infix in receiver-phase-bias keys ("GPS_RPB_L1C").
-/// The surrounding underscores ("_RPB_") make the infix un-producible by
-/// @c makeIfbKey / @c makeDcbKey, so the receiver-phase-bias namespace stays
-/// disjoint from the receiver code-bias namespace (Card 3, §4c).
+/// Receiver phase-bias infix in receiver-phase-bias keys ("GPS_RPB_L1C").
+/// @c makeIfbKey / @c makeDcbKey cannot produce "_RPB_" (the infix with its
+/// surrounding underscores), so the receiver phase-bias keys stay disjoint
+/// from the receiver code-bias keys (Card 3, §4c).
 inline constexpr std::string_view kRpbInfix = "RPB";
 
-/// Receiver INTER-SIGNAL code-bias infix ("GPS_ISC_C1W", card SCC, §4d).
-/// Same disjointness argument as @c kRpbInfix: the surrounding underscores make
-/// "_ISC_" un-producible by @c makeIfbKey / @c makeDcbKey, and the infix itself
-/// shares no substring with "IFB" or "DCB", so the three receiver code-bias
-/// namespaces never collide.
+/// Receiver inter-signal code-bias infix ("GPS_ISC_C1W", card SCC, §4d).
+/// As for @c kRpbInfix, @c makeIfbKey / @c makeDcbKey cannot produce "_ISC_",
+/// and "ISC" contains neither "IFB" nor "DCB", so the three receiver code-bias
+/// key families (IFB, DCB, ISC) never collide.
 inline constexpr std::string_view kIscInfix = "ISC";
 
 /// Narrow-lane infix in NlWl-basis ambiguity keys ("G01_NL_1").
@@ -90,10 +84,10 @@ inline constexpr std::string_view kNlInfix = "NL";
 inline constexpr std::string_view kWlInfix = "WL";
 
 // ===========================================================================
-// 1. PPP ambiguity keys — "<satellite>_<signal>"
+// 1. PPP ambiguity keys: "<satellite>_<signal>"
 // ---------------------------------------------------------------------------
-// Examples: "G01_L1C", "E11_L5Q", "G01_L1C_L5Q" (iono-free combination,
-// note the embedded delimiter — parsers must split on the FIRST '_').
+// Examples: "G01_L1C", "E11_L5Q", "G01_L1C_L5Q" (iono-free combination; the
+// signal field contains the delimiter, so a parser splits on the first '_').
 //
 // Constructed in:  MeasurementModel.cpp (single-band and IF combinations)
 // Stored in:       StateManager::ambiguity_indices_
@@ -118,8 +112,8 @@ inline std::string makeAmbiguityKey(std::string_view satellite,
     return out;
 }
 
-/// Parse a PPP ambiguity key.  Splits on the FIRST underscore so that
-/// iono-free signal combinations remain in @c signal as-is.
+/// Parse a PPP ambiguity key.  Splits on the first underscore so that an
+/// iono-free signal combination stays whole in @c signal.
 /// Returns @c std::nullopt if the delimiter is missing or either side
 /// would be empty.
 inline std::optional<AmbiguityKeyParts>
@@ -134,7 +128,7 @@ parseAmbiguityKey(std::string_view key) {
 }
 
 // ===========================================================================
-// 1b. NL/WL ambiguity keys — "<sat>_NL_<band>" / "<sat>_WL_<band_a>_<band_b>"
+// 1b. NL/WL ambiguity keys: "<sat>_NL_<band>" / "<sat>_WL_<band_a>_<band_b>"
 // ---------------------------------------------------------------------------
 // Examples: "G01_NL_1", "G01_WL_1_2", "G01_WL_1_5", "E11_WL_1_7".
 //
@@ -171,8 +165,9 @@ struct NlAmbiguityKeyParts {
     char        band;       ///< RINEX band digit, e.g. '1' for L1.
 };
 
-/// Decomposed WL ambiguity key.  @c band_a < @c band_b always (canonical
-/// ascending order).
+/// Decomposed WL ambiguity key.  For a key built by @c makeWlAmbiguityKey,
+/// @c band_a <= @c band_b (canonical ascending order); the parser does not
+/// check the order.
 struct WlAmbiguityKeyParts {
     std::string satellite;  ///< Full RINEX sat ID, e.g. "G01".
     char        band_a;     ///< Lower-numbered RINEX band digit.
@@ -214,7 +209,7 @@ inline std::string makeWlAmbiguityKey(std::string_view satellite,
 }
 
 /// Cheap predicate: does @p key match the "<sat>_NL_<digit>" shape?
-/// Used to fast-skip non-NL entries when scanning the mixed ambiguity map.
+/// Lets a scan of the mixed ambiguity map skip non-NL entries quickly.
 inline bool isNlAmbiguityKey(std::string_view key) {
     // Minimum: 1-char sat + "_NL_" + 1-char band = 6 chars.
     if (key.size() < 6) return false;
@@ -270,7 +265,7 @@ parseWlAmbiguityKey(std::string_view key) {
 }
 
 // ===========================================================================
-// 2. Double-difference ambiguity keys — "DD|<cons>|<sat_i>|<code>|<pivot>"
+// 2. Double-difference ambiguity keys: "DD|<cons>|<sat_i>|<code>|<pivot>"
 // ---------------------------------------------------------------------------
 // Examples: "DD|GPS|G05|L1|G01", "DD|Galileo|E11|E5|E24"
 //
@@ -333,7 +328,7 @@ parseDdAmbiguityKey(std::string_view key) {
     if (p2 == std::string_view::npos) return std::nullopt;
     const auto p3 = key.find(kPipeDelimiter, p2 + 1);
     if (p3 == std::string_view::npos) return std::nullopt;
-    // No 5th pipe allowed — that would mean an unknown trailing field.
+    // A fifth pipe would mean an unknown trailing field; reject it.
     if (key.find(kPipeDelimiter, p3 + 1) != std::string_view::npos) {
         return std::nullopt;
     }
@@ -351,7 +346,7 @@ parseDdAmbiguityKey(std::string_view key) {
 }
 
 // ===========================================================================
-// 3. Per-satellite ionosphere keys — "<satellite>"
+// 3. Per-satellite ionosphere keys: "<satellite>"
 // ---------------------------------------------------------------------------
 // Just the bare satellite ID, no delimiter.  Present only in PPP-RTK
 // uncombined mode.
@@ -360,24 +355,27 @@ parseDdAmbiguityKey(std::string_view key) {
 // Stored in:       StateManager::ionosphere_indices_
 // ===========================================================================
 
-/// Build a per-satellite ionosphere key.  Trivial — exists for symmetry
-/// and so that <tt>grep makeIonosphereKey</tt> finds every site.
+/// Build a per-satellite ionosphere key.  Returns the satellite ID unchanged;
+/// the function exists for symmetry and so that <tt>grep makeIonosphereKey</tt>
+/// finds every site.
 inline std::string makeIonosphereKey(std::string_view satellite) {
     return std::string(satellite);
 }
 
 // ===========================================================================
-// 4. Receiver code-bias keys — "<system>_IFB<band>" or "<system>_DCB"
+// 4. Receiver code-bias keys: "<system>_IFB<band>" or "<system>_DCB"
 // ---------------------------------------------------------------------------
 // Examples: "GPS_IFB2", "GPS_IFB5", "GPS_DCB", "Galileo_IFB7"
 //
 //   system : system name string from PppUtils::getSystemString()
 //            ("GPS", "Galileo", "BeiDou", "GLONASS", "QZSS", "SBAS")
-//   band   : single character — the RINEX frequency-band digit, i.e.
-//            obs_signal[1] (the digit between the L/C tracking-mode
-//            prefix and the attribute suffix).
-//   "DCB"  : differential code bias — used when a different bias
-//            structure is selected by StateInitializer::resolveReceiverBias.
+//   band   : single character, the RINEX frequency-band digit, i.e.
+//            obs_signal[1] (the digit between the observation-type letter
+//            C or L and the tracking-attribute suffix).
+//   "DCB"  : receiver differential code bias.  StateInitializer::
+//            resolveReceiverBias maps both bands of the system's clock-reference
+//            signal pair to "<system>_DCB" (each with its own coefficient) and
+//            gives every other band its own "<system>_IFB<band>" state.
 //
 // Constructed in:  StateInitializer (resolveReceiverBias)
 // Stored in:       StateManager::code_bias_indices_
@@ -405,20 +403,20 @@ inline std::string makeDcbKey(std::string_view system) {
 }
 
 // ===========================================================================
-// 4b. Per-FCN-slot GLONASS receiver IFB keys — "GLONASS_IFB<band>_k<±slot>"
+// 4b. Per-FCN-slot GLONASS receiver IFB keys: "GLONASS_IFB<band>_k<±slot>"
 // ---------------------------------------------------------------------------
 // Examples: "GLONASS_IFB1_k-4", "GLONASS_IFB2_k+5"
 //
 //   system : system name string (always "GLONASS" in practice).
-//   band   : FDMA band digit — '1' (G1) or '2' (G2).  CDMA bands keep the
+//   band   : FDMA band digit, '1' (G1) or '2' (G2).  CDMA bands keep the
 //            per-band makeIfbKey form (their frequency is slot-independent).
 //   slot   : GLONASS FDMA channel number k ∈ [-7,+6], printed with an
 //            explicit sign ("+5" / "-4").  The central channel k=0 is the
-//            held datum and never produces a key.
+//            held datum; StateInitializer creates no key for it.
 //
-// Unlike the per-band IFB/DCB keys above, these are NOT receiver-common: two
+// Unlike the per-band IFB/DCB keys above, these are not receiver-common: two
 // GLONASS satellites on different slots see different group delays, so the
-// columns SURVIVE between-satellite single differencing.  BssdTransform
+// columns survive between-satellite single differencing.  BssdTransform
 // (receiver-block zeroing) and StateManager (process-noise suppression)
 // special-case them via isGlonassPerSlotIfbKey().
 //
@@ -448,10 +446,10 @@ inline std::string makeGlonassPerSlotIfbKey(std::string_view system,
     return out;
 }
 
-/// Cheap predicate: is @p key a per-slot GLONASS IFB key (carries the IFB
-/// infix AND the "_k" FCN marker)?  The per-band IFB/DCB keys lack "_k", so
-/// they return false — which is exactly what lets BssdTransform / StateManager
-/// distinguish the SD-surviving per-slot columns from receiver-common ones.
+/// Cheap predicate: is @p key a per-slot GLONASS IFB key (the IFB infix
+/// followed somewhere by the "_k" FCN marker)?  The per-band IFB/DCB keys lack
+/// "_k" and return false, which lets BssdTransform / StateManager tell the
+/// SD-surviving per-slot columns from the receiver-common ones.
 inline bool isGlonassPerSlotIfbKey(std::string_view key) {
     const auto ifb = key.find(kIfbInfix);
     if (ifb == std::string_view::npos) return false;
@@ -459,8 +457,10 @@ inline bool isGlonassPerSlotIfbKey(std::string_view key) {
            != std::string_view::npos;
 }
 
-/// Parse a per-slot GLONASS IFB key.  Returns @c std::nullopt unless the shape
-/// is exactly "<system>_IFB<band>_k<±slot>" with a single band char.
+/// Parse a per-slot GLONASS IFB key "<system>_IFB<band>_k<±slot>".  From the
+/// first "IFB" onward the key must hold one band char, "_k", an optional sign
+/// and one or more digits; otherwise returns @c std::nullopt.  The text before
+/// "IFB" and the slot range are not checked.
 inline std::optional<GlonassPerSlotIfbKeyParts>
 parseGlonassPerSlotIfbKey(std::string_view key) {
     const auto ifb = key.find(kIfbInfix);
@@ -494,11 +494,12 @@ struct IfbKeyParts {
 
 /// Parse a receiver-common per-band IFB key "<system>_IFB<band>".  Returns
 /// @c std::nullopt for the per-slot GLONASS form ("<system>_IFB<band>_k<±slot>",
-/// which carries its own central-channel datum) or any malformed shape.  This is
-/// the inverse of @c makeIfbKey and the receiver-common counterpart to
-/// @c parseGlonassPerSlotIfbKey — letting a caller select the receiver-common
+/// which carries its own central-channel datum) and for any key where "IFB" is
+/// not preceded by '_' or not followed by exactly one band char.  Inverse of
+/// @c makeIfbKey and the receiver-common counterpart to
+/// @c parseGlonassPerSlotIfbKey: a caller uses it to select the receiver-common
 /// code-bias columns (the ones a network common-mode pin / S-basis datum acts on)
-/// while skipping the SD-surviving per-slot GLONASS columns.
+/// and skip the SD-surviving per-slot GLONASS columns.
 inline std::optional<IfbKeyParts> parseIfbKey(std::string_view key) {
     if (isGlonassPerSlotIfbKey(key)) return std::nullopt;   // per-slot, not per-band
     const auto ifb = key.find(kIfbInfix);
@@ -521,24 +522,25 @@ inline std::optional<std::string> parseDcbKey(std::string_view key) {
 }
 
 // ===========================================================================
-// 4c. Receiver PHASE-bias keys — "<system>_RPB_<signal>"
+// 4c. Receiver phase-bias keys: "<system>_RPB_<signal>"
 // ---------------------------------------------------------------------------
 // Examples: "GPS_RPB_L1C", "Galileo_RPB_L5Q"
 //
 //   system : system name string from PppUtils::getSystemString()
 //            ("GPS", "Galileo", "BeiDou", "QZSS", ...).
 //   signal : full RINEX signal code (3 chars; the network allocates these on
-//            RAW phase signals only, so no embedded '_' iono-free combos).
+//            raw phase signals only, so no iono-free combination with an
+//            embedded '_').
 //
 // The per-(receiver, system, signal) satellite-phase-bias split state
 // δ_{r,σ} of the Eq-34 / de Jonge single-receiver-chain phase datum (Card 3,
-// network.phase_datum_eq34).  Giving the receiver fractional phase bias its
-// OWN estimable state stops it lumping into the emitted satellite phase bias,
+// network.phase_datum_eq34).  With its own estimable state, the receiver
+// fractional phase bias does not lump into the emitted satellite phase bias,
 // so the emitted between-satellite reference stays integer-consistent across
-// ALL satellites (each chain hop contributes only an integer).  These are
-// LOCAL states (observed by exactly one station), kept in the SEPARATE map
+// all satellites (each chain hop contributes only an integer).  These are
+// local states (observed by one station), kept in the separate map
 // StateManager::receiver_phase_bias_indices_.  The "_RPB_" infix keeps the
-// namespace disjoint from the receiver code-bias keys (§4) — parseIfbKey /
+// keys disjoint from the receiver code-bias keys (§4): parseIfbKey /
 // parseDcbKey look for the "IFB"/"DCB" infix and never match "RPB".
 //
 // Constructed in:  the network driver / MeasurementModel (eq34 branch only)
@@ -591,43 +593,45 @@ parseReceiverPhaseBiasKey(std::string_view key) {
 }
 
 // ===========================================================================
-// 4d. Receiver INTER-SIGNAL code-bias keys — "<system>_ISC_<signal>"
+// 4d. Receiver inter-signal code-bias keys: "<system>_ISC_<signal>"
 // ---------------------------------------------------------------------------
 // Examples: "GPS_ISC_C1W", "GPS_ISC_C1X"
 //
 //   system : system name string from PppUtils::getSystemString()
 //            ("GPS", "Galileo", "BeiDou", "QZSS", ...).
-//   signal : full RINEX CODE signal code (3 chars).
+//   signal : full RINEX code-observation signal code (3 chars).
 //
 // Card SCC (docs/refound/SCC_second_code_channel_2026-09-21.md, R2).  With
 // `network.second_code_channel` a station contributes every allow-listed band-1
-// code it tracks, not only its latched canonical one.  The receiver group delay
+// code it tracks, not only its latched canonical one (with
+// `processing.channel_mode: all`, any admitted non-canonical code on any band;
+// card SID phase 6b).  The receiver group delay
 // of the second code differs from the canonical one by an inter-signal
 // correction, and the per-band receiver key (§4, "<sys>_DCB" for a pin band)
-// cannot express it: C1C and C1W both resolve to "GPS_DCB" with the SAME
-// coefficient, so a second band-1 code would ASSERT a zero receiver inter-signal
-// bias and push the difference into the satellite column.  (Card B5D is the
-// record of what an asserted zero inter-signal bias costs on a third band.)
+// cannot express it: C1C and C1W both resolve to "GPS_DCB" with the same
+// coefficient, so a second band-1 code would assert a zero receiver inter-signal
+// bias and push the difference into the satellite column.  (Card B5D records
+// what an asserted zero inter-signal bias costs on a third band.)
 //
-// So the non-canonical code gets its own per-(receiver, system, signal) state
-// with UNIT coefficient — an absolute receiver delay in the frame the clock and
-// ionosphere datum leave free, rather than the ionosphere-referenced difference
-// the DCB state carries.  The one null direction that creates (every receiver
-// inter-signal bias against every satellite one) is closed by the satellite
-// family's own time-linked sum-to-zero row, which is why card SCC changes no
+// The non-canonical code therefore gets its own per-(receiver, system, signal)
+// state with unit coefficient: an absolute receiver delay in the frame the clock
+// and ionosphere datum leave free, rather than the ionosphere-referenced
+// difference the DCB state carries.  The one null direction this creates (every
+// receiver inter-signal bias against every satellite one) is closed by the
+// satellite family's own time-linked sum-to-zero row, so card SCC changes no
 // datum row (R3).
 //
-// NAMESPACE.  The key must match NEITHER parseIfbKey NOR parseDcbKey NOR
-// isGlonassPerSlotIfbKey: Application::networkSplitStation_ DROPS every receiver
+// Key disjointness: the key must match none of parseIfbKey, parseDcbKey and
+// isGlonassPerSlotIfbKey.  Application::networkSplitStation_ drops every receiver
 // column whose key contains "_IFB", and the receiver code-bias zero-mean datum
 // prior is gated on parseDcbKey and must not act on this state (it carries no
-// zero-mean prior — R2).  "ISC" shares no substring with either infix, so all
-// three reject by construction; the property is pinned by the negative parser
-// tests in tests/test_network_second_code_scope.cpp.
+// zero-mean prior, R2).  "ISC" contains neither infix, so all three reject the
+// key by construction; the negative parser tests in
+// tests/test_network_second_code_scope.cpp pin the property.
 //
 // Constructed in:  StateInitializer (resolveReceiverBias, SCC branch)
 // Stored in:       StateManager::code_bias_indices_ (beside the IFB/DCB states,
-//                  so the receiver code-bias CARRY restores it — R2)
+//                  so the receiver code-bias carry restores it, R2)
 // Parsed in:       Application::networkSplitStation_ (the R5 sigma scale),
 //                  the network teardown (the R7 state census)
 // ===========================================================================
@@ -677,7 +681,7 @@ parseReceiverIscKey(std::string_view key) {
 }
 
 // ===========================================================================
-// 5. Per-satellite signal-bias keys — "<satellite>|<signal>"
+// 5. Per-satellite signal-bias keys: "<satellite>|<signal>"
 // ---------------------------------------------------------------------------
 // Examples: "G01|C1W", "E11|C5Q", "E24|C7Q"
 //
@@ -686,8 +690,8 @@ parseReceiverIscKey(std::string_view key) {
 //
 // Constructed in:  MeasurementModel, StateInitializer
 // Stored in:       StateManager::sat_bias_indices_
-// Parsed in:       StateManager::computeProcessNoise (BSSD freeze check
-//                  reads only the satellite prefix — see
+// Parsed in:       StateManager::getProcessNoiseMatrix (the BSSD freeze check
+//                  reads only the satellite prefix; see
 //                  satelliteFromSatBiasKey below).
 // ===========================================================================
 
@@ -721,10 +725,9 @@ parseSatBiasKey(std::string_view key) {
     };
 }
 
-/// Extract just the satellite prefix from a sat-bias key.  If the key
-/// has no pipe (legacy / malformed), returns the whole key — this
-/// preserves the lenient behavior of the original
-/// StateManager::computeProcessNoise loop.
+/// Extract the satellite prefix from a sat-bias key.  A key with no pipe
+/// (legacy or malformed) is returned whole, which keeps the lenient behavior of
+/// the StateManager::getProcessNoiseMatrix loop.
 inline std::string satelliteFromSatBiasKey(std::string_view key) {
     const auto bar = key.find(kPipeDelimiter);
     return std::string(bar != std::string_view::npos
@@ -733,30 +736,30 @@ inline std::string satelliteFromSatBiasKey(std::string_view key) {
 }
 
 // ===========================================================================
-// 5b. Per-satellite signal PHASE-bias keys — "<satellite>|<signal>|PB"
+// 5b. Per-satellite signal phase-bias keys: "<satellite>|<signal>|PB"
 // ---------------------------------------------------------------------------
 // Examples: "G01|L1C|PB", "E11|L5Q|PB"
 //
-// The network producer (PPP_RTK_Network) estimates an EXPLICIT per-(satellite,
-// signal) satellite phase bias (Odijk Eq. 4 — it carries the network pivot-
-// receiver ambiguity lump).  Stored in StateManager::sat_phase_bias_indices_, a
-// map kept DISTINCT from sat_bias_indices_ (CODE bias, section 5).  The trailing
-// "|PB" segment is the discriminator that keeps the two namespaces disjoint:
+// The network producer (PPP_RTK_Network) estimates an explicit per-(satellite,
+// signal) satellite phase bias (Odijk Eq. 4; it carries the network pivot-
+// receiver ambiguity lump).  It is stored in StateManager::sat_phase_bias_indices_,
+// a map separate from sat_bias_indices_ (code bias, section 5).  The trailing
+// "|PB" segment keeps the two key sets disjoint:
 //   - satelliteFromSatBiasKey / satelliteFromSatPhaseBiasKey both split on the
-//     FIRST pipe, so either returns the satellite correctly;
-//   - a phase-bias key is NEVER stored in sat_bias_indices_, so parseSatBiasKey
-//     (which would otherwise read "L1C|PB" as the signal) is never invoked on it.
+//     first pipe, so either returns the satellite correctly;
+//   - a phase-bias key is never stored in sat_bias_indices_, so parseSatBiasKey
+//     (which would read "L1C|PB" as the signal) is never applied to it.
 //
 // Constructed in:  MeasurementModel, the network estimator
 // Stored in:       StateManager::sat_phase_bias_indices_
-// Parsed in:       StateManager::getProcessNoiseMatrix (pivot-freeze check reads
-//                  only the satellite prefix — see satelliteFromSatPhaseBiasKey).
+// Parsed in:       StateManager::getProcessNoiseMatrix (the pivot-freeze check
+//                  reads only the satellite prefix; see satelliteFromSatPhaseBiasKey).
 // ===========================================================================
 
 /// Trailing discriminator separating a phase-bias key from a code-bias key.
 inline constexpr std::string_view kSatPhaseBiasSuffix = "|PB";
 
-/// Build a per-satellite signal PHASE-bias key.
+/// Build a per-satellite signal phase-bias key.
 inline std::string makeSatPhaseBiasKey(std::string_view satellite,
                                        std::string_view signal) {
     std::string out;
@@ -774,7 +777,7 @@ inline bool isSatPhaseBiasKey(std::string_view key) {
         && key.substr(key.size() - kSatPhaseBiasSuffix.size()) == kSatPhaseBiasSuffix;
 }
 
-/// Parse a per-satellite signal PHASE-bias key.  Returns @c std::nullopt unless
+/// Parse a per-satellite signal phase-bias key.  Returns @c std::nullopt unless
 /// the key has the form "<sat>|<signal>|PB" with non-empty satellite and signal.
 inline std::optional<SatBiasKeyParts>
 parseSatPhaseBiasKey(std::string_view key) {
@@ -799,23 +802,23 @@ inline std::string satelliteFromSatPhaseBiasKey(std::string_view key) {
 }
 
 // ===========================================================================
-// 5c. Per-satellite CLOCK keys — "<satellite>|SC"
+// 5c. Per-satellite clock keys: "<satellite>|SC"
 // ---------------------------------------------------------------------------
 // Examples: "G01|SC", "E11|SC"
 //
-// The network producer (PPP_RTK_Network) estimates an EXPLICIT per-satellite
+// The network producer (PPP_RTK_Network) estimates an explicit per-satellite
 // clock correction (Δδtˢ in metres, relative to the a-priori precise/real-time
-// product clock already removed in obs.modeled) to maintain consistency with
-// the chosen S-system datum.  Unlike the code/phase biases this is PER-SATELLITE
-// (one clock per satellite, NOT per signal), so the key carries no signal field.
-// Stored in StateManager::sat_clock_indices_, a map kept DISTINCT from the
-// bias maps via the trailing "|SC" discriminator.  The satellite orbit (position)
-// stays FIXED from the product; only the clock is estimated.
+// product clock already removed in obs.modeled) to stay consistent with the
+// chosen S-system datum.  Unlike the code/phase biases there is one clock per
+// satellite, not per signal, so the key carries no signal field.  It is stored
+// in StateManager::sat_clock_indices_, a map separate from the bias maps, and
+// the trailing "|SC" distinguishes the keys.  The satellite orbit (position)
+// stays fixed from the product; only the clock is estimated.
 //
 // Constructed in:  the network driver / estimator
 // Stored in:       StateManager::sat_clock_indices_
-// Parsed in:       StateManager::getProcessNoiseMatrix (frozen-pivot check reads
-//                  only the satellite prefix — see satelliteFromSatClockKey).
+// Parsed in:       StateManager::getProcessNoiseMatrix (the frozen-pivot check
+//                  reads only the satellite prefix; see satelliteFromSatClockKey).
 // ===========================================================================
 
 /// Trailing discriminator marking a per-satellite clock key.
@@ -836,14 +839,16 @@ inline bool isSatClockKey(std::string_view key) {
         && key.substr(key.size() - kSatClockSuffix.size()) == kSatClockSuffix;
 }
 
-/// Extract the satellite from a sat-clock key, or empty if malformed.
+/// Extract the satellite from a sat-clock key.  A key without the "|SC" suffix
+/// is returned whole.
 inline std::string satelliteFromSatClockKey(std::string_view key) {
     if (!isSatClockKey(key)) return std::string(key);
     return std::string(key.substr(0, key.size() - kSatClockSuffix.size()));
 }
 
 /// Parse a per-satellite clock key.  Returns the satellite, or std::nullopt
-/// unless the key has the form "<sat>|SC" with a non-empty satellite.
+/// unless the key has the form "<sat>|SC" with a non-empty satellite that
+/// contains no pipe.
 inline std::optional<std::string> parseSatClockKey(std::string_view key) {
     if (!isSatClockKey(key)) return std::nullopt;
     const std::string_view sat = key.substr(0, key.size() - kSatClockSuffix.size());
@@ -852,31 +857,36 @@ inline std::optional<std::string> parseSatClockKey(std::string_view key) {
 }
 
 // ===========================================================================
-// 6. System-time-offset keys — "<system>"
+// 6. System-time-offset keys: "<system>"
 // ---------------------------------------------------------------------------
-// Just the system name string ("Galileo", "GLONASS", "BeiDou", "QZSS",
-// "SBAS").  GPS is the reference and never appears.
+// The bare system name string ("Galileo", "GLONASS", "BeiDou", "QZSS",
+// "SBAS").  GPS is the reference and never appears.  Under between-satellite
+// single differencing (BSSD) no system-time-offset state is allocated.
 //
 // Constructed in:  StateManager constructor (loop over active systems)
 // Stored in:       StateManager::system_time_offset_indices_
 // ===========================================================================
 
-/// Build a system-time-offset key.  Trivial — exists for symmetry.
+/// Build a system-time-offset key.  Returns the system name unchanged; the
+/// function exists for symmetry.
 inline std::string makeSystemTimeOffsetKey(std::string_view system) {
     return std::string(system);
 }
 
 // ===========================================================================
-// 7. BSSD pivot-seed keys — "<cons>|<band>"
+// 7. BSSD pivot-seed keys: "<cons>|<band>"
 // ---------------------------------------------------------------------------
 // Examples: "GPS|L1", "Galileo|E5", "BeiDou|B2"
 //
 //   cons : constellation string (currently the same string used in DD
 //          ambiguity keys)
-//   band : 2-char band slice of the RINEX signal code (signal.substr(0, 2))
+//   band : band label; the helper joins whatever string it is given.
 //
-// Constructed in:  MeasurementModel (BSSD apply path)
-// Used as:         lookup key in pivot_abs_seeds map (no parse path).
+// makePivotSeedKey has no production caller.  MeasurementModel (BSSD apply
+// path) builds its pivot_abs_seeds keys by concatenation, with the full phase
+// signal code rather than a 2-char band ("GPS|L1C"), plus "<cons>|NL" and
+// "<cons>|WL|<a>_<b>" under the NL/WL basis.
+// Used as:         lookup key in the pivot_abs_seeds map (no parse path).
 // ===========================================================================
 
 /// Build a BSSD pivot-seed key.
@@ -891,27 +901,27 @@ inline std::string makePivotSeedKey(std::string_view cons,
 }
 
 // ===========================================================================
-// 8. Global SH-VTEC coefficient keys — "SH|<n>|<m>|<C|S>" / "SH2|<n>|<m>|<C|S>"
+// 8. Global SH-VTEC coefficient keys: "SH|<n>|<m>|<C|S>" / "SH2|<n>|<m>|<C|S>"
 // ---------------------------------------------------------------------------
 // Examples: "SH|0|0|C", "SH|4|2|C", "SH|4|2|S", "SH2|1|0|C"
 //
 //   n    : spherical-harmonic degree (0..N).
 //   m    : order (0..n).
 //   trig : 'C' (cosine term, includes m=0) or 'S' (sine term, m>=1).
-//   layer: shell index — layer 0 keeps the original "SH" prefix unchanged
-//          (all pre-Iono-2 keys, snapshots, and traces stay valid); the
-//          dual-layer field's second shell uses the DISTINCT prefix "SH2"
-//          (parseVtecShKey hard-rejects extra pipe fields, so a 5-field
-//          layer-extended key would be silently unparseable by old readers —
-//          a distinct prefix is the backward-compatible extension).
+//   layer: shell index.  Layer 0 keeps the "SH" prefix, so single-layer keys,
+//          snapshots and traces written before the second layer existed
+//          (card Iono-2) stay valid.  The dual-layer field's second shell uses
+//          the separate prefix "SH2": parseVtecShKey rejects extra pipe fields,
+//          so a 5-field layer-extended key would be unparseable by older
+//          readers, and a separate prefix is the backward-compatible extension.
 //
-// These name the SHARED spherical-harmonic VTEC coefficient columns of the
+// These name the shared spherical-harmonic VTEC coefficient columns of the
 // PPP-RTK network producer's co-estimated global ionosphere
-// (SharedParamKind::VtecSh).  Unlike every other key here they are NOT
-// StateManager state-vector keys — the coefficients live only in
-// NetworkEstimator's shared border — but they follow the same make/parse
-// pattern so the estimator's column map and the driver's col_desc/trace stay in
-// lockstep.
+// (SharedParamKind::VtecSh).  Like the pivot-seed keys (§7), they are not
+// StateManager state-vector keys: the coefficients live only in
+// NetworkEstimator's shared border.  They follow the same make/parse pattern
+// so the estimator's column map and the driver's col_desc/trace use identical
+// names.
 //
 // Constructed in:  the network estimator (registerVtecCoeff), the driver.
 // ===========================================================================
@@ -930,8 +940,9 @@ struct VtecShKeyParts {
 };
 
 /// Build a global SH-VTEC coefficient key "SH|<n>|<m>|<C|S>" (layer 0) or
-/// "SH2|<n>|<m>|<C|S>" (layer 1).  Layer 0 output is byte-identical to the
-/// pre-Iono-2 three-argument form.
+/// "SH2|<n>|<m>|<C|S>" (layer 1; any @p layer > 0 selects "SH2").  Layer 0
+/// output is byte-identical to the single-layer three-argument form that
+/// preceded card Iono-2.
 inline std::string makeVtecShKey(int n, int m, char trig, int layer = 0) {
     std::string out;
     out.append(layer > 0 ? kVtecSh2Prefix : kVtecShPrefix);
@@ -944,9 +955,9 @@ inline std::string makeVtecShKey(int n, int m, char trig, int layer = 0) {
     return out;
 }
 
-/// Cheap predicate: does @p key open with an SH-VTEC prefix ("SH" or "SH2") + a
-/// pipe?  True for BOTH layers — layer-agnostic call sites (kind tests, trace
-/// filters) keep working unchanged on dual-layer keys.
+/// Cheap predicate: does @p key open with an SH-VTEC prefix ("SH" or "SH2") and
+/// a pipe?  True for both layers, so layer-agnostic call sites (kind tests,
+/// trace filters) work unchanged on dual-layer keys.
 inline bool isVtecShKey(std::string_view key) {
     if (key.size() > kVtecSh2Prefix.size() + 1
         && key.substr(0, kVtecSh2Prefix.size()) == kVtecSh2Prefix

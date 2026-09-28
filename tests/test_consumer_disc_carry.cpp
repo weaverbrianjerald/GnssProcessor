@@ -1,36 +1,37 @@
 /**
  * @file test_consumer_disc_carry.cpp
- * @brief Card CC — the closed-loop consumer's continuity: (A) the declared
- *        phase-bias-step ambiguity CARRY (StateManager::shiftAmbiguity +
- *        PbDiscCarryLedger, the knob-ON twin of the reset reaction) and (B) the
- *        harness-side snapshot contract (the consumer file beside the network
- *        history copy; the refusals of RealTimeEngine::writeStateSnapshotTo).
+ * @brief Tests for the closed-loop consumer's continuity (Card CC): (A) the
+ *        ambiguity carry across a declared phase-bias step
+ *        (StateManager::shiftAmbiguity + PbDiscCarryLedger, the knob-on
+ *        alternative to the reset reaction) and (B) the harness-side snapshot
+ *        contract (the consumer file beside the network history copy; the
+ *        refusals of RealTimeEngine::writeStateSnapshotTo).
  *
- * What is locked here (SPEC_event_harness §24.4, gate G0):
- *   - the shift is VALUE-ONLY: P bitwise unchanged, every other state bitwise
- *     unchanged, the key not marked pending re-seed; unknown keys refused
- *     exactly like resetAmbiguity;
- *   - a declared step is an exact TRANSLATION of the measurement update: with
+ * Checked here (SPEC_event_harness §24.4, gate G0):
+ *   - the shift changes the value only: P bitwise unchanged, every other state
+ *     bitwise unchanged, the key not marked pending re-seed; unknown keys are
+ *     refused as in resetAmbiguity;
+ *   - a declared step is an exact translation of the measurement update: with
  *     the applied bias moved by Δ and the ambiguity by −Δ the innovation is
  *     identical, so the posterior position and every other state agree with
- *     the no-step run to 1e-9 and the ambiguity posterior differs by exactly −Δ
- *     (the reset alternative, by contrast, moves the position);
+ *     the no-step run to 1e-9 and the ambiguity posterior differs by −Δ (the
+ *     reset alternative moves the position);
  *   - every refusal branch of the ledger (first sighting, NL/WL basis, BSSD,
- *     unknown key) takes the EXISTING reset — covariance row/column zeroed,
- *     diagonal re-inflated, key pending re-seed — and increments its own
+ *     unknown key) takes the existing reset (covariance row/column zeroed,
+ *     diagonal re-inflated, key pending re-seed) and increments its own
  *     counter; the closure carried + resets == events holds over a mixed
  *     sequence;
  *   - the config plumbing: processing.ssr_phase_bias_disc_carry loads directly,
- *     network.closed_loop.pb_disc_carry reaches the DERIVED consumer config and
- *     never the base, network.closed_loop.state_snapshot parses; defaults false;
+ *     network.closed_loop.pb_disc_carry reaches the derived consumer config and
+ *     not the base, network.closed_loop.state_snapshot parses; defaults false;
  *   - (B) the consumer history file sits beside the network copy with the same
  *     .epNNNN suffix, and writeStateSnapshotTo refuses (writes nothing) on an
  *     engine that has processed no epoch.
  *
- * The engine-level halves (the seam's per-key sweep, the RESTORED rider, the
- * beside-the-copy write on a live producer) need a full engine + product
+ * The engine-level parts (the seam's per-key sweep, the RESTORED rider, the
+ * write beside the copy on a live producer) need a full engine and product
  * stream and are validated on the field harness (the v9 seed + G2/G3 legs),
- * exactly as the RT snapshot's own engine halves were (test_rt_state_snapshot).
+ * as the RT snapshot's own engine parts were (test_rt_state_snapshot).
  */
 
 #include <gtest/gtest.h>
@@ -59,8 +60,8 @@ namespace {
 
 constexpr double kResetStd = 100.0;   // the reaction's ambiguity_std stand-in
 
-/// A StateManager with a core block + two undifferenced ambiguities and a dense
-/// (fully correlated) covariance — the shape a converged consumer carries.
+/// A StateManager with a core block, two undifferenced ambiguities and a dense
+/// (fully correlated) covariance, the shape a converged consumer carries.
 struct Bed {
     LogManager  lm;
     GnssConfig  cfg;
@@ -144,7 +145,7 @@ std::string networkConfig(const std::string& closed_loop_extra) {
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// (A) StateManager::shiftAmbiguity — value-only, exact, guarded.
+// (A) StateManager::shiftAmbiguity: value only, exact, guarded.
 // ---------------------------------------------------------------------------
 TEST(ConsumerDiscCarryTest, ShiftAmbiguityIsValueOnlyAndExact) {
     Bed b;
@@ -155,9 +156,9 @@ TEST(ConsumerDiscCarryTest, ShiftAmbiguityIsValueOnlyAndExact) {
     ASSERT_TRUE(b.sm.shiftAmbiguity("G24_L5X", delta));
 
     const Eigen::VectorXd x1 = b.sm.getStateVector();
-    EXPECT_EQ(x1(b.i24), x0(b.i24) + delta);                     // the one state, the exact sum
+    EXPECT_EQ(x1(b.i24), x0(b.i24) + delta);                     // one state, the exact sum
     EXPECT_TRUE(bitwiseEqualExcept(x0, x1, b.i24));               // nothing else moved
-    EXPECT_TRUE(bitwiseEqual(P0, b.sm.getCovariance()));          // P untouched, bit for bit
+    EXPECT_TRUE(bitwiseEqual(P0, b.sm.getCovariance()));          // P bitwise unchanged
     EXPECT_FALSE(b.sm.isAmbiguityPendingReseed("G24_L5X"));       // no re-seed
     EXPECT_EQ(b.sm.getAmbiguities().size(), 2u);                  // no state created / removed
 }
@@ -240,7 +241,7 @@ TEST(ConsumerDiscCarryTest, DeclaredStepIsAnExactTranslationOfTheUpdate) {
     Eigen::VectorXd xa, va; Eigen::MatrixXd Pa;
     update(x, P, PB1, xa, Pa, va);
 
-    // Run B: the bias moved by +delta AND the ambiguity carried by -delta
+    // Run B: the bias moved by +delta and the ambiguity carried by -delta
     // (the shift), covariance untouched.
     Eigen::VectorXd xb0 = x; xb0(N1) -= delta;
     Eigen::VectorXd xb, vb; Eigen::MatrixXd Pb;
@@ -251,12 +252,12 @@ TEST(ConsumerDiscCarryTest, DeclaredStepIsAnExactTranslationOfTheUpdate) {
         if (i == N1) continue;
         EXPECT_NEAR(xa(i), xb(i), 1e-9) << "state " << i;      // position, clock, ZWD, N2 unchanged
     }
-    EXPECT_NEAR(xb(N1), xa(N1) - delta, 1e-9);                // the ambiguity moved by exactly -delta
-    EXPECT_TRUE(bitwiseEqual(Pa, Pb));                          // the SAME covariance path, bit for bit
+    EXPECT_NEAR(xb(N1), xa(N1) - delta, 1e-9);                // the ambiguity moved by -delta
+    EXPECT_TRUE(bitwiseEqual(Pa, Pb));                          // same covariance path, bitwise
 
     // The reset alternative (what the carry replaces): P row/column zeroed,
-    // diagonal at std², value kept — the innovation is no longer the no-step
-    // innovation and the posterior position MOVES.
+    // diagonal at std², value kept.  The innovation then differs from the
+    // no-step innovation and the posterior position moves.
     Eigen::MatrixXd Pr = P;
     Pr.row(N1).setZero(); Pr.col(N1).setZero(); Pr(N1, N1) = kResetStd * kResetStd;
     Eigen::VectorXd xr, vr; Eigen::MatrixXd PR;
@@ -297,8 +298,8 @@ TEST(ConsumerDiscCarryTest, LedgerCarriesADeclaredStepValueOnly) {
     EXPECT_TRUE(bitwiseEqual(P0, b.sm.getCovariance()));
     led.record("G24|L5X", 0.0);
 
-    // A bump AND a flip in the same epoch (the bias returns re-realized): ONE
-    // event, one translation spanning both, counted as a disc carry.
+    // A bump and a flip in the same epoch (the bias returns re-realized): one
+    // event, one translation covering both, counted as a disc carry.
     const double before_both = b.sm.getStateVector()(b.i24);
     d = led.react(b.sm, "G24|L5X", "G24_L5X", true, true, 2.100, false, false, kResetStd);
     EXPECT_EQ(d.action, A::CarriedDisc);
@@ -326,7 +327,7 @@ TEST(ConsumerDiscCarryTest, LedgerCarriesADeclaredStepValueOnly) {
 }
 
 // ---------------------------------------------------------------------------
-// (A) Every refusal branch takes the EXISTING reset and increments its counter.
+// (A) Every refusal branch takes the existing reset and increments its counter.
 // ---------------------------------------------------------------------------
 TEST(ConsumerDiscCarryTest, RefusalBranchesTakeTheResetAndCount) {
     using A = PbDiscCarryLedger::Action;
@@ -370,7 +371,7 @@ TEST(ConsumerDiscCarryTest, RefusalBranchesTakeTheResetAndCount) {
         EXPECT_EQ(led.counters().flips, 1u);
     }
     // 4. Unknown ambiguity key: the reset is taken and is itself a no-op there
-    //    (resetAmbiguity's guard) — no state is created, nothing is pending.
+    //    (resetAmbiguity's guard); no state is created and nothing is pending.
     {
         Bed b;
         PbDiscCarryLedger led;
@@ -424,7 +425,7 @@ TEST(ConsumerDiscCarryTest, CounterClosureHoldsOverAMixedSequence) {
 }
 
 // ---------------------------------------------------------------------------
-// Config plumbing: the knob lands on the DERIVED consumer config only.
+// Config plumbing: the knob reaches the derived consumer config only.
 // ---------------------------------------------------------------------------
 TEST(ConsumerDiscCarryTest, ConfigDefaultsAreOffAndTheKnobReachesOnlyTheDerivedConsumer) {
     {
@@ -442,7 +443,7 @@ TEST(ConsumerDiscCarryTest, ConfigDefaultsAreOffAndTheKnobReachesOnlyTheDerivedC
         ASSERT_TRUE(cfg.loadFromJson(p, log));
         EXPECT_TRUE(cfg.getNetworkConfig().closed_loop.pb_disc_carry);
         EXPECT_TRUE(cfg.getNetworkConfig().closed_loop.state_snapshot);
-        EXPECT_FALSE(cfg.ssrPhaseBiasDiscCarry());                       // the PRODUCER never carries
+        EXPECT_FALSE(cfg.ssrPhaseBiasDiscCarry());                       // the producer never carries
         const GnssConfig consumer = cfg.deriveClosedLoopConsumerConfig();
         EXPECT_TRUE(consumer.ssrPhaseBiasDiscCarry());                   // the consumer does
         std::error_code ec; fs::remove(p, ec);
@@ -486,14 +487,14 @@ TEST(ConsumerDiscCarryTest, ConsumerHistoryFileSitsBesideTheNetworkCopy) {
 }
 
 // The on-disk invariant the harness relies on: the consumer file written beside
-// a network history copy carries the SAME epoch (week, tow) in its M line.  The
-// two writers stamp the tow differently (the network copy with fmt's default
+// a network history copy carries the same epoch (week, tow) in its M line.  The
+// two writers format the tow differently (the network copy with fmt's default
 // double format, the RT file with "{:.17g}"), so the invariant is on the parsed
-// value — which is what event_leg.py's read_snapshot_header / read_rt_snapshot_
-// header compare, and what the engine's age gate consumes.
+// value, which is what event_leg.py's read_snapshot_header / read_rt_snapshot_
+// header compare and what the engine's age gate consumes.
 TEST(ConsumerDiscCarryTest, ConsumerFileCarriesTheNetworkCopysTow) {
     const int    week = 2313;
-    const double tow  = 277290.00000810623;   // the field seed's ep0604 stamp (double residue and all)
+    const double tow  = 277290.00000810623;   // the field seed's ep0604 stamp, double residue included
     const fs::path dir = fs::temp_directory_path();
     const fs::path net = dir / "cc_disc_carry_state_snapshot.txt";
     fs::path net_copy = net; net_copy += ".ep0604";

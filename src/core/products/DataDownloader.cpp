@@ -2,13 +2,11 @@
  * @file DataDownloader.cpp
  * @brief HTTP download (libcurl) and gzip decompression (zlib) utilities.
  *
- * Auth model: CDDIS (and other IGS hosts) authenticate via HTTP Basic + the
- * standard @c .netrc file format. This module makes the .netrc location
- * explicit (resolved once at construction, passed via @c CURLOPT_NETRC_FILE)
- * and surfaces HTTP-level errors loudly so the user can tell the difference
- * between "auth failed", "file not found on server", and "network failure"
- * — failure modes that previously all looked like a generic
- * "Download failed" warning.
+ * Authentication: CDDIS (and other IGS hosts) use HTTP Basic with credentials
+ * from a standard @c .netrc file.  The .netrc location is resolved explicitly
+ * (once, on the first download, then passed via @c CURLOPT_NETRC_FILE).  HTTP
+ * errors are logged by class, so an authentication failure (401/403), a file
+ * missing on the server (404) and a network failure produce distinct messages.
  */
 
 #include "products/DataDownloader.hpp"
@@ -98,17 +96,16 @@ DataDownloader::DataDownloader(LogManager& log_manager,
     : log_manager_(log_manager),
       netrc_path_(netrc_path),
       keep_zip_after_unzip_(keep_zip_after_unzip) {
-    // RTB-2(a): process-wide call_once guard shared with NtripClient — a raw
-    // curl_global_init here would re-run on every DataDownloader construction.
+    // Process-wide call_once guard shared with NtripClient; a direct
+    // curl_global_init here would run again on every construction (RTB-2(a)).
     ensureCurlGlobalInit();
 }
 
-// RTB-2(a): deliberately NO curl_global_cleanup here.  This destructor used
-// to run it, which is undefined behaviour while NtripClient receive threads
-// are still inside curl_easy_perform (curl_global_cleanup is documented as
-// non-thread-safe and only legal once ALL curl use in the process has ended
-// — a condition this object cannot know).  Skipping the cleanup at process
-// exit is explicitly sanctioned by the libcurl docs; see CurlGlobalGuard.hpp.
+// The destructor does not call curl_global_cleanup.  That call is not
+// thread-safe and is valid only after all curl use in the process has ended,
+// which this object cannot know; NtripClient receive threads may still be
+// inside curl_easy_perform.  The libcurl documentation permits skipping the
+// cleanup at process exit; see CurlGlobalGuard.hpp (RTB-2(a)).
 DataDownloader::~DataDownloader() = default;
 
 // ---------------------------------------------------------------------------
@@ -131,9 +128,8 @@ void DataDownloader::resolveNetrcPath() {
         netrc_path_.clear();
     }
 
-    // Auto-discover. Try the Unix convention first because that's what
-    // most users on either OS actually have set up; fall through to
-    // the Windows convention if not present.
+    // Auto-discovery.  The Unix convention is tried first because it is the
+    // common setup on either OS; the Windows convention is the fallback.
     const auto home = getHomeDir();
     if (home.empty()) {
         log->warn("auth: HOME / USERPROFILE not set; cannot locate .netrc — "
@@ -193,16 +189,15 @@ bool DataDownloader::download(const std::string& url,
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ofs);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 60L);
-    // Note: we deliberately do NOT set CURLOPT_FAILONERROR. It aborts the
-    // transfer before the body is written, which would deny us the ability
-    // to log the error response (e.g. CDDIS's "Forbidden — authentication
-    // required" HTML when .netrc credentials are wrong). We check the
-    // response code manually below and log the body snippet on failure.
+    // CURLOPT_FAILONERROR is left unset on purpose: it aborts the transfer
+    // before the body is written, and the error body (e.g. the CDDIS HTML page
+    // that reports an authentication failure) is logged below.  The response
+    // code is checked after the transfer instead.
 
-    // CDDIS authentication via .netrc — pass the resolved path explicitly.
-    // CURL_NETRC_REQUIRED would error if no .netrc were available; with
-    // OPTIONAL we still attempt the request (some endpoints are public)
-    // but libcurl uses .netrc credentials when present.
+    // CDDIS authentication via .netrc, with the resolved path passed explicitly.
+    // CURL_NETRC_REQUIRED would fail when no .netrc is available; with OPTIONAL
+    // the request is still attempted (some endpoints are public), and libcurl
+    // uses the .netrc credentials when present.
     curl_easy_setopt(curl, CURLOPT_NETRC, CURL_NETRC_OPTIONAL);
     if (!netrc_path_.empty()) {
         curl_easy_setopt(curl, CURLOPT_NETRC_FILE, netrc_path_.string().c_str());
@@ -229,9 +224,9 @@ bool DataDownloader::download(const std::string& url,
     }
 
     if (http_code >= 400) {
-        // Capture the body so the user can tell auth-failure from 404 from
-        // a transient 5xx. CDDIS returns small HTML pages on 401/403 with
-        // a clear "authentication required" message.
+        // Log the start of the response body to separate an authentication
+        // failure from a 404 or a transient 5xx.  CDDIS returns a small HTML
+        // page on 401/403 that states that authentication is required.
         const std::string snippet = readFileSnippet(local_path);
         if (http_code == 401 || http_code == 403) {
             log->error("HTTP {} (auth failure) for {}", http_code, url);
@@ -333,9 +328,9 @@ std::filesystem::path DataDownloader::downloadAndDecompress(
     if (!download(url, gz_path)) return {};
     if (!decompressGz(gz_path, out_path)) return {};
 
-    // Reclaim disk after a successful round-trip.  The decompressed
-    // file is now the canonical cached artifact; the .gz is dead
-    // weight unless the user explicitly opted in to retaining it.
+    // After a successful download and decompression the decompressed file is
+    // the cached artifact, so the .gz is deleted to save disk unless
+    // keep_zip_after_unzip is set.  A failed delete is logged at debug level.
     if (!keep_zip_after_unzip_) {
         std::error_code ec;
         if (std::filesystem::remove(gz_path, ec)) {
@@ -353,25 +348,24 @@ std::filesystem::path DataDownloader::downloadAndDecompress(
 // ---------------------------------------------------------------------------
 // convertCrxToRnx
 //
-// Runs the external @c crx2rnx tool with stderr+stdout captured via popen
-// (with @c 2>&1 in the shell command). On nonzero exit code or missing
-// output, logs at error level with the full command, exit code, and the
-// captured first few hundred bytes of crx2rnx output — replacing the
-// previous std::system() call which silently dropped diagnostics on the
-// floor.
+// Runs the external @c crx2rnx tool with stderr and stdout captured via popen
+// (@c 2>&1 in the shell command).  On a nonzero exit code or a missing output
+// file, logs at error level the full command, the exit code, and the first
+// lines of the captured crx2rnx output.
 // ---------------------------------------------------------------------------
 
 namespace {
 
-    /// Capture-output subprocess runner. Runs the shell command, returns
-    /// {exit_code, captured_output}. The command is expected to redirect
-    /// stderr -> stdout via "2>&1" in the caller. On Windows uses _popen,
-    /// on Unix uses popen.
+    /// Result of runCaptured(): exit code and captured output.
     struct RunResult {
         int exit_code{ -1 };
         std::string output;
     };
 
+    /// Capture-output subprocess runner.  Runs the shell command and returns
+    /// {exit_code, captured_output}; the caller redirects stderr to stdout
+    /// with "2>&1" in the command.  Uses _popen on Windows and popen on Unix.
+    /// Captured output is truncated after about 16 KiB.
     RunResult runCaptured(const std::string& shell_cmd) {
         RunResult r;
         FILE* pipe = POPEN(shell_cmd.c_str(), "r");
@@ -385,11 +379,10 @@ namespace {
             }
         }
         const int rc = PCLOSE(pipe);
-        // _pclose / pclose returns the wait status; on Windows the value is
-        // the exit code directly. On POSIX, decode with WEXITSTATUS, but
-        // since we don't pull in <sys/wait.h> in headers and this code
-        // ships on Windows primarily, we accept that on POSIX a nonzero
-        // value means failure even if the exact code is wrapped.
+        // _pclose / pclose returns the wait status.  On Windows the value is
+        // the exit code directly.  On POSIX it would need WEXITSTATUS from
+        // <sys/wait.h>, which is not included; the raw status is stored, so a
+        // nonzero value still means failure but is not the tool's exit code.
         r.exit_code = rc;
         return r;
     }
@@ -480,9 +473,8 @@ std::filesystem::path DataDownloader::convertCrxToRnx(
             }
         }
 
-        // PATH lookup as a last resort. We probe with the same captured-
-        // output runner so we can log whatever stderr says about why the
-        // lookup failed (rare, but useful when PATH is being shadowed).
+        // PATH lookup as a last resort, probed with the captured-output runner.
+        // Only the probe's exit code is used; its output is not logged.
         if (exe.empty()) {
 #ifdef _WIN32
             const std::string probe = "where crx2rnx.exe 2>&1";
@@ -516,17 +508,15 @@ std::filesystem::path DataDownloader::convertCrxToRnx(
     const std::filesystem::path abs_crx = std::filesystem::absolute(crx_path);
     std::ostringstream cmd;
 #ifdef _WIN32
-    // cmd.exe (which _popen invokes via "cmd /c <string>") strips one
-    // leading and one trailing `"` from the command string before
-    // executing — an idiosyncratic rule documented under "If /S is
-    // not specified" in `cmd /?`.  When the command starts with a
-    // quoted exe path AND has a quoted argument, that rule strips
-    // the wrong pair and leaves a malformed line like
+    // cmd.exe (which _popen invokes via "cmd /c <string>") strips one leading
+    // and one trailing `"` from the command string before executing it (the
+    // rule under "If /S is not specified" in `cmd /?`).  When the command
+    // starts with a quoted exe path and also has a quoted argument, that rule
+    // strips the wrong pair and leaves a malformed line such as
     //     C:/.../crx2rnx.exe" "C:\...\foo.crx 2>&1
-    // which produces the classic "The filename, directory name, or
-    // volume label syntax is incorrect" diagnostic.  Wrap the entire
-    // command in an extra outer pair of quotes so the rule strips
-    // those and the inner quoting survives intact.
+    // which fails with "The filename, directory name, or volume label syntax
+    // is incorrect".  The whole command is therefore wrapped in an extra outer
+    // pair of quotes; the rule strips those and the inner quoting survives.
     cmd << "\"\"" << exe.string() << "\" \"" << abs_crx.string() << "\" 2>&1\"";
 #else
     cmd << '"' << exe.string() << "\" \"" << abs_crx.string() << "\" 2>&1";

@@ -3,29 +3,29 @@
 
 ``Application::runConsumerReplay`` (armed by
 ``network.closed_loop.replay_products_path``) drives a held-out PPP-RTK consumer
-from a product file WITHOUT re-running the producer -- roughly 30 s per arm
-instead of an hour -- so the consumer side can be explored properly against one
-fixed product stream.  ``runNetwork`` short-circuits to it before input
-validation, so the roster below is a two-station stub that exists only to satisfy
-load-time validation; no station is ever loaded or solved.
+from a product file without re-running the producer: roughly 30 s per arm instead
+of an hour, so the consumer side can be explored against one fixed product stream.
+``runNetwork`` short-circuits to it before input validation, so the roster below
+is a two-station stub that exists only to satisfy load-time validation; no
+station is ever loaded or solved.
 
 Arms
 ----
   base      reproduces the in-run closed loop (the replay/live cross-check)
-  noiono    consume_network_iono OFF -- isolates the network ionosphere's value
-  biasonly  consume_network_clock OFF -- the fallback leg on external precise
-            clock.  This is the leg that dissolves the "we make our own clock"
-            motivation, so it is the control, not the headline.
-  undiff    consumer_undifferenced ON -- the locked architectural end-state
+  noiono    consume_network_iono off: isolates the network ionosphere's value
+  biasonly  consume_network_clock off: the fallback leg on external precise
+            clock. This leg does not depend on the network's own clock product,
+            so it is the control, not the headline.
+  undiff    consumer_undifferenced on: the locked architectural end-state
             (Odijk/Teunissen: the S-basis moves into the product datum)
-  pairW     consumer pinned to C1W/C2W    -- explicit ARRAY, see below
+  pairW     consumer pinned to C1W/C2W, explicit array, see below
   pairX     consumer pinned to C1C/C2X
   obe4      the ~167 km operational held-out station, full consumption
 
-A signal arm MUST be an explicit ARRAY.  ``decideConstellationCanonicals`` picks,
-per (band, obs type), the priority-list signal with the highest OBSERVATION COUNT
-this epoch and breaks only TIES by priority order, so an attribute string does
-not bind the signal.  Listing only the wanted signals removes the competitor from
+A signal arm must be an explicit array. ``decideConstellationCanonicals`` picks,
+per (band, obs type), the priority-list signal with the highest observation count
+this epoch and breaks ties only by priority order, so an attribute string does
+not bind the signal. Listing only the wanted signals removes the competitor from
 the candidate set, which is the only way to pin the pair.
 
 WTZZ00DEU tracks C1C C1W C1X C2W C2X C5X (no C2L), so the L2 contrast here is
@@ -82,9 +82,9 @@ def main() -> None:
     if not products.is_file():
         raise SystemExit(f"no product file yet: {products}")
 
-    # The stub exists only to satisfy load-time validation, but it MUST contain
-    # network.clock_datum_station -- the loader resolves that name against the
-    # roster and hard-fails before the replay branch is ever reached.  The name
+    # The stub exists only to satisfy load-time validation, but it must contain
+    # network.clock_datum_station: the loader resolves that name against the
+    # roster and hard-fails before the replay branch is ever reached. The name
     # lives up the `extends` chain, so walk it.
     def resolve(path: Path, key: str, depth: int = 0):
         """First definition of network.<key> walking up the `extends` chain.

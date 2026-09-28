@@ -2,8 +2,8 @@
 
 Exercises ``simnet_scorecard`` / ``simnet_theory`` / ``simnet_truth_series``
 against stub ``simnet_grade.json`` / ``simnet_grade.txt`` /
-``simnet_grade_series.csv`` files — the artifacts ``scripts/simnet_report.py``
-writes into a run's log dir — without rendering.
+``simnet_grade_series.csv`` files, the artifacts ``scripts/simnet_report.py``
+writes into a run's log dir, without rendering.
 """
 import json
 
@@ -111,7 +111,7 @@ def test_theory_panels(tmp_path):
     names = [f.name for f in res.figures]
     assert names == ["simnet_theory_model", "simnet_theory_sbasis",
                      "simnet_theory_grading"]
-    # The S-basis panel quotes THIS run's realized datum, read from the JSON.
+    # The S-basis panel quotes this run's realized datum, read from the JSON.
     sbasis_texts = " ".join(t.text for t in res.figures[1].axes[0].traces)
     assert "G: G01" in sbasis_texts and "E: E02" in sbasis_texts
     assert "C1C/C2W" in sbasis_texts

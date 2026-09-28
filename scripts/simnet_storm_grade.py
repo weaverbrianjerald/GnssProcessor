@@ -1,4 +1,4 @@
-"""SLIPPED-BED STORM-ARM GRADER — the pre-registered gate table of SPEC_event_harness §Z.6 / §Z.7 in one command.
+"""Slipped-bed storm-arm grader: the pre-registered gate table of SPEC_event_harness §Z.6 / §Z.7 in one command.
 
 Usage (from C:/GnssProcessor, Release run finished):
     python scripts/simnet_storm_grade.py runs/<arm> <out.json>
@@ -74,24 +74,24 @@ R["l1c_reffree_settled"] = pick(l1last, "L1C")
 import os
 so_path = run + "/stdout.txt" if os.path.exists(run + "/stdout.txt") else run + "/run.log"
 so = open(so_path, encoding="utf-8", errors="replace").read()
-# The band-scope run-end census.  TWO different clauses wear that name and only one
-# of them exists on any given arm, which is why a single pattern read None on every
-# campaign arm (diagnosed 2026-09-12 on runs/golden_sim_campaign_zwdblk_{refarc,sts};
-# the reader and the regex were both fine — the line was genuinely absent):
-#   * "Network (band-scoped responses, §Z)" is the RESPONSE-scope clause and is
-#     emitted only behind `if (t4_bs || det_bs)` (NetworkTeardown.cpp), i.e. only when
+# The band-scope run-end census.  Two different clauses carry that name and only
+# one of them exists on any given arm, so a single pattern reads None on some
+# campaign arms (confirmed 2026-09-12 on runs/golden_sim_campaign_zwdblk_{refarc,sts}:
+# the reader and the regex are both correct; the line is genuinely absent there):
+#   * "Network (band-scoped responses, §Z)" is the response-scope clause, emitted
+#     only behind `if (t4_bs || det_bs)` (NetworkTeardown.cpp), i.e. only when
 #     network.raim_erase_band_scope = min_keep_one or
 #     network.cycle_slip.refloat_band_scope = implicated is armed.  The campaign
-#     lineage arms NEITHER, so the producer never writes the line.
-#   * "Network (common-band scope): verdicts ..." is the DETECTOR-side census
-#     (network.cycle_slip.common_band_scope, which the campaign arms DO carry) — the
-#     line SPEC_event_harness §B4 quotes (verdicts / narrowed / no-exon / inconsistent
-#     / IF-TD vetoes / ref-arc refusals).
-# Take whichever the run emits, §Z first, and say which one in bscope_clause_kind so
-# a None can never again be read as a reader miss.  The `verdicts ` anchor is what
-# separates the run-end census from the identically-headed ARMED banner the loader
-# writes at startup.  Search the spdlog file too: only the console sink is guaranteed
-# to be in stdout.txt.
+#     lineage arms neither, so the producer never writes the line.
+#   * "Network (common-band scope): verdicts ..." is the detector-side census
+#     (network.cycle_slip.common_band_scope, which the campaign arms do carry),
+#     the line SPEC_event_harness §B4 quotes (verdicts / narrowed / no-exon /
+#     inconsistent / IF-TD vetoes / ref-arc refusals).
+# Take whichever the run emits, §Z first, and record which one in
+# bscope_clause_kind so a missing value cannot be mistaken for a reader miss.
+# The `verdicts ` anchor separates the run-end census from the identically
+# headed armed banner the loader writes at startup.  Search the spdlog file
+# too: only the console sink is guaranteed to be in stdout.txt.
 BSCOPE_CLAUSES = (("band-scoped-responses-§Z", r"Network \(band-scoped responses, §Z\): (.*)"),
                   ("common-band-scope-census", r"Network \(common-band scope\): (verdicts .*)"))
 _bs_texts = [so]

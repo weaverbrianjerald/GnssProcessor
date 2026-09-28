@@ -1,32 +1,29 @@
 /**
  * @file test_phase_datum_handover.cpp
- * @brief The TWO-EDGE CONTINUOUS ANCHOR HANDOVER
+ * @brief Gates for the two-edge continuous anchor handover
  *        (network.phase_datum_handover_continuous).
  *
- * Suite names here (`PhaseDatumHandover`, `PhaseDatumHandoverLoader`) are owned
- * by THIS FILE ONLY — the repo keeps one suite per file with zero cross-file
+ * The suite names here (`PhaseDatumHandover`, `PhaseDatumHandoverLoader`) are owned
+ * by this file alone; the repository keeps one suite per file with no cross-file
  * overlap.
  *
- * WHAT IS UNDER TEST.  The phase-bias gauge is one constraint per (sat,signal):
- * "station r*'s ambiguity for this key = target".  Every mechanism that moves r*
- * re-pins the SUCCESSOR at 0, which realizes a DIFFERENT frame — the whole
- * family steps by the inter-station ambiguity difference and the satellite clock
- * absorbs it.  Measured on a truth-clean fixture: a legacy pivot losing G15
- * stepped the emitted clock -12.06 m and never recovered
- * (docs/SPEC_pivot_visibility_gauge_defect.md).
+ * Under test: the phase-bias gauge is one constraint per (sat,signal), "station r*'s
+ * ambiguity for this key = target".  Every mechanism that moves r* re-pins the
+ * successor at 0, which realizes a different frame: the whole family steps by the
+ * inter-station ambiguity difference and the satellite clock absorbs the step
+ * (docs/SPEC_pivot_visibility_gauge_defect.md has the fixture measurement).
  *
- * The fix hands the pin over AT THE SUCCESSOR'S OWN VALUE IN THE OUTGOING FRAME,
- * so the gauge change is an S-transform and nothing steps.  Every case below
- * names the silent failure it guards, because each produces a run that completes
- * cleanly and reports plausible counters while the frame walks.
+ * The continuous handover pins the successor at its own value in the outgoing frame,
+ * so the gauge change is an S-transform and nothing steps.  Each case below names
+ * the silent failure it guards, because each such failure produces a run that
+ * completes and reports plausible counters while the frame walks.
  *
- * QUEUE item 1(d) (network.phase_anchor_carry_reref) is tested here too: the
- * CARRY side of the same edge.  §5.07 named the third root — the datum
- * re-realizes on the design matrix only while the carried bˢ_σ is folded forward
- * in the RETIRED frame at q_pb = 1e-12, and the satellite clock (q = 0.01,
- * 1e10:1) absorbs the step.  The election now marks each handover's (sat,signal)
- * for a one-epoch carry marginalization + local-carry erase, exactly as
- * eq34_reref does for the chain datum.
+ * The carry side of the same edge, network.phase_anchor_carry_reref (QUEUE item
+ * 1(d)), is tested here too.  Per §5.07 the datum re-realizes on the design matrix
+ * only, while the carried bˢ_σ is folded forward in the retired frame at
+ * q_pb = 1e-12 and the satellite clock (q = 0.01, a 1e10:1 ratio) absorbs the step.
+ * The election therefore marks each handover's (sat,signal) for a one-epoch carry
+ * marginalization and local-carry erase, as eq34_reref does for the chain datum.
  */
 
 #include <gtest/gtest.h>
@@ -55,7 +52,7 @@ using namespace GnssProcessor;
 namespace {
 
 constexpr const char* kSig = "L1C";
-/// A comfortably-converged conditional variance (m^2) — under any sane ceiling.
+/// A well-converged conditional variance (m^2), below any reasonable ceiling.
 constexpr double kGoodVar = 1.0e-4;
 /// The ceiling the tests drive the election with.
 constexpr double kMaxVar = 1.0;
@@ -67,9 +64,9 @@ struct StationSpec {
     int coverage = 0;   ///< the election's per-constellation ranking key (higher wins)
 };
 
-/// The pieces the anchor election consumes.  No StateManagers: the election reads
-/// only station NAMES and the candidate census (same property the eq34 chain-datum
-/// tests rely on), which is what makes the handover testable in isolation.
+/// The inputs the anchor election consumes.  No StateManagers: the election reads
+/// only station names and the candidate census (the same property the eq34
+/// chain-datum tests rely on), so the handover can be tested in isolation.
 struct Census {
     std::vector<NetStation> stations;
     std::vector<bool> present;
@@ -96,10 +93,10 @@ Census makeCensus(const std::vector<StationSpec>& spec) {
     return c;
 }
 
-/// Drive one election.  `ledger == nullptr` is the pre-card path.
+/// Drive one election.  `ledger == nullptr` is the legacy (handover-off) path.
 struct Elected {
     std::map<std::string, std::string> incumbent;
-    std::map<std::string, double> pin_target;   ///< R2 sticky continuous targets
+    std::map<std::string, double> pin_target;   ///< sticky continuous targets (R2)
     std::map<std::string, std::string> this_epoch;
     std::set<std::string> shared;
     NetworkAnchorTallies tally;
@@ -132,7 +129,7 @@ double pinOf(const Census& c, const std::string& station, const std::string& amb
 // The election
 // ---------------------------------------------------------------------------
 
-/// A FIRST pin is not a handover: there is no outgoing frame to preserve, so it
+/// A first pin is not a handover: there is no outgoing frame to preserve, so it
 /// goes in at 0 and is not counted as either edge.
 TEST(PhaseDatumHandover, FirstPinIsNotAHandover) {
     auto c = makeCensus({{"STA_A", {"G01"}, 10}});
@@ -147,10 +144,10 @@ TEST(PhaseDatumHandover, FirstPinIsNotAHandover) {
     EXPECT_TRUE(e.events.empty());
 }
 
-/// SILENT FAILURE this guards: a settled network whose anchors never move must be
-/// byte-identical with the fix armed.  If a non-handover epoch ever retargets, the
-/// gauge walks every epoch instead of only at handovers — strictly worse than the
-/// defect being fixed.
+/// Silent failure guarded: a settled network whose anchors never move is
+/// byte-identical with the handover armed.  If a non-handover epoch retargeted, the
+/// gauge would walk every epoch instead of only at handovers, which is worse than
+/// the step the handover removes.
 TEST(PhaseDatumHandover, NoHandoverMeansNoRetarget) {
     auto c = makeCensus({{"STA_A", {"G01"}, 10}});
     Elected e;
@@ -165,9 +162,9 @@ TEST(PhaseDatumHandover, NoHandoverMeansNoRetarget) {
     EXPECT_TRUE(e.events.empty());
 }
 
-/// THE FIX.  When the incumbent anchor disappears and the gauge moves to a peer,
-/// the peer is pinned at ITS OWN value in the outgoing frame — so the realization
-/// is unchanged and the emitted family does not step.
+/// The continuous handover: when the incumbent anchor disappears and the gauge moves
+/// to a peer, the peer is pinned at its own value in the outgoing frame, so the
+/// realization is unchanged and the emitted family does not step.
 TEST(PhaseDatumHandover, HandoverPinsSuccessorAtItsOutgoingFrameValue) {
     auto c = makeCensus({{"STA_A", {"G01"}, 10}, {"STA_B", {"G01"}, 5}});
     Elected e;
@@ -178,12 +175,12 @@ TEST(PhaseDatumHandover, HandoverPinsSuccessorAtItsOutgoingFrameValue) {
 
     // STA_B's absolute ambiguity in the frame STA_A realized.
     led.value_abs[{1, "G01_L1C"}] = {-12.0554, kGoodVar};
-    // STA_A drops out entirely: the gauge must move.
+    // STA_A drops out entirely, so the gauge moves.
     auto c2 = makeCensus({{"STA_B", {"G01"}, 5}});
     c2.stations[0].name = "STA_B";
     Elected e2;
     e2.incumbent = e.this_epoch;             // carry the incumbent across the epoch
-    // the ledger is keyed on station INDEX, and STA_B is index 0 in the new census
+    // the ledger is keyed on station index, and STA_B is index 0 in the new census
     AnchorHandoverLedger led2;
     led2.primed = true;
     led2.value_abs[{0, "G01_L1C"}] = {-12.0554, kGoodVar};
@@ -201,14 +198,17 @@ TEST(PhaseDatumHandover, HandoverPinsSuccessorAtItsOutgoingFrameValue) {
     EXPECT_TRUE(e2.events[0].continuous);
 }
 
-/// The HONEST-σ-SCALE ceiling (network.phase_datum_handover_max_var_ratio): with the
-/// ratio armed a ledger value is usable only if var <= ratio × the arc's FIRST-STASH
-/// conditional variance.  A converged arc (1e-3 vs 1.0 at ratio 0.01) is pinned
-/// continuously and its var / var_first ride the event; an arc that has not converged
-/// by the factor is refused as COLD and counted on the RATIO counter, not the absolute
-/// one; an arc with an UNKNOWN first-stash variance is refused — the 378-σ
-/// unvalidated-target guard has to stay demonstrably armed under the new test; the
-/// absolute ceiling stays a rail and keeps its own counter; ratio 0 is the old test.
+/// The relative variance ceiling (network.phase_datum_handover_max_var_ratio): with
+/// the ratio armed, a ledger value is usable only if var <= ratio × the arc's
+/// first-stash conditional variance.  Cases:
+///  - a converged arc (1e-3 against 1.0 at ratio 0.01) is pinned continuously, and
+///    its var and var_first are reported on the event;
+///  - an arc that has not converged by the factor is refused as cold and counted on
+///    the ratio counter, not the absolute one;
+///  - an arc with an unknown first-stash variance is refused, so the
+///    unvalidated-target guard stays armed under the ratio test;
+///  - the absolute ceiling remains a rail with its own counter;
+///  - ratio 0 is the absolute test alone.
 TEST(PhaseDatumHandover, RatioCeilingRefusesUnconvergedAndUnknownArcs) {
     auto seed = makeCensus({{"STA_A", {"G01"}, 10}, {"STA_B", {"G01"}, 5}});
     Elected e;
@@ -261,7 +261,7 @@ TEST(PhaseDatumHandover, RatioCeilingRefusesUnconvergedAndUnknownArcs) {
     EXPECT_EQ(u.t.handover_cold, 1);
     EXPECT_EQ(u.t.handover_refused_ratio, 1);
 
-    const Out off = run(unknown, 0.0);         // ratio OFF: the absolute test alone
+    const Out off = run(unknown, 0.0);         // ratio off: the absolute test alone
     EXPECT_DOUBLE_EQ(off.pin, -12.0554);
     EXPECT_EQ(off.t.handover_continuous, 1);
     EXPECT_EQ(off.t.handover_refused_ratio, 0);
@@ -274,11 +274,10 @@ TEST(PhaseDatumHandover, RatioCeilingRefusesUnconvergedAndUnknownArcs) {
     EXPECT_EQ(h.t.handover_refused_ratio, 0);
 }
 
-/// SILENT FAILURE this guards: a successor with no ledger entry (a genuinely fresh
-/// arc, or the run's first epoch) CANNOT be made continuous.  It must pin at 0 —
-/// and be COUNTED, because that is a real frame step the consumer has to be told
-/// about.  Burying it in the continuous counter would hide exactly the event the
-/// mechanism exists to surface.
+/// Silent failure guarded: a successor with no ledger entry (a fresh arc, or the
+/// run's first epoch) cannot be made continuous.  It pins at 0 and is counted as
+/// cold, because it is a real frame step the consumer has to be told about;
+/// counting it as continuous would hide the event the mechanism exists to report.
 TEST(PhaseDatumHandover, ColdSuccessorPinsAtZeroAndIsCounted) {
     auto c = makeCensus({{"STA_A", {"G01"}, 10}, {"STA_B", {"G01"}, 5}});
     Elected e;
@@ -302,8 +301,8 @@ TEST(PhaseDatumHandover, ColdSuccessorPinsAtZeroAndIsCounted) {
     EXPECT_EQ(e2.events[0].target_m, 0.0);
 }
 
-/// A non-finite ledger value must be refused, not pinned.  A NaN target would
-/// poison the whole normal-equation row rather than merely stepping the frame.
+/// A non-finite ledger value is refused, not pinned.  A NaN target would corrupt the
+/// whole normal-equation row rather than only stepping the frame.
 TEST(PhaseDatumHandover, NonFiniteLedgerValueIsRefusedAsCold) {
     auto c = makeCensus({{"STA_A", {"G01"}, 10}, {"STA_B", {"G01"}, 5}});
     Elected e;
@@ -322,10 +321,10 @@ TEST(PhaseDatumHandover, NonFiniteLedgerValueIsRefusedAsCold) {
     EXPECT_EQ(e2.tally.handover_continuous, 0);
 }
 
-/// OFF PATH = byte-identical.  A null ledger must reproduce the pre-card election
-/// exactly: every target 0.0, neither edge counted — while the observational
-/// event list still reports the handover, so a legacy arm's churn is MEASURABLE
-/// before the fix is armed.
+/// The off path is byte-identical: a null ledger reproduces the legacy election
+/// exactly (every target 0.0, neither edge counted), while the observational event
+/// list still reports the handover, so anchor churn can be measured on a legacy arm
+/// before the handover is armed.
 TEST(PhaseDatumHandover, NullLedgerIsTheLegacyElectionButStillObservable) {
     auto c = makeCensus({{"STA_A", {"G01"}, 10}, {"STA_B", {"G01"}, 5}});
     Elected e;
@@ -343,9 +342,9 @@ TEST(PhaseDatumHandover, NullLedgerIsTheLegacyElectionButStillObservable) {
     EXPECT_FALSE(e2.events[0].continuous);
 }
 
-/// Stickiness and continuity are complementary, not alternatives: stickiness
-/// minimizes the NUMBER of handovers, continuity makes the survivors free.  A
-/// sticky incumbent that still tracks the key must not hand over at all.
+/// Stickiness and continuity are complementary: stickiness minimizes the number of
+/// handovers, and continuity removes the step from the handovers that remain.  A
+/// sticky incumbent that still tracks the key does not hand over at all.
 TEST(PhaseDatumHandover, StickyIncumbentIsNotHandedOverEvenWhenOutranked) {
     auto c = makeCensus({{"STA_A", {"G01"}, 1}, {"STA_B", {"G01"}, 99}});
     Elected e;
@@ -361,9 +360,9 @@ TEST(PhaseDatumHandover, StickyIncumbentIsNotHandedOverEvenWhenOutranked) {
 }
 
 /// The ledger is keyed on (station index, ambiguity key), so a value belonging to
-/// a DIFFERENT station or a different key must never be applied.  A mis-keyed
-/// lookup would pin the successor at a stranger's ambiguity — a far larger step
-/// than the one being fixed, and one that would look like a successful handover.
+/// a different station or a different key is never applied.  A mis-keyed lookup
+/// would pin the successor at another station's ambiguity: a far larger step than
+/// the one the handover removes, and one that looks like a successful handover.
 TEST(PhaseDatumHandover, LedgerLookupIsKeyedOnStationAndAmbiguity) {
     auto c = makeCensus({{"STA_A", {"G01", "G02"}, 10}, {"STA_B", {"G01", "G02"}, 5}});
     Elected e;
@@ -384,11 +383,11 @@ TEST(PhaseDatumHandover, LedgerLookupIsKeyedOnStationAndAmbiguity) {
     EXPECT_EQ(e2.tally.handover_cold, 1);
 }
 
-/// THE RE-COUPLING EDGE MUST RE-VALIDATE (invariant #7).  The pin is a hard
-/// ~1e10-weight constraint, so an ill-determined estimate stamped in as a datum
-/// injects its own error — measured, an unvalidated +17.08 m target produced a
-/// 378-sigma residual spike the next epoch, WORSE than the step it replaced.  A
-/// value above the variance ceiling must be refused to the honest COLD path.
+/// The re-coupling edge re-validates (invariant #7).  The pin is a hard constraint
+/// of weight ~1e10, so an ill-determined estimate installed as a datum injects its
+/// own error; an unvalidated +17.08 m target produced a 378-sigma residual spike on
+/// the next epoch, larger than the step it replaced.  A value above the variance
+/// ceiling is refused and takes the cold path.
 TEST(PhaseDatumHandover, IllDeterminedLedgerValueIsRefused) {
     auto c = makeCensus({{"STA_A", {"G01"}, 10}, {"STA_B", {"G01"}, 5}});
     Elected e;
@@ -400,7 +399,7 @@ TEST(PhaseDatumHandover, IllDeterminedLedgerValueIsRefused) {
     e2.incumbent = e.this_epoch;
     AnchorHandoverLedger loose;
     loose.primed = true;
-    loose.value_abs[{0, "G01_L1C"}] = {17.0761, 25.0};   // sigma = 5 m: not a datum
+    loose.value_abs[{0, "G01_L1C"}] = {17.0761, 25.0};   // sigma = 5 m: too loose for a datum
     elect(c2, e2, &loose, /*sticky=*/true, /*max_var=*/1.0);
     EXPECT_EQ(pinOf(c2, "STA_B", "G01_L1C"), 0.0) << "must NOT pin an unvalidated value";
     EXPECT_EQ(e2.tally.handover_continuous, 0);
@@ -408,8 +407,8 @@ TEST(PhaseDatumHandover, IllDeterminedLedgerValueIsRefused) {
     EXPECT_EQ(e2.tally.handover_refused_var, 1) << "the refusal must be COUNTED separately";
 }
 
-/// A non-positive variance means the harvest could not determine one at all; that
-/// is not a licence to pin.
+/// A non-positive variance means the harvest could not determine one, so the value
+/// is not pinned.
 TEST(PhaseDatumHandover, MissingVarianceIsRefused) {
     auto c = makeCensus({{"STA_A", {"G01"}, 10}, {"STA_B", {"G01"}, 5}});
     Elected e;
@@ -428,18 +427,18 @@ TEST(PhaseDatumHandover, MissingVarianceIsRefused) {
 }
 
 // ---------------------------------------------------------------------------
-// QUEUE item 1(d): the PHASE_ANCHOR carry re-reference
-// (docs/SPEC_pivot_visibility_gauge_defect.md §5.07.5 R1)
+// The PHASE_ANCHOR carry re-reference (QUEUE item 1(d);
+// docs/SPEC_pivot_visibility_gauge_defect.md §5.07.5 R1)
 // ---------------------------------------------------------------------------
 
-/// The re-reference set marks every pin NOT continuously inherited from an
-/// incumbent: a handover, and an incumbent-less pin (first sighting, or a
-/// bridge-exit re-pin whose incumbent record evaporated during the bridge era —
-/// the review-confirmed invariant-#7 "return read as a first sighting" hole).
-/// A SETTLED anchor is never marked — marking it would marginalize a healthy
-/// prior every epoch, the strictly-worse failure NoHandoverMeansNoRetarget
-/// guards on the pin side.  In production the set is cleared by the CARRY STASH
-/// (so a withheld epoch's marks persist); the test models that clear explicitly.
+/// The re-reference set marks every pin not continuously inherited from an
+/// incumbent: a handover, and an incumbent-less pin (a first sighting, or a
+/// bridge-exit re-pin whose incumbent record was dropped during the bridge era,
+/// which would otherwise read a return as a first sighting; invariant #7).  A
+/// settled anchor is never marked: marking it would marginalize a valid prior every
+/// epoch, the failure NoHandoverMeansNoRetarget guards on the pin side.  In
+/// production the carry stash clears the set (so a withheld epoch's marks persist);
+/// the test performs that clear explicitly.
 TEST(PhaseDatumHandover, CarryRerefMarksHandoversAndIncumbentlessPins) {
     std::set<std::pair<std::string, std::string>> reref;
     auto c = makeCensus({{"STA_A", {"G01"}, 10}});
@@ -461,17 +460,17 @@ TEST(PhaseDatumHandover, CarryRerefMarksHandoversAndIncumbentlessPins) {
         << "keyed (sat, signal) — parsed from the registered PB key";
 }
 
-/// The bridge-exit shape specifically: the incumbent record is GONE (a bridged
-/// key skips the election before any incumbent bookkeeping, so one bridged
-/// epoch evaporates it) while the family's carry is still alive.  The eventual
-/// re-pin must be marked even though `is_handover` is false — otherwise the
-/// full-ambiguity frame step folds against the bridge-frame carry at
-/// q_pb = 1e-12 and the clock absorbs it, unmarked and uncounted.
+/// The bridge-exit case: the incumbent record is gone (a bridged key skips the
+/// election before any incumbent bookkeeping, so one bridged epoch removes it)
+/// while the family's carry is still alive.  The eventual re-pin is marked even
+/// though `is_handover` is false; otherwise the full-ambiguity frame step folds
+/// against the bridge-frame carry at q_pb = 1e-12 and the clock absorbs it,
+/// unmarked and uncounted.
 TEST(PhaseDatumHandover, CarryRerefMarksBridgeExitRepin) {
     std::set<std::pair<std::string, std::string>> reref;
     auto c = makeCensus({{"STA_B", {"G01"}, 5}});
     Elected e;
-    // No incumbent entry for G01_L1C at all — the post-bridge state.
+    // No incumbent entry for G01_L1C at all: the post-bridge state.
     elect(c, e, nullptr, true, kMaxVar, &reref);
     EXPECT_EQ(e.this_epoch["G01_L1C"], "STA_B");
     EXPECT_EQ(e.tally.reattaches, 0) << "not a handover — no incumbent to hand from";
@@ -479,12 +478,11 @@ TEST(PhaseDatumHandover, CarryRerefMarksBridgeExitRepin) {
         << "the incumbent-less re-pin must be marked regardless";
 }
 
-/// R2 (§5.09): a CONTINUOUS handover is NOT marked.  Under the sticky target the
-/// successor realizes the outgoing frame for its whole tenure, so the family
-/// provably does not step at T or T+1 and the carried state stays in-frame —
-/// marking it would marginalize a valid fold and erase live leveling carries
-/// (the measured arc truncation: 582/621 cold handovers erased 10 236 carries on
-/// a 12 h zero-slip fixture).  A COLD handover in the same election still marks.
+/// A continuous handover is not marked (R2, §5.09).  Under the sticky target the
+/// successor realizes the outgoing frame for its whole tenure, so the family does
+/// not step at T or T+1 and the carried state stays in frame; marking it would
+/// marginalize a valid fold and erase live leveling carries (§5.09 has the measured
+/// arc truncation).  A cold handover in the same election is still marked.
 TEST(PhaseDatumHandover, CarryRerefSkipsContinuousHandoversUnderTheStickyTarget) {
     std::set<std::pair<std::string, std::string>> reref;
     auto c = makeCensus({{"STA_A", {"G01", "G02"}, 10}, {"STA_B", {"G01", "G02"}, 5}});
@@ -497,7 +495,7 @@ TEST(PhaseDatumHandover, CarryRerefSkipsContinuousHandoversUnderTheStickyTarget)
     e2.incumbent = e.this_epoch;
     AnchorHandoverLedger led2;
     led2.primed = true;
-    led2.value_abs[{0, "G01_L1C"}] = {-12.0554, kGoodVar};   // G02 has no entry -> COLD
+    led2.value_abs[{0, "G01_L1C"}] = {-12.0554, kGoodVar};   // G02 has no entry, so it is cold
     elect(c2, e2, &led2, true, kMaxVar, &reref);
     ASSERT_EQ(e2.tally.handover_continuous, 1) << "precondition: G01 continuous";
     ASSERT_EQ(e2.tally.handover_cold, 1) << "precondition: G02 cold";
@@ -507,10 +505,10 @@ TEST(PhaseDatumHandover, CarryRerefSkipsContinuousHandoversUnderTheStickyTarget)
         << "the cold edge in the SAME election must still mark";
 }
 
-/// R2 (§5.09): the continuous target is STICKY — re-applied every epoch the
-/// successor remains incumbent.  This is the exact defect that made the unsticky
-/// version measure null (§5.0): the pin reverted to 0 at T+1 and the family
-/// stepped one epoch late, with the mark already spent at T.
+/// The continuous target is sticky: it is re-applied every epoch the successor
+/// remains incumbent (R2, §5.09).  Without it the pin reverts to 0 at T+1 and the
+/// family steps one epoch late, after the mark was spent at T; §5.0 records that
+/// the non-sticky version measured null for this reason.
 TEST(PhaseDatumHandover, StickyTargetPersistsForTheSuccessorsTenure) {
     auto c = makeCensus({{"STA_A", {"G01"}, 10}, {"STA_B", {"G01"}, 5}});
     Elected e;
@@ -526,7 +524,7 @@ TEST(PhaseDatumHandover, StickyTargetPersistsForTheSuccessorsTenure) {
     led2.value_abs[{0, "G01_L1C"}] = {-12.0554, kGoodVar};
     elect(c2, e2, &led2);
     ASSERT_EQ(pinOf(c2, "STA_B", "G01_L1C"), -12.0554);
-    // T+1 and T+2: same incumbent, NO handover — the pin must NOT revert to 0.
+    // T+1 and T+2: same incumbent, no handover; the pin does not revert to 0.
     for (int k = 0; k < 2; ++k) {
         auto c3 = makeCensus({{"STA_B", {"G01"}, 5}});
         AnchorHandoverLedger led3;   // empty: a retained incumbent needs no ledger
@@ -538,8 +536,8 @@ TEST(PhaseDatumHandover, StickyTargetPersistsForTheSuccessorsTenure) {
     }
 }
 
-/// A COLD handover drops any stored target: the frame re-realized at 0, so a
-/// later retained epoch must keep realizing 0, not resurrect the dead frame.
+/// A cold handover drops any stored target: the frame re-realized at 0, so a later
+/// retained epoch keeps realizing 0 and does not restore the retired frame.
 TEST(PhaseDatumHandover, ColdHandoverDropsTheStoredTarget) {
     auto c = makeCensus({{"STA_A", {"G01"}, 10}, {"STA_B", {"G01"}, 5}});
     Elected e;
@@ -554,7 +552,7 @@ TEST(PhaseDatumHandover, ColdHandoverDropsTheStoredTarget) {
     led2.value_abs[{0, "G01_L1C"}] = {7.25, kGoodVar};   // index 0 = STA_B here
     elect(c2, e2, &led2);
     ASSERT_EQ(pinOf(c2, "STA_B", "G01_L1C"), 7.25) << "continuous A->B";
-    // B drops the key: handover B->C with NO ledger entry for C -> COLD.
+    // B drops the key: handover B->C with no ledger entry for C, so it is cold.
     auto c3 = makeCensus({{"STA_C", {"G01"}, 3}});
     AnchorHandoverLedger led3;
     led3.primed = true;
@@ -570,9 +568,9 @@ TEST(PhaseDatumHandover, ColdHandoverDropsTheStoredTarget) {
         << "the dead frame must not resurrect on a retained epoch";
 }
 
-/// A key that leaves the union drops its target with its incumbent, so its
-/// eventual return is an incumbent-less pin at 0 — marked, honest, no stale
-/// frame smuggled across the gap.
+/// A key that leaves the union drops its target with its incumbent, so its eventual
+/// return is an incumbent-less pin at 0, marked, with no stale frame carried across
+/// the gap.
 TEST(PhaseDatumHandover, KeyLeavingTheUnionDropsItsTarget) {
     std::set<std::pair<std::string, std::string>> reref;
     auto c = makeCensus({{"STA_A", {"G01"}, 10}, {"STA_B", {"G01"}, 5}});
@@ -605,11 +603,10 @@ TEST(PhaseDatumHandover, KeyLeavingTheUnionDropsItsTarget) {
     EXPECT_TRUE(reref.count({"G01", "L1C"})) << "and it is marked";
 }
 
-/// The null-pointer path is the OFF contract: nothing is populated, nothing
-/// downstream can fire — the byte-identity leg of standing invariant #6.
-/// (Every pre-1(d) case above drives the election through the default nullptr
-/// and pins/tallies are asserted unchanged there; this case only pins the
-/// pointer discipline itself.)
+/// The null-pointer path is the off contract: nothing is populated and nothing
+/// downstream can fire (the byte-identity part of invariant #6).  The election
+/// cases above that do not pass a reref set use the default nullptr and assert
+/// pins and tallies there; this case checks only the pointer handling itself.
 TEST(PhaseDatumHandover, CarryRerefNullOutIsUntouched) {
     auto c = makeCensus({{"STA_A", {"G01"}, 10}, {"STA_B", {"G01"}, 5}});
     Elected e;
@@ -622,9 +619,9 @@ TEST(PhaseDatumHandover, CarryRerefNullOutIsUntouched) {
     EXPECT_EQ(pinOf(c2, "STA_B", "G01_L1C"), 0.0);
 }
 
-/// The erase drops the family at EVERY station — the frame stepped network-wide,
-/// so a station-scoped erase would leave stale floats fighting the new frame at
-/// every station it skipped.  An unrelated family must survive untouched.
+/// The erase drops the family at every station: the frame stepped network-wide, so
+/// a station-scoped erase would leave stale floats in conflict with the new frame at
+/// every station it skipped.  An unrelated family survives unchanged.
 TEST(PhaseDatumHandover, CarryRerefEraseDropsEveryStationOfTheFamily) {
     std::map<std::tuple<int, std::string, std::string>, LocalCarry> lc;
     lc[{0, "G01", "L1C"}] = LocalCarry{-3.2, 1e-4, 100.0, {}};
@@ -646,8 +643,8 @@ namespace {
 
 /// A minimal loadable PPP-RTK network config; @p extra is spliced into the network
 /// block (each entry must end with a comma).  Same shape as
-/// tests/test_raim_carry_invariant_pool.cpp — the loader wants a real roster before
-/// it will validate a network posture.
+/// tests/test_raim_carry_invariant_pool.cpp: the loader requires a real roster before
+/// it validates a network posture.
 std::string networkConfig(const std::string& extra) {
     return std::string("{\n") +
         "  \"processing\": {\n"
@@ -679,7 +676,7 @@ bool loadNet(const std::string& tag, const std::string& extra, GnssConfig& cfg) 
 
 } // namespace
 
-/// Default OFF — the byte-identity contract (standing invariant #6).
+/// Off by default: the byte-identity contract (invariant #6).
 TEST(PhaseDatumHandoverLoader, DefaultsOff) {
     GnssConfig cfg;
     ASSERT_TRUE(loadNet("default", "    \"phase_datum_prioritized\": true,\n", cfg));
@@ -694,9 +691,9 @@ TEST(PhaseDatumHandoverLoader, ArmsUnderThePrioritizedElection) {
     EXPECT_TRUE(cfg.networkPhaseDatumHandoverContinuous());
 }
 
-/// ARMED-BUT-INERT is the failure this rejects: the legacy datum elects no anchor,
-/// so there is no handover to make continuous — it DELETES the column instead,
-/// which is the more severe form of the same defect.
+/// The loader rejects an armed but inert knob: the legacy datum elects no anchor, so
+/// there is no handover to make continuous (it deletes the column instead, which is
+/// a more severe form of the same frame step).
 TEST(PhaseDatumHandoverLoader, DisabledWithoutThePrioritizedElection) {
     GnssConfig cfg;
     ASSERT_TRUE(loadNet("legacy",
@@ -714,7 +711,7 @@ TEST(PhaseDatumHandoverLoader, DisabledUnderTheEnsembleDatum) {
     EXPECT_FALSE(cfg.networkPhaseDatumHandoverContinuous());
 }
 
-/// QUEUE item 1(d): default OFF — the byte-identity contract (invariant #6).
+/// Off by default: the byte-identity contract (invariant #6; QUEUE item 1(d)).
 TEST(PhaseDatumHandoverLoader, CarryRerefDefaultsOff) {
     GnssConfig cfg;
     ASSERT_TRUE(loadNet("reref_default",
@@ -730,8 +727,8 @@ TEST(PhaseDatumHandoverLoader, CarryRerefArmsUnderThePrioritizedElection) {
     EXPECT_TRUE(cfg.networkPhaseAnchorCarryReref());
 }
 
-/// ARMED-BUT-INERT rejection, same ladder as the handover knob: the legacy datum
-/// elects no anchor, so no PHASE_ANCHOR handover exists to re-reference.
+/// Armed-but-inert rejection, the same ladder as for the handover knob: the legacy
+/// datum elects no anchor, so no PHASE_ANCHOR handover exists to re-reference.
 TEST(PhaseDatumHandoverLoader, CarryRerefDisabledWithoutThePrioritizedElection) {
     GnssConfig cfg;
     ASSERT_TRUE(loadNet("reref_legacy",
@@ -739,8 +736,8 @@ TEST(PhaseDatumHandoverLoader, CarryRerefDisabledWithoutThePrioritizedElection) 
     EXPECT_FALSE(cfg.networkPhaseAnchorCarryReref());
 }
 
-/// The eq34 chain owns its own eq34_reref carry hygiene — arming both would
-/// double-treat the same edge, so the loader disarms this one.
+/// The eq34 chain has its own eq34_reref carry hygiene; arming both would treat the
+/// same edge twice, so the loader disarms this one.
 TEST(PhaseDatumHandoverLoader, CarryRerefDisabledUnderTheChainDatum) {
     GnssConfig cfg;
     ASSERT_TRUE(loadNet("reref_eq34",
@@ -750,10 +747,10 @@ TEST(PhaseDatumHandoverLoader, CarryRerefDisabledUnderTheChainDatum) {
     EXPECT_FALSE(cfg.networkPhaseAnchorCarryReref());
 }
 
-/// An eq34-ONLY config (prioritized not set) must still disarm, and via the
-/// eq34 guard, which sits FIRST in this ladder for exactly this posture — the
-/// prioritized-first order would emit the factually wrong "legacy datum elects
-/// no anchor" diagnostic (review finding: eq34 elects a CHAIN datum).
+/// An eq34-only config (prioritized not set) also disarms, through the eq34 guard,
+/// which comes first in the ladder for this posture.  With the prioritized check
+/// first, the loader would emit the wrong "legacy datum elects no anchor"
+/// diagnostic, since eq34 elects a chain datum.
 TEST(PhaseDatumHandoverLoader, CarryRerefDisabledUnderEq34Alone) {
     GnssConfig cfg;
     ASSERT_TRUE(loadNet("reref_eq34only",
@@ -762,7 +759,7 @@ TEST(PhaseDatumHandoverLoader, CarryRerefDisabledUnderEq34Alone) {
     EXPECT_FALSE(cfg.networkPhaseAnchorCarryReref());
 }
 
-/// The ensemble datum elects no anchor — same disarm as the handover knob's.
+/// The ensemble datum elects no anchor: the same disarm as for the handover knob.
 TEST(PhaseDatumHandoverLoader, CarryRerefDisabledUnderTheEnsembleDatum) {
     GnssConfig cfg;
     ASSERT_TRUE(loadNet("reref_ensemble",
@@ -771,12 +768,12 @@ TEST(PhaseDatumHandoverLoader, CarryRerefDisabledUnderTheEnsembleDatum) {
     EXPECT_FALSE(cfg.networkPhaseAnchorCarryReref());
 }
 
-/// THE PAIRING, COMPOSED (R2, §5.09).  The 2026-08-14 review disarmed this pair
-/// because the unsticky ledger pin deferred the frame step to T+1 while the
-/// carry mark covered T.  The R2 sticky target removes the revert and the
-/// election marks only COLD re-realizations, so each mechanism treats exactly
-/// its own edge — continuous handovers keep frame and carries, cold handovers
-/// mark + marginalize + erase.  Both knobs must now survive the loader.
+/// The two knobs compose (R2, §5.09).  A non-sticky ledger pin would defer the
+/// frame step to T+1 while the carry mark covers T, which is why the loader once
+/// disarmed the pair.  The R2 sticky target removes the revert and the election
+/// marks only cold re-realizations, so each mechanism treats its own edge:
+/// continuous handovers keep the frame and the carries, cold handovers mark,
+/// marginalize and erase.  Both knobs survive the loader.
 TEST(PhaseDatumHandoverLoader, CarryRerefComposesWithTheContinuousPairing) {
     GnssConfig cfg;
     ASSERT_TRUE(loadNet("reref_pairing",
@@ -789,8 +786,9 @@ TEST(PhaseDatumHandoverLoader, CarryRerefComposesWithTheContinuousPairing) {
            "gone, so the mark-timing conflict no longer exists)";
 }
 
-/// The honest-σ-scale ceiling: default OFF (0 — the absolute ceiling alone, byte-
-/// identical), parses beside the absolute ceiling, and a negative ratio is refused.
+/// The relative variance ceiling: off by default (0 means the absolute ceiling
+/// alone, byte-identical), parsed beside the absolute ceiling, and a negative ratio
+/// is refused.
 TEST(PhaseDatumHandoverLoader, RatioCeilingDefaultsOffParsesAndRejectsNegative) {
     GnssConfig cfg;
     ASSERT_TRUE(loadNet("ratio_default", "    \"phase_datum_prioritized\": true,\n", cfg));

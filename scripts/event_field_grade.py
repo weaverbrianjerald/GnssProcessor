@@ -1,72 +1,72 @@
 #!/usr/bin/env python3
-"""FIELD EVENT-HARNESS grader — truth-free, everything is EVENT minus NULL.
+"""Field event-harness grader: truth-free, every channel is the event leg minus the null leg.
 
     python scripts/event_field_grade.py runs/evleg_fld_e1_off \
         --null runs/evleg_fld_null_off [--ref-null runs/evleg_fld_null_off] \
         --station GOPE00CZE --sat G07 [--pre 5] [--post 50] [--json out.json]
 
-The field has NO truth (SPEC_event_harness §20): every channel here is the event
-leg MINUS its null leg at the SAME tow, on datum-invariant or de-biased
-quantities.  The two legs resume from the SAME snapshot with the SAME config
+The field has no truth (SPEC_event_harness §20): every channel here is the event
+leg minus its null leg at the same tow, on datum-invariant or de-biased
+quantities.  The two legs resume from the same snapshot with the same config
 except ``network.inject``, so the warm-resume seam transient, the bed, the
 posture and (for the consumer) the station's static bias all cancel in the
-difference.  NOTHING here is absolute and nothing here is a verdict.
+difference.  Nothing here is absolute, and nothing here is a verdict on its own.
 
-Epoch axis ``k = (tow - event_tow) / 30`` with ``event_tow`` from the LEG's
+Epoch axis ``k = (tow - event_tow) / 30`` with ``event_tow`` from the leg's
 ``leg_meta.json``.  A null-vs-null comparison has no event of its own, so pass
 ``--event-tow`` explicitly there (the event leg's tow, so both floors are read on
 the same window).
 
 Channels
-  A IDENTITY   who fired, on what evidence, and WHICH BANDS WERE FREED —
+  A IDENTITY   who fired, on what evidence, and which bands were freed:
                network_events.csv, network_if_slip.csv, mw_slip_detector.log,
                plus the T4 attribution-erase counts at the station and
                network-wide (event - null).  Invariant #4: counters, not the
                absence of crashes.
   B FRAME      the station's own states: receiver clock (network_rx_states.csv
                kind CLK), ZWD (network_zwd.csv), and the injected LOS's slant
-               ionosphere (network_ionosphere.csv, iono_m = the CORRECTION x_r
-               and iono_total_m = x_lin + x_r; §Amendment 4 — x_r alone is not
+               ionosphere (network_ionosphere.csv, iono_m is the correction x_r
+               and iono_total_m is x_lin + x_r; §Amendment 4: x_r alone is not
                absolute slant iono, which is why both are printed).
   C WIRE       products.txt per (sat, kind, signal), event - null: the injected
-               satellite's CLK and per-signal PB, and the worst OTHER satellite
+               satellite's CLK and per-signal PB, and the worst other satellite
                (the blast radius).
-  D CONSUMER   closed_loop_trace.csv ENU, event - null — de-biased BY
-               CONSTRUCTION (the null carries the static bias), plus the
+  D CONSUMER   closed_loop_trace.csv ENU, event - null, de-biased by
+               construction (the null carries the static bias), plus the
                consumer's own reset counts from rt_engine.log.
   E FLOOR      with --ref-null: the same B/C/D for (null - ref-null), i.e. what
-               the knob costs on a QUIET leg with no event at all, plus each
+               the knob costs on a quiet leg with no event at all, plus each
                null's event census and withhold count.
 
-BANDS FREED — where the identity comes from (formats read from source, and the
+Bands freed: where the identity comes from (formats read from source, and the
 lines are cited so a format drift is findable):
   * ``T0_mw_detect``/``mw_wl_slip``  (src/core/slip/NetworkSlipQc.cpp:964)
     action = refloat | diagnostic | oracle_repair | oracle_keep
     detail = "<sig1>;<sig2>" [";band_scope=implicated;kept=<sig>"]
              [";src=evidence;ratio=<r>;n=<n>;int=known|unknown"]
-    The MW row does NOT name the common-band keeps; they come from the epoch's
-    ONE verdict row (below).  A band of the pair is freed iff the action frees
-    (``refloat``), the band is not the §Z ``kept=`` pin, and the common-band
-    verdict did not exonerate it (NetworkSlipQc.cpp:915-921).
+    The MW row does not name the common-band keeps; those come from the epoch's
+    one verdict row (below).  A band of the pair is freed only if the action
+    frees it (``refloat``), the band is not the §Z ``kept=`` pin, and the
+    common-band verdict did not exonerate it (NetworkSlipQc.cpp:915-921).
   * ``T0_mw_detect``/``band_scope`` (NetworkSlipQc.cpp:906) action = keep,
-    detail = "<sig1>;<sig2>;band_scope=implicated;kept=<sig>" — the second-pair
+    detail = "<sig1>;<sig2>;band_scope=implicated;kept=<sig>": the second-pair
     keep that would otherwise be silent.
   * ``T1_if_slip``/``if_slip`` (NetworkSlipQc.cpp:1493) action = refloat |
     diagnostic | oracle_*, detail = "<sig1>;<sig2>"[";<oracle detail>"]
-    [";cb_kept=<sigA>[+<sigB>]"] — here the common-band keeps ARE named
+    [";cb_kept=<sigA>[+<sigB>]"]: here the common-band keeps are named
     explicitly (NetworkSlipQc.cpp:1515).
   * ``T0_band_scope``/``common_band`` (src/core/slip/NetworkCommonBandScope.cpp
-    :477-503) — the epoch's ONE verdict for a (station, satellite):
+    :477-503): the epoch's one verdict for a (station, satellite):
       action "keep" : ["rule=lli_epoch;"] "implicated=<set>" [";exonerated=<set>"]
                       [";narrowed=0|1"] ";basis=<pair+pair...>"
       action "all"  : ["rule=lli_epoch;"] "reason=inconsistent|anchor_colocate|
                       no_exoneration;implicated=<set>;basis=<...>"
-    Sets are rendered with ``+`` separators (a comma would break the one-field
-    CSV detail — NetworkCommonBandScope.cpp:52).
+    Sets are rendered with ``+`` separators, since a comma would break the
+    one-field CSV detail (NetworkCommonBandScope.cpp:52).
 
-mw_slip_detector.log is a TEXT spdlog file, not a CSV, and its per-detection line
-carries no station (station_label_ appears only on the DEBUG ``MWDEC`` line,
-silent at the shipped level).  The LANE is recovered from ``lambda_wl``:
+mw_slip_detector.log is a text spdlog file, not a CSV, and its per-detection line
+carries no station (station_label_ appears only on the debug ``MWDEC`` line,
+silent at the shipped level).  The lane is recovered from ``lambda_wl``:
 GPS 0.862 m = (L1,L2), 0.751 m = (L1,L5), 5.861 m = (L2,L5).  ``bia=yes|no`` on
 that line is the arc's ``bia_corrected`` flag (MwSlipDetector.cpp:2248-2261).
 """
@@ -85,11 +85,12 @@ if _HERE not in sys.path:
 from event_grade import read_products      # noqa: E402  (one products parser)
 
 EPOCH_S = 30.0
-K_FRAME = (1, 5, 10, 20, 45)               # §20 gate G-B reads +1/+10/+45; +5/+20 are free
+K_FRAME = (1, 5, 10, 20, 45)               # epochs printed in the B/C/D tables; gate G-B reads
+                                            # +1/+10/+45 (§20); +5/+20 are supplementary
 SIG_RE = re.compile(r"^[LCS]\d[A-Z]$")
 _TOWPFX = re.compile(r"^\[\s*(\d+),\s*([0-9.]+)")
 
-# GPS wide-lane wavelengths, metres — the lane discriminator for the MW log.
+# GPS wide-lane wavelengths, metres: the lane discriminator for the MW log.
 _LANES = ((0.8619, "L1C/L2W"), (0.7514, "L1C/L5Q"), (5.8611, "L2W/L5Q"))
 
 
@@ -180,16 +181,18 @@ def read_events(legdir):
 def parse_detail(detail):
     """-> dict with pair, kept, cb_kept, implicated, exonerated, basis, reason, rule, src.
 
-    ⚠ THE SET SEPARATOR IS THE FIELD SEPARATOR.  NetworkCommonBandScope.cpp:52
-    renders a band SET with ',' and the event writer then rewrites every comma to
-    a semicolon so `detail` stays one CSV field — so a two-band set arrives as
-    ``exonerated=L2W;L5X`` and its second element is indistinguishable from a new
-    bare token.  A naive split therefore reads `exonerated={L2W}` and silently
-    drops L5X, which makes a correctly-narrowed response read as an over-wide
-    one.  The cure is a CURRENT-KEY state machine: a bare token continues the
-    previous key's list, and a bare token seen BEFORE any key is a pair signal
-    (the drain rows put "<sig1>;<sig2>" first).  ``basis=`` is emitted LAST and
-    itself contains both ';' and '=', so everything from it on is the basis.
+    The set separator is the same character as the field separator.
+    NetworkCommonBandScope.cpp:52 renders a band set with ',' and the event
+    writer then rewrites every comma to a semicolon so `detail` stays one CSV
+    field, so a two-band set arrives as ``exonerated=L2W;L5X`` and its second
+    element is indistinguishable from a new bare token.  A naive split
+    therefore reads `exonerated={L2W}` and silently drops L5X, which makes a
+    correctly-narrowed response read as an over-wide one.  The fix is a
+    state machine keyed on the current field: a bare token continues the
+    previous key's list, and a bare token seen before any key is a pair
+    signal (the drain rows put "<sig1>;<sig2>" first).  ``basis=`` is
+    emitted last and itself contains both ';' and '=', so everything from it
+    on is the basis.
     """
     out = {"pair": [], "kept": set(), "cb_kept": set(), "implicated": set(),
            "exonerated": set(), "basis": "", "reason": "", "rule": "", "src": ""}
@@ -226,7 +229,7 @@ FREE_ACTIONS = ("refloat", "oracle_repair")
 def bands_freed(rows, sta, sat, t0, lo, hi):
     """Union of bands actually freed for (sta, sat) in [lo, hi], + the verdicts."""
     freed, verdicts, drains = set(), [], []
-    # the epoch's ONE common-band verdict per (sta, sat), keyed by k
+    # the epoch's one common-band verdict per (sta, sat), keyed by k
     exon_at = {}
     for r in rows or []:
         if r.get("station") != sta or r.get("sat") != sat:
@@ -319,7 +322,7 @@ def mw_log_rows(path):
       DET  'MW slip detected for G07 (GPS): ... lambda_wl=0.862 m, bia=no, ...'
            is_slip = 1 by construction; lane from lambda_wl; bia_corrected from bia=.
       KEY  any line naming a '<sat>_<sig1>_<sig2>' arc key (WL locked / init
-           suspicious / scheduling reset) — lane EXPLICIT, no bia field except on
+           suspicious / scheduling reset): lane is explicit, no bia field except on
            'MW init suspicious ... BIA-corrected MW=' which is bia_corrected by
            its own wording.
     """

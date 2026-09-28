@@ -2,55 +2,53 @@
 
 /**
  * @file OtlField.hpp
- * @brief Ocean-tidal-loading coefficients that VARY ALONG the vessel track.
+ * @brief Ocean-tidal-loading coefficients that vary along the vessel track.
  *
- * Motivation — why this class exists at all
- * ----------------------------------------
- * The processor synthesizes its OTL coefficients ONCE, at the RINEX
+ * Purpose
+ * -------
+ * The processor synthesizes its OTL coefficients once, at the RINEX
  * @c APPROX @c POSITION @c XYZ, and reuses that frozen 11-constituent set for the
  * whole arc (@c Model::Geometry::loadData); only the ENU->ECEF rotation follows
- * the moving receiver.  @c EphemerisProvider::loadOceanTide deliberately mirrors
- * that: it loads the SAME coefficients at the SAME point, so the injected term
- * and the modeled term are bit-identical and OTL cancels EXACTLY even though the
- * vessel moves hundreds of kilometres.  That is the right default — it keeps the
- * "reuse so it cancels" invariant that every other M7 correction relies on.
+ * the moving receiver.  @c EphemerisProvider::loadOceanTide mirrors that on
+ * purpose: it loads the same coefficients at the same point, so the injected term
+ * and the modeled term are bit-identical and OTL cancels exactly even when the
+ * vessel moves hundreds of kilometres.  That remains the default, because it keeps
+ * the "reuse so it cancels" invariant that the other M7 corrections rely on.
  *
- * It is also physically wrong.  Ocean loading is a FIELD: the EOT20 load grid
- * gives a different complex amplitude at every point, so a vessel under way
- * samples a continuously changing OTL signal.  A processor that freezes the
- * coefficients at the start of the arc therefore cannot model what a moving
- * receiver actually feels, and the difference is a real, unmodelled,
+ * Physically, ocean loading is a field: the EOT20 load grid gives a different
+ * complex amplitude at every point, so a vessel under way samples a continuously
+ * changing OTL signal.  A processor that freezes the coefficients at the start of
+ * the arc cannot model it, and the difference is a real, unmodelled,
  * position-correlated error.
  *
- * This class synthesizes that field.  It samples the genuine EOT20 coefficients
- * at anchor points spaced along the truth trajectory and interpolates between
- * them, so @ref displacementEcef returns the loading at where the vessel IS
- * rather than at where it STARTED.  The residual left in the data is exactly
+ * This class synthesizes that field.  It samples the EOT20 coefficients at anchor
+ * points spaced along the truth trajectory and interpolates between them, so
+ * @ref displacementEcef returns the loading at the vessel's current position
+ * rather than at its starting position.  The residual left in the data is
  *
  *     d_unmodelled(t) = d(x(t), t) - d(x0, t)
  *
  * which is zero at the first epoch and grows as the vessel leaves x0.
  *
- * Why interpolate, and why in the complex plane
- * ---------------------------------------------
+ * Interpolation in the complex plane
+ * ----------------------------------
  * @c OceanTideModel::parseEot20Load re-opens the 286 MB grid on every call, so
- * sampling it per epoch is wasteful; the load tide is also far smoother than the
- * 0.125 deg (~14 km) grid it is stored on, so anchors every few km are exact to
+ * sampling it per epoch is wasteful.  The load tide is also far smoother than the
+ * 0.125 deg (~14 km) grid it is stored on, so anchors every few km are accurate to
  * well under the noise floor.
  *
- * The blend MUST happen in the complex (FES/EOT) plane, never on the BLQ
- * (amplitude, Greenwich phase lag) pair that @c OtlStationCoefficients stores.
- * Phase is circular: blending +179 deg with -179 deg arithmetically yields 0 deg
- * — a half-cycle error, the worst possible answer, and one that appears only in
- * the handful of segments that happen to straddle the wrap.  Converting back to
- * @c z = A*exp(-i*phi) first makes the blend linear and wrap-free, and linear
- * blending of z is also the physically correct operation: the loading response
- * is linear in the complex load coefficients, so interpolating z and evaluating
- * is identical to evaluating at the anchors and interpolating the displacement.
+ * The blend is done in the complex (FES/EOT) plane, not on the BLQ (amplitude,
+ * Greenwich phase lag) pair that @c OtlStationCoefficients stores.  Phase is
+ * circular: blending +179 deg with -179 deg arithmetically yields 0 deg, a
+ * half-cycle error that appears only in the segments that straddle the wrap.
+ * Converting to @c z = A*exp(-i*phi) first makes the blend linear and wrap-free.
+ * Linear blending of z is also the physically correct operation: the loading
+ * response is linear in the complex load coefficients, so interpolating z and
+ * evaluating equals evaluating at the anchors and interpolating the displacement.
  *
- * Evaluation reuses the processor's own @c OceanTideModel — the same Doodson
- * arguments, nodal corrections and (Up, West, South)->ECEF rotation — so the ONLY
- * thing that differs from the frozen path is the coefficient set being fed in.
+ * Evaluation reuses the processor's own @c OceanTideModel (the same Doodson
+ * arguments, nodal corrections and (Up, West, South)->ECEF rotation), so the
+ * coefficient set is the only thing that differs from the frozen path.
  */
 
 #include <filesystem>
@@ -94,7 +92,7 @@ OtlStationCoefficients lerpOtlCoefficients(const OtlStationCoefficients& a,
  * @note The query methods are non-const and mutate the internal evaluator and memo,
  *       so the object is neither reentrant nor thread-safe.  @c EphemerisProvider
  *       reaches it through a @c unique_ptr from a @c const method (const does not
- *       propagate through the pointer), matching how it already treats @c geometry_.
+ *       propagate through the pointer), in the same way it treats @c geometry_.
  */
 class OtlField {
 public:
@@ -107,8 +105,8 @@ public:
     /** @brief An EOT20 sample: the coefficients synthesized at one track point. */
     struct Anchor {
         GnssTime time{};
-        /// Monotone lookup key = week*604800 + tow.  Plain tow would run backwards at a
-        /// week rollover mid-arc and silently clamp the whole remainder to one anchor.
+        /// Monotone lookup key = week*604800 + tow.  Plain tow runs backwards at a week
+        /// rollover mid-arc, which would clamp the whole remainder to one anchor.
         double gps_s{ 0.0 };
         Eigen::Vector3d ecef{ Eigen::Vector3d::Zero() };
         OtlStationCoefficients coeffs{};
@@ -128,10 +126,10 @@ public:
      * exactly.
      *
      * @param eot20_nc          Path to EOT20_load.nc.
-     * @param track             Truth trajectory, ascending in @c tow.
+     * @param track             Truth trajectory, ascending in time (week, @c tow).
      * @param anchor_spacing_km Distance between anchors (km); must be > 0.
-     * @param frozen_site       The site the PROCESSOR will freeze its own
-     *                          coefficients at (the RINEX APPROX POSITION).
+     * @param frozen_site       The site at which the processor freezes its own
+     *                          coefficients (the RINEX APPROX POSITION).
      *                          Sampled separately so @ref frozenDisplacementEcef
      *                          reports the modeled term without assuming it
      *                          coincides with @c track.front().
@@ -154,27 +152,28 @@ public:
     /**
      * @brief Coefficients for the vessel at (@p t, @p rx).
      *
-     * @p t brackets the anchor pair (time is monotone even where the track doubles
-     * back); @p rx sets the blend fraction WITHIN that pair, since anchors are placed
-     * by distance and a time fraction would misplace the vessel wherever speed is not
-     * constant.  Clamped outside the anchor span.  Memoized on the epoch, so the
-     * per-satellite calls within one epoch cost one blend, not one per observation.
+     * @p t selects the bracketing anchor pair (time is monotone even where the track
+     * doubles back); @p rx sets the blend fraction within that pair, by projection
+     * onto the anchor chord.  Anchors are placed by distance, so a time fraction
+     * would misplace the vessel wherever its speed is not constant.  Clamped outside
+     * the anchor span.  Memoized on the (epoch, position) pair, so the per-satellite
+     * calls within one epoch cost one blend, not one per observation.
      */
     const OtlStationCoefficients& coefficientsAt(const GnssTime& t, const Eigen::Vector3d& rx);
 
     /**
-     * @brief Loading displacement (ECEF, m) at where the vessel actually is.
-     * @param rx Truth receiver ECEF (m) — also supplies the ENU->ECEF rotation.
+     * @brief Loading displacement (ECEF, m) at the vessel's current position.
+     * @param rx Truth receiver ECEF (m); also supplies the ENU->ECEF rotation.
      * @param t  Epoch.
      */
     Eigen::Vector3d displacementEcef(const Eigen::Vector3d& rx, const GnssTime& t);
 
     /**
-     * @brief Loading displacement (ECEF, m) from the FROZEN coefficients.
+     * @brief Loading displacement (ECEF, m) from the frozen coefficients.
      *
-     * This is what the processor models.  Same rotation point as
-     * @ref displacementEcef, so the difference of the two is precisely the
-     * unmodelled along-track term.
+     * This is the term the processor models.  It uses the same rotation point as
+     * @ref displacementEcef, so the difference of the two is the unmodelled
+     * along-track term.
      */
     Eigen::Vector3d frozenDisplacementEcef(const Eigen::Vector3d& rx, const GnssTime& t);
 
@@ -185,10 +184,10 @@ private:
 
     LogManager& log_;
     OceanTideModel model_;          ///< Scratch evaluator; coefficients pushed per query.
-    std::vector<Anchor> anchors_;   ///< Ascending in tow.
+    std::vector<Anchor> anchors_;   ///< Ascending in time (gps_s).
     OtlStationCoefficients frozen_; ///< Coefficients at the RINEX APPROX POSITION.
 
-    // One-entry memo for coefficientsAt(), keyed on the FULL argument pair.
+    // One-entry memo for coefficientsAt(), keyed on both arguments (epoch and position).
     bool memo_valid_ = false;
     double memo_gps_s_ = 0.0;
     Eigen::Vector3d memo_rx_{ Eigen::Vector3d::Zero() };

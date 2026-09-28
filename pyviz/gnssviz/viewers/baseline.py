@@ -1,10 +1,10 @@
-"""DD baseline-trace viewer -- the port of ``baseline_trace_parameters.m``.
+"""DD baseline-trace viewer: the port of ``baseline_trace_parameters.m``.
 
 Reads ``baseline_trace.csv`` (rover position + 1σ + DD throughput + ambiguity
 count from ``Application::runBaseline()``) and produces: ECEF X/Y/Z with ±1σ,
 ENU relative to the late-arc mean (the baseline-convergence view), an empirical
 convergence curve (log y), the 1σ evolution (log y), DD throughput, DD ambiguity
-count, and baseline length.  (The MATLAB 3D-trajectory figure is omitted -- the
+count, and baseline length. (The MATLAB 3D-trajectory figure is omitted: the
 ENU/length/convergence panels carry the same information without a 3D axes.)
 """
 

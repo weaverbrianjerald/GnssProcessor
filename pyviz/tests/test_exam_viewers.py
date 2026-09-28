@@ -131,9 +131,9 @@ def test_exam_map_uses_satellite_imagery(exam_fixture):
     from gnssviz.viewers.exam_map import _C_LAND
     regional = res.figures[1].axes[0].traces
     assert any(isinstance(t, RgbImage) for t in regional)
-    # No LAND-FILL polygon: the imagery replaces the coastline basemap.  (The
-    # error-region polygon added 2026-07-24 is a different thing and may be
-    # present, so this checks the fill colour rather than the type alone.)
+    # No land-fill polygon: the imagery replaces the coastline basemap.  (The
+    # error-region polygon is a separate feature that may also be present, so
+    # this checks the fill colour rather than the type alone.)
     assert not any(isinstance(t, Polygon) and tuple(t.fill) == tuple(_C_LAND)
                    for t in regional)
     assert any(isinstance(t, TextBox) and "Esri" in t.text for t in regional)
@@ -159,10 +159,10 @@ def test_exam_map_falls_back_to_coastline_without_imagery(exam_fixture, monkeypa
 
 
 def test_track_error_bounds_need_the_off_diagonals(exam_fixture):
-    # The trajectory corridor + per-epoch ellipses come from the FULL covariance.
+    # The trajectory corridor and per-epoch ellipses come from the full covariance.
     # Without cov_xy/xz/yz an orientation cannot be recovered, and rotating a
     # diagonal-only ECEF covariance would manufacture a bearing that is an
-    # artifact of the rotation -- so the panels must be dropped, not faked.
+    # artifact of the rotation, so the panels must be dropped, not faked.
     truth, logs = exam_fixture(state_cov=True)
     res = _build("exam_track", TraceContext(logs, truth_dir=truth))
     names = [f.name for f in res.figures]
@@ -205,8 +205,8 @@ def test_exam_map_zoom_is_proportional_to_the_track(exam_fixture):
 
 
 def test_whole_arc_storm_suppresses_the_spatial_overlay(exam_fixture):
-    # A storm covering the whole record is recoloured over EVERY epoch, in a line
-    # heavier than the track beneath it -- so the overlay hides the trajectory it
+    # A storm covering the whole record is recoloured over every epoch, in a line
+    # heavier than the track beneath it, so the overlay hides the trajectory it
     # annotates and advertises a legend colour with nothing to contrast against.
     # The spatial viewers must drop it and say so in prose instead.
     from gnssviz.figures import Line as _Line, TextBox as _TextBox
@@ -280,7 +280,7 @@ def test_spp_reference_sigma_panel_needs_the_sigma_columns(exam_fixture):
     res = _build("exam_spp_reference", TraceContext(logs, truth_dir=truth))
     assert any(f.name == "Formal sigma vs error" for f in res.figures)
     assert "err/σ3D" in res.summary
-    # Leg 1's covariance is optimistic (ratio >> 1), leg 2's is honest (~1).
+    # Leg 1's covariance is optimistic (ratio >> 1), leg 2's matches its errors (~1).
     rows = [l for l in res.summary.split("\n") if l.strip().startswith(("leg 1", "leg 2"))]
     assert rows, res.summary
 
@@ -300,7 +300,7 @@ def test_spp_reference_sigma_panel_needs_the_sigma_columns(exam_fixture):
 
 def test_static_window_needs_a_disclosed_window(exam_fixture):
     # The viewer keys off scenario_summary.static_segment; an instance with no
-    # station-keeping prefix has nothing to draw and must SKIP, not fail.
+    # station-keeping prefix has nothing to draw and must skip rather than fail.
     import json
     import os
     truth, logs = exam_fixture()
@@ -315,9 +315,9 @@ def test_static_window_needs_a_disclosed_window(exam_fixture):
 
 
 def test_static_window_separates_bias_from_noise(exam_fixture):
-    # The panel's whole point: a static solve's error is the MEAN of the per-epoch
-    # errors (window truth is one point), and that mean is reported next to the
-    # spread about it, so a bias-limited leg is visibly not helped by averaging.
+    # A static solve's error is the mean of the per-epoch errors (window truth is
+    # one point); the panel reports that mean next to the spread about it, so a
+    # bias-limited leg is visibly not helped by averaging.
     truth, logs = exam_fixture()
     res = _build("exam_static_window", TraceContext(logs, truth_dir=truth))
     assert [f.name for f in res.figures] == ["Static window: per-epoch vs static fix",
@@ -338,9 +338,9 @@ def test_static_window_separates_bias_from_noise(exam_fixture):
     labels = [t.label for t in axl.traces if getattr(t, "label", None)]
     assert any("PPP" in lbl for lbl in labels)
     assert not any("leg 1" in lbl for lbl in labels)
-    # The dotted static-fix overlays are GONE (2026-08-31 professor review:
-    # they read as data series and confused); static values live in the
-    # read-out box, the summary table, and the scatter-panel stars.
+    # The dotted static-fix overlays are removed: they read as data series and
+    # caused confusion.  Static values live in the read-out box, the summary
+    # table, and the scatter-panel stars.
     from gnssviz.figures import HLine
     for ax in (res.figures[0].axes[0], axl):
         assert not any(isinstance(t, HLine) for t in ax.traces)
@@ -353,7 +353,7 @@ def test_static_window_separates_bias_from_noise(exam_fixture):
 def test_static_window_truly_static_ppp_row(exam_fixture):
     # A state_trace_static.csv beside the main trace (the window rerun with
     # filter.process_noise.position_q = 0) becomes a fourth solution whose fix
-    # is the FINAL epoch's error -- a true fixed point, not a window mean.
+    # is the final epoch's error: a true fixed point, not a window mean.
     import os
     import shutil
     truth, logs = exam_fixture()
@@ -367,9 +367,9 @@ def test_static_window_truly_static_ppp_row(exam_fixture):
 
 
 def test_spp_reference_sigma_panel_is_a_correlated_scatter(exam_fixture):
-    # The panel is a per-leg SCATTER of realised error against formal sigma on
-    # log-log axes (not two time series), carrying a 1:1 reference and each leg's
-    # correlation — the professor's 2026-08-06 replacement.
+    # The panel is a per-leg scatter of realised error against formal sigma on
+    # log-log axes (not two time series), carrying a 1:1 reference and each
+    # leg's correlation.
     from gnssviz.figures import Scatter
     truth, logs = exam_fixture()
     res = _build("exam_spp_reference", TraceContext(logs, truth_dir=truth))
@@ -387,7 +387,7 @@ def test_spp_reference_sigma_panel_is_a_correlated_scatter(exam_fixture):
 def test_spp_reference_crowded_panels_are_opt_in(exam_fixture):
     # A/B ablations and the leg1−leg2 clock difference are off by default
     # (dashboard de-crowding) but must come back when asked for, and their
-    # NUMBERS must survive in the read-out either way.
+    # numbers must survive in the read-out either way.
     from gnssviz.viewers.exam_spp_reference import build_exam_spp_reference as B
     truth, logs = exam_fixture()
     ctx = TraceContext(logs, truth_dir=truth)
@@ -432,7 +432,7 @@ def test_spp_reference_excludes_partial_hour_from_the_ladder(exam_fixture):
     rows = ["week,tow_s,l1_n,l1_pdop,l1_cdt_m,l1_e_m,l1_n_m,l1_u_m,l1_3d_m,"
             "l1_noklob_3d_m,l1_notgd_3d_m,l1_prec_3d_m,"
             "if_n,if_pdop,if_cdt_m,if_e_m,if_n_m,if_u_m,if_3d_m,if_noosb_3d_m"]
-    # 120 epochs in hour 1, then ONE epoch that lands in hour 2 carrying a wild value.
+    # 120 epochs in hour 1, then one epoch that lands in hour 2 carrying a wild value.
     for i in range(121):
         tow = 3600.0 + i * 30.0
         v = 3.0 if i < 120 else 50.0

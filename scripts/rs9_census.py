@@ -1,30 +1,30 @@
 #!/usr/bin/env python
-"""RS-9 census (read-only): the rx-CB withheld share and the withholding SET.
+"""RS-9 census (read-only): the rx-CB withheld share and the withholding set.
 
     python scripts/rs9_census.py <run> [<run> ...] [--lo 277320] [--hi 279090]
                                  [--ref <run>]
 
-A generalisation of the RS-7b census script (§21.18(a)) to an arbitrary set of
+A generalization of the RS-7b census script (§21.18(a)) to an arbitrary set of
 runs, and the R1 instrument of card RS-9.  Everything is a read; nothing but
 stdout is written.
 
 Method, unchanged from RS-7b and validated there against the seed's own
 403/3660 = 11.01 %:
 
-  * the HEADLINE share comes from ``logs/network_prior_residual.csv``, family
-    ``rxcb`` — RESPONDED (= innov_withhold) rows over all rows in the window.
-    That is the instrument; nothing below may change the count.
-  * the per-station IDENTITY is not in that CSV (it is aggregated per (epoch,
+  * the headline share comes from ``logs/network_prior_residual.csv``, family
+    ``rxcb``: responded (= innov_withhold) rows over all rows in the window.
+    That is the instrument; nothing below changes the count.
+  * the per-station identity is not in that CSV (it is aggregated per (epoch,
     family, label)), so it is recovered from ``logs/network_rx_states.csv``
-    kind=CB: a FOLDED station's carry (var ~3e-5 m²) pins |CB(t) − CB(t−1)| to
-    ~6 mm while a WITHHELD one is re-solved free (var ~1.3e-2 m²).  Per epoch
+    kind=CB: a folded station's carry (var ~3e-5 m²) pins |CB(t) − CB(t−1)| to
+    ~6 mm while a withheld one is re-solved free (var ~1.3e-2 m²).  Per epoch
     the stations are ranked by |ΔCB| and the top n taken, with n the census's
-    OWN RESPONDED count — so the classification cannot drift from the
+    own responded count, so the classification cannot drift from the
     instrument it stands in for.  The separation ratio is printed as the
     proxy's own health check.
 
 With ``--ref``, the withholding sets are also compared to that run's (the
-seed), which is the R1 bar: the leg's set should BE the seed's ± 1.
+seed), which is the R1 bar: the leg's set should match the seed's within ± 1.
 """
 import csv
 import os
@@ -74,7 +74,7 @@ def read_cb(run, lo, hi):
 
 
 def withhold_map(cb, tows, census, lo):
-    """{station: set(tow withheld)} — top-n by |ΔCB|, n = the census's own count."""
+    """{station: set(tow withheld)}: top-n by |ΔCB|, n = the census's own count."""
     out = {s: set() for s in cb}
     lo_w, hi_f = [], []
     for i, t in enumerate(tows):

@@ -30,10 +30,10 @@
 
 namespace GnssProcessor {
 
-    // Forward declaration — Antenna lives at the GnssProcessor namespace
-    // scope and is owned externally (typically by PppModel).  Geometry
-    // holds only a non-owning pointer for emission-time pseudorange
-    // refinement; it never constructs or destroys the Antenna instance.
+    // Forward declaration.  Antenna lives at GnssProcessor namespace scope and
+    // is owned externally (typically by PppModel).  Geometry holds a non-owning
+    // pointer for emission-time pseudorange refinement and never constructs or
+    // destroys the Antenna instance.
     class Antenna;
     class SsrCorrectionStore;
 
@@ -63,8 +63,10 @@ namespace GnssProcessor {
      * - solid Earth tide and atmospheric loading
      *
      * The class holds product-derived containers (orbits/clocks/antennas/ERPs)
-     * and exposes thread-safe const accessors for geometry used by the
-     * measurement modelling code.
+     * and exposes const accessors for geometry used by the measurement
+     * modelling code.  The const accessors update mutable caches (Sun/Moon
+     * positions, the warned-satellite set, the APC-overlay record) without
+     * locking, so one instance is not safe for concurrent calls.
      */
     class Geometry {
 
@@ -87,42 +89,47 @@ namespace GnssProcessor {
         /**
          * @brief Compute satellite geometry and common corrections for an observation.
          *
-         * This routine performs the end-to-end geometry computation needed to
-         * model a single satellite observation: it obtains (or interpolates)
-         * the satellite position/velocity, computes receiver-satellite line-of-sight,
-         * elevation/azimuth, geometric range and applies the standard corrections
-         * used by the PPP observation model.
+         * Performs the end-to-end geometry computation for one satellite
+         * observation: obtains (or interpolates) the satellite position and
+         * velocity at emission time, computes the receiver-to-satellite line of
+         * sight, elevation/azimuth and geometric range, and evaluates the
+         * standard corrections used by the PPP observation model.  A receiver
+         * position with |r| < 1e3 m (not initialised) rejects every satellite.
          *
          * @param[in] obs RINEX observation record (contains satellite id, signal, epoch).
          * @param[in] state Current PPP state (receiver position, troposphere, etc.).
          * @param[out] sat_pos Satellite ECEF position (meters).
          * @param[out] rx_pos Receiver ECEF position (meters).
-         * @param[out] elevation Satellite elevation angle at the receiver (radians or degrees? documented below).
-         * @param[out] azimuth Satellite azimuth at the receiver (radians or degrees? documented below).
+         * @param[out] elevation Satellite elevation angle at the receiver (degrees).
+         * @param[out] azimuth Satellite azimuth at the receiver (degrees).
          * @param[out] los Line-of-sight unit vector from receiver to satellite (ECEF).
          * @param[out] range Geometric range (meters) between receiver and satellite.
-         * @param[out] tropo_delay Total tropospheric delay (meters).
+         * @param[out] tropo_delay Saastamoinen zenith hydrostatic delay (meters,
+         *             not mapped to the slant); zero when the troposphere model
+         *             is disabled.
          * @param[out] sat_clock Satellite clock correction (seconds).
          * @param[out] shapiro_delay Shapiro relativistic path delay (meters).
-         * @param[out] sagnac_corr Sagnac correction (meters).
+         * @param[out] sagnac_corr Sagnac correction (meters); diagnostic only,
+         *             since the Earth rotation applied to @p sat_pos already
+         *             contains the effect.
          * @param[out] otl_corr Ocean tidal loading site-displacement projection onto -LOS (meters).
          * @param[out] apl_corr Atmospheric pressure loading (S1/S2 thermal tide) site-displacement projection onto -LOS (meters).
-         * @param[out] relativistic_corr Relativistic orbit-clock correction (meters or seconds depending on caller convention).
-         * @param[out] solid_tide Solid Earth tide radial correction (meters).
-         * @param[out] mf_w Wide-lane Melbourne-Wübbena combination factor (if applicable).
-         * @param[out] mf_d Narrow-lane / dual-frequency mapping factor (if applicable).
+         * @param[out] relativistic_corr Periodic relativistic satellite-clock correction (seconds).
+         * @param[out] solid_tide Solid Earth tide displacement projected onto the line of sight (meters).
+         * @param[out] mf_w Wet tropospheric mapping function (unitless).
+         * @param[out] mf_d Hydrostatic (dry) tropospheric mapping function (unitless).
          * @param[out] sat_vel Satellite ECEF velocity (meters/second).
          * @param[out] broadcast_only  Set true when the satellite range model is
-         *             "broadcast grade" — the clock came from the broadcast
+         *             broadcast grade: the clock came from the broadcast
          *             polynomial with no precise CLK and no SSR clock (metre
-         *             level).  The caller drops carrier phase for such satellites
-         *             (phase at mm precision is meaningless against a metre-level
-         *             clock).  False for precise-product or SSR-corrected runs.
+         *             level).  The caller drops carrier phase for such satellites,
+         *             since millimetre phase carries no information against a
+         *             metre-level clock.  False for precise-product or
+         *             SSR-corrected runs.
          * @param[out] drop_reason  On success, set to @c DropReason::None.  On
-         *             failure, set to the specific reason (BelowMask /
-         *             NoProduct / NoModel) so callers can surface it in the
-         *             satellite-status trace.  Defaults to a sink if the
-         *             caller doesn't want it.
+         *             failure, set to the specific reason (BelowMask, Eclipsing,
+         *             NoProduct, NoModel) so callers can surface it in the
+         *             satellite-status trace.
          * @return True on success, false if geometry/corrections could not be computed.
          */
         bool computeSatelliteGeometry(const RinexObservation& obs, const PppState& state,
@@ -149,14 +156,20 @@ namespace GnssProcessor {
         static Topocentric computeTopocentric(const Eigen::Vector3d& rx_pos_ecef, const Eigen::Vector3d& sat_pos_ecef);
 
         /**
-         * @brief Get interpolated satellite ECEF position from available orbit products.
+         * @brief Get the interpolated satellite ECEF position and velocity from
+         *        the available orbit products.
          * @param satellite Satellite identifier string (e.g. "G01", "E11").
          * @param time Epoch at which the position is requested.
-         * @return Satellite ECEF position in meters.
+         * @return Pair (position in meters, velocity in m/s), both ECEF.
          *
-         * If precise orbit (SP3) or propagated ephemeris data are available the
-         * position is interpolated from `orbits_`, otherwise an empty/zero
-         * vector may be returned (caller must check validity).
+         * With SP3 data for the satellite, the state is interpolated from
+         * `orbits_` over a window of consecutive nodes centred on the bracket
+         * of @p time.  When the SP3 cannot describe the epoch (no entry, too few
+         * valid nodes, or @p time outside its span), the live broadcast
+         * ephemeris store is used with the IODE-matched SSR orbit overlay; that
+         * store is filled by RealTimeEngine and, under network brdc_rts, by the
+         * network epoch loop.  On failure both vectors are zero; the caller
+         * checks validity.
          */
         std::pair<Eigen::Vector3d, Eigen::Vector3d> getSatellitePV(
             const std::string& satellite, const GnssTime& time) const;
@@ -199,19 +212,18 @@ namespace GnssProcessor {
          * @return Cached Moon ECEF position (meters). May be zero if no epoch has been processed yet.
          *
          * Mirrors getCachedSunPosition so an external component (e.g. the
-         * simulator's solid-earth-tide reuse) can obtain the SAME Sun+Moon the
-         * geometry pipeline used, guaranteeing bit-for-bit tide cancellation.
+         * simulator's solid-earth-tide reuse) obtains the Sun and Moon positions
+         * the geometry pipeline used, so an injected tide cancels bit for bit.
          */
         const Eigen::Vector3d& getCachedMoonPosition() const { return cached_moon_pos_; }
 
         /**
-         * @brief Sun & Moon ECEF (m) at @p time via the geometry pipeline's OWN
-         *        Planetary model + ERP, populating the cache if needed.
+         * @brief Sun and Moon ECEF (m) at @p time from this geometry pipeline's
+         *        own Planetary model and ERP, populating the cache if needed.
          *
          * Lets an external component (the simulator's solid-earth-tide reuse)
-         * obtain bit-for-bit the same bodies the processor uses, guaranteeing the
-         * injected tide cancels.  Thin public wrapper over the private
-         * ensureSunMoonCached (a member, so it may call it).
+         * obtain bit for bit the bodies the processor uses, so the injected tide
+         * cancels.  Thin public wrapper over the private ensureSunMoonCached.
          */
         void sunMoonPositions(const GnssTime& time, Eigen::Vector3d& sun,
                               Eigen::Vector3d& moon) const {
@@ -225,14 +237,14 @@ namespace GnssProcessor {
          *        ATX-based pseudorange refinement.
          *
          * Without an antenna model, the second-pass refinement in
-         * computeSatelliteGeometry only subtracts the slant tropospheric
-         * ZHD from the pseudorange.  With the model set, it additionally
-         * subtracts the IF-combined satellite + receiver PCO/PCV LOS
-         * projection — driving the t_em residual from tens of ns down to
-         * the code-noise floor (~ns / μm of satellite displacement).
+         * computeSatelliteGeometry subtracts only the slant tropospheric
+         * ZHD from the pseudorange.  With the model set, it also subtracts
+         * the IF-combined satellite + receiver PCO/PCV LOS projection, which
+         * reduces the t_em residual from tens of ns to the code-noise floor
+         * (a few ns, a sub-μm satellite displacement).
          *
          * The pointer is non-owning; the caller (typically PppModel)
-         * retains ownership and must outlive this Geometry instance.
+         * retains ownership, and the Antenna must outlive this Geometry instance.
          *
          * @param antenna  Reference to a constructed Antenna model.
          */
@@ -243,16 +255,16 @@ namespace GnssProcessor {
          *        the PPP-RTK closed-loop harness).
          *
          * Forwards to the internal @c GnssCorrections (which applies the SSR
-         * clock overlay) and also overrides the SSR ORBIT overlay this class
+         * clock overlay) and also overrides the SSR orbit overlay this class
          * applies in @c getSatellitePV.  Pass @c nullptr (the default) to use
-         * the process-wide singleton — every non-harness caller stays
+         * the process-wide singleton; callers outside the harness then stay
          * byte-identical.  The network closed-loop consumer points this at the
-         * producer's OWNED store so a held-out station consumes the network's
-         * freshly-emitted corrections without touching global state.
+         * store the producer owns, so a held-out station consumes the network's
+         * freshly emitted corrections without touching global state.
          *
-         * Delegates to @ref setSsrOrbitStore + @ref setSsrClockStore (RTA-8:
-         * the two overlays are independently routable); this coupled form is
-         * retained for every pre-split caller and behaves exactly as before.
+         * Delegates to @ref setSsrOrbitStore + @ref setSsrClockStore; the two
+         * overlays are independently routable (RTA-8).  This coupled form routes
+         * both to the same store, for callers that do not split them.
          *
          * @param store Non-owning store pointer (must outlive this object) or
          *        @c nullptr for the singleton.
@@ -263,31 +275,31 @@ namespace GnssProcessor {
         }
 
         /**
-         * @brief RTA-8: route ONLY the SSR ORBIT overlay (@c getSatellitePV's
-         *        RAC delta application) at @p store.
+         * @brief Route the SSR orbit overlay alone (the RAC delta application
+         *        in @c getSatellitePV) at @p store (RTA-8).
          *
          * Leaves the clock path (the internal @c GnssCorrections) untouched, so
          * a consumer can read orbit corrections from the external RTS stream
          * (the singleton, via @c nullptr here) while its clocks come from an
-         * injected network-product store — the split the standalone
-         * network-consumer wiring uses (@c processing.network_consumer.orbit_source).
+         * injected network-product store.  The standalone network-consumer
+         * wiring uses this split (@c processing.network_consumer.orbit_source).
          *
-         * Also forwards to the internal @c GnssCorrections' Card-7 echo seam
-         * (@c setOrbitEchoStore) so the orbit-coherence echo check always
-         * compares against the store THIS overlay actually applies from —
-         * the two routings cannot drift apart.
+         * Also forwards to the echo seam of the internal @c GnssCorrections
+         * (@c setOrbitEchoStore, Card 7), so the orbit-coherence echo check
+         * compares against the store this overlay applies from and the two
+         * routings cannot diverge.
          *
          * @param store Non-owning store pointer (must outlive this object) or
          *        @c nullptr for the singleton.
          */
         void setSsrOrbitStore(const SsrCorrectionStore* store) {
             ssr_store_override_ = store;
-            corrections_.setOrbitEchoStore(store);   // Card 7: echo check tracks the orbit routing
+            corrections_.setOrbitEchoStore(store);   // echo check follows the orbit routing (Card 7)
         }
 
         /**
-         * @brief RTA-8: route ONLY the SSR CLOCK overlay (the internal
-         *        @c GnssCorrections satellite-clock lookup) at @p store.
+         * @brief Route the SSR clock overlay alone (the satellite-clock lookup
+         *        of the internal @c GnssCorrections) at @p store (RTA-8).
          *
          * Counterpart of @ref setSsrOrbitStore; the orbit overlay keeps its
          * current routing.
@@ -300,21 +312,21 @@ namespace GnssProcessor {
         }
 
         /**
-         * @brief RTB-5(c): was the most recent SSR orbit overlay APPLIED to
-         *        @p satellite an APC-referenced (legacy-SSR) correction?
+         * @brief Whether the most recent SSR orbit overlay applied to
+         *        @p satellite was an APC-referenced (legacy-SSR) correction
+         *        (RTB-5(c)).
          *
          * Recorded at the two orbit-overlay apply sites in
-         * @c getSatellitePV (live-ephemeris fallback and SP3 branch) — true
-         * only when a fresh, IODE-matched orbit delta tagged
-         * @c SsrReferencePoint::APC was actually subtracted for the most
-         * recent query of this satellite; false when no overlay applied or
-         * the record was CoM-referenced.  @c PppModel reads it to skip the
-         * satellite-PCO range term (the APC double-count guard).
+         * @c getSatellitePV (live-ephemeris fallback and SP3 branch).  True
+         * when a fresh, IODE-matched orbit delta tagged
+         * @c SsrReferencePoint::APC was applied for the most recent query of
+         * this satellite; false when no overlay applied or the record was
+         * CoM-referenced.  @c PppModel reads it to skip the satellite-PCO
+         * range term, which would otherwise count the APC offset twice.
          *
-         * Only maintained while @c realtime.honor_ssr_reference_point is
-         * armed — with the toggle off nothing is recorded and this always
-         * returns false, keeping the default path byte-identical and
-         * allocation-free.
+         * Maintained only while @c realtime.honor_ssr_reference_point is on.
+         * With the toggle off nothing is recorded and this always returns
+         * false, so the default path is byte-identical and allocation-free.
          */
         bool ssrOrbitApcApplied(const std::string& satellite) const {
             const auto it = ssr_orbit_apc_applied_.find(satellite);
@@ -332,9 +344,9 @@ namespace GnssProcessor {
         LogManager& log_manager_;                         /**< Logger for diagnostics. */
         const RinexParser& rinex_parser_;                 /**< RINEX data parser (header/metadata). */
         const double elevation_threshold_;                /**< Elevation mask in degrees. */
-        // Shared handles to the single cached copy (ProductCache) — read-only
-        // product data referenced, NOT duplicated per Geometry instance (the
-        // per-station memory fix; ~0.5 GB/station of copies otherwise).
+        // Shared handles to the single cached copy in ProductCache.  The read-only
+        // product data is referenced, not copied per Geometry instance; a copy
+        // per station would cost about 0.5 GB each.
         std::shared_ptr<const std::vector<OrbitData>>   orbits_;    /**< Satellite orbit records (shared). */
         std::shared_ptr<const std::vector<ClockData>>   clocks_;    /**< Satellite clock records (shared). */
         std::shared_ptr<const std::vector<AntennaData>> antennas_;  /**< Antenna correction models (shared). */
@@ -349,7 +361,7 @@ namespace GnssProcessor {
         const Antenna* antenna_ = nullptr;
 
         /// Non-owning SSR store override; nullptr -> process-wide singleton.
-        /// Set via setSsrStore() for the closed-loop consumer (see header).
+        /// Set via setSsrOrbitStore() (or setSsrStore()) for the closed-loop consumer.
         const SsrCorrectionStore* ssr_store_override_ = nullptr;
 
         /// Resolve the active SSR store (override when set, else the singleton).
@@ -405,6 +417,9 @@ namespace GnssProcessor {
          * @param[out] sat_vel_em Satellite ECEF velocity at emission time (m/s).
          * @param[out] sat_clock  Satellite clock correction at emission time (seconds).
          * @param[out] emission_time  GPS time of signal transmission.
+         * @param[out] broadcast_grade  True when the clock is broadcast grade
+         *             (no precise CLK and no SSR clock).
+         * @param[out] drop_reason  Reason for a false return (NoProduct).
          * @return True on success; false if orbit/clock data are unavailable or invalid.
          */
         bool computeEmissionState(const RinexObservation& obs,
@@ -423,15 +438,14 @@ namespace GnssProcessor {
         mutable Eigen::Vector3d cached_moon_pos_{Eigen::Vector3d::Zero()};  /**< Cached Moon ECEF (m). */
 
         /// Satellites already warned about for missing/invalid clock products.
-        /// Without this set the warning fires once per (call site × satellite ×
-        /// epoch) and dominates geometry.log — typically 4 sats × 2 calls/epoch
-        /// × thousands of epochs. We warn once per satellite per session.
+        /// The warning is issued once per satellite per session; without this
+        /// set it would repeat per call site, satellite and epoch in geometry.log.
         mutable std::set<std::string> sats_warned_no_clock_;
 
-        /// RTB-5(c): per-satellite record of whether the most recent
-        /// getSatellitePV query APPLIED an APC-referenced SSR orbit delta
-        /// (see ssrOrbitApcApplied).  Written at the overlay apply sites only
-        /// while realtime.honor_ssr_reference_point is armed; mutable because
+        /// Per-satellite record of whether the most recent getSatellitePV query
+        /// applied an APC-referenced SSR orbit delta (see ssrOrbitApcApplied;
+        /// RTB-5(c)).  Written at the overlay apply sites only while
+        /// realtime.honor_ssr_reference_point is on; mutable because
         /// getSatellitePV is const (same pattern as the Sun/Moon cache).
         mutable std::unordered_map<std::string, bool> ssr_orbit_apc_applied_;
     };

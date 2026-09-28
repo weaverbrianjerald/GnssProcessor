@@ -1,34 +1,34 @@
 #!/usr/bin/env python3
-"""Build the FAULT arm of a slip-injection bench from an already-synthesized NULL arm.
+"""Build the fault arm of a slip-injection bench from an already-synthesized null arm.
 
     null fixture  --(this script)-->  fault sim config + injection manifest
                                       --(gnss_simulator synth-network)--> fault fixture
 
-WHY THE NULL ARM COMES FIRST, AND IS AN INPUT.
+Why the null arm comes first, and is an input:
 
 A scripted slip fires with form A (an exact 1-based epoch) only if that satellite
-is VISIBLE at that station at that epoch; a form-A event that never fires is a
+is visible at that station at that epoch; a form-A event that never fires is a
 hard run-end failure (`unfinished()`), and on a globally-distributed roster most
-(station, satellite) pairs are below the horizon at any given epoch — measured
-47 of 51 on an earlier attempt.  Rather than guess, this reads the null arm's own
-`truth_visibility.csv` (which satellites were up, per epoch) and
-`truth_ambiguities.csv` (which (sat, signal) pairs that station actually tracks)
-and plans every event inside that intersection.  The null arm therefore does
-double duty: false-alarm calibration AND the visibility oracle.
+(station, satellite) pairs are below the horizon at any given epoch.  Rather than
+guess, this reads the null arm's own `truth_visibility.csv` (which satellites
+were up, per epoch) and `truth_ambiguities.csv` (which (sat, signal) pairs that
+station actually tracks) and plans every event inside that intersection.  The
+null arm therefore does double duty: false-alarm calibration and the visibility
+oracle.
 
-Scripted slips are documented to touch NO RNG stream (`slip_accum`, the LLI OR and
-their own counters only), so the fault fixture is identical to the null fixture
-everywhere except at the injected (station, sat, signal, epoch).  That is what
-makes a differential grade legitimate — and §9.6 of SPEC_synthetic_minimum_network
-is emphatic that G-B classes MUST be graded differentially against the null arm,
-because a headline "recovery floor" was once published off a window artifact when
-the null arm itself drifted -0.464 m across the same window.
+Scripted slips are documented to touch no RNG stream other than `slip_accum`,
+the LLI OR, and their own counters, so the fault fixture is identical to the
+null fixture everywhere except at the injected (station, sat, signal, epoch).
+That is what makes a differential grade legitimate; §9.6 of
+SPEC_synthetic_minimum_network requires G-B classes to be graded differentially
+against the null arm, since a recovery-floor number is not meaningful unless the
+null arm's own drift across the same window is accounted for.
 
-THE MAGNITUDE LADDER.  Events are laid out as a ladder (default +/-1, 2, 3, 5, 10,
-50 cycles) spread across distinct stations/satellites/epochs, so ONE fault run
-measures a detection floor — the empirical MDB the bench exists to produce —
-instead of a single yes/no.  Thresholds stay FIELD-derived; this measures where
-they land, it never tunes them.
+The magnitude ladder: events are laid out as a ladder (default +/-1, 2, 3, 5, 10,
+50 cycles) spread across distinct stations/satellites/epochs, so one fault run
+measures a detection floor (the empirical MDB the bench exists to produce)
+instead of a single yes/no.  Thresholds stay field-derived; this measures where
+they land, it does not tune them.
 
     python scripts/simnet_inject_arms.py runs/simnet24_inject_null \\
            config/sim/simnet24_inject.json config/sim/simnet24_inject_fault.json
@@ -36,9 +36,9 @@ they land, it never tunes them.
            --ladder 1 2 3 5 10 50 --repeat-per-rung 2 --seed 7 --signal-mode per-band
 
 `--signal-mode`:
-  per-band  (default) each event hits ONE (sat,signal) — the single-band slip a
+  per-band  (default) each event hits one (sat,signal): the single-band slip a
             geometry-free / MW detector is built to see.
-  mw-blind  each event hits the SAME delta on BOTH bands of a pair, which cancels
+  mw-blind  each event hits the same delta on both bands of a pair, which cancels
             in the Melbourne-Wubbena wide-lane and is invisible to mw_detect.
             §9.7.6 measured exactly this null space; arming
             network.cycle_slip.if_phase_td is what catches it.  Use this mode to
@@ -111,8 +111,8 @@ def plan_events(fixture_dir, stations, n_epochs, ladder, repeat_per_rung, seed,
         transient and the run end (a slip at the last epoch has no post-event
         window to be detected in, which would grade as a miss);
       * at most one event per (station, sat, signal) so magnitudes never overlap;
-      * no two events share an epoch AND a satellite, so an attribution tier is
-        never asked to separate two simultaneous faults on one satellite.
+      * no two events share both an epoch and a satellite, so an attribution tier
+        is never asked to separate two simultaneous faults on one satellite.
     """
     rng = random.Random(seed)
     lo, hi = int(n_epochs * epoch_lo_frac), int(n_epochs * epoch_hi_frac)
@@ -163,7 +163,7 @@ def plan_events(fixture_dir, stations, n_epochs, ladder, repeat_per_rung, seed,
                            "epoch": epoch, "delta_cycles": delta,
                            "mode": signal_mode})
             # elev_window: the planner still picks a (station, sat, signal) it has
-            # verified the station TRACKS, but hands the firing decision to the
+            # verified the station tracks, but hands the firing decision to the
             # simulator's own Form-B elevation trigger instead of pinning an epoch.
             # The chosen epoch becomes not_before_epoch, so the event still lands
             # inside the requested arc window.

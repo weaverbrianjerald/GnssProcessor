@@ -1,79 +1,88 @@
 #!/usr/bin/env python3
-"""T4 ATTRIBUTION-ARC CENSUS — what does the T4 "attrib_arc" tier actually erase?
+"""T4 attribution-arc census: what the T4 "attrib_arc" tier erases.
 
-On the synthetic SLIPPED bed the network producer's T4 attribution tier erases
+On the synthetic slipped bed the network producer's T4 attribution tier erases
 every signal-arc of one (station, satellite) per event.  On
-`runs/golden_sim_campaign` that is 7,656 events against 2,452 truth slips, and
-only ~53 events land within 90 s after a truth slip.  This script asks what the
-other ~99 % are, by measuring the arc's OWN level error immediately BEFORE the
-erase and tracking it AFTER.
+`runs/golden_sim_campaign` that is 7,656 events against 2,452 truth slips, with
+only ~53 events within 90 s after a truth slip.  This script characterizes the
+remaining ~99 % by measuring the arc's own level error immediately before the
+erase and tracking it afterwards.
 
 Three hypotheses:
 
-  H-A  T4 is RIGHT      the erased arc carried |level error| >= 0.5 cyc before
-                        the erase (the disease is then the re-level VALUE, not
+  H-A  T4 is right      the erased arc carried |level error| >= 0.5 cyc before
+                        the erase (the defect is then the re-level value, not
                         the identification).
   H-B  false alarms     the arc was fine (|error| < 0.25 cyc) before the erase.
-  H-C  limit cycle      the pre-erase error was itself CREATED by a previous
+  H-C  limit cycle      the pre-erase error was itself created by a previous
                         re-level (detector refloat or T4) on the same
                         (station, sat) minutes earlier, and the new re-level
                         does not improve it.
 
-THE STATISTIC
+The statistic
 -------------
 `<run>/logs/network_dd_fractional.csv` carries, per epoch / signal / chord, the
-ABSOLUTE float DD ambiguity
+absolute float DD ambiguity
 
     dd_cyc = ([N_a,i - N_a,ref] - [N_b,i - N_b,ref])_estimated
 
-and the fixture knows the true integers, so the chord error is
+and the fixture holds the true integers, so the chord error is
 
-    e = dd_cyc - DD_true,   DD_true formed in PYTHON INTS
+    e = dd_cyc - DD_true,   DD_true formed in Python ints
       = (err_a,i - err_a,ref) - (err_b,i - err_b,ref)
 
 with err_x,y the arc-level error of station x on satellite y, in cycles.  For a
-station S and satellite s the per-chord contribution of S's own arc enters with
-+1 when S == sta_a and -1 when S == sta_b, so the SIGNED, sign-corrected chord
-median over >= `--min-chords` partners is the arc statistic
+station S and satellite s, S's own arc enters a chord with +1 when S == sta_a
+and -1 when S == sta_b, so the signed, sign-corrected chord median over
+>= `--min-chords` partners is the arc statistic
 
     e(S, s, sig, t) = median_partners [ +/- e ]
                     ~ err_S,s - err_S,ref  + (partner-averaged noise)
 
-*** The trace has ONE reference satellite (SPEC_amb_iono §6.12).  err_S,ref is
-COMMON to every chord of station S, so the as-traced statistic is NOT the arc's
-own error — it is the arc's error MINUS S's reference-arc error.  Differences
-in time on one (S, s) are ref-free (err_S,ref cancels only if the reference arc
-is stable across the window, which it need not be); ABSOLUTE classification is
-not.  This script therefore reports BOTH:
+The trace has one reference satellite (SPEC_amb_iono §6.12).  err_S,ref is
+common to every chord of station S, so the as-traced statistic is not the arc's
+own error but the arc's error minus S's reference-arc error.  Differences in
+time on one (S, s) are ref-free only if the reference arc is stable across the
+window, which it need not be; absolute classification is not ref-free.  Two
+forms are available, selected by `--ref-free` (default: as-traced):
 
     as-traced  e(S, s, sig, t)                       (what the spec asked for)
-    ref-free   e(S, s, sig, t) - median_{s' != s} e(S, s', sig, t)   (LEAVE-ONE-OUT
+    ref-free   e(S, s, sig, t) - median_{s' != s} e(S, s', sig, t)   (leave-one-out
                over the other satellites at the same station/signal/epoch,
-               >= --min-sats of them; this is §6.12's fix)
+               >= --min-sats of them; this is the §6.12 fix)
 
-and the CONTROL population below is measured with the identical statistic, so
-the OFF / FINE thresholds are calibrated against the same contamination.  The
-leave-one-out form is used precisely because subtracting a group's own median
-including the member shrinks |residual| on pure noise (the null trap in
-CLAUDE.md's wrapped-fraction note) — the control would absorb that, but LOO
-removes it outright.
+The control population below is measured with the identical statistic, so the
+OFF / FINE thresholds are calibrated against the same contamination.  The
+leave-one-out form is used because subtracting a group median that includes the
+member shrinks |residual| on pure noise (the null trap in CLAUDE.md's
+wrapped-fraction note); the control would absorb that, and leave-one-out
+removes it.
 
-WHAT IS COMPUTED, per T4 event (S, s, t0) and per signal present for (S, s)
---------------------------------------------------------------------------
- 1. e_pre  = the statistic at t0 - 30 s (the last epoch BEFORE the erase).
- 2. e_at(+k) for k in --offsets epochs, censored at the NEXT re-level event on
-    (S, s) (strictly: an offset epoch at or after the next event is dropped).
- 3. AGE since the previous re-level on (S, s) — a prior T4_attrib, or a prior
-    T0_mw_detect / T1_if_slip row with action=refloat — bucketed.
- 4. TRUTH-SLIP proximity: a truth slip on (S, s, any signal) in (t0-90, t0] and
-    in (t0-600, t0].
- 5. CLASS by max over signals of |e_pre|: OFF >= 0.5, AMBIGUOUS [0.25, 0.5),
-    FINE < 0.25, UNMEASURABLE (no signal with >= --min-chords chords at t0-30).
- 6. A CONTROL population of --control-n random (S, s, t) slots with NO re-level
-    event on (S, s) within +/- --control-guard s, same statistic — this
-    calibrates what "fine" reads on this bed.
+What is computed, per T4 event (S, s, t0) and per signal present for (S, s)
+---------------------------------------------------------------------------
+ 1. e_pre  = the statistic at t0 - 30 s (the last epoch before the erase).
+ 2. e_at(+k) for k in --offsets epochs, censored at the next re-level event on
+    (S, s) (an offset epoch at or after the next event is dropped).  The
+    history offsets -2, -10, -20 epochs give the arc's level before the event,
+    censored at the previous re-level.
+ 3. Age since the previous re-level on (S, s) (a prior T4_attrib, or a prior
+    T0_mw_detect / T1_if_slip row with action=refloat), bucketed.
+ 4. Truth-slip proximity: the latest truth slip on (S, s, any signal) at or
+    before t0, bucketed as within 90 s, within 600 s, or neither.
+ 5. Class by max over signals of |e_pre|: OFF >= 0.5, AMBIGUOUS [0.25, 0.5),
+    FINE < 0.25, UNMEASURABLE (no signal with >= --min-chords chords at t0-30,
+    or, ref-free, fewer than --min-sats other satellites).
+ 6. A control population of --control-n random (S, s, t) slots with no re-level
+    event on (S, s) within +/- --control-guard s, same statistic, which
+    calibrates what "fine" reads on this bed; a strict variant also excludes
+    any T0/T1/T4 row.  The quiet slots also give a per-epoch ambient level, and
+    each event's |e_pre| is compared with the ambient level of its own epoch.
  7. An arc-age convergence profile: median |e_at(+k)| vs k = 0..--profile-k,
-    pooled over all T4 events (and separately over detector refloats).
+    pooled over all T4 events (and separately over detector refloats), plus a
+    fixed cohort without a next re-level inside the window.
+ 8. The re-level chain (H-C): consecutive re-levels on one (S, s) within
+    --profile-k epochs, pairing the first event's post-erase level with the
+    second event's pre-erase level.
 
 Usage:
     python scripts/simnet_t4_census.py runs/golden_sim_campaign \\
@@ -98,7 +107,7 @@ from simnet_amb_integer import load_truth, n_at   # noqa: E402  (faithful truth 
 EPOCH_S = 30
 DEFAULT_OFFSETS = (0, 1, 2, 5, 10, 20, 40)
 REPORT_OFFSETS = (0, 5, 10, 40)
-HISTORY_OFFSETS = (-2, -10, -20)   # the arc's own level BEFORE the event (censored at the previous one)
+HISTORY_OFFSETS = (-2, -10, -20)   # the arc's own level before the event (censored at the previous one)
 AGE_BUCKETS = (("<2min", 0.0, 120.0), ("2-5min", 120.0, 300.0), ("5-15min", 300.0, 900.0),
                ("15-60min", 900.0, 3600.0), (">60min", 3600.0, float("inf")))
 AGE_LABELS = [b[0] for b in AGE_BUCKETS] + ["none"]
@@ -112,8 +121,8 @@ T4_TIER = "T4_attrib"
 
 
 # --------------------------------------------------------------------------
-# small stats helpers (medians over tiny lists — no numpy dependency, matching
-# the house style of scripts/simnet_amb_integer.py)
+# small stats helpers (medians over short lists; no numpy dependency, as in
+# scripts/simnet_amb_integer.py)
 # --------------------------------------------------------------------------
 def median(vals):
     s = sorted(vals)
@@ -220,7 +229,7 @@ def load_events(run_dir, held):
 
 
 def load_truth_slip_index(fixture_dir, stations):
-    """(sta, sat) -> sorted [tow_int] over ALL signals, from truth_slips.csv."""
+    """(sta, sat) -> sorted [tow_int] over all signals, from truth_slips.csv; also the row total."""
     idx = defaultdict(list)
     total = 0
     for sta in sorted(stations):
@@ -323,7 +332,7 @@ def scan_dd(run_dir, fixture_dir, held, min_chords, verbose=True):
             dd_true = (legs[0] - legs[1]) - (legs[2] - legs[3])     # python ints
             e = float(r[i_ddc]) - dd_true
             frac_trace = float(r[i_frac])
-            # parse guard (a tautology for the join itself — see simnet_amb_integer's docstring)
+            # parse guard (a tautology for the join itself; see simnet_amb_integer's docstring)
             if abs((e - round(e)) - frac_trace) > 2e-3 and \
                abs(abs(e - round(e)) - abs(frac_trace)) > 2e-3:
                 diag["frac_mismatch"] += 1
@@ -380,7 +389,7 @@ class ArcStat:
         self.min_sats = min_sats
 
     def signals(self, ti, sta):
-        """Signals with a measurable slot for ANY satellite at (ti, sta)."""
+        """Signals with a slot for any satellite at (ti, sta) (no chord-count filter)."""
         return [k[2] for k in self.med if k[0] == ti and k[1] == sta]
 
     def raw(self, ti, sta, sat, sig):
@@ -403,7 +412,7 @@ class ArcStat:
         pool = self.pool.get((ti, sta, sig))
         if not pool:
             return None
-        others = [m for s2, m in pool if s2 != sat]     # LEAVE-ONE-OUT
+        others = [m for s2, m in pool if s2 != sat]     # leave-one-out
         if len(others) < self.min_sats:
             return None
         return v[1] - median(others)
@@ -418,7 +427,7 @@ class ArcStat:
 
 
 def build_sig_index(med):
-    """(tow_int, sta) -> set of signals seen — avoids scanning `med` per query."""
+    """(tow_int, sta) -> set of signals seen, so queries need not scan `med`."""
     idx = defaultdict(set)
     for (ti, sta, sig) in med:
         idx[(ti, sta)].add(sig)
@@ -451,7 +460,7 @@ def age_bucket(dt):
 def measure_event(ev, stat, sig_index, relevel, slip_idx, offsets, ref_free):
     """One event -> a record dict.  `ev` = (tow_int, sat, sta)."""
     t0, sat, sta = ev
-    sigs = sorted(sig_index.get((t0 - EPOCH_S, sta), ()))     # signals present at the PRE epoch
+    sigs = sorted(sig_index.get((t0 - EPOCH_S, sta), ()))     # signals present at the pre epoch
     pre = {}
     for sig in sigs:
         v = stat.value(t0 - EPOCH_S, sta, sat, sig, ref_free)
@@ -482,9 +491,9 @@ def measure_event(ev, stat, sig_index, relevel, slip_idx, offsets, ref_free):
     for k in offsets:
         tk = t0 + k * EPOCH_S
         if k >= 0:
-            if nxt is not None and tk >= nxt:      # censored by the NEXT re-level
+            if nxt is not None and tk >= nxt:      # censored by the next re-level
                 continue
-        elif prev is not None and tk <= prev:      # censored by the PREVIOUS re-level
+        elif prev is not None and tk <= prev:      # censored by the previous re-level
             continue
         vals = {}
         for sig in (pre or {}):
@@ -530,7 +539,7 @@ def crosstab(recs, field, labels):
 
 
 def profile(recs, kmax):
-    """median |e_at(+k)| pooled over events AND signals, k = 0..kmax."""
+    """(k, n, median |e_at(+k)|) pooled over events and signals, k = 0..kmax."""
     prof = []
     for k in range(kmax + 1):
         vals = []
@@ -559,14 +568,16 @@ def per_signal_pre(recs):
 
 def scan_ambient(stat, sig_index, med, relevel, anyqc, slip_idx, held,
                  n_want, seed, guard, ref_free, min_epoch_tow):
-    """Sweep EVERY measurable (tow, sta, sat) slot, keeping the ones with no
-    re-level event on (sta, sat) within +/- `guard` seconds.
+    """Sweep every measurable (tow, sta, sat) slot at or after `min_epoch_tow`,
+    keeping the ones with no re-level event on (sta, sat) within +/- `guard`
+    seconds.  The strict sample also requires no T0/T1/T4 row at all within
+    the guard.
 
     Returns (control_sample, strict_sample, ambient, per_signal, diag) where
     `ambient[tow_int]` is the median max-over-signals |e| of the quiet slots at
-    that epoch — the epoch-matched reference an event's |e_pre| is compared to
-    (the bed's own error level moves with time, so a global control would
-    confound that)."""
+    that epoch: the epoch-matched reference an event's |e_pre| is compared to
+    (the bed's own error level moves with time, which a global control would
+    confound)."""
     rng = random.Random(seed)
     # (tow_int, sta) -> {sat: {sig: value}} is rebuilt on the fly per slot
     cand = defaultdict(set)                                # (ti, sta) -> {sat}
@@ -630,11 +641,12 @@ def scan_ambient(stat, sig_index, med, relevel, anyqc, slip_idx, held,
 
 
 def chain_stats(recs_all, relevel, max_gap_ep):
-    """H-C's direct test: for CONSECUTIVE re-level events on the same (S, s)
-    separated by <= max_gap_ep epochs, pair the FIRST event's post-erase level
-    (its |e| at +1 epoch) with the SECOND event's pre-erase level.  A limit
-    cycle looks like: post_1 already large, pre_2 ~ post_1, and the second
-    erase does not reduce it."""
+    """Direct test of H-C: for consecutive re-level events on the same (S, s)
+    separated by <= max_gap_ep epochs, pair the first event's post-erase level
+    (its |e| at +1 epoch, or at +0 when +1 is missing) with the second event's
+    pre-erase level.  Both events need a record in `recs_all`.  A limit cycle
+    shows post_1 already large, pre_2 ~ post_1, and a second erase that does
+    not reduce it."""
     by_key = {}
     for r in recs_all:
         by_key[(r["sta"], r["sat"], r["tow"])] = r
@@ -878,7 +890,7 @@ def run_census(args, out=sys.stdout):
         tows[0] + args.control_skip_epochs * EPOCH_S if tows else 0)
 
     # epoch-matched ratio: the event's own |e_pre| against the quiet arcs of the
-    # SAME epoch (the bed's error level moves with time)
+    # same (pre) epoch, since the bed's error level moves with time
     for recs in (t4_recs, det_recs):
         for r in recs:
             amb = ambient.get(r["tow"] - EPOCH_S)
@@ -916,9 +928,9 @@ def run_census(args, out=sys.stdout):
         return out
 
     def history_block(recs):
-        """Was the arc ALREADY this bad before the event?  A T4 that fires on a
-        NEW degradation has |e_pre| >> |e| a few minutes earlier; one that keeps
-        hammering a chronically-bad arc has them equal."""
+        """Whether the arc was already this far off before the event.  A T4 that
+        fires on a fresh degradation has |e_pre| >> |e| a few minutes earlier;
+        one that fires repeatedly on a chronically bad arc has them equal."""
         out = {}
         for k in HISTORY_OFFSETS:
             pairs = [(r["pre_max"], r["at_max"][k]) for r in recs

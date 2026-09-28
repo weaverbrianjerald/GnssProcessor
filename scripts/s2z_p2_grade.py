@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""SPEC_s2z_realization_ab Phase-2 grading — P1(a,c) + P2 (wire damage).
+"""SPEC_s2z_realization_ab Phase-2 grading: P1(a,c) and P2 (wire damage).
 
-All statistics datum-invariant (standing invariant #5 is doubly binding: the
-two arms' raw frames differ by construction).  Grades ONE leg directory and,
-optionally, prints the same statistics for a reference leg for side-by-side
-reading — never a raw-frame difference across realizations.
+All statistics are datum-invariant (standing invariant #5 is doubly binding:
+the two arms' raw frames differ by construction). Grades a single leg
+directory and, optionally, prints the same statistics for a reference leg
+for side-by-side reading; the comparison is never a raw-frame difference
+across realizations.
 
   P1(a)  constraint check: per-epoch clock_median_m inter-epoch delta at each
          onset (network_epoch_status.csv).  Under s2z the solved sat-clock
          median cannot jump at 334020 (the Sigma row holds); a jump means the
-         arm is misconfigured -> STOP.
+         arm is misconfigured and grading should stop.
   P1(c)  sigma0_pf_code jump at each onset vs its own pre-onset baseline
          (network_epoch_status.csv, robust z).
   P2     between-satellite total-IF deviation-from-median level bands
@@ -122,11 +123,11 @@ def grade(legdir, events, quiet_band, pivot):
             print(f"  {hms(onset)}: epoch(s) missing from status trace")
     print()
 
-    # ---- P1(a2): the EXACT constraint — per-epoch mean of solved CLK -------
-    # Sigma dtks = 0 per constellation constrains the MEAN exactly (the median
+    # ---- P1(a2): the exact constraint: per-epoch mean of solved CLK -------
+    # Sigma dtks = 0 per constellation constrains the mean exactly (the median
     # only through symmetry).  Under s2z this must sit at ~0 every epoch
     # (soft-constraint residual, mm-level); under the pin it is the free
-    # common-mode.  The definitive "this arm really runs s2z" check.
+    # common-mode.  This is the definitive check for whether an arm runs s2z.
     sol_path0 = os.path.join(logs, "network_solution.csv")
     clk_mean = {}
     if os.path.isfile(sol_path0):

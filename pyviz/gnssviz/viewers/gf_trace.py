@@ -1,7 +1,7 @@
-"""GF-slip trace viewer -- the port of ``view_gf_trace.m`` / ``plot_gf_trace``.
+"""GF-slip trace viewer: the port of ``view_gf_trace.m`` / ``plot_gf_trace``.
 
-Reads ``gf_slip_trace.csv`` (written by the STAGED ``GfSlipDetector`` -- rarely
-wired in) and reproduces the four diagnostic figures of the MATLAB script.  Each
+Reads ``gf_slip_trace.csv`` (written by the STAGED ``GfSlipDetector``, rarely
+wired in) and reproduces the four diagnostic figures of the MATLAB script. Each
 figure is faceted *by constellation*: one :class:`Axes` (tile) per system that
 appears in the trace, matching MATLAB's ``tiledlayout(1, numSystems)`` /
 ``tiledlayout(2, numSystems)`` row-major layout.
@@ -16,14 +16,14 @@ Expected CSV header (from the detector)::
 
 Figures
 -------
-1. **Raw GF observable** ``GF = L1 - L2`` (m) -- one tile per constellation, a
+1. **Raw GF observable** ``GF = L1 - L2`` (m), one tile per constellation, a
    scatter per per-arc *key* (``<sat>_<sig1>_<sig2>``).
 2. **TD2 GF** (2nd-order time-differenced GF) with the adaptive ``±threshold``
    envelope (dashed, lightened per-key colour), confirmed slips marked with a
    red ``x``, and suppressed detections with a hollow orange diamond.
-3. **Detector diagnostics** -- a 2-row layout: MAD ``σ`` (top row, one tile per
+3. **Detector diagnostics**: a 2-row layout, MAD ``σ`` (top row, one tile per
    system) and arc count (bottom row, one tile per system).
-4. **Ionospheric Variability Index (IVI)** -- one tile per system, one IVI value
+4. **Ionospheric Variability Index (IVI)**: one tile per system, one IVI value
    per epoch (first satellite per epoch), unstable epochs over-plotted in red,
    and a dashed ``IVI threshold`` reference line at 0.06 m.
 
@@ -62,7 +62,7 @@ _IVI_THRESHOLD = 0.06
 
 
 def _key_style(this_key, sat_index, colors, fallback_idx):
-    """Consistent (colour, marker) for a per-arc key -- port of ``key_style``.
+    """Consistent (colour, marker) for a per-arc key: port of ``key_style``.
 
     Colour follows the *satellite* index (so all arcs of a satellite share a
     colour); marker cycles by the per-system per-key order index.  ``fallback_idx``
@@ -167,10 +167,10 @@ def _figure_td2(df, systems, sat_index, colors):
                 x=kk["utc"], y=kk["td2_gf_m"].to_numpy(float), label=str(this_key),
                 color=c, size=18.0, marker=m, alpha=0.6))
 
-            # ±threshold envelope -- lightened per-key colour, drawn as scatter
-            # markers (no Line-with-NaN-gaps primitive matches the per-sample
-            # MATLAB plot of a non-monotone-time arc; scatter keeps it faithful
-            # to the threshold *samples* without spanning data gaps).
+            # ±threshold envelope, lightened per-key colour, drawn as scatter
+            # markers: no Line-with-NaN-gaps primitive matches the per-sample
+            # MATLAB plot of a non-monotone-time arc, so scatter keeps it faithful
+            # to the threshold *samples* without spanning data gaps.
             clite = _lighten(c)
             thr = kk["threshold_m"].to_numpy(float)
             ax.traces.append(Scatter(

@@ -4,21 +4,20 @@
  *        (`Coordinates::markerToArp` / `arpToMarker`).
  *
  * Published station coordinates (IGS SINEX/SSC, NGS SIF, a surveyed RINEX
- * `APPROX POSITION XYZ`) reference the MONUMENT; every position state in the
+ * `APPROX POSITION XYZ`) refer to the monument; every position state in the
  * engine is the antenna reference point, because `igs20.atx` PCO/PCV are
- * ARP-relative.  The bridge between the two frames is the RINEX
- * `ANTENNA: DELTA H/E/N` eccentricity, and getting its ORDER or SIGN wrong
- * produces a constant vertical bias rather than a visible failure — 184 of the
- * 305 stations in the bundled 2024-129 fixture set carry a nonzero eccentricity
- * (JPLM 0.0610 m, AGGO 0.4100 m, NVSK 6.1661 m), so the error would be real and
- * silent.  These tests lock:
+ * ARP-relative.  The RINEX `ANTENNA: DELTA H/E/N` eccentricity connects the two
+ * frames.  An error in its component order or sign produces a constant vertical
+ * bias rather than a visible failure.  184 of the 305 stations in the bundled
+ * 2024-129 fixture set carry a nonzero eccentricity (JPLM 0.0610 m, AGGO
+ * 0.4100 m, NVSK 6.1661 m).  The tests cover:
  *
- *   1. RINEX (H, E, N) really maps to (Up, East, North) — a pure-H eccentricity
- *      moves geodetic HEIGHT only, and by exactly H;
+ *   1. RINEX (H, E, N) maps to (Up, East, North): a pure-H eccentricity moves
+ *      geodetic height only, and by H;
  *   2. the E and N components land on east and north, not swapped;
  *   3. the sign is marker -> ARP (up, away from the monument);
- *   4. a zero eccentricity is an EXACT no-op (bitwise), which is what keeps
- *      0/0/0 stations and header-less live streams byte-identical;
+ *   4. a zero eccentricity is a bitwise no-op, which keeps 0/0/0 stations and
+ *      header-less live streams byte-identical;
  *   5. `markerToArp` and `arpToMarker` round-trip;
  *   6. a non-finite input is passed through rather than propagating NaN.
  */
@@ -40,9 +39,8 @@ namespace {
 
 } // namespace
 
-// A pure-up eccentricity must change geodetic height by exactly H and leave
-// lat/lon untouched — the property that makes an unreduced comparison a pure
-// vertical bias.
+// A pure-up eccentricity changes geodetic height by H and leaves lat/lon
+// unchanged; this is why an unreduced comparison shows a pure vertical bias.
 TEST(AntennaEccentricityTest, PureUpMovesHeightOnly) {
     const Eigen::Vector3d hen(kJplmUp, 0.0, 0.0);
     const Eigen::Vector3d arp = Coordinates::markerToArp(kJplmMarker, hen);
@@ -72,7 +70,7 @@ TEST(AntennaEccentricityTest, EastNorthComponentsAreNotSwapped) {
     EXPECT_NEAR(enu.z(), up,    1e-9);   // U
 }
 
-// Direction: marker -> ARP goes UP (the antenna sits above the monument), so the
+// Direction: marker -> ARP goes up (the antenna sits above the monument), so the
 // ARP is farther from the geocentre for a positive H.
 TEST(AntennaEccentricityTest, SignIsMarkerToArpNotReverse) {
     const Eigen::Vector3d hen(kJplmUp, 0.0, 0.0);
@@ -80,10 +78,10 @@ TEST(AntennaEccentricityTest, SignIsMarkerToArpNotReverse) {
     EXPECT_LT(Coordinates::arpToMarker(kJplmMarker, hen).norm(), kJplmMarker.norm());
 }
 
-// Byte-identity guard: a zero (or absent) eccentricity must not perturb the
-// coordinate at all — not "close", exactly equal.  This is what lets the
-// reduction land on shared paths without invalidating a golden run whose
-// stations happen to be 0/0/0 (CIT1 and NRMG, the current consumers).
+// Byte-identity guard: a zero (or absent) eccentricity returns the coordinate
+// bitwise unchanged, not merely close.  This lets the reduction sit on shared
+// paths without changing a golden run whose stations are 0/0/0 (for example
+// CIT1 and NRMG).
 TEST(AntennaEccentricityTest, ZeroEccentricityIsExactNoOp) {
     const Eigen::Vector3d zero = Eigen::Vector3d::Zero();
     const Eigen::Vector3d arp    = Coordinates::markerToArp(kJplmMarker, zero);
@@ -97,10 +95,10 @@ TEST(AntennaEccentricityTest, ZeroEccentricityIsExactNoOp) {
     EXPECT_EQ(marker.z(), kJplmMarker.z());
 }
 
-// Round-trip, including a large eccentricity (NVSK's 6.17 m tower) where the
-// second-order "local frame evaluated at the ARP" term in arpToMarker is most
-// exposed — a single-shot inverse closes to only ~4 um there, so this also locks
-// that arpToMarker keeps its fixed-point iteration.
+// Round-trip, including a large eccentricity (NVSK's 6.17 m tower), where the
+// second-order error from evaluating the local frame at the ARP in arpToMarker
+// is largest.  A single-shot inverse closes to only about 4 um there, so the
+// 1e-9 m bound also requires arpToMarker to keep its fixed-point step.
 TEST(AntennaEccentricityTest, RoundTripsThroughBothDirections) {
     for (const Eigen::Vector3d& hen : { Eigen::Vector3d(0.0083, 0.0, 0.0),
                                         Eigen::Vector3d(0.4100, 0.0, 0.0),

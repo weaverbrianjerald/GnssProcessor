@@ -1,15 +1,14 @@
 /**
  * @file NetworkRaim.cpp
- * @brief Implementation of @ref networkPostFitRaim — the post-fit network RAIM
- *        pass relocated VERBATIM (dedent-only + one documented substitution) out of
- *        Application::runNetwork at decomposition INC-9 (2026-07-22).
+ * @brief Implementation of @ref networkPostFitRaim, the post-fit network RAIM
+ *        pass moved out of Application::runNetwork at decomposition INC-9.
  *
- * The body below is a byte-copy of the former SB_RAIM block
- * (ApplicationNetwork.cpp lines 7090-7523), dedented 8 spaces, with the single
- * substitution `plan.shared_datum` -> `shared_datum` (the run TU held the shared
- * datum inside NetworkSbasis::Plan; this seam takes only the Datum it reads).  The
- * alias preamble reproduces the run-TU alias block so the relocated code reads the
- * original names.  See NetworkRaim.hpp for the ordering contract.
+ * The body is the former SB_RAIM block of ApplicationNetwork.cpp, dedented 8
+ * spaces, with one substitution: `plan.shared_datum` -> `shared_datum` (the run TU
+ * held the shared datum inside NetworkSbasis::Plan; this seam takes only the Datum
+ * it reads).  Measure-only additions made after the move are marked where they
+ * appear.  The alias preamble reproduces the run-TU alias block so the moved code
+ * reads the original names.  See NetworkRaim.hpp for the ordering contract.
  */
 
 #include "filter/NetworkRaim.hpp"
@@ -41,7 +40,7 @@
 namespace GnssProcessor {
 
 // ---------------------------------------------------------------------------
-// §Z BAND-SCOPED T4 ERASE — the rule (docs/SPEC_event_harness.md §Z)
+// Band-scoped T4 erase rule (docs/SPEC_event_harness.md §Z)
 // ---------------------------------------------------------------------------
 RaimEraseBandScope networkRaimEraseBandScope(
     const std::vector<std::pair<std::string, double>>& sig_r, double bar) {
@@ -62,9 +61,9 @@ RaimEraseBandScope networkRaimEraseBandScope(
         if (k != keep && sig_r[k].second > bar) d.erase.insert(sig_r[k].first);
     d.kept_over_gate = sig_r[keep].second > bar;
     // No band cleared the gate: the cell was flagged by the median-polish
-    // INTERACTION (net of the row and column effects), so a per-signal residual
-    // can sit under k·σ̂₀ while the arc still stands out.  Erase everything but
-    // the pin — never suppress the response on absence of per-band evidence.
+    // interaction (net of the row and column effects), so a per-signal residual
+    // can sit under k·σ̂₀ while the arc still stands out.  Erase every band except
+    // the pin; missing per-band evidence does not suppress the response.
     if (d.erase.empty())
         for (std::size_t k = 0; k < sig_r.size(); ++k)
             if (k != keep) d.erase.insert(sig_r[k].first);
@@ -96,54 +95,51 @@ void networkPostFitRaim(NetworkRunContext& ctx,
     const double raim_s0_floor = ctx.knobs.raim_s0_floor; // floor on the robust a-posteriori s0 (1.0 default; lower lets s0 < 1)
     const int    raim_min_sta  = ctx.knobs.raim_min_sta; // cross-station consensus count
     const int    raim_arc_persist = ctx.knobs.raim_arc_persist; // consecutive-epoch persistence gate for isolated-arc refloats (1 = act immediately, byte-identical)
-    const bool   raim_maturity_gate   = ctx.knobs.raim_maturity_gate;   // T2d: gate isolated-arc refloats on maturity
-    const int    raim_maturity_epochs = ctx.knobs.raim_maturity_epochs;  // T2d: maturity horizon
-    const bool   raim_redun    = ctx.knobs.raim_redun; // B2: Baarda per-row r_i normalization of the RAIM residual
-    const bool   raim_redun_trace = ctx.knobs.raim_redun_trace; // §7.1: COMPUTE r_i for the census without USING it
-    // docs/SPEC_redundancy_census.md MDB-INC-0: the MDB rider on B2's r_i.  NOT
-    // part of the relocated body — a measure-only addition that reads the (w, r_i)
-    // pairs the Pass-1 row walk already visits.  Both conjuncts matter: mdb_on is
-    // the master, mdb_from_raim says THIS feed site is the armed one.
+    const bool   raim_maturity_gate   = ctx.knobs.raim_maturity_gate;   // gate isolated-arc refloats on maturity (T2d)
+    const int    raim_maturity_epochs = ctx.knobs.raim_maturity_epochs;  // maturity horizon (T2d)
+    const bool   raim_redun    = ctx.knobs.raim_redun; // Baarda per-row r_i normalization of the RAIM residual (B2)
+    const bool   raim_redun_trace = ctx.knobs.raim_redun_trace; // compute r_i for the census without applying it (§7.1)
+    // MDB rider on the B2 r_i (docs/SPEC_redundancy_census.md, MDB-INC-0): a
+    // measure-only addition made after the move, reading the (w, r_i) pairs the
+    // Pass-1 row walk already visits.  mdb_on is the master switch and
+    // mdb_from_raim selects this seam as the feed site; both must be set.
     const bool   mdb_on        = ctx.knobs.mdb_on && ctx.knobs.mdb_from_raim;
     const double mdb_delta0    = baardaDelta0(config_.dataSnoopingCritical());
-    // docs/SPEC_prior_residual_census.md §14.2: the DATA SIDE of the
-    // constraint-aware global variance component.  Also NOT part of the relocated
-    // body — a measure-only rider reading the same (w, v, r_i) triples the Pass-1
-    // walk already visits, and nothing in this seam reads a single number back.
-    // globalOn() already ANDs the rider with a live census, so this is one bool.
+    // Data side of the constraint-aware global variance component
+    // (docs/SPEC_prior_residual_census.md §14.2).  Also a measure-only addition made
+    // after the move: it reads the same (w, v, r_i) triples the Pass-1 walk visits,
+    // and nothing in this seam reads its result back.  globalOn() already requires
+    // a live census, so one bool suffices here.
     const bool   s0g_on        = prires.globalOn();
     const bool   clk_mon_couple = ctx.knobs.clk_mon_couple;  // also refloat RAIM-flagged sats' clocks (opt-in)
-    const bool   ura_on        = ctx.knobs.ura_on;                  // B1: emit per-sat URA quality channel
-    const double ura_alpha     = ctx.knobs.ura_alpha;             // B1: s0 EWMA smoothing
+    const bool   ura_on        = ctx.knobs.ura_on;                  // emit the per-sat URA quality channel (B1)
+    const double ura_alpha     = ctx.knobs.ura_alpha;             // s0 EWMA smoothing factor (B1)
     const bool   pl_on         = ctx.knobs.pl_on;
     const int    pl_warmup     = ctx.knobs.pl_warmup;
     const bool   trace_flag_rates = ctx.knobs.trace_flag_rates;
     const bool   phase_datum_prioritized = ctx.knobs.phase_datum_prioritized;
 
-    // --- RAIM POOL RE-HOST (docs/SPEC_raim_pool_rehost.md) ---------------------------
-    // Every walk below used to key on R.pl_amb, which is the PHASE-LEVELING CARRY's
-    // record list.  On a Card-4 lineage that list is empty by construction (its fill
-    // site sits under `do_amb_carry = (…) && !carry_invariant`), so this entire seam —
-    // the σ̂0 pool, the consensus test, the median-polish attribution, the MDB rider,
-    // the constraint-aware global σ̂0 data side and the L13 station-residual trace — ran
-    // over nothing.  `raim_ci_on` fills the carry-neutral R.qc_amb census instead; the
-    // selector below is the single point of substitution for all of them.
+    // The walks below read each station's ambiguity columns through ambPool().
+    // Under carry_invariant the phase-leveling list R.pl_amb is never filled, so
+    // with network.raim_carry_invariant on, assembly builds R.qc_amb instead: every
+    // ambiguity column present this epoch and not gauge-pinned, whichever carry
+    // owns it.  (The continuous phase-datum handover also fills R.qc_amb.)  With
+    // both off, R.qc_amb is empty and ambPool() returns R.pl_amb, so those runs are
+    // unchanged.  Design: docs/SPEC_raim_pool_rehost.md.
     const bool raim_ci_on      = ctx.knobs.raim_ci_on;
     const bool raim_ci_refloat = ctx.knobs.raim_ci_refloat;
-    // Prefer the census when it exists; fall through to the legacy pool otherwise, so a
-    // phase-leveling run is byte-identical (qc_amb is never allocated when OFF).
     auto ambPool = [&](const StationAssembly& R) -> const std::vector<PlAmb>& {
         return R.qc_amb.empty() ? R.pl_amb : R.qc_amb;
     };
 
     auto& local_carry = ctx.carry.local_carry;
-    // RF-3a A1: the code weights' elevation power, the one mapping both ambiguity
-    // variance floors are stated in (ambFloatBirthFloor).  Read once per pass.
+    // Elevation power of the code weights: the mapping in which both ambiguity
+    // variance floors are stated (ambFloatBirthFloor).  Read once per pass (RF-3a A1).
     const double amb_elev_power_ = config_.getCodeElevationPower();
-    // RF-3c: the drop floor IN FORCE this epoch (0 while the warm-up gate is closed),
-    // and the flag that says the gate is what withheld it.  Resolved once per pass
-    // beside the elevation power, so the T4 and T3 sites below cannot read it
-    // differently from each other or from the free-epoch latch.
+    // The drop floor in force this epoch (0 while the warm-up gate is closed), and a
+    // flag set when the gate is what withholds it.  Both are resolved once per pass,
+    // next to the elevation power, so the T4 and T3 sites below and the free-epoch
+    // latch all read the same value (RF-3c).
     const double amb_drop_floor_now_ = ambFloatDropFloorNow(
         ctx.knobs.amb_drop_var_floor,
         static_cast<long long>(ctx.counters.n_loop_epochs),
@@ -151,10 +147,10 @@ void networkPostFitRaim(NetworkRunContext& ctx,
     const bool   amb_drop_pre_gate_ =
         (ctx.knobs.amb_drop_var_floor > 0.0) && !(amb_drop_floor_now_ > 0.0);
     auto& raim_refloat_pending = ctx.carry.raim_refloat_pending;
-    // QUEUE item 4 R2/R4 (SPEC_t3_null_derivation §6): both measure-only, both
-    // loader-guaranteed to require network.raim.  R2 additionally needs per-row
-    // r_i, obtained through the same solve-neutral rowRedundancy read the census
-    // uses (the disjunct below gains staf_on).
+    // Riders R2 and R4 (staf_on, rate_hygiene) are measure-only; the loader requires
+    // network.raim for both (SPEC_t3_null_derivation §6, queue item 4).  R2 also
+    // needs per-row r_i, taken from the same solve-neutral rowRedundancy read the
+    // census uses (hence staf_on in the disjunct below).
     const bool staf_on      = ctx.knobs.staf_on;
     const bool rate_hygiene = ctx.knobs.rate_hygiene;
     auto&      staf_out     = traces.station_factor_trace;
@@ -176,7 +172,7 @@ void networkPostFitRaim(NetworkRunContext& ctx,
     auto& raim_attrib_trace    = traces.raim_attrib_trace;
     auto& events_trace         = traces.events_trace;
     auto& station_res_trace    = traces.station_res_trace;
-    auto& raim_redun_out       = traces.raim_redun_trace;   // §7.1 per-row r_i census
+    auto& raim_redun_out       = traces.raim_redun_trace;   // per-row r_i census (§7.1)
 
     auto emitEvent = [&](const char* tier, const char* event,
                          const std::string& sat, const std::string& station,
@@ -192,26 +188,27 @@ void networkPostFitRaim(NetworkRunContext& ctx,
     struct AmbStat { std::string sat; int sta; double r_max; };
     std::vector<AmbStat> amb_stats;
     std::vector<double>  r_pool;
-    // Prominence-attribution input (collected iff attribution is LOGGED or DRIVES the
+    // Prominence-attribution input (collected iff attribution is logged or drives the
     // action): one cell per (station, satellite, signal) carried-ambiguity residual.
     const bool attrib_on   = raim_attrib_trace.is_open();       // log the decomposition
     const bool attrib_act  = config_.networkRaimAttribution();  // let it drive the refloat
-    // B8/T4 (P1-4): also build the attribution table under trace_flag_rates so the T4
-    // flag-rate is MEASURABLE on a clean baseline with ONLY network.trace_flag_rates on —
-    // the documented empirical-α workflow — without needing raim_attribution or the
+    // The attribution table is also built under trace_flag_rates, so the T4 flag rate
+    // can be measured on a baseline with network.trace_flag_rates as the only armed
+    // knob (the documented empirical-α workflow), without raim_attribution or the
     // attribution trace.  The median polish then runs read-only (no refloat unless
-    // attrib_act, no trace unless attrib_on), feeding only the fr_attrib counter; byte-
-    // identical when trace_flag_rates is off (this disjunct is then absent).
+    // attrib_act, no trace unless attrib_on) and feeds only the fr_attrib counter.
+    // With trace_flag_rates off the output is byte-identical (B8/T4, P1-4).
     const bool need_attrib = attrib_on || attrib_act || trace_flag_rates;
     struct Cell { int sta; std::string sat, sig; double r; };
     std::vector<Cell> cells;
-    // R2: per-station factor rows, collected during Pass 1 and reduced AFTER σ̂₀
+    // Per-station factor rows (R2), collected during Pass 1 and reduced once σ̂₀
     // exists (the trim bar is k·σ̂₀, which is not known until the pool closes).
     std::vector<std::vector<StationFactorRow>> staf_rows;
     if (staf_on) staf_rows.resize(stations.size());
     for (size_t i = 0; i < stations.size(); ++i) {
-        // Prioritized: keep the former pivot — its non-anchored arcs are in
-        // R.pl_amb (anchored/pinned keys already excluded at carry build).
+        // The pivot station is skipped only when network.phase_datum_prioritized is
+        // off.  With it on, the pivot is screened: its non-anchored arcs are in
+        // R.pl_amb (anchored and pinned keys are excluded when the carry is built).
         if (est_index_of[i] < 0
             || (!phase_datum_prioritized && stations[i].is_pivot)) continue;
         const StationAssembly& R = asm_res[i];
@@ -227,30 +224,30 @@ void networkPostFitRaim(NetworkRunContext& ctx,
         } catch (...) { continue; }
         if (x_r.size() != R.A_r.cols()) continue;
         const Eigen::VectorXd resid = R.y - R.A_s * x_s - R.A_r * x_r;  // post-fit O − C
-        Eigen::VectorXd row_r;   // B2: per-row Baarda redundancy (empty when off)
-        // SPEC_t3_null_derivation §7.1: the CENSUS also needs r_i, and needs it WITHOUT
-        // the standardization consuming it — arming raim_redundancy_normalize is
+        Eigen::VectorXd row_r;   // per-row Baarda redundancy (B2; empty when off)
+        // The census also needs r_i, without the standardization consuming it
+        // (SPEC_t3_null_derivation §7.1).  Arming raim_redundancy_normalize is
         // solve-affecting (it drops rows at the floor), so a diagnostic that required it
-        // could not be run on a validated posture.  Computing row_r is a pure read of the
-        // already-factored normal equations, so the disjunct below is solve-NEUTRAL: the
-        // value is used only where `raim_redun` itself is tested.
+        // could not run on a validated posture.  Computing row_r is a pure read of the
+        // already-factored normal equations, so the disjunct below is solve-neutral: the
+        // value is applied only where `raim_redun` itself is tested.
         if (raim_redun || raim_redun_trace || staf_on) {
             try {
                 row_r = est.rowRedundancy(static_cast<std::size_t>(est_index_of[i]),
                                           R.A_s, R.A_r, R.w, shared_datum);
             } catch (...) { row_r.resize(0); }
         }
-        // R2: this station's factor is computable only with a full r_i vector — a
-        // rowRedundancy throw leaves the station "unavailable" this epoch (the
-        // trace's −1 sentinel path; never 0).
+        // The station factor (R2) needs a full r_i vector.  A rowRedundancy throw
+        // leaves the station unavailable this epoch (the trace writes the −1
+        // sentinel, never 0).
         const bool staf_here = staf_on && row_r.size() == R.A_r.rows();
         const bool redun_trace_here = raim_redun_out.is_open();
         // --- MDB rider (docs/SPEC_redundancy_census.md MDB-INC-0) ------------
-        // Every row this loop is about to visit already has (w, r_i) in hand, so
-        // its minimal detectable bias costs one division.  The visited mask exists
-        // because the loop below is keyed on AMBIGUITY COLUMNS, not on rows: a row
-        // touched by two carried ambiguities would otherwise be binned twice and
-        // the join against the census would drift by exactly those duplicates.
+        // Every row this loop visits already has (w, r_i) in hand, so its minimal
+        // detectable bias costs one division.  The loop below is keyed on ambiguity
+        // columns, not rows, so a row touched by two carried ambiguities is visited
+        // twice; the visited mask bins each row once, keeping the join against the
+        // census free of duplicates.
         const bool mdb_here = mdb_on && raim_redun && row_r.size() == R.A_r.rows();
         std::vector<char> mdb_seen;
         std::optional<NetworkMdbStationFeed> mdb_feed;
@@ -261,31 +258,31 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                              NetMdbSource::Raim, 0.0);
         }
         // --- constraint-aware global σ̂₀, data side (SPEC_prior_residual_census §14.2) --
-        // Its OWN visited mask, deliberately not shared with the MDB one: MDB
-        // needs `raim_redun` to exist at all, this rider does not (it degrades to
-        // r ≡ 1 and FLAGS the epoch), so the two populations are not the same set
-        // and one mask would silently give whichever card ran second a subset.
-        // The mask itself is mandatory for the identical reason MDB's is: the
-        // loop below is keyed on AMBIGUITY COLUMNS, not on rows, so a row touched
-        // by two carried ambiguities would be counted twice — inflating BOTH sums
-        // and leaving the ratio perfectly plausible.
+        // This rider has its own visited mask, separate from the MDB one: MDB
+        // requires `raim_redun`, this rider does not (without it, it uses r ≡ 1 and
+        // flags the epoch), so the two row populations differ, and a shared mask
+        // would give whichever rider ran second only a subset.  The mask is needed
+        // for the same reason as MDB's: the loop is keyed on ambiguity columns, so a
+        // row touched by two carried ambiguities would be counted twice, inflating
+        // both sums while leaving their ratio plausible.
         const bool s0g_redun_here = raim_redun && row_r.size() == R.A_r.rows();
         std::vector<char> s0g_seen;
         if (s0g_on) s0g_seen.assign(static_cast<std::size_t>(R.A_r.rows()), 0);
-        std::vector<char> staf_seen;   // R2: row de-dup (column-keyed loop, MDB lesson)
+        std::vector<char> staf_seen;   // row de-dup for R2 (column-keyed loop, as for MDB)
         if (staf_here) staf_seen.assign(static_cast<std::size_t>(R.A_r.rows()), 0);
-        // Largest measurement-standardized post-fit phase residual PER SATELLITE at this
+        // Largest measurement-standardized post-fit phase residual per satellite at this
         // station (a carried ambiguity's phase rows carry +1 on its A_r column; uncombined).
         std::map<std::string, double> sat_rmax;
-        // B9-in-block (network.carry_zwd_in_block) — SPEC_amb_iono_split_overcount §7 item 4,
-        // MEASURED not guessed.  The pool admits a row by |A_r(row, amb_col)| > 0.5, a test
-        // written for DATA phase rows (which carry exactly +1 on their ambiguity column).
-        // A whitened block row is one row of L⁻¹, so the ZWD's block row carries non-zero
-        // coefficients on the ambiguity columns below it and CAN clear that bar — i.e. a
-        // carried-prior row can enter a post-fit fault pool built for observations.  This
-        // card does NOT change the rule; it counts the interaction so the next card decides
-        // on data.  The ZWD's row is the coupling row whose primary local column is the
-        // station's ZWD column (cpl_row_local_cols is in append order from cpl_row_start).
+        // ZWD in the carried block (network.carry_zwd_in_block, B9-in-block;
+        // SPEC_amb_iono_split_overcount §7 item 4).  The pool admits a row by
+        // |A_r(row, amb_col)| > 0.5, a test written for data phase rows (which carry
+        // exactly +1 on their ambiguity column).  A whitened block row is one row of L⁻¹,
+        // so the ZWD's block row carries non-zero coefficients on the ambiguity columns
+        // below it and can clear that bar: a carried-prior row can enter a post-fit fault
+        // pool built for observations.  The admission rule is unchanged here; the
+        // admission is counted so the rule can be decided on data.  The ZWD's row is the
+        // coupling row whose primary local column is the station's ZWD column
+        // (cpl_row_local_cols is in append order from cpl_row_start).
         Eigen::Index zwd_blk_row = -1;
         if (R.pl_zwd_in_block && R.cpl_row_start >= 0 && R.pl_zwd.col >= 0)
             for (std::size_t rr = 0; rr < R.cpl_row_local_cols.size(); ++rr)
@@ -294,13 +291,13 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                     break;
                 }
         bool zwd_row_pooled = false;   // once per station-epoch (the column-keyed loop can revisit it)
-        // I-in-block (network.carry_iono_in_block) — the SAME §7 item 4 interaction for the
-        // I half, MEASURED not guessed.  Each carried iono column contributes one whitened
-        // block row (a row of L⁻¹), which carries non-zero coefficients on the ambiguity
-        // columns below it and can therefore clear the pool's |A_r(row, amb_col)| > 0.5
-        // admission test that was written for DATA phase rows.  This card does NOT change
-        // the rule; it counts the admissions so the next card decides on data.  The rows
-        // are the coupling rows whose primary local column is one of pl_iono_blk_cols
+        // Iono in the carried block (network.carry_iono_in_block, I-in-block): the same
+        // §7 item 4 interaction for the I half.  Each carried iono column contributes one
+        // whitened block row (a row of L⁻¹), which carries non-zero coefficients on the
+        // ambiguity columns below it and can therefore clear the pool's
+        // |A_r(row, amb_col)| > 0.5 admission test written for data phase rows.  The rule
+        // is unchanged here; the admissions are counted so it can be decided on data.  The
+        // rows are the coupling rows whose primary local column is one of pl_iono_blk_cols
         // (cpl_row_local_cols is in append order from cpl_row_start).
         std::set<Eigen::Index> iono_blk_rows;
         if (!R.pl_iono_blk_cols.empty() && R.cpl_row_start >= 0) {
@@ -311,15 +308,15 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                     iono_blk_rows.insert(R.cpl_row_start + static_cast<Eigen::Index>(rr));
         }
         std::set<Eigen::Index> iono_rows_pooled;   // once per row per station-epoch
-        // RX-CLK-in-block (network.carry_rx_clock_in_block) — the SAME §7 item 4
-        // interaction for the rho half.  Each carried clock-family column contributes one
-        // whitened block row (a row of L⁻¹) carrying non-zero coefficients on the
-        // ambiguity columns below it, which can therefore clear the pool's
-        // |A_r(row, amb_col)| > 0.5 admission test that was written for DATA phase rows.
-        // ⚠ Expect this one to be LARGE where the ZWD's is: the receiver clock is the
-        // most station-common direction there is, so its whitened row touches every
-        // ambiguity column of the station.  This card does NOT change the rule; it counts
-        // the admissions so the next card decides on data.
+        // Receiver clock in the carried block (network.carry_rx_clock_in_block,
+        // RX-CLK-in-block): the same §7 item 4 interaction for the rho half.  Each carried
+        // clock-family column contributes one whitened block row (a row of L⁻¹) carrying
+        // non-zero coefficients on the ambiguity columns below it, which can therefore
+        // clear the pool's |A_r(row, amb_col)| > 0.5 admission test written for data
+        // phase rows.  This count is expected to be large wherever the ZWD's is: the
+        // receiver clock is the most station-common direction, so its whitened row touches
+        // every ambiguity column of the station.  The rule is unchanged here; the
+        // admissions are counted so it can be decided on data.
         std::set<Eigen::Index> rxclk_blk_rows;
         if (!R.pl_rxclk_blk_cols.empty() && R.cpl_row_start >= 0) {
             const std::set<Eigen::Index> rcols(R.pl_rxclk_blk_cols.begin(),
@@ -338,32 +335,29 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                     zwd_row_pooled = true;
                     ++ctx.counters.n_raim_pool_zwd_rows;
                 }
-                // I-in-block: the same census, per iono block row.
+                // Same count for iono block rows (I-in-block).
                 if (!iono_blk_rows.empty() && iono_blk_rows.count(row)
                     && iono_rows_pooled.insert(row).second)
                     ++ctx.counters.n_raim_pool_iono_rows;
-                // RX-CLK-in-block: the same census, per clock-family block row.
+                // Same count for clock-family block rows (RX-CLK-in-block).
                 if (!rxclk_blk_rows.empty() && rxclk_blk_rows.count(row)
                     && rxclk_rows_pooled.insert(row).second)
                     ++ctx.counters.n_raim_pool_rxclk_rows;
                 const double w = (row < R.w.size()) ? R.w(row) : 1.0;
-                // MDB is fed HERE, ahead of the uncheckable `continue` below: a row
-                // RAIM drops from its σ̂0 pool because r_i ≤ 1e-6 is precisely the
-                // row whose MDB is +infinity, and that is the number this card
-                // exists to publish.  Binning only the rows that survive the drop
-                // would report the network as perfectly checkable by construction.
+                // MDB is fed here, ahead of the `continue` below that skips uncheckable
+                // rows: a row RAIM drops from its σ̂0 pool because r_i ≤ 1e-6 is a row
+                // whose MDB is +infinity, and that value is what the rider publishes.
+                // Binning only the rows that survive the drop would report the network
+                // as fully checkable by construction.
                 if (mdb_here && !mdb_seen[static_cast<std::size_t>(row)]) {
                     mdb_seen[static_cast<std::size_t>(row)] = 1;
                     mdb_feed->add(pa.sat, NetRowClass::ObsPhase, w, row_r(row));
                 }
-                // The global variance component is fed HERE, ahead of the
-                // uncheckable `continue` below, for the reason the identity
-                // itself supplies: E[w·v²] = r_i, so an r_i ≈ 0 row contributes
-                // ~0 to the numerator AND ~0 to the denominator and cannot bias
-                // the ratio — while DROPPING it would delete a real row from
-                // Σr_data and report the pool as more redundant than it is.
-                // (Same conclusion as MDB's, reached from the arithmetic rather
-                // than from what the card publishes.)
+                // The global variance component is also fed ahead of that `continue`.
+                // Since E[w·v²] = r_i, an r_i ≈ 0 row contributes ~0 to both the
+                // numerator and the denominator and cannot bias the ratio, whereas
+                // dropping it would remove a real row from Σr_data and report the
+                // pool as more redundant than it is.
                 if (s0g_on && !s0g_seen[static_cast<std::size_t>(row)]) {
                     s0g_seen[static_cast<std::size_t>(row)] = 1;
                     prires.addDataRow(w, resid(row),
@@ -371,25 +365,24 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                                       /*r_is_approx=*/!s0g_redun_here);
                 }
                 double r = std::abs(resid(row)) * std::sqrt(std::max(0.0, w));
-                // R2 factor feed: HERE, ahead of the uncheckable `continue`, for the
-                // s0g reason (E[w·v²] = r_i — an r_i ≈ 0 row contributes ~0 to both
-                // sums and cannot bias the ratio, while dropping it would overstate
-                // the station's redundancy).  Guarded by its own seen-mask: the loop
-                // is keyed on ambiguity COLUMNS, so a row touched by two carried
-                // ambiguities would otherwise inflate both sums (the MDB/s0g lesson).
-                // The trim statistic is |v|·√w always — the B2 division is a pool
+                // The R2 station factor is fed ahead of the same `continue`, for the
+                // same reason as the global component (E[w·v²] = r_i: an r_i ≈ 0 row
+                // contributes ~0 to both sums, while dropping it would overstate the
+                // station's redundancy).  It has its own seen-mask because the loop is
+                // keyed on ambiguity columns, so a row touched by two carried
+                // ambiguities would otherwise inflate both sums (as for MDB and s0g).
+                // The trim statistic is always |v|·√w; the B2 division is a pool
                 // convention, not part of the §7.5 factor.
                 if (staf_here && !staf_seen[static_cast<std::size_t>(row)]) {
                     staf_seen[static_cast<std::size_t>(row)] = 1;
                     staf_rows[i].push_back(
                         {w * resid(row) * resid(row), row_r(row), r});
                 }
-                // §7.1 census.  Emitted HERE — above the uncheckable `continue` below —
-                // for the same reason the MDB and σ̂₀-global feeds are: the rows the
-                // normalization DROPS are precisely the ones worth seeing, and a census
-                // that only recorded survivors would report a population that cannot
-                // have a floor problem by construction.  One row per (sta, sat, SIGNAL,
-                // row); the signal is what the cell's max destroys.
+                // Redundancy census (§7.1), also written ahead of the `continue` below,
+                // as for the MDB and global σ̂₀ feeds: the rows the normalization drops
+                // are the ones the census exists to show, and a census of survivors
+                // could not show a floor problem by construction.  One row per (sta,
+                // sat, signal, row); the per-cell max discards the signal.
                 if (redun_trace_here) {
                     const bool has_r = row < row_r.size();
                     const double ri  = has_r ? row_r(row) : 0.0;
@@ -406,7 +399,7 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                     raim_redun_out
                         << ',' << ((has_r && ri <= kBaardaRedundancyFloor) ? 1 : 0) << '\n';
                 }
-                if (raim_redun && row < row_r.size()) {   // B2: standardize v/(σ·√r_i)
+                if (raim_redun && row < row_r.size()) {   // standardize v/(σ·√r_i) (B2)
                     constexpr double kRedFloor = kBaardaRedundancyFloor;
                     const double ri = row_r(row);
                     if (ri <= kRedFloor) continue;   // uncheckable row: exclude from σ̂0 pool + r_max
@@ -424,39 +417,40 @@ void networkPostFitRaim(NetworkRunContext& ctx,
             amb_stats.push_back({sat, static_cast<int>(i), rmax});
     }
 
-    // Robust a-posteriori variance factor for this epoch, network-wide.  Floored at 1
-    // so a clean network is no more sensitive than the nominal stochastic model
-    // (σ̂0→1 ⇒ identical to the plain standardized residual); when the whole network
-    // misfits at cm, σ̂0 rises and the normalized residuals stay O(1) — so RAIM stops
-    // firing on ambient misfit and flags only what stands out ABOVE it.
+    // Robust a-posteriori variance factor for this epoch, network-wide (1.4826 × the
+    // median of the pool).  Floored at raim_s0_floor (1.0 by default) so a clean network
+    // is no more sensitive than the nominal stochastic model (σ̂0 = 1 gives the plain
+    // standardized residual).  When the whole network misfits at cm level, σ̂0 rises and
+    // the normalized residuals stay O(1), so RAIM flags only what stands out above the
+    // ambient misfit.
     double sigma0 = 1.0;
     if (!r_pool.empty()) {
         std::nth_element(r_pool.begin(), r_pool.begin() + r_pool.size() / 2, r_pool.end());
         sigma0 = std::max(raim_s0_floor, 1.4826 * r_pool[r_pool.size() / 2]);
     }
-    // Pool re-host telemetry: σ̂0 on this lineage has NEVER been measured — with the pool
-    // empty, r_pool was empty too and sigma0 never left the 1.0 initializer above.  Record
-    // it only over epochs with a live pool, so the mean is not diluted by that sentinel.
+    // Pool re-host telemetry.  With an empty pool, r_pool is empty and sigma0 keeps its
+    // 1.0 initializer; σ̂0 is recorded only over epochs with a non-empty pool, so that
+    // sentinel does not dilute the mean.
     if (raim_ci_on && !r_pool.empty()) {
         raim_ci_tallies.sigma0_max = std::max(raim_ci_tallies.sigma0_max, sigma0);
         raim_ci_tallies.sigma0_sum += sigma0;
         ++raim_ci_tallies.sigma0_n;
     }
-    // B1: fold the network-wide σ̂0 into the URA EWMA (scales next epoch's emitted
-    // URA — the post-emit ordering means the scale lands one epoch later).
-    // RTB-7(b): the update COUNT feeds the quality-ramp lift rule (the
-    // "EWMA has stabilized" half); read only while the warmup floor is armed.
+    // Fold the network-wide σ̂0 into the URA EWMA (B1).  This seam runs after emission,
+    // so the new scale applies to the URA emitted next epoch.  The update count feeds
+    // the quality-ramp lift rule (its "EWMA has stabilized" half) and is read only
+    // while the warm-up floor is armed (RTB-7(b)).
     if (ura_on) {
         ura_sigma0_ewma = ura_alpha * sigma0 + (1.0 - ura_alpha) * ura_sigma0_ewma;
         ++ura_ewma_updates;
     }
 
-    // --- QUEUE item 4 R2: the DECLARED per-station variance factor -------------
+    // --- Declared per-station variance factor (R2, queue item 4) ---------------
     // (SPEC_t3_null_derivation §6/§7.5.)  Measure-only: nothing below feeds any
-    // denominator, gate or response — absorption is R1, HELD behind the measured
-    // per-station iono error it would bury (§7.8.2).  Runs post-σ̂₀ because the
-    // trim bar is k·σ̂₀.  The seam only runs on accepted epochs, so the EWMA
-    // freezes across withholds by construction.
+    // denominator, gate or response.  Absorbing the factor is R1, which is held
+    // because it would bury the measured per-station iono error (§7.8.2).  Runs
+    // after σ̂₀ because the trim bar is k·σ̂₀.  The seam runs only on accepted
+    // epochs, so the EWMA is frozen across withholds.
     if (staf_on) {
         const double now_tow = se.time.tow;
         double dt = (ctx.carry.staf_prev_tow >= 0.0)
@@ -498,9 +492,9 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                 if (ratio > ctx.counters.staf_max_ratio)
                     ctx.counters.staf_max_ratio = ratio;
                 const bool departed = ctx.carry.staf_departed.count(o.sta) > 0;
-                // Declaration warmup: no edge before the EWMA has real memory
-                // (10 updates ≈ 5 min at 30 s — a fresh station must not alarm
-                // off its seed value).
+                // Declaration warm-up: no edge is declared before the EWMA has 10
+                // updates (about 5 min at 30 s), so a new station does not trigger
+                // off its seed value.
                 const bool warm = ctx.carry.staf_updates[o.sta] >= 10;
                 if (warm && !departed && ratio > ctx.knobs.staf_ratio) {
                     ctx.carry.staf_departed.insert(o.sta);
@@ -538,14 +532,14 @@ void networkPostFitRaim(NetworkRunContext& ctx,
     std::map<std::string, int> sat_flag_stations;  // satellite -> #stations whose normalized residual spiked
     struct RaimDetail { std::string sat; int sta; double s_raw, s_norm; bool spiked; };
     std::vector<RaimDetail> raim_details;           // per (station, sat); built only when tracing
-    std::map<std::string, int> sat_cell_stations;  // R4: per-sat cell count (unconditional)
+    std::map<std::string, int> sat_cell_stations;  // per-sat cell count for R4 (unconditional)
     for (const auto& a : amb_stats) {
         const double s_norm = a.r_max / sigma0;
         const bool   spiked = (s_norm > raim_k);
         if (rate_hygiene) ++sat_cell_stations[a.sat];
-        // B8/T3 cell.  R4: an s_raw exactly 0 cell (carried ambiguity with no phase
-        // row this epoch) is structurally untestable — it can never flag, and
-        // counting it as an opportunity deflates the reported rate (§4: 1.67 %).
+        // Cell flag rate for tier T3 (B8/T3).  Under R4, a cell with s_raw exactly 0 (a carried
+        // ambiguity with no phase row this epoch) is untestable: it can never flag,
+        // and counting it as an opportunity deflates the reported rate (§4).
         if (trace_flag_rates) {
             if (rate_hygiene && a.r_max == 0.0) ++ctx.counters.n_t3_untestable_cells;
             else ++fr_raim_cell.opp;
@@ -567,11 +561,11 @@ void networkPostFitRaim(NetworkRunContext& ctx,
     const std::set<std::string> fset(flagged.begin(), flagged.end());
     if (raim_ci_on) raim_ci_tallies.sats_flagged += static_cast<long long>(flagged.size());
     if (trace_flag_rates) {   // B8/T3 consensus: rate of consensus among sats that spiked ≥1 station
-        // R4: the shipped opportunity count is CONDITIONAL (only satellites that
-        // already spiked somewhere), so implied_alpha compared a conditional rate
-        // against an unconditional α (§1).  Under hygiene the opportunity is the
-        // UNCONDITIONAL population: every satellite with cells at ≥ raim_min_sta
-        // stations this epoch (the population structurally able to reach consensus).
+        // Without R4 hygiene the opportunity count is conditional (only satellites that
+        // spiked at some station), so implied_alpha compares a conditional rate with an
+        // unconditional α (§1).  Under hygiene the opportunity is the unconditional
+        // population: every satellite with cells at ≥ raim_min_sta stations this epoch
+        // (the satellites structurally able to reach consensus).
         if (rate_hygiene) {
             long uncond = 0;
             for (const auto& kv : sat_cell_stations)
@@ -583,12 +577,13 @@ void networkPostFitRaim(NetworkRunContext& ctx,
         fr_raim_sat.flag += static_cast<long>(flagged.size());
     }
 
-    // A consensus-flagged satellite's slip leaked into its SHARED clock (that is why the
-    // innocent stations spiked) — refloat the carried clock alongside the ambiguity.
+    // A consensus-flagged satellite's slip has leaked into its shared clock, which is why
+    // stations without the slip spiked too.  With clk_mon_couple set, the carried clock is
+    // refloated along with the ambiguity.
     if (clk_mon_couple)
         for (const auto& s : fset) clock_refloat_sats.insert(s);
-    // P0-2: consensus-flagged sats contaminated the emitted correction — feed the
-    // retro-bump independent of the couple opt-in.
+    // Consensus-flagged sats have contaminated the emitted correction, so they feed the
+    // retro-bump whether or not clk_mon_couple is set (P0-2).
     if (retro_feed)
         for (const auto& s : fset) retro_flag_sats.insert(s);
 
@@ -610,14 +605,14 @@ void networkPostFitRaim(NetworkRunContext& ctx,
     }
 
     // --- Prominence attribution + optional attribution-driven refloat -------------
-    // Robust 2-way median polish of the (station × satellite) standardized-residual
-    // table separates a bad SATELLITE (whole column lights up), a bad STATION (whole
-    // row), and an isolated ARC (interaction); a per-signal marginal on the polished
-    // leftover flags a bad SIGNAL.  One pass over the residual cells already in hand —
-    // no re-solve, unlike the user-side iterative snoop.  Always LOGGED when the
-    // attribution trace is open; when network.raim_attribution is on it also DRIVES
-    // the refloat (bad sat → network-wide, bad station → that station's arcs, isolated
-    // arc → just that (station,sat)) instead of the per-satellite consensus.
+    // A robust 2-way median polish of the (station × satellite) standardized-residual
+    // table separates a bad satellite (whole column raised), a bad station (whole row)
+    // and an isolated arc (interaction); a per-signal marginal on the polished leftover
+    // flags a bad signal.  It is one pass over the residual cells already in hand, with
+    // no re-solve (unlike the user-side iterative snoop).  Always logged when the
+    // attribution trace is open; with network.raim_attribution on it also drives the
+    // refloat (bad sat → network-wide, bad station → that station's arcs, isolated
+    // arc → that (station,sat) only) in place of the per-satellite consensus.
     bool attrib_acted = false;
     if (need_attrib && !cells.empty()) {
         constexpr double kAttribReportProm = 4.0;  // robust-z above which an entity is logged
@@ -635,10 +630,10 @@ void networkPostFitRaim(NetworkRunContext& ctx,
         for (const auto& [k, v] : cell_max) tbl.emplace_back(k.first, k.second, v);
         const MedianPolish mp = medianPolish2Way(tbl);
 
-        // B8/T4 (P1-4): attribution flag-rate on the per-satellite median-polish
-        // column effect, using the SAME criterion the acting path (bad_sats) uses —
-        // σ̂0 above the within-epoch trigger AND effect/σ̂0 above raim_k — so the rate
-        // is measurable on a clean baseline whether or not raim_attribution is acting.
+        // Attribution flag rate on the per-satellite median-polish column effect
+        // (B8/T4, P1-4), with the criterion the acting path (bad_sats) uses: σ̂0 above
+        // the within-epoch trigger and effect/σ̂0 above raim_k.  The rate is therefore
+        // measurable on a clean baseline whether or not raim_attribution acts.
         if (trace_flag_rates) {
             const double trig_a = config_.networkRaimSigma0Trigger();
             for (const auto& [sat, eff] : mp.col_eff) {
@@ -646,14 +641,13 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                 ++fr_attrib.opp;
                 if (sigma0 > trig_a && sigma0 > 0.0 && eff / sigma0 > raim_k) ++fr_attrib.flag;
             }
-            // §9.7.10: the ARC sub-path's criterion rate.  The SAT line above is
-            // σ̂0-trigger-conjoined and therefore structurally silent on a clean
-            // epoch — while the ARC sub-path (the one that actually refloats
-            // isolated slips) fires at ANY σ̂0.  Without this line the summary
-            // reads "T4: N opp, 0 flag" on runs where T4 refloated arcs — the
-            // §0 error class (an instrument that does not record the acting
-            // sub-path).  Criterion only (pre persistence/maturity gates),
-            // mirroring how the SAT line mirrors the bad_sats criterion.
+            // Criterion rate of the arc sub-path (§9.7.10).  The satellite line above
+            // requires the σ̂0 trigger, so it never flags on a clean epoch, while the
+            // arc sub-path (the one that refloats isolated slips) fires at any σ̂0.
+            // Without this line the summary would read "T4: N opp, 0 flag" on runs
+            // where T4 refloated arcs (the §0 error class: an instrument that does not
+            // record the acting sub-path).  Criterion only, before the persistence and
+            // maturity gates, as the satellite line records the bad_sats criterion.
             for (std::size_t k = 0; k < mp.interaction.size(); ++k) {
                 ++fr_attrib_arc.opp;
                 if (sigma0 > 0.0 && mp.interaction[k] / sigma0 > raim_k)
@@ -682,58 +676,60 @@ void networkPostFitRaim(NetworkRunContext& ctx,
         // Attribution-driven refloat set (scale-consistent: an effect is "bad" when it
         // stands raim_k robust baselines (σ̂0) above the additive model).  A bad
         // satellite/station is caught wholesale; an isolated arc counts only if its
-        // sat/station were NOT already caught (no double attribution).
+        // sat/station were not already caught (no double attribution).
         std::set<std::string> bad_sats;
-        std::set<int>         bad_stations;   // deliberately never populated — see below
+        std::set<int>         bad_stations;   // deliberately never populated; see below
         std::vector<std::pair<int, std::string>> bad_arcs;
         if (attrib_act) {
-            // Wholesale SATELLITE refloat only when the network is GENUINELY contaminated
-            // (σ̂0 above the within-epoch trigger).  At a robust-clean epoch (σ̂0 ≈ 1) a high
-            // column effect is a median-polish artifact of a satellite visible across a
-            // regional station cluster, NOT a network-wide slip — refloating its carriers
-            // everywhere would wipe good accumulated precision and destabilize (the root of
-            // the 305 24h ~4 h lock-in).  The isolated-arc path below still refloats real
-            // single slips at ANY σ̂0.
+            // Wholesale satellite refloat happens only when the network as a whole is
+            // contaminated (σ̂0 above the within-epoch trigger).  At a robust-clean epoch
+            // (σ̂0 ≈ 1) a high column effect is a median-polish artifact of a satellite
+            // visible across a regional station cluster, not a network-wide slip;
+            // refloating its carriers everywhere discards accumulated precision and
+            // destabilizes the solution (a multi-hour lock-in at 305 stations).  The
+            // isolated-arc path below still refloats real single slips at any σ̂0.
             if (sigma0 > config_.networkRaimSigma0Trigger())
                 for (const auto& [sat, eff] : mp.col_eff)
                     if (eff / sigma0 > raim_k) bad_sats.insert(sat);
-            // Refloat the carried clock of an attribution-flagged (network-wide) satellite
-            // too — an isolated ARC is a local slip and does NOT implicate the shared clock,
-            // so only whole-satellite culprits feed the clock refloat.
+            // With clk_mon_couple set, the carried clock of an attribution-flagged
+            // (network-wide) satellite is refloated too.  An isolated arc is a local slip
+            // and does not implicate the shared clock, so only whole-satellite culprits
+            // feed the clock refloat.
             if (clk_mon_couple)
                 for (const auto& s : bad_sats) clock_refloat_sats.insert(s);
-            // P0-2: attribution whole-satellite culprits contaminated the emitted
-            // correction — feed the retro-bump independent of the couple opt-in.
-            // (Isolated arcs are LOCAL slips that do not implicate the shared per-sat
-            //  correction, so they are excluded — mirroring the clock-refloat scoping.)
+            // Whole-satellite attribution culprits have contaminated the emitted
+            // correction, so they feed the retro-bump whether or not clk_mon_couple is
+            // set (P0-2).  Isolated arcs are local slips that do not implicate the shared
+            // per-sat correction, so they are excluded, as in the clock-refloat scoping.
             if (retro_feed)
                 for (const auto& s : bad_sats) retro_flag_sats.insert(s);
-            // Bad-STATION wholesale refloat is DELIBERATELY DISABLED: a regional cluster of
-            // stations lighting up on ONE shared satellite event inflates their median-polish
-            // ROW effects, so this path mass-refloated dozens of innocent stations at once
-            // (78 stations / 3977 carriers at TOW 273150 in the 24 h run) → cascade →
-            // divergence.  A genuinely bad station is handled by the within-epoch station-
-            // exclude (σ̂0 > trigger) or surfaces as isolated arcs; a whole-station carrier
-            // wipe is never worth the mis-attribution risk.  bad_stations stays empty.
+            // Bad-station wholesale refloat is disabled on purpose; bad_stations stays
+            // empty.  A regional cluster of stations raised by one shared satellite event
+            // inflates their median-polish row effects, so this path refloated dozens of
+            // unaffected stations at once, and the cascade diverged the solution.  A bad
+            // station is handled by the within-epoch station exclude (σ̂0 > trigger) or
+            // surfaces as isolated arcs; a whole-station carrier wipe is not worth the
+            // mis-attribution risk.
             // Persistence gate (network.raim_arc_persist_epochs, K): an isolated arc is
-            // refloated only after it trips the interaction gate K CONSECUTIVE epochs.  A real
-            // slip persists as an integer step until refloated → trips every epoch → clears K
-            // and refloats; a heavy-tail / model-error spike does not repeat on the same arc →
-            // never reaches K → is starved.  K=1 (default) takes the immediate path below and is
-            // byte-identical.  For K>1 we rebuild the streak map from THIS epoch's flagged set so
-            // any arc not flagged now resets to 0 (absence ⇒ non-consecutive), and an arc that
-            // reaches K refloats and is dropped from the carry (must re-persist K epochs for the
-            // next refloat — a persistent arc refloats at most once per K epochs).
-            // T2d: filter-maturity latch for the isolated-arc refloat gate — mirrors the
-            // warmup URA ramp (emitted-epoch horizon AND σ̂0-EWMA update count, the count
-            // waived when the EWMA is structurally unavailable).  Isolated arcs are the
-            // self-sustaining warmup churn driver (2→1063/epoch); suppress them until the
-            // filter has settled.  Forced true when the gate is OFF ⇒ byte-identical.
-            // Whole-sat bad_sats (network-wide contamination) are NEVER gated.
-            // ewma_structurally_available == (emit_ura && raim && phase_leveling): only
-            // then is the σ̂0-EWMA a fed signal, so only then does the update-count term
-            // apply; without emit_ura the EWMA is never updated and the horizon alone
-            // decides (matching the RTB-6 sentinel + the URA-ramp lift rule).
+            // refloated only after it trips the interaction gate on K consecutive epochs.  A
+            // real slip persists as an integer step until refloated, so it trips every epoch,
+            // reaches K and is refloated; a heavy-tail or model-error spike does not repeat on
+            // the same arc and never reaches K.  K = 1 (default) takes the immediate path
+            // below and is byte-identical.  For K > 1 the streak map is rebuilt from this
+            // epoch's flagged set, so any arc not flagged now resets to 0 (absence means
+            // non-consecutive), and an arc that reaches K is refloated and dropped from the
+            // map (it must persist another K epochs before its next refloat, so a persistent
+            // arc refloats at most once per K epochs).
+            // Filter-maturity latch for the isolated-arc refloat gate (T2d).  It mirrors the
+            // warm-up URA ramp: an emitted-epoch horizon and a σ̂0-EWMA update count, the
+            // count waived when the EWMA is structurally unavailable.  Isolated arcs drive a
+            // self-sustaining warm-up churn, so they are suppressed until the filter has
+            // settled.  With the gate off, raim_mature is forced true and the output is
+            // byte-identical.  Whole-sat bad_sats (network-wide contamination) are never
+            // gated.  The EWMA is structurally available only when emit_ura, raim and
+            // phase_leveling are all on: only then is the σ̂0-EWMA fed, so only then does the
+            // update-count term apply.  Without emit_ura the EWMA is never updated and the
+            // horizon alone decides (matching the RTB-6 sentinel and the URA-ramp lift rule).
             const bool raim_mature = !raim_maturity_gate || networkWarmupRampLifted(
                 static_cast<long long>(n_emitted), raim_maturity_epochs, pl_warmup,
                 static_cast<long long>(ura_ewma_updates), ura_on && raim_on && pl_on);
@@ -743,7 +739,7 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                 const int sta = std::get<0>(tbl[k]);
                 const std::string& sat = std::get<1>(tbl[k]);
                 if (bad_sats.count(sat)) continue;   // caught wholesale; no double attribution
-                if (!raim_mature) continue;   // T2d: suppress isolated-arc refloat pre-maturity
+                if (!raim_mature) continue;   // no isolated-arc refloat before maturity (T2d)
                 if (raim_arc_persist <= 1) {
                     bad_arcs.emplace_back(sta, sat);   // byte-identical immediate refloat
                     continue;
@@ -757,7 +753,7 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                     next_arc_streak[akey] = streak;    // still building → carry forward
             }
             if (raim_arc_persist > 1) arc_spike_streak.swap(next_arc_streak);
-            n_arc_refloat_epoch += static_cast<int>(bad_arcs.size());  // T2d: heartbeat churn metric
+            n_arc_refloat_epoch += static_cast<int>(bad_arcs.size());  // heartbeat churn metric (T2d)
         }
 
         if (attrib_on) {
@@ -804,22 +800,22 @@ void networkPostFitRaim(NetworkRunContext& ctx,
             }
         }
 
-        // Execute the attribution-driven refloat (surgical: whole sat / whole station /
-        // single arc, per the decomposition).  Erasing local_carry + pending-reseed is
-        // the same one-shot refloat the consensus path uses.
-        // EVENT HARNESS: a staged arc_erase runs THE T4 path — it is appended to
-        // bad_arcs so the injected erase and a real attribution execute the same
-        // code (carry erase + iono-carry erase + pending-reseed + C3c queue), and
-        // is marked as injected only in its event row.  It also OPENS the block on
-        // an epoch whose σ̂₀ never tripped: that is the point of the harness.
+        // Execute the attribution-driven refloat (whole sat, whole station or single arc,
+        // per the decomposition).  Erasing local_carry and marking pending-reseed is the
+        // same one-shot refloat the consensus path uses.
+        // Event harness: a staged arc_erase runs the T4 path.  It is appended to bad_arcs,
+        // so the injected erase and a real attribution execute the same code (carry
+        // erase, iono-carry erase, pending-reseed, C3c queue); only its event row marks it
+        // as injected.  It also opens the block on an epoch whose σ̂₀ never tripped,
+        // which is what the harness is for.
         bool inject_arc_act = false;
         auto joinSet = [](const std::set<std::string>& v) {
             std::string o;
             for (const auto& x : v) o += (o.empty() ? "" : ";") + x;
             return o;
         };
-        // Study-1 DIAGNOSTIC sub-knob (docs/SPEC_event_harness.md SS9):
-        // (station idx, sat) -> the injected mode.  Consulted ONLY for arcs this
+        // Diagnostic sub-knob for Study 1 (docs/SPEC_event_harness.md SS9):
+        // (station idx, sat) -> the injected mode.  Consulted only for arcs this
         // injector staged; a real attribution's arcs are absent from the map and
         // take the production path unchanged.
         std::map<std::pair<int, std::string>, std::string> inject_arc_mode;
@@ -854,18 +850,17 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                 config_.networkCycleSlipRelevelRetapStatistical();
             const double retap_var = config_.networkCycleSlipRelevelRetapVarM2();
             const int    retap_streak_max = config_.networkCycleSlipRelevelRetapStreakMax();
-            // SPEC_lane_slip_response §3: corroborated keep.  The wu93 lane-integer
-            // A/B measured BOTH blanket policies wrong — blanket refloat (F1) costs
-            // ~29 points of settled EWL at-own-integer vs response-virgin chords,
-            // and blanket keep (F3) costs a further 16 vs F1 (the kept levels were
-            // wrong at flag time and var 0.25 anchors them).  The flagged population
-            // is heterogeneous; only per-arc EVIDENCE separates it.  Rule (the
-            // D5-v3 tri-state): keep ONLY when the pre-solve raw MW/GF pass
-            // POSITIVELY measured this (station, sat) as continuous — measured AND
-            // not stepped.  Unmeasured, stepped, no-evidence-this-epoch, or the
-            // qualification pass not run at all ⇒ the erase, exactly as without
-            // the retap (invariant #1: never suppress a slip response on absence
-            // of evidence).
+            // Corroborated keep (SPEC_lane_slip_response §3).  The wu93 lane-integer A/B
+            // found both blanket policies wrong: blanket refloat (F1) costs ~29 points of
+            // settled EWL at-own-integer against response-virgin chords, and blanket keep
+            // (F3) costs a further 16 against F1 (the kept levels were wrong at flag time,
+            // and var 0.25 anchors them).  The flagged population is heterogeneous, and
+            // only per-arc evidence separates it.  Rule (the D5-v3 tri-state): keep only
+            // when the pre-solve raw MW/GF pass measured this (station, sat) as
+            // continuous, that is, measured and not stepped.  Unmeasured, stepped, no
+            // evidence this epoch, or the qualification pass not run at all: erase,
+            // exactly as without the retap (invariant #1: a slip response is never
+            // suppressed on absence of evidence).
             const bool retap_corr =
                 retap_on && config_.networkCycleSlipRelevelRetapCorroborate();
             auto retapEvidenceFlat = [&](int i, const std::string& sat,
@@ -879,23 +874,23 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                 const auto vit = vmap.find(sat);
                 return vit != vmap.end() && vit->second.measured;
             };
-            // ---- §Z BAND-SCOPED ERASE (docs/SPEC_event_harness.md) -------------
-            // `min_keep_one`: an ISOLATED-ARC (statistical) erase frees only the
-            // bands whose OWN post-fit normalized residual stands above the T4
-            // gate, and ALWAYS spares the band with the smallest |r|/σ̂₀ — the
-            // survivor is the line of sight's level anchor, and Study 1 measured
-            // that keeping one is worth 9× on the persistent level floor.
+            // ---- Band-scoped erase (§Z, docs/SPEC_event_harness.md) -------------
+            // `min_keep_one`: an isolated-arc (statistical) erase frees only the bands
+            // whose own post-fit normalized residual stands above the T4 gate, and
+            // always spares the band with the smallest |r|/σ̂₀.  The survivor is the
+            // line of sight's level anchor; Study 1 measured that keeping one is worth
+            // a factor of 9 on the persistent level floor.
             //
-            // Per-signal residual source: `cells`, built in Pass 1 as one row per
-            // (station, satellite, SIGNAL) carrying that carried-ambiguity's max
-            // standardized post-fit phase residual — the SAME number the median
-            // polish consumes after `cell_max` collapses the signal axis away.
-            // Nothing is re-derived here; the scope reads the value the
-            // attribution itself was computed from, one aggregation step earlier.
+            // Per-signal residual source: `cells`, built in Pass 1 with one row per
+            // (station, satellite, signal) holding that carried ambiguity's max
+            // standardized post-fit phase residual, the same number the median polish
+            // consumes after `cell_max` collapses the signal axis.  Nothing is
+            // re-derived here; the scope reads the value the attribution was computed
+            // from, one aggregation step earlier.
             //
-            // The CONSENSUS whole-satellite path (statistical_arc = false) is
-            // deliberately NOT scoped: a ≥ min_sta cross-station agreement is real
-            // evidence about the satellite, not about one arc's bands.
+            // The consensus whole-satellite path (statistical_arc = false) is not
+            // scoped, on purpose: agreement across ≥ min_sta stations is evidence about
+            // the satellite, not about one arc's bands.
             const bool bscope_t4 =
                 config_.getNetworkConfig().raim_erase_band_scope
                     == NetworkRaimEraseBandScope::MinKeepOne;
@@ -906,8 +901,8 @@ void networkPostFitRaim(NetworkRunContext& ctx,
             if (bscope_t4)
                 for (const auto& c : cells)
                     cell_sig_r[{ c.sta, c.sat }].emplace_back(c.sig, c.r);
-            // Adjudicate one cell: the RULE is the pure
-            // networkRaimEraseBandScope (unit-tested); this only looks the cell up.
+            // Band scope of one cell.  The rule is the pure function
+            // networkRaimEraseBandScope (unit-tested); this lambda only looks the cell up.
             auto bandScope = [&](int i, const std::string& sat) -> RaimEraseBandScope {
                 const auto it = cell_sig_r.find({ i, sat });
                 if (it == cell_sig_r.end()) return {};
@@ -916,9 +911,8 @@ void networkPostFitRaim(NetworkRunContext& ctx,
             auto refloat_sat_at = [&](int i, const std::string& sat,
                                       bool statistical_arc) -> int {
                 int n = 0;
-                // §Z: resolved once per (station, satellite) visit, above the
-                // per-signal loop, so the pin is one decision and not a race
-                // between bands.
+                // Resolved once per (station, satellite) visit, above the per-signal
+                // loop, so the pin is one decision for all bands (§Z).
                 std::set<std::string> bs_erase;
                 std::string           bs_keep;
                 bool                  bs_on = false;
@@ -929,7 +923,7 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                     const bool over = bs.kept_over_gate;
                     if (bs.act) {
                         if (bs.single_band) {
-                            // Single-band arc — skip the erase outright.  The level
+                            // Single-band arc: skip the erase outright.  The level
                             // is suspect, but freeing it re-draws (ρ, I, N) from one
                             // epoch of code with nothing left to anchor them, which
                             // is the failure this scope exists to prevent.
@@ -945,15 +939,15 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                         bs_kept_by_arc[{ i, sat }] =
                             bs_keep + (over ? "(over_gate)" : "");
                     }
-                    // No cell rows for this (station, sat) — the arc is not in the
+                    // No cell rows for this (station, sat): the arc is not in the
                     // attribution pool this epoch.  Fall through to the unscoped
-                    // erase: the scope has no evidence to act on, and refusing the
-                    // response on missing evidence is the other failure mode.
+                    // erase: the scope has no evidence to act on, and withholding
+                    // the response on missing evidence is the other failure mode.
                 }
-                // Study-1 sub-knob: production defaults unless THIS arc was
+                // Study-1 sub-knob: production defaults unless this arc was
                 // staged by the injector with a diagnostic mode.  Every flag
-                // below is `true` on the production path, so an unarmed run's
-                // instruction stream is the pre-card one.
+                // below is `true` on the production path, so an unarmed run
+                // executes the same path as without the sub-knob.
                 bool inj_iono = true, inj_reseed = true, inj_funnel = true;
                 const std::set<std::string>* inj_sigs = nullptr;
                 if (!inject_arc_mode.empty()) {
@@ -972,21 +966,21 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                         && !(inj_sigs && inj_sigs->count(pa.signal) == 0)
                         && !(bs_on && bs_erase.count(pa.signal) == 0)) {
                         if (bs_on) ++ctx.counters.n_bscope_t4_erased;
-                        // SPEC_slip_relevel_walk §6, retap piece: an ISOLATED-ARC
-                        // refloat carries NO measured delta and its population is
-                        // FA-dominated (21114 arc refloats vs ~4500 slip-driven on
-                        // the 60-sta campaign) — the arc's level is overwhelmingly
-                        // CORRECT, so erasing it was the steady-state injection.
-                        // KEEP the level, SET the confidence loose (idempotent —
-                        // the bad_sats+bad_arcs double-visit is reachable), clear
-                        // the coupling regression (the warm-resume empty-coupling
-                        // degrade precedent), and let the data adjudicate: a real
-                        // missed slip wins against the loose prior within an epoch
-                        // or two, and an arc re-tripping relevel_retap_streak_max
-                        // times inside 120 s falls back to the erase.  Whole-sat
-                        // CONSENSUS refloats (statistical_arc = false) keep the
-                        // strong erase — a ≥min_sta network event has real
-                        // evidence behind it.
+                        // Retap (SPEC_slip_relevel_walk §6): an isolated-arc refloat
+                        // carries no measured delta, and its population is dominated by
+                        // false alarms (21114 arc refloats against ~4500 slip-driven on
+                        // the 60-sta campaign), so the arc's level is usually correct
+                        // and erasing it injects error in steady state.  The retap keeps
+                        // the level, loosens the confidence (var raised to at least
+                        // retap_var; idempotent, since the bad_sats + bad_arcs double
+                        // visit is reachable), clears the coupling regression (as the
+                        // warm-resume empty-coupling degrade does), and lets the data
+                        // decide: a real missed slip wins against the loose prior within
+                        // an epoch or two, and an arc that re-trips
+                        // relevel_retap_streak_max times, each within 120 s of the last,
+                        // falls back to the erase.  Whole-sat consensus refloats
+                        // (statistical_arc = false) keep the erase: a network event at
+                        // ≥ min_sta stations has real evidence behind it.
                         if (retap_on && statistical_arc) {
                             const auto key = std::make_tuple(i, pa.sat, pa.signal);
                             auto it = local_carry.find(key);
@@ -1015,32 +1009,33 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                                         if (retap_corr)
                                             ++ctx.counters.n_relevel_retap_corr_kept;
                                         ++n;
-                                        continue;   // level kept — no erase, no mark, no queue
+                                        continue;   // level kept: no erase, no mark, no queue
                                     }
                                     ++ctx.counters.n_relevel_retap_escalated;
                                 }
-                                // corroboration refused (or streak escalated): fall
-                                // through to the erase — the un-kept arc takes the
-                                // full refloat exactly as without the retap.
+                                // Corroboration refused or streak escalated: fall
+                                // through to the erase, so the arc takes the full
+                                // refloat exactly as without the retap.
                             } else {
                                 ++ctx.counters.n_relevel_retap_miss;
                             }
                         }
                         {
-                            // RF-2 items 3 + 4: a T4 attribution flag STAMPS the arc, so
-                            // the next election refuses it the S-basis for flag_quiet_ep
-                            // epochs and — when it IS the basis holder — deposes it
-                            // BEFORE any response acts on the column.  Stamped here, at
-                            // the flag, not at the response: the two are different edges.
+                            // With pd_held_basis armed, a T4 attribution flag stamps the
+                            // arc, so the next election refuses it the S-basis for
+                            // flag_quiet_ep epochs and, if it holds the basis, deposes it
+                            // before any response acts on the column (RF-2 items 3 and
+                            // 4).  The stamp is set here, at the flag, not at the
+                            // response: the two are different edges.
                             if (ctx.knobs.pd_held_basis)
                                 ctx.carry.amb_flag_ep[{static_cast<int>(i), pa.amb_key}] =
                                     static_cast<long long>(ctx.counters.n_loop_epochs);
                             const auto lane_lk = std::make_tuple(i, pa.sat, pa.signal);
                             const auto lane_lit = local_carry.find(lane_lk);
                             if (lane_lit != local_carry.end()) {
-                                // §7.6(d) lane-observatory T4-side pre-erase capture
-                                // (measure-only; consumed at the NEXT harvest).  The
-                                // erase below is the existing actuator, untouched.
+                                // Pre-erase capture for the lane observatory, T4 side
+                                // (§7.6(d)); measure-only, consumed at the next harvest.
+                                // The erase below is the existing actuator, unchanged.
                                 if (config_.networkCycleSlipRelevelLaneSnap()) {
                                     ctx.carry.lane_t4_pre[lane_lk] = {
                                         lane_lit->second.value_abs,
@@ -1048,28 +1043,26 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                                         RelevelEpochState::kCauseT4Attrib };
                                     ++ctx.counters.n_lane_t4_captured;
                                 }
-                                // RF-1 §7.4 D3: capture the entry BEFORE the erase —
+                                // The entry is recorded before the erase (RF-1 §7.4 D3):
                                 // this is the class design §3.4 replaces with a bounded
-                                // drop, and its "variance before" only exists here.
-                                // RF-1 step 4 (§3.4): under the float_kf vehicle this
-                                // is a bounded DROP, not an erase.  R10 measured 88 % of
-                                // the run's unsignalled satellite-clock steps at dt = 0
-                                // on exactly this event: the erase removes ALL
-                                // information about the column, the anchor's w = 1e10 pin
-                                // holds the phase bias, and the only shared parameter
-                                // left to absorb the opened direction is the CLOCK.  A
-                                // drop bounds what can move, keeps value_abs, and keeps
-                                // the arc's identity (birth stamps, var_first, n_folds),
-                                // so the next epoch re-couples against a stated prior
-                                // instead of a first sighting.
+                                // drop, and its variance before the event exists only here.
+                                // Under the float_kf vehicle this is a bounded drop, not
+                                // an erase (RF-1 step 4, §3.4).  An erase removes all
+                                // information about the column; the anchor's w = 1e10 pin
+                                // holds the phase bias, so the only shared parameter left
+                                // to absorb the opened direction is the clock (R10
+                                // attributed 88 % of a run's unsignalled satellite-clock
+                                // steps at dt = 0 to this event).  A drop bounds what can
+                                // move and keeps value_abs and the arc's identity (birth
+                                // stamps, var_first, n_folds), so the next epoch
+                                // re-couples against a stated prior instead of a first
+                                // sighting.
                                 if (ctx.knobs.amb_float_kf) {
-                                    // RF-3a A1: the drop is taken at BOTH floors, and both
-                                    // are elevation-mapped at this line of sight's own
-                                    // elevation — the same mapping the birth stash uses.
-                                    // ⚠ The pre-RF-3a code passed the ZENITH birth floor
-                                    // here while the birth stash mapped it; the two now
-                                    // agree, which changes the T4/T3 drop only on a run
-                                    // that arms a floor at all (both are 0 by default).
+                                    // The drop is taken at both floors, each mapped at this
+                                    // line of sight's own elevation, the same mapping the
+                                    // birth stash uses (RF-3a A1).  Both floors are 0 by
+                                    // default, so the mapping matters only on a run that
+                                    // arms a floor.
                                     const double e_pa = pa.elev_deg;
                                     const auto o_t4 = ambFloatDropFloored(
                                         lane_lit->second,
@@ -1096,55 +1089,55 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                                                   lane_lit->second, "t4_attrib");
                                 local_carry.erase(lane_lit);
                                 }
-                                ++ctx.counters.n_cr_raim_attrib;   // census (C): T4 ATTRIBUTION refloat
+                                ++ctx.counters.n_cr_raim_attrib;   // census (C): T4 attribution refloat
                             }
                         }
-                        // QUEUE 8b: a T4/consensus erase means the arc's LEVEL is not
-                        // trusted, and the attribution cannot separate level error from
-                        // carried-iono error (the T4 statistic reads their sum) — erase
-                        // the LOS's iono carry with it so the re-level re-draws both.
-                        // Idempotent across the per-signal loop; a retap-KEPT arc above
-                        // never reaches this line (kept level ⇒ kept iono carry).
+                        // A T4 or consensus erase means the arc's level is not trusted,
+                        // and the attribution cannot separate level error from
+                        // carried-iono error (the T4 statistic reads their sum), so the
+                        // LOS's iono carry is erased with it and the re-level re-draws
+                        // both (queue 8b).  Idempotent across the per-signal loop; an arc
+                        // kept by the retap above never reaches this line (kept level,
+                        // kept iono carry).
                         if (inj_iono && ctx.knobs.iono_on &&
                             ctx.carry.iono_carry.erase({i, pa.sat}))
                             ++ctx.counters.n_iono_carry_erased_t4;
-                        // I-in-block (network.carry_iono_in_block): the SAME edge for the
-                        // in-block vehicle, and it is invariant #1's wired response for it
-                        // — the T4 statistic reads level error and carried-iono error as a
-                        // SUM, so an arc whose level is no longer trusted cannot vouch for
-                        // the iono that was estimated jointly with it.  Erasing here makes
-                        // the LOS re-draw BOTH from data (its next harvest re-creates the
-                        // entry with a fresh birth_s).  Separate map, separate counter: the
-                        // two carries are mutually exclusive vehicles, so a run's erase
-                        // count is never split across them.
+                        // Iono in the carried block (network.carry_iono_in_block,
+                        // I-in-block): the same edge for the in-block vehicle, and its
+                        // wired response under invariant #1.  The T4 statistic reads level
+                        // error and carried-iono error as a sum, so an arc whose level is
+                        // no longer trusted cannot vouch for the iono estimated jointly
+                        // with it.  Erasing here makes the LOS re-draw both from data (its
+                        // next harvest re-creates the entry with a fresh birth_s).
+                        // Separate map and counter: the two carries are mutually exclusive
+                        // vehicles, so a run's erase count is never split across them.
                         if (ctx.knobs.iono_blk &&
                             ctx.carry.iono_blk_carry.erase({i, pa.sat}))
                             ++ctx.counters.n_iono_blk_erased_t4;
-                        // RX-CLK-in-block DELIBERATELY has no T4 edge here, and that is a
-                        // triaged decision rather than an omission (invariant #1: every
-                        // stiff time-linked quantity needs a WIRED event response — this
-                        // one's is the jump gate at the harvest, not the arc refloat).  A
-                        // T4 refloat is a per-(station, satellite) ARC event; the receiver
-                        // clock is a station-wide quantity re-determined every epoch by
-                        // every code and phase row of the station, so erasing it on any one
-                        // arc's refloat would erase the carry on most station-epochs of a
-                        // slipped bed (9,871 T4 events on the 6 h campaign) and leave the
-                        // channel effectively unarmed.  Any real clock displacement a
-                        // refloat causes shows up as a one-step prediction innovation and
-                        // is caught by network.carry_rx_clock_jump_k, which is the
-                        // response that CAN see it.
-                        // BOOKKEEPING, not the actuator on the Card-4 path: the producer
-                        // forms every innovation against the linearization point and never
-                        // writes the solution back, so moving x_lin leaves the reduced
-                        // shared RHS b_red = u_s − N_sr N_rr⁻¹ u_r algebraically unchanged
-                        // (SPEC_deweight_release_hygiene §7.2).  Kept because it IS the
-                        // actuator on the phase-leveling lineage.
+                        // The receiver clock in the carried block (RX-CLK-in-block) has no
+                        // T4 edge here, by a triaged decision rather than an omission.
+                        // Invariant #1 requires a wired event response for every stiff
+                        // time-linked quantity; this one's is the jump gate at the
+                        // harvest, not the arc refloat.  A T4 refloat is a per-(station,
+                        // satellite) arc event, while the receiver clock is station-wide
+                        // and re-determined every epoch by every code and phase row of the
+                        // station; erasing it on any one arc's refloat would erase the
+                        // carry on most station-epochs of a slipped bed and leave the
+                        // channel effectively unarmed.  A real clock displacement caused
+                        // by a refloat appears as a one-step prediction innovation and is
+                        // caught by network.carry_rx_clock_jump_k.
+                        // Under carry_invariant this mark is bookkeeping, not the actuator:
+                        // the producer forms every innovation against the linearization
+                        // point and never writes the solution back, so moving x_lin leaves
+                        // the reduced shared RHS b_red = u_s − N_sr N_rr⁻¹ u_r
+                        // algebraically unchanged (SPEC_deweight_release_hygiene §7.2).  It
+                        // is kept because it is the actuator on phase-leveling runs.
                         if (inj_reseed)
                             stations[i].sm->markAmbiguityPendingReseed(pa.amb_key);
-                        // THE actuator under carry_invariant: queue for the next epoch's
+                        // The actuator under carry_invariant: queue for the next epoch's
                         // C3c funnel, which membership-excludes the arc from A_old so its
-                        // chord is re-tapped from a diffuse prior.  Deferred because the
-                        // funnel was consumed at SB_DDBUILD, long before SB_RAIM.
+                        // chord is re-tapped from a diffuse prior.  Deferred because this
+                        // epoch's funnel was consumed at SB_DDBUILD, before SB_RAIM.
                         if (inj_funnel && raim_ci_refloat) {
                             raim_refloat_pending.insert({i, pa.amb_key});
                             ++raim_ci_tallies.refloats_queued;
@@ -1160,12 +1153,12 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                         && (phase_datum_prioritized || !stations[i].is_pivot))
                         n_ref += refloat_sat_at(static_cast<int>(i), sat,
                                                 /*statistical_arc=*/false);
-            // (bad_stations is intentionally empty — the whole-station refloat path is
-            //  disabled to avoid the regional mis-attribution mass-refloat.)
+            // (bad_stations is intentionally empty: the whole-station refloat path is
+            //  disabled to avoid mass refloats from regional mis-attribution.)
             for (const auto& [sta, sat] : bad_arcs)
                 n_ref += refloat_sat_at(sta, sat, /*statistical_arc=*/true);
             if (inject_arc_act) {
-                // The injected pairs are the TAIL of bad_arcs (appended above).
+                // The injected pairs are the tail of bad_arcs (appended above).
                 const std::size_t n_inj = inject_arc_staged.size();
                 std::string modes;
                 for (const InjectArcErase* d : inject_arc_staged) {
@@ -1206,9 +1199,9 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                       "(σ̂0={:.2f}, gate {:.1f}) [{}]",
                       se.time.tow, n_ref, bad_sats.size(), bad_stations.size(),
                       bad_arcs.size(), sigma0, raim_k, detail);
-            // T4: one event per ACTED entity (SAT with its column prominence; ARC keyed
-            // by station).  Full per-entity attribution (incl. arc prominence) is in
-            // network_raim_attrib.csv; here we log only the entities that were refloated.
+            // One T4 event per acted entity (SAT with its column prominence; ARC keyed by
+            // station).  The full per-entity attribution (including arc prominence) is in
+            // network_raim_attrib.csv; only the refloated entities are logged here.
             if (events_trace.is_open()) {
                 const std::string sd = fmt::format("sigma0={:.2f}", sigma0);
                 for (const auto& s : bad_sats)
@@ -1217,9 +1210,9 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                                                 : std::nullopt,
                               raim_k, "refloat", sd);
                 for (const auto& [sta, sat] : bad_arcs) {
-                    // §Z: the kept band is part of the event's identity — an arc
-                    // that was band-scoped is a DIFFERENT response from one that
-                    // was erased whole, and the trace must say which it was.
+                    // The kept band is part of the event's identity (§Z): a
+                    // band-scoped arc is a different response from one erased
+                    // whole, and the trace records which it was.
                     const auto kit = bs_kept_by_arc.find({ sta, sat });
                     emitEvent("T4_attrib", "attrib_arc", sat, stations[sta].name,
                               std::nullopt, raim_k, "refloat",
@@ -1232,11 +1225,13 @@ void networkPostFitRaim(NetworkRunContext& ctx,
     }
 
     // --- "So bad" within-epoch adaptation trigger (detection + log) ---------------
-    // When σ̂0 exceeds the trigger the joint solve is contaminated enough that emitting
-    // it would be wrong.  The full adaptation drops the dominant culprit(s) and RE-SOLVES
-    // this epoch (a beginEpoch replay of the scatter minus the culprit) to re-condition;
-    // that core-solve change is staged.  For now we DETECT + arm it so the trigger rate
-    // and the drop targets can be validated against the attribution first.
+    // When σ̂0 exceeds the trigger, the joint solve is contaminated enough that emitting
+    // it would be wrong.  The within-epoch adaptation (network.raim_within_epoch) drops
+    // the dominant culprit(s) and re-solves the epoch (a beginEpoch replay of the scatter
+    // minus the culprit) in the solve glue, before this seam runs, and only on carry_warm
+    // epochs.  This block fires when this seam's σ̂0 still exceeds the trigger: it logs a
+    // warning and a T2 event, and the epoch is emitted anyway.  It is not carry_warm-gated,
+    // so it also fires on epochs where no adaptation ran.
     if (config_.networkRaimWithinEpoch() && sigma0 > config_.networkRaimSigma0Trigger()) {
         log->warn("Network[RAIM within-epoch]: TOW {:.1f} σ̂0={:.2f} STILL > trigger {:.2f} after "
                   "adaptation — residual contamination the culprit-drop could not isolate "
@@ -1246,7 +1241,7 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                   config_.networkRaimSigma0Trigger(), "emit_anyway", "");
     }
 
-    // Per-satellite consensus refloat — only when attribution is NOT driving the action.
+    // Per-satellite consensus refloat, only when attribution is not driving the action.
     if (!attrib_act && !flagged.empty()) {
         int n_refloat = 0;
         for (size_t i = 0; i < stations.size(); ++i) {
@@ -1254,15 +1249,15 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                 || (!phase_datum_prioritized && stations[i].is_pivot)) continue;
             for (const auto& pa : ambPool(asm_res[i]))
                 if (fset.count(pa.sat)) {
-                    // Drop the contaminated carry OUTRIGHT.  The harvest above
-                    // just re-stashed this ambiguity's (contaminated) value into
-                    // local_carry; erasing it means the next epoch finds no prior
-                    // to inject (cit == end → no addStationPrior), so the ambiguity
-                    // re-floats from data — a direct, unambiguous refloat that does
-                    // not depend on the deferred pending-reseed skip path.  The mark
-                    // is also set (belt-and-suspenders / cleared by the next stash).
+                    // Remove the contaminated carry outright (under float_kf, the
+                    // bounded drop; see the attribution site).  The harvest has just
+                    // re-stashed this ambiguity's contaminated value into local_carry;
+                    // erasing it means the next epoch finds no prior to inject
+                    // (cit == end, so no addStationPrior), and the ambiguity refloats
+                    // from data without depending on the deferred pending-reseed skip
+                    // path.  The mark is also set (redundant; cleared by the next stash).
                     {
-                        // RF-2 items 3 + 4 — see the attribution site.
+                        // Flag stamp (RF-2 items 3 and 4); see the attribution site.
                         if (ctx.knobs.pd_held_basis)
                             ctx.carry.amb_flag_ep[{static_cast<int>(i), pa.amb_key}] =
                                 static_cast<long long>(ctx.counters.n_loop_epochs);
@@ -1270,7 +1265,7 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                             std::make_tuple(static_cast<int>(i), pa.sat, pa.signal);
                         const auto lane_lit = local_carry.find(lane_lk);
                         if (lane_lit != local_carry.end()) {
-                            // §7.6(d) pre-erase capture — see the attribution site.
+                            // Pre-erase capture (§7.6(d)); see the attribution site.
                             if (config_.networkCycleSlipRelevelLaneSnap()) {
                                 ctx.carry.lane_t4_pre[lane_lk] = {
                                     lane_lit->second.value_abs,
@@ -1278,10 +1273,10 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                                     RelevelEpochState::kCauseT4Consens };
                                 ++ctx.counters.n_lane_t4_captured;
                             }
-                            // RF-1 §7.4 D3 — see the attribution site.
-                            // RF-1 step 4 — see the attribution site.
+                            // Entry record and bounded drop (RF-1 §7.4 D3, RF-1 step 4);
+                            // see the attribution site.
                             if (ctx.knobs.amb_float_kf) {
-                                // RF-3a A1 — see the attribution site.
+                                // Elevation-mapped floors (RF-3a A1); see the attribution site.
                                 const double e_pa = pa.elev_deg;
                                 const auto o_t3 = ambFloatDropFloored(
                                     lane_lit->second,
@@ -1308,10 +1303,10 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                                               lane_lit->second, "t3_consensus");
                             local_carry.erase(lane_lit);
                             }
-                            ++ctx.counters.n_cr_raim_consensus;   // census (C): T3 CONSENSUS refloat
+                            ++ctx.counters.n_cr_raim_consensus;   // census (C): T3 consensus refloat
                         }
                     }
-                    // Bookkeeping on the Card-4 path (see refloat_sat_at above); the real
+                    // Bookkeeping under carry_invariant (see refloat_sat_at above); the
                     // actuator there is the deferred funnel queue.
                     stations[i].sm->markAmbiguityPendingReseed(pa.amb_key);
                     if (raim_ci_refloat) {
@@ -1328,7 +1323,7 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                   "stations (σ̂0={:.2f}; a pre-processor-missed slip leaked into the shared "
                   "clock, caught by network redundancy).",
                   se.time.tow, n_refloat, flagged.size(), flist, raim_k, raim_min_sta, sigma0);
-        // T3: one event per consensus-refloated sat.  statistic = the per-sat max
+        // One T3 event per consensus-refloated sat.  statistic = the per-sat max
         // normalized post-fit residual (max r_max / σ̂0 over its stations), from amb_stats.
         if (events_trace.is_open()) {
             std::map<std::string, double> t3_norm;

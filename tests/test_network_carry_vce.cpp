@@ -1,17 +1,18 @@
-// M2 (LS-VCE carry-q monitor): unit tests for the standalone NetworkCarryVce
-// accumulator (include/filter/NetworkCarryVce.hpp) — the residual-form
-// variance-component estimator the network producer feeds carry-row innovations
-// into.  Both gates drive the class DIRECTLY with synthetic carry rows of KNOWN
-// truth (the standalone-class precedent of test_neq_accumulator / the M4
-// combined-sigma test); no ApplicationNetwork coupling.
+// Unit tests for the standalone NetworkCarryVce accumulator
+// (include/filter/NetworkCarryVce.hpp), the residual-form variance-component
+// estimator into which the network producer feeds carry-row innovations (M2, the
+// LS-VCE carry-q monitor).  The tests drive the class directly with synthetic
+// carry rows of known truth, as test_neq_accumulator and the M4 combined-sigma
+// test do for their classes; there is no ApplicationNetwork coupling.
 //
-//   Gate 1 (recovery)   — a deterministic 2-component fixture with known
-//                         (floor σ0, rate q); the estimator recovers BOTH within
-//                         a few percent and never yields a negative component.
-//   Gate 2 (gating)     — the SAME fixture plus an injected level shift; the
-//                         gated accumulator (contaminated epoch marked dirty)
-//                         stays unbiased, the ungated one is biased HIGH — which
-//                         documents why the clean-epoch gate exists.
+//   Gate 1 (recovery):  a deterministic 2-component fixture with known
+//                       (floor σ0, rate q); the estimator recovers the floor
+//                       within 5 % and the rate within 20 %, and yields no
+//                       negative component.
+//   Gate 2 (gating):    the same fixture plus an injected level shift; the
+//                       gated accumulator (contaminated epochs marked dirty)
+//                       stays unbiased, while the ungated one is biased high,
+//                       which is the reason for the clean-epoch gate.
 
 #include "filter/NetworkCarryVce.hpp"
 
@@ -63,8 +64,8 @@ TEST(NetworkCarryVce, RecoversTwoComponentsFromCleanFixture) {
     const double floor_true = 4.0e-5;   // m^2   (golden-class PL floor)
     const double rate_true  = 3.0e-7;   // m^2/s (nonzero so it is identifiable)
 
-    // Seed the a-priori DELIBERATELY WRONG (5x the true floor, zero rate) to
-    // prove the data — not the prior — drives the estimate.
+    // The a-priori seed is wrong on purpose (5x the true floor, zero rate), so
+    // the test shows that the data, not the prior, drives the estimate.
     NetworkCarryVce vce(/*families=*/{"pl"}, /*window_epochs=*/0.0,
                         /*split_by_const=*/true,
                         /*seed_floor=*/2.0e-4, /*seed_rate=*/0.0);
@@ -103,9 +104,10 @@ TEST(NetworkCarryVce, RecoversTwoComponentsFromCleanFixture) {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 1b: near-constant gaps make Floor and Rate collinear — the estimator
-// must stay well-behaved (rate pinned near its a-priori, Floor still recovered),
-// NOT blow up.  This exercises the separability guard.
+// Gate 1b: constant gaps make Floor and Rate collinear.  The estimator stays
+// well-behaved instead of diverging: the rate is frozen (held near its a-priori)
+// and non-negative, and the Floor is still recovered.  This exercises the
+// separability guard.
 // ---------------------------------------------------------------------------
 TEST(NetworkCarryVce, ConstantGapsFreezeRateButRecoverFloor) {
     const double floor_true = 4.0e-5;
@@ -131,14 +133,14 @@ TEST(NetworkCarryVce, ConstantGapsFreezeRateButRecoverFloor) {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 2: contaminated fixture — ungated is biased high, gated stays unbiased.
+// Gate 2: contaminated fixture; ungated is biased high, gated stays unbiased.
 // ---------------------------------------------------------------------------
 TEST(NetworkCarryVce, CleanEpochGatePreventsLevelShiftBias) {
     const double floor_true = 4.0e-5;
     const double rate_true  = 3.0e-7;
     const double shift_m    = 0.30;   // a re-level: 30 cm carry jump (many sigma)
 
-    // Two estimators fed IDENTICAL row streams; they differ only in whether the
+    // Two estimators fed identical row streams; they differ only in whether the
     // contaminated epochs are marked clean.
     NetworkCarryVce ungated({"pl"}, 0.0, true, 4.0e-5, 0.0);
     NetworkCarryVce gated  ({"pl"}, 0.0, true, 4.0e-5, 0.0);
@@ -179,12 +181,12 @@ TEST(NetworkCarryVce, CleanEpochGatePreventsLevelShiftBias) {
 }
 
 // ---------------------------------------------------------------------------
-// Robust (geometric-mean) floor: recovers the innovation variance AND shrugs
-// off a heavy outlier tail — the property that makes it the field-primary
-// statistic (the arithmetic mean is dominated by rare frame-churn re-levels).
+// Robust (geometric-mean) floor: recovers the innovation variance and is
+// insensitive to a heavy outlier tail.  That property makes it the primary field
+// statistic; the arithmetic mean is dominated by rare frame-churn re-levels.
 // ---------------------------------------------------------------------------
 TEST(NetworkCarryVce, RobustFloorRecoversVarianceAndResistsOutliers) {
-    const double s_true = 5.0e-4;   // m^2 — the true innovation variance (~2.2 cm)
+    const double s_true = 5.0e-4;   // m^2, the true innovation variance (sigma ~2.2 cm)
 
     NetworkCarryVce clean({"pl"}, 0.0, true, 4.0e-5, 0.0);
     NetworkCarryVce tailed({"pl"}, 0.0, true, 4.0e-5, 0.0);
@@ -192,8 +194,8 @@ TEST(NetworkCarryVce, RobustFloorRecoversVarianceAndResistsOutliers) {
     std::normal_distribution<double> nrm(0.0, std::sqrt(s_true));
     const int N = 60000;
     for (int i = 0; i < N; ++i) {
-        // Both estimators see the same clean draw; `tailed` additionally gets a
-        // rare (1%) decimetre-scale re-level — a 0.5 m innovation, ~500x sigma.
+        // Both estimators see the same clean draw; on 1 % of rows `tailed` gets a
+        // 0.5 m innovation instead (a re-level; ~22 sigma, 500x the variance).
         const double e = nrm(gen);
         // fold_var/post_var are arbitrary-but-valid; they do not enter robust_floor.
         clean.beginEpoch(i * 1.0, true);
@@ -212,8 +214,8 @@ TEST(NetworkCarryVce, RobustFloorRecoversVarianceAndResistsOutliers) {
     // Tailed: 1% of 0.5 m re-levels barely move the robust floor (<2x)...
     EXPECT_LT(et.robust_floor, 2.0 * s_true)
         << "robust_floor with outliers = " << et.robust_floor;
-    // ...while the arithmetic MEAN floor is blown up by them (here ~8x) and ends
-    // up many times the robust floor — exactly why the robust statistic is the
+    // ...while the arithmetic-mean floor is inflated by them (here ~8x) and ends
+    // up several times the robust floor.  That is why the robust statistic is the
     // field primary and the mean is the event-inclusive companion.
     EXPECT_GT(et.sigma[NetworkCarryVce::kFloor], 3.0 * s_true)
         << "mean floor with outliers = " << et.sigma[NetworkCarryVce::kFloor];

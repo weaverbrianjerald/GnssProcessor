@@ -1,44 +1,45 @@
 /**
  * @file test_level_information_budget.cpp
- * @brief The ionosphere-LEVEL information budget: cards LV-1 and LV-2
+ * @brief The ionosphere-level information budget: cards LV-1 and LV-2, plus the
+ *        LV-4 carry step screen and the LV-5 loader interlock
  *        (docs/SPEC_level_information_budget.md).
  *
- * Both cards are one line of arithmetic each, sitting on a path where a wrong
- * answer produces a plausible number rather than a crash — the spec asks for unit
- * coverage exactly there and nowhere else.  What is pinned here:
+ * Each card is a line or two of arithmetic on a path where a wrong answer
+ * produces a plausible number rather than a crash; the spec asks for unit
+ * coverage there and nowhere else.  Pinned here:
  *
  *   LV-1 (bias-free per-LOS iono seeding)
- *     1. The station-common offset is a MEDIAN, not a mean: one mis-tracked
- *        channel (the geometry-free code seed can be tens of metres off) must not
- *        move the frame every other line of sight is then born into.  A mean would
- *        pass a "does it return a number" test and fail this one.
- *     2. The min_sats FALLBACK is real: below the floor there is NO offset, and the
- *        caller must seed RAW and count it — a silently-zero offset would reframe
+ *     1. The station-common offset is a median, not a mean: one mis-tracked
+ *        channel (the geometry-free code seed can be tens of metres off) does not
+ *        move the frame every other line of sight is then born into.  A mean
+ *        would pass a "does it return a number" test and fail this one.
+ *     2. The min_sats fallback: below the floor there is no offset, and the caller
+ *        seeds raw and counts it.  A zero offset returned silently would reframe
  *        every station to its own single channel while reading as "reframed".
- *     3. The knob is INERT-SAFE: armed without an SH field there is nothing to
- *        seed into, and the loader must force it off and say so rather than let a
- *        run report a reframe it never performed (invariant #4).
+ *     3. The knob is inert-safe: armed without an SH field there is nothing to
+ *        seed into, so the loader forces it off and says so rather than let a run
+ *        report a reframe it never performed (invariant #4).
  *
  *   LV-2 (rx-CB carry common-mode de-mean)
- *     4. μ is the INFORMATION-weighted mean (Σλ·innov / Σλ), not the arithmetic
+ *     4. μ is the information-weighted mean (Σλ·innov / Σλ), not the arithmetic
  *        one.  With unequal λ the two differ, and only the weighted one makes the
- *        card's claim true.
- *     5. The identity it rests on, stated as the property it is: Σλ·(innov − μ) ≡ 0
- *        in DELTA coordinates, with every between-station DIFFERENCE keeping full
- *        stiffness (a uniform shift of all innovations moves μ by exactly that
- *        shift and leaves every demeaned innovation unchanged).  ⚠ That is NOT the
- *        same as leaving the common mode free — see the test's own note and
- *        SPEC §13; in absolute terms the de-meaned carry pins it to mean(x_lin).
- *     6. The thin-mean FREEZE (invariant #7's decoupling edge): below the
- *        contributing-station floor, or with no weight behind the sum, μ HOLDS its
+ *        card's claim hold.
+ *     5. The identity it rests on, stated as a property: Σλ·(innov − μ) ≡ 0 in
+ *        delta coordinates, with every between-station difference keeping full
+ *        stiffness (a uniform shift of all innovations moves μ by that shift and
+ *        leaves every demeaned innovation unchanged).  That is not the same as
+ *        leaving the common mode free: see the test's own note and §13 of the
+ *        spec; in absolute terms the de-meaned carry pins it to mean(x_lin).
+ *     6. The thin-mean freeze (invariant #7's decoupling edge): below the
+ *        contributing-station floor, or with no weight behind the sum, μ holds its
  *        previous value instead of adopting a mean nothing supports.
- *     7. Armed without the carry it modifies, the de-mean is forced off — there is
+ *     7. Armed without the carry it modifies, the de-mean is forced off: there is
  *        no fold to de-mean, and an armed-but-inert knob reads as working.
  *
- * The two arithmetic helpers are pure by construction (a static on
- * StateInitializer and an inline in NetworkRunTypes.hpp) precisely so this file
- * needs no estimator and no run loop; the contract tests load a minimal network
- * config the same way the other config-contract suites do.
+ * The arithmetic helpers are pure (a static on StateInitializer and inlines in
+ * NetworkRunTypes.hpp) so this file needs no estimator and no run loop; the
+ * contract tests load a minimal network config the same way the other
+ * config-contract suites do.
  */
 
 #include <gtest/gtest.h>
@@ -63,7 +64,7 @@ using namespace GnssProcessor;
 namespace {
 
 // ===========================================================================
-// LV-1 — the station-common seed offset
+// The station-common seed offset (LV-1)
 // ===========================================================================
 
 TEST(LevelInformationBudget, Lv1OffsetIsTheMedianOfTheRawSeeds) {
@@ -78,11 +79,11 @@ TEST(LevelInformationBudget, Lv1OffsetIsTheMedianOfTheRawSeeds) {
     EXPECT_DOUBLE_EQ(*m_even, 3.5);   // mean of the two central order statistics
 }
 
-// A single garbage channel is the failure mode the median exists for: the raw
-// geometry-free seed of a mis-tracked satellite is bounded only by the |seed| <
-// 200 m sanity check, so one sample can sit 100 m from the truth.  The mean
-// swallows it whole and drags the frame EVERY other LOS of that station is then
-// born into; the median does not move at all.
+// One bad channel is the case the median exists for: the raw geometry-free seed
+// of a mis-tracked satellite is bounded only by the |seed| < 200 m sanity check,
+// so one sample can sit 100 m from the truth.  The mean takes it in full and
+// shifts the frame every other LOS of that station is then born into; the median
+// barely moves.
 TEST(LevelInformationBudget, Lv1OffsetIsRobustToOneWildChannel) {
     const std::vector<double> clean{9.0, 10.0, 11.0, 10.5, 9.5};
     std::vector<double> polluted = clean;
@@ -111,7 +112,7 @@ TEST(LevelInformationBudget, Lv1BelowMinSatsThereIsNoOffsetAtAll) {
     std::vector<double> none;
     EXPECT_FALSE(StateInitializer::stationSeedOffset(none, 5).has_value());
 
-    // A degenerate floor still needs one sample — never "median of nothing".
+    // A degenerate floor still needs one sample: there is no median of nothing.
     std::vector<double> one{7.0};
     const auto m_one = StateInitializer::stationSeedOffset(one, 0);
     ASSERT_TRUE(m_one.has_value());
@@ -119,7 +120,7 @@ TEST(LevelInformationBudget, Lv1BelowMinSatsThereIsNoOffsetAtAll) {
 }
 
 // ===========================================================================
-// LV-2 — the information-weighted common-mode mean
+// The information-weighted common-mode mean (LV-2)
 // ===========================================================================
 
 TEST(LevelInformationBudget, Lv2MuIsInformationWeightedNotArithmetic) {
@@ -135,16 +136,15 @@ TEST(LevelInformationBudget, Lv2MuIsInformationWeightedNotArithmetic) {
 }
 
 // The identity the card rests on, as a property: after de-meaning, the folded RHS
-// sums to zero along the common-mode direction IN DELTA COORDINATES, and every
+// sums to zero along the common-mode direction in delta coordinates, and every
 // between-station difference is untouched.
 //
-// ⚠ Read the scope right (SPEC §13, measured 2026-08-05).  This identity does NOT
-// mean the common mode is left free: the de-mean moves the RHS, never the fold's
-// information, so in ABSOLUTE terms the targets' weighted mean becomes mean(x_lin)
-// — the carry re-pins the common mode to the frozen first-epoch seed frame instead
-// of re-asserting last epoch's realization.  What the identity buys is the removal
-// of the FEEDBACK, which is exactly why the lag mattered (LV-5).  Do not let this
-// test be read as proof of a free frame; it proves the arithmetic, not the claim.
+// Scope (§13 of the spec, measured): the identity does not mean the common mode is
+// left free.  The de-mean moves the RHS, not the fold's information, so in absolute
+// terms the targets' weighted mean becomes mean(x_lin): the carry re-pins the common
+// mode to the frozen first-epoch seed frame instead of re-asserting last epoch's
+// realization.  What the identity removes is the feedback, which is why the lag
+// matters (LV-5).  This test proves the arithmetic, not a free frame.
 TEST(LevelInformationBudget, Lv2DemeanedFoldsSumToZeroInDeltaCoordinates) {
     const std::vector<double> lam{100.0, 25.0, 4.0, 400.0, 1.0, 64.0, 9.0, 36.0};
     const std::vector<double> innov{-1.20, 0.35, 2.75, -0.40, 5.00, 0.05, -3.10, 0.90};
@@ -159,7 +159,7 @@ TEST(LevelInformationBudget, Lv2DemeanedFoldsSumToZeroInDeltaCoordinates) {
                                   static_cast<int>(lam.size()), 8, 0.0);
     ASSERT_TRUE(red.fresh);
 
-    // Σλ(innov − μ) = 0 — the fold's summed RHS along the common-mode direction.
+    // Σλ(innov − μ) = 0: the fold's summed RHS along the common-mode direction.
     double net = 0.0;
     for (std::size_t i = 0; i < lam.size(); ++i) net += lam[i] * (innov[i] - red.mu);
     EXPECT_NEAR(net, 0.0, 1e-9 * s_lam);
@@ -171,8 +171,8 @@ TEST(LevelInformationBudget, Lv2DemeanedFoldsSumToZeroInDeltaCoordinates) {
         EXPECT_DOUBLE_EQ(dm_diff, raw_diff);
     }
 
-    // A COHERENT FRAME MOVE (every station shifts by the same amount — the
-    // flywheel this card removes) moves μ by exactly that amount and leaves every
+    // A coherent frame move (every station shifts by the same amount: the
+    // common-mode feedback LV-2 removes) moves μ by that amount and leaves every
     // demeaned innovation, and therefore every folded prior, unchanged.
     constexpr double kShift = 0.37;
     double s2 = 0.0;
@@ -187,18 +187,18 @@ TEST(LevelInformationBudget, Lv2DemeanedFoldsSumToZeroInDeltaCoordinates) {
 TEST(LevelInformationBudget, Lv2ThinEpochFreezesMuInsteadOfTrustingIt) {
     constexpr double kPrev = -0.25;
 
-    // Below the contributing-station floor: HOLD, do not adopt.
+    // Below the contributing-station floor: hold, do not adopt.
     const auto thin = rxCbDemeanMu(/*sum_lam_innov=*/7.0, /*sum_lam=*/2.0,
                                    /*n_sta=*/3, /*min_sta=*/8, kPrev);
     EXPECT_FALSE(thin.fresh);
-    EXPECT_DOUBLE_EQ(thin.mu, kPrev);   // NOT 3.5
+    EXPECT_DOUBLE_EQ(thin.mu, kPrev);   // not 3.5
 
     // At the floor it is fresh (the floor is inclusive).
     const auto at_floor = rxCbDemeanMu(7.0, 2.0, 8, 8, kPrev);
     EXPECT_TRUE(at_floor.fresh);
     EXPECT_DOUBLE_EQ(at_floor.mu, 3.5);
 
-    // No weight behind the sum is not a measurement — freeze.
+    // No weight behind the sum is not a measurement: freeze.
     EXPECT_FALSE(rxCbDemeanMu(0.0, 0.0, 60, 8, kPrev).fresh);
     EXPECT_DOUBLE_EQ(rxCbDemeanMu(0.0, 0.0, 60, 8, kPrev).mu, kPrev);
     EXPECT_FALSE(rxCbDemeanMu(1.0, -3.0, 60, 8, kPrev).fresh);   // negative Σλ is impossible ⇒ reject
@@ -212,9 +212,9 @@ TEST(LevelInformationBudget, Lv2ThinEpochFreezesMuInsteadOfTrustingIt) {
     EXPECT_DOUBLE_EQ(rxCbDemeanMu(inf, 10.0, 60, 8, kPrev).mu, kPrev);
 }
 
-// A cold start has no previous μ: the first epoch injects UN-demeaned (μ = 0),
-// which is one epoch of legacy behaviour by design, and the record must say
-// "frozen" rather than pretend a frame was measured.
+// A cold start has no previous μ: the first epoch injects without de-meaning
+// (μ = 0), one epoch of the unarmed behaviour by design, and the record says
+// "frozen" rather than implying a frame was measured.
 TEST(LevelInformationBudget, Lv2ColdStartHoldsZeroAndSaysSo) {
     const auto cold = rxCbDemeanMu(0.0, 0.0, 0, 8, /*prev_mu=*/0.0);
     EXPECT_FALSE(cold.fresh);
@@ -222,18 +222,18 @@ TEST(LevelInformationBudget, Lv2ColdStartHoldsZeroAndSaysSo) {
 }
 
 // ===========================================================================
-// LV-4 — the frame-INVARIANT carry screen
+// The frame-invariant carry screen (LV-4)
 // ===========================================================================
 //
 // The claim is a symmetry, so it is tested as one: shifting the linearization
-// point (which the network solve is invariant to, and which the absolute
-// estimates therefore absorb) must not change the screen's verdict.  The retired
-// statistic fails exactly that test, and the second case below pins the failure
-// so nobody reinstates it by accident.
+// point (to which the network solve is invariant, and which the absolute estimates
+// therefore absorb) does not change the screen's verdict.  The retired statistic
+// fails that test, and a case below pins the failure so that it is not reinstated
+// by accident.
 
-// A quiet 61-station epoch: everyone re-realizes by ~±1 m (this is what the network
-// actually does at ignition), and ONE receiver steps by 30 m.  The screen must find
-// exactly that one — and must do so identically in any linearization frame.
+// A quiet 61-station epoch: every station re-realizes by about ±1 m (what the
+// network does at ignition), and one receiver steps by 30 m.  The screen finds
+// that one, identically in any linearization frame.
 std::vector<double> quietSteps() {
     std::vector<double> s;
     for (int i = 0; i < 60; ++i) s.push_back(0.9 * std::sin(0.7 * i) + 0.1);
@@ -251,9 +251,9 @@ TEST(LevelInformationBudget, Lv4StepScreenIsInvariantToTheLinearizationFrame) {
     for (std::size_t i = 0; i + 1 < steps.size(); ++i)
         EXPECT_FALSE(rxCbStepVerdict(steps[i], scale, 10.0).jumped) << "i=" << i;
 
-    // FRAME INVARIANCE.  Shifting x_lin by δ shifts every ABSOLUTE estimate by δ
-    // (x_abs = x_lin + x_r is what the solve preserves), so every STEP — a
-    // difference of two absolutes at the same station — is unchanged, and with it
+    // Frame invariance.  Shifting x_lin by δ shifts every absolute estimate by δ
+    // (x_abs = x_lin + x_r is what the solve preserves), so every step (a
+    // difference of two absolutes at the same station) is unchanged, and with it
     // the scale, the z and the verdict.  The retired screen changes by δ itself.
     // Checked to a relative tolerance, not bit-for-bit: the differencing still
     // carries ordinary cancellation.
@@ -270,9 +270,9 @@ TEST(LevelInformationBudget, Lv4StepScreenIsInvariantToTheLinearizationFrame) {
     }
 }
 
-// A step COMMON to the whole network is a frame move, not N simultaneous receiver
-// resets — the same distinction LV-2 draws for the fold.  Adding a constant to
-// every station must change nothing about who is flagged.
+// A step common to the whole network is a frame move, not N simultaneous receiver
+// resets: the same distinction LV-2 draws for the fold.  Adding a constant to
+// every station changes nothing about which station is flagged.
 TEST(LevelInformationBudget, Lv4CommonModeStepIsNotAnEvent) {
     std::vector<double> steps = quietSteps();
     steps.push_back(30.0);
@@ -292,11 +292,13 @@ TEST(LevelInformationBudget, Lv4CommonModeStepIsNotAnEvent) {
     EXPECT_TRUE(rxCbStepVerdict(moved.back(), shifted, 10.0).jumped);
 }
 
-// WHY THE SCALE MUST BE ROBUST — the measured failure, pinned.  A formal-σ test
-// (σ ≈ 0.52 m from var + guard) calls the network's ordinary metre-class
-// re-realization a jump: on the real arm it erased 432 of 777 carried entries and
-// the level went unstable.  The MAD scale adapts to what the epoch is actually
-// doing, so the same population yields exactly one flag.
+// The scale is robust because a formal-σ test (σ ≈ 0.52 m from var + guard) calls
+// the network's ordinary metre-class re-realization a jump; on field data it erased
+// most carried entries and the level went unstable.  The MAD scale adapts to the
+// epoch's own spread (here above the 0.52 m floor) and flags only the one real
+// step.  On this synthetic population the formal scale also flags only the 30 m
+// step, so the test pins the robust result and that it flags no more than the
+// formal scale; it does not reproduce the field failure.
 TEST(LevelInformationBudget, Lv4RobustScaleSurvivesMetreClassReRealization) {
     std::vector<double> steps = quietSteps();
     steps.push_back(30.0);
@@ -308,13 +310,13 @@ TEST(LevelInformationBudget, Lv4RobustScaleSurvivesMetreClassReRealization) {
     int formal_flags = 0, robust_flags = 0;
     for (double e : steps) {
         if (std::abs(e) > 10.0 * 0.52) ++formal_flags;                 // the retired scale
-        if (rxCbStepVerdict(e, scale, 10.0).jumped) ++robust_flags;    // this card's
+        if (rxCbStepVerdict(e, scale, 10.0).jumped) ++robust_flags;    // the LV-4 scale
     }
     EXPECT_EQ(robust_flags, 1);
     EXPECT_GE(formal_flags, 1);
     EXPECT_GE(formal_flags, robust_flags);
 
-    // …but the floor still protects a freakishly quiet epoch from hypersensitivity.
+    // The floor still keeps an unusually quiet epoch from becoming hypersensitive.
     std::vector<double> tiny(40, 0.0);
     for (std::size_t i = 0; i < tiny.size(); ++i) tiny[i] = 1e-6 * static_cast<double>(i % 3);
     std::vector<double> w = tiny;
@@ -324,7 +326,7 @@ TEST(LevelInformationBudget, Lv4RobustScaleSurvivesMetreClassReRealization) {
     EXPECT_FALSE(rxCbStepVerdict(1.0, quiet, 10.0).jumped);   // 1 m < 10·0.52
 }
 
-// Invariant #7: a thin epoch must not define what "normal" is.
+// Invariant #7: a thin epoch does not define what "normal" is.
 TEST(LevelInformationBudget, Lv4ThinEpochStandsTheScreenDown) {
     std::vector<double> few{0.1, -0.2, 40.0};
     const auto scale = rxCbStepScale(few, 0.15, /*min_n=*/8);
@@ -333,10 +335,10 @@ TEST(LevelInformationBudget, Lv4ThinEpochStandsTheScreenDown) {
     EXPECT_EQ(scale.n, 3);
 }
 
-// THE DEFECT, pinned.  The retired inject test compares a carried ABSOLUTE value
-// with x_lin — one absolute quantity and one frozen frame — so a station whose
-// first-epoch seed simply landed 6 m away is withheld forever, with no receiver
-// event anywhere.  Same numbers, both screens, opposite answers.
+// The retired inject test compares a carried absolute value with x_lin (one
+// absolute quantity against one frozen frame), so a station whose first-epoch seed
+// landed 6 m away is withheld on every epoch with no receiver event anywhere.  The
+// same numbers give opposite answers under the two screens.
 TEST(LevelInformationBudget, Lv4RetiredFrameScreenWithholdsAQuietReceiverForever) {
     constexpr double kVar = 1e-2, kQ = 1e-9, kGap = 30.0, kK = 10.0, kGuard = 0.25;
     constexpr double kXlin = -6.0;        // where the first-epoch seed happened to land
@@ -345,7 +347,7 @@ TEST(LevelInformationBudget, Lv4RetiredFrameScreenWithholdsAQuietReceiverForever
     double var_eff = 0.0;
     const double frame_innov = kAbsPrev - kXlin;        // 6.02 m of pure frame
     EXPECT_EQ(rxCbInjectGate(kGap, 900.0, kVar, kQ, frame_innov, kK, kGuard, var_eff),
-              RxCbInjectAction::SkipInnov);             // withheld — nothing happened
+              RxCbInjectAction::SkipInnov);             // withheld, though nothing happened
 
     // The same row, judged on the invariant step against its peers: quiet, folds.
     std::vector<double> peers = quietSteps();
@@ -359,7 +361,7 @@ TEST(LevelInformationBudget, Lv4RetiredFrameScreenWithholdsAQuietReceiverForever
               RxCbInjectAction::Fold);
     EXPECT_GT(var_eff, 0.0);              // the frame-free checks still ran
 
-    // Disabling the innovation test does NOT disable the frame-free ones.
+    // Disabling the innovation test leaves the frame-free ones in place.
     var_eff = 0.0;
     EXPECT_EQ(rxCbInjectGate(/*gap_s=*/5000.0, 900.0, kVar, kQ, 0.0, kK, kGuard, var_eff,
                              /*innov_test=*/false),
@@ -391,15 +393,15 @@ TEST(LevelInformationBudget, Lv4DegenerateInputReportsNoJump) {
     EXPECT_FALSE(rxCbStepVerdict(nan, scale, 10.0).jumped);
     EXPECT_FALSE(rxCbStepVerdict(inf, scale, 10.0).jumped);
 
-    // An all-identical population has zero MAD, so the FLOOR is what stands: the
-    // scale must never be zero (that would divide every step by nothing).
+    // An all-identical population has zero MAD, so the floor sets the scale; the
+    // scale is never zero (that would divide every step by zero).
     std::vector<double> flat(30, 2.5);
     const auto degenerate = rxCbStepScale(flat, 0.15, 8);
     ASSERT_TRUE(degenerate.valid);
     EXPECT_DOUBLE_EQ(degenerate.sigma, 0.15);
     EXPECT_DOUBLE_EQ(degenerate.median, 2.5);
 
-    // …and with no floor at all the scale is invalid rather than infinite-power.
+    // With no floor at all the scale is invalid rather than infinitely sensitive.
     std::vector<double> flat2(30, 2.5);
     const auto no_floor = rxCbStepScale(flat2, 0.0, 8);
     EXPECT_FALSE(no_floor.valid);
@@ -407,7 +409,7 @@ TEST(LevelInformationBudget, Lv4DegenerateInputReportsNoJump) {
 }
 
 // ===========================================================================
-// Loader contract — the knobs are OFF by default and INERT-SAFE when armed
+// Loader contract: the knobs are off by default and forced off when armed
 // without the mechanism they modify (standing invariant #4)
 // ===========================================================================
 
@@ -454,9 +456,9 @@ TEST(LevelInformationBudget, BothKnobsDefaultOff) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-// No field ⇒ no frame to seed into.  The reframe must not stay "armed" while
-// doing nothing: a run whose log says LV-1 is on and whose seeds are all still in
-// the receiver's bias-in frame is exactly the failure invariant #4 names.
+// No field ⇒ no frame to seed into.  The reframe does not stay armed while doing
+// nothing: a run whose log says LV-1 is on while its seeds all remain in the
+// receiver's bias-in frame is the failure invariant #4 names.
 TEST(LevelInformationBudget, Lv1IsForcedOffWithoutAnShField) {
     LogManager log;
     const fs::path p = writeTempConfig("lv1_nofield",
@@ -522,7 +524,7 @@ TEST(LevelInformationBudget, Lv2SurvivesWithTheCarry) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-// LV-5 rides on LV-2: with no de-mean there is no μ to compute early.
+// The LV-5 knob depends on LV-2: with no de-mean there is no μ to compute early.
 TEST(LevelInformationBudget, Lv5IsForcedOffWithoutTheDemean) {
     LogManager log;
     const fs::path p = writeTempConfig("lv5_nodemean",
@@ -575,7 +577,7 @@ TEST(LevelInformationBudget, Lv4SurvivesWithTheCarryAndRejectsANonPositiveK) {
     EXPECT_TRUE(cfg.networkRxCbCarryStepGate());
     EXPECT_DOUBLE_EQ(cfg.networkRxCbCarryStepKSigma(), 6.0);
 
-    // k <= 0 would erase every carried bias on every epoch — hard error, not a clamp.
+    // k <= 0 would erase every carried bias on every epoch: a hard error, not a clamp.
     const fs::path bad = writeTempConfig("lv4_badk",
         networkConfig("    \"code_datum_time_linked\": true,\n"
                       "    \"carry_rx_code_bias\": true,\n"

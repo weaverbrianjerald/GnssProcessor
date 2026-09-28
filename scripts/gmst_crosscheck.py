@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """Cross-check GnssProcessor's two independent GMST implementations against
-each other and against the cssrlib/RTKLIB form, for the SAME UT1 input.
+each other and against the cssrlib/RTKLIB form, for the same UT1 input.
 
 GnssProcessor computes GMST in two places with two different (both standard
 IAU-1982) algebraic forms:
 
-  A. Planetary::utc2gmst  — "split" form: GMST at 0h UT1 + 1.00273790935·UT.
-  B. GnssCorrections::computeFundamentalArguments — "continuous" form:
+  A. Planetary::utc2gmst, the "split" form: GMST at 0h UT1 + 1.00273790935·UT.
+  B. GnssCorrections::computeFundamentalArguments, the "continuous" form:
        gmst = 67310.54841 + (3155760000 + 8640184.812866)·T + 0.093104·T²
               − 6.2e-6·T³   [seconds], T = UT1 centuries from J2000.
 
-If both are faithful IAU-1982 GMST they must agree to ~µs for any UT1.
-A divergence beyond rounding means one has a transcription bug.
+If both are faithful IAU-1982 GMST they must agree to about a microsecond for
+any UT1. A divergence beyond rounding means one has a transcription bug.
 
-Usage:  python scripts/gmst_crosscheck.py
+Usage: python scripts/gmst_crosscheck.py
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ TWO_PI = 2.0 * math.pi
 
 
 def gmst_split(ut1_jd):
-    """Form A — Planetary::utc2gmst."""
+    """Form A: Planetary::utc2gmst."""
     tut0 = (math.floor(ut1_jd - 0.5) + 0.5 - J2000_JD) / CY      # centuries at 0h UT1
     gmst0 = (24110.54841 + 8640184.812866 * tut0
              + 0.093104 * tut0 * tut0 - 6.2e-6 * tut0**3)         # seconds
@@ -36,7 +36,7 @@ def gmst_split(ut1_jd):
 
 
 def gmst_continuous(ut1_jd):
-    """Form B — GnssCorrections::computeFundamentalArguments."""
+    """Form B: GnssCorrections::computeFundamentalArguments."""
     T = (ut1_jd - J2000_JD) / CY                                 # UT1 centuries from J2000
     gmst_sec = math.fmod(67310.54841
                          + (3155760000.0 + 8640184.812866) * T

@@ -1,7 +1,7 @@
-"""Satellite-status strip viewer -- the port of ``view_satellite_strip.m``.
+"""Satellite-status strip viewer: the port of ``view_satellite_strip.m``.
 
 (satellite x epoch) raster of per-satellite status from
-``satellite_status_trace.csv`` -- one tile per constellation, built on the shared
+``satellite_status_trace.csv``, one tile per constellation, built on the shared
 :func:`gnssviz.strip.build_sat_epoch_strip` renderer.  ``plot_value`` selects:
   * ``'status'``       -> categorical processing status (Clean/Pivot/...);
   * ``'elevation'``    -> elevation_deg [0..90] (viridis);

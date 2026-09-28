@@ -32,9 +32,9 @@ void SoftLliBridge::recordSnapshot(const StateManager& state_manager,
         const auto i = static_cast<Eigen::Index>(idx);
         if (i < 0 || i >= x.size()) continue;
         const double var = state_manager.getStateVariance(static_cast<int>(idx));
-        // Skip mid-reset / not-yet-converged keys: a fresh reset (var ~1e6)
-        // must NOT overwrite the last genuinely-converged snapshot — that
-        // snapshot is precisely the pre-gap anchor a later soft-LLI hold needs.
+        // Skip mid-reset and not-yet-converged keys, so a fresh reset (var ~1e6)
+        // does not overwrite the last converged snapshot, which is the pre-gap
+        // anchor a later soft-LLI hold needs.
         if (!(std::isfinite(var) && var >= 0.0) || var > kSnapshotMaxVariance)
             continue;
         last_good_amb_[key] = AmbSnapshot{ x(i), var, epoch_now_s };
@@ -49,10 +49,10 @@ std::set<std::string> SoftLliBridge::heldKeys() const {
 
 bool SoftLliBridge::qualifies(const std::string& sat_id, double epoch_now_s) const {
     if (!enabled()) return false;
-    // High-rate only — the bridge's across-gap GF jump is iono-coherent only at
+    // High rate only: the bridge's across-gap GF jump is iono-coherent only at
     // high rate (mirrors TurboEditResolver::kHighRateMaxIntervalS = 1 s).  Use
     // the declared interval when known, else the measured spacing to the
-    // previous epoch (SBF/RTCM streams carry no interval header → declared 0).
+    // previous epoch (SBF/RTCM streams carry no interval header, so declared 0).
     const double measured_dt =
         (prev_epoch_s_ > 0.0 && epoch_now_s > prev_epoch_s_)
             ? (epoch_now_s - prev_epoch_s_) : 0.0;
@@ -71,20 +71,20 @@ void SoftLliBridge::registerHold(const std::string& sat_id,
     auto log = log_manager_.getLogger("cycle_slip_manager");
     const double cap = config_.getCycleSlipConfig().turbo_edit_max_gap_s;
 
-    // Hold every phase signal of this satellite that carries a RECENT pre-gap
-    // snapshot — not only the signals still in the LLI reset set (@p amb_keys).
-    // The signal that actually slipped is often the one that DROPPED first (its
-    // carrier vanished an epoch before the LLI fired) and is already pruned out
-    // of @p amb_keys; without holding it from the snapshot the bridge would
-    // moot it and the precise integer repair would be lost.  The recency gate
-    // (snapshot within the bridge cap) excludes long-untracked signals.
+    // Hold every phase signal of this satellite that has a recent pre-gap
+    // snapshot, in addition to the signals still in the LLI reset set
+    // (@p amb_keys).  The signal that slipped is often the one that dropped
+    // first (its carrier vanished an epoch before the LLI fired) and is already
+    // pruned out of @p amb_keys; unless it is held from the snapshot, the bridge
+    // moots it and its integer repair is lost.  The recency gate (snapshot
+    // within the bridge cap) excludes long-untracked signals.
     std::set<std::string> candidate_keys = amb_keys;
     const std::string prefix = sat_id + "_";
     for (const auto& [key, snap] : last_good_amb_) {
         if (key.rfind(prefix, 0) != 0) continue;
         if (epoch_now_s > 0.0 && snap.epoch_s > 0.0 &&
             (epoch_now_s - snap.epoch_s) > cap)
-            continue;  // stale — sat is not actively tracking this signal
+            continue;  // stale: sat is not actively tracking this signal
         candidate_keys.insert(key);
     }
 
@@ -142,7 +142,7 @@ void SoftLliBridge::registerGapHolds(const std::vector<PppObservation>& modeled_
         if (snap == last_good_amb_.end()) continue;              // never converged
         if (epoch_now_s > 0.0 && snap->second.epoch_s > 0.0 &&
             (epoch_now_s - snap->second.epoch_s) > cap)
-            continue;  // stale (long-untracked / unconverged) — normal prune
+            continue;  // stale (long-untracked / unconverged): normal prune
         const std::string sat = amb_key.substr(0, amb_key.find('_'));
         if (!qualifies(sat, epoch_now_s)) continue;
         if (is_bssd_pivot && is_bssd_pivot(sat)) continue;
@@ -177,21 +177,22 @@ void SoftLliBridge::resolveHolds(const TurboEditResolver::EpochResolution& te,
     std::map<std::string, std::vector<const TurboEditResolver::SignalRepair*>> reps_by_sat;
     for (const auto& r : te.repairs) reps_by_sat[r.satellite].push_back(&r);
 
-    // Held keys grouped by satellite (adjudication is sat-granular; the
-    // timeout below is per KEY from each hold's own start).
+    // Held keys grouped by satellite (adjudication is per satellite; the
+    // timeout below is per key, from each hold's own start).
     std::map<std::string, std::vector<std::string>> keys_by_sat;
     for (const auto& [k, h] : held_pending_bridge_) {
         keys_by_sat[h.sat].push_back(k);
     }
 
     // Overwrite an ambiguity with (anchor + dN·λ) at the snapshot variance,
-    // cross-covariances zeroed.  The anchor is the held snapshot when present;
-    // for a signal that dropped BEFORE the LLI reset captured it (never
-    // formally held) the rolling last_good_amb_ snapshot is used.  This
-    // reconstructs the satellite's CURRENT integer ambiguity from its pre-gap
-    // value plus the bridge-resolved carrier change (valid whether the gap was
-    // a slip with lock held or a re-acquisition — dN absorbs either) at the
-    // pre-gap precision rather than a loose reset.
+    // cross-covariances zeroed; the variance falls back to the reset variance
+    // when the snapshot's is unusable and is floored at 1e-6.  The anchor is
+    // the held snapshot when present; for a signal that dropped before the LLI
+    // reset captured it (never formally held) the rolling last_good_amb_
+    // snapshot is used.  This reconstructs the satellite's current integer
+    // ambiguity from its pre-gap value plus the bridge-resolved carrier change
+    // (valid for a slip with lock held and for a re-acquisition, since dN
+    // absorbs either) at the pre-gap precision instead of a loose reset.
     auto applyRestore = [&](const std::string& amb_key, const std::string& sat,
                             const std::string& sig, int dN, double lambda) -> bool {
         const int idx = state_manager.getAmbiguityIndex(amb_key);
@@ -245,11 +246,11 @@ void SoftLliBridge::resolveHolds(const TurboEditResolver::EpochResolution& te,
             continue;
         }
         if (sat_repaired) {
-            // A restore can fail only abnormally: the held state vanished
-            // (a prune-protection gap) or both anchors are gone.  Silently
-            // erasing the hold would leave the ambiguity at whatever loose /
-            // freshly-seeded value it has — neither repaired nor reset — so
-            // the failure path is LOUD and falls back to the normal reset.
+            // A restore fails only abnormally: the held state vanished (a
+            // prune-protection gap), both anchors are gone, or a nonzero dN has
+            // no wavelength.  Erasing the hold alone would leave the ambiguity
+            // at its loose or freshly seeded value, neither repaired nor reset,
+            // so a failure logs a warning and falls back to the normal reset.
             auto restoreOrReset = [&](const std::string& amb_key,
                                       const std::string& sig,
                                       int dN, double lambda) -> bool {
@@ -262,9 +263,9 @@ void SoftLliBridge::resolveHolds(const TurboEditResolver::EpochResolution& te,
                 ++n_reset;
                 return false;
             };
-            // Signals the repair loop already actioned (restored OR
-            // reset-fallback) — the dN = 0 partner loop must not touch them
-            // again, or a failed restore would be double-reset.
+            // Signals the repair loop already handled (restored or reset by
+            // the fallback).  The dN = 0 partner loop skips them, so a failed
+            // restore is not reset twice.
             std::set<std::string> actioned_sigs;
             bool any = false;
             for (const auto* r : rit->second) {
@@ -273,9 +274,9 @@ void SoftLliBridge::resolveHolds(const TurboEditResolver::EpochResolution& te,
                 if (restoreOrReset(rk, r->signal, r->dN, r->lambda))
                     any = true;
             }
-            // A held signal the bridge did NOT flag this epoch did not slip
-            // (no GF/MW exceedance) — restore its converged pre-gap value
-            // (dN = 0) rather than leaving it at the loose LLI reset.
+            // A held signal the bridge did not flag this epoch did not slip
+            // (no GF/MW exceedance): restore its converged pre-gap value
+            // (dN = 0) instead of leaving it at the loose LLI reset.
             for (const auto& k : keys) {
                 const std::string sig = signalOf(k);
                 if (actioned_sigs.count(sig)) continue;
@@ -290,24 +291,22 @@ void SoftLliBridge::resolveHolds(const TurboEditResolver::EpochResolution& te,
         }
         // A WL-settle deferral extends the hold past the base cap: the
         // resolver is waiting for the post-restart MW mean to settle and
-        // owns the timing (it will emit repairs or reset_sats).  The
-        // absolute backstop cap + settle window guards against a pending
-        // flag that dies without an adjudication (e.g. an external arc
-        // erase) — holds must never dangle unbounded.
+        // owns the timing (it emits repairs or reset_sats).  The backstop
+        // of cap plus settle window bounds a hold whose pending flag ends
+        // without an adjudication (e.g. an external arc erase), so no hold
+        // stays open indefinitely.
         const double settle_max =
             config_.getCycleSlipConfig().turbo_edit_wl_settle_max_s;
         const double cap_eff =
             te.pending_sats.count(sat) ? cap + settle_max : cap;
-        // Per-KEY timeout: each held signal gets the full cap from its OWN
-        // hold start.  A signal that drops into an existing outage late
-        // must not inherit the group's nearly-spent timer (the motivating
-        // field case group-reset a 10 s-old L2L hold on a 60 s-old L1C/L2W
-        // timer, one epoch before the L2L phase returned).  An expired key
-        // takes the path-specific reset AND has its resolver state voided
-        // (held-continuous assertion + touching GF arcs): its integer
-        // continuity is broken, so a later bridged adjudication must not
-        // treat the signal as continuous.  Keys within their window keep
-        // holding (measurements stay excluded).
+        // Per-key timeout: each held signal gets the full cap from its own
+        // hold start, so a signal that drops late into an existing outage
+        // does not inherit the group's nearly spent timer.  An expired key
+        // takes the path-specific reset and has its resolver state voided
+        // (the held-continuous assertion and the GF arcs touching the
+        // signal): its integer continuity is broken, so a later bridged
+        // adjudication must not treat the signal as continuous.  Keys within
+        // their window stay held (measurements stay excluded).
         std::string expired_sigs;
         double max_elapsed = 0.0;
         std::size_t n_expired = 0;

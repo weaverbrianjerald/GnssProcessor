@@ -37,7 +37,7 @@ def test_carry_dominated_sat_named(tmp_path):
         # G13 is carry-dominated (locked in): carry_frac pinned high, data starved.
         rows.append(_row(tow, "G13", anchor=0.1, carry=9.0, data=0.2,
                          carry_frac=0.97, anchor_frac_data=0.05))
-        # G20 is healthy: fresh data dominates, carry low.
+        # G20 is data-dominated: fresh data dominates, carry low.
         rows.append(_row(tow, "G20", anchor=0.1, carry=1.0, data=8.0,
                          carry_frac=0.20, anchor_frac_data=0.02))
     _write(tmp_path, rows)
@@ -64,7 +64,7 @@ def test_pivot_rows_excluded(tmp_path):
     rows = []
     for k in range(12):
         tow = 259200 + 30 * k
-        # Pivot sat looks "locked" (data_info inflated by the pin) but is EXCLUDED.
+        # Pivot sat looks "locked" (data_info inflated by the pin) but is excluded.
         rows.append(_row(tow, "G01", anchor=5.0, carry=9.0, data=50.0,
                          carry_frac=0.99, anchor_frac_data=0.4, is_pivot=1))
         rows.append(_row(tow, "G20", anchor=0.1, carry=1.0, data=8.0,

@@ -1,23 +1,23 @@
 """Field-arm grader: closed-loop consumer ENU/3D + fleet ZWD span, settled window.
 
-Built for the FIELD ZWD-in-block arm (SPEC_amb_iono_split_overcount.md 6.16.7d Arm F2),
+Built for the field ZWD-in-block arm (SPEC_amb_iono_split_overcount.md 6.16.7d Arm F2),
 where the graded quantities are
 
-  * consumer  -- runs/<arm>/logs/closed_loop_trace.csv, columns
+  * consumer: runs/<arm>/logs/closed_loop_trace.csv, columns
                  tow, pos_err_3d_m, east_m, north_m, up_m.  Reported settled
                  (tow >= t0 + settle_h*3600): 3D rms / p50, and per-component
-                 mean / sd / rms.  The UP MEAN is the vertical DC bias -- the
+                 mean / sd / rms.  The up mean is the vertical DC bias, the
                  quantity the in-block ZWD vehicle removes.
-  * fleet ZWD -- runs/<arm>/logs/network_zwd.csv, columns tow, station, zwd_m.
-                 Per-station SPAN = max - min over the settled window; the fleet
+  * fleet ZWD: runs/<arm>/logs/network_zwd.csv, columns tow, station, zwd_m.
+                 Per-station span (max - min) over the settled window; the fleet
                  statistic is the median span across stations plus the counts over
                  2 m and 10 m (the pre-registered gates).
-  * corr(UP, ZWD deviation of one station) -- Pearson r between the consumer's
+  * corr(up, ZWD deviation of one station): Pearson r between the consumer's
                  up_m and a named station's ZWD minus its own settled mean, on the
                  epochs the two traces share.  This is the "producer ZWD sink
                  reaches the consumer through the wire" instrument
-                 (project_zwd_sink_census_2026-09-09); positive/zero means the
-                 sink is not steering the vertical.
+                 (project_zwd_sink_census_2026-09-09); a positive or zero value
+                 means the sink is not steering the vertical.
 
 t0 defaults to the first tow in the consumer trace, so a run needs no date knobs.
 

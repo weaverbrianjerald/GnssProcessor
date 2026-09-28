@@ -13,11 +13,11 @@ Each cell gets:
 Concurrency model
 ============================================================
 
-Days are processed strictly in order.  Within each day:
-  1. Station[0] runs SERIALLY.  This is the only path that may need
-     to download products from CDDIS — letting it complete first
+Days are processed strictly in order. Within each day:
+  1. Station[0] runs serially. This is the only path that may need
+     to download products from CDDIS, so letting it complete first
      guarantees the products are on disk before any siblings start.
-  2. Stations[1:] run in PARALLEL via a process pool.  By this point
+  2. Stations[1:] run in parallel via a process pool. By this point
      the on-disk product cache is warm; every parallel worker just
      reads from there.
 
@@ -57,7 +57,7 @@ Usage
         --template config/ppp_rtk_kinematic_multi_prod.json \\
         --output-root batch_results/week_2025_200
 
-    # Resume a partially-completed batch (re-running is idempotent —
+    # Resume a partially-completed batch (re-running is idempotent:
     # cells with .success markers are skipped).
     python scripts/run_batch.py ... --output-root batch_results/week_2025_200
 
@@ -83,12 +83,12 @@ from pathlib import Path
 # JSONC support
 # ---------------------------------------------------------------------
 # The C++ side parses configs with nlohmann::json's ignore_comments
-# mode, so the in-tree configs use // and /* */ liberally.  Python's
-# stdlib json doesn't grok comments, so we strip them before parsing.
-# The regex alternates between matching string literals (which we
-# preserve verbatim — comments don't apply inside strings) and matching
-# comments (which we drop).  This is sufficient for the small number
-# of configs we deal with; if we ever need full JSON5, swap to the
+# mode, so the in-tree configs use // and /* */ liberally. Python's
+# stdlib json does not parse comments, so they are stripped before parsing.
+# The regex alternates between matching string literals (preserved
+# verbatim, since comments do not apply inside strings) and matching
+# comments (dropped). This is sufficient for the small number of configs
+# handled here; a need for full JSON5 would mean switching to the
 # json5 PyPI package.
 _JSONC_RE = re.compile(
     r'(?P<string>"(?:[^"\\]|\\.)*")|(?P<linec>//[^\n]*)|(?P<blockc>/\*.*?\*/)',
@@ -158,8 +158,8 @@ def make_run_config(template: dict, station: str, country: str,
     dl.setdefault("download_products", True)
 
     # An explicit observation_path / navigation_path in the template
-    # would override PathResolver's auto-discovery and pin EVERY cell
-    # to the same file — almost certainly not what a batch wants.
+    # would override PathResolver's auto-discovery and pin every cell
+    # to the same file, almost certainly not what a batch wants.
     files = cfg.setdefault("files", {})
     files.pop("observation_path", None)
     files.pop("navigation_path", None)
@@ -170,7 +170,7 @@ def make_run_config(template: dict, station: str, country: str,
     # daily file that's ~1M log lines per cell, dominating wall-clock
     # for batch runs even on Release builds.  GnssConfig defaults
     # missing logger keys to false, so this two-key block is enough
-    # to guarantee the rest stay off — no need to enumerate every
+    # to guarantee the rest stay off, with no need to enumerate every
     # toggle.
     cfg["logging"] = {
         "enable_main_log":   True,
@@ -415,7 +415,7 @@ def main(argv: list[str] | None = None) -> int:
         "wall_seconds": round(wall, 2),
         "counts": { "pass": n_pass, "fail": n_fail, "skipped": n_skip,
                     "total": len(all_results) },
-        # Sort for human readability AND stable diffs across re-runs.
+        # Sort for human readability and stable diffs across re-runs.
         "results": sorted(all_results,
                           key=lambda r: (r["year"], r["doy"], r["station"])),
     }

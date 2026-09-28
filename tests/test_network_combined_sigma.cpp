@@ -1,8 +1,9 @@
-// M4 (product contract v2): unit tests for the combined-correction σ arithmetic
-// (include/products/CombinedCorrectionSigma.hpp) — the covariance→{sigc,sigcc,rho}
-// math the producer emits on the sigc=/sigcc=/rho= wire tokens.  Hand-built
-// covariances with KNOWN cross-terms verify the formulas exactly and the
-// load-bearing inequality (combined σ ≪ individual-σ RSS for a reconverging sat).
+// Unit tests for the combined-correction σ arithmetic
+// (include/products/CombinedCorrectionSigma.hpp): the covariance→{sigc,sigcc,rho}
+// math behind the producer's sigc=/sigcc=/rho= wire tokens (M4, product contract v2).
+// Hand-built covariances with known cross-terms check the formulas exactly, and
+// check that the combined σ is far below the RSS of the individual σ for a
+// reconverging satellite.
 
 #include "products/CombinedCorrectionSigma.hpp"
 
@@ -43,9 +44,9 @@ TEST(CombinedCorrectionSigma, ReproducesHandComputedValues) {
 }
 
 // ---------------------------------------------------------------------------
-// The load-bearing inequality: for a fresh (reconverging) satellite whose
-// clock and phase-bias estimates are strongly ANTI-correlated, the COMBINED σ
-// is far below the RSS of the individual σ — the whole point of the channel.
+// For a fresh (reconverging) satellite whose clock and phase-bias estimates are
+// strongly anti-correlated, the combined σ is far below the RSS of the individual
+// σ.  This is the information the combined-σ channel exists to carry.
 // ---------------------------------------------------------------------------
 TEST(CombinedCorrectionSigma, FreshSatelliteCombinedFarBelowRss) {
     // Individual σ are large (√100 = 10 at s0=1) but the errors nearly cancel in
@@ -64,7 +65,7 @@ TEST(CombinedCorrectionSigma, FreshSatelliteCombinedFarBelowRss) {
 }
 
 // ---------------------------------------------------------------------------
-// σ0 multiplies sigc/sigcc and CANCELS in rho.
+// σ0 multiplies sigc/sigcc and cancels in rho.
 // ---------------------------------------------------------------------------
 TEST(CombinedCorrectionSigma, Sigma0ScalesSigmaButNotRho) {
     const Eigen::MatrixXd cov = cov3(4, 9, 16, -5, -7, 10);
@@ -73,7 +74,7 @@ TEST(CombinedCorrectionSigma, Sigma0ScalesSigmaButNotRho) {
 
     EXPECT_NEAR(r5.sigc,  5.0 * r1.sigc,  1e-12);
     EXPECT_NEAR(r5.sigcc, 5.0 * r1.sigcc, 1e-12);
-    EXPECT_NEAR(r5.rho,   r1.rho,         1e-12);   // dimensionless — σ0-invariant
+    EXPECT_NEAR(r5.rho,   r1.rho,         1e-12);   // dimensionless, so σ0-invariant
 }
 
 // ---------------------------------------------------------------------------
@@ -111,7 +112,7 @@ TEST(CombinedCorrectionSigma, InvalidClockColumnGivesAllZero) {
 // A non-positive combined variance (numerically degenerate) emits no σ.
 // ---------------------------------------------------------------------------
 TEST(CombinedCorrectionSigma, NonPositiveCombinedVarianceIsZero) {
-    // Var(clk+pb) = 1 + 1 + 2(-1) = 0 ⇒ no honest phase σ.
+    // Var(clk+pb) = 1 + 1 + 2(-1) = 0 ⇒ no phase σ is emitted.
     const Eigen::MatrixXd cov = cov3(1, 1, 4, -1, 0, 0);
     const auto r = computeCombinedCorrectionSigma(cov, 0, 1, 2, 1.0);
     EXPECT_DOUBLE_EQ(r.sigc, 0.0);
@@ -120,7 +121,7 @@ TEST(CombinedCorrectionSigma, NonPositiveCombinedVarianceIsZero) {
 }
 
 // ---------------------------------------------------------------------------
-// rho is clamped into [-1, 1] against tiny numerical overshoot.
+// rho is clamped into [-1, 1] against numerical overshoot.
 // ---------------------------------------------------------------------------
 TEST(CombinedCorrectionSigma, RhoClamped) {
     // a=b=c=1, d=e=1, f=2 ⇒ cross = 1+1+1+2 = 5, denom = √(4·4) = 4 ⇒ raw rho 1.25.
@@ -131,15 +132,14 @@ TEST(CombinedCorrectionSigma, RhoClamped) {
 
 // ---------------------------------------------------------------------------
 // selectCombinedCodeRef: the code↔phase reference pairing.  Code and phase biases
-// live in DISJOINT key namespaces ("C1W" vs "L1W"), so the pairing MUST translate
-// the RINEX obs-type letter (C→L) — a raw key equality would never match (and left
-// rho dead at 0, the bug this covers).
+// live in disjoint key namespaces ("C1W" vs "L1W"), so the pairing translates the
+// RINEX obs-type letter (C→L).  A raw key equality never matches and leaves rho at 0.
 // ---------------------------------------------------------------------------
 TEST(CombinedCorrectionSigma, RefPairsCodeToPhaseSibling) {
     // C1W's phase sibling L1W is present ⇒ that pair is chosen.
     const auto ref = selectCombinedCodeRef({"C1W", "C2W"}, {"L1W", "L2W"});
     EXPECT_EQ(ref.code, "C1W");
-    EXPECT_EQ(ref.phase, "L1W");   // NOT "C1W" — the obs-type swap is the whole point
+    EXPECT_EQ(ref.phase, "L1W");   // not "C1W": the obs-type letter is swapped
 }
 
 TEST(CombinedCorrectionSigma, RefPrefersFirstCodeWithPhasePair) {

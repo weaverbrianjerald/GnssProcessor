@@ -1,6 +1,6 @@
 /**
  * @file NetworkEmitRebase.cpp
- * @brief Implementation of the Card 4 (M1) phase-D emit-layer frame re-base.
+ * @brief Implementation of the emit-layer frame re-base (Card 4 (M1) phase D).
  */
 
 #include "products/NetworkEmitRebase.hpp"
@@ -11,8 +11,8 @@ namespace GnssProcessor {
 
 void NetworkEmitRebase::reset() {
     last_emit_.clear();
-    // Counters accumulate over the whole run (like the carry driver's) — a mid-run
-    // reset() is a carry cold start, not a counter reset, so leave counters_ intact.
+    // Counters accumulate over the whole run (like the carry driver's).  A mid-run
+    // reset() is a carry cold start, not a counter reset, so counters_ is left intact.
 }
 
 bool NetworkEmitRebase::lastEmittedForTest(const std::string& sat,
@@ -28,9 +28,9 @@ void NetworkEmitRebase::rebaseEpoch(std::vector<Entry>& entries) {
     if (entries.empty()) return;
     ++counters_.epochs;
 
-    // Bucket entry indices by connected-component id (the common fractional δ is
-    // per component — the datum receiver r1 is elected per connected component of
-    // the bipartite (rx,sat) graph, so its fractional lump is shared only within).
+    // Bucket entry indices by connected-component id.  The common fractional δ is
+    // per component: the datum receiver r1 is elected per connected component of
+    // the bipartite (rx,sat) graph, so its fractional lump is shared only within it.
     std::map<int, std::vector<std::size_t>> by_comp;
     for (std::size_t i = 0; i < entries.size(); ++i)
         by_comp[entries[i].component].push_back(i);
@@ -39,16 +39,17 @@ void NetworkEmitRebase::rebaseEpoch(std::vector<Entry>& entries) {
         (void)comp;
         ++counters_.components;
 
-        // Wavelength for the component (all its entries share a signal ⇒ one λ;
-        // GLONASS FDMA is excluded upstream so a per-sat λ never arises here).
+        // Wavelength for the component: the first positive lambda_m (all its
+        // entries share a signal ⇒ one λ; GLONASS FDMA is excluded upstream, so a
+        // per-sat λ never arises here).  λ = 0 leaves the component un-re-based.
         double lambda = 0.0;
         for (const std::size_t i : idxs)
             if (entries[i].lambda_m > 0.0) { lambda = entries[i].lambda_m; break; }
 
-        // The CLEAN per-key steps Δ_s = raw_s − last_emit_s, over non-slipped,
-        // baselined keys only — the estimator of the common fractional δ.  A
-        // slipped or first-sighting key is deliberately excluded so it cannot
-        // pull δ (and its own integer step is preserved below).
+        // The clean per-key steps Δ_s = raw_s − last_emit_s, over non-slipped,
+        // baselined keys only, estimate the common fractional δ.  A slipped or
+        // first-sighting key is excluded so it cannot pull δ (its own integer step
+        // is preserved below).
         struct Clean { std::size_t i; double delta_step; };
         std::vector<Clean> clean;
         clean.reserve(idxs.size());
@@ -61,9 +62,9 @@ void NetworkEmitRebase::rebaseEpoch(std::vector<Entry>& entries) {
         }
 
         // Common fractional δ by robust coordinate descent: alternate integer
-        // rounding (per key) with a MEDIAN of the residuals (robust to the
+        // rounding (per key) with the median of the residuals (robust to the
         // minority of clean keys whose Δ carries a genuine per-sat integer, e.g.
-        // an undetected reattach).  Two sweeps converge — between 30 s epochs a
+        // an undetected reattach).  Two sweeps suffice: between 30 s epochs a
         // carried DD drifts ≪ ½ cycle, so the integers are unambiguous.
         double delta = 0.0;
         if (lambda > 0.0 && !clean.empty()) {
@@ -79,10 +80,10 @@ void NetworkEmitRebase::rebaseEpoch(std::vector<Entry>& entries) {
             }
         }
 
-        // Apply.  δ is common to the whole component (keeps every satellite — even
-        // a fresh birth — in one re-based frame); the per-sat integer is removed
-        // ONLY for a clean, baselined key.  A slipped key keeps k_s=0 so its
-        // integer step survives → emitter jump test fires (never laundered).
+        // Apply.  δ is common to the whole component, which keeps every satellite
+        // (a fresh birth included) in one re-based frame; the per-sat integer is
+        // removed only for a clean, baselined key.  A slipped key keeps k_s=0, so
+        // its integer step survives and the emitter jump test fires.
         for (const std::size_t i : idxs) {
             Entry& e = entries[i];
             const std::string key = e.sat + "|" + e.signal;

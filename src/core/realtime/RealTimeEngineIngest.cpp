@@ -74,9 +74,9 @@ void RealTimeEngine::logRtcmIngestCounters(RtcmParser& parser, std::size_t n_ssr
         parser.getSsrCombined().size()    + parser.getSsrCodeBiases().size() +
         parser.getSsrPhaseBiases().size() + parser.getSsrUras().size() +
         parser.getSsrHighRateClocks().size();
-    // RTA-8(b): only records that actually reached the store count as "pushed"
-    // (a decomposed combined record did — as an orbit).  With the default All
-    // policy nothing is dropped and this is exactly the pre-filter n_ssr.
+    // Only records that reached the store count as "pushed" (a decomposed
+    // combined record counts, as an orbit).  With the default All policy nothing
+    // is dropped and this equals n_ssr (RTA-8(b)).
     const std::size_t n_ssr_pushed = n_ssr - n_ssr_dropped;
     if (n_ssr_pushed > 0) {
         if (n_ssr_dropped > 0)
@@ -91,9 +91,9 @@ void RealTimeEngine::logRtcmIngestCounters(RtcmParser& parser, std::size_t n_ssr
                 "to store ({} sats cached)",
                 parser.lastMessageType(), n_ssr_pushed, hdr.epoch_time.week,
                 hdr.epoch_time.tow, hdr.iod_ssr, ssr_store.size());
-        // obs↔SSR sync: the freshest SSR content just advanced, so a previously
-        // held obs epoch may now be covered — re-attempt it.  No-op when nothing
-        // is held or the sync feature is off.
+        // obs↔SSR sync: the freshest SSR content has advanced, so a held obs
+        // epoch may now be covered; re-attempt it.  No-op when nothing is held
+        // or the sync feature is off.
         drainHeldObs();
     }
     if (!parser.getBroadcastEphemeris().empty()) {
@@ -112,35 +112,37 @@ void RealTimeEngine::logRtcmIngestCounters(RtcmParser& parser, std::size_t n_ssr
  */
 void RealTimeEngine::seedAprioriFromStationCoords(RtcmParser& parser) {
     // Reference-station coordinate (RTCM 1005/1006).  Seed the filter a-priori
-    // from the antenna reference point until the KF has bootstrapped — the RTCM
-    // analogue of the PVTGeodetic seed in feedSbfFrame.  A live RTCM obs stream
-    // carries no RINEX APPROX POSITION, so without this the a-priori is the
-    // coarse Earth-centred fallback (geographic pole) from which almost every
-    // satellite sits below the elevation mask and the filter can never converge.
-    // A configured reference_position always wins; once first_epoch_ clears the
-    // KF owns the position and we stop overwriting it.  The startup defer gate
-    // keeps first_epoch_ true through warmup, so a 1005/1006 arriving a few
-    // seconds into the stream (they come less often than the 1 Hz obs) still
-    // seeds before the first estimation epoch.
+    // from the antenna reference point until the KF has bootstrapped; this is the
+    // RTCM analogue of the PVTGeodetic seed in feedSbfFrame.  A live RTCM obs
+    // stream carries no RINEX APPROX POSITION, so without this the a-priori is the
+    // coarse Earth-centred fallback (geographic pole), from which almost every
+    // satellite sits below the elevation mask and the filter cannot converge.
+    // A configured reference_position always takes precedence; once first_epoch_
+    // clears, the KF owns the position and this seed does not write it.  The
+    // startup defer gate keeps first_epoch_ true through warmup, so a 1005/1006
+    // arriving a few seconds into the stream (they are sent less often than the
+    // 1 Hz obs) still seeds before the first estimation epoch.
     if (!parser.getStationCoords().empty()) {
         const auto& s = parser.getStationCoords().front();
         if (first_epoch_ && !config_.hasReferencePosition()
             && s.arp_ecef.allFinite() && s.arp_ecef.norm() > 1e3) {
-            // RTA-12(3): blunder gate.  When armed (realtime.arp_blunder_gate_m
-            // > 0) and a plausible a-priori already exists (RINEX-header approx
-            // position, SBF PVT seed, or an earlier ARP seed), a decoded ARP that
-            // disagrees by more than the gate is REJECTED — a mis-configured
-            // caster (wrong mountpoint, stale 1005 coordinates) must not teleport
-            // the a-priori.  0 (default) keeps the legacy seed-always behaviour.
+            // Blunder gate (RTA-12(3)).  When armed (realtime.arp_blunder_gate_m
+            // > 0) and a prior a-priori exists (see the next comment for what
+            // counts), a decoded ARP that disagrees with it by more than the gate
+            // is rejected, so a misconfigured caster (wrong mountpoint, stale 1005
+            // coordinates) cannot move the a-priori.  0 (default) keeps the
+            // seed-always behaviour.
             const double gate_m = config_.getRealTimeConfig().arp_blunder_gate_m;
             bool blunder = false;
-            // RTA-12 fix: only cross-check against a GENUINE prior.  The initial
-            // a-priori is the geographic-pole fallback (0,0,EARTH_RADIUS,
-            // norm ~6.37e6), which trivially clears norm()>1e3 — testing against
-            // it rejects the FIRST legitimate ARP seed (thousands of km from the
-            // pole) and the filter never bootstraps.  A prior exists only once
-            // ppp_state_.position has moved away from initial_position_ (an SBF
-            // PVT seed, an earlier ARP seed, or a RINEX-approx a-priori).
+            // Cross-check only against a real prior (RTA-12).  Without a RINEX
+            // header position the initial a-priori is the geographic-pole fallback
+            // (0,0,EARTH_RADIUS, norm ~6.37e6), which passes norm()>1e3; testing
+            // against it would reject the first legitimate ARP seed (thousands of
+            // km from the pole) and the filter would never bootstrap.  A prior
+            // counts only once ppp_state_.position is more than 1 km from
+            // initial_position_, as after an SBF PVT seed or an earlier ARP seed.
+            // initial_position_ is itself the RINEX-header ARP when the header has
+            // one, so a RINEX-approx a-priori does not count as a prior here.
             if (gate_m > 0.0 && ppp_state_.position.allFinite()
                 && (ppp_state_.position - initial_position_).norm() > 1e3) {
                 const double dist_m = (s.arp_ecef - ppp_state_.position).norm();
@@ -178,13 +180,13 @@ void RealTimeEngine::seedAprioriFromStationCoords(RtcmParser& parser) {
             }
         } else {
             // A-priori already pinned (config reference_position) or already
-            // owned by the KF — just surface the broadcast ARP so it can be
-            // eyeballed against the configured/estimated position.
-            // RTA-12(3): with the gate armed, additionally CROSS-CHECK the
-            // broadcast ARP against a configured reference position (which is
-            // never overwritten regardless) and upgrade to a one-shot WARN on
-            // disagreement — the operator pointed the engine at the wrong
-            // mountpoint or configured the wrong station.
+            // owned by the KF: log the broadcast ARP so it can be compared with
+            // the configured or estimated position.  With the gate armed, the
+            // broadcast ARP is also cross-checked against a configured reference
+            // position (which is never overwritten in either case), and a
+            // disagreement is logged as a one-shot warning instead: the engine
+            // points at the wrong mountpoint or the wrong station is configured
+            // (RTA-12(3)).
             const double gate_m = config_.getRealTimeConfig().arp_blunder_gate_m;
             bool flagged = false;
             if (gate_m > 0.0 && config_.hasReferencePosition()

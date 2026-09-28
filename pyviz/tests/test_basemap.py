@@ -92,7 +92,7 @@ def test_encode_png_rejects_bad_channel_count():
 
 def test_encode_png_is_valid_png_without_pillow():
     # The encoder exists for the Pillow-absent plotly path, so validate its
-    # output using only the stdlib (struct + zlib) — no PIL round-trip.
+    # output using only the stdlib (struct + zlib), without a PIL round-trip.
     import struct
     import zlib
     arr = np.arange(3 * 5 * 3, dtype=np.uint8).reshape(3, 5, 3)   # H=3, W=5, RGB

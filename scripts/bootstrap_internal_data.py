@@ -5,14 +5,14 @@ Populate ``data/`` for internal-mode GnssProcessor runs.
 
 Internal mode (``data_source = "internal"`` in the JSON config) expects a
 directory tree under ``<repo>/data/`` containing the canonical IGS product
-set, the IGS antenna phase-centre file, an ocean-tide loading model, and
-the bundled observation RINEX fixtures.  The actual files are tens of MB
-to several hundred MB each and are not stored in git.  This script
-fetches them once, after which the C++ application's ``PathResolver``
-discovers them automatically by globbing the canonical layout.
+set, the IGS antenna phase-centre file, an ocean-tide loading model, the
+GPT3 grid, and the bundled observation RINEX fixtures.  The files are tens
+of MB to several hundred MB each and are not stored in git.  This script
+fetches them once; the C++ application's ``PathResolver`` then discovers
+them by globbing the canonical date-first layout.
 
-The script is **idempotent**: every step checks whether the destination
-file already exists and skips the download.  Re-run any time to fill in
+The script is idempotent: every step checks whether the destination file
+already exists and skips the download if so.  Re-running it fills in
 missing pieces (for example after enabling ocean-tide loading).
 
 ============================================================
@@ -24,9 +24,10 @@ free NASA Earthdata Login account, plus a ``.netrc`` entry::
 
     machine urs.earthdata.nasa.gov login YOUR_USER password YOUR_PASS
 
-(On Windows the file is ``%USERPROFILE%\\_netrc``; on Unix it's
-``~/.netrc``.)  Without this, downloads from ``cddis.nasa.gov`` will
-return HTTP 401.
+(On Windows the file is ``%USERPROFILE%\\_netrc``; on Unix it is
+``~/.netrc``.)  Without it, downloads from ``cddis.nasa.gov`` return
+HTTP 401.  Note that ``download_file`` below opens URLs with plain
+urllib, which does not read ``.netrc`` itself (see its docstring).
 
 The IGS file server (``files.igs.org``) and DGFI-TUM (``oceantide.dgfi.tum.de``)
 do not require authentication.
@@ -40,8 +41,8 @@ Usage
     # From the repo root
     python scripts/bootstrap_internal_data.py
 
-    # Skip the heavyweight EOT20 download (use it if you'll set
-    # model_corrections.enable_ocean_tide_loading=false in the config)
+    # Skip the large EOT20 download (for configs that set
+    # model_corrections.enable_ocean_tide_loading=false)
     python scripts/bootstrap_internal_data.py --no-eot20
 
     # Override the repo root (default: parent of this script's dir)
@@ -53,11 +54,11 @@ Adding more fixtures
 
 Edit ``FIXTURE_DATES`` and ``FIXTURE_OBSERVATIONS`` below.  Each entry
 in ``FIXTURE_DATES`` triggers a download of orbit/clock/dcb/erp/brdc
-for that day, plus the day before and after for orbit/clock (matches
-the C++ resolver's interpolation window).  ``FIXTURE_OBSERVATIONS``
-lists individual obs files; the script fetches them from CDDIS for
-IGS-mirrored stations, or — for local research data not on CDDIS —
-prints a warning telling the user to drop the file in manually.
+for that day, plus the day before and after for orbit/clock (the C++
+resolver's interpolation window).  ``FIXTURE_OBSERVATIONS`` lists
+individual obs files; the script fetches them from CDDIS for
+IGS-mirrored stations, and for local research data not on CDDIS it
+prints a message at the end asking for the file to be supplied manually.
 """
 
 from __future__ import annotations
@@ -75,7 +76,7 @@ from pathlib import Path
 from typing import Iterable
 
 try:
-    import hatanaka  # bundled RNXCMP 4.x — gzip + Hatanaka decompression, RINEX 2/3/4
+    import hatanaka  # bundled RNXCMP 4.x: gzip + Hatanaka decompression, RINEX 2/3/4
     HAVE_HATANAKA = True
 except ImportError:
     hatanaka = None
@@ -85,26 +86,25 @@ except ImportError:
 # What to fetch
 # ---------------------------------------------------------------------
 
-#: Dates we want full IGS product coverage for.  Add (year, doy) tuples
-#: as you onboard new fixtures.  Day-1 and day+1 are pulled
-#: automatically for orbit/clock so satellite interpolation has
-#: boundary points.
+#: Dates that get full IGS product coverage.  A new fixture adds its
+#: (year, doy) tuple here.  Day-1 and day+1 are pulled automatically
+#: for orbit/clock so satellite interpolation has boundary points.
 FIXTURE_DATES: list[tuple[int, int]] = [
-    (2024, 129),  # GCGO PPP fixture (Cleveland, USA)
-    (2023, 321),  # OSU baseline fixture (C103 vs NARY)
+    (2024, 129),  # GCGO PPP fixture (Cleveland, USA) and IGS_Pasadena baseline
+    (2023, 321),  # OSU baseline fixtures (C103, NARY, 233)
 ]
 
 #: Analysis-centre prefix and product type.  COD-MGXFIN matches the
-#: existing files in data/products/ — pick something else if your
-#: fixtures move (e.g. GFZ for late-July 2024 GLONASS issues).
+#: existing files in data/<YYYY-DOY>/products/; other fixtures may need
+#: another source (e.g. GFZ for late-July 2024 GLONASS issues).
 PRODUCT_SOURCE = "COD"
 PRODUCT_TYPE   = "MGXFIN"   # FIN=>MGXFIN, RAP=>OPSRAP, ULT=>OPSULT
 
 @dataclass
 class ObsFixture:
-    """One observation RINEX file we want bootstrapped."""
-    station: str            # 9-char IGS long name OR 4-char short name
-    country: str            # 3-char country code (long-name only)
+    """One observation RINEX file to bootstrap."""
+    station: str            # 9-char IGS long name or 4-char short name
+    country: str            # 3-char country code (used only to build the long name)
     year: int
     doy: int
     rate: str = "30S"       # sampling: 30S / 15S / 01S
@@ -115,7 +115,7 @@ class ObsFixture:
 #: get a "please supply" message at the end of the run.
 #:
 #: Files are placed under @c <repo>/data/<YYYY-DOY>/obs/<station_lower>/
-#: per the unified date-first layout — the C++ ``PathResolver`` picks
+#: per the unified date-first layout; the C++ ``PathResolver`` picks
 #: them up by station-name match within that subtree.
 FIXTURE_OBSERVATIONS: list[ObsFixture] = [
     # PPP fixture: GCGO on CDDIS daily archive.
@@ -129,9 +129,9 @@ FIXTURE_OBSERVATIONS: list[ObsFixture] = [
     ObsFixture(station="JPLM", country="USA", year=2024, doy=129,
                rate="30S", on_cddis=True),
     # OSU_Campus baseline fixture: local research data, not on any
-    # public archive.  Bootstrap leaves a "please supply manually"
-    # message if these aren't already present.  The C++ side picks
-    # them up via the baseline_fixture="OSU_Campus" preset.
+    # public archive.  Bootstrap prints a "please supply manually"
+    # message if these are not already present.  The C++ side picks
+    # them up via the baseline_fixture="OSU_Campus" preset (NARY + 233).
     ObsFixture(station="C103", country="",   year=2023, doy=321,
                rate="30S", on_cddis=False),
     ObsFixture(station="NARY", country="",   year=2023, doy=321,
@@ -142,10 +142,11 @@ FIXTURE_OBSERVATIONS: list[ObsFixture] = [
 
 #: Static (non-date-keyed) downloads.
 IGS20_ATX_URL = "https://files.igs.org/pub/station/general/igs20.atx"
-#: NOTE: EOT20 is hosted by DGFI-TUM.  The URL below is current as of
-#: 2024 — if it 404s, check https://www.dgfi.tum.de/en/research-areas/
-#: global-and-regional-reference-systems/ocean-tide-models/ for the
-#: latest link, then update this constant.
+#: EOT20 is hosted by DGFI-TUM.  The URL below was current in 2024; if
+#: it returns 404, the current link is listed at
+#: https://www.dgfi.tum.de/en/research-areas/
+#: global-and-regional-reference-systems/ocean-tide-models/ and this
+#: constant needs updating.
 EOT20_LOAD_NC_URL = "https://oceantide.dgfi.tum.de/EOT20/data/ocean_tides/EOT20_load.nc"
 #: GPT3 5° empirical pressure/temperature/mapping-function grid
 #: (Landskron & Boehm 2018).  Used by the troposphere a priori when
@@ -175,11 +176,14 @@ def shifted_doy(year: int, doy: int, shift: int) -> tuple[int, int]:
 # ---------------------------------------------------------------------
 
 def download_file(url: str, dest: Path, *, log_prefix: str = "") -> bool:
-    """Download ``url`` to ``dest``; skip if dest already exists.
+    """Download ``url`` to ``dest``; skip if dest already exists and is non-empty.
 
-    Honors the system's ``.netrc`` for HTTPS basic auth (needed for
-    CDDIS).  Returns True on success or already-cached, False on any
-    network/HTTP error (caller decides whether to fail loudly).
+    Uses plain ``urllib.request.urlopen`` with no authentication handler;
+    urllib does not read ``.netrc``, so a server that requires Basic auth
+    (CDDIS) answers with an HTTP error and the call returns False.
+    Returns True on success or when already cached, False on any
+    network/HTTP error, after removing a partial ``dest`` (the caller
+    decides whether to fail).
     """
     if dest.exists() and dest.stat().st_size > 0:
         print(f"  {log_prefix}cached  {dest.relative_to(dest.parents[3]) if len(dest.parents) >= 4 else dest}")
@@ -187,11 +191,10 @@ def download_file(url: str, dest: Path, *, log_prefix: str = "") -> bool:
     dest.parent.mkdir(parents=True, exist_ok=True)
     print(f"  {log_prefix}fetch   {url}")
     try:
-        # urlretrieve handles .netrc only via Authorization headers if
-        # we manually plumb them; for CDDIS the simpler route is
-        # urllib + a custom opener that uses HTTPBasicAuthHandler.  We
-        # sidestep that here by relying on the user having set up
-        # .netrc + a Basic auth flow tested before this script runs.
+        # urllib uses .netrc credentials only if they are passed in as
+        # Authorization headers or through an opener with
+        # HTTPBasicAuthHandler.  Neither is set up here: the request is
+        # sent without credentials.
         with urllib.request.urlopen(url, timeout=120) as resp, open(dest, "wb") as out:
             shutil.copyfileobj(resp, out)
         return True
@@ -212,10 +215,10 @@ def find_crx2rnx(explicit: Path | None = None) -> Path | None:
       1. ``explicit`` (from --crx2rnx CLI flag) if it exists.
       2. The ``CRX2RNX`` environment variable.
       3. ``shutil.which("crx2rnx")`` / ``crx2rnx.exe``.
-      4. A short list of well-known install locations on Windows.
+      4. A short list of well-known install locations (Windows and Unix).
 
-    Returns ``None`` if nothing is found; the caller logs a friendly
-    "install crx2rnx" message in that case.
+    Returns ``None`` if nothing is found; the caller then prints an
+    install hint.
     """
     import shutil
     if explicit is not None and explicit.exists():
@@ -254,7 +257,7 @@ def expected_rnx_output(compact_path: Path) -> Path | None:
     lower_name = name.lower()
     if lower_name.endswith(".crx"):
         return compact_path.with_suffix(".rnx")
-    # .YYd / .YYD short-name form — last char swaps d↔o, preserving case.
+    # .YYd / .YYD short-name form: the last char swaps d↔o, preserving case.
     if (len(name) >= 4 and name[-4] == "."
             and name[-3].isdigit() and name[-2].isdigit()
             and name[-1] in ("d", "D")):
@@ -266,8 +269,8 @@ def crx_to_rnx(compact_path: Path, crx2rnx_exe: Path | None = None) -> Path | No
     """Convert a Hatanaka-compressed obs file (.crx or .YYd) to
     standard RINEX (.rnx or .YYo).
 
-    Primary engine is the ``hatanaka`` library (bundled RNXCMP 4.x — RINEX
-    2/3/4 capable; the old standalone crx2rnx 4.0.x rejects RINEX 4).  Falls
+    The primary engine is the ``hatanaka`` library (bundled RNXCMP 4.x, which
+    handles RINEX 2/3/4; the standalone crx2rnx 4.0.x rejects RINEX 4).  Falls
     back to an external ``crx2rnx`` binary only when hatanaka is unavailable.
     Returns the produced standard-RINEX path, or ``None`` on any error.  The
     output is written next to the input.
@@ -310,8 +313,8 @@ def crx_to_rnx(compact_path: Path, crx2rnx_exe: Path | None = None) -> Path | No
 
 def gunzip_inplace(src_gz: Path, dest: Path, *, keep_gz: bool = False) -> bool:
     """Decompress ``src_gz`` -> ``dest``.  Removes ``src_gz`` after
-    success unless ``keep_gz`` is True (mirrors the C++ DataDownloader's
-    new default behavior)."""
+    success unless ``keep_gz`` is True (as the C++ DataDownloader does by
+    default).  An existing non-empty ``dest`` counts as success."""
     if dest.exists() and dest.stat().st_size > 0:
         if not keep_gz and src_gz.exists():
             src_gz.unlink()
@@ -374,7 +377,7 @@ def _cddis_daily_dir_url(fix: ObsFixture) -> str:
     )
 
 def cddis_obs_url_v3(fix: ObsFixture) -> tuple[str, str]:
-    """RINEX-3 long-name Hatanaka URL: SSSSCCCNNN_R_YYYYDOY...crx.gz"""
+    """RINEX-3 long-name Hatanaka URL: SSSS00CCC_R_YYYYDOY...crx.gz"""
     yd = yyyydoy(fix.year, fix.doy)
     long_name = (fix.station + ("00" + fix.country if len(fix.station) == 4 else "")).upper()
     fname = f"{long_name}_R_{yd}0000_01D_{fix.rate}_MO.crx.gz"
@@ -388,12 +391,12 @@ def cddis_obs_url_v2(fix: ObsFixture) -> tuple[str, str]:
     fname = f"{short_station}{fix.doy:03d}0.{yy}d.gz"
     return _cddis_daily_dir_url(fix) + fname, fname
 
-# Backwards-compat alias — tooling outside this script may have
-# imported the old name; keep it pointing at the v3 builder.
+# Backwards-compatible alias for tooling outside this script that
+# imports the old name; it points at the v3 builder.
 cddis_obs_url = cddis_obs_url_v3
 
 # ---------------------------------------------------------------------
-# Layout helpers (must match PathResolver / ProductResolver exactly)
+# Layout helpers (these must match PathResolver / ProductResolver)
 # ---------------------------------------------------------------------
 
 def date_dir_name(year: int, doy: int) -> str:
@@ -420,9 +423,11 @@ def fetch_products_for_date(year: int, doy: int, data_root: Path) -> None:
     """Pull SP3/CLK (3-day window), BIA/ERP (single day), and BRDC into
     the date-first layout under @c <data_root>/<YYYY-DOY>/products/.
 
-    Raw .gz downloads land in @c <data_root>/cache/<YYYY-DOY>/ to match
-    @c ProductResolver — the .gz is removed by @c gunzip_inplace once
-    the decompressed product is in place.
+    Each file goes under its own day's directory, so the day before and
+    after get their own date dirs for SP3/CLK.  Raw .gz downloads land in
+    @c <data_root>/cache/<YYYY-DOY>/ to match @c ProductResolver; the .gz
+    is removed by @c gunzip_inplace once the decompressed product is in
+    place.
     """
     days_3 = [shifted_doy(year, doy, s) for s in (-1, 0, 1)]
     days_1 = [(year, doy)]
@@ -461,21 +466,24 @@ def fetch_observations(data_root: Path,
     """Fetch each obs fixture; return (manual_supply_list, crx_pending_list).
 
     Files land at @c <data_root>/<YYYY-DOY>/obs/<station_lower>/<file>
-    so they're discoverable by @c PathResolver via station-name match.
+    so @c PathResolver finds them by station-name match.
 
     ``manual_supply_list`` covers fixtures with @c on_cddis=False (local
-    research data the user must drop in by hand).
+    research data that has to be copied in by hand).
     ``crx_pending_list`` covers fixtures where the CDDIS download
-    succeeded but @c crx2rnx wasn't available — the .crx file is
-    staged but not converted, and the C++ processor won't read it
-    until the user runs crx2rnx manually or installs it on PATH.
+    succeeded but no conversion produced standard RINEX (no decompressor
+    available, or the conversion failed).  The compact file is staged
+    but not converted, and the C++ processor does not read it until it
+    is converted by hand or a decompressor is installed and the script
+    re-run.
     """
     manual: list[str] = []
     crx_pending: list[str] = []
     for fix in FIXTURE_OBSERVATIONS:
         # Long-name station identifier (SSSS00CCC) when on_cddis;
-        # otherwise just the original short name lower-cased — the
-        # PathResolver matches case-insensitively on substring.
+        # otherwise the station name as given (obs_dir lower-cases the
+        # directory name; PathResolver matches case-insensitively on
+        # substring).
         if fix.on_cddis:
             station_long = (fix.station + ("00" + fix.country
                             if len(fix.station) == 4 else "")).upper()
@@ -504,10 +512,10 @@ def fetch_observations(data_root: Path,
 
         # CDDIS-hosted IGS station.  CDDIS publishes daily obs in two
         # naming conventions per station: the modern RINEX-3 long name
-        # (SSSSCCCNNN_R_..._01D_30S_MO.crx.gz) and/or the legacy
+        # (SSSS00CCC_R_..._01D_30S_MO.crx.gz) and/or the legacy
         # RINEX-2 short name (ssssdddh.YYd.gz).  Some stations have
-        # both, some only one.  We try v3 first and fall back to v2
-        # on any download failure (typically HTTP 404).
+        # both, some only one.  v3 is tried first, with a fall back to
+        # v2 on any download or conversion failure (typically HTTP 404).
         cdir = cache_dir(data_root, fix.year, fix.doy)
         candidates = [
             ("v3", *cddis_obs_url_v3(fix)),
@@ -530,9 +538,9 @@ def fetch_observations(data_root: Path,
         if already_have:
             continue
 
-        # Try each candidate in order.  Stop at the first one whose
-        # download succeeds; the rest are alternative spellings and
-        # we don't need redundant copies.
+        # Try each candidate in order and stop at the first one that
+        # downloads and converts; the rest are alternative spellings,
+        # and redundant copies are not needed.
         produced_rnx = None
         last_compact = None
         for tag, url, fname in candidates:
@@ -547,16 +555,16 @@ def fetch_observations(data_root: Path,
             last_compact = compact_path
             rnx_in_cache = crx_to_rnx(compact_path, crx2rnx_exe)
             if rnx_in_cache is None:
-                # Either crx2rnx isn't available or this candidate's
-                # extension wasn't recognised — record for the
-                # post-run summary and try the next candidate.
+                # No decompressor, a failed conversion, or an
+                # unrecognised extension: last_compact keeps this file
+                # for the post-run summary; try the next candidate.
                 continue
             produced_rnx = rnx_in_cache
             break
 
         if produced_rnx is None:
             if last_compact is not None:
-                # Downloaded successfully but conversion didn't run.
+                # Downloaded, but no conversion produced standard RINEX.
                 target_rnx_basename = (
                     expected_rnx_output(last_compact).name
                     if expected_rnx_output(last_compact) is not None
@@ -575,8 +583,8 @@ def fetch_observations(data_root: Path,
                       file=sys.stderr)
             continue
 
-        # Move into the per-station obs dir.  PathResolver will pick
-        # it up on the next run via station-name match.
+        # Move into the per-station obs dir, where PathResolver picks
+        # it up on the next run by station-name match.
         target_rnx = target_dir / produced_rnx.name
         try:
             shutil.move(str(produced_rnx), str(target_rnx))

@@ -1,42 +1,42 @@
 #!/usr/bin/env python3
-"""FP-1 gate table — the §20 G-A..G-E bars applied to a PIN/OFF field leg matrix.
+"""FP-1 gate table: the §20 G-A..G-E bars applied to a PIN/OFF field leg matrix.
 
     python scripts/fp1_gate_table.py [--runs C:/GnssProcessor/runs] [--json out.json]
 
-`scripts/event_field_grade.py` grades ONE leg against ONE null and prints
+`scripts/event_field_grade.py` grades one leg against one null and prints
 channels A-E.  The §20 gates are not that: each one compares the PIN arm's
-(event - null) against the OFF arm's (event - null), with the FLOOR
+(event - null) against the OFF arm's (event - null), with the floor
 |PIN-null - OFF-null| on the same channel and window as the tolerance.  This
 script forms those four-leg comparisons for the whole matrix and prints the
 bars, so the verdict is mechanical rather than eyeballed off ten grader dumps.
 
 Gates, verbatim from SPEC_event_harness.md §20 (frozen 2026-09-12):
-  G-A identity   which detectors fired, on what evidence, WHICH BANDS were
+  G-A identity   which detectors fired, on what evidence, which bands were
                  freed, and the T4 attribution-erase count at the station.  A
-                 narrowing FOLLOWED by a T4_attrib/attrib_arc within +45 is a
-                 wrong narrowing = FAIL.  (T4 is structurally ~0 on a
-                 carry_invariant lineage — the count is reported anyway,
-                 invariant #4: counters, not the absence of crashes.)
+                 narrowing followed by a T4_attrib/attrib_arc within +45 is a
+                 wrong narrowing, which fails the gate.  (T4 is structurally
+                 near zero on a carry_invariant lineage; the count is reported
+                 anyway, invariant #4: counters, not the absence of crashes.)
   G-B frame      station CLK / ZWD / injected-LOS iono, event - null, at
                  +1/+10/+45.  Bar: PIN |d| at the window end <= OFF |d|.
   G-C wire       injected satellite's CLK and per-signal PB, max |d| over
-                 [0,+45]: PIN <= OFF.  Every OTHER satellite <= 2x the floor.
+                 [0,+45]: PIN <= OFF.  Every other satellite <= 2x the floor.
   G-D consumer   de-biased ENU, max |d3D| over [0,+50] and mean |d3D| over
                  [+30,+50].  Bar: PIN mean <= OFF mean + floor.
   G-E quiet cost PIN-null vs OFF-null: no new withhold, attrib_arc within +-3,
                  wire CLK max |d| <= 0.02 m, consumer max |d3D| <= 0.03 m.
 
-⚠ THE G25 WINDOW TRAP (§20.1 (d)).  On the G25 legs the injected satellite
-becomes the DD-trace REFERENCE at about +43, which confounds any window that
-reaches past +40.  That event's rows are graded on windows ending at +40 and the
-table says so — do not compare its numbers against a +45/+50 row.
+The G25 window trap (§20.1 (d)): on the G25 legs the injected satellite becomes
+the DD-trace reference at about +43, which confounds any window that reaches
+past +40.  That event's rows are graded on windows ending at +40, and the
+table says so; do not compare its numbers against a +45/+50 row.
 
-⚠ THE FLOOR IS NOT FLAT IN k.  A single natural slip handled differently by the
+The floor is not flat in k.  A single natural slip handled differently by the
 two postures opens the two nulls at that epoch and they never re-converge, so a
 scalar floor read over [0,+50] can be orders of magnitude larger than the floor
-over the epochs that actually carry the event's response.  The FLOOR ONSET
-section reports the first k at which each channel separates, so a gate that
-passes only because the floor is wide is visible as such.
+over the epochs that actually carry the event's response.  The onset column
+reports the first k at which each channel separates, so a gate that passes
+only because the floor is wide is visible as such.
 """
 import argparse
 import json
@@ -135,13 +135,14 @@ def consumer_diff(leg, null, t0, post, lo_mean=30):
 
 
 def blast_at(leg, null, t0, k=0, tol=0.5):
-    """Product keys moving more than `tol` m at ONE epoch, event - null.
+    """Product keys moving more than `tol` m at one epoch, event - null.
 
     G-C's "every other satellite <= 2x the floor" is uninformative whenever the
-    floor is set by an unrelated natural event late in the window: 2x a 139 m
-    floor passes anything.  Read at the EVENT EPOCH instead, where a natural
-    event tens of epochs later cannot reach, the same quantity is a clean
-    blast radius — how many product keys the response moved, and which.
+    floor is set by an unrelated natural event late in the window, since twice
+    a large floor passes anything.  Reading at the event epoch instead, where a
+    natural event tens of epochs later cannot reach, turns the same quantity
+    into a clean blast radius: how many product keys the response moved, and
+    which.
     """
     t = t0 + k * EPOCH_S
     A = read_products(os.path.join(leg, "products.txt"), int(t) - 1, int(t) + 1)
@@ -172,14 +173,14 @@ _DRAIN = {("T1_if_slip", "if_slip"), ("T0_mw_detect", "mw_wl_slip"),
 
 
 def collateral(legdir, nulldir, sta, injected_sat, t0, lo=0, hi=5):
-    """Drain rows at the injected STATION on OTHER satellites, event - null.
+    """Drain rows at the injected station on other satellites, event - null.
 
     §20's G-A inspects only the (station, satellite) that was dosed, so it is
-    structurally blind to a response that lands on the station's OTHER arcs.
-    That is not a hypothetical: an IF-TD chain's statistic is
-    dOMC(sat) - dOMC(ref), so a slip on the chain's REFERENCE satellite is
-    identically 0 on its own row and appears at full size on EVERY other
-    satellite of that chain — the fan-out this census counts.
+    structurally blind to a response that lands on the station's other arcs.
+    An IF-TD chain's statistic is dOMC(sat) - dOMC(ref), so a slip on the
+    chain's reference satellite is identically 0 on its own row and appears at
+    full size on every other satellite of that chain: the fan-out this census
+    counts.
     """
     out = {}
     for tag, d in (("leg", legdir), ("null", nulldir)):
@@ -208,11 +209,11 @@ def collateral(legdir, nulldir, sta, injected_sat, t0, lo=0, hi=5):
 def fanout_groups(legdir):
     """(tow, station, pair) groups where >= 2 satellites refloated together.
 
-    The signature of a REFERENCE-arc slip: dOMC(sat) - dOMC(ref) is identically
+    The signature of a reference-arc slip: dOMC(sat) - dOMC(ref) is identically
     0 on the reference's own row and full-size on every other satellite of that
     chain, so one slip on a chain reference flags the whole station at once.
-    Network-wide (the injected station is not privileged), and the natural rate
-    is the control — read it on the nulls before reading it on an event leg.
+    This is network-wide (the injected station is not privileged); the natural
+    rate is the control, read on the nulls before reading it on an event leg.
     """
     rows = read_events(legdir) or []
     g = {}

@@ -1,13 +1,13 @@
-"""Slant-ionosphere strip viewer -- the port of ``view_iono_strip.m``.
+"""Slant-ionosphere strip viewer: the port of ``view_iono_strip.m``.
 
 (satellite x epoch) raster of the per-satellite slant ionosphere state from
-``ionosphere_trace.csv`` -- the estimate, its standard deviation, or the
+``ionosphere_trace.csv``: the estimate, its standard deviation, or the
 vertical TEC.  One tile per constellation (no signal dimension), built on the
 shared :func:`gnssviz.strip.build_sat_epoch_strip` renderer.
 
-The iono-sigma raster reinflates at slips exactly like the ambiguity sigma did
--- an independent witness to the reset story -- and the iono raster shows the
-active-ionosphere periods that gate GF slip trust (the TurboEdit IVI cut).
+The iono-sigma raster reinflates at slips the same way the ambiguity sigma
+does, giving an independent check on slip resets, and the iono raster shows
+the active-ionosphere periods that gate GF slip trust (the TurboEdit IVI cut).
 PPP-RTK (uncombined) runs only.
 
 ``plot_value`` selects the content (MATLAB default ``'std'``):

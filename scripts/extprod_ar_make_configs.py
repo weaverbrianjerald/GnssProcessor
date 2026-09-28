@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build the external-product integer-AR probe arms (DOY-129, 50-sta GPS-only tri-freq).
 
-Three arms, identical in EVERY respect except how the satellite code bias and the
+Three arms, identical in every respect except how the satellite code bias and the
 ionosphere are treated.  The point is to isolate what an external product can and
 cannot buy for the network's DD ambiguity integer character.
 
@@ -11,25 +11,25 @@ cannot buy for the network's DD ambiguity integer character.
                     (= the validated Jul-17 _wlver_50sta lineage.)
 
     G  ext-GIM   estimate_iono_sh = false, estimate_sat_code_bias = true
-                 -> the COD .INX GIM becomes the LOAD-BEARING iono constraint that
+                 -> the COD .INX GIM becomes the load-bearing iono constraint that
                     makes the satellite DCB observable; the network still estimates
                     its own OSB; external .BIA still force-disabled.
 
     B  ext-OSB   estimate_iono_sh = false, estimate_sat_code_bias = false,
                  model_corrections.enable_code_phase_bias = true
-                 -> COD OSB (.BIA) is APPLIED to the code observations, no satellite
+                 -> COD OSB (.BIA) is applied to the code observations, no satellite
                     code-bias states, no iono pseudo-observation at all: free
                     per-(rx,sat) slant iono constrained only by the (now unbiased)
                     geometry-free code.  The per-LOS iono model, bought with an
                     external bias product.
 
-WHY ALL THREE ALSO GET network.phase_leveling
----------------------------------------------
-Without it the network producer is a per-epoch ABSOLUTE SNAPSHOT solve
-(GnssConfig.hpp:1568-1576 - "Default false keeps the per-epoch ABSOLUTE snapshot
+Why all three also get network.phase_leveling
+----------------------------------------------
+Without it the network producer is a per-epoch absolute-snapshot solve
+(GnssConfig.hpp:1568-1576: "Default false keeps the per-epoch absolute snapshot
 solve byte-identical").  A single-epoch float ambiguity carries code-level
-precision, i.e. of order a cycle or worse, so its DD fraction is uniform BY
-CONSTRUCTION and no product change could ever show up.  The Jul-17 base config
+precision, i.e. of order a cycle or worse, so its DD fraction is uniform by
+construction, and no product change could ever show up.  The Jul-17 base config
 had no carry, so its DD-frac readout could only ever have read uniform.
 phase_leveling auto-arms network.cycle_slip.mw_detect (GnssConfigLoadNetwork.cpp
 :1795-1802), satisfying standing invariant #1 (zero-q needs a slip response).
@@ -53,7 +53,7 @@ def duration_for(epochs):
 
 # --- the Jul-28 standard armed set -------------------------------------------
 # The base config predates the directive (Jul-17), so arm it explicitly here.
-# Everything below is fingerprint-SAFE or fresh-convergence-only; every arm is a
+# Everything below is fingerprint-safe or fresh-convergence-only; every arm is a
 # cold start, so the fingerprinted members are legal.
 ARMED_QC = {
     # QC, fingerprint-safe

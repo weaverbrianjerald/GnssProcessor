@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""TRUTH GRADE of the producer's Phase-2 AR search (docs/network_ambiguity_resolution_design.md,
+"""Truth grade of the producer's Phase-2 AR search (docs/network_ambiguity_resolution_design.md,
 the 2026-09-10 note §4.1: "a fix count is not a grade").
 
 `NetworkProducerAr` forms between-station double differences of the network's float ambiguities
 (star topology per (constellation, signal): one reference satellite, one reference station), builds
 their conditional covariance, and runs MLAMBDA on the `ils_max_dim` lowest-sigma of them.  With
-`network.ambiguity_resolution.trace` armed it now writes every DD of the basis to
+`network.ambiguity_resolution.trace` armed it writes every DD of the basis to
 `logs/network_producer_ar.csv` with its identity, float value, formal sigma, whether it entered the
 search subset, and the integer the ILS returned.  This script joins that file to the simulator's
 per-station truth and answers the three questions a fix count cannot:
@@ -13,19 +13,19 @@ per-station truth and answers the three questions a fix count cannot:
   1. **Is the float right?**  e = float_cyc - DD_true, where
      DD_true = [N(sta_r, sat_j) - N(sta_r, ref_sat)] - [N(ref_sta, sat_j) - N(ref_sta, ref_sat)]
      at that epoch (truth slips accumulated via simnet_amb_integer.n_at; the quiet bed has none).
-     Reported as wrapped |frac| p50, share < 0.15 / < 0.25, and the UNWRAPPED std -- for the whole
+     Reported as wrapped |frac| p50, share < 0.15 / < 0.25, and the unwrapped std, for the whole
      basis and for the searched subset separately, per band.  The two populations are different by
      construction: the cap selects the tightest DDs, so a subset number is not a basis number.
-  2. **Are the fixed integers RIGHT?**  The CORRECT-fix rate among kept DDs (fixed_int == DD_true),
+  2. **Are the fixed integers right?**  The correct-fix rate among kept DDs (fixed_int == DD_true),
      the wrong-fix count with the |e| of each, per band and per sigma bin.  This is the gate that
      matters: a wrong fix accepted at p_succ >= 0.9999 falsifies the carry-blind covariance as a
      gate input, and no amount of fix rate compensates for it.
-  3. **What is the ceiling?**  The share of searched DDs with |e| < 0.25 -- the ones plain rounding
+  3. **What is the ceiling?**  The share of searched DDs with |e| < 0.25, the ones plain rounding
      would already get right.  If the ceiling is high and the fix rate is low, the search is being
      refused by its gates; if the ceiling is low, the float is the problem and Phase 3 is premature.
 
 Plus the reference sat/station identity over time and its switch count, because every DD in this
-file is differenced against ONE such pair and inherits its error (SPEC_amb_iono_split_overcount
+file is differenced against one such pair and inherits its error (SPEC_amb_iono_split_overcount
 §6.12: any grade built on a single reference element must report that element's share or difference
 it away).  A high switch count with a settled-window verdict means the graded population is rotating.
 
@@ -50,7 +50,7 @@ from simnet_amb_integer import load_truth, n_at  # noqa: E402
 TRACE_REL = os.path.join("logs", "network_producer_ar.csv")
 
 # Formal-sigma bins (cycles) for the wrong-fix breakdown.  The ILS gates on FFR, not on sigma
-# directly, so a wrong fix concentrated in one bin says the covariance is mis-scaled THERE.
+# directly, so a wrong fix concentrated in one bin says the covariance is mis-scaled in that bin.
 SIGMA_BINS = ((0.0, 0.01, "[0,.01)"), (0.01, 0.03, "[.01,.03)"), (0.03, 0.10, "[.03,.10)"),
               (0.10, 0.30, "[.10,.30)"), (0.30, 1.00, "[.30,1)"), (1.00, 1e9, "1+"))
 
@@ -149,7 +149,7 @@ def grade(fixture, run, settle_h=12.0, stride=1, out=sys.stdout):
         tow = float(row[ix["tow"]])
         if tow0 is None:
             tow0 = tow
-        # Stride on EPOCHS, not rows (a row is a DD; striding rows would sample a band).
+        # Stride on epochs, not rows (a row is a DD; striding rows would sample a band).
         k = keep_ep.get(tow)
         if k is None:
             k = (len(keep_ep) % stride == 0) if stride > 1 else True
@@ -321,7 +321,7 @@ def grade(fixture, run, settle_h=12.0, stride=1, out=sys.stdout):
 
 
 # ===========================================================================
-# Selftest: a fabricated trace + truth tree with a KNOWN answer.
+# Selftest: a fabricated trace + truth tree with a known answer.
 # ===========================================================================
 def selftest():
     tmp = tempfile.mkdtemp(prefix="netar_grade_")
@@ -344,8 +344,8 @@ def selftest():
         return ((N[("S02", sat)] - N[("S02", "G01")]) - (N[("S01", sat)] - N[("S01", "G01")]))
 
     # One epoch, two DDs (G02 and G03 at station S02 against ref sta S01 / ref sat G01).
-    # G02: float sits 0.04 cyc off truth, IS searched, IS kept, fixed CORRECTLY.
-    # G03: float sits 0.60 cyc off truth, IS searched, IS kept, fixed WRONG by +1.
+    # G02: float sits 0.04 cyc off truth, is searched, is kept, fixed correctly.
+    # G03: float sits 0.60 cyc off truth, is searched, is kept, fixed wrong by +1.
     rows = [("G02", dd_true("G02") + 0.04, 0.02, 1, dd_true("G02"), 1),
             ("G03", dd_true("G03") + 0.60, 0.20, 1, dd_true("G03") + 1, 1)]
     with open(os.path.join(run, "logs", "network_producer_ar.csv"), "w", newline="") as f:

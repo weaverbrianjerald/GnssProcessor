@@ -1,7 +1,7 @@
 /**
  * @file NetworkAmbStateTrace.cpp
- * @brief RF-1 §7.4 — row formatting and the serial drain for
- *        @c network_amb_state.csv.  @see include/filter/NetworkAmbStateTrace.hpp
+ * @brief Row formatting and the serial drain for @c network_amb_state.csv
+ *        (RF-1 §7.4).  @see include/filter/NetworkAmbStateTrace.hpp
  */
 #include "filter/NetworkAmbStateTrace.hpp"
 
@@ -27,8 +27,8 @@ std::string ambStateFormatRow(const AmbStateRow& r) {
     // {:.17g} on the graded quantities (the value and the four variances): D1 fits a
     // slope through fold_var over 30 folds at the 1e-4 m² scale and D2 compares
     // value_abs against a 0.3 m bar, so a 6-significant-digit default would quantize
-    // exactly the signal the reads are built on.  TOW keeps 3 decimals — it is the join
-    // key of every other trace CSV in the run and must match them cell for cell.
+    // the signal the reads are built on.  TOW keeps 3 decimals: it is the join key of
+    // every other trace CSV in the run and must match them cell for cell.
     return fmt::format("{},{:.3f},{},{},{},"
                        "{:.17g},{:.17g},{:.17g},{:.17g},{:.17g},"
                        "{},{},{},"
@@ -53,10 +53,10 @@ void ambStateNoteErase(NetworkRunContext& ctx, long long week, double tow,
     row.station = station;
     row.sat     = sat;
     row.signal  = signal;
-    // The entry AS IT STANDS at the moment of deletion: its last harvested value and
-    // variance, its birth prior, and how many folds it had earned.  fold_var / folded /
-    // route stay at their defaults — an erase row is not a fold, and D3 reads the
-    // "variance before" off var_m2, which is the number the next arc has to re-earn.
+    // The entry as it stands at deletion: its last harvested value and variance, its
+    // birth prior, and its fold count.  fold_var / folded / route keep their defaults
+    // because an erase row is not a fold; D3 reads the "variance before" from var_m2,
+    // which is the variance the next arc starts over from.
     row.value_abs_m  = lc.value_abs;
     row.var_m2       = lc.var;
     row.var_first_m2 = lc.var_first;
@@ -81,10 +81,10 @@ void ambStateNoteDrop(NetworkRunContext& ctx, long long week, double tow,
     row.station = station;
     row.sat     = sat;
     row.signal  = signal;
-    // POST-drop state: the restored variance is the number D3 reads as "after", and the
-    // whole claim of §3.4 is that it is a STATED, bounded level rather than the absence
-    // of information a free epoch or an erase leaves behind.
-    row.value_abs_m  = lc.value_abs;     // kept — a drop is about confidence, not identity
+    // Post-drop state: D3 reads the restored variance as "after".  Design §3.4 treats
+    // it as a stated, bounded level, unlike the missing information a free epoch or an
+    // erase leaves behind.
+    row.value_abs_m  = lc.value_abs;     // kept: a drop changes confidence, not identity
     row.var_m2       = lc.var;
     row.var_first_m2 = lc.var_first;
     row.var_birth_m2 = lc.var_birth;
@@ -92,7 +92,7 @@ void ambStateNoteDrop(NetworkRunContext& ctx, long long week, double tow,
     row.age_ep = (lc.birth_ep > 0)
         ? (static_cast<long long>(ctx.counters.n_loop_epochs) - lc.birth_ep)
         : lc.birth_ep;
-    row.age_since_relevel_ep = 0;        // the drop IS the re-level event
+    row.age_since_relevel_ep = 0;        // the drop is the re-level event
     row.event = std::string("drop:") + cause;
     ctx.carry.amb_state_rows.push_back(std::move(row));
 }
@@ -106,10 +106,9 @@ void networkAmbStateTrace(NetworkRunContext& ctx,
 
     if (rows.empty()) return;
     if (!traces.amb_state_trace.is_open()) {
-        // The stream is opened once in openAll() under the same knob, so this can only
-        // mean the open failed (already warned there).  Clear anyway: a buffer that
-        // grows for the whole run because a file could not be created is a memory leak
-        // dressed as a trace.
+        // openAll() opens the stream once under the same knob, so a closed stream here
+        // means the open failed (openAll() already warned).  Clear the buffer anyway,
+        // so it does not grow for the whole run.
         if (log) log->warn("Network (RF-1 §7.4): {} buffered carry-state row(s) discarded — "
                            "network_amb_state.csv is not open.", rows.size());
         rows.clear();

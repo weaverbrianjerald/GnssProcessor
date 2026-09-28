@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
-"""THE WIND-UP DISCRIMINATOR for the band-common DD error (SPEC_synthetic §13.8.2 finding 4, owed since 2026-08).
+"""Wind-up discriminator for the band-common DD error (SPEC_synthetic §13.8.2 finding 4).
 
-Finding 4: the per-band DDs of the posture-C arm are ~5.0 cyc med|e| on L1C, L2W AND L5Q alike, while
-WL(1,2) is 0.386 and EWL(2,5) is 0.081 — so the dominant term is EQUAL IN CYCLES across bands and cancels
-exactly in every between-band difference.  The registered leading candidate is residual carrier phase
-wind-up, which is band-common in cycles by construction.  This script is the owed regression.
+Finding 4: the per-band DDs of the posture-C arm are about 5.0 cyc med|e| on L1C, L2W and
+L5Q alike, while WL(1,2) is 0.386 and EWL(2,5) is 0.081, so the dominant term is equal in
+cycles across bands and cancels exactly in every between-band difference.  The leading
+candidate is residual carrier phase wind-up, which is band-common in cycles by
+construction.  This script is the regression that tests that candidate.
 
-WHY THE CANDIDATE IS PLAUSIBLE AT ALL — and the cheaper test that comes first.  A range-domain error
-(orbit, clock, troposphere, antenna offset) is common in METRES, so in cycles it scales as 1/lambda and L5
-would read 25 % SMALLER than L1.  Measured: 4.956 / 5.034 / 5.076, a 2.4 % spread with L5 slightly LARGER.
-So the term is a CYCLE-domain quantity, and wind-up is the only standard one.  That is what makes the
-regression worth running rather than a formality.
+Why the candidate is plausible, and the cheaper test that comes first: a range-domain
+error (orbit, clock, troposphere, antenna offset) is common in metres, so in cycles it
+scales as 1/lambda and L5 would read 25% smaller than L1.  Measured: 4.956 / 5.034 /
+5.076, a 2.4% spread with L5 slightly larger.  So the term is a cycle-domain quantity,
+and wind-up is the only standard one.  That is what makes the regression worth running
+rather than a formality.
 
-THE REGRESSOR IS TRUTH, NOT A MODEL.  The simulator injects wind-up per (station, satellite, epoch) via
-EphemerisProvider::phaseWindupMetres(sat, r_rx, ...) and writes the accumulated band-common cycle count to
-<fixture>/<station>/truth_windup.csv.  So the DD regressor is exact:
+The regressor is truth, not a model.  The simulator injects wind-up per (station,
+satellite, epoch) via EphemerisProvider::phaseWindupMetres(sat, r_rx, ...) and writes the
+accumulated band-common cycle count to <fixture>/<station>/truth_windup.csv.  The DD
+regressor is exact:
 
     wu_dd = [wu(a,sat) - wu(a,ref)] - [wu(b,sat) - wu(b,ref)]        (cycles)
 
@@ -22,16 +25,18 @@ and the graded quantity is the same e the integer grader uses:
 
     e = dd_cyc - DD_true,    DD_true = [N(a,sat) - N(a,ref)] - [N(b,sat) - N(b,ref)]
 
-PRE-REGISTERED PREDICTIONS (write them down before reading the output):
-  H1 wind-up IS the band-common term  =>  |slope| ~ 1, R^2 large, the SAME slope on all three bands, and
-     med|e - wu_dd| collapses well below med|e|.
-  H0 it is not                        =>  |slope| small and/or R^2 ~ 0, and sd(e - wu_dd) > sd(e)
-     (variances add under independence).  ⚠ State that in VARIANCE, not in med| |: for a broad e the
-     median absolute value can fall slightly when a small independent regressor is subtracted, so a
-     "med|e-w| went down" reading is NOT evidence of wind-up content.
-  ⚠ MAGNITUDE GATE, independent of any fit: the injected wind-up accumulates to at most ~1 cycle, so
-     |wu_dd| is bounded by ~2 cyc.  If med|e| is ~5 cyc with a ~20 cyc p90, wind-up cannot be the whole
-     term no matter what the correlation says.  Report the bound BESIDE the fit and let it veto.
+Pre-registered predictions (recorded before reading the output):
+  H1, wind-up is the band-common term: |slope| close to 1, R^2 large, the same slope on
+     all three bands, and med|e - wu_dd| collapses well below med|e|.
+  H0, it is not: |slope| small and/or R^2 near 0, and sd(e - wu_dd) > sd(e) (variances
+     add under independence).  This must be judged on variance, not on med| |: for a
+     broad e the median absolute value can fall slightly when a small independent
+     regressor is subtracted, so a drop in med|e-w| alone is not evidence of wind-up
+     content.
+  Magnitude gate, independent of any fit: the injected wind-up accumulates to at most
+     about 1 cycle, so |wu_dd| is bounded by about 2 cyc.  If med|e| is about 5 cyc with
+     a 20 cyc p90, wind-up cannot be the whole term no matter what the correlation says.
+     Report the bound beside the fit and let it veto.
 
 Usage:  python scripts/windup_dd_regress.py <fixture_dir> <run_dir> [--stride 8] [--signals L1C,L2W,L5Q]
         python scripts/windup_dd_regress.py --selftest
@@ -196,13 +201,13 @@ def regress(fixture, run, stride=8, signals=("L1C", "L2W", "L5Q"), out=sys.stdou
         P(f"{sig:>5} {len(e):7d} {a:9.4f} {b:9.4f} {r:7.4f} {r2:7.4f} | "
           f"{med(e):8.3f} {med(res_one):9.3f} | {st.pstdev(e):8.3f} {st.pstdev(res_one):8.3f}")
 
-    # --- Two-component decomposition, then the SHARPEST form of the discriminator ----------
-    # p ~ +0.39 above says the per-band error is a MIXTURE, so testing wind-up against the RAW
-    # per-band e dilutes it.  Split each chord's three-band error into
+    # --- Two-component decomposition, then the sharpest form of the discriminator ----------
+    # p about +0.39 above says the per-band error is a mixture, so testing wind-up against the
+    # raw per-band e dilutes it.  Split each chord's three-band error into
     #     e_i = A + B * (lambda_i / lambda_1)
-    # A = the CYCLE-common part (what wind-up would be) and B = the part proportional to lambda
-    # (iono enters exactly this way: -dI1 * lambda_i / lambda_1^2 cycles).  Then regress the
-    # EXTRACTED A against the wind-up DD — if wind-up hides anywhere, it is in A.
+    # A is the cycle-common part (what wind-up would be) and B is the part proportional to
+    # lambda (iono enters exactly this way: -dI1 * lambda_i / lambda_1^2 cycles).  Then
+    # regress the extracted A against the wind-up DD: if wind-up hides anywhere, it is in A.
     if len(lam_of) >= 3 and all(x in lam_of for x in signals):
         base = lam_of[signals[0]]
         r = [lam_of[x] / base for x in signals]
@@ -235,8 +240,8 @@ def regress(fixture, run, stride=8, signals=("L1C", "L2W", "L5Q"), out=sys.stdou
 
 
 def selftest():
-    """Two beds through the real path: one where e IS the wind-up DD (slope 1 must come back), one where
-    e is independent of it (slope ~ 0, and subtracting the regressor must make the residual WORSE)."""
+    """Two beds through the real path: one where e is the wind-up DD (slope 1 must come back), one where
+    e is independent of it (slope near 0, and subtracting the regressor must make the residual worse)."""
     ok = True
 
     def chk(name, cond, detail=""):

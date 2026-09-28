@@ -1,6 +1,6 @@
-"""IF-phase slip-trace viewer -- the port of ``view_if_slip_trace.m``.
+"""IF-phase slip-trace viewer: the port of ``view_if_slip_trace.m``.
 
-Reads ``if_slip_trace.csv`` from the *STAGED* (rarely-wired-in)
+Reads ``if_slip_trace.csv`` from the staged (rarely wired in)
 ``IfPhaseSlipDetector`` and reproduces its four diagnostic figures, faceted by
 constellation.  The detector forms an ionosphere-free (IF) carrier-phase
 combination, single-differences it between satellites against a per-epoch
@@ -22,8 +22,8 @@ Expected CSV header (per the MATLAB banner)::
 The ``pos_sigma_3d_m`` / ``pos_gated`` columns may be absent in older traces
 (filled with zeros, exactly as the MATLAB does).
 
-Figures (each one constellation per *vertically-stacked* tile -- the backend
-stacks axes rather than tiling them side-by-side as MATLAB's ``tiledlayout``
+Figures (each one constellation per vertically stacked tile: the backend
+stacks axes rather than tiling them side by side as MATLAB's ``tiledlayout``
 does, but the per-system grouping, colours and series are identical):
 
 1. ``Δ∇φ_IF`` between-epoch double difference [m], per ``<sat>_<phase_if_key>``
@@ -40,10 +40,10 @@ does, but the per-system grouping, colours and series are identical):
 Fidelity notes
 --------------
 * Satellite colours come from :func:`distinguishable_colors` sized
-  ``max(8, N)`` over the *sorted-unique* satellite categories, indexed by the
-  satellite's position in that ordering -- matching the MATLAB
-  ``distinguishable_colors(max(8,N))`` + ``find(satCats==sat)`` lookup.  (MATLAB
-  ``unique(categorical(...))`` sorts; we sort too.)
+  ``max(8, N)`` over the sorted-unique satellite categories, indexed by the
+  satellite's position in that ordering: matching the MATLAB
+  ``distinguishable_colors(max(8,N))`` + ``find(satCats==sat)`` lookup.  MATLAB
+  ``unique(categorical(...))`` sorts; this port sorts too.
 * Arc-breaking inserts a NaN sample at every time gap larger than ``1.5 ×``
   the median epoch step, so lines do not connect across visibility gaps (the
   ``break_arcs`` helper, ported verbatim).
@@ -204,7 +204,7 @@ def build_if_slip_trace(ctx) -> ViewerResult:
 
     figures: List[Figure] = []
 
-    # ---- FIGURE 1: between-epoch double difference (delta_grad) -------------
+    # ---- figure 1: between-epoch double difference (delta_grad) -------------
     axes1: List[Axes] = []
     for sys_name in system_list:
         t_sys = t_clean[t_clean["system"] == sys_name]
@@ -241,7 +241,7 @@ def build_if_slip_trace(ctx) -> ViewerResult:
                           title="Δ∇φ_IF (between-satellite, between-epoch) [m]",
                           axes=axes1, width=14, height=max(4.0, 2.4 * len(axes1))))
 
-    # ---- FIGURE 2: IF phase OMC (phi_if_omc) -------------------------------
+    # ---- figure 2: IF phase OMC (phi_if_omc) -------------------------------
     if "phi_if_omc_m" in df.columns:
         axes2: List[Axes] = []
         for sys_name in system_list:
@@ -265,7 +265,7 @@ def build_if_slip_trace(ctx) -> ViewerResult:
                               axes=axes2, width=14,
                               height=max(4.0, 2.4 * len(axes2))))
 
-    # ---- FIGURE 3: between-satellite single difference (grad_phi_if) -------
+    # ---- figure 3: between-satellite single difference (grad_phi_if) -------
     if "grad_phi_if_m" in df.columns:
         axes3: List[Axes] = []
         for sys_name in system_list:
@@ -289,7 +289,7 @@ def build_if_slip_trace(ctx) -> ViewerResult:
                               axes=axes3, width=14,
                               height=max(4.0, 2.4 * len(axes3))))
 
-    # ---- FIGURE 4: reference satellite elevation over time -----------------
+    # ---- figure 4: reference satellite elevation over time -----------------
     has_refchg = "ref_changed" in df.columns
     axes4: List[Axes] = []
     for sys_name in system_list:

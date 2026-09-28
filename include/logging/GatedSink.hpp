@@ -2,13 +2,13 @@
 
 /**
  * @file GatedSink.hpp
- * @brief spdlog sink wrapper that buffers messages and replays selected slots.
+ * @brief spdlog sink wrapper that buffers messages and replays them on request.
  *
- * Used by KalmanFilter to implement concise per-epoch logging: pass-1 messages
- * pass through immediately, intermediate rebuild passes are buffered and
- * discarded, and the final-pass buffer is replayed when end-of-epoch is
- * signaled.  Generic enough to be reused for any logger that has a similar
- * "first + last only" emission policy.
+ * Used by KalmanFilter for concise per-epoch logging: pass-1 messages pass
+ * through immediately, the messages of every later rebuild pass accumulate in
+ * the buffer, and endEpoch() replays the whole buffer in order and then clears
+ * it.  Generic enough to be reused for any logger with a similar
+ * "live first pass, deferred later passes" emission policy.
  */
 
 #include <spdlog/sinks/sink.h>
@@ -31,14 +31,14 @@ namespace GnssProcessor {
  * - In @c Policy::Buffer mode: appended (as an owned copy) to an in-memory
  *   buffer. Inner sinks are not touched.
  *
- * Caller controls the policy via @c setPolicy. The buffer is exposed via:
- * - @c clearBuffer — discard everything currently buffered (no replay).
- * - @c replayBuffer — forward every buffered message to the inner sinks
+ * The caller sets the policy with @c setPolicy. The buffer is exposed via:
+ * - @c clearBuffer: discard everything currently buffered (no replay).
+ * - @c replayBuffer: forward every buffered message to the inner sinks
  *   exactly as if it had been emitted in passthrough mode.
  *
- * Thread-safe: concurrent log() calls use a mutex around the buffer; policy
- * is an atomic so a switch from Buffer to Passthrough is observed
- * monotonically. Inner-sink calls reuse spdlog's per-sink mutex (the inner
+ * Thread-safe: concurrent log() calls use a mutex around the buffer; the policy
+ * is an atomic, so a switch from Buffer to Passthrough is observed
+ * monotonically. Inner-sink calls rely on spdlog's per-sink mutex (the inner
  * sinks should be the @c _mt variants).
  */
 class GatedSink : public spdlog::sinks::sink {
@@ -68,7 +68,7 @@ public:
     void clearBuffer();
 
     /// Forward every buffered message to the inner sinks. The buffer is
-    /// retained — call @c clearBuffer afterward if you want a fresh slot.
+    /// retained; call @c clearBuffer afterward to start an empty one.
     void replayBuffer();
 
 private:

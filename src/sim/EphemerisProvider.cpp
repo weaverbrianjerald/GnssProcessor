@@ -11,11 +11,10 @@
 #include <string>
 
 #include "common/Constants.hpp"
-// NOTE: ModelGeometry.hpp holds a Troposphere by value, so including it provides
-// the complete Troposphere type.  We deliberately do NOT include
-// "atmosphere/Troposphere.hpp" directly: as of this writing that header's guard
-// is a bare `#pragma` (not `#pragma once`), so a second include in the same TU
-// triggers a class redefinition.  Single-path inclusion via ModelGeometry avoids it.
+// Note: the Troposphere type comes in through ModelGeometry.hpp, which holds a
+// Troposphere by value and includes "atmosphere/Troposphere.hpp".  That header is not
+// included directly here.  (It now carries `#pragma once`, so a direct include would
+// also be safe; the single include path dates from when its guard was a bare `#pragma`.)
 #include "atmosphere/GlobalIonosphereMap.hpp" // IONEX quiet background (opt-in)
 #include "atmosphere/Ionosphere.hpp" // includes ModelGeometry.hpp (Troposphere via that path only)
 #include "model/Antenna.hpp"         // satellite antenna PCO/PCV (reuse; brings System enum)
@@ -25,14 +24,14 @@
 #include "rinex/RinexParser.hpp"
 
 namespace {
-// The broadcast nav file carries usable GPS Klobuchar only if it yields EXACTLY
-// 8 finite coefficients — one clean GPSA (alpha[4]) + one clean GPSB (beta[4]).
+// The broadcast nav file carries usable GPS Klobuchar only if it yields exactly
+// 8 finite coefficients: one clean GPSA (alpha[4]) and one clean GPSB (beta[4]).
 // Every coefficient load path (ProductParser::parseKlobuchar, loadKlobucharCoeffs)
-// CLEARS the vector to size 0 on any count != 8 (e.g. duplicate GPSA/GPSB lines in
+// clears the vector to size 0 on any count != 8 (e.g. duplicate GPSA/GPSB lines in
 // merged BRDC products, or a malformed value), and
-// Ionosphere::computeKlobucharDelay then indexes coeffs[0..7] WITHOUT a guard.
-// So match the parser's success condition exactly: anything else -> fall back to
-// the analytic quiet background rather than risk an out-of-bounds read.
+// Ionosphere::computeKlobucharDelay then indexes coeffs[0..7] without a size check.
+// This predicate therefore matches the parsers' success condition; anything else
+// falls back to the analytic quiet background instead of an out-of-bounds read.
 bool navHasGpsKlobuchar(const std::filesystem::path& nav) {
     std::ifstream f(nav);
     if (!f.is_open()) return false;
@@ -48,10 +47,10 @@ bool navHasGpsKlobuchar(const std::filesystem::path& nav) {
     while (std::getline(f, line)) {
         if (line.find("END OF HEADER") != std::string::npos) break;
         if (line.find("IONOSPHERIC CORR") == std::string::npos) continue;
-        // Fortran 'D' exponents -> 'E', matching what the real loaders now do
-        // (Ionosphere.cpp / ProductParser.cpp).  This predicate MUST agree with them:
-        // if it says yes and they say no, computeKlobucharDelay indexes an empty
-        // vector; if it says no and they say yes, the background silently degrades.
+        // Fortran 'D' exponents become 'E', as in the loaders (Ionosphere.cpp /
+        // ProductParser.cpp).  This predicate has to agree with them: if it accepts
+        // and they reject, computeKlobucharDelay indexes an empty vector; if it rejects
+        // and they accept, the background falls back to analytic without notice.
         std::string norm = line;
         for (char& c : norm)
             if (c == 'D' || c == 'd') c = 'E';
@@ -87,7 +86,7 @@ EphemerisProvider::EphemerisProvider(const std::filesystem::path& setup_obs,
 
     product_parser_->loadProducts();
     ProductCache& cache = ProductCache::getInstance();
-    cache.clearCache(); // singleton — ensure a clean load for this provider
+    cache.clearCache(); // singleton: start this provider from a clean load
     if (!cache.loadProducts(*product_parser_, log_)) return;
     if (cache.getOrbitCount() == 0 || cache.getClockCount() == 0) return;
 
@@ -104,18 +103,18 @@ EphemerisProvider::EphemerisProvider(const std::filesystem::path& setup_obs,
         has_klobuchar_ = true;
     }
 
-    // Antenna PCO/PCV via reuse (M7 antenna).  Only stood up when an ATX was loaded
-    // into the shared cache (the caller adds igs20.atx to product_paths when either
-    // antenna term is requested).  The SATELLITE half is always active.  The RECEIVER
-    // half is gated on a non-empty rx_antenna_type: with none, force receiver PCO/PCV
-    // off (they default true) so getAntennaCorrection returns exactly
-    // (-sat_pco + sat_pcv); with one, enable them so the receiver half is injected too
-    // and the run config's enable_receiver_pco/pcv cancels it.  enable_phase_windup
-    // must stay OFF *here* in every case: since M10 (2026-08-11) wind-up is injected
-    // through the DEDICATED phaseWindupMetres() path (corrections.phase_windup knob,
-    // accumulated mode), so letting getAntennaCorrection add its own wrapped wind-up
-    // would double-inject the term.  The level, north-referenced receiver convention
-    // is shared by both paths; hull yaw stays unmodelled on both sides.
+    // Antenna PCO/PCV, reusing the processor's Antenna model (M7).  Built only when an
+    // ATX was loaded into the shared cache (the caller adds igs20.atx to product_paths
+    // when either antenna term is requested).  The satellite half is always active.
+    // The receiver half is gated on a non-empty rx_antenna_type: with none, receiver
+    // PCO/PCV are forced off (they default true) so getAntennaCorrection returns exactly
+    // (-sat_pco + sat_pcv); with one, they are enabled so the receiver half is injected
+    // too and the run config's enable_receiver_pco/pcv cancels it.  enable_phase_windup
+    // stays off here in every case: wind-up is injected through the dedicated
+    // phaseWindupMetres() path (corrections.phase_windup knob, accumulated mode; M10),
+    // and a wrapped wind-up added by getAntennaCorrection would inject the term twice.
+    // Both paths use the level, north-referenced receiver convention; hull yaw is
+    // unmodelled on both sides.
     if (!ProductCache::getInstance().getAntennas().empty()) {
         const bool rx_on = !rx_antenna_type_.empty();
         auto& mc = config_.getModelCorrections(); // non-const overload
@@ -124,19 +123,20 @@ EphemerisProvider::EphemerisProvider(const std::filesystem::path& setup_obs,
         mc.enable_receiver_pco = rx_on;
         mc.enable_receiver_pcv = rx_on;
         mc.enable_phase_windup = false;
-        // Pin the current antenna vector so Antenna's raw reference into the singleton
-        // cache can't dangle if the cache is later cleared/reloaded during our lifetime.
+        // Holds the current antenna vector so Antenna's raw reference into the singleton
+        // cache stays valid if the cache is cleared or reloaded while this provider lives.
         antennas_hold_ = ProductCache::getInstance().getAntennasShared();
         antenna_ = std::make_unique<Antenna>(config_, *product_parser_, log_, *rinex_);
         has_antenna_ = true;
     }
 
-    // Observable-specific signal biases (OSB): stood up whenever a .BIA parsed into the
+    // Observable-specific signal biases (OSB): active whenever a .BIA parsed into the
     // shared cache (the caller adds the COD MGX .BIA to product_paths only when
-    // corrections.signal_bias is requested).  No separate model object is needed — the
-    // biases ride in geometry_'s own GnssCorrections, built from cache.getBiasesShared()
-    // (ModelGeometry.cpp), so signalBiasMetres just calls its getBiasCorrection, exactly
-    // the lookup the processor performs in computeBaseModeledValue.
+    // corrections.signal_bias is requested).  No separate model object is needed: the
+    // biases are held by geometry_'s own GnssCorrections, built from
+    // cache.getBiasesShared() (ModelGeometry.cpp), so signalBiasMetres calls its
+    // getBiasCorrection, the same lookup the processor performs in
+    // computeBaseModeledValue.
     has_signal_bias_ = ProductCache::getInstance().getBiasCount() > 0;
 
     ok_ = true;
@@ -166,27 +166,26 @@ bool EphemerisProvider::gimSlantStec(const Eigen::Vector3d& rx, const Eigen::Vec
     stec_tecu = std_tecu = ipp_lat_deg = ipp_lon_deg = 0.0;
     if (!gim_) return false;
 
-    // The frequency only scales delay_m, which we discard; STEC is frequency-free.
-    // Querying ONCE here (never per band) is what keeps the injected first-order term a
-    // single scalar, and therefore what keeps the iono-free combination cancelling exactly.
+    // The frequency only scales delay_m, which is discarded; STEC is frequency-free.
+    // One query per ray (not one per band) keeps the injected first-order term a single
+    // scalar, so the iono-free combination cancels it exactly.
     const GimQuery q = gim_->slantIonoDelay(t, rx, sat_pos, Constants::GPS_L1_FREQ);
     if (!q.valid || !std::isfinite(q.stec_tecu)) return false;
 
-    // Non-positive STEC is map CONTENT, not a failed query: storm-time GIMs legitimately
-    // carry near-zero/negative cells in depleted sectors (post-storm night side, plus the
-    // spherical-harmonic fit overshooting toward zero — DOY 132's pre-dawn minimum at the
-    // vessel is 10 TECU with negative cells nearby).  Clamp to 0 (a negative first-order
-    // group delay would be unphysical) instead of misclassifying the ray as invalid,
-    // which silently mixed Klobuchar into an otherwise-GIM background and tripped the
-    // uniform-background gate.
-    stec_tecu = std::max(0.0, q.stec_tecu);   // ALREADY SLANT — see the header warning; do not map.
+    // Non-positive STEC is map content, not a failed query: storm-time GIMs carry
+    // near-zero or negative cells in depleted sectors (post-storm night side, and the
+    // spherical-harmonic fit overshooting toward zero).  The value is clamped to 0 (a
+    // negative first-order group delay is unphysical) rather than treated as invalid;
+    // an invalid ray would fall back to Klobuchar, mixing two backgrounds and failing
+    // the uniform-background gate.
+    stec_tecu = std::max(0.0, q.stec_tecu);   // Already slant (see the header @warning); do not map.
     const double deg = 180.0 / Constants::PI;
     // std_m at L1 back to TECU: I = 40.3e16 * STEC / f^2.
     std_tecu = std::isfinite(q.std_m)
                    ? q.std_m * Constants::GPS_L1_FREQ * Constants::GPS_L1_FREQ / (40.3 * 1e16)
                    : 0.0;
     ipp_lat_deg = q.ipp_lat_rad * deg;
-    // The map returns longitude UNWRAPPED; this vessel sits at lon ~-179, so wrap it.
+    // The map returns longitude unwrapped; wrap it to [-180, 180) (needed near lon -179).
     double lon = std::fmod(q.ipp_lon_rad * deg + 180.0, 360.0);
     if (lon < 0.0) lon += 360.0;
     ipp_lon_deg = lon - 180.0;
@@ -242,10 +241,10 @@ double EphemerisProvider::clock(const std::string& sat, const GnssTime& t, bool*
     return geometry_->getCorrections().getSatelliteClockCorrection(sat, t, broadcast);
 }
 
-// --- M7 full-correction stack ------------------------------------------------
-// Signs verified against PppModel::computeBaseModeledValue: the modeled value is
+// --- Full-correction stack (M7) ----------------------------------------------
+// Signs follow PppModel::computeBaseModeledValue: the modeled value is
 //   range - c*sat_clock - c*relativistic_corr + ... + shapiro + solid_tide + pole
-// and observed = modeled(truth) + noise, so the synth ADDS each term below.
+// and observed = modeled(truth) + noise, so the synthesis adds each term below.
 
 double EphemerisProvider::relativityMetres(const std::string& sat, const Eigen::Vector3d& sat_pos_em,
                                            const Eigen::Vector3d& sat_vel_em) const {
@@ -264,8 +263,8 @@ double EphemerisProvider::shapiroMetres(const std::string& sat, const Eigen::Vec
 double EphemerisProvider::solidEarthTideMetres(const Eigen::Vector3d& rx, const Eigen::Vector3d& sat_pos,
                                                const GnssTime& t) const {
     if (!geometry_) return 0.0;
-    // Reuse the geometry pipeline's OWN Sun/Moon (same Planetary + ERP) so the
-    // displacement is bit-for-bit what the processor computes -> cancels exactly.
+    // Uses the geometry pipeline's own Sun/Moon (same Planetary + ERP), so the
+    // displacement is bit-for-bit what the processor computes and cancels exactly.
     Eigen::Vector3d sun, moon;
     geometry_->sunMoonPositions(t, sun, moon);
     return geometry_->getCorrections().computeSolidEarthTide(rx, sat_pos, sun, moon, t);
@@ -295,9 +294,9 @@ bool EphemerisProvider::loadOceanTideAlongTrack(const std::filesystem::path& eot
                                                 const std::vector<OtlField::TrackSample>& track,
                                                 double anchor_spacing_km,
                                                 const Eigen::Vector3d& frozen_site) {
-    // Deliberately does NOT touch geometry_'s corrections: the field owns both the
-    // moving coefficients and the frozen reference set, so there is exactly one
-    // source for each and they cannot drift apart.
+    // Leaves geometry_'s corrections untouched: the field owns both the moving
+    // coefficients and the frozen reference set, so each has one source and the two
+    // cannot drift apart.
     auto field = std::make_unique<OtlField>(log_);
     if (!field->build(eot20_nc, track, anchor_spacing_km, frozen_site)) return false;
     otl_field_      = std::move(field);
@@ -321,7 +320,7 @@ Eigen::Vector3d EphemerisProvider::oceanTideModeledEcef(const Eigen::Vector3d& r
                                                         const GnssTime& t) const {
     if (!has_ocean_tide_) return Eigen::Vector3d::Zero();
     if (otl_field_) return otl_field_->frozenDisplacementEcef(rx, t);
-    // Frozen mode: what the sim injects IS what the processor models.
+    // Frozen mode: the injected displacement equals what the processor models.
     if (!geometry_) return Eigen::Vector3d::Zero();
     return geometry_->getCorrections().computeOceanTideCorrection(rx, t);
 }
@@ -331,9 +330,10 @@ double EphemerisProvider::oceanTideMetres(const Eigen::Vector3d& rx, const Eigen
     if (!has_ocean_tide_) return 0.0;
     if (!otl_field_ && !geometry_) return 0.0;
     // Project the ECEF site displacement onto the sat->rx direction, exactly as
-    // ModelGeometry does (otl_ecef.dot(-los), los = rx->sat) — same form as pole tide.
+    // ModelGeometry does (otl_ecef.dot(-los), los = rx->sat), the same form as pole tide.
     // With an along-track field installed the displacement is the one at the vessel's
-    // actual position, so this is the ONE M7 term that does not cancel by construction.
+    // actual position, which makes this the one M7 term that does not cancel by
+    // construction.
     const Eigen::Vector3d otl_ecef =
         otl_field_ ? otl_field_->displacementEcef(rx, t)
                    : geometry_->getCorrections().computeOceanTideCorrection(rx, t);
@@ -348,8 +348,8 @@ double EphemerisProvider::antennaMetres(const std::string& sat, const std::strin
     if (!has_antenna_ || !antenna_ || !geometry_) return 0.0;
     // Map the constellation from the sat id exactly as RinexParser::systemFromSatPrefix
     // does, so this stays correct if the signal plan is ever extended past GPS+Galileo
-    // (a first-char heuristic that defaulted unknown systems to GPS would inject a
-    // GPS-keyed term on e.g. a BeiDou row and silently break its cancellation).  An
+    // (a heuristic that defaulted unknown systems to GPS would inject a GPS-keyed term
+    // on, e.g., a BeiDou row and break its cancellation without any error).  An
     // unhandled prefix returns 0 (no injection) rather than a misclassified term.
     System system;
     switch (sat.empty() ? '?' : sat[0]) {
@@ -361,15 +361,15 @@ double EphemerisProvider::antennaMetres(const std::string& sat, const std::strin
         case 'S': system = System::SBAS;    break;
         default:  return 0.0;
     }
-    // Reuse the geometry pipeline's cached Sun (the SAME source the processor passes
-    // as getCachedSunPosition()) so the satellite body-frame yaw-steering attitude —
-    // hence the PCO rotation into ECEF — matches the processor and cancels.
+    // Uses the geometry pipeline's cached Sun (the source the processor passes as
+    // getCachedSunPosition()), so the satellite body-frame yaw-steering attitude, and
+    // with it the PCO rotation into ECEF, matches the processor and cancels.
     Eigen::Vector3d sun, moon;
     geometry_->sunMoonPositions(t, sun, moon);
-    // rx_antenna_type_ empty + receiver terms disabled => exactly (-sat_pco + sat_pcv);
-    // non-empty + receiver terms enabled => that PLUS (+rx_pco + rx_pcv).  The SAME
-    // string is written to the RINEX "ANT # / TYPE" header, so the antenna the file
-    // declares is by construction the antenna whose pattern was injected.
+    // rx_antenna_type_ empty, receiver terms disabled: exactly (-sat_pco + sat_pcv).
+    // Non-empty, receiver terms enabled: that plus (+rx_pco + rx_pcv).  The same string
+    // is written to the RINEX "ANT # / TYPE" header, so the antenna the file declares
+    // is the antenna whose pattern was injected.
     return antenna_->getAntennaCorrection(sat, code, system, rx, sat_pos, sat_vel,
                                           elev_deg, az_deg, rx_antenna_type_, t,
                                           sun, /*skip_satellite_pco=*/false);
@@ -378,8 +378,8 @@ double EphemerisProvider::antennaMetres(const std::string& sat, const std::strin
 double EphemerisProvider::signalBiasMetres(const std::string& sat, const std::string& code,
                                            const GnssTime& t) const {
     if (!has_signal_bias_ || !geometry_) return 0.0;
-    // The processor ADDS this same value to its modeled value (computeBaseModeledValue
-    // "+ bias_corr") when enable_code_phase_bias is on, so ADDING it to the synthesized
+    // The processor adds this same value to its modeled value (computeBaseModeledValue
+    // "+ bias_corr") when enable_code_phase_bias is on, so adding it to the synthesized
     // observable cancels it back to truth.  getBiasCorrection returns 0 for any
     // (satellite, observable) the product does not cover, which cancels trivially.
     return geometry_->getCorrections().getBiasCorrection(sat, code, t);
@@ -402,15 +402,15 @@ double EphemerisProvider::phaseWindupMetres(const std::string& sat, const Eigen:
         case 'S': system = System::SBAS;    break;
         default:  return 0.0;
     }
-    // Geometry's cached Sun = the source PppModel passes (getCachedSunPosition), so the
-    // yaw-steering body frame — hence the wind-up angle — matches the processor exactly.
+    // Geometry's cached Sun is the source PppModel passes (getCachedSunPosition), so the
+    // yaw-steering body frame, and with it the wind-up angle, matches the processor.
     Eigen::Vector3d sun, moon;
     geometry_->sunMoonPositions(t, sun, moon);
-    // accumulate=true: the injected physics must be CONTINUOUS.  A wrapped (fractional)
+    // accumulate=true: the injected wind-up is continuous.  A wrapped (fractional)
     // injection would step the phase by exactly one cycle at every ±pi crossing, which
-    // an estimator can only absorb by stepping the float ambiguity — the opposite of
-    // the time-constant-integer contract this term exists to protect.  The run config
-    // mirrors it with estimation.accumulate_phase_windup.
+    // an estimator can absorb only by stepping the float ambiguity, breaking the
+    // time-constant integer ambiguity the truth model promises.  The run config
+    // matches it with estimation.accumulate_phase_windup.
     return geometry_->getCorrections().computePhaseWindUp(sat, system, rx, sat_pos,
                                                           wavelength_m, t, sun, sat_vel,
                                                           /*accumulate=*/true);

@@ -1,44 +1,44 @@
 #!/usr/bin/env python3
-"""REFERENCE-SLIP FAN-OUT census for the FP-1 field matrix.
+"""Reference-slip fan-out census for the FP-1 field matrix.
 
     python scripts/fp1_refslip_census.py [--runs C:/GnssProcessor/runs]
                                          [--prefix fp1] [--json out.json]
 
-WHAT THIS MEASURES, and why it is not one of §20's gates.
+What this measures, and why it is not one of §20's gates.
 
 An IF-TD chain's per-sample statistic is ``dd = dOMC(sat) - dOMC(ref)``
-(`IfPhaseSlipDetector.hpp:195-206`), so the chain's REFERENCE satellite has
+(`IfPhaseSlipDetector.hpp:195-206`), so the chain's reference satellite has
 ``dd == 0`` identically, however large its own slip.  §22 closed one
-consequence of that identity — a reference arc cannot EXONERATE, because the
+consequence of that identity: a reference arc cannot exonerate, because the
 pooled preview could never have flagged it (`common_band_ref_arc`).  This
-census measures the OTHER consequence, which no gate in §20 or §22 looks at:
+census measures the other consequence, which no gate in §20 or §22 looks at:
 when the reference satellite is the one that slips, its step lands at full
-size on EVERY OTHER satellite of that chain, and the response refloats them.
+size on every other satellite of that chain, and the response refloats them.
 
 Under ``if_phase_td_pairs: first`` a station runs one chain, so the exposure is
 one reference arc.  Under ``all`` every distinct band pair runs its own chain
 with its own reference election (§14.10.4), so a triple-band station carries
 three references and the two L5-bearing chains typically elect the station's
-highest L5-capable satellite — which is exactly the satellite an event study
+highest L5-capable satellite, which is exactly the satellite an event study
 picks as "mature, high elevation, clean".
 
 Per leg the census reports:
   * the epochs k over which the injected satellite is each chain's reference
-    (``network_if_slip.csv`` ``is_ref``) — the exposure window;
-  * the injected satellite's OWN abs_dev on each chain (expected 0.000000 on a
+    (``network_if_slip.csv`` ``is_ref``): the exposure window;
+  * the injected satellite's own abs_dev on each chain (expected 0.000000 on a
     chain it references: the slip is invisible where it happened);
-  * every OTHER satellite flagged at that station on that chain, with abs_dev,
-    threshold and k — the fan-out;
-  * how many of those became a ``T1_if_slip`` REFLOAT versus were held back by
+  * every other satellite flagged at that station on that chain, with abs_dev,
+    threshold and k: the fan-out;
+  * how many of those became a ``T1_if_slip`` refloat versus were held back by
     a common-band verdict (``cb_kept=``) or never drained;
   * the phase-bias datum re-realizations they caused: products ``P`` rows whose
     value moves > `--pb-tol` m at the event epoch, with the phase_disc counter
     and emitted sigma on both sides (invariant #7's declaration edge), plus the
     ``R`` retro-bump and ``C`` clock_disc records;
-  * the consumer's response, ``closed_loop_trace.csv`` ENU event - null.
+  * the consumer's response, ``closed_loop_trace.csv`` ENU event minus null.
 
-The OFF arm is printed alongside on every line (the expectation is 0), and the
-G25 legs are the control: that satellite is NOT a chain reference at k=0, so a
+The off arm is printed alongside on every line (the expectation is 0), and the
+G25 legs are the control: that satellite is not a chain reference at k=0, so a
 fan-out there would falsify the mechanism rather than confirm it.
 """
 import argparse
@@ -190,7 +190,7 @@ def census(runs, prefix, pb_tol, json_out=None):
             if not own:
                 print("      (none)")
 
-            # 3. the fan-out: OTHER satellites flagged at this station, k in [0,+5]
+            # 3. the fan-out: other satellites flagged at this station, k in [0,+5]
             fan = [(k, p, s, dv, th) for k, p, s, dv, th, fl, ir in rows
                    if fl and s != sat and 0 <= k <= 5]
             fan.sort()

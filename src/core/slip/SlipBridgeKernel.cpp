@@ -81,9 +81,9 @@ SlipBridgeKernel::BridgeWindows SlipBridgeKernel::buildWindows(
             !std::isfinite(P_hi) || !std::isfinite(P_lo))
             continue;
 
-        // GF (metres) — mirrors TurboEditResolver::computeGfMeters.
+        // GF (metres), as in TurboEditResolver::computeGfMeters.
         const double gf = L_hi * o.lam_hi - L_lo * o.lam_lo;
-        // MW (metres) — mirrors MwSlipDetector::computeMwMeters.
+        // MW (metres), as in MwSlipDetector::computeMwMeters.
         const double L_hi_m = L_hi * c / o.f_hi;
         const double L_lo_m = L_lo * c / o.f_lo;
         const double wl_phase_m = (o.f_hi * L_hi_m - o.f_lo * L_lo_m) / f_diff;

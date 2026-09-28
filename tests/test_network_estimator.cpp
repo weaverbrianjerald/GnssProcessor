@@ -1,17 +1,16 @@
 /**
  * @file test_network_estimator.cpp
  * @brief Synthetic-truth recovery tests for the single-epoch network estimator
- *        (W4-S2a) — the plan's "synthetic-network simulation (known truth)"
- *        verification milestone.
+ *        (the synthetic-network, known-truth verification milestone; W4-S2a).
  *
  * A noise-free, zero-atmosphere, single-frequency network is generated from
- * prescribed truth (per-satellite clock + phase bias; per-station clock +
- * float-ambiguity lumps).  Under the explicit minimum-constraint datum — a
- * SHARED pin on the reference satellite's clock (c_{s0}=0, exercising the
- * solveSharedConstrained S-basis seam) plus LOCAL pins on the reference
- * receiver's ambiguities (M_{0,s}=0, folded into that station's rows) — the
- * estimator must recover the satellite-side parameters EXACTLY up to that
- * declared S-transform:
+ * prescribed truth (per-satellite clock and phase bias; per-station clock and
+ * float-ambiguity lumps).  The minimum-constraint datum is a shared pin on the
+ * reference satellite's clock (c_{s0}=0, which exercises the
+ * solveSharedConstrained S-basis seam) plus local pins on the reference
+ * receiver's ambiguities (M_{0,s}=0, folded into that station's rows).  Under
+ * that datum the estimator recovers the satellite-side parameters exactly, up to
+ * the declared S-transform:
  *     c_s   -> c_s   - c_{s0}
  *     b_s   -> b_s   + M_{0,s}     (the pivot-receiver ambiguity lump, Odijk Eq. 4)
  *     a_r   -> a_r   - c_{s0}
@@ -142,7 +141,7 @@ TEST(NetworkEstimatorTest, RecoversSyntheticTruthUpToSTransform) {
         ids.push_back(est.addStation(A_s, A_r, w, y));
     }
 
-    // Datum: SHARED pin on the reference satellite's clock (c_{s0}=0).
+    // Datum: a shared pin on the reference satellite's clock (c_{s0}=0).
     const NetworkEstimator::Datum datum = {{est.clockColumn(t.sats[0]), 0.0}};
     const Eigen::VectorXd x_s = est.solve(datum);
 
@@ -165,11 +164,11 @@ TEST(NetworkEstimatorTest, RecoversSyntheticTruthUpToSTransform) {
     for (int s = 0; s < t.S; ++s) EXPECT_NEAR(x0(1 + s), 0.0, 1e-6);
 }
 
-// Multi-pin datum: a second, independent gauge (an UNOBSERVED satellite phase
+// Multi-pin datum: a second, independent gauge (an unobserved satellite phase
 // bias whose column is zero in every station) is rank-deficient on its own and
-// must be fixed by its own pin.  Exercises the multi-pin hard-pin elimination
-// (RHS moves across several pins) and confirms the extra pin does not perturb
-// the recovered satellite-side truth.
+// needs its own pin.  Exercises the multi-pin hard-pin elimination (RHS moves
+// across several pins) and checks that the extra pin does not perturb the
+// recovered satellite-side truth.
 TEST(NetworkEstimatorTest, MultiPinDatumWithIndependentGauge) {
     const Truth t = makeTruth(/*seed=*/2024, /*R=*/4, /*S=*/5);
     const std::string signal = "L1";
@@ -207,15 +206,15 @@ TEST(NetworkEstimatorTest, MultiPinDatumWithIndependentGauge) {
     }
 }
 
-// Fix A — anchor-free ENSEMBLE phase-bias datum: instead of pinning ONE anchor
-// receiver's ambiguity per satellite (M_{0,s}=0), fix the phase-bias↔ambiguity
-// gauge by a SUM-TO-ZERO over the receivers (Σ_r M_{r,s}=0), folded through the
+// Anchor-free ensemble phase-bias datum (Fix A).  Instead of pinning one anchor
+// receiver's ambiguity per satellite (M_{0,s}=0), the phase-bias/ambiguity gauge
+// is fixed by a sum-to-zero over the receivers (Σ_r M_{r,s}=0), folded through the
 // kernel's Schur-projected rank-1 correction (foldReducedSumZeroGauges).  The
-// estimable satellite phase bias then references the receiver ENSEMBLE MEAN
+// estimable satellite phase bias then references the receiver ensemble mean
 // (b_s + mean_r M_{r,s}), the ambiguities are M_{r,s} − mean_r (summing to zero),
-// and the between-receiver differences equal the truth — a pure S-transform of
-// the anchor datum (same estimable quantities, different gauge).  No pivot, no
-// pin rows in any station's block.
+// and the between-receiver differences equal the truth: a pure S-transform of
+// the anchor datum (same estimable quantities, different gauge).  No station
+// block carries a pivot or pin rows.
 TEST(NetworkEstimatorTest, SumZeroPhaseDatumRecoversEnsembleSTransform) {
     const Truth t = makeTruth(/*seed=*/2024, /*R=*/4, /*S=*/5);
     const std::string signal = "L1";
@@ -230,7 +229,7 @@ TEST(NetworkEstimatorTest, SumZeroPhaseDatumRecoversEnsembleSTransform) {
     est.beginEpoch();
     std::vector<std::size_t> ids;
     for (int r = 0; r < t.R; ++r) {
-        // Every station symmetric — NO pivot pin rows (the ensemble datum needs none).
+        // Every station is symmetric, with no pivot pin rows (the ensemble datum needs none).
         const int S = t.S;
         const Eigen::Index n_local = 1 + S;      // [a_r, M_{r,0..S-1}]
         const Eigen::Index m = 2 * S;
@@ -257,7 +256,7 @@ TEST(NetworkEstimatorTest, SumZeroPhaseDatumRecoversEnsembleSTransform) {
             gauges[s].terms.emplace_back(ids[r], static_cast<Eigen::Index>(1 + s));
     est.setPhaseSumZeroGauges(gauges);
 
-    // Clock datum unchanged: a SHARED pin on the reference satellite clock.
+    // Clock datum unchanged: a shared pin on the reference satellite clock.
     const NetworkEstimator::Datum datum = {{est.clockColumn(t.sats[0]), 0.0}};
     const Eigen::VectorXd x_s = est.solve(datum);
 
@@ -267,7 +266,7 @@ TEST(NetworkEstimatorTest, SumZeroPhaseDatumRecoversEnsembleSTransform) {
         for (int r = 0; r < t.R; ++r) meanM += t.M[r][s];
         meanM /= t.R;
         EXPECT_NEAR(x_s(clkCol[s]), t.c[s] - c0, 1e-6) << "sat clock " << s;
-        EXPECT_NEAR(x_s(pbCol[s]), t.b[s] + meanM, 1e-6)   // ENSEMBLE-mean reference
+        EXPECT_NEAR(x_s(pbCol[s]), t.b[s] + meanM, 1e-6)   // ensemble-mean reference
             << "sat phase bias " << s;
     }
 
@@ -290,13 +289,13 @@ TEST(NetworkEstimatorTest, SumZeroPhaseDatumRecoversEnsembleSTransform) {
     }
 }
 
-// Card 4 (M1) phase C — gate 4 (DatumFreedom) through the production NetworkEstimator
-// API: a folded rank-K DD prior yields a DD ambiguity estimate INVARIANT to the shared
-// datum choice.  Same network + sum-to-zero phase gauge + DD prior, solved under two
-// different clock datums (pin sat0 vs sat1) ⇒ identical reconstructed AMBIGUITIES (the
-// receiver-clock column legitimately shifts with the datum; the ambiguities do not) and
-// an identical DD posterior.  Exercises setDdPriors → solve → reconstruct →
-// ddPriorPosteriorMean end-to-end.
+// Gate 4 (DatumFreedom) through the production NetworkEstimator API: a folded rank-K
+// DD prior yields a DD ambiguity estimate invariant to the shared datum choice.  The
+// same network, receiver-0 ambiguity pins and DD prior are solved under two clock
+// datums (pin sat0, then sat1); the reconstructed ambiguities and the DD posterior
+// agree (the receiver-clock column shifts with the datum, as expected).  Exercises
+// setDdPriors → solve → reconstruct → ddPriorPosteriorMean end to end.
+// (Card 4 (M1) phase C)
 TEST(NetworkEstimatorTest, DdPriorDatumFreedomThroughEstimator) {
     Truth t = makeTruth(/*seed=*/321, /*R=*/4, /*S=*/4);
     for (auto& mrow : t.M) for (auto& v : mrow) v = std::round(v);   // integer ambiguities
@@ -326,11 +325,12 @@ TEST(NetworkEstimatorTest, DdPriorDatumFreedomThroughEstimator) {
         }
         ids.push_back(est.addStation(A_s, A_r, w, y));
     }
-    // Phase datum: PIN receiver 0's ambiguities to 0 (the anchor/tree pins) via
-    // addStationPrior — a PRE-reduce local prior that composes EXACTLY with the
-    // post-reduce DD fold (the fold reads the already-pinned N_rr).  NOT the
-    // sum-to-zero ensemble gauge: that is itself a post-reduce fold and is mutually
-    // exclusive with the DD priors (NetworkEstimator::solve throws if both are set).
+    // Phase datum: receiver 0's ambiguities are pinned to 0 (the anchor/tree pins)
+    // through addStationPrior, a pre-reduce local prior that composes exactly with
+    // the post-reduce DD fold (the fold reads the already-pinned N_rr).  The
+    // sum-to-zero ensemble gauge is not usable here: it is itself a post-reduce fold
+    // and is mutually exclusive with the DD priors (NetworkEstimator::solve throws if
+    // both are set).
     {
         std::vector<Eigen::Index> pin_cols(t.S);
         for (int s = 0; s < t.S; ++s) pin_cols[s] = 1 + s;
@@ -354,7 +354,7 @@ TEST(NetworkEstimatorTest, DdPriorDatumFreedomThroughEstimator) {
     const Eigen::VectorXd zA = est.ddPriorPosteriorMean(0, xsA);
 
     const NetworkEstimator::Datum datumB = {{est.clockColumn(t.sats[1]), 0.0}};
-    const Eigen::VectorXd xsB = est.solve(datumB);   // re-solve, DIFFERENT datum
+    const Eigen::VectorXd xsB = est.solve(datumB);   // re-solve under the other datum
     std::vector<Eigen::VectorXd> xrB(t.R);
     for (int r = 0; r < t.R; ++r) xrB[r] = est.reconstructStation(ids[r], xsB);
     const Eigen::VectorXd zB = est.ddPriorPosteriorMean(0, xsB);
@@ -412,30 +412,30 @@ TEST(NetworkEstimatorTest, DdPriorAndSumZeroGaugeAreMutuallyExclusive) {
 // ---------------------------------------------------------------------------
 // Eq-34 integer-recovery gate (S-system theory reference §6, docs/
 // SPEC_sbasis_realization_contract.md §E).  A network phase-bias datum yields an
-// INTEGER-fixable product for a held-out PPP-RTK user IFF the emitted per-
-// satellite datum reference has INTEGER between-satellite differences.
+// integer-fixable product for a held-out PPP-RTK user if and only if the emitted
+// per-satellite datum reference has integer between-satellite differences.
 //
 // The user applies the emitted bias δ̃_s to its phase; its float ambiguity
 // absorbs  M_u,s − ref_s  with  ref_s = δ̃_s − b_s  (the physical satellite bias
 // b_s cancels between the observation's true bias and the emitted product).  The
 // user's fixable between-satellite single-difference is
 //     (M_u,s − M_u,p) − (ref_s − ref_p).
-// With integer user ambiguities this is integer IFF  D_sp = ref_s − ref_p  is an
-// integer for every satellite pair (s,p).
+// With integer user ambiguities this is integer if and only if D_sp = ref_s − ref_p
+// is an integer for every satellite pair (s,p).
 //
 //   CC-R  (single pivot receiver 0, M_{0,s}=0 pin):  ref_s = M_{0,s}  (integer)
-//         ⇒ D_sp = M_{0,s} − M_{0,p} integer ⇒ user DD integer ⇒ FIXABLE.
+//         ⇒ D_sp = M_{0,s} − M_{0,p} integer ⇒ user DD integer ⇒ fixable.
 //   Ensemble (Σ_r M_{r,s}=0):  ref_s = mean_r M_{r,s}
-//         ⇒ D_sp = mean_r(M_{r,s} − M_{r,p}) = k_sp / R  ⇒ NON-integer
-//         ⇒ user DD non-integer ⇒ NOT FIXABLE (Odijk CC-S "not directly integer").
+//         ⇒ D_sp = mean_r(M_{r,s} − M_{r,p}) = k_sp / R  ⇒ in general non-integer
+//         ⇒ user DD non-integer ⇒ not fixable (Odijk CC-S "not directly integer").
 //
-// This is the decisive gate the theory reference mandates before trusting the
-// ensemble datum: churn suppression via the ensemble CANNOT unlock integer AR,
-// because the ensemble product is structurally non-integer (a mean of integers).
+// The theory reference requires this gate before the ensemble datum is used:
+// churn suppression through the ensemble cannot enable integer AR, because the
+// ensemble product is structurally non-integer (a mean of integers).
 TEST(NetworkEstimatorTest, Eq34UserIntegerRecovery_CCRIntegerEnsembleFractional) {
     // Integer network ambiguities.  In real GNSS M_{r,s} = integer + a receiver-
-    // common fractional phase bias; here pure integers so the ONLY non-integer
-    // source under test is the datum's own averaging (not receiver biases).
+    // common fractional phase bias; here they are pure integers, so the only
+    // non-integer source under test is the datum's own averaging.
     Truth t = makeTruth(/*seed=*/99, /*R=*/5, /*S=*/6);
     for (auto& row : t.M)
         for (auto& v : row) v = std::round(v);
@@ -517,8 +517,8 @@ TEST(NetworkEstimatorTest, Eq34UserIntegerRecovery_CCRIntegerEnsembleFractional)
             if (fracDist(d_ens) > 1e-3) ens_has_fraction = true;
         }
     }
-    // Ensemble: at least one between-sat reference is a NON-integer k/R fraction
-    // ⇒ the held-out user's DD is non-integer ⇒ the product is NOT integer-fixable.
+    // Ensemble: at least one between-sat reference is a non-integer k/R fraction,
+    // so the held-out user's DD is non-integer and the product is not integer-fixable.
     EXPECT_TRUE(ens_has_fraction)
         << "Ensemble datum should yield a non-integer between-satellite reference "
            "(mean-of-integers / R) — the structural obstruction to user integer AR.";
@@ -533,20 +533,20 @@ TEST(NetworkEstimatorTest, Eq34UserIntegerRecovery_CCRIntegerEnsembleFractional)
 }
 
 // ===========================================================================
-// Card 3 — Eq-34 / de Jonge SINGLE-RECEIVER-CHAIN phase-bias datum.
+// Eq-34 / de Jonge single-receiver-chain phase-bias datum (Card 3).
 //
 // Unlike the fixtures above (which lump the receiver fractional bias into the
 // ambiguity M_{r,s}), the eq34 model gives the receiver fractional phase bias
-// its OWN estimable state δ_r and keeps the ambiguity a true integer z_{r,s}:
+// its own estimable state δ_r and keeps the ambiguity a true integer z_{r,s}:
 //     code  P_{r,s} = a_r − c_s
 //     phase Φ_{r,s} = a_r − c_s + b_s + δ_r + z_{r,s}   (z ∈ ℤ, δ_r fractional)
-// The datum is realized by a SHARED clock pin (c_{s0}=0) + ONE datum-receiver
-// RPB pin (δ_{r1}=0) + a spanning tree of ambiguity pins over the bipartite
-// (receiver × satellite) observation graph.  Then EVERY emitted between-
-// satellite reference difference is an integer — including for satellites the
-// datum receiver never sees — because each chain hop contributes only an
-// integer while the SAME common receiver fractional δ_{r1} rides every ref_s
-// and cancels in the difference.
+// The datum is a shared clock pin (c_{s0}=0), one datum-receiver RPB pin
+// (δ_{r1}=0) and a spanning tree of ambiguity pins over the bipartite
+// (receiver × satellite) observation graph.  Every emitted between-satellite
+// reference difference is then an integer, including for satellites the datum
+// receiver never sees: each chain hop contributes only an integer, and the one
+// common receiver fractional δ_{r1} is present in every ref_s and cancels in
+// the difference.
 // ===========================================================================
 namespace {
 
@@ -643,8 +643,9 @@ std::vector<double> solveEq34Chain(const Eq34Truth& t, int r1,
         est.addStation(A_s, A_r, w, y);
     }
 
-    // The clock datum must pin a PRESENT satellite's clock; s0 is seen by r0 and
-    // r3 in this fixture, so pin s0 when present else the lowest seen sat.
+    // The clock datum has to pin the clock of a satellite that is present; s0 is
+    // seen by r0 and r3 in this fixture, so s0 is pinned when present, otherwise
+    // the lowest seen satellite.
     const int clk_pin_sat = seen.count(0) ? 0 : *seen.begin();
     const NetworkEstimator::Datum datum = {{est.clockColumn(t.sats[clk_pin_sat]), 0.0}};
     const Eigen::VectorXd x_s = est.solve(datum);
@@ -656,9 +657,9 @@ std::vector<double> solveEq34Chain(const Eq34Truth& t, int r1,
 
 }  // namespace
 
-// GATE 1: the eq34 chain datum yields an INTEGER user double difference for
-// EVERY satellite pair — including pairs whose chain paths differ and pairs
-// involving satellites the datum receiver never sees — despite a non-zero
+// Gate 1: the eq34 chain datum yields an integer user double difference for
+// every satellite pair (including pairs whose chain paths differ and pairs
+// involving satellites the datum receiver never sees), despite a non-zero
 // receiver fractional bias d_r.  Negative control in the same fixture: the
 // prioritized per-satellite anchor election yields a fractional cross-anchor
 // pair (the structural obstruction the chain datum removes).
@@ -690,8 +691,8 @@ TEST(NetworkEstimatorTest, Eq34ChainDatumUserDdInteger) {
                 << "chain-datum D(" << s << "," << p << ")=" << (ref[s] - ref[p])
                 << " must be an integer (user DD fixable)";
 
-    // Every ref_s carries the SAME common fractional (its distance to the nearest
-    // integer equals that of ref_0) — the mechanism behind the integer DDs.
+    // Every ref_s carries one common fractional (its offset from the nearest
+    // integer equals that of ref_0); this is why the DDs are integer.
     const double frac0 = ref[0] - std::round(ref[0]);
     for (int s = 1; s < t.S; ++s) {
         double frac = ref[s] - std::round(ref[s]);
@@ -756,9 +757,9 @@ TEST(NetworkEstimatorTest, Eq34ChainDatumUserDdInteger) {
            "(the obstruction the eq34 chain datum removes).";
 }
 
-// GATE 3: datum-receiver handover — electing a DIFFERENT datum receiver r1'
-// still yields integer between-satellite DDs (the common fractional cancels),
-// though the absolute references move by a common fractional + integers.
+// Gate 3: datum-receiver handover.  Electing another datum receiver r1' still
+// yields integer between-satellite DDs (the common fractional cancels), though
+// the absolute references move by a common fractional plus integers.
 TEST(NetworkEstimatorTest, Eq34DatumReceiverHandoverBetweenSatInteger) {
     const Eq34Truth t = makeEq34Truth();
     auto fracDist = [](double v) { return std::abs(v - std::round(v)); };
@@ -795,23 +796,23 @@ TEST(NetworkEstimatorTest, Eq34DatumReceiverHandoverBetweenSatInteger) {
                           "absolute frame by a common fractional.";
 }
 
-// GATE 2: a tree-edge REATTACH (satellite re-pinned at a different station,
-// same datum receiver) steps the emitted satellite phase bias by an EXACT
-// integer number of cycles — the frame's common fractional δ_{r1} is unchanged,
+// Gate 2: a tree-edge reattach (satellite re-pinned at a different station,
+// same datum receiver) steps the emitted satellite phase bias by an exact
+// integer number of cycles: the frame's common fractional δ_{r1} is unchanged,
 // so only an integer moves.  (Pin-to-round, a driver feature, would then pick
-// the |·|-minimizing integer; at the estimator level we pin target 0 and check
-// the step is integral.)
+// the |·|-minimizing integer; at the estimator level the test pins target 0 and
+// checks that the step is integral.)
 TEST(NetworkEstimatorTest, Eq34ReattachStepsByExactInteger) {
     const Eq34Truth t = makeEq34Truth();
     auto fracDist = [](double v) { return std::abs(v - std::round(v)); };
 
-    // Datum receiver r1 = station 0 in BOTH solves.  s3 (index 3) is tracked by
-    // station 1 AND station 2; the two spanning trees differ ONLY in s3's edge.
+    // Datum receiver r1 = station 0 in both solves.  s3 (index 3) is tracked by
+    // stations 1 and 2; the two spanning trees differ only in s3's edge.
     const std::vector<AmbPin> pinsA = {   // s3 pinned at station 1
         {0, 0, 0.0}, {0, 1, 0.0}, {0, 2, 0.0}, {3, 0, 0.0},
         {1, 2, 0.0}, {3, 4, 0.0}, {1, 3, 0.0}, {2, 4, 0.0},
     };
-    const std::vector<AmbPin> pinsB = {   // s3 REATTACHED to station 2
+    const std::vector<AmbPin> pinsB = {   // s3 reattached to station 2
         {0, 0, 0.0}, {0, 1, 0.0}, {0, 2, 0.0}, {3, 0, 0.0},
         {1, 2, 0.0}, {3, 4, 0.0}, {2, 3, 0.0}, {2, 4, 0.0},
     };
@@ -829,11 +830,11 @@ TEST(NetworkEstimatorTest, Eq34ReattachStepsByExactInteger) {
         }
 }
 
-// GATE 4: component-split integrity — when a cut station leaves and the graph
+// Gate 4: component-split integrity.  When a cut station leaves and the graph
 // splits, within-component DDs stay integer while a cross-component pair is
-// fractional (the accepted, unavoidable limitation: no data connects them).
+// fractional (an accepted limitation: no data connects the components).
 TEST(NetworkEstimatorTest, Eq34ComponentSplitLocalIntegrity) {
-    // Two disjoint components on the SAME signal: {r0,r1} see {s0,s1};
+    // Two disjoint components on one signal: {r0,r1} see {s0,s1};
     // {r2,r3} see {s2,s3}.  No station bridges them.
     Eq34Truth t;
     t.R = 4; t.S = 4;
@@ -854,10 +855,9 @@ TEST(NetworkEstimatorTest, Eq34ComponentSplitLocalIntegrity) {
         {0, 0, 0.0}, {0, 1, 0.0}, {1, 0, 0.0},   // component A (root r0)
         {2, 2, 0.0}, {2, 3, 0.0}, {3, 2, 0.0},   // component B (root r2)
     };
-    // Both roots pin their RPB.  solveEq34Chain pins only r1; component B's root
-    // (r2) needs its RPB pinned too, so drive a second solve is unnecessary — we
-    // fold r2's RPB pin by treating the whole network as one solve with TWO RPB
-    // pins.  Build inline to pin both roots.
+    // Both roots pin their RPB.  solveEq34Chain pins only r1, and component B's
+    // root (r2) needs its RPB pinned too, so the network is built inline as one
+    // solve with two RPB pins (r0 and r2).
     const std::string signal = "L1";
     NetworkEstimator est;
     std::vector<Eigen::Index> clkCol(t.S), pbCol(t.S);
@@ -916,51 +916,51 @@ TEST(NetworkEstimatorTest, Eq34ComponentSplitLocalIntegrity) {
 }
 
 // ===========================================================================
-// Card 3 / I1 — SHIFT-WALK (carry S-transformation) unit test.
+// Shift-walk (carry S-transformation) unit tests (Card 3 / I1).
 //
-// The experimental `phase_datum_eq34_carry_shift` walk claims that when the
-// chain datum re-pins a tree edge, the carried quantities can be transformed
-// EXACTLY into the new emission frame instead of erased.  It is an
-// alternating-sign forward pass over the spanning tree (parents strictly before
-// children; the datum receiver's RPB is pinned so its shift is 0):
+// The experimental `phase_datum_eq34_carry_shift` walk transforms the carried
+// quantities into the new emission frame, instead of erasing them, when the chain
+// datum re-pins a tree edge.  It is an alternating-sign forward pass over the
+// spanning tree (parents strictly before children; the datum receiver's RPB is
+// pinned, so its shift is 0):
 //     Δb_s     = −Δδ_parent − pinmove(edge)     (satellite child of a receiver)
 //     Δδ_r     = −Δb_parent − pinmove(edge)     (receiver child of a satellite)
 //     Δz_{r,s} = −Δb_s − Δδ_r                    (every carried ambiguity)
-// where `pinmove` is this pin's displacement of its pinned float vs the frame it
-// last sat in.  It FIELD-FAILED (B8': 86 cyc/ep injected error).  These tests
-// decide, in a controlled noise-free box, whether the ALGEBRA is exact — so the
-// field failure is a model-coupling defect (iono / weak δ split feeding a wrong
-// carried float), NOT a bookkeeping bug in the walk itself.
+// where `pinmove` is this pin's displacement of its pinned float relative to the
+// frame it last sat in.  The walk failed in the field (B8').  These tests check,
+// in a noise-free box, whether the algebra is exact; if it is, the field failure
+// is a model-coupling defect (iono or a weak δ split feeding a wrong carried
+// float), not a bookkeeping error in the walk.
 //
 // Setup: the code datum (clock pin) is held fixed across the two epochs, so a_r
-// and c_s are invariant and cancel — φ_{r,s} := Φ_{r,s} − (a_r − c_s) =
+// and c_s are invariant and cancel: φ_{r,s} := Φ_{r,s} − (a_r − c_s) =
 // b_s + δ_r + z_{r,s}.  A spanning tree over the connected bipartite graph, plus
 // one RPB pin, makes the phase subsystem square and full rank, so exact tree
-// propagation IS the estimator's solution (no Eigen solve needed here — GATE 1-4
-// above already exercise NetworkEstimator; these target the walk arithmetic).
+// propagation is the estimator's solution.  No Eigen solve is needed here: gates
+// 1 to 4 above exercise NetworkEstimator, and these tests target the walk arithmetic.
 //
-// KEY FACT that shapes the negative results: in a NOISE-FREE box every floated
-// (non-tree) ambiguity lands on an exact integer (the frame's single common
-// fractional δ_{r1} rides b_s and δ_r and cancels in z = φ − b − δ).  So a
-// FAITHFUL carry ⇒ pin-to-round reproduces the true integer ⇒ pinmove 0 ⇒ the
-// reattach is a perfect no-op (I1b).  The shift only moves — and only mis-fires
-// (I1c) — when the CARRIED float has drifted off its true value, which is
-// exactly what phase-leveling with iono/δ coupling does in the field.
+// In a noise-free box every floated (non-tree) ambiguity lands on an exact
+// integer (the frame's single common fractional δ_{r1} is in both b_s and δ_r and
+// cancels in z = φ − b − δ).  With a faithful carry, pin-to-round therefore
+// reproduces the true integer, pinmove is 0, and the reattach is a no-op (I1b).
+// The shift moves anything, and can misfire (I1c), only when the carried float has
+// drifted off its true value, which is what phase-leveling with iono/δ coupling
+// does in the field.
 //
-// SCOPE / what these tests do and do NOT cover.  The production carry walk lives
-// in two [&]-capturing lambdas inside the per-epoch election loop of
-// ApplicationNetwork.cpp (recordEdge + the vshift forward pass) — there is no
-// callable seam to drive from a unit test.  `shiftWalk`/`propagateChain` below
-// are therefore an INDEPENDENT reference reimplementation, kept byte-faithful to
-// the production recurrence.  These tests FALSIFY/CONFIRM the ALGEBRA (the
-// roadmap I1 goal) and stand as an executable reference to diff production
-// against — they do NOT auto-detect a regression in the shipped walk (a sign
-// flip or mis-key in production would leave them green), and they deliberately
-// do not exercise production's pin-to-round target derivation (they supply the
+// Scope.  The production carry walk is two [&]-capturing lambdas in the
+// phase-datum election of NetworkChainDatum.cpp (recordEdge and the vshift
+// forward pass), with no callable seam for a unit test.  `shiftWalk` and
+// `propagateChain` below are an independent reference reimplementation, written
+// to follow the production recurrence term for term.  The tests confirm or
+// falsify the algebra (the roadmap I1 goal) and serve as an executable reference
+// to compare production against.  They do not detect a regression in the shipped
+// walk (a sign flip or mis-key in production leaves them passing), and they do
+// not exercise production's pin-to-round target derivation (they supply the
 // already-rounded target), its per-satellite eq34_sat_root root gating (I1d
-// blanket-flags on a single-component handover), or the station-keyed maps whose
-// mis-keying was the "collision class bit twice" field bug.  Wiring the shipped
-// lambdas to a testable seam is a separate (src/-touching) follow-up.
+// covers only the blanket flagging on a single-component handover), or the
+// station-keyed maps (the site of the "collision class bit twice" field defect).
+// Moving the shipped lambdas behind a testable seam is a separate follow-up that
+// touches src/.
 // ===========================================================================
 namespace {
 
@@ -1013,15 +1013,15 @@ struct ShiftWalk {
 };
 
 // Independent reference reimplementation of the production carry S-transformation
-// walk (ApplicationNetwork.cpp recordEdge + the vshift forward pass) on explicit
-// trees — a parallel copy for algebra falsification, NOT a call into production
-// (see the SCOPE note above).  `carry` supplies the value each floated ambiguity
-// is believed to sit at when a re-pin lands at a NEW station — in the estimator
-// this is local_carry (phase-leveling); here we pass it in so a test can feed
-// either the faithful float (state_A.z) or a drifted one.
-// `seed_state` (null = INC-2 off) is the SEED-ROUND frame-continuous re-host
+// walk (NetworkChainDatum.cpp recordEdge and the vshift forward pass) on explicit
+// trees.  It is a parallel copy for testing the algebra, not a call into production
+// (see the scope note above).  `carry` supplies the value each floated ambiguity
+// is taken to sit at when a re-pin lands at a new station; in the estimator this
+// is local_carry (phase-leveling).  It is a parameter so a test can pass either
+// the faithful float (state_A.z) or a drifted one.
+// `seed_state` (null = INC-2 off) is the seed-round frame-continuous re-host
 // (docs/SPEC_eq34_seed_round.md §8.5 INC-2): where a re-pin lands at a new station
-// with NO carry, the station's own ambiguity STATE supplies the pre-pin value, so
+// with no carry, the station's own ambiguity state supplies the pre-pin value, so
 // the step is computable and the edge stays shiftable even with shift_on false.
 ShiftWalk shiftWalk(const ChainTree& treeA, const ChainTree& treeB,
                     const std::map<std::pair<int, int>, double>& carry,
@@ -1061,7 +1061,7 @@ ShiftWalk shiftWalk(const ChainTree& treeA, const ChainTree& treeB,
         }
         bool shiftable = false;                         // INC-2: framed re-host
         if (edge_changed) {
-            auto cv = carry.find({e.r, e.s});           // carry at the NEW station
+            auto cv = carry.find({e.r, e.s});           // carry at the new station
             if (cv != carry.end()) pinmove = e.target - cv->second;
             else if (seed_state) {                      // INC-2: the state itself
                 auto sx = seed_state->find({e.r, e.s});
@@ -1090,8 +1090,8 @@ ShiftWalk shiftWalk(const ChainTree& treeA, const ChainTree& treeB,
     return sw;
 }
 
-// Assert state_A + shift == state_B on every KNOWN vertex + every ambiguity whose
-// endpoints are both known.  Returns the count of checked cells (so a test can
+// Assert state_A + shift == state_B on every known vertex and on every ambiguity
+// whose endpoints are both known.  Returns the count of checked cells (so a test can
 // assert the check was non-vacuous).
 int expectShiftReproduces(const Eq34Truth& t, const Eq34FullState& A,
                           const Eq34FullState& B, const ShiftWalk& sw, double tol) {
@@ -1136,11 +1136,11 @@ ChainTree eq34TreeA() {
 
 }  // namespace
 
-// I1a — EXACTNESS under a same-station re-pin (pin-to-round lands on a different
-// integer).  Tree topology unchanged; edge S2->R1's target bumped +1 cycle.  The
-// walk must propagate the alternating-sign step through depth (Δδ_1=−1 ⇒ Δb_3=+1
-// ⇒ floated Δz=∓1) and reproduce the re-solved state EXACTLY.  The default-OFF
-// behavior (shift_on=false) must instead flag the affected subtree unknown.
+// Exactness under a same-station re-pin, where pin-to-round lands on a different
+// integer (I1a).  The tree topology is unchanged; edge S2->R1's target moves by +1
+// cycle.  The walk propagates the alternating-sign step through depth (Δδ_1=−1 ⇒
+// Δb_3=+1 ⇒ floated Δz=∓1) and reproduces the re-solved state exactly.  With the
+// default shift_on=false, the affected subtree is flagged unknown instead.
 TEST(NetworkEstimatorTest, Eq34ShiftWalkReproducesRepinExactly) {
     const Eq34Truth t = makeEq34Truth();
     const ChainTree A = eq34TreeA();
@@ -1150,8 +1150,8 @@ TEST(NetworkEstimatorTest, Eq34ShiftWalkReproducesRepinExactly) {
     const Eq34FullState sA = propagateChain(t, A);
     const Eq34FullState sB = propagateChain(t, B);
 
-    // Shift ON: exact reproduction, and the step genuinely propagated (Δδ_1, Δb_3
-    // are the −1/+1 the algebra predicts, not zero).
+    // Shift on: exact reproduction, and the step did propagate (Δδ_1 and Δb_3 are
+    // the −1 and +1 the algebra predicts, not zero).
     const ShiftWalk on = shiftWalk(A, B, sA.z, /*shift_on=*/true);
     ASSERT_TRUE(on.dd_known.at(1)) << "rx1 must be a known (shiftable) vertex";
     ASSERT_TRUE(on.db_known.at(3)) << "sat3 must be a known (shiftable) vertex";
@@ -1160,7 +1160,7 @@ TEST(NetworkEstimatorTest, Eq34ShiftWalkReproducesRepinExactly) {
     const int checked = expectShiftReproduces(t, sA, sB, on, 1e-9);
     EXPECT_GE(checked, 10) << "reproduction check must be non-vacuous";
 
-    // Shift OFF (default): a non-zero pin displacement is treated as unknown, so
+    // Shift off (default): a non-zero pin displacement is treated as unknown, so
     // the re-pinned edge's subtree (rx1 and its child sat3) is flagged for erase.
     const ShiftWalk off = shiftWalk(A, B, sA.z, /*shift_on=*/false);
     EXPECT_FALSE(off.dd_known.at(1)) << "shift OFF must NOT shift rx1 (erase path)";
@@ -1168,17 +1168,18 @@ TEST(NetworkEstimatorTest, Eq34ShiftWalkReproducesRepinExactly) {
     EXPECT_GT(off.n_unknown, 0);
 }
 
-// I1b — a CLEAN reattach with a FAITHFUL carry is a perfect no-op.  s3 moves from
-// station 1 to station 2; the carry equals the estimator's true float there, so
-// pin-to-round reproduces the integer it already sits at (pinmove 0) and the
-// emission frame does not move.  Every vertex stays known; state is unchanged.
+// A clean reattach with a faithful carry is a no-op (I1b).  s3 moves from station 1
+// to station 2; the carry equals the estimator's true float there, so pin-to-round
+// reproduces the integer it already sits at (pinmove 0) and the emission frame
+// does not move.  Every vertex stays known and the state is unchanged.
 TEST(NetworkEstimatorTest, Eq34ShiftWalkCleanReattachIsNoOp) {
     const Eq34Truth t = makeEq34Truth();
     const ChainTree A = eq34TreeA();
     const Eq34FullState sA = propagateChain(t, A);
 
-    // Reattach s3: drop R1->S3, attach R2->S3 (R2 already lit via S4->R2), pinning
-    // z_{2,3} to round(true float there) — the pin-to-round production does.
+    // Reattach s3: drop R1->S3 and attach R2->S3 (R2 is already reached through
+    // S4->R2), pinning z_{2,3} to round(true float there), as production's
+    // pin-to-round does.
     const double carry23 = sA.z.at({2, 3});
     ChainTree B{0, {
         {true, 0, 0, 0.0}, {true, 0, 1, 0.0}, {true, 0, 2, 0.0},
@@ -1192,22 +1193,21 @@ TEST(NetworkEstimatorTest, Eq34ShiftWalkCleanReattachIsNoOp) {
     EXPECT_EQ(sw.n_unknown, 0) << "a faithful-carry reattach must not erase anything";
     const int checked = expectShiftReproduces(t, sA, sB, sw, 1e-9);
     EXPECT_GE(checked, 10);
-    // The frame genuinely did not move (clean integer handover).
+    // The frame did not move (clean integer handover).
     for (int s = 0; s < t.S; ++s) EXPECT_NEAR(sw.db.at(s), 0.0, 1e-9) << "sat " << s;
 }
 
-// I1c — the B8 FAILURE, reproduced and localized.  Same reattach as I1b, but the
-// carried float has DRIFTED by ε off its true value (what phase-leveling does).
-// pin-to-round still lands on the true integer, so the estimator's actual state
-// is UNCHANGED (Δb_3 = 0) — but the walk computes pinmove from the drifted carry
-// and predicts Δb_3 = +ε.  The shift therefore injects exactly the carry error.
-// This establishes the CONDITIONAL: the alternating-sign arithmetic is exact
-// given a faithful carry (I1b), and any carry drift ε propagates verbatim into
-// the frame.  That is consistent with the B8 field failure being carry-driven
-// (phase-leveling / iono / weak-δ coupling feeding a drifted float) — but this
-// box does not by itself rule out the other B8 candidates (sat-pass churn, the
-// station-keyed map collisions), so read it as mechanism-plausible, not as a
-// closed attribution of the field failure.
+// The B8 failure mechanism, reproduced in the box (I1c).  Same reattach as I1b, but
+// the carried float has drifted by ε off its true value (as phase-leveling does).
+// Pin-to-round still lands on the true integer, so the estimator's actual state is
+// unchanged (Δb_3 = 0), while the walk computes pinmove from the drifted carry and
+// predicts Δb_3 = +ε.  The shift therefore injects exactly the carry error.
+// The result is conditional: the alternating-sign arithmetic is exact given a
+// faithful carry (I1b), and any carry drift ε propagates unchanged into the frame.
+// That is consistent with a carry-driven B8 field failure (phase-leveling, iono or
+// weak-δ coupling feeding a drifted float), but the box does not rule out the
+// other B8 candidates (sat-pass churn, the station-keyed map collisions), so it
+// shows a plausible mechanism, not a closed attribution of the field failure.
 TEST(NetworkEstimatorTest, Eq34ShiftWalkCarryDriftInjectsError) {
     const Eq34Truth t = makeEq34Truth();
     const ChainTree A = eq34TreeA();
@@ -1230,7 +1230,7 @@ TEST(NetworkEstimatorTest, Eq34ShiftWalkCarryDriftInjectsError) {
     ASSERT_TRUE(sw.db_known.at(3));
     EXPECT_NEAR(std::round(true_float), true_float, 1e-9)
         << "box invariant: the true floated carry is an exact integer";
-    // Estimator truth: the frame did NOT move (pinned to the integer it sat at).
+    // Estimator truth: the frame did not move (pinned to the integer it sat at).
     EXPECT_NEAR(sB.b[3] - sA.b[3], 0.0, 1e-9);
     // The walk, trusting the drifted carry, predicts a non-zero step == the drift…
     EXPECT_NEAR(sw.db.at(3), eps, 1e-9) << "injected step equals the carry drift";
@@ -1239,16 +1239,16 @@ TEST(NetworkEstimatorTest, Eq34ShiftWalkCarryDriftInjectsError) {
         << "carry drift ε propagates verbatim into the shifted frame (the B8 defect)";
 }
 
-// I1d — ROOT-HANDOVER negative control.  Electing a different datum receiver
-// (r1: 0 -> 3) steps the whole frame by the receivers' common FRACTIONAL δ
-// difference — not expressible as any integer chain transform.  The walk must
-// refuse: every sat is flagged unknown (erase), never shifted.  We also confirm
-// the refusal is NECESSARY — the true frame step is genuinely non-integer.
+// Root-handover negative control (I1d).  Electing a different datum receiver
+// (r1: 0 -> 3) steps the whole frame by the receivers' common fractional δ
+// difference, which no integer chain transform can express.  The walk refuses:
+// every sat is flagged unknown (erase), none is shifted.  The test also checks
+// that the refusal is necessary, i.e. that the true frame step is non-integer.
 TEST(NetworkEstimatorTest, Eq34ShiftWalkRootHandoverIsUnknown) {
     const Eq34Truth t = makeEq34Truth();
     const ChainTree A = eq34TreeA();
     // Tree B rooted at r1'=3 (BFS: R3->{S0,S4}, S0->R0, S4->R2, R0->{S1,S2},
-    // R2->S3, S2->R1) — the GATE-3 handover tree, as ChainEdges.
+    // R2->S3, S2->R1): the gate-3 handover tree, as ChainEdges.
     const ChainTree B{3, {
         {true, 3, 0, 0.0}, {true, 3, 4, 0.0},
         {false, 0, 0, 0.0}, {false, 2, 4, 0.0},
@@ -1266,8 +1266,8 @@ TEST(NetworkEstimatorTest, Eq34ShiftWalkRootHandoverIsUnknown) {
     EXPECT_GT(sw.n_unknown, 0);
 
     // The refusal is necessary: the true frame step carries a common fractional
-    // (δ_{3} − δ_{0} in tree A's frame), so at least one sat's Δb is non-integer —
-    // no integer walk could have reproduced it.
+    // (δ_{3} − δ_{0} in tree A's frame), so at least one sat's Δb is non-integer,
+    // which no integer walk can reproduce.
     auto fracDist = [](double v) { return std::abs(v - std::round(v)); };
     bool some_fractional = false;
     for (int s = 0; s < t.S; ++s)
@@ -1279,28 +1279,28 @@ TEST(NetworkEstimatorTest, Eq34ShiftWalkRootHandoverIsUnknown) {
            "(the reason the walk is right to erase rather than shift).";
 }
 
-// I1e — SEED-ROUND INC-2, the FRAME-CONTINUOUS RE-HOST (docs/SPEC_eq34_seed_round.md
-// §8.5).  The carry_invariant posture has NO phase-leveling carry at all, so every
-// re-host of a tree pin hits the "re-pin with no carry" arm: unknown step ⇒ the
-// (sat,σ) is re-referenced and its carried phase-bias prior is marginalized for the
-// epoch.  INC-2 supplies the missing pre-pin value from the new host's OWN ambiguity
-// state, which makes the step exactly computable — and the walk then reproduces the
-// re-solved frame with the global carry-shift knob still OFF.
+// Seed-round frame-continuous re-host (I1e; docs/SPEC_eq34_seed_round.md §8.5
+// INC-2).  The carry_invariant posture has no phase-leveling carry, so every
+// re-host of a tree pin takes the "re-pin with no carry" branch: the step is
+// unknown, the (sat,σ) is re-referenced, and its carried phase-bias prior is
+// marginalized for the epoch.  INC-2 supplies the missing pre-pin value from the
+// new host's own ambiguity state, which makes the step exactly computable; the walk
+// then reproduces the re-solved frame with the global carry-shift knob still off.
 //
-// Non-vacuous by construction: the re-host is pinned one cycle off the float it sits
-// at, so pinmove = +1 and the (pinmove == 0) door in the walk is shut.  Read this
-// box together with I1c: the ε that made carry_shift inject error in the field is the
-// CARRY's drift off the estimator, and INC-2's input is the estimator's own state, so
-// that term is structurally absent — the residual risk INC-2's A/B measures is a
-// different one (whether the real solve puts the pin displacement into b_s alone, as
-// the chain algebra assumes, or spreads it across the weakly-held δ split).
+// The re-host is pinned one cycle off the float it sits at, so pinmove = +1 and the
+// (pinmove == 0) exemption in the walk does not apply; the check is non-vacuous.
+// Compare I1c: the ε that made carry_shift inject error in the field is the carry's
+// drift off the estimator, and INC-2's input is the estimator's own state, so that
+// term is structurally absent.  The residual risk that INC-2's A/B measures is a
+// different one: whether the real solve puts the pin displacement into b_s alone,
+// as the chain algebra assumes, or spreads it across the weakly held δ split.
 TEST(NetworkEstimatorTest, Eq34ShiftWalkSeedRoundRehostFramesWithShiftOff) {
     const Eq34Truth t = makeEq34Truth();
     const ChainTree A = eq34TreeA();
     const Eq34FullState sA = propagateChain(t, A);
 
     // Reattach s3 from station 1 to station 2 (as I1b), but pin it a cycle off the
-    // value the state holds there — a genuine frame step, not a clean handover.
+    // value the state holds there: a real frame step, not a clean handover.
     const double target23 = std::round(sA.z.at({2, 3})) + 1.0;
     const ChainTree B{0, {
         {true, 0, 0, 0.0}, {true, 0, 1, 0.0}, {true, 0, 2, 0.0},
@@ -1311,15 +1311,15 @@ TEST(NetworkEstimatorTest, Eq34ShiftWalkSeedRoundRehostFramesWithShiftOff) {
     const Eq34FullState sB = propagateChain(t, B);
     const std::map<std::pair<int, int>, double> no_carry;   // carry_invariant: none
 
-    // Production TODAY (INC-2 off): no carry at the new station ⇒ unknown ⇒ the
-    // sat is re-referenced (PB prior marginalized) even though nothing about the
-    // step is actually unknowable.
+    // INC-2 off (production default): no carry at the new station ⇒ unknown ⇒ the
+    // sat is re-referenced (PB prior marginalized), although the step could be
+    // computed from the state.
     const ShiftWalk off = shiftWalk(A, B, no_carry, /*shift_on=*/false);
     EXPECT_FALSE(off.db_known.count(3) && off.db_known.at(3))
         << "without INC-2 a carry-less re-host must stay on the erase/reref path";
     EXPECT_GT(off.n_unknown, 0);
 
-    // INC-2: the state at the new host IS the pre-pin value, so the step is exact.
+    // INC-2: the state at the new host is the pre-pin value, so the step is exact.
     const ShiftWalk inc2 = shiftWalk(A, B, no_carry, /*shift_on=*/false, &sA.z);
     ASSERT_TRUE(inc2.db_known.at(3)) << "INC-2 must frame the re-hosted sat";
     EXPECT_NEAR(inc2.db.at(3), -1.0, 1e-9)
@@ -1327,8 +1327,8 @@ TEST(NetworkEstimatorTest, Eq34ShiftWalkSeedRoundRehostFramesWithShiftOff) {
     const int checked = expectShiftReproduces(t, sA, sB, inc2, 1e-9);
     EXPECT_GE(checked, 10) << "reproduction check must be non-vacuous";
 
-    // A re-host INC-2 cannot frame (the state does not exist yet — the fold-deferred
-    // cold arm) keeps the legacy refusal: the exemption is per-edge, never blanket.
+    // A re-host that INC-2 cannot frame (the state does not exist yet: the
+    // fold-deferred cold branch) keeps the legacy refusal; the exemption is per edge.
     std::map<std::pair<int, int>, double> partial = sA.z;
     partial.erase({2, 3});
     const ShiftWalk cold = shiftWalk(A, B, no_carry, /*shift_on=*/false, &partial);
@@ -1337,13 +1337,13 @@ TEST(NetworkEstimatorTest, Eq34ShiftWalkSeedRoundRehostFramesWithShiftOff) {
 }
 
 // ===========================================================================
-// I2 — extend-only membership (network.phase_datum_eq34_extend_only, de Jonge
+// Extend-only membership (I2; network.phase_datum_eq34_extend_only, de Jonge
 // §3.5).  Production retains an incumbent tree edge's sticky identity across a
 // momentary row gap while its phase-leveling carry is still alive (age-stamped
 // to phase_leveling_max_gap_s), so a returning arc re-pins to its pre-gap
 // integer (frame step ≈ 0) instead of re-leveling from a first-sighting 0.  The
-// mirror below reproduces ONLY the retention decision (carry-alive ⇒ keep); the
-// frame CONSEQUENCE of that decision is checked against the independent
+// mirror below reproduces only the retention decision (carry alive ⇒ keep); the
+// frame consequence of that decision is checked against the independent
 // propagateChain oracle, so the gates are not self-referential.
 // ===========================================================================
 namespace {
@@ -1354,9 +1354,10 @@ struct RetainResult {
     std::set<std::pair<int, int>>         retained;  // edges kept across the gap
 };
 
-// Mirror of ApplicationNetwork.cpp's extend-only retention: an incumbent edge
-// not seen this epoch keeps its identity iff its carry is alive; else it drops
-// (a reroute erases the carry; a gap past the horizon prunes it) and re-floats.
+// Mirror of the extend-only retention in NetworkChainDatum.cpp: an incumbent edge
+// not seen this epoch keeps its identity iff its carry is alive; otherwise it is
+// dropped (a reroute erases the carry; a gap past the horizon prunes it) and
+// re-floats.
 template <class CarryAlive>
 RetainResult retainIdentity(
     const std::map<std::pair<int, int>, double>& incumbentTargets,
@@ -1377,10 +1378,10 @@ RetainResult retainIdentity(
 
 }  // namespace
 
-// I2a — a returning arc (row gap, carry alive) re-pins to its pre-gap integer,
-// so the emitted between-satellite frame does NOT step; a wholesale replace
-// (first-sighting target 0) re-levels it by that integer — the silent
-// re-reference that poisons every peer station's surviving carry.
+// A returning arc (row gap, carry alive) re-pins to its pre-gap integer, so the
+// emitted between-satellite frame does not step (I2a).  A wholesale replace
+// (first-sighting target 0) re-levels it by that integer: an unsignalled
+// re-reference that leaves every peer station's surviving carry stale.
 TEST(NetworkEstimatorTest, Eq34ExtendOnlyGapReturnStepsZero) {
     const Eq34Truth t = makeEq34Truth();
     ChainTree A = eq34TreeA();
@@ -1390,7 +1391,7 @@ TEST(NetworkEstimatorTest, Eq34ExtendOnlyGapReturnStepsZero) {
     std::map<std::pair<int, int>, double> incumbent;   // mirror eq34_prev_target
     for (const auto& e : A.edges) incumbent[{e.r, e.s}] = e.target;
 
-    // GAP epoch: S3 absent everywhere; its phase-leveling carry is still alive.
+    // Gap epoch: S3 absent everywhere; its phase-leveling carry is still alive.
     std::set<std::pair<int, int>> seen;
     for (const auto& e : A.edges) if (e.s != 3) seen.insert({e.r, e.s});
     const RetainResult ret =
@@ -1400,7 +1401,7 @@ TEST(NetworkEstimatorTest, Eq34ExtendOnlyGapReturnStepsZero) {
     EXPECT_NEAR(ret.targets.at({1, 3}), 1.0, 1e-12)
         << "the retained pin target is the pre-gap integer";
 
-    // RESUME: S3 back at R1; pin-to-round of the surviving carry reproduces the
+    // Resume: S3 back at R1; pin-to-round of the surviving carry reproduces the
     // retained integer ⇒ the tree and the emitted frame are unchanged (step 0).
     ChainTree resume = A;
     resume.edges[6].target = ret.targets.at({1, 3});
@@ -1408,8 +1409,8 @@ TEST(NetworkEstimatorTest, Eq34ExtendOnlyGapReturnStepsZero) {
     EXPECT_NEAR(sR.b[3] - sA.b[3], 0.0, 1e-9)
         << "returning arc re-pins to its pre-gap integer ⇒ emitted b_3 does not step";
 
-    // Contrast — wholesale replace forgets the identity ⇒ first-sighting 0 ⇒ b_3
-    // silently re-levels by the full integer.
+    // Contrast: a wholesale replace forgets the identity ⇒ first-sighting 0 ⇒ b_3
+    // re-levels by the full integer, with no signal.
     ChainTree wholesale = A;
     wholesale.edges[6].target = 0.0;
     const Eq34FullState sW = propagateChain(t, wholesale);
@@ -1417,9 +1418,9 @@ TEST(NetworkEstimatorTest, Eq34ExtendOnlyGapReturnStepsZero) {
         << "wholesale replace re-levels b_3 by the pre-gap integer (step != 0)";
 }
 
-// I2b — a gap LONGER than the carry horizon (phase_leveling_max_gap_s) drops the
-// identity, so the return is a genuine first sighting (target 0, frame re-levels)
-// — correct, because the peer carries are gone by then too.
+// A gap longer than the carry horizon (phase_leveling_max_gap_s) drops the
+// identity, so the return is a real first sighting (target 0, frame re-levels);
+// this is correct because the peer carries are gone by then too (I2b).
 TEST(NetworkEstimatorTest, Eq34ExtendOnlyBeyondHorizonFirstSighting) {
     const Eq34Truth t = makeEq34Truth();
     ChainTree A = eq34TreeA();
@@ -1445,12 +1446,12 @@ TEST(NetworkEstimatorTest, Eq34ExtendOnlyBeyondHorizonFirstSighting) {
         << "beyond the horizon the returning arc re-floats from a first-sighting 0";
 }
 
-// I2c — a gap FOLLOWED BY A REROUTE (the arc returns at a DIFFERENT station with
-// no carry there) must flag a re-reference: with the incumbent identity retained
-// the resume is an edge change with no carry ⇒ unknown ⇒ erase (correct — the
-// emitted b_s stepped by a full integer, so the peer leveling carries are stale).
-// A wholesale replace would have silently dropped the incumbent and left the
-// reroute unflagged — the "gap+reroute now flags a reref" gate.
+// A gap followed by a reroute (the arc returns at a different station with no
+// carry there) flags a re-reference (I2c).  With the incumbent identity retained,
+// the resume is an edge change with no carry ⇒ unknown ⇒ erase, which is correct:
+// the emitted b_s stepped by a full integer, so the peer leveling carries are
+// stale.  A wholesale replace drops the incumbent without a signal and leaves the
+// reroute unflagged.  This is the "gap+reroute now flags a reref" gate.
 TEST(NetworkEstimatorTest, Eq34ExtendOnlyGapRerouteFlagsReref) {
     const Eq34Truth t = makeEq34Truth();
     const ChainTree A = eq34TreeA();                 // S3 incumbent under R1 (edge 6)
@@ -1469,12 +1470,12 @@ TEST(NetworkEstimatorTest, Eq34ExtendOnlyGapRerouteFlagsReref) {
     EXPECT_GT(with_retain.n_unknown, 0)
         << "gap+reroute with the incumbent retained flags a reref (no carry at R2)";
 
-    // Necessity — with a COMMON root the reroute's receiver fractional cancels and
-    // b_3 steps by an exact NON-ZERO INTEGER (the chain-path difference; here −13
+    // Necessity: with a common root the reroute's receiver fractional cancels and
+    // b_3 steps by an exact non-zero integer (the chain-path difference; here −20
     // cycles).  There is no carry at R2 to pin-to-round against, so the step is real
     // ⇒ the peer stations' leveling carries for S3 go stale by that integer ⇒ the
     // erase/reref is correct.  (This is also the Card-3 integer-user-DD property in
-    // miniature: the fractional never leaks, so a re-reference is only ever integer.)
+    // miniature: the fractional never leaks, so a re-reference is always integer.)
     const double step = sB.b[3] - sA.b[3];
     auto fracDist = [](double v) { return std::abs(v - std::round(v)); };
     EXPECT_GT(std::abs(step), 0.5)
@@ -1482,8 +1483,8 @@ TEST(NetworkEstimatorTest, Eq34ExtendOnlyGapRerouteFlagsReref) {
     EXPECT_LT(fracDist(step), 1e-6)
         << "common root ⇒ the step is an exact integer (the receiver fractional cancels)";
 
-    // Contrast — had the incumbent been dropped (wholesale), the same resume edge
-    // is a fresh first sighting (no edge change) and the reroute goes unflagged.
+    // Contrast: with the incumbent dropped (wholesale), the same resume edge is a
+    // fresh first sighting (no edge change) and the reroute goes unflagged.
     ChainTree A_dropped = A;
     A_dropped.edges.erase(A_dropped.edges.begin() + 6);  // S3 not in the incumbent tree
     const ShiftWalk wholesale = shiftWalk(A_dropped, B, carry, /*shift_on=*/false);
@@ -1538,7 +1539,7 @@ TEST(NetworkEstimatorTest, JointConditionalCovarianceMatchesBruteForce) {
         Nfull.block(off[r], 0, nl, nS)       += Ar[r].transpose() * WAs;
         Nfull.block(off[r], off[r], nl, nl)  += Ar[r].transpose() * WAr;
     }
-    // Condition on the datum clock (shared col p) as KNOWN: drop its row/col, invert.
+    // Condition on the datum clock (shared col p) as known: drop its row/col, invert.
     const int p = static_cast<int>(est.clockColumn(t.sats[0]));
     std::vector<int> freeIdx;
     for (int i = 0; i < total; ++i) if (i != p) freeIdx.push_back(i);
@@ -1608,10 +1609,10 @@ TEST(NetworkEstimatorTest, ToSolutionEpochMapsColumns) {
     EXPECT_TRUE(e11.phase_bias.empty());
 }
 
-// RT0-3: toSolutionEpoch flags CDMA (GPS/GAL/BDS/QZSS) satellite phase biases as
+// toSolutionEpoch flags CDMA (GPS/GAL/BDS/QZSS) satellite phase biases as
 // integer-preserving (signal_integer=true) and leaves GLONASS/FDMA ('R') biases
-// false — truthful metadata a consumer's AR candidate selection can consult before
-// FDMA (per-slot inter-frequency-bias) biases ever enter the product.
+// false.  A consumer's AR candidate selection can consult this metadata before
+// FDMA (per-slot inter-frequency-bias) biases enter the product.  (RT0-3)
 TEST(NetworkEstimatorTest, ToSolutionEpochSetsSignalIntegerForCdmaOnly) {
     NetworkEstimator est;
     const Eigen::Index g_pb = est.registerPhaseBias("G01", "L1");
@@ -1636,7 +1637,7 @@ TEST(NetworkEstimatorTest, ToSolutionEpochSetsSignalIntegerForCdmaOnly) {
     EXPECT_TRUE (findSat("E11").phase_bias.at("L1").signal_integer);  // GAL  → integer
     EXPECT_TRUE (findSat("C08").phase_bias.at("L2").signal_integer);  // BDS  → integer
     EXPECT_TRUE (findSat("J02").phase_bias.at("L1").signal_integer);  // QZSS → integer (CDMA)
-    EXPECT_FALSE(findSat("R05").phase_bias.at("L1").signal_integer);  // GLO  → NOT integer (FDMA)
+    EXPECT_FALSE(findSat("R05").phase_bias.at("L1").signal_integer);  // GLO  → not integer (FDMA)
 }
 
 // Registration is idempotent and rejected once the epoch is open.
@@ -1672,10 +1673,10 @@ TEST(NetworkEstimatorTest, UnderSpecifiedDatumThrows) {
     EXPECT_THROW(est.solve({}), std::invalid_argument);
 }
 
-// PARTIAL under-specification: a datum that fixes the clock gauge but leaves an
-// independent exact gauge (the unobserved ghost satellite) unpinned must still
-// throw — the positive-definiteness guard catches the remaining exact deficiency
-// even amongst other (well-conditioned) pins, regardless of weighting scale.
+// Partial under-specification: a datum that fixes the clock gauge but leaves an
+// independent exact gauge (the unobserved ghost satellite) unpinned still throws.
+// The positive-definiteness guard catches the remaining exact deficiency among
+// other (well-conditioned) pins, regardless of weighting scale.
 TEST(NetworkEstimatorTest, PartialUnderSpecifiedDatumThrows) {
     const Truth t = makeTruth(/*seed=*/2024, /*R=*/4, /*S=*/5);
     const std::string signal = "L1";
@@ -1694,7 +1695,7 @@ TEST(NetworkEstimatorTest, PartialUnderSpecifiedDatumThrows) {
         buildStation(t, r, est, clkCol, pbCol, A_s, A_r, w, y);
         est.addStation(A_s, A_r, w, y);
     }
-    // Pin ONLY the clock gauge; leave the ghost gauge unfixed → still singular.
+    // Pin only the clock gauge; leave the ghost gauge unfixed → still singular.
     EXPECT_THROW(est.solve({{est.clockColumn(t.sats[0]), 0.0}}), std::invalid_argument);
 }
 
@@ -1731,8 +1732,8 @@ TEST(NetworkEstimatorTest, AddStationAfterSolveThrows) {
 
 // The between-epoch D2 carry-forward seam (W4-S2b): sharedCovariance() exposes a
 // well-formed posterior covariance, and addSharedPrior() (a diagonal prior on the
-// shared border) actually moves the next epoch's estimate.  These are exactly the
-// two mechanics the runNetwork() driver leans on for between-epoch continuity.
+// shared border) moves the next epoch's estimate.  These are the two mechanics the
+// runNetwork() driver relies on for between-epoch continuity.
 TEST(NetworkEstimatorTest, SharedCovarianceAndCarryForwardPrior) {
     const Truth t = makeTruth(/*seed=*/2024, /*R=*/4, /*S=*/5);
     const std::string signal = "L1";
@@ -1760,13 +1761,13 @@ TEST(NetworkEstimatorTest, SharedCovarianceAndCarryForwardPrior) {
     EXPECT_TRUE(cov.allFinite());
     EXPECT_NEAR((cov - cov.transpose()).cwiseAbs().maxCoeff(), 0.0, 1e-9);  // symmetric
     // The datum-pinned column is realized as a hard pin (N(col,col)=pin_scale), so
-    // its covariance is 1/pin_scale — small relative to a free column, but not zero.
+    // its covariance is 1/pin_scale: small relative to a free column, but not zero.
     EXPECT_GT(cov(clkCol[0], clkCol[0]), 0.0);
     EXPECT_GT(cov(clkCol[1], clkCol[1]), 0.0);
     EXPECT_LT(cov(clkCol[0], clkCol[0]), cov(clkCol[1], clkCol[1]));  // pinned tighter than free
 
-    // Epoch 2: identical data, but a STRONG carry-forward prior pulls satellite
-    // 1's clock toward a deliberately biased value.  The D2 seam must move it.
+    // Epoch 2: identical data, but a strong carry-forward prior pulls satellite
+    // 1's clock toward a deliberately biased value.  The D2 seam has to move it.
     est.beginEpoch();
     for (int r = 0; r < t.R; ++r) {
         Eigen::MatrixXd A_s, A_r; Eigen::VectorXd w, y;
@@ -1803,7 +1804,7 @@ TEST(NetworkEstimatorTest, SharedCovarianceAndCarryForwardPrior) {
 }
 
 // ===========================================================================
-// addSharedPriorDense — the C1 full-covariance carry seam
+// addSharedPriorDense: the C1 full-covariance carry seam
 // ===========================================================================
 
 // A dense prior whose covariance is exactly diagonal must reproduce the scalar
@@ -1852,14 +1853,13 @@ TEST(NetworkEstimatorTest, DensePriorWithDiagonalCovMatchesScalarPath) {
 }
 
 // ---------------------------------------------------------------------------
-// Card Q3 (docs/SPEC_clock_temporal_anchor.md §2.4) — the post-solve refloat
-// primitives.  Both exist so an epoch can be RE-SOLVED with one carried prior
-// withdrawn, which is what turns the clock anchor's guard from an annotation
-// into a correction (adapt-and-EMIT).  Their whole contract is exactness: the
-// withdrawal must leave the system in the state it would have been in had the
-// prior never been folded, or the "corrected" epoch is corrected to the wrong
-// thing.  Both cases therefore compare against a never-folded reference rather
-// than against a tolerance on the delta.
+// Post-solve refloat primitives (card Q3, docs/SPEC_clock_temporal_anchor.md §2.4).
+// Both let an epoch be re-solved with one carried prior withdrawn, which turns the
+// clock anchor's guard from an annotation into a correction (adapt-and-emit).
+// Their contract is exactness: after the withdrawal the system is in the state it
+// would have been in had the prior never been folded; otherwise the corrected epoch
+// would be corrected to the wrong value.  Both cases therefore compare against a
+// never-folded reference rather than against a tolerance on the delta.
 // ---------------------------------------------------------------------------
 
 TEST(NetworkEstimatorTest, WithdrawSharedPriorIsTheExactInverseOfTheFold) {
@@ -1901,9 +1901,9 @@ TEST(NetworkEstimatorTest, WithdrawSharedPriorIsTheExactInverseOfTheFold) {
     const Eigen::VectorXd x_back = est.solve(datum);
     EXPECT_LT((x_back - x_free).cwiseAbs().maxCoeff(), 1e-9);
 
-    // …and a second solve after the withdrawal must not drift (the kernel's
-    // reduced form stays current through the shared-border fast path — this is
-    // what makes the in-epoch re-solve cheap enough to do at all).
+    // A second solve after the withdrawal does not drift: the kernel's reduced form
+    // stays current through the shared-border fast path, which is what makes the
+    // in-epoch re-solve cheap enough to use.
     const Eigen::VectorXd x_again = est.solve(datum);
     EXPECT_LT((x_again - x_back).cwiseAbs().maxCoeff(), 1e-12);
 }
@@ -1920,8 +1920,8 @@ TEST(NetworkEstimatorTest, RefoldDenseDroppingClocksEqualsMarginalizedFold) {
     }
     const NetworkEstimator::Datum datum = {{est.clockColumn(t.sats[0]), 0.0}};
 
-    // A CORRELATED block — clock ↔ phase bias, the coupling the C1 dense carry
-    // exists to retain.  Correlation is what makes "drop the row/col of the
+    // A correlated block (clock ↔ phase bias, the coupling the C1 dense carry
+    // exists to retain).  Correlation is what makes "drop the row/col of the
     // covariance" (marginalize) differ from "drop the row/col of Λ" (condition),
     // so a diagonal block would not test the property that matters.
     std::vector<NetworkEstimator::SharedPrior> keys(3);
@@ -1943,7 +1943,7 @@ TEST(NetworkEstimatorTest, RefoldDenseDroppingClocksEqualsMarginalizedFold) {
         }
     };
 
-    // Reference: fold the block with sat[1]'s CLOCK already marginalized out.
+    // Reference: fold the block with sat[1]'s clock already marginalized out.
     std::vector<NetworkEstimator::SharedPrior> kept{keys[1], keys[2]};
     Eigen::MatrixXd kept_cov(2, 2);
     kept_cov << cov(1, 1), cov(1, 2),
@@ -1952,7 +1952,7 @@ TEST(NetworkEstimatorTest, RefoldDenseDroppingClocksEqualsMarginalizedFold) {
     est.addSharedPriorDense(kept, kept_cov);
     const Eigen::VectorXd x_ref = est.solve(datum);
 
-    // The card's path: fold the FULL block, solve, then re-fold it marginalized.
+    // The card's path: fold the full block, solve, then re-fold it marginalized.
     addStations();
     est.addSharedPriorDense(keys, cov);
     const Eigen::VectorXd x_full = est.solve(datum);
@@ -1962,8 +1962,8 @@ TEST(NetworkEstimatorTest, RefoldDenseDroppingClocksEqualsMarginalizedFold) {
     const Eigen::VectorXd x_drop = est.solve(datum);
     EXPECT_LT((x_drop - x_ref).cwiseAbs().maxCoeff(), 1e-9);
 
-    // The restore branch puts the epoch back exactly — the path taken when the
-    // re-solve throws and the anchored solution must survive.
+    // The restore branch puts the epoch back exactly; it is the path taken when the
+    // re-solve throws and the anchored solution has to be kept.
     est.refoldSharedPriorDenseDroppingClocks(keys, cov, {t.sats[1]}, /*restore=*/true);
     const Eigen::VectorXd x_restored = est.solve(datum);
     EXPECT_LT((x_restored - x_full).cwiseAbs().maxCoeff(), 1e-9);
@@ -1975,11 +1975,11 @@ TEST(NetworkEstimatorTest, RefoldDenseDroppingClocksEqualsMarginalizedFold) {
     EXPECT_LT((x_noop - x_full).cwiseAbs().maxCoeff(), 1e-12);
 }
 
-// Absent-key policy: a key not in the layout is MARGINALIZED — its rows/cols of
-// the prior covariance are dropped BEFORE inversion.  With a strong correlation
+// Absent-key policy: a key not in the layout is marginalized, i.e. its rows/cols of
+// the prior covariance are dropped before inversion.  With a strong correlation
 // to a present key, marginalizing leaves 1/P(0,0) of information on the
-// survivor; row-deleting Λ instead would inject the far larger CONDITIONAL
-// information 1/(P(0,0)·(1−ρ²)).  This is the load-bearing statistics contract.
+// survivor; deleting rows of Λ instead would inject the far larger conditional
+// information 1/(P(0,0)·(1−ρ²)).  This is the statistical contract of the path.
 TEST(NetworkEstimatorTest, DensePriorMarginalizesAbsentKeys) {
     const Truth t = makeTruth(/*seed=*/2024, /*R=*/4, /*S=*/5);
     const std::string signal = "L1";
@@ -2013,7 +2013,7 @@ TEST(NetworkEstimatorTest, DensePriorMarginalizesAbsentKeys) {
     const std::size_t kept = est.addSharedPriorDense(keys, P, &lam);
     EXPECT_EQ(kept, 1u);
     ASSERT_EQ(lam.size(), 2);
-    EXPECT_NEAR(lam(0), 1.0 / 0.25, 1e-7);  // marginal info, NOT 1/(0.25·(1−0.99²)) ≈ 201
+    EXPECT_NEAR(lam(0), 1.0 / 0.25, 1e-7);  // marginal info, not 1/(0.25·(1−0.99²)) ≈ 201
     EXPECT_EQ(lam(1), 0.0);                 // absent key → dropped
     const Eigen::VectorXd x_dense = est.solve(datum);
 
@@ -2029,10 +2029,10 @@ TEST(NetworkEstimatorTest, DensePriorMarginalizesAbsentKeys) {
     EXPECT_LT((x_dense - x_ref).cwiseAbs().maxCoeff(), 1e-9);
 }
 
-// Deterministic measurement noise on the DATA rows (the pivot's 1e10 ambiguity
-// pin rows stay exact).  Noise makes the two epochs' information genuinely
-// distinct — noise-free consistent data would satisfy ANY prior weighting and
-// the batch-vs-recursive comparison below would lose its discrimination.
+// Deterministic measurement noise on the data rows (the pivot's 1e10 ambiguity
+// pin rows stay exact).  Noise makes the two epochs' information distinct:
+// noise-free consistent data would satisfy any prior weighting, and the
+// batch-vs-recursive comparison below could not discriminate.
 void addDataNoise(Eigen::VectorXd& y, int S, unsigned seed) {
     std::mt19937 gen(seed);
     std::normal_distribution<double> n01(0.0, 1.0);
@@ -2042,16 +2042,16 @@ void addDataNoise(Eigen::VectorXd& y, int S, unsigned seed) {
     }
 }
 
-// THE C1 exactness property: with q = 0 and the FULL posterior covariance
+// The C1 exactness property: with q = 0 and the full posterior covariance
 // carried, the two-epoch recursion equals the single batch solve stacking both
-// epochs' station data (locals per-epoch separate, shared border + datum
-// common) — the information-form KF is exact recursive least squares, and the
+// epochs' station data (locals separate per epoch, shared border and datum
+// common).  The information-form KF is exact recursive least squares, and the
 // identical-value datum pins telescope through the Dirichlet elimination.  The
-// legacy DIAGONAL carry discards the off-diagonal information and must
-// measurably deviate.  This is the property that motivates the entire card.
+// legacy diagonal carry discards the off-diagonal information and deviates
+// measurably.  This property is the motivation for the C1 card.
 TEST(NetworkEstimatorTest, DenseCarryRecursiveEqualsBatch) {
     const Truth t1 = makeTruth(/*seed=*/2024, /*R=*/4, /*S=*/5);
-    Truth t2 = t1;   // SAME shared truth (c_s, b_s); new receiver clocks + arcs
+    Truth t2 = t1;   // same shared truth (c_s, b_s); new receiver clocks and arcs
     {
         std::mt19937 gen(777);
         std::uniform_real_distribution<double> clk(-10.0, 10.0);
@@ -2071,8 +2071,8 @@ TEST(NetworkEstimatorTest, DenseCarryRecursiveEqualsBatch) {
     }
     const NetworkEstimator::Datum datum = {{est.clockColumn(t1.sats[0]), 0.0}};
 
-    // Pre-build every noisy station block ONCE: the recursive and batch paths
-    // must consume bit-identical inputs.
+    // Pre-build every noisy station block once, so the recursive and batch paths
+    // consume bit-identical inputs.
     struct Blk { Eigen::MatrixXd A_s, A_r; Eigen::VectorXd w, y; };
     std::vector<Blk> ep1(static_cast<std::size_t>(t1.R)), ep2(static_cast<std::size_t>(t2.R));
     for (int r = 0; r < t1.R; ++r) {
@@ -2084,7 +2084,7 @@ TEST(NetworkEstimatorTest, DenseCarryRecursiveEqualsBatch) {
         addDataNoise(ep2[r].y, t2.S, 200u + static_cast<unsigned>(r));
     }
 
-    // Epoch 1: solve, stash the value + FULL covariance over the free columns.
+    // Epoch 1: solve, stash the value and the full covariance over the free columns.
     est.beginEpoch();
     for (auto& b : ep1) est.addStation(b.A_s, b.A_r, b.w, b.y);
     const Eigen::VectorXd x1 = est.solve(datum);
@@ -2093,7 +2093,7 @@ TEST(NetworkEstimatorTest, DenseCarryRecursiveEqualsBatch) {
     std::vector<NetworkEstimator::SharedPrior> keys;
     std::vector<Eigen::Index> kcol;
     for (int s = 0; s < t1.S; ++s) {
-        if (s != 0) {   // clkCol[0] is the datum pin — never carried
+        if (s != 0) {   // clkCol[0] is the datum pin; never carried
             NetworkEstimator::SharedPrior p;
             p.kind = SharedParamKind::Clock; p.sat = t1.sats[s];
             p.value = x1(clkCol[s]);
@@ -2110,13 +2110,13 @@ TEST(NetworkEstimatorTest, DenseCarryRecursiveEqualsBatch) {
         for (Eigen::Index b = 0; b < k; ++b)
             Pk(a, b) = P1(kcol[static_cast<std::size_t>(a)], kcol[static_cast<std::size_t>(b)]);
 
-    // Epoch 2, FULL covariance carried (q = 0): exact recursive least squares.
+    // Epoch 2, full covariance carried (q = 0): exact recursive least squares.
     est.beginEpoch();
     for (auto& b : ep2) est.addStation(b.A_s, b.A_r, b.w, b.y);
     EXPECT_EQ(est.addSharedPriorDense(keys, Pk), static_cast<std::size_t>(k));
     const Eigen::VectorXd x2_dense = est.solve(datum);
 
-    // Epoch 2, DIAGONAL only: the legacy D2 approximation.
+    // Epoch 2, diagonal only: the legacy D2 approximation.
     est.beginEpoch();
     for (auto& b : ep2) est.addStation(b.A_s, b.A_r, b.w, b.y);
     {
@@ -2148,21 +2148,20 @@ TEST(NetworkEstimatorTest, DenseCarryRecursiveEqualsBatch) {
         << "the dense carry should be orders of magnitude closer to batch";
 }
 
-// Card 1 (network.carry_conditional_coupling): the CONDITIONAL local carry.  The
-// sequential recursion with {dense border carry + per-column conditional coupling
-// rows} must reproduce the BATCH solve for the shared border AND the carried LOCAL
-// ambiguities — where the legacy diagonal (marginal) carry does NOT.  This test
-// FAILING with the diagonal carry and PASSING with the coupling rows is the whole
-// point of the card.
+// The conditional local carry (Card 1, network.carry_conditional_coupling).  The
+// sequential recursion with a dense border carry plus per-column conditional
+// coupling rows reproduces the batch solve for the shared border and for the
+// carried local ambiguities; the legacy diagonal (marginal) carry does not.  The
+// test checks both halves: the coupling rows match batch, the diagonal carry does not.
 //
-// Model (chosen so the coupling row is EXACT): shared per satellite = clock c_s +
+// Model (chosen so the coupling row is exact): shared per satellite = clock c_s +
 // phase bias b_s; local per station = ambiguity M_{r,s}, one per satellite.  Each
-// M_{r,s} appears in exactly ONE phase row (Φ = −c_s + b_s + M_{r,s}); a code row
-// P = −c_s makes c_s observable.  So the local block N_rr is DIAGONAL → the carried
-// ambiguities are conditionally INDEPENDENT given the shared border, the regime a
-// per-column coupling row carries exactly.  Datum: pin c_0 (shared) + M_{0,s}=0
-// (pivot local).  Two epochs, SAME truth, DIFFERENT noise, zero process noise → an
-// exact recursive-least-squares recursion.
+// M_{r,s} appears in exactly one phase row (Φ = −c_s + b_s + M_{r,s}); a code row
+// P = −c_s makes c_s observable.  The local block N_rr is therefore diagonal, so the
+// carried ambiguities are conditionally independent given the shared border, the
+// regime a per-column coupling row carries exactly.  Datum: pin c_0 (shared) +
+// M_{0,s}=0 (pivot local).  Two epochs with the same truth, different noise and
+// zero process noise give an exact recursive-least-squares recursion.
 TEST(NetworkEstimatorTest, ConditionalCarryRecursiveEqualsBatch) {
     const int R = 3, S = 4;   // station 0 = pivot (M_{0,s}=0); 1,2 carry their M
     const std::string signal = "L1";
@@ -2289,7 +2288,7 @@ TEST(NetworkEstimatorTest, ConditionalCarryRecursiveEqualsBatch) {
             blk.A_r(m0, cr.col) = 1.0;
             double yv = cr.value;                       // (r̂_prev − r_lin), r_lin = 0
             for (Eigen::Index j = 0; j < nshared; ++j) {
-                if (j == pin0) continue;                // FREE-column restriction
+                if (j == pin0) continue;                // free-column restriction
                 const double mj = cr.Mr(j);
                 blk.A_s(m0, j) = mj;
                 yv += mj * x1(j);                       // + M_rj · ŝ_prev,j
@@ -2302,7 +2301,7 @@ TEST(NetworkEstimatorTest, ConditionalCarryRecursiveEqualsBatch) {
     // The legacy diagonal (marginal) carry, for the discrimination check.
     auto with_diagonal = [&](std::vector<Blk> blks) { return blks; };
 
-    // --- Epoch 2 (COUPLING rows + dense border): the rigorous recursion. --------
+    // --- Epoch 2 (coupling rows + dense border): the rigorous recursion. --------
     std::vector<Blk> ep2c = with_coupling(ep2);
     est.beginEpoch();
     std::vector<std::size_t> stidx2(static_cast<std::size_t>(R));
@@ -2317,7 +2316,7 @@ TEST(NetworkEstimatorTest, ConditionalCarryRecursiveEqualsBatch) {
         loc_coupled[static_cast<std::size_t>(r)] =
             est.reconstructStation(stidx2[static_cast<std::size_t>(r)], x2_coupled);
 
-    // --- Epoch 2 (DIAGONAL marginal carry + dense border): the legacy path. -----
+    // --- Epoch 2 (diagonal marginal carry + dense border): the legacy path. -----
     std::vector<Blk> ep2d = with_diagonal(ep2);
     est.beginEpoch();
     std::vector<std::size_t> stidxd(static_cast<std::size_t>(R));
@@ -2328,7 +2327,7 @@ TEST(NetworkEstimatorTest, ConditionalCarryRecursiveEqualsBatch) {
     for (const Carry& cr : carries) {
         const std::size_t si = stidxd[static_cast<std::size_t>(cr.r)];
         Eigen::VectorXd dN(1), du(1);
-        dN(0) = 1.0 / cr.marg_var;                 // MARGINAL variance (the double-count)
+        dN(0) = 1.0 / cr.marg_var;                 // marginal variance (the double-count)
         du(0) = (1.0 / cr.marg_var) * cr.value;
         est.addStationPrior(si, {cr.col}, dN, du);
     }
@@ -2338,8 +2337,8 @@ TEST(NetworkEstimatorTest, ConditionalCarryRecursiveEqualsBatch) {
     for (int r = 1; r < R; ++r)
         loc_diag[static_cast<std::size_t>(r)] = est.reconstructStation(stidxd[static_cast<std::size_t>(r)], x2_diag);
 
-    // --- Batch: each station added ONCE with BOTH epochs' rows stacked (its M
-    //     persists; the shared border persists) — the joint reference. ----------
+    // --- Batch: each station added once with both epochs' rows stacked (its M and
+    //     the shared border persist); this is the joint reference. --------------
     NetworkEstimator estb;
     for (int s = 0; s < S; ++s) {
         estb.registerClock(sats[static_cast<std::size_t>(s)]);
@@ -2382,47 +2381,50 @@ TEST(NetworkEstimatorTest, ConditionalCarryRecursiveEqualsBatch) {
 
 // ── Card 1c ──────────────────────────────────────────────────────────────────
 // Numerical trace of the between-epoch conditional-coupling carry (Card 1,
-// network.carry_conditional_coupling) over an 8-epoch SURVIVING arc.  Field fact
-// (memory project_network_ddfrac_rootcause_shvtec): arcs survive 16-43 epochs,
-// dep_var≈0 (clock_model off ⇒ M_w empty, Card-1b joint whitening a no-op), yet the
-// DD formal σ stays FLAT at var_eff≈5.6 cyc rather than contracting ~1/√k.  This test
-// drives the PRODUCTION harvest→inject path each epoch — solve → stationRegression
-// (cond_var + M_r) + conditionalLocalVarianceDiag → inject a coupling row next epoch,
-// plus the C1 dense-border carry — and PRINTS, per epoch for the tracked ambiguity:
-// the injected row σ² (last epoch's q_cond), the harvested q_cond, the M_r
+// network.carry_conditional_coupling) over an 8-epoch surviving arc.  In the field
+// (project note project_network_ddfrac_rootcause_shvtec) arcs survive many epochs
+// with dep_var≈0 (clock_model off ⇒ M_w empty, Card-1b joint whitening a no-op),
+// yet the DD formal σ stays flat instead of contracting ~1/√k.  This test drives the
+// production harvest→inject path each epoch (solve → stationRegression (cond_var +
+// M_r) + conditionalLocalVarianceDiag → inject a coupling row next epoch, plus the
+// C1 dense-border carry) and prints, per epoch for the tracked ambiguity: the
+// injected row σ² (last epoch's q_cond), the harvested q_cond, the M_r
 // coefficients, the jointConditionalCovariance σ (the dd_sigma path), and the value
-// error vs truth.  The σ(k) trajectory is read directly from the table.
+// error against truth.  The σ(k) trajectory is read from the table.
 //
-// Geometry: 2 stations, 2 satellites.  Gauge = datum pins sat-0's clock (clk0) + station 0
-// pins sat-0's phase bias (pb0=0) — so BOTH stations' sat-1 ambiguities stay FREE and carried,
-// letting the DD N_{1,1}−N_{0,1} cancel the shared clk1/pb1 EXACTLY (the field dd_sigma
-// contrast).  The FREE carried border the arc regresses onto is exactly {clk_1 (LARGE per-epoch
-// q ⇒ loosely carried), pb_1 (small q ⇒ tightly carried)} — the card's "1 clock-like + 1
-// bias-like column".  Two σ's are traced: the single-ambiguity conditional σ (carries the
-// shared-border propagation) and the border-cancelling DD σ.  Per station per sat: a phase row
-// (σ 0.002 m; amb + iono + clock + bias) and a code row (σ 0.3 m; iono + clock).  Zero
-// ambiguity process noise (constant arc).  The `correlated_iono` variant (the branch-(a)
-// probe) ties BOTH stations' ionos to ONE carried SH-like shared column with a
-// representativeness σ — the correlated per-epoch iono error hypothesised to be the
-// field floor.  PURE DIAGNOSTIC: asserts only that the harvest stayed finite/positive
-// (green in every branch); the verdict is read from the printed table.
+// Geometry: 2 stations, 2 satellites.  Gauge: the datum pins sat-0's clock (clk0)
+// and station 0 pins sat-0's phase bias (pb0=0), so both stations' sat-1
+// ambiguities stay free and carried, and the DD N_{1,1}−N_{0,1} cancels the shared
+// clk1/pb1 exactly (the field dd_sigma contrast).  The free carried border the arc
+// regresses onto is {clk_1 (q_clk, the looser carry), pb_1 (q_pb, the tighter
+// carry)}: the card's "1 clock-like + 1 bias-like column".  Two σ's are traced: the
+// single-ambiguity conditional σ (includes the shared-border propagation) and the
+// border-cancelling DD σ.  Per station per sat: a phase row (σ 0.002 m; amb + iono
+// + clock + bias) and a code row (σ 0.3 m; iono + clock).  Zero ambiguity process
+// noise (constant arc).  The `correlated_iono` variant (the branch-(a) probe) ties
+// both stations' ionos to one carried SH-like shared column with a
+// representativeness σ: the correlated per-epoch iono error hypothesised to be the
+// field floor.  The unfixed arms are diagnostics and assert only that the harvest
+// stays finite and positive; the Card 1d arms (`fixed`) carry the consistency and
+// contraction assertions at the end of the test.
 TEST(NetworkEstimatorTest, ConditionalCarryContractionTrace) {
     struct Blk { Eigen::MatrixXd A_s, A_r; Eigen::VectorXd w, y; };
     const int NEP = 8;
     const double sig_ph = 0.002, sig_cd = 0.3;
     // clk1 is confounded with common-mode iono in this 2-sat toy (a single free satellite's
-    // clock is unobservable), so it is carried with a SMALL q that holds its variance at a
-    // stable nonzero floor (~seed 1 m²) — that floor is what the single-ambiguity σ can never
-    // beat, while the between-station DD cancels clk1 and pb1 exactly.  pb1 = the small-q
-    // carried bias.  (A truly large-q free clock would diverge here; the field breaks the
-    // clock/iono null with many satellites + the SH-VTEC constraint, which this toy omits.)
+    // clock is unobservable), so it is carried with a small q that holds its variance at a
+    // stable nonzero floor (about the 1 m² seed).  The single-ambiguity σ cannot go below
+    // that floor, while the between-station DD cancels clk1 and pb1 exactly.  pb1 is the
+    // carried bias, with an even smaller q.  (A large-q free clock would diverge here; the
+    // field breaks the clock/iono null with many satellites and the SH-VTEC constraint,
+    // which this toy omits.)
     const double q_clk = 1e-3, q_pb = 1e-8;
     const double pb_true[2]   = { 0.37, -0.52 };
     const double N_true[2][2] = { {0.0, 0.0}, {2.3, -4.1} };  // gauge: pivot r0 ambiguities = 0
 
-    // Card 1d: `fixed` arms inject each coupling row with the border TIME UPDATE
+    // Card 1d: `fixed` arms inject each coupling row with the border time update
     // (per-column κ shrink + M²κq inflation, q ladder = the border carry's own
-    // {q_clk, q_pb, q_sh}) — the docs/SPEC_card1_coupling_carry.md fix.
+    // {q_clk, q_pb, q_sh}), the fix in docs/SPEC_card1_coupling_carry.md.
     struct Trace { std::vector<double> single_sig, dd_sig, err_ratio; };
     auto run_trace = [&](bool correlated_iono, bool fixed) -> Trace {
         NetworkEstimator est;
@@ -2443,14 +2445,14 @@ TEST(NetworkEstimatorTest, ConditionalCarryContractionTrace) {
         std::mt19937 gen(90210u + (correlated_iono ? 7u : 0u));
         std::normal_distribution<double> ndph(0.0, sig_ph), ndcd(0.0, sig_cd);
         std::normal_distribution<double> ndI(0.0, 5.0), nd1(0.0, 1.0), ndrep(0.0, 0.1);
-        // Model-CONSISTENT truths (mirroring the Card-1c falsifier convention,
-        // card1c_falsify.py): clk0 ≡ 0 (the datum), clk1 = a genuine RW(q_clk)
-        // seeded N(0,1) (exactly the border carry's model), pb constant.  The SH
-        // truth stays WHITE N(0,25) against the border's RW q_sh=5 — Opus's probe
-        // mismatch, kept DELIBERATELY: it is the representativeness error the σ
-        // trajectory is graded under.  With consistent truths the dd_val_err/σ
-        // ratio is a meaningful consistency metric (formal σ itself is truth-
-        // independent, so the printed σ trajectories are unchanged).
+        // Model-consistent truths (following the Card-1c falsifier convention,
+        // card1c_falsify.py): clk0 ≡ 0 (the datum), clk1 = a random walk RW(q_clk)
+        // seeded N(0,1) (the border carry's own model), pb constant.  The SH truth
+        // stays white N(0,25) against the border's RW q_sh=5.  That probe mismatch
+        // is deliberate: it is the representativeness error the σ trajectory is
+        // graded under.  With consistent truths the dd_val_err/σ ratio is a
+        // meaningful consistency metric (formal σ itself is truth-independent, so
+        // the printed σ trajectories do not depend on the truths).
         double clk1_true = nd1(gen);
 
         struct Cpl { Eigen::Index col; double value; double cond_var; Eigen::VectorXd Mr; };
@@ -2458,14 +2460,15 @@ TEST(NetworkEstimatorTest, ConditionalCarryContractionTrace) {
         Eigen::VectorXd prev_xs;                         // last epoch's shared solution (ŝ_prev RHS)
         Eigen::VectorXd prev_pdiag;                      // Card 1d: last epoch's posterior border variances (κ inputs)
 
-        // Gauge: datum pins clk0 (reference clock); station 0 pins pb0=0 (reference bias) with a
-        // tight row.  This leaves BOTH stations' sat-1 ambiguities FREE and carried, so the DD
-        // N_{1,1}−N_{0,1} cancels the shared clk1/pb1 EXACTLY (the field dd_sigma contrast) — the
-        // decisive check that the single-ambiguity plateau is the shared-border-propagation floor.
+        // Gauge: the datum pins clk0 (reference clock); station 0 pins pb0=0 (reference bias)
+        // with a tight row.  Both stations' sat-1 ambiguities stay free and carried, so the DD
+        // N_{1,1}−N_{0,1} cancels the shared clk1/pb1 exactly (the field dd_sigma contrast).
+        // This checks that the single-ambiguity plateau is the shared-border-propagation floor.
         //
-        // Dense border carry = {clk1 (large q), pb1 (small q, the carried bias) (+SH)}.  Seeded
-        // with a weak diagonal prior so epoch 0 is full-rank (the free sat's clock/bias share the
-        // classic null until the small-q bias is carried); rebuilt from posterior + q each epoch.
+        // Dense border carry = {clk1 (q_clk), pb1 (q_pb, the carried bias), plus SH when
+        // correlated_iono}.  Seeded with a unit-variance diagonal prior so epoch 0 is full-rank
+        // (the free sat's clock and bias share the classic null until the bias is carried);
+        // rebuilt from the posterior + q each epoch.
         std::vector<NetworkEstimator::SharedPrior> bkeys;
         std::vector<Eigen::Index> bcol;
         auto addKey = [&](SharedParamKind kind, const std::string& sat, const std::string& sig, Eigen::Index col){
@@ -2476,12 +2479,12 @@ TEST(NetworkEstimatorTest, ConditionalCarryContractionTrace) {
         addKey(SharedParamKind::PhaseBias, "G02", "L1", pb1);
         if (correlated_iono) addKey(SharedParamKind::Clock, "SH99", "", shc);
         const Eigen::Index k = static_cast<Eigen::Index>(bcol.size());
-        // Epoch-0 seed prior: TIGHT (variance 1 m²) on every free border column so the
-        // uncarried (clk1,pb1) gauge null is PD for the first solve.  From epoch 1 the q
-        // inflation (clk1 += q_clk = 1e4) loosens the clock to the intended large-q regime;
-        // the DD cancels clk1, so its epoch-0 seed does not bias the tracked contrast.
-        // The SH seed matches its white-truth variance (25 m²) so epoch 0 is honest —
-        // the probe's mismatch is the RW q=5 CARRY, not the seed.
+        // Epoch-0 seed prior: variance 1 m² on every free border column, so the uncarried
+        // (clk1,pb1) gauge null is PD for the first solve.  From epoch 1 the q inflation adds
+        // q_clk = 1e-3 to clk1 and q_pb = 1e-8 to pb1 each epoch; the DD cancels clk1, so its
+        // epoch-0 seed does not bias the tracked contrast.  The SH seed matches its white-truth
+        // variance (25 m²) so epoch 0 is consistent; the probe's mismatch is in the RW q=5
+        // carry, not in the seed.
         Eigen::MatrixXd Pk = Eigen::MatrixXd::Identity(k, k);
         if (correlated_iono) Pk(k - 1, k - 1) = 25.0;   // bcol.back() == shc
 
@@ -2515,13 +2518,13 @@ TEST(NetworkEstimatorTest, ConditionalCarryContractionTrace) {
                     b.y(row) = -clk[s] + pb_true[s] + N_true[r][s] - I[r][s] + ndph(gen); ++row;
                 }
                 if (correlated_iono) {
-                    // Pin I_{r,s} = map_r·SH + rep.  The mapping map_r DIFFERS per station (the
-                    // field's SH→slant map at each station's pierce point), so SH does NOT cancel
-                    // in the between-station DD (unlike the sat clock) — the ambiguity DD inherits
-                    // (map_1−map_0)·SH.  SH is carried with a LARGE q (re-applied ~white against a
-                    // representativeness σ), so its posterior variance never converges to 0 → a
-                    // PERSISTENT floor on the DD σ.  This is the project_network_ddfrac_rootcause_shvtec
-                    // SH-VTEC iono-error mechanism.
+                    // Pin I_{r,s} = map_r·SH + rep.  The mapping map_r differs per station (the
+                    // field's SH→slant map at each station's pierce point), so SH does not cancel
+                    // in the between-station DD (unlike the sat clock): the ambiguity DD inherits
+                    // (map_1−map_0)·SH.  SH is carried with a large q (q_sh = 5, re-applied as
+                    // nearly white against a representativeness σ), so its posterior variance does
+                    // not converge to 0, which leaves a persistent floor on the DD σ.  This is the
+                    // SH-VTEC iono-error mechanism of project_network_ddfrac_rootcause_shvtec.
                     const double map_r = (r == 0) ? 1.0 : 1.4;
                     for (int s = 0; s < 2; ++s) {
                         b.A_r(row, icol(s)) = 1.0; b.A_s(row, shc) = -map_r;
@@ -2534,7 +2537,7 @@ TEST(NetworkEstimatorTest, ConditionalCarryContractionTrace) {
             };
             std::vector<Blk> blk = { build(0), build(1) };
 
-            // Inject BOTH stations' coupling rows from last epoch's harvest.
+            // Inject both stations' coupling rows from last epoch's harvest.
             double inj_sig2_11 = -1.0;
             for (int r = 0; r < 2; ++r)
                 for (const Cpl& cr : carry[static_cast<std::size_t>(r)]) {
@@ -2548,7 +2551,7 @@ TEST(NetworkEstimatorTest, ConditionalCarryContractionTrace) {
                     double yv = cr.value;                               // (r̂_prev − r_lin), r_lin = 0
                     double tu = 0.0;                                    // Card 1d: Σ M²·κ·q inflation
                     for (Eigen::Index j = 0; j < nshared; ++j) {
-                        if (j == clk0 || j == pb0) continue;            // FREE-column restriction (both pinned)
+                        if (j == clk0 || j == pb0) continue;            // free-column restriction (both pinned)
                         const double mj = cr.Mr(j);
                         if (fixed) {
                             // Border time update: same per-column q the Pk rebuild applies below.
@@ -2573,8 +2576,8 @@ TEST(NetworkEstimatorTest, ConditionalCarryContractionTrace) {
             est.addSharedPriorDense(bkeys, Pk);
             const Eigen::VectorXd xs = est.solve(datum);
 
-            // Single-ambiguity σ (includes shared-border propagation) vs the between-station DD σ
-            // N_{1,1}−N_{0,1} (cancels the shared clk1/pb1 — the field dd_sigma contrast).
+            // Single-ambiguity σ (includes shared-border propagation) against the between-station
+            // DD σ of N_{1,1}−N_{0,1} (cancels the shared clk1/pb1: the field dd_sigma contrast).
             const Eigen::MatrixXd J1 = est.jointConditionalCovariance({{s1, ncol(1)}}, datum);
             const double single_sig = (J1.rows() == 1 && J1(0, 0) > 0.0) ? std::sqrt(J1(0, 0)) : -1.0;
             const Eigen::MatrixXd J2 =
@@ -2585,7 +2588,7 @@ TEST(NetworkEstimatorTest, ConditionalCarryContractionTrace) {
                 dd_sig = (vdd > 0.0) ? std::sqrt(vdd) : -1.0;
             }
 
-            // Harvest BOTH stations' ambiguities → next epoch's coupling rows (production path).
+            // Harvest both stations' ambiguities → next epoch's coupling rows (production path).
             const Eigen::VectorXd x0 = est.reconstructStation(s0, xs);
             const Eigen::VectorXd x1 = est.reconstructStation(s1, xs);
             const std::vector<Eigen::Index> ambcols = { ncol(0), ncol(1) };
@@ -2647,9 +2650,9 @@ TEST(NetworkEstimatorTest, ConditionalCarryContractionTrace) {
     auto contraction = [&](const std::vector<double>& v) {
         return (!v.empty() && v.front() > 0 && v.back() > 0) ? v.front() / v.back() : 0.0;
     };
-    // The asymmetric correlated-iono probe (map 1.0 vs 1.4) leaks the stale-row
-    // defect into the DD (the "σ-incest" ±5 m, 30-50× overconfident signature) —
-    // the discrimination arm.  The fix must keep the SAME probe honest.
+    // In the asymmetric correlated-iono probe (map 1.0 vs 1.4) the stale-row defect
+    // leaks into the DD and makes it grossly overconfident (|err|/σ well above 4);
+    // this is the discrimination arm.  With the fix, the same probe stays consistent.
     EXPECT_GT(maxr(corr.err_ratio), 4.0)
         << "unfixed correlated-iono arm should be grossly overconfident (the Card-1c "
            "defect) — the fixture lost its discrimination";
@@ -2657,8 +2660,8 @@ TEST(NetworkEstimatorTest, ConditionalCarryContractionTrace) {
         << "Card 1d: fixed correlated-iono arm must stay consistent (|err|/sigma <= 3)";
     EXPECT_LT(maxr(plain_fix.err_ratio), 3.0)
         << "Card 1d: fixed plain arm must stay consistent (|err|/sigma <= 3)";
-    // Honest accumulation: the DD σ keeps contracting under the fix (no incest
-    // floor, no divergence) in both geometries.
+    // Consistent accumulation: under the fix the DD σ keeps contracting in both
+    // geometries (no floor from re-counted information, no divergence).
     EXPECT_GT(contraction(plain_fix.dd_sig), 1.8)
         << "Card 1d: fixed plain arm DD sigma should contract ~1/sqrt(k)";
     EXPECT_GT(contraction(corr_fix.dd_sig), 1.3)
@@ -2666,23 +2669,23 @@ TEST(NetworkEstimatorTest, ConditionalCarryContractionTrace) {
 }
 
 // ── Card 1d ──────────────────────────────────────────────────────────────────
-// Border TIME UPDATE of the coupling rows (network.carry_coupling_time_update).
+// Border time update of the coupling rows (network.carry_coupling_time_update).
 // ConditionalCarryRecursiveEqualsBatch above passes only because its shared
-// border is STATIC between epochs (zero process noise) — the exact test gap that
-// shipped the Card-1c defect.  Here the border MOVES: c_{s,2} = c_{s,1} + w,
-// w ~ N(0, q) with the card-spec LARGE q (1e4 m², a free-running clock), and the
-// recursion equals batch only when each injected coupling row is re-independenced
-// against the moved border: per-column shrink κ_j = P_prev/(P_prev + q) applied
-// to the coefficient AND its ŝ_prev RHS term, plus the row-variance inflation
-// M²·κ_j·q = Mᵀ(P⁻¹+Q⁻¹)⁻¹M.  Geometry chosen so the scalar per-column κ is
-// EXACT: ONE carried station (no cross-station conditional correlation to drop),
-// shared = one clock per satellite ONLY, each ambiguity couples to exactly one
-// clock, and different satellites never share a row or a local — so the border
-// posterior is diagonal across the coupled columns and each row has a single
+// border is static between epochs (zero process noise), which is the test gap
+// that let the Card-1c defect through.  Here the border moves: c_{s,2} = c_{s,1} + w,
+// w ~ N(0, q) with the card-spec large q (1e4 m², a free-running clock), and the
+// recursion equals batch only when each injected coupling row is made independent
+// again of the moved border: per-column shrink κ_j = P_prev/(P_prev + q) applied
+// to the coefficient and to its ŝ_prev RHS term, plus the row-variance inflation
+// M²·κ_j·q = Mᵀ(P⁻¹+Q⁻¹)⁻¹M.  The geometry makes the scalar per-column κ exact:
+// one carried station (no cross-station conditional correlation to drop), shared
+// columns are one clock per satellite and nothing else, each ambiguity couples to
+// exactly one clock, and different satellites never share a row or a local, so the
+// border posterior is diagonal across the coupled columns and each row has a single
 // coupled column.  The batch reference is hand-built per satellite over
-// (c₁, c₂, M₀, M₁) with an explicit link row c₂−c₁ ~ N(0,q).  The RAW (unfixed
-// Card-1) recursion must FAIL against the moving border — that failing arm IS
-// the Card-1c defect.
+// (c₁, c₂, M₀, M₁) with an explicit link row c₂−c₁ ~ N(0,q).  The raw (unfixed
+// Card-1) recursion fails against the moving border; that failing arm is the
+// Card-1c defect.
 namespace card1d {
 
 struct Blk { Eigen::MatrixXd A_s, A_r; Eigen::VectorXd w, y; };
@@ -2812,7 +2815,7 @@ inline EpochTwo runRecursion(const Fixture& fx, Mode mode) {
     for (int s = 0; s < S; ++s)
         clkCol[static_cast<std::size_t>(s)] = est.registerClock(fx.sats[static_cast<std::size_t>(s)]);
     const Eigen::Index nshared = est.numShared();
-    const NetworkEstimator::Datum datum;   // clocks absolutely observed — no pin needed
+    const NetworkEstimator::Datum datum;   // clocks absolutely observed; no pin needed
 
     // Epoch 1: solve + harvest.
     est.beginEpoch();
@@ -2869,14 +2872,15 @@ inline EpochTwo runRecursion(const Fixture& fx, Mode mode) {
 }
 
 // Hand-built exact batch per satellite: unknowns z = [c₁, c₂, M₀, M₁], rows =
-// both epochs' code/phase + BOTH epochs' pivot pins + the link c₂−c₁ ~ N(0,q).
-// Noise realizations MUST match runRecursion's builds (same seeds), so the two
-// see identical data.
+// both epochs' code/phase + both epochs' pivot pins + the link c₂−c₁ ~ N(0,q).
+// Noise realizations match runRecursion's builds (same seeds), so the two see
+// identical data; changing the seeds or draw order in one requires the same
+// change in the other.
 struct Batch { double c2, m1; double var_c2, var_m1; };
 
 inline Batch runBatch(const Fixture& fx, int s) {
     // Reproduce the per-row noise stream: build() draws 2 gaussians per sat in
-    // sat order from one generator per (station, epoch) — replay them all.
+    // sat order from one generator per (station, epoch); replay them all.
     auto noise = [&](unsigned seed) {
         std::mt19937 g(seed);
         std::normal_distribution<double> nd(0.0, 1.0);
@@ -2919,10 +2923,10 @@ inline Batch runBatch(const Fixture& fx, int s) {
 
 }  // namespace card1d
 
-// Card 1d gate: with the LARGE-q moving clock border, the κ-fixed recursion
-// equals the hand-built batch (values AND formal variances) while the raw
-// Card-1 recursion fails grossly; a moderate q exercises κ away from both
-// limits.  See docs/SPEC_card1_coupling_carry.md.
+// With the large-q moving clock border, the κ-fixed recursion equals the
+// hand-built batch (values and formal variances) while the raw Card-1 recursion
+// fails grossly; a moderate q exercises κ away from both limits (Card 1d gate).
+// See docs/SPEC_card1_coupling_carry.md.
 TEST(NetworkEstimatorTest, ConditionalCarryTimeUpdateRecursiveEqualsBatch) {
     using namespace card1d;
     for (const double q : {1e4, 1.0}) {
@@ -2953,13 +2957,12 @@ TEST(NetworkEstimatorTest, ConditionalCarryTimeUpdateRecursiveEqualsBatch) {
     }
 }
 
-// Card 1d limits: q = 0 must reproduce the raw (unfixed) rows EXACTLY (κ = 1,
-// zero inflation — guards the OFF-adjacent behavior), and q → ∞ must reproduce
-// the departed-column marginalization (κ = 0, σ² += M²·P_prev) — the fix's two
-// analytic limits.
+// The fix's two analytic limits (Card 1d): q = 0 reproduces the raw (unfixed)
+// rows (κ = 1, zero inflation; guards the behavior closest to off), and q → ∞
+// reproduces the departed-column marginalization (κ = 0, σ² += M²·P_prev).
 TEST(NetworkEstimatorTest, ConditionalCarryTimeUpdateLimits) {
     using namespace card1d;
-    {   // q = 0: κ-fixed construction == raw construction, bit-for-bit behavior
+    {   // q = 0: κ-fixed construction == raw construction (to 1e-13)
         const Fixture fx(0.0, 1.0);
         const EpochTwo fixed = runRecursion(fx, Mode::Fixed);
         const EpochTwo raw   = runRecursion(fx, Mode::Raw);
@@ -2969,7 +2972,7 @@ TEST(NetworkEstimatorTest, ConditionalCarryTimeUpdateLimits) {
         EXPECT_LT((fixed.P_loc - raw.P_loc).cwiseAbs().maxCoeff(), 1e-13);
     }
     {   // q → ∞ (1e30): κ-fixed == full departed-column marginalization
-        const Fixture fx(1e30, 1.0);   // truth drift kept moderate — equivalence is data-identical
+        const Fixture fx(1e30, 1.0);   // truth drift kept moderate; both arms see identical data
         const EpochTwo fixed = runRecursion(fx, Mode::Fixed);
         const EpochTwo dep   = runRecursion(fx, Mode::Departed);
         EXPECT_LT((fixed.x_s - dep.x_s).cwiseAbs().maxCoeff(), 1e-9)
@@ -2979,16 +2982,16 @@ TEST(NetworkEstimatorTest, ConditionalCarryTimeUpdateLimits) {
     }
 }
 
-// Card 1b (network.carry_coupling_joint_whiten): when >=2 of a station's carried
-// ambiguities regress on the SAME shared column that has DEPARTED the layout, that
-// column must be marginalized JOINTLY — the coupling rows' noise covariance
-// R = diag(var_eff) + M_w·diag(P_w)·M_wᵀ — not per-row into a scalar.  This test
+// Joint whitening (Card 1b, network.carry_coupling_joint_whiten): when >=2 of a station's carried
+// ambiguities regress on one shared column that has departed the layout, that
+// column has to be marginalized jointly, through the coupling rows' noise covariance
+// R = diag(var_eff) + M_w·diag(P_w)·M_wᵀ, not per row into a scalar.  This test
 // isolates the mathematical claim on a minimal system (two locals r0,r1 + one
 // departed shared W): the joint covariance equals the exact batch marginal of W, so
-// the recursive posterior matches the batch; the Card-1 per-row SCALAR variance is
-// exactly the DIAGONAL of that joint covariance (it drops the between-row correlation
-// the shared departed column induces) and does NOT match.  Self-contained linear
-// algebra — validates the mechanism the driver's whitenCouplingRows() implements.
+// the recursive posterior matches the batch; the Card-1 per-row scalar variance is
+// the diagonal of that joint covariance (it drops the between-row correlation the
+// shared departed column induces) and does not match.  Self-contained linear
+// algebra that validates the mechanism the driver's whitenCouplingRows() implements.
 TEST(NetworkEstimatorTest, JointWhitenCouplingMarginalizationEqualsBatch) {
     using Eigen::MatrixXd;
     using Eigen::Vector2d;
@@ -3015,19 +3018,19 @@ TEST(NetworkEstimatorTest, JointWhitenCouplingMarginalizationEqualsBatch) {
     const Vector2d Mr   = SrW / SWW;                  // regression of (r0,r1) on W
     const MatrixXd Scond = Srr - SWW * (Mr * Mr.transpose());  // conditional cov (var_eff diagonal)
 
-    // JOINT whitening covariance R = diag(var_eff) + M_w·P_w·M_wᵀ, with M_w=[Mr0;Mr1],
+    // Joint whitening covariance R = diag(var_eff) + M_w·P_w·M_wᵀ, with M_w=[Mr0;Mr1],
     // var_eff_i = Scond(i,i).  By the marginalization identity it equals the marginal Srr.
     MatrixXd Rjoint = SWW * (Mr * Mr.transpose());
     for (int i = 0; i < 2; ++i) Rjoint(i, i) += Scond(i, i);
     EXPECT_LT((Rjoint - Srr).cwiseAbs().maxCoeff(), 1e-12)
         << "joint departed-column marginalization must equal the exact batch marginal cov";
 
-    // Card-1 SCALAR path: σ²_i = var_eff_i + M_i²·P_w = Srr(i,i) — a DIAGONAL R that
+    // Card-1 scalar path: σ²_i = var_eff_i + M_i²·P_w = Srr(i,i), a diagonal R that
     // discards the off-diagonal M0·M1·P_w the two rows share through W.
     MatrixXd Rscalar = MatrixXd::Zero(2, 2);
     for (int i = 0; i < 2; ++i) Rscalar(i, i) = Scond(i, i) + SWW * Mr(i) * Mr(i);
 
-    // Epoch-2 information on the LOCALS only (W has departed — not touched).  The
+    // Epoch-2 information on the locals only (W has departed and is not touched).  The
     // recursive posterior = epoch-1 marginal r-info (R⁻¹) + epoch-2 info; the batch =
     // full (r0,r1,W) info + epoch-2 r-info, marginalized over W.  They agree iff the
     // marginalization is exact (joint), and epoch-2's r-only update commutes with it.
@@ -3050,9 +3053,9 @@ TEST(NetworkEstimatorTest, JointWhitenCouplingMarginalizationEqualsBatch) {
            "the between-row correlation is exactly the Card-1 inert-carry flaw Card 1b fixes";
 }
 
-// Input validation + numerical rejection: bad dims throw invalid_argument, an
+// Input validation and numerical rejection: bad dims throw invalid_argument, an
 // un-begun epoch throws logic_error, an indefinite or negative-variance block
-// throws runtime_error (after the ridge retry) — and a rejected fold leaves the
+// throws runtime_error (after the ridge retry), and a rejected fold leaves the
 // epoch solvable (the throw happens before any kernel mutation).
 TEST(NetworkEstimatorTest, DensePriorInputValidation) {
     const Truth t = makeTruth(/*seed=*/2024, /*R=*/3, /*S=*/4);
@@ -3072,7 +3075,7 @@ TEST(NetworkEstimatorTest, DensePriorInputValidation) {
     // Dimension mismatch → invalid_argument (checked before the epoch guard).
     EXPECT_THROW(est.addSharedPriorDense(one, Eigen::MatrixXd::Identity(2, 2)),
                  std::invalid_argument);
-    // No open epoch → logic_error (the NEW overload is guarded; the legacy
+    // No open epoch → logic_error (the dense overload is guarded; the legacy
     // diagonal addSharedPrior deliberately is not).
     EXPECT_THROW(est.addSharedPriorDense(one, Eigen::MatrixXd::Identity(1, 1)),
                  std::logic_error);
@@ -3103,11 +3106,11 @@ TEST(NetworkEstimatorTest, DensePriorInputValidation) {
 
 // The conditioning guards (review hardening): a PD-but-near-singular carried
 // correlation (relative pivot < 1e-6 even after the ridge retry) and an absolute
-// folded-information overflow (Λ_aa > 1e13 1/m²) are both REJECTED as
-// runtime_error — the driver then degrades to the legacy diagonal fold for the
+// folded-information overflow (Λ_aa > 1e13 1/m²) are both rejected as
+// runtime_error.  The driver then falls back to the legacy diagonal fold for the
 // epoch instead of injecting amplified information that would trip the
-// constrained solve's own relative-pivot guard downstream (where a solve-throw
-// skips the epoch BEFORE the stash and the identical block re-folds forever).
+// constrained solve's own relative-pivot guard downstream (a solve throw skips
+// the epoch before the stash, so the same block would be folded again every epoch).
 TEST(NetworkEstimatorTest, DensePriorRejectsNearSingularAndOverStiffBlocks) {
     const Truth t = makeTruth(/*seed=*/2024, /*R=*/3, /*S=*/4);
     const std::string signal = "L1";
@@ -3140,19 +3143,19 @@ TEST(NetworkEstimatorTest, DensePriorRejectsNearSingularAndOverStiffBlocks) {
                  rho, 1.0;
     EXPECT_THROW(est.addSharedPriorDense(two, near_sing), std::runtime_error);
 
-    // (b) Absolute folded-information budget: healthy correlation (identity) but
+    // (b) Absolute folded-information budget: well-conditioned correlation (identity) but
     // an extreme 1e-14 m² variance ⇒ Λ_aa = 1e14 > the 1e13 1/m² budget.
     Eigen::MatrixXd overstiff = Eigen::MatrixXd::Zero(2, 2);
     overstiff(0, 0) = 1e-14;
     overstiff(1, 1) = 1e-14;
     EXPECT_THROW(est.addSharedPriorDense(two, overstiff), std::runtime_error);
 
-    // Both rejections precede any kernel mutation — the epoch still solves.
+    // Both rejections precede any kernel mutation, so the epoch still solves.
     const Eigen::VectorXd x = est.solve(datum);
     EXPECT_TRUE(x.allFinite());
 }
 
-// Empty key set and all-absent key sets are EXACT no-ops (no kernel mutation),
+// Empty key set and all-absent key sets are exact no-ops (no kernel mutation),
 // mirroring the legacy absent-key skip.
 TEST(NetworkEstimatorTest, DensePriorEmptyAndAbsentKeysAreExactNoOps) {
     const Truth t = makeTruth(/*seed=*/2024, /*R=*/3, /*S=*/4);
@@ -3193,13 +3196,13 @@ TEST(NetworkEstimatorTest, DensePriorEmptyAndAbsentKeysAreExactNoOps) {
 }
 
 // ===========================================================================
-// SharedParamKind::VtecSh — global SH-VTEC coefficient columns
+// SharedParamKind::VtecSh: global SH-VTEC coefficient columns
 // ===========================================================================
 
 // registerVtecCoeff is idempotent and disjoint from clock/bias columns;
 // vtecCoeffColumn round-trips; the prior routes to the right SH column; the SH
 // columns are solved from their (Kaula) prior alone when they carry no data; and
-// toSolutionEpoch does NOT manufacture a per-satellite slot for an SH column.
+// toSolutionEpoch does not create a per-satellite slot for an SH column.
 TEST(NetworkEstimatorTest, VtecShColumnsRegisterPriorAndSkipEmit) {
     NetworkEstimator est;
     const Eigen::Index cG1 = est.registerClock("G01");
@@ -3219,7 +3222,7 @@ TEST(NetworkEstimatorTest, VtecShColumnsRegisterPriorAndSkipEmit) {
 
     est.beginEpoch();
     // One station observing G01/G02 by code: P = a_rx - c_sat (A_r = rx clock).
-    // The SH columns carry NO data (A_s SH entries all zero).
+    // The SH columns carry no data (A_s SH entries all zero).
     Eigen::MatrixXd A_s = Eigen::MatrixXd::Zero(2, 6);
     A_s(0, cG1) = -1.0;
     A_s(1, cG2) = -1.0;
@@ -3252,15 +3255,15 @@ TEST(NetworkEstimatorTest, VtecShColumnsRegisterPriorAndSkipEmit) {
     EXPECT_NEAR(x(a11c), 0.0, 1e-3);
     EXPECT_NEAR(x(a11s), 0.0, 1e-3);
 
-    // toSolutionEpoch must NOT create an "SH" satellite — only G01/G02 appear.
+    // toSolutionEpoch does not create an "SH" satellite; only G01/G02 appear.
     const NetworkSolutionEpoch sol = est.toSolutionEpoch(x, GnssTime{2313, 259200.0});
     EXPECT_EQ(sol.sats.size(), 2u);
     for (const auto& s : sol.sats)
         EXPECT_TRUE(s.sat == "G01" || s.sat == "G02") << "unexpected sat " << s.sat;
 }
 
-// Iono-2 dual-layer: the second shell registers under its own "SH2" keys — the
-// same (n,m,trig) coexists on both layers as DISTINCT columns, the per-layer
+// Iono-2 dual-layer: the second shell registers under its own "SH2" keys.  The
+// same (n,m,trig) coexists on both layers as distinct columns, the per-layer
 // prior routing lands on the right one, the layer-0 API keeps its legacy
 // defaulted-argument behavior, and labels disambiguate the shells.
 TEST(NetworkEstimatorTest, VtecShLayer2ColumnsRegisterDistinctWithPerLayerPriors) {
@@ -3286,7 +3289,7 @@ TEST(NetworkEstimatorTest, VtecShLayer2ColumnsRegisterDistinctWithPerLayerPriors
     est.addStation(A_s, A_r, w, y);
 
     // Per-layer a00 anchors: layer 0 → 12 TECU, layer 1 → 3 TECU.  sh_layer in
-    // the SharedPrior identity must route each to ITS shell's column.
+    // the SharedPrior identity routes each to its own shell's column.
     std::vector<NetworkEstimator::SharedPrior> pr;
     auto mk = [](int n, int m, char t, int layer, double v) {
         NetworkEstimator::SharedPrior p;
@@ -3307,12 +3310,12 @@ TEST(NetworkEstimatorTest, VtecShLayer2ColumnsRegisterDistinctWithPerLayerPriors
 }
 
 // ===========================================================================
-// NetworkSbasis (W5) — minimum-constraint datum builder + null-space rank gate
+// NetworkSbasis (W5): minimum-constraint datum builder and null-space rank gate
 // ===========================================================================
 
-// The shared datum is ONE satellite-clock pin per constellation (the clock gauge
+// The shared datum is one satellite-clock pin per constellation (the clock gauge
 // per timing system).  The phase-bias gauge is per (sat,signal) and is fixed by
-// LOCAL pivot-receiver ambiguity pins, so it does NOT appear in the shared datum.
+// local pivot-receiver ambiguity pins, so it does not appear in the shared datum.
 TEST(NetworkSbasisTest, BuildsOneClockPinPerConstellation) {
     NetworkEstimator est;
     est.registerClock("G01"); est.registerClock("G02");
@@ -3341,11 +3344,11 @@ TEST(NetworkSbasisTest, BuildsOneClockPinPerConstellation) {
                        if (p.column == est.clockColumn("G02")) return true; return false; }());
 }
 
-// W6 IF-pin reference-pair selection must be a DETERMINISTIC function of the
-// satellite's registered signal SET — independent of the order the signals are
+// W6 IF-pin reference-pair selection is a deterministic function of the
+// satellite's registered signal set, independent of the order the signals are
 // passed in.  The emitted (δtˢ, dˢ) split is anchored to this pair, so an
-// order-dependent same-band swap (C1C ↔ C1W) would silently re-datum the clock
-// by the satellite's inter-channel bias — the bug selectIfPinPair fixes.
+// order-dependent same-band swap (C1C ↔ C1W) would re-datum the clock by the
+// satellite's inter-channel bias without any signal; selectIfPinPair prevents that.
 TEST(NetworkSbasisTest, SelectIfPinPairIsDeterministicInSignalSet) {
     using Pair = std::pair<std::string, std::string>;
     // GPS carrier frequencies by RINEX band digit (L1 / L2 / L5); '9' (below) is
@@ -3360,19 +3363,19 @@ TEST(NetworkSbasisTest, SelectIfPinPairIsDeterministicInSignalSet) {
         }
     };
 
-    // Same-band channels tie-break on the FULL signal name (C1C < C1W), and the
-    // result is invariant to input order — three permutations, one answer.
+    // Same-band channels tie-break on the full signal name (C1C < C1W), and the
+    // result is invariant to input order: three permutations, one answer.
     const Pair expected{ "C1C", "C2W" };
     EXPECT_EQ(NetworkSbasis::selectIfPinPair({ "C1C", "C1W", "C2W" }, gpsFreq), expected);
     EXPECT_EQ(NetworkSbasis::selectIfPinPair({ "C2W", "C1W", "C1C" }, gpsFreq), expected);
     EXPECT_EQ(NetworkSbasis::selectIfPinPair({ "C1W", "C2W", "C1C" }, gpsFreq), expected);
 
-    // `second` skips a same-FREQUENCY co-channel (C1L is L1 like C1C) and takes the
-    // first genuinely distinct frequency.
+    // `second` skips a same-frequency co-channel (C1L is L1 like C1C) and takes the
+    // first distinct frequency.
     EXPECT_EQ(NetworkSbasis::selectIfPinPair({ "C1L", "C1C", "C2W" }, gpsFreq),
               (Pair{ "C1C", "C2W" }));
 
-    // Two LOWEST distinct frequencies: L2 wins over L5 (first = L1, second = the
+    // Two lowest distinct frequencies: L2 wins over L5 (first = L1, second = the
     // first distinct frequency = L2), regardless of where L5 sorts.
     EXPECT_EQ(NetworkSbasis::selectIfPinPair({ "C5Q", "C2W", "C1C" }, gpsFreq),
               (Pair{ "C1C", "C2W" }));
@@ -3391,10 +3394,10 @@ TEST(NetworkSbasisTest, SelectIfPinPairIsDeterministicInSignalSet) {
               (Pair{ std::string{}, std::string{} }));
 }
 
-// Card 2 (network.code_datum_time_linked): the pure time-linked sum-to-zero target.
-// Veterans (present satellites WITH a previous solved value) span the row and are
+// The pure time-linked sum-to-zero target (Card 2, network.code_datum_time_linked).
+// Veterans (present satellites with a previous solved value) span the row and are
 // referenced to themselves (RHS Σ b̂_prev), so a membership change never moves the
-// target.  A channel with NO veteran falls back to the legacy all-present Σ = 0 seed
+// target.  A channel with no veteran falls back to the legacy all-present Σ = 0 seed
 // and flags reseed so the driver disc-bumps the re-reference.
 TEST(NetworkSbasisTest, CodeS2zTimeLinkVeteranReferenceAndReseed) {
     const std::vector<std::string> present = { "G01", "G02", "G03" };
@@ -3408,7 +3411,7 @@ TEST(NetworkSbasisTest, CodeS2zTimeLinkVeteranReferenceAndReseed) {
         EXPECT_EQ(tl.jac_sats, present);
         EXPECT_NEAR(tl.rhs, 0.3 - 0.1 + 0.5, 1e-12);
     }
-    // Mixed (G02 fresh): the row spans the VETERANS {G01,G03} only — the target is the
+    // Mixed (G02 fresh): the row spans only the veterans {G01,G03}; the target is the
     // veteran sum, so the new satellite takes its level from the network + this row.
     {
         const std::map<std::string, double> prev = { { "G01", 0.3 }, { "G03", 0.5 } };
@@ -3426,14 +3429,14 @@ TEST(NetworkSbasisTest, CodeS2zTimeLinkVeteranReferenceAndReseed) {
     }
 }
 
-// Card 2: set-change CONTINUITY of the sum-to-zero code-bias datum, solved through the
-// real estimator.  A channel of satellite code biases is observable only up to a common
-// LEVEL — each observation is (d_r + b_s), the receiver code bias d_r absorbing the
-// level, so the sum-to-zero row is the gauge that fixes it.  When a satellite LEAVES
-// between epochs, the legacy zero target (Σ b = 0 over the CURRENT set) STEPS every
+// Set-change continuity of the sum-to-zero code-bias datum (Card 2), solved through
+// the real estimator.  A channel of satellite code biases is observable only up to a common
+// level: each observation is (d_r + b_s), and the receiver code bias d_r absorbs the
+// level, so the sum-to-zero row is the gauge that fixes it.  When a satellite leaves
+// between epochs, the legacy zero target (Σ b = 0 over the current set) steps every
 // surviving bias by the departed bias / (m−1) (a common-mode shift); the time-linked
-// veteran target (Σ_vet b = Σ b̂_prev) reproduces the previous epoch EXACTLY.  This is
-// the falsifiable core of the card — the same layout either way (rank unchanged).
+// veteran target (Σ_vet b = Σ b̂_prev) reproduces the previous epoch exactly.  This is
+// the falsifiable core of the card, with the same layout either way (rank unchanged).
 TEST(NetworkEstimatorTest, CodeDatumTimeLinkedSetChangeContinuity) {
     const std::string sig = "C1W";
     const std::vector<std::string> sats = { "G01", "G02", "G03", "G04" };
@@ -3461,7 +3464,7 @@ TEST(NetworkEstimatorTest, CodeDatumTimeLinkedSetChangeContinuity) {
             y(k)                                          = O[static_cast<std::size_t>(i)];
         }
         est.addStation(A_s, A_r, w, y);
-        // Sum-to-zero gauge over the present code biases at RHS z_target (weight 1e3 —
+        // Sum-to-zero gauge over the present code biases at RHS z_target (weight 1e3,
         // the driver's kCodeBiasGaugeWeight).
         Eigen::MatrixXd H = Eigen::MatrixXd::Zero(1, nshared);
         for (int i : present) H(0, cb[sats[static_cast<std::size_t>(i)]]) = 1.0;
@@ -3477,10 +3480,10 @@ TEST(NetworkEstimatorTest, CodeDatumTimeLinkedSetChangeContinuity) {
     const auto b1 = solveEpoch({ 0, 1, 2, 3 }, 0.0);
     const std::vector<int> surv = { 0, 1, 2 };   // Epoch 2: G04 leaves.
 
-    // OLD (toggle off): Σ = 0 over the survivors → every survivor steps by the SAME
-    // common-mode shift (the mean change).
+    // Toggle off: Σ = 0 over the survivors → every survivor steps by one common-mode
+    // shift (the mean change).
     const auto b2_old = solveEpoch(surv, 0.0);
-    // NEW (toggle on): Σ_vet = Σ b̂_prev over the survivors → survivors continuous.
+    // Toggle on: Σ_vet = Σ b̂_prev over the survivors → survivors continuous.
     double z_vet = 0.0;
     for (int i : surv) z_vet += b1.at(sats[static_cast<std::size_t>(i)]);
     const auto b2_new = solveEpoch(surv, z_vet);
@@ -3495,16 +3498,16 @@ TEST(NetworkEstimatorTest, CodeDatumTimeLinkedSetChangeContinuity) {
         EXPECT_NEAR(b2_new.at(s), b1.at(s), 1e-6)
             << "time-linked datum must hold " << s << " continuous across the set change";
     }
-    // Legacy: a visible, uniform (common-mode) step — the very wander the card cures.
+    // Legacy: a visible, uniform (common-mode) step, the wander the card removes.
     EXPECT_GT(std::abs(step_min), 1e-3) << "legacy zero-target datum should step the survivors";
     EXPECT_NEAR(step_min, step_max, 1e-9) << "the legacy step is a pure common-mode shift";
 }
 
-// RTA-1: sticky clock-pivot selection.  Passing the driver's emit-baseline map
-// keeps the incumbent pivot as long as it is still registered — a lexically
-// LOWER satellite rising no longer flips the datum (the constellation-wide
-// consumer reset the legacy per-epoch lexical pick forced).  Passing nullptr
-// (the default) preserves the legacy lexical selection byte-identically.
+// Sticky clock-pivot selection (RTA-1).  Passing the driver's emit-baseline map
+// keeps the incumbent pivot as long as it is still registered, so a lexically
+// lower satellite rising does not flip the datum (with the legacy per-epoch
+// lexical pick, that flip forces a constellation-wide consumer reset).  Passing
+// nullptr (the default) keeps the legacy lexical selection, byte-identical.
 TEST(NetworkSbasisTest, StickyPivotKeepsIncumbentWhenLexicallyLowerRises) {
     NetworkEstimator est;
     est.registerClock("G01"); est.registerClock("G03"); est.registerClock("G05");
@@ -3516,23 +3519,23 @@ TEST(NetworkSbasisTest, StickyPivotKeepsIncumbentWhenLexicallyLowerRises) {
     // Incumbent G05 (e.g. it was the first sighting); G01/G03 have since risen.
     const std::map<std::string, std::string> incumbent{{"G", "G05"}};
 
-    // Sticky OFF (nullptr): legacy lexical pick — the datum flips to G01.
+    // Sticky off (nullptr): legacy lexical pick; the datum flips to G01.
     const auto off = sb.buildSharedDatum(est, sats, decl);
     EXPECT_EQ(off.clock_pivot.at("G"), "G01");
 
-    // Sticky ON: the incumbent survives the rise; the pin lands on ITS column.
+    // Sticky on: the incumbent survives the rise; the pin lands on its column.
     const auto on = sb.buildSharedDatum(est, sats, decl, &incumbent);
     EXPECT_EQ(on.clock_pivot.at("G"), "G05");
     EXPECT_TRUE([&]{ for (const auto& p : on.shared_datum)
                        if (p.column == est.clockColumn("G05")) return true; return false; }());
-    // A constellation with NO incumbent entry still falls back to the lexical pick.
+    // A constellation with no incumbent entry still falls back to the lexical pick.
     EXPECT_EQ(on.clock_pivot.at("E"), "E11");
     EXPECT_EQ(on.declared_dimension, 2);
 }
 
-// RTA-1: when the incumbent SETS, a new pivot is selected (existing lexical
-// fallback) — and after the emit-baseline advances, the NEW pivot is the sticky
-// incumbent: the OLD one returning must NOT flip the datum back.
+// When the incumbent sets, a new pivot is selected (lexical fallback); after the
+// emit-baseline advances, the new pivot is the sticky incumbent, and the old one
+// returning does not flip the datum back (RTA-1).
 TEST(NetworkSbasisTest, StickyPivotReselectsOnLossAndDoesNotFlipBack) {
     NetworkEstimator est;
     est.registerClock("G03"); est.registerClock("G05"); est.registerClock("G07");
@@ -3540,7 +3543,7 @@ TEST(NetworkSbasisTest, StickyPivotReselectsOnLossAndDoesNotFlipBack) {
     NetworkSbasis sb;
     SbasisDeclaration decl;
 
-    // Epoch N: incumbent G05 has set — re-select (lexical fallback picks G03).
+    // Epoch N: incumbent G05 has set; re-select (lexical fallback picks G03).
     std::map<std::string, std::string> incumbent{{"G", "G05"}};
     const auto n = sb.buildSharedDatum(est, {"G03", "G07"}, decl, &incumbent);
     EXPECT_EQ(n.clock_pivot.at("G"), "G03");
@@ -3548,16 +3551,16 @@ TEST(NetworkSbasisTest, StickyPivotReselectsOnLossAndDoesNotFlipBack) {
     // The driver's emit-baseline advances to the emitted plan (emit site, P0-1).
     incumbent["G"] = n.clock_pivot.at("G");
 
-    // Epoch N+1: the old incumbent G05 returns — the NEW incumbent stays pivot.
+    // Epoch N+1: the old incumbent G05 returns; the new incumbent stays pivot.
     const auto n1 = sb.buildSharedDatum(est, {"G03", "G05", "G07"}, decl, &incumbent);
     EXPECT_EQ(n1.clock_pivot.at("G"), "G03");
 }
 
-// RTA-1: the config-pinned satellite (network.clock_datum_satellite) has
-// priority in BOTH modes — including over a sticky incumbent (a returning
-// pinned satellite deliberately reclaims the datum; that flip-back is user
-// intent).  When the pinned satellite is absent, sticky mode falls back to the
-// incumbent and legacy mode to the lexical pick.
+// The config-pinned satellite (network.clock_datum_satellite) has priority in
+// both modes, including over a sticky incumbent: a returning pinned satellite
+// reclaims the datum, and that flip-back is intended by the configuration.  When
+// the pinned satellite is absent, sticky mode falls back to the incumbent and
+// legacy mode to the lexical pick (RTA-1).
 TEST(NetworkSbasisTest, PinnedSatellitePriorityRespectedInBothModes) {
     NetworkEstimator est;
     est.registerClock("G01"); est.registerClock("G03"); est.registerClock("G05");
@@ -3568,7 +3571,7 @@ TEST(NetworkSbasisTest, PinnedSatellitePriorityRespectedInBothModes) {
     const std::map<std::string, std::string> incumbent{{"G", "G03"}};
     const std::vector<std::string> sats{"G01", "G03", "G05"};
 
-    // Pinned present: it wins over BOTH the lexical pick and the incumbent.
+    // Pinned present: it wins over both the lexical pick and the incumbent.
     EXPECT_EQ(sb.buildSharedDatum(est, sats, decl).clock_pivot.at("G"), "G05");
     EXPECT_EQ(sb.buildSharedDatum(est, sats, decl, &incumbent).clock_pivot.at("G"), "G05");
 
@@ -3578,7 +3581,8 @@ TEST(NetworkSbasisTest, PinnedSatellitePriorityRespectedInBothModes) {
     EXPECT_EQ(sb.buildSharedDatum(est, sats, decl, &incumbent).clock_pivot.at("G"), "G03");
 }
 
-// The SVD gate must count near-zero singular values == declared S-basis dimension.
+// The SVD gate requires the count of near-zero singular values to equal the declared
+// S-basis dimension.
 TEST(NetworkSbasisTest, NullSpaceGateCountsDeficiencies) {
     NetworkSbasis sb;
 
@@ -3595,13 +3599,13 @@ TEST(NetworkSbasisTest, NullSpaceGateCountsDeficiencies) {
     EXPECT_THROW(sb.assertNullSpaceRank(F, 1), std::runtime_error);
 }
 
-// FIREWALL at the GATE (design §4 / §9(d)): turning the carried-ambiguity prior ON
-// must NOT change the null-space gate's withhold decision.  A carry on a station's
-// LOCAL ambiguity cannot fill a SHARED gauge the data leaves free, so a marginal /
-// under-declared epoch still WITHHOLDS with the carry on.  Here two shared columns
+// Firewall at the gate (design §4 / §9(d)): turning the carried-ambiguity prior on
+// does not change the null-space gate's withhold decision.  A carry on a station's
+// local ambiguity cannot fill a shared gauge the data leaves free, so a marginal or
+// under-declared epoch still withholds with the carry on.  Here two shared columns
 // are forced co-linear (an exact analogue of an unpinned per-constellation clock
 // datum), giving one shared gauge; the gate's pass/throw decision is asserted to be
-// identical with the carry OFF and ON.
+// identical with the carry off and on.
 TEST(NetworkSbasisTest, CarryDoesNotChangeGateDecision_Firewall) {
     NetworkSbasis sb;
     std::mt19937 gen(20260630);
@@ -3647,8 +3651,8 @@ TEST(NetworkSbasisTest, CarryDoesNotChangeGateDecision_Firewall) {
     // Declared dimension = 1 (the single shared gauge): both pass.
     EXPECT_NO_THROW(sb.assertNullSpaceRank(off.reducedSharedNormals(), 1));
     EXPECT_NO_THROW(sb.assertNullSpaceRank(on.reducedSharedNormals(), 1));
-    // Under-declared datum (0): BOTH still withhold (throw).  The carry did not mask
-    // the gauge — the firewall holds with the carry on.
+    // Under-declared datum (0): both still withhold (throw).  The carry does not mask
+    // the gauge, so the firewall holds with the carry on.
     EXPECT_THROW(sb.assertNullSpaceRank(off.reducedSharedNormals(), 0), std::runtime_error);
     EXPECT_THROW(sb.assertNullSpaceRank(on.reducedSharedNormals(), 0), std::runtime_error);
 }
@@ -3697,9 +3701,9 @@ TEST(NetworkSbasisTest, DrivesSingleConstellationRecoveryAndGate) {
     EXPECT_NEAR(x_s(clkCol[0]), 0.0, 1e-6);  // pivot clock pinned to the datum
 }
 
-// SUM-TO-ZERO clock datum (network.clock_datum_sum_to_zero): buildSharedDatum emits
-// one all-ones gauge row per constellation over its OWN clock columns and NO pivot /
-// hard pin — the anchor-free analogue of the code-bias per-(const,signal) sum-to-zero.
+// Sum-to-zero clock datum (network.clock_datum_sum_to_zero): buildSharedDatum emits
+// one all-ones gauge row per constellation over its own clock columns, with no pivot
+// or hard pin: the anchor-free analogue of the code-bias per-(const,signal) sum-to-zero.
 TEST(NetworkSbasisTest, SumToZeroDatumBuildsGaugeRowsNoPivot) {
     NetworkEstimator est;
     est.registerClock("G01"); est.registerClock("G02");
@@ -3709,7 +3713,7 @@ TEST(NetworkSbasisTest, SumToZeroDatumBuildsGaugeRowsNoPivot) {
     NetworkSbasis sb;
     SbasisDeclaration decl;
     decl.isb_datum = SbasisDeclaration::IsbDatum::SumToZeroPerConstellation;
-    decl.clock_pivot_sat["G"] = "G02";    // a stray config pin must be IGNORED (no pivot exists)
+    decl.clock_pivot_sat["G"] = "G02";    // a stray config pin is ignored (no pivot exists)
 
     const auto plan = sb.buildSharedDatum(est, {"G01", "G02", "E11", "E12"}, decl);
 
@@ -3741,9 +3745,9 @@ TEST(NetworkSbasisTest, SumToZeroDatumBuildsGaugeRowsNoPivot) {
     }
 }
 
-// End-to-end: the SUM-TO-ZERO datum recovers the SAME estimable solution as the pin
+// End-to-end: the sum-to-zero datum recovers the same estimable solution as the pin
 // datum (a pure S-transform).  Both are solved on the same synthetic truth; the
-// between-satellite clock DIFFERENCES and the phase biases match, the sum-to-zero
+// between-satellite clock differences and the phase biases match, the sum-to-zero
 // clocks sum to zero (each == truth − constellation mean), and the full-rank gate
 // (declared_dimension 0) passes.
 TEST(NetworkSbasisTest, SumToZeroDatumRecoversSTransformAndGate) {
@@ -3794,7 +3798,7 @@ TEST(NetworkSbasisTest, SumToZeroDatumRecoversSTransformAndGate) {
     EXPECT_NEAR(sum_z, 0.0, 1e-6);
 
     // S-transform equivalence: between-satellite clock differences are identical to
-    // the pin datum, and the phase-bias gauge (fixed by the LOCAL pivot pins) is
+    // the pin datum, and the phase-bias gauge (fixed by the local pivot pins) is
     // untouched by the clock-datum choice.
     for (int s = 0; s < t.S; ++s) {
         EXPECT_NEAR(x_z(clkZ[s]) - x_z(clkZ[0]),
@@ -3804,12 +3808,12 @@ TEST(NetworkSbasisTest, SumToZeroDatumRecoversSTransformAndGate) {
     }
 }
 
-// BROADCAST-ANCHORED clock datum (network.clock_datum_broadcast_anchored,
-// brdc_rts RT): buildSharedDatum emits ONE single-entry soft anchor row per
+// Broadcast-anchored clock datum (network.clock_datum_broadcast_anchored,
+// brdc_rts RT): buildSharedDatum emits one single-entry soft anchor row per
 // registered clock satellite (Δδtˢ → 0 = its own broadcast a-priori) at
-// information 1/σ² — the anchors ARE the gauge.  Like sum-to-zero there is no
+// information 1/σ²; the anchors are the gauge.  As with sum-to-zero there is no
 // pivot and no hard pin (declared dimension 0, gauges folded before the rank
-// gate); UNLIKE sum-to-zero the rows are per-SATELLITE, so membership changes
+// gate); unlike sum-to-zero the rows are per satellite, so membership changes
 // cause no redistribution wander of the absolute clock-product frame.  This
 // test pins the exact Plan shape the driver folds: row count, row order
 // (constellation groups in map order, lexical satellite order within), the
@@ -3827,35 +3831,34 @@ TEST(NetworkSbasisTest, BroadcastAnchoredPlanShape) {
 
     const auto plan = sb.buildSharedDatum(est, {"G01", "G02", "E01"}, decl);
 
-    EXPECT_TRUE(plan.shared_datum.empty());          // no hard pins — the soft anchors are the datum
+    EXPECT_TRUE(plan.shared_datum.empty());          // no hard pins; the soft anchors are the datum
     EXPECT_TRUE(plan.clock_pivot.empty());           // no pivot satellite → no handover seam ever
     EXPECT_EQ(plan.declared_dimension, 0);           // anchors close every clock gauge pre-gate
     EXPECT_DOUBLE_EQ(plan.clock_constraint_weight, 1.0 / 9.0);   // 1/σ² at σ = 3 m
 
-    // One row per registered clock SATELLITE (not per constellation): 3 sats.
+    // One row per registered clock satellite (not per constellation): 3 sats.
     ASSERT_EQ(plan.clock_constraint_H.rows(), 3);
     EXPECT_EQ(plan.clock_constraint_H.cols(), est.numShared());
     ASSERT_EQ(plan.clock_constraint_z.size(), 3);
     EXPECT_TRUE(plan.clock_constraint_z.isZero());   // target = own broadcast a-priori = 0
 
     // Rows are grouped by constellation (lexical constellation order: E before
-    // G) with lexical satellite order within each group — E01, G01, G02.
+    // G) with lexical satellite order within each group: E01, G01, G02.
     const std::vector<std::string> expected_order{"E01", "G01", "G02"};
     for (Eigen::Index r = 0; r < plan.clock_constraint_H.rows(); ++r) {
         const Eigen::VectorXd row = plan.clock_constraint_H.row(r);
         const std::string& sat = expected_order[static_cast<std::size_t>(r)];
         EXPECT_EQ(row(est.clockColumn(sat)), 1.0) << "row " << r << " must anchor " << sat;
-        EXPECT_EQ(row.sum(), 1.0);                              // exactly ONE entry per row
+        EXPECT_EQ(row.sum(), 1.0);                              // exactly one entry per row
         EXPECT_EQ(row(est.phaseBiasColumn("G01", "L1")), 0.0);  // non-clock column untouched
     }
 }
 
-// The broadcast-anchored datum has NO pivot, so BOTH pivot-selection inputs —
-// the config pin (network.clock_datum_satellite → decl.clock_pivot_sat) and
-// the RTA-1 sticky incumbent map — must be completely inert: the plan is
-// IDENTICAL with and without them.  Guards against a future refactor threading
-// pivot state into the anchor rows, which would silently reintroduce the
-// handover seam this datum exists to eliminate.
+// The broadcast-anchored datum has no pivot, so both pivot-selection inputs (the
+// config pin, network.clock_datum_satellite → decl.clock_pivot_sat, and the RTA-1
+// sticky incumbent map) are inert: the plan is identical with and without them.
+// Guards against a refactor that threads pivot state into the anchor rows, which
+// would reintroduce, without any signal, the handover seam this datum removes.
 TEST(NetworkSbasisTest, BroadcastAnchoredIgnoresPivotOverridesAndSticky) {
     NetworkEstimator est;
     est.registerClock("G01"); est.registerClock("G02");
@@ -3869,7 +3872,7 @@ TEST(NetworkSbasisTest, BroadcastAnchoredIgnoresPivotOverridesAndSticky) {
     const auto ref = sb.buildSharedDatum(est, sats, base);
 
     SbasisDeclaration pinned = base;
-    pinned.clock_pivot_sat["G"] = "G02";   // stray config pin — meaningless here
+    pinned.clock_pivot_sat["G"] = "G02";   // stray config pin; meaningless here
     const std::map<std::string, std::string> incumbent{{"G", "G02"}, {"E", "E01"}};
     const auto plan = sb.buildSharedDatum(est, sats, pinned, &incumbent);
 
@@ -3885,8 +3888,9 @@ TEST(NetworkSbasisTest, BroadcastAnchoredIgnoresPivotOverridesAndSticky) {
 }
 
 // An anchor σ of zero, negative, or non-finite makes the 1/σ² row weight (and
-// hence the gauge) undefined — buildSharedDatum must throw loudly rather than
-// return a datum-less plan the downstream solve would silently least-norm.
+// hence the gauge) undefined.  buildSharedDatum throws instead of returning a
+// datum-less plan that the downstream solve would resolve by least norm without
+// any signal.
 TEST(NetworkSbasisTest, BroadcastAnchoredThrowsOnInvalidSigma) {
     NetworkEstimator est;
     est.registerClock("G01");
@@ -3904,17 +3908,17 @@ TEST(NetworkSbasisTest, BroadcastAnchoredThrowsOnInvalidSigma) {
     decl.broadcast_anchor_sigma_m = -3.0;  // negative σ is equally meaningless
     EXPECT_THROW(sb.buildSharedDatum(est, {"G01"}, decl), std::runtime_error);
 
-    // The declared default (3.0 m) stays valid — the guard must not overfire.
+    // The declared default (3.0 m) stays valid; the guard does not overfire.
     decl.broadcast_anchor_sigma_m = 3.0;
     EXPECT_NO_THROW(sb.buildSharedDatum(est, {"G01"}, decl));
 }
 
 // ---------------------------------------------------------------------------
-// RTA-10: per-constellation σ̂0 carve-out decision (network.per_const_withhold).
-// decidePerConstWithhold is PURE policy — rows + σ̂0_c per constellation, the A4
-// withhold ceiling, and the judgeability floor in; publish/withhold partition
-// out — so it is tested exhaustively here while the driver only maps the sets
-// onto the emission (RT0-5-style prune).
+// Per-constellation σ̂0 carve-out decision (RTA-10, network.per_const_withhold).
+// decidePerConstWithhold is pure policy (in: rows + σ̂0_c per constellation, the A4
+// withhold ceiling and the judgeability floor; out: the publish/withhold
+// partition), so it is tested exhaustively here while the driver only maps the
+// sets onto the emission (RT0-5-style prune).
 // ---------------------------------------------------------------------------
 
 namespace {
@@ -3927,7 +3931,7 @@ NetworkEstimator::PerConstSigma0 pcs(double sigma0_c, int rows) {
 } // namespace
 
 // Every constellation individually clean and judgeable ⇒ all publish, none
-// withheld (the driver then publishes in full and counts the DIFFUSE edge).
+// withheld (the driver then publishes in full and counts the diffuse edge).
 TEST(NetworkEstimatorTest, PerConstWithholdAllCleanPublishesAll) {
     std::map<char, NetworkEstimator::PerConstSigma0> stats{
         {'G', pcs(1.2, 120)}, {'E', pcs(2.5, 80)}, {'R', pcs(5.9, 40)}};
@@ -3947,9 +3951,9 @@ TEST(NetworkEstimatorTest, PerConstWithholdOneDirtyIsolated) {
     EXPECT_EQ(dec.withhold, (std::set<char>{'C'}));
 }
 
-// Every constellation dirty ⇒ empty publish set — the driver's signal that NO
-// healthy subset exists and the whole-epoch withhold applies unchanged.  An
-// EMPTY input (no judged constellations at all) yields the same empty publish.
+// Every constellation dirty ⇒ empty publish set, the driver's signal that no
+// clean subset exists and the whole-epoch withhold applies unchanged.  An
+// empty input (no judged constellations at all) yields the same empty publish.
 TEST(NetworkEstimatorTest, PerConstWithholdAllDirtyYieldsEmptyPublish) {
     std::map<char, NetworkEstimator::PerConstSigma0> stats{
         {'G', pcs(9.0, 200)}, {'E', pcs(6.01, 90)}};
@@ -3963,7 +3967,7 @@ TEST(NetworkEstimatorTest, PerConstWithholdAllDirtyYieldsEmptyPublish) {
 }
 
 // Boundary semantics: rows == min_rows is judgeable (publishes); one fewer row
-// is UNJUDGEABLE and withheld even with a spotless σ̂0_c.  Ceiling is inclusive
+// is unjudgeable and withheld even with a clean σ̂0_c.  The ceiling is inclusive
 // (σ̂0_c == ceiling publishes; the smallest exceedance withholds), matching the
 // global withhold's strict '>' trip.  Zero-row entries are always withheld.
 TEST(NetworkEstimatorTest, PerConstWithholdMinRowsAndCeilingBoundaries) {
@@ -3981,10 +3985,10 @@ TEST(NetworkEstimatorTest, PerConstWithholdMinRowsAndCeilingBoundaries) {
 }
 
 // ===========================================================================
-// INC-8: buildCodeBiasDatumRows — the W6 satellite code-bias (OSB) datum row
-// builder relocated VERBATIM out of the network run loop.  Pure over const
-// estimator queries; every carry / scratch / latch is an explicit reference,
-// so the tests own them all directly.
+// buildCodeBiasDatumRows: the W6 satellite code-bias (OSB) datum row builder,
+// moved unchanged out of the network run loop (INC-8).  Pure over const estimator
+// queries; every carry, scratch and latch is an explicit reference, so the tests
+// own them all directly.
 // ===========================================================================
 
 namespace {
@@ -4002,16 +4006,16 @@ double gpsCodeFreq(const std::string& /*sat*/, const std::string& sig) {
     }
 }
 
-// Owns the builder's five side channels + knob set and clears the per-epoch
-// scratch outs before each call, exactly as the driver contract requires
-// ("cleared by caller").  The emitEvent stub counts firings and records the
-// last (tier, event, sat, detail) for the re-latch assertions.
-/// RF-0c (network.sat_gf_datum) off for every case in this file: these lock the INC-8
+/// network.sat_gf_datum (RF-0c) is off for every case in this file: these lock the INC-8
 /// IF-pin / sum-to-zero shape, which the RF-0c row sits beside without changing.
 const std::map<std::string, double> kNoSatGfTargets{};
-/// RF-0f is not this file's concern either: no companion is ever bridged here.
+/// No companion is ever bridged here (RF-0f is out of scope for this file).
 const std::set<std::string> kNoIscBridged{};
 
+// Owns the builder's side channels and knob set, and clears the per-epoch
+// scratch outs before each call, as the driver contract requires ("cleared by
+// caller").  The emitEvent stub counts firings and records the last
+// (tier, event, sat, detail) for the re-latch assertions.
 struct CbDatumRowsHarness {
     using Pair = std::pair<std::string, std::string>;
 
@@ -4019,7 +4023,7 @@ struct CbDatumRowsHarness {
     bool cb_time_linked{false};
     bool clock_signal_basis_hold{false};
     bool emit_clock_disc{false};
-    bool gf_datum{false};          // slant-posture GF pin rows (default OFF = legacy)
+    bool gf_datum{false};          // slant-posture GF pin rows (default off = legacy)
     // Card-2 carry (const in)
     std::map<std::string, std::map<std::string, double>> code_bias_prev;
     std::map<std::string, Pair>                          code_bias_ifpin_pair;
@@ -4030,9 +4034,9 @@ struct CbDatumRowsHarness {
     std::map<std::string, Pair> this_epoch_if_pin_sel;
     std::map<std::string, Pair> this_epoch_if_pin_real;   // S-contract §1.5 declaration record
     std::set<std::string>       this_epoch_gf_pin_real;   // sats that took a GF datum row
-    // FAMILY-GF: the partitioned-secondary-family verdict fed to the builder, and the
-    // per-satellite secondary pair it records back.  Empty set => not one extra row, which
-    // is the byte-identity control every other case in this fixture runs under.
+    // The partitioned-secondary-family verdict fed to the builder, and the per-satellite
+    // secondary pair it records back (FAMILY-GF).  Empty set => no extra row, which is
+    // the byte-identity control every other case in this fixture runs under.
     std::set<std::string>       gf_family_constellations;
     std::map<std::string, Pair> this_epoch_family_gf_pin_real;
     std::map<std::string, Pair> this_epoch_cb_ifpin;
@@ -4080,9 +4084,9 @@ struct CbDatumRowsHarness {
 } // namespace
 
 // Legacy two-band shape (all knobs off, empty carries): 2 sats x {C1C, C2W}
-// yields 2 IF pins + 2 sum-to-zero rows in the CONTRACTUAL order — IF pins in
-// census FIRST-SEEN order (not lexical, not column order), then s2z rows in
-// sorted "<constellation>|<signal>" channel-key order — with the
+// yields 2 IF pins + 2 sum-to-zero rows in the contractual order (IF pins in
+// census first-seen order, not lexical and not column order; then s2z rows in
+// sorted "<constellation>|<signal>" channel-key order), with the
 // ionosphere-free (clock-preserving) weights and all-zero targets.
 TEST(NetworkSbasisTest, BuildCodeBiasDatumRowsLegacyTwoBand) {
     NetworkEstimator est;
@@ -4130,8 +4134,8 @@ TEST(NetworkSbasisTest, BuildCodeBiasDatumRowsLegacyTwoBand) {
     EXPECT_DOUBLE_EQ(out.H.row(3).cwiseAbs().sum(), 2.0);
 }
 
-// A satellite with a single DISTINCT frequency (two same-band channels) has no
-// IF split to pin — its row degenerates to the all-ones gauge over its
+// A satellite with a single distinct frequency (two same-band channels) has no
+// IF split to pin; its row degenerates to the all-ones gauge over its
 // registered signals (the code-bias common mode is still fixed), zero RHS.
 TEST(NetworkSbasisTest, BuildCodeBiasDatumRowsDegenerateSingleFreq) {
     NetworkEstimator est;
@@ -4153,12 +4157,12 @@ TEST(NetworkSbasisTest, BuildCodeBiasDatumRowsDegenerateSingleFreq) {
     EXPECT_DOUBLE_EQ(out.H.row(0).cwiseAbs().sum(), 2.0);
 }
 
-// Card 2 (network.code_datum_time_linked): both row families pin the CHANGE of
-// the datum.  With the stored pair intact and both signals veteran, the IF row's
+// Time-linked code datum (Card 2, network.code_datum_time_linked): both row
+// families pin the change of the datum.  With the stored pair intact and both signals veteran, the IF row's
 // RHS is the previous solved IF combination and each s2z row's RHS the veteran
 // sum; a stored-pair flip re-seeds the IF target to 0 and records the satellite
-// in this_epoch_cb_reseed iff it has a prior kept epoch (code_bias_sat_seen_) —
-// a genuine first appearance is exempt.
+// in this_epoch_cb_reseed iff it has a prior kept epoch (code_bias_sat_seen_);
+// a first appearance is exempt.
 TEST(NetworkSbasisTest, BuildCodeBiasDatumRowsTimeLinked) {
     NetworkEstimator est;
     est.registerCodeBias("G01", "C1C");
@@ -4191,8 +4195,8 @@ TEST(NetworkSbasisTest, BuildCodeBiasDatumRowsTimeLinked) {
 
     // (b) Stored pair flipped: the IF target re-seeds to 0 (a pair change
     //     re-references the clock<->code split even with prior values) and the
-    //     SEEN satellite is recorded for the disc bump.  The s2z targets are
-    //     untouched — their veterans did not change.
+    //     seen satellite is recorded for the disc bump.  The s2z targets are
+    //     untouched because their veterans did not change.
     h.code_bias_ifpin_pair["G01"] = {"C1C", "C5Q"};
     out = h.build(est, keys);
     EXPECT_EQ(out.z(0), 0.0);
@@ -4202,8 +4206,8 @@ TEST(NetworkSbasisTest, BuildCodeBiasDatumRowsTimeLinked) {
     EXPECT_EQ(h.this_epoch_cb_ifpin.at("G01"),
               (CbDatumRowsHarness::Pair{"C1C", "C2W"}));  // this epoch's selection, re-recorded
 
-    // (c) Same flip but the satellite has NO prior kept epoch (not seen, not
-    //     resumed): the re-seed is a first appearance — no disc-bump candidate.
+    // (c) Same flip but the satellite has no prior kept epoch (not seen, not
+    //     resumed): the re-seed is a first appearance, not a disc-bump candidate.
     h.code_bias_sat_seen.clear();
     out = h.build(est, keys);
     EXPECT_EQ(out.z(0), 0.0);
@@ -4211,8 +4215,8 @@ TEST(NetworkSbasisTest, BuildCodeBiasDatumRowsTimeLinked) {
 }
 
 // network.clock_signal_basis_hold: the satellite's first-latched reference pair
-// is HELD while both signals stay registered — even when a fresh selection
-// would prefer a newly-risen lower band — and RE-LATCHED (one
+// is held while both signals stay registered, even when a fresh selection
+// would prefer a newly risen lower band, and re-latched (one
 // "CLK_BASIS"/"relatch" event; per-sat disc pending iff emit_clock_disc) only
 // when a held signal leaves the >=2-station set.
 TEST(NetworkSbasisTest, BuildCodeBiasDatumRowsHoldLatchRelatch) {
@@ -4227,15 +4231,15 @@ TEST(NetworkSbasisTest, BuildCodeBiasDatumRowsHoldLatchRelatch) {
         h.clock_signal_basis_hold = true;
         h.emit_clock_disc         = emit_disc;
 
-        // Epoch 1 (LATCH): only L2+L5 registered -> (C2W, C5Q) latched silently.
+        // Epoch 1 (latch): only L2+L5 registered -> (C2W, C5Q) latched with no event.
         h.build(est, {{"G01", "C2W"}, {"G01", "C5Q"}});
         EXPECT_EQ(h.events, 0) << "emit_disc=" << emit_disc;
         ASSERT_EQ(h.held_clock_ref.count("G01"), 1u);
         EXPECT_EQ(h.held_clock_ref.at("G01"), (Pair{"C2W", "C5Q"}));
 
-        // Epoch 2 (HOLD): C1C rises — the fresh selection would be (C1C, C2W),
+        // Epoch 2 (hold): C1C rises; the fresh selection would be (C1C, C2W),
         // but both held signals are still registered, so the IF row stays on
-        // the held L2/L5 pair and the counting stub does NOT fire.
+        // the held L2/L5 pair and the counting stub does not fire.
         auto out = h.build(est, {{"G01", "C1C"}, {"G01", "C2W"}, {"G01", "C5Q"}});
         EXPECT_EQ(h.events, 0) << "emit_disc=" << emit_disc;
         EXPECT_EQ(h.held_clock_ref.at("G01"), (Pair{"C2W", "C5Q"}));
@@ -4245,7 +4249,7 @@ TEST(NetworkSbasisTest, BuildCodeBiasDatumRowsHoldLatchRelatch) {
         EXPECT_DOUBLE_EQ(out.H(0, est.codeBiasColumn("G01", "C5Q")), -fb * fb / den);
         EXPECT_DOUBLE_EQ(out.H(0, est.codeBiasColumn("G01", "C1C")), 0.0);
 
-        // Epoch 3 (RE-LATCH): held C2W leaves the registered set -> adopt the
+        // Epoch 3 (re-latch): held C2W leaves the registered set -> adopt the
         // fresh (C1C, C5Q) pair; exactly one CLK_BASIS/relatch event; the
         // per-sat disc goes pending iff the clock-disc channel is armed.
         h.build(est, {{"G01", "C1C"}, {"G01", "C5Q"}});
@@ -4258,10 +4262,10 @@ TEST(NetworkSbasisTest, BuildCodeBiasDatumRowsHoldLatchRelatch) {
     }
 }
 
-// Hold OFF + emit_clock_disc: this epoch's pin selection is recorded in the
-// this_epoch_if_pin_sel scratch for the emit-site compare — but ONLY for a real
+// Hold off + emit_clock_disc: this epoch's pin selection is recorded in the
+// this_epoch_if_pin_sel scratch for the emit-site compare, but only for a real
 // two-frequency IF pair (a single-frequency satellite has no clock<->code split
-// to re-reference, so it must stay out of the disc channel).
+// to re-reference, so it stays out of the disc channel).
 TEST(NetworkSbasisTest, BuildCodeBiasDatumRowsHoldOffDiscScratch) {
     NetworkEstimator est;
     est.registerCodeBias("G01", "C1C");
@@ -4269,7 +4273,7 @@ TEST(NetworkSbasisTest, BuildCodeBiasDatumRowsHoldOffDiscScratch) {
     est.registerCodeBias("G02", "C1C");   // single-frequency satellite
 
     CbDatumRowsHarness h;
-    h.emit_clock_disc = true;             // hold stays OFF
+    h.emit_clock_disc = true;             // hold stays off
     const auto out = h.build(
         est, {{"G01", "C1C"}, {"G01", "C2W"}, {"G02", "C1C"}});
 
@@ -4277,34 +4281,32 @@ TEST(NetworkSbasisTest, BuildCodeBiasDatumRowsHoldOffDiscScratch) {
     EXPECT_EQ(h.this_epoch_if_pin_sel.at("G01"),
               (CbDatumRowsHarness::Pair{"C1C", "C2W"}));
     EXPECT_EQ(h.this_epoch_if_pin_sel.count("G02"), 0u);
-    // The hold latch is neither read nor written on the OFF path.
+    // The hold latch is neither read nor written on the off path.
     EXPECT_TRUE(h.held_clock_ref.empty());
     EXPECT_EQ(out.n_if_pin_sats, 2);      // both sats still get a pin row
     EXPECT_EQ(out.n_s2z_channels, 2);     // G|C1C (2 sats) + G|C2W (1 sat)
-    // The DECLARATION record is populated regardless of the disc channel — same
+    // The declaration record is populated regardless of the disc channel: same
     // pair, but a different map with a different purpose (see the next test).
     ASSERT_EQ(h.this_epoch_if_pin_real.size(), 1u);
     EXPECT_EQ(h.this_epoch_if_pin_real.at("G01"),
               (CbDatumRowsHarness::Pair{"C1C", "C2W"}));
 }
 
-// S-contract §1.5: the DECLARATION record (this_epoch_if_pin_real /
-// this_epoch_gf_pin_real) must be independent of BOTH the disc channel and the
-// basis hold — it is what cbpin= / gfpin= are built from, and a product-contract
-// declaration must never depend on a QC-channel knob.
+// S-contract §1.5: the declaration record (this_epoch_if_pin_real /
+// this_epoch_gf_pin_real) is independent of both the disc channel and the basis
+// hold.  cbpin= and gfpin= are built from it, and a product-contract declaration
+// may not depend on a QC-channel knob.
 //
-// This is the regression guard for the measured field defect: the cbpin fill
-// originally read this_epoch_if_pin_sel, which is gated
-// `!clock_signal_basis_hold && emit_clock_disc`.  network.emit_clock_disc
-// defaults false and appears nowhere in the ft63 -> pc305 field chain, so every
-// field posture-C product declared no pin at all and the truth-grader (which
-// REFUSES rather than assume a pair) could not transform its B records — while
-// the sim arms, which arm the knob, declared fine.
+// Regression guard: the declaration must not be read from this_epoch_if_pin_sel,
+// which is gated `!clock_signal_basis_hold && emit_clock_disc`.
+// network.emit_clock_disc defaults false and is off in the field postures, so a
+// declaration built from that map names no pin in the field, and the truth grader
+// (which refuses rather than assume a pair) cannot transform the B records.
 //
-// The knobs below are the field posture exactly: hold ON, disc channel OFF, GF
-// datum armed.  The declaration must survive; the disc scratch must stay empty
+// The knobs below are the field posture: hold on, disc channel off, GF datum
+// armed.  The declaration is still recorded, and the disc scratch stays empty
 // (that map drives per-satellite discontinuity bumps, so widening it would be a
-// WIRE change, not a declaration change).
+// wire change, not a declaration change).
 TEST(NetworkSbasisTest, BuildCodeBiasDatumRowsDeclarationRecordIsUngated) {
     NetworkEstimator est;
     est.registerCodeBias("G01", "C1C");
@@ -4319,22 +4321,22 @@ TEST(NetworkSbasisTest, BuildCodeBiasDatumRowsDeclarationRecordIsUngated) {
     const auto out = h.build(
         est, {{"G01", "C1C"}, {"G01", "C2W"}, {"G01", "C5Q"}, {"G02", "C1C"}});
 
-    // The disc scratch stays EMPTY — the QC channel is untouched by this change.
+    // The disc scratch stays empty; the QC channel is not touched.
     EXPECT_TRUE(h.this_epoch_if_pin_sel.empty());
-    // The declaration record carries the HELD pair anyway.
+    // The declaration record carries the held pair anyway.
     ASSERT_EQ(h.this_epoch_if_pin_real.size(), 1u);
     EXPECT_EQ(h.this_epoch_if_pin_real.at("G01"),
               (CbDatumRowsHarness::Pair{"C1C", "C2W"}));
     EXPECT_EQ(h.this_epoch_if_pin_real.count("G02"), 0u);   // no dual-freq pin
     EXPECT_EQ(h.held_clock_ref.at("G01"),
               (CbDatumRowsHarness::Pair{"C1C", "C2W"}));    // hold really did latch
-    // The GF record names the satellites that took the second row — the same set
+    // The GF record names the satellites that took the second row: the same set
     // the gfpin= unanimity rule tallies over.
     EXPECT_EQ(h.this_epoch_gf_pin_real, (std::set<std::string>{"G01"}));
     EXPECT_EQ(out.n_gf_pin_sats, 1);
     EXPECT_EQ(out.n_gf_only_pair, 0);     // G01 has C5Q outside the pinned pair
 
-    // GF datum OFF: the pair is still declared, the GF set is empty (so no gfpin=).
+    // GF datum off: the pair is still declared, the GF set is empty (so no gfpin=).
     CbDatumRowsHarness h0;
     h0.clock_signal_basis_hold = true;
     h0.gf_datum                = false;
@@ -4346,8 +4348,8 @@ TEST(NetworkSbasisTest, BuildCodeBiasDatumRowsDeclarationRecordIsUngated) {
 }
 
 // ---------------------------------------------------------------------------
-// INC-8: dumpEstimabilitySpectrum — one-shot estimability diagnostic relocated
-// out of the run loop.  Smoke over a real registered/added system: no throw,
+// dumpEstimabilitySpectrum: one-shot estimability diagnostic moved out of the run
+// loop (INC-8).  Smoke test over a real registered/added system: no throw,
 // and the "Network[estimability]" warn lines land in the sink with the
 // driver-format labels when col_desc is supplied and the "colN" fallback when
 // it is empty.
@@ -4362,7 +4364,7 @@ TEST(NetworkEstimatorTest, DumpEstimabilitySpectrumSmoke) {
         clkCol[s] = est.registerClock(t.sats[s]);
         pbCol[s]  = est.registerPhaseBias(t.sats[s], signal);
     }
-    // Driver-format labels ("CLK|sat" / "PB|sat|sig" — deliberately NOT
+    // Driver-format labels ("CLK|sat" / "PB|sat|sig", deliberately not
     // sharedColumnLabel), indexed by shared column.
     std::vector<std::string> col_desc(static_cast<std::size_t>(est.numShared()));
     for (int s = 0; s < t.S; ++s) {

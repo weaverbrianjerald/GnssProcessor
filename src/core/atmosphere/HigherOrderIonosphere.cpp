@@ -8,16 +8,17 @@
 namespace GnssProcessor {
 
     namespace {
-        // Second-order GROUP-delay (code) coefficient.  Derived from the
+        // Second-order group-delay (code) coefficient, derived from the
         // quasi-longitudinal Appleton-Hartree phase index
         //   n_ph = 1 − X/2 − (1/2)·X·Y_L − …,   X = A·N_e/f²,  Y_L = (e·B·cosθ)/(2π·m_e·f)
-        // whose 2nd-order phase delay is −(A·e/(4π·m_e·f³))·B·cosθ·STEC.
-        // The group delay is (1−k)=−2× the phase term (k=3, the f⁻³ power),
-        // giving the code coefficient
+        // (A = 80.6, the plasma-frequency constant), whose second-order phase
+        // delay is −(A·e/(4π·m_e·f³))·B·cosθ·STEC.  The group delay is
+        // (1−k) = −2 times the phase term (k = 3, the f⁻³ power), which gives
+        // the code coefficient
         //   I_2^code = (A·e/(2π·m_e)) · STEC[el/m²] · B[T]·cosθ / f³[Hz]
         //            = (7527 · c) · STEC · B·cosθ / f³           [metres].
-        // NOTE: it is 7527·c for the code (group) delay, NOT 7527·c/2 — the
-        // latter is the *phase* coefficient (the phase term is −½ of code, see
+        // The code (group) coefficient is 7527·c, not 7527·c/2; the latter is
+        // the phase coefficient (the phase term is −½ of the code term, see
         // slantHigherOrderComponents).  Matches POINT Iono_Second_Order
         // (const1 = e·A/(2π·m_e·f³), no factor of ½) and Hernández-Pajares
         // et al. 2007 / Petrie et al. 2010.  e·A/(2π·m_e) = 2.2564e12 ≈ 7527·c.
@@ -26,17 +27,18 @@ namespace GnssProcessor {
         // 1 TECU in electrons per square metre.
         constexpr double kTecuToElectrons = 1.0e16;
 
-        // Third-order GROUP-delay (code) coefficient (Hoque & Jakowski 2008;
+        // Third-order group-delay (code) coefficient (Hoque & Jakowski 2008;
         // POINT Iono_Third_Order):
-        //   I_3^code = (2437 · η) · ∫N_e² dl / f⁴ ,   ∫N_e² dl = η·N_max·STEC
-        // i.e. the third-order term depends on ∫N_e² dl (units el²·m⁻⁵), which
-        // the shape factor η≈0.66 relates to N_max·STEC — it is NOT proportional
-        // to STEC².  N_max (the F2-layer peak electron density, el/m³) is taken
-        // from the Hoque-Jakowski linear fit N_max = (14e12 / 3.17e18)·STEC
-        // (the two anchor points TEC=1.38e18↔6e12 and TEC=4.55e18↔20e12).
-        // 2437 = 3·A²/8.  Sub-mm at GPS L1; the STEC-vs-VTEC choice inside the
-        // N_max fit is negligible at that level, so slant STEC is used to match
-        // the POINT reference exactly.
+        //   I_3^code = 2437 · ∫N_e² dl / f⁴ ,   ∫N_e² dl = η·N_max·STEC
+        // The third-order term depends on ∫N_e² dl (units el²·m⁻⁵), which the
+        // shape factor η ≈ 0.66 relates to N_max·STEC; it is not proportional
+        // to STEC².  N_max (the F2-layer peak electron density, el/m³) comes
+        // from the Hoque-Jakowski linear fit N_max = (14e12 / 3.17e18)·STEC:
+        // the slope through the anchor points TEC=1.38e18↔6e12 and
+        // TEC=4.55e18↔20e12, applied with zero intercept.  2437 = 3·A²/8.
+        // The term is sub-mm at GPS L1 for typical STEC; the STEC-vs-VTEC choice
+        // inside the N_max fit is negligible at that level, so slant STEC is
+        // used, as in the POINT reference.
         constexpr double kI3CodeBase  = 2437.0;
         constexpr double kI3ShapeEta  = 0.66;
         constexpr double kNmaxPerStec = (20.0 - 6.0) * 1.0e12 / ((4.55 - 1.38) * 1.0e18);
@@ -59,13 +61,13 @@ namespace GnssProcessor {
         if (ipp_radius_m <= 0.0 || !std::isfinite(ipp_radius_m)) return out;
 
         // Reconstruct the IPP ECEF position from the IPP coordinates the
-        // GIM returned.  IONEX is a thin-shell SPHERICAL model, so shell →
-        // ECEF is just spherical → Cartesian at the IONEX base+shell
-        // radius.  Note the latitude is spherically propagated from a
-        // GEODETIC receiver seed (see the convention note on IppGeometry),
-        // so this point sits ~23 km along-shell from where a strictly
-        // geocentric chain would put it — immaterial for sampling B on a
-        // cm-level term, but it is not a pure geocentric reconstruction.
+        // GIM returned.  IONEX is a spherical thin-shell model, so shell to
+        // ECEF is a spherical-to-Cartesian conversion at the IONEX
+        // base+shell radius.  The latitude is propagated spherically from a
+        // geodetic receiver seed (see the convention note on IppGeometry),
+        // so this point sits about 23 km along the shell from where a purely
+        // geocentric chain would put it.  That offset is immaterial for
+        // sampling B on a cm-level term.
         const double cos_lat = std::cos(ipp_lat_rad);
         const Eigen::Vector3d ipp_ecef(
             ipp_radius_m * cos_lat * std::cos(ipp_lon_rad),

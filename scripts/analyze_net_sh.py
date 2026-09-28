@@ -73,12 +73,12 @@ def main():
     if sh_path.exists():
         with sh_path.open() as f:
             for row in csv.DictReader(f):
-                # Skip torn rows.  These traces are buffered, so the final line of a
-                # run that is still in flight -- or that was killed / WER-zombied, which
-                # the record says is a realistic end state for a multi-hour run -- is a
-                # partial write with missing trailing fields.  csv.DictReader fills those
-                # with None, and float(None) raises TypeError, NOT ValueError; before this
-                # guard one torn line aborted the whole analysis of an 8-hour run.
+                # Skip torn rows.  A trace file is buffered, so the final line of a run
+                # still in flight, or one that was killed or WER-zombied (a realistic
+                # end state for a multi-hour run), can be a partial write with missing
+                # trailing fields.  csv.DictReader fills a missing field with None, and
+                # float(None) raises TypeError rather than ValueError, so the except
+                # clauses below must catch both.
                 if row.get("std_tecu") is None or row.get("tow") is None:
                     continue
                 try:
@@ -133,7 +133,7 @@ def main():
                   f"{amax_k[0]:>2}/{amax_k[1]:<2}{amax_k[2]:<2} {l2:9.2f} "
                   f"{vsub:8.1f} {vmin:9.1f} {vmax:9.1f} {n_nan:4d}")
 
-        # per-degree RMS power spectrum at the LAST epoch
+        # per-degree RMS power spectrum at the last epoch
         last = epochs[-1]
         deg_pow = defaultdict(list)
         for (n, m, trig), v in by_epoch[last].items():

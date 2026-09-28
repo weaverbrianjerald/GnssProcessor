@@ -1,8 +1,8 @@
 /**
  * @file NetworkSlipOracle.cpp
- * @brief Implementation of the sim-only ORACLE slip response (the
- *        level-preserving re-level CEILING).  See the header banner for the
- *        card, the window semantics and the field-inertness argument.
+ * @brief Implementation of the sim-only oracle slip response (the ceiling of a
+ *        level-preserving re-level).  See the header banner for the card, the
+ *        window semantics and why it is field-inert.
  */
 
 #include "slip/NetworkSlipOracle.hpp"
@@ -48,8 +48,8 @@ System systemOf(const std::string& sat) {
     }
 }
 
-/// splitmix64 — a full-avalanche 64-bit mixer, so the seed differs in every bit
-/// for two arcs that differ in one character.
+/// splitmix64: a full-avalanche 64-bit mixer, so the seeds of two arcs that
+/// differ in one character differ in about half their bits.
 std::uint64_t mix64(std::uint64_t x) {
     x += 0x9E3779B97F4A7C15ULL;
     x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ULL;
@@ -90,8 +90,9 @@ networkSlipOracleParseCsv(const std::string& path) {
             "network.cycle_slip.oracle_relevel: truth slip file '" + path + "' is empty");
     // Header contract (src/sim/main.cpp):
     //   week,tow_s,satellite,signal,delta_cycles,flagged,elev_deg
-    // Pinned by NAME rather than by position so a fixture that grows a column
-    // fails loudly here instead of silently mis-reading delta_cycles.
+    // The first five column names are checked as a prefix of the header, so a
+    // fixture that inserts or reorders a column among them fails here instead of
+    // mis-reading delta_cycles.  Columns after delta_cycles are not checked.
     {
         const std::string hdr = trim(line);
         if (hdr.rfind("week,tow_s,satellite,signal,delta_cycles", 0) != 0)
@@ -129,8 +130,8 @@ networkSlipOracleParseCsv(const std::string& path) {
                 row, path, e.what()));
         }
     }
-    // The fixture writes in time order, but the oracle's window scan assumes it
-    // rather than hoping for it: a stable sort keeps equal-stamped rows (two
+    // The fixture writes in time order, and the window scan depends on that
+    // order, so it is enforced here.  A stable sort keeps equal-stamped rows (two
     // jumps on one arc in one epoch) in file order so their sum is reproducible.
     for (auto& [k, v] : out)
         std::stable_sort(v.begin(), v.end(),
@@ -159,9 +160,10 @@ std::unique_ptr<NetworkSlipOracle> networkSlipOracleLoad(
     oracle->true_slip   = (sq.oracle_true_slip == "free")
                               ? NetworkSlipOracle::TrueSlip::Free
                               : NetworkSlipOracle::TrueSlip::Repair;
-    // The loader already clamped this to >= 0; re-clamped because this function is
-    // also the unit suite's entry point (a hand-built config never passed through
-    // loadFromJson).  A negative window would make EVERY actuation a false alarm.
+    // The loader already clamped this to >= 0; it is clamped again because this
+    // function is also the unit suite's entry point (a hand-built config never
+    // passes through loadFromJson).  A negative window, like 0, admits no truth
+    // slip, so every actuation would read as a false alarm.
     oracle->window_s    = std::max(0.0, sq.oracle_window_s);
     oracle->utils       = std::make_unique<PppUtils>(log_manager);
 
@@ -215,10 +217,10 @@ std::unique_ptr<NetworkSlipOracle> networkSlipOracleLoad(
 double networkSlipOracleNoise(double sigma_cyc, int sta, const std::string& sat,
                               const std::string& signal, double now_s) {
     if (!(sigma_cyc > 0.0)) return 0.0;
-    // Deterministic seed: the arc identity plus the epoch, so the SAME key drawn
-    // twice (two detectors firing on one arc in one epoch, or a re-run of the
-    // whole arm) gets the SAME draw.  The epoch is quantized to the millisecond
-    // so a float-formatted tow cannot perturb it.
+    // Deterministic seed: the arc identity plus the epoch, so a key drawn twice
+    // (two detectors firing on one arc in one epoch, or a re-run of the whole
+    // arm) gets the same draw.  The epoch is rounded to the millisecond so
+    // floating-point noise in the tow cannot change it.
     std::uint64_t h = 0xCBF29CE484222325ULL;
     h = hashStr(h, sat);
     h = hashStr(h, signal);
@@ -243,8 +245,8 @@ bool networkSlipOracleHandle(NetworkSlipOracle& oracle, int sta,
     ++oracle.seen;
     const auto key = std::make_tuple(sta, sat, signal);
 
-    // (1) Nothing to preserve.  The whole card is about the CARRIED level; an arc
-    //     with no leveling entry is re-estimated free either way, so today's
+    // (1) Nothing to preserve.  The card concerns the carried level; an arc with
+    //     no leveling entry is re-estimated free either way, so the ordinary
     //     response is already the right one.
     if (!oracle.carry) { ++oracle.no_carry; return false; }
     const auto cit = oracle.carry->find(key);
@@ -252,23 +254,24 @@ bool networkSlipOracleHandle(NetworkSlipOracle& oracle, int sta,
 
     // (2) The window: (max(last_applied, carry.birth_s, now_s - window_s), now_s].
     //     See the header banner for why each term is there.  In particular the
-    //     lower edge is NOT carry.last_seen_s: that is the PREVIOUS epoch's stash
-    //     time, and a zero-q carried level is not re-set by the intervening solve,
-    //     so a detector firing 1-3 epochs late (the normal latency) is still
-    //     looking at an un-absorbed jump.
+    //     lower edge is not carry.last_seen_s: that is the previous epoch's stash
+    //     time, and the intervening solve does not re-set a zero-q carried level,
+    //     so a detector firing 1-3 epochs late (the normal latency) still sees an
+    //     unabsorbed jump.
     auto& arc = oracle.arcs[key];
     const double w_edge = now_s - oracle.window_s;
     // Non-positive when the birth is unknown: 0 = never stamped,
     // LocalCarry::kBirthSRestored (−1) = warm-resume-restored (the true birth is
     // not snapshotted, SPEC_event_harness §15.4).  Either way it loses the max and
-    // the window falls back to the latency bound — and with the sentinel it keeps
-    // losing it, instead of being floored at the resume epoch from the first
-    // post-resume harvest on.
+    // the window falls back to the latency bound.  The sentinel is kept across
+    // re-stashes, so the arc is never floored at the resume epoch by a later
+    // harvest.
     const double b_edge = cit->second.birth_s;
     const double lower  = std::max({arc.last_applied_s, b_edge, w_edge});
-    // Which term BOUND (invariant #4).  Ties go to the most specific explanation,
-    // so a reader can tell "the window is too narrow" from "the arc is younger
-    // than the window" from "we already paid this jump" — three different fixes.
+    // Which term bound (invariant #4).  Ties go to the most specific explanation
+    // (applied, then birth, then window), so a reader can tell "the window is too
+    // narrow" from "the arc is younger than the window" from "this jump was
+    // already applied", which call for three different fixes.
     if (lower == arc.last_applied_s)      ++oracle.bound_applied;
     else if (lower == b_edge)             ++oracle.bound_birth;
     else                                  ++oracle.bound_window;
@@ -278,26 +281,26 @@ bool networkSlipOracleHandle(NetworkSlipOracle& oracle, int sta,
     if (tit != oracle.truth.end()) {
         for (const auto& ts : tit->second) {
             if (ts.s <= lower) continue;
-            if (ts.s > now_s) break;              // ascending — nothing later qualifies
+            if (ts.s > now_s) break;              // ascending: nothing later qualifies
             sum_cyc += static_cast<double>(ts.delta_cyc);
             ++n;
         }
     }
 
-    // (3) FALSE ALARM — the detector fired and truth says nothing jumped on this
+    // (3) False alarm: the detector fired and the truth table has no jump on this
     //     arc in the window.  `keep` is the ceiling (an oracle knows); `free`
-    //     falls through so the arm keeps today's false-alarm cost.
+    //     falls through so the arm keeps the ordinary false-alarm cost.
     if (n == 0) {
         if (oracle.false_alarm == NetworkSlipOracle::FalseAlarm::Free) {
             ++oracle.fa_freed;
             return false;
         }
         ++oracle.fa_kept;
-        // Per-TIER attribution of the keeps (invariant #4).  The decision is
-        // already made — the tier only says WHICH detector's thresholds a
-        // false-alarm-isolation arm should be read against.  An unrecognised bit
-        // is a mis-wired call site, not a fifth detector, so it gets its own
-        // bucket rather than being folded into one of the four.
+        // Per-tier attribution of the keeps (invariant #4).  The decision is
+        // already made; the tier only says which detector's thresholds a
+        // false-alarm-isolation arm is read against.  An unrecognised bit is a
+        // mis-wired call site, not a fifth detector, so it gets its own bucket
+        // instead of being folded into one of the four.
         switch (cause) {
             case RelevelEpochState::kCauseMw:     ++oracle.fa_kept_mw;    break;
             case RelevelEpochState::kCauseLli:    ++oracle.fa_kept_lli;   break;
@@ -310,32 +313,32 @@ bool networkSlipOracleHandle(NetworkSlipOracle& oracle, int sta,
         return true;
     }
 
-    // (3b) TRUE SLIP, policy `free` — the FALSE-ALARM ISOLATION arm.  Truth says
-    //      this arc really jumped, so it gets today's ORDINARY response: decline,
-    //      and the caller frees / re-levels exactly as it would on the base arm.
-    //      Deliberately BEFORE the wavelength lookup — no shift is formed, so a
-    //      signal with no wavelength is not a `no_lambda` fall-through here, it
-    //      is the same decline for the same reason (and counting it twice would
-    //      break the closure).  `last_applied_s` is NOT advanced: nothing was
-    //      applied, and the next detector on this arc must see the same window.
+    // (3b) True slip under policy `free` (the false-alarm-isolation arm).  The
+    //      truth table says this arc jumped, so it gets the ordinary response:
+    //      decline, and the caller frees and re-levels as it would on the base
+    //      arm.  This test comes before the wavelength lookup because no shift is
+    //      formed: a signal with no wavelength is the same decline here, not a
+    //      `no_lambda` fall-through (counting it in both would break the
+    //      closure).  `last_applied_s` does not advance: nothing was applied, and
+    //      the next detector on this arc sees the same window.
     if (oracle.true_slip == NetworkSlipOracle::TrueSlip::Free) {
         ++oracle.true_slip_freed;
         return false;
     }
 
-    // (4) REPAIR.  Wavelength in the signal's OWN band (delta_cycles is in that
+    // (4) Repair.  Wavelength of the signal's own band (delta_cycles is in that
     //     signal's cycles), FDMA-correct via the satellite id.  An unknown signal
-    //     is counted and falls through — never silently skipped, which would read
-    //     as a false alarm and corrupt the census.
+    //     is counted in no_lambda and falls through; skipping it without a count
+    //     would read as a false alarm and bias the census.
     const double lambda =
         oracle.utils ? oracle.utils->getWavelength(systemOf(sat), signal, sat) : 0.0;
     if (!(lambda > 0.0) || !std::isfinite(lambda)) { ++oracle.no_lambda; return false; }
 
     const double noise = networkSlipOracleNoise(oracle.noise_cyc, sta, sat, signal, now_s);
-    // ⚠ value_abs ONLY.  The variance is DELIBERATELY unchanged: the point of the
-    // ceiling is that a perfect repair costs no information, so the level stays
-    // at its converged weight (an x_lin shift, by contrast, is an exact solve
-    // no-op — docs/SPEC_lane_slip_response.md §7.2).
+    // Only value_abs is shifted.  The variance is left unchanged on purpose: in
+    // the ceiling a perfect repair costs no information, so the level keeps its
+    // converged weight.  (An x_lin shift would be an exact solve no-op;
+    // docs/SPEC_lane_slip_response.md §7.2.)
     cit->second.value_abs += (sum_cyc + noise) * lambda;
     arc.last_applied_s = now_s;
 

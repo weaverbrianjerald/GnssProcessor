@@ -35,12 +35,12 @@ namespace GnssProcessor {
     // Fast text-parsing helpers (anonymous namespace, file-local)
     // =================================================================
     //
-    // The hot paths in parseSp3 / parseClk used to iterate every record
-    // through std::istringstream and operator>>, which on MSVC pays the
-    // locale + stream-buffer overhead per token (it dominated startup
-    // cost for daily SP3+CLK product loads).  These helpers replace that
+    // The hot paths in parseSp3 / parseClk (and the ATX PCO/PCV rows) parse
     // with std::from_chars over a std::string_view of the line, skipping
-    // ASCII whitespace and advancing the view past each parsed field.
+    // spaces and tabs and advancing the view past each parsed field.
+    // std::istringstream with operator>> pays locale and stream-buffer
+    // overhead per token on MSVC, which dominated startup cost for daily
+    // SP3+CLK product loads.
     //
     // std::from_chars avoids the C/C++ locale entirely, has no
     // allocations, and on MSVC2019+ supports double parsing.
@@ -56,9 +56,9 @@ namespace GnssProcessor {
         inline bool parseInt(std::string_view& sv, int& out) {
             skipWs(sv);
             if (sv.empty()) return false;
-            // std::from_chars (C++17) accepts a leading '-' but not '+';
-            // istringstream did. Skip an explicit '+' so SP3/CLK/ATX files
-            // that pad positive integers with a sign still parse.
+            // std::from_chars (C++17) accepts a leading '-' but not '+'.
+            // Skip an explicit '+' so SP3/CLK/ATX files that pad positive
+            // integers with a sign still parse.
             if (sv.front() == '+') sv.remove_prefix(1);
             if (sv.empty()) return false;
             const char* first = sv.data();
@@ -72,13 +72,11 @@ namespace GnssProcessor {
         inline bool parseDouble(std::string_view& sv, double& out) {
             skipWs(sv);
             if (sv.empty()) return false;
-            // Same '+' handling as parseInt.  ATX PCO lines look like
+            // Same '+' handling as parseInt.  ATX PCO lines can look like
             //   "    +0.83     -0.27    +86.72   NORTH / EAST / UP"
-            // — std::from_chars rejects the '+' and the entire entry's
-            // PCO/PCV ends up unloaded, silently dropping the antenna
-            // correction at runtime. This is the bug that kept
-            // JAVRINGANT_DM_SCIS (and most BLOCK IIF satellite entries)
-            // from contributing PCO/PCV after the cfa3080 optimization.
+            // and std::from_chars rejects the '+'; without the skip, the
+            // PCO of such entries (for example JAVRINGANT_DM_SCIS and most
+            // BLOCK IIF satellite entries) would fail to load.
             if (sv.front() == '+') sv.remove_prefix(1);
             if (sv.empty()) return false;
             const char* first = sv.data();
@@ -189,7 +187,7 @@ namespace GnssProcessor {
             std::map<std::string, std::map<GnssTime, OrbitData>> orbit_map;
             constexpr double MIN_TIME_DIFF = 1.0;
             size_t total_entries = 0;
-            int merged_epoch_interval = -1;   // m2: first merged file's SP3 sampling, to flag mixed-rate concats
+            int merged_epoch_interval = -1;   // first merged file's SP3 sampling (s), to flag mixed-rate merges (m2)
             auto logger = log_manager_.getLogger("product_parser");
 
             for (const auto& sp3_path : sp3_paths) {
@@ -203,11 +201,10 @@ namespace GnssProcessor {
                 bool in_header = true;
                 int epoch_interval = 300;
                 std::vector<std::string> satellite_ids;
-                // Per-satellite orbit accuracy 1-sigma (m) recovered from the SP3
-                // '++' accuracy-code block, keyed by PRN.  Used as the uniform
-                // fallback weight when a P-record carries no per-record std-dev.
-                // Declared at the outer record scope so it is visible at both the
-                // header populate site and the P-record consume site.
+                // Per-satellite orbit accuracy 1-sigma (m) from the SP3 '++'
+                // accuracy-code block, keyed by PRN.  Filled in the header loop and
+                // copied onto every P record of that satellite; the per-record
+                // std-dev fields of P records are not parsed.
                 std::map<std::string, float> sat_accuracy_sigma_m;
                 size_t line_count = 0;
 
@@ -260,22 +257,22 @@ namespace GnssProcessor {
                             ++line_count;
                         }
                         // '++' lines carry one signed base-2 accuracy exponent per
-                        // satellite (orbit 1-sigma = 2^acc mm), in the SAME 3-char
-                        // columns and order as the '+ ' satellite-ID block (verified
-                        // against a real MGEX SP3-d: IDs and codes both begin at
-                        // column index 9, 17 fields per line).  Pair by a RUNNING
-                        // positional index across all '++' lines so satellites beyond
-                        // the first 17 (line 2 onward) map to the correct PRN.
+                        // satellite (orbit 1-sigma = 2^acc mm), in the same 3-char
+                        // columns and order as the '+ ' satellite-ID block (checked
+                        // against an MGEX SP3-d file: IDs and codes both begin at
+                        // column index 9, 17 fields per line).  The pairing uses a
+                        // positional index that runs across all '++' lines, so
+                        // satellites beyond the first 17 map to the correct PRN.
                         size_t acc_idx = 0;
                         while (header_line.substr(0, 2) == "++") {
                             for (size_t i = 9; i + 3 <= header_line.length() && i < 60; i += 3) {
                                 int acc = 0;
                                 try { acc = std::stoi(header_line.substr(i, 3)); }
                                 catch (...) { acc = 0; }
-                                // acc <= 0 = unknown / not predicted -> skip (leaves the
-                                // sat unweighted).  Clamp a bogus-large exponent so
-                                // 2^acc cannot overflow; it merely heavily down-weights
-                                // that single node.
+                                // acc <= 0 means unknown / not predicted: skipped, so the
+                                // satellite gets no accuracy_sigma_m.  Exponents above 30
+                                // are clamped to 30 so 2^acc cannot overflow; such a
+                                // satellite still gets a very large sigma.
                                 if (acc_idx < satellite_ids.size() && acc > 0) {
                                     const int acc_clamped = (acc > 30) ? 30 : acc;
                                     sat_accuracy_sigma_m[satellite_ids[acc_idx]] =
@@ -307,14 +304,15 @@ namespace GnssProcessor {
                     }
                 }
 
-                // m2: a multi-file merge that mixes sampling rates (e.g. a COD 05M
+                // A multi-file merge that mixes sampling rates (e.g. a COD 05M
                 // ultra-rapid margin file concatenated with an IGS 15M one) interleaves
-                // the finer file's off-grid nodes into the coarser arc.  They are NOT
-                // duplicates, so the 1 s dedup window below (correctly) keeps them,
-                // leaving a non-uniformly-sampled merged series.  The orbit values are
-                // valid; only the node spacing is mixed — surface it once per differing
-                // file so the operator knows an interpolation window may straddle two
-                // products.  Single-file / same-rate merges never trip this (byte-identical).
+                // the finer file's off-grid nodes into the coarser arc.  They are not
+                // duplicates, so the 1 s dedup window below keeps them, leaving a
+                // non-uniformly sampled merged series.  The orbit values are valid; only
+                // the node spacing is mixed.  A warning is logged for each file whose
+                // interval differs from the first file's, since an interpolation window
+                // may straddle two products.  Single-file and same-rate merges log
+                // nothing (m2).
                 if (merged_epoch_interval < 0) {
                     merged_epoch_interval = epoch_interval;
                 } else if (epoch_interval != merged_epoch_interval && sp3_paths.size() > 1) {
@@ -369,16 +367,17 @@ namespace GnssProcessor {
                                 data.position = Eigen::Vector3d::Zero();
                                 data.velocity = Eigen::Vector3d::Zero();
                                 // Per-satellite orbit accuracy 1-sigma from the '++'
-                                // header (one value per arc; uniform across nodes,
-                                // matching M-PAGES SVsig — so it is inert as a fit
-                                // weight but carries the orbit accuracy downstream).
+                                // header: one value per arc, uniform across nodes (as
+                                // M-PAGES SVsig), so it does not change relative fit
+                                // weights but carries the orbit accuracy downstream.
                                 {
                                     auto acc_it = sat_accuracy_sigma_m.find(data.satellite);
                                     if (acc_it != sat_accuracy_sigma_m.end())
                                         data.accuracy_sigma_m = acc_it->second;
                                 }
 
-                                // SP3 P record fields start at column 4: "PG02  XXXX YYYY ZZZZ CCCC"
+                                // SP3 P record fields start at column 4: "PG02  XXXX YYYY ZZZZ CCCC".
+                                // X/Y/Z are in km (stored in m); the clock field is parsed but not stored.
                                 std::string_view psv(line.data() + 4, line.size() - 4);
                                 double x, y, z, clock_bias;
                                 if (!parseDouble(psv, x) || !parseDouble(psv, y)
@@ -411,14 +410,15 @@ namespace GnssProcessor {
                                 std::string sat_id = line.substr(1, 3);
                                 auto& sat_orbits = orbit_map[sat_id];
                                 auto it = sat_orbits.find(epoch_time);
-                                // m1: first-file-wins for velocity, mirroring the P-record
-                                // dedup above.  A P record inserts with velocity_valid=false and
-                                // the FIRST V for that epoch sets it true, so a file's own V
-                                // still applies exactly once; but a later (overlapping ULT margin)
-                                // file whose duplicate P was skipped must NOT overwrite the
-                                // velocity already carried on the retained first-file entry.
+                                // First file wins for velocity, as for the P-record dedup
+                                // above.  A P record inserts with velocity_valid=false and the
+                                // first V for that epoch sets it true, so a file's own V applies
+                                // once.  A later file (e.g. an overlapping ULT margin file) whose
+                                // duplicate P was skipped does not overwrite the velocity on the
+                                // retained first-file entry (m1).
                                 if (it != sat_orbits.end() && !it->second.velocity_valid) {
-                                    // SP3 V record fields also start at column 4.
+                                    // SP3 V record fields also start at column 4; velocity is
+                                    // in dm/s (stored in m/s).
                                     std::string_view vsv(line.data() + 4, line.size() - 4);
                                     double vx, vy, vz, clock_rate;
                                     if (!parseDouble(vsv, vx) || !parseDouble(vsv, vy)
@@ -548,10 +548,10 @@ namespace GnssProcessor {
                     data.end_time = GnssTime{ epoch_time.week, epoch_time.tow + epoch_interval };
                     data.clock_bias = clock_bias;
 
-                    // Optional bias sigma — appears as the 2nd value when NV >= 2
-                    // (NV is the @c num field above, the count of value/sigma pairs).
-                    // Per IGS RINEX-CLK 3.x convention: bias_sigma is on the same
-                    // line as bias.  Missing or non-finite sigma is silently skipped.
+                    // Optional bias sigma: the 2nd value when NV >= 2 (NV is the @c num
+                    // field above, the number of data values that follow).  Per RINEX-CLK
+                    // 3.x, bias_sigma is on the same line as the bias (both in s).  A
+                    // missing, non-finite or non-positive sigma is skipped without a log.
                     if (num >= 2) {
                         double bias_sigma;
                         if (parseDouble(sv, bias_sigma) && std::isfinite(bias_sigma) && bias_sigma > 0.0) {
@@ -559,13 +559,12 @@ namespace GnssProcessor {
                         }
                     }
 
-                    // Optional rate + rate_sigma — when NV >= 4, the next two
-                    // values are on a continuation line per RINEX-CLK 3.x.
-                    // Many IGS Final products supply rates only at coarse epochs
-                    // (e.g. every 5 minutes) and emit NV=2 records elsewhere, so
-                    // this path may be exercised on only ~1 in 10 records for a
-                    // 30 s file.  Both rate and rate_sigma must parse cleanly
-                    // and be finite; otherwise has_rate stays false and the
+                    // Optional rate and rate_sigma: when NV >= 4, the next two values
+                    // are on a continuation line per RINEX-CLK 3.x.  Many IGS Final
+                    // products supply rates only at coarse epochs (e.g. every 5 minutes)
+                    // and write NV=2 records elsewhere, so in a 30 s file this path may
+                    // run on only about 1 in 10 records.  Both values must parse and be
+                    // finite, with rate_sigma > 0; otherwise has_rate stays false and the
                     // LSQ clock interpolator treats this node as value-only.
                     if (num >= 4) {
                         std::string cont_line;
@@ -650,10 +649,10 @@ namespace GnssProcessor {
                     double second;
                     if (iss >> year >> month >> day >> hour >> minute >> second) {
                         // Year >= 1970 admits pre-GPS-epoch dates (Block I
-                        // satellites launched 1978-02-22 onward). They parse
-                        // to negative GPS weeks, which the matcher treats as
-                        // "no covering window" for any modern epoch — i.e.,
-                        // the entries simply never apply, with no warning.
+                        // satellites, launched from 1978-02-22).  They parse to
+                        // negative GPS weeks, which the matcher treats as "no
+                        // covering window" for any modern epoch, so those
+                        // entries never apply and no warning is logged.
                         if (year >= 1970 && month >= 1 && month <= 12 && day >= 1 && day <= 31 &&
                             hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 && second >= 0.0 && second < 61.0) {
                             try { return TimeUtils::gregorianGpsToGpsTime(year, month, day, hour, minute, second); }
@@ -698,14 +697,14 @@ namespace GnssProcessor {
             };
 
             // std::from_chars' floating-point overload accepts a leading '-'
-            // but NOT a leading '+'.  Some ATX calibration labs (e.g. Geo++
-            // robot files — the LEIAR25 NONE / LEIT type-means in igs20.atx)
-            // prefix EVERY PCV value with '+', which made the hot-loop parser
-            // below stop at the first value and store an EMPTY PCV grid for
-            // that antenna — silently zeroing its phase-centre variation and,
-            // under require_atx_coverage, dropping all its signals.  This
-            // wrapper tolerates the '+'; ptr is measured from the original
-            // `first`, so existing `ptr - fp` advances stay correct.
+            // but not a leading '+'.  Some ATX calibration labs (e.g. Geo++
+            // robot files: the LEIAR25 NONE / LEIT type-means in igs20.atx)
+            // prefix every PCV value with '+'.  Without this wrapper the PCV
+            // loop below stops at the first value and stores an empty PCV grid
+            // for that antenna, which zeroes its phase-centre variation without
+            // a warning and, under require_atx_coverage, drops all its signals.
+            // The returned ptr is past the parsed value in the original buffer,
+            // so the `ptr - fp` advances below stay correct.
             auto fromCharsPcv = [](const char* first, const char* last, double& v) {
                 if (first < last && *first == '+') ++first;
                 return std::from_chars(first, last, v);
@@ -896,7 +895,7 @@ namespace GnssProcessor {
 
                 if (!in_freq || current_freq.empty()) continue;
 
-                // --- PCO ---
+                // --- PCO (north, east, up in mm; stored in mm) ---
                 if (line.find("NORTH / EAST / UP") != std::string::npos) {
                     const size_t header_pos = line.find("NORTH");
                     std::string_view sv(line.data(), header_pos);
@@ -914,10 +913,10 @@ namespace GnssProcessor {
                 if (line.find("COMMENT") != std::string::npos) continue;
 
                 // --- PCV data rows ---
-                // Hot loop: ~thousands of rows per antenna × frequency,
-                // millions per ATX file.  Replaced istringstream tokenize +
-                // try/catch stod with from_chars over a string_view —
-                // ~5–10× faster on MSVC (no locale, no exception SEH frames).
+                // Hot loop: runs for every PCV row of every antenna and frequency
+                // in the ATX file.  from_chars over a string_view avoids the locale
+                // and exception SEH frames of istringstream tokenizing with
+                // try/catch stod (about 5–10× faster on MSVC).
                 std::string_view sv(line);
                 skipWs(sv);
                 if (sv.empty()) continue;
@@ -1093,9 +1092,9 @@ namespace GnssProcessor {
                 }
 
                 // OSB = observable-specific bias (COD MGX); DSB = differential bias
-                // (the CAS MGEX DCB product's record type — the one that carries
-                // NONZERO receiver DCBs, item 0b's authority).  Anything else in the
-                // block stays a counted debug skip.
+                // (the record type of the CAS MGEX DCB product, which carries nonzero
+                // receiver DCBs and is the source item 0b relies on).  Any other record
+                // in the block is logged at debug level and skipped.
                 const bool is_osb_line = line.length() >= 4 && line.substr(0, 4) == "OSB ";
                 const bool is_dsb_line = line.length() >= 4 && line.substr(0, 4) == "DSB ";
                 if (!in_solution_block || (!is_osb_line && !is_dsb_line)) {
@@ -1104,13 +1103,13 @@ namespace GnssProcessor {
                     continue;
                 }
 
-                // Fixed-width field extraction.  CLAMPED at end-of-line rather than
-                // empty-on-overrun: SINEX writers end the line at the last non-blank
-                // column, so the LAST field of a record is routinely shorter than its
-                // declared width — the COD MGX file's lines are 103 chars against the
-                // std-dev field's nominal [91,104), which silently blanked std_dev on
-                // EVERY record (satellite ones included) until 2026-08-08.  No solve
-                // consumer reads BiasData::std_dev, so the repair is output-neutral.
+                // Fixed-width field extraction, with columns counted after the leading
+                // whitespace trim above.  A field that runs past end-of-line is clamped
+                // to the available characters rather than returned empty: SINEX writers
+                // end the line at the last non-blank column, so the last field of a
+                // record is routinely shorter than its declared width (the COD MGX
+                // lines are 103 characters against the std-dev field's nominal
+                // [91,104)).  No solve consumer reads BiasData::std_dev.
                 auto field = [&](size_t start, size_t len) -> std::string {
                     if (line.length() <= start) return {};
                     std::string s = line.substr(start, std::min(len, line.length() - start));
@@ -1130,14 +1129,13 @@ namespace GnssProcessor {
                 std::string bias_str = field(69, 21);
                 std::string std_str  = field(91, 13);
 
-                // --- RECEIVER records (non-empty STATION field) --------------------
-                // Item 0b (docs/SPEC_level_information_budget.md §17): previously a
-                // silent `continue` — 6797 records/day dropped from the COD MGX file
-                // alone.  Receiver lines carry the SYSTEM char in the PRN/SVN field
-                // (1 char, e.g. "G") and a 4..9-char station.  Parsed into the
-                // SEPARATE receiver vector so every satellite-vector consumer is
-                // byte-identical; nothing consumes these yet (the estimation rung is
-                // its own default-OFF card).
+                // --- Receiver records (non-empty STATION field) --------------------
+                // Receiver lines carry the system character in the PRN/SVN field
+                // (1 char, e.g. "G") and a 4..9-char station.  They go to the separate
+                // receiver vector, so consumers of the satellite vector are unaffected;
+                // nothing consumes them yet (estimation is a separate default-off card).
+                // A COD MGX file holds about 6797 receiver records per day.  Item 0b,
+                // docs/SPEC_level_information_budget.md §17.
                 if (!station.empty()) {
                     if (obs1.empty() || start.empty() || end.empty() || unit.empty()
                         || bias_str.empty() || station.length() < 4) {
@@ -1175,8 +1173,8 @@ namespace GnssProcessor {
                     ReceiverBiasData rb;
                     rb.station = station;
                     // System char: the PRN field carries it on receiver lines ("G");
-                    // fall back to the SVN field, then '?' (counted valid — a station
-                    // bias with an undeclared system is still a record).
+                    // fall back to the SVN field, then '?'.  A '?' record is kept: a
+                    // station bias with an undeclared system is still a record.
                     rb.constellation = !prn.empty() ? prn[0] : (!svn.empty() ? svn[0] : '?');
                     rb.signal  = obs1;
                     rb.signal2 = is_dsb_line ? obs2 : std::string{};
@@ -1193,10 +1191,10 @@ namespace GnssProcessor {
                     receiver_biases_.push_back(std::move(rb));
                     continue;
                 }
-                // Satellite DSB records (CAS satellite DCBs) are NOT folded into the
-                // OSB vector — its consumers assume observable-specific semantics —
-                // and a satellite-DSB store is out of scope until something needs it.
-                // Counted skip, never silent.
+                // Satellite DSB records (CAS satellite DCBs) are not folded into the
+                // OSB vector, whose consumers assume observable-specific semantics, and
+                // no satellite-DSB store exists.  They are skipped and counted in
+                // sat_dsb_skipped, which the per-file summary line reports.
                 if (is_dsb_line) {
                     ++sat_dsb_skipped;
                     continue;
@@ -1257,9 +1255,9 @@ namespace GnssProcessor {
 
             file.close();
             const size_t rx_parsed = receiver_biases_.size() - rx_bias_before;
-            // Item 0b: an all-receiver file (the CAS MGEX DCB product) is a legal
-            // parse — the old satellite-only emptiness check would have failed it.
-            // A file with NEITHER population is still the error it always was.
+            // A file with only receiver records (the CAS MGEX DCB product) is a
+            // valid parse; a file with neither satellite nor receiver records is an
+            // error (item 0b).
             if (biases.empty() && rx_parsed == 0) {
                 logger->error("No valid bias data parsed from {}", bia_path.string());
                 return false;
@@ -1369,10 +1367,10 @@ namespace GnssProcessor {
                 ++line_count;
                 if (in_header && line.find("END OF HEADER") != std::string::npos) { in_header = false; continue; }
                 if (in_header && line.find("IONOSPHERIC CORR") != std::string::npos) {
-                    // Normalise Fortran 'D' exponents to 'E' — see the matching note in
-                    // Ionosphere.cpp.  IGS BRDC uses 'E' on 2024 DOY 129 and 'D' on DOY
-                    // 131; operator>>(double) accepts only 'E', so the 'D' form parsed
-                    // to zero coefficients and Klobuchar vanished with only a warning.
+                    // Normalise Fortran 'D' exponents to 'E' (see the matching note in
+                    // Ionosphere.cpp).  IGS BRDC files use either form (e.g. 'E' on 2024
+                    // DOY 129, 'D' on DOY 131), and operator>>(double) accepts only 'E',
+                    // so a 'D' line would not yield its coefficients.
                     std::string norm = line;
                     for (char& c : norm)
                         if (c == 'D' || c == 'd') c = 'E';
@@ -1380,11 +1378,11 @@ namespace GnssProcessor {
                     std::string type;
                     iss >> type;
                     // GPS Klobuchar α/β only.  A RINEX 3 "GAL" IONOSPHERIC CORR
-                    // line carries Galileo NeQuick-G coefficients (ai0..ai2),
-                    // NOT Klobuchar α — feeding those into the half-cosine
-                    // polynomial is physically meaningless, and in a mixed
-                    // GPS+GAL nav file GPSA+GAL+GPSB yields 12 values (≠ 8) and
-                    // discards everything.  Galileo broadcasts no Klobuchar set.
+                    // line carries Galileo NeQuick-G coefficients (ai0..ai2), not
+                    // Klobuchar α; they do not belong in the half-cosine polynomial,
+                    // and in a mixed GPS+GAL nav file accepting GAL would yield 12
+                    // values instead of 8, which fails the size check below.
+                    // Galileo broadcasts no Klobuchar set.
                     if (type == "GPSA") parse_coeffs("alpha", iss);
                     else if (type == "GPSB") parse_coeffs("beta", iss);
                 }
@@ -1425,7 +1423,7 @@ namespace GnssProcessor {
                 ppp_log->error("Failed to load {} files: [{}]", label, joinPaths(paths));
         };
 
-        // Helper: load a single-file product (ATX, BIA, ERP, RNX)
+        // Helper: load a single-file product (used for ATX and ERP; BIA and RNX are handled below)
         auto loadSingle = [&](const char* ext, const char* label, auto parseFn, auto& dest) {
             auto path = getProductPath(ext);
             if (path.empty()) { ppp_log->warn("No {} file path provided", label); return; }
@@ -1437,9 +1435,9 @@ namespace GnssProcessor {
 
         // Precise orbits/clocks are skipped when a live broadcast+SSR source
         // drives the geometry (real-time live mode); the corresponding cache then
-        // stays empty so the query resolves through the live store.  RTB-4: the
-        // two are independent — a config may load precise (ultra-rapid) orbits
-        // while taking clocks live ("ULT orbits + network clocks").
+        // stays empty so the query resolves through the live store.  The two flags
+        // are independent: a config may load precise (ultra-rapid) orbits while
+        // taking clocks live ("ULT orbits + network clocks") (RTB-4).
         if (load_precise_orbits)
             loadMulti("SP3",  &ProductParser::getOrbitPaths, &ProductParser::parseSp3, orbits_);
         else
@@ -1450,7 +1448,7 @@ namespace GnssProcessor {
             ppp_log->info("Skipping precise CLK load — live/network clock source in use");
         loadSingle("ATX", "ATX", &ProductParser::parseAtx, antennas_);
 
-        // BIA: special case  parseBia also extracts the clock reference map
+        // BIA: special case, since parseBia also extracts the clock reference map
         {
             auto path = getProductPath("BIA");
             if (path.empty()) { ppp_log->warn("No BIA file path provided"); }
@@ -1462,11 +1460,11 @@ namespace GnssProcessor {
 
         loadSingle("ERP", "ERP", &ProductParser::parseErp, erps_);
         if (erps_.empty()) {
-            // No Earth-rotation data → pole tide is omitted (up to ~25 mm
+            // Without Earth-rotation data the pole tide is omitted (up to ~25 mm
             // radial) and the Sun/Moon ECI→ECEF frame falls back to
-            // xp=yp=UT1=0. Surface it once: in real-time ProductResolver now
-            // prefers a RAPID / most-recent ERP, so an empty set here means
-            // none resolved (offline live run, or a missing internal fixture).
+            // xp=yp=UT1=0.  Warned once here.  In real-time, ProductResolver
+            // prefers a RAPID / most-recent ERP, so an empty set means none was
+            // resolved (offline live run, or a missing internal fixture).
             ppp_log->warn("No ERP (Earth-rotation) data loaded — pole tide and "
                           "the Sun/Moon EOP frame will be degraded. Supply a "
                           "recent .ERP (production RT auto-fetches RAPID; "

@@ -34,9 +34,9 @@ namespace GnssProcessor {
          * @brief Construct a KalmanFilterLogger that writes to @p filename.
          * @param filename Path to the text file where logs will be written.
          *
-         * The constructor opens the file in append mode. If opening fails the
-         * ensuing log calls will be no-ops (the stream should be checked by the caller
-         * if needed).
+         * The constructor opens the file in truncate mode (any existing content is
+         * discarded) and writes an opening banner with the timestamp.
+         * @throws std::runtime_error if the file cannot be opened.
          */
         KalmanFilterLogger(const std::string& filename);
 
@@ -110,9 +110,9 @@ namespace GnssProcessor {
 
         /**
          * @brief Produce a human-readable timestamp string for log entries.
-         * @return std::string Timestamp in local time, e.g. "2026-01-21 15:04:05".
+         * @return std::string Timestamp in local time, formatted "YYYY-MM-DD HH:MM:SS".
          *
-         * This helper is used internally to prefix log blocks with a consistent time.
+         * Used internally to prefix log blocks and the opening and closing banners.
          */
         std::string getTimestamp() const;
     };

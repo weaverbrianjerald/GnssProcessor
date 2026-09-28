@@ -1,41 +1,39 @@
 /**
  * @file test_carry_rx_clock_in_block.cpp
- * @brief Contract tests for @c network.carry_rx_clock_in_block — the station RECEIVER
- *        CLOCK (and its ISB columns) folded INSIDE the F3 jointly-whitened station
- *        block as a random walk about a CARRIED DRIFT.  The @f$\rho@f$-direction
+ * @brief Contract tests for @c network.carry_rx_clock_in_block: the station receiver
+ *        clock (and its ISB columns) folded inside the F3 jointly-whitened station
+ *        block as a random walk about a carried drift.  The @f$\rho@f$-direction
  *        sibling of @c carry_zwd_in_block and @c carry_iono_in_block
  *        (SPEC_amb_iono_split_overcount §7 item 17).
  *
- * WHY the card exists: on the network producer the per-station receiver clock is a
- * purely PER-EPOCH local column — a column of @f$A_r@f$ eliminated by the Schur
- * reduction with NO temporal prior at all (@c filter.process_noise.clock_bias_q is
- * inert on this path; an arm with q 1000 → 0.09 produced a byte-identical
- * products.txt) — so it is the free sink that absorbs whatever station-common error
- * the levels and the ZWD could not.  Carrying it gives that direction a price, and it
- * belongs INSIDE the block because it is the most station-COMMON direction there is:
- * a diagonal prior on it would be the @f$n_{LOS}@f$ over-count that falsified the
- * diagonal ZWD carry (0.723 m vs 0.088 m in-block on the quiet bed).
+ * Purpose: on the network producer the per-station receiver clock is a per-epoch
+ * local column, a column of @f$A_r@f$ eliminated by the Schur reduction with no
+ * temporal prior (@c filter.process_noise.clock_bias_q is inert on this path).  It
+ * therefore absorbs whatever station-common error the levels and the ZWD do not.
+ * Carrying it puts a prior on that direction.  The prior belongs inside the block
+ * because the clock is the most station-common direction there is: a diagonal prior
+ * on it would be the @f$n_{LOS}@f$ over-count that falsified the diagonal ZWD carry
+ * (0.723 m against 0.088 m in-block on the quiet bed).
  *
- * ⚠ THE DRIFT IS THE CARD'S ONE LOAD-BEARING DESIGN DECISION, so half these cases are
- * about it.  The producer never writes its solution back into the station
- * StateManager, so @c x_lin(clock) is a RUN-CONSTANT: @f$x_r@f$ carries the entire
- * clock, including a ~0.3 m/s ramp (measured 0.29994 m/s on the sim truth bed against
- * 0.299 m of random-walk jitter) = 9 m per 30 s epoch.  A bias-only random walk would
- * therefore inject a ~30 σ wrong mean EVERY epoch — asserted below as an executable
- * fact, not a comment — which is why the carried state is the (bias, drift) pair.
+ * The drift is the main design decision, and half of these cases cover it.  The
+ * producer never writes its solution back into the station StateManager, so
+ * @c x_lin(clock) is constant over the run and @f$x_r@f$ carries the entire clock,
+ * including a ~0.3 m/s ramp (0.29994 m/s on the sim truth bed, against 0.299 m of
+ * random-walk jitter), i.e. 9 m per 30 s epoch.  A bias-only random walk would inject
+ * a mean error of ~30 σ every epoch (asserted below), which is why the carried state
+ * is the (bias, drift) pair.
  *
- * What a unit test can reach is the SEAM the card acts on
- * (@c CouplingRowBuilder::buildLocalBlock over a real registered
- * @c NetworkEstimator), the shared (bias, drift) kernel both edges call
- * (@c rxClockPredict / @c rxClockRateUpdate), the carry map's key shape, and the
- * loader's interlocks.  The two ends it cannot reach are the harvest (which appends
- * the clock columns to @c cols and writes their rows of @c PlHarvestBlock::C) and the
- * PASS-B driver's walk of @c getClockIndex / @c getSystemTimeOffsetStates; those are
- * graded on the sim fixture ladder.
+ * A unit test reaches the seam the card acts on (@c CouplingRowBuilder::buildLocalBlock
+ * over a real registered @c NetworkEstimator), the shared (bias, drift) kernel both
+ * edges call (@c rxClockPredict / @c rxClockRateUpdate), the carry map's key shape,
+ * and the loader's interlocks.  It does not reach the harvest (which appends the clock
+ * columns to @c cols and writes their rows of @c PlHarvestBlock::C) or the PASS-B
+ * driver's walk of @c getClockIndex / @c getSystemTimeOffsetStates; those are graded
+ * on the sim fixture ladder.
  *
- * ⚠ Deliberately NOT tested as a fallback: there is no diagonal clock row.  A non-SPD
- * block means the clock carry did not act (counted @c pl_blk_rxclk_not_folded), and
- * the unit contract is that the failed build buffers NOTHING.
+ * There is no diagonal clock row as a fallback, so none is tested.  A non-SPD block
+ * means the clock carry did not act (counted in @c pl_blk_rxclk_not_folded), and the
+ * contract is that the failed build buffers nothing.
  */
 
 #include <gtest/gtest.h>
@@ -68,9 +66,9 @@ namespace {
 // --- seam fixture ------------------------------------------------------------
 //
 // Mirrors test_carry_zwd_in_block.cpp / test_carry_iono_in_block.cpp (one registered
-// satellite clock + phase bias, layout frozen at beginEpoch) — a separate local copy
-// so this file owns its suite name outright and no file's cases can drift another's
-// layout.
+// satellite clock + phase bias, layout frozen at beginEpoch).  It is a separate local
+// copy so that this file owns its suite name and no file's cases can change another
+// file's layout.
 struct RxClkBlockFixture {
     NetworkEstimator est;
     GlobalVtecShConfig shc{};
@@ -108,7 +106,7 @@ std::shared_ptr<PlHarvestBlock> makeHarvestBlock(const std::vector<double>& diag
     return blk;
 }
 
-/// A carried local column pointing at @p blk index @p idx, with one PRESENT shared
+/// A carried local column pointing at @p blk index @p idx, with one present shared
 /// coupling term (the G01 clock) so every row carries a real border regressor.
 LocalCarry makeCarry(double value_abs, double var,
                      const std::shared_ptr<PlHarvestBlock>& blk, int idx) {
@@ -126,10 +124,10 @@ LocalCarry makeCarry(double value_abs, double var,
 
 // --- the sim truth bed's measured receiver-clock model -----------------------
 //
-// runs/simnet60_quiet_wu93_24h/<sta>/truth_clock.csv, 2879 epochs at 30 s: an EXACT
-// white random walk of 0.2988 m per epoch (lag-1 correlation −0.004) about a linear
-// drift of 0.29994 m/s.  These are the numbers the defaults are set from, so they are
-// spelled out here where a future reader can re-derive the tuning.
+// runs/simnet60_quiet_wu93_24h/<sta>/truth_clock.csv, 2879 epochs at 30 s: a white
+// random walk of 0.2988 m per epoch (lag-1 correlation −0.004) about a linear drift of
+// 0.29994 m/s.  The defaults are set from these numbers, so they are recorded here to
+// allow the tuning to be re-derived.
 constexpr double kSimDriftMps   = 0.29994;   // m/s  ⇒ 8.998 m per 30 s epoch
 constexpr double kSimRwSigmaM   = 0.2988;    // m per 30 s epoch
 constexpr double kEpochS        = 30.0;
@@ -182,24 +180,23 @@ bool loadInto(const std::string& tag, const std::string& body, GnssConfig& cfg) 
 }  // namespace
 
 // =============================================================================
-// (1) ON: k ambiguities + the ZWD + the receiver clock + an ISB build ONE
-//     (k+1+2)-row whitened block whose Σ carries the HARVESTED clock cross terms.
+// (1) On: k ambiguities + the ZWD + the receiver clock + an ISB build one
+//     (k+1+2)-row whitened block whose Σ carries the harvested clock cross terms.
 // =============================================================================
 //
-// The card's whole claim in one case: the receiver clock is coupled to the station's
-// ambiguities (and to the ZWD, and to its ISB) through the harvested (N_rr⁻¹) terms
-// rather than asserted independently.  Σ is checked directly, then the whitening is
-// verified the way test_network_coupling checks an ambiguity-only block: L·(emitted)
-// == raw.
+// The card's main claim: the receiver clock is coupled to the station's ambiguities
+// (and to the ZWD, and to its ISB) through the harvested (N_rr⁻¹) terms rather than
+// treated as independent.  Σ is checked directly, then the whitening is verified the
+// way test_network_coupling checks an ambiguity-only block: L·(emitted) == raw.
 TEST(CarryRxClockInBlockTest, ClockAndIsbJoinTheWhitenedBlockAndCarryTheirHarvestedCrossTerms) {
     RxClkBlockFixture f;
     // 3 ambiguity columns + the ZWD + the receiver clock + one ISB.  Block index order
-    // mirrors the harvest's: ambiguities, iono (none here), clock family, ZWD LAST —
-    // the ZWD card computes its own row as C.rows()−1 and must keep that slot.
+    // mirrors the harvest's: ambiguities, iono (none here), clock family, ZWD last,
+    // because the ZWD card computes its own row as C.rows()−1 and needs that slot.
     // Strictly diagonally dominant so Σ is PD by inspection: every off-diagonal is the
     // same harvested cross term and 5×cross < the smallest diagonal.  (A carried receiver
-    // clock really is well determined — σ ~10 cm against the station's whole code+phase
-    // set — so a small clock diagonal is the physical case, not a convenience.)
+    // clock is well determined, σ ~10 cm against the station's whole code+phase set, so
+    // a small clock diagonal is the physical case, not a convenience.)
     const std::vector<double> cdiag = {0.040, 0.030, 0.050, 0.0100, 0.0120, 0.0075};
     const double cross = 0.0010;                       // (N_rr⁻¹)_{c_i c_j}, all pairs
     auto blk = makeHarvestBlock(cdiag, cross);
@@ -228,16 +225,16 @@ TEST(CarryRxClockInBlockTest, ClockAndIsbJoinTheWhitenedBlockAndCarryTheirHarves
     ASSERT_EQ(cb.crows.size(), 6u);
     for (const PendCplRow& row : cb.crows) {
         EXPECT_DOUBLE_EQ(row.w, 1.0);
-        EXPECT_FALSE(row.local.empty());   // a BLOCK row (dense L⁻¹), not a scalar +1 row
+        EXPECT_FALSE(row.local.empty());   // a block row (dense L⁻¹), not a scalar +1 row
     }
-    EXPECT_EQ(cb.crows[3].local_col, 3);   // the clock row's PRIMARY column is its own
+    EXPECT_EQ(cb.crows[3].local_col, 3);   // the clock row's primary column is its own
     EXPECT_EQ(cb.crows[4].local_col, 4);
 
     const Eigen::MatrixXd& S = f.R.pl_blk.Sigma;
     ASSERT_EQ(S.rows(), 6);
     for (int k = 0; k < 6; ++k)
         EXPECT_DOUBLE_EQ(S(k, k), cdiag[static_cast<std::size_t>(k)]);
-    // The clock family is coupled to EVERYTHING the harvest saw: the ambiguities (the
+    // The clock family is coupled to every column the harvest saw: the ambiguities (the
     // station-common overlap this card subtracts), the ZWD, and each other.
     for (int k = 0; k < 6; ++k)
         for (int j : {3, 4}) {
@@ -246,7 +243,7 @@ TEST(CarryRxClockInBlockTest, ClockAndIsbJoinTheWhitenedBlockAndCarryTheirHarves
             EXPECT_DOUBLE_EQ(S(k, j), cross);
         }
     EXPECT_EQ(f.R.pl_blk_rxclk_cols, 2);          // clock + ISB, counted exactly once each
-    EXPECT_EQ(f.R.pl_blk_rxclk_isb_cols, 1);      // …of which one is the ISB (a SUB-count)
+    EXPECT_EQ(f.R.pl_blk_rxclk_isb_cols, 1);      // …of which one is the ISB (a sub-count)
     EXPECT_EQ(f.R.pl_blk_rxclk_missing_cross, 0);
     EXPECT_EQ(f.R.pl_blk_zwd_cols, 1);            // the neighbouring cards are untouched
     EXPECT_EQ(f.R.pl_blk_iono_cols, 0);
@@ -255,8 +252,8 @@ TEST(CarryRxClockInBlockTest, ClockAndIsbJoinTheWhitenedBlockAndCarryTheirHarves
     EXPECT_EQ(f.R.pl_blk_rows, 6);
 
     // The emitted rows are L⁻¹·[I | M | y] for this Σ: reconstruct L and undo it.  The
-    // clock rows are built by the SAME ingredient path as an ambiguity row — that
-    // identity ("just another carried local column") is the point.
+    // clock rows are built by the same ingredient path as an ambiguity row; the clock is
+    // treated as another carried local column, and this identity checks that.
     const Eigen::MatrixXd L = Eigen::LLT<Eigen::MatrixXd>(S).matrixL();
     Eigen::MatrixXd Hr = Eigen::MatrixXd::Zero(6, f.R.A_r.cols());
     Eigen::MatrixXd Hs = Eigen::MatrixXd::Zero(6, f.R.A_s.cols());
@@ -280,10 +277,10 @@ TEST(CarryRxClockInBlockTest, ClockAndIsbJoinTheWhitenedBlockAndCarryTheirHarves
     EXPECT_LT((L * z  - z_raw ).cwiseAbs().maxCoeff(), 1e-9);
 }
 
-// is_rx_clk / is_rx_isb are TELEMETRY ONLY.  If either became load-bearing in the
-// algebra the clock would stop being "just another carried local column" and the
-// exactness claim would need re-proving — so pin that the whitened output is
-// bit-identical with the flags set and cleared.
+// is_rx_clk / is_rx_isb affect telemetry only.  If either entered the algebra, the
+// clock would no longer be an ordinary carried local column and the exactness claim
+// would need a new proof, so this pins that the whitened output is bit-identical with
+// the flags set and cleared.
 TEST(CarryRxClockInBlockTest, IsRxClkFlagChangesTelemetryOnlyNotTheAlgebra) {
     const std::vector<double> cdiag = {0.040, 0.0025};
     auto blk = makeHarvestBlock(cdiag, 0.0050);
@@ -310,14 +307,14 @@ TEST(CarryRxClockInBlockTest, IsRxClkFlagChangesTelemetryOnlyNotTheAlgebra) {
             EXPECT_EQ(flag.crows[k].local[j].second, noflag.crows[k].local[j].second);
         }
     }
-    EXPECT_EQ(flag_f.R.pl_blk_rxclk_cols, 1);     // the ONLY difference
+    EXPECT_EQ(flag_f.R.pl_blk_rxclk_cols, 1);     // the only difference
     EXPECT_EQ(noflag_f.R.pl_blk_rxclk_cols, 0);
-    EXPECT_EQ(flag_f.R.pl_blk_rxclk_isb_cols, 0); // …and the ISB sub-count is honest
+    EXPECT_EQ(flag_f.R.pl_blk_rxclk_isb_cols, 0); // …and the ISB sub-count stays 0 (no ISB flag)
 }
 
 // =============================================================================
-// (2) OFF: the block is k rows and no clock column exists — and, like the iono
-//     card and unlike the ZWD card, there is NO diagonal replacement row.
+// (2) Off: the block is k rows and no clock column exists.  Like the iono card and
+//     unlike the ZWD card, there is no diagonal replacement row.
 // =============================================================================
 TEST(CarryRxClockInBlockTest, KnobOffLeavesKBlockRowsAndNoClockColumnAtAll) {
     const std::vector<double> cdiag = {0.040, 0.030, 0.050};
@@ -331,7 +328,7 @@ TEST(CarryRxClockInBlockTest, KnobOffLeavesKBlockRowsAndNoClockColumnAtAll) {
     ASSERT_TRUE(cb.buildLocalBlock({LocalBlockCol{0, 0.5,   &a0, cdiag[0], 30.0, 1.0},
                                     LocalBlockCol{1, -0.25, &a1, cdiag[1], 30.0, 1.0},
                                     LocalBlockCol{2, 1.0,   &a2, cdiag[2], 30.0, 1.0}}));
-    ASSERT_EQ(cb.crows.size(), 3u);                 // k rows, NOT k+1
+    ASSERT_EQ(cb.crows.size(), 3u);                 // k rows, not k+1
     EXPECT_EQ(f.R.pl_blk.Sigma.rows(), 3);
     EXPECT_EQ(f.R.pl_blk_rxclk_cols, 0);
     EXPECT_EQ(f.R.pl_blk_rxclk_isb_cols, 0);
@@ -342,14 +339,14 @@ TEST(CarryRxClockInBlockTest, KnobOffLeavesKBlockRowsAndNoClockColumnAtAll) {
 }
 
 // =============================================================================
-// (3) q inflation lands on the CLOCK DIAGONAL ONLY, and PD is preserved.
+// (3) q inflation lands on the clock diagonal only, and PD is preserved.
 // =============================================================================
 //
 // The driver computes var_eff = var + q·gap_ep + rate_var·gap² (rxClockPredict) and
-// hands it over as LocalBlockCol::var_eff.  The contract pinned here is where that
-// lands: Σ's diagonal for that column and NOWHERE else — the off-diagonals stay the
+// passes it as LocalBlockCol::var_eff.  The contract pinned here is where it lands:
+// on Σ's diagonal for that column and nowhere else.  The off-diagonals stay the
 // harvested cross terms (a random walk has no cross term) and the ambiguity rows'
-// entries are BITWISE unchanged.
+// entries are bitwise unchanged.
 TEST(CarryRxClockInBlockTest, QInflationTouchesTheClockDiagonalOnlyAndPreservesPd) {
     const std::vector<double> cdiag = {0.040, 0.030, 0.0100, 0.0120};
     const double cross = 0.0005;
@@ -390,11 +387,11 @@ TEST(CarryRxClockInBlockTest, QInflationTouchesTheClockDiagonalOnlyAndPreservesP
         }
     EXPECT_EQ(Eigen::LLT<Eigen::MatrixXd>(Sb).info(), Eigen::Success);
     EXPECT_EQ(Eigen::LLT<Eigen::MatrixXd>(Si).info(), Eigen::Success);
-    EXPECT_GT(Si(2, 2), Sb(2, 2));       // strictly WEAKER, never stronger
+    EXPECT_GT(Si(2, 2), Sb(2, 2));       // strictly weaker, never stronger
     EXPECT_GT(Si(3, 3), Sb(3, 3));
 }
 
-// Gap scaling: q is PER EPOCH, so a four-epoch gap must land 4q on the diagonal.
+// Gap scaling: q is per epoch, so a four-epoch gap lands 4q on the diagonal.
 TEST(CarryRxClockInBlockTest, GapScalingIsLinearInEpochsOnTheClockDiagonal) {
     const std::vector<double> cdiag = {0.040, 0.0025};
     auto blk = makeHarvestBlock(cdiag, 0.0020);
@@ -421,15 +418,15 @@ TEST(CarryRxClockInBlockTest, GapScalingIsLinearInEpochsOnTheClockDiagonal) {
 }
 
 // =============================================================================
-// (4) ABSOLUTE-value carry: the RHS is (value_abs − x_lin), so a moved
+// (4) Absolute-value carry: the RHS is (value_abs − x_lin), so a moved
 //     linearization point changes η by exactly −Δx_lin and nothing else.
 // =============================================================================
 //
-// ⚠ For the receiver clock this is a statement about a frame that does NOT normally
-// move: the producer never writes its solution back, so x_lin(clock) is a run
-// constant.  The test moves it anyway, because that constancy is an observation about
-// today's driver rather than a guarantee — a future card that re-seeds the clock (or a
-// warm resume that restores a state vector) must not silently re-interpret the carry.
+// For the receiver clock this frame does not normally move: the producer never writes
+// its solution back, so x_lin(clock) is constant over the run.  The test moves it
+// anyway, because that constancy is a property of the current driver, not a guarantee.
+// A later card that re-seeds the clock (or a warm resume that restores a state vector)
+// must not silently re-interpret the carry.
 TEST(CarryRxClockInBlockTest, CarriedClockValueIsAbsoluteSoEtaTracksAMovedXLin) {
     const std::vector<double> cdiag = {0.040, 0.0025};
     auto blk = makeHarvestBlock(cdiag, 0.0020);
@@ -458,12 +455,12 @@ TEST(CarryRxClockInBlockTest, CarriedClockValueIsAbsoluteSoEtaTracksAMovedXLin) 
     EXPECT_NEAR(r0, (value_abs - x0) + 0.8 * 1.5, 1e-6);
     EXPECT_NEAR(r1, (value_abs - x1) + 0.8 * 1.5, 1e-9);
     EXPECT_NEAR(r1 - r0, -(x1 - x0), 1e-6);
-    EXPECT_GT(std::abs(r1 - r0), 1e-6);    // it MOVED: not a stored correction
+    EXPECT_GT(std::abs(r1 - r0), 1e-6);    // it moved: not a stored correction
 }
 
 // =============================================================================
 // (5) Block failure ⇒ nothing buffered.  There is no diagonal clock row to fall
-//     back to, so "not folded" is the honest outcome and the driver counts it.
+//     back to, so the outcome is "not folded", and the driver counts it.
 // =============================================================================
 TEST(CarryRxClockInBlockTest, NonSpdBlockBuffersNothingAndTheClockSimplyDoesNotFold) {
     const std::vector<double> cdiag = {0.040, 0.0025};
@@ -476,13 +473,13 @@ TEST(CarryRxClockInBlockTest, NonSpdBlockBuffersNothingAndTheClockSimplyDoesNotF
     const bool ok = cb.buildLocalBlock(
         {LocalBlockCol{0, 0.5, &a0, cdiag[0], 30.0, 1.0},
          LocalBlockCol{1, 0.0, &ck, cdiag[1], 30.0, 1.0, false, false, 0.0, true}});
-    EXPECT_FALSE(ok);                      // driver: ++pl_blk_fallback, clock NOT folded
+    EXPECT_FALSE(ok);                      // driver: ++pl_blk_fallback, clock not folded
     EXPECT_TRUE(cb.crows.empty());         // nothing buffered ⇒ no double inject
     EXPECT_EQ(f.R.pl_blk_blocks, 0);
     EXPECT_EQ(f.R.pl_blk_rows, 0);
-    // The clock column was ADMITTED (it passed the scalar screen) even though the
-    // factorization then failed — the counter must say so, otherwise the not-folded
-    // rate cannot be read against the admission rate.
+    // The clock column was admitted (it passed the scalar screen) even though the
+    // factorization then failed.  The counter records the admission so that the
+    // not-folded rate can be read against the admission rate.
     EXPECT_EQ(f.R.pl_blk_rxclk_cols, 1);
 }
 
@@ -490,9 +487,9 @@ TEST(CarryRxClockInBlockTest, NonSpdBlockBuffersNothingAndTheClockSimplyDoesNotF
 // (6) A clock entry with no harvest block zeroes its pairs and is counted separately.
 // =============================================================================
 //
-// Splitting the clock's share out of pl_blk_pair_missing is what makes "the carried
-// clock is not actually coupled to anything" — i.e. silently back to a DIAGONAL prior
-// on the most station-common direction of all — visible instead of hidden.
+// Counting the clock's share separately from pl_blk_pair_missing makes visible the
+// case where the carried clock is coupled to nothing, which amounts to a diagonal
+// prior on the most station-common direction.
 TEST(CarryRxClockInBlockTest, ClockWithoutAHarvestBlockZeroesItsPairsAndIsCountedSeparately) {
     const std::vector<double> cdiag = {0.040, 0.030, 0.050};
     auto blk = makeHarvestBlock(cdiag, 0.0060);
@@ -508,7 +505,7 @@ TEST(CarryRxClockInBlockTest, ClockWithoutAHarvestBlockZeroesItsPairsAndIsCounte
          LocalBlockCol{1, -0.25, &a1, cdiag[1], 30.0, 1.0},
          LocalBlockCol{2, 1.0,   &a2, cdiag[2], 30.0, 1.0},
          LocalBlockCol{3, 0.0,   &ck, 0.0025,   30.0, 1.0, false, false, 0.0, true}}));
-    ASSERT_EQ(cb.crows.size(), 4u);               // the block STILL builds
+    ASSERT_EQ(cb.crows.size(), 4u);               // the block still builds
     EXPECT_EQ(f.R.pl_blk_rxclk_cols, 1);
     EXPECT_EQ(f.R.pl_blk_rxclk_missing_cross, 3); // clock ↔ each of the 3 ambiguities
     EXPECT_EQ(f.R.pl_blk_pair_missing, 3);
@@ -521,8 +518,8 @@ TEST(CarryRxClockInBlockTest, ClockWithoutAHarvestBlockZeroesItsPairsAndIsCounte
         EXPECT_DOUBLE_EQ(S(k, 3), 0.0);
     }
 
-    // A pair that is BOTH (clock, zwd) counts in BOTH splits — neither counter claims
-    // to partition pl_blk_pair_missing, and a reader must not assume they sum.
+    // A (clock, zwd) pair counts in both splits.  Neither counter partitions
+    // pl_blk_pair_missing, so the splits do not sum to it.
     auto other = makeHarvestBlock({0.0090}, 0.0);
     LocalCarry zw = makeCarry(0.16, 0.0090, other, 0);   // different harvest ⇒ pointer-unequal
     RxClkBlockFixture g;
@@ -537,14 +534,14 @@ TEST(CarryRxClockInBlockTest, ClockWithoutAHarvestBlockZeroesItsPairsAndIsCounte
 }
 
 // =============================================================================
-// (7) THE DRIFT.  The card's one load-bearing design decision, tested at the
-//     kernel both edges share (rxClockPredict / rxClockRateUpdate).
+// (7) The drift: the card's main design decision, tested at the kernel both edges
+//     share (rxClockPredict / rxClockRateUpdate).
 // =============================================================================
 
-// The motivating fact, executable: with the sim bed's measured clock model a BIAS-ONLY
-// random walk (the naive "carry it like the ZWD" vehicle) is ~30 σ wrong every single
-// epoch, while the (bias, drift) prediction is inside 1 σ.  If this case ever fails
-// because the drift term was dropped, the card is wrong, not the test.
+// With the sim bed's measured clock model, a bias-only random walk (carrying the clock
+// like the ZWD) is ~30 σ off every epoch, while the (bias, drift) prediction is within
+// 1 σ.  If this case fails because the drift term was dropped, the card is wrong, not
+// the test.
 TEST(CarryRxClockInBlockTest, PureRandomWalkIsThirtySigmaWrongOnThisDriftButTheDriftedOneIsNot) {
     const double q = 0.09;                       // σ 0.30 m per 30 s epoch
     const double var_prev = 1e-4;                // the clock is very well determined
@@ -563,21 +560,21 @@ TEST(CarryRxClockInBlockTest, PureRandomWalkIsThirtySigmaWrongOnThisDriftButTheD
                                         kEpochS, 1.0, q);
     EXPECT_NEAR(dp.mean, truth_step, 1e-9);
     EXPECT_LT(std::abs(truth_step - dp.mean) / std::sqrt(dp.var), 1.0);
-    // The drift's own uncertainty is IN the injected variance, not assumed away.
+    // The drift's own uncertainty is included in the injected variance.
     EXPECT_GT(dp.var, rw.var);
     EXPECT_NEAR(dp.var - rw.var, rate_var * kEpochS * kEpochS, 1e-15);
 }
 
-// An UNKNOWN drift must inject a near-FREE prior, never a stiff wrong one.  With the
-// default rate_var0 = 1 m²/s² a 30 s prediction carries σ ≈ 30 m — three times the
-// per-epoch clock motion itself, i.e. the prior says almost nothing until the rate
-// filter has seen one increment.  That is the card's cold-start quarantine.
+// An unknown drift injects a nearly free prior, never a stiff wrong one.  With the
+// default rate_var0 = 1 m²/s², a 30 s prediction carries σ ≈ 30 m, about three times
+// the per-epoch clock motion, so the prior constrains almost nothing until the rate
+// filter has seen one increment.  This is the card's cold-start quarantine.
 TEST(CarryRxClockInBlockTest, UnknownDriftInjectsANearFreePriorNotAStiffWrongOne) {
     const double q = 0.09, var_prev = 1e-4, rate_var0 = 1.0;
     const RxClkPred cold = rxClockPredict(0.0, var_prev, 0.0, rate_var0, kEpochS, 1.0, q);
     EXPECT_NEAR(std::sqrt(cold.var), 30.0, 0.1);
-    // The real motion is inside a third of a sigma: the cold prior cannot pull the
-    // clock anywhere it does not want to go.
+    // The real motion is within a third of a sigma, so the cold prior exerts almost no
+    // pull on the clock.
     EXPECT_LT((kSimDriftMps * kEpochS) / std::sqrt(cold.var), 0.35);
 }
 
@@ -595,7 +592,7 @@ TEST(CarryRxClockInBlockTest, RateFilterConvergesToTheObservedDriftAfterOneIncre
     // …and the prior it now injects is the RW jitter, not 30 m.
     const RxClkPred warm = rxClockPredict(0.0, var, rate, rate_var, dt, 1.0, q);
     EXPECT_LT(std::sqrt(warm.var), 0.45);
-    EXPECT_GT(std::sqrt(warm.var), kSimRwSigmaM);      // never TIGHTER than the true q
+    EXPECT_GT(std::sqrt(warm.var), kSimRwSigmaM);      // never tighter than the true q
 
     // A second increment tightens it further and tracks a genuinely changing drift.
     double rate2 = rate, rv2 = rate_var;
@@ -604,7 +601,7 @@ TEST(CarryRxClockInBlockTest, RateFilterConvergesToTheObservedDriftAfterOneIncre
     EXPECT_GT(rate2, rate);
     EXPECT_LT(rate2, obs_rate + 0.01);                 // …but does not chase it in one step
 
-    // Degenerate inputs leave the state untouched rather than poisoning it.
+    // Degenerate inputs are rejected and leave the state unchanged.
     double r3 = rate2, v3 = rv2;
     EXPECT_FALSE(rxClockRateUpdate(r3, v3, std::numeric_limits<double>::quiet_NaN(),
                                    r_rate, 1e-10));
@@ -612,9 +609,9 @@ TEST(CarryRxClockInBlockTest, RateFilterConvergesToTheObservedDriftAfterOneIncre
     EXPECT_EQ(v3, rv2);
 }
 
-// The clock-JUMP gate (invariant #1's wired response, the ONLY jump detector the
-// network's receiver clock has).  A 1 ms receiver step must trip it by orders of
-// magnitude; ordinary random-walk jitter must never trip it.
+// The clock-jump gate (invariant #1's wired response, and the only jump detector for
+// the network's receiver clock).  A 1 ms receiver step trips it by orders of
+// magnitude; ordinary random-walk jitter does not trip it.
 TEST(CarryRxClockInBlockTest, JumpGateCatchesAMillisecondStepAndIgnoresOrdinaryJitter) {
     const double q = 0.09, var = 1e-4, k = 10.0;       // the defaults
     const double rate_var = 1e-6;                      // a converged drift
@@ -633,17 +630,17 @@ TEST(CarryRxClockInBlockTest, JumpGateCatchesAMillisecondStepAndIgnoresOrdinaryJ
     EXPECT_GT(std::abs(jumped - p.mean), k * sigma);
     EXPECT_GT(std::abs(jumped - p.mean) / sigma, 1e5);   // it is not marginal
 
-    // (c) the gate scales with the gate constant, so a lineage can loosen it — and a
-    //     tiny k would erase the carry on ordinary jitter, which is why the loader
-    //     refuses k <= 0.
+    // (c) the gate scales with the gate constant, so a lineage can loosen it.  A tiny
+    //     k would erase the carry on ordinary jitter, which is why the loader refuses
+    //     k <= 0.
     EXPECT_LT(std::abs(quiet - p.mean), 1000.0 * sigma);
     EXPECT_GT(std::abs(quiet - p.mean), 0.0);
 }
 
-// A gap is NOT a jump: over a long gap the prediction band grows with the gap squared
-// (the drift's uncertainty) plus q per epoch, so a station that drifted away for ten
-// epochs is not mistaken for a stepped receiver.  This is what keeps the gap response
-// (drop) and the jump response (erase + rebirth) from firing on each other's events.
+// A gap is not a jump: over a long gap the prediction band grows with the gap squared
+// (the drift's uncertainty) plus q per epoch, so a station that drifted for ten epochs
+// is not mistaken for a stepped receiver.  This keeps the gap response (drop) and the
+// jump response (erase + rebirth) from firing on each other's events.
 TEST(CarryRxClockInBlockTest, PredictionBandGrowsWithTheGapSoAGapIsNotReadAsAJump) {
     const double q = 0.09, var = 1e-4, rate_var = 1e-6;
     const RxClkPred one = rxClockPredict(0.0, var, kSimDriftMps, rate_var, kEpochS, 1.0, q);
@@ -651,22 +648,22 @@ TEST(CarryRxClockInBlockTest, PredictionBandGrowsWithTheGapSoAGapIsNotReadAsAJum
                                          10.0 * kEpochS, 10.0, q);
     EXPECT_GT(ten.var, one.var);
     EXPECT_NEAR(ten.mean, 10.0 * one.mean, 1e-9);            // the mean extrapolates…
-    // …and the variance carries BOTH terms: 10q from the bias walk, 100·rate_var·Δt²
-    // from the drift.  Neither is dropped.
+    // …and the variance carries both terms: 10q from the bias walk and 100·rate_var·Δt²
+    // from the drift.
     EXPECT_NEAR(ten.var, var + 10.0 * q + rate_var * 100.0 * kEpochS * kEpochS, 1e-12);
-    // Ten epochs of real random walk is ~√10 σ — comfortably inside a 10 σ gate.
+    // Ten epochs of real random walk is ~√10 σ, well inside a 10 σ gate.
     EXPECT_LT(std::sqrt(10.0) * kSimRwSigmaM, 10.0 * std::sqrt(ten.var));
 }
 
 // =============================================================================
-// (8) The carry map's KEY SHAPE: {station index, kind}, with "" the primary clock
+// (8) The carry map's key shape: {station index, kind}, with "" the primary clock
 //     and the system name for each ISB.
 // =============================================================================
 //
-// What would actually break silently.  The jump response erases {i, ""} and must NOT
-// take the station's ISBs with it (an ISB does not step when the clock does — the
-// receiver's step is common to every system, so the GPS-referenced ISB is unchanged),
-// and the gap prune must address the whole family per station.
+// A key-shape error would fail silently.  The jump response erases {i, ""} and leaves
+// the station's ISBs in place (an ISB does not step when the clock does: the receiver's
+// step is common to every system, so the GPS-referenced ISB is unchanged), and the gap
+// prune addresses the whole family per station.
 TEST(CarryRxClockInBlockTest, CarryKeyAddressesTheClockAndEachIsbSeparately) {
     NetworkCarryState carry;
     auto put = [&](int sta, const std::string& kind, double v) {
@@ -685,12 +682,12 @@ TEST(CarryRxClockInBlockTest, CarryKeyAddressesTheClockAndEachIsbSeparately) {
     EXPECT_EQ(carry.rx_clk_carry.count({1, std::string()}), 1u);           // other station
     EXPECT_EQ(carry.rx_clk_carry.erase({0, std::string()}), 0u);           // idempotent
 
-    // The DRIFT map is keyed identically but populated only for the primary clock.
+    // The drift map is keyed identically but populated only for the primary clock.
     const std::pair<int, std::string> k1{1, std::string()};
     carry.rx_clk_rate[k1].rate = kSimDriftMps;
     EXPECT_EQ(carry.rx_clk_rate.count({1, std::string("Galileo")}), 0u);
     EXPECT_DOUBLE_EQ(carry.rx_clk_rate[k1].rate, kSimDriftMps);
-    // A fresh entry means "no rate yet": rate 0 with a NEGATIVE variance sentinel, so
+    // A fresh entry means "no rate yet": rate 0 with a negative variance sentinel, so
     // the injector substitutes carry_rx_clock_rate_var0 rather than a stiff zero.
     const auto fresh = carry.rx_clk_rate[{0, std::string()}];
     EXPECT_DOUBLE_EQ(fresh.rate, 0.0);
@@ -698,7 +695,7 @@ TEST(CarryRxClockInBlockTest, CarryKeyAddressesTheClockAndEachIsbSeparately) {
     EXPECT_EQ(fresh.n_incr, 0);
     EXPECT_LT(fresh.prev_s, 0.0);
 
-    // The neighbouring carries are DIFFERENT maps — no vehicle shares state.
+    // The neighbouring carries are separate maps; no vehicle shares state.
     EXPECT_TRUE(carry.iono_blk_carry.empty());
     EXPECT_TRUE(carry.zwd_carry.empty());
 }
@@ -711,7 +708,7 @@ TEST(CarryRxClockInBlockTest, DefaultIsOffOnAnArmedF3Posture) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("default", networkConfig(kF3Posture), cfg));
     EXPECT_FALSE(cfg.networkCarryRxClockInBlock());
-    EXPECT_TRUE(cfg.networkPhaseLevelingLocalBlock());   // the vehicle IS armed…
+    EXPECT_TRUE(cfg.networkPhaseLevelingLocalBlock());   // the vehicle is armed…
 }
 
 TEST(CarryRxClockInBlockTest, DisabledWhenTheF3BlockIsOff) {
@@ -738,16 +735,16 @@ TEST(CarryRxClockInBlockTest, DisabledWhenPhaseLevelingIsOff) {
     EXPECT_FALSE(cfg.networkCarryRxClockInBlock());
 }
 
-// carry_invariant is a different carry VEHICLE and makes F3 structurally inert, so
-// riding it is the armed-and-inert failure invariant #4 forbids.
+// carry_invariant is a different carry vehicle and makes F3 structurally inert, so
+// arming the clock carry on it would be the armed-and-inert failure of invariant #4.
 TEST(CarryRxClockInBlockTest, DisabledUnderCarryInvariant) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("ci",
                          networkConfig(std::string(kF3Posture)
-                                       // carry_invariant is only DEFINED on the eq34 chain
+                                       // carry_invariant is defined only on the eq34 chain
                                        // datum (the loader hard-errors otherwise), so the
-                                       // posture has to be legal before the interlock under
-                                       // test can be the thing that fires.
+                                       // posture is made legal first; the interlock under
+                                       // test is then what fires.
                                        + "    \"carry_invariant\": true,\n"
                                          "    \"phase_datum_eq34\": true,\n"
                                          "    \"carry_rx_clock_in_block\": true,\n"),
@@ -756,7 +753,7 @@ TEST(CarryRxClockInBlockTest, DisabledUnderCarryInvariant) {
     EXPECT_FALSE(cfg.networkCarryRxClockInBlock());
 }
 
-// F3 armed but structurally unable to build a block (no conditional coupling rows) is
+// A posture with F3 armed but unable to build a block (no conditional coupling rows) is
 // the same failure: the clock column would have no block to join.
 TEST(CarryRxClockInBlockTest, DisabledWhenF3CannotBuildABlockOnThisPosture) {
     GnssConfig cfg;
@@ -778,8 +775,8 @@ TEST(CarryRxClockInBlockTest, ArmedHappyPathResolvesTheVarianceLadderAndTheGapSe
                          cfg));
     EXPECT_TRUE(cfg.networkCarryRxClockInBlock());
     EXPECT_TRUE(cfg.networkPhaseLevelingLocalBlock());
-    // q default: m² PER EPOCH (σ 0.30 m/epoch = the sim bed's measured RW), NOT m²/s
-    // like zwd_carry_q.
+    // q default: m² per epoch (σ 0.30 m/epoch, the sim bed's measured RW), not m²/s
+    // as for zwd_carry_q.
     EXPECT_DOUBLE_EQ(cfg.networkCarryRxClockQM2(), 0.09);
     EXPECT_NEAR(std::sqrt(cfg.networkCarryRxClockQM2()), kSimRwSigmaM, 2e-3);
     // The gap sentinel resolves to the leveling gap, so the clock carry can never
@@ -789,8 +786,8 @@ TEST(CarryRxClockInBlockTest, ArmedHappyPathResolvesTheVarianceLadderAndTheGapSe
     EXPECT_DOUBLE_EQ(cfg.networkCarryRxClockRateVar0(), 1.0);
     EXPECT_DOUBLE_EQ(cfg.networkCarryRxClockRateQ(), 1e-10);
     EXPECT_DOUBLE_EQ(cfg.networkCarryRxClockJumpK(), 10.0);
-    // The ISB sub-knob is ON by default: leaving the ISB white while pricing the clock
-    // would just move the sink one column over.
+    // The ISB sub-knob is on by default: leaving the ISB white while carrying the clock
+    // would move the unconstrained direction to the ISB column.
     EXPECT_TRUE(cfg.networkCarryRxClockIsb());
 }
 
@@ -832,8 +829,8 @@ TEST(CarryRxClockInBlockTest, NegativeVarianceLadderValuesAreRefusedConfigs) {
     }
 }
 
-// jump_k = 0 would erase the carry every epoch (|innov| > 0 always), i.e. an armed and
-// permanently inert channel — refused rather than logged.
+// jump_k = 0 would erase the carry every epoch (|innov| > 0 always), leaving an armed
+// but permanently inert channel, so the loader refuses it instead of logging it.
 TEST(CarryRxClockInBlockTest, ZeroJumpGateIsARefusedConfig) {
     GnssConfig cfg;
     EXPECT_FALSE(loadInto("zerok",
@@ -843,7 +840,7 @@ TEST(CarryRxClockInBlockTest, ZeroJumpGateIsARefusedConfig) {
                           cfg));
 }
 
-// The ladder is validated even on a DISABLED arm, so a typo is not hidden by an
+// The ladder is validated even on a disabled arm, so a typo is not hidden by an
 // interlock that happens to fire first.
 TEST(CarryRxClockInBlockTest, TheLadderIsValidatedEvenWhenTheKnobIsOff) {
     GnssConfig cfg;

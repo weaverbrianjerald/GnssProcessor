@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""simnet_lane_slip_age.py -- WHERE does the lane-integer slip cost live?
+"""simnet_lane_slip_age.py: where does the lane-integer slip cost live?
 
-Follow-up to the wu93 campaign finding (SPEC_slip_relevel_walk.md section 9):
-live slips cost ~25 points of at-own-integer rate at BOTH lane rungs
-(EWL 95.1 -> 70.2 %, WL 46.2 -> 21.1 %).  This script decomposes the slipped
-arm's lane errors by the TRUTH slip history of each DD quadruple:
+Follow-up to the wu93 campaign finding (SPEC_slip_relevel_walk.md section 9): live
+slips cost about 25 points of at-own-integer rate at both lane rungs (EWL 95.1 to
+70.2 %, WL 46.2 to 21.1 %).  This script decomposes the slipped arm's lane errors
+by the truth slip history of each DD quadruple:
 
-  * virgin rows      -- none of the quadruple's 8 (station,sat)x(band) legs has
-                        slipped yet at this epoch.  If these match the quiet
-                        twin's rate, slips carry the whole cost.
-  * slip-aged rows   -- bucketed by epochs since the most recent truth slip on
-                        any leg.  A cost that HEALS with age is re-convergence
-                        (bounded, arguably acceptable); a cost that PERSISTS
-                        across hundreds of epochs is a wrong lane level baked
-                        in by the re-level response -- the signature that makes
-                        lane-level continuity (not iono, not detection) the fix.
+  * virgin rows: none of the quadruple's 8 (station,sat)x(band) legs has slipped
+                 yet at this epoch.  If these match the quiet twin's rate, slips
+                 carry the whole cost.
+  * slip-aged rows: bucketed by epochs since the most recent truth slip on any
+                 leg.  A cost that decreases with age reflects re-convergence
+                 (bounded, arguably acceptable); a cost that persists across
+                 hundreds of epochs is a wrong lane level fixed in place by the
+                 re-level response, the signature that makes lane-level
+                 continuity (not iono, not detection) the fix.
 
 Reuses the truth join of simnet_amb_integer.py verbatim (load_truth / n_at);
 lane errors are formed exactly as there: e_lane = e_band1 - e_band2 on matched
@@ -60,9 +60,9 @@ def last_slip_tow(slips, sta, sat, sig, tow):
 
 
 def build_vertex_slips(slips):
-    """(sta,sat) -> sorted tows of truth slips on ANY signal.  The estimator's
+    """(sta,sat) -> sorted tows of truth slips on any signal.  The estimator's
     refloat response is vertex-scoped (a slip on one band refloats the whole
-    (station,sat) vertex), so 'virgin' must mean any-band virgin."""
+    (station,sat) vertex), so 'virgin' means any-band virgin."""
     vx = defaultdict(list)
     for (sta, sat, _sig), lst in slips.items():
         vx[(sta, sat)].extend(t for t, _ in lst)
@@ -81,9 +81,9 @@ RESPONSE_EVENTS = {"if_slip", "mw_wl_slip", "lli_slip", "attrib_arc"}
 
 
 def build_vertex_responses(run_dir):
-    """(sta,sat) -> sorted tows of ESTIMATOR response events (refloat-class),
-    from network_events.csv.  Truth-blind: false-alarm responses count too —
-    that is the point of the second pass."""
+    """(sta,sat) -> sorted tows of estimator response events (refloat-class),
+    from network_events.csv.  Truth-blind: false-alarm responses count too,
+    which is the point of the second pass."""
     path = os.path.join(run_dir, "logs", "network_events.csv")
     vx = defaultdict(list)
     if not os.path.isfile(path):
@@ -132,7 +132,7 @@ def main():
     for label, b1, b2 in LANES:
         # key None = any-band virgin; ('other',) = lane-band virgin but another
         # band slipped a leg (vertex refloat still fired); (lo,hi) = age buckets
-        # since the last IN-LANE-BAND leg slip.
+        # since the last in-lane-band leg slip.
         buckets = defaultdict(list)
         for (tow, sat, ref, sa, sb), sigs in quad.items():
             if b1 not in sigs or b2 not in sigs:
@@ -177,7 +177,7 @@ def main():
                 tag = f"age {key[0]:>3}-{key[1] if key[1] < 10**9 else 'inf'} ep since last in-band leg slip"
             print(f"  {tag:<46} n={n:7d}  med|e|={med:7.3f}  round(e)=0 {hit:5.1f}%")
 
-    # ---- second pass: bucket by ESTIMATOR response events (truth-blind) ----
+    # ---- second pass: bucket by estimator response events (truth-blind) ----
     rvx = build_vertex_responses(args.run)
     n_ev = sum(len(v) for v in rvx.values())
     print(f"\n==== BY ESTIMATOR RESPONSE EVENT (refloat-class: {sorted(RESPONSE_EVENTS)}; "

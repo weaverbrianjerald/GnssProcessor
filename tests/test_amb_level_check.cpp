@@ -1,32 +1,33 @@
 /**
  * @file test_amb_level_check.cpp
- * @brief Card ALC - the consumer RE-VALIDATES its float ambiguities against
- *        their own code level (@c AmbLevelCheck + the
- *        @c network.closed_loop.amb_level_check plumbing).
+ * @brief Tests for the consumer's re-validation of its float ambiguities against
+ *        their own code level (Card ALC): @c AmbLevelCheck and the
+ *        @c network.closed_loop.amb_level_check plumbing.
  *
- * What is locked here:
- *   - the two combinations are what they claim to be: the WL statistic is
- *     GEOMETRY- and (first-order) IONOSPHERE-free and the IF statistic is
- *     geometry- and ionosphere-free, so a common-mode error on all four rows and
- *     a dispersive (1/f^2) error on the phase/code pair both cancel EXACTLY;
- *   - (a) a 1.0 m ambiguity drift against a consistent code level TRIPS the
- *     check after the window fills, at k = 4, with realistic noise
+ * Checked here:
+ *   - the two combinations: the WL statistic is geometry-free and first-order
+ *     ionosphere-free, and so is the IF statistic, so an error common to all four
+ *     rows and a dispersive (1/f^2) error on the phase/code pair both cancel
+ *     exactly.  A receiver clock on the phase rows only does not cancel, so a
+ *     trip alone does not prove an ambiguity error (see AmbLevelCheck.hpp);
+ *   - (a) a 1.0 m ambiguity drift against a consistent code level trips the
+ *     check once the window fills, at k = 4, with realistic noise
  *     (code sigma 0.5 m, phase sigma 5 mm);
- *   - (b) a consistent ambiguity NEVER trips over 500 epochs at that noise;
- *   - (c) a translation epoch RESTARTS the window: a restart at the step means
- *     the pre-step samples cannot be tested against the post-step state, and the
- *     next legal test is window_ep epochs later;
- *   - the window fills before any test is legal, the sigma floors bound an
- *     abnormally quiet window, a trip clears the window in BOTH modes, and the
+ *   - (b) a consistent ambiguity never trips over 500 epochs at that noise;
+ *   - (c) a translation epoch restarts the window: the pre-step samples are
+ *     never tested against the post-step state, and the next test is
+ *     window_ep epochs later;
+ *   - no test runs before the window fills, the sigma floors bound an
+ *     abnormally quiet window, a trip clears the window in both modes, and the
  *     counters close;
  *   - the config plumbing: defaults off, the harness knob reaches only the
- *     DERIVED consumer, a standalone consumer sets the processing key, the three
+ *     derived consumer, a standalone consumer sets the processing key, the three
  *     tuning knobs travel with it, and bad values are rejected rather than used.
  *
- * The engine-level half (the innovation harvest, the band pairing, the variance
+ * The engine-level part (the innovation harvest, the band pairing, the variance
  * half of the restart rule, the refloat through @c StateManager::resetAmbiguity
- * and the CST `refloat_level` kind) needs a full engine + product stream and is
- * validated on the field/sim arms of the card, exactly as cards CC and PBT were.
+ * and the CST `refloat_level` kind) needs a full engine and product stream and is
+ * validated on the card's field/sim arms, as for cards CC and PBT.
  */
 
 #include <gtest/gtest.h>
@@ -63,9 +64,9 @@ struct Rows {
 
 /// @param e1,e2   ambiguity error on band 1 / band 2 (m), sign as it appears in
 ///                the phase innovation (innov = observed - predicted, and the
-///                predicted carries +amb, so a state too LARGE by d gives -d).
-/// @param common  a common-mode error on ALL FOUR rows (m): geometry, receiver
-///                clock, troposphere - everything the combinations must kill.
+///                predicted carries +amb, so a state too large by d gives -d).
+/// @param common  an error common to all four rows (m): geometry, receiver clock
+///                common to code and phase, troposphere; the combinations cancel it.
 /// @param iono1   first-order slant ionosphere error on band 1 (m); band 2 gets
 ///                iono1 * (f1/f2)^2, phase -I and code +I.
 Rows makeRows(double e1, double e2, double common = 0.0, double iono1 = 0.0) {
@@ -124,33 +125,33 @@ std::string networkConfig(const std::string& closed_loop_extra) {
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// The combinations are what they claim to be.
+// The combinations cancel what they are meant to cancel.
 // ---------------------------------------------------------------------------
 TEST(AmbLevelCheckTest, BothCombinationsKillGeometryAndFirstOrderIonosphere) {
-    // No ambiguity error at all, but 17 m of common mode and 6 m of slant iono:
-    // both statistics must be EXACTLY zero (to double rounding).
+    // No ambiguity error, but 17 m of common mode and 6 m of slant iono: both
+    // statistics are zero to double rounding.
     const Rows clean = makeRows(0.0, 0.0, 17.0, 6.0);
     EXPECT_NEAR(wlOf(clean), 0.0, 1e-9);
     EXPECT_NEAR(ifOf(clean), 0.0, 1e-9);
 
-    // A pure wide-lane error of exactly one cycle on band 1 reads as 1/lambda_1
-    // cycles of WL, i.e. e1/lambda1 - e2/lambda2 in cycles by construction.
+    // A one-cycle error on band 1 alone reads as one WL cycle, since the WL
+    // statistic is e1/lambda1 - e2/lambda2 in cycles.
     const double lam1 = kC / kF1, lam2 = kC / kF2;
-    const Rows wl1 = makeRows(-lam1, 0.0, 17.0, 6.0);   // state too LARGE by lambda1 on band 1
+    const Rows wl1 = makeRows(-lam1, 0.0, 17.0, 6.0);   // state too large by lambda1 on band 1
     EXPECT_NEAR(wlOf(wl1), -1.0, 1e-9);
-    // …and the IF statistic of the same error is the IF combination in metres.
+    // The IF statistic of the same error is the IF combination in metres.
     const double g1 = kF1 * kF1, g2 = kF2 * kF2;
     EXPECT_NEAR(ifOf(wl1), (g1 * (-lam1) - g2 * 0.0) / (g1 - g2), 1e-9);
 
-    // A one-cycle error on BOTH bands is (1/lam1 - 1/lam2) WL cycles, not 0 and
-    // not 2 - the sanity check that the coefficients are not accidentally equal.
+    // A one-cycle error on both bands (N1 = N2 = 1) leaves N1 - N2 unchanged, so
+    // the WL statistic is 0 while the IF statistic sees the level.
     const Rows both = makeRows(-lam1, -lam2, 0.0, 0.0);
     EXPECT_NEAR(wlOf(both), -1.0 + 1.0, 1e-9);          // N1 - N2 with N1 = N2 = 1 => 0
     EXPECT_NEAR(ifOf(both), (g1 * (-lam1) - g2 * (-lam2)) / (g1 - g2), 1e-9);
 }
 
 // ---------------------------------------------------------------------------
-// (a) A 1.0 m ambiguity drift against a consistent code level TRIPS.
+// (a) A 1.0 m ambiguity drift against a consistent code level trips.
 // ---------------------------------------------------------------------------
 TEST(AmbLevelCheckTest, OneMetreDriftTripsAfterTheWindowFillsAtKFour) {
     AmbLevelCheck chk;
@@ -160,9 +161,8 @@ TEST(AmbLevelCheckTest, OneMetreDriftTripsAfterTheWindowFillsAtKFour) {
     std::normal_distribution<double> code(0.0, 0.5);    // code sigma 0.5 m
     std::normal_distribution<double> phase(0.0, 0.005); // phase sigma 5 mm
 
-    // The ambiguity of BOTH bands is 1.0 m too large: the phase innovations carry
-    // -1.0 m, the code rows are consistent (no error).  That is "a 1.0 m
-    // ambiguity drift against a consistent code level".
+    // The ambiguity of both bands is 1.0 m too large: the phase innovations carry
+    // -1.0 m and the code rows are consistent (no error).
     bool tripped = false;
     int trip_epoch = -1;
     for (int ep = 0; ep < 20; ++ep) {
@@ -174,30 +174,29 @@ TEST(AmbLevelCheckTest, OneMetreDriftTripsAfterTheWindowFillsAtKFour) {
         if (v.test != AmbLevelCheck::Test::None) { tripped = true; trip_epoch = ep; }
     }
     ASSERT_TRUE(tripped);
-    EXPECT_EQ(trip_epoch, 19);                             // exactly when the window filled
+    EXPECT_EQ(trip_epoch, 19);                             // when the window filled
     EXPECT_EQ(chk.counters().trips_wl + chk.counters().trips_if, 1u);
     EXPECT_EQ(chk.counters().checks, 1u);
     EXPECT_EQ(chk.counters().samples, 20u);
-    // WHICH channel caught it, and why that is the honest answer: an equal-in-
-    // METRES 1.0 m error is exactly 1.0 m of IF level (the IF coefficients sum to
-    // 1) AND 1.0/lam1 - 1.0/lam2 = -1.16 WL cycles.  At code sigma 0.5 m and
-    // n = 20 the WL channel's own 4-sigma bar is 0.37 cyc while the IF channel's
-    // is 1.33 m, so the WL channel is ~3.6x the more sensitive of the two here
-    // and it is the one that fires.  Recorded, not engineered: the card quotes
-    // both bars.
+    // Which channel trips, and why: a 1.0 m error equal in metres on both bands is
+    // 1.0 m of IF level (the IF coefficients sum to 1) and 1.0/lam1 - 1.0/lam2 =
+    // 1.16 WL cycles (negative here).  At code sigma 0.5 m and n = 20 the WL
+    // channel's 4-sigma bar is 0.37 cyc and the IF channel's is 1.33 m, so the
+    // error is 3.1 WL bars but only 0.75 IF bars; the WL channel is about 4x more
+    // sensitive here and is the one that fires.  The card quotes both bars.
     EXPECT_EQ(chk.counters().trips_wl, 1u);
 }
 
-// The IF channel carries a level error the WL channel CANNOT see: a drift that
-// is band-common in CYCLES leaves N1 - N2 exactly unchanged, so only the
-// iono-free level moves.  That is the half of the check the WL test does not
-// cover, and the clause the card pre-registered for the IF test.
+// The IF channel detects a level error the WL channel cannot see: a drift that
+// is band-common in cycles leaves N1 - N2 unchanged, so only the iono-free
+// level moves.  The WL test does not cover this case; the card pre-registered
+// it for the IF test.
 TEST(AmbLevelCheckTest, TheIfTestCarriesAWlSilentLevelDriftOnItsOwn) {
     AmbLevelCheck chk;
     // 120 epochs (1 h at 30 s): the IF channel's 4-sigma bar at code sigma 0.5 m
     // falls to 0.54 m, so a 1.0 m IF-level drift clears it by ~3.4 sigma.  The
-    // same drift at the 20-epoch default would NOT trip - the IF channel's
-    // minimum detectable IF level there is 1.33 m, which the card states.
+    // same drift at the 20-epoch default would not trip: the IF channel's
+    // minimum detectable IF level there is 1.33 m, as the card states.
     chk.configure(cfg(120, 4.0));
 
     std::mt19937 rng(31415926u);
@@ -222,7 +221,7 @@ TEST(AmbLevelCheckTest, TheIfTestCarriesAWlSilentLevelDriftOnItsOwn) {
 }
 
 // ---------------------------------------------------------------------------
-// (b) A consistent ambiguity NEVER trips over 500 epochs at that noise.
+// (b) A consistent ambiguity never trips over 500 epochs at that noise.
 // ---------------------------------------------------------------------------
 TEST(AmbLevelCheckTest, ConsistentAmbiguityNeverTripsOverFiveHundredEpochs) {
     AmbLevelCheck chk;
@@ -245,7 +244,7 @@ TEST(AmbLevelCheckTest, ConsistentAmbiguityNeverTripsOverFiveHundredEpochs) {
 }
 
 // ---------------------------------------------------------------------------
-// (c) A translation epoch RESTARTS the window.
+// (c) A translation epoch restarts the window.
 // ---------------------------------------------------------------------------
 TEST(AmbLevelCheckTest, ATranslationEpochRestartsTheWindow) {
     AmbLevelCheck chk;
@@ -259,14 +258,14 @@ TEST(AmbLevelCheckTest, ATranslationEpochRestartsTheWindow) {
     EXPECT_EQ(chk.depth("G12"), 19u);
 
     // The engine saw a translation for G12 this epoch and restarts the window
-    // BEFORE pushing the epoch's sample (RealTimeEngineEstimate.cpp).
+    // before pushing the epoch's sample (RealTimeEngineEstimate.cpp).
     EXPECT_TRUE(chk.restart("G12"));
     EXPECT_EQ(chk.depth("G12"), 0u);
     EXPECT_EQ(chk.counters().restarts, 1u);
 
-    // A grossly wrong state from here on: the FIRST 19 post-restart epochs are
-    // still untestable, so the window that CONTAINED the translation can never
-    // trip - the next legal test is window_ep epochs after the step.
+    // A grossly wrong state from here on: the first 19 post-restart epochs are
+    // still untestable, so no window that contains the translation can trip; the
+    // next test is window_ep epochs after the step.
     for (int ep = 0; ep < 19; ++ep) {
         const Rows r = makeRows(-3.0, -3.0, 12.0, 4.0);
         EXPECT_FALSE(chk.push("G12", wlOf(r), ifOf(r)).tested) << "epoch " << ep;
@@ -287,13 +286,12 @@ TEST(AmbLevelCheckTest, ATranslationEpochRestartsTheWindow) {
 // The sigma floors, the trip's window clear, and the counter closure.
 // ---------------------------------------------------------------------------
 TEST(AmbLevelCheckTest, SigmaFloorsBoundAnAbnormallyQuietWindow) {
-    // A PERFECTLY noiseless window has sample sigma 0, so without a floor any
-    // non-zero mean would trip at any k.  The floors turn that into a bar of
-    // k * 0.02 cyc / k * 0.05 m.
+    // A noiseless window has sample sigma 0, so without a floor any non-zero mean
+    // would trip at any k.  The floors turn that into a bar of k * 0.02 cyc /
+    // k * 0.05 m.
     AmbLevelCheck quiet;
     quiet.configure(cfg(5, 4.0));
-    // Offset chosen to sit just UNDER both floored bars: 4 * 0.02 = 0.08 cyc and
-    // 4 * 0.05 = 0.20 m.
+    // Offsets below both floored bars: 4 * 0.02 = 0.08 cyc and 4 * 0.05 = 0.20 m.
     for (int ep = 0; ep < 5; ++ep) quiet.push("G01", 0.05, 0.10);
     EXPECT_EQ(quiet.counters().checks, 1u);
     EXPECT_EQ(quiet.counters().trips_wl + quiet.counters().trips_if, 0u);
@@ -338,7 +336,7 @@ TEST(AmbLevelCheckTest, CountersCloseOverAMixedSequence) {
     EXPECT_EQ(c.trips_if, 0u);
     EXPECT_EQ(c.restarts, 1u);
     EXPECT_LE(c.trips_wl + c.trips_if, c.checks);  // the closure inequality
-    EXPECT_EQ(c.refloats, 0u);                     // the ENGINE reports those
+    EXPECT_EQ(c.refloats, 0u);                     // the engine reports those
     chk.noteRefloat();
     EXPECT_EQ(chk.counters().refloats, 1u);
 }
@@ -389,7 +387,7 @@ TEST(AmbLevelCheckTest, ConfigDefaultsAreOffAndTheKnobReachesOnlyTheDerivedConsu
                                      " \"amb_level_check_mode\": \"observe\""));
         ASSERT_TRUE(cfg_h.loadFromJson(p, log));
         EXPECT_TRUE(cfg_h.getNetworkConfig().closed_loop.amb_level_check);
-        EXPECT_FALSE(cfg_h.ambLevelCheck());                     // the PRODUCER never checks
+        EXPECT_FALSE(cfg_h.ambLevelCheck());                     // the producer never checks
         const GnssConfig consumer = cfg_h.deriveClosedLoopConsumerConfig();
         EXPECT_TRUE(consumer.ambLevelCheck());                   // the consumer does
         EXPECT_EQ(consumer.getAmbLevelCheckWindowEp(), 30);

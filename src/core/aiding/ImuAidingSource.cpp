@@ -1,11 +1,12 @@
 /**
  * @file ImuAidingSource.cpp
- * @brief IMU first-client adapter — wraps ImuIntegrator behind IAidingSource.
+ * @brief IMU first-client adapter: wraps ImuIntegrator behind IAidingSource.
  *
  * Implements the state descriptor and the predict-time contribution (the
  * composable generalization of KalmanFilter::predictImu).  predictAided /
- * collectPredict are now the live paths (Application::run, RealTimeEngine::run);
- * the legacy predictImu is retired (no call sites outside its own definition).
+ * collectPredict are the live paths (Application::run,
+ * RealTimeEngine::processEpoch); KalmanFilter::predictImu has no call sites
+ * outside its own definition.
  *
  * @see docs/aiding_source_abstraction_design.md
  */
@@ -29,9 +30,9 @@ ImuAidingSource::ImuAidingSource(const GnssConfig& config, LogManager& log_manag
     : config_(config),
       log_manager_(log_manager),
       tightly_coupled_(config.tightlyCoupledImu()) {
-    // Wrap (do not replace) ImuIntegrator.  Construction + data load mirror the
-    // legacy Application::run wiring; a load failure leaves hasData()==false,
-    // the existing graceful GNSS-only fallback.
+    // Wrap ImuIntegrator.  Construction and data load follow the Application::run
+    // wiring; a load failure leaves hasData()==false, which falls back to
+    // GNSS-only processing.
     integrator_ = std::make_unique<ImuIntegrator>(config_, log_manager_);
     const auto& path = config_.getImuConfig().imu_file_path;
     if (!path.empty() && !integrator_->loadData(path)) {
@@ -42,16 +43,16 @@ ImuAidingSource::ImuAidingSource(const GnssConfig& config, LogManager& log_manag
 }
 
 std::optional<StateBlockSpec> ImuAidingSource::reserveStates(StateManager& sm) {
-    // Stash for live per-epoch index resolution (indices shift under prunes —
-    // never cache the returned start_index).
+    // Stored for live per-epoch index resolution.  Indices shift under prunes, so
+    // the returned start_index must not be cached.
     state_manager_ = &sm;
 
     if (!sm.hasImuBiases())
         return std::nullopt;  // IMU error states not allocated in this config.
 
     // Describe the existing contiguous attitude/accel-bias/gyro-bias block
-    // (StateManager.cpp lays them out as attitude_idx_, +3, +6).  Allocate
-    // nothing — bit-for-bit identical state layout.
+    // (StateManager.cpp lays them out as attitude_idx_, +3, +6).  Nothing is
+    // allocated, so the state layout is bit-for-bit unchanged.
     StateBlockSpec spec;
     spec.owner = AidingSourceKind::Imu;
     spec.key_prefix.clear();  // tier-1: core offsets, no keyed-tail block.
@@ -140,7 +141,7 @@ PredictContribution ImuAidingSource::contributePredict(const AidingEpochContext&
         gyro_bias  = x.segment<3>(static_cast<Eigen::Index>(sm.getGyroBiasIndex()));
     }
 
-    // Current nominal attitude read THROUGH the owner (the single C_b_e_ owner).
+    // Current nominal attitude, read through its single owner (C_b_e_ in the filter).
     const Eigen::Matrix3d C_b_e = filter_->getAttitude();
 
     const ImuPrediction pred = integrator_->integrate(
@@ -168,10 +169,10 @@ void ImuAidingSource::applyTcJacobianInputs(MeasurementModel& model) const {
     if (!tightly_coupled_ || !hasData() || !state_manager_ || !filter_)
         return;
 
-    // Relocated verbatim from Application::run's two TC sites: a
-    // gravity-subtracted body specific force (f_b ~ C^T*(-g) at rest; the live
-    // state is a good approximation over the GNSS epoch interval) plus the
-    // current attitude, fed to the unchanged setImuState partials.
+    // Moved unchanged from the two TC sites in Application::run: the body specific
+    // force from gravity, f_b = C^T*(-g) - accel_bias (its value at rest; the live
+    // state is a good approximation over the GNSS epoch interval), plus the
+    // current attitude, fed to the setImuState partials.
     const StateManager& sm = *state_manager_;
     const Eigen::VectorXd x = sm.getStateVector();
     Eigen::Vector3d accel_bias = Eigen::Vector3d::Zero();

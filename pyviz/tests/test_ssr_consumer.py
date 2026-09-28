@@ -1,7 +1,7 @@
 """Build-time tests for the ssr_consumer viewer (synthetic trace CSVs).
 
-Exercises ``build_ssr_consumer`` against stub ``ssr_consumer_trace.csv`` files --
-enough to catch schema / contract regressions -- plus the optional closed-loop
+Exercises ``build_ssr_consumer`` against stub ``ssr_consumer_trace.csv`` files,
+enough to catch schema and contract regressions, plus the optional closed-loop
 overlay and the :class:`ViewerSkip` (header-only) path.  Figures are *built*
 (spec objects), not rendered, so these stay fast and backend-free.
 """
@@ -77,8 +77,8 @@ def test_event_counts_in_summary(tmp_path):
     _write_consumer(tmp_path, _base_rows())
     res = build_ssr_consumer(_ctx(tmp_path))
     s = res.summary
-    # 2 gap epochs (k=3,4), 1 stale flip (k=5), 1 disc reset (k=6 -> clk_disc AND
-    # pb_disc_max both increment on the same epoch => 2 counted increments).
+    # 2 gap epochs (k=3,4), 1 stale flip (k=5), 1 disc reset (k=6: clk_disc and
+    # pb_disc_max both increment on the same epoch, so 2 counted increments).
     assert "Product gaps   : 2 epoch(s)" in s
     assert "Stale-hold flip: 1" in s
     assert "Disc resets    : 2" in s
@@ -110,10 +110,10 @@ def test_blank_optional_columns_are_tolerated(tmp_path):
 
 
 def test_closed_loop_overlay_causality(tmp_path):
-    """With a closed-loop trace, 3D error INSIDE gap epochs vs OUTSIDE is reported.
+    """With a closed-loop trace, 3D error inside gap epochs versus outside is reported.
 
     Construct the closed loop so the error is high exactly on the gap epochs
-    (k=3,4) and low elsewhere -> median-inside must exceed median-outside.
+    (k=3,4) and low elsewhere, so median-inside exceeds median-outside.
     """
     _write_consumer(tmp_path, _base_rows())
     cl_rows = ["week,tow,n_sats,ar_ran,ar_success,num_fixed,num_candidates,ratio,"
@@ -145,8 +145,8 @@ def test_closed_loop_overlay_causality(tmp_path):
 
 
 def test_epoch_set_mismatch_tolerated(tmp_path):
-    # Closed-loop has an extra epoch (k=8) not in the consumer trace -> counted
-    # OUTSIDE (only consumer-known gaps define shaded windows); must not crash.
+    # Closed-loop has an extra epoch (k=8) not in the consumer trace, counted as
+    # outside (only consumer-known gaps define shaded windows); must not crash.
     _write_consumer(tmp_path, _base_rows())
     cl_rows = ["week,tow,n_sats,ar_ran,ar_success,num_fixed,num_candidates,ratio,"
                "pos_err_3d_m,east_m,north_m,up_m"]
@@ -158,7 +158,7 @@ def test_epoch_set_mismatch_tolerated(tmp_path):
         "\n".join(cl_rows) + "\n", encoding="utf-8")
 
     res = build_ssr_consumer(_ctx(tmp_path))
-    # 2 inside (k=3,4) still; the extra k=8 lands OUTSIDE -> 7 outside.
+    # 2 inside (k=3,4) still; the extra k=8 lands outside, giving 7 outside.
     assert "INSIDE  gap epochs (n=2)" in res.summary
     assert "OUTSIDE gap epochs (n=7)" in res.summary
 

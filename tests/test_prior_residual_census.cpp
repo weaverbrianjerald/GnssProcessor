@@ -1,66 +1,68 @@
 /**
  * @file test_prior_residual_census.cpp
- * @brief PRIOR-RESIDUAL CENSUS (docs/SPEC_prior_residual_census.md) — the
- *        stale-carry test, generalized off D5.
+ * @brief Prior-residual census (docs/SPEC_prior_residual_census.md): the stale-carry
+ *        test of D5, generalized to every carried stiff prior.
  *
- * The card mirrors LASER Guide v2.7 slide 5-74's *residual of prior information*
- * and its dispersion onto every carried stiff prior that has no screen at all,
- * and reports a per-family EMPIRICAL exceedance ladder.  Four things here fail
- * SILENTLY if they are wrong, which is why each has its own case:
+ * The census applies the residual of prior information and its dispersion (LASER
+ * Guide v2.7 slide 5-74) to every carried stiff prior that has no screen of its own,
+ * and reports a per-family empirical exceedance ladder.  Four properties still
+ * produce plausible output when they are wrong, so each has its own case:
  *
- *   1. **The dispersion identity.**  D{ê} = p²/(p+d) = r·fold_var is the whole
- *      card.  If it is wrong the census still produces plausible ladders and
- *      nobody can tell.  Case 1 checks it against the closed form to 1e-12.
+ *   1. **The dispersion identity.**  D{ê} = p²/(p+d) = r·fold_var underlies every
+ *      ladder, and a wrong identity still yields plausible ladders.  Case 1 checks
+ *      it against the closed form to 1e-12.
  *   2. **The `folded` branch.**  Applying the folded form to an unfolded row is
- *      not a cosmetic error: it is anti-conservative by ~×3000, so every
- *      RESPONDED row lands in the top ladder bin BY CONSTRUCTION and the §9.3
- *      positive control passes vacuously.  Case 10 keeps that as a NEGATIVE
- *      example — the number it asserts is the artifact, not a target.
- *   3. **The empirical critical value.**  Cases 2 and 3 are a matched pair:
- *      Gaussian input must reproduce the normal tail once σ̂₀ converges, and
- *      Student-t(3) input must be grossly over-occupied at 4σ̂₀ WHILE the
- *      geometric mean sits at 1.  Case 3 IS D5's measured failure mode
- *      reproduced in a unit test, so a future reader cannot mistake it for a
- *      bug: a scale calibration fixes the typical scale and CANNOT flatten a
- *      non-Gaussian tail.
+ *      anti-conservative (about ×3000 at a 1e-3 redundancy floor, about 3e6 at the
+ *      census floor of 1e-9), so every Responded row lands in the top
+ *      ladder bin by construction and the §9.3 positive control passes vacuously.
+ *      Case 10 keeps that as a negative example: the number it asserts is the
+ *      artifact, not a target.
+ *   3. **The empirical critical value.**  Cases 2 and 3 are a matched pair: Gaussian
+ *      input reproduces the normal tail once σ̂₀ converges, and Student-t(3) input
+ *      grossly over-occupies the 4σ̂₀ bin while the geometric mean stays at 1.
+ *      Case 3 reproduces the failure mode D5 measured and is expected behavior: a
+ *      scale calibration fixes the typical scale and cannot flatten a non-Gaussian
+ *      tail.
  *   4. **The two calibration contracts.**  Predict-then-update (case 4: a single
- *      huge row must not standardize itself away) and never-censor-by-threshold
- *      (case 5: censoring biases σ̂₀ LOW, which is D5 v2's note stated
- *      mechanically).
+ *      large row does not standardize itself away) and no censoring by threshold
+ *      (case 5: censoring biases σ̂₀ low, the mechanical form of the D5 v2 note).
  *
- * Plus the partition (case 6 — the three populations are never pooled and never
- * double-counted), the warm-up honesty flag (case 7), the redundancy clamp on
- * the documented coupling-carry case (case 8), and structural OFF-inertness
- * (case 9).
+ * The remaining early cases cover the partition (case 6: the three populations are
+ * neither pooled nor double-counted), the warm-up flag (case 7), the redundancy clamp
+ * for the documented coupling-carry case (case 8), and structural inertness when
+ * unarmed (case 9).
  *
  * ## Cases 13-18: the constraint-aware global variance component (the rider)
  *
- * docs/SPEC_prior_residual_census.md §14 — LASER 5-74's OTHER half, pooling the
- * SAME rows into the global scale
+ * docs/SPEC_prior_residual_census.md §14: the other half of LASER 5-74, which pools
+ * the same rows into the global scale
  * @f$\hat\sigma_0^2 = (\tilde e^\top P\tilde e + \tilde e_0^\top P_0 \tilde e_0)
- *                     /(n-m+l)@f$.  Same suite and same file on purpose: the
- * accumulator IS the census's, so one-file-one-suite ownership is preserved.
+ *                     /(n-m+l)@f$.  The rider uses the census accumulator, so its
+ * cases share this file and suite, which keeps one-file-one-suite ownership.
  *
- *   13. **The 5-74 identity**, against a closed form derived WITHOUT the
+ *   13. **The 5-74 identity**, against a closed form derived without the
  *       accumulator (a one-redundancy scalar net has
- *       @f$\hat\sigma_0^2 = (z-z_0)^2/(d+p)@f$ — the misfit between two
+ *       @f$\hat\sigma_0^2 = (z-z_0)^2/(d+p)@f$: the misfit between two
  *       independent measurements of the same unknown over their combined
- *       variance).  If the sums are assembled wrongly the ladders are unaffected
- *       and nothing else in this file would notice.
- *   14. **The 5-85 equivalence.**  As the constraint tightens to a datum PIN the
+ *       variance).  Wrongly assembled sums leave the ladders unaffected, so no
+ *       other case in this file would detect them.
+ *   14. **The 5-85 equivalence.**  As the constraint tightens to a datum pin, the
  *       global denominator @f$n-m+l@f$ converges to @f$n-\mathrm{rk}\,A@f$ and
- *       the statistic to the fixed-constraint form — pins need no correction and
- *       get none.  It is the NON-MINIMAL rows that bias the global test.
+ *       the statistic to the fixed-constraint form; pins need no correction and
+ *       get none.  The bias in the global test comes from the non-minimal rows.
  *   15. **Label discipline.**  An unfolded row is not a constraint in this
- *       epoch's solve and must move NEITHER sum; so must the two other skips,
- *       each counted, because a row admitted to the numerator but not the
- *       denominator biases the ratio SILENTLY.
+ *       epoch's solve and moves neither sum; the same holds for the two other
+ *       skips, each counted, because a row admitted to the numerator but not the
+ *       denominator biases the ratio with no other visible sign.
  *   16. **The approx flag.**  Without a Baarda r_i the fallback changes only
- *       @f$\sum r_{data}@f$ and SAYS SO in-band.
- *   17. **Structural OFF-inertness**, including the property the field A/B
+ *       @f$\sum r_{data}@f$ and reports that in-band.
+ *   17. **Structural inertness when unarmed**, and the property the field A/B
  *       depends on: arming the rider changes no ladder count anywhere.
  *   18. The per-family split closes, and the per-epoch history is the population
  *       the run-end quantiles claim.
+ *
+ * Cases 19-21 cover the corroboration consensus rule, its audit columns and the
+ * sensitivity column; case 22 covers the rneg re-partition.
  */
 
 #include <gtest/gtest.h>
@@ -87,7 +89,7 @@ NetworkPriorResidual makeCensus(double min_rows = 200.0,
                                 min_rows, report_sigma, corroborate);
 }
 
-/// One ordinary folded CLEAN row.
+/// One row; by default an ordinary folded row labelled Clean.
 NetworkPriorResidual::Input row(double e, double fold_var, double post_var,
                                 bool folded = true,
                                 PriorResidualLabel lab = PriorResidualLabel::Clean) {
@@ -104,18 +106,18 @@ NetworkPriorResidual::Input row(double e, double fold_var, double post_var,
     return in;
 }
 
-/// A census with the constraint-aware global variance component ARMED
-/// (docs/SPEC_prior_residual_census.md §14).  Warm-up is pushed out of reach by
-/// default: the rider's sums are independent of the σ̂₀ calibration, and pinning
-/// the ladder side raw-formal keeps the two concerns from being confused.
+/// A census with the constraint-aware global variance component armed
+/// (docs/SPEC_prior_residual_census.md §14).  By default the warm-up threshold is
+/// out of reach: the rider's sums do not depend on the σ̂₀ calibration, and keeping
+/// the ladder side raw-formal keeps the two concerns separate.
 NetworkPriorResidual makeGlobalCensus(double min_rows = 1e18) {
     return NetworkPriorResidual(std::vector<std::string>{"pl"}, /*window_epochs=*/0.0,
                                 min_rows, /*report_sigma=*/4.0,
                                 /*corroborate=*/false, /*global_sigma0=*/true);
 }
 
-/// One scalar Gauss-Markov net with ONE data row and ONE stochastic constraint,
-/// solved in closed form — the reference the rider is measured against.
+/// A scalar Gauss-Markov net with one data row and one stochastic constraint,
+/// solved in closed form; the reference for the rider.
 ///
 ///   data:        z  = xi + e,   Var{e}  = d = 1/w_d
 ///   constraint:  z0 = xi + e0,  Var{e0} = p = 1/w_0
@@ -147,21 +149,20 @@ void feedUnitRows(NetworkPriorResidual& c, int n, Gen& g, Dist& d) {
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// 1. THE DISPERSION IDENTITY — the card's foundational claim.
+// 1. The dispersion identity, on which every other case depends.
 // ---------------------------------------------------------------------------
 // Hand-built scalar fold: prior variance p, data-only variance d, posterior
 // v = pd/(p+d).  LASER 5-74's D̂{ẽ₀} specialized to one scalar constraint is
 // r·fold_var with r = 1 − w·v; the direct algebra gives p²/(p+d); and
-// fold_var − post_var gives the same thing again.  All three must agree, because
-// if they do not, nothing else in this file means anything.
+// fold_var − post_var gives the same value.  All three agree.
 TEST(PriorResidualCensusTest, DispersionIdentityMatchesClosedForm) {
-    // Deliberately spread over eight decades of p/d ratio.  The p << d cases are
-    // the ones that matter and the reason this case exists: r = p/(p+d) goes to
-    // ZERO exactly on the STIFFEST priors — {1e-4, 1.0} gives r = 1e-4 — which is
-    // the standing-invariant-#1 population the whole card is about.  Inheriting
-    // NetworkCarryVce's 1e-3 redundancy floor clamped precisely those rows,
-    // inflating their D{e} tenfold and shrinking their |t| by sqrt(10).  Caught
-    // here; see kRedundancyFloor for why the census floor is 1e-9 instead.
+    // The cases span eight decades of p/d ratio.  The p << d cases matter most:
+    // r = p/(p+d) goes to zero on the stiffest priors ({1e-4, 1.0} gives r = 1e-4),
+    // which is the standing-invariant-#1 population the census targets.  A 1e-3
+    // redundancy floor (the one NetworkCarryVce uses) would clamp those rows,
+    // inflating their D{e} tenfold and shrinking their |t| by sqrt(10); the
+    // assertion on r_clamped below guards that.  See kRedundancyFloor for why the
+    // census floor is 1e-9.
     const double cases[][2] = {{1e-4, 1e-4}, {1e-4, 1.0},  {1.0, 1e-4},
                               {1e-6, 1e-2},  {25.0, 3.0},  {1e2, 1e-8},
                               {1e-6, 1.0},   {1e-8, 1.0}};   // r = 1e-6, 1e-8
@@ -176,11 +177,11 @@ TEST(PriorResidualCensusTest, DispersionIdentityMatchesClosedForm) {
         const double closed = p * p / (p + d);            // §1 direct algebra
         const double r_true = p / (p + d);
         // r = 1 - v/p is a difference of near-equal doubles, so its relative
-        // precision is ~eps/r and NOT better — the identity is exact in exact
-        // arithmetic, and this is the double-precision floor on reading it.  At
-        // r = 1e-6 that is ~1e-9 relative; at the kRedundancyFloor of 1e-9 it is
-        // ~1e-6, which is why the floor sits there and not lower.  Well-
-        // conditioned rows (r >~ 1e-4) hold the spec's 1e-12.
+        // precision is about eps/r.  The identity is exact in exact arithmetic;
+        // this is the double-precision floor on evaluating it.  At r = 1e-6 that is
+        // about 1e-9 relative; at the kRedundancyFloor of 1e-9 it is about 1e-6,
+        // which is why the floor is not lower.  Well-conditioned rows (r >~ 1e-4)
+        // hold the spec's 1e-12.
         const double tol = std::max(1e-12, 4.0 * 2.220446049250313e-16 / r_true);
         EXPECT_NEAR(st.disp / closed, 1.0, tol) << "p=" << p << " d=" << d;
         EXPECT_NEAR(st.disp / (p - v), 1.0, tol) << "fold_var - post_var";
@@ -190,11 +191,11 @@ TEST(PriorResidualCensusTest, DispersionIdentityMatchesClosedForm) {
 }
 
 // ---------------------------------------------------------------------------
-// 2. GAUSSIAN TRUTH — the instrument is unbiased WHEN THE ASSUMPTION HOLDS.
+// 2. Gaussian input: the ladder is unbiased when the Gaussian assumption holds.
 // ---------------------------------------------------------------------------
-// This is the falsifier for §2's claim that the FIELD data does not satisfy it:
-// if the ladder over-occupied on clean Gaussian input, case 3's over-occupancy
-// would be an artifact of this class rather than a property of the data.
+// This is the control for §2's claim that the field data does not satisfy the
+// assumption: if the ladder over-occupied on clean Gaussian input, case 3's
+// over-occupancy would be an artifact of this class rather than of the data.
 TEST(PriorResidualCensusTest, GaussianRowsReproduceTheNormalTail) {
     NetworkPriorResidual c = makeCensus(/*min_rows=*/1000.0);
     std::mt19937 g(20260804u);
@@ -203,7 +204,7 @@ TEST(PriorResidualCensusTest, GaussianRowsReproduceTheNormalTail) {
     // Epoch 0 calibrates (every row raw-formal at σ̂₀ = 1, which is also the truth).
     c.beginEpoch(0.0, 0.0);
     feedUnitRows(c, 200000, g, nd);
-    // Epoch 1 is measured against the FROZEN, now-converged σ̂₀.
+    // Epoch 1 is measured against the σ̂₀ frozen at epoch start, now converged.
     c.beginEpoch(30.0, 30.0);
     ASSERT_TRUE(c.sigma0Warm(0));
     EXPECT_NEAR(c.sigma0(0), 1.0, 0.02);
@@ -224,15 +225,15 @@ TEST(PriorResidualCensusTest, GaussianRowsReproduceTheNormalTail) {
 }
 
 // ---------------------------------------------------------------------------
-// 3. ★ THE D5 FAILURE MODE, REPRODUCED.
+// 3. The D5 failure mode, reproduced (expected behavior, not a defect).
 // ---------------------------------------------------------------------------
-// Student-t(3) input: the geometric-mean σ̂₀ calibration converges perfectly
-// (geo(t²) ≈ 1 — the TYPICAL scale is right) while the 4σ̂₀ bin is over-occupied
-// by more than TWO ORDERS OF MAGNITUDE against the Gaussian tail.  That is
-// exactly what D5 measured in the field: a 4·σ̂₀ gate still flagged ~17 %/epoch
-// where clean 4σ Gaussian gives 0.006 %.  A SCALE calibration cannot flatten a
-// non-Gaussian TAIL, which is why this card reports the empirical ladder and
-// refuses to import LASER's t/F critical values.  NOT A BUG.
+// Student-t(3) input: the geometric-mean σ̂₀ calibration converges (geo(t²) ≈ 1,
+// so the typical scale is right) while the 4σ̂₀ bin is over-occupied by more than
+// two orders of magnitude against the Gaussian tail.  D5 measured the same in the
+// field: a 4·σ̂₀ gate still flagged about 17 % per epoch where a clean 4σ Gaussian
+// gives 0.006 %.  A scale calibration cannot flatten a non-Gaussian tail, which is
+// why the census reports the empirical ladder and does not use LASER's t/F
+// critical values.
 TEST(PriorResidualCensusTest, HeavyTailOverOccupiesTheLadderWhileGeoMeanStaysAtOne) {
     NetworkPriorResidual c = makeCensus(/*min_rows=*/1000.0);
     std::mt19937 g(20260804u);
@@ -247,15 +248,15 @@ TEST(PriorResidualCensusTest, HeavyTailOverOccupiesTheLadderWhileGeoMeanStaysAtO
 
     const auto& L = c.epochLadder(0, PriorResidualLabel::Clean);
     ASSERT_EQ(L.n_rows, kN);
-    // The calibration DID its job — the typical scale is right...
+    // The calibration fixes the typical scale...
     EXPECT_NEAR(L.geoT2(), 1.0, 0.10);
-    // ...and the tail is still catastrophically over-occupied.
+    // ...and the tail is still over-occupied by at least 100×.
     EXPECT_GT(L.frac(3), 100.0 * 6.33e-5) << "|t| > 4 must be >=100x the Gaussian tail";
     EXPECT_GT(L.bins[7], 0) << "t(3) reaches |t| > 20; a Gaussian sample never would";
 }
 
 // ---------------------------------------------------------------------------
-// 4. PREDICT-THEN-UPDATE — a row must not standardize itself away.
+// 4. Predict-then-update: a row does not standardize itself away.
 // ---------------------------------------------------------------------------
 TEST(PriorResidualCensusTest, HugeRowDoesNotCalibrateAgainstItself) {
     NetworkPriorResidual c = makeCensus(/*min_rows=*/100.0);
@@ -267,28 +268,28 @@ TEST(PriorResidualCensusTest, HugeRowDoesNotCalibrateAgainstItself) {
     c.beginEpoch(30.0, 30.0);
     const double sigma0_frozen = c.sigma0(0);
     ASSERT_TRUE(c.sigma0Warm(0));
-    // ONE row 500σ out.  If σ̂₀ were re-estimated per row (or after the fact
-    // within the epoch) this would standardize itself toward 1.
+    // One row 500σ out.  If σ̂₀ were re-estimated per row (or later within the
+    // epoch), this row would standardize itself toward 1.
     const auto st = c.addRow(row(/*e=*/500.0, 2.0, 1.0));
     ASSERT_TRUE(st.accepted);
     EXPECT_DOUBLE_EQ(st.sigma0, sigma0_frozen);
     EXPECT_GT(std::abs(st.t), 400.0);
     EXPECT_TRUE(st.reported);
-    // The frozen σ̂₀ must also be unchanged for the REST of this epoch.
+    // The frozen σ̂₀ also stays unchanged for the rest of this epoch.
     const auto st2 = c.addRow(row(/*e=*/1.0, 2.0, 1.0));
     EXPECT_DOUBLE_EQ(st2.sigma0, sigma0_frozen);
-    // It DOES reach the calibration for the NEXT epoch (never censored by size).
+    // The row does reach the calibration for the next epoch (no censoring by size).
     c.beginEpoch(60.0, 60.0);
     EXPECT_GT(c.sigma0(0), sigma0_frozen);
 }
 
 // ---------------------------------------------------------------------------
-// 5. NEVER CENSOR BY THRESHOLD — D5 v2's note, stated mechanically.
+// 5. No censoring by threshold (the D5 v2 note, stated mechanically).
 // ---------------------------------------------------------------------------
-// "Feeding above-threshold rows into σ̂₀ is NECESSARY, not merely safe;
-// censoring biases σ̂₀ low, and under misspecification the flags ARE the
-// calibration signal."  A low σ̂₀ inflates every |t|, so a censoring
-// implementation would manufacture the very over-occupancy the card measures.
+// Above-threshold rows are fed into σ̂₀ because censoring them biases σ̂₀ low, and
+// under misspecification the flagged rows are the calibration signal.  A low σ̂₀
+// inflates every |t|, so a censoring implementation would create the
+// over-occupancy the census measures.
 TEST(PriorResidualCensusTest, CensoringAboveThresholdRowsBiasesSigma0Low) {
     NetworkPriorResidual full = makeCensus(/*min_rows=*/100.0);
     NetworkPriorResidual cens = makeCensus(/*min_rows=*/100.0);
@@ -301,7 +302,7 @@ TEST(PriorResidualCensusTest, CensoringAboveThresholdRowsBiasesSigma0Low) {
         const double s = td(g);
         auto r_full = row(s, 2.0, 1.0);            // D{ê} = 1 ⇒ e == s
         auto r_cens = r_full;
-        if (std::abs(s) > 4.0) r_cens.calibrate = false;   // the forbidden censoring
+        if (std::abs(s) > 4.0) r_cens.calibrate = false;   // the censoring under test
         full.addRow(r_full);
         cens.addRow(r_cens);
     }
@@ -311,13 +312,13 @@ TEST(PriorResidualCensusTest, CensoringAboveThresholdRowsBiasesSigma0Low) {
     ASSERT_TRUE(cens.sigma0Warm(0));
     EXPECT_LT(cens.sigma0(0), full.sigma0(0))
         << "censoring the tail must bias sigma0 LOW (and every |t| high)";
-    // And the exclusion must be auditable, not silent.
+    // The exclusion is counted (n_no_sigma0), so it can be audited.
     EXPECT_GT(cens.runLadder(0, PriorResidualLabel::Clean).n_no_sigma0, 0);
     EXPECT_EQ(full.runLadder(0, PriorResidualLabel::Clean).n_no_sigma0, 0);
 }
 
 // ---------------------------------------------------------------------------
-// 6. THE PARTITION — three populations, never pooled, never double-counted.
+// 6. The partition: three populations, neither pooled nor double-counted.
 // ---------------------------------------------------------------------------
 TEST(PriorResidualCensusTest, LabelLaddersPartitionTheRowsExactly) {
     NetworkPriorResidual c = makeCensus(/*min_rows=*/1e18);
@@ -337,7 +338,7 @@ TEST(PriorResidualCensusTest, LabelLaddersPartitionTheRowsExactly) {
     EXPECT_EQ(c.epochRowsResp(), kResp);
     EXPECT_EQ(c.epochRowsFrame(), kFrame);
     EXPECT_EQ(c.runRows(0), kClean + kResp + kFrame);
-    // Only the CLEAN rows took the folded branch here.
+    // Only the Clean rows took the folded branch here.
     EXPECT_EQ(c.epochLadder(0, PriorResidualLabel::Clean).n_folded, kClean);
     EXPECT_EQ(c.epochLadder(0, PriorResidualLabel::Responded).n_folded, 0);
     EXPECT_EQ(c.epochLadder(0, PriorResidualLabel::Frame).n_folded, 0);
@@ -348,15 +349,15 @@ TEST(PriorResidualCensusTest, LabelLaddersPartitionTheRowsExactly) {
 }
 
 // ---------------------------------------------------------------------------
-// 7. WARM-UP HONESTY — below min_rows, t IS s and the row says so.
+// 7. Warm-up: below min_rows, t equals s and the row is flagged raw-formal.
 // ---------------------------------------------------------------------------
-// The alternative (silently standardizing by a seed) is what makes a cold ladder
-// indistinguishable from a calibrated one, which is exactly the confusion the
-// trace's `sigma0_warm` column exists to prevent.
+// Standardizing by a seed value without a flag would make a cold ladder
+// indistinguishable from a calibrated one; the trace's `sigma0_warm` column
+// exists to keep them apart.
 TEST(PriorResidualCensusTest, BelowWarmUpReportsRawFormalAndFlagsIt) {
     NetworkPriorResidual c = makeCensus(/*min_rows=*/1000.0);
     std::mt19937 g(3u);
-    std::normal_distribution<double> nd(0.0, 3.0);   // truth sigma 3, NOT 1
+    std::normal_distribution<double> nd(0.0, 3.0);   // true sigma 3, not 1
 
     c.beginEpoch(0.0, 0.0);
     feedUnitRows(c, 100, g, nd);                     // far below min_rows
@@ -370,7 +371,7 @@ TEST(PriorResidualCensusTest, BelowWarmUpReportsRawFormalAndFlagsIt) {
     EXPECT_DOUBLE_EQ(st.sigma0, 1.0);
     EXPECT_EQ(c.epochLadder(0, PriorResidualLabel::Clean).n_raw_formal, 1);
 
-    // Past the warm-up the SAME row standardizes by the measured scale (~3).
+    // Past the warm-up the same row standardizes by the measured scale (~3).
     for (int e = 1; e <= 12; ++e) {
         c.beginEpoch(30.0 * e, 30.0 * e);
         feedUnitRows(c, 200, g, nd);
@@ -384,12 +385,13 @@ TEST(PriorResidualCensusTest, BelowWarmUpReportsRawFormalAndFlagsIt) {
 }
 
 // ---------------------------------------------------------------------------
-// 8. THE r CLAMP — the documented coupling-carry case, not a negative variance.
+// 8. The r clamp: the documented coupling-carry case, not a negative variance.
 // ---------------------------------------------------------------------------
 // Under network.carry_conditional_coupling the harvested post_var is a
-// CONDITIONAL variance that can legitimately exceed the prior (NetworkCarryVce
+// conditional variance that can legitimately exceed the prior (NetworkCarryVce
 // documents this at its own clamp).  fold_var − post_var would then be negative
-// and √D{ê} a NaN, so the census must clamp exactly as the monitor does.
+// and √D{ê} a NaN, so the census clamps r, as NetworkCarryVce does, but to its
+// own floor of 1e-9 (kRedundancyFloor) instead of 1e-3.
 TEST(PriorResidualCensusTest, PostVarAboveFoldVarClampsInsteadOfGoingNegative) {
     NetworkPriorResidual c = makeCensus(/*min_rows=*/1e18);
     c.beginEpoch(0.0, 0.0);
@@ -403,20 +405,20 @@ TEST(PriorResidualCensusTest, PostVarAboveFoldVarClampsInsteadOfGoingNegative) {
                                   "prior/posterior pair that does not describe one fold";
     EXPECT_GT(st.disp, 0.0);
     EXPECT_TRUE(std::isfinite(st.s));
-    EXPECT_NEAR(st.r, 1e-9, 1e-21);                     // the NUMERICAL [eps,1] floor
+    EXPECT_NEAR(st.r, 1e-9, 1e-21);                     // the numerical [eps,1] floor
     EXPECT_NEAR(st.disp, 1e-9 * fold_var, 1e-24);
-    // ⚠ SINCE THE RNEG RE-PARTITION (test 14) the row is counted in the RNEG
-    // class, not in the label ladder: its |t| is not a standardized residual,
-    // so it is out of every bin, out of sum_log_t2 and out of the worst-|t|
-    // line.  The clamp itself is unchanged — that is what this test pins.
+    // With the rneg re-partition (case 22) the row is counted in the rneg class,
+    // not in the label ladder: its |t| is not a standardized residual, so it is
+    // out of every bin, out of sum_log_t2 and out of the worst-|t| line.  The
+    // clamp itself is unchanged, and that is what this case pins.
     EXPECT_EQ(c.epochLadder(0, PriorResidualLabel::Clean).n_r_clamped, 0);
     EXPECT_EQ(c.epochLadder(0, PriorResidualLabel::Clean).n_r_negative, 0);
     EXPECT_EQ(c.rnegEpochLadder(0, PriorResidualLabel::Clean).n_rows, 1);
     EXPECT_EQ(c.rnegEpochLadder(0, PriorResidualLabel::Clean).n_r_clamped, 1);
     EXPECT_EQ(c.rnegEpochLadder(0, PriorResidualLabel::Clean).n_r_negative, 1);
-    // A genuinely STIFF prior (r = 1e-6, three decades under the VCE's old 1e-3
-    // floor) must pass through UNCLAMPED — that is the whole point of the tighter
-    // floor, and clamping it would hide a stale stiff carry.
+    // A stiff prior (r = 1e-6, three decades under NetworkCarryVce's 1e-3 floor)
+    // passes through unclamped; that is the purpose of the tighter floor, and
+    // clamping it would hide a stale stiff carry.
     const double p = 1e-6, d = 1.0, v = p * d / (p + d);
     const auto stiff = c.addRow(row(/*e=*/1e-3, p, v));
     EXPECT_FALSE(stiff.r_clamped);
@@ -430,7 +432,7 @@ TEST(PriorResidualCensusTest, PostVarAboveFoldVarClampsInsteadOfGoingNegative) {
 }
 
 // ---------------------------------------------------------------------------
-// 9. OFF IS STRUCTURALLY INERT.
+// 9. An unarmed census is structurally inert.
 // ---------------------------------------------------------------------------
 TEST(PriorResidualCensusTest, UnarmedCensusIsStructurallyInert) {
     NetworkPriorResidual off(std::vector<std::string>{}, 60.0);
@@ -446,7 +448,7 @@ TEST(PriorResidualCensusTest, UnarmedCensusIsStructurallyInert) {
     EXPECT_EQ(off.epochRows(), 0);
     EXPECT_TRUE(off.hits().empty());
 
-    // An ARMED census still ignores a family it was not asked for.
+    // An armed census still ignores a family it was not configured for.
     NetworkPriorResidual on = makeCensus();
     on.beginEpoch(0.0, 0.0);
     auto other = row(1e6, 1e-6, 1e-9);
@@ -456,17 +458,18 @@ TEST(PriorResidualCensusTest, UnarmedCensusIsStructurallyInert) {
 }
 
 // ---------------------------------------------------------------------------
-// 10. ★ THE BRANCH TEST — and the ×3000 artifact, kept as a NEGATIVE example.
+// 10. The branch test, with the wrong-branch artifact kept as a negative example.
 // ---------------------------------------------------------------------------
-// The sign flip is exact, not a convention.  With the fold IN,
-// Cov(z₀, ξ̂) = post_var, so D{z₀ − ξ̂} = fold_var + post_var − 2·post_var.
-// With the fold OUT, prior and solve are independent and the variances ADD.
+// The sign flip follows from the covariance, not from a convention.  With the
+// fold in, Cov(z₀, ξ̂) = post_var, so D{z₀ − ξ̂} = fold_var + post_var − 2·post_var.
+// With the fold out, prior and solve are independent and the variances add.
 //
-// The second half is the trap: a refloat-scale row (post_var = 1e4·fold_var)
-// pushed through the FOLDED branch has its r slammed into the ε clamp and its
-// |t| inflated by ~×3000.  If that ever happens in the field wiring, every
-// RESPONDED row lands in the top ladder bin by construction and §9 gate 3 — the
-// positive control — passes vacuously while measuring nothing at all.
+// The second half is the failure mode: a refloat-scale row (post_var =
+// 1e4·fold_var) sent through the folded branch has its r clamped to ε and its |t|
+// inflated (about ×3000 at a 1e-3 floor, far more at the census floor; see
+// below).  If the field wiring did that, every Responded row would land in the
+// top ladder bin by construction, and §9 gate 3 (the positive control) would pass
+// vacuously.
 TEST(PriorResidualCensusTest, FoldedAndUnfoldedBranchesAndTheClampArtifact) {
     NetworkPriorResidual c = makeCensus(/*min_rows=*/1e18);
     c.beginEpoch(0.0, 0.0);
@@ -493,12 +496,12 @@ TEST(PriorResidualCensusTest, FoldedAndUnfoldedBranchesAndTheClampArtifact) {
     EXPECT_TRUE(wrong.r_clamped);
     EXPECT_FALSE(correct.r_clamped);
     EXPECT_TRUE(wrong.r_negative);
-    // The spec quotes ~x3000, computed at NetworkCarryVce's eps = 1e-3.  The
-    // census floors at 1e-9 (see kRedundancyFloor — a 1e-3 floor would have
-    // truncated genuinely stiff priors, case 1), so the artifact is far LARGER
-    // here: sqrt((p+v)/(eps*p)) = sqrt(1.0001 / 1e-13) ~ 3.2e6.  The number is
-    // the artifact's size, not a target — it is asserted so a future reader who
-    // sees a RESPONDED ladder pinned at the top bin recognizes the signature.
+    // The spec quotes about ×3000, computed at NetworkCarryVce's eps = 1e-3.  The
+    // census floors at 1e-9 (see kRedundancyFloor; a 1e-3 floor would truncate
+    // stiff priors, case 1), so the artifact is far larger here:
+    // sqrt((p+v)/(eps*p)) = sqrt(1.0001 / 1e-13) ~ 3.2e6.  The number is the
+    // artifact's size, not a target; it is asserted so that a Responded ladder
+    // pinned at the top bin can be recognized by this signature.
     const double ratio = std::abs(wrong.t) / std::abs(correct.t);
     EXPECT_NEAR(ratio / std::sqrt((refloat_fold + refloat_post)
                                   / (1e-9 * refloat_fold)), 1.0, 1e-6);
@@ -506,27 +509,27 @@ TEST(PriorResidualCensusTest, FoldedAndUnfoldedBranchesAndTheClampArtifact) {
 }
 
 // ---------------------------------------------------------------------------
-// 11. INC-3 — the contingency table (the b-cell is the number that matters).
+// 11. The corroboration contingency table; the b-cell is the reported number (INC-3).
 // ---------------------------------------------------------------------------
-// Not in the spec's numbered list, but the join is a v1 deliverable precisely
-// BECAUSE D5 spent three cycles before anyone measured it, so the wiring gets a
-// case of its own: the resolver must be consulted per row, the split must land
-// on the report threshold, and the cells must close.
+// Not in the spec's numbered list, but the join is a v1 deliverable (D5 went three
+// cycles without this measurement), so the wiring has its own case: the resolver
+// is consulted per row, the split lands on the report threshold, and the cells
+// close.
 TEST(PriorResidualCensusTest, CorroborationJoinFillsTheContingencyTable) {
     NetworkPriorResidual c(std::vector<std::string>{"pl"}, /*window*/ 0.0,
                            /*min_rows=*/1e18, /*report_sigma=*/4.0,
                            /*corroborate=*/true);
     // Resolver keyed off the satellite id so the test controls each row's cell.
-    // ONE-member domains, so priorResidualConsensus degenerates to the member's
-    // own verdict and this case keeps testing the TABLE rather than the rule
-    // (the rule has its own cases, 19 and 20).
+    // One-member domains, so priorResidualConsensus reduces to the member's own
+    // verdict and this case tests the table rather than the rule (the rule has
+    // its own cases, 19 and 20).
     c.setCorroborator([](std::string_view, int, std::string_view sat) {
         if (sat == "G01") return PriorResidualEvidence{1, 1};   // Stepped
         if (sat == "G02") return PriorResidualEvidence{1, 0};   // Flat
         return PriorResidualEvidence{0, 0};                     // NoEvidence
     });
     c.beginEpoch(0.0, 0.0);
-    // D{ê} = 1 here, and the census is raw-formal (σ̂₀ = 1), so e IS |t|.
+    // D{ê} = 1 here, and the census is raw-formal (σ̂₀ = 1), so e equals |t|.
     const char* sats[] = {"G01", "G02", "G03"};
     for (int k = 0; k < 3; ++k) {
         for (int i = 0; i < 5; ++i) {          // above the 4σ report threshold
@@ -547,7 +550,7 @@ TEST(PriorResidualCensusTest, CorroborationJoinFillsTheContingencyTable) {
     for (int r = 0; r < 2; ++r)
         for (int k = 0; k < kPriorResidualCorrobs; ++k) tot += L.contingency[r][k];
     EXPECT_EQ(tot, L.n_rows) << "the table must close over every row";
-    // An UNARMED join leaves the table empty rather than defaulting a column.
+    // An unarmed join leaves the table empty rather than defaulting a column.
     NetworkPriorResidual plain = makeCensus(/*min_rows=*/1e18);
     plain.beginEpoch(0.0, 0.0);
     plain.addRow(row(10.0, 2.0, 1.0));
@@ -560,8 +563,8 @@ TEST(PriorResidualCensusTest, CorroborationJoinFillsTheContingencyTable) {
 // ---------------------------------------------------------------------------
 // 12. The bounded identity buffer never costs a ladder count.
 // ---------------------------------------------------------------------------
-// Standing invariant #4 in its subtlest form: a truncated EVENT stream must not
-// make a busy epoch read as a quiet one.  The cap thins identities only.
+// Standing invariant #4: a truncated event stream does not make a busy epoch read
+// as a quiet one.  The cap thins identities only; ladder counts stay complete.
 TEST(PriorResidualCensusTest, IdentityBufferCapNeverThinsTheLadder) {
     NetworkPriorResidual c = makeCensus(/*min_rows=*/1e18, /*report_sigma=*/4.0);
     c.beginEpoch(0.0, 0.0);
@@ -578,20 +581,19 @@ TEST(PriorResidualCensusTest, IdentityBufferCapNeverThinsTheLadder) {
 }
 
 // ===========================================================================
-//  THE CONSTRAINT-AWARE GLOBAL VARIANCE COMPONENT
-//  (docs/SPEC_prior_residual_census.md §14) — LASER 5-74's other half
+//  The constraint-aware global variance component
+//  (docs/SPEC_prior_residual_census.md §14): the other half of LASER 5-74
 // ===========================================================================
 
 // ---------------------------------------------------------------------------
-// 13. ★ THE 5-74 IDENTITY — the rider's foundational claim.
+// 13. The 5-74 identity, on which the rider depends.
 // ---------------------------------------------------------------------------
-// sigma0^2 = (v'Pv + e0'P0e0)/(n − m + l): prior residuals in the NUMERATOR,
-// constraints in the REDUNDANCY.  Checked against a closed form derived without
-// touching the accumulator — for a one-redundancy scalar net the variance factor
-// is the squared misfit between two independent measurements of the same unknown
-// over their combined variance, (z − z0)^2/(d + p).  If the four sums were
-// assembled wrongly the ladders would be unaffected and NOTHING else in this
-// file would notice.
+// sigma0^2 = (v'Pv + e0'P0e0)/(n − m + l): prior residuals in the numerator,
+// constraints in the redundancy.  Checked against a closed form derived without
+// the accumulator: for a one-redundancy scalar net the variance factor is the
+// squared misfit between two independent measurements of the same unknown over
+// their combined variance, (z − z0)^2/(d + p).  Wrongly assembled sums would
+// leave the ladders unaffected, so no other case in this file would detect them.
 TEST(PriorResidualCensusTest, Laser574GlobalIdentityMatchesClosedForm) {
     // Spread over eight decades of p/d, i.e. from a loose carry to a stiff one.
     const double cases[][4] = {
@@ -620,21 +622,20 @@ TEST(PriorResidualCensusTest, Laser574GlobalIdentityMatchesClosedForm) {
         // (a) the numerator halves, each against its own definition
         EXPECT_NEAR(g.s.wv2 / (n.w_d * n.v * n.v), 1.0, 1e-12);
         EXPECT_NEAR(g.s.we2 / (n.w_0 * n.e0 * n.e0), 1.0, 1e-12);
-        // (b) THE REDUNDANCY.  Slide 5-74's n − m + l = 1 − 1 + 1 = 1 has to
-        //     fall out of the two per-row redundancies SUMMING, which is the
-        //     whole reason the two pools may be added at all.
+        // (b) The redundancy.  Slide 5-74's n − m + l = 1 − 1 + 1 = 1 is the sum
+        //     of the two per-row redundancies, which is what allows the two
+        //     pools to be added.
         EXPECT_NEAR(g.s.r_data + g.s.r_prior, 1.0, 1e-12)
             << "sum of partial redundancies must equal n - m + l (d=" << d
             << " p=" << p << ")";
         // (c) the statistic, against the independent closed form.  The tolerance
-        //     is conditioning-aware for the same reason case 1's is, and the
-        //     conditioning here is the RESIDUALS', not the data's: on a stiff
-        //     prior the solution sits almost on top of z0, so e0 = z0 − xi_hat is
-        //     a difference of near-equal doubles (|z0|/|e0| ~ 1e4 on the fourth
-        //     net) while the closed form reaches the same number through (z − z0)
-        //     — different arithmetic, so the two disagree at the cancellation
-        //     level and no tighter tolerance is READABLE.  Well-conditioned nets
-        //     hold the spec's 1e-12.
+        //     is conditioning-aware for the same reason as case 1's, and the
+        //     conditioning here is that of the residuals, not the data: on a stiff
+        //     prior the solution sits almost on z0, so e0 = z0 − xi_hat is a
+        //     difference of near-equal doubles, while the closed form reaches the
+        //     same number through (z − z0).  The two computations differ at the
+        //     cancellation level, so no tighter tolerance can be resolved.
+        //     Well-conditioned nets hold the spec's 1e-12.
         constexpr double kEps = 2.220446049250313e-16;
         const double cond = (std::abs(z)  + std::abs(n.xhat)) / std::abs(n.v)
                           + (std::abs(z0) + std::abs(n.xhat)) / std::abs(n.e0);
@@ -648,7 +649,7 @@ TEST(PriorResidualCensusTest, Laser574GlobalIdentityMatchesClosedForm) {
         //     equal measure.
         ASSERT_TRUE(g.tension_defined);
         EXPECT_NEAR(g.prior_tension / (p / d), 1.0, tol);
-        // (e) each side is self-consistent: E[w*resid^2] = r for BOTH pools,
+        // (e) each side is self-consistent: E[w*resid^2] = r for both pools,
         //     which is why a vanishing-r row cannot bias the ratio.
         EXPECT_NEAR((g.s.wv2 / g.s.r_data) / (g.s.we2 / g.s.r_prior), 1.0, 1e-9)
             << "the two pools must imply the SAME variance factor on a net with "
@@ -657,15 +658,15 @@ TEST(PriorResidualCensusTest, Laser574GlobalIdentityMatchesClosedForm) {
 }
 
 // ---------------------------------------------------------------------------
-// 14. ★ THE 5-85 EQUIVALENCE — a minimal constraint needs no correction.
+// 14. The 5-85 equivalence: a minimal constraint needs no correction.
 // ---------------------------------------------------------------------------
-// Slide 5-85: for a MINIMAL constraint set n − m + l = n − rk A.  Drive the
-// stochastic constraint's variance to zero (a datum PIN) and the global form must
-// converge to the fixed-constraint statistic e'Pe/(n − rk A) — here 1 data row,
+// Slide 5-85: for a minimal constraint set n − m + l = n − rk A.  As the
+// stochastic constraint's variance goes to zero (a datum pin), the global form
+// converges to the fixed-constraint statistic e'Pe/(n − rk A); here 1 data row,
 // 0 free unknowns, so redundancy 1 and sigma0^2 = w_d (z − z0)^2.  This is why
-// the card corrects the NON-MINIMAL stochastic rows (the carry families) and
-// leaves the datum pins alone: a pin's contribution vanishes at BOTH ends of the
-// ratio, numerator and denominator together.
+// the census corrects the non-minimal stochastic rows (the carry families) and
+// leaves the datum pins alone: a pin's contribution vanishes from numerator and
+// denominator together.
 TEST(PriorResidualCensusTest, Laser585MinimalConstraintEquivalence) {
     const double d = 1.0, z = 0.42, z0 = -0.17;
     const double fixed = (z - z0) * (z - z0) / d;   // e'Pe/(n − rk A), rk A = 0
@@ -677,13 +678,13 @@ TEST(PriorResidualCensusTest, Laser585MinimalConstraintEquivalence) {
         c.addDataRow(n.w_d, n.v, n.r_data, false);
         const auto st = c.addRow(row(n.e0, p, n.post_var));
         ASSERT_TRUE(st.accepted);
-        // The pin is NOT clamped away: r_prior ~ p/d = 1e-8 at the tightest,
-        // still a decade above the numerical floor.  (This is the reason that
-        // floor is 1e-9 and not NetworkCarryVce's 1e-3.)
+        // The pin is not clamped away: r_prior ~ p/d = 1e-8 at the tightest,
+        // still a decade above the numerical floor.  (This is why that floor is
+        // 1e-9 and not NetworkCarryVce's 1e-3.)
         EXPECT_FALSE(st.r_clamped) << "p=" << p;
         const auto g = c.epochGlobal();
         ASSERT_TRUE(g.formed);
-        // The DENOMINATORS coincide: n − m + l -> n − rk A = 1.
+        // The denominators coincide: n − m + l -> n − rk A = 1.
         EXPECT_NEAR(g.s.r_data + g.s.r_prior, 1.0, 1e-12);
         EXPECT_NEAR(g.s.r_data, 1.0, 2.0 * p / d) << "the data row absorbs the whole "
                                                      "redundancy as the pin tightens";
@@ -697,14 +698,14 @@ TEST(PriorResidualCensusTest, Laser585MinimalConstraintEquivalence) {
 }
 
 // ---------------------------------------------------------------------------
-// 15. LABEL / BRANCH DISCIPLINE — three skips, each counted, never silent.
+// 15. Label and branch discipline: three skips, each counted.
 // ---------------------------------------------------------------------------
-// An UNFOLDED row is not a stochastic constraint in this epoch's solve, so it is
-// in neither e0'P0e0 nor l.  A NOMINAL-variance row's w is a fiction.  An
-// r_negative row is a (prior, posterior) pair that does not describe one fold —
+// An unfolded row is not a stochastic constraint in this epoch's solve, so it is
+// in neither e0'P0e0 nor l.  A nominal-variance row has no real weight w.  An
+// r_negative row is a (prior, posterior) pair that does not describe one fold:
 // its numerator is real and its redundancy is not, and admitting one without the
-// other is EXACTLY the bias this card exists to remove.  Every skip is counted
-// and surfaced, because a one-sided row shifts the ratio with nothing saying so.
+// other is the bias the rider exists to remove.  Every skip is counted and
+// reported, because a one-sided row shifts the ratio with no other visible sign.
 TEST(PriorResidualCensusTest, UnfoldedAndUnusableRowsMoveNeitherGlobalSum) {
     NetworkPriorResidual c = makeGlobalCensus();
     c.beginEpoch(0.0, 0.0);
@@ -716,8 +717,8 @@ TEST(PriorResidualCensusTest, UnfoldedAndUnusableRowsMoveNeitherGlobalSum) {
     EXPECT_NEAR(we2_0, 0.02 * 0.02 / 4e-4, 1e-15);
     EXPECT_NEAR(rp_0, 0.75, 1e-15);
 
-    // (a) an unfolded RESPONDED refloat — the population whose folded-form
-    //     misuse inflates |t| by ~3e6 in case 10.  Here it must simply vanish.
+    // (a) an unfolded Responded refloat, the population whose folded-form misuse
+    //     inflates |t| by ~3e6 in case 10.  Here it enters neither sum.
     c.addRow(row(1.0, 1e-4, 1.0, /*folded=*/false, PriorResidualLabel::Responded));
     // (b) a nominal fold variance (the phase_hold population).
     auto nom = row(1.0, 4e-4, 1e-4);  nom.var_nominal = true;  nom.calibrate = false;
@@ -735,17 +736,16 @@ TEST(PriorResidualCensusTest, UnfoldedAndUnusableRowsMoveNeitherGlobalSum) {
     EXPECT_TRUE(g.flags & NetworkPriorResidual::kGlobalRnegDrop)
         << "an r_negative drop must be visible in-band, not only in a counter";
     EXPECT_FALSE(g.flags & NetworkPriorResidual::kGlobalNoPrior);
-    // The LADDERS, by contrast, saw all four rows: the census tests every row and
-    // the rider pools only the ones the identity admits.  That asymmetry is the
-    // design, and it is the reason the two live in one class but two readouts.
+    // The ladder side, by contrast, saw all four rows: the census tests every row
+    // and the rider pools only the rows the identity admits.  That asymmetry is by
+    // design, and it is why the two share one class but have two readouts.
     //
-    // ⚠ SINCE THE RNEG RE-PARTITION (test 14) the two readouts agree on ONE more
-    // thing: row (c) — post_var > fold_var — is in the RNEG class on the ladder
-    // side too, exactly as the rider has always dropped it (kGlobalRnegDrop).
-    // Rows (a) unfolded and (b) var_nominal are still ordinary LABEL rows: the
-    // rider skips them because they are not stochastic constraints in THIS
-    // epoch's solve, which says nothing about whether their |t| is a valid
-    // statistic.  The total is what must stay at four.
+    // With the rneg re-partition (case 22) the two readouts also agree on row (c)
+    // (post_var > fold_var): the ladder side puts it in the rneg class, and the
+    // rider drops it (kGlobalRnegDrop).  Rows (a) unfolded and (b) var_nominal
+    // remain ordinary label rows: the rider skips them because they are not
+    // stochastic constraints in this epoch's solve, which says nothing about
+    // whether their |t| is a valid statistic.  The total stays at four.
     long long label_rows = 0, rneg_rows = 0;
     for (int li = 0; li < kPriorResidualLabels; ++li) {
         const auto lab = static_cast<PriorResidualLabel>(li);
@@ -760,11 +760,11 @@ TEST(PriorResidualCensusTest, UnfoldedAndUnusableRowsMoveNeitherGlobalSum) {
 }
 
 // ---------------------------------------------------------------------------
-// 16. THE APPROX FALLBACK — degraded, flagged, and degraded in ONE direction.
+// 16. The approx fallback: degraded, flagged, and biased in one known direction.
 // ---------------------------------------------------------------------------
-// Without network.raim_redundancy_normalize there is no honest Σr_data.  The
-// r == 1 fallback leaves the NUMERATOR untouched and inflates the denominator, so
-// sigma0_global reads LOW — a reader who knows the direction can still use it,
+// Without network.raim_redundancy_normalize there is no true Σr_data.  The
+// r == 1 fallback leaves the numerator untouched and inflates the denominator, so
+// sigma0_global reads low.  A reader who knows the direction can still use it,
 // which is why the flag is in-band per epoch rather than a footnote.
 TEST(PriorResidualCensusTest, ApproxRedundancyFlagChangesOnlyTheDenominator) {
     NetworkPriorResidual real = makeGlobalCensus();
@@ -795,9 +795,9 @@ TEST(PriorResidualCensusTest, ApproxRedundancyFlagChangesOnlyTheDenominator) {
     EXPECT_LT(ga.sigma0_global, gr.sigma0_global)
         << "the fallback over-counts the redundancy, so the degraded number is "
            "LOW — a known direction, not an unknown error";
-    // The other two in-band states, on the same footing: an epoch with no data
-    // rows is PRIOR-ONLY and one with no folded priors is DATA-ONLY (which is
-    // precisely the quantity this card exists to correct).
+    // The other two in-band states: an epoch with no data rows is prior-only
+    // (kGlobalNoData), and one with no folded priors is data-only (kGlobalNoPrior,
+    // the quantity the rider exists to correct).
     NetworkPriorResidual pr = makeGlobalCensus();
     pr.beginEpoch(0.0, 0.0);
     pr.addRow(row(0.02, 4e-4, 1e-4));
@@ -806,7 +806,7 @@ TEST(PriorResidualCensusTest, ApproxRedundancyFlagChangesOnlyTheDenominator) {
     dt.beginEpoch(0.0, 0.0);
     dt.addDataRow(2.0, 0.01, 0.5, false);
     EXPECT_TRUE(dt.epochGlobal().flags & NetworkPriorResidual::kGlobalNoPrior);
-    // And an epoch with nothing at all forms NO number — blank, never zero.
+    // An epoch with no rows at all forms no number (blank, not zero).
     NetworkPriorResidual none = makeGlobalCensus();
     none.beginEpoch(0.0, 0.0);
     const auto gn = none.epochGlobal();
@@ -816,11 +816,11 @@ TEST(PriorResidualCensusTest, ApproxRedundancyFlagChangesOnlyTheDenominator) {
 }
 
 // ---------------------------------------------------------------------------
-// 17. OFF IS STRUCTURALLY INERT — and changes no ladder when ON.
+// 17. The rider is structurally inert when off and changes no ladder when on.
 // ---------------------------------------------------------------------------
-// The second half is the property the field A/B rests on: the rider is a pure
-// rider, so arming it may not perturb a single census count anywhere.  If it
-// did, the census's own gates would silently stop being comparable across arms.
+// The second half is the property the field A/B depends on: arming the rider
+// changes no census count anywhere.  If it did, the census's own gates would
+// stop being comparable across arms without any sign of it.
 TEST(PriorResidualCensusTest, GlobalRiderIsInertOffAndLadderNeutralOn) {
     NetworkPriorResidual off = makeCensus(/*min_rows=*/1e18);
     EXPECT_FALSE(off.globalOn());
@@ -873,12 +873,12 @@ TEST(PriorResidualCensusTest, GlobalRiderIsInertOffAndLadderNeutralOn) {
 }
 
 // ---------------------------------------------------------------------------
-// 18. THE PER-FAMILY SPLIT CLOSES, AND THE HISTORY IS WHAT THE QUANTILES CLAIM.
+// 18. The per-family split closes, and the history is what the quantiles claim.
 // ---------------------------------------------------------------------------
-// The split is the column that has to reconcile with M2's per-family robust
-// sigma-hat to ~factor 2; a split that did not sum to the total would make that
+// The split is the column that reconciles with M2's per-family robust sigma-hat
+// to about a factor of 2; a split that did not sum to the total would make that
 // reconciliation meaningless.  The history is the population the run-end median
-// and p95 are quoted over, and it must be exactly the DRAINED epochs.
+// and p95 are quoted over, and it holds exactly the drained epochs.
 TEST(PriorResidualCensusTest, GlobalPerFamilySplitClosesAndHistoryTracksDrainedEpochs) {
     NetworkPriorResidual c(std::vector<std::string>{"pl", "cb"}, /*window*/ 0.0,
                            /*min_rows=*/1e18, /*report_sigma=*/4.0,
@@ -890,7 +890,7 @@ TEST(PriorResidualCensusTest, GlobalPerFamilySplitClosesAndHistoryTracksDrainedE
         auto b = row(0.003 * (ep + 1), 1e-3, 2e-4);  b.family = "cb";
         c.addRow(a);
         c.addRow(b);
-        // Only three of the four epochs are DRAINED (one stands for an epoch
+        // Only three of the four epochs are drained (one stands for an epoch
         // withheld between the census's beginEpoch and the emission seam).
         if (ep != 2) c.recordEpochGlobal();
     }
@@ -904,56 +904,55 @@ TEST(PriorResidualCensusTest, GlobalPerFamilySplitClosesAndHistoryTracksDrainedE
     EXPECT_NEAR(F0.r_prior + F1.r_prior, G.s.r_prior, 1e-12);
     EXPECT_DOUBLE_EQ(F0.wv2, 0.0) << "the data side is global, never per-family";
     EXPECT_DOUBLE_EQ(F1.wv2, 0.0);
-    // The run sums include the UNDRAINED epoch (its rows are real), while the
-    // per-epoch history covers only the drained ones — the two are different
-    // populations on purpose, and the run-end line says so.
+    // The run sums include the undrained epoch (its rows are real), while the
+    // per-epoch history covers only the drained ones.  The two populations differ
+    // by design, and the run-end line states this.
     EXPECT_EQ(c.globalEpochs(), 3);
     EXPECT_EQ(c.globalSampleCount(), 3u);
     EXPECT_EQ(c.globalSamplesDropped(), 0);
     EXPECT_GT(c.globalQuantile(0.50), 0.0);
     EXPECT_LE(c.globalQuantile(0.05), c.globalQuantile(0.95));
     EXPECT_LE(c.tensionQuantile(0.05), c.tensionQuantile(0.95));
-    // A per-epoch ladder/global reset really happened between epochs.
+    // The per-epoch global sums were reset between epochs.
     const auto ge = c.epochGlobal();
     EXPECT_EQ(ge.s.n_prior, 2);
     EXPECT_EQ(ge.s.n_data, 1);
 }
 
 // ---------------------------------------------------------------------------
-// 19. ★ THE CONSENSUS RULE — and the roster-dependence it removes.
+// 19. The consensus rule, and the roster dependence it removes.
 // ---------------------------------------------------------------------------
-// v1 resolved a multi-member corroboration domain with an OR ("did ANY member
-// step?").  That is defensible at 63 stations and DEGENERATE at 303: measured on
-// identical data the same day, `cb` rows reading raw_stepped went 29 % -> 70 %
-// and the b-cell — the card's headline INC-3 number — collapsed 57 % -> 21 %,
-// purely because P(any of N steps) = 1-(1-p)^N -> 1.  A statistic whose value
-// depends on how many receivers happen to be in the roster is not measuring the
-// satellite.
+// v1 resolved a multi-member corroboration domain with an OR ("did any member
+// step?").  The OR saturates as the domain grows, because P(any of N steps) =
+// 1-(1-p)^N -> 1.  On identical data, going from 63 to 303 stations moved the
+// raw_stepped share of `cb` rows from 29 % to 70 % and the b-cell (the INC-3
+// headline number) from 57 % to 21 %.  A statistic that depends on how many
+// receivers are in the roster does not measure the satellite.
 //
-// The fix is a vote, not a threshold, and it is physically grounded: the
-// discontinuities these priors can suffer are COMMON-MODE over their domain by
+// The replacement is a vote, not a threshold, and it follows the physics: the
+// discontinuities these priors can suffer are common-mode over their domain by
 // construction (a satellite bias jump enters MW/GF at every station tracking it;
 // a receiver reset moves every satellite at that station).
 TEST(PriorResidualCensusTest, ConsensusRuleReplacesTheRosterDependentOr) {
     using E = PriorResidualEvidence;
     // Nothing measurable ⇒ NoEvidence, whatever the domain size.
     EXPECT_EQ(priorResidualConsensus(E{0, 0}), PriorResidualCorrob::NoEvidence);
-    // A ONE-member domain is the `pl` case and MUST be unchanged from v1 —
-    // consensus degenerates to the member's own verdict.
+    // A one-member domain is the `pl` case and is unchanged from v1: the
+    // consensus reduces to the member's own verdict.
     EXPECT_EQ(priorResidualConsensus(E{1, 0}), PriorResidualCorrob::Flat);
     EXPECT_EQ(priorResidualConsensus(E{1, 1}), PriorResidualCorrob::Stepped);
     for (int stepped = 0; stepped <= 1; ++stepped)
         EXPECT_EQ(priorResidualConsensus(E{1, stepped}),
                   priorResidualOrVerdict(E{1, stepped}))
             << "the consensus must be a NO-OP on a one-member domain";
-    // Multi-member: STRICT majority.  A tie is NOT a consensus.
+    // Multi-member: strict majority.  A tie is not a consensus.
     EXPECT_EQ(priorResidualConsensus(E{2, 1}), PriorResidualCorrob::Flat);
     EXPECT_EQ(priorResidualConsensus(E{2, 2}), PriorResidualCorrob::Stepped);
     EXPECT_EQ(priorResidualConsensus(E{4, 2}), PriorResidualCorrob::Flat);
     EXPECT_EQ(priorResidualConsensus(E{4, 3}), PriorResidualCorrob::Stepped);
-    // THE PROPERTY THAT MATTERS.  Hold the per-arc step RATE fixed at 20 % and
-    // grow the domain from 10 to 1000: the OR saturates to Stepped, the
-    // consensus stays Flat.  This is the 63 -> 305 collapse, reproduced.
+    // The main property: with the per-arc step rate fixed at 20 % and the domain
+    // grown from 10 to 1000, the OR saturates to Stepped and the consensus stays
+    // Flat.  This reproduces the 63 -> 303 station collapse described above.
     for (int n : {10, 30, 63, 150, 303, 1000}) {
         const E ev{n, n / 5};                       // 20 % of members stepped
         EXPECT_EQ(priorResidualOrVerdict(ev), PriorResidualCorrob::Stepped)
@@ -971,12 +970,13 @@ TEST(PriorResidualCensusTest, ConsensusRuleReplacesTheRosterDependentOr) {
 }
 
 // ---------------------------------------------------------------------------
-// 20. The corroboration AUDIT columns close, and the fix can only raise the b-cell.
+// 20. The corroboration audit columns close, and the rule can only raise the b-cell.
 // ---------------------------------------------------------------------------
-// The consensus can only move rows Stepped -> Flat, so it can only RAISE the
-// b-cell, which is the number the card reports as its finding.  Presenting that
-// without showing how much the rule moved would be circular — hence the audit
-// trio.  This pins the arithmetic those columns must satisfy.
+// Relative to the OR, the consensus can only move rows Stepped -> Flat, so it can
+// only raise the b-cell, which is the number the census reports as its finding.
+// Reporting that without showing how much the rule moved would be circular, hence
+// the three audit columns (n_corrob_rows, n_corrob_or_stepped, n_corrob_stepped).
+// This case pins the arithmetic those columns satisfy.
 TEST(PriorResidualCensusTest, CorroborationAuditColumnsCloseAndBoundTheBCell) {
     NetworkPriorResidual c(std::vector<std::string>{"pl"}, /*window*/ 0.0,
                            /*min_rows=*/1e18, /*report_sigma=*/4.0,
@@ -996,16 +996,15 @@ TEST(PriorResidualCensusTest, CorroborationAuditColumnsCloseAndBoundTheBCell) {
     EXPECT_DOUBLE_EQ(L.meanCorrobDomain(), 100.0);
     EXPECT_EQ(L.n_corrob_or_stepped, kHi + kLo) << "v1's OR would have saturated";
     EXPECT_EQ(L.n_corrob_stepped, 0)            << "the consensus refuses a 20 % minority";
-    // Every flagged row therefore lands in the b-cell rather than the a-cell —
-    // and the audit above is what lets a reader see that it was the RULE, not
-    // the data, that put them there.
+    // Every flagged row therefore lands in the b-cell rather than the a-cell, and
+    // the audit columns above show that the rule, not the data, put them there.
     EXPECT_EQ(L.contingency[0][static_cast<int>(PriorResidualCorrob::Flat)], kHi);
     EXPECT_EQ(L.contingency[0][static_cast<int>(PriorResidualCorrob::Stepped)], 0);
     EXPECT_EQ(L.contingency[1][static_cast<int>(PriorResidualCorrob::Flat)], kLo);
     // The consensus count can never exceed the OR count: the rule is one-way.
     EXPECT_LE(L.n_corrob_stepped, L.n_corrob_or_stepped);
 
-    // A one-member domain leaves both counts equal — the no-op case.
+    // A one-member domain leaves both counts equal (the no-op case).
     NetworkPriorResidual solo(std::vector<std::string>{"pl"}, 0.0, 1e18, 4.0, true);
     solo.setCorroborator([](std::string_view, int, std::string_view) {
         return PriorResidualEvidence{1, 1};
@@ -1019,15 +1018,15 @@ TEST(PriorResidualCensusTest, CorroborationAuditColumnsCloseAndBoundTheBCell) {
 }
 
 // ---------------------------------------------------------------------------
-// 21. THE SENSITIVITY COLUMN — what makes a null consensus count falsifiable.
+// 21. The sensitivity column, which makes a null consensus count falsifiable.
 // ---------------------------------------------------------------------------
-// "The consensus fired 0 times" reads identically whether no common-mode event
-// occurred or the rule could never have seen one.  max_corrob_frac is the number
-// that separates those two readings: it is the highest stepped fraction any
-// domain reached, against the rule's strict-majority bar of 0.5.  Measured on
-// the FT63 smoke the cb family reached far below the bar, so its zero consensus
-// count is uninformative about the rule's POWER — and the run-end line says so
-// in as many words rather than presenting the zero as a result.
+// "The consensus fired 0 times" reads the same whether no common-mode event
+// occurred or the rule could never have seen one.  max_corrob_frac separates the
+// two readings: it is the highest stepped fraction any domain reached, against
+// the rule's strict-majority bar of 0.5.  When a family stays far below the bar
+// (as cb did on the FT63 smoke), its zero consensus count says nothing about the
+// rule's power, and the run-end line states that instead of presenting the zero
+// as a result.
 TEST(PriorResidualCensusTest, MaxCorroborationFractionMakesTheNullFalsifiable) {
     auto runWith = [](int n_measured, int n_stepped) {
         NetworkPriorResidual c(std::vector<std::string>{"pl"}, 0.0, 1e18, 4.0, true);
@@ -1044,8 +1043,8 @@ TEST(PriorResidualCensusTest, MaxCorroborationFractionMakesTheNullFalsifiable) {
     EXPECT_NEAR(runWith(4, 3),    0.75, 1e-12);
     EXPECT_NEAR(runWith(0, 0),    0.00, 1e-12) << "no evidence contributes no fraction";
 
-    // It is a MAXIMUM over rows, not a mean: one loud domain must survive a sea
-    // of quiet ones, or the sensitivity claim would be diluted away.
+    // It is a maximum over rows, not a mean: one high-fraction domain among many
+    // low ones still sets the value, so the sensitivity claim is not diluted.
     NetworkPriorResidual c(std::vector<std::string>{"pl"}, 0.0, 1e18, 4.0, true);
     int call = 0;
     c.setCorroborator([&call](std::string_view, int, std::string_view) {
@@ -1061,26 +1060,26 @@ TEST(PriorResidualCensusTest, MaxCorroborationFractionMakesTheNullFalsifiable) {
 }
 
 // ---------------------------------------------------------------------------
-// 14. THE RNEG RE-PARTITION — a row whose posterior EXCEEDS its prior is not a
-//     standardized residual, and must not head the ladder.
+// 22. The rneg re-partition: a row whose posterior exceeds its prior is not a
+//     standardized residual and does not enter the label ladder.
 // ---------------------------------------------------------------------------
 // post_var > fold_var makes r < 0 before the numerical floor: the documented
-// coupling-carry case, where the harvested posterior is a CONDITIONAL variance
+// coupling-carry case, where the harvested posterior is a conditional variance
 // that can legitimately exceed the prior.  Its D{ê} is then not the dispersion
-// of ONE fold, so `r` slams into kRedundancyFloor and |t| inflates by
-// sqrt((p+v)/(eps*p)) — the same x3000 artifact the file banner names for the
-// wrong-branch case, arriving through a different door.  Measured on
-// runs/fldf3_pl2, 927 of the 957 rows above |t| = 1e4 were exactly this, and the
-// run-end "worst |t| of the run" headline read 2.5e8 off one of them.
+// of one fold, so `r` is clamped to kRedundancyFloor and |t| inflates by
+// sqrt((p+v)/(eps*p)): the same artifact the file header names for the
+// wrong-branch case (case 10), reached by a different path.  Left in the label
+// ladder, such rows made up almost all rows above |t| = 1e4 in a field run and
+// set the run-end worst-|t| line.
 //
-// The sigma0_global rider has always dropped them (kGlobalRnegDrop).  This is
-// the ladder side of the same decision: they get their own class, keyed by the
-// same label, and touch NOTHING in the CLEAN/RESPONDED/FRAME bins.
+// The sigma0_global rider drops them (kGlobalRnegDrop).  This is the ladder side
+// of the same decision: they get their own class, keyed by the same label, and
+// touch nothing in the Clean/Responded/Frame bins.
 TEST(PriorResidualCensusTest, RNegativeRowsAreClassedApartAndMoveNoLadderStatistic) {
     NetworkPriorResidual c = makeCensus(/*min_rows=*/1e18);   // raw-formal: t == s
     c.beginEpoch(0.0, 0.0);
 
-    // A modest, perfectly ordinary population first.
+    // An ordinary population first.
     const int kClean = 20;
     for (int i = 0; i < kClean; ++i) c.addRow(row(0.05 * (i + 1), 2.0, 1.0));
     const auto snapshot = c.epochLadder(0, PriorResidualLabel::Clean);
@@ -1092,16 +1091,16 @@ TEST(PriorResidualCensusTest, RNegativeRowsAreClassedApartAndMoveNoLadderStatist
     for (int k = 0; k < NetworkPriorResidual::kLadderBins; ++k)
         bins_before[static_cast<std::size_t>(k)] = snapshot.bins[static_cast<std::size_t>(k)];
 
-    // Now the poison row: a stiff 1e-5 m^2 prior whose posterior came back at
-    // 1.0 m^2 (post_var > fold_var), carrying a 3 m residual.  Under the old
-    // pooling this row alone owned every ladder bin and the worst-|t| line.
+    // Then the r-negative row: a stiff 1e-5 m^2 prior whose posterior came back at
+    // 1.0 m^2 (post_var > fold_var), carrying a 3 m residual.  Pooled into the
+    // label ladder, this row alone would set the top bin and the worst-|t| line.
     const auto st = c.addRow(row(3.0, 1e-5, 1.0));
     ASSERT_TRUE(st.accepted);
     ASSERT_TRUE(st.r_negative) << "the fixture must actually build an r<0 row";
     ASSERT_TRUE(st.r_clamped)  << "r<0 is below the floor by construction";
     EXPECT_GT(std::abs(st.t), 1e3) << "and its |t| really is the artifact scale";
 
-    // --- the LABEL ladder is untouched, in every statistic --------------------
+    // --- the label ladder is untouched, in every statistic --------------------
     const auto& L = c.epochLadder(0, PriorResidualLabel::Clean);
     EXPECT_EQ(L.n_rows, kClean)          << "the rneg row must not be counted here";
     EXPECT_DOUBLE_EQ(L.max_abs_t, t_before);
@@ -1113,7 +1112,7 @@ TEST(PriorResidualCensusTest, RNegativeRowsAreClassedApartAndMoveNoLadderStatist
     // the population lives in the rneg class, not "of those" rows.
     EXPECT_EQ(L.n_r_negative, 0);
 
-    // --- the RNEG class carries it, keyed on |e| in METRES --------------------
+    // --- the rneg class carries it, keyed on |e| in metres --------------------
     const auto& N = c.rnegEpochLadder(0, PriorResidualLabel::Clean);
     EXPECT_EQ(N.n_rows, 1);
     EXPECT_TRUE(N.keepsMaxByE) << "the class orders its identity by |e|, not |t|";
@@ -1124,27 +1123,27 @@ TEST(PriorResidualCensusTest, RNegativeRowsAreClassedApartAndMoveNoLadderStatist
     EXPECT_DOUBLE_EQ(N.max_gap_s, 30.0);
     EXPECT_EQ(N.max_sat, "G01");
     EXPECT_EQ(N.max_station, 0);
-    // Its |t| is still recorded (the trace column exists so a reader can see the
-    // number that used to be the headline) — it is simply not the ordering key.
+    // Its |t| is still recorded (the trace column shows the artifact-scale value)
+    // but is not the ordering key.
     EXPECT_NEAR(N.max_abs_t, std::abs(st.t), 1e-6);
 
     // --- the epoch-status scalars --------------------------------------------
-    // ep_rows_ stays the TOTAL so the row count still closes; the |t| scalar
+    // ep_rows_ stays the total so the row count still closes; the |t| scalar
     // that feeds prires_max_t and the run-end line excludes the class.
     EXPECT_EQ(c.epochRows(), kClean + 1);
     EXPECT_EQ(c.epochRowsRneg(), 1);
     EXPECT_DOUBLE_EQ(c.epochMaxAbsT(), t_before);
     EXPECT_DOUBLE_EQ(c.epochRnegMaxAbsE(), 3.0);
-    // A family whose rows were ALL rneg still RAN — runRows must see them, or
-    // the run-end readout would send a reader to check the carry's arming knob.
+    // A family whose rows were all rneg still ran; runRows counts them, so the
+    // run-end readout does not report the family as unarmed.
     EXPECT_EQ(c.runRows(0), kClean + 1);
     EXPECT_EQ(c.rnegRunRows(0), 1);
 }
 
-// The class is ordered by |e|, not |t|, and that ordering is the whole reason it
-// is readable: within the class a LOUD residual on a stiff prior and a quiet one
-// on a loose prior can have their |t| ranking inverted by the floor.  A second
-// rneg row with a larger |e| but a smaller |t| must take the identity.
+// The class is ordered by |e|, not |t|, which keeps it readable: the floor
+// inflates |t| more on a stiffer prior, so a small residual on a stiff prior can
+// outrank a large residual on a loose prior in |t|.  A second rneg row with a
+// larger |e| but a smaller |t| takes the identity.
 TEST(PriorResidualCensusTest, RNegClassIdentityFollowsTheLargestResidualNotTheLargestT) {
     NetworkPriorResidual c = makeCensus(/*min_rows=*/1e18);
     c.beginEpoch(0.0, 0.0);
@@ -1155,7 +1154,7 @@ TEST(PriorResidualCensusTest, RNegClassIdentityFollowsTheLargestResidualNotTheLa
     const auto sa = c.addRow(a);
     ASSERT_TRUE(sa.r_negative);
 
-    // Row B: much larger |e|, looser prior ⇒ SMALLER |t| than A.
+    // Row B: much larger |e|, looser prior ⇒ smaller |t| than A.
     auto b = row(9.0, 1e-2, 1.0);
     b.sat = "GBB";
     const auto sb = c.addRow(b);
@@ -1175,15 +1174,15 @@ TEST(PriorResidualCensusTest, RNegClassIdentityFollowsTheLargestResidualNotTheLa
     EXPECT_DOUBLE_EQ(c.epochMaxAbsT(), 0.0);
 }
 
-// NEGATIVE CONTROL for the re-partition: an UNFOLDED row takes the `+` branch
-// (D = fold_var + post_var), where post_var > fold_var is perfectly ordinary and
-// r is never even formed.  Such a row must stay in its label ladder — diverting
-// it would silently empty the RESPONDED population, which is the positive
-// control the whole card is graded on (spec §9.3).
+// Negative control for the re-partition: an unfolded row takes the `+` branch
+// (D = fold_var + post_var), where post_var > fold_var is ordinary and r is not
+// formed.  Such a row stays in its label ladder; diverting it would empty the
+// Responded population, which is the positive control the census is graded on
+// (spec §9.3).
 TEST(PriorResidualCensusTest, UnfoldedRowsWithLargePosteriorsStayInTheirLabelLadder) {
     NetworkPriorResidual c = makeCensus(/*min_rows=*/1e18);
     c.beginEpoch(0.0, 0.0);
-    // Same variances as the poison row above, but UNFOLDED (a refloated prior
+    // Same variances as the r-negative row above, but unfolded (a refloated prior
     // that did not enter this epoch's solve).
     const auto st = c.addRow(row(3.0, 1e-5, 1.0, /*folded=*/false,
                                  PriorResidualLabel::Responded));

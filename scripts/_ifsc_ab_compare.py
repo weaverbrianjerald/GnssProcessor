@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Compare the two IF-TD pool-scale arms (SPEC_amb_iono_split_overcount §6.14.5 defect 2).
 
-old = reference satellite's structural zero INCLUDED in the robust scale (as shipped)
-new = it is EXCLUDED (the fix)
+old = reference satellite's structural zero included in the robust scale (as shipped)
+new = it is excluded (the fix)
 
-Verifies the claim the fix must satisfy: the pool FLAG population is unchanged on a
-clean bed, while the scale itself de-deflates.  Also reports tier T1r (defect 1),
-which is telemetry-only and must therefore be identical across the two arms.
+Verifies the claim the fix must satisfy: the pool's flag population is unchanged on a
+clean bed, while the scale itself de-deflates. Also reports tier T1r (defect 1), which
+is telemetry-only and so must be identical across the two arms.
 """
 import csv, sys, statistics as st
 from pathlib import Path
@@ -92,7 +92,7 @@ for col in ('s_eff_m', 'thr_m'):
           f"   ({100*(b/a-1) if a else float('nan'):+.1f} %)")
 
 # Independent cross-check of tier T1r against the event stream (invariant #4:
-# never trust a counter you have not corroborated against a second instrument).
+# a counter is corroborated against a second instrument before it is trusted).
 print("\n" + "=" * 78)
 print("T1r CROSS-CHECK vs network_events.csv refsat_reset")
 print("=" * 78)

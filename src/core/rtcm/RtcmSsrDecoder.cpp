@@ -1,9 +1,10 @@
 /**
  * @file RtcmSsrDecoder.cpp
- * @brief Bit-level decoders for legacy RTCM SSR (1057-1068, 1240-1270).
+ * @brief Bit-level decoders for legacy RTCM SSR (1057-1068, 1240-1270), IGS-SSR
+ *        (RTCM 4076) and the 1005/1006 station-coordinate messages.
  *
- * Field widths and scale factors transcribed from RTCM Standard 10403.3,
- * Annex A.  Per-system differences are confined to:
+ * Field widths and scale factors are transcribed from RTCM Standard 10403.3,
+ * Annex A.  In legacy SSR the per-system differences are confined to:
  *   - Satellite ID width (DF068 / DF384 / DF386 / etc.):
  *       GPS 6, GLO 5, GAL 6, QZS 4, SBAS 6, BDS 6
  *   - IODE width (DF071 / equivalents):
@@ -11,7 +12,8 @@
  *   - Epoch field width (DF385 GPS TOW = 20 bits, DF389 GLO TOD = 17 bits)
  *
  * Everything else (orbit/clock/bias scale factors, per-signal layout, yaw
- * fields, etc.) is system-independent.
+ * fields, etc.) is system-independent.  IGS-SSR 4076 uses one set of widths
+ * for every system (see decodeIgs4076).
  */
 
 #include "rtcm/RtcmSsrDecoder.hpp"
@@ -27,8 +29,8 @@ namespace GnssProcessor::RtcmSsr {
 namespace {
 
 // ---------------------------------------------------------------------------
-// Per-system table.  Sequenced indices (system, satellite ID width, IODE
-// width, satellite letter prefix, epoch field width).
+// Per-system table: system, satellite ID width, IODE width, satellite letter
+// prefix, epoch field width, GLONASS time-of-day flag (legacy SSR widths).
 // ---------------------------------------------------------------------------
 struct SystemDescriptor {
     System system;
@@ -119,8 +121,8 @@ double decodeUra(uint8_t ura_index) {
 // Promote a mod-604800 GPS-TOW-second epoch into a full GnssTime by nearest
 // continuation to the caller's anchor (continuous GPS seconds; RTB-1(a),
 // RTKLIB adjweek): pick the week minimizing |week·604800 + tow − anchor|.
-// No leap seconds applied (GPS time scale).  A non-positive anchor keeps
-// the legacy week-0 behaviour for direct decoder calls.
+// No leap seconds are applied (GPS time scale).  A non-positive anchor
+// returns week 0, which is what a direct decoder call without an anchor gets.
 GnssTime promoteGpsEpoch(double anchor_gps_seconds, uint32_t tow_s) {
     const double tow = static_cast<double>(tow_s);
     if (anchor_gps_seconds <= 0.0) return GnssTime{0, tow};
@@ -131,13 +133,12 @@ GnssTime promoteGpsEpoch(double anchor_gps_seconds, uint32_t tow_s) {
 }
 
 // Promote a GLONASS time-of-day field (DF389, seconds since the start of the
-// GLONASS UTC(SU)+3h day) into a GnssTime on the GPS scale.  Anchors on the
+// GLONASS UTC(SU)+3h day) into a GnssTime on the GPS scale.  The anchor is the
 // caller's last-known continuous GPS stream time (RtcmParser's per-parser
-// tracker; host clock only at cold start — RTB-1(a)) and carries the
-// time-of-day back through UTC with the epoch's leap seconds — see
-// TimeUtils::glonassTodToGpsTime.  Without this the SSR epoch lands at {0,0}
-// and every GLONASS SSR record is dropped from the store as stale /
-// IOD-mismatched.
+// tracker, which uses the host clock only at cold start; RTB-1(a)); the
+// time-of-day is carried back through UTC with the epoch's leap seconds (see
+// TimeUtils::glonassTodToGpsTime).  An unpromoted epoch would be {0,0}, and the
+// store drops such GLONASS SSR records as stale or IOD-mismatched.
 GnssTime promoteGloTod(double anchor_gps_seconds, uint32_t tod_s) {
     return TimeUtils::glonassTodToGpsTime(static_cast<double>(tod_s),
                                           anchor_gps_seconds);
@@ -178,14 +179,14 @@ bool decodeSsrHeader(RtcmBitReader& r, const SystemDescriptor& sys,
 }
 
 // ---------------------------------------------------------------------------
-// Receive-time stamp (system clock at decode).  Used to flag staleness.
+// Receive-time stamp from the system clock at decode, used for staleness checks.
 // ---------------------------------------------------------------------------
 GnssTime nowReceiveTime() {
     using namespace std::chrono;
     const auto now      = system_clock::now();
     const auto since    = duration_cast<seconds>(now.time_since_epoch()).count();
-    // GPS epoch (Jan 6 1980) = 315964800 Unix; 18 leap seconds drift ignored
-    // here — this is only used for staleness and ordering, not arithmetic.
+    // GPS epoch (Jan 6 1980) = 315964800 Unix.  The GPS-UTC leap-second offset
+    // (18 s) is ignored: the stamp is used only for staleness and ordering.
     constexpr int64_t kGpsEpochUnix = 315964800;
     const int64_t since_gps = since - kGpsEpochUnix;
     if (since_gps <= 0) return GnssTime{0, 0.0};
@@ -197,21 +198,20 @@ GnssTime nowReceiveTime() {
 }
 
 // ---------------------------------------------------------------------------
-// Per-body decoders.  Each consumes exactly one satellite block from @p r
-// and appends one record to the output vector.
+// Per-body decoders.  Each consumes one satellite block from @p r and appends
+// at most one record to the output vector.
 // ---------------------------------------------------------------------------
 
-// RTB-5(a): normalize a decoded SSR IOD to the broadcast-side matching
-// convention.  The LEGACY Galileo orbit/combined messages (1240-series) carry
-// the full 10-bit IODnav, but the broadcast side compares under IODnav & 0xFF
-// (LiveEphemerisStore::ssrMatchIode) — so a raw IODnav >= 256 could NEVER
-// match and every such Galileo satellite silently dropped to broadcast grade.
-// Mask to 8 bits HERE, at decode, in exactly the legacy case (sys.iode_bits >
-// 8 — the IGS-SSR 4076 path overrides iode_bits to 8 before dispatch, so it is
-// never re-masked; its 8-bit value is already in convention).  BDS's legacy
-// 10-bit "toe-index" IOD is intentionally NOT masked: its broadcast-side
-// convention is toe/720 % 240, not a bit mask, and reconciling the two is a
-// separate (RTF-scale) contract question.
+// Normalize a decoded SSR IOD to the broadcast-side matching convention.  The
+// legacy Galileo orbit/combined messages (1240-series) carry the full 10-bit
+// IODnav, while the broadcast side compares IODnav & 0xFF
+// (LiveEphemerisStore::ssrMatchIode), so an unmasked IODnav >= 256 would never
+// match and the satellite would fall back to broadcast grade.  The mask is
+// applied at decode, in the legacy case only (sys.iode_bits > 8).  The IGS-SSR
+// 4076 path sets iode_bits to 8 before dispatch, so its 8-bit value, already in
+// convention, is not re-masked.  The legacy BDS 10-bit "toe-index" IOD is not
+// masked: its broadcast-side convention is toe/720 % 240, not a bit mask, and
+// reconciling the two is a separate (RTF-scale) contract question.  (RTB-5(a))
 int normalizeSsrIode(const SystemDescriptor& sys, int iode) {
     if (sys.system == System::Galileo && sys.iode_bits > 8) return iode & 0xFF;
     return iode;
@@ -233,13 +233,13 @@ void decodeOrbitBody(RtcmBitReader& r, const SystemDescriptor& sys,
 
     SsrOrbitCorrection o;
     o.sat             = formatSat(sys, sat_raw);
-    o.iode            = normalizeSsrIode(sys, iode);   // RTB-5(a): legacy GAL 10-bit → &0xFF
+    o.iode            = normalizeSsrIode(sys, iode);   // legacy GAL 10-bit IOD → &0xFF (RTB-5(a))
     o.delta_rac       = Eigen::Vector3d{dr, da, dc};
     o.delta_rac_dot   = Eigen::Vector3d{drd, dad, dcd};
     o.received_time   = rx;
     o.epoch_time      = hdr.epoch_time;     // content reference epoch (orbit dt base)
     o.iod_ssr         = hdr.iod_ssr;
-    o.reference_point = ref_point;          // RTB-5(b): legacy=APC, 4076=CoM
+    o.reference_point = ref_point;          // legacy=APC, 4076=CoM (RTB-5(b))
     out.push_back(std::move(o));
 }
 
@@ -282,7 +282,7 @@ void decodeCombinedBody(RtcmBitReader& r, const SystemDescriptor& sys,
 
     SsrCombinedCorrection cb;
     cb.sat             = formatSat(sys, sat_raw);
-    cb.iode            = normalizeSsrIode(sys, iode);  // RTB-5(a): legacy GAL 10-bit → &0xFF
+    cb.iode            = normalizeSsrIode(sys, iode);  // legacy GAL 10-bit IOD → &0xFF (RTB-5(a))
     cb.delta_rac       = Eigen::Vector3d{dr, da, dc};
     cb.delta_rac_dot   = Eigen::Vector3d{drd, dad, dcd};
     cb.c0              = c0;
@@ -291,7 +291,7 @@ void decodeCombinedBody(RtcmBitReader& r, const SystemDescriptor& sys,
     cb.received_time   = rx;
     cb.epoch_time      = hdr.epoch_time;    // content reference epoch (orbit + clock dt base)
     cb.iod_ssr         = hdr.iod_ssr;
-    cb.reference_point = ref_point;         // RTB-5(b): legacy=APC, 4076=CoM
+    cb.reference_point = ref_point;         // legacy=APC, 4076=CoM (RTB-5(b))
     out.push_back(std::move(cb));
 }
 
@@ -426,9 +426,9 @@ DecodeResult decodeLegacy(
 
     const GnssTime rx = nowReceiveTime();
 
-    // RTB-5(b): legacy RTCM SSR corrects the broadcast orbit to the satellite
-    // ANTENNA PHASE CENTER (RTCM 10403.3 sec. 3.5.12) — tag orbit-bearing
-    // records APC so the user model can suppress its own satellite-PCO term.
+    // Legacy RTCM SSR corrects the broadcast orbit to the satellite antenna
+    // phase center (RTCM 10403.3 sec. 3.5.12).  Orbit-bearing records are tagged
+    // APC so the user model can suppress its own satellite-PCO term (RTB-5(b)).
     constexpr SsrReferencePoint kRef = SsrReferencePoint::APC;
 
     for (int i = 0; i < num_sats; ++i) {
@@ -450,15 +450,15 @@ DecodeResult decodeLegacy(
 }
 
 // ---------------------------------------------------------------------------
-// IGS-SSR (RTCM 4076) — wrapper around legacy per-body decoders.
+// IGS-SSR (RTCM 4076): wrapper around the legacy per-body decoders.
 // ---------------------------------------------------------------------------
 
 namespace {
 
 // Map IGS Message Number to (system descriptor, body type).
-// IGS-SSR encodes the constellation in the TENS digit and the body in the ONES
-// digit: GPS 21-27, GLONASS 41-47, Galileo 61-67, QZSS 81-87, BeiDou 101-107,
-// SBAS 121-127  (so im/10 = 2,4,6,8,10,12 respectively); ones digit 1=Orbit …
+// IGS-SSR encodes the constellation in im/10 and the body in the ones digit:
+// GPS 21-27, GLONASS 41-47, Galileo 61-67, QZSS 81-87, BeiDou 101-107,
+// SBAS 121-127 (so im/10 = 2,4,6,8,10,12 respectively); ones digit 1=Orbit …
 // 7=URA.  Returns false for unsupported IM (NavIC 141-147, VTEC 201, etc.).
 bool classifyIgsIm(int im, const SystemDescriptor*& sys_out, LegacyBody& body_out) {
     if (im < 21) return false;
@@ -478,8 +478,8 @@ bool classifyIgsIm(int im, const SystemDescriptor*& sys_out, LegacyBody& body_ou
 
     // IGS-SSR offset within each per-system block:
     //   1=Orbit, 2=Clock, 3=Combined, 4=HighRate, 5=CodeBias,
-    //   6=PhaseBias, 7=URA.  This differs from legacy SSR's offset
-    //   ordering — caller must NOT reuse the legacy mapping.
+    //   6=PhaseBias, 7=URA.  This differs from the legacy SSR offset
+    //   ordering, so the legacy mapping in classify() does not apply here.
     switch (body_off) {
     case 1: body_out = LegacyBody::Orbit;     break;
     case 2: body_out = LegacyBody::Clock;     break;
@@ -519,23 +519,21 @@ DecodeResult decodeIgs4076(
     LegacyBody body = LegacyBody::Unknown;
     if (!classifyIgsIm(im, sys_ptr, body)) return result;
 
-    // IGS-SSR (RTCM 4076) uses a UNIFORM per-satellite layout for every
-    // constellation, which differs from the legacy per-system SSR widths
-    // transcribed into the SystemDescriptor table.  Per IGS-SSR Format v1.00
-    // (cross-checked against RTKLIB's subtype>0 override and cssrlib's
-    // msgtype==4076 path):
-    //   IDF011 GNSS Satellite ID = uint6   (6 bits for ALL; legacy GLO=5/QZS=4),
-    //   IDF012 GNSS IOD          = bit(8)   (8 bits for ALL; legacy GAL=10/BDS=10/
-    //                                        SBAS=9) and there is NO IODCRC field —
+    // IGS-SSR (RTCM 4076) uses one per-satellite layout for every constellation,
+    // unlike the legacy per-system SSR widths in the SystemDescriptor table.  Per
+    // IGS-SSR Format v1.00 (cross-checked against RTKLIB's subtype>0 override and
+    // cssrlib's msgtype==4076 path):
+    //   IDF011 GNSS Satellite ID = uint6   (6 bits for all; legacy GLO=5/QZS=4),
+    //   IDF012 GNSS IOD          = bit(8)   (8 bits for all; legacy GAL=10/BDS=10/
+    //                                        SBAS=9); there is no IODCRC field:
     //                                        the 24-bit IODCRC is a legacy-RTCM-only
     //                                        BDS/SBAS field, absent from 4076,
-    //   IDF003 SSR Epoch Time    = uint20 GPS-aligned TOW for ALL systems,
+    //   IDF003 SSR Epoch Time    = uint20 GPS-aligned TOW for all systems,
     //                              including GLONASS (no 17-bit TOD path).
-    // Reusing the legacy widths here over-read the Galileo/BeiDou IOD by 2 bits,
-    // corrupting the IOD AND shifting every subsequent orbit/clock field, so the
-    // GAL/BDS SSR clock never IODE-matched and those constellations were stuck at
-    // broadcast grade.  Apply the 4076 widths on a LOCAL copy so the legacy path
-    // (decodeLegacy) keeps the per-system widths it still needs.
+    // The legacy widths would over-read the Galileo/BeiDou IOD by 2 bits, which
+    // corrupts the IOD and shifts every later orbit/clock field, so no GAL/BDS
+    // record would IODE-match.  The 4076 widths are applied to a local copy so
+    // decodeLegacy keeps its per-system widths.
     SystemDescriptor sys = *sys_ptr;
     sys.sat_id_bits  = 6;
     sys.iode_bits    = 8;
@@ -553,12 +551,12 @@ DecodeResult decodeIgs4076(
 
     const GnssTime rx = nowReceiveTime();
 
-    // RTB-5(b): IGS-SSR corrects the broadcast orbit to the satellite CENTER
-    // OF MASS (IGS SSR Format v1.00 sec. 4) — the SP3 convention, so the user
-    // model keeps applying its own satellite PCO.  Tag orbit-bearing records
-    // CoM.  The 8-bit 4076 IOD is already in the broadcast-side matching
-    // convention; normalizeSsrIode never re-masks it (iode_bits was overridden
-    // to 8 above), so there is no double-mask.
+    // IGS-SSR corrects the broadcast orbit to the satellite center of mass (IGS
+    // SSR Format v1.00 sec. 4), the SP3 convention, so the user model keeps
+    // applying its own satellite PCO; orbit-bearing records are tagged CoM
+    // (RTB-5(b)).  The 8-bit 4076 IOD is already in the broadcast-side matching
+    // convention, and normalizeSsrIode does not mask it because iode_bits was
+    // set to 8 above.
     constexpr SsrReferencePoint kRef = SsrReferencePoint::CoM;
 
     for (int i = 0; i < num_sats; ++i) {

@@ -1,38 +1,48 @@
 #pragma once
 /**
  * @file NetworkSolPrep.hpp
- * @brief Emit-side solution preparation + discontinuity signalling for the PPP-RTK
- *        network producer — the FRONT half of the emit pipeline (the back half,
- *        store push + product write + closed-loop, stays in SB_EMITSTORE).
+ * @brief Emit-side solution preparation and discontinuity signalling for the PPP-RTK
+ *        network producer: the front half of the emit pipeline (the back half, store
+ *        push + product write + closed-loop, stays in SB_EMITSTORE).
  *
  * Maps the post-fit shared estimate to a @ref NetworkSolutionEpoch and prepares it
  * for emission:
  *   - build @c sol via @c est.toSolutionEpoch; stamp per-sat C1 drift (two-state
- *     clock_model or the decoupled emit_clock_rate), generation time/id;
- *   - RT0-5 clock-runaway quarantine + RTA-10 per-constellation σ̂0 carve-out
- *     (prune withheld constellations from @c sol.sats);
+ *     clock_model or the decoupled emit_clock_rate), generation time/id, and, in
+ *     brdc_rts mode, the per-sat broadcast IODE (clock_iode);
+ *   - erase record values the solve did not measure: pinned band-2 companion ISCs
+ *     (RF-0f) and held extra-band columns (B5D);
+ *   - RT0-5 clock-runaway quarantine + RTA-10 per-constellation σ̂0 carve-out, and
+ *     the per-satellite GL-2 wire withhold and RF-3b declared-LOS withhold (all
+ *     prune @c sol.sats);
  *   - B1 per-sat URA (+ RTB-7 cold-start quality ramp) and B1b per-(sat,signal)
  *     phase-bias σ;
- *   - datum-bump + PIVOT events, the retro-bump / eph-cutover / basis-relatch /
- *     IF-pin-reselect / CB-reseed per-sat DISCONTINUITY landings (all emit-only,
+ *   - datum-bump + PIVOT events, the retro-bump / eph-cutover / CB-excursion /
+ *     clock-anchor / basis-relatch / IF-pin-reselect / CB-reseed per-sat
+ *     discontinuity landings (all emit-only,
  *     replay-faithful present/pending splits), the prev_pivot/last_pivot +
  *     emitted_anchor emit-baseline advance, the deferred v2 contract-writer open,
- *     and the M4 combined-correction σ (sigc/sigcc/rho).
+ *     the M4 combined-correction σ (sigc/sigcc/rho), and the L14 satellite
+ *     bias-state trace.
  *
- * Seeded at decomposition INC-11pre (2026-07-22), which relocated the SB_SOLPREP
- * block VERBATIM out of Application::runNetwork (dedent-only, zero substitution).
- * Owns NO state: every carry / emit-side object is an explicit reference into the
- * caller's NetworkRunContext / NetworkSetupResult.
+ * With the SH health gate engaged (network.sh_health_gate), the seam returns an empty
+ * result before any of these steps, so pending bumps and emit baselines wait for the
+ * next actual emit.
  *
- * ⚠ CROSSING OUTPUTS — unlike the self-contained QC seams, this block PRODUCES
- * five locals that SB_EMITSTORE (and the epoch heartbeat) consume, returned in
+ * Created at decomposition INC-11pre, which moved the SB_SOLPREP block unchanged out
+ * of Application::runNetwork (dedent only, no substitution).  Owns no state: every
+ * carry / emit-side object is an explicit reference into the caller's
+ * NetworkRunContext / NetworkSetupResult.
+ *
+ * Crossing outputs: unlike the self-contained QC seams, this block produces five
+ * locals that SB_EMITSTORE (and the epoch heartbeat) consume, returned in
  * @ref NetworkSolPrepResult: @c sol (emitToStore + product write), the withheld-
  * constellation set (heartbeat), the datum-bump serialization (global_bump +
  * serialized_consts, product write), and the applied retro-bump set (heartbeat).
  *
- * ⚠ ORDERING CONTRACT — runs on the post-fit @p x_s AFTER SB_CLOCKUPD (whose
- * @c clock_osc / clock_rate_est drift it publishes as C1) and BEFORE SB_EMITSTORE
- * (which consumes the returned @ref NetworkSolPrepResult).  It MUTATES persistent
+ * Ordering contract: runs on the post-fit @p x_s after SB_CLOCKUPD (whose
+ * @c clock_osc / clock_rate_est drift it publishes as C1) and before SB_EMITSTORE
+ * (which consumes the returned @ref NetworkSolPrepResult).  It mutates persistent
  * carries (the disc-pending sets, prev_pivot/last_pivot, emitted_anchor,
  * last_if_pin_sel, ura_retro_sats, the RTB-7 ramp state) and the emit-side objects
  * (@c emitter datum/disc bumps; opens @c product_writer at first emit).  The caller
@@ -57,21 +67,21 @@ namespace spdlog { class logger; }
 namespace GnssProcessor {
 
 class GnssConfig;
-struct NetworkRunContext;   // app/NetworkRunContext.hpp — included in the .cpp only
-struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp — included in the .cpp only
+struct NetworkRunContext;   // app/NetworkRunContext.hpp, included in the .cpp only
+struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cpp only
 
 /**
- * @brief The five SB_SOLPREP locals SB_EMITSTORE + the heartbeat consume.
+ * @brief The five SB_SOLPREP locals that SB_EMITSTORE and the heartbeat consume.
  *
  * Returned by value (moved out of the seam's body-locals); the caller re-aliases
  * each member so the unchanged downstream SB_EMITSTORE code reads the old names.
  */
 struct NetworkSolPrepResult {
     NetworkSolutionEpoch     sol;                   ///< The prepared solution epoch (post prune/URA/σ stamps).
-    std::set<char>           epoch_withheld_consts; ///< RT0-5 / RTA-10 withheld constellations (H heartbeat).
+    std::set<char>           epoch_withheld_consts; ///< Constellations withheld by RT0-5 / RTA-10 (H heartbeat).
     bool                     global_bump = false;   ///< A global (non-scoped) datum bump this emit.
     std::set<char>           serialized_consts;     ///< The per-constellation datum-bump set (product write).
-    std::set<std::string>    retro_emit_sats;       ///< Per-sat disc bumps that LANDED this emit — B1 retro plus the
+    std::set<std::string>    retro_emit_sats;       ///< Per-sat disc bumps that landed this emit: B1 retro plus the
                                                     ///< folded queue marks (eph-cutover / CB-excursion / clock-anchor /
                                                     ///< basis-relatch / IF-pin reselect / CB-reseed), serialized as the
                                                     ///< R record (replay) + heartbeat.
@@ -84,10 +94,10 @@ struct NetworkSolPrepResult {
  *
  * @param ctx                  [in/out] carry (disc-pending sets, pivots, anchors,
  *                             URA/ramp state) + counters (iod, generation_id,
- *                             n_emitted, runaway/perconst tallies) + knobs.  Taken
- *                             whole; the body opens with an alias preamble that
- *                             byte-copies the former run-TU alias block so a dropped
- *                             `&` cannot silently drop a carry/emit mutation.
+ *                             n_emitted, runaway/perconst tallies) + knobs.  Passed
+ *                             whole so that a missing `&` cannot drop a carry/emit
+ *                             mutation; the body opens with an alias preamble copied
+ *                             from the former run-TU alias block.
  * @param config_             networkEmitPhaseBiasSigma / networkEmitCombinedSigma +
  *                             nc = getNetworkConfig() (warmup_ura_floor_m/epochs).
  * @param log                 "main_log": generation-id / runaway / withhold /

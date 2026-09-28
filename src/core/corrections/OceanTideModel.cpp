@@ -46,19 +46,19 @@ namespace GnssProcessor {
     }
 
     /**
-     * @brief Compute the six fundamental Delaunay arguments and GMST.
+     * @brief Compute the five fundamental Delaunay arguments and GMST.
      *
      * Implements the IERS 2010 expressions (Simon et al. 1994) for the
      * fundamental arguments of nutation theory:
-     *   l    Mean anomaly of the Moon  (F1)
-     *   l'   Mean anomaly of the Sun   (F2)
-     *   F    Mean argument of latitude of the Moon (F3)
-     *   D    Mean elongation of Moon from Sun (F4)
-     *   ?    Longitude of ascending node of Moon (F5)
-     *   ?    Greenwich Mean Sidereal Time (GMST)
+     *   l    Mean anomaly of the Moon  (F1)
+     *   l'   Mean anomaly of the Sun   (F2)
+     *   F    Mean argument of latitude of the Moon (F3)
+     *   D    Mean elongation of Moon from Sun (F4)
+     *   Ω    Longitude of ascending node of Moon (F5)
+     *   GMST Greenwich Mean Sidereal Time
      *
      * @param t_centuries Julian centuries of TT from J2000.0.
-     * @param ut1_frac UT1 day fraction (for GMST).
+     * @param ut1_frac Unused: GMST is computed from @p t_centuries.
      * @return Array of 6 arguments in radians.
      */
     std::array<double, 6> OceanTideModel::computeFundamentalArguments(double t_centuries, double ut1_frac) const {
@@ -90,15 +90,19 @@ namespace GnssProcessor {
             1072260.70369 + 1602961601.2090 * T - 6.3706 * T2
             + 0.006593 * T3 - 0.00003169 * T4, 1296000.0) * AS2R;
 
-        // ?: Longitude of ascending node of Moon (IERS 2010, Eq. 5.47)
+        // Ω: Longitude of ascending node of Moon (IERS 2010, Eq. 5.47)
         double Omega = std::fmod(
             450160.398036 - 6962890.5431 * T + 7.4722 * T2
             + 0.007702 * T3 - 0.00005939 * T4, 1296000.0) * AS2R;
 
-        // GMST: Greenwich Mean Sidereal Time (IERS 2010, Eq. 5.32 / Capitaine et al. 2003)
-        // GMST = 280.46061837 + 360.98564736629*(JD_UT1 - 2451545.0) + higher-order terms
-        // We approximate JD_UT1 from GPS time (GPS-UT1 < 1s, negligible for OTL).
-        // The TT centuries (T) are used only for the small quadratic/cubic corrections.
+        // GMST in degrees:
+        //   280.46061837 + 360.98564736629*(JD_UT1 - 2451545.0) + 0.000387933*T² - T³/38710000.
+        // This is the IAU 1982 expression in the form of Meeus (Astronomical Algorithms,
+        // eq. 12.4), not the ERA-based IERS 2010 Eq. 5.32 (Capitaine et al. 2003); the two
+        // differ negligibly for OTL.  JD_UT1 is approximated by the GPS-time Julian date.
+        // GPS - UT1 is the leap-second count (18 s since 2017) plus |UT1 - UTC| < 0.9 s,
+        // which shifts a semidiurnal argument by about 0.15 deg; negligible for OTL.
+        // The TT centuries (T) are used only for the small quadratic and cubic terms.
         double JD_UT1_approx = TimeUtils::J2000_JD + (T * TimeUtils::DAYS_PER_JULIAN_CENTURY)
                              - TimeUtils::TT_GPS_OFFSET / TimeUtils::SECONDS_IN_DAY;
         double gmst_deg = std::fmod(
@@ -112,31 +116,23 @@ namespace GnssProcessor {
     /**
      * @brief Compute tidal arguments for all 11 constituents using Doodson multipliers.
      *
-     * The tidal argument for constituent j is:
-     *   ?_j = n1·(? + ?) + n2·s + n3·h + n4·p + n5·(-N') + n6·ps
+     * The tidal argument for constituent j is
+     *   χ_j = n1·(GMST + π) + n2·s + n3·h + n4·p + n5·N' + n6·ps + 2π·b_j
      *
-     * where [n1..n6] are the Doodson multipliers and:
-     *   ? = GMST
-     *   s = F + ?     (mean longitude of Moon)
-     *   h = F + ? - D (mean longitude of Sun, approximation)
-     *   p = F + ? - l (longitude of Moon's perigee, approximation)
-     *   N' = -?       (negative longitude of Moon's node)
-     *   ps = s - D + l' (longitude of Sun's perigee, approximation)
+     * where [n1..n6] is row j of DOODSON_MULTIPLIERS, b_j is
+     * CONSTITUENT_PHASE_BIAS_CYCLES[j], and the Doodson variables follow from the
+     * Delaunay arguments:
+     *   s  = F + Ω       (mean longitude of the Moon)
+     *   h  = s - D       (mean longitude of the Sun)
+     *   p  = s - l       (longitude of the Moon's perigee)
+     *   N' = -Ω          (negative longitude of the Moon's node)
+     *   ps = h + l'      (longitude of the Sun's perigee, as coded; see below)
      *
-     * More precisely, using the standard mapping from Delaunay to Doodson:
-     *   ? = ? - s  (but we include ? directly via GMST+? convention)
-     *   s = F + ?
-     *   h = s - D = F + ? - D
-     *   p = s - l = F + ? - l
-     *   N' = -?
-     *   ps = s - D + l' ? h + l' (but for the major tides, ps column is 0)
+     * The lunar time τ = GMST + π - s is not formed; its -n1·s part is folded into
+     * the s column of DOODSON_MULTIPLIERS, so n1 multiplies (GMST + π) directly.
+     * The result is normalized to [0, 2π).
      *
-     * For practical computation we map Doodson arguments to Delaunay:
-     *   argument = n1·(GMST + ?) + (n2 + n1)·(F + ?) - n1·(F + ?)  ... etc.
-     *
-     * Simplified direct mapping for each constituent using Delaunay + GMST:
-     *
-     * @param fund_args Array [l, l', F, D, ?, GMST].
+     * @param fund_args Array [l, l', F, D, Ω, GMST].
      * @return Array of 11 tidal arguments in radians.
      */
     std::array<double, 11> OceanTideModel::computeTidalArguments(const std::array<double, 6>& fund_args) const {
@@ -152,18 +148,13 @@ namespace GnssProcessor {
         const double h = s - D;              // mean longitude of Sun
         const double p = s - l;              // longitude of Moon's perigee
         const double N_prime = -Omega;       // negative of Moon's node longitude
-        const double ps = h + lp;            // longitude of Sun's perigee (approximation, rarely needed)
+        // Longitude of the Sun's perigee.  The standard relation is ps = h - l'; the
+        // sign here does not matter because the ps column is 0 for all 11 constituents.
+        const double ps = h + lp;
 
-        // ? = GMST + ? - s  (lunar time angle)
-        // But for our Doodson encoding: argument = n1·? + n2·s + n3·h + n4·p + n5·N' + n6·ps
-        // where ? = GMST + ? - s
-        // So: argument = n1·(GMST + ?) + (n2 - n1)·s + n3·h + n4·p + n5·N' + n6·ps
-        //
-        // Actually the standard Doodson encoding uses:
-        //   argument = n1·(GMST + ?) + n2·s + n3·h + n4·p + n5·N' + n6·ps
-        // where our n1 multiplies (GMST + ?), and n2 accounts for the 's' that is
-        // NOT already subtracted by ?. The table in the header already encodes the
-        // arguments directly as multipliers of [GMST+?, s, h, p, N', ps].
+        // The loop forms n1·(GMST + π) + n2·s + n3·h + n4·p + n5·N' + n6·ps.
+        // The multiplier table in the header is already expressed against
+        // [GMST+π, s, h, p, N', ps], with the lunar-time -n1·s folded into n2.
 
         std::array<double, 11> arguments{};
         const double gmst_pi = gmst + Constants::PI;
@@ -177,7 +168,7 @@ namespace GnssProcessor {
             }
             // Doodson-Warburg species phase bias (a quarter-cycle for the
             // diurnal band).  Without it the K1/O1/P1/Q1 arguments are 90 deg
-            // out of phase versus the IERS ARG.f / HARDISP convention to which
+            // out of phase with the IERS ARG.f / HARDISP convention to which
             // the BLQ and EOT20/FES phases are referenced.  See
             // CONSTITUENT_PHASE_BIAS_CYCLES.
             arg += CONSTITUENT_PHASE_BIAS_CYCLES[j] * 2.0 * Constants::PI;
@@ -204,7 +195,8 @@ namespace GnssProcessor {
         // Convert GPS time to TT Julian centuries from J2000.0
         double t_centuries = TimeUtils::gpsTimeToTtCenturies(time);
 
-        // UT1 fraction (approximate: use GPS time, ignore UT1-UTC which is < 1 s)
+        // Day fraction on the GPS time scale, standing in for UT1.  The value is passed
+        // on but computeFundamentalArguments() does not use it.
         double ut1_frac = std::fmod(TimeUtils::gpsTimeToMjd(time), 1.0);
 
         // Compute fundamental arguments
@@ -225,8 +217,8 @@ namespace GnssProcessor {
             const auto& c = station_coeffs_.constituents[j];
             const double chi = tidal_args[j];
 
-            // displacement_k = A_k * cos(?_j - ?_k)
-            // where ?_k is the Greenwich phase lag in radians
+            // displacement_k = A_k * cos(χ_j - φ_k)
+            // where φ_k is the Greenwich phase lag (stored in degrees, converted here)
             disp_up    += c.amp_up    * std::cos(chi - c.phase_up    * D2R);
             disp_west  += c.amp_west  * std::cos(chi - c.phase_west  * D2R);
             disp_south += c.amp_south * std::cos(chi - c.phase_south * D2R);
@@ -259,15 +251,13 @@ namespace GnssProcessor {
                                                                     const GnssTime& /*time*/) const {
         // No station-specific OTL coefficients (BLQ or EOT20) are loaded.
         //
-        // The previous fallback synthesized a phase-blind, latitude-scaled OTL
-        // signal from global-average coastal amplitudes. With a wrong Greenwich
-        // phase that signal injects a coherent biased oscillation into the up
-        // channel that the filter cannot absorb cleanly — for many stations it
-        // is worse than no correction at all. Returning zero lets the receiver
-        // clock and ZTD absorb residual OTL energy without fighting a fictitious
-        // model.
+        // A phase-blind, latitude-scaled OTL signal built from global-average
+        // coastal amplitudes has the wrong Greenwich phase and adds a coherent
+        // biased oscillation to the Up channel that the filter cannot absorb
+        // cleanly; for many stations that is worse than no correction.  With
+        // zero, the receiver clock and ZTD absorb the residual OTL signal.
         //
-        // To get real OTL displacement, configure either:
+        // OTL displacement requires one of:
         //   (a) files.otl_blq_path  → station-specific BLQ from Onsala, or
         //   (b) data_download.nc_path → EOT20_load.nc (synthesized for any
         //       station via OceanTideModel::parseEot20Load).
@@ -387,8 +377,9 @@ namespace GnssProcessor {
      *         hRe[const, lat, lon], hIm[const, lat, lon] (int16, scale_factor);
      *         constituents.constituent_order = "2n2 j1 k1 k2 m2 m4 mf mm n2 o1 p1 q1 s1 s2 sa ssa t2"
      *
-     * We read a 17 × 2 × 2 hyperslab (≈ 544 bytes after auto-scaling), bilinear-
-     * interpolate each constituent at the station's (lat, lon), and pick the
+     * The function reads a 17 × 2 × 2 hyperslab of hRe and of hIm (68 values each,
+     * 544 bytes as double), applies scale_factor / add_offset, bilinearly
+     * interpolates each constituent at the station's (lat, lon), and picks the
      * 11 BLQ-order constituents (indices [4 13 8 3 2 9 10 11 6 7 15] in EOT20).
      */
     bool OceanTideModel::parseEot20Load(const std::string& nc_path,
@@ -408,7 +399,7 @@ namespace GnssProcessor {
             return false;
         }
 
-        // RAII close — every early return below will unwind through this.
+        // RAII close: every early return below closes the file through this.
         struct NcCloser {
             int id;
             ~NcCloser() { if (id >= 0) nc_close(id); }
@@ -440,17 +431,16 @@ namespace GnssProcessor {
             return false;
         }
 
-        // Pull scale_factor / add_offset from the packed int16 variables.
-        // The netCDF C library (unlike the Python netCDF4 binding) does NOT
-        // auto-apply these — nc_get_vara_double returns the raw integer
-        // values cast to double, and the user must scale manually. EOT20
-        // packs hRe/hIm as int16 with scale_factor ≈ 5.34e-5 (m/LSB);
-        // without applying it, the synthesized amplitudes come out ~20 000×
-        // too large (meters of "OTL" instead of millimeters).
+        // Read scale_factor / add_offset from the packed int16 variables.
+        // The netCDF C library, unlike the Python netCDF4 binding, does not
+        // apply these: nc_get_vara_double returns the raw integer values cast
+        // to double, so the caller scales them. EOT20 packs hRe/hIm as int16
+        // with scale_factor ≈ 5.34e-5 (m/LSB); unscaled amplitudes would be
+        // about 20 000× too large (meters instead of millimeters).
         auto getScaleOffset = [&](int varid, double& scale, double& offset) {
             scale  = 1.0;
             offset = 0.0;
-            // Errors are non-fatal — absent attributes mean "no packing,"
+            // Errors are non-fatal: an absent attribute means no packing,
             // i.e. scale=1, offset=0, which is the correct default.
             (void)nc_get_att_double(ncid, varid, "scale_factor", &scale);
             (void)nc_get_att_double(ncid, varid, "add_offset",   &offset);
@@ -515,8 +505,8 @@ namespace GnssProcessor {
         const double flon = (lon_deg - lon_arr[j_lon]) / dlon;
         const double flat = (lat_deg - lat_arr[i_lat]) / dlat;  // ratio of two negatives → in [0, 1]
 
-        // Read 17 × 2 × 2 hyperslab. The C library returns raw int16-as-double;
-        // we apply scale_factor and add_offset manually.
+        // Read the 17 × 2 × 2 hyperslab. The C library returns raw int16 values as
+        // double; scale_factor and add_offset are applied below.
         const size_t start[3] = { 0,        i_lat, j_lon };
         const size_t count[3] = { n_const,  2,     2     };
         std::vector<double> hRe_box(n_const * 4), hIm_box(n_const * 4);

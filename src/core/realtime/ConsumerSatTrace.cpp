@@ -1,10 +1,10 @@
 /**
  * @file ConsumerSatTrace.cpp
- * @brief Card CST: the pure CSV formatter for @ref GnssProcessor::ConsumerSatRow.
+ * @brief Pure CSV formatter for @ref GnssProcessor::ConsumerSatRow (card CST).
  *
- * Deliberately separate from both the engine (which fills the row) and
- * NetworkRunTraces (which owns the stream): the schema is then a kernel that a
- * unit test can pin without constructing a RealTimeEngine or touching a file.
+ * Kept separate from the engine (which fills the row) and from NetworkRunTraces
+ * (which owns the stream), so a unit test can pin the schema without constructing
+ * a RealTimeEngine or touching a file.
  */
 
 #include "realtime/ConsumerSatTrace.hpp"
@@ -14,13 +14,13 @@
 namespace GnssProcessor {
 
 namespace {
-/// A metre quantity at 6 dp, or an EMPTY field when the consumer had none.
-/// Blank is never "0" — an absent phase bias and a zero phase bias are
-/// different wires and the instrument exists to tell them apart.
+/// A metre quantity at 6 dp, or an empty field when the consumer had none.
+/// Blank is never written as "0": an absent phase bias and a zero phase bias are
+/// different wires, and the trace exists to tell them apart.
 inline std::string optM(bool have, double v) {
     return have ? fmt::format("{:.6f}", v) : std::string();
 }
-/// An integer counter, or an EMPTY field when that channel carries none.
+/// An integer counter, or an empty field when that channel carries none.
 inline std::string optI(bool have, int v) {
     return have ? fmt::format("{}", v) : std::string();
 }

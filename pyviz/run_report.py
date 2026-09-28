@@ -15,12 +15,12 @@ Exam dashboard (GnssSimulator answer key)
 
 ``--truth-dir`` binds the simulator's answer-key folder (``truth_*.csv`` +
 ``scenario_summary.json``); the truth-referenced ``exam_*`` viewers then light up
-(and, without it, auto-skip).  A ``verify_report.json`` (auto-detected under the
-run's log dir, or ``--verify-report``) adds the coloured PASS/FAIL gate banner.
+(and, without it, auto-skip). A ``verify_report.json`` (auto-detected under the
+run's log dir, or ``--verify-report``) adds the coloured pass/fail gate banner.
 ``--plotly-js inline`` embeds plotly.js so the interactive report opens offline.
 
 The exam dashboard also drops a fixed set of viewers that duplicate a panel
-above them or are internal QC strips -- see :data:`EXAM_DASHBOARD_OFF`.  Add any
+above them or are internal QC strips: see :data:`EXAM_DASHBOARD_OFF`. Add any
 of them back with ``--only <name>``, or all of them with ``--all``.
 """
 
@@ -36,16 +36,16 @@ from functools import partial
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
-#: Viewers dropped from the **exam dashboard** by default (professor review,
-#: 2026-08-06: the dashboard had grown too crowded to read).  Each entry is
-#: either already covered by a truth-referenced panel earlier in the report, or
-#: an internal QC strip that earns its place on demand rather than in the
-#: standing artifact.  This is a *dashboard composition* decision, not a judgement
-#: about the viewers: they all stay in ``REGISTRY`` and remain default-on for the
+#: Viewers dropped from the exam dashboard by default (the dashboard had grown
+#: too crowded to read; professor review, 2026-08-06). Each entry is either
+#: already covered by a truth-referenced panel earlier in the report, or an
+#: internal QC strip that earns its place on demand rather than in the standing
+#: artifact. This is a dashboard composition decision, not a judgement about
+#: the viewers: they all stay in ``REGISTRY`` and remain default-on for the
 #: ordinary (non-exam) ``gnss_report.html``.
 #:
 #: Bring one back with ``--only <name>`` (alone or alongside others), or the whole
-#: set with ``--all``.  ``gnss_simulator``'s C++ dashboard step passes an
+#: set with ``--all``. ``gnss_simulator``'s C++ dashboard step passes an
 #: ``--exclude`` list that is a subset of this one; it is harmless duplication
 #: kept so an older binary still produces the same composition.
 EXAM_DASHBOARD_OFF = {
@@ -61,13 +61,13 @@ EXAM_DASHBOARD_OFF = {
 }
 
 
-#: Viewers dropped from the **real-time dashboard** (``--run-config`` with
-#: ``app_mode=real_time``) by default.  Same composition-not-judgement rule as
+#: Viewers dropped from the real-time dashboard (``--run-config`` with
+#: ``app_mode=real_time``) by default. Same composition-not-judgement rule as
 #: :data:`EXAM_DASHBOARD_OFF`, with one extra constraint the exam never had: an
 #: RT replay traces at 1 Hz, so the per-(sat,signal) slip/residual internals run
-#: to tens of MB of CSV and an *interactive* (plotly) report embedding them blew
-#: past 70 MB — the composition below keeps the standing artifact in the
-#: 10-20 MB class.  Bring any back with ``--only <name>`` or all with ``--all``.
+#: to tens of MB of CSV, and an interactive (plotly) report embedding them blew
+#: past 70 MB. The composition below keeps the standing artifact in the
+#: 10-20 MB class. Bring any back with ``--only <name>`` or all with ``--all``.
 RT_DASHBOARD_OFF = {
     "measurement_residuals": "per-signal residual series (heavy at 1 Hz; on demand)",
     "residual_strip": "raster of the same residuals",
@@ -92,10 +92,10 @@ def _registry_for(std_residuals: bool):
     """The dispatch registry, optionally with standardized residual panels on.
 
     The ``measurement_residuals`` viewer binds ``show_standardized=False`` by
-    default (raw Code/Phase only).  For an exam report we flip it on so the
-    storm-window standardized-residual inflation (~1.4→2.2σ, the Part-D exhibit)
-    is visible — done by swapping just that viewer's ``build`` partial, leaving
-    the shared REGISTRY untouched.
+    default (raw Code/Phase only). For an exam report it is flipped on so the
+    storm-window standardized-residual inflation (about 1.4 to 2.2 sigma, the
+    Part-D exhibit) is visible, done by swapping just that viewer's ``build``
+    partial and leaving the shared REGISTRY untouched.
     """
     from gnssviz.viewers import REGISTRY
     if not std_residuals:

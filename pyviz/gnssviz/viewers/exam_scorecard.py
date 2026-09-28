@@ -1,12 +1,12 @@
-"""Exam scorecard — the run's answer key vs the Verifier verdict (no plots).
+"""Exam scorecard: the run's answer key against the Verifier verdict (no plots).
 
 A text-only viewer (SPEC §4.2): a ``summary`` block stating the scenario, mode,
 seed, truth ISB/ZWD, storm window/peak, slip counts, and the truth↔trace epoch
 match count (SPEC R5), followed by the per-check gate table read straight from
-``verify_report.json`` (SPEC R6) — the dashboard *displays* the Verifier's
-verdict, it never re-grades.  The coloured PASS/FAIL banner is injected at the
+``verify_report.json`` (SPEC R6). The dashboard displays the Verifier's
+verdict; it does not re-grade. The coloured PASS/FAIL banner is injected at the
 top of the report by ``run_report.py`` via the ``extra_html`` hook (SPEC §4.4);
-this viewer carries the detail table in a plain ``<pre>`` (zero new CSS).
+this viewer carries the detail table in a plain ``<pre>`` (no added CSS).
 
 Renders whenever a truth dir is bound (``truth_scalars.csv`` is always emitted);
 degrades gracefully when ``verify_report.json`` / ``scenario_summary.json`` are

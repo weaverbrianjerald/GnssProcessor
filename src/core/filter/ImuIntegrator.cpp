@@ -123,11 +123,11 @@ namespace GnssProcessor {
             return result;
         }
 
-        // Find samples in (t_start, t_end] using the cached hint.
-        // Reset hint if it's out of range.
+        // Find samples in (t_start, t_end] by a linear walk from the cached hint.
+        // Reset the hint if it is out of range.
         if (search_hint_ >= samples_.size()) search_hint_ = 0;
 
-        // Binary search for the first sample with time > t0.
+        // Locate the first sample with time > t0 (1e-6 s tolerance).
         auto time_of = [](const ImuSample& s) {
             return TimeUtils::continuousGpsSeconds(s.time);
         };
@@ -193,7 +193,8 @@ namespace GnssProcessor {
             const Eigen::Matrix3d dR = Eigen::Matrix3d::Identity() + skew(w_b) * dt;
             C = C * dR - Omega_ie * C * dt;
 
-            // Re-orthonormalize via SVD to prevent drift.
+            // Re-orthonormalize via SVD every 100 integrated steps (the first step
+            // included) to keep C a rotation matrix.
             if (n_integrated % 100 == 0) {
                 Eigen::JacobiSVD<Eigen::Matrix3d> svd(C, Eigen::ComputeFullU | Eigen::ComputeFullV);
                 C = svd.matrixU() * svd.matrixV().transpose();
@@ -217,11 +218,12 @@ namespace GnssProcessor {
             // 15-state: [dp(3), dv(3), dpsi(3), dba(3), dbg(3)]
             //
             // Linearized error dynamics:
-            //   F = | 0   I   0      0     0   |
-            //       | 0  -2Oe  -[f_e]x  C   0   |
-            //       | 0   0   -Oe    0    -C  |
-            //       | 0   0    0     0     0   |
-            //       | 0   0    0     0     0   |
+            //   F = | 0    I      0      0    0  |
+            //       | 0  -2Oe  -[f_e]x   C    0  |
+            //       | 0    0     -Oe     0   -C  |
+            //       | 0    0      0      0    0  |
+            //       | 0    0      0      0    0  |
+            //   with Oe = [omega_ie]x.
             Eigen::MatrixXd F_k = Eigen::MatrixXd::Zero(15, 15);
             F_k.block<3,3>(0, 3) = Eigen::Matrix3d::Identity();               // dp/dv
             F_k.block<3,3>(3, 3) = -2.0 * Omega_ie;                           // dv/dv
@@ -233,7 +235,7 @@ namespace GnssProcessor {
             // Discrete transition: Phi_k = I + F*dt (first order).
             const Eigen::MatrixXd Phi_k = Eigen::MatrixXd::Identity(15, 15) + F_k * dt;
 
-            // Noise spectral densities.
+            // Noise input matrix G and spectral densities W: Q_k = G W G^T dt.
             Eigen::MatrixXd G_k = Eigen::MatrixXd::Zero(15, 12);
             G_k.block<3,3>(3, 0) = C;                   // accel noise -> velocity
             G_k.block<3,3>(6, 3) = -C;                  // gyro noise -> attitude

@@ -1,16 +1,16 @@
 /**
  * @file test_soft_lli_bridge.cpp
- * @brief Unit tests for SoftLliBridge — the shared soft-LLI / gap-bridge
- *        hold orchestration — focused on the per-signal-dropout path
- *        (registerGapHolds) and the resolveHolds restore / fallback
- *        contracts.
+ * @brief Unit tests for SoftLliBridge, the shared soft-LLI and gap-bridge
+ *        hold orchestration: the per-signal-dropout path
+ *        (registerGapHolds) and the restore and fallback contracts of
+ *        resolveHolds.
  *
- * Scenario under test (the motivating field case): a phase signal drops
- * for a few epochs with NO receiver LLI.  The hold must be registered at
- * the first missing epoch (so the caller can prune-protect and KF-exclude
- * the ambiguity), survive the gap, and resolve to a snapshot + dN·λ
- * integer repair when the TurboEdit gap bridge adjudicates the outage —
- * or fall back LOUDLY to a reset when the restore cannot be applied.
+ * Scenario under test: a phase signal drops for a few epochs with no
+ * receiver LLI.  The hold is registered at the first missing epoch (so the
+ * caller can protect the ambiguity from the prune and exclude it from the
+ * KF), survives the gap, and resolves to a snapshot + dN·λ integer repair
+ * when the TurboEdit gap bridge adjudicates the outage.  When the restore
+ * cannot be applied, it falls back to a reset and logs a warning.
  */
 
 #include <gtest/gtest.h>
@@ -69,7 +69,7 @@ struct BridgeHarness {
         bridge.setSampleInterval(1.0);  // high-rate gate
     }
 
-    /// Add an ambiguity state at a CONVERGED variance (well under the
+    /// Add an ambiguity state at a converged variance (well under the
     /// snapshot ceiling) so recordSnapshot captures it.
     size_t addConvergedAmbiguity(const std::string& key, double value,
                                  double variance = 0.01) {
@@ -95,12 +95,11 @@ PppObservation makeObs(const std::string& sat,
 }
 
 // ---------------------------------------------------------------------------
-// registerGapHolds — registration and gates
+// registerGapHolds: registration and gates
 // ---------------------------------------------------------------------------
 
-// The headline case: G01 tracked on L1C+L2W with converged states; L2W
-// produces no observation this epoch (no LLI).  The dropped signal — and
-// only it — must be held.
+// Main case: G01 tracked on L1C+L2W with converged states; L2W produces no
+// observation this epoch (no LLI).  Only the dropped signal is held.
 TEST(SoftLliGapHolds, DroppedSignalIsHeldObservedSignalIsNot) {
     BridgeHarness h("drop");
     h.addConvergedAmbiguity("G01_L1C", 12.5);
@@ -120,8 +119,8 @@ TEST(SoftLliGapHolds, DroppedSignalIsHeldObservedSignalIsNot) {
 }
 
 // Gates: disabled bridge, GLONASS (not AR-capable), BSSD pivot, stale
-// snapshot, and never-converged (no snapshot) keys must all fall through
-// to the normal prune — no hold.
+// snapshot, and never-converged (no snapshot) keys all fall through to the
+// normal prune, with no hold.
 TEST(SoftLliGapHolds, GatesRefuseIneligibleKeys) {
     // Disabled (default config: turbo_edit_bridge_lli off).
     {
@@ -156,8 +155,9 @@ TEST(SoftLliGapHolds, GatesRefuseIneligibleKeys) {
                                   h.te, 101.0, "");
         EXPECT_TRUE(h.bridge.heldKeys().empty());
     }
-    // Stale snapshot: last converged value predates the bridge cap (15 s) —
-    // the sat was not actively tracking; let the prune reclaim the state.
+    // Stale snapshot: the last converged value is older than the bridge cap
+    // (15 s), so the satellite was not actively tracking and the prune
+    // reclaims the state.
     {
         BridgeHarness h("stale");
         h.addConvergedAmbiguity("G01_L2W", 4.0);
@@ -167,7 +167,7 @@ TEST(SoftLliGapHolds, GatesRefuseIneligibleKeys) {
         EXPECT_TRUE(h.bridge.heldKeys().empty());
     }
     // Never converged: no snapshot anchor exists, so a snapshot+dN·λ repair
-    // has nothing to restore — no hold.
+    // has nothing to restore, and no hold is registered.
     {
         BridgeHarness h("uncvg");
         h.addConvergedAmbiguity("G01_L2W", 4.0, /*variance=*/1.0e6);
@@ -179,12 +179,12 @@ TEST(SoftLliGapHolds, GatesRefuseIneligibleKeys) {
 }
 
 // ---------------------------------------------------------------------------
-// resolveHolds — restore and fallback contracts
+// resolveHolds: restore and fallback contracts
 // ---------------------------------------------------------------------------
 
-// Bridge repair arrives for a held key: the ambiguity must be overwritten
-// with anchor + dN·λ at the snapshot variance, the hold released, and the
-// satellite reported repaired (so the caller skips its own reset).
+// A bridge repair arrives for a held key: the ambiguity is overwritten with
+// anchor + dN·λ at the snapshot variance, the hold is released, and the
+// satellite is reported repaired (so the caller skips its own reset).
 TEST(SoftLliGapHolds, BridgeRepairRestoresAnchorPlusIntegerJump) {
     BridgeHarness h("repair");
     const double anchor = -3.25;
@@ -194,8 +194,8 @@ TEST(SoftLliGapHolds, BridgeRepairRestoresAnchorPlusIntegerJump) {
                               h.te, 101.0, "");
     ASSERT_EQ(h.bridge.heldKeys().size(), 1u);
 
-    // Simulate the post-gap KF reseed the hold is meant to make harmless:
-    // the live value drifted; the restore must come from the SNAPSHOT.
+    // Simulate the post-gap KF reseed that the hold guards against: the live
+    // value has drifted, and the restore has to come from the snapshot.
     {
         Eigen::VectorXd x = h.sm.getStateVector();
         x(static_cast<Eigen::Index>(idx)) = 999.0;
@@ -225,10 +225,10 @@ TEST(SoftLliGapHolds, BridgeRepairRestoresAnchorPlusIntegerJump) {
                 0.01, 1e-12);
 }
 
-// Restore failure must be LOUD and terminal: when the held state vanished
-// (a prune-protection gap), the fallback reset fires exactly once — never
-// twice (the dN = 0 partner loop must skip an already-actioned signal) —
-// and the satellite is NOT reported repaired.
+// A restore failure is terminal: when the held state has vanished (a gap in
+// prune protection), the fallback reset fires once and only once (the dN = 0
+// partner loop skips a signal already acted on), and the satellite is not
+// reported repaired.
 TEST(SoftLliGapHolds, RestoreFailureFallsBackToSingleReset) {
     BridgeHarness h("fallback");
     h.addConvergedAmbiguity("G01_L2W", -3.25);
@@ -237,8 +237,8 @@ TEST(SoftLliGapHolds, RestoreFailureFallsBackToSingleReset) {
                               h.te, 101.0, "");
     ASSERT_EQ(h.bridge.heldKeys().size(), 1u);
 
-    // The failure under test: the held state was deleted out from under
-    // the hold (exactly what the prune did before the protection existed).
+    // The failure under test: the held state is deleted while the hold is
+    // active (what an unprotected prune does).
     ASSERT_TRUE(h.sm.removeAmbiguity("G01_L2W"));
 
     TurboEditResolver::EpochResolution te_res;
@@ -295,11 +295,11 @@ TEST(SoftLliGapHolds, TimeoutFallsBackToReset) {
     EXPECT_TRUE(h.bridge.heldKeys().empty());
 }
 
-// The timeout is PER KEY, not per satellite: a signal that drops into an
-// existing outage late gets the FULL cap from its OWN hold start.  This is
-// the G03 field case (2026-05-25 06:31): L1C+L2W held at T, L2L joined at
-// T+8; the old per-sat timer (anchored at the EARLIEST hold) group-reset
-// L2L only seconds into its own window.
+// The timeout is per key, not per satellite: a signal that joins an existing
+// outage late gets the full cap measured from its own hold start.  A
+// per-satellite timer anchored at the earliest hold would reset the late
+// signal a few seconds into its own window (field case: L1C+L2W held at T,
+// L2L joining at T+8).
 TEST(SoftLliGapHolds, TimeoutIsPerKeyNotPerSatellite) {
     BridgeHarness h("perkey");
     h.addConvergedAmbiguity("G01_L1C", 12.5);
@@ -325,7 +325,7 @@ TEST(SoftLliGapHolds, TimeoutIsPerKeyNotPerSatellite) {
                                   const std::string&) { reset_keys.insert(key); };
 
     // T=117: L1C/L2W are 16 s old (> 15 s cap) -> expire; L2L is 8 s old
-    // and MUST remain held with its own window intact.
+    // and remains held with its own window intact.
     h.bridge.resolveHolds(empty_res, h.te, {}, h.sm, /*epoch=*/117.0, "",
                           repaired_sats, n_repaired, n_reset, count_resets);
     EXPECT_EQ(reset_keys,

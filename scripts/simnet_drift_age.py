@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""simnet_drift_age.py -- STABILITY target 1: settled late drift vs carry age.
+"""simnet_drift_age.py: stability campaign target 1, settled late drift vs carry age.
 
 The 12 h quiet flagship (_camp60wu_quiet12h_r2q3) rises h7->h11 in settled
 consumer 3D (0.107 -> 0.179 rms) while young-carry resumed legs beat it
-(0.088-0.134).  Named suspect: carry aging / accumulated frame tension.  This
+(0.088-0.134). Named suspect: carry aging / accumulated frame tension. This
 instrument decomposes a (12 h or 24 h) quiet-bed run into the channels that
-could age, WITHOUT presupposing the mechanism:
+could age, without presupposing the mechanism:
 
-  A. hourly consumer 3D / up (closed_loop_trace.csv) -- the verdict channel.
+  A. hourly consumer 3D / up (closed_loop_trace.csv): the verdict channel.
   B. hourly truth-graded producer channels (simnet_grade_series.csv):
      clk residual/contrast, cb, rx-dcb contrast, ZWD, phase med|frac|.
-  C. hourly event-census rates (network_events.csv) -- frame tension as events.
-  D. DD ambiguity truth error |e| stratified by CHORD AGE (network_dd_
+  C. hourly event-census rates (network_events.csv): frame tension as events.
+  D. DD ambiguity truth error |e| stratified by chord age (network_dd_
      fractional.csv joined against fixture truth, the simnet_amb_integer join
-     verbatim).  Age = epochs since the (signal, sat, sta_a, sta_b) chord was
-     first traced (re-birth after a >1-epoch gap).  The within-hour young/old
-     contrast controls for anything time-varying that is NOT age.
+     verbatim). Age = epochs since the (signal, sat, sta_a, sta_b) chord was
+     first traced (re-birth after a >1-epoch gap). The within-hour young/old
+     contrast controls for anything time-varying that is not age.
   E. per-station ZWD late drift (which stations pay, late-hour minus h_ref).
 
 Join gate (same discipline as simnet_plateau_decompose): on the published
@@ -139,13 +139,13 @@ def events_hourly(run_dir, t0):
 
 
 # --------------------------------------------------------------------------- #
-# D. DD truth error vs chord age (streamed -- the file can be ~3/4 GB)
+# D. DD truth error vs chord age (streamed: the file can be ~3/4 GB)
 # --------------------------------------------------------------------------- #
 def dd_age(run_dir, fixture_dir, t0, settle_h):
     p = os.path.join(run_dir, "logs", "network_dd_fractional.csv")
     if not os.path.isfile(p):
         return None
-    # Station set from the FIXTURE, not from a file prefix: the trace's early
+    # Station set from the fixture, not from a file prefix: the trace's early
     # epochs cover only a pivot-adjacent subset (measured: 21 of 56 stations in
     # the first 200k rows of the 12 h flagship), so a learned prefix silently
     # drops the majority of rows as "unknown station".

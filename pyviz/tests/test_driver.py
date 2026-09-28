@@ -1,7 +1,7 @@
 """Driver dispatch: default_enabled gating and the explicit-override paths.
 
 Uses a synthetic registry of zero-CSV viewers (``required_csvs=()`` so the
-``has_data`` presence check is a no-op) and a throwaway ``TraceContext`` -- the
+``has_data`` presence check is a no-op) and a throwaway ``TraceContext``: the
 default-folder fallback never touches disk for these.
 """
 from gnssviz import TraceContext, run_viewers

@@ -31,9 +31,10 @@ namespace GnssProcessor {
     // ===================================================================
     //
     // Set by the application at the top of each per-epoch processing
-    // iteration; consumed by TowFlagFormatter on every log message.
-    // Thread-local so worker threads (e.g. multi-rover baselines, future
-    // network mode) each carry their own current epoch.
+    // iteration; read by EpochFlagFormatter on every log message.
+    // Thread-local, so each worker thread (e.g. multi-rover baselines)
+    // carries its own current epoch, and a thread that never sets one
+    // prints the placeholder.
     namespace {
         thread_local std::optional<GnssTime> tls_current_epoch_;
     }
@@ -52,9 +53,9 @@ namespace GnssProcessor {
     //
     // Emits "wk, tow.mmm (YYYY-MM-DD HH:MM:SS.mmm)" in GPS time scale
     // when the calling thread has a current epoch set, a placeholder of
-    // matching width otherwise.  The datetime is GPS-scale (NO UTC leap-
-    // second subtraction) so it aligns with TOW exactly — a 30 s RINEX
-    // file produces lines on the HH:MM:00 / HH:MM:30 grid, not 18 s off.
+    // matching width otherwise.  The datetime is GPS-scale (no UTC leap-
+    // second subtraction), so it matches the TOW: a 30 s RINEX file
+    // produces lines on the HH:MM:00 / HH:MM:30 grid, not 18 s off it.
     class EpochFlagFormatter : public spdlog::custom_flag_formatter {
     public:
         void format(const spdlog::details::log_msg& /*msg*/, const std::tm& /*unused*/,
@@ -85,8 +86,9 @@ namespace GnssProcessor {
      * @file src/core/logging/LogManager.cpp
      * @brief Implementation of LogManager: wrapper around spdlog for application-wide logging.
      *
-     * Provides initialization of a default rotating file + console logger, creation of
-     * module-specific loggers, runtime log level changes, and graceful shutdown/flush.
+     * Provides initialization of a console-only default logger, creation of
+     * module-specific rotating-file + console loggers, runtime log level changes, and
+     * shutdown with flush.
      */
 
     /**
@@ -100,15 +102,15 @@ namespace GnssProcessor {
     /**
      * @brief Initialize the logging subsystem.
      *
-     * Creates the log directory if necessary, removes existing .log files in the directory,
-     * and registers a default logger named "gnss_processor" which writes to a rotating file
-     * and the console. If initialization fails for file sinks, falls back to a console-only
-     * logger and returns false.
+     * Creates the log directory if necessary, removes existing .log files in the directory
+     * (best-effort), installs the GPS-time formatter on the spdlog registry, and registers a
+     * console-only default logger named "gnss_processor".  If any step throws, falls back
+     * to a console-only logger that is not guaranteed to be registered, and returns false.  Re-initializing an
+     * initialized instance calls spdlog::drop_all() first.
      *
      * @param log_dir Filesystem path to the directory where log files will be created.
      * @param level Initial logging level to apply to the created logger(s).
-     * @return true on successful initialization of file + console logger; false if only
-     *         console logging could be established due to an spdlog error.
+     * @return true on success; false if an exception forced the console-only fallback.
      */
     bool LogManager::initialize(const std::filesystem::path& log_dir, LogLevel level) {
         if (initialized_) {
@@ -120,24 +122,20 @@ namespace GnssProcessor {
         log_dir_ = log_dir;
         level_ = level;
         try {
-            // Log-directory preparation is BEST-EFFORT and must never throw.
+            // Log-directory preparation is best-effort and does not throw.
             //
-            // Every std::filesystem call below raises std::filesystem_error —
-            // which is NOT an spdlog_ex, so it would escape the catch clause
-            // and abort the caller, contradicting this function's documented
-            // "fall back to console-only, return false" contract.  That is not
-            // hypothetical: concurrent runs are normal in this project, and on
-            // Windows `remove()` on a .log another live process still holds
-            // open fails with ERROR_SHARING_VIOLATION.  It surfaced as
-            // Gpt3Test's SetUpTestSuite dying with
-            //   C++ exception ... "remove: The process cannot access the file
-            //   because it is being used by another process"
-            // whenever a second gnss_tests.exe (or a WER-zombied one) still had
-            // the shared temp gpt3.log open.
+            // The throwing std::filesystem overloads raise std::filesystem_error,
+            // which would abort the caller against this function's "fall back
+            // to console-only, return false" contract.  Concurrent runs are
+            // normal in this project, and on Windows `remove()` on a .log that
+            // another live process holds open fails with
+            // ERROR_SHARING_VIOLATION (for example a second gnss_tests.exe
+            // holding the shared temp gpt3.log that Gpt3Test's
+            // SetUpTestSuite logs to).
             //
-            // So use the error_code overloads and SKIP what we cannot touch: an
-            // undeletable stale .log costs us the overwrite of that one file
-            // (spdlog appends/rotates instead), which beats failing the run.
+            // The error_code overloads are used instead, and an entry that
+            // cannot be removed is skipped: the stale .log is then appended to
+            // or rotated by spdlog instead of overwritten.
             std::error_code ec;
             if (!std::filesystem::exists(log_dir, ec)) {
                 std::filesystem::create_directories(log_dir, ec);
@@ -151,21 +149,22 @@ namespace GnssProcessor {
                 }
             }
 
-            // Apply the GPS+TOW formatter globally so that the 48-odd
-            // call sites that use the default global logger directly
-            // (spdlog::info, spdlog::warn, ...) also get GPS-scale
-            // timestamps and the [tow=...] field.  spdlog clones the
-            // formatter onto every registered logger and stores it as
-            // the default for new loggers, so per-logger
-            // set_formatter() calls below remain a defensive belt-and-
-            // braces but are not strictly required.
+            // Apply the epoch-field formatter to the spdlog registry so the
+            // call sites that use spdlog's own default logger directly
+            // (spdlog::info, spdlog::warn, ...) also get the GPS-scale epoch
+            // field.  spdlog clones the formatter onto every registered logger
+            // and keeps it for loggers its factories create later; loggers
+            // added with register_logger() do not receive it, so the
+            // per-logger set_formatter() calls below apply it explicitly.
             spdlog::set_formatter(makeGpsFormatter());
 
-            // Default logger ("gnss_processor") is console-only by design.
-            // It catches messages from spdlog::xxx() global calls and from a
-            // small number of legacy sites that use getLogger() with no name;
-            // all module-specific logging should go to a named logger
-            // (getLogger("module_name")) that lands in its own .log file.
+            // The manager's default logger ("gnss_processor") is console-only
+            // by design.  It serves the few legacy sites that call getLogger()
+            // with no name.  It is registered with register_logger(), not
+            // set_default_logger(), so spdlog::xxx() free-function calls go to
+            // spdlog's own default logger instead (see logging/SafeLogger.hpp).
+            // Module-specific logging goes to a named logger
+            // (getLogger("module_name")) that writes its own .log file.
             auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
             auto logger = std::make_shared<spdlog::logger>("gnss_processor", console_sink);
             logger->set_formatter(makeGpsFormatter());
@@ -176,13 +175,12 @@ namespace GnssProcessor {
             initialized_ = true;
             return true;
         }
-        // Catch std::exception, not just spdlog_ex: the point of this clause is
-        // that NO caller can be aborted by a logging-setup failure, and the
-        // things that throw here are not all spdlog's (formatter construction,
-        // allocation, and — before the error_code rewrite above — filesystem).
-        // The recovery must itself be exception-safe: the most common arrival
-        // is register_logger() rejecting a duplicate "gnss_processor", and the
-        // retry below would hit that same rejection, so it is guarded.
+        // Catch std::exception, not only spdlog_ex: a logging-setup failure
+        // must not abort any caller, and not everything that can throw here is
+        // spdlog's (formatter construction, allocation).  The recovery is
+        // itself exception-safe: the most common cause is register_logger()
+        // rejecting a duplicate "gnss_processor", and the registration below
+        // would hit the same rejection, so it is guarded.
         catch (const std::exception& e) {
             auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
             auto logger = std::make_shared<spdlog::logger>("gnss_processor", console_sink);
@@ -193,7 +191,7 @@ namespace GnssProcessor {
             try {
                 spdlog::register_logger(logger);
             } catch (const spdlog::spdlog_ex&) {
-                // Name already registered — the map entry above is what this
+                // Name already registered.  The map entry above is what this
                 // manager hands out, so a failed registry insert is harmless.
             }
             initialized_ = true;
@@ -222,8 +220,9 @@ namespace GnssProcessor {
     /**
      * @brief Shutdown logging subsystem.
      *
-     * Flushes all registered loggers, drops all spdlog loggers/sinks, clears internal
-     * state and marks the manager as uninitialized so it may be safely reinitialized.
+     * Flushes all managed loggers, drops all spdlog loggers and sinks (spdlog::drop_all()
+     * also clears spdlog's default logger), clears internal state and marks the manager
+     * as uninitialized so it can be reinitialized.
      */
     void LogManager::shutdown() {
         if (initialized_) {
@@ -241,16 +240,17 @@ namespace GnssProcessor {
      * @brief Default ("gnss_processor") logger accessor.
      *
      * Returns the registered default logger when initialized; before
-     * initialize(), returns a transient console-only fallback — see the
-     * header doc for the rationale (pre-initialization call sites such as
-     * GnssConfig::loadFromJson must degrade, not throw).
+     * initialize() (or after shutdown()), returns a transient console-only
+     * fallback.  The header doc gives the rationale: pre-initialization call
+     * sites such as GnssConfig::loadFromJson log to the console instead of
+     * throwing.
      */
     std::shared_ptr<spdlog::logger> LogManager::getLogger() const {
         const auto it = loggers_.find("gnss_processor");
         if (it != loggers_.end()) return it->second;
-        // Uninitialized: transient console-only fallback, mirroring the named
-        // overload below.  Deliberately NOT registered with spdlog, so
-        // repeated calls cannot collide in the global registry.
+        // Uninitialized: transient console-only fallback, as in the named
+        // overload below.  Not registered with spdlog, so repeated calls
+        // cannot collide in the global registry.
         auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
         auto logger = std::make_shared<spdlog::logger>("gnss_processor", console_sink);
         logger->set_level(spdlog::level::info);
@@ -263,9 +263,9 @@ namespace GnssProcessor {
      *
      * If the manager is not initialized, returns a console-only logger with the requested
      * name and issues an error-level message indicating the manager wasn't initialized.
-     * When initialized, attempts to create a rotating-file + console logger using the same
-     * rotation policy as the default logger. On failure to create a file sink, the default
-     * `gnss_processor` logger is returned.
+     * When initialized, returns the existing logger of that name, or creates a rotating-file
+     * (5 MB, 3 files) + console logger. If creation throws spdlog_ex (for example when the
+     * file sink cannot be opened), the default `gnss_processor` logger is returned.
      *
      * @param logger_name Name of the logger to retrieve/create.
      * @return Shared pointer to the requested spdlog::logger.
@@ -281,24 +281,24 @@ namespace GnssProcessor {
 
         // Lock-free fast path.  std::map::find is data-race-safe for concurrent
         // readers (see [container.requirements.dataraces]), and the returned
-        // shared_ptr copy is atomically ref-counted — so once a logger exists it
+        // shared_ptr copy is atomically ref-counted, so once a logger exists it
         // can be fetched from many threads at once.  The PPP-RTK network producer
         // parallelizes its per-station geometry/assembly across threads and
-        // PREWARMS every logger its model path can touch before entering that
-        // region, so in steady state this is the only branch taken concurrently:
-        // no map mutation, no race.  (Returning find()->second rather than the
-        // associative operator[] matters — operator[] is NOT in the const/
-        // data-race-safe set for associative containers.)
+        // prewarms every logger its model path can touch before entering that
+        // region, so in steady state this is the only branch taken concurrently
+        // and the map is not mutated.  The fast path returns find()->second, not
+        // the associative operator[], because operator[] is not in the const,
+        // data-race-safe set for associative containers.
         if (auto it = loggers_.find(logger_name); it != loggers_.end())
             return it->second;
 
         // Slow path: create + register + insert under a mutex.  Runs at startup
-        // and on first touch of a new logger.  The mutex makes concurrent CREATES
-        // mutually safe; the prewarm contract above guarantees this path is never
-        // taken concurrently with the fast path on the SAME new name inside a
-        // parallel region (which would otherwise be a find-vs-insert race).
+        // and on first touch of a new logger.  The mutex serializes concurrent
+        // creates.  It does not protect the lock-free fast path: the prewarm
+        // contract above is what keeps this path from running concurrently with
+        // a fast-path fetch inside a parallel region (a find-vs-insert race).
         std::lock_guard<std::mutex> create_lock(logger_create_mutex_);
-        // Re-check: another thread may have created it while we waited.
+        // Re-check: another thread may have created it while this one waited.
         if (auto it = loggers_.find(logger_name); it != loggers_.end())
             return it->second;
         try {

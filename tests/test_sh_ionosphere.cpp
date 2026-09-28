@@ -3,16 +3,17 @@
  * @brief Stage-0 unit tests for the single-layer spherical-harmonic VTEC model,
  *        the shared IPP geometry, and the sub-solar longitude.
  *
- * These validate the math BEFORE any filter wiring (the design's Stage 0):
+ * These validate the math independently of any filter wiring (the design's Stage 0):
  *   - the real surface-harmonic basis is orthonormal under (1/4π)∫dΩ
  *     (the normalization is internally consistent);
  *   - the analytic partials ∂VTEC/∂coeff equal the basis values (the network row
  *     builder's Jacobian is correct);
- *   - a known coefficient set is recovered to ~machine precision from synthesized
- *     samples (the basis spans + the linear algebra is sound);
- *   - the IPP geometry reproduces a hand-computed overhead/elevation case;
- *   - a parsed CODE IONEX grid is reproduced by a degree-15 fit to < 0.1 TECU
- *     (the basis represents a real band-limited VTEC field).
+ *   - a known coefficient set is recovered to within 1e-8 from synthesized samples
+ *     (the basis spans the field and the linear algebra is sound);
+ *   - the IPP geometry reproduces the overhead case and the closed-form thin-shell
+ *     mapping for an off-zenith satellite;
+ *   - a parsed CODE IONEX grid is reproduced by a degree-15 fit with RMS below
+ *     0.5 TECU (the basis represents a real band-limited VTEC field).
  */
 
 #include <gtest/gtest.h>
@@ -38,8 +39,8 @@ namespace {
 
 constexpr double kDeg2Rad = Constants::PI / 180.0;
 
-// (1/4π)∫ Y_i Y_j dΩ ≈ δ_ij — verify the basis is orthonormal via a dense
-// midpoint quadrature with cos(lat) area weights.
+// (1/4π)∫ Y_i Y_j dΩ ≈ δ_ij: checks that the basis is orthonormal with a dense
+// midpoint quadrature using cos(lat) area weights.
 TEST(ShIonosphere, BasisOrthonormalOverSphere) {
     const int N = 4;
     SphericalHarmonicIonosphere sh(N);
@@ -175,8 +176,8 @@ TEST(ShIonosphere, MeanSunLongitudeSweepsWestward) {
     EXPECT_NEAR(d_deg, -90.0, 3.0);  // ~ −15°/hr × 6 h, ±equation-of-time drift
 }
 
-// A parsed CODE IONEX grid is reproduced by a degree-15 SH fit to < 0.1 TECU
-// (the band-limited-field acceptance).  Skips cleanly if the fixture is absent.
+// A parsed CODE IONEX grid is reproduced by a degree-15 SH fit with RMS below
+// 0.5 TECU (the band-limited-field acceptance).  Skips if the fixture is absent.
 TEST(ShIonosphere, ReproducesCodeIonexGrid) {
     const std::filesystem::path inx =
         std::filesystem::path(GNSS_TEST_DATA_DIR) / "2024-129" / "products" /
@@ -193,8 +194,8 @@ TEST(ShIonosphere, ReproducesCodeIonexGrid) {
     SphericalHarmonicIonosphere sh(N);
     const int K = sh.numCoeffs();
 
-    // Fit the FIRST map's static grid directly in geographic lon (no sun rotation
-    // — we fit the published grid, not a sun-fixed field).
+    // Fit the first map's static grid directly in geographic longitude, without sun
+    // rotation: the target is the published grid, not a sun-fixed field.
     const auto& map0 = data.maps.front();
     std::vector<double> b;
     std::vector<Eigen::VectorXd> rows;
@@ -227,11 +228,11 @@ TEST(ShIonosphere, ReproducesCodeIonexGrid) {
     EXPECT_LT(rms, 0.5) << "degree-15 SH fit RMS to the CODE IONEX grid (TECU)";
 }
 
-// Iono-2 dual-layer: the shLayers() view is assembled per config (single-layer
-// list without a second model; ordered two-entry list with one), each shell's
-// pierce geometry is evaluated at its OWN height (higher shell ⇒ smaller
-// thin-shell mapping and a displaced IPP), and the summed slant matches the
-// per-layer syntheses — the exact contract every consumer loop relies on.
+// Dual-layer model (Iono-2): the shLayers() view is assembled per config (a
+// single-layer list without a second model, an ordered two-entry list with one),
+// each shell's pierce geometry is evaluated at its own height (higher shell ⇒
+// smaller thin-shell mapping and a displaced IPP), and the summed slant matches the
+// per-layer syntheses, which is the contract every consumer loop relies on.
 TEST(ShIonosphere, DualLayerViewAndSlantSumMatchPerLayerSynthesis) {
     GlobalVtecShConfig shc;
     shc.max_degree = 3;

@@ -2,9 +2,9 @@
 
 Covers the two column-remapped modes served by the single
 ``network_clock_monitor.csv``: model (nis/mode present, one over-k fire),
-monitor (blank nis, ",," prev/jump), a LEGACY file with no nis/mode columns
+monitor (blank nis, ",," prev/jump), a legacy file with no nis/mode columns
 routed by the ``abs_max_m.nunique()`` heuristic, and the ViewerSkip / mode-
-resolution edge cases.  Figures are *built* (spec objects), not rendered.
+resolution edge cases. Figures are built (spec objects), not rendered.
 """
 import pytest
 
@@ -39,7 +39,7 @@ def _write_model(tmp_path):
         for sat, base_nis in (("G10", 0.4), ("E15", 0.9), ("G13", 0.6)):
             # G13 at i==4 is the over-k fire.
             nis = 7.5 if (sat == "G13" and i == 4) else base_nis + 0.02 * i
-            root_s = 0.010 + 0.001 * i          # per-row √S (VARIES -> model)
+            root_s = 0.010 + 0.001 * i          # per-row √S (varies -> model)
             dev = nis * root_s
             drift = 1e-4 * (1 + 0.01 * i)       # prev_clk_m = drift (m/s)
             clk = 0.5 + 0.01 * i
@@ -75,7 +75,7 @@ def test_model_mode(tmp_path):
 # --------------------------------------------------------------------------- #
 def _write_monitor(tmp_path):
     rows = [_HEADER]
-    abs_max = 20.0   # CONSTANT bound -> monitor
+    abs_max = 20.0   # constant bound -> monitor
     jump_max = 10.0
     for i in range(5):
         tow = 259200 + 30 * i
@@ -124,13 +124,13 @@ _LEGACY_HEADER = ("week,tow,sat,clk_m,median_m,dev_m,prev_clk_m,jump_m,"
 
 
 def test_legacy_model_heuristic(tmp_path):
-    """No mode col, abs_max_m VARIES -> model (per-row √S)."""
+    """No mode col, abs_max_m varies -> model (per-row √S)."""
     rows = [_LEGACY_HEADER]
     k = 6.0
     for i in range(5):
         tow = 259200 + 30 * i
         for sat in ("G10", "G13"):
-            root_s = 0.010 + 0.001 * i          # VARIES -> nunique>1 -> model
+            root_s = 0.010 + 0.001 * i          # varies -> nunique>1 -> model
             nis = 7.2 if (sat == "G13" and i == 2) else 0.5 + 0.05 * i
             dev = nis * root_s
             clk = 0.5 + 0.01 * i
@@ -155,7 +155,7 @@ def test_legacy_model_heuristic(tmp_path):
 
 
 def test_legacy_monitor_heuristic(tmp_path):
-    """No mode col, abs_max_m CONSTANT -> monitor."""
+    """No mode col, abs_max_m constant -> monitor."""
     rows = [_LEGACY_HEADER]
     for i in range(4):
         tow = 259200 + 30 * i

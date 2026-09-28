@@ -35,24 +35,24 @@ namespace GnssProcessor {
     /**
      * @brief Result of MW slip detection for a single ambiguity.
      *
-     * The MW observable measures N_WL = N_1 - N_2.  A WL slip tells us
-     * the *difference* changed but cannot distinguish which signal slipped.
+     * The MW observable measures N_WL = N_1 - N_2.  A WL slip shows that this
+     * difference changed; it cannot show which signal slipped.
      * When slip_wl_known is true, slip_wl_cycles contains an integer
      * estimate of the WL jump, and slip_frac records how far from integer
      * the raw value was before rounding (0 = exact, up to 0.5 = worst).
      *
-     * @note slip_wl_cycles is always the satellite's OWN undifferenced
+     * @note slip_wl_cycles is always the satellite's own undifferenced
      *       (zero-differenced) WL slip.  Bias-corrected arcs are detected in a
      *       single-differenced frame against the detector's internal MW pivot,
      *       but that pivot's own slip is added back before reporting, so
      *       consumers may difference two satellites' slips directly without
-     *       knowing (or sharing) the MW pivot.  When the conversion can't be
+     *       knowing (or sharing) the MW pivot.  When the conversion cannot be
      *       made (MW pivot slipped with an unresolved integer) slip_wl_known is
      *       set false so the consumer falls back to a reset.
      */
     struct MwSlipResult {
         std::string amb_key;           ///< Ambiguity key (e.g. "G01_L1C").
-        int    slip_wl_cycles{ 0 };    ///< Satellite's OWN (zero-differenced) WL slip dN_WL, cycles (0 if unknown).
+        int    slip_wl_cycles{ 0 };    ///< Satellite's own (zero-differenced) WL slip dN_WL, cycles (0 if unknown).
         bool   slip_wl_known{ false }; ///< True if slip_wl_cycles is a usable integer.
         double lambda_wl{ 0.0 };       ///< Wide-lane wavelength (meters) for this signal pair.
         std::string sig1;              ///< First signal (higher freq, e.g. "L1C").
@@ -61,53 +61,58 @@ namespace GnssProcessor {
         double slip_frac{ 0.0 };       ///< Fractional residual |x - round(x)| before rounding
                                        ///< (0 = exact integer, 0.5 = worst).  Clean pairs and
                                        ///< BIA-locked pairs have ~0; best-effort pairs may be large.
-        /// FLOAT estimate of the WL slip (cycles, same zero-differenced frame
-        /// as @c slip_wl_cycles), populated where the emission path has a
-        /// meaningful step estimate even when @c slip_wl_known is false —
-        /// e.g. the locked-arc TD-confirmation level gap, whose integer is
-        /// withheld by contract (the deferred path must never publish one)
-        /// but whose magnitude is sound.  NaN when no estimate exists or the
+        /// Float estimate of the WL slip (cycles, same zero-differenced frame
+        /// as @c slip_wl_cycles).  Populated wherever the emission path has a
+        /// meaningful step estimate, including when @c slip_wl_known is false:
+        /// for example the locked-arc TD-confirmation level gap, whose integer
+        /// is withheld by contract (the deferred path never publishes one) but
+        /// whose magnitude is sound.  NaN when no estimate exists or when the
         /// SD→ZD re-referencing could not be applied (pivot slip unresolved).
-        /// Consumers must treat it as a CANDIDATE SELECTOR only (e.g.
-        /// TurboEditResolver's gap-bridge solve tries round(f)±1), never as
-        /// an integer to apply.
+        /// Consumers use it only to select integer candidates (for example,
+        /// TurboEditResolver's gap-bridge solve tries round(f)±1), never as an
+        /// integer to apply.
         double slip_wl_float{ std::numeric_limits<double>::quiet_NaN() };
 
-        // --- DETECTION STRENGTH (mw_evidence_refloat) -----------------------
-        // The three quantities a DETECT-ONLY consumer needs to judge a flag it
+        // --- Detection strength (mw_evidence_refloat) -----------------------
+        // Three quantities a detect-only consumer uses to judge a flag that it
         // cannot judge by integer cleanliness.  slip_frac grades how cleanly the
-        // step ROUNDS, which says nothing about how far above the noise the step
-        // stood — a −99 cycle slip flagged at 78x its own threshold was dropped
-        // by the frac gate at 0.183.  These are reported for every emission path
-        // and are purely additive: no existing consumer reads them.
+        // step rounds, not how far above the noise it stood, so a large slip
+        // flagged far above its threshold can still fail a frac gate.  Every
+        // slip-detection emission path reports them (LLI resets keep the
+        // defaults), and no detector decision depends on them.
+        // The network producer's MW refloat admission reads them and admits on
+        // them only with network.cycle_slip.mw_evidence_refloat on.
 
-        /// |deviation| / threshold at the flag, i.e. how many times its OWN
-        /// adaptive gate the firing statistic stood at.  NaN where the emitting
-        /// path has no meaningful ratio (it never fabricates one).
+        /// |deviation| / threshold at the flag: the firing statistic as a
+        /// multiple of its own adaptive threshold.  NaN where the emitting path
+        /// has no meaningful ratio (none is fabricated).
         double evidence_ratio{ std::numeric_limits<double>::quiet_NaN() };
-        /// The arc's accumulated sample count at the flag, BEFORE the erase —
-        /// arc MATURITY.  0 on the init-suspicious path (the arc is one sample
-        /// old by construction) and wherever the emitting path has no arc.
+        /// Arc maturity: the arc's accumulated sample count at the flag, before
+        /// the erase.  0 on the init-suspicious path (the arc is one sample old
+        /// by construction) and wherever the emitting path has no arc.
         int    arc_epochs{ 0 };
-        /// Lane CLASS: true when the MW value the flag was formed on had both the
+        /// Lane class: true when the MW value the flag was formed on had both the
         /// satellite (BIA) and the receiver (single-difference) bias removed.
         /// Such a lane is single-differenced against the detector's internal MW
-        /// pivot, so a pivot S-transform re-reference shows up as a synchronous
-        /// multi-satellite "slip" at one station — the measured false-alarm
-        /// population.  Evidence-based admission is restricted to bias-FREE lanes
-        /// for exactly that reason.
+        /// pivot, so a pivot S-transform re-reference appears as a synchronous
+        /// multi-satellite "slip" at one station; that is the measured
+        /// false-alarm population.  The group's MW pivot also reports true: its
+        /// value is BIA-corrected and it is the reference of that S-transform.
+        /// Evidence-based admission is therefore restricted to lanes with
+        /// bia_corrected false.
         bool   bia_corrected{ false };
     };
 
     /**
      * @brief Detection-strength outputs of one @c processMwSample call.
      *
-     * A small out-struct rather than three more out-params: @c processMwSample
-     * already carries four.  Every field mirrors the identically named member of
-     * @ref MwSlipResult and is written ONLY on the epochs the call returns true;
-     * a path with no meaningful value leaves the default (NaN / 0 / false) rather
-     * than inventing one, so a consumer's @c std::isfinite check is the honest
-     * "this path published no strength" test.
+     * An out-struct instead of three more out-params (@c processMwSample
+     * already carries four).  Each field mirrors the identically named member
+     * of @ref MwSlipResult.  Every call resets the fields and records
+     * @c bia_corrected; the ratio and the arc count are set only on paths
+     * where the call returns true.  A path with no meaningful value leaves the
+     * default (NaN / 0) instead of inventing one, so @c std::isfinite on
+     * @c evidence_ratio tells a consumer whether the path published a strength.
      */
     struct MwSampleEvidence {
         double evidence_ratio{ std::numeric_limits<double>::quiet_NaN() };
@@ -123,7 +128,7 @@ namespace GnssProcessor {
      */
     struct SatelliteMwQuality {
         size_t min_arc_length{ 0 };   ///< Shortest arc (epoch count) across all pairs.
-        double worst_sigma{ 1e9 };    ///< Largest MAD-sigma (meters) across all pairs (NaN if immature).
+        double worst_sigma{ 1e9 };    ///< Largest MAD-sigma (meters) across pairs with a mature MAD (1e9 if none).
         bool   all_wl_locked{ false };///< True only if every BIA-corrected pair has a locked WL integer.
         size_t num_pairs{ 0 };        ///< Number of active MW pairs for this satellite.
     };
@@ -132,10 +137,12 @@ namespace GnssProcessor {
      * @class MwSlipDetector
      * @brief Detector for large MW (wide-lane / MW-like) discontinuities.
      *
-     * The detector inspects per-satellite observations and computes an MW-like
-     * quantity in meters. It keeps a short history (last value per satellite)
-     * and flags ambiguities for reset when the MW change exceeds a configured
-     * threshold (in wide-lane cycles).
+     * The detector computes an MW-like quantity in meters for each satellite
+     * and signal pair and keeps running statistics per arc (keyed like
+     * "G01_L1C_L2W").  It flags the pair's ambiguities for reset when a
+     * sample's deviation from the arc reference exceeds an adaptive threshold:
+     * k times the arc's MAD-based σ once the arc is mature, and a cross-satellite
+     * or gross-slip floor before that.
      */
     class MwSlipDetector : public ISlipDetector {
     public:
@@ -157,10 +164,10 @@ namespace GnssProcessor {
          * carries @c SlipGranularity::BandDifference with both signals
          * populated.
          *
-         * @note @c CycleSlipManager does not call this — its specialized
-         *       BSSD-aware pipeline consumes @c detectLargeMwResets directly
-         *       for the full @c MwSlipResult WL-pair semantics the projection
-         *       does not preserve.  This override exists for the polymorphic
+         * @note @c CycleSlipManager does not call this: its BSSD-aware pipeline
+         *       consumes @c detectLargeMwResets directly, because it needs the
+         *       full @c MwSlipResult WL-pair semantics that the projection does
+         *       not preserve.  This override exists for the polymorphic
          *       @c ISlipDetector contract.
          *
          * @param context Epoch inputs (only @c observations is consulted).
@@ -210,24 +217,23 @@ namespace GnssProcessor {
          * @brief Arc keys whose MW observable was affirmatively clean this epoch.
          *
          * An arc enters the set when, during the current
-         * @c detectLargeMwResets pass, it (a) is genuinely mature
-         * (sample count ≥ 10 — a finite adaptive threshold is NOT used as
-         * a maturity proxy, since the warm-up/cold-start branches return
-         * finite thresholds for 2-sample arcs), (b) did not flag, (c) its
-         * empirical MAD σ gives the test discriminating power
-         * (3σ ≤ 0.7·λ_WL, so a real ±1-cycle wide-lane slip cannot be
-         * pulled inside the clean bound by noise except as a ≥3σ event),
-         * and (d) its sample deviation from the arc mean sat within
-         * 0.3·@f$\lambda_{WL}@f$ — i.e. the wide-lane integer is
-         * demonstrably unchanged at this epoch.  Key format matches the
-         * arc stats key ("G01_L1C_L2W").
+         * @c detectLargeMwResets pass, it (a) is mature (sample count ≥ 10; a
+         * finite adaptive threshold is not used as a maturity proxy, because the
+         * warm-up and cold-start branches return finite thresholds for 2-sample
+         * arcs), (b) did not flag, (c) has an empirical MAD σ that gives the test
+         * discriminating power (3σ ≤ 0.7·λ_WL, so noise can pull a real ±1-cycle
+         * wide-lane slip inside the clean bound only as a ≥3σ event), and (d) had
+         * a sample deviation from the arc's Hatch mean within
+         * 0.3·@f$\lambda_{WL}@f$, so the wide-lane integer is demonstrably
+         * unchanged at this epoch.  Key format matches the arc stats key
+         * ("G01_L1C_L2W").
          *
          * Consumed by @c TurboEditResolver::resolve to gate its GF-only
-         * equal-slip (@f$\Delta N_{WL}=0@f$) split: MW *silence* is not
-         * sufficient evidence — a wl-locked arc deliberately absorbs a real
-         * slip into its Welford stats without emitting a result, and an
-         * immature arc could not have flagged at all.  Only affirmative
-         * cleanliness justifies the equal-slip assumption.
+         * equal-slip (@f$\Delta N_{WL}=0@f$) split.  MW silence is not sufficient
+         * evidence for that split: a wl-locked arc deliberately absorbs a real
+         * slip into its Welford stats without emitting a result, and an immature
+         * arc could not have flagged at all.  Only affirmative cleanliness
+         * justifies the equal-slip assumption.
          *
          * Cleared and rebuilt by every @c detectLargeMwResets call; contents
          * are valid for the current epoch only.
@@ -239,40 +245,40 @@ namespace GnssProcessor {
         /**
          * @brief Arc sample count of each key in @c getEpochCleanPairs.
          *
-         * Same keys, same lifetime (cleared and rebuilt by every
+         * Same keys and lifetime (cleared and rebuilt by every
          * @c detectLargeMwResets call).  @c getEpochCleanPairs already enforces
          * an internal maturity floor for TurboEdit's equal-slip split; this map
-         * lets a consumer apply its OWN, stricter bar to the same evidence and —
-         * the operative half — COUNT what that bar refused.  The network
-         * producer's common-band scope (SPEC_event_harness.md §14) is the first
-         * such consumer: a silent pair exonerates its two bands only when its
-         * arc reaches @c network.cycle_slip.common_band_min_arc_epochs.
+         * lets a consumer apply its own, stricter bar to the same evidence and
+         * count what that bar refused.  The network producer's common-band scope
+         * (SPEC_event_harness.md §14), which applies
+         * @c network.cycle_slip.common_band_min_arc_epochs, reads its arc counts
+         * from @ref getEpochPairStatus instead of from this map.
          *
          * @return Map from affirmatively-clean arc key to that arc's sample count.
          */
         const std::map<std::string, int>& getEpochCleanArcN() const { return epoch_clean_arc_n_; }
 
         /**
-         * @brief What the detector DID with one arc this epoch — the
-         *        DETECTION-grade record, as opposed to @c getEpochCleanPairs's
-         *        cleanliness-grade one.
-         */
-        /**
-         * @brief Name this detector instance for its DEBUG decision lines (§14.10).
+         * @brief Name this detector instance for its debug-level decision lines
+         *        (SPEC_event_harness.md §14.10).
          *
-         * The network runs ONE detector per station and they all share the
+         * The network runs one detector per station, and all of them share the
          * `mw_slip_detector` logger, whose records are keyed only by
-         * `<sat>_<sig1>_<sig2>` — so two stations' lines for the same arc are
-         * indistinguishable and the log cannot be read per station at all.  This
-         * stamps the label into the MWDEC / MWSKIP lines.  Empty by default;
-         * affects nothing but log text.
+         * `<sat>_<sig1>_<sig2>`; without a label, two stations' lines for the
+         * same arc cannot be told apart.  The label is stamped into the MWDEC /
+         * MWSKIP lines.  Empty by default; affects nothing but log text.
          *
          * @param label Station name (or any short instance id).
          */
         void setStationLabel(const std::string& label) { station_label_ = label; }
 
+        /**
+         * @brief What the detector did with one arc this epoch: the
+         *        detection-grade record, as opposed to the cleanliness-grade
+         *        record of @c getEpochCleanPairs.
+         */
         struct EpochPairStatus {
-            /// Arc sample count as the flag decision saw it (samples BEFORE this
+            /// Arc sample count as the flag decision saw it (samples before this
             /// one; the Welford increment happens later in the same call).
             int    arc_n_at_sample{ 0 };
             /// The detector's own flag verdict for this sample.  Advisory: a
@@ -282,51 +288,47 @@ namespace GnssProcessor {
             /// Adaptive detection threshold at this sample (metres).  NaN when the
             /// sample left before a threshold existed (an arc's very first epoch).
             double thresh_m{ std::numeric_limits<double>::quiet_NaN() };
-            /// Wide-lane wavelength of the pair (m) — divides @ref thresh_m into
-            /// the cycles a consumer can compare against a slip magnitude.
+            /// Wide-lane wavelength of the pair (m).  Dividing @ref thresh_m by it
+            /// gives the threshold in cycles, comparable with a slip magnitude.
             double lambda_wl{ 0.0 };
-            /// §14.11 LLI SHADOW — one of this pair's BANDS carried a receiver
-            /// loss-of-lock bit at the PREVIOUS epoch, so the pair's previous
-            /// sample was WITHHELD: the uncombined LLI branch of @ref detect
-            /// schedules the ambiguity resets and `continue`s, deliberately
-            /// preserving the MW arc (the MW combination is a function of raw
-            /// observations alone, so a short LLI gap does not invalidate the
-            /// EWMA).  The arc count therefore keeps accumulating straight
-            /// through the flagged epoch, and this sample — the FIRST one after
-            /// the gap — is compared against a mean that never saw the epoch the
-            /// receiver declared broken.  A band-common slip leaves the wide lane
-            /// unmoved, so the lane reads "silent and mature" while carrying no
-            /// information at all about the epoch in question.  Measured on the
-            /// storm bed: all five spurious `keep` verdicts in 2 994 sat exactly
-            /// one epoch after an LLI, and in every one the exonerating lane
-            /// CONTAINED the flagged band (S37/G20 (L1C+L5Q) n 87→99 across the
-            /// LLI at 4.9833 h, thr 9.0 WL; S25/E36 (L1C+L5Q) n 164→173).
+            /// LLI shadow (SPEC_event_harness.md §14.11): one of this pair's bands
+            /// carried a receiver loss-of-lock bit at the previous epoch, so the
+            /// pair's previous sample was withheld.  The uncombined LLI branch of
+            /// @ref detectLargeMwResets schedules the ambiguity resets and skips
+            /// the satellite (`continue`) while preserving the MW arc on purpose:
+            /// the MW combination depends on raw observations alone, so a short
+            /// LLI gap does not invalidate the arc statistics.  The arc is not
+            /// reset at the flagged epoch, and this sample, the first after it,
+            /// is compared against a mean that never saw the epoch the receiver
+            /// declared broken.  A band-common slip leaves the wide lane unmoved,
+            /// so the lane reads as silent and mature while carrying no
+            /// information about that epoch.  On the storm bed, every spurious
+            /// `keep` verdict came one epoch after an LLI, on a lane that
+            /// contained the flagged band.
             bool   lli_shadow{ false };
         };
 
         /**
-         * @brief Per-epoch record of every arc the detector PROCESSED a sample for.
+         * @brief Per-epoch record of every arc the detector processed a sample for.
          *
          * Same key shape and lifetime as @c getEpochCleanPairs
          * ("&lt;sat&gt;_&lt;sig1&gt;_&lt;sig2&gt;", cleared and rebuilt by every
-         * @c detectLargeMwResets call), and deliberately a DIFFERENT question.
+         * @c detectLargeMwResets call), but it answers a different question.
          *
          * @c getEpochCleanPairs answers "is this arc clean enough to assert
-         * ΔN_WL = 0 for TurboEdit's GF-only split" — a conjunction of a 0.3-cycle
-         * deviation bound and a σ-awareness condition (3σ ≤ 0.7·λ_WL) that a
-         * NARROW lane on a noisy bed can never satisfy, no matter how quiet it
-         * is.  Measured on the 60-station sim: MW scatter σ_MAD p50 = 0.414 m on
-         * L1C+L2W against that pair's 0.201 m bar, so the narrow lanes are never
-         * affirmed and only the extra-wide lanes (λ_WL 5.9–9.8 m) ever appear
-         * there.
+         * ΔN_WL = 0 for TurboEdit's GF-only split": a conjunction of a 0.3-cycle
+         * deviation bound and a σ condition (3σ ≤ 0.7·λ_WL) that a narrow lane on
+         * a noisy bed never satisfies, however quiet it is.  On the 60-station
+         * sim, the MW scatter σ_MAD p50 is 0.414 m on L1C+L2W against that pair's
+         * 0.201 m bar, so the narrow lanes are never affirmed and only the
+         * extra-wide lanes (λ_WL 5.9–9.8 m) appear there.
          *
-         * THIS map answers the weaker, detection-grade question a slip-response
-         * consumer actually needs: "did the detector look at this pair this
-         * epoch, on an arc old enough to have flagged, and not flag it?"  The
-         * network producer's common-band scope (SPEC_event_harness.md §14) is
-         * built on that, and reports @ref EpochPairStatus::thresh_m so a silence
-         * too loose to exclude the slip size in question can be counted rather
-         * than trusted blindly.
+         * This map answers the weaker, detection-grade question a slip-response
+         * consumer needs: "did the detector look at this pair this epoch, on an
+         * arc old enough to have flagged, and not flag it?"  The network
+         * producer's common-band scope (SPEC_event_harness.md §14) is built on
+         * it and reads @ref EpochPairStatus::thresh_m, so a silence too loose to
+         * exclude the slip size in question can be counted instead of trusted.
          *
          * @return Map from processed arc key to that sample's detection record.
          */
@@ -336,8 +338,8 @@ namespace GnssProcessor {
          * @brief Get the worst-case fractional residual of each
          *        currently-locked WL arc, in cycles.
          *
-         * Reports @c |mean/λ_WL − rounded_wl| + 3·σ_mean/λ_WL — the same
-         * worst-case-frac expression the lock criterion uses, capturing
+         * Reports @c |mean/λ_WL − rounded_wl| + 3·σ_mean/λ_WL, the same
+         * worst-case-frac expression the lock criterion uses.  It captures
          * both the observed drift between the live running mean and the
          * locked integer and the statistical uncertainty of the mean.
          *
@@ -354,40 +356,40 @@ namespace GnssProcessor {
          */
         std::map<std::string, double> getResolvedWlFractions() const;
 
-        /**
-         * @brief Per-arc standard error of the locked WL arc MEAN, in cycles.
-         *
-         * Same population and key space as @ref getResolvedWlAmbiguities and
-         * @ref getResolvedWlFractions, and the same `σ_mean = √(M2/(n−1)/n) / λ_WL`
-         * the fractions accessor forms internally — exposed on its own instead of
-         * folded into the single worst-case-frac scalar.
-         *
-         * **Why it has to be separable.**  `wl_max_frac` is a POINT test on the
-         * running residual: it says the locked integer looks consistent right now.
-         * It cannot bound the PROBABILITY that the integer is wrong, which is what
-         * an acceptance decision must control.  Given σ_mean, one arc's rounding
-         * success rate is `erf(1/(2√2·σ))` — the identical per-component term
-         * @ref ils::computeBootstrapSuccessRate uses on the LAMBDA tier — so
-         * exposing σ lets the WL-only AR path run the SAME fixed-failure-rate gate
-         * as the LAMBDA path instead of having none.
-         *
-         * A BSSD MW pivot is 0 cycles against itself by construction and is
-         * reported with @c exact=true (success 1 regardless of maturity), matching
-         * the 0.0 the fractions accessor reports for those keys.
-         *
-         * @c count travels with σ because it is load-bearing: a 2-sample arc whose
-         * samples happen to agree yields σ ≈ 0 and a success rate ≈ 1 on one degree
-         * of freedom.  A caller applying an FFR gate MUST also require maturity, or
-         * a meaningless variance buys a fix.  Maturity is deliberately not gated
-         * here — that threshold is consumer policy, not a detector constant.
-         *
-         * @return Map of stats_key -> lock quality.
-         */
         struct WlLockQuality {
             double      sigma_mean_cycles{ 0.0 };  ///< σ of the arc mean (cycles).
             std::size_t count{ 0 };                ///< Welford sample count backing that σ.
             bool        exact{ false };            ///< SD-vs-self pivot: 0 cycles by construction, no uncertainty.
         };
+        /**
+         * @brief Per-arc standard error of the locked WL arc mean, in cycles.
+         *
+         * Same population and key space as @ref getResolvedWlAmbiguities and
+         * @ref getResolvedWlFractions, and the same `σ_mean = √(M2/(n−1)/n) / λ_WL`
+         * the fractions accessor forms internally, exposed on its own instead of
+         * folded into the single worst-case-frac scalar.
+         *
+         * It is exposed separately because `wl_max_frac` is a point test on the
+         * running residual: it says the locked integer looks consistent now.  It
+         * cannot bound the probability that the integer is wrong, which is what
+         * an acceptance decision must control.  Given σ_mean, one arc's rounding
+         * success rate is `erf(1/(2√2·σ))`, the same per-component term
+         * @ref ils::computeBootstrapSuccessRate uses on the LAMBDA tier, so
+         * exposing σ lets the WL-only AR path run the same fixed-failure-rate
+         * gate as the LAMBDA path instead of having none.
+         *
+         * A BSSD MW pivot is 0 cycles against itself by construction and is
+         * reported with @c exact=true (success 1 regardless of maturity), matching
+         * the 0.0 the fractions accessor reports for those keys.
+         *
+         * @c count travels with σ because a 2-sample arc whose samples happen to
+         * agree yields σ ≈ 0 and a success rate ≈ 1 on one degree of freedom.  A
+         * caller applying an FFR gate must also require maturity, or a meaningless
+         * variance buys a fix.  Maturity is not gated here on purpose: that
+         * threshold is consumer policy, not a detector constant.
+         *
+         * @return Map of stats_key -> lock quality.
+         */
         std::map<std::string, WlLockQuality> getResolvedWlQuality() const;
 
         /**
@@ -396,10 +398,13 @@ namespace GnssProcessor {
          * Returns every stats key that has an active MW arc with enough
          * epoch history (diff_window >= kMinEpochsForAdaptive) to have
          * detected a slip if one occurred.  Immature arcs are excluded
-         * because their slip-detection is deferred — treating them as
+         * because their slip detection is deferred: treating them as
          * "clean" would create false constraints in the multi-frequency
-         * solver.  Slipped arcs are excluded because they are erased
-         * immediately upon detection.
+         * solver.  An unlocked arc that flags a slip is erased at once and
+         * drops out.  A locked arc that flags stays listed: the level modes
+         * absorb the sample (drift demotion later unlocks the arc without
+         * erasing it), and the TimeDifference modes normally erase it one
+         * epoch later, when the step is confirmed.
          *
          * The key format is "SAT_SIG1_SIG2" (e.g. "G01_L1C_L2W").
          * This is used by CycleSlipManager to build clean-pair references
@@ -417,11 +422,11 @@ namespace GnssProcessor {
          * restarts an arc (the across-gap event): the demoted pre-jump
          * level is stashed, and as the post-restart arc's Hatch mean
          * converges, (new mean − pre-jump level) / λ_WL re-estimates the
-         * across-gap WL step with √n-averaged code noise — the
-         * instantaneous jump float published at confirm time is biased by
-         * the re-acquisition NL-code transient (observed several cycles
-         * off), which is exactly what poisons integer-candidate selection
-         * in the TurboEdit gap-bridge solve.
+         * across-gap WL step with √n-averaged code noise.  The instantaneous
+         * jump float published at confirm time is biased by the
+         * re-acquisition NL-code transient (observed several cycles off),
+         * which misleads integer-candidate selection in the TurboEdit
+         * gap-bridge solve.
          *
          * @c stable applies the same empirical criterion as the WL lock
          * (@c |frac| + 3·σ_mean < 0.5 cycles with n ≥ 10): the estimate is
@@ -451,26 +456,33 @@ namespace GnssProcessor {
         getAcrossGapWlEvidence(double epoch_now_s) const;
 
         /**
-         * @brief Clear MW arc history for a specific satellite.
+         * @brief Roll back or clear the MW arcs of a specific satellite.
          *
          * Call this when an ambiguity is reset by an external mechanism (e.g.,
-         * KF outlier handler) so the MW detector starts a fresh arc on the
-         * next epoch. Without this call, stale pre-reset MW values would
-         * contaminate the running statistics and mask subsequent slips.
+         * KF outlier handler).  Each of the satellite's arcs is restored to the
+         * snapshot taken before this epoch's sample when one exists (the
+         * accumulated noise statistics are kept and the WL lock is broken) and
+         * erased otherwise.  Without this call, the sample carrying a slip that
+         * the MW test missed would stay in the running statistics and mask the
+         * slip.  The satellite's bridge arcs and demoted-level stashes are
+         * dropped, and an SD pivot entry held by the satellite is cleared so
+         * that a new pivot is selected next epoch.
          *
          * @param satellite Satellite identifier (e.g. "G01").
          */
         void resetSatellite(const std::string& satellite) override;
 
         /**
-         * @brief Clear MW arc histories that involve a specific (satellite,
-         *        signal) — leaving arcs on signal pairs that don't include
-         *        this signal intact.
+         * @brief Roll back or clear the MW arcs that involve a specific
+         *        (satellite, signal), leaving arcs on signal pairs that do
+         *        not include this signal intact.
          *
          * Finer-grained alternative to @c resetSatellite for the common case
          * where only one signal slipped on a multi-frequency satellite (e.g.
-         * L1C slipped while L2W and L5X are clean — the L2W/L5X arc should
-         * survive while L1C/L2W and L1C/L5X arcs are cleared).
+         * L1C slipped while L2W and L5X are clean: the L2W/L5X arc survives
+         * while the L1C/L2W and L1C/L5X arcs are rolled back or cleared).
+         * Rollback and erase follow @c resetSatellite; bridge arcs and
+         * demoted-level stashes that involve the signal are dropped.
          *
          * @param satellite Satellite identifier (e.g. "G01").
          * @param signal    Signal identifier (e.g. "L1C", "L2W", "L5X").
@@ -550,10 +562,11 @@ namespace GnssProcessor {
          * @brief Override the inter-epoch gap tolerance for arc resets.
          *
          * Overrides @c kDefaultMaxGapSeconds for this detector instance.
-         * Application sets this to the RINEX sampling interval when the
-         * data rate is coarser than 5 s and IMU is not available, so any
-         * gap longer than the nominal cadence resets the arc rather than
-         * silently absorbing a slip-during-gap into the running mean.
+         * Application sets this to 1.5 × the effective sampling interval
+         * (the RINEX interval, or processing.gnss_rate_s when set) when that
+         * interval is coarser than 5 s and IMU is not available, so a missed
+         * epoch resets the arc rather than silently absorbing a
+         * slip-during-gap into the running mean.
          * When IMU bridges gaps the default 120 s is preserved by not
          * calling this setter.
          *
@@ -603,37 +616,37 @@ namespace GnssProcessor {
          * exactly (M5 card WL-1; see @c NetworkMwWlLayer).
          */
         struct MwArcZdMean {
-            double      mean_m{ std::numeric_limits<double>::quiet_NaN() };        ///< ZD-consistent MW mean (m), LAGGED one epoch (SPEC_mw_wl_card §3.3 double-count guard).
-            double      var_of_mean_m2{ std::numeric_limits<double>::quiet_NaN() };///< Welford variance of the lagged mean = M2_lag/(n_lag(n_lag−1)) (m²); for a reconstructed SD arc this is a CONSERVATIVE (over-counted) upper bound — the common pivot variance cancels in a closed cycle.
+            double      mean_m{ std::numeric_limits<double>::quiet_NaN() };        ///< ZD-consistent MW mean (m), lagged one epoch (SPEC_mw_wl_card §3.3 double-count guard).
+            double      var_of_mean_m2{ std::numeric_limits<double>::quiet_NaN() };///< Welford variance of the lagged mean = M2_lag/(n_lag(n_lag−1)) (m²); for a reconstructed SD arc this is a conservative (over-counted) upper bound, because the common pivot variance cancels in a closed cycle.
             std::size_t count{ 0 };                                                ///< Lagged Welford sample count (min across the arc and, if reconstructed, its pivot).
             double      lambda_wl{ 0.0 };                                          ///< cached wide-lane wavelength (m).
-            bool        bia_corrected{ false };                                    ///< satellite-bias frame of the underlying arc (true = BIA-subtracted).  Cycle-level satellite-bias cancellation requires a UNIFORM frame — the WL layer skips mixed-frame cycles.
-            bool        valid{ false };                                            ///< the arc exists, has ≥2 LAGGED samples, and a finite ZD mean/variance was recovered.
-            /// The (satellite, signal-pair) arc KEY is present in the accumulator at
-            /// all — i.e. the detector has ever formed an MW on this exact pair.
-            /// Strictly weaker than @c valid, and the ONLY way for a caller to tell
-            /// "this pair was never built" (a band the detector does not pair, or a
-            /// tracking channel it did not choose) from "built but not yet usable"
-            /// (young, or an SD arc whose group pivot is missing).  Those are
-            /// different defects with different fixes, and a single invalid flag
-            /// conflates them — which is exactly how an EWL consumer can spend a run
-            /// reporting "immature arc" for a pair that does not exist.
+            bool        bia_corrected{ false };                                    ///< satellite-bias frame of the underlying arc (true = BIA-subtracted).  Cycle-level satellite-bias cancellation requires a uniform frame, so the WL layer skips mixed-frame cycles.
+            bool        valid{ false };                                            ///< the arc exists, has ≥2 lagged samples, and a finite ZD mean/variance was recovered.
+            /// The (satellite, signal-pair) arc key is present in the accumulator,
+            /// i.e. the detector currently holds an arc (of any age) on this exact
+            /// pair.  Strictly weaker than @c valid, and the only way for a caller
+            /// to tell "this pair was never built" (a band the detector does not
+            /// pair, or a tracking channel it did not choose) from "built but not
+            /// yet usable" (young, or an SD arc whose group pivot is missing).  The
+            /// two cases have different causes and fixes; a single invalid flag
+            /// would let an EWL consumer report "immature arc" for a whole run on a
+            /// pair that does not exist.
             bool        exists{ false };
-            /// The RINEX CODE observables the MW combination actually consumed on
-            /// (@c sig1, @c sig2) — @c matchChannel's same-tracking-attribute pick, with
+            /// The RINEX code observables the MW combination consumed on
+            /// (@c sig1, @c sig2): @c matchChannel's same-tracking-attribute pick, with
             /// its in-band fallback (see @ref collectUncombinedPairs).  Served because a
-            /// consumer that models the arc's satellite CODE bias must name the SAME
-            /// per-signal OSB column the observable carries: deriving "C"+band+attribute
+            /// consumer that models the arc's satellite code bias must name the same
+            /// per-signal OSB column the observable carries.  Deriving "C"+band+attribute
             /// from the phase key is right only when the fallback did not fire, and a
-            /// silently mis-attributed OSB column is an undetectable modelling error.
+            /// mis-attributed OSB column is a modelling error nothing downstream detects.
             /// Empty on an arc fed before this was recorded (never within one run).
             std::string code1, code2;
         };
 
         /**
          * @brief Read a (satellite, signal-pair) MW arc as a ZD-consistent Welford
-         *        summary — the per-arc code-coherence accumulator the wide-lane layer
-         *        double-differences over the Card-4 chord basis.
+         *        summary: the per-arc code-coherence accumulator that the wide-lane
+         *        layer double-differences over the Card-4 chord basis.
          *
          * The network per-station detector stores non-pivot arcs single-differenced
          * against a per-(constellation,signal-pair) MW pivot (mean = MW_bia(sat) -
@@ -644,7 +657,7 @@ namespace GnssProcessor {
          * single-differenced but its group pivot arc is absent (cannot reconstruct) the
          * result is @c valid=false and the caller skips the cycle.
          *
-         * Maturity is NOT gated here — @c count is returned so the caller applies its
+         * Maturity is not gated here: @c count is returned so the caller applies its
          * own @c min_arc_epochs threshold.
          *
          * @param sat  Satellite identifier (e.g. "G05").
@@ -657,34 +670,35 @@ namespace GnssProcessor {
                               const std::string& sig2) const;
 
         /**
-         * @brief A per-arc LAGGED per-epoch MW sample in the ZD-consistent frame — the
-         *        WL-3 lane-carry per-epoch INCREMENT source.
+         * @brief A per-arc lagged per-epoch MW sample in the ZD-consistent frame: the
+         *        per-epoch increment source of the lane-coordinate carry (WL-3).
          *
-         * NOT the Welford mean (@ref arcZdMean): under the lane-coordinate carry the
-         * ESTIMATOR owns the accumulation, so each epoch's raw sample must enter exactly
-         * once.  The served value is the arc's PREVIOUS processed epoch's raw MW — the
-         * same F1 one-epoch lag discipline as @c mean_lag (a same-epoch consumer never
-         * re-ingests the observations the estimator is folding this epoch).  @c var_m2
-         * is the PER-SAMPLE Welford variance M2_lag/(n_lag−1) (m²) — the honest per-epoch
-         * noise, not the variance of the mean.  For a reconstructed SD arc the value adds
-         * the group pivot's own lagged raw sample and the variance both arcs' per-sample
-         * variances (conservative — the common pivot term cancels in a closed DD cycle);
-         * the reconstruction requires the arc and its pivot to have sampled the SAME
+         * This is not the Welford mean (@ref arcZdMean): under the lane-coordinate
+         * carry the estimator owns the accumulation, so each epoch's raw sample must
+         * enter exactly once.  The served value is the raw MW of the arc's previous
+         * processed epoch, with the same one-epoch lag as @c mean_lag (F1), so a
+         * same-epoch consumer never re-ingests the observations the estimator is
+         * folding this epoch.  @c var_m2 is the per-sample Welford variance
+         * M2_lag/(n_lag−1) (m²): the per-epoch noise, not the variance of the mean.
+         * For a reconstructed SD arc the value adds the group pivot's own lagged raw
+         * sample, and the variance adds both arcs' per-sample variances (conservative,
+         * because the common pivot term cancels in a closed DD cycle).  The
+         * reconstruction requires the arc and its pivot to have sampled the same
          * epoch (checked via @c epoch_s, else @c valid=false).
          */
         struct MwArcZdLast {
             double      value_m{ std::numeric_limits<double>::quiet_NaN() };  ///< ZD-consistent lagged raw MW sample (m).
             double      var_m2{ std::numeric_limits<double>::quiet_NaN() };   ///< Per-sample Welford variance (m²); conservative for SD-reconstructed arcs.
-            double      epoch_s{ 0.0 };                                       ///< Continuous GPS seconds the sample was taken — the caller's cycle-consistency guard (all arcs of a DD cycle must share it).
+            double      epoch_s{ 0.0 };                                       ///< Continuous GPS seconds at which the sample was taken; the caller's cycle-consistency guard (all arcs of a DD cycle must share it).
             std::size_t count{ 0 };                                           ///< Lagged Welford sample count backing @c var_m2.
             double      lambda_wl{ 0.0 };                                     ///< Cached wide-lane wavelength (m).
-            bool        bia_corrected{ false };                               ///< Frame flag — mixed-frame cycles must be skipped (as in @ref MwArcZdMean).
+            bool        bia_corrected{ false };                               ///< Frame flag; mixed-frame cycles must be skipped (as in @ref MwArcZdMean).
             bool        valid{ false };                                       ///< A finite lagged sample + variance was recovered (needs ≥2 lagged samples).
         };
 
         /**
-         * @brief Read a (satellite, signal-pair) arc's LAGGED per-epoch MW sample
-         *        (@ref MwArcZdLast) — the WL-3 lane measurement source.  Same ZD
+         * @brief Read a (satellite, signal-pair) arc's lagged per-epoch MW sample
+         *        (@ref MwArcZdLast), the lane measurement source (WL-3).  Same ZD
          *        reconstruction as @ref arcZdMean (an SD arc re-adds the group pivot's
          *        own lagged raw sample, epoch-aligned).  Maturity is not gated here.
          */
@@ -693,13 +707,14 @@ namespace GnssProcessor {
                               const std::string& sig2) const;
 
         /**
-         * @brief Arm the tri-frequency phase bridge accumulator (M5 card WL-2, SPEC
-         *        docs/SPEC_ewl_wl_cascade_card.md §3.4).
+         * @brief Arm the tri-frequency phase bridge accumulator
+         *        (docs/SPEC_ewl_wl_cascade_card.md §3.4, M5 card WL-2).
          *
-         * Default OFF: no per-arc @f$GF_b@f$ Welford is maintained, so the detector is
-         * byte-identical.  The @c ApplicationNetwork sets this true only when
-         * @c network.mw_wl.{wl_inject_enable && ewl_enable} — the bridge path needs both
-         * the WL inject master and the EWL integers it bridges from.  Idempotent.
+         * Off by default: no per-arc @f$GF_b@f$ Welford is maintained, and the
+         * detector output is byte-identical.  @c ApplicationNetwork sets this true only
+         * when @c network.mw_wl.{wl_inject_enable && ewl_enable}, because the bridge
+         * path needs both the WL inject master and the EWL integers it bridges from.
+         * Idempotent.
          */
         void setBridgeEnabled(bool on) { bridge_enabled_ = on; }
 
@@ -707,71 +722,76 @@ namespace GnssProcessor {
         bool bridgeEnabled() const { return bridge_enabled_; }
 
         /**
-         * @brief WL-3: preferred phase channel per (constellation, band digit) for the
-         *        bridge arc's per-band signal selection — the network's channel census.
+         * @brief Preferred phase channel per (constellation, band digit) for the
+         *        bridge arc's per-band signal selection, from the network's
+         *        channel census (WL-3).
          *
          * When set, @ref updateBridgeArc keys its arcs on the preferred channel where
          * tracked (legacy min-name otherwise), so the bridge arcs align with the
-         * caller's census-selected primary pair instead of starving every (rx,sat)
-         * whose min-name channel differs.  Pushed once per epoch by ApplicationNetwork
-         * under @c network.lane_carry (census stable ⇒ keys stable; a flip re-warms the
-         * affected arcs).  Empty (default) = legacy min-name everywhere (byte-identical).
+         * caller's census-selected primary pair.  Keyed on the min-name channel, an
+         * (rx,sat) whose census channel differs would find no bridge arc.  Pushed
+         * once per epoch by ApplicationNetwork under @c network.lane_carry (a stable
+         * census keeps the keys stable; a flip re-warms the affected arcs).  Empty
+         * (default) = legacy min-name everywhere (byte-identical).
          */
         void setBridgePreferredChannels(std::map<std::pair<char, char>, std::string> pref) {
             bridge_pref_ = std::move(pref);
         }
 
         /**
-         * @brief UWL-1: per-constellation lane-tier band
-         *        digits for the bridge arc's band pick.
+         * @brief Per-constellation lane-tier band digits for the bridge arc's band
+         *        pick (UWL-1).
          *
-         * Empty (default) = the legacy hardcoded {1,2,5} scan for EVERY constellation
-         * (byte-identical — this is what silently made the cascade GPS-only: Galileo
-         * has no band '2', so no bridge arc ever formed).  When the UWL card is armed
-         * ApplicationNetwork pushes @ref mwLaneTierOf's table; a constellation ABSENT
-         * from the pushed map then forms NO bridge arc (deliberate — BDS-3 stays dark
-         * until its clock-divergence memory closes, and the wiring warns loudly
-         * instead of skipping silently).  GPS's entry reproduces the legacy digits,
-         * so GPS-only runs are bit-identical with the table pushed.
+         * Empty (default) = the legacy hardcoded {1,2,5} scan for every constellation
+         * (byte-identical).  That scan forms no bridge arc for Galileo, which has no
+         * band '2', so without the table the cascade is GPS-only.  When the UWL card
+         * is armed, ApplicationNetwork pushes @ref mwLaneTierOf's table; a
+         * constellation absent from the pushed map then forms no bridge arc, on
+         * purpose (BDS-3 stays out until its clock-divergence item is closed, and the
+         * wiring logs a warning instead of skipping silently).  GPS's entry
+         * reproduces the legacy digits, so GPS-only runs are bit-identical with the
+         * table pushed.
          */
         void setLaneTiers(std::map<char, MwLaneTier> tiers) {
             lane_tiers_ = std::move(tiers);
         }
 
         /**
-         * @brief Arm the PER-SAMPLE iono de-bias of the bridge accumulator
-         *        (@c network.mw_wl.bridge_sample_debias — the 60-epoch age-bias fix).
+         * @brief Arm the per-sample iono de-bias of the bridge accumulator
+         *        (@c network.mw_wl.bridge_sample_debias, the fix for the age bias).
          *
          * The raw @f$GF_b@f$ observable contains @f$C_{iono}\,I_1@f$ (the bridge is
-         * geometry-free, NOT iono-free).  The WL-2 §3.4 v2 READ-time de-bias subtracts
-         * @f$C_{iono}\,\tilde\imath(t_{now})@f$ from a Welford mean that accumulated
-         * @f$C_{iono}\,\mathrm{mean}(I)@f$ over the ARC'S LIFETIME — a frame mismatch
-         * whose residual @f$C_{iono}(\mathrm{mean}(I)-I_{now})@f$ grows with iono drift
-         * (measured: constrained-lane circR 0.89 → 0.24 over 60 epochs as re-decisions
-         * starve).  Armed, each sample folds as @f$GF_k - C_{iono}\,\tilde\imath(t_k)@f$
-         * instead — a STATIONARY estimable-function realization (Odijk 2016 Table 8:
-         * the S-basis code-bias lumps in @f$\tilde\imath@f$ are per-receiver /
-         * per-satellite constants that cancel in the closed DD cycle, so the cycle sum
-         * of the subtraction equals the true @f$\nabla\Delta I@f$ exactly).
+         * geometry-free, not iono-free).  The read-time de-bias (WL-2 §3.4 v2)
+         * subtracts @f$C_{iono}\,\tilde\imath(t_{now})@f$ from a Welford mean that
+         * accumulated @f$C_{iono}\,\mathrm{mean}(I)@f$ over the arc's lifetime.  The
+         * two terms refer to different epochs, and the residual
+         * @f$C_{iono}(\mathrm{mean}(I)-I_{now})@f$ grows with iono drift (measured:
+         * constrained-lane circR fell from 0.89 to 0.24 over 60 epochs).  Armed, each
+         * sample folds as @f$GF_k - C_{iono}\,\tilde\imath(t_k)@f$ instead, a
+         * stationary estimable-function realization (Odijk 2016 Table 8: the S-basis
+         * code-bias lumps in @f$\tilde\imath@f$ are per-receiver / per-satellite
+         * constants that cancel in the closed DD cycle, so the cycle sum of the
+         * subtraction equals the true @f$\nabla\Delta I@f$ exactly).
          *
-         * FRAME CONTRACT: with the flag armed, @ref arcBridge / @ref arcBridgeLast /
-         * @ref arcBridgeCold serve IONO-DE-BIASED means/samples — the consumer must NOT
-         * subtract @f$C_{iono}\,\Sigma c\,\tilde\imath@f$ again at read time.  The
-         * estimates arrive via @ref setBridgeIonoEstimates one epoch lagged (the F1
-         * discipline); a sample whose satellite has no pushed estimate is SKIPPED
-         * (counted via @ref bridgeDebiasSkipped) — cold-start epoch 1 only, since the
-         * iono state persists across slips (the post-slip re-warm path is unaffected).
-         * Default OFF ⇒ byte-identical raw accumulation.
+         * Frame contract: with the flag armed, @ref arcBridge / @ref arcBridgeLast /
+         * @ref arcBridgeCold serve iono-de-biased means and samples, and the consumer
+         * must not subtract @f$C_{iono}\,\Sigma c\,\tilde\imath@f$ again at read time.
+         * The estimates arrive via @ref setBridgeIonoEstimates one epoch lagged (F1).
+         * A sample whose satellite has no pushed estimate is skipped (counted via
+         * @ref bridgeDebiasSkipped); that happens on the first cold-start epoch only,
+         * because the iono state persists across slips (the post-slip re-warm path is
+         * unaffected).  Off by default, with byte-identical raw accumulation.
          */
         void setBridgePerSampleDebias(bool on) { bridge_debias_ = on; }
 
         /**
          * @brief Push this station's per-satellite estimable slant-iono values
-         *        @f$\tilde\imath@f$ (m, L1-referenced — the estimator's iono states)
+         *        @f$\tilde\imath@f$ (m, L1-referenced; the estimator's iono states)
          *        for the per-sample bridge de-bias.  Pushed once per epoch by
-         *        ApplicationNetwork (values are the PRIOR epoch's linearization at
-         *        push time, applying to the NEXT detector pass — one-epoch lag by
-         *        construction).  Idempotent within an epoch (RAIM re-solve safe).
+         *        ApplicationNetwork; the values are the prior epoch's linearization
+         *        at push time and apply to the next detector pass, a one-epoch lag
+         *        by construction.  Idempotent within an epoch (safe under a RAIM
+         *        re-solve).
          */
         void setBridgeIonoEstimates(std::map<std::string, double> iono_m) {
             bridge_iono_ = std::move(iono_m);
@@ -779,46 +799,48 @@ namespace GnssProcessor {
 
         /// @return Samples skipped by the armed per-sample de-bias for want of an iono
         ///         estimate (expected: first cold-start epoch only; a growing count on
-        ///         a warm run means the push wiring is broken — invariant #4).
+        ///         a warm run means the push wiring is broken, invariant #4).
         std::size_t bridgeDebiasSkipped() const { return bridge_debias_skipped_; }
 
         /**
          * @brief A per-arc geometry-free WL↔EWL phase bridge Welford summary.
          *
-         * The bridge observable @f$GF_b=\phi_{WL}-\phi_{EWL}@f$ (meters, PHASE ONLY: no
-         * code) is geometry-free — the geometry/clock/tropo terms cancel between the two
-         * lane phases — leaving @f$\lambda_{WL}N_{WL}-\lambda_{EWL}N_{EWL}@f$ (constant
-         * along the arc) plus a slow differential-iono residue and phase noise.  Because
-         * the raw phases carry the receiver + satellite hardware biases, @f$GF_b@f$ is
-         * stored UNDIFFERENCED (ZD) per (station, sat) — those biases cancel in the closed
-         * DD cycle the layer forms, so no MW-style SD pivot is needed (unlike @ref MwArcZdMean).
-         * The layer double-differences @f$\sum c\,GF_b@f$ over the Card-4 chord basis and
-         * adds @f$\lambda_{EWL}\,\nabla\Delta N_{EWL}^{\text{fixed}}@f$ to obtain a fast,
+         * The bridge observable @f$GF_b=\phi_{WL}-\phi_{EWL}@f$ (meters, phase only, no
+         * code) is geometry-free: the geometry, clock and tropo terms cancel between
+         * the two lane phases, leaving @f$\lambda_{WL}N_{WL}-\lambda_{EWL}N_{EWL}@f$
+         * (constant along the arc) plus a slow differential-iono residue and phase
+         * noise.  The raw phases carry the receiver and satellite hardware biases, so
+         * @f$GF_b@f$ is stored undifferenced (ZD) per (station, sat); those biases
+         * cancel in the closed DD cycle the layer forms, so no MW-style SD pivot is
+         * needed (unlike @ref MwArcZdMean).  The layer double-differences
+         * @f$\sum c\,GF_b@f$ over the Card-4 chord basis and adds
+         * @f$\lambda_{EWL}\,\nabla\Delta N_{EWL}^{\text{fixed}}@f$ to obtain a fast,
          * iono-limited WL integer determination: @f$z_{WL}^{\text{bridge}}=[\sum
          * c\,GF_b+\lambda_{EWL}N_{EWL}]/\lambda_{WL}@f$.
          */
         struct MwBridgeMean {
-            double      gf_mean_m{ std::numeric_limits<double>::quiet_NaN() };        ///< ZD @f$GF_b@f$ mean (m), LAGGED one epoch (same double-count guard as @ref MwArcZdMean).
-            double      var_of_mean_m2{ std::numeric_limits<double>::quiet_NaN() };   ///< Welford variance of the lagged mean = M2_lag/(n_lag(n_lag−1)) (m²).  Prices the differential-iono drift + phase noise (the §3.4 v1 iono-honesty guard reads it).
+            double      gf_mean_m{ std::numeric_limits<double>::quiet_NaN() };        ///< ZD @f$GF_b@f$ mean (m), lagged one epoch (same double-count guard as @ref MwArcZdMean).
+            double      var_of_mean_m2{ std::numeric_limits<double>::quiet_NaN() };   ///< Welford variance of the lagged mean = M2_lag/(n_lag(n_lag−1)) (m²).  Reflects the differential-iono drift and phase noise (read by the §3.4 v1 iono σ-guard).
             std::size_t count{ 0 };                                                   ///< Lagged Welford sample count.
             double      lambda_wl{ 0.0 };                                             ///< cached WL wavelength c/(f1−f2) (m).
             double      lambda_ewl{ 0.0 };                                            ///< cached EWL wavelength c/(f2−f5) (m).
-            double      iono_coeff{ 0.0 };                                            ///< @f$GF_b@f$ sensitivity to the L1-referenced slant iono @f$I_1@f$ (m/m): @f$C_{iono}=f_{ref}^2(\tfrac1{f_1 f_2}-\tfrac1{f_2 f_5})@f$, @f$f_{ref}=@f$ GPS L1 (the estimator's iono-state frame, MeasurementModel §Jacobian).  The consumer subtracts @f$C_{iono}\sum c\,\hat I_1@f$ to de-bias the bridge (SPEC §3.4 v2 — the v1 Welford-only form is falsified by a STABLE differential iono, whose ~0 variance passes the σ-guard yet biases the rounded integer).
-            bool        valid{ false };                                              ///< the arc exists, has ≥2 LAGGED samples, and a finite mean/variance/λ was recovered.
+            double      iono_coeff{ 0.0 };                                            ///< @f$GF_b@f$ sensitivity to the L1-referenced slant iono @f$I_1@f$ (m/m): @f$C_{iono}=f_{ref}^2(\tfrac1{f_1 f_2}-\tfrac1{f_2 f_5})@f$, @f$f_{ref}=@f$ GPS L1 (the estimator's iono-state frame, MeasurementModel §Jacobian).  Without the per-sample de-bias (@ref setBridgePerSampleDebias) the consumer subtracts @f$C_{iono}\sum c\,\hat I_1@f$ to de-bias the bridge (SPEC §3.4 v2; the v1 Welford-only form fails under a stable differential iono, whose near-zero variance passes the σ-guard yet biases the rounded integer).
+            bool        valid{ false };                                              ///< the arc exists, has ≥2 lagged samples, and a finite mean/variance/λ was recovered.
         };
 
         /**
          * @brief Read a (satellite, WL-pair, EWL-third-band) tri-frequency phase bridge
          *        arc as a ZD-consistent lagged Welford summary.
          *
-         * The bridge arc is keyed @c "sat_sig1_sig2_sig5" — the WL pair @c (sig1,sig2) and
-         * the EWL third band @c sig5 (GPS L5 / Galileo E5a) — and is maintained only while
-         * @ref setBridgeEnabled is armed.  Maturity is NOT gated here (@c count is returned
-         * so the caller applies its own @c ewl_min_arc_epochs-style threshold).
+         * The bridge arc is keyed @c "sat_sig1_sig2_sig5" (the WL pair @c (sig1,sig2)
+         * and the EWL third band @c sig5, GPS L5 / Galileo E5a) and is maintained only
+         * while @ref setBridgeEnabled is armed.  Maturity is not gated here (@c count
+         * is returned so the caller applies its own @c ewl_min_arc_epochs-style
+         * threshold).
          *
          * @param sat  Satellite identifier (e.g. "G05").
          * @param sig1 WL pair band-1 phase signal (higher freq), e.g. "L1C".
-         * @param sig2 WL pair band-2 phase signal (lower freq), e.g. "L2W" — also the EWL pair's high band.
+         * @param sig2 WL pair band-2 phase signal (lower freq), e.g. "L2W"; also the EWL pair's high band.
          * @param sig5 EWL third band phase signal (lowest freq), e.g. "L5Q".
          * @return The ZD-consistent bridge summary; @c valid=false if no usable arc exists.
          */
@@ -828,10 +850,11 @@ namespace GnssProcessor {
                                const std::string& sig5) const;
 
         /**
-         * @brief A bridge arc's LAGGED per-epoch raw @f$GF_b@f$ sample — the WL-3
-         *        lane-carry phase-precision INCREMENT source (SPEC_lane_carry_card.md
-         *        §3.2), mirroring @ref MwArcZdLast (raw sample + per-sample variance,
-         *        NOT the Welford mean; same F1 lag + once-only discipline).
+         * @brief A bridge arc's lagged per-epoch raw @f$GF_b@f$ sample: the
+         *        phase-precision increment source of the lane-coordinate carry
+         *        (WL-3, SPEC_lane_carry_card.md §3.2).  Mirrors @ref MwArcZdLast:
+         *        raw sample and per-sample variance, not the Welford mean, with the
+         *        same one-epoch lag (F1) and once-only use.
          */
         struct MwBridgeLast {
             double      gf_m{ std::numeric_limits<double>::quiet_NaN() };   ///< Lagged raw ZD @f$GF_b@f$ sample (m).
@@ -844,49 +867,49 @@ namespace GnssProcessor {
             bool        valid{ false };                                     ///< A finite lagged sample + variance was recovered.
         };
 
-        /// Read a bridge arc's LAGGED per-epoch raw @f$GF_b@f$ sample
+        /// Read a bridge arc's lagged per-epoch raw @f$GF_b@f$ sample
         /// (@ref MwBridgeLast).  Maturity is not gated here.
         MwBridgeLast arcBridgeLast(const std::string& sat,
                                    const std::string& sig1,
                                    const std::string& sig2,
                                    const std::string& sig5) const;
 
-        // --- M5 card UWL-1: cold-fix (n=1) DECISION-ONLY accessors --------
+        // --- Cold-fix (n=1) decision-only accessors (M5 card UWL-1) --------
 
         /**
-         * @brief UWL-1 cold read of a (satellite, signal-pair) MW arc: the UNLAGGED
-         *        current-state Welford summary, served from n ≥ 1.
+         * @brief Cold read of a (satellite, signal-pair) MW arc: the unlagged
+         *        current-state Welford summary, served from n ≥ 1 (UWL-1).
          *
-         * Same ZD reconstruction as @ref arcZdMean, but WITHOUT the F1 one-epoch lag and
-         * WITHOUT the two-sample floor: a slipped arc's FIRST re-formed sample is served
-         * the epoch it lands, which is what collapses the ~3-epoch re-warm window.  At
-         * @c count==1 the Welford variance of the mean does not exist —
-         * @c var_of_mean_m2 is NaN and the CALLER substitutes the a-priori per-sample σ
+         * Same ZD reconstruction as @ref arcZdMean, but without the one-epoch lag (F1)
+         * and without the two-sample floor: a slipped arc's first re-formed sample is
+         * served the epoch it lands, which shortens the ~3-epoch re-warm window.  At
+         * @c count==1 the Welford variance of the mean does not exist, so
+         * @c var_of_mean_m2 is NaN and the caller substitutes the a-priori per-sample σ
          * (@c network.mw_wl.uwl_cold_sigma_m); from n ≥ 2 the (unlagged) Welford
          * variance takes over.  @c valid here means "n ≥ 1 with a finite ZD mean and a
-         * positive λ" — deliberately weaker than @ref arcZdMean's contract.
+         * positive λ", deliberately weaker than @ref arcZdMean's contract.
          *
-         * DISCIPLINE: this accessor exists for INTEGER DECISIONS only (which top-tier
-         * integer the bridge may use).  It must never feed a folded row or a lane
-         * increment — those keep the lagged once-only sources (@ref arcZdLast /
-         * @ref arcBridgeLast); the wiring additionally restricts cold decisions to
-         * tiers with λ ≥ @c uwl_cold_min_lambda_m (the wavelength that EARNS the
-         * privilege — GPS's 5.861 m EWL is deliberately excluded).
+         * This accessor exists for integer decisions only (which top-tier integer the
+         * bridge may use).  It must never feed a folded row or a lane increment; those
+         * keep the lagged once-only sources (@ref arcZdLast / @ref arcBridgeLast).  The
+         * wiring also restricts cold decisions to tiers with
+         * λ ≥ @c uwl_cold_min_lambda_m, which excludes GPS's 5.861 m EWL on purpose.
          */
         MwArcZdMean arcZdMeanCold(const std::string& sat,
                                   const std::string& sig1,
                                   const std::string& sig2) const;
 
         /**
-         * @brief UWL-1 cold read of a bridge arc: the UNLAGGED current-state Welford
-         *        summary, served from n ≥ 2.
+         * @brief Cold read of a bridge arc: the unlagged current-state Welford
+         *        summary, served from n ≥ 2 (UWL-1).
          *
-         * The bridge's variance-of-mean needs two samples, so the cold bridge serves at
-         * n ≥ 2 — one epoch earlier than the lagged @ref arcBridge (which needs
-         * count_lag ≥ 2, i.e. three samples): post-slip the cascade re-decides the top
-         * tier at the FIRST re-formed epoch (via @ref arcZdMeanCold) and the WL lane
-         * re-pins the epoch after.  DECISION-ONLY, like @ref arcZdMeanCold — the WL-3
-         * lane bridge INCREMENT stays on the lagged @ref arcBridgeLast.
+         * The bridge's variance of the mean needs two samples, so the cold bridge
+         * serves at n ≥ 2, one epoch earlier than the lagged @ref arcBridge (which
+         * needs count_lag ≥ 2, i.e. three samples).  After a slip the cascade
+         * re-decides the top tier at the first re-formed epoch (via
+         * @ref arcZdMeanCold) and the WL lane re-pins the epoch after.
+         * Decision-only, like @ref arcZdMeanCold; the lane bridge increment (WL-3)
+         * stays on the lagged @ref arcBridgeLast.
          */
         MwBridgeMean arcBridgeCold(const std::string& sat,
                                    const std::string& sig1,
@@ -906,60 +929,59 @@ namespace GnssProcessor {
         /** Fixed capacity of the per-arc local-median ring buffer (raw MW
          *  values, meters).  The effective window length is the configured
          *  @c CycleSlipConfig::mw_local_window (≤ this cap; the config loader
-         *  clamps).  A fixed @c std::array — rather than a deque — keeps the
-         *  ring portion of @c MwArcStats trivially copyable so the per-epoch
+         *  clamps).  A fixed @c std::array (rather than a deque) keeps the
+         *  ring portion of @c MwArcStats trivially copyable, so the per-epoch
          *  @c arc_snapshots_ copy and the rollback in @c resetSatellite /
          *  @c resetSatelliteSignal stay cheap. */
         static constexpr size_t kMwLocalWindowCap = 64;
 
         /**
-         * @brief Per-satellite running statistics for the MW time series.
+         * @brief Per-arc running statistics for the MW time series.
          *
          * Maintains a recursively updated mean and Welford variance estimate,
          * plus a rolling window of recent epoch-to-epoch MW differences used
          * to compute the Median Absolute Deviation (MAD) for robust outlier
-         * detection. Using differences instead of raw values ensures the MAD
-         * measures the actual noise level rather than spread around the
+         * detection. Using differences instead of raw values makes the MAD
+         * measure the actual noise level rather than the spread around the
          * (arbitrary) ambiguity-dominated mean.
          *
          * Additionally holds a short ring buffer of recent accepted raw MW
          * values (@c mw_window) for the local-median detection reference
          * (@c MwDetectReference::LocalMedian).  Both windows admit only
-         * non-slip epochs; the ring is maintained in BOTH reference modes
-         * (cheap) so the trace can show the would-be local reference even
-         * when the legacy Hatch reference governs detection.  Because the
-         * ring lives inside this struct, the gap reset
-         * (@c stats = MwArcStats{}), the @c arc_snapshots_ rollback, and
-         * the erase-on-slip path all keep it consistent for free.  Code
-         * paths that shift the arc's reference frame by a constant (the
-         * BSSD pivot S-transform and the in-house bias commit re-anchor)
-         * must shift the ring contents alongside @c mean / @c prev_mw —
-         * see @c shiftLocalWindow.
+         * non-slip epochs.  The ring is maintained in every reference mode
+         * (it is cheap), so the trace can show the would-be local reference
+         * even when another reference governs detection.  Because the ring
+         * lives inside this struct, the gap reset (@c stats = MwArcStats{}),
+         * the @c arc_snapshots_ rollback, and the erase-on-slip path keep it
+         * consistent without extra code.  Code paths that shift the arc's
+         * reference frame by a constant (the BSSD pivot S-transform and the
+         * in-house bias commit re-anchor) must shift the ring contents
+         * alongside @c mean / @c prev_mw (see @c shiftLocalWindow).
          */
         struct MwArcStats {
             double mean{ 0.0 };            /**< Running (Hatch) mean of MW values (meters). */
             double M2{ 0.0 };              /**< Welford accumulator for variance (m^2). */
             size_t count{ 0 };             /**< Number of MW samples accumulated. */
-            /** Lagged snapshot of {mean, M2, count} as of the END of the PREVIOUS
+            /** Lagged snapshot of {mean, M2, count} as of the end of the previous
              *  processed epoch (copied at the top of the per-epoch statistics
-             *  update).  @ref arcZdMean serves THESE so a same-epoch consumer
+             *  update).  @ref arcZdMean serves these, so a same-epoch consumer
              *  (the MW-WL layer, SPEC_mw_wl_card §3.3) never re-ingests the
-             *  current epoch's observations — the 1/n information double-count
-             *  guard.  Frame discipline: every constant-shift re-reference of
-             *  @c mean (BSSD pivot S-transform, in-house bias-commit re-anchor)
-             *  shifts @c mean_lag by the same constant, so the lagged value is
-             *  always expressed in the arc's CURRENT frame. */
+             *  current epoch's observations (the guard against counting 1/n of
+             *  the information twice).  Frame rule: every constant-shift
+             *  re-reference of @c mean (BSSD pivot S-transform, in-house
+             *  bias-commit re-anchor) shifts @c mean_lag by the same constant, so
+             *  the lagged value is always expressed in the arc's current frame. */
             double mean_lag{ 0.0 };        /**< Lagged mean (meters); see block comment. */
             double M2_lag{ 0.0 };          /**< Lagged Welford accumulator (m^2). */
             size_t count_lag{ 0 };         /**< Lagged sample count. */
             double prev_mw{ 0.0 };         /**< Previous epoch MW value for differencing (meters). */
-            /** The LAGGED raw sample —
-             *  @c prev_mw as of the top of the current epoch's statistics update,
-             *  i.e. the PREVIOUS processed epoch's raw MW, served by @ref arcZdLast
-             *  under the same F1 one-epoch lag discipline as @c mean_lag.  Frame
-             *  discipline: every constant-shift re-reference of @c prev_mw (BSSD
-             *  pivot S-transform, in-house bias-commit re-anchor) shifts this
-             *  alongside.  NaN until two epochs have been processed. */
+            /** The lagged raw sample: @c prev_mw as of the top of the current
+             *  epoch's statistics update, i.e. the raw MW of the previous
+             *  processed epoch, served by @ref arcZdLast with the same one-epoch
+             *  lag (F1) as @c mean_lag.  Frame rule: every constant-shift
+             *  re-reference of @c prev_mw (BSSD pivot S-transform, in-house
+             *  bias-commit re-anchor) shifts this alongside.  NaN until two
+             *  epochs have been processed. */
             double prev_mw_lag{ std::numeric_limits<double>::quiet_NaN() };
             double prev_epoch_s{ 0.0 };     /**< Continuous GPS seconds @c prev_mw was sampled (WL-3 alignment stamp). */
             double prev_epoch_lag_s{ 0.0 }; /**< Continuous GPS seconds @c prev_mw_lag was sampled (WL-3: the SD pivot re-add + the caller's cycle-consistency guard both align on this). */
@@ -971,12 +993,12 @@ namespace GnssProcessor {
             double lambda_wl{ 0.0 };        /**< Wide-lane wavelength (meters) cached for slip repair. */
             /** The RINEX code observables this arc's MW combination was formed
              *  from, recorded per accepted sample so a consumer can name the
-             *  satellite CODE-bias columns the observable actually carries (see
-             *  @ref MwArcZdMean::code1).  The arc key holds only the two PHASE
+             *  satellite code-bias columns the observable carries (see
+             *  @ref MwArcZdMean::code1).  The arc key holds only the two phase
              *  signals, so without these the code channel is unrecoverable and a
              *  consumer must guess it from the phase attribute.  Short RINEX-3
-             *  codes ("C2W") — inside std::string's small-buffer, so the
-             *  per-epoch @c arc_snapshots_ copy stays allocation-free. */
+             *  codes ("C2W") fit in std::string's small buffer, so the per-epoch
+             *  @c arc_snapshots_ copy stays allocation-free. */
             std::string code1, code2;
             double last_dev{ 0.0 };         /**< Active-reference deviation at the most recent epoch (meters). */
             double last_sigma{ std::numeric_limits<double>::quiet_NaN() }; /**< Active-reference sigma at the most recent epoch (meters). */
@@ -987,65 +1009,70 @@ namespace GnssProcessor {
              *  (meters); NaN until two samples exist.  Combined with the
              *  current TD1 it yields the second time-difference
              *  TD2 = TD1[k] − TD1[k−1] for MwTdOrder::Second.  Updated every
-             *  epoch alongside @c prev_mw (including slip epochs — see the
+             *  epoch alongside @c prev_mw, slip epochs included (see the
              *  echo note on @c td2_window).  Frame handling: the bias-commit
              *  re-anchor is a true constant shift within one sample series,
-             *  to which TDs are invariant — no fix-up needed.  The BSSD
-             *  pivot S-transform is NOT a constant shift of one series (it
+             *  to which TDs are invariant, so no fix-up is needed.  The BSSD
+             *  pivot S-transform is not a constant shift of one series (it
              *  swaps which pivot's samples are differenced away), so the
              *  S-transform re-references this field by subtracting the new
-             *  pivot's own old-frame prev_diff — exact through the shared
-             *  old-pivot terms, and essential after a slip-FORCED handover,
-             *  where the old pivot's dN would otherwise echo into every
-             *  surviving arc's TD2 at the handover epoch. */
+             *  pivot's own old-frame prev_diff.  That is exact through the
+             *  shared old-pivot terms, and it is required after a slip-forced
+             *  handover, where the old pivot's dN would otherwise echo into
+             *  every surviving arc's TD2 at the handover epoch. */
             double prev_diff{ std::numeric_limits<double>::quiet_NaN() };
             /** Rolling window of second time-differences (meters), the MAD
-             *  source for the MwTdOrder::Second gate — mirrors
-             *  @c diff_window (which holds TD1) in admission rule (non-slip
-             *  epochs only) and cap (@c kMwWindowSize).  Echo note: a real
-             *  slip on a LOCKED arc produces a +dN·λ TD2 at the slip epoch
-             *  and a −dN·λ echo one epoch later (prev_diff carries the
-             *  slip-sized TD1 forward); a locked-arc NOISE outlier o echoes
-             *  twice (+o, −2o, +o over three epochs).  All such epochs flag,
-             *  all are absorbed, and none enters this window.  Unlocked arcs
-             *  erase at the slip epoch, so the echoes never form. */
+             *  source for the MwTdOrder::Second gate.  Mirrors @c diff_window
+             *  (which holds TD1) in admission rule (non-slip epochs only) and
+             *  cap (@c kMwWindowSize).  Echo note: left alone, a real slip on a
+             *  locked arc produces a +dN·λ TD2 at the slip epoch and a −dN·λ
+             *  echo one epoch later (prev_diff carries the slip-sized TD1
+             *  forward), and a locked-arc noise outlier o echoes twice (+o,
+             *  −2o, +o over three epochs).  Flagged epochs never enter this
+             *  window.  In the TimeDifference modes the locked-arc confirmation
+             *  (@c td_confirm_pending) erases the arc on a confirmed step and
+             *  excises a declared outlier from the TD chain, so these echoes
+             *  do not form there.  Unlocked arcs erase at the slip epoch, so
+             *  the echoes never form. */
             std::deque<double> td2_window;
             /** Locked-arc TD confirmation state (TimeDifference modes only).
-             *  A TD gate firing on a LOCKED arc is not silently absorbed: the
+             *  A TD gate firing on a locked arc is not silently absorbed: the
              *  memoryless TD statistic flags a real step exactly once, so
-             *  absorbing it would discard the only detection it will ever
-             *  produce and leave the stale locked integer exposed to AR for the
-             *  ~dozen epochs until drift demotion.  Instead this flag is set and
-             *  the decision deferred ONE epoch.  The next sample resolves it by
-             *  comparing two level hypotheses: after a one-epoch noise OUTLIER
-             *  the level returns to the pre-jump track, after a real STEP it
-             *  stays on the post-jump track.  Step → demote the lock, emit an
-             *  UNKNOWN-INTEGER slip (downstream reset), erase the arc.
-             *  Outlier → keep the lock and excise the outlier from the TD chain.
+             *  absorbing it would discard the only detection it produces and
+             *  leave the stale locked integer exposed to AR for the dozen or so
+             *  epochs until drift demotion.  Instead this flag is set and the
+             *  decision is deferred by one epoch.  The next sample resolves it
+             *  by comparing two level hypotheses: after a one-epoch noise
+             *  outlier the level returns to the pre-jump track, and after a real
+             *  step it stays on the post-jump track.  A step demotes the lock,
+             *  emits a slip with an unknown integer (downstream reset) and
+             *  erases the arc.  An outlier keeps the lock and is excised from
+             *  the TD chain.
              *
-             *  The confirmation NEVER publishes a known integer, because a
+             *  The confirmation never publishes a known integer, because a
              *  deferred result is one epoch late: (a) the pass-2 SD→ZD
-             *  re-referencing would pair a flag-epoch SD jump with the RESOLUTION
-             *  epoch's pivot ZD slip — wrong frame, and a pivot slip would then
-             *  mint confidently wrong integers on every clean locked peer;
-             *  (b) TurboEdit would pair the integer with the resolution epoch's
-             *  GF value, the sign-flipped echo of the real jump; and (c) the KF
-             *  post-fit or TurboEdit may already have acted at the flag epoch, so
-             *  an additive repair at k+1 risks double mutation.  Reset is the
-             *  only safe deferred action.
+             *  re-referencing would pair a flag-epoch SD jump with the
+             *  resolution epoch's pivot ZD slip (the wrong frame), and a pivot
+             *  slip would then produce confidently wrong integers on every
+             *  clean locked peer; (b) TurboEdit would pair the integer with the
+             *  resolution epoch's GF value, the sign-flipped echo of the real
+             *  jump; and (c) the KF post-fit or TurboEdit may already have acted
+             *  at the flag epoch, so an additive repair at k+1 risks a double
+             *  mutation.  Reset is the only safe deferred action.
              *
              *  Frame guards: pending is neither entered nor resolved across a
              *  frame discontinuity.  A bia_corrected flip of the incoming sample
              *  falls back to the legacy absorb (the deviation is a frame
-             *  artifact, not an event); a pivot ZD slip at the FLAG epoch takes
-             *  an immediate unknown-integer slip rather than deferring, staying
+             *  artifact, not an event); a pivot ZD slip at the flag epoch takes
+             *  an immediate unknown-integer slip instead of deferring, staying
              *  synchronous with the pass-2 re-referencing and CycleSlipManager's
-             *  pivot-slip machinery; and a pivot ZD slip at the RESOLUTION epoch
-             *  makes the hypotheses unclassifiable, resolving the same way.
+             *  pivot-slip handling; and a pivot ZD slip at the resolution epoch
+             *  makes the hypotheses unclassifiable and resolves the same way.
              *  While pending, the locked integer is withheld from
-             *  getResolvedWlAmbiguities / getResolvedWlFractions.  Cleared by the
-             *  pivot S-transform, the stored quantities being frame-bound;
-             *  reset/gap/erase come free from the struct's normal lifecycle. */
+             *  getResolvedWlAmbiguities / getResolvedWlFractions (and
+             *  getResolvedWlQuality).  Cleared by the pivot S-transform, because
+             *  the stored quantities are frame-bound; reset, gap and erase clear
+             *  it through the struct's normal lifecycle. */
             bool   td_confirm_pending{ false };
             /** Flagged level jump TD1 = mw[k] − reference (meters) at the
              *  pending epoch; the post-jump track is pre + jump. */
@@ -1059,7 +1086,7 @@ namespace GnssProcessor {
              *  by construction on that row. */
             double td_confirm_dev_m{ 0.0 };
             /** Flag-epoch gate (meters).  Carried rather than recomputed at
-             *  resolution: recomputation does NOT reproduce the firing gate
+             *  resolution: recomputation does not reproduce the firing gate
              *  for warmup-branch locks (the cross-sat EWMA floor updates
              *  every epoch and re-expands at the new elevation) nor for
              *  TD1-fallback flags inside TD2 order. */
@@ -1069,13 +1096,13 @@ namespace GnssProcessor {
             int    td_confirm_mode{ 0 };
         };
 
-        /** Per-satellite MW arc statistics keyed by satellite identifier. */
+        /** Per-arc MW statistics, keyed by arc key (e.g. "G01_L1C_L2W"). */
         std::map<std::string, MwArcStats> mw_stats_;
 
-        // --- M5 card WL-2: tri-frequency phase bridge accumulator ---------
+        // --- Tri-frequency phase bridge accumulator (M5 card WL-2) ---------
 
-        /** Whether @ref updateBridgeArc maintains @c bridge_stats_ this run.  Default
-         *  OFF ⇒ no bridge arc is ever touched, so the detector is byte-identical
+        /** Whether @ref updateBridgeArc maintains @c bridge_stats_ this run.  Off by
+         *  default: no bridge arc is touched and the detector is byte-identical
          *  (@ref setBridgeEnabled; armed by ApplicationNetwork under
          *  @c wl_inject_enable && ewl_enable). */
         bool bridge_enabled_{ false };
@@ -1084,15 +1111,16 @@ namespace GnssProcessor {
          * @brief Per-arc Welford of the geometry-free WL↔EWL phase bridge
          *        @f$GF_b=\phi_{WL}-\phi_{EWL}@f$ (meters, ZD, phase-only).
          *
-         * A deliberately LEAN mirror of @ref MwArcStats — Hatch/Welford mean + M2 +
-         * count with a one-epoch LAG snapshot (the same same-epoch double-count guard
-         * @ref arcZdMean uses) and a gap reset.  No SD pivot, no BIA correction, no
-         * detection statistic: @f$GF_b@f$ is a raw-phase ZD quantity (its receiver +
-         * satellite biases cancel in the closed DD cycle the layer forms), and cycle-slip
-         * response comes from the SAME funnel that resets the ambiguity — @ref
-         * resetSatellite / @ref resetSatelliteSignal / @ref resetAll erase the matching
-         * bridge arc, and @ref updateBridgeArc self-guards a missed reset with a gross-jump
-         * refloat.  Keyed @c "sat_sig1_sig2_sig5".
+         * A deliberately lean mirror of @ref MwArcStats: Hatch/Welford mean, M2 and
+         * count, with a one-epoch lag snapshot (the same-epoch double-count guard
+         * that @ref arcZdMean also uses) and a gap reset.  No SD pivot, no BIA
+         * correction, no detection statistic: @f$GF_b@f$ is a raw-phase ZD quantity
+         * (its receiver and satellite biases cancel in the closed DD cycle the layer
+         * forms), and the cycle-slip response comes from the same funnel that resets
+         * the ambiguity.  @ref resetSatellite / @ref resetSatelliteSignal /
+         * @ref resetAll erase the matching bridge arc, and @ref updateBridgeArc
+         * guards against a missed reset with a gross-jump refloat.  Keyed
+         * @c "sat_sig1_sig2_sig5".
          */
         struct BridgeArcStats {
             double mean{ 0.0 };            ///< Running Hatch mean of @f$GF_b@f$ (m).
@@ -1101,8 +1129,8 @@ namespace GnssProcessor {
             double mean_lag{ 0.0 };        ///< Lagged mean as of the previous epoch's end (m).
             double M2_lag{ 0.0 };          ///< Lagged Welford accumulator (m²).
             std::size_t count_lag{ 0 };    ///< Lagged sample count.
-            double prev_gf{ std::numeric_limits<double>::quiet_NaN() };     ///< Previous epoch's raw @f$GF_b@f$ sample (m) — WL-3 lane increment staging.
-            double prev_gf_lag{ std::numeric_limits<double>::quiet_NaN() }; ///< LAGGED raw sample (the previous processed epoch's @c prev_gf), served by @ref arcBridgeLast (WL-3 §3.2 once-only discipline).
+            double prev_gf{ std::numeric_limits<double>::quiet_NaN() };     ///< Previous epoch's raw @f$GF_b@f$ sample (m); staging for the lane increment (WL-3).
+            double prev_gf_lag{ std::numeric_limits<double>::quiet_NaN() }; ///< Lagged raw sample (the previous processed epoch's @c prev_gf), served by @ref arcBridgeLast (WL-3 §3.2 once-only use).
             double prev_epoch_s{ 0.0 };     ///< Continuous GPS seconds @c prev_gf was sampled.
             double prev_epoch_lag_s{ 0.0 }; ///< Continuous GPS seconds @c prev_gf_lag was sampled (the caller's cycle-consistency stamp).
             double last_epoch_s{ 0.0 };    ///< Continuous GPS seconds of the last update (gap detection).
@@ -1115,17 +1143,18 @@ namespace GnssProcessor {
          *  Empty (never touched) unless @c bridge_enabled_. */
         std::map<std::string, BridgeArcStats> bridge_stats_;
 
-        /** WL-3 (@ref setBridgePreferredChannels): (constellation, band digit) → preferred
-         *  phase channel for the bridge arc keys.  Empty = legacy min-name selection. */
+        /** (Constellation, band digit) → preferred phase channel for the bridge arc
+         *  keys (@ref setBridgePreferredChannels, WL-3).  Empty = legacy min-name
+         *  selection. */
         std::map<std::pair<char, char>, std::string> bridge_pref_;
 
-        /** UWL-1 (@ref setLaneTiers): constellation → lane-tier band digits for the
-         *  bridge band pick.  Empty = the legacy hardcoded {1,2,5} scan for every
-         *  constellation (byte-identical). */
+        /** Constellation → lane-tier band digits for the bridge band pick
+         *  (@ref setLaneTiers, UWL-1).  Empty = the legacy hardcoded {1,2,5} scan for
+         *  every constellation (byte-identical). */
         std::map<char, MwLaneTier> lane_tiers_;
 
-        /** Per-sample bridge iono de-bias (@ref setBridgePerSampleDebias).  Default
-         *  OFF ⇒ raw accumulation, byte-identical. */
+        /** Per-sample bridge iono de-bias (@ref setBridgePerSampleDebias).  Off by
+         *  default: raw accumulation, byte-identical. */
         bool bridge_debias_{ false };
         /** Per-satellite estimable slant iono @f$\tilde\imath@f$ (m, L1-referenced)
          *  for the armed de-bias (@ref setBridgeIonoEstimates; one-epoch-lagged). */
@@ -1133,37 +1162,37 @@ namespace GnssProcessor {
         /** Armed-de-bias samples skipped for want of an estimate (invariant #4). */
         std::size_t bridge_debias_skipped_{ 0 };
 
-        /** Gross-jump refloat guard for a bridge arc (m): a WL/EWL cycle slip the ambiguity
-         *  funnel somehow missed jumps @f$GF_b@f$ by ≥ @f$\lambda_{WL}\approx 0.86@f$ m (a
-         *  1-cycle WL slip) — far above the differential-iono residue over an arc window
-         *  (@f$\approx 0.44\cdot\nabla I_1@f$, sub-decimeter).  0.4 m sits safely between
-         *  them, so the guard resets the accumulator on a real slip but never on iono drift.
-         *  Belt-and-suspenders behind the funnel; the §3.4 bridge-σ guard is the wrong-integer
-         *  backstop regardless. */
+        /** Gross-jump refloat guard for a bridge arc (m).  A WL/EWL cycle slip that the
+         *  ambiguity reset funnel missed jumps @f$GF_b@f$ by ≥ @f$\lambda_{WL}\approx 0.86@f$ m
+         *  (a 1-cycle WL slip), far above the differential-iono residue over an arc
+         *  window (@f$\approx 0.44\cdot\nabla I_1@f$, sub-decimeter).  0.4 m sits between
+         *  the two, so the guard resets the accumulator on a real slip but not on iono
+         *  drift.  It is a secondary guard behind the funnel; the §3.4 bridge-σ guard
+         *  remains the wrong-integer backstop in any case. */
         static constexpr double kBridgeJumpResetM = 0.4;
 
         /**
          * @brief Ingest one satellite's tri-frequency phase into its bridge arc.
          *
          * No-op unless @c bridge_enabled_.  Picks the KF-aligned single phase signal per
-         * lane-tier band — the legacy {1,2,5} for every constellation, or the
-         * constellation's @ref setLaneTiers digits when the UWL card pushed its table
-         * (UWL-1 §3.1; a constellation absent from a pushed table forms no arc) — from
-         * @c obs.observed (min-name tie-break, matching the ApplicationNetwork
+         * lane-tier band from @c obs.observed: the legacy {1,2,5} for every
+         * constellation, or the constellation's @ref setLaneTiers digits when the UWL
+         * card pushed its table (UWL-1 §3.1; a constellation absent from a pushed table
+         * forms no arc), with a min-name tie-break that matches the ApplicationNetwork
          * primary/band-top selection so the key aligns with the caller's
-         * @ref arcBridge query), reads the raw cycle values from @c obs.raw_observed, forms
-         * @f$GF_b=\phi_{WL}-\phi_{TOP}@f$ (m; the top-pair term is ordered by actual
-         * frequency, so Galileo's (E5b,E5a)/(E5,E5a) top tier keeps λ &gt; 0), and folds
-         * it into @c bridge_stats_["sat_s1_s2_s5"]
+         * @ref arcBridge query.  It reads the raw cycle values from
+         * @c obs.raw_observed, forms @f$GF_b=\phi_{WL}-\phi_{TOP}@f$ (m; the top-pair
+         * term is ordered by actual frequency, so Galileo's (E5b,E5a)/(E5,E5a) top
+         * tier keeps λ &gt; 0), and folds it into @c bridge_stats_["sat_s1_s2_s5"]
          * with a gap reset, the lag snapshot, and the gross-jump refloat guard.
-         * A tier with a FALLBACK top rung (@ref MwLaneTier::b_top2, increment 5)
-         * additionally feeds the fallback base triple (b1,b2,b_top2) — formed even
-         * when the preferred band is untracked this epoch — and, under an armed mid
-         * rung, the fallback hop-hi (b_mid,b2,b_top2); single-top tiers keep the
-         * legacy single-/mid-triple flow verbatim.  @p has_lli
-         * erases the arc (a lock loss on any phase re-warms the bridge — safer than the MW
-         * path's preserve-across-LLI, since the bridge has no detection statistic to catch a
-         * real slip).
+         * A tier with a fallback top rung (@ref MwLaneTier::b_top2, increment 5)
+         * also feeds the fallback base triple (b1,b2,b_top2), formed even when the
+         * preferred band is untracked this epoch, and, under an armed mid rung, the
+         * fallback hop-hi (b_mid,b2,b_top2); single-top tiers keep the legacy
+         * single-/mid-triple flow unchanged.  @p has_lli erases the arc: a lock loss
+         * on any phase re-warms the bridge, which is safer than the MW path's
+         * preserve-across-LLI because the bridge has no detection statistic to catch
+         * a real slip.
          *
          * @param obs      The epoch observation (raw_observed + observed + system + sat + time).
          * @param has_lli  Whether any phase reported loss-of-lock this epoch.
@@ -1176,24 +1205,25 @@ namespace GnssProcessor {
          *  @c mw_stats_.  Consumed by @c resetSatellite /
          *  @c resetSatelliteSignal to roll back a single epoch's
          *  contribution when the KF post-fit residual check identifies
-         *  a slip MW's own detector missed — preserves the arc's pre-
-         *  slip noise statistics (mean, M2, diff_window, count) rather
-         *  than wiping the entire arc and forcing a re-warmup.  On
-         *  rollback we additionally clear @c wl_locked / @c rounded_wl
-         *  since a KF-detected slip means the underlying ambiguity
-         *  changed and the previously-locked integer is no longer
-         *  valid.
+         *  a slip that the MW test missed.  The rollback keeps the arc's
+         *  pre-slip noise statistics (mean, M2, diff_window, count)
+         *  instead of wiping the arc and forcing a re-warmup.  It also
+         *  clears @c wl_locked / @c rounded_wl, because a KF-detected slip
+         *  means the underlying ambiguity changed and the locked integer
+         *  is invalid.
          *
          *  Cleared at the top of @c detectLargeMwResets each epoch so
-         *  the map only ever holds current-epoch snapshots.  Consumed
-         *  (erased per arc) by reset functions.  Also cleared in
-         *  @c resetAll.  When no snapshot exists for an arc the reset
-         *  falls back to the legacy full-erase behavior. */
+         *  the map only holds current-epoch snapshots.  Consumed
+         *  (erased per arc) by the reset functions.  Also cleared in
+         *  @c resetAll.  When no snapshot exists for an arc, the reset
+         *  erases the arc. */
         std::map<std::string, MwArcStats> arc_snapshots_;
 
         /** Current BSSD pivot satellite per (constellation char + signal-pair key).
-         *  Example key: "G_L1C_L2W".  When the pivot changes all SD arcs
-         *  for that group are reset because the SD ambiguity changes. */
+         *  Example key: "G_L1C_L2W".  When the pivot changes, the group's SD arcs
+         *  are S-transformed onto the new pivot if it was BIA-corrected and
+         *  integer-locked at the prior epoch, and erased otherwise, because the SD
+         *  ambiguity changes. */
         std::map<std::string, std::string> sd_pivot_sat_;
 
         /** One-shot deprioritization hints for the next MW pivot pick.
@@ -1201,21 +1231,22 @@ namespace GnssProcessor {
          *  by the next call to @c detectLargeMwResets. */
         std::set<std::string> deprioritized_pivot_sats_;
 
-        /** Cross-satellite MAD σ per (constellation × signal-pair) group,
-         *  keyed by "<system_char>_<sig1>_<sig2>" (e.g. "G_L1C_L2W").
-         *  Updated at the end of each @c detectLargeMwResets call from
-         *  the previous epoch's pool of per-sat MW deviations.  Consumed
-         *  by @c computeAdaptiveThreshold as one of the σ_floor_static
-         *  sources — provides statistical strength even when individual
-         *  arcs are still warming up (cold start: 10 GPS sats at epoch 2
-         *  give MAD with 9 degrees of freedom vs. zero per-arc).
-         *  Persists across epochs as an EWMA (factor @c cross_sat_ewma_alpha_,
-         *  bootstrapped by the first finite MAD); cleared by @c resetAll.
-         *  Lags by one epoch — the current epoch's pool isn't known until all
-         *  sats are processed, so the floor uses the previous epoch's σ.  Lag
-         *  AND smoothing are acceptable because the noise environment doesn't
-         *  change epoch-to-epoch; the EWMA is what makes the warmup floor stable
-         *  instead of tracking the thin cross-section's per-epoch MAD jitter. */
+        /** Cross-satellite MAD σ per (constellation × band-pair) group, keyed by
+         *  @c makeGroupKey as "<system_char>_<band1>_<band2>" (e.g. "G_L1_L2";
+         *  the tracking attribute is dropped).  Updated at the end of each
+         *  @c detectLargeMwResets call from that epoch's pool of per-sat MW
+         *  deviations and consumed by @c computeAdaptiveThreshold (through
+         *  @c crossSatSigmaFloor) as the warmup floor.  It provides statistical
+         *  strength while individual arcs are still warming up (cold start:
+         *  10 GPS sats at epoch 2 give a MAD with 9 degrees of freedom against
+         *  zero per arc).  Persists across epochs as an EWMA (factor
+         *  @c cross_sat_ewma_alpha_, bootstrapped by the first finite MAD);
+         *  cleared by @c resetAll.  Lags by one epoch: the current epoch's pool
+         *  is complete only after all sats are processed, so the floor uses the
+         *  previous epoch's σ.  The lag and the smoothing are acceptable because
+         *  the noise environment does not change epoch to epoch; the EWMA keeps
+         *  the warmup floor stable instead of following the per-epoch MAD jitter
+         *  of a thin cross-section. */
         std::map<std::string, double> cross_sat_sigma_m_;
 
         /** Per-epoch staging map: collects per-sat MW deviations during
@@ -1235,7 +1266,7 @@ namespace GnssProcessor {
          *  @c getEpochCleanArcN).  Same keys, cleared and rebuilt together. */
         std::map<std::string, int> epoch_clean_arc_n_;
 
-        /** Per-epoch DETECTION record of every arc processed this epoch (see
+        /** Per-epoch detection record of every arc processed this epoch (see
          *  @c getEpochPairStatus).  Written twice per sample in
          *  @c processMwSample: once right after the gap check, so an arc that
          *  leaves through an early return is still recorded, and again once the
@@ -1243,16 +1274,17 @@ namespace GnssProcessor {
          *  @ref epoch_clean_pairs_. */
         std::map<std::string, EpochPairStatus> epoch_pair_status_;
 
-        /** §14.11 LLI SHADOW memory: satellite → the phase bands that carried a
-         *  receiver loss-of-lock bit, for the PREVIOUS epoch (@ref
-         *  prev_lli_bands_) and the one being processed (@ref cur_lli_bands_).
-         *  Rotated once at the top of @c detect, so a sample stamped during this
-         *  epoch reads LAST epoch's flags — which is the whole point: the LLI
-         *  epoch itself is withheld (the detector `continue`s), and it is the
-         *  FIRST sample AFTER it whose silence is worthless.  One epoch only: by
-         *  the second sample the arc has seen a post-gap value and its silence
-         *  means something again.  Detector-local, so the (station) scope is the
-         *  per-station instance — no cross-station leakage. */
+        /** LLI shadow memory (SPEC_event_harness.md §14.11): satellite → the phase
+         *  bands that carried a receiver loss-of-lock bit, for the previous epoch
+         *  (@ref prev_lli_bands_) and the one being processed (@ref cur_lli_bands_).
+         *  Rotated once at the top of @c detectLargeMwResets, so a sample stamped
+         *  during this epoch reads the previous epoch's flags.  The LLI epoch
+         *  itself is withheld (the detector skips the satellite with `continue`),
+         *  and the first sample after it is the one whose silence carries no
+         *  information.  The shadow lasts one epoch: by the second sample the arc
+         *  has seen a post-gap value and its silence is informative again.  The
+         *  memory is detector-local, so its scope is the per-station instance and
+         *  nothing leaks across stations. */
         std::map<std::string, std::set<std::string>> prev_lli_bands_;
         std::map<std::string, std::set<std::string>> cur_lli_bands_;
 
@@ -1282,7 +1314,7 @@ namespace GnssProcessor {
          *  deviation pool as @c cross_sat_sigma_m_.  @c cross_sat_sigma_cons_
          *  is keyed by single-char constellation ("G") and pools all
          *  band-pairs of that constellation; @c cross_sat_sigma_global_ pools
-         *  every constellation EXCEPT GLONASS (its FDMA inter-channel noise is
+         *  every constellation except GLONASS (its FDMA inter-channel noise is
          *  the least comparable, so it must not contaminate the estimate the
          *  clean constellations fall back on).  A sparse band-pair group falls
          *  back to its constellation tier, then (non-GLONASS only) to the
@@ -1292,8 +1324,8 @@ namespace GnssProcessor {
         double cross_sat_sigma_global_ = std::numeric_limits<double>::quiet_NaN();
 
         /** Minimum cross-sat pool size before MAD is statistically
-         *  meaningful.  Below this we leave the previous epoch's σ in
-         *  place (or no entry, if cold start) rather than computing
+         *  meaningful.  Below it, the previous epoch's σ stays in place
+         *  (or no entry exists, at cold start) instead of a value computed
          *  from a degenerately small pool. */
         static constexpr size_t kMinCrossSatSamples = 5;
 
@@ -1303,17 +1335,18 @@ namespace GnssProcessor {
          * Used when @c GnssConfig::getInhouseBiasEstimation() is enabled
          * for arcs lacking external BIA bias correction.  An arc that
          * matures with its running mean within @c kBiasCommitMaxFrac of
-         * an integer cycle, AND with σ_mean below @c kBiasCommitMaxSigmaCyc,
+         * an integer cycle and with σ_mean below @c kBiasCommitMaxSigmaCyc
          * commits its residual offset as a stored bias.  The stored bias
          * is subtracted from incoming MW samples on subsequent arcs of
          * the same (satellite, signal-pair) so the new arc accumulates
          * an integer-near mean from epoch one and is eligible for the
          * normal lock criterion.
          *
-         * Lifetime is decoupled from @c MwArcStats — the bias survives
-         * arc resets (new arc inherits parent's stored bias), survives
-         * cycle slips (the integer changed but the bias didn't), and is
-         * S-transformed alongside arc means when the MW pivot changes.
+         * Lifetime is decoupled from @c MwArcStats: the bias survives
+         * arc resets (a new arc inherits the stored bias; only @c resetAll
+         * clears it), survives cycle slips (the integer changed but the
+         * bias did not), and is S-transformed alongside arc means when the
+         * MW pivot changes.
          */
         struct EstimatedBias {
             double bias_m{ 0.0 };           /**< Stored bias in meters; subtract from raw mw_m to get integer-near. */
@@ -1330,11 +1363,11 @@ namespace GnssProcessor {
         static constexpr size_t kBiasCommitMinCount = 20;
 
         /** Maximum |frac| (in cycles) for an unbiased arc to commit a
-         *  bias.  Tighter than @c kWlMaxFrac because we are deciding
-         *  which integer the arc converged to without external corroboration;
-         *  a sat with frac in the 0.20–0.30 zone may legitimately belong
-         *  to either side and we'd rather wait for more evidence (or skip
-         *  the satellite) than gamble. */
+         *  bias.  Tighter than @c kWlMaxFrac because the commit decides
+         *  which integer the arc converged to without external
+         *  corroboration; a sat with frac in the 0.20–0.30 zone may
+         *  legitimately belong to either side, and waiting for more
+         *  evidence (or skipping the satellite) is preferred to guessing. */
         static constexpr double kBiasCommitMaxFrac = 0.20;
 
         /** Maximum σ_mean (cycles) for commit.  Ensures the running mean
@@ -1373,7 +1406,8 @@ namespace GnssProcessor {
                                     const std::string& stats_key,
                                     double lambda_wl, double epoch_s);
 
-        /** Maximum number of recent MW values kept per satellite for MAD computation. */
+        /** Maximum number of recent MW time-differences kept per arc
+         *  (@c diff_window, @c td2_window) for MAD computation. */
         static constexpr size_t kMwWindowSize = 30;
 
         /** Maximum effective count used in the Hatch (recursive) mean.
@@ -1387,20 +1421,20 @@ namespace GnssProcessor {
 
         /**
          * @brief Minimum number of diff_window entries before MAD-σ is
-         *        trusted as the adaptive threshold input.  MAD computed
-         *        from only 5 diffs is statistically marginal — when
-         *        those few diffs happened to be tight by luck the MAD
-         *        collapsed to near-zero, producing the 1-cycle → 0.008-
-         *        cycle threshold transition observed in MWWL traces.
-         *        15 diffs gives MAD enough degrees of freedom to be
+         *        trusted as the adaptive threshold input.  A MAD computed
+         *        from only 5 diffs is statistically marginal: when those
+         *        few diffs happen to be tight, the MAD collapses toward
+         *        zero and the threshold falls from about one cycle to a
+         *        small fraction of a cycle (seen in MWWL traces).  15 diffs
+         *        give the MAD enough degrees of freedom to be
          *        representative.  During the warmup phase
-         *        @c computeAdaptiveThreshold uses a max of the
+         *        @c computeAdaptiveThreshold uses the max of the
          *        cross-sat MAD, a mode-specific per-arc spread term
          *        (Welford σ_emp in the level modes; the young TD MAD
          *        over the partial diff_window / td2_window in the
-         *        TimeDifference modes — see the @c mode_sigma_m
+         *        TimeDifference modes; see the @c mode_sigma_m
          *        paragraph of @c computeAdaptiveThreshold), and the
-         *        absolute @c kMinSigmaMeters floor — none of which
+         *        absolute @c kMinSigmaMeters floor, none of which
          *        require external calibration. */
         static constexpr size_t kMinEpochsForAdaptive = 15;
 
@@ -1408,8 +1442,8 @@ namespace GnssProcessor {
          *  @c computeAdaptiveThreshold.  Prevents the threshold from
          *  collapsing to near-zero when the diff_window happens to be
          *  unnaturally tight (e.g., a brief stretch of nearly-identical
-         *  samples on a quiet, short arc).  Set to 1 cm — well below
-         *  typical L1/L2 WL MAD (~5–15 cm), so it doesn't change behavior
+         *  samples on a quiet, short arc).  Set to 1 cm, well below the
+         *  typical L1/L2 WL MAD (~5–15 cm), so it does not change behavior
          *  for the standard pairs, while keeping the threshold
          *  wavelength-independent and useful for ultra-long EWL pairs
          *  (e.g., L5X/L8X at λ ≈ 19.5 m) whose natural MAD can be
@@ -1418,10 +1452,10 @@ namespace GnssProcessor {
         static constexpr double kMinSigmaMeters = 0.01;
 
         /** Default maximum inter-epoch gap (seconds) before the arc is
-         *  reset.  Override at runtime via @c setMaxGapSeconds — typical
-         *  use is to tighten this to the RINEX sampling interval when
-         *  IMU is not available, so a brief outage cannot silently
-         *  initialize a fresh arc with a slip-corrupted baseline.
+         *  reset.  Override at runtime via @c setMaxGapSeconds; the typical
+         *  use is to tighten this to 1.5 × the sampling interval when IMU
+         *  is not available, so a brief outage resets the arc instead of
+         *  silently absorbing a slip that occurred during the gap.
          *  When IMU is available and bridging gaps via INS propagation,
          *  the default is preserved so legitimate continuous arcs
          *  survive 60–120 s outages. */
@@ -1439,12 +1473,12 @@ namespace GnssProcessor {
          *  The cross-sat MAD is recomputed every epoch from a thin
          *  cross-section (one deviation per non-slipping arc in the group,
          *  ≥ @c kMinCrossSatSamples), which is statistically jumpy
-         *  epoch-to-epoch.  Because the MW noise ENVELOPE itself varies slowly
+         *  epoch-to-epoch.  Because the MW noise envelope itself varies slowly
          *  (the one-epoch-lag rationale on @c cross_sat_sigma_m_), each tier is
-         *  updated as an EWMA — σ_t = α·MAD_epoch + (1−α)·σ_{t−1}, first finite
-         *  MAD as bootstrap — instead of overwritten with the raw MAD.  Smaller
-         *  α = heavier smoothing; α = 1 disables smoothing.  Purely empirical,
-         *  no stochastic-model input. */
+         *  updated as an EWMA, σ_t = α·MAD_epoch + (1−α)·σ_{t−1} with the first
+         *  finite MAD as bootstrap, instead of being overwritten with the raw
+         *  MAD.  Smaller α = heavier smoothing; α = 1 disables smoothing.
+         *  Purely empirical, no stochastic-model input. */
         double cross_sat_ewma_alpha_;
 
         /** kσ multiplier applied to max(σ_MAD, floor) in
@@ -1461,27 +1495,27 @@ namespace GnssProcessor {
         /** Detection-reference selection from
          *  @c GnssConfig::getCycleSlipConfig().mw_detect_reference.  With
          *  @c LocalMedian the slip deviation is measured against the median of
-         *  the per-arc @c mw_window ring instead of the laggy Hatch mean, and
-         *  the spread is the same window's MAD (×√2 for TD1-equivalent
-         *  multiplier scale) — deviation and spread are then the same local
+         *  the per-arc @c mw_window ring instead of the lagging Hatch mean, and
+         *  the spread is the same window's MAD (×√2 for the TD1-equivalent
+         *  multiplier scale).  Deviation and spread are then the same local
          *  quantity, so a smooth MW trend lifts both and cancels instead of
          *  accumulating a lag offset that false-fires the gate.  With
-         *  @c TimeDifference there is no level reference at all: the deviation
-         *  IS the MW time-difference (order per @c td_order_), gated by the
-         *  MAD of the same time-difference history — memoryless, hence immune
-         *  to trends AND curvature (the soft-quadratic signals that defeat
-         *  even the local median), at the cost of √2 (TD1) / √6 (TD2) noise
-         *  amplification.  Only the detection statistic is affected: the
-         *  Hatch mean, WL lock, drift demotion, and the bias-commit
-         *  machinery are mode-independent. */
+         *  @c TimeDifference there is no level reference: the deviation is the
+         *  MW time-difference (order per @c td_order_), gated by the MAD of the
+         *  same time-difference history.  That statistic is memoryless and so
+         *  immune to trends and to curvature (the soft-quadratic signals that
+         *  defeat even the local median), at the cost of √2 (TD1) / √6 (TD2)
+         *  noise amplification.  Only the detection statistic is affected: the
+         *  Hatch mean, WL lock, drift demotion, and the bias-commit logic are
+         *  mode-independent. */
         MwDetectReference detect_reference_;
 
         /** Differencing order for @c MwDetectReference::TimeDifference, from
          *  @c CycleSlipConfig::mw_td_order.  First: dev = TD1 = mw[k]−mw[k−1],
-         *  spread = MAD(@c diff_window) — the very statistic the legacy mature
-         *  branch already maintains, now self-consistently gating its own
-         *  quantity.  Second: dev = TD2 = TD1[k]−TD1[k−1], spread =
-         *  MAD(@c td2_window).  Ignored in the level-reference modes. */
+         *  spread = MAD(@c diff_window), the statistic the legacy mature branch
+         *  already maintains, here gating its own quantity.  Second:
+         *  dev = TD2 = TD1[k]−TD1[k−1], spread = MAD(@c td2_window).  Ignored
+         *  in the level-reference modes. */
         MwTdOrder td_order_;
 
         /** Effective local-median window length (epochs), from
@@ -1489,90 +1523,92 @@ namespace GnssProcessor {
          *  [@c kMinEpochsForAdaptive, @c kMwLocalWindowCap]. */
         size_t local_window_len_;
 
-        // Note: the WL lock criterion is no longer a fixed-N wait.  It's
-        // an adaptive 3σ confidence test on the running mean,
+        // Note: the WL lock criterion is an adaptive 3σ confidence test on
+        // the running mean, not a fixed-N wait:
         //
-        //     |frac| + 3 · σ_mean / λ_WL  <  0.5    AND    |frac| < kWlMaxFrac
+        //     |frac| + 3 · σ_mean / λ_WL  <  0.5    and    |frac| < kWlMaxFrac
         //
-        // implemented inline in @c processMwSample.  Clean arcs lock as
-        // early as n=3; noisy arcs wait until √n has averaged the noise
-        // down enough.  See the inline kWlLockKSigma / kWlLockMinN
-        // constants there.
+        // implemented inline in @c processMwSample with a floor of
+        // n ≥ kWlLockMinN (10).  Clean arcs lock at that floor; noisy arcs
+        // wait until √n has averaged the noise down enough.  See the inline
+        // kWlLockKSigma / kWlLockMinN constants there.
 
-        /** Hard cap on raw fractional residual |mean/λ_WL − round(...)|
-         *  for an MW arc to be exposed to AR (or to lock).  The
-         *  statistical 3σ test alone can satisfy itself that a non-
-         *  integer running mean (e.g. 3.33 with σ_mean = 0.05) is
-         *  well-determined and round to a (potentially wrong) integer.
-         *  This cap treats a large raw |frac| as a "real bias" signal
-         *  that disqualifies the arc regardless of statistical
-         *  confidence.  Used both at lock time and as a filter in
-         *  @c getResolvedWlAmbiguities / @c getResolvedWlFractions. */
+        /** Hard cap on the raw fractional residual |mean/λ_WL − round(...)|
+         *  for an MW arc to lock (and so to be exposed to AR).  The
+         *  statistical 3σ test alone can accept a non-integer running mean
+         *  (e.g. 3.33 with σ_mean = 0.05) as well-determined and round it
+         *  to a possibly wrong integer.  This cap treats a large raw |frac|
+         *  as a real-bias signal that disqualifies the arc regardless of
+         *  statistical confidence.  Applied by the lock criterion in
+         *  @c processMwSample; after lock, @c kWlLockDriftMaxCyc bounds the
+         *  drift, and @c getResolvedWlAmbiguities / @c getResolvedWlFractions
+         *  do not re-apply this cap. */
         static constexpr double kWlMaxFrac = 0.30;
 
         /** Live-mean drift threshold (WL cycles) that demotes a locked
          *  arc back to unlocked.  After lock the Welford / Hatch mean
-         *  is no longer pinned to @c rounded_wl × λ_WL — it keeps
-         *  tracking, so persistent disagreement between the running
-         *  mean and the locked integer manifests as drift.  When
-         *  |mean/λ − rounded_wl| exceeds this threshold the lock is
-         *  no longer supported by accumulated evidence (either the
-         *  initial lock was premature, or the arc has absorbed enough
-         *  slipped samples to migrate); demote and let the arc re-
-         *  resolve.  0.4 cycles is well inside the rounding basin
-         *  (< 0.5) while leaving comfortable headroom over the lock
-         *  criterion's kWlMaxFrac=0.30 ceiling, so a freshly locked
-         *  arc with frac near the lock cap doesn't immediately
-         *  demote itself on the next sample. */
+         *  is not pinned to @c rounded_wl × λ_WL; it keeps tracking, so
+         *  persistent disagreement between the running mean and the
+         *  locked integer shows up as drift.  When |mean/λ − rounded_wl|
+         *  exceeds this threshold, the accumulated evidence does not
+         *  support the lock (either the initial lock was premature, or
+         *  the arc has absorbed enough slipped samples to migrate), so
+         *  the arc is demoted and re-resolves.  0.4 cycles is inside the
+         *  rounding basin (< 0.5) and leaves headroom over the lock
+         *  criterion's kWlMaxFrac = 0.30 ceiling, so a freshly locked arc
+         *  with frac near the lock cap does not demote itself on the next
+         *  sample. */
         static constexpr double kWlLockDriftMaxCyc = 0.4;
 
         /**
          * @brief Compute the adaptive slip-detection threshold for an arc.
          *
-         * Two regimes, with a clean warmup→per-arc handover:
+         * Two regimes, with a continuous warmup→per-arc handover:
          *
-         *  - MATURE arc (diff_window ≥ @c kMinEpochsForAdaptive, so the per-arc
-         *    MAD is trustworthy): threshold = @c sigma_multiplier_ ×
-         *    max(σ_MAD, @c kMinSigmaMeters).  The per-arc per-signal MAD GOVERNS;
-         *    the cross-sat σ is deliberately NOT a floor here, since one noisy
-         *    cross-section must never override a converged per-arc estimate.  Only
-         *    the absolute @c kMinSigmaMeters anti-collapse floor remains.
-         *  - WARMUP arc (no trustworthy per-arc MAD yet): threshold =
+         *  - Mature arc (the caller passes a finite @c mode_sigma_m: the active
+         *    statistic's window holds ≥ @c kMinEpochsForAdaptive samples, so the
+         *    per-arc MAD is trustworthy): threshold = @c sigma_multiplier_ ×
+         *    max(σ_MAD, @c kMinSigmaMeters).  The per-arc per-signal MAD governs.
+         *    The cross-sat σ is not a floor here, so one noisy cross-section cannot
+         *    override a converged per-arc estimate; only the absolute
+         *    @c kMinSigmaMeters anti-collapse floor remains.
+         *  - Warmup arc (no trustworthy per-arc MAD yet): threshold =
          *    @c sigma_multiplier_ × max(@c kMinSigmaMeters, cross-sat σ,
-         *    mode-specific per-arc spread).  The cross-sat σ — EWMA-smoothed,
+         *    mode-specific per-arc spread).  The cross-sat σ (EWMA-smoothed,
          *    resolved by the breadth cascade band-pair → constellation →
-         *    global(non-GLONASS), re-expanded to this arc's elevation — carries the
-         *    cold-start epochs until the per-arc MAD takes over.  With NO cross-sat
-         *    tier populated (a true cold start) the result is floored at a
-         *    gross-slip GATE of min(λ_WL, 1 m), applied directly rather than ×k.
+         *    global (non-GLONASS), and re-expanded to this arc's elevation)
+         *    carries the cold-start epochs until the per-arc MAD takes over.  With
+         *    no cross-sat tier populated (a true cold start), the result is
+         *    floored at a gross-slip gate of min(λ_WL, 1 m), applied directly
+         *    rather than ×k.
          *
          * No stochastic-model-derived σ is consulted at any stage: the gate is
          * entirely data-driven, so a phone and a geodetic receiver each converge to
          * their own MW WL noise level automatically.
          *
-         * The caller passes the mature spread of the ACTIVE detection statistic as
-         * @c mode_sigma_m, keeping this function statistic-agnostic:
-         *   - HatchMean: MAD(@c diff_window) — the legacy TD1 spread.
+         * The caller passes the mature spread of the active detection statistic as
+         * @c mode_sigma_m, which keeps this function statistic-agnostic:
+         *   - HatchMean: MAD(@c diff_window), the legacy TD1 spread.
          *   - LocalMedian: the raw-MW ring's MAD ×√2 (TD1-equivalent scale).
-         *   - TimeDifference/First: MAD(@c diff_window) — self-consistent, since
-         *     the deviation IS a TD1 sample.
+         *   - TimeDifference/First: MAD(@c diff_window), self-consistent because
+         *     the deviation is a TD1 sample.
          *   - TimeDifference/Second: MAD(@c td2_window).
          * When finite it governs the mature branch; when NaN the warmup branch
-         * applies, preserving the warmup-only cross-sat contract in every mode.
+         * applies, so in every mode the cross-sat floor applies to warmup arcs only.
          *
          * The warmup per-arc spread term is mode-specific.  Level modes use the
-         * Welford σ_emp; TimeDifference modes use the YOUNG TD MAD over the partial
-         * diff_window / td2_window, because σ_emp is a LEVEL variance that a trend
-         * inflates by the ramp span (≈ S/√12), ballooning the warmup gate by whole
-         * cycles against a noise-scale TD deviation.  The young MAD is collapse-safe
-         * in floor position — it can lift the gate, never undercut the other floors
-         * — and makes the warmup→mature handover continuous in the statistic itself.
-         * The cross-sat floor needs no mode handling: its pool already holds
-         * active-statistic deviations.
+         * Welford σ_emp.  TimeDifference modes use the young TD MAD over the partial
+         * diff_window / td2_window, because σ_emp is a level variance that a trend
+         * inflates by the ramp span (≈ S/√12), which would widen the warmup gate by
+         * whole cycles against a noise-scale TD deviation.  In floor position the
+         * young MAD cannot collapse the gate (it can lift it, never undercut the
+         * other floors), and it makes the warmup→mature handover continuous in the
+         * statistic itself.  The cross-sat floor needs no mode handling: its pool
+         * already holds active-statistic deviations.
          *
          * @param stats     Current arc statistics for the satellite.
          * @param stats_key Per-arc key used to look up the cross-sat σ
-         *                  floor for this (constellation × signal-pair)
+         *                  floor for this (constellation × band-pair)
          *                  group via @c makeGroupKey.  Pass empty string
          *                  to skip the cross-sat lookup.
          * @param elev_deg  Arc elevation (deg).  Re-expands the
@@ -1601,7 +1637,7 @@ namespace GnssProcessor {
          * @brief MAD-derived Gaussian-equivalent σ of the arc's second
          *        time-difference window.
          *
-         * Spread source for the @c MwTdOrder::Second gate — the same
+         * Spread source for the @c MwTdOrder::Second gate, with the same
          * @c kMinEpochsForAdaptive maturity floor as the TD1 MAD, so the
          * warmup→mature handover epoch is mode-independent.
          *
@@ -1612,18 +1648,18 @@ namespace GnssProcessor {
 
         /**
          * @brief White-noise scale of the active detection statistic
-         *        relative to a raw LEVEL MW sample.
+         *        relative to a raw level MW sample.
          *
-         * 1 for the level references (HatchMean and LocalMedian — their
+         * 1 for the level references (HatchMean and LocalMedian, whose
          * deviations, and hence the cross-sat pool they feed, are
          * level-domain), √2 for TimeDifference/First, √6 for
          * TimeDifference/Second.  Single source of truth for converting
          * between the level noise domain and the active-statistic domain.
-         * Sole remaining consumer: the init-frac cross-sat lift divides by
-         * it (the pool is active-domain, the gated init frac is
-         * level-domain).  The warmup gate no longer scales σ_emp with it —
-         * the TimeDifference modes replaced that floor term with the young
-         * TD MAD, which lives natively in the active domain.
+         * Its only consumer is the init-frac cross-sat lift, which divides
+         * by it (the pool is active-domain, the gated init frac is
+         * level-domain).  The warmup gate does not scale σ_emp with it: in
+         * the TimeDifference modes that floor term is the young TD MAD,
+         * which is already in the active domain.
          *
          * @return Dimensionless σ ratio (≥ 1).
          */
@@ -1635,7 +1671,7 @@ namespace GnssProcessor {
          *
          * The median is the local-median detection reference: the level the
          * current sample's deviation is measured against in
-         * @c MwDetectReference::LocalMedian mode.  Causal by construction —
+         * @c MwDetectReference::LocalMedian mode.  Causal by construction:
          * the ring holds samples through epoch k−1 only (the current sample
          * is pushed after the slip decision), so a slipped current epoch
          * cannot contaminate its own reference.
@@ -1644,13 +1680,13 @@ namespace GnssProcessor {
          * keeps the configured @c mw_sigma_multiplier on its legacy scale:
          * the historical spread statistic is the MAD of first
          * time-differences, which for white noise estimates √2·σ_MW, while
-         * the window MAD estimates σ_MW directly — without the rescale the
-         * same multiplier would gate ~1.41× tighter in local mode and an
-         * A/B against the legacy reference would conflate the reference
-         * change with a threshold change.  σ is reported only once the ring
-         * has ≥ @c kMinEpochsForAdaptive accepted samples (the same maturity
-         * floor as the TD1 MAD); before that NaN is returned in the
-         * out-param so the warmup floors keep governing the gate.
+         * the window MAD estimates σ_MW directly.  Without the rescale the
+         * same multiplier would gate ~1.41× tighter in local mode, and an
+         * A/B against the legacy reference would mix the reference change
+         * with a threshold change.  σ is reported only once the ring has
+         * ≥ @c kMinEpochsForAdaptive accepted samples (the same maturity
+         * floor as the TD1 MAD); before that the out-param receives NaN so
+         * the warmup floors keep governing the gate.
          *
          * @param stats             Arc whose ring buffer is summarized.
          * @param out_sigma_scaled  Optional; receives the √2-scaled MAD σ
@@ -1682,8 +1718,8 @@ namespace GnssProcessor {
          * S-transform (shift by −old-pivot mean) and the in-house bias
          * commit re-anchor (shift by −committed bias).  Without the
          * matching ring shift, the epoch after the frame jump would show a
-         * local deviation equal to the full frame offset — a guaranteed
-         * false slip on every surviving arc.
+         * local deviation equal to the full frame offset, a false slip on
+         * every surviving arc.
          *
          * @param stats    Arc whose ring is shifted.
          * @param delta_m  Additive shift applied to each sample (meters).
@@ -1704,7 +1740,7 @@ namespace GnssProcessor {
         /**
          * @brief Derive the cross-sat group key from a per-arc stats key.
          *
-         * Reduces the satellite to its constellation prefix AND each signal to
+         * Reduces the satellite to its constellation prefix and each signal to
          * its 2-char frequency band (attribute dropped), so all attribute
          * combinations on the same frequency pair pool into one statistic:
          *   "G01_L1C_L2W" → "G_L1_L2"
@@ -1746,10 +1782,10 @@ namespace GnssProcessor {
          * zenith-referenced value to this arc's elevation via
          * @c mwElevationWeight.  Shared by @c computeAdaptiveThreshold (warmup
          * floor) and the @c mwwl_trace.csv writer (the @c cross_sat_floor_m
-         * diagnostic column), so the trace shows the floor even on mature arcs
-         * where it no longer gates.
+         * diagnostic column), so the trace shows the floor even on mature arcs,
+         * where it does not gate.
          *
-         * @param stats_key Per-arc key (constellation × signal-pair) to pool by.
+         * @param stats_key Per-arc key; pooled by (constellation × band-pair).
          * @param elev_deg  Arc elevation (deg) for the 1/sin re-expansion.
          * @return Cross-sat σ floor in meters, or NaN when no tier is populated
          *         (true cold start) or @p stats_key is empty.
@@ -1763,11 +1799,13 @@ namespace GnssProcessor {
          * Handles the first-epoch initialization, adaptive threshold evaluation,
          * trace writing, and Welford/Hatch statistics update for one MW value.
          *
-         * For BIA+BSSD-corrected arcs the WL integer locks on the very first epoch,
-         * the MW being near-integer immediately.  When a slip is detected on a
-         * locked arc and the new sample is also near-integer, the integer slip
-         * magnitude ΔN_WL is written to @p out_slip_cycles so the caller can attempt
-         * a joint MW+IF repair.
+         * For BIA+BSSD-corrected arcs the WL integer locks once the statistical
+         * lock criterion passes (n ≥ kWlLockMinN = 10; see the note above
+         * @c kWlMaxFrac).  A known integer slip ΔN_WL (@p out_wl_known true) is
+         * reported only by the unlocked-arc path, when the jump deviation is
+         * near-integer and, in the TimeDifference modes, resolvable from a single
+         * sample.  Every locked-arc detection (drift demotion, TD confirmation)
+         * reports an unknown integer, so the caller resets.
          *
          * @param obs            Observation (for tracing metadata).
          * @param stats_key      Key into mw_stats_ for this arc.
@@ -1783,44 +1821,44 @@ namespace GnssProcessor {
          * @param[out] out_wl_known     If non-null, set to true when out_slip_cycles is reliable.
          * @param[out] out_slip_frac    If non-null, set to |x - round(x)| of the float value
          *                              before rounding (0 = exact, up to 0.5 = worst).
-         * @param[out] out_slip_wl_float If non-null, the FLOAT WL-step estimate in
+         * @param[out] out_slip_wl_float If non-null, the float WL-step estimate in
          *                              cycles where the emission path has one
          *                              (unlocked-arc jump deviation, TD-confirmation
          *                              level gap, drift-demotion drift,
          *                              level-disagreement gap); NaN otherwise.  Same
-         *                              frame as the integer outputs — SD for
-         *                              bias-corrected arcs, so the caller's SD→ZD
+         *                              frame as the integer outputs (SD for
+         *                              bias-corrected arcs), so the caller's SD→ZD
          *                              re-referencing must be applied identically.
-         *                              A candidate SELECTOR for downstream solvers,
-         *                              never an integer to apply.
+         *                              Downstream solvers use it only to select
+         *                              candidates, never as an integer to apply.
          * @param pivot_sat      SD pivot satellite for this arc's (constellation,
          *                       signal-pair) group, recorded in the trace's
          *                       @c mw_pivot column.  Empty for undifferenced
          *                       (no-BIA) arcs that are not single-differenced
          *                       against any pivot.
-         * @param pivot_zd_slip_in  The pivot's OWN ZD slip detected this pass
+         * @param pivot_zd_slip_in  The pivot's own ZD slip detected this pass
          *                       (cycles; 0 when the pivot is clean or the arc is not
          *                       single-differenced).  Consumed only by the locked-arc
          *                       TD confirmation, where a non-zero value marks the SD
-         *                       frame as moved this epoch — which forbids deferring a
-         *                       new pending (the machinery must see the slip NOW) and
-         *                       classifying an existing one (its hypotheses are
-         *                       old-frame).
+         *                       frame as moved this epoch.  That forbids deferring a
+         *                       new pending flag (the downstream handling must see
+         *                       the slip this epoch) and classifying an existing one
+         *                       (its hypotheses are in the old frame).
          * @param pivot_zd_known_in Whether the pivot's ZD slip integer is
          *                       known; false likewise marks the frame moved.
          * @param code1          RINEX code observable the MW combination consumed on
          *                       @p sig1, recorded so a consumer can name the satellite
-         *                       CODE-bias column it carries (@ref MwArcZdMean::code1).
-         *                       Bookkeeping only — the MW value arrives pre-computed
+         *                       code-bias column it carries (@ref MwArcZdMean::code1).
+         *                       Bookkeeping only: the MW value arrives pre-computed
          *                       in @p mw_m, so this changes no detection.
          * @param code2          RINEX code observable on @p sig2 (see @p code1).
-         * @param[out] out_evidence If non-null, the DETECTION STRENGTH of the flag
+         * @param[out] out_evidence If non-null, the detection strength of the flag
          *                       (@ref MwSampleEvidence): |dev|/threshold at the
-         *                       firing gate, the arc's sample count BEFORE the
-         *                       erase, and the lane's bias class.  Written only
+         *                       firing gate, the arc's sample count before the
+         *                       erase, and the lane's bias class.  Meaningful only
          *                       when the call returns true; paths with no
-         *                       meaningful ratio leave NaN rather than fabricate
-         *                       one.  Purely additive — no detection changes.
+         *                       meaningful ratio leave NaN.  It changes no
+         *                       detection.
          * @return True if a slip was detected (caller should generate reset keys).
          */
         bool processMwSample(const PppObservation& obs,
@@ -2027,9 +2065,9 @@ namespace GnssProcessor {
          * @param mw_pivot SD pivot satellite for this row's (constellation,
          *                 signal-pair) group; empty for undifferenced arcs.
          * @param local_ref_m Local-median reference level (meters; NaN when
-         *                 the ring is empty).  Emitted in both reference
-         *                 modes so a legacy-mode run still records what the
-         *                 local reference would have been (offline A/B).
+         *                 the ring is empty).  Emitted in every reference
+         *                 mode, so a run in another mode still records what
+         *                 the local reference would have been (offline A/B).
          * @param local_sigma_m √2-scaled local-window MAD σ (meters; NaN
          *                 while the ring is immature).
          * @param detect_mode Statistic that governed this row's slip decision:
@@ -2042,7 +2080,7 @@ namespace GnssProcessor {
          *                 (meters): dev_from_mean in mode 0, the local/TD deviation
          *                 in modes 1–3, the synthesized level gap on backstop rows;
          *                 NaN where the dev test is bypassed.  Makes every row
-         *                 self-describing — |active_dev|/threshold > 1 iff is_slip,
+         *                 self-describing: |active_dev|/threshold > 1 iff is_slip,
          *                 in every mode.
         */
         void writeTraceRecord(const PppObservation& obs,

@@ -2,28 +2,29 @@
 
 /**
  * @file ISlipDetector.hpp
- * @brief Polymorphic contract shared by every cycle-slip detector.
+ * @brief Polymorphic contract shared by the registry-built cycle-slip detectors.
  *
- * Historically each detector (Melbourne-Wübbena, GRAPHIC, extra-wide-lane,
- * geometry-free, ionosphere-free phase) was a bespoke concrete class with its
- * own per-epoch entry-point name (@c detectLargeMwResets, @c detect, ...) and
- * its own result struct (@c MwSlipResult, @c GraphicSlipResult, ...).  Nothing
- * tied them together, so only the MW detector was ever wired in and the others
- * accreted as dead or staged code.
+ * Each detector (Melbourne-Wübbena, GRAPHIC, extra-wide-lane, and the staged
+ * geometry-free and ionosphere-free phase detectors) has its own per-epoch
+ * entry point (@c detectLargeMwResets, @c detect, ...) and its own result
+ * struct (@c MwSlipResult, @c GraphicSlipResult, ...).
  *
- * @c ISlipDetector imposes one contract over all of them:
+ * @c ISlipDetector places one contract over them:
  *   - a single per-epoch entry point @c detect(SlipEpochContext) returning a
  *     vector of unified @c SlipEvent records, and
- *   - the lifecycle hooks every detector already shared verbatim
- *     (@c resetSatellite, @c enableTracing, @c setCorrections, ...).
+ *   - the lifecycle hooks the detectors share (@c resetSatellite,
+ *     @c enableTracing, @c setCorrections, ...).
  *
- * This lets @c SlipDetectorRegistry construct a config-selected set of
- * detectors as @c std::unique_ptr<ISlipDetector> and lets
- * @c CycleSlipManager drive them through one loop, while the
- * detector-specific richer API (e.g. the MW detector's WL-lock queries,
- * pivot-handover hints, and per-satellite quality scoring consumed by
- * @c AmbiguityResolver and the BSSD @c PivotManager) stays accessible via a
- * typed down-cast (@c asMelbourneWubbena) rather than polluting the base.
+ * @c SlipDetectorRegistry constructs a config-selected set of detectors as
+ * @c std::unique_ptr<ISlipDetector>, and @c CycleSlipManager drives them in
+ * one loop.  The MW detector's detector-specific API (WL-lock queries,
+ * pivot-handover hints, per-satellite quality scoring, consumed by
+ * @c AmbiguityResolver and the BSSD @c PivotManager) is reached through the
+ * typed down-cast @c asMelbourneWubbena and stays off the base class.
+ *
+ * Implemented by @c MwSlipDetector, @c GraphicSlipDetector and
+ * @c EwlSlipDetector.  @c GfSlipDetector and @c IfPhaseSlipDetector do not
+ * derive from this interface.
  */
 
 #include "common/PppTypes.hpp"
@@ -34,8 +35,8 @@
 
 namespace GnssProcessor {
 
-class GnssCorrections;  // forward decl — only a pointer is held
-class MwSlipDetector;   // forward decl — typed down-cast accessor target
+class GnssCorrections;  // forward decl: only a pointer is held
+class MwSlipDetector;   // forward decl: target of the typed down-cast accessor
 
 /**
  * @brief Identifies the algorithm behind a slip detector.
@@ -44,21 +45,21 @@ class MwSlipDetector;   // forward decl — typed down-cast accessor target
  * config-selection token (see @c slipDetectorKindFromString).
  */
 enum class SlipDetectorKind {
-    MelbourneWubbena, ///< Wide-lane MW combination (primary, always available).
+    MelbourneWubbena, ///< Wide-lane MW combination (primary; the registry always has a creator for it).
     Graphic,          ///< GRAPHIC (code+phase average) per-signal detector.
-    ExtraWideLane,    ///< Extra-wide-lane MW for 3+ frequency satellites.
-    GeometryFree,     ///< 2nd-order time-differenced geometry-free (STAGED).
-    IonoFreePhase     ///< Double-differenced ionosphere-free phase OMC (STAGED).
+    ExtraWideLane,    ///< Extra-wide-lane MW for satellites with 3 or more frequencies.
+    GeometryFree,     ///< 2nd-order time-differenced geometry-free (staged: not compiled, no registry creator).
+    IonoFreePhase     ///< Between-satellite, between-epoch IF phase OMC; no registry creator (network.cycle_slip.if_phase_td).
 };
 
 /**
  * @brief Whether a @c SlipEvent concerns one signal or a band difference.
  *
- * GRAPHIC / GF / IF detectors flag a single carrier signal.  MW / EWL
+ * GRAPHIC, GF and IF detectors flag a single carrier signal.  MW and EWL
  * detectors measure a between-band difference @f$\Delta N_{WL}=\Delta N_1 -
- * \Delta N_2@f$ and cannot, on their own, attribute the jump to a single
- * signal — the cross-consistency analysis in @c CycleSlipManager resolves
- * the culprit by intersecting several @c BandDifference events.
+ * \Delta N_2@f$ and cannot attribute the jump to one signal on their own.
+ * @c CycleSlipManager identifies the slipped signal by comparing the MW pairs
+ * that slipped with the pairs that stayed clean (@c identifySlippedSignals).
  */
 enum class SlipGranularity {
     PerSignal,      ///< @c sig1 is the slipped signal; @c sig2 is empty.
@@ -68,7 +69,7 @@ enum class SlipGranularity {
 /**
  * @brief Unified per-detection cycle-slip record.
  *
- * Superset of every legacy per-detector result struct.  Detectors that
+ * Each detector maps its own result struct into this record.  Detectors that
  * cannot size the slip (GF, IF) leave @c slip_known false; band-difference
  * detectors (MW, EWL) report the wide-lane integer in @c slip_cycles with
  * @c granularity == @c BandDifference and populate @c sig2.
@@ -87,14 +88,14 @@ struct SlipEvent {
 };
 
 /**
- * @brief Per-epoch inputs handed uniformly to every detector's @c detect().
+ * @brief Per-epoch inputs passed to every detector's @c detect().
  *
- * Bundling the inputs keeps @c ISlipDetector::detect single-signature even
- * though detectors need different context: most consume only
- * @c observations, while the ionosphere-free phase detector also needs the
- * current 3-D position uncertainty and the receiver ECEF to form and gate
- * its double-differenced OMC.  Fields a given detector does not need are
- * simply ignored.
+ * The bundle keeps @c ISlipDetector::detect to one signature although
+ * detectors need different context.  The registered detectors (MW, GRAPHIC,
+ * EWL) read only @c observations.  @c position_sigma_3d and
+ * @c receiver_position carry what the ionosphere-free phase detector needs to
+ * form and gate its double-differenced OMC; no detector that implements this
+ * interface reads them.  A detector ignores the fields it does not need.
  */
 struct SlipEpochContext {
     const std::vector<PppObservation>& observations; ///< Modeled observations for this epoch.
@@ -107,14 +108,13 @@ struct SlipEpochContext {
 
 /**
  * @class ISlipDetector
- * @brief Abstract base every cycle-slip detector implements.
+ * @brief Abstract base that every registry-built cycle-slip detector implements.
  *
- * The contract is deliberately narrow: a per-epoch @c detect plus the
- * lifecycle hooks the concrete detectors already shared.  Detector-specific
- * query surfaces (WL locks, iono-stability flags, jump magnitudes, quality
- * scoring) are intentionally kept off this interface — callers that need
- * them hold the concrete type (obtained via @c asMelbourneWubbena or by
- * constructing the detector directly).
+ * The contract is narrow on purpose: a per-epoch @c detect plus the shared
+ * lifecycle hooks.  Detector-specific queries (WL locks, iono-stability
+ * flags, jump magnitudes, quality scoring) are not on this interface; callers
+ * that need them hold the concrete type, obtained through
+ * @c asMelbourneWubbena or by constructing the detector directly.
  */
 class ISlipDetector {
 public:
@@ -136,9 +136,9 @@ public:
     /**
      * @brief Clear arc state touching a specific (satellite, signal) only.
      *
-     * Detectors that track per-pair arcs (MW/EWL) clear arcs involving the
-     * signal while preserving unrelated pairs.  The default falls back to a
-     * full per-satellite reset for detectors that lack finer granularity.
+     * The MW detector overrides this to clear the arcs that involve the
+     * signal and keep unrelated pairs.  The default falls back to a full
+     * per-satellite reset; GRAPHIC and EWL use the default.
      *
      * @param satellite Satellite identifier (e.g. "G01").
      * @param signal    Signal identifier (e.g. "L1C").
@@ -152,7 +152,8 @@ public:
     /**
      * @brief Drop all per-arc state (hard-gap restart).
      *
-     * Default no-op; detectors with cross-arc/pivot bookkeeping override.
+     * Default no-op; detectors with cross-arc or pivot bookkeeping override
+     * it (the MW detector does).
      */
     virtual void resetAll() {}
 
@@ -185,9 +186,9 @@ public:
     /**
      * @brief Typed access to the MW detector when this instance is one.
      *
-     * Returns @c this for @c MwSlipDetector, nullptr otherwise.  Lets
-     * @c CycleSlipManager recover the MW detector's rich API (WL-lock
-     * queries, pivot hints, quality scoring) from a registry-built
+     * Returns @c this for @c MwSlipDetector and nullptr otherwise.
+     * @c CycleSlipManager uses it to reach the MW detector's full API
+     * (WL-lock queries, pivot hints, quality scoring) from a registry-built
      * @c ISlipDetector handle without RTTI.
      */
     virtual MwSlipDetector* asMelbourneWubbena() { return nullptr; }

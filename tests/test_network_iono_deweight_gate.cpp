@@ -1,24 +1,25 @@
-// Iono deweight card: unit tests for the standalone NetworkIonoDeweightGate
-// (include/filter/NetworkIonoDeweightGate.hpp) — the per-station SH-VTEC-constraint
-// deweight factor with a v1 static list and a v2 network-relative IGG auto-trigger.
-// The tests drive the class DIRECTLY with synthetic per-station statistics of KNOWN
-// structure (the standalone-class precedent of test_network_carry_vce); no
-// ApplicationNetwork coupling.
+// Unit tests for the standalone NetworkIonoDeweightGate
+// (include/filter/NetworkIonoDeweightGate.hpp): the per-station SH-VTEC-constraint
+// deweight factor with a v1 static list and a v2 network-relative IGG auto-trigger
+// (iono deweight card).  The tests drive the class directly with synthetic per-station
+// statistics of known structure, following the standalone-class pattern of
+// test_network_carry_vce; there is no ApplicationNetwork coupling.
 //
-//   OffByteIdentical  — empty list + adaptive off (and a factor==1 list) ⇒ weight()
-//                       is 1.0 for every station and active() is false: the producer
-//                       is byte-identical to OFF (invariant #6).
-//   StaticV1          — a listed station gets the fixed factor (0 ⇒ decouple);
-//                       unlisted stays 1.0; telemetry reflects the static set.
-//   RampTarget        — the smooth 3-segment IGG ramp is exact at the segment edges.
-//   AdaptiveHysteresis— an outlier ENGAGES only above sigma_hi and RELEASES only below
-//                       sigma_lo; a moderate outlier in the (lo,hi) band does NOT
-//                       engage from released, but a still-engaged station HOLDS there
-//                       (the anti-oscillation guarantee) — each z self-checked.
-//   RateLimit         — the weight slews toward the floor by at most rate_limit/epoch.
-//   MinEpochs         — a station cannot gate before min_epochs clean samples.
-//   CleanGate         — a datum-change epoch (advance(false)) holds all state.
-//   Degenerate        — an all-equal population (MAD==0) never engages / never NaNs.
+//   OffByteIdentical:   empty list and adaptive off (and a factor==1 list): weight()
+//                       is 1.0 for every station and active() is false, so the
+//                       producer is byte-identical to OFF (invariant #6).
+//   StaticV1:           a listed station gets the fixed factor (0 means decouple);
+//                       unlisted stations stay at 1.0; telemetry reflects the static set.
+//   RampTarget:         the smooth 3-segment IGG ramp is exact at the segment edges and
+//                       at the midpoint.
+//   AdaptiveHysteresis: an outlier engages only above sigma_hi and releases only below
+//                       sigma_lo; a moderate outlier in the (lo,hi) band does not engage
+//                       from released, but a station already engaged stays engaged
+//                       there (the anti-oscillation property).  Each z is checked.
+//   RateLimit:          the weight slews toward the floor by at most rate_limit per epoch.
+//   MinEpochs:          a station cannot gate before min_epochs clean samples.
+//   CleanGate:          a datum-change epoch (advance(false)) holds all state.
+//   Degenerate:         an all-equal population (MAD==0) never engages and yields no NaN.
 
 #include "filter/NetworkIonoDeweightGate.hpp"
 
@@ -32,9 +33,10 @@ namespace GnssProcessor {
 namespace {
 
 // Background fixture: five stations at 0.0 and five at 2.0, plus a controllable PROBE.
-// For any PROBE >= 2, the 11-station population has median 2.0 and MAD 2.0 (mad_sigma =
-// 1.4826*2 = 2.965), both exactly invariant to the probe — so z_PROBE = (probe-2)/2.965
-// is analytically known, and the test also self-checks it via zscore().
+// For any probe >= 4, the 11-station population has median 2.0 and MAD 2.0 (mad_sigma =
+// 1.4826*2 = 2.965), both independent of the probe, so z_PROBE = (probe-2)/2.965 is
+// known analytically; the tests also check it through zscore().  (For 2 <= probe < 4
+// the median is still 2.0 but the MAD is probe-2.)
 void feedEpoch(NetworkIonoDeweightGate& g, double probe) {
     for (int i = 0; i < 5; ++i) {
         g.observe("BGLO" + std::to_string(i), 0.0);
@@ -46,8 +48,9 @@ void feedEpoch(NetworkIonoDeweightGate& g, double probe) {
 
 NetworkIonoDeweightGate makeAdaptive(double rate_limit = 1.0, double floor = 0.0,
                                      int min_epochs = 1) {
-    // window_epochs tiny ⇒ phi≈0 ⇒ EWMA tracks the latest sample exactly (isolates the
-    // gate state-machine from the smoothing, which is exercised implicitly elsewhere).
+    // A tiny window_epochs gives phi≈0, so the EWMA tracks the latest sample; this
+    // isolates the gate state machine from the smoothing, which other tests exercise
+    // implicitly.
     return NetworkIonoDeweightGate(/*static*/ {}, /*static_w*/ 0.0, /*adaptive*/ true,
                                    /*window_epochs*/ 1.0e-3, /*sigma_hi*/ 3.0,
                                    /*sigma_lo*/ 2.0, floor, rate_limit, min_epochs);
@@ -93,14 +96,14 @@ TEST(NetworkIonoDeweightGate, RampTarget) {
     EXPECT_DOUBLE_EQ(g.rampTarget(2.0), 1.0);   // at release edge
     EXPECT_DOUBLE_EQ(g.rampTarget(3.0), 0.1);   // at trigger edge ⇒ floor
     EXPECT_DOUBLE_EQ(g.rampTarget(4.0), 0.1);   // above trigger ⇒ clamped to floor
-    // Midpoint z=2.5 ⇒ t=0.5, heal=0.5 ⇒ floor + (1-floor)*0.25 = 0.325.
+    // Midpoint z=2.5: t=0.5 and 1-t=0.5, so floor + (1-floor)*0.25 = 0.325.
     EXPECT_NEAR(g.rampTarget(2.5), 0.325, 1e-12);
 }
 
 TEST(NetworkIonoDeweightGate, AdaptiveHysteresis) {
     NetworkIonoDeweightGate g = makeAdaptive(/*rate*/ 1.0, /*floor*/ 0.0, /*min_epochs*/ 1);
 
-    // Phase A — a big outlier (z≈33) engages and snaps to the floor.
+    // Phase A: a large outlier (z≈33) engages and snaps to the floor.
     feedEpoch(g, 100.0);
     EXPECT_GT(g.zscore("PROBE"), 3.0);
     EXPECT_TRUE(g.engaged("PROBE"));
@@ -109,8 +112,8 @@ TEST(NetworkIonoDeweightGate, AdaptiveHysteresis) {
     EXPECT_EQ(g.releaseEvents(), 0);
     EXPECT_DOUBLE_EQ(g.weight("BGLO0"), 1.0);   // a well-behaved station is untouched
 
-    // Phase B — lower to z≈2.36 (in the (2,3) hysteresis band): STAYS engaged, no new
-    // trigger or release event.  (probe 9.0 ⇒ (9-2)/2.965 = 2.36)
+    // Phase B: lower to z≈2.36, inside the (2,3) hysteresis band.  The station stays
+    // engaged, with no new trigger or release event.  (probe 9.0: (9-2)/2.965 = 2.36)
     feedEpoch(g, 9.0);
     EXPECT_GT(g.zscore("PROBE"), 2.0);
     EXPECT_LT(g.zscore("PROBE"), 3.0);
@@ -118,14 +121,14 @@ TEST(NetworkIonoDeweightGate, AdaptiveHysteresis) {
     EXPECT_EQ(g.triggerEvents(), 1);
     EXPECT_EQ(g.releaseEvents(), 0);
 
-    // Phase C — into the cluster (z=0 < lo): releases and recovers to full weight.
+    // Phase C: into the cluster (z=0 < lo); the station releases and recovers full weight.
     feedEpoch(g, 1.0);
     EXPECT_LT(g.zscore("PROBE"), 2.0);
     EXPECT_FALSE(g.engaged("PROBE"));
     EXPECT_DOUBLE_EQ(g.weight("PROBE"), 1.0);
     EXPECT_EQ(g.releaseEvents(), 1);
 
-    // A never-engaged station sitting in the (lo,hi) band must NOT engage (needs > hi).
+    // A never-engaged station in the (lo,hi) band does not engage (engaging needs z > hi).
     NetworkIonoDeweightGate fresh = makeAdaptive(1.0, 0.0, 1);
     feedEpoch(fresh, 9.0);   // z≈2.36
     feedEpoch(fresh, 9.0);

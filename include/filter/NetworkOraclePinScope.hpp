@@ -1,18 +1,17 @@
 #pragma once
 /**
  * @file NetworkOraclePinScope.hpp
- * @brief The `oracle_pin` SCOPE grammar — which arcs a sim-only oracle
- *        ambiguity pin holds at truth.
+ * @brief The `oracle_pin` scope grammar: which arcs a sim-only oracle ambiguity
+ *        pin holds at truth.
  *
- * A LEAF header (no project includes) deliberately split out of
- * filter/NetworkOraclePin.hpp: the JSON loader
- * (src/core/config/GnssConfigLoadNetwork.cpp) must refuse a bad scope BY NAME at
- * load time, and it must do so through the SAME parser the run-scope seam uses,
- * or the grammar would live in two places and drift.  The seam's own header
- * pulls filter/NetworkRunTypes.hpp (StateManager, NetworkEstimator, PppModel,
- * MeasurementModel), which the config TU has no business including.
+ * A leaf header (no project includes), split out of filter/NetworkOraclePin.hpp
+ * on purpose.  The JSON loader (src/core/config/GnssConfigLoadNetwork.cpp) refuses
+ * a bad scope by name at load time, and does so through the same parser the
+ * run-scope seam uses, so the grammar exists in one place.  The seam's own header
+ * includes filter/NetworkRunTypes.hpp (StateManager, NetworkEstimator, PppModel,
+ * MeasurementModel), which the config TU should not depend on.
  *
- * See include/filter/NetworkOraclePin.hpp for the card.
+ * The oracle-pin card is described in include/filter/NetworkOraclePin.hpp.
  */
 
 #include <set>
@@ -23,16 +22,22 @@ namespace GnssProcessor {
 /**
  * @brief One parsed `scope` string of an `oracle_pin` event.
  *
- * Grammar (rejected BY NAME at load, never silently widened or emptied):
- *   - `all`                       — every carried non-anchor arc;
- *   - `band:<sig>[+<sig>…]`       — e.g. `band:L1C+L2W`;
- *   - `station:<name>`            — one roster station;
- *   - `sat:<id>`                  — one satellite, e.g. `sat:G08`;
- *   - `arc:<station>/<sat>/<sig>` — one exact arc.
+ * Grammar (an invalid scope is rejected by name at load, never silently widened
+ * or emptied):
+ *   - `all`: every carried arc;
+ *   - `band:<sig>[+<sig>…]`: phase signal codes, each starting with `L`,
+ *     e.g. `band:L1C+L2W`;
+ *   - `station:<name>`: one roster station;
+ *   - `sat:<id>`: one satellite, e.g. `sat:G08`;
+ *   - `arc:<station>/<sat>/<sig>`: one exact arc.
+ *
+ * Under every scope, a family's anchor arc is never pinned (its datum pin defines
+ * the family's gauge); src/core/filter/NetworkOraclePin.cpp applies that exclusion
+ * after covers().
  */
 struct OraclePinScope {
-    /// Which form this scope is.  @c Invalid never leaves @ref oraclePinParseScope
-    /// on success — it is the parse-failure marker.
+    /// Which form this scope is.  @c Invalid is the parse-failure marker and is
+    /// never returned by @ref oraclePinParseScope on success.
     enum class Kind { Invalid, All, Band, Station, Sat, Arc };
     Kind                  kind{Kind::Invalid};
     std::set<std::string> signals;   ///< @c Band: the accepted RINEX-3 phase codes.

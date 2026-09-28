@@ -3,15 +3,14 @@
 
 Same experiment as ``make_agu_configs.py`` at 5x the stations.  The roster is
 lifted from ``_gg305_pdfix_deg15_smoke.json`` (the only 305 config already on the
-PD-safe-fold lineage) but the POSTURE comes from ``_ft63_pdfix_v3.json``, because
+PD-safe-fold lineage), but the posture comes from ``_ft63_pdfix_v3.json``, because
 the gg305 config differs from the validated FT63 posture in two ways that matter:
 
-  * it does not arm ``adm_screen`` -- the measurement-admission screen is what
-    retired both DOY-129 withhold eras at their origin; without it this day is
-    not clean;
+  * it does not arm ``adm_screen``: the measurement-admission screen retired both
+    DOY-129 withhold eras at their origin, so without it this day is not clean;
   * it runs SH ``max_degree`` 15, which the P3b additive ladder measured as an
-    expensive NULL at 63 stations (+34 % wall, mature DD steps and total_IF
-    unchanged).  Degree 8 is the validated setting and the cheaper one.
+    expensive null at 63 stations (+34 % wall, mature DD steps and total_IF
+    unchanged). Degree 8 is the validated, cheaper setting.
 
 Extending the FT63 config inherits both correctly; only the roster, the
 constellation set and the signal priorities are overridden here.
@@ -64,9 +63,9 @@ def build(tag: str, arm: str, duration_s: float, roster: list) -> dict:
             "frequency_mode": "all",
             "channel_mode": "single",
         },
-        # SH: degree 15, SINGLE shell (user directive 2026-08-04).  Costs only
-        # ~+5-8 % at 305 stations -- far less than the +34 % the P3b ladder saw at
-        # 63, because per-station work dominates at this scale.
+        # SH: degree 15, single shell (user directive 2026-08-04). Costs only
+        # about +5-8 % at 305 stations, far less than the +34 % the P3b ladder saw
+        # at 63, because per-station work dominates at this scale.
         "estimation": {
             "global_vtec_sh": {"max_degree": 15, "layer2_max_degree": 0},
         },
@@ -74,26 +73,27 @@ def build(tag: str, arm: str, duration_s: float, roster: list) -> dict:
             "max_duration_s": duration_s,
             # The MW/WL lane layer is the 305-station bottleneck: applyLaneMeasurement
             # is 84.7 % of the run (232 ms/row of dense O(dim^2) downdate on a 2K x 2K
-            # joint block, max K_c 3866).  OFF takes a settled epoch 310 s -> 26.7 s
-            # (12x) and shrinks the largest component 3866 -> 2359, while costing
-            # nothing measurable: AR fix rate is 0 % and med|frac| uniform 0.25 with
-            # it ON.
+            # joint block, max K_c 3866). Off takes a settled epoch from 310 s to
+            # 26.7 s (12x) and shrinks the largest component from 3866 to 2359, at no
+            # measurable cost: AR fix rate is 0 % and med|frac| is uniformly 0.25 with
+            # the layer on.
             #
-            # SCOPE: this is a LARGE-network setting.  At ~60 stations the same change
-            # is a small net LOSS (dd-build -73 % but install-post ~3x; 2084 -> 2207
-            # ms/epoch), because the 2K x 2K scaling only bites once K is large.
+            # This is a large-network setting. At about 60 stations the same change
+            # is a small net loss (dd-build -73 % but install-post about 3x; 2084 to
+            # 2207 ms/epoch), because the 2K x 2K scaling only bites once K is large.
             #
-            # UNGRADED SIDE EFFECT: it changes carry RETENTION -- whole-block
-            # marginalizations go 0-over-1440-epochs (lane ON) to 735-over-31 (lane
-            # OFF), since a per-band component whose chords all refloat is dropped
-            # wholesale where the joint block survived if either band did.  Solve-
-            # affecting: grade total_IF / a00 / DD steps on a >=2 h run before
-            # quoting numbers from this posture.
+            # Ungraded side effect: it changes carry retention. Whole-block
+            # marginalizations go from 0 over 1440 epochs (lane on) to 735 over 31
+            # (lane off), since a per-band component whose chords all refloat is
+            # dropped wholesale where the joint block survived if either band did.
+            # This is solve-affecting: grade total_IF / a00 / DD steps on a run of
+            # at least 2 h before quoting numbers from this posture.
             "lane_carry": {"enable": False},
-            # Diagnostic only, and network_ionosphere.csv is FRAME-BROKEN (emits x_r
-            # without its seeded linearization point).  Use network_vtec_sh.csv +
-            # scripts/sh_vtec.py for the estimated ionosphere.  Left ON here only
-            # because it is cheap (<0.2 % of the epoch) and useful for slip forensics.
+            # Diagnostic only; network_ionosphere.csv is frame-broken (it emits x_r
+            # without its seeded linearization point). Use network_vtec_sh.csv plus
+            # scripts/sh_vtec.py for the estimated ionosphere. Left on here only
+            # because it is cheap (under 0.2 % of the epoch) and useful for slip
+            # forensics.
             "trace_ionosphere": True,
             "product_output_path": f"{run_dir}/products.txt",
             "state_snapshot_path": f"{run_dir}/state_snapshot.bin",

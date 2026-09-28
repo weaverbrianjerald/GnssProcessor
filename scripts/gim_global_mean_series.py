@@ -1,16 +1,16 @@
-"""Grade a network run's SH a00 against the GIM's OWN global mean VTEC, epoch by epoch.
+"""Grade a network run's SH a00 against the GIM's own global mean VTEC, epoch by epoch.
 
-Why this exists.  Every level verdict on the EXT-CB ladder so far has been quoted
-against a SINGLE number — "GIM 32.24 TECU" — which is the global mean of the 00:00
-map.  That is fine for an ignition arm covering minutes.  It is not fine for a 12 h
-arm: the global mean VTEC itself moves through the day (~2x between night and the
-afternoon peak), so a run whose a00 rises may be tracking the ionosphere rather
-than drifting.  Comparing a00(t) with GIM_mean(t) separates those two readings.
+Rationale: every level verdict on the EXT-CB ladder so far has been quoted against
+a single number, "GIM 32.24 TECU", the global mean of the 00:00 map. That is fine
+for an ignition arm covering minutes. It is not fine for a 12 h arm: the global
+mean VTEC itself moves through the day (about 2x between night and the afternoon
+peak), so a run whose a00 rises may be tracking the ionosphere rather than
+drifting. Comparing a00(t) with GIM_mean(t) separates those two readings.
 
 What it computes
   * GIM_mean(t): the area-weighted (cos-latitude) mean VTEC of each IONEX map in the
-    day's file, linearly interpolated in time.  This is the same functional a00 is
-    (a sun-fixed SH expansion's a00 IS the global mean, since the basis is
+    day's file, linearly interpolated in time. This is the same functional a00 is
+    (a sun-fixed SH expansion's a00 is the global mean, since the basis is
     orthonormal under (1/4pi) integral dOmega, so Ybar00 = 1).
   * per-run a00(t) from logs/network_vtec_sh_health.csv, and the residual
     a00(t) - GIM_mean(t) with hourly statistics.
@@ -21,10 +21,10 @@ Usage
 
 Caveats worth keeping in mind when quoting the output
   * IONEX maps are themselves a product with a few-TECU error, and their global mean
-    leans on the (data-free) ocean/southern-hemisphere interpolation.  Treat the
-    residual as a level COMPARISON, not as truth.
-  * a00 is a GLOBAL mean while the network sees one hemisphere-ish footprint; the
-    unsupported region is Kaula-extrapolated.  A residual can therefore be real
+    leans on the (data-free) ocean/southern-hemisphere interpolation. Treat the
+    residual as a level comparison, not as truth.
+  * a00 is a global mean while the network sees one hemisphere-ish footprint; the
+    unsupported region is Kaula-extrapolated. A residual can therefore be real
     without any station being wrong (see docs/SPEC_level_information_budget.md §29).
 """
 import argparse
@@ -67,15 +67,15 @@ def load_ionex(path):
                     j = k
                     continue
                 j += 1
-            # A map whose EPOCH record we failed to read is DROPPED, not defaulted
-            # to 00:00 — a mis-timed map silently distorts the whole reference curve
+            # A map whose EPOCH record cannot be read is dropped, not defaulted to
+            # 00:00: a mis-timed map silently distorts the whole reference curve
             # (it sorts to the front and the first interpolation segment inherits the
             # wrong value).
             if grid and sod is not None:
-                # The final map of a daily IONEX is the NEXT day's 00:00 (COD writes
-                # it as such), so its seconds-of-day wraps to 0.  Unwrap in file
-                # order or it sorts to the front and poisons the first interpolation
-                # segment with the day-END level.
+                # The final map of a daily IONEX is the next day's 00:00 (COD writes
+                # it that way), so its seconds-of-day wraps to 0. Unwrap in file
+                # order, or it sorts to the front and corrupts the first
+                # interpolation segment with the day-end level.
                 if maps and sod <= maps[-1][0]:
                     sod += 86400
                 maps.append((sod, grid))
@@ -148,7 +148,7 @@ def main():
     print("  " + "  ".join(f"{s//3600:02d}h:{v:.1f}" for s, v in series))
     print()
 
-    tow0 = 259200.0            # DOY-129 00:00 GPS TOW (week 2313)
+    tow0 = 259200.0            # GPS TOW at 00:00 on DOY-129 (week 2313)
     for run in args.runs:
         a = run_a00(run)
         if not a:

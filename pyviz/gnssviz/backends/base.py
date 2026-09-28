@@ -3,8 +3,8 @@
 A backend turns a :class:`gnssviz.figures.Figure` (pure data) into a rendered
 artifact.  The matplotlib backend (static figures, PNG-for-report, today) and a
 future plotly backend (interactive / real-time) implement this same interface,
-which is the whole point of the backend-agnostic split: viewers never import a
-plotting library, they only build :class:`Figure` objects.
+so that viewers never import a plotting library and only build :class:`Figure`
+objects: that separation is the reason for the backend-agnostic split.
 """
 
 from __future__ import annotations

@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""ORACLE PIN driver — the leg matrix for docs/SPEC_oracle_pin.md.
+"""Oracle-pin driver: the leg matrix for docs/SPEC_oracle_pin.md.
 
 The card (SPEC_event_harness.md §17): hold some or all of the producer's float
-ambiguities at the fixture's TRUE integers and grade the REMAINING parameters
-against truth.  With the ambiguity/ionosphere degeneracy removed, the residual
-error budget is the model's own; the PARTIAL columns are the coupling map — they
-show which parameter absorbs the error a pinned band or station no longer
-carries.
+ambiguities at the fixture's true integers and grade the remaining parameters
+against truth. With the ambiguity/ionosphere degeneracy removed, the residual
+error budget is the model's own; the partial columns are the coupling map,
+showing which parameter absorbs the error that a pinned band or station no
+longer carries.
 
-Nine legs, all 60 epochs off the SAME snapshot, pin at +5:
+Nine legs, all 60 epochs off the same snapshot, pin at +5:
 
     quiet seed (runs/evseed_quiet6h ep0665, fingerprint 6a3531a1afb2b40b)
-      opin_null_base   BASE exe, no event     G1 reference
-      opin_null        ON   exe, no event     G1 (must be byte-identical) + the table's `none`
+      opin_null_base   base exe, no event     G1 reference
+      opin_null        on   exe, no event     G1 (must be byte-identical) + the table's `none`
       opin_all         scope: all             the ceiling
       opin_l12         scope: band:L1C+L2W    L5Q free
       opin_l5          scope: band:L5Q        L1C/L2W free
@@ -22,8 +22,8 @@ Nine legs, all 60 epochs off the SAME snapshot, pin at +5:
       opin_slip_null   no event               G4 reference
       opin_slip_all    scope: all             G4
 
-⚠ `oracle_truth_root` is armed on EVERY leg, the nulls included, so the ONLY
-difference between a null and an arm is the event itself.  The root is inert
+`oracle_truth_root` is armed on every leg, the nulls included, so the only
+difference between a null and an arm is the event itself. The root is inert
 without an `oracle_pin` event (and without `cycle_slip.oracle_relevel`), which
 is exactly what gate G1 proves.
 
@@ -32,7 +32,7 @@ is exactly what gate G1 proves.
     python scripts/ev_oracle_pin_legs.py list
     python scripts/ev_oracle_pin_legs.py status
 
-⚠ Concurrency is capped at TWO (this card's directive — another session may be
+Concurrency is capped at two (this card's directive: another session may be
 running a storm arm in the third slot), and completion is read from each leg's
 `exitcode.txt`, never from the process list (memory
 `feedback_detached_run_launchers`: a subagent's children can be reaped out from
@@ -50,9 +50,9 @@ REPO = os.path.dirname(_HERE)
 
 BASE_EXE = os.path.join(REPO, "build", "x64-Release", "gnss_processor_opin_base.exe")
 PIN_EXE = os.path.join(REPO, "build", "x64-Release", "gnss_processor_opin.exe")
-# The post-REBASE exe.  `opin_all_rb` is the rebase smoke leg: the leg derives from
-# the frozen SEED config, so the posture is unchanged by main's golden edits and the
-# run-end clause must reproduce `opin_all`'s counts EXACTLY.
+# The post-rebase exe. `opin_all_rb` is the rebase smoke leg: the leg derives from
+# the frozen seed config, so the posture is unchanged by main's golden edits, and
+# the run-end clause must reproduce `opin_all`'s counts exactly.
 RB_EXE = os.path.join(REPO, "build", "x64-Release", "gnss_processor_opin_rb.exe")
 
 QUIET_SEED = "C:/GnssProcessor/.claude/worktrees/evharness/runs/evseed_quiet6h"
@@ -102,8 +102,8 @@ def legdir(name):
 
 
 def _extra(fixture):
-    """`--extra` deep-merges LAST, so it is how a leg arms a knob the SEED's
-    config predates.  Armed on every leg, nulls included: the only difference
+    """`--extra` deep-merges last, so it is how a leg arms a knob the seed's
+    config predates. Armed on every leg, nulls included: the only difference
     between a null and an arm must be the event."""
     return json.dumps({"network": {"cycle_slip": {"oracle_truth_root": fixture}}})
 
@@ -125,8 +125,8 @@ def cmd_make(args):
         rc = subprocess.call(cmd)
         if rc:
             raise SystemExit(f"make-leg failed for {name} (rc {rc})")
-        # Record the exe this leg is FOR, so `run` cannot silently use the wrong
-        # one (the G1 pair differs ONLY in the binary).
+        # Record the exe this leg is for, so `run` cannot silently use the wrong
+        # one (the G1 pair differs only in the binary).
         meta_path = os.path.join(legdir(name), "leg_meta.json")
         with open(meta_path, encoding="utf-8") as fh:
             meta = json.load(fh)
@@ -163,10 +163,10 @@ def cmd_run(args):
         d = legdir(name)
         if not os.path.isfile(os.path.join(d, "leg.json")):
             raise SystemExit(f"{name}: no leg.json — run `make` first")
-        # event_leg.py `rerun` restores the pristine snapshot first: a leg WRITES
+        # event_leg.py `rerun` restores the pristine snapshot first: a leg writes
         # its own snapshot at its first emitted epoch, so relaunching the exe on
         # an existing leg.json resumes into an epoch the snapshot already holds
-        # and is cleanly REFUSED (SPEC_event_harness §11.1).
+        # and is cleanly refused (SPEC_event_harness §11.1).
         for stale in ("exitcode.txt",):
             p = os.path.join(d, stale)
             if os.path.isfile(p):
@@ -180,7 +180,7 @@ def cmd_run(args):
     bad = 0
     for name, t0, p in procs:
         p.communicate()
-        rc, wall = _exitcode(name)          # the FILE, never p.returncode
+        rc, wall = _exitcode(name)          # the file, never p.returncode
         print(f"  {name:16s} exitcode.txt rc={rc} wall={wall}s "
               f"(launcher {time.time() - t0:.1f}s)")
         if rc != 0:
@@ -189,7 +189,7 @@ def cmd_run(args):
 
 
 def oracle_pin_clause(name):
-    """The run-end ORACLE PIN line from a leg's stdout, verbatim (or None).
+    """The run-end oracle-pin line from a leg's stdout, verbatim (or None).
 
     Standing invariant #4: this line, not the absence of a crash, is what says
     whether the arm actuated.  It is multi-line in the log (spdlog wraps nothing,

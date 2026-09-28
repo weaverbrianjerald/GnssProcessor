@@ -224,9 +224,8 @@ bool ProductCache::loadProducts(ProductParser& parser, LogManager& log_manager) 
     try {
         log_manager.getLogger("product_cache")->info("Loading products into cache (move semantics)...");
 
-        // MOVE data from parser - this is the key optimization
-        // The parser's vectors are left empty after this, which is fine
-        // since we only load products once.
+        // Move the data out of the parser instead of copying it. The parser's
+        // vectors are left empty; products are loaded once per cache lifetime.
         orbits_   = std::make_shared<const std::vector<OrbitData>>(parser.moveOrbits());
         clocks_   = std::make_shared<const std::vector<ClockData>>(parser.moveClocks());
         antennas_ = std::make_shared<const std::vector<AntennaData>>(parser.moveAntennas());
@@ -272,8 +271,8 @@ void ProductCache::clearCache() {
     std::lock_guard<std::mutex> lock(load_mutex_);
 
     // Release the shared product copies (rebind to empty so getX() stays safe).
-    // Any model component still holding a getXShared() handle keeps its copy alive
-    // until it too releases — exactly the shared-ownership contract.
+    // A model component still holding a getXShared() handle keeps its copy alive
+    // until it releases the handle. clock_ref_signals_ is not cleared here.
     orbits_   = std::make_shared<const std::vector<OrbitData>>();
     clocks_   = std::make_shared<const std::vector<ClockData>>();
     antennas_ = std::make_shared<const std::vector<AntennaData>>();

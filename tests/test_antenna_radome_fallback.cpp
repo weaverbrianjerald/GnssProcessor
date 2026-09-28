@@ -5,18 +5,18 @@
  *        (Tier 2).
  *
  * Tier 1 (Antenna::matchReceiverAntenna): a RINEX receiver antenna whose
- * (type, radome) has no exact ATX entry retries the SAME antenna type with a
- * "NONE" radome — the documented IGS/EPN practice of borrowing a physical
- * antenna's radome-agnostic calibration (mm-level).  These tests lock that the
- * fallback (1) recovers an uncalibrated-radome station to its type's NONE
- * entry, (2) is flagged distinctly from an exact match, (3) NEVER remaps the
- * antenna TYPE (a truly unknown model still resolves to nothing — the Tier-2
- * exclusion predicate), (4) leaves already-matched lookups byte-identical
- * (exact match wins, fallback never fires), and (5) does not cross to a
+ * (type, radome) has no exact ATX entry retries the same antenna type with a
+ * "NONE" radome, following the documented IGS/EPN practice of borrowing the
+ * antenna's radome-agnostic calibration (mm-level difference).  These tests lock
+ * that the fallback (1) resolves an uncalibrated-radome station to its type's NONE
+ * entry, (2) is flagged distinctly from an exact match, (3) never remaps the
+ * antenna type (an unknown model still resolves to nothing, which is the Tier-2
+ * exclusion predicate), (4) leaves already-matched lookups byte-identical (the
+ * exact match wins and the fallback does not fire), and (5) does not cross to a
  * different type's NONE entry.
  *
  * Tier 2 (GnssConfig): the network.exclude_unmodeled_antenna_stations toggle
- * parses and defaults OFF (byte-identical).
+ * parses and defaults to off (byte-identical).
  */
 
 #include <gtest/gtest.h>
@@ -37,8 +37,8 @@ using namespace GnssProcessor;
 namespace {
 
 // Build a 20-char ANTEX/RINEX receiver antenna field: a 16-char left-justified
-// model region followed by a 4-char radome code — the exact layout the
-// production RINEX parser hands to the matcher (line.substr(20,20)).
+// model region followed by a 4-char radome code, the layout the production RINEX
+// parser hands to the matcher (line.substr(20,20)).
 std::string rxField(const std::string& model, const std::string& radome) {
     std::string s = model.substr(0, std::min<size_t>(16, model.size()));
     s.append(16 - s.size(), ' ');
@@ -49,8 +49,8 @@ std::string rxField(const std::string& model, const std::string& radome) {
 
 // A small ATX antenna list.  Receiver ATX entry types are stored in the
 // underscore-normalized "<model>_<radome>" form (mirrors ProductParser).  One
-// entry carries a PCO so we can prove the matcher returns the real entry whose
-// per-frequency data is untouched (the frequency chain is orthogonal).
+// entry carries a PCO, which shows that the matcher returns the real entry with its
+// per-frequency data untouched (the frequency chain is independent of the match).
 std::vector<AntennaData> makeAntennas() {
     std::vector<AntennaData> v;
     AntennaData a;
@@ -74,14 +74,14 @@ TEST(AntennaRadomeFallback, UncalibratedRadomeResolvesToNone) {
     EXPECT_EQ(m.entry->type, "AOAD/M_B_NONE");
     EXPECT_TRUE(m.via_radome_none);
     EXPECT_TRUE(m.type_substitution.empty());
-    // The returned entry is the real object — its per-frequency PCO is intact
+    // The returned entry is the real object, with its per-frequency PCO intact
     // (radome→NONE swaps the calibration entry, not the frequency handling).
     ASSERT_EQ(m.entry->pco.count("G01"), 1u);
     EXPECT_DOUBLE_EQ(m.entry->pco.at("G01").z(), 0.0837);
 }
 
-// (2) An exact (type, NONE) match is NOT flagged as a radome fallback — it hit
-// directly.  Byte-identical to the historical behaviour.
+// (2) An exact (type, NONE) match is a direct hit and is not flagged as a radome
+// fallback.  Byte-identical to the historical behaviour.
 TEST(AntennaRadomeFallback, ExactNoneMatchIsNotFlagged) {
     const auto antennas = makeAntennas();
     const auto m = Antenna::matchReceiverAntenna(
@@ -91,9 +91,10 @@ TEST(AntennaRadomeFallback, ExactNoneMatchIsNotFlagged) {
     EXPECT_FALSE(m.via_radome_none);
 }
 
-// (3) An exact match on a CALIBRATED non-NONE radome wins at the primary pass;
-// the radome→NONE step never fires (there is no ...NONE entry to steal it, and
-// exact match precedes the fallback anyway) — matched lookups are byte-identical.
+// (3) An exact match on a calibrated non-NONE radome wins at the primary pass and
+// the radome→NONE step does not fire (there is no ..._NONE entry for this type, and
+// the exact match precedes the fallback in any case), so matched lookups are
+// byte-identical.
 TEST(AntennaRadomeFallback, CalibratedRadomeExactMatchWinsNoFallback) {
     const auto antennas = makeAntennas();
     const auto m = Antenna::matchReceiverAntenna(
@@ -103,8 +104,8 @@ TEST(AntennaRadomeFallback, CalibratedRadomeExactMatchWinsNoFallback) {
     EXPECT_FALSE(m.via_radome_none);
 }
 
-// (4) A genuinely unknown antenna TYPE still resolves to nothing even after the
-// radome→NONE fallback — the predicate the Tier-2 hard exclusion acts on.
+// (4) An unknown antenna type still resolves to nothing after the radome→NONE
+// fallback; this is the predicate the Tier-2 hard exclusion acts on.
 TEST(AntennaRadomeFallback, UnknownTypeStillNoMatch) {
     const auto antennas = makeAntennas();
     const auto m = Antenna::matchReceiverAntenna(
@@ -112,13 +113,13 @@ TEST(AntennaRadomeFallback, UnknownTypeStillNoMatch) {
     EXPECT_EQ(m.entry, nullptr);
     EXPECT_FALSE(m.via_radome_none);
 
-    // Enabling the opt-in TYPE-remap table (empty by default) does not rescue it.
+    // Enabling the opt-in type-remap table (empty by default) does not resolve it.
     const auto m2 = Antenna::matchReceiverAntenna(
         antennas, rxField("NOSUCHANT", "OSOD"), /*enable_type_substitution=*/true);
     EXPECT_EQ(m2.entry, nullptr);
 }
 
-// (5) The radome→NONE fallback is TYPE-preserving: it must not cross to a
+// (5) The radome→NONE fallback preserves the type: it does not cross to a
 // different antenna's NONE entry.  With only TRM's NONE present, an
 // uncalibrated-radome AOAD antenna resolves to nothing (not to TRM).
 TEST(AntennaRadomeFallback, DoesNotCrossAntennaTypes) {
@@ -130,12 +131,12 @@ TEST(AntennaRadomeFallback, DoesNotCrossAntennaTypes) {
 }
 
 // (6) A blank/short field carries no distinct radome, so there is nothing to
-// override — the fallback must not fabricate a NONE variant.
+// override, and the fallback does not fabricate a NONE variant.
 TEST(AntennaRadomeFallback, BlankRadomeNoFabricatedFallback) {
     std::vector<AntennaData> antennas;
     AntennaData a; a.type = "AOAD/M_B_NONE"; antennas.push_back(a);
     // A bare, already-trimmed type (no 20-char radome region): substring match
-    // finds the NONE entry directly, and it is NOT counted as a radome fallback.
+    // finds the NONE entry directly, and it is not counted as a radome fallback.
     const auto m = Antenna::matchReceiverAntenna(antennas, "AOAD/M_B", false);
     ASSERT_NE(m.entry, nullptr);
     EXPECT_EQ(m.entry->type, "AOAD/M_B_NONE");
@@ -198,7 +199,7 @@ TEST(ExcludeUnmodeledAntennaConfig, ParsesWhenSet) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-// Default is OFF (byte-identical: every loaded station is built).
+// Default is off (byte-identical: every loaded station is built).
 TEST(ExcludeUnmodeledAntennaConfig, DefaultsOff) {
     LogManager log;
     const fs::path p = writeTempConfig("default", "");

@@ -1,7 +1,7 @@
 /**
  * @file NetworkShDevVtec.cpp
- * @brief Implementation of @ref networkShDevVtec — the SB_SHDEV_VTEC block relocated VERBATIM
- *        (dedent-4, zero substitution) out of Application::runNetwork at INC-11b.
+ * @brief Implementation of @ref networkShDevVtec: the SB_SHDEV_VTEC block, moved unchanged
+ *        (dedent-4 only) out of Application::runNetwork at INC-11b.
  */
 
 #include "filter/NetworkShDevVtec.hpp"
@@ -58,25 +58,23 @@ void networkShDevVtec(
     const GlobalVtecShConfig& shc = config_.getGlobalVtecShConfig();
 
 
-    // --- Iono-2 / T5v2: SH-deviation carry EXACT update (SERIAL) ----------
-    // The solved pin functional û = ι̂ − Σ_l SH_l(ĉ) and its EXACT joint
+    // --- Iono-2 / T5v2: SH-deviation carry, exact update (serial) ----------
+    // The solved pin functional û = ι̂ − Σ_l SH_l(ĉ) and its exact joint
     // posterior variance V̂ = cond_var + (m_ι + b_s)ᵀ Σ_free (m_ι + b_s)
     // (one stationRegression per LOS; the bordered inverse gives
-    // Cov(ι, x_s) = −Σ_free·m_ι, collapsing the −2·cross term into the
-    // single quadratic form — the rowRedundancy identity with a_r = e_ι,
+    // Cov(ι, x_s) = −Σ_free·m_ι, which folds the −2·cross term into the
+    // single quadratic form: the rowRedundancy identity with a_r = e_ι,
     // a_s = −b_s) drive the closed-form GM update shDevExactUpdate().
-    // The v1 scalar filter here was CIRCULAR (falsified Jul-10): it
-    // re-consumed the pin-regularized residual as an independent floor-
-    // noise observation, so P collapsed to floor² after one update and the
-    // deviation degenerated to a lag-1 copy.  The exact gain uses the
-    // PREDICTED variance and the recovered data-only information U, so a
-    // weak epoch leaves P at P_pred and information accumulates at the
-    // true rate — the per-LOS iono temporal-accumulation channel.
-    // Carried in VERTICAL TECU via the layer-0 mapping (elevation-
-    // stationary).  Stations with the pin fully deweighted away (w_s ≤ 0)
-    // folded NO rows and get NO update (the aged prior stands — v1 updated
-    // them anyway, a defect); partial deweight inflates the effective
-    // floor by 1/w_s, matching the row the solve actually saw.
+    // The update does not re-consume the pin-regularized residual as an
+    // independent floor-noise observation: that is circular, collapsing P to
+    // floor² after one update and turning the deviation into a lag-1 copy.
+    // The exact gain uses the predicted variance and the recovered data-only
+    // information U, so a weak epoch leaves P at P_pred and information
+    // accumulates at the true rate (the per-LOS iono temporal-accumulation
+    // channel).  Carried in vertical TECU via the layer-0 mapping (elevation-
+    // stationary).  Stations whose pin is fully deweighted (w_s ≤ 0) fold no
+    // rows and get no update, so the aged prior stands; a partial deweight
+    // inflates the effective floor by 1/w_s, matching the row the solve used.
     // Insertions happen only here (serial), never in the assembly.
     if (sh_dev_on) {
         const auto& iwh = config_.getIonosphereWeightingConfig();
@@ -101,9 +99,10 @@ void networkShDevVtec(
         }
         if (cols_ok) {
             // Datum-as-known shared covariance, built once per epoch: the
-            // pinned + ensemble-gauge columns are exactly zero there, so the
-            // regression row's gauge-direction terms self-cancel (Card-1e:
-            // keep pinned coefficients in the row, never amputate).
+            // pinned and ensemble-gauge columns are exactly zero there, so the
+            // regression row's gauge-direction terms cancel.  Pinned
+            // coefficients therefore stay in the row and are not removed
+            // (Card-1e).
             const Eigen::MatrixXd Sfree =
                 est.datumFrameSharedCov(plan.shared_datum);
             const double now_s = se.time.week * 604800.0 + se.time.tow;
@@ -193,8 +192,10 @@ void networkShDevVtec(
 
     // --- Co-estimated SH-VTEC coefficient trace -------------------------
     // Dual-layer (Iono-2): with the second shell armed the rows carry a
-    // `layer` column (header matches, NetworkRunTraces::openAll); the
-    // single-layer format is byte-identical to pre-Iono-2.
+    // `layer` column (the header matches, NetworkRunTraces::openAll); without
+    // it the rows have no layer column and are byte-identical to the
+    // single-layer format.  Written whenever the trace is open and an SH model
+    // exists, independent of sh_dev_on.
     if (vtec_sh_trace.is_open() && sh_model) {
         const Eigen::MatrixXd& shcov = est.sharedCovariance();
         const bool lay_col = shc.layer2_max_degree > 0;

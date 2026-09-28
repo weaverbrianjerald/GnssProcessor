@@ -2,20 +2,20 @@
 
 /**
  * @file AidingSourceManager.hpp
- * @brief Owns the config-selected aiding-source set — the @c CycleSlipManager
- *        analog for navigation aiding.
+ * @brief Owns the config-selected aiding-source set; the navigation-aiding
+ *        counterpart of @c CycleSlipManager.
  *
- * Built once per process from @c AidingSourceRegistry::createEnabled and
- * consumed identically by @c Application::run (post-processing) and
- * @c RealTimeEngine::processEpoch (streaming) so the predict/update path cannot
- * diverge between the two pipelines.  Holds the polymorphic herd plus one
- * typed handle for the privileged source (the IMU), mirroring
- * @c CycleSlipManager's @c detectors_ + @c mw_ split.
+ * Built once per process from @c AidingSourceRegistry::createEnabled.  Both
+ * @c Application::run (post-processing) and @c RealTimeEngine::processEpoch
+ * (streaming) take their aided predict from @c collectPredict, so the predict
+ * path cannot diverge between the two pipelines.  The post-processing path also
+ * uses @c applyTcJacobianInputs and @c collectMeasurement; the real-time engine
+ * uses @c ingestSample.  Holds the polymorphic source list plus one typed handle for
+ * the privileged source (the IMU), mirroring @c CycleSlipManager's
+ * @c detectors_ + @c mw_ split.
  *
- * Step 0 exposes construction + the gap-policy query
- * (@c anySourceBridgesGaps).  The per-epoch fan-out (collectPredict /
- * applyTcJacobianInputs / collectMeasurement) lands with the touch-point
- * rewiring in later steps; see docs/aiding_source_abstraction_design.md.
+ * The gap-policy query @c anySourceBridgesGaps has no caller yet.  See
+ * docs/aiding_source_abstraction_design.md.
  */
 
 #include "aiding/IAidingSource.hpp"
@@ -24,11 +24,11 @@
 
 namespace GnssProcessor {
 
-class GnssConfig;        // forward decl — only a const ref is taken
-class LogManager;        // forward decl — only a ref is taken (full type via IAidingSource.hpp)
-class ImuAidingSource;   // forward decl — non-owning typed handle target
-class MeasurementModel;  // forward decl — TC Jacobian sink (forwarded to the IMU source)
-class StateManager;      // forward decl — passed through to each source's reserveStates
+class GnssConfig;        // forward decl: only a const ref is taken
+class LogManager;        // forward decl: only a ref is taken (full type via IAidingSource.hpp)
+class ImuAidingSource;   // forward decl: target of the non-owning typed handle
+class MeasurementModel;  // forward decl: TC Jacobian sink (forwarded to the IMU source)
+class StateManager;      // forward decl: passed through to each source's reserveStates
 
 /**
  * @class AidingSourceManager
@@ -44,7 +44,7 @@ public:
     AidingSourceManager(const GnssConfig& config, LogManager& log_manager);
 
     /**
-     * @brief Establish every source's state THROUGH StateManager.
+     * @brief Establish every source's state through StateManager.
      *
      * Calls @c reserveStates on each source once after the core state is laid
      * out (stashes the StateManager for live index resolution; reserves tier-2
@@ -73,16 +73,17 @@ public:
     /**
      * @brief Whether any active source bridges full GNSS outages.
      *
-     * The faithful replacement for the scattered @c enableImu() gap/dynamics
-     * and MW arc-reset-tolerance queries: true iff some source's
-     * @c bridgesGaps() is true (IMU yes; baro/ZUPT no).
+     * Intended to replace the scattered @c enableImu() gap/dynamics and MW
+     * arc-reset-tolerance queries: true iff some source's @c bridgesGaps() is
+     * true (IMU true; ZUPT false).  No caller uses it yet; those queries still
+     * read @c enableImu().
      */
     bool anySourceBridgesGaps() const;
 
     /**
      * @brief Collect this epoch's predict contributions from every source.
      *
-     * Calls each source's @c contributePredict and returns the VALID ones
+     * Calls each source's @c contributePredict and returns the valid ones
      * (an invalid/absent contribution is dropped).  An empty result signals
      * @c KalmanFilter::predictAided to fall back to the time-only predict.
      *
@@ -94,8 +95,9 @@ public:
     /**
      * @brief Collect this epoch's independent measurement rows from row sources.
      *
-     * Gathers @c contributeMeasurement from every NON-re-parameterizing source
-     * (ZUPT/baro/...; the TC-IMU column source is skipped).  The rows are
+     * Gathers @c contributeMeasurement from every source that does not
+     * re-parameterize the GNSS rows (ZUPT and the other row sources; the TC-IMU
+     * column source is skipped).  The rows are
      * appended into the finalized EpochMeasurement by the caller via
      * @c MeasurementModel::appendAidingRow.
      *
@@ -108,8 +110,9 @@ public:
      * @brief Feed tightly-coupled Jacobian inputs to the measurement model.
      *
      * Forwards to the IMU source (the only re-parameterizing source today),
-     * which is a no-op unless tightly coupled with data.  Replaces the two
-     * scattered @c setImuState sites in Application::run.
+     * which is a no-op unless tightly coupled with data.  The post-processing
+     * path calls it from Application::runFilterUpdateLoop and
+     * Application::runGeometryRelinearizationNaive.
      *
      * @param model Measurement model to receive @c setImuState.
      */
@@ -118,9 +121,8 @@ public:
     /**
      * @brief Whether any active source forces the naive IEKF relinearization.
      *
-     * The faithful replacement for the @c tightlyCoupledImu() IEKF-dispatch
-     * hard-coding: true iff some source applies error-state nominal feedback
-     * (the tightly-coupled IMU).
+     * Replaces the @c tightlyCoupledImu() check in the IEKF dispatch: true iff
+     * some source applies error-state nominal feedback (the tightly-coupled IMU).
      */
     bool anySourceRequiresNaiveRelinearization() const;
 

@@ -2,30 +2,33 @@
 
 /**
  * @file AidingSourceRegistry.hpp
- * @brief Static factory that constructs aiding sources by kind / from config.
+ * @brief Static factory that constructs aiding sources by kind or from config.
  *
  * The navigation-aiding analog of @c SlipDetectorRegistry.  The registry is the
- * single place that knows how to build each concrete @c IAidingSource from the
- * uniform @c (const GnssConfig&, LogManager&) constructor every source shares.
+ * one place that knows how to build each concrete @c IAidingSource from the
+ * uniform @c (const GnssConfig&, LogManager&) constructor that every source shares.
  *
  * Two layers:
- *   - @c create(kind, ...) — build one source by kind, or nullptr if that kind
- *     is staged/unavailable in this build (e.g. Vision is not yet compiled).
- *   - @c createEnabled(config, ...) — build the ordered set the configuration
+ *   - @c create(kind, ...): build one source by kind, or nullptr if that kind
+ *     is staged or unavailable in this build (e.g. Vision is not compiled).
+ *   - @c createEnabled(config, ...): build the ordered set the configuration
  *     selects (IMU first as the primary, then auxiliaries), skipping kinds that
- *     are disabled or unavailable and logging each decision.
+ *     are disabled or unavailable; each built source is logged at info level
+ *     and each unavailable one with a warning.
  *
- * Adding a new source means: implement @c IAidingSource, add its
- * @c AidingSourceKind, register it in the creator table
- * (AidingSourceRegistry.cpp), add its toggle to @c GnssConfig::AidingConfig,
- * and list its .cpp in CMakeLists.txt.  No call sites change —
- * @c AidingSourceManager picks it up automatically.
+ * Adding a new source: implement @c IAidingSource, add its
+ * @c AidingSourceKind (with its tokens in @c toString / @c aidingKindFromString),
+ * register it in the creator table and in the selection list of
+ * @c createEnabled (AidingSourceRegistry.cpp), add its toggle to @c AidingConfig
+ * (config/GnssConfigTypes.hpp), and list its .cpp in CMakeLists.txt.
+ * @c AidingSourceManager builds its set through @c createEnabled, so its call
+ * sites do not change.
  *
- * Note: no @c TestAccess friend is declared here.  Following the tree's
- * convention, @c TestAccess shims exist only on numeric kernels (Mlambda,
+ * No @c TestAccess friend is declared here.  Such friends exist on classes whose
+ * private state tests must reach (e.g. ImuAidingSource, KalmanFilter,
  * WlsEstimator, StochasticModel); the registry's selection API
  * (@c createEnabled / @c create / @c isAvailable / @c availableKinds) is
- * already public, so registry selection is fully testable through it.
+ * public, so registry selection is testable through it.
  *
  * @see docs/aiding_source_abstraction_design.md
  */
@@ -76,11 +79,11 @@ public:
     /**
      * @brief Build the config-selected source set.
      *
-     * Order is deterministic: the IMU first (the primary — it owns the INS
-     * error states the TC Jacobian and gap-bridging depend on), then
+     * The order is fixed: the IMU first (the primary, which owns the INS error
+     * states that the TC Jacobian and gap-bridging depend on), then
      * ZUPT / NHC / WheelOdom / Baro / Vision.  A kind enabled in config but
-     * unavailable in this build is skipped with a warning (so a config
-     * referencing a staged source degrades gracefully rather than failing).
+     * unavailable in this build is skipped with a warning, so a config that
+     * selects a staged source still runs instead of failing.
      *
      * @param config      Processing configuration (queried via getAidingConfig()).
      * @param log_manager Logging facility.

@@ -2,15 +2,15 @@
 """Select a globally-distributed subset of IGS stations from a CDDIS day listing.
 
 Input: a CDDIS daily-directory listing (``curl '<dir>*?list'``) for a given day,
-which names every RINEX-3 obs file actually present that day.  We keep the
+which names every RINEX-3 obs file actually present that day.  Keeps the
 stations that are also in the ITRF2020 IGS SSC (so a held-fixed ECEF is
-available, mm-precise) and farthest-point-sample N of them for even global
-coverage — the geometry the network needs to observe satellite clocks/biases
-well.
+available, mm-precise) and farthest-point-samples N of them for even global
+coverage: the geometry the network needs to observe satellite clocks and
+biases well.
 
-Emits ``selected.json``: ``[{long, code, ecef:[x,y,z]}, ...]`` for the fetch +
-config-generation steps.  Reuses the test-suite SinexTruth resolver (loaded
-standalone — the gnssviz package init needs pandas).
+Emits ``selected.json``: ``[{long, code, ecef:[x,y,z]}, ...]`` for the fetch and
+config-generation steps.  Reuses the test-suite SinexTruth resolver, loaded
+standalone because the gnssviz package init needs pandas.
 """
 from __future__ import annotations
 

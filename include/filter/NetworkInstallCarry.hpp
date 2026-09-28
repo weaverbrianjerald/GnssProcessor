@@ -1,20 +1,22 @@
 #pragma once
 /**
  * @file NetworkInstallCarry.hpp
- * @brief Post-solve DD-carry install + WL zone-4 fold/inject for the PPP-RTK network
- *        producer.  Relocated VERBATIM (dedent-8, zero substitution) out of
- *        Application::runNetwork at decomposition INC-9b (2026-07-22).
+ * @brief Post-solve DD-carry install and WL zone-4 fold/inject for the PPP-RTK network
+ *        producer.  The body was moved unchanged out of Application::runNetwork
+ *        (decomposition INC-9b).
  *
- * Runs on the FINAL accepted x_s + datum, POST-ACCEPTANCE and OUTSIDE the within-epoch
- * RAIM block, so a withheld/contaminated epoch never poisons the carry.  Three parts,
- * all no-op / byte-identical when carry_invariant is OFF (the caller keeps the wrapping
- * `if (carry_invariant)` gate + the subBegin/subEnd(SB_INSTALL) brackets):
- *   1. carry_driver.installPosterior (DD posterior mean/cov read-back into the carry);
+ * Runs on the final accepted x_s and datum, after acceptance and outside the
+ * within-epoch RAIM block, so a withheld or contaminated epoch never enters the carry.
+ * Three parts, all no-op and byte-identical when carry_invariant is off (the caller
+ * keeps the enclosing `if (carry_invariant)` gate and the subBegin/subEnd(SB_INSTALL)
+ * brackets):
+ *   1. carry_driver.installPosterior (DD posterior mean/cov read back into the carry);
  *   2. the M5/WL-1 counter folds (mw_wl_epoch -> mw_wl_run, ewl_lanes[].run, wl_run,
- *      wl_cons_run) and the D5 inject application against the fresh posterior;
+ *      wl_cons_run) and the application of the WL inject plan against the fresh
+ *      posterior;
  *   3. the log-only F6 / lane-trace / d5-flags CSV writers (network.mw_wl.*).
  *
- * Owns NO state: every carry object is an explicit reference into the caller's
+ * Owns no state: every carry object is an explicit reference into the caller's
  * NetworkRunContext, and every cross-epoch WL run-state instance (ewl_lanes /
  * wl_inject_epoch / mw_wl_run / mw_wl_f6 / ...) is passed by reference from the run TU.
  */
@@ -45,9 +47,9 @@ struct NetworkRunContext;
 struct NetworkRunTraces;
 
 /**
- * @brief Install the accepted DD posterior + fold the WL zone-4 tallies for this epoch.
+ * @brief Install the accepted DD posterior and fold the WL zone-4 tallies for this epoch.
  * @see NetworkInstallCarry.hpp file banner for the ordering contract.  All WL run-state
- *      params are in/out references into the run-TU-owned instances.
+ *      parameters are in/out references into the instances owned by the run TU.
  */
 void networkInstallCarry(
     NetworkRunContext& ctx,

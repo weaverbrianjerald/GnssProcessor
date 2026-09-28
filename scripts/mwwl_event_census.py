@@ -1,22 +1,22 @@
-"""Estimator-free lane-information census across an EVENT WINDOW (DOY-129 19:26 detonation).
+"""Estimator-free lane-information census across an event window (DOY-129 19:26 detonation).
 
-Settles one question that needs NO estimator run: when the network's SH-VTEC field
-detonates, is the MW/widelane cascade's *information* also disturbed (⇒ the cascade is a
-victim of the same insult) or is it intact (⇒ the cascade holds information the estimator
+Answers one question without running the estimator: when the network's SH-VTEC field
+detonates, is the MW/widelane cascade's information also disturbed (the cascade is a
+victim of the same fault) or is it intact (the cascade holds information the estimator
 loses, and is a candidate conditioner)?
 
-The cascade has two information paths with OPPOSITE exposure to an ionospheric/SH fault:
+The cascade has two information paths with opposite exposure to an ionospheric/SH fault:
 
-  MW(1,2), MW(2,5)   Melbourne-Wubbena — IONO-FREE by construction, code-noise-limited.
+  MW(1,2), MW(2,5)   Melbourne-Wubbena, iono-free by construction, code-noise-limited.
                      MW(2,5) (EWL, lam 5.861 m) is single-epoch fixable (sigma ~0.04 cyc);
                      MW(1,2) (WL, lam 0.862 m) needs n ~ 25-50 ep (sigma ~0.5-0.7/sqrt(n)).
-  GF_b bridge        lam12*(L1-L2) - lam25*(L2-L5), phase-only, PRECISE and FAST but
-                     IONO-CONTAMINATED: z_WL = N12 - 0.5064 * I1_dd[m].  The shipped
-                     cascade de-biases it with the network's OWN slant-iono estimate,
+  GF_b bridge        lam12*(L1-L2) - lam25*(L2-L5), phase-only, precise and fast, but
+                     iono-contaminated: z_WL = N12 - 0.5064 * I1_dd[m]. The shipped
+                     cascade de-biases it with the network's own slant-iono estimate,
                      so it inherits whatever the SH field is doing.
 
 This tool measures both paths straight from raw RINEX, per epoch, over a window, together
-with the DATA-side disturbance metrics (phase TEC rate, code-minus-phase iono residual =
+with the data-side disturbance metrics (phase TEC rate, code-minus-phase iono residual =
 what the code-only SH field actually eats, LLI, MW jumps).
 
 Usage
@@ -54,7 +54,7 @@ CACHE_DIR = os.path.join(
     "claude", "C--GnssProcessor", "13e1dc21-707d-4ecd-bc5e-02b9c8f443ca",
     "scratchpad", "mwwl_census_cache")
 
-# same-channel code/phase preference per band (estimator uses GPS "WCSLXPYMIQ")
+# Same-channel code/phase preference per band (estimator uses GPS "WCSLXPYMIQ").
 CHAN_PREF = {"1": "WCSLX", "2": "WLSXC", "5": "QXI"}
 
 
@@ -87,7 +87,7 @@ def parse_header(fh):
 
 
 def pick_channel(tl, band):
-    """-> (code_idx, phase_idx, chan) for the first channel carrying BOTH C and L."""
+    """-> (code_idx, phase_idx, chan) for the first channel carrying both C and L."""
     for ch in CHAN_PREF[band]:
         c, l = "C" + band + ch, "L" + band + ch
         if c in tl and l in tl:
@@ -164,8 +164,8 @@ def parse_station(args):
                 continue
             r = rec[sat]
             r["mw12"][slot] = (l1 - l2) - (F1 * p1 + F2 * p2) / ((F1 + F2) * LAM12)
-            r["icode"][slot] = (p2 - p1) / GF_SCALE           # slant I1 from CODE  [m]
-            r["iphase"][slot] = -(LAM1 * l1 - LAM2 * l2) / GF_SCALE   # I1 from PHASE + const
+            r["icode"][slot] = (p2 - p1) / GF_SCALE           # slant I1 from code  [m]
+            r["iphase"][slot] = -(LAM1 * l1 - LAM2 * l2) / GF_SCALE   # I1 from phase + const
             r["lli"][slot] = (lli(b1[1]) & 1) | (lli(b2[1]) & 1)
             if b5:
                 p5, l5 = fld(b5[0]), fld(b5[1])
@@ -524,7 +524,7 @@ def cmd_oracle(a):
     print("# MW10 = plain MW(1,2) trailing median. hit = fraction landing on the truth "
           "integer. uniform: med|f|=0.25 R=0.00 hit=0.50/(2*0.5)")
 
-    # ---- the shipped GATE applied: what actually reaches the stiff carry ----
+    # ---- the shipped gate applied: what actually reaches the stiff carry ----
     print(f"\n# --- shipped FFR gate |z-round(z)| < {a.frac_gate} applied "
           f"(network.mw_wl.wl_fix_frac_cyc) ---")
     print(f"{'bucket':<12}{'BRG pass%':>10}{'BRG WRONG%':>12}{'DBG pass%':>10}"

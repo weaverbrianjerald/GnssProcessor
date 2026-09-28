@@ -19,7 +19,8 @@ namespace GnssProcessor {
             out.lon_rad = std::atan2(y, x);
 
             if (p < 1e-12) {
-                // Near the pole: set longitude to 0 and compute latitude/height directly
+                // On the polar axis: latitude is ±π/2 and height follows directly;
+                // longitude keeps the atan2(y, x) value computed above
                 out.lat_rad = (z >= 0.0) ? Constants::PI / 2.0 : -Constants::PI / 2.0;
                 const double sin_lat = std::sin(out.lat_rad);
                 const double N = a / std::sqrt(1.0 - e2 * sin_lat * sin_lat);
@@ -82,7 +83,7 @@ namespace GnssProcessor {
 
         Eigen::Vector3d ecefToEnu(const Eigen::Vector3d& vec_ecef, const Llh& ref_llh) {
             Eigen::Matrix3d R = enuToEcefMatrix(ref_llh.lat_rad, ref_llh.lon_rad);
-            // R maps ENU -> ECEF, so to get ENU from ECEF vector we use R.transpose()
+            // R maps ENU -> ECEF, so R.transpose() maps an ECEF vector to ENU
             return R.transpose() * vec_ecef;
         }
 
@@ -105,11 +106,13 @@ namespace GnssProcessor {
                                     const Eigen::Vector3d& delta_hen) {
             if (!(delta_hen.norm() > 1e-6) || !arp_ecef.allFinite()) return arp_ecef;
             const Eigen::Vector3d enu(delta_hen(1), delta_hen(2), delta_hen(0));
-            // The rotation belongs at the MARKER, which is what we are solving for,
-            // so take one fixed-point step: rotate at the ARP to get a first guess,
-            // then re-rotate at that guess.  The first guess is off by O(|ecc|²/R)
-            // (4 um on a 6.2 m tower — not negligible at the mm level this project
-            // grades at); one iteration drives closure below a picometre.
+            // The rotation is defined at the marker, which is the unknown, so one
+            // fixed-point step is taken: rotate at the ARP for a first guess, then
+            // rotate again at that guess.  The first guess is off by O(|ecc|²/R),
+            // driven by the horizontal components: zero for a height-only
+            // eccentricity (geodetic latitude and longitude do not change along
+            // the ellipsoid normal), about 8 µm for a 6.2 m horizontal offset.
+            // One iteration brings the closure below a picometre.
             const Eigen::Vector3d guess = arp_ecef - enuToEcef(enu, ecefToLlh(arp_ecef));
             return arp_ecef - enuToEcef(enu, ecefToLlh(guess));
         }

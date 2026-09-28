@@ -37,7 +37,7 @@ std::optional<std::vector<uint8_t>> SbfStreamReader::nextFrame() {
 
         // A valid SBF block length is a multiple of 4 and at least the header.
         if (length < 8 || (length % 4) != 0 || length > kMaxBlock) {
-            buf_.pop_front();                       // false sync — drop '$' and rescan
+            buf_.pop_front();                       // false sync: drop '$' and rescan
             ++bytes_discarded_;
             continue;
         }
@@ -49,7 +49,7 @@ std::optional<std::vector<uint8_t>> SbfStreamReader::nextFrame() {
             static_cast<uint16_t>(block[2]) | (static_cast<uint16_t>(block[3]) << 8);
         const uint16_t crc_calc = crc16Xmodem(block.data() + 4, length - 4);
         if (crc_calc != crc_field) {
-            buf_.pop_front();                       // bad CRC — treat as false sync
+            buf_.pop_front();                       // bad CRC: treat as false sync
             ++bytes_discarded_;
             continue;
         }

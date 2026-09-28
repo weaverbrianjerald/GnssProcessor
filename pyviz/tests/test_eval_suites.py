@@ -1,4 +1,4 @@
-"""Unit tests for gnssviz.eval.suites -- declarative suite expansion."""
+"""Unit tests for gnssviz.eval.suites: declarative suite expansion."""
 from __future__ import annotations
 
 import itertools

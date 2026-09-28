@@ -1,29 +1,29 @@
 /**
  * @file test_sd_ewl_prereduce.cpp
- * @brief SD pre-reduce EWL constraint — coefficient algebra, correlated-R whitening,
- *        pivot-election determinism, and the config contract.
+ * @brief Tests for the SD pre-reduce EWL constraint: coefficient algebra, correlated-R
+ *        whitening, pivot-election determinism, and the config contract.
  *        See docs/SPEC_sd_ewl_prereduce.md.
  *
- * Suite names owned by this file ONLY (the suite-per-file rule):
+ * Suite names owned by this file only (the suite-per-file rule):
  *   SdEwlAlgebraTest, SdEwlWhiteningTest, SdEwlPivotElectionTest, SdEwlConfigTest,
  *   SdEwlArcSourceTest, SdEwlChannelSearchTest.
  *
  * `Application::networkAppendSdEwlRows_` is a private member that needs a whole
  * NetworkEstimator + NetStation + StateManager to call, so these tests verify the
- * MATHEMATICAL CONTRACT the implementation must satisfy — the same algebra, written
- * independently from the spec rather than copied from the source — plus the config
+ * mathematical contract the implementation must satisfy (the same algebra, written
+ * independently from the spec rather than copied from the source), plus the config
  * loader behaviour, which is directly reachable.  A defect in the row coefficients or the
- * whitening would break these; a defect in the wiring is caught by the run-end counters
+ * whitening breaks these tests; a defect in the wiring is caught by the run-end counters
  * (standing invariant #4), not here.
  *
- * `SdEwlArcSourceTest` is the exception and is NOT a contract restatement: it drives a
- * real `MwSlipDetector` with hand-built tri-frequency observations to pin the row's
- * STATISTIC SOURCE — that an EWL (band2, band5) MW arc is formed at all (it is; the
+ * `SdEwlArcSourceTest` is the exception and is not a restatement of the contract: it
+ * drives a real `MwSlipDetector` with hand-built tri-frequency observations to check the
+ * row's statistic source.  It checks that an EWL (band2, band5) MW arc is formed (the
  * detector's pair builder is generic over band pairs, not L1-referenced), that
  * `MwArcZdMean::exists` separates "never formed" from "not yet usable", and that the arc
- * reports the CODE channels its MW actually consumed rather than leaving the consumer to
- * derive them from the phase attribute.  Those three facts are what the first ON run got
- * wrong, so they are guarded here rather than left to a field run.
+ * reports the code channels its MW consumed, so the consumer does not derive them from
+ * the phase attribute.  An error in any of the three leaves the row without a correct
+ * statistic, so they are checked here rather than in a field run.
  */
 
 #include <gtest/gtest.h>
@@ -92,7 +92,7 @@ constexpr const char* kMinimalStations = R"(
         ])";
 
 // ---------------------------------------------------------------------------------
-// A tri-frequency GPS observation with BOTH phase and code per band — the MW
+// A tri-frequency GPS observation with both phase and code per band.  The MW
 // combination needs the code, so a phase-only observation forms no arc at all.
 // `observed` drives the detector's band scope under the default (Mirror) MW frequency
 // mode; `raw_observed` supplies the values the MW is formed from.
@@ -112,7 +112,7 @@ PppObservation mwObs(const std::string& sat, double tow,
 }
 
 // A quiet tri-frequency GPS satellite: L1/L2/L5 phase (cycles) + matching codes (m).
-// Values are arbitrary but self-consistent; the arcs only need to EXIST and be finite.
+// Values are arbitrary but self-consistent; the arcs only need to exist and be finite.
 std::map<std::string, double> triFreqGps(double l1c, double l2c, double l5c,
                                          double rho_m) {
     return { { "L1C", l1c }, { "L2W", l2c }, { "L5Q", l5c },
@@ -137,7 +137,7 @@ std::string writeTempConfig(const std::string& body, const char* tag) {
 }  // namespace
 
 // =================================================================================
-// SdEwlAlgebraTest — the coefficients must reproduce the EWL combination exactly.
+// SdEwlAlgebraTest: the coefficients reproduce the EWL combination exactly.
 // =================================================================================
 
 TEST(SdEwlAlgebraTest, GpsL2L5EwlWavelengthIsTheKnownTierValue) {
@@ -172,8 +172,8 @@ TEST(SdEwlAlgebraTest, LocalCoefficientsReproduceLambdaEwlTimesIntegerDifference
     EXPECT_NEAR(got, want, 1e-9);
 }
 
-// MW = phi_WL - P_NL.  A bias COMMON to both bands and both satellites must cancel;
-// this pins the relative signs of the four shared coefficients.
+// MW = phi_WL - P_NL.  A bias common to both bands and both satellites cancels; this
+// fixes the relative signs of the four shared coefficients.
 TEST(SdEwlAlgebraTest, SharedCoefficientsCancelACommonSatelliteBias) {
     const SdEwlRow r = buildRow(Constants::GPS_L2_FREQ, Constants::GPS_L5_FREQ);
     const double b = 0.37;   // same bias value on every PB/CB of both satellites
@@ -190,14 +190,14 @@ TEST(SdEwlAlgebraTest, PhaseAndCodeCombinationGainsAreUnitAndOpposite) {
     EXPECT_NEAR(r.a_cb_b1_s + r.a_cb_b2_s, -1.0, 1e-12) << "-P_NL gain must be -1";
 }
 
-// A receiver-side bias is common to both arcs at the SAME station and must vanish from
-// the between-satellite difference — the reason the constraint is SD and not undifferenced
+// A receiver-side bias is common to both arcs at the same station and vanishes from the
+// between-satellite difference.  That is why the constraint is SD and not undifferenced
 // (SPEC section 2: undifferenced is not estimable under the per-signal eq34 gauge).
 TEST(SdEwlAlgebraTest, ReceiverBiasCancelsInTheBetweenSatelliteDifference) {
     const SdEwlRow r = buildRow(Constants::GPS_L2_FREQ, Constants::GPS_L5_FREQ);
-    // A receiver EWL bias enters BOTH arcs identically, so in z = mean(s) - mean(p) it is
-    // differenced away before the row is ever formed.  Assert the modelled satellite side
-    // is antisymmetric in (s,p), which is the algebraic expression of that.
+    // A receiver EWL bias enters both arcs identically, so in z = mean(s) - mean(p) it is
+    // differenced away before the row is formed.  The algebraic expression of that is a
+    // modelled satellite side antisymmetric in (s,p), which is what is asserted.
     EXPECT_NEAR(r.a_pb_b1_s, -r.a_pb_b1_p, 1e-12);
     EXPECT_NEAR(r.a_pb_b2_s, -r.a_pb_b2_p, 1e-12);
     EXPECT_NEAR(r.a_cb_b1_s, -r.a_cb_b1_p, 1e-12);
@@ -206,17 +206,17 @@ TEST(SdEwlAlgebraTest, ReceiverBiasCancelsInTheBetweenSatelliteDifference) {
     EXPECT_NEAR(r.a_amb_b2_s, -r.a_amb_b2_p, 1e-12);
 }
 
-// The station's block is in the CORRECTION frame (y = z − H·x_lin), so the row must
-// subtract its own linearized prediction.  Pinned as an identity: with the states AT
-// their linearization point the residual is exactly zero no matter how large x_lin is —
-// which is the whole point, since the raw SD MW difference runs to hundreds of metres
-// (λ_EWL·N_EWL with N_EWL in the thousands) against a ~0.13 m row sigma.
+// The station's block is in the correction frame (y = z − H·x_lin), so the row subtracts
+// its own linearized prediction.  Checked as an identity: with the states at their
+// linearization point the residual is zero however large x_lin is.  This matters because
+// the raw SD MW difference (λ_EWL times an integer count in the thousands of cycles) runs
+// to hundreds of metres or more, against a row sigma of about 0.13 m.
 TEST(SdEwlAlgebraTest, CorrectionFrameResidualVanishesAtTheLinearizationPoint) {
     const double f1 = Constants::GPS_L2_FREQ, f2 = Constants::GPS_L5_FREQ;
     const double c = Constants::SPEED_OF_LIGHT;
     const double lam_b1 = c / f1, lam_b2 = c / f2, lam_ewl = c / (f1 - f2);
 
-    // One arc's linearized prediction of the MW observable — the implementation's
+    // One arc's linearized prediction of the MW observable: the implementation's
     // pred_m, written from the spec coefficients.
     const auto pred = [&](double amb_b1, double amb_b2, double pb_b1, double pb_b2,
                           double cb_b1, double cb_b2) {
@@ -224,10 +224,10 @@ TEST(SdEwlAlgebraTest, CorrectionFrameResidualVanishesAtTheLinearizationPoint) {
              + (f1 / (f1 - f2)) * pb_b1 - (f2 / (f1 - f2)) * pb_b2
              - (f1 / (f1 + f2)) * cb_b1 - (f2 / (f1 + f2)) * cb_b2;
     };
-    // The PHYSICAL observable, written independently of `pred`: MW = φ_WL − P_NL, whose
-    // ambiguity part is λ_EWL·(N_b1 − N_b2) in CYCLES and whose bias part is the lump of
-    // SPEC §3.  `pred` reaches the same value through the METRE-valued states, so their
-    // agreement is a real check on the λ_EWL/λ_b conversion, not a tautology.
+    // The physical observable, written independently of `pred`: MW = φ_WL − P_NL, whose
+    // ambiguity part is λ_EWL·(N_b1 − N_b2) with N in cycles and whose bias part is the
+    // lump of SPEC §3.  `pred` reaches the same value through the metre-valued states, so
+    // their agreement checks the λ_EWL/λ_b conversion and is not a tautology.
     const auto observable = [&](double N1, double N2, double pb_b1, double pb_b2,
                                double cb_b1, double cb_b2) {
         return lam_ewl * (N1 - N2)
@@ -245,15 +245,15 @@ TEST(SdEwlAlgebraTest, CorrectionFrameResidualVanishesAtTheLinearizationPoint) {
     const auto predOf = [&](const S& a) {
         return pred(lam_b1 * a.N1, lam_b2 * a.N2, a.pb1, a.pb2, a.cb1, a.cb2);
     };
-    // States AT their linearization point ⇒ the folded residual is exactly zero...
+    // States at their linearization point ⇒ the folded residual is zero...
     EXPECT_NEAR((obsOf(sat) - obsOf(piv)) - (predOf(sat) - predOf(piv)), 0.0, 1e-8);
-    // ...while the RAW SD difference it replaces is enormous, so folding it unreduced
-    // would be a hundreds-of-metres constraint at a decimetre sigma.
+    // ...while the raw SD difference it replaces is large, so folding it unreduced
+    // would be a constraint of hundreds of metres at a decimetre sigma.
     EXPECT_GT(std::abs(obsOf(sat) - obsOf(piv)), 100.0);
 }
 
-// Linearity: the residual equals H applied to the state ERROR, so a known perturbation
-// of one state must show up in the row with exactly that state's coefficient.
+// Linearity: the residual equals H applied to the state error, so a known perturbation
+// of one state shows up in the row with that state's coefficient.
 TEST(SdEwlAlgebraTest, CorrectionFrameResidualEqualsHTimesTheStateError) {
     const double f1 = Constants::GAL_E5B_FREQ, f2 = Constants::GAL_E5A_FREQ;
     const double c = Constants::SPEED_OF_LIGHT;
@@ -274,14 +274,14 @@ TEST(SdEwlAlgebraTest, CorrectionFrameResidualEqualsHTimesTheStateError) {
 }
 
 // =================================================================================
-// SdEwlArcSourceTest — the row's STATISTIC SOURCE, against a real MwSlipDetector.
+// SdEwlArcSourceTest: the row's statistic source, against a real MwSlipDetector.
 // =================================================================================
 
-// The claim this card rests on, and the one the first ON run appeared to refute: the
-// detector DOES form the EWL (band2, band5) MW pair.  collectUncombinedPairs enumerates
-// every band pair present (i<j over bands sorted by descending frequency), so with L1/L2/L5
-// tracked the arcs are (L1,L2), (L1,L5) AND (L2,L5) — nothing about it is L1-referenced.
-// A failure here means the row has no statistic and the whole card is inert.
+// The card rests on this: the detector forms the EWL (band2, band5) MW pair.
+// collectUncombinedPairs enumerates every band pair present (i<j over bands sorted by
+// descending frequency), so with L1/L2/L5 tracked the arcs are (L1,L2), (L1,L5) and
+// (L2,L5); the enumeration is not L1-referenced.  A failure here means the row has no
+// statistic and the card is inert.
 TEST(SdEwlArcSourceTest, EwlBandPairArcIsFormedAndServedInZdFrame) {
     LogManager log; GnssConfig cfg;
     MwSlipDetector det(cfg, log);
@@ -291,21 +291,20 @@ TEST(SdEwlArcSourceTest, EwlBandPairArcIsFormedAndServedInZdFrame) {
     EXPECT_TRUE(ewl.exists) << "the (band2, band5) MW pair must be formed";
     ASSERT_TRUE(ewl.valid);
     EXPECT_GE(ewl.count, 2u);
-    // λ_WL of the pair IS the GPS EWL rung — proof the arc is the EWL pair and not a
+    // λ_WL of the pair is the GPS EWL rung, so the arc is the EWL pair and not a
     // mislabelled L1-referenced one (λ(L1,L2) ≈ 0.862 m, λ(L1,L5) ≈ 0.751 m).
     EXPECT_NEAR(ewl.lambda_wl,
                 Constants::SPEED_OF_LIGHT
                     / (Constants::GPS_L2_FREQ - Constants::GPS_L5_FREQ), 5e-3);
     EXPECT_TRUE(std::isfinite(ewl.mean_m));
-    // The L1-referenced pairs exist too — the EWL arc is additional, not a replacement.
+    // The L1-referenced pairs exist too: the EWL arc is additional, not a replacement.
     EXPECT_TRUE(det.arcZdMean("G01", "L1C", "L2W").exists);
     EXPECT_TRUE(det.arcZdMean("G01", "L1C", "L5Q").exists);
 }
 
-// `exists` vs `valid`: without the former, "the detector never built this pair" and
-// "built but under two lagged samples" are the same flag — and a consumer reports a
-// missing pair as an immature arc, which is what sent the first ON run's 5041 skips into
-// the wrong bucket.  The two causes have different fixes, so they must be separable.
+// `exists` vs `valid`: without `exists`, "the detector never built this pair" and "built
+// but under two lagged samples" share one flag, and a consumer reports a missing pair as
+// an immature arc.  The two causes have different fixes, so they are kept separable.
 TEST(SdEwlArcSourceTest, ExistsSeparatesNeverFormedFromNotYetUsable) {
     LogManager log; GnssConfig cfg;
     MwSlipDetector det(cfg, log);
@@ -316,24 +315,24 @@ TEST(SdEwlArcSourceTest, ExistsSeparatesNeverFormedFromNotYetUsable) {
     EXPECT_FALSE(young.valid) << "...but count_lag < 2, so it is not yet usable";
 
     // Pairs the detector never builds: a band it does not track, and the reversed
-    // (ascending-frequency) order — every MW key is ordered (higher f, lower f).
+    // (ascending-frequency) order; every MW key is ordered (higher f, lower f).
     const auto untracked = det.arcZdMean("G05", "L2W", "L6X");
     EXPECT_FALSE(untracked.exists);
     EXPECT_FALSE(untracked.valid);
     EXPECT_FALSE(det.arcZdMean("G05", "L5Q", "L2W").exists) << "keys are (hi,lo) ordered";
 }
 
-// The arc must report the CODE channels its own MW consumed.  matchChannel prefers the
-// same tracking attribute but FALLS BACK to the first code in the band, so deriving
-// "C" + band + phase-attribute is not always right — and a wrong per-signal OSB column
-// is a silent modelling error, invisible downstream.  Here band 2 publishes phase L2L
-// with only a C2W code, so the honest answer is C2W and the derived guess would be C2L.
+// The arc reports the code channels its own MW consumed.  matchChannel prefers the same
+// tracking attribute but falls back to the first code in the band, so deriving
+// "C" + band + phase-attribute is not always right, and a wrong per-signal OSB column is
+// a modelling error that nothing downstream reports.  Here band 2 publishes phase L2L
+// with only a C2W code, so the correct answer is C2W and the derived guess would be C2L.
 TEST(SdEwlArcSourceTest, ArcReportsTheCodeChannelItsMwConsumedNotThePhaseAttribute) {
     LogManager log; GnssConfig cfg;
     MwSlipDetector det(cfg, log);
     const std::map<std::string, double> obs = {
         { "L1C", 1.0e8 }, { "L2L", 0.8e8 }, { "L5Q", 0.7e8 },
-        { "C1W", 2.2e7 }, { "C2W", 2.2e7 }, { "C5Q", 2.2e7 }   // NO C2L
+        { "C1W", 2.2e7 }, { "C2W", 2.2e7 }, { "C5Q", 2.2e7 }   // no C2L
     };
     drive(det, "G09", 4, obs);
 
@@ -346,9 +345,9 @@ TEST(SdEwlArcSourceTest, ArcReportsTheCodeChannelItsMwConsumedNotThePhaseAttribu
     EXPECT_NE(ewl.code1, "C2L") << "deriving the code from the phase attribute is unsafe";
 }
 
-// Same-attribute case: when the band DOES publish the matching code, that is what the
-// MW uses.  Together with the fallback test above, this pins both branches, so a
-// consumer can rely on code1/code2 unconditionally instead of guessing.
+// Same-attribute case: when the band publishes the matching code, the MW uses it.
+// Together with the fallback test above this covers both branches, so a consumer can
+// rely on code1/code2 unconditionally instead of guessing.
 TEST(SdEwlArcSourceTest, SameAttributeCodeIsUsedWhenPresent) {
     LogManager log; GnssConfig cfg;
     MwSlipDetector det(cfg, log);
@@ -360,15 +359,15 @@ TEST(SdEwlArcSourceTest, SameAttributeCodeIsUsedWhenPresent) {
 }
 
 // =================================================================================
-// SdEwlChannelSearchTest — the candidate-pair search order.
+// SdEwlChannelSearchTest: the candidate-pair search order.
 // =================================================================================
 
 // The appender cannot know which tracking channel the detector holds an arc on, so it
-// searches the candidate (band1, band2) phase pairs in ASCENDING (sig1, sig2) order and
-// takes the first with a usable arc.  The order must be a strict total order (byte
-// identity), and — the point of searching at all — the winner is frequently NOT the
-// lexicographically first candidate: measured on the 50-station fixture, 41 % of resolved
-// arcs had two candidate pairs, and both L7X/L5X and L7Q/L5Q won at different satellites.
+// searches the candidate (band1, band2) phase pairs in ascending (sig1, sig2) order and
+// takes the first with a usable arc.  The order is a strict total order (required for
+// byte identity).  The search is needed because the winner is often not the
+// lexicographically first candidate: on the 50-station fixture, 41 % of resolved arcs had
+// two candidate pairs, and both L7X/L5X and L7Q/L5Q won at different satellites.
 TEST(SdEwlChannelSearchTest, SearchIsAscendingAndTakesTheFirstPairWithAnArc) {
     const std::vector<std::string> b1 = { "L2W", "L2L" };   // deliberately unsorted
     const std::vector<std::string> b2 = { "L5X", "L5Q" };
@@ -384,8 +383,8 @@ TEST(SdEwlChannelSearchTest, SearchIsAscendingAndTakesTheFirstPairWithAnArc) {
     };
     EXPECT_EQ(order, want) << "input order must not leak into the candidate order";
 
-    // Only the LAST candidate has an arc: the search must still find it, which a
-    // fixed lexicographically-smallest election never would.
+    // Only the last candidate has an arc.  The search still finds it; a fixed
+    // lexicographically-smallest election would not.
     const auto has_arc = [](const std::pair<std::string, std::string>& p) {
         return p.first == "L2W" && p.second == "L5X";
     };
@@ -398,7 +397,7 @@ TEST(SdEwlChannelSearchTest, SearchIsAscendingAndTakesTheFirstPairWithAnArc) {
 }
 
 // =================================================================================
-// SdEwlWhiteningTest — R = diag(var_s) + var_p * 11^T whitened by L^-1 must reproduce
+// SdEwlWhiteningTest: R = diag(var_s) + var_p * 11^T whitened by L^-1 reproduces
 // H^T R^-1 H and H^T R^-1 z exactly (the GIM common-mode pattern).
 // =================================================================================
 
@@ -440,7 +439,7 @@ TEST(SdEwlWhiteningTest, CommonModeRIsPositiveDefiniteForAnyPositivePivotVarianc
     }
 }
 
-// The sigma floor exists because arcZdMean serves a VARIANCE OF THE MEAN (~1/n): without
+// The sigma floor exists because arcZdMean serves a variance of the mean (~1/n): without
 // it a long quiet arc produces an unphysically tight row that dominates the shared border.
 TEST(SdEwlWhiteningTest, SigmaFloorBoundsTheRowInformationFromAbove) {
     const double floor_m = 0.05;
@@ -452,7 +451,7 @@ TEST(SdEwlWhiteningTest, SigmaFloorBoundsTheRowInformationFromAbove) {
 }
 
 // =================================================================================
-// SdEwlPivotElectionTest — most mature arc, tie-break ascending satellite name.
+// SdEwlPivotElectionTest: most mature arc, ties broken by ascending satellite name.
 // Determinism is a byte-identity requirement, not a preference.
 // =================================================================================
 
@@ -483,7 +482,7 @@ TEST(SdEwlPivotElectionTest, ElectionIsInvariantToInputOrder) {
 }
 
 // =================================================================================
-// SdEwlConfigTest — defaults, clamps, and the inert-dependency warning path.
+// SdEwlConfigTest: defaults, clamps, and the inert-dependency warning path.
 // =================================================================================
 
 TEST(SdEwlConfigTest, DefaultsAreOffAndByteIdentitySafe) {
@@ -550,8 +549,9 @@ TEST(SdEwlConfigTest, NonPositiveSigmaFloorIsClamped) {
 }
 
 // Arming sd_ewl without the MW detector leaves arcZdMean unreachable at every station.
-// The loader must still LOAD (the run is legal, just inert) — the contract is that it
-// warns rather than silently producing zero rows.
+// The config still loads (the run is legal, only inert); the loader logs a warning
+// instead of letting the run produce zero rows unannounced.  The warning itself is not
+// asserted here.
 TEST(SdEwlConfigTest, ArmingWithoutTheDetectorStillLoadsAndStaysInert) {
     const std::string body = std::string() + R"({
       "processing": { "mode": "ppp-rtk-network" },

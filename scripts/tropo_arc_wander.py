@@ -1,11 +1,11 @@
 #!/usr/bin/env python
-"""The FOURTH member: does the per-epoch ZWD state close the two-band budget of the DD-ambiguity/iono co-motion?
+"""The fourth member: whether the per-epoch ZWD state closes the two-band budget of the DD-ambiguity/iono co-motion.
 (SPEC_amb_iono §6.15.3a item 5, peer derivation 18:25.)
 
 With a band-common metre term T (DD troposphere) beside the iono deviation ΔI and a cycle-common ambiguity A:
     band 1:  λ1·A − ΔI       + T = 0
     band 2:  λ2·A − 1.6469·ΔI + T = 0     ⇒  A = 2.283·ΔI_cyc  and  T = −1.283·ΔI   (exactly)
-PREDICTIONS (pre-registered before running): per chord-arc on the field control,
+Predictions (pre-registered before running): per chord-arc on the field control,
     (i)  the DD-ZWD deviation regressed on the DD-iono deviation (both metres) has slope ≈ −1.28, high |corr|;
     (ii) the two-regressor fit  e1_dev = a·ΔI_cyc + t·ΔT_cyc  gives a → ~2.28 (up from the attenuated 1.7) and
          t → ~−1  (band-1 phase: λ1·ΔN1 = ΔI − ΔT ⇒ e1 = ΔI_cyc − ΔT_cyc, i.e. (+1, −1) if the tropo term is the closer).

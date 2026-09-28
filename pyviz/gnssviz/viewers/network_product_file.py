@@ -1,9 +1,9 @@
-"""Network product-file viewer -- decodes the emitted ``network_products*.txt``.
+"""Network product-file viewer: decodes the emitted ``network_products*.txt``.
 
 Unlike :mod:`gnssviz.viewers.network_products` (which reads the producer-side
 ``network_solution.csv`` trace), this viewer parses the *serialized product file*
-the network writes for consumers -- the exact bytes a downstream user ingests.
-It is the "what did we actually ship?" view, decoded through
+the network writes for consumers: the exact bytes a downstream user ingests.
+It shows what was actually shipped, decoded through
 :func:`gnssviz.product_file.parse_product_file` (a re-derivation of the C++
 ``NetworkProductReader`` grammar).
 
@@ -11,21 +11,21 @@ Discovery
 ---------
 There is no fixed CSV name: the file lives at ``network.product_output_path``
 (relative paths land under the run's log dir).  The viewer globs the log dir for
-``network_products*.txt`` and picks the newest by mtime -- so the chosen file and
-its mtime are surfaced in the summary (a **stale-file hazard**: an older run's
-product left in the same folder can win the glob).  Ad-hoc configs that point
-``product_output_path`` at an absolute scratch path outside the log dir are
-**not** found by this glob; those runs skip.
+``network_products*.txt`` and picks the newest by mtime, so the chosen file and
+its mtime are surfaced in the summary. This is a stale-file hazard: an older
+run's product left in the same folder can win the glob.  Ad-hoc configs that
+point ``product_output_path`` at an absolute scratch path outside the log dir
+are not found by this glob; those runs skip.
 
 Figures
 -------
 1. **Per-sat URA timeline** (from ``U`` records), log-y, one line per satellite
    coloured by PRN, one tile per constellation.  ``R`` retro-bump epochs are
    ringed on the affected satellite; ``datum_changed`` epochs draw a faint
-   vertical line labelled with the affected-constellation set.  Note that
-   **datum-pivot satellites carry no U line by design** (their pin variance is
-   bogus), so a gap is expected, not missing data.
-2. **Per-epoch record counts** -- U lines, C lines, C-with-nonzero-drift (C1),
+   vertical line labelled with the affected-constellation set.  Datum-pivot
+   satellites carry no U line by design (their pin variance is bogus), so a
+   gap on those satellites is expected, not missing data.
+2. **Per-epoch record counts**: U lines, C lines, C-with-nonzero-drift (C1),
    and R-flagged satellites over the run.
 """
 
@@ -229,7 +229,7 @@ def _summary(pf, df, path, ctx) -> str:
     else:
         out.append("--- S-basis contract: NONE (v1 / pre-B6 file) ---")
 
-    # URA stats per constellation: median + std + worst-sat NAME.
+    # URA stats per constellation: median, std and the worst satellite's name.
     ura = df[df["record"] == "U"]
     out.append("")
     if not ura.empty:

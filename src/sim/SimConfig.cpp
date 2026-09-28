@@ -55,14 +55,13 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
     using detail::jval;
     using detail::resolvePath;
 
-    // Read an int knob tolerantly: accept 120 OR 120.0 (nlohmann's get<int> throws
-    // on a float literal), rounding to nearest — matching the loose double semantics
-    // of every other knob.
+    // Reads an int knob as either 120 or 120.0 (nlohmann's get<int> throws on a float
+    // literal) and rounds to nearest, matching the double semantics of the other knobs.
     auto jint = [&](const char* path, int dflt) -> int {
         return static_cast<int>(std::llround(jval<double>(s, path, "", static_cast<double>(dflt))));
     };
-    // Read a non-negative uint64 seed; reject a negative JSON literal loudly rather
-    // than letting it wrap to ~1.8e19.
+    // Reads a non-negative uint64 seed.  A negative JSON literal is an error rather
+    // than a value wrapped to about 1.8e19.
     bool seed_ok = true;
     std::string seed_err;
     auto jseed = [&](const char* path, std::uint64_t dflt) -> std::uint64_t {
@@ -127,11 +126,11 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
     cfg.biases.isb_gps_gal_m   = jval(s, "biases.isb_gps_gal_m",   "", cfg.biases.isb_gps_gal_m);
     cfg.geometry.elevation_mask_deg = jval(s, "geometry.elevation_mask_deg", "", cfg.geometry.elevation_mask_deg);
 
-    // --- Per-observable RECEIVER biases (SPEC_synthetic_minimum_network.md §3). ---
+    // --- Per-observable receiver biases (SPEC_synthetic_minimum_network.md §3). ---
     // Shape: "biases.rx_code_bias": [ {"code":"C1C","value_m":0.42}, ... ].  Absent or
-    // empty leaves the lists empty, so the synthesis is byte-identical.  Validated here
-    // (the header stays a plain resolved record): an unparseable entry is a loud error,
-    // never a silently-dropped bias that would make the Table-8 identity read 0 == 0.
+    // empty leaves the lists empty, so the synthesis is byte-identical.  Validation is
+    // done here (the header stays a plain resolved record): an unparseable entry is an
+    // error, because a dropped bias would make the Table-8 identity read 0 == 0.
     {
         auto loadRxBias = [&](const char* key, std::vector<RxBias>& out) -> const char* {
             const nlohmann::json* arr = resolvePath(s, key);
@@ -162,7 +161,7 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
             return fail(std::string("sim config 'biases.rx_phase_bias' ") + why);
     }
 
-    // M7 full-correction stack (all default false -> byte-identical bare dataset).
+    // Full-correction stack (M7).  All default false, giving a byte-identical bare dataset.
     cfg.corrections.relativity       = jval(s, "corrections.relativity",       "", cfg.corrections.relativity);
     cfg.corrections.shapiro          = jval(s, "corrections.shapiro",          "", cfg.corrections.shapiro);
     cfg.corrections.solid_earth_tide = jval(s, "corrections.solid_earth_tide", "", cfg.corrections.solid_earth_tide);
@@ -205,9 +204,9 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
         }
     }
     if (!cfg.signals.synth_osb_amp_m.empty() && !cfg.corrections.signal_bias) {
-        // The synthetic OSB rides the same injection site as the product OSB, which is
-        // gated on corrections.signal_bias.  Armed-but-inert would look exactly like a
-        // fixture whose third band genuinely has no bias.
+        // The synthetic OSB uses the injection site of the product OSB, which is gated
+        // on corrections.signal_bias.  Accepting it here would produce a fixture that
+        // cannot be told apart from one whose third band has no bias.
         return fail("sim config 'signals.synth_osb_amp_m' is set but "
                     "'corrections.signal_bias' is false — the synthetic OSB is injected "
                     "at the same site as the product OSB and would be silently inert. "
@@ -215,11 +214,11 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
                     "the synthetic amplitudes.");
     }
 
-    // ---- Integer-ambiguity REGIME -------------------------------------------------
+    // ---- Integer-ambiguity regime -------------------------------------------------
     // Default "legacy" (N in [1e5,1e6)) so every existing fixture regenerates
-    // byte-identically.  "field" (N in [-W,+W]) is the regime any experiment against a
-    // ZERO-TARGET datum must use — see include/sim/AmbiguityDraw.hpp for the measured
-    // IGS spread this is calibrated against and why the four-decade gap is not cosmetic.
+    // byte-identically.  "field" (N in [-W,+W]) is required for any experiment against a
+    // zero-target datum.  include/sim/AmbiguityDraw.hpp gives the measured IGS spread
+    // this is calibrated against and why the four-decade gap matters.
     if (const nlohmann::json* ar = resolvePath(s, "ambiguity.regime")) {
         if (!ar->is_string())
             return fail("sim config 'ambiguity.regime' must be a string: "
@@ -235,18 +234,18 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
     if (const nlohmann::json* aw = resolvePath(s, "ambiguity.half_width_cycles")) {
         if (!aw->is_number())
             return fail("sim config 'ambiguity.half_width_cycles' must be a number (cycles)");
-        // Armed-but-inert is the failure mode this codebase pays for repeatedly: under
-        // the legacy regime this knob does nothing, and a fixture regenerated with it
-        // set would look field-realistic in its config and be 1e5 cycles wide on disk.
+        // Under the legacy regime this knob has no effect, so a fixture generated with
+        // it set would look field-realistic in its config and be 1e5 cycles wide on
+        // disk.  Setting it outside the field regime is therefore an error.
         if (cfg.ambiguity.regime != AmbiguityRegime::Field)
             return fail("sim config 'ambiguity.half_width_cycles' is set but "
                         "'ambiguity.regime' is not \"field\" — under the legacy regime the "
                         "half-width is inert and the fixture would still draw N in "
                         "[1e5,1e6).  Set ambiguity.regime = \"field\" or drop the half-width.");
         const long long w = std::llround(aw->get<double>());
-        // Upper bound matches the ScriptedSlip |delta_cycles| guard: a half-width above
-        // it would make an injected slip smaller than the draw's own quantization noise
-        // in the reader's head, and both are "cycles" in the same truth files.
+        // The upper bound matches the ScriptedSlip |delta_cycles| guard (100000).  Both
+        // quantities are in cycles in the same truth files, and a larger half-width
+        // would make an injected slip look small next to the ambiguity draw itself.
         if (w < 1 || w > 100000)
             return fail("sim config 'ambiguity.half_width_cycles' " + std::to_string(w) +
                         " out of range [1, 100000]");
@@ -257,9 +256,9 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
         jval(s, "corrections.ocean_tide_along_track", "", cfg.corrections.ocean_tide_along_track);
     cfg.corrections.otl_anchor_spacing_km =
         jval(s, "corrections.otl_anchor_spacing_km", "", cfg.corrections.otl_anchor_spacing_km);
-    // Fail loudly rather than silently freezing the field: the whole point of the
-    // along-track mode is that the term does NOT cancel, so a typo that quietly
-    // reverts to the cancelling path would be invisible in the output.
+    // An error rather than a silent fallback: in the along-track mode the term does
+    // not cancel, and a config that fell back to the cancelling path would give no
+    // sign of it in the output.
     if (cfg.corrections.ocean_tide_along_track && !cfg.corrections.ocean_tide)
         return fail("sim config 'corrections.ocean_tide_along_track' is set but "
                     "'corrections.ocean_tide' is false (the along-track field extends the "
@@ -267,8 +266,8 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
     if (!(cfg.corrections.otl_anchor_spacing_km > 0.0))
         return fail("sim config 'corrections.otl_anchor_spacing_km' must be > 0 km");
     // Receiver antenna type: the RINEX "ANT # / TYPE" field (16-char model + 4-char
-    // radome).  Empty = OFF.  Doubles as the RINEX header string, so a single source
-    // of truth guarantees the declared antenna IS the injected one.
+    // radome).  Empty means off.  The same string is written to the RINEX header, so
+    // the declared antenna and the injected one always agree.
     if (const nlohmann::json* rx = resolvePath(s, "corrections.rx_antenna_type")) {
         if (!rx->is_string())
             return fail("sim config 'corrections.rx_antenna_type' must be a string "
@@ -293,9 +292,9 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
     cfg.iono.drift_lon_deg_per_min  = jval(s, "iono.drift_lon_deg_per_min",  "", cfg.iono.drift_lon_deg_per_min);
     cfg.iono.center_lat_offset_deg  = jval(s, "iono.center_lat_offset_deg",  "", cfg.iono.center_lat_offset_deg);
     cfg.iono.center_lon_offset_deg  = jval(s, "iono.center_lon_offset_deg",  "", cfg.iono.center_lon_offset_deg);
-    // ABSOLUTE storm anchor.  NaN default = derive from this run's own trajectory
-    // origin (legacy).  A network MUST set these or every station sits at the blob
-    // centre — see SimConfig.hpp Iono::center_lat_deg.
+    // Absolute storm anchor.  The NaN default derives the centre from this run's own
+    // trajectory origin (legacy).  A network run has to set both, otherwise every
+    // station sits at the blob centre; see SimConfig.hpp Iono::center_lat_deg.
     cfg.iono.center_lat_deg = jval(s, "iono.center_lat_deg", "", cfg.iono.center_lat_deg);
     cfg.iono.center_lon_deg = jval(s, "iono.center_lon_deg", "", cfg.iono.center_lon_deg);
     if (std::isfinite(cfg.iono.center_lat_deg) !=
@@ -390,8 +389,8 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
     cfg.iono.shell_height_km        = jval(s, "iono.shell_height_km",        "", cfg.iono.shell_height_km);
     cfg.iono.scint_elev_clamp_deg   = jval(s, "iono.scint_elev_clamp_deg",   "", cfg.iono.scint_elev_clamp_deg);
 
-    // Quiet-background source.  Validated STRICTLY: a typo must not silently fall back
-    // to Klobuchar and emit a dataset that merely LOOKS like a GIM run.
+    // Quiet-background source.  An unknown value is an error, so a typo cannot fall
+    // back to Klobuchar and produce a dataset that only appears to be a GIM run.
     if (const nlohmann::json* bs = resolvePath(s, "iono.background_source")) {
         if (!bs->is_string())
             return fail("sim config 'iono.background_source' must be a string "
@@ -430,9 +429,9 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
     cfg.trajectory.heave_period_s  = jval(s, "trajectory.heave_period_s",  "", cfg.trajectory.heave_period_s);
     cfg.trajectory.clock_bias0_s   = jval(s, "trajectory.clock_bias0_s",   "", cfg.trajectory.clock_bias0_s);
     cfg.trajectory.clock_drift_sps = jval(s, "trajectory.clock_drift_sps", "", cfg.trajectory.clock_drift_sps);
-    // Receiver clock random walk (m^2/s, the PPP-filter unit).  Reject a negative
-    // spectral density loudly — sqrt() of it would be NaN and would silently poison
-    // every observation in the file rather than failing the run.
+    // Receiver clock random walk (m^2/s, the PPP-filter unit).  A negative spectral
+    // density is an error: its sqrt() would be NaN and would corrupt every
+    // observation in the file without failing the run.
     cfg.trajectory.clock_rw_q_m2ps = jval(s, "trajectory.clock_rw_q_m2ps", "", cfg.trajectory.clock_rw_q_m2ps);
     if (!(cfg.trajectory.clock_rw_q_m2ps >= 0.0))
         return fail("sim config 'trajectory.clock_rw_q_m2ps' must be >= 0 (m^2/s)");
@@ -518,11 +517,11 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
 
     if (!seed_ok) return fail(seed_err);
 
-    // --- Scripted "gotcha" cycle slips (optional; SPEC_scripted_slips.md §3). ---
-    // Absent OR an empty array leaves cfg.slips.scripted empty, so the synthesis is
-    // byte-identical to the random-only dataset.  Every event is fully validated
-    // here (SimConfig.hpp stays a plain resolved record); a rejected event is a
-    // loud error, never a silently-dropped exam fixture.
+    // --- Scripted cycle slips (optional; SPEC_scripted_slips.md §3). ---
+    // Absent or an empty array leaves cfg.slips.scripted empty, so the synthesis is
+    // byte-identical to the random-only dataset.  Every event is validated here
+    // (SimConfig.hpp stays a plain resolved record); a rejected event is an error,
+    // not a dropped test event.
     if (const nlohmann::json* arr = resolvePath(s, "cycle_slips.scripted")) {
         if (!arr->is_array())
             return fail("sim config 'cycle_slips.scripted' must be an array");
@@ -536,10 +535,10 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
                    std::isdigit(static_cast<unsigned char>(id[1])) &&
                    std::isdigit(static_cast<unsigned char>(id[2]));
         };
-        // PHASE codes only (scripting a code observable is meaningless here).  The
-        // third band is accepted ONLY when its own switch is armed: a scripted slip on
-        // a band the fixture does not emit would never fire, and a silently-inert event
-        // is indistinguishable from a detector that missed it.
+        // Phase codes only (a slip on a code observable has no meaning here).  A
+        // third-band code is accepted only when its signals.* switch is on: a slip on a
+        // band the fixture does not emit would never fire, and an event that never
+        // fires cannot be told apart from one the detector missed.
         auto validPhase = [&cfg](char sys, const std::string& code) -> bool {
             if (sys == 'G')
                 return code == "L1C" || code == "L2W" ||
@@ -549,12 +548,10 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
                        (cfg.signals.galileo_e5b && code == "L7Q");
             return false;
         };
-        // Tolerant int read: accept 20 OR 20.0 (nlohmann get<int> throws on a float
-        // literal — the crash class already fixed once for the other int knobs).
-        // Saturate out-of-int-range magnitudes to INT_MAX/MIN so a pathological
-        // literal (e.g. 2^32+50) can NOT wrap (mod 2^32) into an in-range value and
-        // silently bypass the |delta|/epoch/repeat guards below — instead the
-        // saturated value trips those range checks and is rejected loudly.
+        // Reads an int as either 20 or 20.0 (nlohmann get<int> throws on a float
+        // literal, as handled by jint above).  Magnitudes outside the int range
+        // saturate to INT_MAX/MIN rather than wrapping mod 2^32 (e.g. 2^32+50 would
+        // wrap to 50), so the |delta|/epoch/repeat range checks below reject them.
         auto toInt = [](const nlohmann::json& v) -> int {
             const long long r = std::llround(v.get<double>());
             if (r > std::numeric_limits<int>::max()) return std::numeric_limits<int>::max();
@@ -640,7 +637,7 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
                     return fail(where + ".flag_lli must be a boolean");
                 ev.flag_lli = el["flag_lli"].get<bool>();
             }
-            // delta == 0 is an LLI-only false alarm — only meaningful WITH the flag.
+            // delta == 0 is an LLI-only false alarm, which requires the flag.
             if (ev.delta_cycles == 0 && !ev.flag_lli)
                 return fail(where + ": delta_cycles == 0 is only allowed with flag_lli=true "
                                     "(LLI-only false alarm)");
@@ -659,10 +656,10 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
         }
     }
 
-    // --- Station identity of THIS invocation (SPEC_synthetic_minimum_network.md §1). ---
-    // Absent => empty name + zero salt => the legacy "SARV" single-station dataset,
-    // byte-for-byte.  The `synth-network` driver writes one child config per station
-    // with this block filled in.
+    // --- Station identity of this invocation (SPEC_synthetic_minimum_network.md §1). ---
+    // Absent gives an empty name and zero salt, i.e. the legacy "SARV" single-station
+    // dataset, byte-for-byte.  The `synth-network` driver writes one child config per
+    // station with this block filled in.
     {
         if (const nlohmann::json* nm = resolvePath(s, "station.name")) {
             if (!nm->is_string())
@@ -679,9 +676,9 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
         if (const nlohmann::json* sd = resolvePath(s, "station.seed_salt")) {
             if (!sd->is_number() || sd->get<double>() < 0.0)
                 return fail("sim config 'station.seed_salt' must be a non-negative integer");
-            // Read the INTEGER exactly when the literal is one.  Going through a double
-            // (as the other seed fields do — they are all < 2^32, so it is lossless for
-            // them) would round a large salt and could collide two stations.
+            // Reads the integer exactly when the literal is one.  Going through a double
+            // (as atmosphere.seed and sat_clock.seed do; exact only below 2^53) would
+            // round a large salt and could give two stations the same salt.
             cfg.station.seed_salt = sd->is_number_unsigned()
                                         ? sd->get<std::uint64_t>()
                                         : static_cast<std::uint64_t>(sd->get<double>());
@@ -695,13 +692,12 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
     if (const nlohmann::json* arr = resolvePath(s, "network_stations")) {
         if (!arr->is_array())
             return fail("sim config 'network_stations' must be an array");
-        // Paste-accident guard only.  The cap was 32 while the fixture was strictly a
-        // MINIMUM network (3 / 5 stations); the 50-station global variant exists to
-        // reach the QC tiers that are structurally inert at that scale
-        // (raim_min_stations needs a real consensus, cb_admission_min_stations = 4,
-        // rx_cb_carry_demean_min_stations = 8), so the cap now spans the field's own
-        // 63- and 305-station lineages.  Each station is a separate child PROCESS, so
-        // the practical limit is wall-clock, not memory.
+        // Paste-accident guard only.  The cap spans the field's 63- and 305-station
+        // lineages; larger networks (e.g. the 50-station global variant) reach QC tiers
+        // that are inert on a 3- or 5-station network (raim_min_stations needs a real
+        // consensus, cb_admission_min_stations = 4, rx_cb_carry_demean_min_stations = 8).
+        // Each station is a separate child process, so the practical limit is
+        // wall-clock time, not memory.
         if (arr->size() > 400)
             return fail("sim config 'network_stations' has " + std::to_string(arr->size()) +
                         " entries (> 400; that is beyond the largest field lineage and is "
@@ -790,7 +786,7 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
                         "hand-auditable network is 3");
     }
 
-    // --- Synthetic SATELLITE clock error (optional; all-zero default is legacy). ---
+    // --- Synthetic satellite clock error (optional; the all-zero default is legacy). ---
     cfg.sat_clock.bias0_sigma_m = jval(s, "sat_clock.bias0_sigma_m", "", cfg.sat_clock.bias0_sigma_m);
     cfg.sat_clock.rate_sigma_mps = jval(s, "sat_clock.rate_sigma_mps", "", cfg.sat_clock.rate_sigma_mps);
     cfg.sat_clock.rw_q_m2ps = jval(s, "sat_clock.rw_q_m2ps", "", cfg.sat_clock.rw_q_m2ps);
@@ -866,12 +862,12 @@ std::uint64_t stationSeedSalt(const std::string& name) {
     for (unsigned char ch : name) h = mix(h ^ static_cast<std::uint64_t>(ch));
     // Truncate to 53 bits: the salt is written into a JSON child config, and a JSON
     // number is conventionally a double, whose mantissa is 53 bits.  A full 64-bit
-    // value does NOT survive that round trip — it comes back rounded, and two stations
-    // whose salts differ only in the low bits would silently collide and share one
-    // whole noise realization.  53 bits is ample for a minimum network and makes the
-    // value exact for any consumer, whichever way it reads the number.
+    // value comes back rounded from that round trip, and two stations whose salts
+    // differ only in the low bits would then share one noise realization.  53 bits is
+    // ample for a minimum network and keeps the value exact for any reader, whether
+    // it parses the number as an integer or as a double.
     h &= (1ull << 53) - 1ull;
-    // 0 is the "legacy, do not salt" sentinel; a station must never land on it.
+    // 0 is the "legacy, do not salt" sentinel, so a station hash of 0 is remapped.
     return h == 0 ? 0x1F3779B97F4A7Cull : h;
 }
 
@@ -917,9 +913,9 @@ bool writeStationConfig(const std::filesystem::path& base_config,
     s["iono"]["center_lat_deg"] = anchor_lat_deg;
     s["iono"]["center_lon_deg"] = anchor_lon_deg;
 
-    // Per-station receiver biases REPLACE the base lists wholesale when the roster
-    // entry declares any (config arrays replace, they do not merge — the same rule the
-    // processor's deepMergeJson follows, so the two dialects behave alike).
+    // Per-station receiver biases replace the base lists wholesale when the roster
+    // entry declares any.  Config arrays replace rather than merge, the same rule the
+    // processor's deepMergeJson follows, so the two dialects behave alike.
     if (!st.rx_code_bias.empty() || !st.rx_phase_bias.empty()) {
         if (!s.contains("biases") || !s["biases"].is_object())
             s["biases"] = nlohmann::json::object();
@@ -932,18 +928,17 @@ bool writeStationConfig(const std::filesystem::path& base_config,
         if (!st.rx_phase_bias.empty()) s["biases"]["rx_phase_bias"] = emit(st.rx_phase_bias);
     }
 
-    // PER-STATION scripted cycle slips.  A slip is a RECEIVER event, and on a
-    // globally-distributed roster no satellite is visible at every station at a given
-    // epoch — so a slip written once at the top level cannot fire everywhere, and the
-    // synthesis correctly FAILS the stations where its satellite is below the horizon
-    // (measured: 47 of 51).  A roster entry may therefore carry its own
-    // "scripted_slips" array, which is passed through verbatim into the child's
-    // cycle_slips.scripted and validated there by the existing top-level parser — the
-    // parent deliberately does not re-implement that validation.
+    // Per-station scripted cycle slips.  A slip is a receiver event, and on a globally
+    // distributed roster no satellite is visible at every station at a given epoch, so
+    // a slip written once at the top level cannot fire everywhere: the synthesis fails
+    // the stations where its satellite is below the horizon.  A roster entry may
+    // therefore carry its own "scripted_slips" array, which is copied verbatim into
+    // the child's cycle_slips.scripted and validated there by the top-level parser;
+    // the parent does not repeat that validation.
     //
-    // Present per-station slips REPLACE the base list for that station (config arrays
-    // replace, they do not merge), so a roster entry opts a station out of the global
-    // list simply by declaring its own.
+    // Per-station slips, when present, replace the base list for that station (config
+    // arrays replace, they do not merge), so a roster entry opts a station out of the
+    // global list by declaring its own.
     for (const nlohmann::json* rosters : { &s, &doc }) {
         if (!rosters->contains("network_stations") || !(*rosters)["network_stations"].is_array())
             continue;

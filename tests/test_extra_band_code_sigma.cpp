@@ -3,21 +3,21 @@
  * @brief Contract tests for `network.extra_band_code_sigma_scale` (card L5P,
  *        docs/refound/L5P_l5_phase_posture_2026-09-21.md knob B).
  *
- * In the NETWORK solve the code rows of a signal whose band is neither band of
+ * In the network solve, the code rows of a signal whose band is neither band of
  * the constellation's ionosphere-free pin pair fold at sigma x scale.  With card
- * B5D armed the extra-band code-bias column stays determined by those same rows,
+ * B5D armed, the extra-band code-bias column stays determined by those same rows,
  * so the wire keeps a band-5 code bias while the rows lose their pull on the
  * shared states.
  *
- * What is pinned here:
- *   (a) the pure EXTRA-BAND predicate: band-5 signals are extra against a GPS
+ * Covered here:
+ *   (a) the pure extra-band predicate: band-5 signals are extra against a GPS
  *       L1/L2 pin, band-1 and band-2 signals never are, the tracking attribute
  *       is irrelevant, and no constellation is hard-coded;
- *   (b) an UNRESOLVED pin pair says nothing is extra-band, so the weights are
- *       left exactly as they were rather than scaled on a guess;
- *   (c) the LOADER contract: 1.0 by default, a value below 1 refused back to
- *       1.0, a legal value parsed, and the closed-loop consumer pinned at 1.0
- *       whatever the producer asked for.
+ *   (b) an unresolved pin pair marks nothing as extra-band, so the weights stay
+ *       as they were rather than being scaled on a guess;
+ *   (c) the loader contract: 1.0 by default, a value below 1 reset to 1.0, a
+ *       legal value parsed, and the closed-loop consumer pinned at 1.0 whatever
+ *       the producer config sets.
  *
  * The weight arithmetic itself (`w /= scale * scale` on the code rows, phase rows
  * untouched) is graded on the arms by the `w` column of `network_pf_rows.csv` at
@@ -98,8 +98,8 @@ TEST(ExtraBandCodeSigma, ThePinBandsAreNeverExtraWhateverTheAttribute) {
 }
 
 TEST(ExtraBandCodeSigma, TheExtraBandFollowsTheConstellationsOwnPinPair) {
-    // Band 5 is a PIN band for Galileo and band 2 is the extra one — the exact
-    // inversion a band-5 hard-coding would get wrong.
+    // Band 5 is a pin band for Galileo and band 2 is the extra one: the inversion
+    // that a hard-coded band 5 would get wrong.
     EXPECT_FALSE(networkSignalIsExtraBand("C5Q", kGal));
     EXPECT_TRUE(networkSignalIsExtraBand("C7Q", kGal));
     EXPECT_TRUE(networkSignalIsExtraBand("C2W", kGal));
@@ -148,9 +148,9 @@ TEST(ExtraBandCodeSigma, ParsesALegalScale) {
 }
 
 TEST(ExtraBandCodeSigma, RefusesAScaleBelowOne) {
-    // The knob only ever DEWEIGHTS; a value below 1 asks for the opposite and is
-    // a typo, so the loader refuses it back to the no-op default rather than
-    // trusting an extra band more than the pinned pair.
+    // The knob only deweights.  A value below 1 would weight an extra band above
+    // the pinned pair, so the loader treats it as a typo and resets it to the
+    // no-op default of 1.0.
     LogManager log;
     const fs::path p = writeTempConfig("low",
         networkConfig("    \"extra_band_code_sigma_scale\": 0.25,\n"));

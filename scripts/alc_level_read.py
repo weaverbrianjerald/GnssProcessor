@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""Card ALC - read the consumer ambiguity LEVEL check's own telemetry.
+"""Card ALC - read the consumer ambiguity level check's own telemetry.
 
     python scripts/alc_level_read.py <run_dir> [<run_dir> ...] [--hour-bins 6]
 
-TRACE-ONLY: launches nothing, writes nothing but stdout.
+Trace-only: launches nothing, writes nothing but stdout.
 
 Reads the `AMB_LEVEL` rows of `logs/network_events.csv` (invariant #7's two
-edges: `trip` = the decoupling test fired, `refloat` = the response) and the
+edges: `trip` is the decoupling test firing, `refloat` is the response) and the
 `refloat_level` kind in `ev_pb` of `logs/closed_loop_sat_trace.csv`, and reports:
 
-  * trips and refloats per HOUR (binned on the producer's own tow) and per
-    SATELLITE, split by which test fired (wl / if);
-  * the distribution of |state - level| / sigma_level at the trips - the
+  * trips and refloats per hour (binned on the producer's own tow) and per
+    satellite, split by which test fired (wl / if);
+  * the distribution of |state - level| / sigma_level at the trips, the
     quantity the k bar is applied to, so a census that sits just above k is a
     different finding from one that sits at 20 k;
-  * the trips inside a named window (--tow-min / --tow-max), for the
-    "does the check fire where the accidental resets used to?" read.
+  * the trips inside a named window (--tow-min / --tow-max), to check whether
+    the check fires at the tow of an accidental reset it is meant to catch.
 
 The counter closure (checks / trips / refloats) is on the run's own summary
 line; this script is the per-hour and per-satellite breakdown that line cannot
@@ -101,7 +101,7 @@ def report(run_dir, args):
              sum(1 for r in trips if r["test"] == "if"), len(refl),
              min(r["tow"] for r in rows), max(r["tow"] for r in rows)))
 
-    # per HOUR, binned on the run's own first emitted epoch
+    # Per hour, binned on the run's own first emitted epoch.
     per_h = defaultdict(Counter)
     for r in rows:
         h = int((r["tow"] - args.t0_ref) // 3600) + 1 if args.t0_ref is not None \

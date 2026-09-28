@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """CLK_STEP episode census over network_events.csv.
 
-The per-mark count is a bad discriminator (SPEC_pivot_visibility_gauge_defect
-§5.0.1: 9 of 16 marks were ONE satellite crossing the 1.5 m bar on nine
-consecutive epochs), so re-realizations are graded on EPISODES — contiguous
-mark-runs per satellite (marks on consecutive epochs merge; a gap > one epoch
-interval starts a new episode).  Reports per-episode onset / length / Σ|dev| /
-max|dev| and run totals, plus the §5.07.4-defect-4 caveat: this census is
-contaminated at both ends (a sub-threshold ramp has ZERO marks; a recovering
-step is not a re-realization at all), so treat it as the CHANNEL the SPEC
-grades, not as ground truth.
+The per-mark count is a weak discriminator (SPEC_pivot_visibility_gauge_defect
+§5.0.1: 9 of 16 marks were one satellite crossing the 1.5 m bar on nine
+consecutive epochs), so re-realizations are graded on episodes: contiguous
+mark-runs per satellite (marks on consecutive epochs merge; a gap longer than
+one epoch interval starts a new episode). Reports per-episode onset, length,
+sum|dev|, max|dev|, and run totals, plus the §5.07.4 defect-4 caveat: the
+census is biased at both ends (a sub-threshold ramp produces no marks; a
+recovering step is not a re-realization at all), so it measures the channel
+the SPEC grades, not ground truth.
 
     python scripts/clk_step_episodes.py runs/pareref_off/logs [more ...]
     python scripts/clk_step_episodes.py --interval-s 30 runs/a/logs runs/b/logs

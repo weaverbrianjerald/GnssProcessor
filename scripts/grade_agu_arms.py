@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Tabulate held-out consumer performance across runs / replay arms.
 
-Reads each run's ``logs/closed_loop_trace.csv`` and reports the FINAL-HOUR
-median error -- the converged-window convention this project grades network runs
+Reads each run's ``logs/closed_loop_trace.csv`` and reports the final-hour
+median error, the converged-window convention this project grades network runs
 on.  A whole-run mean would average the ignition transient into the verdict.
 
 Usage:
@@ -44,12 +44,13 @@ def grade(run_dir: Path, products: Path | None = None) -> dict | None:
         return None
     df = df.sort_values("tow")
 
-    # A consumer epoch BEYOND the product file's last record is not a measure of
+    # A consumer epoch past the product file's last record does not measure
     # product quality: with no fresh correction the consumer coasts on a frozen
-    # set (or falls back to the external precise products it also has loaded) and
-    # its error can IMPROVE dramatically -- observed here going 0 % -> 96 % fixed
-    # and 3.9 m -> 0.10 m the moment coverage ran out.  Grading that would be
-    # reporting the absence of our own product as its success.  Clamp, loudly.
+    # set (or falls back to the external precise products it also has loaded),
+    # and its error can improve sharply once coverage runs out (observed here:
+    # 0 % to 96 % fixed and 3.9 m to 0.10 m). Grading that would report the
+    # absence of the product as its success, so those epochs are excluded here,
+    # and the count is surfaced in the 'cut' column rather than absorbed silently.
     n_all = len(df)
     if products is not None and (span := product_span(products)):
         df = df[(df["tow"] >= span[0]) & (df["tow"] <= span[1])]

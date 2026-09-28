@@ -14,18 +14,19 @@
  *
  *   TD2(t) = GF(t) - 2*GF(t-1) + GF(t-2)
  *
- * The first difference cancels geometry, clock, and troposphere; the
- * second difference additionally cancels the constant carrier-phase
- * ambiguity and any constant/linear ionospheric trend, leaving a proxy
- * for ionospheric (TEC) acceleration plus measurement noise.  Cycle slips
- * appear as isolated single-epoch outliers and are absorbed by a robust
- * (MAD) statistic.
+ * The GF combination cancels geometry, clock, and troposphere; the second
+ * time difference also cancels the constant carrier-phase ambiguity and any
+ * constant or linear ionospheric trend, leaving a proxy for ionospheric (TEC)
+ * acceleration plus measurement noise.  A cycle slip (a GF step s) appears
+ * as a short outlier pair in TD2 (+s at the slip epoch, -s at the next) and
+ * is absorbed by a robust (MAD) statistic.
  *
  * Per satellite the monitor compares a recent-window MAD-sigma of TD2 to
- * a baseline-window MAD-sigma.  The squared ratio, clamped to
+ * a baseline-window MAD-sigma (the baseline window is the full rolling
+ * history and contains the recent window).  The squared ratio, clamped to
  * [1, max_multiplier], scales the static ionospheric process-noise
- * spectral density (ProcessNoise::ionosphere).  Using the ratio
- * self-normalizes: the slowly varying geometric (obliquity-curvature)
+ * spectral density (ProcessNoise::ionosphere).  The ratio is
+ * self-normalizing: the slowly varying geometric (obliquity-curvature)
  * component sits in both windows and cancels, so quiet conditions yield a
  * multiplier near 1 at any elevation and the existing 1/sin^2(el)
  * obliquity scaling is not double-counted.  The resulting per-satellite
@@ -90,10 +91,10 @@ namespace GnssProcessor {
 
         /**
          * @brief Per-satellite dimensionless variability multipliers from the
-         *        most recent update() — the clamped recent/baseline TD2
-         *        MAD-sigma ratio squared, before any q scaling.
+         *        most recent update(): the squared recent/baseline TD2
+         *        MAD-sigma ratio, clamped, before any q scaling.
          *
-         * For consumers whose noise base is NOT ProcessNoise::ionosphere
+         * For consumers whose noise base is not ProcessNoise::ionosphere
          * (e.g. the network T5v2 GM deviation innovation), which scale their
          * own base by this factor instead of adopting the zenith q override.
          *

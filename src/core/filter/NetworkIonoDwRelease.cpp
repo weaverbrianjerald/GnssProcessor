@@ -1,6 +1,6 @@
 /**
  * @file NetworkIonoDwRelease.cpp
- * @brief Implementation of @ref networkIonoDwRelease — the iono-deweight RELEASE
+ * @brief Implementation of @ref networkIonoDwRelease, the iono-deweight release
  *        hygiene seam (docs/SPEC_deweight_release_hygiene.md).
  */
 
@@ -39,16 +39,17 @@ namespace {
 /// any of four independent reasons and may satisfy several at once; the flags stay
 /// apart because the counters must distinguish them (invariant #4).
 struct SweepFlags {
-    bool released = false;   ///< INC-1: its zero-weight era ended in this epoch's advance().
-    bool decoupled = false;  ///< INC-2: weight <= eps right now (the spec's own trigger).
-    bool cold = false;       ///< INC-2: the gate holds NO samples for it (post-warm-resume).
-    bool screen = false;     ///< INC-3 / INC-3b: it owns held rows, or admission is armed.
+    bool released = false;   ///< its zero-weight era ended in this epoch's advance() (INC-1).
+    bool decoupled = false;  ///< weight <= eps now, the spec's trigger (INC-2).
+    bool cold = false;       ///< the gate holds no samples for it, e.g. post-warm-resume (INC-2).
+    bool screen = false;     ///< it owns held rows, or admission is armed (INC-3 / INC-3b).
 };
 
 /// Erase every "NAME|SAT" entry of one station from a "|"-delimited keyed container.
-/// Both are lexicographically ordered, so a station's entries form one contiguous
-/// range; the delimiter-terminated prefix is what makes it exact ("BSHM" must not
-/// match "BSHM00ISR").  '|' is 0x7C, so ++back() gives the open upper bound 0x7D.
+/// The containers are lexicographically ordered, so a station's entries form one
+/// contiguous range; the delimiter-terminated prefix makes the match exact ("BSHM"
+/// does not match "BSHM00ISR").  '|' is 0x7C, so ++back() gives the open upper bound
+/// 0x7D.
 template <typename ContainerT>
 std::size_t eraseStationRange(ContainerT& c, const std::string& name) {
     const std::string lo = name + "|";
@@ -61,10 +62,10 @@ std::size_t eraseStationRange(ContainerT& c, const std::string& name) {
     return n;
 }
 
-/// INC-3b: consecutive barren (no harvested deviation) epochs a quarantined LOS may
-/// serve before it is admitted anyway.  A judgeable LOS is harvested in the SAME epoch
-/// its row would fold, so 2 is already generous; the bound exists only to stop a LOS
-/// whose harvest NEVER runs from being withheld for the whole run.
+/// Consecutive barren (no harvested deviation) epochs a quarantined LOS may serve
+/// before it is admitted anyway (INC-3b).  A judgeable LOS is harvested in the same
+/// epoch its row would fold, so 2 is already generous; the bound only keeps a LOS
+/// whose harvest never runs from being withheld for the whole run.
 constexpr int kAdmitNoDevMaxEp = 2;
 
 } // namespace
@@ -90,7 +91,7 @@ void networkIonoDwRelease(NetworkRunContext& ctx,
 
     const GlobalVtecShConfig& shc = config_.getGlobalVtecShConfig();
     const auto& iw = config_.getIonosphereWeightingConfig();
-    if (!iw.enabled) return;                   // the tie rows this card guards are not built
+    if (!iw.enabled) return;                   // the tie rows this seam guards are not built
 
     auto& ctr     = ctx.counters.dwr;
     auto& held    = ctx.carry.dw_row_held;
@@ -107,22 +108,21 @@ void networkIonoDwRelease(NetworkRunContext& ctx,
     ++ctr.epochs;
 
     // --- The gate-advance watermark ------------------------------------------
-    // networkShHealth skips the WHOLE gate block on a datum-change epoch (its guard is
+    // networkShHealth skips the whole gate block on a datum-change epoch (its guard is
     // `adaptive() && !datum_changed`) and there is no advance(false) caller in the
-    // tree, so the gate's per-call release list retains the PREVIOUS epoch's contents.
-    // Consuming it unguarded would re-fire an old release on every held epoch.
+    // tree, so the gate's per-call release list retains the previous epoch's contents.
+    // Consuming it unguarded would re-fire an old release on every such epoch.
     const long long seq = iono_deweight.advanceCount();
     const bool advanced = (seq != ctx.carry.dw_gate_adv_seen);
     ctx.carry.dw_gate_adv_seen = seq;
     if (advanced) ++ctr.gate_advances;
 
     // --- Which stations does this epoch sweep? -------------------------------
-    // Cheap by construction: no reconstructStation.  The two quantities this seam
-    // needs are the SOLVED SH field (from x_s by column lookup) and the SOLVED
-    // per-LOS deviation, which networkShDevVtec has ALREADY harvested into
-    // ctx.carry.sh_dev_carry a few lines earlier this same epoch.  So the cost is one
-    // SH evaluation per LOS of the selected stations — no cov consumer, which is
-    // exactly what the H1 de-duplication removed from this part of the epoch.
+    // No reconstructStation call is needed.  The seam reads the solved SH field (from
+    // x_s by column lookup) and the solved per-LOS deviation, which networkShDevVtec
+    // has already harvested into ctx.carry.sh_dev_carry earlier in this epoch.  The
+    // cost is one SH evaluation per LOS of the selected stations, with no covariance
+    // consumer (H1 de-duplication).
     std::map<std::size_t, SweepFlags> sweep;
     if (advanced && reseed_on) {
         std::map<std::string, std::size_t> idx_of;
@@ -140,11 +140,11 @@ void networkIonoDwRelease(NetworkRunContext& ctx,
         if (bound_tecu > 0.0) {
             const bool decoupled = (iono_deweight.weight(nm) <= eps);
             // Post-warm-resume coverage.  No gate state is serialized, so a resumed leg
-            // starts EVERY station at w = 1 with zero samples and re-folds every tie row
-            // on its first assembly — there is no release edge to hook, which is
-            // precisely the spec's own stated reason for INC-2 to exist.  A station the
-            // gate has never scored is exactly that condition (and, in a cold run, the
-            // pre-min_epochs warm-up, where the bound is equally correct).
+            // starts every station at w = 1 with zero samples and re-folds every tie row
+            // on its first assembly with no release edge to hook; the spec gives this as
+            // the reason for INC-2.  A station the gate has never scored is that
+            // condition (and, in a cold run, the pre-min_epochs warm-up, where the bound
+            // applies equally).
             const bool cold = (iono_deweight.samples(nm) == 0);
             if (decoupled || cold) {
                 auto& f = sweep[i];
@@ -152,8 +152,8 @@ void networkIonoDwRelease(NetworkRunContext& ctx,
                 f.cold = cold;
             }
         }
-        // INC-3b sweeps EVERY present station: admission is about LOS this seam has
-        // never seen, so it cannot be driven off a list of stations it already knows.
+        // Admission sweeps every present station (INC-3b): it concerns LOS this seam
+        // has never seen, so it cannot be driven off a list of stations it already knows.
         if (admit_on) { sweep[i].screen = true; continue; }
         if (validate_k > 0.0 && !held.empty()) {
             const std::string lo = nm + "|";
@@ -164,8 +164,8 @@ void networkIonoDwRelease(NetworkRunContext& ctx,
     if (sweep.empty()) return;
 
     // --- The solved SH field (both shells) -----------------------------------
-    // Mirrors the health sweep's reconstruction exactly: coefficients out of x_s by
-    // column lookup, then vtec(coeff, IPP) * mapping * tecu_to_L1m per shell.
+    // Same reconstruction as the health sweep: coefficients out of x_s by column
+    // lookup, then vtec(coeff, IPP) * mapping * tecu_to_L1m per shell.
     const auto& coeffs = sh_model->coeffs();
     Eigen::VectorXd coeff(static_cast<Eigen::Index>(coeffs.size()));
     bool coeff_ok = true;
@@ -187,9 +187,9 @@ void networkIonoDwRelease(NetworkRunContext& ctx,
         }
     }
     if (!coeff_ok) {
-        // No trustworthy field ⇒ no trustworthy screen.  Doing nothing is the safe
-        // disposition, but it is a SILENT skip of an armed response — say so, and leave
-        // every hold in place (a held row must never be admitted by an error path).
+        // Without the field there is no screen.  Doing nothing is the safe disposition,
+        // but it skips an armed response, so it is logged; every hold stays in place
+        // (an error path does not admit a held row).
         log->warn("Network (dw release hygiene): SH coefficient columns unavailable at "
                   "TOW {:.1f} — the release/admission response is SKIPPED this epoch "
                   "(invariant #4: an armed guard that cannot read the field is not a "
@@ -221,11 +221,12 @@ void networkIonoDwRelease(NetworkRunContext& ctx,
         long long n_admit_nodev = 0;
         std::vector<std::string> reinflate_sats;
 
-        // Both per-station sets are rebuilt from scratch, so a LOS that sets (or is
-        // pruned) can never leave a stale hold or a stale admission behind.  The
-        // satellites held / admitted going IN are kept so entered-vs-released is
-        // attributed per LOS rather than inferred from a count difference (which a
-        // same-epoch swap would hide).
+        // For a screened station both per-station sets are rebuilt from scratch (the
+        // admitted set only when admission is armed), so a LOS that sets or is pruned
+        // cannot leave a stale hold or a stale admission behind.  The satellites held /
+        // admitted on entry are kept so entered-vs-released is attributed per LOS
+        // instead of inferred from a count difference, which a same-epoch swap would
+        // hide.
         std::set<std::string> held_before, seen_before;
         if (flags.screen) {
             const std::string lo = st.name + "|";
@@ -247,9 +248,9 @@ void networkIonoDwRelease(NetworkRunContext& ctx,
             const IppGeometry g0 = computeIppGeometry(st.ecef, o.sat_pos, Re, H);
             if (!g0.valid) continue;
 
-            // Field evaluation for this LOS, in L1 slant metres — the same quantity the
-            // assembly's tie row asserts the state should equal, and the same form the
-            // emit path uses (vtec * mapping * tecu_to_L1m).
+            // Field evaluation for this LOS, in L1 slant metres: the quantity the
+            // assembly's tie row asserts the state should equal, in the form the emit
+            // path uses (vtec * mapping * tecu_to_L1m).
             double sh_slant =
                 sh_model->vtec(coeff, g0.ipp_lat_rad, g0.ipp_lon_rad - lon_sun)
                 * g0.mapping * tecu_to_L1m;
@@ -265,30 +266,32 @@ void networkIonoDwRelease(NetworkRunContext& ctx,
             const std::string key = st.name + "|" + o.satellite;
             const double m0_tecu = g0.mapping * tecu_to_L1m;   // vertical TECU -> slant m
 
-            // --- The screen statistic: the SOLVED deviation, not the state ------
-            // The producer is a per-epoch ABSOLUTE solve whose per-station StateManager
-            // is a frozen LINEARIZATION POINT, and every innovation is formed against
+            // --- The screen statistic: the solved deviation, not the state -------
+            // The producer is a per-epoch absolute solve whose per-station StateManager
+            // is a frozen linearization point, and every innovation is formed against
             // it (data rows via em.innovations; the tie row via r.innov = -x(iono)).  A
             // shift of x_lin by d therefore moves y by exactly -A_r e_c d and leaves the
-            // reduced shared RHS u_s - N_sr N_rr^-1 u_r ALGEBRAICALLY UNCHANGED — the
-            // absolute estimate x_lin + x_r is invariant.  So |x_lin - field| is a
-            // frame-arbitrary number and must NOT be screened on.  The physical quantity
-            // is the deviation of the ABSOLUTE slant from the field, which
+            // reduced shared RHS u_s - N_sr N_rr^-1 u_r algebraically unchanged, so the
+            // absolute estimate x_lin + x_r is invariant and |x_lin - field| is a
+            // frame-arbitrary number that is not screened on.  The physical quantity is
+            // the deviation of the absolute slant from the field, which
             // networkShDevVtec harvested into the stash this same epoch as
-            // dev = (x_lin + x_r - SH) / M0 / tecu_to_L1m, in vertical TECU.  Its
-            // natural standardization is against the representativeness sigma, in the
-            // same frame — dimensionless, elevation-stationary, and free.
+            // dev = (x_lin + x_r - SH) / M0 / tecu_to_L1m, in vertical TECU.  It is
+            // standardized by the representativeness sigma in the same frame, which
+            // makes it dimensionless, elevation-stationary and free to compute.
             const auto dit = stash.find(key);
             const bool has_dev = (dit != stash.end() && dit->second.t_s > 0.0);
             const double dev_v = has_dev ? dit->second.dev : 0.0;
             const double z = (has_dev && rep_sig > 0.0) ? std::fabs(dev_v) / rep_sig : 0.0;
             const double slant_abs = sh_slant + dev_v * m0_tecu;   // absolute, L1 metres
 
-            // --- INC-2: while-decoupled (or gate-cold) park bound --------------
-            // The state is an L1-referenced SLANT delay in metres, so the physical
-            // comparison is |slant| / tecu_to_L1m with NO mapping function — slant TECU.
-            // Actuation is the STASH erase (the tie row's predicted deviation is a real,
+            // --- Park bound while decoupled or gate-cold (INC-2) ----------------
+            // slant_abs is an L1-referenced slant delay in metres, so the comparison is
+            // |slant| / tecu_to_L1m with no mapping function, in slant TECU.  The
+            // actuator is the stash erase (the tie row's predicted deviation is an
             // uncompensated input to y and R); the state write beside it is bookkeeping.
+            // With admission armed, a reset LOS is not re-entered in the admitted set,
+            // so its next tie row goes through the admission screen again.
             if (bound_tecu > 0.0 && (flags.decoupled || flags.cold)
                 && std::isfinite(slant_abs)) {
                 const double slant_tecu = std::fabs(slant_abs) / tecu_to_L1m;
@@ -306,11 +309,11 @@ void networkIonoDwRelease(NetworkRunContext& ctx,
                 }
             }
 
-            // --- INC-1: release-time reseed ------------------------------------
-            // The state write is BOOKKEEPING, not an actuator (see the invariance note
-            // above): it makes the frame-broken readouts honest and gives the next
-            // structural change a sane starting point.  The actuators of INC-1 are the
-            // stash erase and the ambiguity refloat, both applied per station below.
+            // --- Release-time reseed (INC-1) -----------------------------------
+            // The state write is bookkeeping, not an actuator (see the invariance note
+            // above): it keeps the frame-dependent readouts meaningful and gives the
+            // next structural change a sane starting point.  The actuators of INC-1 are
+            // the stash erase and the ambiguity refloat, both applied per station below.
             if (flags.released && reseed_on) {
                 x(iono_idx) = sh_slant;
                 x_dirty = true;
@@ -320,22 +323,21 @@ void networkIonoDwRelease(NetworkRunContext& ctx,
 
             if (!flags.screen) continue;
 
-            // --- INC-3b: ADMISSION screen on a LOS's FIRST tie row --------------
-            // The measured valve at DOY-129 TOW 329160 was not a deweight release
-            // (BSHM sat at w = 1.0 throughout; its only IONO_DW event is an ENGAGE at
-            // the break) — it was a satellite crossing the elevation cutoff and
-            // entering BSHM's tie stack for the first time, coupling an unvalidated
-            // slant column to the SH block.  So a tie row must EARN admission: a LOS
-            // this seam has not admitted is held for one epoch, during which
-            // networkShDevVtec still harvests its deviation (that harvest is gated on
-            // the deweight weight, not on whether the row folded), and it is admitted
-            // at the end of that epoch iff the harvested deviation passes k.
+            // --- Admission screen on a LOS's first tie row (INC-3b) -------------
+            // A satellite crossing the elevation cutoff and entering a station's tie
+            // stack for the first time couples its slant column to the SH block with no
+            // deweight release involved (the measured event at DOY-129 TOW 329160; see
+            // the header).  A LOS this seam has not admitted is therefore held for one
+            // epoch, during which networkShDevVtec still harvests its deviation (that
+            // harvest is gated on the deweight weight, not on whether the row folded),
+            // and it is admitted at the end of that epoch if the harvested deviation
+            // passes k.
             if (admit_on && !ctx.carry.dw_tie_seeded) {
-                // One-shot start / resume SEED: admit every present LOS unscreened.
-                // See NetworkCarryState::dw_tie_seeded — at start there is no
-                // established field for a "first coupling" to be relative to, and
-                // holding every row for an epoch would be a far larger shock than the
-                // event guarded against.  Counted apart from a real admission.
+                // One-shot start/resume seed: admit every present LOS unscreened.  See
+                // NetworkCarryState::dw_tie_seeded: at start there is no established
+                // field for a first coupling to be relative to, and holding every row for
+                // an epoch would disturb the solve far more than the guarded event.
+                // Counted apart from a screened admission.
                 seen.insert(key);
                 ++n_seeded;
                 continue;
@@ -344,12 +346,12 @@ void networkIonoDwRelease(NetworkRunContext& ctx,
                 if (!has_dev) {
                     // No statistic to judge by.  networkShDevVtec skips its harvest for
                     // a station at weight <= 0 and for a LOS with no local column, so
-                    // for those the deviation NEVER arrives — and holding on missing
-                    // data withholds the row for the whole run (measured: 58 consecutive
-                    // epochs, CPVG00CPV|G30).  Reject on evidence, not on its absence:
-                    // bound the barren wait, then admit and count apart.  A LOS the
-                    // screen could actually judge is harvested in the SAME epoch its row
-                    // would fold, so this never fails open for a judgeable one.
+                    // for those the deviation never arrives, and holding on missing data
+                    // would withhold the row for the whole run.  Rejection requires
+                    // evidence: the barren wait is bounded (kAdmitNoDevMaxEp), then the
+                    // LOS is admitted and counted apart.  A LOS the screen can judge is
+                    // harvested in the same epoch its row would fold, so this path does
+                    // not fail open for a judgeable one.
                     const int wait = ++ctx.carry.dw_admit_wait[key];
                     if (wait > kAdmitNoDevMaxEp) {
                         seen.insert(key);
@@ -380,7 +382,7 @@ void networkIonoDwRelease(NetworkRunContext& ctx,
                 continue;   // admission owns this LOS's disposition this epoch
             }
 
-            // --- INC-3: release screen on an already-admitted LOS ---------------
+            // --- Release screen on an already-admitted LOS (INC-3) --------------
             if (validate_k > 0.0 && has_dev && z > validate_k) {
                 held.insert(key);
                 ++n_held;
@@ -402,21 +404,21 @@ void networkIonoDwRelease(NetworkRunContext& ctx,
             }
         }
 
-        // --- INC-1: stash erase + refloat, once per released station ------------
+        // --- Stash erase + refloat, once per released station (INC-1) ----------
         if (flags.released && reseed_on) {
-            // Deviation stash: erase outright.  This IS an actuator — the entry sets the
+            // Deviation stash: erase outright.  This is an actuator: the entry sets the
             // tie row's predicted deviation and its variance (r.innov = -x + dev_pred,
             // r.var = floor^2 + var_pred), neither of which is compensated by the
-            // linearization-point algebra.  It must also override the Iono-2 v3k
+            // linearization-point algebra.  It also has to override the Iono-2 v3k
             // d5_keep policy, which an outright erase does by construction.
             const std::size_t n_stash = eraseStationRange(stash, st.name);
             ctr.reseed_stash_erased += static_cast<long long>(n_stash);
 
-            // Ambiguity refloat, DEFERRED one epoch.  The funnel it must feed is a
-            // per-epoch driver local whose load-bearing consumer already ran, and a bare
-            // pending-reseed mark issued here is wiped by the leveling harvest a few
-            // lines later — so queue it, exactly as the Card-4 D5 innovation gate queues
-            // its own post-solve detections.
+            // Ambiguity refloat, deferred one epoch.  The funnel it feeds is a per-epoch
+            // driver local whose load-bearing consumer has already run, and a bare
+            // pending-reseed mark issued here is cleared by the leveling harvest a few
+            // lines later.  It is queued instead, as the Card-4 D5 innovation gate
+            // queues its own post-solve detections.
             for (const auto& [amb_key, sidx] : st.sm->getAmbiguities()) {
                 (void)sidx;
                 if (pending.insert({static_cast<int>(i), amb_key}).second) ++n_rel;
@@ -436,8 +438,9 @@ void networkIonoDwRelease(NetworkRunContext& ctx,
 
         if (x_dirty) {
             st.sm->setStateVector(x);
-            // Break the stale (iono, bias) covariance partition the parked value baked
-            // in.  Same doctrine as the slip path's sat-wide reset.
+            // Re-inflate the slant-iono variance of every rewritten LOS to break the
+            // stale (iono, bias) covariance built up around the parked value, as the
+            // slip path's satellite-wide reset does.
             const double reinf = rep_sig * tecu_to_L1m;
             std::sort(reinflate_sats.begin(), reinflate_sats.end());
             reinflate_sats.erase(std::unique(reinflate_sats.begin(), reinflate_sats.end()),
@@ -456,7 +459,7 @@ void networkIonoDwRelease(NetworkRunContext& ctx,
         ctr.admit_seeded         += n_seeded;
         ctr.admit_nodev          += n_admit_nodev;
     }
-    // Latch AFTER the whole sweep so every present station is seeded in the same pass
+    // Latch after the whole sweep so every present station is seeded in the same pass
     // (the flag is read per LOS above, so flipping it mid-sweep would seed some
     // stations and screen others in the same epoch).
     if (admit_on && !ctx.carry.dw_tie_seeded) {

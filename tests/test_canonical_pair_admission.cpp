@@ -1,18 +1,18 @@
 /**
  * @file test_canonical_pair_admission.cpp
- * @brief Card CPA: the canonical-pair admission STATE MACHINE and its two knobs.
+ * @brief The canonical-pair admission state machine and its two knobs (card CPA).
  *
  * (docs/refound/CPA_canonical_pair_admission_2026-09-20.md §1 and §2.4.)  The rule
- * the producer runs per (station, satellite) is a pure function of three things:
+ * the producer runs per (station, satellite) is a pure function of three inputs:
  * whether this epoch holds the station's canonical phase and code on band digits 1
  * and 2, the processed-epoch index, and the tolerance.  Everything else in the seam
  * (reading the latch, erasing the record, the events, the counters) is plumbing
- * around that function, so the function is what this file exercises:
+ * around that function, so this file exercises the function:
  *
  *  * `canonicalPairStep`: never good; good from the first epoch; a dropout shorter
  *    than, equal to and longer than the tolerance; the return after a withhold; and
- *    a tolerance of zero.  Both EDGES (standing invariant 7) are checked where they
- *    are crossed and where they are NOT: an epoch admitted by the tolerance opens no
+ *    a tolerance of zero.  Both edges (standing invariant 7) are checked where they
+ *    are crossed and where they are not: an epoch admitted by the tolerance opens no
  *    withhold edge, and a withhold that continues raises no second one.
  *  * The loader: the two knobs' defaults, an armed value, and the negative-value
  *    clamp.
@@ -48,7 +48,7 @@ bool withheld(const CanonicalPairStep& s) {
 /**
  * @brief Drive one (station, satellite) through a scripted good/bad sequence.
  *
- * @param pattern one character per PROCESSED epoch: 'G' = the canonical pair is
+ * @param pattern one character per processed epoch: 'G' = the canonical pair is
  *                held, '.' = it is not.  The epoch index is the position, which is
  *                the seam's own clock (one increment per epoch that reaches the
  *                epoch body, whether or not this satellite was present).
@@ -117,15 +117,15 @@ bool loadWith(const std::string& extra, GnssConfig& cfg, LogManager& log,
 // ---------------------------------------------------------------------------
 
 TEST(CanonicalPairStateMachine, NeverGoodIsWithheldForever) {
-    // A receiver that tracks the satellite on its civil signals and NEVER holds the
+    // A receiver that tracks the satellite on its civil signals and never holds the
     // semi-codeless pair: every epoch is `before_first`, whatever the tolerance.
-    // A tolerance licenses carrying a good epoch forward, and there is none here.
+    // The tolerance only carries a good epoch forward, and there is none here.
     const auto s = run("........", 3);
     EXPECT_EQ(shape(s), "WWWWWWWW");
     for (const auto& st : s)
         EXPECT_EQ(st.action, CanonicalPairAction::WithholdBeforeFirst);
     EXPECT_STREQ(canonicalPairReason(s.front().action), "before_first");
-    // The DECOUPLING edge is raised ONCE, on the first withheld epoch, not once per
+    // The decoupling edge is raised once, on the first withheld epoch, not once per
     // withheld epoch (the card's event contract).
     EXPECT_TRUE(s.front().withhold_edge);
     for (std::size_t i = 1; i < s.size(); ++i) EXPECT_FALSE(s[i].withhold_edge);
@@ -160,7 +160,7 @@ TEST(CanonicalPairStateMachine, DropoutShorterThanTheToleranceIsAdmitted) {
 }
 
 TEST(CanonicalPairStateMachine, DropoutExactlyTheToleranceIsStillAdmitted) {
-    // The boundary the emulation drew (`e - last > keep` kills): the third missed
+    // The boundary the emulation drew (`e - last > keep` withholds): the third missed
     // epoch is the last one carried, the fourth would not be.
     const auto s = run("G...G", 3);
     EXPECT_EQ(shape(s), "AAAAA");
@@ -190,7 +190,7 @@ TEST(CanonicalPairStateMachine, ReturnAfterAWithholdRaisesTheReCouplingEdge) {
     EXPECT_TRUE(s[6].readmit_edge);
     EXPECT_EQ(s[6].gap_ep, 2);            // the run of withheld epochs that just ended
     EXPECT_FALSE(s[7].readmit_edge);      // the epoch after a return is ordinary
-    // The clock restarts from the RETURN: a second dropout is measured against it.
+    // After the return, a second dropout is measured from the last good epoch (7).
     const auto t = run("G.....GG.....", 3);
     EXPECT_EQ(shape(t), "AAAAWWAAAAAWW");
 }
@@ -198,7 +198,7 @@ TEST(CanonicalPairStateMachine, ReturnAfterAWithholdRaisesTheReCouplingEdge) {
 TEST(CanonicalPairStateMachine, ReturnBeforeTheFirstGoodEpochAlsoReCouples) {
     // The `before_first` stretch is the population GRS §6 says dominates ("long
     // stretches in which a receiver tracks a satellite without ever holding the
-    // semi-codeless pair"), so its re-coupling edge must be reported too.
+    // semi-codeless pair"), so its re-coupling edge is reported too.
     const auto s = run("...G", 3);
     EXPECT_EQ(shape(s), "WWWA");
     EXPECT_TRUE(s[0].withhold_edge);
@@ -209,8 +209,8 @@ TEST(CanonicalPairStateMachine, ReturnBeforeTheFirstGoodEpochAlsoReCouples) {
 
 TEST(CanonicalPairStateMachine, ToleranceZeroAdmitsOnlyTheGoodEpochs) {
     // N = 0 is the card's other measured arm: every partial epoch is withheld, so
-    // the shape is the pattern itself.  Note it is NOT the same rule as "never
-    // good": the returns still readmit.
+    // the shape is the pattern itself.  It differs from the "never good" case in
+    // that the returns still readmit.
     const auto s = run("G.G..G", 0);
     EXPECT_EQ(shape(s), "AWAWWA");
     EXPECT_EQ(s[1].action, CanonicalPairAction::WithholdBeyondKeep);
@@ -224,13 +224,13 @@ TEST(CanonicalPairStateMachine, ToleranceZeroAdmitsOnlyTheGoodEpochs) {
 }
 
 TEST(CanonicalPairStateMachine, AbsentEpochsCountTowardTheGap) {
-    // The epoch index is the RUN's clock, not this satellite's: a satellite absent
+    // The epoch index is the run's clock, not this satellite's: a satellite absent
     // from the epoch entirely contributes no step, and the gap still grows.  Driven
     // here by stepping the index past the epochs the satellite did not appear in.
     CanonicalPairTrack tr;
     EXPECT_EQ(canonicalPairStep(tr, true, 10, 3).action, CanonicalPairAction::AdmitGood);
     // Epochs 11..14 hold no record for this satellite at all; the next one it does
-    // appear in is 15, four epochs past the tolerance.
+    // appear in is 15, a gap of 5 processed epochs, 2 past the tolerance.
     const auto s = canonicalPairStep(tr, false, 15, 3);
     EXPECT_EQ(s.action, CanonicalPairAction::WithholdBeyondKeep);
     EXPECT_EQ(s.gap_ep, 5);

@@ -1,35 +1,35 @@
-"""Two-state clock-model NIS viewer -- the V2 lock-in instrument.
+"""Two-state clock-model NIS viewer, the V2 lock-in instrument.
 
-Reads ``network_clock_monitor.csv`` (the PPP-RTK NETWORK producer's per-satellite
-clock sanity trace).  That one CSV serves *two* detectors and its columns are
-silently REMAPPED between them:
+Reads ``network_clock_monitor.csv`` (the PPP-RTK network producer's per-satellite
+clock sanity trace). That one CSV serves two detectors, and its columns carry
+different meanings depending on which one wrote it:
 
-* **model** mode (``network.clock_model`` on) -- a two-state oscillator predicts
+* **model** mode (``network.clock_model`` on): a two-state oscillator predicts
   each satellite clock forward; the normalized innovation ``nis = (innov − datum
   common-mode) / √S`` is tested against the model's own tight prediction band
-  ``k = clock_model_k`` (σ).  A healthy clock tracks its prediction
-  (``|nis| ~ 1``); a self-consistent lock-in jumps hundreds of σ.  The columns
-  carry: ``clk_m`` = solved, ``median_m`` = the PRE-update prediction,
+  ``k = clock_model_k`` (σ). A healthy clock tracks its prediction
+  (``|nis| ~ 1``); a self-consistent lock-in jumps hundreds of σ. The columns
+  carry: ``clk_m`` = solved, ``median_m`` = the pre-update prediction,
   ``dev_m`` = de-meaned innovation, ``prev_clk_m`` = drift, ``jump_m`` = raw
-  innovation, ``abs_max_m`` = the per-row band ``√S`` (VARIES row to row),
-  ``jump_max_m`` = ``k`` (CONSTANT).
+  innovation, ``abs_max_m`` = the per-row band ``√S`` (varies row to row),
+  ``jump_max_m`` = ``k`` (constant).
 
-* **monitor** mode (``network.clock_monitor`` on, ``clock_model`` off) -- a
+* **monitor** mode (``network.clock_monitor`` on, ``clock_model`` off): a
   post-solve absolute/jump sanity check: ``dev_m`` vs the constant absolute bound
-  ``abs_max_m`` and ``jump_m`` vs the constant jump bound ``jump_max_m``.  ``nis``
+  ``abs_max_m`` and ``jump_m`` vs the constant jump bound ``jump_max_m``. ``nis``
   is blank; ``prev_clk_m``/``jump_m`` may be blank (``,,``).
 
-Mode is taken from the ``mode`` column when present.  LEGACY files (no ``nis`` /
-``mode`` columns) are routed by the CORRECTED heuristic: **model iff
-``abs_max_m.nunique() > 1``** (model writes a per-row ``√S``; monitor writes a
-constant bound), defaulting to ``monitor`` when undecidable (e.g. a single row).
+Mode is taken from the ``mode`` column when present. Legacy files (no ``nis`` /
+``mode`` columns) are routed by a heuristic: model if ``abs_max_m.nunique() > 1``
+(model writes a per-row ``√S``; monitor writes a constant bound), defaulting to
+``monitor`` when undecidable (e.g. a single row).
 
 Model-mode figures:
   1. ``|NIS|`` per satellite (scatter, PRN-coloured) with the ``k`` band line;
      red rings where ``flag_abs`` fired, orange where ``flag_ext`` (an already-
      flagged RAIM/within-epoch sat) fired.
-  2. Worst-6 satellites by ``max|nis|`` -- solved clock + its PRE-update
-     prediction + the ``median_m ± k·√S`` prediction band, NaN-gapped.
+  2. Worst-6 satellites by ``max|nis|``: solved clock, its pre-update
+     prediction, and the ``median_m ± k·√S`` prediction band, NaN-gapped.
   3. ``|nis|`` (sat × epoch) strip via the shared strip builder (viridis).
   4. Per-satellite drift (``prev_clk_m``).
 
@@ -52,9 +52,9 @@ from ..strip import build_sat_epoch_strip
 from .base import Viewer, ViewerResult, ViewerSkip
 
 # Ring colours for the flagged-sample overlays.
-_C_ABS = (0.85, 0.10, 0.10)   # red   -- own-bound / NIS fire (flag_abs)
-_C_EXT = (0.95, 0.55, 0.10)   # orange -- already flagged by RAIM/within-epoch (flag_ext)
-_C_JUMP = (0.60, 0.20, 0.70)  # purple -- monitor jump-bound fire (flag_jump)
+_C_ABS = (0.85, 0.10, 0.10)   # red: own-bound / NIS fire (flag_abs)
+_C_EXT = (0.95, 0.55, 0.10)   # orange: already flagged by RAIM/within-epoch (flag_ext)
+_C_JUMP = (0.60, 0.20, 0.70)  # purple: monitor jump-bound fire (flag_jump)
 _C_BOUND = (0.55, 0.55, 0.55)
 
 _MONITOR = "monitor"
@@ -78,7 +78,7 @@ def _resolve_mode(df: pd.DataFrame) -> str:
         if not vals.empty:
             m = vals.iloc[0].lower()
             return _MODEL if m == _MODEL else _MONITOR
-    # Legacy: no mode column -> corrected heuristic on the abs_max_m bound.
+    # Legacy: no mode column -> fall back to the abs_max_m bound.
     if "abs_max_m" in df.columns:
         bound = pd.to_numeric(df["abs_max_m"], errors="coerce").dropna()
         if bound.nunique() > 1:
@@ -180,7 +180,7 @@ def _build_model(df: pd.DataFrame, sat_color) -> ViewerResult:
                           title="PPP-RTK network clock-model NIS",
                           axes=[ax1], width=12.0, height=4.5, link_x=True))
 
-    # --- Fig 2: worst-6 sats by max|nis| -- clk + prediction + band ---
+    # --- Fig 2: worst-6 sats by max|nis|: clk, prediction, band ---
     worst = _worst_sats(df, absnis, n=6)
     if worst:
         axes2: List[Axes] = []
@@ -358,7 +358,7 @@ def _median(v):
 
 
 def _worst_sat_name(df: pd.DataFrame, values) -> str:
-    """Satellite with the largest |value| (name only) -- clock-stat convention."""
+    """Satellite with the largest |value| (name only), clock-stat convention."""
     tmp = pd.DataFrame({"sat": df["sat"].to_numpy(str),
                         "a": np.abs(np.asarray(values, float))})
     tmp = tmp[np.isfinite(tmp["a"])]

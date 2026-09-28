@@ -4,13 +4,13 @@ Chain, per station-pair/sat-pair DD, straight from raw RINEX (GPS, W/Q channels)
   1. EWL integer from MW(2,5) at n=2 epochs, FFR-gated (|frac|<=0.20)   [spec §3.2]
   2. bridged WL:  z = (DD[gfb] + lam25*N_EWL) / lam12
         gfb = lam12*(l1-l2) - lam25*(l2-l5)  [m]  =>  z = N12 - 0.5064*I1_dd[m]
-  3. compare the bridged-WL frac maturity curve vs plain code MW(1,2) on the SAME
-     DDs — the card's headline claim (iono-limited vs code-limited)
+  3. compare the bridged-WL frac maturity curve vs plain code MW(1,2) on the same
+     DDs, the card's headline claim (iono-limited vs code-limited)
   4. integrity: |round(z@n5) - DD[mw12]@n30| > 1.5 cyc flags a wrong EWL integer
-     (one EWL error displaces z by lam25/lam12 = 6.80 cyc — unmissable vs MW12)
+     (one EWL error displaces z by lam25/lam12 = 6.80 cyc, unmissable vs MW12)
 
-DDs are built between GEOGRAPHICALLY NEAR station pairs (nearest neighbor), bucketed
-by baseline length, plus a far-pair control bucket — the locality of the iono term
+DDs are built between geographically near station pairs (nearest neighbor), bucketed
+by baseline length, plus a far-pair control bucket. The locality of the iono term
 (0.5 cyc per meter of DD iono) is the open spec question §11 Q2.
 """
 import glob, math, os, random, statistics as st

@@ -1,23 +1,29 @@
 #!/usr/bin/env python3
 """Compose the 4-tile AGU26 abstract figure from one network run.
 
-    (a) network geometry + the network's OWN estimated ionosphere, as
-        ionospheric pierce points coloured by vertical TEC at a converged epoch;
-    (b) satellite code bias (per-signal OSB) -- W6, self-estimated;
-    (c) satellite phase bias;
+Default layout (--layout mechanism):
+    (a) network geometry and the network's own estimated ionosphere, as
+        ionospheric pierce points colored by vertical TEC at a converged epoch;
+    (b) the datum-invariant total_IF level channel, windowed, with the code-bias
+        set-change events that coincide with a step;
+    (c) how long the product lets an ambiguity live against how long an arc
+        needs to mature;
     (d) the held-out consumer's position error (E/N/U + 3D).
 
-Panels (b) and (c) plot each series as a deviation from ITS OWN run median.  The
-estimable clock and biases are datum-dependent, so their raw levels are metres-
-scale numbers that say nothing about product quality; what a consumer actually
-needs is that they be STABLE.  De-medianed, the y-axis is centimetres and the
-panel makes exactly that claim.  A per-series median is a constant offset, so
-this is a presentation choice, not a correction -- the spread it shows is real.
+--layout products replaces (b) and (c) with the raw per-series ensembles:
+satellite code bias (per-signal OSB, W6, self-estimated) and satellite phase
+bias. Each series is plotted as a deviation from its own run median: the
+estimable clock and biases are datum-dependent, so their raw levels are
+metre-scale numbers that say nothing about product quality, while what a
+consumer needs is that they be stable. De-medianed, the y-axis is centimetres
+and the panel makes that claim directly. A per-series median is a constant
+offset, so this is a presentation choice, not a correction: the spread it
+shows is real.
 
-``gnssviz`` supplies the domain layer (pierce-point geometry, the slant->VTEC
-thin-shell mapping, the coastline, the viridis table) so nothing here re-derives
-geodesy; the layout is local because ``figures.Figure`` stacks axes vertically
-and this needs a grid.
+``gnssviz`` supplies the domain layer (pierce-point geometry, the slant-to-VTEC
+thin-shell mapping, the coastline, the viridis table), so nothing here
+re-derives geodesy; the layout is local because ``figures.Figure`` stacks axes
+vertically and this figure needs a grid.
 
 Usage
 -----
@@ -58,7 +64,7 @@ _RE_KM, _H_KM = 6371.0, 450.0
 _INK = "#1a1a1a"
 _MUTED = "#6b6b6b"
 _GRID = "#d8d8d8"
-# Categorical order for panel (d) -- fixed, never cycled.
+# Categorical order for panel (d), fixed, never cycled.
 _C_E, _C_N, _C_U, _C_3D = "#1f6feb", "#2a9d4a", "#d1560f", "#1a1a1a"
 _ENSEMBLE = "#3b6ea5"
 
@@ -85,7 +91,7 @@ def _read(path: Path, what: str, required: tuple = ("tow",)) -> pd.DataFrame:
     Trace writers here are not all line-flushed, so a live or crash-truncated
     file can end mid-row.  One NaN ``tow`` is enough to make ``h.max()`` NaN,
     which silently turns every downstream ``h.max() > x`` window test False and
-    grades the WHOLE run as if it were the converged tail.  Fail loud instead.
+    grades the whole run as if it were the converged tail.  Fail loud instead.
     """
     if not path.is_file():
         raise SystemExit(f"missing {what}: {path}")
@@ -127,14 +133,15 @@ def _panel_tag(ax, letter):
 # --------------------------------------------------------------------------- #
 def panel_iono(ax, log_dir: Path, cfg: Path | None, window_min: float,
                held_out: str | None):
-    """(a) The network's OWN spherical-harmonic VTEC field + station geometry.
+    """(a) The network's own spherical-harmonic VTEC field and station geometry.
 
-    Synthesized from ``network_vtec_sh.csv`` -- the estimated coefficients, i.e.
-    the actual emitted product.  Deliberately NOT ``network_ionosphere.csv``:
+    Synthesized from ``network_vtec_sh.csv``, the estimated coefficients, i.e.
+    the actual emitted product. Deliberately not ``network_ionosphere.csv``:
     that trace emits ``x_r`` without its linearization point (NetworkIonoDiag.cpp:92)
-    while the per-LOS iono state IS seeded at allocation (MeasurementModel.cpp:404),
-    so it is a CORRECTION, not absolute slant ionosphere.  Measured on this run it
-    medians ~10 TECU against the field's own ~30 TECU a00 with 37 % negative values.
+    while the per-LOS iono state is seeded at allocation (MeasurementModel.cpp:404),
+    so it is a correction, not absolute slant ionosphere. Measured on this run it
+    medians about 10 TECU against the field's own about 30 TECU a00, with 37% negative
+    values.
     """
     coeffs, week, tow = load_epoch(log_dir / "network_vtec_sh.csv")
     lats = np.linspace(-88.0, 88.0, 179)
@@ -146,7 +153,7 @@ def panel_iono(ax, log_dir: Path, cfg: Path | None, window_min: float,
     if not stations:
         raise SystemExit("no station roster -- cannot draw network geometry")
     pos = {s.id: (s.lat, s.lon) for s in stations}
-    # The roster CSV carries the held-out consumer too; it is NOT a network
+    # The roster CSV carries the held-out consumer too; it is not a network
     # station and must not be counted or drawn as one.
     net_stations = [s for s in stations if s.id != held_out]
 
@@ -191,11 +198,11 @@ def panel_iono(ax, log_dir: Path, cfg: Path | None, window_min: float,
 # --------------------------------------------------------------------------- #
 def _bias_panel(ax, sol: pd.DataFrame, kind: str, t0: float, *, title, letter,
                 settle_h: float = 2.0):
-    """Per-(sat,signal) deviation from own median -- the stability claim.
+    """Per-(sat,signal) deviation from own median: the stability claim.
 
-    Both the reference median and the plotted span are taken AFTER ``settle_h``.
+    Both the reference median and the plotted span are taken after ``settle_h``.
     The cold-start ramp is a convergence transient, not product instability, and
-    letting it set either the reference level or the y-scale would hide the very
+    letting it set either the reference level or the y-scale would hide the
     thing the panel is meant to show.  The window is stated in the title.
     """
     d = sol[sol["kind"] == kind].copy()
@@ -238,8 +245,8 @@ def _bias_panel(ax, sol: pd.DataFrame, kind: str, t0: float, *, title, letter,
     ax.legend(loc="upper right", fontsize=7.5, framealpha=0.9)
     # Scale to a fixed high percentile, not to the extremes: a handful of series
     # carrying a signalled discontinuity would otherwise set a y-range that
-    # flattens the bulk into a line.  This bounds the clipped fraction at ~2.5 %
-    # BY CONSTRUCTION and the panel reports it, so nothing is hidden silently.
+    # flattens the bulk into a line.  This bounds the clipped fraction at about
+    # 2.5% by construction, and the panel reports the fraction it clips.
     lim = float(np.nanpercentile(np.abs(d["dev_cm"]), 97.5))
     lim = max(lim, float(np.nanmax(np.abs(np.concatenate([p16, p84])))), 1.0)
     ax.set_ylim(-1.05 * lim, 1.05 * lim)
@@ -256,7 +263,7 @@ def _product_wide_events(sol: pd.DataFrame, kind: str, t0: float,
                          frac: float = 0.5, step_m: float = 0.5) -> list[float]:
     """Hours at which >`frac` of a product's channels jump >`step_m` in one epoch.
 
-    A SET-change datum re-realization, as distinct from per-channel churn.
+    A set-change datum re-realization, as distinct from per-channel churn.
     """
     d = sol[sol["kind"] == kind].copy()
     if d.empty:
@@ -275,9 +282,9 @@ def panel_total_if(ax, sol: pd.DataFrame, t0: float, window_min: float = 20.0):
     """(b) The datum-invariant level channel a consumer forms, windowed.
 
     total_IF = CLK + a1*CB(band1) - a2*CB(band2), as a deviation from the
-    PER-EPOCH MEDIAN across satellites.  Median-referencing makes it invariant to
-    any common shift, so a pure S-transformation cannot move it -- which is
-    exactly what makes a STEP here evidence that a datum event was not gauge-only.
+    per-epoch median across satellites.  Median-referencing makes it invariant to
+    any common shift, so a pure S-transformation cannot move it, which is what
+    makes a step here evidence that a datum event was not gauge-only.
 
     Windowed at 20 min deliberately: hourly windows average across the step and
     hide it (they read 8-12 m where the truth is 4.8 m then 12.6 m).
@@ -309,7 +316,7 @@ def panel_total_if(ax, sol: pd.DataFrame, t0: float, window_min: float = 20.0):
         ax.annotate(f"{ys[i]:.2f} m", (xs[i], ys[i]), textcoords="offset points",
                     xytext=(6, -13), fontsize=8.5, color=col, fontweight="bold")
 
-    # Set-change datum events on the code bias -- the thing the step coincides with.
+    # Set-change datum events on the code bias: the thing the step coincides with.
     # Ignition events are excluded: before the field settles, "most channels moved"
     # is the cold start, not a datum re-realization.
     ev = [h for h in _product_wide_events(sol, "CB", t0) if h >= 0.5]
@@ -338,13 +345,13 @@ def panel_total_if(ax, sol: pd.DataFrame, t0: float, window_min: float = 20.0):
 
 def panel_disc_vs_maturity(ax, sol: pd.DataFrame, t0: float,
                            maturity_min: float = 120.0, settle_h: float = 2.0):
-    """(c) How long the product lets an ambiguity live, vs how long it needs.
+    """(c) How long the product lets an ambiguity live, against how long it needs.
 
     Per (satellite,signal) channel, the elapsed time between ``disc_counter``
-    increments -- i.e. how long a consumer gets to hold an ambiguity before the
-    product tells it to reset.  Against the measured requirement that an arc
-    needs ~240 epochs (~120 min) to reach resolvable precision.  The overlap of
-    the two is the whole reason the AR fix rate is zero.
+    increments, i.e. how long a consumer gets to hold an ambiguity before the
+    product tells it to reset.  Compared against the measured requirement that
+    an arc needs about 240 epochs (about 120 min) to reach resolvable precision.
+    The overlap of the two accounts for the zero AR fix rate.
     """
     out = {}
     for kind, col, lbl in (("PB", _C_E, "phase bias"), ("CB", _C_U, "code bias")):
@@ -376,8 +383,8 @@ def panel_disc_vs_maturity(ax, sol: pd.DataFrame, t0: float,
         out[kind] = {"n": int(gaps.size), "median_min": round(float(np.median(gaps)), 1),
                      "frac_below_maturity": round(frac, 3)}
 
-    # CENSORING GUARD.  A run of length T cannot contain an interval longer than T,
-    # so on a short run "100 % of intervals end before maturity" is arithmetic, not
+    # Censoring guard: a run of length T cannot contain an interval longer than T,
+    # so on a short run "100% of intervals end before maturity" is arithmetic, not
     # a finding.  Require the observation window to be comfortably longer than the
     # threshold before the panel is allowed to make the claim.
     span_min = 60.0 * float(sol["tow"].pipe(lambda s: (s.max() - s.min())) / 3600.0)
@@ -432,7 +439,7 @@ def panel_consumer(ax, log_dir: Path, t0: float, held_out: str | None,
             label="3D error", zorder=4)
     ax.axhline(0.0, color=_MUTED, linewidth=0.7, zorder=1)
 
-    # Grade on the FINAL HOUR -- the converged-window convention used throughout
+    # Grade on the final hour: the converged-window convention used throughout
     # this project's network grading (never a whole-run mean, which averages the
     # ignition transient into the verdict).
     n = len(df)
@@ -508,7 +515,7 @@ def main() -> None:
     _panel_tag(axes[0][0], "a")
     if args.layout == "mechanism":
         # (b) the product's own quality and the event that damages it; (c) why the
-        # user cannot use it.  Shows the CAUSAL CHAIN rather than the raw products,
+        # user cannot use it.  Shows the causal chain rather than the raw products,
         # whose datum-dependent levels invite the wrong question.
         stats["total_if"] = panel_total_if(axes[0][1], sol, t0,
                                            window_min=args.total_if_window_min)

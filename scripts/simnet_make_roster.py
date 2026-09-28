@@ -1,46 +1,47 @@
 #!/usr/bin/env python3
-"""Generate a globally-distributed station roster for a synth-network sim config.
+"""Generate a globally distributed station roster for a synth-network sim config.
 
-Why a generator: 50 hand-written coordinate triples is precisely where a silent
-error lives.  The producer HOLDS station coordinates fixed (CORS geometry), so a
-mistyped position is invisible to every downstream gate -- a held coordinate is by
-definition not estimated, and nothing in the run can distinguish a 1 km error from
-a real one.  Generating them removes the whole failure mode, and makes the
-geometry reproducible and reviewable as a rule rather than as a table.
+A generator instead of hand-written coordinates: the producer holds station
+coordinates fixed (CORS geometry), so a mistyped position is invisible to every
+downstream gate (a held coordinate is not estimated, and nothing in the run can
+distinguish a 1 km error from a real one). Generating the roster removes that
+failure mode and makes the geometry reproducible and reviewable as a rule rather
+than as a table.
 
-DISTRIBUTION.  A Fibonacci (golden-angle) lattice, which is the standard way to
-spread N points near-uniformly on a sphere -- no clustering at the poles the way a
-lat/lon grid gives, and no RNG, so the roster is a pure function of N.
+Distribution: a Fibonacci (golden-angle) lattice, the standard way to spread N
+points near-uniformly on a sphere (no pole clustering the way a lat/lon grid
+gives, and no RNG, so the roster is a pure function of N).
 
-Latitude is capped at |lat| <= ~72 deg.  GPS has a 55 deg inclination, so a polar
+Latitude is capped at |lat| <= ~72 deg. GPS has a 55 deg inclination, so a polar
 station sees every satellite at low elevation: it would contribute almost nothing
-but noise, and (worse for a fixture) it would make the station-count trend confound
-"more stations" with "worse stations".  Real IGS networks are also land-biased and
-therefore clustered; even coverage is the cleaner instrument for grading QC tiers,
-and it is stated here rather than left as an unexamined property of the fixture.
+but noise, and it would make the station-count trend confound "more stations"
+with "worse stations". Real IGS networks are also land-biased and therefore
+clustered; even coverage is the cleaner instrument for grading QC tiers, stated
+here rather than left as an unexamined property of the fixture.
 
-RECEIVER BIASES vary per station by construction.  The S-basis contract's Table-8
-identity resolves the FLEET MEAN of the receiver GF code bias; a roster on which
+Receiver biases vary per station by construction. The S-basis contract's Table-8
+identity resolves the fleet mean of the receiver GF code bias; a roster on which
 every station carries the same bias makes the fleet mean indistinguishable from
-each member, so the estimator could realize any split between them and still grade
-as correct.  Values are a deterministic function of the station index (no RNG, so
-the sim's own four RNG streams are untouched and byte-identity is preserved).
+each member, so the estimator could realize any split between them and still
+grade as correct. Values are a deterministic function of the station index (no
+RNG, so the sim's own four RNG streams are untouched and byte-identity is
+preserved).
 
-STATION NAMES are 9-char IGS long-name ids ending in the pseudo-country "SIM" (no
-real 3-char country code is SIM, so a synthetic marker can never collide with a
-real site).  Two schemes, because the original one runs out of room:
+Station names are 9-char IGS long-name ids ending in the pseudo-country "SIM"
+(no real 3-char country code is SIM, so a synthetic marker cannot collide with a
+real site). Two schemes, because the original one runs out of room:
 
-  legacy2  "S01000SIM"  -- "S" + 2-digit index + "000".  Valid only up to n = 99;
-                          at n = 100 it becomes "S100000SIM", TEN characters, which
-                          is no longer a RINEX long name at all.
-  wide3    "S00101SIM"  -- "S" + 3-digit index + "01".  Valid to n = 999.
+  legacy2  "S01000SIM"  "S" + 2-digit index + "000". Valid only up to n = 99;
+                         at n = 100 it becomes "S100000SIM", ten characters,
+                         no longer a RINEX long name at all.
+  wide3    "S00101SIM"  "S" + 3-digit index + "01". Valid to n = 999.
 
 `--name-scheme auto` (the default) picks legacy2 at n <= 99 so every existing
-roster's station ARRAY regenerates byte-identically (only the `_roster`
-provenance string gains the scheme name), and wide3 above it.  The trailing "01"
+roster's station array regenerates byte-identically (only the `_roster`
+provenance string gains the scheme name), and wide3 above it. The trailing "01"
 rather than "00" is deliberate: the per-station RNG salt is derived from the
-station NAME, and "S" + ddd + "00" would make wide3 station 300 share its name --
-and therefore its entire noise realization -- with legacy2 station 30.  The 6th
+station name, and "S" + ddd + "00" would make wide3 station 300 share its name,
+and therefore its entire noise realization, with legacy2 station 30. The 6th
 character is '0' in every legacy2 name and '1' in every wide3 name, so the two
 schemes cannot collide at any index.
 
@@ -57,29 +58,29 @@ import sys
 
 
 # --------------------------------------------------------------------------- #
-# The §29.5 EMPIRICAL receiver-GF-bias model
+# The §29.5 empirical receiver-GF-bias model
 # --------------------------------------------------------------------------- #
-# docs/SPEC_level_information_budget.md §29.5 measured the FIELD's receiver
+# docs/SPEC_level_information_budget.md §29.5 measured the field's receiver
 # C1C-C2W geometry-free hardware biases over the 61-station ext63 roster:
 #
-#     network MEAN     ~ -5 ns  ~ -1.55 m of GF code  ~ -15 slant TECU
-#     spread           std ~ 21 slant TECU, CONTINENT-SCALE CLUSTERED
+#     network mean     ~ -5 ns  ~ -1.55 m of GF code  ~ -15 slant TECU
+#     spread           std ~ 21 slant TECU, continent-scale clustered
 #                      (Europe uniformly ~ -22, southern outliers +40..+47)
 #
-# That non-zero mean is the whole C4 confound of the LV-6 census card: the
-# rx_code_bias_datum zero-MEAN convention cannot hold it, so it lands in the
-# level.  The `legacy` roster model below is zero-mean by construction (measured
+# That non-zero mean is the C4 confound of the LV-6 census card: the
+# rx_code_bias_datum zero-mean convention cannot hold it, so it lands in the
+# level. The `legacy` roster model below is zero-mean by construction (measured
 # fleet mean ~ -0.05 m, full spread ~ 1 m ~ 10 TECU), so a fixture built on it
-# CANNOT grade the confound -- which is why SPEC_level_authority_internal.md
-# §4 G1 / §5 item 5 require a REGENERATED fixture carrying this distribution.
+# cannot grade the confound, which is why SPEC_level_authority_internal.md
+# §4 G1 / §5 item 5 require a regenerated fixture carrying this distribution.
 #
-# Structure, and why it is written this way: the model is a latitude gradient
-# (the "southern outliers" of §29.5) plus a continent-scale REGIONAL bloc term
-# (12 cells: 3 latitude bands x 4 longitude sectors) plus per-station jitter,
-# then AFFINE-PINNED so the fleet mean and population sd hit the measured
-# targets EXACTLY.  Every draw is a deterministic hash of a station/region name
-# -- no RNG state, so the roster stays a pure function of its arguments and the
-# sim's own four RNG streams are untouched.
+# Structure: the model is a latitude gradient (the "southern outliers" of
+# §29.5) plus a continent-scale regional bloc term (12 cells: 3 latitude bands
+# x 4 longitude sectors) plus per-station jitter, then affine-pinned so the
+# fleet mean and population sd hit the measured targets exactly. Every draw is
+# a deterministic hash of a station/region name, with no RNG state, so the
+# roster stays a pure function of its arguments and the sim's own four RNG
+# streams are untouched.
 F1_HZ, F2_HZ = 1575.42e6, 1227.60e6
 MU12 = (F1_HZ / F2_HZ) ** 2                          # 1.646944 = (f1/f2)^2
 K_L1_M_PER_TECU = 40.3e16 / F1_HZ ** 2               # 0.162377 m of L1 delay per TECU
@@ -108,27 +109,27 @@ def _region(lat, lon):
 
 def f29p5_gf(points, names, bloc_tecu, bloc_sd_tecu, outlier_frac,
              outlier_lo_tecu, outlier_hi_tecu):
-    """Per-station GF code bias g = b(C1C) - b(C2W), §29.5-shaped, in METRES.
+    """Per-station GF code bias g = b(C1C) - b(C2W), §29.5-shaped, in metres.
 
     The shape is taken literally from the measurement, not from a Gaussian fit:
-    a dominant continental BLOC near `bloc_tecu` (§29.5: "Europe uniformly
-    ~ -22") plus a small POSITIVE SOUTHERN TAIL at +40..+47.  That skew is
-    load-bearing for LV-6 G1 -- the gate grades the census MEDIAN, and
-    SPEC_level_authority_internal §5 item 5 says in as many words that the
-    reference statistic is the median "not the coverage-weighted mean -- median
-    vs mean skew".  A symmetric draw pinned to the same mean and sd would make
-    that distinction untestable, so the bloc/tail anchors are held and the
-    resulting mean/sd are REPORTED rather than pinned.
+    a dominant continental bloc near `bloc_tecu` (§29.5: "Europe uniformly
+    ~ -22") plus a small positive southern tail at +40..+47. That skew is
+    load-bearing for LV-6 G1: the gate grades the census median, and
+    SPEC_level_authority_internal §5 item 5 states that the reference statistic
+    is the median, not the coverage-weighted mean (median vs mean skew). A
+    symmetric draw pinned to the same mean and sd would make that distinction
+    untestable, so the bloc/tail anchors are held and the resulting mean/sd are
+    reported rather than pinned.
 
-    Bloc dispersion is split between a continent-scale REGIONAL term (12 cells:
+    Bloc dispersion is split between a continent-scale regional term (12 cells:
     3 latitude bands x 4 longitude sectors) and per-station jitter, in
-    quadrature.  Every draw is a deterministic hash of a region/station name --
-    no RNG state, so the roster stays a pure function of its arguments.
+    quadrature. Every draw is a deterministic hash of a region/station name,
+    with no RNG state, so the roster stays a pure function of its arguments.
     """
     n = len(names)
     n_out = max(1, int(round(outlier_frac * n))) if outlier_frac > 0.0 else 0
-    # The tail is SOUTHERN (§29.5 "southern outliers"), so it is the n_out
-    # lowest-latitude stations -- a geographic rule, not a draw.
+    # The tail is southern (§29.5 "southern outliers"), so it is the n_out
+    # lowest-latitude stations: a geographic rule, not a draw.
     south_idx = set(sorted(range(n), key=lambda i: (points[i][0], names[i]))[:n_out])
     sd_reg = bloc_sd_tecu * math.sqrt(0.6)      # regional / station split, in quadrature
     sd_sta = bloc_sd_tecu * math.sqrt(0.4)
@@ -148,11 +149,11 @@ def f29p5_gf(points, names, bloc_tecu, bloc_sd_tecu, outlier_frac,
 def f29p5_split(g, mode):
     """Split a GF bias g into (b_C1C, b_C2W) metres.
 
-    `gf_pure` (default) puts the ENTIRE injected bias in the geometry-free
+    `gf_pure` (default) puts the entire injected bias in the geometry-free
     direction: the ionosphere-free lump a1*b1 + a2*b2 (a1 = mu/(mu-1),
-    a2 = -1/(mu-1) -- the same IF_A1/IF_A2 scripts/simnet_grade.py uses) is
-    identically ZERO, so the receiver-CLOCK truth channel is untouched and every
-    other graded channel keeps its meaning.  `half` splits +-g/2 (smaller
+    a2 = -1/(mu-1), the same IF_A1/IF_A2 scripts/simnet_grade.py uses) is
+    identically zero, so the receiver-clock truth channel is untouched and
+    every other graded channel keeps its meaning. `half` splits +-g/2 (smaller
     absolute codes, but it moves the rx-clock channel by 2.046*g).
     """
     if mode == "half":
@@ -238,9 +239,9 @@ def main():
 
     pts = fibonacci_sphere(args.n, args.lat_cap)
     names = [station_name(i) for i in range(args.n)]
-    # §29.5 model (opt-in).  Computed for the WHOLE roster at once because the
-    # affine pin is a fleet statistic -- a per-station formula cannot hit a fleet
-    # mean, and the fleet mean is the entire point of the model.
+    # §29.5 model (opt-in). Computed for the whole roster at once because the
+    # affine pin is a fleet statistic: a per-station formula cannot hit a fleet
+    # mean, and the fleet mean is the point of the model.
     gf_f29p5 = None
     if args.rx_bias_model == "f29p5":
         gf_f29p5 = f29p5_gf(pts, names, args.rx_bias_bloc_tecu,
@@ -256,11 +257,11 @@ def main():
         # mean.  Two incommensurate periods so C1C and C2W do not co-vary.
         c1 = 0.55 * math.sin(2.0 * math.pi * (i * 7 % 23) / 23.0)
         c2 = 0.48 * math.cos(2.0 * math.pi * (i * 11 % 29) / 29.0)
-        # Third-band receiver bias.  INERT on a two-band fixture — the sim applies a
-        # receiver bias only to a code it actually emits — so this is byte-safe for
+        # Third-band receiver bias. Inert on a two-band fixture: the sim applies a
+        # receiver bias only to a code it actually emits, so this is byte-safe for
         # every existing roster, and it means a triple-frequency fixture does not
-        # silently carry a ZERO receiver bias on the one band whose code bias Odijk
-        # says is the only estimable one under a slant ionosphere (Eq. 33).  A third
+        # silently carry a zero receiver bias on the one band whose code bias Odijk
+        # says is the only estimable one under a slant ionosphere (Eq. 33). A third
         # incommensurate period so C5Q co-varies with neither C1C nor C2W.
         c5 = 0.52 * math.sin(2.0 * math.pi * (i * 13 % 31) / 31.0)
         codes = [{"code": "C1C", "value_m": round(c1, 4)},
@@ -280,7 +281,7 @@ def main():
         })
 
     if args.consumer:
-        # Held out of the solve.  Placed at a mid-latitude point offset from every
+        # Held out of the solve. Placed at a mid-latitude point offset from every
         # lattice node so it is not co-located with a solve station (a consumer
         # sitting on top of a network station is not an independent test).
         roster.append({
@@ -290,11 +291,11 @@ def main():
                              {"code": "C2W", "value_m": 0.41}],
         })
         if gf_f29p5 is not None:
-            # The consumer is HELD OUT of the solve, so it contributes nothing to
+            # The consumer is held out of the solve, so it contributes nothing to
             # the fleet mean the pin fixes; it still needs a bias from the same
-            # population or the closed-loop station is the one clean receiver in a
-            # biased world.  Keyed off its own name, pinned to the fleet mean + 1 sd
-            # of the solve roster is wrong (it would be a fleet member); use the
+            # population, or the closed-loop station is the one clean receiver in a
+            # biased world. Pinning it to the fleet mean plus 1 sd of the solve
+            # roster would be wrong (it would make it a fleet member); use the
             # model's own draw at its coordinates instead.
             g_c = f29p5_gf([(28.5, -16.5)], ["SZZ000SIM"], args.rx_bias_bloc_tecu,
                             args.rx_bias_bloc_sd_tecu, 0.0, 0.0, 0.0)[0]

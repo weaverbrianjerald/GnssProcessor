@@ -1,31 +1,30 @@
 /**
  * @file test_eq34_reattach_hygiene.cpp
- * @brief eq34 REATTACH HYGIENE (docs/SPEC_eq34_reattach_hygiene.md) — the anchor-host
- *        eligibility gate, the INC-2 time-linked "pin bridge" lifecycle, and the
- *        INC-3 fresh-pin σ ramp.
+ * @brief eq34 reattach hygiene (docs/SPEC_eq34_reattach_hygiene.md): the anchor-host
+ *        eligibility gate (INC-1), the time-linked "pin bridge" lifecycle (INC-2), and
+ *        the fresh-pin σ ramp (INC-3).
  *
- * What is worth testing here is what can go wrong SILENTLY.  The field defect this
- * card fixes produced a completely clean epoch (post-fit σ̂0 2.95) and only broke one
- * epoch LATER, so none of the run-time screens could attribute it; the guard is
- * therefore a pure ELECTION decision, and an election decision that quietly does
- * nothing looks exactly like one that works.  Every case below pins a decision that
- * has no other observable:
+ * The tests target failures that produce no other signal.  The field defect behind
+ * this card produced a clean epoch (post-fit σ̂0 2.95) and broke one epoch later, so
+ * no run-time screen could attribute it.  The guard is therefore a pure election
+ * decision, and an election decision that does nothing looks the same as one that
+ * works.  Each case below pins a decision that has no other observable:
  *
- *   1. a mature host must OUTRANK a fresh one — regardless of the coverage / I4
- *      longevity order the election would otherwise follow;
- *   2. with only fresh candidates the key must be HELD OUT (and counted), not pinned;
- *   3. armed with INC-2 the same situation must open a BRIDGE at the last solved
- *      level instead, and the bridge must expire at its staleness bound;
- *   4. a slip on the bridged key must DROP the bridge (standing invariant #1 — a
- *      stiff time-linked quantity with no wired event response is the failure mode
- *      this project has paid for twice);
- *   5. a warm resume must seed ages MATURE, or a resumed leg blocks every reattach;
- *   6. OFF must be structurally inert — no age map, no bridge, no counter, and an
- *      election whose pin set is identical to the pre-card one.
+ *   1. a mature host outranks a fresh one, regardless of the coverage / I4 longevity
+ *      order the election would otherwise follow;
+ *   2. with only fresh candidates the key is held out (and counted), not pinned;
+ *   3. with INC-2 armed, the same situation opens a bridge at the last solved level
+ *      instead, and the bridge expires at its staleness bound;
+ *   4. a slip on the bridged key drops the bridge (standing invariant #1: a stiff
+ *      time-linked quantity needs a wired event response);
+ *   5. a warm resume seeds arc ages as mature, otherwise a resumed leg blocks every
+ *      reattach;
+ *   6. with the knobs off the feature is structurally inert: no age map, no bridge, no
+ *      counter, and an election whose pin set is identical to the one without the card.
  *
- * The eq34 chain election is exercised directly (it reads only station NAMES and the
- * candidate census, never a StateManager), while the hygiene seam gets real
- * StateManagers because it prunes phase-bias states and reads pending-reseed flags.
+ * The eq34 chain election is exercised directly (it reads only station names and the
+ * candidate census, never a StateManager); the hygiene seam gets real StateManagers
+ * because it prunes phase-bias states and reads pending-reseed flags.
  */
 
 #include <gtest/gtest.h>
@@ -58,10 +57,10 @@ namespace {
 constexpr std::size_t kPppCoreSize = 5;
 constexpr const char* kSig = "L1C";
 
-/// Empty C3c slip funnel — every test in THIS file is about reattach hygiene, not slips,
-/// so the election's slip-aware path (network.phase_datum_eq34_slip_aware_election) must
-/// see nothing.  A named constant rather than a temporary so it cannot be mistaken for a
-/// fixture that some test quietly populates.
+/// Empty C3c slip funnel.  Every test in this file is about reattach hygiene, not slips,
+/// so the election's slip-aware path (network.phase_datum_eq34_slip_aware_election) sees
+/// nothing.  A named constant rather than a temporary, so it cannot be mistaken for a
+/// fixture that some test populates.
 const std::set<std::pair<int, std::string>> kNoSlips;
 
 fs::path writeTempConfig(const std::string& tag, const std::string& body) {
@@ -93,7 +92,7 @@ std::string networkConfig(const std::string& net_extra) {
         "}\n";
 }
 
-/// Load a config through the real loader (so every INERT-guard and clamp runs) and
+/// Load a config through the production loader (so every inert guard and clamp runs) and
 /// hand back the owned GnssConfig.
 std::unique_ptr<GnssConfig> loadCfg(LogManager& log, const std::string& tag,
                                     const std::string& net_extra) {
@@ -128,8 +127,8 @@ struct StationSpec {
 };
 
 /// Build the pieces the election consumes: NetStation names, the presence mask and the
-/// PhaseDatumCandidates census.  Stations get NO StateManager — the chain election never
-/// touches one (see the file banner); the hygiene tests below add real ones.
+/// PhaseDatumCandidates census.  Stations get no StateManager, since the chain election
+/// never touches one (see the file banner); the hygiene tests below add real ones.
 struct Census {
     std::vector<NetStation> stations;
     std::vector<bool> present;
@@ -157,7 +156,7 @@ Census makeCensus(const std::vector<StationSpec>& spec) {
 }
 
 /// Attach a real StateManager holding one satellite phase-bias state and one ambiguity
-/// per tracked satellite — what the hygiene seam actually reads and prunes.
+/// per tracked satellite: the states the hygiene seam reads and prunes.
 void attachStateManagers(Census& c, const std::vector<StationSpec>& spec,
                          LogManager& log, const GnssConfig& cfg) {
     for (std::size_t i = 0; i < spec.size(); ++i) {
@@ -177,11 +176,11 @@ GnssTime epochAt(double tow) {
     return t;
 }
 
-/// Give a key a FRESH emitted-realization baseline at @p tow.  The eligibility block is
+/// Give a key a fresh emitted-realization baseline at @p tow.  The eligibility block is
 /// warm-conditioned (spec addendum): without a recent realization there is no warm
-/// memory for a cold pin to fight, so the guard deliberately stands down.  Every
-/// "should block" scenario therefore has to establish this first — which is also the
-/// honest field shape: the network was emitting the key seconds before it re-hosted.
+/// memory for a cold pin to contradict, so the guard stands down.  Every "should block"
+/// scenario therefore establishes this first, which also matches the field case: the
+/// network was emitting the key seconds before it re-hosted.
 void markRealizedAt(NetworkRunContext& ctx, const std::string& amb, double tow) {
     ctx.carry.emitted_anchor_s[amb] = TimeUtils::continuousGpsSeconds(epochAt(tow));
 }
@@ -193,10 +192,10 @@ std::string pinnedHost(const Census& c, const std::string& amb) {
     return {};
 }
 
-/// EVERY tree edge of the elected spanning tree, as (station index, ambiguity key).
-/// `pinnedHost` returns only the first station holding a given key, which is lossy: a
-/// satellite vertex of degree 2 is pinned at BOTH its tree neighbours, and the slip-aware
-/// election's whole question is which of them kept the edge.
+/// Every tree edge of the elected spanning tree, as (station index, ambiguity key).
+/// `pinnedHost` returns only the first station holding a given key, which loses
+/// information: a satellite vertex of degree 2 is pinned at both its tree neighbours, and
+/// the slip-aware election's question is which of them kept the edge.
 std::set<std::pair<int, std::string>> treeEdges(const Census& c) {
     std::set<std::pair<int, std::string>> out;
     for (std::size_t i = 0; i < c.stations.size(); ++i)
@@ -226,22 +225,22 @@ void ageArcs(NetworkRunContext& ctx, const GnssConfig& cfg, Census& c, int n,
 } // namespace
 
 // ---------------------------------------------------------------------------
-// 1. A MATURE host outranks a FRESH one, whatever the election's own rank order says
+// 1. A mature host outranks a fresh one, whatever the election's own rank order says
 // ---------------------------------------------------------------------------
 //
-// The defect's shape exactly: G29's incumbent host dies, and the walk would otherwise
-// take whichever host its coverage / attachment order reaches first — at DOY-129 that
-// was INEG's one-epoch-old arc.  With INC-1 armed the walk's FIRST pass admits only
-// converged arcs, so the mature host must win even though the fresh one is ranked
-// above it (higher coverage) and sorts first by station index.
+// The field defect's configuration: G29's incumbent host dies, and without the guard
+// the walk takes whichever host its coverage / attachment order reaches first (on
+// DOY-129, a one-epoch-old arc).  With INC-1 armed the walk's first pass admits only
+// converged arcs, so the mature host wins even though the fresh one is ranked above it
+// (higher coverage) and sorts first by station index.
 TEST(Eq34ReattachHygiene, MatureHostPreferredOverColdHostRegardlessOfRank) {
     LogManager log;
     auto cfg = loadCfg(log, "prefer_mature", armed(/*min_arc_ep=*/5));
     ASSERT_GT(cfg->getNetworkConfig().eq34_anchor_min_arc_ep, 0);
 
-    // FRESH (index 0, coverage 99 — ranked first by every legacy criterion) and MATURE
-    // (index 1, coverage 1).  Both track G29; a third satellite keeps both stations in
-    // the same connected component so the walk really has a choice.
+    // Fresh host (index 0, coverage 99, ranked first by every legacy criterion) and
+    // mature host (index 1, coverage 1).  Both track G29; a second satellite (G01) keeps
+    // both stations in the same connected component, so the walk has a choice.
     const std::vector<StationSpec> spec = {
         { "FRSH", { "G29", "G01" }, 99 },
         { "MATR", { "G29", "G01" },  1 },
@@ -252,10 +251,10 @@ TEST(Eq34ReattachHygiene, MatureHostPreferredOverColdHostRegardlessOfRank) {
     NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     ASSERT_TRUE(ctx.knobs.anchor_hygiene_on);
 
-    // Age BOTH arcs mature, then make FRSH's G29 arc restart (a slip refloats it), so
-    // MATR is the only converged host for G29.  The incumbent host is GONE — its arc
-    // died, which is exactly what forces the reattach (the incumbent itself is
-    // deliberately exempt from the age test; keeping it is not a reattach).
+    // Age both arcs to maturity, then make FRSH's G29 arc restart (a slip refloats it),
+    // so MATR is the only converged host for G29.  The incumbent host is "GONE", an
+    // absent station; its loss is what forces the reattach (a live incumbent is exempt
+    // from the age test, since keeping it is not a reattach).
     ageArcs(ctx, *cfg, c, 6);
     ctx.carry.anchor_incumbent["G29_" + std::string(kSig)] = "GONE";
     const AnchorHygiene hyg =
@@ -265,7 +264,7 @@ TEST(Eq34ReattachHygiene, MatureHostPreferredOverColdHostRegardlessOfRank) {
     EXPECT_GE(hyg.arcAge(1, "G29_L1C"), 5);
     EXPECT_FALSE(hyg.eligibleHost(0, "G29_L1C"));
     EXPECT_TRUE(hyg.eligibleHost(1, "G29_L1C"));
-    // A converged host exists, so the key is NOT held out.
+    // A converged host exists, so the key is not held out.
     EXPECT_EQ(c.cnd.union_keys.count("G29_L1C"), 1u);
     EXPECT_EQ(ctx.counters.hyg.reattach_blocked_cold, 0);
 
@@ -278,7 +277,7 @@ TEST(Eq34ReattachHygiene, MatureHostPreferredOverColdHostRegardlessOfRank) {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Only-fresh candidates ⇒ the key is HELD OUT, its states pruned, and counted
+// 2. Only fresh candidates: the key is held out, its states pruned, and the hold counted
 // ---------------------------------------------------------------------------
 TEST(Eq34ReattachHygiene, ColdOnlyCandidatesBlockTheReattachAndPruneTheKey) {
     LogManager log;
@@ -292,8 +291,8 @@ TEST(Eq34ReattachHygiene, ColdOnlyCandidatesBlockTheReattachAndPruneTheKey) {
     attachStateManagers(c, spec, log, *cfg);
 
     NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
-    // The incumbent is a station that is NOT present at all — the arc died, which is
-    // precisely what forces a reattach.  Both live arcs are one epoch old.
+    // The incumbent is a station that is not present at all (its arc ended), which
+    // forces a reattach.  Both live arcs are one epoch old.
     ctx.carry.anchor_incumbent["G29_L1C"] = "GONE";
     markRealizedAt(ctx, "G29_L1C", 970.0);   // emitted one epoch ago: warm memory exists
     const AnchorHygiene hyg = runHygiene(ctx, *cfg, c, 1000.0);
@@ -301,7 +300,7 @@ TEST(Eq34ReattachHygiene, ColdOnlyCandidatesBlockTheReattachAndPruneTheKey) {
     EXPECT_EQ(ctx.counters.hyg.reattach_blocked_cold, 1);
     EXPECT_EQ(c.cnd.union_keys.count("G29_L1C"), 0u) << "blocked key must leave the union";
     EXPECT_EQ(c.cnd.union_keys.count("G01_L1C"), 1u) << "a first sighting is never gated";
-    // The phase-bias STATES of the blocked key are pruned at every tracking station, so
+    // The phase-bias states of the blocked key are pruned at every tracking station, so
     // the per-station column sets stay consistent with the gated union (the coverage
     // gate's disposition, byte for byte).
     for (const auto& st : c.stations) {
@@ -320,15 +319,15 @@ TEST(Eq34ReattachHygiene, ColdOnlyCandidatesBlockTheReattachAndPruneTheKey) {
 }
 
 // ---------------------------------------------------------------------------
-// 2b. The hold-out must PERSIST until a host converges — a one-epoch block is a bug
+// 2b. The hold-out persists until a host converges; a one-epoch block is a defect
 // ---------------------------------------------------------------------------
 //
 // A held-out key is absent from this_epoch_anchor, so it also drops out of
 // anchor_incumbent at the end of the election.  Without a persistent record it would
-// read as a FIRST SIGHTING on the very next epoch — and first sightings are
-// deliberately never gated — so the guard would refuse the cold pin once and then
-// grant it one epoch later, on an arc one epoch older and still code-seeded.  The hold
-// must last until an arc actually reaches the threshold, and then release.
+// read as a first sighting on the next epoch, and first sightings are never gated, so
+// the guard would refuse the cold pin once and grant it one epoch later, on an arc one
+// epoch older and still code-seeded.  The hold lasts until an arc reaches the
+// threshold, and then releases.
 TEST(Eq34ReattachHygiene, HoldOutPersistsUntilAHostConvergesThenReleases) {
     LogManager log;
     constexpr int kMin = 4;
@@ -343,8 +342,8 @@ TEST(Eq34ReattachHygiene, HoldOutPersistsUntilAHostConvergesThenReleases) {
     ctx.carry.anchor_incumbent["G29_L1C"] = "GONE";
     markRealizedAt(ctx, "G29_L1C", 1000.0);
 
-    // Epoch 1 blocks.  Then, epoch after epoch, the key must STAY out even though the
-    // incumbent has long since been forgotten — until the arcs reach kMin epochs.
+    // Epoch 1 blocks.  The key then stays out, epoch after epoch, until the arcs reach
+    // kMin epochs.
     for (int ep = 1; ep < kMin; ++ep) {
         Census ce = makeCensus(spec);
         attachStateManagers(ce, spec, log, *cfg);
@@ -352,7 +351,8 @@ TEST(Eq34ReattachHygiene, HoldOutPersistsUntilAHostConvergesThenReleases) {
         EXPECT_EQ(ce.cnd.union_keys.count("G29_L1C"), 0u)
             << "released at epoch " << ep << " with every host still cold";
         EXPECT_EQ(hyg.arcAge(0, "G29_L1C"), ep);
-        // The incumbent really is gone — the hold is what is doing the work.
+        // The incumbent entry still names the absent station "GONE": the election,
+        // which replaces the incumbent map, does not run inside this loop.
         EXPECT_EQ(ctx.carry.anchor_incumbent.count("G29_L1C"), 1u);
     }
     EXPECT_EQ(ctx.counters.hyg.reattach_blocked_cold, 1) << "one HOLD, not one per epoch";
@@ -375,24 +375,23 @@ TEST(Eq34ReattachHygiene, HoldOutPersistsUntilAHostConvergesThenReleases) {
 }
 
 // ---------------------------------------------------------------------------
-// 2c. WARM CONDITIONING (spec addendum): a cold host is only refused while a fresh
+// 2c. Warm conditioning (spec addendum): a cold host is refused only while a fresh
 //     emitted realization contradicts it
 // ---------------------------------------------------------------------------
 //
-// The failure mode this closes is the opposite of the card's: an ABSOLUTE eligibility
-// rule turns every network restart into a self-inflicted min_arc_ep-epoch phase-bias
-// outage, because on a restart EVERY host is fresh and there is nothing for the guard
-// to protect.  A cold pin is dangerous strictly in proportion to the warm memory it has
-// to fight.  Both directions are pinned here, and the permissive one is counted rather
-// than silent (it is the one that lets a cold pin through).
+// This covers the opposite failure to the card's: an absolute eligibility rule would
+// turn every network restart into a min_arc_ep-epoch phase-bias outage, because on a
+// restart every host is fresh and there is nothing for the guard to protect.  The risk
+// of a cold pin scales with the warm memory it contradicts.  Both directions are pinned
+// here, and the permissive one (which lets a cold pin through) is counted.
 TEST(Eq34ReattachHygiene, ColdHostIsOnlyRefusedAgainstAFreshEmittedRealization) {
     LogManager log;
     const std::vector<StationSpec> spec = {
         { "AAAA", { "G29", "G01" }, 10 },
         { "BBBB", { "G29", "G01" },  9 },
     };
-    // (a) NO baseline at all — a cold start / restart.  Nothing to shock ⇒ the key must
-    //     stay in the union and converge the legacy way.
+    // (a) No baseline at all: a cold start or restart.  There is no emitted level to
+    //     contradict, so the key stays in the union and converges the legacy way.
     {
         auto cfg = loadCfg(log, "warm_none", armed(/*min_arc_ep=*/5));
         Census c = makeCensus(spec);
@@ -404,7 +403,7 @@ TEST(Eq34ReattachHygiene, ColdHostIsOnlyRefusedAgainstAFreshEmittedRealization) 
         EXPECT_GT(ctx.counters.hyg.reattach_cold_allowed_no_prior, 0);
         EXPECT_EQ(c.cnd.union_keys.count("G29_L1C"), 1u);
     }
-    // (b) STALE baseline — an outage longer than the horizon.  The carried state has
+    // (b) Stale baseline: an outage longer than the horizon.  The carried state has
     //     expired through its own staleness machinery, so the block lifts.
     {
         auto cfg = loadCfg(log, "warm_stale",
@@ -421,10 +420,10 @@ TEST(Eq34ReattachHygiene, ColdHostIsOnlyRefusedAgainstAFreshEmittedRealization) 
         EXPECT_GT(ctx.counters.hyg.reattach_cold_allowed_no_prior, 0);
         EXPECT_EQ(c.cnd.union_keys.count("G29_L1C"), 1u);
     }
-    // (c) FRESH baseline — the original DOY-129 case.  Note there is NO incumbent here:
-    //     a satellite returning after a gap has already dropped out of the (wholesale-
-    //     replaced) incumbent map, so the emitted-realization baseline is the ONLY thing
-    //     that can recognise it as a re-host rather than a first sighting.
+    // (c) Fresh baseline: the DOY-129 field case.  There is no incumbent here: a
+    //     satellite returning after a gap has already dropped out of the (wholesale-
+    //     replaced) incumbent map, so the emitted-realization baseline is the only
+    //     record that identifies it as a re-host rather than a first sighting.
     {
         auto cfg = loadCfg(log, "warm_fresh", armed(/*min_arc_ep=*/5));
         Census c = makeCensus(spec);
@@ -440,14 +439,14 @@ TEST(Eq34ReattachHygiene, ColdHostIsOnlyRefusedAgainstAFreshEmittedRealization) 
 }
 
 // ---------------------------------------------------------------------------
-// 3. INC-2 armed ⇒ the same situation BRIDGES at the last solved level, and the bridge
+// 3. With INC-2 armed the same situation bridges at the last solved level, and the bridge
 //    expires at phase_datum_bridge_max_ep
 // ---------------------------------------------------------------------------
 TEST(Eq34ReattachHygiene, BridgeHoldsTheSolvedLevelAndExpiresAtItsStalenessBound) {
     LogManager log;
-    // min_arc_ep deliberately far above the epochs this test runs, so no candidate can
-    // become eligible mid-test and "heal" the bridge — the LIFETIME rule is what is
-    // under test here, and a heal would mask an expiry that never fires.
+    // min_arc_ep is set far above the epochs this test runs, so no candidate can become
+    // eligible mid-test and end the bridge through the "healed" drop: the lifetime rule
+    // is under test here, and a healed drop would mask an expiry that never fires.
     auto cfg = loadCfg(log, "bridge", armed(/*min_arc_ep=*/50, /*bridge=*/true,
                                             /*bridge_max=*/3));
     ASSERT_TRUE(cfg->getNetworkConfig().phase_datum_time_linked);
@@ -470,25 +469,25 @@ TEST(Eq34ReattachHygiene, BridgeHoldsTheSolvedLevelAndExpiresAtItsStalenessBound
     ASSERT_EQ(ctx.counters.hyg.bridges_opened, 1);
     EXPECT_TRUE(hyg.isBridged("G29_L1C"));
     EXPECT_EQ(ctx.carry.pin_bridge.at("G29_L1C").value, -1.234);
-    // Bridging REPLACES the drop: the key stays in the shared set (its column is solved),
-    // it is simply not pinned.
+    // Bridging replaces the drop: the key stays in the shared set (its column is solved)
+    // and is not pinned.
     EXPECT_EQ(c.cnd.union_keys.count("G29_L1C"), 1u);
     EXPECT_EQ(ctx.counters.hyg.reattach_blocked_cold, 0);
 
     std::set<std::string> shared;
     networkElectChainDatum(ctx, *cfg, log, spdlog::default_logger(), c.stations,
                            c.present, c.cnd, hyg, kNoSlips, shared);
-    // No HOST is elected for a bridged key — its datum is the shared row, and it enters
-    // the walk as a spanning-forest root.  (Receivers reached THROUGH it still pin their
-    // own z^s_r on that satellite; that is the edge which determines δ_r, and it is
-    // subject to the same eligibility test.)
+    // No host is elected for a bridged key: its datum is the shared row, and it enters
+    // the walk as a spanning-forest root.  (Receivers reached through it still pin their
+    // own z^s_r on that satellite; that edge determines δ_r and is subject to the same
+    // eligibility test.)
     EXPECT_EQ(ctx.carry.this_epoch_anchor.count("G29_L1C"), 0u)
         << "a bridged key must not be re-hosted";
     EXPECT_EQ(shared.count(StateKeys::makeSatPhaseBiasKey("G29", kSig)), 1u);
 
     // Staleness: the bridge survives while folds < max_ep and is dropped once it has
-    // been folded max_ep times.  (The fold counter is bumped by the row injection; drive
-    // it directly here — this test owns the LIFETIME rule, not the fold plumbing.)
+    // been folded max_ep times.  (The row injection increments the fold counter; this
+    // test sets it directly because it covers the lifetime rule, not the fold plumbing.)
     for (int k = 0; k < 3; ++k) {
         ctx.carry.pin_bridge.at("G29_L1C").folds = k;
         Census c2 = makeCensus(spec);
@@ -502,7 +501,7 @@ TEST(Eq34ReattachHygiene, BridgeHoldsTheSolvedLevelAndExpiresAtItsStalenessBound
     hyg = runHygiene(ctx, *cfg, c3, 1200.0);
     EXPECT_FALSE(hyg.isBridged("G29_L1C"));
     EXPECT_EQ(ctx.counters.hyg.bridge_drop_stale, 1);
-    // Expiry must NOT silently re-open on the same (now time-expired) level, and with no
+    // Expiry does not re-open a bridge on the same (now time-expired) level, and with no
     // converged host the key falls back to the INC-1 hold-out.
     EXPECT_EQ(ctx.counters.hyg.bridges_opened, 1);
     EXPECT_EQ(ctx.counters.hyg.reattach_blocked_cold, 1);
@@ -510,15 +509,15 @@ TEST(Eq34ReattachHygiene, BridgeHoldsTheSolvedLevelAndExpiresAtItsStalenessBound
 }
 
 // ---------------------------------------------------------------------------
-// 4. Standing invariant #1: a slip on the bridged key DROPS the bridge
+// 4. Standing invariant #1: a slip on the bridged key drops the bridge
 // ---------------------------------------------------------------------------
 //
-// The bridge is a stiff, zero-q, time-linked quantity, and this project has twice paid
-// field time for one without a wired slip response (phase-leveling's zero-q carry; the
-// Card-4 invariant DD carry, 10.9 cyc/ep FAIL).  A cycle slip aliases n·λ into the very
-// ambiguity whose level the bridge is holding, so the held value is poison — reset, do
-// not repair.  Both slip feeds must work: the Card-4 funnel AND the phase-leveling
-// pending-reseed flag (they are gated by different, non-overlapping toggles).
+// The bridge is a stiff, zero-q, time-linked quantity; earlier quantities of this kind
+// without a wired slip response failed in the field (phase-leveling's zero-q carry, the
+// card 4 invariant DD carry).  A cycle slip aliases n·λ into the ambiguity whose level
+// the bridge holds, so the held value is invalid: reset, do not repair.  Both slip feeds
+// are tested: the card 4 funnel and the phase-leveling pending-reseed flag (they are
+// gated by different, non-overlapping toggles).
 TEST(Eq34ReattachHygiene, BridgeDropsOnASlipOfItsOwnKeyFromEitherFeed) {
     LogManager log;
     const std::vector<StationSpec> spec = {
@@ -539,7 +538,7 @@ TEST(Eq34ReattachHygiene, BridgeDropsOnASlipOfItsOwnKeyFromEitherFeed) {
         attachStateManagers(c2, spec, log, *cfg);
         std::set<std::pair<int, std::string>> funnel;
         if (feed == 0) {
-            funnel.insert({ 0, "G29_L1C" });               // Card-4 funnel
+            funnel.insert({ 0, "G29_L1C" });               // slip funnel (card 4)
         } else {
             c2.stations[0].sm->markAmbiguityPendingReseed("G29_L1C");  // leveling refloat
         }
@@ -547,21 +546,21 @@ TEST(Eq34ReattachHygiene, BridgeDropsOnASlipOfItsOwnKeyFromEitherFeed) {
 
         EXPECT_FALSE(hyg.isBridged("G29_L1C")) << "feed " << feed;
         EXPECT_EQ(ctx.counters.hyg.bridge_drop_slip, 1) << "feed " << feed;
-        // ...and it must not immediately re-open on the poisoned level.
+        // ...and it does not immediately re-open on the slipped level.
         EXPECT_EQ(ctx.counters.hyg.bridges_opened, 1) << "feed " << feed;
         EXPECT_EQ(ctx.carry.pin_bridge.count("G29_L1C"), 0u) << "feed " << feed;
     }
 }
 
 // ---------------------------------------------------------------------------
-// 5. Warm resume seeds ages MATURE
+// 5. Warm resume seeds arc ages as mature
 // ---------------------------------------------------------------------------
 //
 // The age map is deliberately not serialized (spec §7).  Without the seed every arc
-// would look one epoch old on the first resumed epoch and the gate would block EVERY
-// reattach for min_arc_ep epochs — turning a hygiene knob into an outage.  Seeding from
-// PRESENCE rather than from "carried keys" is load-bearing: the stacks this card targets
-// run with phase_leveling OFF, so local_carry is empty there.
+// would look one epoch old on the first resumed epoch, and the gate would block every
+// reattach for min_arc_ep epochs, a phase-bias outage.  The seed is taken from presence,
+// not from carried keys, because the stacks this card targets run with phase_leveling
+// off, so local_carry is empty there.
 TEST(Eq34ReattachHygiene, WarmResumeSeedsEveryPresentArcAsMature) {
     LogManager log;
     auto cfg = loadCfg(log, "resume", armed(/*min_arc_ep=*/7));
@@ -583,8 +582,8 @@ TEST(Eq34ReattachHygiene, WarmResumeSeedsEveryPresentArcAsMature) {
         << "a resumed leg must not block every reattach";
     EXPECT_FALSE(ctx.carry.anchor_age_resume_seed) << "the seed is one-shot";
 
-    // One-shot really means one-shot: an arc appearing for the first time on the NEXT
-    // epoch is fresh, not mature.
+    // The seed is one-shot: an arc appearing for the first time on the next epoch is
+    // fresh, not mature.
     const std::vector<StationSpec> spec2 = {
         { "AAAA", { "G29", "G07" }, 10 },
         { "BBBB", { "G29" },         9 },
@@ -597,7 +596,7 @@ TEST(Eq34ReattachHygiene, WarmResumeSeedsEveryPresentArcAsMature) {
 }
 
 // ---------------------------------------------------------------------------
-// 6. OFF is structurally inert — and the INC-3 ramp only ever LOOSENS a fresh pin
+// 6. Off is structurally inert, and the INC-3 ramp only ever loosens a fresh pin
 // ---------------------------------------------------------------------------
 TEST(Eq34ReattachHygiene, DisarmedIsStructurallyInert) {
     LogManager log;
@@ -638,8 +637,8 @@ TEST(Eq34ReattachHygiene, DisarmedIsStructurallyInert) {
 }
 
 // The INC-3 ramp is a pure function of the arc age; pin it directly (its only other
-// observable is a weight deep inside the parallel assembly).  It must decay MONOTONELY
-// to exactly 1 and never tighten a pin below the hard-pin weight.
+// observable is a weight deep inside the parallel assembly).  It decays monotonically
+// to exactly 1 and never tightens a pin beyond the hard-pin weight.
 TEST(Eq34ReattachHygiene, FreshPinRampDecaysMonotonelyToUnity) {
     std::map<std::pair<int, std::string>, int> age;
     AnchorHygiene hyg;
@@ -664,8 +663,8 @@ TEST(Eq34ReattachHygiene, FreshPinRampDecaysMonotonelyToUnity) {
     EXPECT_DOUBLE_EQ(hyg.pinSigmaScale(0, "G29_L1C"), 1.0);
 }
 
-// A ramp scale below 1 would INVERT the row weight (a datum pin tighter than the hard
-// pin, or negative information).  The loader must refuse it rather than fold nonsense.
+// A ramp scale below 1 would make a datum pin tighter than the hard pin, and one at or
+// below 0 would invert the row weight.  The loader resets it to 1 (off) with a warning.
 TEST(Eq34ReattachHygiene, LoaderRefusesAnInvertedRampAndDisarmsOutsideAnAnchoredDatum) {
     LogManager log;
     {
@@ -680,7 +679,7 @@ TEST(Eq34ReattachHygiene, LoaderRefusesAnInvertedRampAndDisarmsOutsideAnAnchored
         auto cfg = loadCfg(log, "neg_min", "    \"eq34_anchor_min_arc_ep\": -3,\n");
         EXPECT_EQ(cfg->getNetworkConfig().eq34_anchor_min_arc_ep, 0);
     }
-    {   // the ENSEMBLE datum elects no anchor at all ⇒ nothing to guard ⇒ disarm loudly
+    {   // the ensemble datum elects no anchor, so there is nothing to guard: disarm with a warning
         auto cfg = std::make_unique<GnssConfig>();
         const std::string body =
             std::string("{\n")
@@ -705,22 +704,22 @@ TEST(Eq34ReattachHygiene, LoaderRefusesAnInvertedRampAndDisarmsOutsideAnAnchored
 }
 
 // ---------------------------------------------------------------------------
-// Card 3/4 — SLIP-AWARE ELECTION (network.phase_datum_eq34_slip_aware_election)
+// Slip-aware election (network.phase_datum_eq34_slip_aware_election, cards 3/4)
 // ---------------------------------------------------------------------------
 //
-// A slipped arc that sits in the spanning TREE poisons every fundamental cycle that
-// closes through it, so the whole dependent chord set refloats at once; a slipped CHORD
-// costs exactly one DD (its cycle support is 1 — GATE 8 in
+// A slipped arc in the spanning tree invalidates every fundamental cycle that closes
+// through it, so the whole dependent chord set refloats at once; a slipped chord costs
+// exactly one DD (its cycle support is 1, GATE 8 in
 // tests/test_network_invariant_carry_driver.cpp).  The election is the only place that
-// decides which of the two a slipped arc becomes, and today it decides BEFORE knowing:
-// the sticky-tree seed re-seats every live incumbent unconditionally, and the incumbent
-// queue drains ahead of the new-edge walk, so a slipped incumbent keeps its seat by
-// default.  This test drives exactly that.
+// decides which of the two a slipped arc becomes, and without the knob it decides before
+// the slip is known: the sticky-tree seed re-seats every live incumbent unconditionally,
+// and the incumbent queue drains ahead of the new-edge walk, so a slipped incumbent
+// keeps its seat by default.  This test drives that case.
 //
-// A/B on one treatment, same census and the same warm-up: with the knob OFF the slipped
-// incumbent keeps its tree edge; with it ON the edge moves and the arc becomes a chord.
-// The graph is deliberately dense enough (3 stations x 3 satellites) that an alternative
-// route to the satellite exists — the fail-safe branch, where no alternative exists and
+// A/B on one treatment, with the same census and the same warm-up: with the knob off the
+// slipped incumbent keeps its tree edge; with it on the edge moves and the arc becomes a
+// chord.  The graph is dense enough (3 stations x 3 satellites) that an alternative
+// route to the satellite exists.  The fail-safe branch, where no alternative exists and
 // the completion re-admits the slipped arc, is asserted separately below.
 TEST(Eq34ReattachHygiene, SlipAwareElectionDeseatsASlippedIncumbentTreeEdge) {
     LogManager log;
@@ -730,7 +729,7 @@ TEST(Eq34ReattachHygiene, SlipAwareElectionDeseatsASlippedIncumbentTreeEdge) {
         { "CCCC", { "G01", "G02", "G03" }, 1 },
     };
 
-    // Warm each arm to the SAME incumbent tree, then re-elect with one arc slipped.
+    // Warm each arm to the same incumbent tree, then re-elect with one arc slipped.
     auto elect = [&](bool slip_aware, std::set<std::pair<int, std::string>>& tree1,
                      std::set<std::pair<int, std::string>>& tree2,
                      long long& deseeded, long long& readmitted,
@@ -759,8 +758,8 @@ TEST(Eq34ReattachHygiene, SlipAwareElectionDeseatsASlippedIncumbentTreeEdge) {
         readmitted = ctx.counters.eq34_slip_readmitted;
     };
 
-    // Discover an actual incumbent edge rather than assuming one — the walk order is an
-    // implementation detail and hard-coding it would make this test a tautology.
+    // Discover an actual incumbent edge rather than assuming one: the walk order is an
+    // implementation detail, and hard-coding it would make this test a tautology.
     std::set<std::pair<int, std::string>> probe1, probe2;
     long long d0 = 0, r0 = 0;
     elect(/*slip_aware=*/false, probe1, probe2, d0, r0, {});
@@ -773,21 +772,21 @@ TEST(Eq34ReattachHygiene, SlipAwareElectionDeseatsASlippedIncumbentTreeEdge) {
     elect(/*slip_aware=*/false, offT1, offT2, offDe, offRe, slip);
     elect(/*slip_aware=*/true,  onT1,  onT2,  onDe,  onRe,  slip);
 
-    // Both arms warmed to the SAME tree — so the epoch-2 difference is the treatment.
+    // Both arms warmed to the same tree, so the epoch-2 difference is the treatment.
     EXPECT_EQ(offT1, onT1) << "the arms must warm identically; otherwise the A/B is not one "
                               "treatment";
     ASSERT_EQ(offT1.count(victim), 1u) << "the chosen victim must really be a tree edge";
 
-    // OFF: the slipped incumbent keeps its seat, and nothing is counted (byte-identical
-    // path — the counters are the invariant-#4 proof the disarmed path never ran).
+    // Off: the slipped incumbent keeps its seat, and nothing is counted (byte-identical
+    // path; the zero counters show, per invariant #4, that the disarmed path never ran).
     EXPECT_EQ(offT2.count(victim), 1u)
         << "control: without the knob a slipped incumbent keeps its tree edge, and every "
            "chord closing through it refloats";
     EXPECT_EQ(offDe, 0);
     EXPECT_EQ(offRe, 0);
 
-    // ON: it is de-seeded, and with two other stations tracking the same satellite the
-    // completion had somewhere else to go — so the arc is now a CHORD.
+    // On: it is de-seeded, and with two other stations tracking the same satellite the
+    // completion has another route, so the arc is now a chord.
     EXPECT_GE(onDe, 1) << "the slipped incumbent must lose its sticky seed";
     EXPECT_EQ(onT2.count(victim), 0u)
         << "with an alternative route available the slipped arc must end up a chord";
@@ -797,13 +796,13 @@ TEST(Eq34ReattachHygiene, SlipAwareElectionDeseatsASlippedIncumbentTreeEdge) {
         << "de-seating must MOVE an edge, not delete one — a smaller tree is a rank loss";
 }
 
-// The fail-safe half: when the slipped arc is a component's ONLY route to a satellite,
-// the completion re-admits it and the mass refloat happens anyway.  That is correct — the
-// topology forced it — but it must be COUNTED, or a nonzero de-seed count reads as "no
-// slipped arc is in the tree" when one still is (standing invariant #4).
+// The fail-safe half: when the slipped arc is a component's only route to a satellite,
+// the completion re-admits it and the mass refloat happens anyway.  That is correct (the
+// topology forces it), but it is counted; otherwise a nonzero de-seed count would read
+// as "no slipped arc is in the tree" when one still is (standing invariant #4).
 TEST(Eq34ReattachHygiene, SlipAwareElectionReadmitsAnUnavoidableSlippedTreeEdge) {
     LogManager log;
-    // G09 is tracked by ONE station, so its only tree edge is (AAAA, G09) whatever the
+    // G09 is tracked by one station, so its only tree edge is (AAAA, G09) whatever the
     // election prefers.  G01 keeps the component connected.
     const std::vector<StationSpec> spec = {
         { "AAAA", { "G01", "G09" }, 3 },

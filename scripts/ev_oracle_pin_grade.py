@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""ORACLE PIN grader — gates G1..G4 of docs/SPEC_oracle_pin.md.
+"""Oracle pin grader: gates G1..G4 of docs/SPEC_oracle_pin.md.
 
-Every cell comes from a TRUTH grader, never a raw wire step (standing invariant
+Every cell comes from a truth grader, never a raw wire step (standing invariant
 #5 / the Psychas single-realization mandate): a raw step confounds benign frame
-drift with a real defect, and the whole point of this card is to read WHERE the
-error went once the ambiguities are held.
+drift with a real defect, and this card reads where the error went once the
+ambiguities are held.
 
-    g1  OFF byte-identity   opin_null_base vs opin_null
+    g1  off byte-identity   opin_null_base vs opin_null
     g2  actuation           pinned chords must read integer at pin+1
     g3  the six-column table, both windows      -> markdown + runs/opin_table.json
-    g4  slipped seed        the pin FOLLOWS N(t) through a truth slip
+    g4  slipped seed        the pin follows N(t) through a truth slip
 
 Windows (pre-registered, §17): epochs +28..+32 and +53..+57 of the 60-epoch leg,
-i.e. pin+23..+27 and pin+48..+52 with the pin at +5.  Both are expressed as TOW
+i.e. pin+23..+27 and pin+48..+52 with the pin at +5. Both are expressed as TOW
 ranges off each leg's own `first_tow` (leg_meta.json), so the slipped-seed legs
 use the same relative windows at their own absolute epoch.
 
@@ -111,7 +111,7 @@ G1_FILES = ["products.txt",
             "logs/network_rx_states.csv", "logs/network_events.csv"]
 
 # A run-end counter line is one that carries a count and no wall-clock figure.
-# Timing, paths and the per-epoch section timers are the ONLY legal differences
+# Timing, paths and the per-epoch section timers are the only legal differences
 # between two byte-identical solves; everything else must match character for
 # character (memory `feedback_stale_trace_dir_fake_ab`: an A/B that compares a
 # stale trace directory reads as byte-identity and is worth nothing, so the file
@@ -217,16 +217,16 @@ def dd_rows(name, lo, hi):
 
 
 def pinned_set(name, at_tow=None):
-    """(sta, sat, sig) PINNED at `at_tow` (default: at the end of the leg).
+    """(sta, sat, sig) pinned at `at_tow` (default: at the end of the leg).
 
-    Reconstructed from the producer's own per-arc ENTRY (`pinned`) and EXIT
-    (`released`) rows in `network_events.csv` — what the producer DID, not what
-    the scope asked for.  The difference is exactly the no-anchor /
+    Reconstructed from the producer's own per-arc entry (`pinned`) and exit
+    (`released`) rows in `network_events.csv`: what the producer did, not what
+    the scope asked for. The difference is exactly the no-anchor /
     no-station-term population the run-end clause counts.
 
-    ⚠ The ONSET rows alone are NOT the membership: arcs join as satellites rise
+    The onset rows alone are not the membership: arcs join as satellites rise
     (7 828 at onset vs 9 381 at the run end on the first quiet arm), so a grade
-    built on them reads a working pin as a failure.  Both edges are needed, which
+    built on them reads a working pin as a failure. Both edges are needed, which
     is why both are emitted.
     """
     p = os.path.join(legdir(name), "logs", "network_events.csv")
@@ -344,11 +344,11 @@ def cmd_g2(args):
 
 # ------------------------------------------------------------ the G3 channels
 def _iono_err_by_epoch(name, lo, hi):
-    """{tow_int: {(station, sat): estimate − truth}} over the window, plus the
-    station set.  The join `simnet_iono_interaction.py` uses:
-    `network_ionosphere.csv`'s `iono_total_m` (= x_lin + x_r, the ABSOLUTE slant
-    estimate — never `iono_m`, which is the correction alone) against
-    (tow, station, sat), and `truth_atmo.csv`'s `I_L1_m` (ALREADY slant)."""
+    """{tow_int: {(station, sat): estimate - truth}} over the window, plus the
+    station set. The join `simnet_iono_interaction.py` uses:
+    `network_ionosphere.csv`'s `iono_total_m` (= x_lin + x_r, the absolute slant
+    estimate, never `iono_m`, which is the correction alone) against
+    (tow, station, sat), and `truth_atmo.csv`'s `I_L1_m` (already slant)."""
     p = os.path.join(legdir(name), "logs", "network_ionosphere.csv")
     if not os.path.isfile(p):
         return None, set()
@@ -385,13 +385,13 @@ def _iono_err_by_epoch(name, lo, hi):
 
 
 def _two_way(e, tol=1.0e-12, max_it=500):
-    """Unbalanced two-way de-mean WITHOUT interaction: e_rs = mu + a_r + b_s + eps.
+    """Unbalanced two-way de-mean without interaction: e_rs = mu + a_r + b_s + eps.
 
-    Solved by ALTERNATING MEANS (Gauss–Seidel on the normal equations of the
+    Solved by alternating means (Gauss-Seidel on the normal equations of the
     two-factor additive model) with a re-centre to sum-to-zero after each sweep,
-    iterated to max|Delta a|, max|Delta b| < `tol` metres or `max_it` sweeps.  For
+    iterated to max|Delta a|, max|Delta b| < `tol` metres or `max_it` sweeps. For
     an unbalanced design the sweep is a contraction on the connected component, so
-    it converges — unlike the median recursion of the PIN's own fit (§1.2), which
+    it converges, unlike the median recursion of the pin's own fit (§1.2), which
     is a selection and cycles.
 
     @return (eps dict, a dict, b dict, mu, iterations)
@@ -433,21 +433,21 @@ def _two_way(e, tol=1.0e-12, max_it=500):
 
 
 def iono_row1b(name, lo, hi):
-    """ROW 1b — the DATUM-INVARIANT per-LOS ionosphere error.
+    """Row 1b: the datum-invariant per-LOS ionosphere error.
 
-    ⚠ The RAW per-LOS error (row 1) cannot test the root cause.  In the producer's
-    realized basis the free per-LOS slant iono absorbs a STATION-common term (the
-    receiver GF/DCB lump — the Table-8 identity) and a SATELLITE-common term (the
-    satellite code-bias / S-basis share).  NO ambiguity information can touch
+    The raw per-LOS error (row 1) cannot test the root cause. In the producer's
+    realized basis the free per-LOS slant iono absorbs a station-common term (the
+    receiver GF/DCB lump, the Table-8 identity) and a satellite-common term (the
+    satellite code-bias / S-basis share). No ambiguity information can touch
     either, so the raw row's insensitivity to the pin is forced by the basis, not
-    measured.  Standing invariant #5: grade datum-invariant quantities only.
+    measured. Standing invariant #5: grade datum-invariant quantities only.
     Removing the additive station and satellite effects leaves exactly the part a
-    DOUBLE DIFFERENCE sees — DD(e) = eps(r1,s1) − eps(r1,s2) − eps(r2,s1) +
-    eps(r2,s2), with a_r and b_s cancelling identically — so row 1b is the
+    double difference sees: DD(e) = eps(r1,s1) - eps(r1,s2) - eps(r2,s1) +
+    eps(r2,s2), with a_r and b_s cancelling identically, so row 1b is the
     quantity the pin can, in principle, determine.
 
-    Fitted PER EPOCH (a_r and b_s are epoch-local: the absorbed lumps drift), then
-    pooled over the window.  The a/b spreads are reported so the reader can see
+    Fitted per epoch (a_r and b_s are epoch-local: the absorbed lumps drift), then
+    pooled over the window. The a/b spreads are reported so the reader can see
     which factor carries the metres.
     """
     by_ep, _stas = _iono_err_by_epoch(name, lo, hi)
@@ -475,8 +475,8 @@ def iono_row1b(name, lo, hi):
 
 
 def iono_row(name, lo, hi):
-    """Slant iono per LOS vs truth_atmo.csv I_L1_m (ALREADY slant) — the RAW,
-    BASIS-DEPENDENT error.  See @ref iono_row1b for why this row cannot test the
+    """Slant iono per LOS vs truth_atmo.csv I_L1_m (already slant): the raw,
+    basis-dependent error. See ``iono_row1b`` for why this row cannot test the
     root cause and must not be read as one."""
     p = os.path.join(legdir(name), "logs", "network_ionosphere.csv")
     if not os.path.isfile(p):
@@ -572,11 +572,11 @@ def consumer_row(name, lo, hi):
 def sg_rows(name, lo, hi):
     """The simnet_grade channels (sat clock, code bias, rx states) in-window.
 
-    ⚠ `network_fixture.json` stores `truth_dir` RELATIVE to the MAIN checkout
-    (`runs/<fixture>/<STA>`), so `SG.load_truth` silently returns EMPTY truth when
-    the cwd is a worktree — and `grade_rx_states` then reports `n_stations_truth
+    `network_fixture.json` stores `truth_dir` relative to the main checkout
+    (`runs/<fixture>/<STA>`), so `SG.load_truth` silently returns empty truth when
+    the cwd is a worktree, and `grade_rx_states` then reports `n_stations_truth
     = 0` with every contrast None, which reads exactly like a channel the run did
-    not emit.  chdir to the checkout the fixture lives under for the duration.
+    not emit. chdir to the checkout the fixture lives under for the duration.
     """
     d = legdir(name)
     fx = fixture_of(name)
@@ -592,7 +592,7 @@ def sg_rows(name, lo, hi):
         osb_truth, _ = SG.osb_truth_by_key(truth)
         if_lump = SG.if_lump_by_sat(osb_truth, (s_line or {}).get("cbpin", {}))
         s2z = bool(s_line) and s_line.get("isb_datum") == "1"
-        # settle_frac 0: the WINDOW is the settling choice.
+        # settle_frac 0: the window is the settling choice.
         clk = SG.grade_clock(epochs, s_line, sc_truth, 0.0, if_lump, s2z=s2z)
         sig_rows = SG.load_csv(os.path.join(d, "logs", "network_sat_bias_states.csv"))
         cb = SG.grade_code_bias(epochs, s_line, osb_truth, sig_rows, 0.0)
@@ -604,7 +604,7 @@ def sg_rows(name, lo, hi):
 
 
 def amb_row(name, lo, hi):
-    """REF-FREE lane / band grade (SPEC_amb_iono §6.12: the DD trace has ONE
+    """Reference-free lane / band grade (SPEC_amb_iono §6.12: the DD trace has one
     reference satellite and it is in every chord, so a raw DD grade reports that
     satellite's own error)."""
     ns = argparse.Namespace(
@@ -744,7 +744,7 @@ def cmd_g4(args):
     print("== G4  slipped seed — the pin must FOLLOW N(t) through a truth slip ==")
     print(f"   pin tow {t_pin:.0f}, leg ends {t_end:.0f}, {len(pins)} arc(s) pinned at onset\n")
 
-    # truth slips landing on a PINNED arc after the pin
+    # truth slips landing on a pinned arc after the pin
     hits = []
     for sta, sat, sig in sorted(pins):
         p = os.path.join(fx, sta, "truth_slips.csv")
@@ -833,7 +833,7 @@ def main():
     sub.add_parser("g1").set_defaults(func=cmd_g1)
     p2 = sub.add_parser("g2")
     p2.add_argument("--leg", action="append")
-    # The pre-registered read is pin+1 (epoch +6).  --at-ep re-reads the SAME gate
+    # The pre-registered read is pin+1 (epoch +6). --at-ep re-reads the same gate
     # at a settled epoch, which is how the `all` arm's onset transient is separated
     # from a genuine actuation failure: the gate is the same, the epoch is named.
     p2.add_argument("--at-ep", type=int, default=None)

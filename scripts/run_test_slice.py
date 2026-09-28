@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""run_test_slice.py -- thin slice of the "standard test run" harness.
+"""run_test_slice.py: thin slice of the "standard test run" harness.
 
 Runs ``gnss_processor.exe`` over a small matrix of (station x config-cell) on the
 bundled internal data, then grades each run's ``state_trace.csv`` position
-against an **independent** truth coordinate (IGS SINEX/SSC primary, NGS SIF
-fallback -- see :mod:`gnssviz.eval`).  Prints an ENU bias / RMS / convergence
+against an independent truth coordinate (IGS SINEX/SSC primary, NGS SIF
+fallback; see :mod:`gnssviz.eval`). Prints an ENU bias / RMS / convergence
 scorecard and the A-vs-B deltas, and writes ``slice_metrics.json``.
 
 Design notes
 ------------
-* Truth comes from :func:`gnssviz.eval.make_default_truth`, NOT from any field
-  in the run config.  The engine seeds its a-priori from the RINEX marker /
+* Truth comes from :func:`gnssviz.eval.make_default_truth`, not from any field
+  in the run config. The engine seeds its a-priori from the RINEX marker /
   ``receiver.reference_position_ecef``; reusing that as truth would be circular
   (a static run with zero position process noise barely moves off its seed), so
   the grader is deliberately decoupled.
 * Each cell runs in its own dir so the exe's ``logs/`` trees don't collide.
-* This is the phase-1 slice: one station (JPLM), one A/B toggle.  The STATIONS /
+* This is the phase-1 slice: one station (JPLM), one A/B toggle. The STATIONS /
   CELLS tables below are the seam the phase-3 full matrix grows from.
 
 Usage
@@ -64,7 +64,7 @@ STATIONS = [
         "active_systems": ["GPS", "Galileo"],
     },
     # CIT1 is RINEX-2 (GPS-centric) and bundled too; kept for the wider matrix.
-    # NOTE: its BaselineFixtures.hpp reference ECEF is WRONG (~1.7 km / h=-693 m);
+    # Note: its BaselineFixtures.hpp reference ECEF is wrong (~1.7 km / h=-693 m);
     # the truth here comes from SIF, not that fixture, so this is unaffected.
     # {
     #     "name": "CIT1", "truth_key": "CIT100USA",
@@ -77,7 +77,7 @@ STATIONS = [
 CELLS = [
     ("baseline", {}),
     # Regression injection: disabling solid-earth tide should move the position
-    # (esp. vertical) vs truth -- the suite must resolve that as a position diff.
+    # (especially vertical) vs truth, and the suite must resolve that as a position diff.
     ("no_solid_tide", {"model_corrections.enable_solid_earth_tide": False}),
 ]
 

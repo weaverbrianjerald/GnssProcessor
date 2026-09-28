@@ -1,32 +1,31 @@
 /**
  * @file test_pb_emit_hold.cpp
- * @brief Card PBH — `network.emit_pb_hold`: the emitted phase bias of a
- *        (satellite, signal) is HELD at the first value of its generation, and a
- *        new generation is the declaration a consumer re-floats on.
+ * @brief `network.emit_pb_hold`: the emitted phase bias of a (satellite, signal) is
+ *        held at the first value of its generation, and a new generation is the
+ *        declaration a consumer re-floats on (card PBH).
  *
- * PBH read 3 graded the wire against truth on both beds: the phase bias ALONE
- * carries 0.0227 m (sim) / 0.0467 m (field) of within-arc RMS against the clock's
- * 0.0030 / 0.0274 m, the first differences of the two errors correlate at +0.006,
- * and on the simulator the true bias is constant in time — so the movement is
- * error, not a frame transfer, and the contract that follows is identity-passing
- * rather than delta-passing.
+ * Graded against truth on both beds, the within-arc phase-bias error (0.0227 m sim,
+ * 0.0467 m field RMS) exceeds the clock's (0.0030 / 0.0274 m), the first differences
+ * of the two errors are uncorrelated (+0.006), and the simulator's true bias is
+ * constant in time.  The movement is therefore error rather than a frame transfer,
+ * so the wire passes an identity (a held value plus a generation) rather than deltas.
  *
- * What is locked here:
- *   - the knob OFF leaves every emitted value and every entry untouched, with
- *     `hold_generation` 0 (the byte-identity claim in miniature);
- *   - the held value is CONSTANT while the estimator's own value moves, and the
- *     deviation the hold hides is measured on every held emission;
- *   - a FIRST sighting starts generation 1 and emits the estimate itself;
- *   - a gap BEYOND `emit_pb_hold_max_gap_s` starts a new generation and a gap at
- *     or below it does NOT;
- *   - the hold runs AHEAD of the emitter's value-jump test, so the test screens
- *     the held value: a key held across a large estimator step is not declared;
+ * Covered here:
+ *   - with the knob off, every emitted value and every entry is untouched and
+ *     `hold_generation` is 0 (byte identity in miniature);
+ *   - the held value stays constant while the estimator's value moves, and the
+ *     deviation the hold hides is recorded on every held emission;
+ *   - a first sighting starts generation 1 and emits the estimate itself;
+ *   - a gap beyond `emit_pb_hold_max_gap_s` starts a new generation; a gap at or
+ *     below it does not;
+ *   - the hold runs before the emitter's value-jump test, so the test screens the
+ *     held value: a key held across a large estimator step is not declared;
  *   - the stamp reaches `SsrPhaseBiasEntry::hold_generation` in the store;
- *   - the consumer ledger IGNORES a discontinuity-counter bump under a hold and
- *     RE-FLOATS on a generation change, with a first sighting doing neither;
- *   - the wire round trip of the `gen=` P-record token and the `pbhold=1` S-line
- *     token, with an OFF contract byte-identical and `checkContract` naming a
- *     contract/payload disagreement.
+ *   - the consumer ledger ignores a discontinuity-counter bump under a hold and
+ *     re-floats on a generation change; a first sighting does neither;
+ *   - the `gen=` P-record token and the `pbhold=1` S-line token round-trip, an off
+ *     contract writes no token, and `checkContract` names a contract/payload
+ *     disagreement.
  */
 
 #include <gtest/gtest.h>
@@ -64,8 +63,9 @@ std::shared_ptr<spdlog::logger> pbhLogger() {
 }
 
 /// Two GPS satellites, one clock + one code bias + one phase bias each.  The
-/// phase bias of G32 is the quantity under test; G12 is the unheld control that
-/// the de-commoning median needs a population for.
+/// phase bias of G32 is the quantity under test; G12 is a constant control (held
+/// as well when the knob is on) that gives the de-commoning clock-step median a
+/// second satellite.
 NetworkSolutionEpoch pbhEpoch(double tow, double g32_pb, double g32_clk = 1.0) {
     NetworkSolutionEpoch sol;
     sol.epoch_time = GnssTime{ 2313, tow };
@@ -99,9 +99,8 @@ std::uint32_t genOf(const NetworkSolutionEpoch& sol, const std::string& sat) {
 
 /// A run context + traces + emitter, wired the way networkEmitStore wires them.
 ///
-/// `ctx.knobs` is const by design (one snapshot, one source of truth), so the
-/// harness goes through the LOADER — which makes every case below a round trip of
-/// the JSON keys as well as of the mechanism.
+/// `ctx.knobs` is a const snapshot, so the harness sets the knobs through the JSON
+/// loader; every case below therefore also round-trips the JSON keys.
 struct PbhHarness {
     LogManager                             log_mgr;
     GnssConfig                             cfg;
@@ -143,7 +142,7 @@ struct PbhHarness {
     ~PbhHarness() { std::error_code ec; fs::remove(cfg_path, ec); }
 
     /// Apply the hold to one epoch, then hand it to the emitter exactly as the
-    /// producer does — so the emitter's jump test sees the HELD value.
+    /// producer does, so the emitter's jump test sees the held value.
     void step(NetworkSolutionEpoch& sol, SsrCorrectionStore& store) {
         se.time = sol.epoch_time;
         networkPbHold(*ctx, cfg, pbhLogger(), *traces, *emitter, se, sol);
@@ -230,7 +229,7 @@ TEST(PbEmitHoldTest, AGapBeyondMaxGapStartsANewGenerationAndOneBelowDoesNot) {
     h.step(seed, store);
     ASSERT_EQ(genOf(seed, "G32"), 1u);
 
-    // Exactly at the bar (300 s) is NOT beyond it: the generation must hold.
+    // A gap equal to the bar (300 s) is not beyond it, so the generation holds.
     auto at_bar = pbhEpoch(259200.0 + 300.0, 0.77);
     h.step(at_bar, store);
     EXPECT_EQ(genOf(at_bar, "G32"), 1u) << "a gap AT max_gap_s is a continuation";
@@ -252,9 +251,9 @@ TEST(PbEmitHoldTest, AGapBeyondMaxGapStartsANewGenerationAndOneBelowDoesNot) {
 }
 
 TEST(PbEmitHoldTest, TheHoldRunsAheadOfTheEmitterValueJumpTest) {
-    // A 0.5 m estimator step under a 0.05 m bar would be declared outright.  Held,
-    // the emitter never sees it — which is the ordering claim: the hold is the last
-    // writer of the emitted value and the jump test screens what the consumer gets.
+    // Unheld, a 0.5 m estimator step under the 0.05 m bar is declared.  Held, the
+    // emitter never sees it: the hold is the last writer of the emitted value, and
+    // the jump test screens what the consumer receives.
     SsrCorrectionStore store;
     {
         PbhHarness off(/*hold_on=*/false, 300.0, "jt");
@@ -303,7 +302,8 @@ TEST(PbEmitHoldTest, ConsumerRefloatsOnAGenerationChangeAndNotOnAFirstSighting) 
     EXPECT_EQ(d.previous_generation, 3u);
     EXPECT_EQ(led.react("G32|L1W", 4u, false).action, PbHoldLedger::Action::Held)
         << "the new generation is adopted, so it re-floats exactly once";
-    // An UNHELD entry is a pure no-op on every counter — the byte-identity claim.
+    // An unheld entry (generation 0) changes no counter, which keeps the off path
+    // byte-identical.
     const auto n = led.react("G12|L1W", 0u, /*disc_changed=*/true);
     EXPECT_EQ(n.action, PbHoldLedger::Action::NotHeld);
     const auto& c = led.counters();
@@ -373,7 +373,7 @@ TEST(PbEmitHoldTest, SLinePbHoldTokenRoundTripsAndCheckContractNamesADisagreemen
     EXPECT_TRUE(ok);
     EXPECT_TRUE(recs.empty());
     EXPECT_TRUE(file_c.emit_pb_hold);
-    // The contract/payload disagreement is NAMED rather than silent.
+    // checkContract reports the contract/payload disagreement by field name.
     SbasisContract expected = file_c;
     expected.emit_pb_hold = false;
     std::vector<std::string> notes;
@@ -383,7 +383,8 @@ TEST(PbEmitHoldTest, SLinePbHoldTokenRoundTripsAndCheckContractNamesADisagreemen
     EXPECT_TRUE(named) << "checkContract must name a pbhold= mismatch";
     fs::remove(p);
 
-    // An OFF contract writes NO token: the S line is byte-identical to a pre-PBH one.
+    // An off contract writes no pbhold= token, so its S line matches one written
+    // before the knob existed.
     const fs::path q = fs::temp_directory_path() / "pbh_contract_off.txt";
     SbasisContract off = c;
     off.emit_pb_hold = false;

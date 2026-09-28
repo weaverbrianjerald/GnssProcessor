@@ -1,25 +1,27 @@
-"""Network discontinuity + clock-drift honesty viewer.
+"""Network discontinuity-counter and clock-drift (C1) consistency viewer.
 
 Two independent half-sources, either of which alone produces a useful figure
-(the viewer only *skips* when BOTH are absent):
+(the viewer skips only when both are absent):
 
-**Half B -- discontinuity-counter timelines** (from ``network_solution.csv``).
-Cumulative step plots of the per-satellite ``disc_counter`` -- the running count
-of stream discontinuities the CONSUMER turns into ambiguity resets -- drawn one
+**Half B: discontinuity-counter timelines** (from ``network_solution.csv``).
+Cumulative step plots of the per-satellite ``disc_counter`` (the running count
+of stream discontinuities the consumer turns into ambiguity resets), one
 :class:`Axes` per product kind (``CLK`` / ``PB`` / ``CB``).  Bump epochs are
-classified with a CSV-only heuristic and glyphed: a "datum" bump (a clock-pivot
-handover / datum re-reference) is one where >=80% of a constellation's satellites
-step at the same epoch; anything sparser is "per-sat" (an isolated satellite
-discontinuity).  ``CLK`` ``disc_counter`` is hard-zero unless the producer ran
-with ``network.emit_clock_disc`` (default off) -- an all-zero clock axis renders
-gracefully (a flat trace + an informational note), it is not an error.
+classified with a CSV-only heuristic and marked: a "datum" bump (a clock-pivot
+handover or datum re-reference) is one where >=80% of a constellation's
+satellites present that epoch step together; anything sparser is "per-sat" (an
+isolated satellite discontinuity).  The ``CLK`` ``disc_counter`` is identically
+zero unless the producer ran with ``network.emit_clock_disc`` (default off); an
+all-zero clock axis renders as a flat trace plus an informational note, not as
+an error.
 
-**Half A -- C1 clock-drift honesty** (from the ``network_products*.txt`` product
-file).  For each satellite carrying >=2 clock (``C``) records, finite-differences
-the emitted clock offset ``c0`` over ADJACENT epochs *by per-satellite time*
-(``fd = Δc0 / Δt``): a withheld / missing epoch opens a real time gap, so the
-difference is never taken across a row-index neighbour that is actually a
-different epoch.  Per constellation, a tile overlays the producer-emitted drift
+**Half A: C1 clock-drift consistency** (from the ``network_products*.txt``
+product file).  For each satellite carrying >=2 clock (``C``) records, the
+emitted clock offset ``c0`` is finite-differenced over epochs adjacent in that
+satellite's own time (``fd = Δc0 / Δt``): a withheld or missing epoch opens a
+real time gap, so the difference is never taken across a row-index neighbour
+that is a different epoch, and pairs further apart than the reset gap are
+dropped.  Per constellation, a tile overlays the producer-emitted drift
 (``c1``, the ``C`` record's 4th field) as a line against the finite-difference
 ``fd`` as dots, plus a residual (``c1 - fd``) axis carrying a ``+/-2e-4 m/s``
 guide band.
@@ -29,27 +31,30 @@ Physics note
 ``c1`` (the two-state clock model's ``x1``) is the drift carried *into* the
 epoch, whereas ``fd`` = ``Δc0/Δt`` is the *realised* rate *across* the interval
 that ends at the epoch.  ``c1`` and ``fd`` are therefore offset by one epoch in
-their time basis, so a perfect model does **not** give an identically-zero
-``c1 - fd`` residual -- the criterion is that the residual sits inside the
+their time basis, so a perfect model does not give an identically-zero
+``c1 - fd`` residual; the criterion is that the residual sits inside the
 ``+/-2e-4 m/s`` guide band, not that it is zero.
 
-Honesty checks encoded (per the R6 pass criteria):
-  * ``C1==0`` is encoded by OMISSION -- a **3-field** ``C`` record (no 4th
-    ``c1`` field).  On the first epoch after a per-satellite gap that exceeds
-    ``network.clock_model_max_gap_s`` (fallback 120 s) the drift state is reset,
-    so an *honest* producer writes a 3-field ``C`` record there.  A 4-field
-    (non-zero ``c1``) ``C`` record on the first post-gap epoch is a **stale-C1**
-    honesty failure and is flagged.
-  * A finite difference is NEVER taken across an epoch flagged
+Consistency checks encoded (per the R6 pass criteria):
+  * ``C1==0`` is encoded by omission: a **3-field** ``C`` record (no 4th ``c1``
+    field).  On the first epoch after a per-satellite gap longer than
+    ``network.clock_model_max_gap_s`` the drift state is reset, so a consistent
+    producer writes a 3-field ``C`` record there.  A 4-field (non-zero ``c1``)
+    ``C`` record on the first post-gap epoch is a **stale-C1** failure and is
+    flagged.  The viewer does not read the config; it uses a fixed 120 s gap
+    (``_DEFAULT_MAX_GAP_S``).
+  * A finite difference is never taken across an epoch flagged
     ``datum_changed=1`` (scoped to the affected constellations when the E-line's
-    field-8 ``datum_consts`` set is present) -- a datum re-reference is a step in
-    ``c0`` that is not a physical drift.
-  * If NO ``C`` record in the whole file carries a 4th field (``clock_model``
+    field-8 ``datum_consts`` set is present): a datum re-reference is a step in
+    ``c0``, not a physical drift.
+  * If no ``C`` record in the whole file carries a 4th field (``clock_model``
     off), Half A degrades to an informational note rather than an empty tile.
 
-Reuses the L8 product-file parser (``gnssviz.product_file``) when present;
-otherwise a minimal inline record parser reads exactly the ``E`` / ``C`` / ``G``
-records this viewer needs.
+Epochs are parsed through the L8 product-file module (``gnssviz.product_file``)
+only if it exposes one of the entry points ``_try_l8_parser`` looks for;
+otherwise a minimal inline record parser reads the ``E`` and ``C`` records this
+viewer needs.  The current module exposes ``parse_product_file``, which the
+adapter does not look for, so the inline parser is the one that runs.
 """
 
 from __future__ import annotations
@@ -66,13 +71,14 @@ from ..io import add_utc, gps_to_datetime, load_trace, require_cols
 from ..palettes import color_by_prn, system_color
 from .base import Viewer, ViewerResult, ViewerSkip
 
-# Constellation render order + leading-letter map (kept local, mirroring the
-# other network viewers' private helpers).
+# Constellation render order (kept local, mirroring the other network viewers'
+# private helpers).
 _SYS_ORDER = ("GPS", "Galileo", "GLONASS", "BeiDou", "QZSS", "SBAS")
 
-# Product-file drift-honesty guide band: |c1 - fd| within this is "healthy".
+# Product-file drift-consistency guide band: |c1 - fd| within this passes.
 _GUIDE_BAND_M_S = 2.0e-4
-# Fallback per-satellite max gap for the drift-reset check (network.clock_model_max_gap_s).
+# Per-satellite max gap for the drift-reset check; a fixed stand-in for
+# network.clock_model_max_gap_s, which the viewer does not read.
 _DEFAULT_MAX_GAP_S = 120.0
 # Fraction of a constellation that must step at one epoch to call it a datum bump.
 _DATUM_FRACTION = 0.80
@@ -86,7 +92,7 @@ _KINDS = (("CLK", "Sat clock disc-counter"),
 #  Public build
 # =========================================================================== #
 def build_network_discontinuities(ctx) -> ViewerResult:
-    """Build the discontinuity-counter + C1-honesty viewer (two half-sources)."""
+    """Build the discontinuity-counter + C1-consistency viewer (two half-sources)."""
     figures: List[Figure] = []
     notes: List[str] = []
 
@@ -100,7 +106,7 @@ def build_network_discontinuities(ctx) -> ViewerResult:
     else:
         notes.append("network_solution.csv absent — disc-counter timelines skipped.")
 
-    # --- Half A: C1 honesty from the product file ------------------------- #
+    # --- Half A: C1 consistency from the product file --------------------- #
     prod_path = _find_product_file(ctx)
     if prod_path is not None:
         a_figs, a_note = _build_c1_half(prod_path)
@@ -115,10 +121,11 @@ def build_network_discontinuities(ctx) -> ViewerResult:
         raise ViewerSkip("neither network_solution.csv nor a network_products*.txt "
                          "product file is present")
 
-    # At least one source was present (else we skipped above).  If it produced no
-    # drawable figure — e.g. a product file whose C records are all 3-field
-    # (clock_model off, so there is no C1 to check) — DEGRADE to an informational
-    # note (a summary-only ViewerResult) rather than skipping the whole card.
+    # At least one source was present (otherwise the viewer skipped above).  If
+    # it produced no drawable figure (for example a product file whose C records
+    # are all 3-field: clock_model off, so there is no C1 to check), the result
+    # degrades to an informational note (a summary-only ViewerResult) rather than
+    # skipping the whole card.
     return ViewerResult(figures=figures, summary="\n".join(notes))
 
 
@@ -237,7 +244,7 @@ def _classify_bumps(d, keys) -> List[Tuple[object, str, str]]:
             step[i] = True
     work["_step"] = step
 
-    # Satellites present per (system, epoch) — denominator for the datum test.
+    # Satellites present per (system, epoch): the denominator for the datum test.
     for (sys_name, utc), grp in work.groupby(["system", "utc"]):
         present_sats = grp["sat"].nunique()
         bump_sats = grp.loc[grp["_step"], "sat"].nunique()
@@ -249,7 +256,7 @@ def _classify_bumps(d, keys) -> List[Tuple[object, str, str]]:
 
 
 # =========================================================================== #
-#  Half A -- C1 honesty (product file)
+#  Half A: C1 consistency (product file)
 # =========================================================================== #
 def _build_c1_half(prod_path: str) -> Tuple[List[Figure], str]:
     epochs = _parse_product_epochs(prod_path)
@@ -289,7 +296,7 @@ def _build_c1_half(prod_path: str) -> Tuple[List[Figure], str]:
         c1 = np.array([r[3] for r in recs], float)
         dchg = np.array([r[4] for r in recs], bool)
 
-        # Finite difference on ADJACENT-BY-TIME pairs; drop the pair when the
+        # Finite difference on pairs adjacent in time; drop the pair when the
         # gap exceeds max_gap_s or either endpoint's epoch was a datum change.
         fd_t: List[float] = []
         fd_v: List[float] = []
@@ -302,8 +309,8 @@ def _build_c1_half(prod_path: str) -> Tuple[List[Figure], str]:
             fd_t.append(t[i])
             fd_v.append((c0[i] - c0[i - 1]) / dt)
 
-        # Stale-C1 honesty check: first post-gap epoch should reset the drift
-        # state → an honest producer writes a 3-field C record (has_c1 False).
+        # Stale-C1 check: the first post-gap epoch resets the drift state, so a
+        # consistent producer writes a 3-field C record there (has_c1 False).
         # A 4-field non-zero-c1 record there is a stale carry.
         stale_t: List[float] = []
         for i in range(1, len(recs)):
@@ -362,7 +369,7 @@ def _build_c1_half(prod_path: str) -> Tuple[List[Figure], str]:
                 rate_traces.append(Scatter(x=fd_dt, y=s["fd_v"], color=col,
                                            marker=".", size=14, alpha=0.8,
                                            show_in_legend=False))
-                # Residual (c1 - fd) evaluated at the FD epochs (fd_t are a
+                # Residual (c1 - fd) evaluated at the fd epochs (fd_t are a
                 # subset of the sat's epoch times, so c1 aligns by lookup).
                 idx = np.searchsorted(s["t"], s["fd_t"])
                 idx = np.clip(idx, 0, s["t"].size - 1)
@@ -414,9 +421,10 @@ def _build_c1_half(prod_path: str) -> Tuple[List[Figure], str]:
 def _find_product_file(ctx) -> Optional[str]:
     """First ``network_products*.txt`` under the run's log dir (lexicographic).
 
-    The product file's path may be configured to an ABSOLUTE location outside
-    the log dir; this viewer only auto-discovers within ``ctx.log_dir`` and
+    The product file's path may be configured to an absolute location outside
+    the log dir; this viewer auto-discovers only within ``ctx.log_dir`` and
     notes the miss otherwise (it does not assume ``ctx.path('network_products.txt')``).
+    Empty files are skipped.
     """
     hits = sorted(glob.glob(os.path.join(ctx.log_dir, "network_products*.txt")))
     for h in hits:
@@ -457,11 +465,12 @@ def _parse_product_epochs(path: str) -> List[dict]:
 def _try_l8_parser(pf_module, path: str) -> Optional[List[dict]]:
     """Adapt the L8 parser's output to this viewer's epoch-dict shape.
 
-    L8's exact API is not yet frozen (its card is unimplemented at this
-    viewer's authoring), so this adapter is conservative: it only engages when
-    ``product_file`` exposes a ``parse_epochs``/``read``/``parse`` callable that
-    yields row/record objects carrying the E/C fields we need.  On any shape
-    mismatch it returns ``None`` so the caller falls back to the inline parser.
+    The adapter is conservative: it engages only when ``product_file`` exposes a
+    ``parse_epochs`` / ``read_epochs`` / ``read`` / ``parse`` callable that
+    yields row/record objects carrying the needed E/C fields.  With no such
+    callable, or on any shape mismatch, it returns ``None`` and the caller falls
+    back to the inline parser.  The current ``product_file`` module exposes
+    ``parse_product_file`` instead, so this adapter returns ``None``.
     """
     fn = None
     for name in ("parse_epochs", "read_epochs", "read", "parse"):
@@ -528,7 +537,7 @@ def _adapt_l8_records(records) -> Optional[List[dict]]:
 
 
 def _parse_product_epochs_inline(path: str) -> List[dict]:
-    """Minimal inline E/C record parser (fallback when L8 is absent)."""
+    """Minimal inline E/C record parser (fallback when the L8 adapter does not engage)."""
     epochs: List[dict] = []
     cur: Optional[dict] = None
     try:
@@ -577,10 +586,11 @@ def _parse_product_epochs_inline(path: str) -> List[dict]:
 def _datum_changed_for(ep: dict, sat: str) -> bool:
     """Whether ``sat``'s constellation had a datum change this epoch.
 
-    An epoch flagged ``datum_changed`` with a NON-empty ``datum_consts`` set
+    An epoch flagged ``datum_changed`` with a non-empty ``datum_consts`` set
     applies only to satellites whose leading constellation letter is in that set
-    (A2 per-constellation scoping).  An empty set is a GLOBAL datum change (pre-A2
-    files / scoping-off runs) and applies to every satellite.
+    (A2 per-constellation scoping).  An empty set is a global datum change
+    (files without A2 scoping, or runs with scoping off) and applies to every
+    satellite.
     """
     if not ep["datum_changed"]:
         return False

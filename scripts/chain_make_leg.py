@@ -3,22 +3,22 @@
 
 Derives ``network.start_offset_hours`` from a snapshot's ``M`` line using the
 self-correcting recurrence, so a leg always resumes on the epoch immediately
-after the last one the snapshot actually recorded -- whether the previous run
+after the last one the snapshot actually recorded, whether the previous run
 finished cleanly or was killed mid-leg.
 
     start_offset_hours = (snap_week*604800 + snap_tow - DAY_ANCHOR + 15) / 3600
 
 The +15 s is a half-epoch back-off: epoch elapsed times carry up to ~2e-05 s of
 double-precision residue (TimeUtils builds them through a Julian-date divide),
-and the fast-forward gate at ApplicationNetwork.cpp:1011 is a strict ``<``.
+and the fast-forward gate at ApplicationNetwork.cpp:1422 is a strict ``<``.
 Landing 15 s below the target epoch gives ~6 orders of magnitude of margin, and
 is nowhere near the previous epoch 30 s back.
 
-Only fingerprint-safe keys are touched (verified against the fingerprint
-construction at NetworkRunContext.cpp:172-305).  The station roster and its
+Only fingerprint-safe keys are touched (verified against networkSnapshotFingerprint(),
+NetworkRunContext.cpp:641-1227). The station roster and its
 order, carry_invariant, state_snapshot_carry*, estimate_iono_sh, every q/floor,
-apriori_source, epoch_decimation_n and the datum station are all IN the
-fingerprint -- changing any of them hard-aborts every subsequent leg.
+apriori_source, epoch_decimation_n and the datum station are all in the
+fingerprint: changing any of them hard-aborts every subsequent leg.
 
 Usage:
     python scripts/chain_make_leg.py --snapshot <in.txt> --legdir <dir> \
@@ -36,8 +36,8 @@ if _HERE not in sys.path:
 from gnss_config_chain import load_config, ConfigChainError  # noqa: E402
 
 # First synced epoch of DOY-129 = 2024-05-08 00:00:00 GPS, in continuous GPS
-# seconds (week 2313, tow 259200).  This is the anchor the epoch loop latches
-# on -- it is NOT restored from the snapshot, so it is always the file start.
+# seconds (week 2313, tow 259200). This is the anchor the epoch loop latches
+# on: it is not restored from the snapshot, so it is always the file start.
 DAY_ANCHOR_S = 1399161600.0
 EPOCH_INTERVAL_S = 30.0
 HALF_EPOCH_BACKOFF_S = 15.0
@@ -63,11 +63,11 @@ def read_snapshot_header(path):
 def start_offset_hours(week, tow, anchor_s=None):
     """Self-correcting recurrence -> offset that lands on snapshot_epoch + 1.
 
-    anchor_s = the fixture's FIRST observation epoch in continuous GPS seconds
-    (fixture_first_obs_s) — the producer's fast-forward gate latches on the first
-    synced epoch of the files, not on the GPS day start (caught 2026-09-11: a
-    12:00-start fixture was offset 12 h; the 00:00:30 quiet fixture resumed one
-    epoch late).  None keeps the old day-start anchor for reproducing pre-fix legs."""
+    anchor_s is the fixture's first observation epoch in continuous GPS seconds
+    (fixture_first_obs_s): the producer's fast-forward gate latches on the first
+    synced epoch of the files, not on the GPS day start (2026-09-11: a 12:00-start
+    fixture was offset 12 h; the 00:00:30 quiet fixture resumed one epoch late).
+    None keeps the old day-start anchor for reproducing pre-fix legs."""
     if anchor_s is None:
         anchor_s = DAY_ANCHOR_S
     continuous_s = week * 604800.0 + tow
@@ -75,8 +75,9 @@ def start_offset_hours(week, tow, anchor_s=None):
 
 
 def fixture_first_obs_s(cfg):
-    """Continuous GPS seconds of TIME OF FIRST OBS in the first station's RINEX header;
-    falls back to DAY_ANCHOR_S with a warning when unreadable."""
+    """Continuous GPS seconds of the TIME OF FIRST OBS record in the first
+    station's RINEX header; falls back to DAY_ANCHOR_S with a warning when
+    unreadable."""
     import datetime as _dt
     try:
         path = cfg.get("network", {}).get("stations", [])[0]["rinex_path"]
@@ -123,19 +124,19 @@ def main():
     os.makedirs(legdir, exist_ok=True)
     os.makedirs(os.path.join(legdir, "logs"), exist_ok=True)
 
-    # The leg reads AND writes its OWN snapshot -- never the file it was seeded
+    # The leg reads and writes its own snapshot, never the file it was seeded
     # from, so a killed leg can never destroy the state it resumed from.
     leg_snap = os.path.join(legdir, "snap.txt")
     if os.path.abspath(args.snapshot) != leg_snap:
         shutil.copyfile(args.snapshot, leg_snap)
 
-    # FLATTEN the base's "extends" chain.  This script writes a WHOLE config, not a delta,
+    # Flatten the base's "extends" chain. This script writes a whole config, not a delta,
     # and reading the base file raw breaks two ways on an inheriting base: the section
-    # subscripts below KeyError on a thin delta that has no "processing"/"network" of its
-    # own, and any base that survived that would carry the parent's `extends` list into
-    # legdir, where a RELATIVE base path no longer resolves against the declaring file's
-    # directory.  Flattening also makes the leg reproducible: a self-contained leg.json
-    # cannot be retro-changed by someone editing a base after the leg has run.
+    # subscripts below raise KeyError on a thin delta that has no "processing"/"network"
+    # of its own, and any base that survived that would carry the parent's `extends` list
+    # into legdir, where a relative base path no longer resolves against the declaring
+    # file's directory. Flattening also makes the leg reproducible: a self-contained
+    # leg.json cannot be retro-changed by someone editing a base after the leg has run.
     try:
         cfg, base_chain = load_config(args.base)
     except ConfigChainError as e:
@@ -145,13 +146,13 @@ def main():
     cfg.setdefault("processing", {})["max_duration_s"] = args.max_duration
     net = cfg.setdefault("network", {})
     # Re-anchor the resume offset on the fixture's first observation now that the
-    # config (and so the station RINEX paths) is known — see start_offset_hours.
+    # config (and so the station RINEX paths) is known; see start_offset_hours.
     offset_h = start_offset_hours(week, tow, fixture_first_obs_s(cfg))
     net["start_offset_hours"] = offset_h
     net["state_snapshot_path"] = leg_snap.replace("\\", "/")
     net["state_snapshot_require"] = True          # never silently cold-start
     net["state_snapshot_keep_history"] = False    # 0.55 MB x every epoch otherwise
-    # B5: no product stream was being written at all -- "" in both stock configs.
+    # No product stream was being written at all: both stock configs use "" (B5).
     net["product_output_path"] = os.path.join(legdir, "products.txt").replace("\\", "/")
     # Observability (all fingerprint-safe, all default-off).
     net["write_run_manifest"] = True
@@ -159,15 +160,15 @@ def main():
     net["trace_events"] = True
     net["trace_flag_rates"] = True
     net["health_interval_s"] = 300.0
-    # SPEC_day129_frame_guards Phase 1.  Every key below is verified ABSENT from
-    # the fingerprint construction (NetworkRunContext.cpp:172-307), so arming them
+    # SPEC_day129_frame_guards Phase 1. Every key below is verified absent from
+    # the fingerprint construction (NetworkRunContext.cpp:641-1227), so arming them
     # on a resume against the untraced 6 h seed is legal.
     if args.frame_guards:
         net["trace_sh_spectrum"] = True
         net["trace_sh_spectrum_stride"] = args.sh_spectrum_stride
         net["trace_postfit_sigma0"] = True
-        net["trace_postfit_keyed"] = True            # §4.3 RHS localization (STA/SAT/SIG pools)
-        net["trace_dd_fractional"] = True            # P1-5 (closes handoff Q6 measurability)
+        net["trace_postfit_keyed"] = True            # RHS localization (STA/SAT/SIG pools) (§4.3)
+        net["trace_dd_fractional"] = True            # closes handoff Q6 measurability (P1-5)
         net["trace_dd_fractional_max_pairs"] = args.dd_frac_max_pairs
         net["trace_dd_fractional_epoch_stride"] = 1
 
@@ -190,7 +191,7 @@ def main():
               f"trace_dd_fractional max_pairs {args.dd_frac_max_pairs})")
     print(f"config            {cfg_path}")
     if base_chain:
-        # The leg is written FLAT, so the merged-away provenance would otherwise be lost.
+        # The leg is written flat, so the merged-away provenance would otherwise be lost.
         print(f"base chain        {args.base} <- "
               + " <- ".join(os.path.basename(c) for c in reversed(base_chain))
               + "  (flattened into the leg)")

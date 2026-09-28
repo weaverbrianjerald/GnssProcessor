@@ -1,44 +1,45 @@
-// Card ZP (SPEC_event_harness §24.10) — the per-station LOCAL-BLOCK audit.
+// Tests for the per-station local-block audit (card ZP, SPEC_event_harness §24.10).
 //
-// §24.9 measured a station whose own post-fit code residuals are 0.3-0.55 m while
-// its reconstructed ZWD reads -18 +/- 4.5 m and 47 of its 130 rows (36 %) carry
-// zero redundancy.  The instrument that explains both is the station's LOCAL
-// normal block N_rr = A_r^T W A_r + folded station priors, the matrix
-// NetworkEstimator::reconstructStation inverts with the shared states held at
-// their solved values.  This file pins the algebra that reads it.
+// §24.9 of SPEC_event_harness describes a station whose own post-fit code residuals
+// are 0.3-0.55 m while its reconstructed ZWD reads -18 +/- 4.5 m and 47 of its 130
+// rows (36 %) carry zero redundancy.  The instrument that explains both is the
+// station's local normal block N_rr = A_r^T W A_r + folded station priors, the
+// matrix NetworkEstimator::reconstructStation inverts with the shared states held
+// at their solved values.  This file tests the algebra that reads it.
 //
-// The fixture is the uncombined posture the field vehicle actually runs, at the
-// smallest size that carries every structural feature §24.9 names: one station,
-// four satellites, two code signals and two phase signals per satellite, and
+// The fixture is the uncombined posture the field vehicle runs, at the smallest
+// size that carries every structural feature §24.9 names: one station, four
+// satellites, two code signals and two phase signals per satellite, and
 // per-station locals {clock, ZWD, a gamma-scaled receiver code bias, one slant
-// ionosphere per LOS, one ambiguity per (LOS, band)}.  Nothing about it is
-// tuned: the block's defects are consequences of that parameterization, and each
-// one is asserted against an ANALYTIC value derived in the comments, not against
-// a recorded number.
+// ionosphere per LOS, one ambiguity per (LOS, band)}.  Nothing in it is tuned:
+// the block's defects follow from that parameterization, and each one is asserted
+// against an analytic value derived in the comments, not against a recorded
+// number.
 //
-//   Gate 1 (rank + span) - the block is rank-deficient by exactly one, and the
-//                          null direction is the clock / receiver-bias / iono /
-//                          ambiguity combination, with the ZWD carrying ZERO
-//                          loading in it.  That matters for the card's reading:
-//                          the ZWD is not IN the null space, so a rank report
-//                          alone would exonerate it.
-//   Gate 2 (redundancy)   - every PHASE row is uncheckable (r_i == 0) because its
+//   Gate 1 (rank + span)  - the block is rank-deficient by exactly one, and the
+//                           null direction is the clock / receiver-bias / iono /
+//                           ambiguity combination, with zero ZWD loading.  The
+//                           ZWD is therefore not in the null space, and a rank
+//                           report alone would clear it.
+//   Gate 2 (redundancy)   - every phase row is uncheckable (r_i == 0) because its
 //                           own free ambiguity absorbs it, the sum of the
 //                           redundancies equals rows - rank exactly, and all of
 //                           it sits on the code rows.  This is the §24.9 census.
-//   Gate 3 (the vehicle)  - a diagonal prior on the ambiguity columns (what the
-//                           phase_leveling carry injects and what carry_invariant
-//                           does NOT) restores full rank AND makes the phase rows
-//                           checkable.  The two vehicles differ by this and the
-//                           trace is built to see it.
-//   Gate 4 (ZWD info)     - effectiveInformation is the Schur complement of the
-//                           column against every other local state, to the digit.
-//                           The implementation uses the identity 1/(N^+)_zz; this
-//                           gate holds it to the definition in the card.
+//   Gate 3 (the vehicle)  - a diagonal prior on the ambiguity columns (which the
+//                           phase_leveling carry injects and carry_invariant does
+//                           not) restores full rank and makes the phase rows
+//                           checkable.  The two vehicles differ by this, and the
+//                           trace is built to show it.
+//   Gate 4 (ZWD info)     - effectiveInformation equals the Schur complement of
+//                           the column against every other local state, to the
+//                           digit.  The implementation uses the identity
+//                           1/(N^+)_zz; this gate checks it against the
+//                           definition in the card.
 //   Gate 5 (span format)  - the span field is a deterministic function of the
-//                           eigenvector, truncates at the 90 % cover, and cannot
-//                           emit a CSV delimiter.
-//   Gate 6 (knob OFF)     - the structural no-op: an unarmed run opens no stream
+//                           eigenvector, stops at three entries or the 90 % cover
+//                           (whichever comes first), and cannot emit a CSV
+//                           delimiter.
+//   Gate 6 (knob off)     - the structural no-op: an unarmed run opens no stream
 //                           and creates no file; an armed one writes the
 //                           provenance line and the byte-exact column header the
 //                           reader parses.
@@ -65,8 +66,8 @@
 namespace GnssProcessor {
 namespace {
 
-/// GPS L1/L2 ionospheric scale factor (f1/f2)^2 — the ratio §24.9 measured in the
-/// receiver "code-bias" seed and named as the tell that the column is an
+/// GPS L1/L2 ionospheric scale factor (f1/f2)^2.  §24.9 measured this ratio in the
+/// receiver "code-bias" seed and takes it as the sign that the column is an
 /// ionosphere-like offset rather than a hardware DCB.
 constexpr double kGamma = (1575.42 / 1227.60) * (1575.42 / 1227.60);
 
@@ -80,8 +81,8 @@ constexpr Eigen::Index kNLocal  = kColAmb + 2 * kSats;   // 15
 constexpr Eigen::Index kNRows   = 4 * kSats;             // 16
 
 /// Wet mapping function per satellite (1/sin(elevation) at 15 / 30 / 50 / 75 deg).
-/// They must be DISTINCT — the clock and the ZWD separate only through the
-/// elevation spread, which is the §24.9 sentence this fixture encodes.
+/// They must be distinct: the clock and the ZWD separate only through the
+/// elevation spread, which is the §24.9 statement this fixture encodes.
 double mapWet(int sat) {
     static const double el_deg[kSats] = {15.0, 30.0, 50.0, 75.0};
     return 1.0 / std::sin(el_deg[sat] * 3.14159265358979323846 / 180.0);
@@ -153,17 +154,17 @@ std::shared_ptr<spdlog::logger> nullLogger() {
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// Gate 1: rank deficiency, and WHICH local direction is unresolved.
+// Gate 1: rank deficiency, and which local direction is unresolved.
 // ---------------------------------------------------------------------------
 //
 // Solving A_r * n = 0 by hand:
-//   C1_j - C2_j  =>  (1 - gamma) iono_j - rxcb = 0   =>  iono_j = rxcb/(gamma-1)
-//                                                        (the SAME for every j)
-//   C1_j         =>  clk + m_j*zwd = -iono_j, for all j with DISTINCT m_j
+//   C1_j - C2_j  =>  (1 - gamma) iono_j - rxcb = 0   =>  iono_j = -rxcb/(gamma-1)
+//                                                        (the same for every j)
+//   C1_j         =>  clk + m_j*zwd = -iono_j, for all j with distinct m_j
 //                =>  zwd = 0  and  clk = -iono_j
 //   L1_j, L2_j   =>  amb_{j,L1} = -(clk - iono_j),  amb_{j,L2} = -(clk - gamma*iono_j)
 // With rxcb = gamma - 1: iono_j = -1, clk = 1, zwd = 0, amb_L1 = -2,
-// amb_L2 = -(1+gamma).  One dimension, and the ZWD is EXACTLY absent from it.
+// amb_L2 = -(1+gamma).  One dimension, and the ZWD loading in it is exactly zero.
 TEST(StationBlockAuditTest, TheUncombinedStationBlockIsRankDeficientByOneAndTheZwdIsNotInIt) {
     const Eigen::MatrixXd A = makeAr();
     const Eigen::VectorXd w = makeW();
@@ -185,22 +186,22 @@ TEST(StationBlockAuditTest, TheUncombinedStationBlockIsRankDeficientByOneAndTheZ
     const auto sp = StationBlockAudit::spectrum(N, makeLabels());
     ASSERT_TRUE(sp.ok);
     EXPECT_EQ(sp.n_local, kNLocal);
-    // 16 rows, 15 locals, ONE exact null direction.
+    // 16 rows, 15 locals, one exact null direction.
     EXPECT_EQ(sp.rank, kNLocal - 1);
     EXPECT_GT(sp.cond, 0.0);
 
     // The smallest eigenvalue is the null one: structurally zero against the
-    // largest, and orders below the second-smallest (so the deficiency is EXACTLY
+    // largest, and orders below the second-smallest (so the deficiency is exactly
     // one, not "one that happens to sort first").
     const Eigen::Index nn = sp.eigenvalues.size();
     const double lmax = sp.eigenvalues(nn - 1);
     EXPECT_LE(std::abs(sp.ev_val[0]), StationBlockAudit::kRankTolRel * lmax);
     EXPECT_GT(sp.ev_val[1], StationBlockAudit::kRankTolRel * lmax);
 
-    // The span names ambiguity columns and NEVER the ZWD.  This is the reading
-    // the card needs: a rank report alone would say "the block has a hole" and a
-    // reader would assume the absurd ZWD is in it.  It is not -- the ZWD's defect
-    // is weak information (gate 4), not rank.
+    // The span names ambiguity columns and never the ZWD.  A rank report alone
+    // would say "the block has a hole", and a reader could assume the implausible
+    // ZWD is in it.  It is not: the ZWD's defect is weak information (gate 4),
+    // not rank.
     const std::string& span = sp.ev_span[0];
     EXPECT_EQ(span.find("zwd"), std::string::npos) << "span=" << span;
     EXPECT_EQ(span.rfind("amb:", 0), 0u) << "span=" << span;
@@ -211,7 +212,8 @@ TEST(StationBlockAuditTest, TheUncombinedStationBlockIsRankDeficientByOneAndTheZ
 }
 
 // ---------------------------------------------------------------------------
-// Gate 2: the redundancy census -- the §24.9 "36 % of rows are UNCHECKABLE".
+// Gate 2: the redundancy census (the §24.9 finding that 36 % of rows are
+// uncheckable).
 // ---------------------------------------------------------------------------
 TEST(StationBlockAuditTest, PhaseRowsWithFreeAmbiguitiesCarryZeroRedundancy) {
     const Eigen::MatrixXd A = makeAr();
@@ -223,8 +225,8 @@ TEST(StationBlockAuditTest, PhaseRowsWithFreeAmbiguitiesCarryZeroRedundancy) {
     const Eigen::VectorXd r = StationBlockAudit::redundancy(sp, A, w);
     ASSERT_EQ(r.size(), kNRows);
 
-    // Every phase row carries its own free ambiguity, which appears in NO other
-    // row: the row is absorbed exactly, so no residual of it is checkable and no
+    // Every phase row carries its own free ambiguity, which appears in no other
+    // row: the row is absorbed exactly, so its residual is not checkable and no
     // QC screen, however armed, can see a fault on it.
     int zero_phase = 0, zero_code = 0;
     for (Eigen::Index i = 0; i < r.size(); ++i) {
@@ -245,14 +247,14 @@ TEST(StationBlockAuditTest, PhaseRowsWithFreeAmbiguitiesCarryZeroRedundancy) {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 3: the VEHICLE difference, in one assertion.
+// Gate 3: the vehicle difference, in one assertion.
 // ---------------------------------------------------------------------------
 //
 // phase_leveling folds a diagonal prior onto each carried ambiguity column
 // (NetworkEstimator::addStationPrior, which rank-1-updates the cached LDL^T, so
-// stationLocalNormals returns a block that HAS them).  carry_invariant folds no
-// such prior: its ambiguities are free every epoch.  That single structural
-// difference is what the trace exists to see, so it is pinned here.
+// stationLocalNormals returns a block that includes them).  carry_invariant folds
+// no such prior: its ambiguities are free every epoch.  The trace exists to show
+// that structural difference, so it is tested here.
 TEST(StationBlockAuditTest, AnAmbiguityPriorRestoresRankAndMakesThePhaseRowsCheckable) {
     const Eigen::MatrixXd A = makeAr();
     const Eigen::VectorXd w = makeW();
@@ -267,7 +269,7 @@ TEST(StationBlockAuditTest, AnAmbiguityPriorRestoresRankAndMakesThePhaseRowsChec
     const auto sp = StationBlockAudit::spectrum(N, makeLabels());
     ASSERT_TRUE(sp.ok);
     // The null direction had non-zero loading on every ambiguity column, so the
-    // prior closes it: the block is FULL RANK.
+    // prior closes it: the block is full rank.
     EXPECT_EQ(sp.rank, kNLocal);
 
     const Eigen::VectorXd r = StationBlockAudit::redundancy(sp, A, w);
@@ -281,12 +283,12 @@ TEST(StationBlockAuditTest, AnAmbiguityPriorRestoresRankAndMakesThePhaseRowsChec
 }
 
 // ---------------------------------------------------------------------------
-// Gate 4: the ZWD column's EFFECTIVE information.
+// Gate 4: the ZWD column's effective information.
 // ---------------------------------------------------------------------------
 TEST(StationBlockAuditTest, EffectiveInformationEqualsTheExplicitSchurComplement) {
     // A non-singular SPD block, so the definition N_zz - N_zo N_oo^-1 N_oz can be
-    // evaluated with an ORDINARY inverse and the identity 1/(N^-1)_zz has nothing
-    // to hide behind.  Deterministic, no RNG.
+    // evaluated with an ordinary inverse and the identity 1/(N^-1)_zz is checked
+    // without any pseudo-inverse involved.  Deterministic, no RNG.
     const Eigen::Index n = 6;
     Eigen::MatrixXd M(n, n);
     for (Eigen::Index i = 0; i < n; ++i)
@@ -302,7 +304,7 @@ TEST(StationBlockAuditTest, EffectiveInformationEqualsTheExplicitSchurComplement
     ASSERT_EQ(sp.rank, n);
 
     for (Eigen::Index z = 0; z < n; ++z) {
-        // Explicit elimination of every OTHER column.
+        // Explicit elimination of every other column.
         Eigen::MatrixXd Noo(n - 1, n - 1);
         Eigen::VectorXd Noz(n - 1);
         Eigen::Index a = 0;
@@ -321,7 +323,7 @@ TEST(StationBlockAuditTest, EffectiveInformationEqualsTheExplicitSchurComplement
             << "column " << z;
     }
 
-    // And on the fixture: the ZWD column has far LESS effective information than
+    // And on the fixture: the ZWD column has far less effective information than
     // its raw sum(w*m_wet^2), which is the §24.9 quantity ("the ZWD column's
     // effective information in the reduced station block is ~1/50 of that").
     const Eigen::MatrixXd A = makeAr();
@@ -331,7 +333,7 @@ TEST(StationBlockAuditTest, EffectiveInformationEqualsTheExplicitSchurComplement
     const double raw = makeNrr(A, wv)(kColZwd, kColZwd);
     const double eff = StationBlockAudit::effectiveInformation(spf, kColZwd);
     EXPECT_GT(raw, 0.0);
-    EXPECT_GT(eff, 0.0);          // the ZWD is NOT in the null space (gate 1)
+    EXPECT_GT(eff, 0.0);          // the ZWD is not in the null space (gate 1)
     EXPECT_LT(eff / raw, 1e-5);   // and keeps under 1e-5 of its raw information
 }
 
@@ -340,8 +342,10 @@ TEST(StationBlockAuditTest, EffectiveInformationEqualsTheExplicitSchurComplement
 // ---------------------------------------------------------------------------
 TEST(StationBlockAuditTest, SpanIsDeterministicTruncatedAtTheCoverAndCsvSafe) {
     Eigen::VectorXd v(4);
-    // Two EXACTLY equal loadings: the tie must break on column index, or two arms
-    // of an A/B differ because std::sort saw the pair in another order.
+    // Two exactly equal loadings: the tie breaks on column index; otherwise two
+    // arms of an A/B could differ because the sort saw the pair in another order.
+    // Three entries are printed although they cover only 0.88: the span stops at
+    // three entries or the 90 % cover, whichever comes first.
     v << 0.6, 0.6, 0.4, std::sqrt(1.0 - 0.36 - 0.36 - 0.16);
     const std::vector<std::string> labels = {"clk", "zwd", "iono:G01", "amb:G01:L1C"};
     const std::string s = StationBlockAudit::spanOf(v, labels);
@@ -363,7 +367,7 @@ TEST(StationBlockAuditTest, SpanIsDeterministicTruncatedAtTheCoverAndCsvSafe) {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 6: the knob-OFF structural no-op + the byte-exact header.
+// Gate 6: the knob-off structural no-op and the byte-exact header.
 // ---------------------------------------------------------------------------
 TEST(StationBlockAuditTest, UnarmedOpensNothingAndArmedWritesTheDocumentedHeader) {
     namespace fs = std::filesystem;
@@ -376,8 +380,8 @@ TEST(StationBlockAuditTest, UnarmedOpensNothingAndArmedWritesTheDocumentedHeader
     const GnssConfig cfg;
     const GlobalVtecShConfig shc;
 
-    {   // OFF: no stream, no file.  The seam's own gate is `is_open()`, so this
-        // IS the structural no-op -- an unarmed run cannot reach the audit.
+    {   // Off: no stream, no file.  The seam's own gate is `is_open()`, so this
+        // is the structural no-op: an unarmed run cannot reach the audit.
         NetworkConfig nc;
         EXPECT_FALSE(nc.trace_station_block) << "the knob must default OFF";
         NetworkRunTraces t(dir);
@@ -387,7 +391,7 @@ TEST(StationBlockAuditTest, UnarmedOpensNothingAndArmedWritesTheDocumentedHeader
     }
     EXPECT_FALSE(fs::exists(dir / "network_station_block.csv"));
 
-    {   // ON: the stream opens and the file carries provenance + columns.
+    {   // On: the stream opens and the file carries provenance and columns.
         NetworkConfig nc;
         nc.trace_station_block = true;
         NetworkRunTraces t(dir);
@@ -404,7 +408,7 @@ TEST(StationBlockAuditTest, UnarmedOpensNothingAndArmedWritesTheDocumentedHeader
     if (!provenance.empty() && provenance.back() == '\r') provenance.pop_back();
     if (!header.empty() && header.back() == '\r') header.pop_back();
 
-    // The provenance line must say WHICH matrix the numbers describe; without it
+    // The provenance line says which matrix the numbers describe; without it
     // the trace reads as the station's stand-alone normals, which it is not.
     EXPECT_EQ(provenance.rfind('#', 0), 0u);
     EXPECT_NE(provenance.find("N_rr"), std::string::npos);
@@ -417,7 +421,7 @@ TEST(StationBlockAuditTest, UnarmedOpensNothingAndArmedWritesTheDocumentedHeader
               "ev1_val,ev1_span,ev2_val,ev2_span,ev3_val,ev3_span,"
               "zwd_info_eff,zwd_info_raw,zwd_info_ratio,x_r_norm,x_r_zwd,"
               "zero_red_code,zero_red_phase,n_rows");
-    // Armed and silent is a header-only file -- the honest "ran, audited none".
+    // Armed with nothing audited gives a header-only file ("ran, audited none").
     std::string extra;
     EXPECT_FALSE(static_cast<bool>(std::getline(in, extra)));
     in.close();

@@ -4,9 +4,8 @@
  *
  * The elevation model amplifies the zenith variance by sin(el)^(-2·power):
  * power = code_elevation_power_ (default 1.0 -> csc²(el) on variance) for code
- * observables, and phase_elevation_power_ (default 1.0 -> csc²(el), symmetric
- * with code as of 2026-07-31; 0.5 -> csc(el) selectable via JSON) for 'L…'
- * observables.  A near-zero elevation (sin ≤ 1e-6) is clamped to the zenith
+ * observables, and phase_elevation_power_ (default 1.0 -> csc²(el), the same as
+ * code; 0.5 -> csc(el) selectable via JSON) for 'L…' observables.  A near-zero elevation (sin ≤ 1e-6) is clamped to the zenith
  * variance to avoid amplifying to infinity.
  *
  * computeElevation is private; the befriended StochasticModelTestAccess shim

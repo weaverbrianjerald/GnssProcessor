@@ -57,8 +57,8 @@ namespace GnssProcessor {
             //
             // Note on the GPS L2 disambiguation: a RINEX 2.x mixed file can list both "C2"
             // (L2 civilian, typically L2C-L on modern survey receivers) and "P2" (L2 P(Y)
-            // tracked via Z-tracking) in the same epoch. Both refer to L2 codes but on
-            // different signals, so they must NOT collapse onto the same v3 code. We map
+            // tracked via Z-tracking) in the same epoch. Both are L2 codes but on
+            // different signals, so they map to different v3 codes:
             // P2 -> C2W (canonical Z-tracking attribute) and C2 -> C2L (L2C-L attribute);
             // the carrier phase / Doppler / SNR observables on L2 stay paired with the
             // P-code track (L2W/D2W/S2W), which matches what NETR9-class receivers report.
@@ -168,10 +168,11 @@ namespace GnssProcessor {
      * @param product_parser Reference to a ProductParser used to access auxiliary products.
      *
      * @details
-     * - Initializes internal header/state members to sensible defaults.
+     * - Initializes the header and state members to defaults (version 0.0, time
+     *   system "GPS", no interval, zero position and antenna offsets).
      * - Emits an initialization log entry including the selected processing mode.
      *
-     * Note: the constructor does not parse any files. Call `parse()` to read the
+     * The constructor does not parse any file. Call `parse()` to read the
      * configured RINEX observation file.
      */
     RinexParser::RinexParser(const GnssConfig& config, LogManager& log_manager, ProductParser& product_parser)
@@ -193,19 +194,24 @@ namespace GnssProcessor {
      * @brief Parse the configured RINEX file (observation or navigation).
      *
      * This routine reads the file at `config_.getObservationPath()` and:
-     * - Validates the file path and returns false (logs error) if missing or not present.
+     * - Validates the file path; logs an error and returns false if it is empty or
+     *   does not exist.
      * - Detects navigation RINEX files (filename contains "BRDC" or "_MN.rnx")
      *   and delegates parsing to `product_parser_.parseKlobuchar(...)`. Returns
      *   true on successful delegation.
-     * - Parses RINEX header and observation epochs for both RINEX 3.x (">" epoch lines)
-     *   and RINEX 2.x formats:
+     * - Parses the RINEX header and observation epochs for both RINEX 3.x (">" epoch
+     *   lines) and RINEX 2.x formats:
      *     - Populates `header_` fields (version, time system, obs types per system,
      *       approximate ECEF position, antenna offsets/azimuth/elevation, interval,
-     *       marker/receiver/antenna metadata).
+     *       marker/receiver/antenna metadata, SYS / PHASE SHIFT records).
      *     - Fills `glonass_freq_slots_` from "GLONASS SLOT / FRQ #" header lines.
-     *     - Builds `observations_` vector of `RinexObservation`, sets `time_of_first_obs_`.
-     *     - Rescales GLONASS measurements via `rescaleGlonassMeasurement(...)` when slot info exists.
-     *     - Assigns measurement variances using `config_.getDefaultMeasurementNoise()` and stores LLI flags.
+     *     - Builds the `observations_` vector of `RinexObservation` and sets
+     *       `time_of_first_obs_`; stops early at the parse window set by
+     *       `setMaxObservationSpanSeconds()`.
+     *     - Stores GLONASS measurements as recorded: the call to
+     *       `rescaleGlonassMeasurement(...)` is commented out.
+     *     - Assigns measurement variances from `config_.getDefaultMeasurementNoise()`
+     *       (1.0 for signal strength) and stores LLI flags.
      * - Logs progress, warnings and errors via `log_manager_`.
      * - Catches and logs exceptions; closes the file and returns false on failure.
      *
@@ -412,8 +418,8 @@ namespace GnssProcessor {
 
                         extractCodesFromLine(line);
 
-                        // Read continuation lines until we have all declared types or
-                        // hit a non-continuation line.
+                        // Read continuation lines until all declared types are read or
+                        // a non-continuation line is reached.
                         while (v2_obs_types.size() < static_cast<size_t>(num_types)) {
                             std::string cont;
                             if (!std::getline(file, cont)) break;
@@ -485,16 +491,23 @@ namespace GnssProcessor {
                         //   3-5   : observation code (e.g., "L2W", "L8X")
                         //   6     : blank
                         //   7-14  : phase shift in cycles, F8.5 (may be blank → 0)
-                        //   15    : blank
-                        //   16-17 : number of satellites listed (I2; 0 = applies to all)
-                        //   18-58 : satellite list (10 × A4, may continue on next line)
-                        //   60-79 : "SYS / PHASE SHIFT"
+                        //   15-16 : blank
+                        //   17-18 : number of satellites listed (I2.2; 0 or blank = all)
+                        //   19-58 : satellite list (10 × (1X,A3), may continue on next line)
+                        //   61-80 : "SYS / PHASE SHIFT"
                         //
-                        // We honor only the system-wide shifts (sat list empty
-                        // or zero count); per-sat overrides are uncommon in
-                        // practice and not supported here.  When a record's
-                        // shift field is blank, the receiver did not record a
-                        // shift for that observation code — treat as zero.
+                        // A record with a zero or blank count applies to every
+                        // satellite of the system and is stored in phase_shifts.  A
+                        // record with a satellite list applies to the listed
+                        // satellites only and is stored per satellite in
+                        // phase_shifts_by_sat; at application a per-satellite entry
+                        // takes precedence over a system-wide one.  Each continuation
+                        // record (columns 1-18 blank, same label) carries up to 10
+                        // further satellites in the same columns.  A count that the
+                        // listed satellites do not match is warned about, and a
+                        // per-satellite record is never widened to the whole system.
+                        // A blank shift field means the receiver recorded no shift for
+                        // that observation code, so it is treated as zero.
                         if (line.size() >= 5) {
                             const std::string sys = line.substr(0, 1);
                             const System sys_enum =
@@ -542,7 +555,6 @@ namespace GnssProcessor {
                             if (sys_enum == System::Unknown || obs_code.empty()) {
                                 log_manager_.getLogger("rinex_parser")->debug(
                                     "Skipping malformed SYS / PHASE SHIFT record: '{}'", line);
-                                // Still consume continuation lines if any.
                             } else if (n_sats > 0) {
                                 log_manager_.getLogger("rinex_parser")->info(
                                     "SYS / PHASE SHIFT for {} {} has per-sat list (n={}); "
@@ -569,9 +581,10 @@ namespace GnssProcessor {
                     }
                     else if (label.find("GLONASS SLOT / FRQ #") != std::string::npos) {
                         // Header carries up to 8 (sat, freq) pairs per record; for >8 slots,
-                        // continuation records have a blank count column.  Probe iss first
-                        // and refill on extraction failure so we don't lose the first sat
-                        // of each continuation to a stale (non-eof) trailing-whitespace state.
+                        // continuation records have a blank count column.  Extract from iss
+                        // first and refill it from the next line on failure, so the first
+                        // sat of each continuation is not lost to a stale (non-eof)
+                        // trailing-whitespace state.
                         std::istringstream iss(line.substr(0, 60));
                         int num_slots;
                         iss >> num_slots;
@@ -611,9 +624,10 @@ namespace GnssProcessor {
                             first_epoch = false;
                         }
 
-                        // Parse-window clip: RINEX epochs are time-ordered, so once we
-                        // pass the requested span past the first epoch the rest of the
-                        // file is discarded — stop reading instead of materializing it.
+                        // Parse-window clip: RINEX epochs are time-ordered, so once an
+                        // epoch is more than the requested span past the first epoch,
+                        // the rest of the file is not needed; stop reading instead of
+                        // materializing it.
                         if (max_obs_span_s_ > 0.0 &&
                             TimeUtils::continuousGpsSeconds(epoch_time) -
                                 TimeUtils::continuousGpsSeconds(time_of_first_obs_) > max_obs_span_s_) {
@@ -625,18 +639,15 @@ namespace GnssProcessor {
                                 log_manager_.getLogger("rinex_parser")->warn("Invalid satellite line: {}", line);
                                 continue;
                             }
-                            // Card RXP: a blank in the PRN field is a well-formed
-                            // RINEX 3 identifier — a writer may emit "G 7" for
-                            // "G07", and 16 of the 310 observation files of
-                            // DOY-129 do.  Unnormalized it matches no orbit, no
-                            // product record and no other station's id, so every
-                            // satellite numbered below 10 leaves that station
-                            // silently: four roster stations contributed none.
-                            // The RINEX 2 path of this file has always applied
-                            // this rule (extractSatsFromLine below); it is
-                            // unconditional here for the same reason — a reader
-                            // that drops a valid satellite has no correct OFF
-                            // state.
+                            // A writer may emit a blank in the PRN field ("G 7" for
+                            // "G07"); it is zero-filled here.  Unnormalized, the id
+                            // matches no orbit, no product record and no other
+                            // station's id, so every satellite numbered below 10
+                            // would be dropped from that station without a message.
+                            // The RINEX 2 path applies the same rule
+                            // (extractSatsFromLine below).  There is no knob: dropping
+                            // a valid satellite is never the wanted behavior
+                            // (card RXP).
                             std::string sat_id = line.substr(0, 3);
                             if (sat_id[1] == ' ') sat_id[1] = '0';
                             System system = sat_id[0] == 'G' ? System::GPS :
@@ -666,7 +677,7 @@ namespace GnssProcessor {
                                 // Apply the processing.rinex_types filter: skip any
                                 // observation whose RINEX-3 type letter (C/L/D/S)
                                 // is not enabled.  Done before field extraction so
-                                // we pay no per-obs decoding cost for filtered types.
+                                // filtered types cost no per-obs decoding.
                                 if (obs_types[j].empty() ||
                                     !config_.isRinexTypeEnabled(obs_types[j][0])) {
                                     continue;
@@ -689,14 +700,16 @@ namespace GnssProcessor {
                                 }
                                 try {
                                     double value = std::stod(value_str);
-                                    // RINEX 3 zero-sentinel guard (gated;
-                                    // docs/SPEC_rinex_zero_sentinel.md): the standard
-                                    // writes missing observations "as 0.0 or blanks",
-                                    // so a written zero is data-not-available, not a
-                                    // measurement.  The 2.x branch below has always
-                                    // skipped these; the 3.x path ingested them (a
-                                    // 0-cycle phase = a ~2e7 m pseudo-observation when
-                                    // the cell sits above the elevation mask).
+                                    // RINEX 3 zero-sentinel guard, armed by
+                                    // processing.rinex_skip_zero_values (off by
+                                    // default; docs/SPEC_rinex_zero_sentinel.md): the
+                                    // standard writes missing observations "as 0.0 or
+                                    // blanks", so a written zero means data not
+                                    // available, not a measurement.  The 2.x branch
+                                    // below skips zeros unconditionally.  With the
+                                    // guard off, a written zero is ingested (a 0-cycle
+                                    // phase is a ~2e7 m pseudo-observation when the
+                                    // cell sits above the elevation mask).
                                     if (value == 0.0 && config_.rinexSkipZeroValues()) {
                                         ++zero_sentinels_skipped_;
                                         continue;
@@ -707,7 +720,7 @@ namespace GnssProcessor {
                                     }
                                     */
                                     // Optionally subtract the receiver-applied SYS / PHASE SHIFT
-                                    // from raw phase observations (cycles).  Off by default —
+                                    // from raw phase observations (cycles).  Off by default:
                                     // most modern BIA products (CODE, CAS, GFZ) are calibrated
                                     // against the receiver-shifted phases as recorded in RINEX,
                                     // so leaving the shifts in place is the standard PPP
@@ -762,13 +775,14 @@ namespace GnssProcessor {
                     else {
                         // RINEX 2.x epoch + observation parsing.
                         //
-                        // Epoch record (FORTRAN 1-indexed columns; 0-indexed below):
+                        // Epoch record, as 0-based offsets used by the code below (the
+                        // RINEX spec's 1-based columns are one higher):
                         //   col 1-2   : 2-digit year
                         //   col 4-5   : month
                         //   col 7-8   : day
                         //   col 10-11 : hour
                         //   col 13-14 : minute
-                        //   col 16-26 : seconds (F11.7)
+                        //   col 15-25 : seconds (F11.7)
                         //   col 28    : epoch flag (0 ok, 1 power fail, 2-5 events, 6 cycle slip)
                         //   col 29-31 : number of satellites (or records-to-follow for events)
                         //   col 32+   : satellite list, A1 + I2.2 per sat, max 12 per line.
@@ -783,7 +797,7 @@ namespace GnssProcessor {
 
                         // An epoch record starts with a space and has digits at columns 1-2
                         // (the 2-digit year). Anything else (orphan obs lines, blank rows from
-                        // truncated event records, etc.) is silently skipped.
+                        // truncated event records, etc.) is skipped without a log entry.
                         if (line.size() < 32 ||
                             !std::isdigit(static_cast<unsigned char>(line[1])) ||
                             !std::isdigit(static_cast<unsigned char>(line[2]))) {
@@ -809,8 +823,8 @@ namespace GnssProcessor {
                         parseFixedInt(line, 28, 1, epoch_flag);
                         parseFixedInt(line, 29, 3, num_records);
 
-                        // Event records (flag 2-5) carry num_records *header-style* lines that
-                        // we don't currently consume; skip them so we stay aligned.
+                        // Event records (flag 2-5) carry num_records header-style lines that
+                        // are not consumed; skip them to stay aligned with the epoch records.
                         if (epoch_flag >= 2 && epoch_flag <= 5) {
                             for (int i = 0; i < num_records; ++i) {
                                 std::string skipline;
@@ -843,9 +857,9 @@ namespace GnssProcessor {
                             first_epoch = false;
                         }
 
-                        // Parse-window clip (see the v3 path): stop once we pass the
-                        // requested span past the first epoch — the time-ordered tail
-                        // is discarded rather than parsed and copied.
+                        // Parse-window clip (see the v3 path): stop once an epoch is
+                        // more than the requested span past the first epoch, so the
+                        // time-ordered tail is not parsed and copied.
                         if (max_obs_span_s_ > 0.0 &&
                             TimeUtils::continuousGpsSeconds(epoch_time) -
                                 TimeUtils::continuousGpsSeconds(time_of_first_obs_) > max_obs_span_s_) {
@@ -855,7 +869,7 @@ namespace GnssProcessor {
                         // Pull satellite IDs from the epoch line (cols 32+) plus continuation
                         // lines (also at cols 32+). Each ID is 3 chars: system letter + 2-digit PRN.
                         // Pre-RINEX-2.10 GPS-only files may emit a leading space in place of the
-                        // system letter ("  5") — convert those to "G05".
+                        // system letter ("  5"); those are converted to "G05".
                         std::vector<std::string> sat_ids;
                         sat_ids.reserve(static_cast<size_t>(num_records));
 
@@ -868,10 +882,9 @@ namespace GnssProcessor {
                                 // All-blank slot signals the end of the on-line list.
                                 if (sat.find_first_not_of(' ') == std::string::npos) break;
 
-                                // Normalize blanks/system-letter quirks:
-                                //   "  5" or " 5"  -> "G05"   (legacy GPS-only files)
+                                // Normalize a blank system letter and a blank PRN tens digit:
+                                //   "  5" or " 05" -> "G05"   (legacy GPS-only files)
                                 //   "G 5"          -> "G05"
-                                //   "G 5"  pieces  -> already 3 chars, just zero-pad PRN
                                 if (sat[0] == ' ') sat[0] = 'G';
                                 if (sat[1] == ' ') sat[1] = '0';
                                 if (sat.size() < 3 || sat[2] == ' ') {
@@ -901,13 +914,14 @@ namespace GnssProcessor {
                                 num_records, sat_ids.size());
                         }
 
-                        // RINEX 2.x is type-shared. Use any populated entry; default to GPS.
+                        // RINEX 2.x shares one type list across systems, and the header
+                        // parse stores it under every system; read it from the GPS entry.
                         const auto& shared_obs_types = header_.obs_types[System::GPS];
                         if (shared_obs_types.empty()) {
                             log_manager_.getLogger("rinex_parser")->error(
                                 "No # / TYPES OF OBSERV declared in v2 header; cannot parse epoch.");
-                            // Without an obs-types declaration we can't know how many lines
-                            // per satellite to consume; bail on this epoch.
+                            // Without an obs-types declaration the number of lines per
+                            // satellite is unknown, so this epoch is abandoned.
                             continue;
                         }
                         const size_t n_obs_types = shared_obs_types.size();
@@ -919,9 +933,9 @@ namespace GnssProcessor {
                         const double default_doppler_var = noise_cfg.doppler_std_m * noise_cfg.doppler_std_m;
 
                         for (const auto& sat_id : sat_ids) {
-                            // Slurp the per-satellite obs block into a single padded buffer so
-                            // we can index obs[j] at a fixed offset regardless of trailing
-                            // whitespace stripping in the source file.
+                            // Read the per-satellite obs block into a single buffer, each line
+                            // padded to 80 chars, so obs[j] sits at a fixed offset even when
+                            // the source file strips trailing whitespace.
                             std::string obs_buf;
                             obs_buf.reserve(80 * lines_per_sat);
                             bool short_block = false;
@@ -957,7 +971,7 @@ namespace GnssProcessor {
                             // Share one obs-code layout per system.  RINEX 2 codes are
                             // stored in their translated v3 form (see translateV2ObsCodeToV3
                             // below), so the layout is built from the translated declared
-                            // list — computed once per system, then cached.
+                            // list, once per system, then cached.
                             {
                                 auto cached = obs_layouts_.find(system);
                                 if (cached != obs_layouts_.end()) {
@@ -977,9 +991,9 @@ namespace GnssProcessor {
                                 // pseudoranges flagged as 'P' (encrypted P(Y) or
                                 // GLONASS P) translate to 'C' codes in the v3 form
                                 // the downstream pipeline expects, so map 'P' to
-                                // 'C' before checking the filter; otherwise users
-                                // setting rinex_types="CL" against a v2 file with
-                                // P1/P2 would silently lose all pseudoranges.
+                                // 'C' before checking the filter; otherwise
+                                // rinex_types="CL" against a v2 file with P1/P2
+                                // would drop all pseudoranges without a message.
                                 if (!shared_obs_types[j].empty()) {
                                     char tletter = shared_obs_types[j][0];
                                     if (tletter == 'P') tletter = 'C';
@@ -1069,16 +1083,18 @@ namespace GnssProcessor {
      *
      * Behavior:
      * - Returns true immediately when `observations_` is empty.
-     * - If `header_.interval` is present, verifies it lies in [0.01, 300.0] seconds;
-     *   logs an error if outside that range and a warning when it differs from the
-     *   expected 30.0 s test value.
+     * - If `header_.interval` is present, verifies it is in [0.01, 300.0] seconds;
+     *   logs an error and returns false if outside that range, and logs a warning
+     *   when it differs from the expected 30.0 s test value.
      * - Iterates consecutive observations (skips identical epoch times), computes
-     *   delta-t using the difference of TOW values, and accounts for GPS week
+     *   delta-t as the difference of TOW values, and accounts for GPS week
      *   rollover by adding 604800.0 s when dt < 0.0.
-     * - Ensures each epoch interval dt is within [0.01, 300.0] s; logs errors on
-     *   invalid intervals and warnings when dt deviates from 30.0 s.
+     * - Requires each epoch interval dt to be within [0.01, 300.0] s; logs an error
+     *   and returns false on the first invalid interval, and logs a warning when dt
+     *   deviates from 30.0 s.
      *
-     * @note Uses spdlog for logging messages.
+     * @note Logs through the spdlog default logger (`Logging::safeDefaultLogger()`),
+     *       not the "rinex_parser" logger.
      *
      * @return true if the header interval (if present) and all epoch intervals are
      *         within allowed ranges; false if any invalid interval is detected.
@@ -1093,7 +1109,7 @@ namespace GnssProcessor {
     bool RinexParser::validateMeasurementRate() const {
         if (observations_.empty()) return true;
 
-        // Resolved ONCE, not per iteration: the epoch-interval warning below sits in
+        // Resolved once, not per iteration: the epoch-interval warning below sits in
         // a loop over every observation, and each resolution takes spdlog's
         // process-wide registry mutex.  Holding the shared_ptr for the whole function
         // also pins one logger for the duration.  See logging/SafeLogger.hpp.
@@ -1148,12 +1164,13 @@ namespace GnssProcessor {
      *
      * @param[in] code   Observation code string to validate (e.g., "C1C").
      * @param[in] system GNSS system enum indicating which system's valid set to check.
-     * @return std::optional<std::string> containing the (normalized) observation code
+     * @return std::optional<std::string> containing the observation code, unchanged,
      *         on success, or std::nullopt if the code is syntactically invalid or not
-     *         permitted for the given system.
+     *         permitted for the given system.  The header parse keeps a rejected
+     *         code in the declared list anyway (with a warning), so column order holds.
      */
     std::optional<std::string> RinexParser::validateObsCode(const std::string& code, System system) const {
-        // RINEX 3.x observation code format: [CLDS][1-9][A-Z]
+        // RINEX 3.x observation code format: [CLDS][0-9][A-Z]
         if (code.length() != 3 || (code[0] != 'C' && code[0] != 'L' && code[0] != 'D' && code[0] != 'S') ||
             !std::isdigit(code[1]) || !std::isupper(code[2])) {
             log_manager_.getLogger("rinex_parser")->debug("Invalid observation code format: {} for system {}", code,
@@ -1170,7 +1187,7 @@ namespace GnssProcessor {
                 "L1C", "L1S", "L1L", "L1X", "L1P", "L1W", "L1Y", "L1M",
                 "D1C", "D1S", "D1L", "D1X", "D1P", "D1W", "D1Y", "D1M",
                 "S1C", "S1S", "S1L", "S1X", "S1P", "S1W", "S1Y", "S1M",
-                // L2: C/A, L2C, P(Y), M-code
+                // L2: C/A, L2C, P(Y), Z-tracking, M-code
                 "C2C", "C2S", "C2L", "C2X", "C2P", "C2W", "C2Y", "C2M",
                 "L2C", "L2S", "L2L", "L2X", "L2P", "L2W", "L2Y", "L2M",
                 "D2C", "D2S", "D2L", "D2X", "D2P", "D2W", "D2Y", "D2M",
@@ -1207,13 +1224,13 @@ namespace GnssProcessor {
                 "C1D", "C1P", "C1X", "L1D", "L1P", "L1X", "D1D", "D1P", "D1X", "S1D", "S1P", "S1X",
                 // B2a: D, Z, D+Z
                 "C5D", "C5Z", "C5X", "L5D", "L5Z", "L5X", "D5D", "D5Z", "D5X", "S5D", "S5Z", "S5X",
-                // B2b: I, Q, I+Q
+                // B2I / B2b: I, Q, I+Q, D, Z
                 "C7I", "C7Q", "C7X", "C7D", "C7Z", "L7I", "L7Q", "L7X", "L7D", "L7Z", "D7I", "D7Q", "D7X", "D7D", "D7Z", "S7I", "S7Q", "S7X", "S7D", "S7Z",
                 // B2a+b: I, Q, I+Q
                 "C8I", "C8Q", "C8X", "L8I", "L8Q", "L8X", "D8I", "D8Q", "D8X", "S8I", "S8Q", "S8X"
             }},
             {System::QZSS, {
-                // L1: C/A, SAIF, L1C
+                // L1: C/A, L1C (D, P, D+P)
                 "C1C", "C1S", "C1L", "C1X", "L1C", "L1S", "L1L", "L1X", "D1C", "D1S", "D1L", "D1X",
                 "S1C", "S1S", "S1L", "S1X",
                 // L2: L2C

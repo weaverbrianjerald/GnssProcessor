@@ -2,36 +2,36 @@
 # -*- coding: utf-8 -*-
 """D5 v5 (``network.carry_invariant_innov_carried_only``) A/B grader.
 
-The knob restricts the Card-4 D5 innovation gate to chords genuinely CARRIED into
-the epoch.  A chord BORN this epoch has no carried prior — its Cov(v) is the diffuse
-``carry_invariant_fresh_prior_var`` — so the standardized ratio is not a hypothesis
-test, the "reset" it triggers is a no-op (a diffuse chord's posterior already IS the
+The knob restricts the Card-4 D5 innovation gate to chords genuinely carried into
+the epoch. A chord born this epoch has no carried prior: its Cov(v) is the diffuse
+``carry_invariant_fresh_prior_var``, so the standardized ratio is not a hypothesis
+test, the "reset" it triggers is a no-op (a diffuse chord's posterior already is the
 data-only tap-off), and the flag's one lasting effect is the funnel entry that
-re-borns the chord next epoch, which flags again.  ``NetworkInvariantCarryDriver.cpp``
-``bornSkipped()`` skips a row when it is **topologically born** (``chord_carried``
-false) OR **informationally diffuse** (``var_v >= 0.5 * fresh_prior_var``), counted
-BEFORE the threshold test — so ``innov_born_skipped`` is the whole born population,
-not just the part that would have flagged.
+re-borns the chord next epoch, which flags again. In ``NetworkInvariantCarryDriver.cpp``,
+``bornSkipped()`` skips a row that is topologically born (``chord_carried`` false)
+or informationally diffuse (``var_v >= 0.5 * fresh_prior_var``), counted before the
+threshold test, so ``innov_born_skipped`` is the whole born population, not just the
+part that would have flagged.
 
 This script reads what an arm actually did and prints a machine-comparable JSON blob:
 
-  RUN-END   the D5 stdout counters (flags / re-taps / v3-suppressed / v5-born-skipped
+  run-end   the D5 stdout counters (flags / re-taps / v3-suppressed / v5-born-skipped
             / D5-keep / sigma0), the invariant-carry birth + carried-DD totals,
-            ``attrib_arc``, epochs emitted, withheld epochs, COLD START.
-  EPOCH     ``logs/network_epoch_status.csv`` — ``n_d5_flags``, ``n_d5_retaps``,
+            ``attrib_arc``, epochs emitted, withheld epochs, cold start.
+  epoch     ``logs/network_epoch_status.csv``: ``n_d5_flags``, ``n_d5_retaps``,
             ``n_chord_births``, ``n_slip_refloats`` per epoch, over a window.
-  FLAGS     ``logs/network_d5_flags.csv`` — every row the gate actually installed,
-            split BORN (``var_v >= frac * fresh_prior_var``, default frac 0.5, the
-            same bar the C++ uses) vs CARRIED.  This is the V2 instrument: the knob
-            must drive the BORN half to zero and leave the CARRIED half alone.
-  LIFETIME  ``logs/network_dd_fractional.csv`` — chord population per epoch and
-            chord LIFETIME = the number of consecutive epochs one chord id persists.
+  flags     ``logs/network_d5_flags.csv``: every row the gate actually installed,
+            split born (``var_v >= frac * fresh_prior_var``, default frac 0.5, the
+            same bar the C++ uses) vs carried. This is the V2 instrument: the knob
+            must drive the born half to zero and leave the carried half alone.
+  lifetime  ``logs/network_dd_fractional.csv``: chord population per epoch and
+            chord lifetime, the number of consecutive epochs one chord id persists.
             Two keyings are reported: ``full`` (includes ``ref_sat``) and ``reffree``
-            (drops it — the trace's reference satellite rotates and is in every
+            (drops it, since the trace's reference satellite rotates and is in every
             chord, SPEC_amb_iono §6.12, so a lifetime keyed on it measures the
             reference's tenure as much as the chord's).
-  EVENT     ``logs/network_events.csv`` rows for a (station, satellite) in an epoch
-            window — the V1 identity instrument.
+  event     ``logs/network_events.csv`` rows for a (station, satellite) in an epoch
+            window: the V1 identity instrument.
 
 Usage
   python scripts/d5v5_grade.py <rundir> [--json out.json]
@@ -101,7 +101,7 @@ _PATTERNS = {
     'd5_nonpos_var_rows': (r'D5 rows the gate could not test \(Cov\(v\) not positive\):\s*([\d,]+)', int),
     'carry_restored_dd': (r'carry restored YES \(([\d,]+) carried DD at restore\)', int),
     # "Network (Card 4/M1 invariant carry): N epoch(s) driven, M carried DD(s) at run
-    # end; B chord birth(s), ... , R slip refloat(s), ..."  — the carry-side totals.
+    # end; B chord birth(s), ... , R slip refloat(s), ...": the carry-side totals.
     'carry_epochs_driven': (r'invariant carry\):\s*([\d,]+)\s*epoch\(s\) driven', int),
     'carried_dd_runend': (r'invariant carry\):[^\n]*?([\d,]+)\s*carried DD\(s\) at run end', int),
     'chord_births_runend': (r'invariant carry\):[^\n]*?([\d,]+)\s*chord birth\(s\)', int),
@@ -109,8 +109,8 @@ _PATTERNS = {
     'slip_refloats_runend': (r'invariant carry\):[^\n]*?([\d,]+)\s*slip refloat\(s\)', int),
     'emitted_epochs': (r'post-fit [^\n]{0,12}0\):\s*([\d,]+)\s*emitted epoch\(s\)', int),
     # Slip-QC card G's run-end "D5 attribution: N FLAG ROW(s) of which M coincident
-    # with a raw step, = A distinct funnel arc(s) re-tapped".  attrib_arc is A — the
-    # count that actually re-taps (the ROW count double-counts a pair chord flagged on
+    # with a raw step, = A distinct funnel arc(s) re-tapped". attrib_arc is A, the
+    # count that actually re-taps (the row count double-counts a pair chord flagged on
     # both bands of a WL-3 joint block).
     'attrib_rows': (r'D5 attribution:\s*([\d,]+)\s*FLAG ROW\(s\)', int),
     'attrib_rawstep': (r'D5 attribution:[^\n]*?of which\s*([\d,]+)\s*coincident with a raw step', int),
@@ -128,17 +128,16 @@ def parse_stdout(path):
         m = re.search(pat, t)
         out[key] = cast(m.group(1).replace(',', '')) if m else None
 
-    # The v5 INFO line itself — standing invariant #4: the arm must SAY it is on.
+    # The v5 info line itself, standing invariant #4: the arm must state that it is on.
     out['v5_line_present'] = bool(
         re.search(r'D5 v5\): CARRIED-ONLY innovation gate ON', t))
     out['v5_inert_warn'] = bool(
         re.search(r'D5 v5\): carried-only is ARMED but skipped NOTHING', t))
-    # A warm resume that cold-started is not an A/B arm, it is a different run.  The
-    # POSITIVE evidence is the RTB-7d resume event ("carry restored YES (N carried DD
+    # A warm resume that cold-started is not an A/B arm; it is a different run. The
+    # positive evidence is the RTB-7d resume event ("carry restored YES (N carried DD
     # at restore)"); a bare /cold start/i search false-positives on the loader's own
     # prose ("...is a hard run error instead of a silent cold start", "cold_clock_seed
-    # ON"), which is exactly the kind of absence-by-grep this project has been bitten
-    # by — so the flag is derived from the restore line, not from the phrase.
+    # ON"), so the flag is derived from the restore line rather than from that phrase.
     out['carry_restored'] = ('carry restored YES' in t)
     out['cold_start'] = not out['carry_restored']
     # Back-compat aliases for the compare() table.
@@ -181,7 +180,7 @@ def epoch_status(rundir, w_from=None, w_to=None):
 
 
 def d5_flags(rundir, fresh_prior_var, diffuse_frac, w_from=None, w_to=None, t0=None):
-    """Split the installed D5 flags into BORN vs CARRIED on the C++'s own bar."""
+    """Split the installed D5 flags into born vs carried on the C++'s own bar."""
     rows = _rows(os.path.join(rundir, 'logs', 'network_d5_flags.csv'))
     if not rows:
         return {'present': False, 'n_rows': 0, 'born': 0, 'carried': 0}
@@ -220,16 +219,16 @@ def chord_lifetime(rundir, w_from=None, w_to=None, t0=None):
 
     ``full`` keys on the whole DD row incl. ``ref_sat``; ``reffree`` drops ``ref_sat``.
     The trace differences every satellite against one reference that rotates, and that
-    reference is in EVERY chord (SPEC_amb_iono §6.12) — so a full-key lifetime partly
-    measures the reference's tenure.  Both are reported; compare like with like.
+    reference is in every chord (SPEC_amb_iono §6.12), so a full-key lifetime partly
+    measures the reference's tenure. Both are reported; compare like with like.
     """
     rows = _rows(os.path.join(rundir, 'logs', 'network_dd_fractional.csv'))
     if not rows:
         return {'present': False}
     tows = sorted({_f(r['tow']) for r in rows})
-    # Epoch indices MUST be referenced to the run's first processed epoch (the
-    # epoch-status t0), not to this trace's own first row: a trace that starts late
-    # would otherwise shift every index and silently mis-window the comparison.
+    # Epoch indices are referenced to the run's first processed epoch (the
+    # epoch-status t0), not to this trace's own first row, since a trace that
+    # starts late would otherwise shift every index and mis-window the comparison.
     if t0 is None:
         t0 = tows[0]
     ep_of = {t: int(round((t - t0) / 30.0)) for t in tows}
@@ -272,11 +271,11 @@ def chord_lifetime(rundir, w_from=None, w_to=None, t0=None):
 
 
 def consumer(rundir, w_from, w_to, t0):
-    """Closed-loop consumer over an epoch window, DE-BIASED per standing invariant #5.
+    """Closed-loop consumer over an epoch window, de-biased per standing invariant #5.
 
     A static coordinate realization at the hold-out station enters ``pos_err_3d_m``
     directly and has nothing to do with the knob (SPEC_event_harness §15.10), so the
-    graded quantity is |ENU − the ARM'S OWN window-mean ENU|.  The raw mean is
+    graded quantity is |ENU − the arm's own window-mean ENU|. The raw mean is
     reported beside it so the confound stays visible instead of hiding inside the
     number.
     """
@@ -309,7 +308,7 @@ def consumer(rundir, w_from, w_to, t0):
 
 
 def a00(rundir, w_from, w_to, t0):
-    """SH a00 (layer 0, n 0, m 0, trig C) — the frame channel, in TECU."""
+    """SH a00 (layer 0, n 0, m 0, trig C): the frame channel, in TECU."""
     rows = _rows(os.path.join(rundir, 'logs', 'network_vtec_sh.csv'))
     if not rows:
         return {'present': False}
@@ -360,7 +359,7 @@ def event_rows(rundir, station, sat, ep_from, ep_to, t0):
 
 
 def d5_rows_for(rundir, station, sat, ep_from, ep_to, t0):
-    """D5 flag rows for one (station, sat) in an epoch window — V1's other half."""
+    """D5 flag rows for one (station, sat) in an epoch window: V1's other half."""
     rows = _rows(os.path.join(rundir, 'logs', 'network_d5_flags.csv'))
     out = []
     for r in rows:
@@ -402,15 +401,15 @@ def grade(args):
     p = os.path.join(rundir, 'exitcode.txt')
     if os.path.exists(p):
         exitcode = _read_text(p).strip().splitlines()
-    # CARRY-SIDE chord lifetime.  ``network_dd_fractional.csv``'s chord POPULATION is
-    # visibility-determined, not carry-determined: measured on the 20-epoch smoke pair
-    # the two arms' row keys are set-IDENTICAL (931 rows each) while 674 of the 931
-    # frac_cyc VALUES differ — so a lifetime read off that trace is structurally blind
-    # to this knob and its "ON >= OFF" bar passes by construction.  The carry's own
+    # Carry-side chord lifetime. ``network_dd_fractional.csv``'s chord population is
+    # visibility-determined, not carry-determined: measured on the 20-epoch smoke pair,
+    # the two arms' row keys are set-identical (931 rows each) while 674 of the 931
+    # frac_cyc values differ, so a lifetime read off that trace is structurally blind
+    # to this knob and its "on >= off" bar passes by construction. The carry's own
     # numbers are sensitive, so estimate mean lifetime there by Little's law:
     #     W = L / lambda,  L = carried DDs at run end,  lambda = births per epoch.
     # It assumes a roughly stationary carried population over the leg; it is an
-    # ESTIMATE, reported beside the raw inputs so the assumption stays checkable.
+    # estimate, reported beside the raw inputs so the assumption stays checkable.
     st_ = st
     L = st_.get('carried_dd_runend')
     Bth = st_.get('chord_births_runend')
@@ -523,7 +522,7 @@ def compare(a_path, b_path):
     if aw is not None and bw is not None:
         gates.append(('V3f withheld epochs equal', aw == bw, 'OFF %s / ON %s' % (aw, bw)))
 
-    # ---- V1 identity: the injected chord's event + D5 rows must match EXACTLY -----
+    # ---- V1 identity: the injected chord's event + D5 rows must match exactly -----
     ae, be = _g(A, 'event', 'events', 'rows'), _g(B, 'event', 'events', 'rows')
     if ae is not None and be is not None:
         same = (ae == be)

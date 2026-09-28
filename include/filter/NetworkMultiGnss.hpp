@@ -1,29 +1,29 @@
 #pragma once
 /**
  * @file NetworkMultiGnss.hpp
- * @brief Card GAL: the telemetry a second constellation needs on the network path
+ * @brief Telemetry for a second constellation on the network path, card GAL
  *        (docs/refound/GAL_gps_galileo_dual_2026-09-22.md).
  *
- * ### What this file owns
+ * ### Contents of this file
  *
  * Measure-only counters and run-end lines, all silent unless a constellation other
- * than GPS is ACTIVE on the network path (in @c processing.active_systems AND
- * carrying a @c processing.signal_priorities list, the two conditions the producer
- * needs to admit it).  A GPS-only run therefore makes one flag test per call and
+ * than GPS is active on the network path: listed in @c processing.active_systems
+ * and carrying a @c processing.signal_priorities list, the two conditions under
+ * which the producer admits it.  A GPS-only run makes one flag test per call and
  * writes nothing, so its log, its traces and its wire are byte-identical.
  *
  *  - the inter-system bias: the stations holding a state per system, the
  *    station-epochs whose local block carried the column, and the station-epochs
- *    with NO GPS row at all (clock and inter-system bias are then collinear, the
+ *    with no GPS row at all (clock and inter-system bias are then collinear, the
  *    local block is rank-deficient and the addStation PD test drops the station
- *    for that epoch; counted, and the drops counted separately);
+ *    for that epoch; such epochs are counted, and the drops counted separately);
  *  - the clock S-basis per constellation: the realized pivot satellite at the
  *    first and the last emit, the pivot handovers between emitted products, and
  *    the declared dimension (one clock direction per constellation in pin mode);
  *  - the geometry-free datum counters of @c NetworkSbasis split per constellation
  *    (the global line in @c NetworkTeardown keeps its text);
  *  - the (constellation, signal) family census of card SID phase 6b, which on a
- *    single-channel posture is otherwise never run;
+ *    single-channel posture runs only because this telemetry is active;
  *  - the guarded temporal clock anchor's folds and trips per constellation.
  *
  * Nothing here touches the solve, the wire or any graded trace.
@@ -47,10 +47,10 @@ namespace GnssProcessor {
     /**
      * @brief Run-scope counters of card GAL.  Lives in @c NetworkServiceCounters.
      *
-     * Every map is keyed by the constellation NAME the state manager uses for the
-     * inter-system bias ("Galileo") or by the constellation LETTER the wire uses
-     * ("E"), as each field says; a zero with a zero denominator is dead wiring and
-     * the run-end line says so.
+     * Each map is keyed either by the constellation name the state manager uses for
+     * the inter-system bias ("Galileo") or by the constellation letter the wire uses
+     * ("E"), as each field states.  A zero with a zero denominator is dead wiring,
+     * and the run-end line reports it as such.
      */
     struct NetworkMultiGnssCounters {
         long long epochs{ 0 };   ///< Epochs the per-epoch census ran (denominator).
@@ -64,7 +64,7 @@ namespace GnssProcessor {
         /// Constellation letter -> peak distinct satellites modelled in one epoch.
         std::map<std::string, long long> sats_max;
         /// Station-epochs whose modelled observations held rows of a non-GPS system
-        /// and NO GPS row (receiver clock and inter-system bias collinear).
+        /// and no GPS row (receiver clock and inter-system bias collinear).
         long long nongps_only_station_epochs{ 0 };
         /// Of those, the station-epochs the addStation PD rejection dropped.
         long long nongps_only_pd_drops{ 0 };
@@ -72,18 +72,18 @@ namespace GnssProcessor {
         std::set<std::string> nongps_only_stations;
         /// Emit epochs seen by @ref networkMultiGnssNotePivots.
         long long emits{ 0 };
-        /// Constellation letter -> the clock pivot satellite at the FIRST emit.
+        /// Constellation letter -> the clock pivot satellite at the first emit.
         std::map<std::string, std::string> first_emit_pivot;
-        /// Constellation letter -> the clock pivot satellite at the LAST emit.
+        /// Constellation letter -> the clock pivot satellite at the last emit.
         std::map<std::string, std::string> last_emit_pivot;
         /// Constellation letter -> pivot changes between successive emitted products.
         std::map<std::string, long long> pivot_handovers;
         /// Declared clock-datum dimension (pivot count) over the emitted epochs.
         long long declared_min{ -1 };
         long long declared_max{ -1 };
-        /// Constellation letter -> guarded temporal clock anchor folds ANCHORED.
+        /// Constellation letter -> guarded temporal clock anchor folds in the anchored state.
         std::map<std::string, long long> anchor_folds_anchored;
-        /// Constellation letter -> anchor folds LOOSE.
+        /// Constellation letter -> anchor folds in the loose state.
         std::map<std::string, long long> anchor_folds_loose;
         /// Constellation letter -> anchor decouplings (every cause), each an event.
         std::map<std::string, long long> anchor_trips;
@@ -104,7 +104,7 @@ namespace GnssProcessor {
     bool networkMultiGnssActive(const GnssConfig& config);
 
     /**
-     * @brief PURE: does a station's modelled epoch carry rows of a non-GPS system
+     * @brief Pure: does a station's modelled epoch carry rows of a non-GPS system
      *        and no GPS row at all?
      *
      * @param modeled The station's modelled observations of the epoch.
@@ -117,7 +117,7 @@ namespace GnssProcessor {
      *        constellation, non-GPS-only station-epochs.
      *
      * Called once per epoch after the solve, beside the phase-6b census, with the
-     * FINAL @p present vector (a station the PD test dropped is already false).
+     * final @p present vector (a station the PD test dropped is already false).
      * Returns on its first line unless @ref networkMultiGnssActive.
      *
      * @param ctx      Run context (counters written).
@@ -134,9 +134,9 @@ namespace GnssProcessor {
     /**
      * @brief Emit-site record of the realized clock pivots per constellation.
      *
-     * Called at the one site the handover baseline advances (NetworkSolPrep,
-     * immediately before @c prev_pivot is replaced), so a handover is counted
-     * between EMITTED products exactly as the consumer sees it, never on a
+     * Called at the single site where the handover baseline advances
+     * (NetworkSolPrep, immediately before @c prev_pivot is replaced), so a handover
+     * is counted between emitted products as the consumer sees it, never on a
      * withheld epoch.  Returns on its first line unless @ref networkMultiGnssActive.
      *
      * @param ctx         Run context (counters written).
@@ -164,7 +164,7 @@ namespace GnssProcessor {
      *
      * @param ctx     Run context (counters read).
      * @param config_ Configuration.
-     * @return A JSON member (key and object, no surrounding comma), or an EMPTY
+     * @return A JSON member (key and object, no surrounding comma), or an empty
      *         string when @ref networkMultiGnssActive is false, so a GPS-only
      *         manifest is byte-identical.
      */

@@ -1,10 +1,10 @@
 /**
  * @file SignalDeclaration.cpp
- * @brief Implementation of the card SID phase 5 declared signal roster and its
- *        wire form (the `N` record).
+ * @brief Implementation of the declared signal roster and its wire form (the `N`
+ *        record) (card SID phase 5).
  *
- * New code, not a relocation.  Pure: no logging, no I/O, no config: the writer
- * and the reader share these functions so the two cannot drift.
+ * Pure functions: no logging, no I/O, no config.  The writer and the reader
+ * share these functions so the two cannot diverge.
  */
 
 #include "products/SignalDeclaration.hpp"
@@ -72,10 +72,10 @@ bool NetworkSignalDeclaration::declaresCode(const std::string& cons,
     if (cit == bands.end()) return false;
     for (const auto& [band, row] : cit->second) {
         (void)band;
-        // A card SCC companion IS a family the network emits a code bias for, so
-        // it answers "does the network carry this code" exactly as a modelled one
-        // does.  The roles are kept apart in the record so a reader that needs the
-        // distinction still has it.
+        // A companion (card SCC) is a family the network emits a code bias for, so
+        // it answers "does the network carry this code" the same way a modelled
+        // code does.  The roles stay separate in the record so a reader that needs
+        // the distinction still has it.
         if (listHas(row.code, signal) || listHas(row.companion, signal)) return true;
     }
     return false;
@@ -114,8 +114,8 @@ bool signalDeclarationParseRecord(const std::vector<std::string>& f,
         else if (f[k].rfind("comp=", 0) == 0) row.companion = splitPlus(f[k].substr(5));
         else if (f[k].rfind("dph=", 0) == 0)  row.datum_phase = f[k].substr(4);
         else if (f[k].rfind("dco=", 0) == 0)  row.datum_code  = f[k].substr(4);
-        // Unknown key=value tokens are ignored (forward-compatible), exactly as
-        // the C / B / P / S records treat theirs.
+        // Unknown key=value tokens are ignored (forward-compatible), as the
+        // C / B / P / S records treat theirs.
     }
     out.present            = true;
     out.bands[f[1]][f[2][0]] = std::move(row);

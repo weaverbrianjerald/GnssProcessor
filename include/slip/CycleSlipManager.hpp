@@ -7,15 +7,19 @@
 *
 * CycleSlipManager owns the detector set built by @c SlipDetectorRegistry
 * from @c GnssConfig::getCycleSlipConfig and coordinates cycle slip
-* detection, multi-frequency signal identification, and ambiguity reset.
-* The Melbourne-Wübbena detector (when enabled) is the primary: it drives the
-* specialized cross-consistency + BSSD-aware repair/handover pipeline and is
-* the source of WL integers for AR and the BSSD pivot manager.  Auxiliary
-* detectors (GRAPHIC, EWL, and — once compiled — GF / IF) run through the
-* uniform polymorphic contract and trigger BSSD-aware resets.
+* detection, multi-frequency signal identification, ambiguity repair and
+* ambiguity reset.  The Melbourne-Wübbena detector (when enabled) is the
+* primary: it drives the cross-consistency and BSSD-aware repair/handover
+* pipeline and is the source of WL integers for AR and the BSSD pivot
+* manager.  The auxiliary detectors the registry builds (GRAPHIC, EWL) run
+* through the uniform polymorphic contract and trigger BSSD-aware resets.
+* The registry registers no GF detector (its source is not compiled) and no
+* IF-phase detector (that one is built directly on the network path).  The
+* manager also runs the optional TurboEdit MW+GF joint repair and the
+* soft-LLI gap bridge.
 *
 * Design:
-*   - Owns MwSlipDetector.
+*   - Owns the detector set; @c mw_ is a non-owning handle to the MW detector.
 *   - detectAndRepair() is the single entry point called per epoch.
 *   - The MwSlipDetector forms *all* dual-frequency MW pairs for each
 *     satellite (L1-L2, L1-L5, L2-L5, etc.), including EWL pairs with
@@ -55,41 +59,44 @@ namespace GnssProcessor {
  * @brief Epoch-level result of cycle slip processing.
  */
 struct CycleSlipEpochResult {
-    int n_repaired{ 0 };       ///< Slips handled by targeted single-signal reset.
-    int n_reset{ 0 };          ///< Slips handled by full ambiguity reset.
-    /// SATELLITES whose MW mandates were suppressed via the dedicated
+    int n_repaired{ 0 };       ///< Slips handled per signal: additive integer repair, targeted single-signal reset when the repair is refused, or a pivot-deferred repair/reset; also TurboEdit and soft-LLI bridge repairs.
+    int n_reset{ 0 };          ///< Slips handled by ambiguity reset rather than a per-signal repair (full reset, auxiliary-detector resets, TurboEdit reset fallback).
+    /// Satellites whose MW mandates were suppressed by the dedicated
     /// code-event veto branch (GF affirmatively stable; no state touched
     /// for the adjudicated signals).  Counted per satellite, not per pair,
-    /// and only for the veto branch — a code-event sat that the culprit
-    /// branch handled via clean_signals adjudication is not counted here.
+    /// and only for the veto branch: a code-event satellite that the culprit
+    /// branch handled through clean_signals adjudication is not counted here.
     /// See TurboEditResolver's "code-domain veto" header note.
     int n_code_events{ 0 };
     bool state_modified{ false }; ///< True if any filter state was changed.
 
-    /// Satellites whose ambiguity state was RESET / reseeded this epoch by the
-    /// slip phase — SD-aware reset, pivot-disturbance variance inflation, or a
-    /// soft-LLI bridge restore (absolute value overwrite).  These carry a fresh,
-    /// large-variance (or covariance-rebuilt) prior that holds no information
-    /// backward, so the RTS smoother SEGMENTS them: their ambiguities are
-    /// excluded from the backward common subspace at this epoch boundary.
-    /// See @c Smoother and the slip-repair audit finding F1.
+    /// Satellites whose ambiguity state was reset or reseeded this epoch by the
+    /// slip phase: SD-aware reset, pivot-disturbance variance inflation, a
+    /// soft-LLI bridge restore (absolute value overwrite), or a post-handover
+    /// deferred repair.  These carry a fresh, large-variance (or
+    /// covariance-rebuilt) prior that holds no information backward, so the RTS
+    /// smoother segments them: their ambiguities are excluded from the backward
+    /// common subspace at this epoch boundary.  See @c Smoother and the
+    /// slip-repair audit finding F1.
     std::set<std::string> reset_satellites;
 
     /// Covariance-preserving additive integer repairs applied this epoch, as
     /// (ambiguity_key, delta_metres) with @c delta = dN·λ.  A repair is a
-    /// deterministic, known state jump — not a measurement event — so the
+    /// deterministic, known state jump, not a measurement event, so the
     /// smoother folds @c delta into the stored a-priori @c x_pred (a control
     /// input) instead of letting the backward pass absorb it as an innovation
-    /// (audit F1).  Only the PRE-handover repair site is recorded here; the
-    /// post-handover deferred repair lands in the new SD frame and is surfaced
-    /// as a @c reset_satellites entry (segmented) instead.
+    /// (audit F1).  Only repairs applied in the pre-handover frame (through
+    /// @c repairAmbiguityBssdAware) are recorded here; the post-handover
+    /// deferred repair lands in the new SD frame and is recorded as a
+    /// @c reset_satellites entry (segmented) instead.
     std::vector<std::pair<std::string, double>> ambiguity_repairs;
 };
 
 /**
 * @class CycleSlipManager
-* @brief Coordinates MW-only cycle slip detection, multi-frequency
-*        signal identification, and ambiguity reset.
+* @brief Coordinates cycle slip detection (MW primary, registry auxiliaries,
+*        optional TurboEdit MW+GF), multi-frequency signal identification,
+*        and ambiguity repair or reset.
 *
 * Design:
 *   Pre-estimation:
@@ -99,9 +106,11 @@ struct CycleSlipEpochResult {
 *        otherwise, the regular Hatch filter is used.
 *     2. Multi-frequency cross-consistency: when a satellite has 3+
 *        signals, overlapping MW pairs are compared to isolate which
-*        individual signal slipped, enabling targeted single-signal
-*        ambiguity reset instead of resetting all signals.
+*        individual signal slipped, enabling a targeted single-signal
+*        repair or reset instead of resetting all signals.
 *     3. Unidentified slips get a full ambiguity reset.
+*     4. TurboEdit GF-only detections and auxiliary-detector events are
+*        applied to satellites the MW path did not handle.
 */
 class CycleSlipManager {
 public:
@@ -113,12 +122,18 @@ public:
     CycleSlipManager(const GnssConfig& config, LogManager& log_manager);
 
     /**
-     * @brief Pre-estimation: MW-only cycle slip detection and reset.
+     * @brief Pre-estimation: cycle slip detection, repair and reset.
      *
      * Pipeline:
-     *   1. Run MW/LLI detector to identify WL slips.
-     *   2. Multi-frequency cross-consistency to isolate culprit signals.
-     *   3. Fall through to full reset for unidentified slips.
+     *   1. Register soft-LLI gap holds (when the bridge is enabled).
+     *   2. Run the MW/LLI detector to identify WL slips, and the TurboEdit
+     *      resolver when enabled.
+     *   3. Multi-frequency cross-consistency to isolate culprit signals;
+     *      repair or reset them BSSD-aware, deferring pivot-affected ones
+     *      to the forced pivot handover (PivotManager::handlePivotHandover).
+     *   4. Fall through to full reset for unidentified slips.
+     *   5. Apply TurboEdit GF-only resolutions, then auxiliary-detector
+     *      resets, to satellites not already handled.
      *
      * @param epoch_prefix     Log prefix.
      * @param modeled_obs      Modeled observations for this epoch.
@@ -143,13 +158,14 @@ public:
     /// rounding failure rate.  Empty when no MW detector is active.
     std::map<std::string, MwSlipDetector::WlLockQuality> getResolvedWlQuality() const;
 
-    /// Reset satellite state in all detectors.
+    /// Reset satellite state in all detectors and in the TurboEdit resolver.
     void resetSatellite(const std::string& satellite);
 
-    /// Reset MW arc state for a specific (satellite, signal) only.  Arcs on
-    /// signal pairs that don't involve the specified signal are preserved.
-    /// Use when the upstream caller knows precisely which signal slipped
-    /// (e.g. via the KF's per-(sat, signal) outlier dispatch).
+    /// Reset arc state for one (satellite, signal) only, in every detector and
+    /// in the TurboEdit resolver.  In the MW detector, arcs on signal pairs that
+    /// do not involve the specified signal are preserved.  Use when the upstream
+    /// caller knows which signal slipped (e.g. via the KF's per-(sat, signal)
+    /// outlier dispatch).
     void resetSatelliteSignal(const std::string& satellite,
                               const std::string& signal);
 
@@ -161,8 +177,8 @@ public:
     void notifyPivotForcedHandover(const std::string& satellite,
                                    const std::string& reason);
 
-    /// Provide bias corrections to the MW detector (and the TurboEdit resolver,
-    /// if enabled).
+    /// Provide bias corrections to every detector (MW and EWL use them; the
+    /// others ignore them) and to the TurboEdit resolver, if enabled.
     void setCorrections(const GnssCorrections* corrections);
 
     /// Enable MW trace logging.
@@ -173,15 +189,17 @@ public:
     bool enableTurboEditTracing(const std::filesystem::path& log_dir);
 
     /// Provide the effective observation sampling interval (s) used to gate the
-    /// high-rate-only TurboEdit GF repair (warns once if coarser than 1 s).
-    /// Also tightens the TurboEdit GF-arc gap tolerance to the cadence.
+    /// high-rate-only TurboEdit GF repair (the resolver warns once when the
+    /// interval is coarser than 1 s).  Also forwards the interval to the
+    /// soft-LLI bridge and sets the TurboEdit GF-arc gap tolerance to 1.5 times
+    /// the cadence.
     void setSampleInterval(double interval_s);
 
     /// Whether the MW+GF TurboEdit joint repair mode is active (config toggle
-    /// set AND the MW detector — its source of WL integers — is enabled).
+    /// set and the MW detector, its source of WL integers, enabled).
     bool turboEditEnabled() const { return turbo_ != nullptr; }
 
-    /// Access the MW detector for its rich API (WL-lock queries, per-sat
+    /// Access the MW detector for its wider API (WL-lock queries, per-sat
     /// quality scoring, pivot hints), or nullptr if the MW detector is
     /// disabled via @c estimation.cycle_slip.mw.
     MwSlipDetector* mwDetector() { return mw_; }
@@ -194,15 +212,15 @@ public:
     const std::map<std::string, MwSlipResult>& getLastMwSlips() const { return last_mw_slips_; }
 
     /**
-     * @brief Record a rolling "last good" snapshot of every ambiguity value /
-     *        variance — the pre-gap anchor for the soft-LLI bridge repair.
+     * @brief Record a rolling "last good" snapshot of every ambiguity value
+     *        and variance: the pre-gap anchor for the soft-LLI bridge repair.
      *
-     * Call once per epoch AFTER the Kalman measurement update (so it captures
-     * the converged post-update values).  Only ambiguities whose variance is
-     * below a converged threshold update the snapshot, so a fresh reset /
-     * pending-reseed does NOT overwrite the last genuinely-converged value —
-     * which is exactly the anchor a later soft-LLI hold needs (the value from
-     * the epoch BEFORE the signal dropped).  No-op unless
+     * Call once per epoch after the Kalman measurement update, so it captures
+     * the converged post-update values.  Only ambiguities whose variance is
+     * below a converged threshold update the snapshot, so a fresh reset or
+     * pending-reseed does not overwrite the last converged value.  That value
+     * (from the epoch before the signal dropped) is the anchor a later
+     * soft-LLI hold needs.  No-op unless
      * @c estimation.cycle_slip.turbo_edit_bridge_lli is set.
      *
      * @param state_manager Filter state to snapshot from.
@@ -211,12 +229,12 @@ public:
     void recordAmbiguitySnapshot(const StateManager& state_manager, double epoch_now_s);
 
     /**
-     * @brief Phase-measurement keys ("G03_L2W") currently HELD across a soft
+     * @brief Phase-measurement keys ("G03_L2W") currently held across a soft
      *        LLI gap pending a TurboEdit bridge repair.
      *
      * The caller (@c Application / @c RealTimeEngine) seeds the Kalman update's
-     * @c excluded_measurements with these so the held — still-slipped —
-     * ambiguities never contaminate shared states across the MW one-epoch
+     * @c excluded_measurements with these so the held, still-slipped
+     * ambiguities do not contaminate shared states across the MW one-epoch
      * confirmation delay.  Empty unless @c turbo_edit_bridge_lli.
      */
     std::set<std::string> getHeldPendingBridgeKeys() const;
@@ -224,7 +242,7 @@ public:
     /**
      * @brief Drop all soft-LLI / gap-bridge hold and snapshot state.
      *
-     * Call alongside any HARD filter reset that deletes ambiguity states
+     * Call alongside any hard filter reset that deletes ambiguity states
      * outside the measurement model's protected prune (e.g. the long-gap
      * state teardown in @c Application::handleGap): a hold that outlives
      * the state it anchors would later "restore" a pre-gap value onto a
@@ -326,15 +344,15 @@ private:
     /**
      * @brief Apply slip events from the auxiliary (non-MW) detectors.
      *
-     * GRAPHIC / EWL (and, once compiled, GF / IF) run through the polymorphic
-     * @c ISlipDetector::detect contract and emit unified @c SlipEvent records.
-     * Unlike the MW pipeline — which owns the WL-lock state, AR coupling, and
-     * BSSD pivot machinery and so can repair in place — the auxiliary
-     * detectors are independent cross-checks; the safe, in-house-convention
+     * GRAPHIC and EWL (the auxiliaries the registry builds) run through the
+     * polymorphic @c ISlipDetector::detect contract and emit unified
+     * @c SlipEvent records.  The MW pipeline owns the WL-lock state, AR
+     * coupling and BSSD pivot machinery and can therefore repair in place; the
+     * auxiliary detectors are independent cross-checks, and the project's
      * response to one of their detections is a BSSD-aware ambiguity *reset*
      * (see "reset over repair for bias-less signals").  Events for a satellite
      * the MW pipeline already acted on this epoch (present in @p handled_sats)
-     * are skipped to avoid fighting MW's targeted per-signal repairs.
+     * are skipped so they do not override MW's targeted per-signal repairs.
      *
      * @param events        Aggregated auxiliary-detector slip events.
      * @param handled_sats  Satellites already reset/repaired by the MW path
@@ -358,8 +376,9 @@ private:
      * @brief Apply TurboEdit resolutions for GF-only detections.
      *
      * Satellites the MW pipeline already handled this epoch (in @p handled_sats)
-     * are skipped — their dual-frequency culprits were resolved in-loop via the
-     * TurboEdit-augmented cross-consistency path and the BSSD pivot machinery.
+     * are skipped: their dual-frequency culprits were resolved in the MW loop
+     * through the TurboEdit-augmented cross-consistency path and the BSSD pivot
+     * machinery.
      * This pass covers the remainder: satellites flagged purely by the
      * geometry-free jump (MW's @f$\Delta N_1=\Delta N_2@f$ blind spot, where MW
      * reported nothing).  Confident per-signal integers are applied via
@@ -413,9 +432,10 @@ private:
     /// Per-epoch slip-action accumulators for the RTS smoother, cleared at the
     /// top of @c detectAndRepair and copied into the returned
     /// @c CycleSlipEpochResult before it returns.  Written by
-    /// @c resetAmbiguityBssdAware (reset sats), @c repairAmbiguityBssdAware
+    /// @c resetAmbiguityBssdAware (reset satellites), @c repairAmbiguityBssdAware
     /// (compensatable repairs), the inline post-handover repair (recorded as a
-    /// reset — new SD frame), and the soft-LLI bridge restore path (reset).
+    /// reset, since it lands in the new SD frame), and the soft-LLI bridge
+    /// restore path (reset).
     std::set<std::string> epoch_reset_sats_;
     std::vector<std::pair<std::string, double>> epoch_repairs_;
 

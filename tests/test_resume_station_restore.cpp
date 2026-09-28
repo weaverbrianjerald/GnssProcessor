@@ -1,34 +1,34 @@
 /**
  * @file test_resume_station_restore.cpp
- * @brief Contract tests for the RS-6 STATION-LAYER continuity card
+ * @brief Contract tests for the RS-6 station-layer continuity card
  *        (docs/SPEC_event_harness.md §21.13): the snapshot's format-forward
- *        station-layer records (@c RC — the rx-CB carry, one receiver
- *        code-bias posterior per (station roster index, CB state key); @c SD —
- *        the T5 / Iono-2 per-LOS SH representation-error deviation carry, one
+ *        station-layer records (@c RC: the rx-CB carry, one receiver code-bias
+ *        posterior per (station roster index, CB state key); @c SD: the
+ *        T5 / Iono-2 per-LOS SH representation-error deviation carry, one
  *        @c ShDevCarry per "STATION|SAT"), and the loader's side of the write
  *        knob (@c network.state_snapshot_station_capture), the read knob
  *        (@c network.resume_station_restore) and its two diagnostic
  *        sub-switches (@c ..._rxcb / @c ..._shdev).
  *
- * What is locked here:
- *   (a) both maps round-trip through the snapshot TEXT exactly — with a
+ * Covered here:
+ *   (a) both maps round-trip through the snapshot text exactly, with a
  *       '|'-bearing key (the SD key is "STATION|SAT") and full-precision
- *       doubles, since the restored rx-CB value IS the prior the next fold's
- *       innovation differences against and the restored deviation IS the GM
+ *       doubles, since the restored rx-CB value is the prior the next fold's
+ *       innovation differences against and the restored deviation is the GM
  *       level the next harvest ages;
- *   (b) the restored rx-CB entries carry the RESTORED-ARC sentinel of §15.4.1
+ *   (b) the restored rx-CB entries carry the restored-arc sentinel of §15.4.1
  *       (the @c makeRestoredLocalCarry convention the @c L / @c Z rows use), and
- *       a restored deviation entry reads WARM because @c ShDevCarry's own cold
+ *       a restored deviation entry reads warm because @c ShDevCarry's own cold
  *       test is @c t_s <= 0 and the harvest stamp travels;
  *   (c) a snapshot with no @c RC / @c SD rows restores nothing (an old file
- *       leaves today's cold-start behaviour, and the containers stay empty);
- *   (d) the write knob OFF emits none of the rows, and the file it produces is
- *       byte-identical to the one the same snapshot produced before the card;
- *   (e) the two sub-switches restore only their half.
+ *       keeps the cold-start behaviour, and the containers stay empty);
+ *   (d) with the write knob off none of the rows is emitted, and the file is
+ *       byte-identical to the pre-RS-6 format for the same snapshot;
+ *   (e) each of the two sub-switches restores only its half.
  *
- * The seam mechanics themselves (the estimator's own level actually continuing
- * across a warm resume — the raw phase bias, the receiver clocks, the SH a₀₀)
- * are graded on the harness legs, not here.
+ * The seam mechanics (the estimator's own level continuing across a warm resume:
+ * the raw phase bias, the receiver clocks, the SH a₀₀) are graded on the harness
+ * legs, not here.
  */
 #include <gtest/gtest.h>
 
@@ -65,7 +65,7 @@ NetworkStateSnapshot baseSnapshot() {
 }
 
 /// A snapshot carrying both station-layer record kinds, with values chosen so a
-/// shortest-round-trip decimal is NOT the same string as a rounded one.
+/// shortest-round-trip decimal is not the same string as a rounded one.
 NetworkStateSnapshot stationSnapshot() {
     NetworkStateSnapshot s = baseSnapshot();
     // rx-CB: the two families that coexist on the field lineage, at two stations.
@@ -73,7 +73,7 @@ NetworkStateSnapshot stationSnapshot() {
         NetworkStateSnapshot::Local{-3.8391234567890123, 1.2345678901234e-04, 1400277290.0};
     s.rx_cb_carry[{7, "GPS_IFB5"}] =
         NetworkStateSnapshot::Local{0.0625, 3.0517578125e-05, 1400277260.0};
-    // T5: the key carries the '|' the format splits around commas alone.
+    // Deviation carry (T5): the key contains a '|'; the format splits on commas only.
     s.sh_dev_carry["WTZZ00DEU|G24"] =
         NetworkStateSnapshot::ShDev{-1.2345678901234567, 0.87654321098765, 1.5625, 1400277290.0};
     s.sh_dev_carry["MAJU00MHL|E11"] =
@@ -128,9 +128,9 @@ std::vector<std::string> lines(const std::string& t) {
     return v;
 }
 
-/// The restore the driver performs for the rx-CB half (NetworkRunContext.cpp),
-/// reproduced here so the SENTINEL convention is locked by a test rather than by
-/// a comment: the driver's own block is one `if` inside networkTryWarmResume.
+/// The restore the driver performs for the rx-CB half (networkTryWarmResume in
+/// NetworkRunContext.cpp), reproduced here so the sentinel convention is locked by
+/// a test rather than by a comment; the driver's own block is one `if` there.
 std::map<std::pair<int, std::string>, LocalCarry>
 restoreRxCb(const NetworkStateSnapshot& s) {
     std::map<std::pair<int, std::string>, LocalCarry> out;
@@ -140,7 +140,7 @@ restoreRxCb(const NetworkStateSnapshot& s) {
     return out;
 }
 
-/// The deviation half's restore — as WRITTEN, deliberately without a sentinel.
+/// The deviation half's restore: as written, deliberately without a sentinel.
 std::map<std::string, ShDevCarry> restoreShDev(const NetworkStateSnapshot& s) {
     std::map<std::string, ShDevCarry> out;
     for (const auto& [key, d] : s.sh_dev_carry)
@@ -151,14 +151,14 @@ std::map<std::string, ShDevCarry> restoreShDev(const NetworkStateSnapshot& s) {
 } // namespace
 
 // ---------------------------------------------------------------------------
-// (a) the snapshot TEXT round-trip
+// (a) the snapshot text round-trip
 // ---------------------------------------------------------------------------
 
 TEST(ResumeStationRestore, StationLayerRoundTripsThroughTheSnapshotText) {
     const NetworkStateSnapshot s = stationSnapshot();
     ASSERT_TRUE(s.hasStationState());
     const std::string text = serialized(s);
-    // The rows ride the EXISTING header — they are format-forward, not a new version.
+    // The rows use the existing header: they are format-forward, not a new version.
     EXPECT_EQ(text.rfind("# gnss_network_state_snapshot v1\n", 0), 0u) << text.substr(0, 60);
     EXPECT_NE(text.find("RC,0,GPS_DCB,"), std::string::npos) << text;
     EXPECT_NE(text.find("RC,7,GPS_IFB5,"), std::string::npos) << text;
@@ -170,7 +170,7 @@ TEST(ResumeStationRestore, StationLayerRoundTripsThroughTheSnapshotText) {
     std::istringstream is(text);
     ASSERT_TRUE(NetworkStateSnapshotIO::parse(is, r, &err)) << err;
     ASSERT_EQ(r.rx_cb_carry.size(), 2u);
-    // Full precision, BITWISE: the restored value is the prior the next fold's
+    // Full precision, bitwise: the restored value is the prior the next fold's
     // innovation differences against, and its var is that fold's weight.
     const auto& a = r.rx_cb_carry.at({0, "GPS_DCB"});
     EXPECT_DOUBLE_EQ(a.value_abs, -3.8391234567890123);
@@ -186,11 +186,11 @@ TEST(ResumeStationRestore, StationLayerRoundTripsThroughTheSnapshotText) {
     EXPECT_TRUE(r.hasStationState());
 }
 
-/// A non-finite value would be accepted by strtod and then poison every
-/// subsequent fold of that (station, family) — the ER / CBP precedent: it is a
-/// HARD parse failure (the caller's documented cold-start signal), never a
-/// silent partial restore.  A non-positive rx-CB variance is refused on the same
-/// ground: the harvest only ever stashes var > 0.
+/// strtod accepts a non-finite value, which would then corrupt every subsequent
+/// fold of that (station, family).  As for the ER / CBP rows, it is a hard parse
+/// failure (the caller's documented cold-start signal), never a silent partial
+/// restore.  A non-positive rx-CB variance is refused for the same reason: the
+/// harvest only stashes var > 0.  The SD variance is checked the same way.
 TEST(ResumeStationRestore, NonFiniteOrNonPositiveStationFieldIsAHardParseFailure) {
     const auto mangle = [](const std::string& tag_prefix, const std::string& repl) {
         NetworkStateSnapshot s = stationSnapshot();
@@ -224,10 +224,10 @@ TEST(ResumeStationRestore, NonFiniteOrNonPositiveStationFieldIsAHardParseFailure
 // ---------------------------------------------------------------------------
 
 /// The rx-CB half goes back through @c makeRestoredLocalCarry, so every restored
-/// entry carries the §15.4.1 RESTORED-ARC sentinel rather than a 0 that also
-/// means "never stashed" — the one convention a later age reader must not have
-/// to rediscover.  (The rx-CB inject reads only value_abs / var / last_seen_s
-/// today, which is exactly why the convention has to be locked by a test.)
+/// entry carries the §15.4.1 restored-arc sentinel rather than a 0 that also
+/// means "never stashed", so a later age reader can rely on it.  The rx-CB inject
+/// reads only value_abs / var / last_seen_s at present, so no run exercises the
+/// convention and this test locks it.
 TEST(ResumeStationRestore, RestoredRxCbEntriesCarryTheRestoredArcSentinel) {
     NetworkStateSnapshot r;
     std::string err;
@@ -239,8 +239,8 @@ TEST(ResumeStationRestore, RestoredRxCbEntriesCarryTheRestoredArcSentinel) {
     for (const auto& [key, lc] : carry) {
         EXPECT_EQ(lc.birth_ep, LocalCarry::kBirthEpRestored) << key.second;
         EXPECT_DOUBLE_EQ(lc.birth_s, LocalCarry::kBirthSRestored);
-        // Restored ⇒ MATURE at every age reader (all of which test `> 0`), and
-        // NOT re-brandable by a first-stash-wins rule (which tests `!= 0`).
+        // Restored ⇒ mature at every age reader (all of which test `> 0`), and
+        // not re-brandable by a first-stash-wins rule (which tests `!= 0`).
         EXPECT_FALSE(localCarryYoung(lc, /*now_ep=*/3, /*min_age_ep=*/10));
         EXPECT_NE(lc.birth_ep, 0);
     }
@@ -254,10 +254,10 @@ TEST(ResumeStationRestore, RestoredRxCbEntriesCarryTheRestoredArcSentinel) {
     EXPECT_DOUBLE_EQ(dcb.var_first, 0.0);
 }
 
-/// The deviation half is restored AS WRITTEN, with no sentinel — and that is the
-/// point: @c ShDevCarry's own cold test is @c t_s <= 0, so carrying the writer's
-/// harvest stamp is exactly what makes the entry read WARM instead of cold-seeding
-/// at the steady state (dev 0, var = representation_sigma²).
+/// The deviation half is restored as written, with no sentinel, on purpose:
+/// @c ShDevCarry's own cold test is @c t_s <= 0, so the writer's harvest stamp is
+/// what makes the entry read warm instead of cold-seeding at the steady state
+/// (dev 0, var = representation_sigma²).
 TEST(ResumeStationRestore, RestoredDeviationEntriesReadWarmThroughTheirHarvestStamp) {
     NetworkStateSnapshot r;
     std::string err;
@@ -283,7 +283,7 @@ TEST(ResumeStationRestore, RestoredDeviationEntriesReadWarmThroughTheirHarvestSt
 // ---------------------------------------------------------------------------
 
 /// A file with no station-layer rows restores nothing: an old snapshot (or a
-/// writer without the capture knob) leaves both carries cold-starting as today.
+/// writer without the capture knob) leaves both carries cold-starting.
 TEST(ResumeStationRestore, SnapshotWithoutStationRowsRestoresNothing) {
     const NetworkStateSnapshot s = baseSnapshot();
     ASSERT_FALSE(s.hasStationState());
@@ -302,9 +302,9 @@ TEST(ResumeStationRestore, SnapshotWithoutStationRowsRestoresNothing) {
     EXPECT_TRUE(restoreShDev(r).empty());
 }
 
-/// The WRITE knob is what the driver gates the capture on, so with it off the
-/// containers stay empty and the file the same snapshot produces is byte-identical
-/// to the pre-card one (standing invariant #6, at the format level).
+/// The driver gates the capture on the write knob, so with it off the containers
+/// stay empty and the file the same snapshot produces is byte-identical to the
+/// pre-RS-6 one (standing invariant #6, at the format level).
 TEST(ResumeStationRestore, WriteKnobOffEmitsNoneOfTheRows) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("nocapture",
@@ -312,8 +312,8 @@ TEST(ResumeStationRestore, WriteKnobOffEmitsNoneOfTheRows) {
     EXPECT_FALSE(cfg.getNetworkConfig().state_snapshot_station_capture);
 
     // What the driver writes with the knob off: a snapshot whose station containers
-    // were never filled.  Line-wise the ONLY difference against an armed one is the
-    // new rows plus the END line-count they advance.
+    // were never filled.  Line-wise, the only differences against an armed one are
+    // the added rows and the END line count they advance.
     const std::string off = serialized(baseSnapshot());
     NetworkStateSnapshot on_snap = baseSnapshot();
     on_snap.rx_cb_carry[{0, "GPS_DCB"}] =
@@ -342,9 +342,9 @@ TEST(ResumeStationRestore, WriteKnobOffEmitsNoneOfTheRows) {
 // (e) the diagnostic sub-switches partition the restore
 // ---------------------------------------------------------------------------
 
-/// Each sub-switch restores ONLY its half — the §21.13 attribution matrix's
-/// whole mechanism (the half that moves a channel owns it).  A withheld half
-/// leaves its map exactly as a cold start does.
+/// Each sub-switch restores only its half.  The attribution matrix of §21.13 of
+/// SPEC_event_harness rests on this: the half whose restore moves a channel owns
+/// it.  A withheld half leaves its map exactly as a cold start does.
 TEST(ResumeStationRestore, SubSwitchesRestoreOnlyTheirHalf) {
     NetworkStateSnapshot r;
     std::string err;
@@ -370,8 +370,8 @@ TEST(ResumeStationRestoreConfig, DefaultsAreOffAndBothSubSwitchesOn) {
     ASSERT_TRUE(loadInto("defaults", networkConfig(), cfg));
     EXPECT_FALSE(cfg.getNetworkConfig().state_snapshot_station_capture);
     EXPECT_FALSE(cfg.networkResumeStationRestore());
-    // The sub-switches default TRUE: an ordinary armed resume restores both halves,
-    // and only an attribution leg has to say anything at all.
+    // The sub-switches default to true: an ordinary armed resume restores both
+    // halves, and only an attribution leg sets them.
     EXPECT_TRUE(cfg.networkResumeStationRestoreRxCb());
     EXPECT_TRUE(cfg.networkResumeStationRestoreShDev());
 }
@@ -385,12 +385,12 @@ TEST(ResumeStationRestoreConfig, CaptureKnobParsesAndDoesNotArmTheReadSide) {
     EXPECT_FALSE(cfg.networkResumeStationRestore());
 }
 
-/// Both memories are expressed IN the realization frame underneath them, so the
-/// read knob is only meaningful when that frame also continues — mirroring
+/// Both memories are expressed in the realization frame underneath them, so the
+/// read knob is meaningful only when that frame also continues, as for
 /// @c resume_datum_restore / @c resume_emit_restore.
 TEST(ResumeStationRestoreConfig, RestoreWithoutFrameRestoreIsRejected) {
-    // The loader turns its own throw into a FAILED LOAD (loadFromJson catches and
-    // returns false) — the shape every other restore prerequisite is asserted in.
+    // The loader turns its own throw into a failed load (loadFromJson catches and
+    // returns false), the form in which every other restore prerequisite is asserted.
     GnssConfig cfg;
     EXPECT_FALSE(loadInto("noframe",
         networkConfig("    \"state_snapshot_path\": \"state_snapshot.snap\",\n"
@@ -413,8 +413,8 @@ TEST(ResumeStationRestoreConfig, ArmedPostureLoadsAndSubSwitchesParse) {
     EXPECT_TRUE(cfg.networkResumeFrameRestore());
 }
 
-/// Armed with no snapshot path the loader warns and still loads (INERT, not fatal)
-/// — the same posture every other resume-response knob takes.
+/// Armed with no snapshot path, the loader warns and still loads (inert, not
+/// fatal), as for every other resume-response knob.
 TEST(ResumeStationRestoreConfig, ArmedWithoutASnapshotPathStillLoads) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("inert",

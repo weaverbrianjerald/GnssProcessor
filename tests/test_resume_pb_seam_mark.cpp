@@ -1,26 +1,27 @@
 /**
  * @file test_resume_pb_seam_mark.cpp
- * @brief Contract tests for the RS-4 warm-resume PHASE-BIAS seam mark
- *        (@c network.resume_pb_seam_mark, SPEC_event_harness §21.9).
+ * @brief Contract tests for the warm-resume phase-bias seam mark
+ *        (@c network.resume_pb_seam_mark, SPEC_event_harness §21.9, RS-4).
  *
- * The card's premise, measured on the field golden's 6 h seed: a warm resume that
- * RESTORES the emitter (its per-key @c last_phase_bias_ baselines come back from the
- * snapshot's @c epb rows) and restores the CLK-R held frame emits a first epoch whose
- * satellite phase biases sit ~17 m p50 away from those baselines — while the E record
- * carries @c datum_changed 0, because the only resume mark in the emit path fires on a
- * COLD held-frame clock engine and the restore is precisely what makes it warm.
+ * A warm resume restores the emitter (its per-key @c last_phase_bias_ baselines come
+ * back from the snapshot's @c epb rows) and the CLK-R held frame.  Its first epoch can
+ * emit satellite phase biases far from those baselines (about 17 m p50 on the field
+ * golden's 6 h seed) while the E record carries @c datum_changed 0: the only other
+ * resume mark in the emit path fires on a cold held-frame clock engine, and the
+ * restore makes that engine warm.
  *
- * What is locked here is the DECISION, not the driver plumbing: @ref
+ * These tests cover the decision, not the driver plumbing.  @ref
  * NetworkProductEmitter::pbSeamCensus is the read-only twin of the jump test inside
- * @c emitToStore, and the rule the driver applies to it is "more than
- * @ref GnssConfig::kResumePbSeamMarkFraction of a constellation's fresh-baseline keys
- * beyond @c discThresholdM".  Cases: (1) a first emit moving 30 % of the keys is over
- * the bar and marks its constellation exactly once; (2) 5 % is under the bar and marks
- * nothing; (3) a SECOND emit can never mark, because @c emitToStore has already
- * overwritten every baseline with this epoch's value (the census is structurally empty)
- * — the one-shot property the driver's latch also enforces; (4) the knob is off by
- * default, parses, and is not in the warm-resume fingerprint.  The seam's wire effect
- * (the first E record's @c datum_changed) is graded on the legs, not here.
+ * @c emitToStore, and the driver marks a constellation when more than
+ * @ref GnssConfig::kResumePbSeamMarkFraction of its fresh-baseline keys lie beyond
+ * @c discThresholdM.  Cases: (1) a first emit moving 30 % of the keys is over the bar
+ * and marks its constellation once; (2) 5 % is under the bar and marks nothing;
+ * (3) a second emit cannot mark, because @c emitToStore has already overwritten every
+ * baseline with this epoch's value (the one-shot property the driver's latch also
+ * enforces); (4) a cold emitter has no baselines and an empty census; (5) only the
+ * constellation that moved is marked; (6) the knob is off by default and parses.  The
+ * knob is also outside the warm-resume fingerprint (not asserted here).  The seam's
+ * wire effect (the first E record's @c datum_changed) is graded on the legs, not here.
  */
 #include <gtest/gtest.h>
 #include "config/GnssConfig.hpp"
@@ -40,10 +41,10 @@ using namespace GnssProcessor;
 
 namespace {
 
-constexpr double kLam = 0.1902936728;   // GPS L1 wavelength (m) — one cycle >> the 0.05 m gate
+constexpr double kLam = 0.1902936728;   // GPS L1 wavelength (m); one cycle >> the 0.05 m gate
 
 /// A GPS epoch of @p n satellites, one L1C phase bias each: key i gets
-/// @c base + i*0.001 m, plus @p jump m on the FIRST @p n_jumped of them.
+/// 0.25 + i*0.001 m, plus @p jump m on the first @p n_jumped of them.
 NetworkSolutionEpoch makeEpoch(double tow, int n, int n_jumped, double jump) {
     NetworkSolutionEpoch sol;
     sol.epoch_time = GnssTime{2313, tow};
@@ -107,8 +108,8 @@ bool loadInto(const std::string& tag, const std::string& body, GnssConfig& cfg) 
     return ok;
 }
 
-/// An emitter whose per-key baselines are the PREVIOUS run's emitted values — the
-/// state a warm resume restores from the snapshot's EMITTER blob.  Built by emitting
+/// An emitter whose per-key baselines are the previous run's emitted values, the
+/// state a warm resume restores from the snapshot's emitter blob.  Built by emitting
 /// the pre-seam epoch into a throwaway store, then round-tripping through
 /// serializeState / restoreState so the test exercises the same path the resume does.
 NetworkProductEmitter restoredEmitter(double pre_seam_tow, int n) {
@@ -138,15 +139,15 @@ TEST(ResumePbSeamMark, ThirtyPercentOfKeysMarksTheConstellationOnce) {
 
     ASSERT_EQ(census.size(), 1u);
     const auto& g = census.at('G');
-    EXPECT_EQ(g.keys_tested, 20);     // every key carries a RESTORED baseline
+    EXPECT_EQ(g.keys_tested, 20);     // every key carries a restored baseline
     EXPECT_EQ(g.keys_over, 6);
     EXPECT_NEAR(g.max_abs_delta_m, kLam, 1e-9);
     EXPECT_GT(static_cast<double>(g.keys_over) / g.keys_tested,
               GnssConfig::kResumePbSeamMarkFraction);
     EXPECT_EQ(markedConsts(census), std::set<char>({'G'}));
 
-    // The census is READ-ONLY: taking it twice gives the same answer, and it has not
-    // disturbed the counters the emitter is about to step.
+    // The census is read-only: taking it twice gives the same answer, and it leaves
+    // the counters the emitter is about to step unchanged.
     EXPECT_EQ(em.pbSeamCensus(first).at('G').keys_over, 6);
     EXPECT_EQ(em.discontinuityCounter("G01", "L1C"), 0);
 
@@ -165,8 +166,8 @@ TEST(ResumePbSeamMark, ThirtyPercentOfKeysMarksTheConstellationOnce) {
 TEST(ResumePbSeamMark, FivePercentOfKeysMarksNothing) {
     NetworkProductEmitter em = restoredEmitter(/*pre_seam_tow=*/277290.0, /*n=*/20);
 
-    // 1 of 20 keys (5 %) — under the 10 % bar, so this is an ordinary single-key jump
-    // the emitter's own per-key test already reports; not a frame re-realization.
+    // 1 of 20 keys (5 %) is under the 10 % bar: an ordinary single-key jump that the
+    // emitter's own per-key test reports, not a frame re-realization.
     const NetworkSolutionEpoch first = makeEpoch(277320.0, 20, /*n_jumped=*/1, /*jump=*/kLam);
     const auto census = em.pbSeamCensus(first);
 
@@ -178,7 +179,7 @@ TEST(ResumePbSeamMark, FivePercentOfKeysMarksNothing) {
     EXPECT_TRUE(markedConsts(census).empty());
 }
 
-// --- 3. A second emit can never mark — the baselines are this epoch's -------------
+// --- 3. A second emit cannot mark: the baselines are this epoch's ----------------
 
 TEST(ResumePbSeamMark, SecondEmitCannotMark) {
     NetworkProductEmitter em = restoredEmitter(/*pre_seam_tow=*/277290.0, /*n=*/20);
@@ -188,22 +189,22 @@ TEST(ResumePbSeamMark, SecondEmitCannotMark) {
     EXPECT_EQ(markedConsts(em.pbSeamCensus(first)), std::set<char>({'G'}));
     em.emitToStore(first, store);
 
-    // Re-censusing the epoch that was just emitted: every baseline now IS that epoch's
-    // value, so nothing is over threshold even though the values never moved back.
+    // A census of the epoch just emitted: every baseline now equals that epoch's
+    // value, so nothing is over threshold although the values never moved back.
     const auto after = em.pbSeamCensus(first);
     ASSERT_EQ(after.size(), 1u);
     EXPECT_EQ(after.at('G').keys_tested, 20);
     EXPECT_EQ(after.at('G').keys_over, 0);
     EXPECT_TRUE(markedConsts(after).empty());
 
-    // And the genuinely next epoch, re-realized by another whole cycle, is graded
-    // against the post-seam frame — the emitter's ordinary jump test, not the seam.
+    // The next epoch, re-realized by another whole cycle, is graded against the
+    // post-seam frame, as in the emitter's ordinary jump test rather than the seam.
     const auto next = em.pbSeamCensus(makeEpoch(277350.0, 20, 20, 2.0 * kLam));
     EXPECT_EQ(next.at('G').keys_over, 20);   // the per-key test still sees it
     EXPECT_NEAR(next.at('G').max_abs_delta_m, kLam, 1e-9);   // one cycle, not two
 }
 
-// --- 4. A COLD emitter has no baselines, so the census is empty -------------------
+// --- 4. A cold emitter has no baselines, so the census is empty -------------------
 
 TEST(ResumePbSeamMark, ColdEmitterHasNothingToCompare) {
     NetworkProductEmitter em;                 // fresh: no restored baselines
@@ -242,7 +243,7 @@ TEST(ResumePbSeamMark, MarksOnlyTheConstellationThatMoved) {
     EXPECT_EQ(markedConsts(census), std::set<char>({'G'}));
 }
 
-// --- 6. The knob: default OFF, parses, and is NOT fingerprinted -------------------
+// --- 6. The knob: off by default, parses, and is not fingerprinted ----------------
 
 TEST(ResumePbSeamMark, KnobDefaultsOffAndParses) {
     GnssConfig def;
@@ -253,12 +254,12 @@ TEST(ResumePbSeamMark, KnobDefaultsOffAndParses) {
     ASSERT_TRUE(loadInto("on", networkConfig("    \"resume_pb_seam_mark\": true,\n"), on));
     EXPECT_TRUE(on.networkResumePbSeamMark());
 
-    // The warn-inert posture (armed with no snapshot to resume from) still LOADS —
-    // an armed-and-inert knob is a warning, never a hard failure (the
-    // resume_frame_restore precedent).
+    // Armed with no snapshot to resume from, the knob is inert and the config still
+    // loads: an armed-and-inert knob is a warning, not a hard failure (as for
+    // resume_frame_restore).
     EXPECT_TRUE(on.getNetworkConfig().state_snapshot_path.empty());
 
-    // The bar is a single compile-time constant shared by the rule, its log line and
-    // this test — 10 %, as pre-registered.
+    // The bar is one compile-time constant shared by the rule, its log line and this
+    // test: 10 %, as pre-registered.
     EXPECT_DOUBLE_EQ(GnssConfig::kResumePbSeamMarkFraction, 0.10);
 }

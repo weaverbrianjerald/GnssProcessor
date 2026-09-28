@@ -1,13 +1,17 @@
 /**
  * @file Troposphere.cpp
- * @brief Implementation of troposphere utilities: GMF mapping functions and ZHD.
+ * @brief Implementation of troposphere utilities: mapping functions and ZHD.
  *
  * Implements:
- *  - Global Mapping Function (GMF) by Boehm et al. (2006) for hydrostatic/wet mapping.
+ *  - Hydrostatic/wet mapping from the Niell (1996) NMF coefficient tables (the default
+ *    path, labelled "GMF" in the method name and log text), or VMF3 with GPT3 "a"
+ *    coefficients when the VMF3 mapping function is configured and the GPT3 grid loads.
  *  - Standard-atmosphere pressure model used to estimate station pressure from height.
  *  - Saastamoinen zenith hydrostatic delay (ZHD).
  *
- * Reference:
+ * References:
+ *   Niell, A. E. (1996), Global mapping functions for the atmosphere delay at radio
+ *   wavelengths, J. Geophys. Res., 101(B2), 3227-3246.
  *   Boehm, J., A. Niell, P. Tregoning, H. Schuh (2006),
  *   Global Mapping Function (GMF): A new empirical mapping function based on
  *   numerical weather model data, Geophys. Res. Lett., 33, L07304.
@@ -72,15 +76,15 @@ namespace GnssProcessor {
             config_.getElevationMaskDeg());
 
         if (want_vmf3 || want_gpt3_apriori) {
-            // Explicit receiver.gpt3_grid_path wins; otherwise default to the
-            // bundled static grid under the internal data root.  GPT3 is a
+            // An explicit receiver.gpt3_grid_path takes precedence; otherwise the
+            // bundled static grid under the internal data root is used.  GPT3 is a
             // date-independent static asset, so it is resolved here rather than
-            // through PathResolver's date-aware product logic — mirroring the
-            // ocean-pole-tide / atmospheric-loading grids defaulted in
-            // ModelGeometry.  The config loader cannot bake this default because
-            // the internal data root is resolved only after the receiver section
-            // parses (see GnssConfig::loadReceiverSection_); by the time this
-            // constructor runs the root is always known.
+            // through PathResolver's date-aware product logic, as ModelGeometry does
+            // for the ocean-pole-tide and atmospheric-loading grids.  The config
+            // loader cannot set this default because the internal data root is
+            // resolved only after the receiver section parses (see
+            // GnssConfig::loadReceiverSection_); the root is known by the time this
+            // constructor runs.
             std::filesystem::path grid_path = config_.getGpt3GridPath();
             if (grid_path.empty()) {
                 grid_path = config_.getInternalDataRoot() / "static" / "gpt3" / "gpt3_5.grd";
@@ -131,13 +135,18 @@ namespace GnssProcessor {
     }
 
     /**
-     * @brief Compute tropospheric mapping functions using the Global Mapping Function (GMF).
+     * @brief Compute hydrostatic and wet tropospheric mapping functions.
      *
-     * The GMF provides latitude-, height-, and season-dependent mapping coefficients
-     * (a, b, c) for both hydrostatic and wet components using a Marini continued
-     * fraction form. The coefficients are modelled as a mean plus annual harmonic.
+     * With the VMF3 mapping function configured and a loaded GPT3 grid, VMF3 is
+     * evaluated from the GPT3 "a" coefficients.  Otherwise (and when the GPT3 query
+     * fails) the Niell (1996) NMF tables supply latitude- and season-dependent
+     * coefficients (a, b, c) for the Marini continued fraction: hydrostatic terms are
+     * a mean plus an annual harmonic, wet terms a mean only.  Both paths add the Niell
+     * height correction to the hydrostatic mapping.  An invalid receiver position
+     * selects a Black & Eisner fallback.
      *
-     * Reference: Boehm et al. (2006), Geophys. Res. Lett., 33, L07304.
+     * References: Niell (1996), J. Geophys. Res., 101(B2), 3227-3246; Boehm et al.
+     * (2006), Geophys. Res. Lett., 33, L07304.
      */
     void Troposphere::getTroposphereMapping(double elevation,
                                             const Eigen::Vector3d& receiver_pos,
@@ -175,11 +184,11 @@ namespace GnssProcessor {
         // Day-of-year for annual variation (phase reference: Jan 28 for NH)
         double doy = getDayOfYear(time);
 
-        // --- VMF3 path (empirical from GPT3): early-out before GMF fallthrough ---
+        // --- VMF3 path (empirical, from GPT3): returns before the NMF path ---
         // Uses a_h/a_w bilinearly interpolated from the GPT3 grid and b/c
         // synthesized from the degree/order-12 spherical-harmonic expansion in
-        // Vmf3Coefficients.hpp.  On any GPT3 query failure we silently fall
-        // through to GMF so the engine never aborts on a single bad sample.
+        // Vmf3Coefficients.hpp.  A failed GPT3 query falls through to the NMF path
+        // without a log line, so a single bad sample does not abort the run.
         if (config_.getTroposphereMappingFunction() == TroposphereMappingFunction::Vmf3 && gpt3_) {
             const double lat_deg = lat * 180.0 / Constants::PI;
             const double lon_deg = llh.lon_rad * 180.0 / Constants::PI;
@@ -187,10 +196,11 @@ namespace GnssProcessor {
             if (gpt3_->query(lat_deg, lon_deg, llh.h_m, doy, r)) {
                 Vmf3::computeMapping(lat, llh.lon_rad, doy, el_rad, r.a_h, r.a_w, mf_d, mf_w);
 
-                // Niell height correction for the hydrostatic mapping is the
-                // same formula GMF uses; VMF3's a coefficient lives at the
-                // grid's orthometric height so applying the correction here
-                // brings it down to the station height.
+                // Niell height correction for the hydrostatic mapping, the same
+                // formula as the NMF path below.  It is applied with the full
+                // station height h_km, which moves the VMF3 mapping from the height
+                // its "a" coefficient refers to (the grid's orthometric reference
+                // height) to the station height.
                 static constexpr double a_ht = 2.53e-5;
                 static constexpr double b_ht = 5.49e-3;
                 static constexpr double c_ht = 1.14e-3;
@@ -209,7 +219,7 @@ namespace GnssProcessor {
                     elevation, lat_deg, llh.h_m, doy, r.a_h, r.a_w, mf_d, mf_w);
                 return;
             }
-            // GPT3 query failed — fall through to GMF below.
+            // GPT3 query failed: fall through to the NMF path below.
         }
 
         // Phase offset: DOY 28 for northern hemisphere, DOY 28 + 182.625 for southern
@@ -219,15 +229,14 @@ namespace GnssProcessor {
         double abs_lat = std::abs(lat); // radians
 
         // === Niell Mapping Function coefficients (Niell 1996, NMF) ===
-        // 5 data points at latitudes: 15°, 30°, 45°, 60°, 75°.  (Despite the
-        // historical "GMF" naming on this method, these are the NMF tables;
-        // the spherical-harmonic GMF/VMF3 path lives in the Vmf3 branch.)
+        // 5 data points at latitudes: 15°, 30°, 45°, 60°, 75°.  These are the NMF
+        // tables, although the method and its log text say "GMF"; the
+        // spherical-harmonic VMF3 path is the branch above.
         //
-        // The hydrostatic seasonal AMPLITUDE is zero at 15° and grows poleward,
-        // so amplitude[0] = 0.0.  Verified against POINT (Troposphere.cpp NMF
-        // abc_amp), cssrlib (gnss.py tropmapfNiell) and RTKLIB (tropmapf) — all
-        // three carry the leading 0.0.  (A prior version dropped it and shifted
-        // every amplitude one latitude bin toward the equator.)
+        // The hydrostatic seasonal amplitude is zero at 15° and grows poleward,
+        // so amplitude[0] = 0.0.  POINT (Troposphere.cpp NMF abc_amp), cssrlib
+        // (gnss.py tropmapfNiell) and RTKLIB (tropmapf) all carry the leading 0.0;
+        // omitting it shifts every amplitude one latitude bin toward the equator.
         //
         // Hydrostatic: mean and annual amplitude
         static constexpr double ah_mean[] = { 1.2769934e-3, 1.2683230e-3, 1.2465397e-3,
@@ -245,7 +254,7 @@ namespace GnssProcessor {
         static constexpr double ch_amp[]  = { 0.0, 9.0128400e-5, 4.3497037e-5,
                                                84.795348e-5, 170.37206e-5 };
 
-        // Wet: mean only (no annual variation in GMF wet)
+        // Wet: mean only (no annual variation in NMF wet)
         static constexpr double aw_mean[] = { 5.8021897e-4, 5.6794847e-4, 5.8118019e-4,
                                                5.9727542e-4, 6.1641693e-4 };
         static constexpr double bw_mean[] = { 1.4275268e-3, 1.5138625e-3, 1.4572752e-3,
@@ -269,17 +278,16 @@ namespace GnssProcessor {
             return arr[i] * (1.0 - f) + arr[i + 1] * f;
         };
 
-        // Niell seasonal combination is avg − amp·cos(2π(doy − 28)/365.25)
-        // (MINUS).  cos_annual already folds the southern-hemisphere half-year
-        // shift into its phase (doy_phase = 28 + 182.625 for the SH), so the
-        // single minus sign is correct for both hemispheres.  Verified against
-        // POINT, cssrlib and RTKLIB — all use the minus.  (A prior version used
-        // a plus, putting the seasonal variation in anti-phase.)
+        // Niell seasonal combination: avg − amp·cos(2π(doy − 28)/365.25), with a
+        // minus sign.  cos_annual already folds the southern-hemisphere half-year
+        // shift into its phase (doy_phase = 28 + 182.625 for the SH), so the one
+        // minus sign is correct for both hemispheres.  POINT, cssrlib and RTKLIB
+        // all use the minus; a plus puts the seasonal variation in anti-phase.
         double a_h = lerp(ah_mean, idx, frac) - lerp(ah_amp, idx, frac) * cos_annual;
         double b_h = lerp(bh_mean, idx, frac) - lerp(bh_amp, idx, frac) * cos_annual;
         double c_h = lerp(ch_mean, idx, frac) - lerp(ch_amp, idx, frac) * cos_annual;
 
-        // Interpolate wet coefficients (no annual variation in GMF wet)
+        // Interpolate wet coefficients (no annual variation in NMF wet)
         double a_w = lerp(aw_mean, idx, frac);
         double b_w = lerp(bw_mean, idx, frac);
         double c_w = lerp(cw_mean, idx, frac);
@@ -288,9 +296,10 @@ namespace GnssProcessor {
         mf_d = mariniMapping(sin_el, a_h, b_h, c_h);
         mf_w = mariniMapping(sin_el, a_w, b_w, c_w);
 
-        // Height correction for hydrostatic mapping function
-        // Boehm & Schuh (2004): mf_h(h) = mf_h(0) + (1/sin(el) - mf_h(0)) * h_km * dh
-        // where dh is height-correction gradient
+        // Niell (1996) height correction for the hydrostatic mapping function (also
+        // used by VMF1, Boehm & Schuh 2004):
+        //   mf_h(h) = mf_h(0) + [1/sin(el) - m(el; a_ht, b_ht, c_ht)] * h_km
+        // where m is the Marini form with the height-correction coefficients below.
         static constexpr double a_ht = 2.53e-5;
         static constexpr double b_ht = 5.49e-3;
         static constexpr double c_ht = 1.14e-3;
@@ -319,8 +328,9 @@ namespace GnssProcessor {
         double P = pressureFromHeightStdAtm(config_.getZhdPressure(), config_.getZhdTemp(), h_m);
         const char* source = "stdatm";
 
-        // GPT3 path: query the grid at this lat/lon/h/doy.  On any failure
-        // we silently keep the standard-atmosphere fallback already in P.
+        // GPT3 path, taken whenever the grid is loaded (a priori source Gpt3 or
+        // mapping function Vmf3): query the grid at this lat/lon/h/doy.  On failure
+        // the standard-atmosphere value already in P is kept, with no log line.
         if (gpt3_ && gpt3_->isLoaded()) {
             const double lat_deg = lat_rad * 180.0 / Constants::PI;
             const double lon_deg = llh.lon_rad * 180.0 / Constants::PI;

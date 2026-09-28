@@ -3,15 +3,15 @@
  * @file TcpClient.hpp
  * @brief Raw TCP client for receiving an RTCM byte stream from a receiver.
  *
- * Septentrio (and most modern receivers) can be configured to push RTCM3
- * MSM messages over a TCP server socket — e.g. a Septentrio AsteRx
- * configured with "RTCMv3 output → IPS1, port 28784".  This client
- * connects to that host:port pair and pumps the raw bytes into an
- * internal buffer that the realtime polling loop drains via tryRead().
+ * Septentrio and most current receivers can push RTCM3 MSM messages over a TCP
+ * server socket, e.g. a Septentrio AsteRx configured with
+ * "RTCMv3 output → IPS1, port 28784".  This client connects to that host:port
+ * pair and copies the raw bytes into an internal buffer that the realtime
+ * polling loop drains via tryRead().
  *
- * Mirrors @c NtripClient: background thread does blocking @c recv into
- * a mutex-protected buffer; producers wake the consumer via a condition
- * variable.  Reconnects automatically on connection loss.
+ * Mirrors @c NtripClient: a background thread does a blocking @c recv into a
+ * mutex-protected buffer and wakes the consumer through a condition variable.
+ * The client reconnects automatically on connection loss.
  */
 
 #include "logging/LogManager.hpp"
@@ -55,17 +55,18 @@ public:
     /// True while the connection is established.
     bool isConnected() const { return connected_.load(); }
 
-    /// True from start() until stop() — the client's intent-to-run, independent
-    /// of momentary connection state.  The realtime poll loop treats a socket
-    /// source as "active" while running (drops are handled by internal
-    /// auto-reconnect), so a transient disconnect or a not-yet-established
-    /// connection at startup does not tear the session down.
+    /// True from start() until stop(): the client's intent to run, independent of
+    /// the momentary connection state.  The realtime poll loop treats a socket
+    /// source as active while it is running (drops are handled by the internal
+    /// auto-reconnect), so a transient disconnect or a connection not yet
+    /// established at startup does not end the session.
     bool isRunning() const { return running_.load(); }
 
     /**
-     * @brief Non-blocking buffered read with millisecond timeout.
+     * @brief Buffered read that waits up to @p timeout_ms milliseconds for data
+     *        (no wait when @p timeout_ms ≤ 0) and returns at most @p max_bytes.
      *
-     * Same contract as @c NtripClient::tryRead — used by the multi-stream
+     * Same contract as @c NtripClient::tryRead; used by the multi-stream
      * realtime polling loop.
      */
     std::size_t tryRead(std::vector<uint8_t>& out, std::size_t max_bytes, int timeout_ms);

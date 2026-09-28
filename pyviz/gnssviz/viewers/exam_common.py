@@ -8,7 +8,7 @@ exam viewers share lives here so the truth-join hygiene (SPEC R5) is written
 once:
 
 * **Truth↔trace join** on the integer ``(week, round(tow*1000))`` grid in
-  ``int64`` — never a float/string tow compare (:func:`merge_truth_trace`,
+  ``int64``, never a float or string tow compare (:func:`merge_truth_trace`,
   :func:`tow_key`).
 * **ENU** about each epoch's truth point via the same rotation as
   :mod:`gnssviz.geodesy` (:func:`enu_error`).
@@ -20,8 +20,8 @@ once:
   (SPEC R7), ``scenario_summary.json``, and the machine-readable
   ``verify_report.json`` (SPEC R6), plus the report banner it feeds.
 
-None of these import a plotting library — they return prepared pandas / numpy /
-:mod:`gnssviz.figures` specs, like every other data-layer helper.
+None of these import a plotting library; like every other data-layer helper,
+they return prepared pandas / numpy / :mod:`gnssviz.figures` specs.
 """
 
 from __future__ import annotations
@@ -46,10 +46,10 @@ STORM_COLOR = (0.85, 0.45, 0.10)
 
 # Slip-class → RGB (stable across the skyplot + timeline viewers).
 SLIP_CLASS_COLORS = {
-    "flagged":     (0.15, 0.45, 0.85),   # blue  — LLI=1 (engine warned)
-    "unflagged":   (0.85, 0.20, 0.20),   # red   — LLI=0 (must be detected via MW/GF)
-    "scripted":    (0.55, 0.30, 0.75),   # purple— hand-authored gotcha
-    "false-alarm": (0.55, 0.55, 0.55),   # grey  — Δ=0, LLI=1 only
+    "flagged":     (0.15, 0.45, 0.85),   # blue: LLI=1 (engine warned)
+    "unflagged":   (0.85, 0.20, 0.20),   # red: LLI=0 (detectable only via MW/GF)
+    "scripted":    (0.55, 0.30, 0.75),   # purple: hand-authored scenario slip
+    "false-alarm": (0.55, 0.55, 0.55),   # grey: Δ=0, LLI=1 only
 }
 SLIP_CLASS_ORDER = ("flagged", "unflagged", "scripted", "false-alarm")
 
@@ -82,7 +82,7 @@ def require_truth(ctx, name: str) -> pd.DataFrame:
 
 
 # --------------------------------------------------------------------------- #
-#  (week, tow-ms) join — the ONLY sanctioned truth↔trace matcher (SPEC R5)
+#  (week, tow-ms) join: the one truth↔trace matcher to use (SPEC R5)
 # --------------------------------------------------------------------------- #
 def tow_key(week, tow) -> np.ndarray:
     """Integer join key ``week*ms_per_week + round(tow*1000)`` as ``int64``.
@@ -132,7 +132,7 @@ def enu_error(est_x, est_y, est_z, tru_x, tru_y, tru_z, lat_deg, lon_deg):
 
     Vectorized per row (each epoch carries its own truth lat/lon for a kinematic
     run).  Same E/N/U rotation as :func:`gnssviz.geodesy.ecef_to_enu`; the origin
-    offset cancels because we difference ECEF first.
+    offset cancels because the ECEF difference is formed first.
     """
     dx = np.asarray(est_x, float) - np.asarray(tru_x, float)
     dy = np.asarray(est_y, float) - np.asarray(tru_y, float)
@@ -150,8 +150,8 @@ def enu_error(est_x, est_y, est_z, tru_x, tru_y, tru_z, lat_deg, lon_deg):
 # --------------------------------------------------------------------------- #
 #  Full position covariance -> horizontal (E,N) 2x2, and track-relative frames
 # --------------------------------------------------------------------------- #
-#: chi-square, 2 dof: 95% -> 5.991, 99% -> 9.210.  A 2-D confidence region is NOT
-#: 1.96 sigma per axis; using the 1-D quantile is a common and gradeable error.
+#: chi-square, 2 dof: 95% -> 5.991, 99% -> 9.210.  A 2-D confidence region is not
+#: 1.96 sigma per axis; using the 1-D quantile understates the region.
 CHI2_95 = 5.991
 CHI2_99 = 9.210
 
@@ -161,14 +161,14 @@ def enu_cov2(df, lat0_deg, lon0_deg):
 
     Needs the off-diagonal position columns (``cov_xy_m2`` / ``cov_xz_m2`` /
     ``cov_yz_m2``, emitted since 2026-07-24).  Returns ``None`` when they are
-    absent -- an ellipse ORIENTATION cannot be recovered from variances alone, and
-    rotating a diagonal-only ECEF covariance manufactures a bearing that is an
-    artifact of the rotation rather than the filter's correlation (median 41 deg
-    wrong on the hero run).  Callers must draw nothing rather than draw that.
+    absent: an ellipse orientation cannot be recovered from variances alone, and
+    rotating a diagonal-only ECEF covariance produces a bearing that comes from
+    the rotation, not from the filter's correlation.  Callers draw nothing in
+    that case.
 
-    Rotated about ONE fixed geodetic point so the result is consistent with a plot
-    drawn in that same frame; over a few hundred km the local ENU triad turns by
-    ~(L/R_earth), i.e. ~2.7 deg at 300 km.
+    Rotated about one fixed geodetic point so the result is consistent with a
+    plot drawn in that same frame; over a few hundred km the local ENU triad
+    turns by ~(L/R_earth), i.e. ~2.7 deg at 300 km.
     """
     need = ("x_std_m", "y_std_m", "z_std_m", "cov_xy_m2", "cov_xz_m2", "cov_yz_m2")
     cols = {c: first_col(df, c) for c in need}
@@ -208,10 +208,12 @@ def exaggeration(bound_m, span_m, *, target=0.015, skip=0):
     """A 1/2/5-decade factor making the steady-state p90 bound ``target`` of span.
 
     Cm-level bounds on a multi-hundred-km track are invisible at true scale, so
-    plan-view/geographic panels must exaggerate.  Scaled off the STEADY-STATE p90
-    rather than the whole-arc median: the filter's convergence transient runs
-    ~2.5 m against a ~0.6 cm steady state and would otherwise set the factor by
-    itself (one opening ellipse came out 450 km across).
+    plan-view/geographic panels exaggerate them.  The factor is the smallest
+    1/2/5 x 10^k at or above ``target * span_m / p90``, where p90 is taken over
+    ``bound_m[skip:]`` (the steady state when ``skip`` drops the convergence
+    transient) rather than the whole-arc median: a transient of metres against
+    a sub-cm steady state would otherwise set the factor on its own.  Returns
+    1.0 when the reference bound or the span is not positive.
     """
     b = np.asarray(bound_m, float)[skip:]
     b = b[np.isfinite(b)]
@@ -272,11 +274,11 @@ def converge_skip(ctx, default: int = 30) -> int:
     """Leading epochs the Verifier excludes from its steady-state statistics.
 
     Read from ``verify_report.json`` (the C++ ``Verifier`` echoes its own
-    ``converge_skip`` there) so a dashboard number and the graded number are the
-    same number.  Including the filter's convergence transient is what makes a
-    panel disagree with the scorecard sitting next to it — on the SAR-Fiji run it
-    inflates the ZWD RMS from 12 mm to 20 mm and the vertical RMS from 40 mm to
-    124 mm, purely from the first 30 epochs.
+    ``converge_skip`` there) so a dashboard statistic matches the graded one.
+    Including the convergence transient makes a panel disagree with the
+    scorecard next to it (on one run the first 30 epochs raised the ZWD RMS
+    from 12 mm to 20 mm and the vertical RMS from 40 mm to 124 mm).  Falls
+    back to ``default`` when the report or its value is missing or negative.
     """
     rep = verify_report(ctx)
     if isinstance(rep, dict):
@@ -307,11 +309,9 @@ def is_kinematic(ctx) -> bool:
 # --------------------------------------------------------------------------- #
 #  Layout
 # --------------------------------------------------------------------------- #
-#: Per-satellite-row height (inches) for every sat x epoch strip/raster.  Kept in
-#: ONE place so a heatmap cell (a "tile") is the same size in every such figure on
-#: the dashboard — the iono raster, the slip timeline and the signal-usage strip
-#: previously used 0.34, 0.34 and 0.18 per row with different caps, so their tiles
-#: rendered at visibly different heights for the same satellites.
+#: Per-satellite-row height (inches) for every sat x epoch strip/raster (the iono
+#: raster, the slip timeline, the signal-usage strip).  Defined once so a heatmap
+#: cell (a "tile") has the same height in every such figure on the dashboard.
 SAT_ROW_IN = 0.34
 
 
@@ -356,12 +356,12 @@ def storm_overlay_is_informative(mask, *, frac: float = STORM_WHOLE_ARC_FRAC) ->
 
     The *spatial* viewers mark the storm by recolouring the affected track
     segment, which only carries information if there is unaffected track to
-    contrast it against.  On a whole-arc storm (the DOY-132 hero: 100% of epochs)
-    the overlay is drawn thicker than the track it covers, so it hides the
-    trajectory it is meant to annotate and leaves a legend advertising a colour
-    the reader never sees.  Callers should skip the overlay and say "whole arc"
-    in prose instead.  Time-series viewers are unaffected — their paired
-    :func:`storm_vlines` land harmlessly at the plot edges.
+    contrast it against.  On a whole-arc storm (e.g. the DOY-132 scenario, 100%
+    of epochs) the overlay is drawn thicker than the track it covers, so it hides
+    the trajectory and leaves a legend entry for a colour that is not visible.
+    Callers skip the overlay and say "whole arc" in prose instead.  Time-series
+    viewers are unaffected: their paired :func:`storm_vlines` fall at the plot
+    edges.  Returns ``False`` also for an empty or all-false mask.
     """
     m = np.asarray(mask, dtype=bool)
     if m.size == 0 or not m.any():
@@ -417,7 +417,7 @@ def classify_slips(df: pd.DataFrame) -> pd.Series:
 
 
 # --------------------------------------------------------------------------- #
-#  Verifier banner + chip row (SPEC §4.4) — trusted HTML for build_html_report
+#  Verifier banner + chip row (SPEC §4.4): trusted HTML for build_html_report
 # --------------------------------------------------------------------------- #
 def verifier_banner_html(rep: Optional[dict], report_path: str = "") -> str:
     """Coloured PASS/FAIL banner + compact per-check chip row from a

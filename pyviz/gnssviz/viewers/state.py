@@ -1,8 +1,8 @@
-"""State / position viewer -- the port of ``state_base_parameters.m``.
+"""State / position viewer: the port of ``state_base_parameters.m``.
 
 Reads ``state_trace.csv`` (or the smoother schema) and produces, guarded by
 column presence:
-  * ENU & 3D position error vs time, with per-component mean/sigma read-outs
+  * ENU and 3D position error vs time, with per-component mean/sigma read-outs
     (cm) over the post-converged window;
   * receiver clock bias (GPS / Galileo / phase) with +/-1 sigma, when present;
   * tropospheric zenith delay with +/-1 sigma;
@@ -21,7 +21,7 @@ from ..io import add_utc, first_col, load_trace
 from ..figures import Axes, Figure, Legend, Line, TextBox
 from .base import Viewer, ViewerResult
 
-# Component colours (match the MATLAB script).
+# Component colours, matching the MATLAB script.
 _C_E = (0.0, 0.0, 1.0)        # blue
 _C_N = (0.0, 0.6, 0.0)        # green
 _C_U = (1.0, 0.0, 0.0)        # red
@@ -32,7 +32,7 @@ _RED_DASH = (1.0, 0.0, 0.0)
 def _half_index(n: int) -> int:
     """0-based start of the post-converged window (MATLAB ``lxyz-round(lxyz/2)``)."""
     r = int(np.floor(n / 2.0 + 0.5))         # MATLAB round: half away from zero
-    return max((n - r) - 1, 0)               # 1-based (n-r) -> 0-based slice start
+    return max((n - r) - 1, 0)               # 1-based (n-r), converted to 0-based
 
 
 def _sigma_lines(t, y, s, base_color, label):
@@ -61,8 +61,9 @@ def build_state(ctx) -> ViewerResult:
     clk = _arr(first_col(df, "clock_m"))
     # Deliberate divergence from MATLAB: state_base_parameters.m falls back to
     # clock_m itself as the sigma when clock_std_m is absent, drawing a
-    # nonsensical clk +/- clk band.  We draw no band instead (correct over
-    # bug-faithful); the real state_trace.csv carries no clock columns anyway.
+    # nonsensical clk +/- clk band. This viewer draws no band instead, favoring
+    # correctness over matching that behavior; the real state_trace.csv carries
+    # no clock columns anyway.
     clks = _arr(first_col(df, "clock_std_m"))
     trop = _arr(first_col(df, "tropo_m", "tropo_zwd_m"))
     trops = _arr(first_col(df, "tropo_std_m", "sigma_tropo_m"))
@@ -94,10 +95,11 @@ def build_state(ctx) -> ViewerResult:
         pos_err = np.sqrt(e ** 2 + nth ** 2 + u ** 2)
         stats = _enu_stats(e, nth, u, pos_err, h0)
 
-        # For a MOVING receiver this ENU-about-median is the vessel's *track* (tens
-        # of km), not an error — so it is unreadable and misleading here.  Draw the
-        # self-referenced panel only for a (near-)static receiver; on a kinematic run
-        # the truth-referenced error lives in the exam position-error panel instead.
+        # For a moving receiver this ENU-about-median is the vessel's track (tens
+        # of km), not an error, so it is unreadable and misleading here. Draw the
+        # self-referenced panel only for a near-static receiver; on a kinematic run
+        # the truth-referenced error lives in the exam position-error panel
+        # (exam_position_truth.py) instead.
         moving = bool(np.nanmax(pos_err) > 100.0)
 
     if ref_ok and not moving:
@@ -159,7 +161,7 @@ def _ref_median(v, h0):
 
 
 def _enu_stats(e, nth, u, p, h0):
-    """mean/sigma (cm) over the post-converged window; sigma is sample (ddof=1).
+    """Mean/sigma (cm) over the post-converged window; sigma is sample (ddof=1).
 
     A single finite sample yields sigma 0 (matching MATLAB ``std`` of one
     element) rather than the NaN that ``ddof=1`` would produce.

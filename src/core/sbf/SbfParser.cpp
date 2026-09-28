@@ -6,12 +6,13 @@
  * (alignment-safe, native byte order on x64/MSVC).  Reconstruction formulas
  * and field offsets follow the Septentrio SBF Reference Guide (mosaic-X5
  * v4.8.0), cross-checked against RTKLIB septentrio.c.  Keplerian angular
- * elements are broadcast in SEMICIRCLES and converted to radians here (× π)
+ * elements are broadcast in semicircles and converted to radians here (× π)
  * to match the engine's BroadcastEphemeris convention; BeiDou toe/toc are
  * kept on the native BDT week scale (LiveEphemerisStore converts the query).
  *
- * Offsets for the Nav blocks are RTKLIB-derived and carry validate-against-
- * capture risk (see the SBF research notes); MeasEpoch is high-confidence.
+ * The Nav block offsets are RTKLIB-derived and still need validation against
+ * a capture (see the SBF research notes); the MeasEpoch offsets are
+ * high-confidence.
  */
 
 #include "sbf/SbfParser.hpp"
@@ -27,7 +28,7 @@ namespace GnssProcessor {
 
 namespace {
 
-/// Per-call logger for the SBF decode path — see logging/SafeLogger.hpp for why
+/// Per-call logger for the SBF decode path.  logging/SafeLogger.hpp explains why
 /// the bare spdlog::xxx() free functions are unsafe here.
 std::shared_ptr<spdlog::logger> sbfLog() {
     return Logging::safeDefaultLogger();
@@ -238,7 +239,7 @@ bool SbfParser::decodeMeasEpoch(const uint8_t* b, std::size_t len, int revision)
 // state lives in the process-wide Meas3Decoder (the format and the state
 // machine are documented there); this method is a thin adapter that drains the
 // decoded per-satellite observations into the parser's output vector.  Returns
-// true whenever the block is structurally a Meas3Ranges block — an empty result
+// true whenever the block is at least 20 bytes long.  An empty result
 // (auxiliary-antenna set, or a delta epoch whose reference was not yet seen) is
 // not an error.
 // ---------------------------------------------------------------------------
@@ -250,7 +251,7 @@ bool SbfParser::decodeMeas3Ranges(const uint8_t* b, std::size_t len) {
 }
 
 // ---------------------------------------------------------------------------
-// GPSNav (5891) / QZSNav (4095) — identical Keplerian layout
+// GPSNav (5891) / QZSNav (4095): identical Keplerian layout
 // ---------------------------------------------------------------------------
 
 bool SbfParser::decodeGpsQzsNav(const uint8_t* b, std::size_t len) {
@@ -297,7 +298,7 @@ bool SbfParser::decodeGpsQzsNav(const uint8_t* b, std::size_t len) {
 }
 
 // ---------------------------------------------------------------------------
-// GALNav (4002) — double-first I/NAV layout
+// GALNav (4002): I/NAV layout, double-precision fields first
 // ---------------------------------------------------------------------------
 
 bool SbfParser::decodeGalNav(const uint8_t* b, std::size_t len) {
@@ -341,7 +342,8 @@ bool SbfParser::decodeGalNav(const uint8_t* b, std::size_t len) {
 }
 
 // ---------------------------------------------------------------------------
-// BDSNav (4081) — native BDT scale (validate early-header offsets vs capture)
+// BDSNav (4081): native BDT scale (the early-header offsets still need
+// validation against a capture)
 // ---------------------------------------------------------------------------
 
 bool SbfParser::decodeBdsNav(const uint8_t* b, std::size_t len) {
@@ -388,8 +390,9 @@ bool SbfParser::decodeBdsNav(const uint8_t* b, std::size_t len) {
 }
 
 // ---------------------------------------------------------------------------
-// GLONav (4004) -> GlonassEphemeris (PZ-90 state).  GLONASS is excluded from
-// active_systems for now; decoded so the store is complete, offsets best-effort.
+// GLONav (4004) -> GlonassEphemeris (PZ-90 state).  GLONASS is currently excluded
+// from active_systems; the block is decoded so the store is complete, and the
+// offsets are best-effort.
 // ---------------------------------------------------------------------------
 
 bool SbfParser::decodeGlonav(const uint8_t* b, std::size_t len) {
@@ -423,12 +426,12 @@ bool SbfParser::decodeGlonav(const uint8_t* b, std::size_t len) {
 
 // ---------------------------------------------------------------------------
 // RawNavBits container (4017 GPSRawCA / 4023 GALRawINAV / 4047 BDSRaw /
-// 4026 GLORawCA).  Layout confirmed against a real AsteRx-U capture:
+// 4026 GLORawCA).  Layout verified against an AsteRx-U capture:
 //   body@14: SVID u8, CRCPassed u8, ViterbiCnt u8, Source u8 (SBF signal),
 //            FreqNr u8, RxChannel u8, then NAVBits = (body_len-6)/4 LE u32.
 // For GPS/BeiDou each u32 holds one 30-bit nav word right-justified (bits
-// 29..0).  Subframe/page assembly into an ephemeris is done downstream by
-// SubframeAssembler; here we only lift the words verbatim.
+// 29..0).  SubframeAssembler assembles subframes/pages into an ephemeris
+// downstream; this method only copies the words verbatim.
 // ---------------------------------------------------------------------------
 bool SbfParser::decodeRawNav(const uint8_t* b, std::size_t len) {
     constexpr std::size_t kBody = 14;

@@ -1,15 +1,15 @@
-"""Network worldmap viewer -- stations + datum links on an equirectangular map.
+"""Network worldmap viewer: stations and datum links on an equirectangular map.
 
-Draws the PPP-RTK NETWORK geometry: every estimating peer station, the
-clock-datum pivot, and (when present) the held-out closed-loop consumer / user
+Draws the PPP-RTK network geometry: every estimating peer station, the
+clock-datum pivot, and (when present) the held-out closed-loop consumer/user
 station, on a world coastline, with great-circle "datum links" fanning out from
-the clock-datum station.  These arcs are a COSMETIC depiction of the star
+the clock-datum station.  These arcs are a cosmetic depiction of the star
 topology the network time reference defines (every station tied to the common
-clock datum) -- the producer forms an undifferenced joint normal-equation
-system, so they are NOT double-differenced baselines.
+clock datum); the producer forms an undifferenced joint normal-equation
+system, so they are not double-differenced baselines.
 
-Station positions / roles come from :func:`gnssviz.network_config.load_stations`
--- preferring the producer-emitted ``network_stations.csv`` roster (it reflects
+Station positions and roles come from :func:`gnssviz.network_config.load_stations`,
+preferring the producer-emitted ``network_stations.csv`` roster (it reflects
 the stations that actually loaded), falling back to the run config JSON passed
 via ``TraceContext.network_config``.  With neither, the viewer skips (it has no
 geometry to draw), like a missing-CSV viewer.

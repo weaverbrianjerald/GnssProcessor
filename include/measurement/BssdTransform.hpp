@@ -4,11 +4,11 @@
  * @file BssdTransform.hpp
  * @brief Between-Satellite Single-Difference (BSSD) S-transformation.
  *
- * BssdTransform centralizes the BSSD math used by both PPP-RTK and the
- * baseline DD pipeline.  Each path consumes BSSD differently:
+ * BssdTransform holds the BSSD math used by both PPP-RTK and the baseline DD
+ * pipeline.  The two paths consume it differently:
  *
  *  - PPP-RTK (single receiver, SD-enabled mode) calls @c apply() to
- *    transform a fully-built @c EpochMeasurement in place.  The S-
+ *    transform a fully built @c EpochMeasurement in place.  The S-
  *    transformation rewrites the measurement vector @c z, the design
  *    matrix @c H, and the noise covariance @c R from undifferenced
  *    form to per-(constellation, signal) single differences against a
@@ -18,15 +18,14 @@
  *  - Baseline DD (rover + reference) feeds @c BrsdObservation entries
  *    into @c differenceBrsd().  BRSD has already cancelled receiver-
  *    shared bias terms in residual space; @c differenceBrsd applies
- *    the BSSD operator (non-pivot minus pivot) per-(cons, band, obs_type)
+ *    the BSSD operator (non-pivot minus pivot) per (cons, band, obs_type)
  *    to produce DD rows ready for the @c MeasurementModel row builder.
  *    The two-step composition BRSD → BSSD is mathematically equivalent
- *    to the single-step DD = (rov_i - rov_p) - (ref_i - ref_p) but the
- *    intermediate BRSD layer is inspectable as a separate diagnostic.
+ *    to the single-step DD = (rov_i - rov_p) - (ref_i - ref_p), and the
+ *    intermediate BRSD layer remains inspectable as a separate diagnostic.
  *
- * Renamed from @c DifferencingTransform (the old name was generic — it
- * didn't say between-satellite vs between-receiver).  PPP-RTK and
- * baseline now consume BSSD through this single class.
+ * Formerly named @c DifferencingTransform; the current name states that the
+ * difference is between satellites rather than between receivers.
  */
 
 #include "config/GnssConfig.hpp"
@@ -51,12 +50,13 @@ namespace GnssProcessor {
      * observation vector, design matrix H, and noise covariance R.
      *
      * - @c None: no differencing; raw (undifferenced) observables pass through.
-     *   Used by PPP and by PPP-RTK when @c enable_between_satellite_sd is false.
+     *   Used by PPP, by PPP-RTK when @c enable_between_satellite_sd is false,
+     *   and always by the PPP-RTK network producer.
      * - @c BetweenSatellite: per-constellation single difference against a
      *   pivot satellite within one receiver.  Cancels receiver-shared
      *   states (receiver clock, ISB, receiver DCB, ...).  Used by PPP-RTK
      *   when the SD transform is enabled.  Realised by @c BssdTransform::apply().
-     * - @c DoubleDifference: between-receiver AND between-satellite
+     * - @c DoubleDifference: between-receiver and between-satellite
      *   differencing.  Used by baseline modes; realised by composing
      *   @c BrsdTransform::apply (per sat) with @c BssdTransform::differenceBrsd
      *   (per cons / band / obs_type).
@@ -77,9 +77,9 @@ namespace GnssProcessor {
      *
      * Geometry partials w.r.t. the rover position state are recoverable
      * from @c los_rov_i and @c los_rov_p as @c h_pos = -(los_rov_i - los_rov_p).
-     * The fields are deliberately kept narrow — MeasurementModel can
-     * layer on its own bookkeeping fields (group_key, amb_idx, etc.)
-     * around the BssdDdRow without growing this struct.
+     * The struct carries only these fields; MeasurementModel keeps its own
+     * bookkeeping (group_key, amb_idx, etc.) in its own row type around the
+     * BssdDdRow.
      */
     struct BssdDdRow {
         char obs_type{ 'C' };                                ///< 'C' (code) or 'L' (phase).
@@ -107,22 +107,21 @@ namespace GnssProcessor {
      * One class, two methods:
      *
      *  - @c apply() is the in-place S-transform on an @c EpochMeasurement,
-     *    used by PPP-RTK with BSSD enabled.  Constructs the differencing
-     *    operator D from the current pivot map (provided by @c PivotManager
-     *    in uncombined mode, or chosen per signal in combined IF mode)
-     *    and applies @c (D z, D H, D R Dᵀ) plus the column-zeroing of
-     *    receiver-shared states.
+     *    used by PPP-RTK with BSSD enabled.  It builds the differencing
+     *    operator D from the per-constellation pivot map held by
+     *    @c PivotManager (in both combined IF and uncombined mode), applies
+     *    @c (D z, D H, D R Dᵀ), and zeroes the columns of receiver-shared
+     *    states.
      *
      *  - @c differenceBrsd() is the static helper that consumes BRSD
      *    outputs (from @c BrsdTransform::apply) plus a pivot map, and
-     *    emits a vector of @c BssdDdRow.  No state required — pure
-     *    function of its inputs.  The baseline DD path runs this for
-     *    each epoch's BRSD set.
+     *    emits a vector of @c BssdDdRow.  It holds no state and is a pure
+     *    function of its inputs.  The baseline DD path runs it on each
+     *    epoch's BRSD set.
      *
-     * Both methods are conceptually the same operation (subtract the
-     * pivot's value from each non-pivot in the same group); they differ
-     * in what they're subtracting from and what bookkeeping the result
-     * needs.
+     * Both methods perform the same operation (subtract the pivot's value
+     * from each non-pivot in the same group); they differ in what they
+     * subtract from and in the bookkeeping the result needs.
      */
     class BssdTransform {
     public:
@@ -132,19 +131,29 @@ namespace GnssProcessor {
                       LogManager& log_manager);
 
         /**
-         * @brief Apply between-satellite single-difference transformation in place.
+         * @brief Applies the between-satellite single-difference transformation in place.
          *
-         * Combined (IF) mode:
-         *   Pivot: one per (constellation, signal_type), highest elevation.
-         *   Columns zeroed: receiver clock, phase clock, ISB.
+         * Pivot: in both combined (IF) and uncombined mode, the sticky
+         * per-constellation pivot satellite from PivotManager.  Rows are grouped
+         * by (constellation, full signal type); in each group the pivot
+         * satellite's row is the reference.  A row with no pivot in its group,
+         * or in a group of one, is dropped rather than passed through
+         * undifferenced.  If no SD pair forms, the update is emptied.  An update
+         * with fewer than two rows is returned unchanged.
          *
-         * Uncombined PPP-RTK mode:
-         *   Pivot: reads the sticky pivot from PivotManager.
-         *   Columns zeroed: receiver clock, phase clock, ISB, receiver DCB/IFB,
-         *   reference satellite ionosphere.
+         * Columns zeroed in both modes: receiver clock, phase clock, ISB, clock
+         * rate and ISB rate (when allocated), and receiver code-bias (DCB/IFB)
+         * states except the per-FCN-slot GLONASS IFB states, which do not cancel
+         * between satellites on different slots.  Uncombined mode also zeroes the
+         * pivot satellites' ionosphere and satellite-bias columns.
          *
-         * In both modes reference ambiguity columns are zeroed and the
-         * differencing operator D is applied to z, H, and R.
+         * In both modes the pivot's ambiguity columns are zeroed (under the NlWl
+         * basis, its NL column and, for a non-reference band, the WL column), and
+         * the differencing operator D is applied to z, H, and R.  R is formed from
+         * the diagonal @c R_v: each SD row's variance is the sum of its two input
+         * variances, and rows sharing a pivot are correlated by the pivot's
+         * variance.  Output satellite IDs read "<sat>-<pivot>"; output signal
+         * types are the non-pivot row's.
          *
          * @param update         EpochMeasurement to transform (modified in place).
          * @param epoch_prefix   Log prefix string.
@@ -152,22 +161,23 @@ namespace GnssProcessor {
         void apply(EpochMeasurement& update, const std::string& epoch_prefix);
 
         /**
-         * @brief Apply BSSD to a vector of BRSD entries to produce DD rows.
+         * @brief Applies BSSD to a vector of BRSD entries to produce DD rows.
          *
-         * Iterates the @p brsd_by_cons_sat structure, finds each
-         * constellation's pivot in @p pivots, and for every non-pivot
-         * satellite in that constellation emits one @c BssdDdRow per
-         * (band, obs_type) pair where the pivot also has a BRSD entry.
+         * For each constellation in @p pivots, finds that constellation's
+         * entries in @p brsd_by_cons_sat, and for every non-pivot satellite
+         * emits one @c BssdDdRow per code or phase (band, obs_type) pair on
+         * which the pivot also has a BRSD entry.  A constellation absent from
+         * @p pivots, or whose pivot has no BRSD entries, yields no rows.
          * The DD residual is the BSSD difference @c BRSD_i - @c BRSD_p
-         * in residual space; the DD variance components are simply the
-         * two BRSD variances (BSSD's pivot column dropping carries no
-         * additional noise).  Cross-attribute aliasing flags are
-         * propagated into @c integer_capable so downstream AR knows
-         * which rows can round to integer.
+         * in residual space; the DD variance components are the two BRSD
+         * variances (removing the pivot column adds no noise).
+         * Cross-attribute aliasing flags are propagated into
+         * @c integer_capable so that downstream AR knows which rows can round
+         * to an integer.
          *
-         * Stateless / pure: the static method depends only on its
-         * inputs.  Pivot selection happens upstream (@c MeasurementModel
-         * owns the sticky pivot logic for baseline mode).
+         * Stateless: the static method depends only on its inputs.  Pivot
+         * selection happens upstream (@c MeasurementModel owns the sticky
+         * pivot logic for baseline mode, through its DdPivotManager).
          *
          * @param brsd_by_cons_sat  BRSD entries indexed by constellation
          *                          name then satellite ID.

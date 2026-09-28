@@ -171,8 +171,8 @@ TEST_F(StationInfoTest, AntennaHistory) {
 
 // Coordinate resolution: within a single OCCUPATION window (no periodic/PSD),
 // the displacement between two epochs is exactly velocity * dt, which pins both
-// the window selection and the linear propagation.  The propagated covariance
-// must be present, symmetric, and positive-definite on the diagonal.
+// the window selection and the linear propagation.  The propagated covariance is
+// present, symmetric, and positive on the diagonal.
 TEST_F(StationInfoTest, CoordinateResolutionVelocityWithinWindow) {
     const StationInfo* s = sif_->find("CIT100USA");
     ASSERT_NE(s, nullptr);
@@ -221,11 +221,11 @@ TEST_F(StationInfoTest, CoordinateResolutionPeriodicIsSmallNonzero) {
     EXPECT_LT(delta, 0.05);    // seasonal amplitude is cm-level, never > 5 cm
 }
 
-// RTA-12: the network-roster resolution helper — (registry, name, date) ->
-// optional<ECEF + epoch> — is the find() + resolveStationCoordinate composition
-// (periodic + PSD terms on) used by the config loader under
-// network.use_sif_coordinates.  Any of the three lookup keys works; an unknown
-// station returns nullopt (the loader then hard-errors).
+// The network-roster resolution helper, (registry, name, date) -> optional<ECEF +
+// epoch>, is the composition find() + resolveStationCoordinate (periodic and PSD
+// terms on) that the config loader uses under network.use_sif_coordinates.  Any of
+// the three lookup keys works; an unknown station returns nullopt, and the loader
+// then fails with a hard error (RTA-12).
 TEST_F(StationInfoTest, RosterCoordinateResolvesByNameAtRunDate) {
     const double year = 2024.36;  // within the IGS fixture span
 
@@ -233,14 +233,14 @@ TEST_F(StationInfoTest, RosterCoordinateResolvesByNameAtRunDate) {
     ASSERT_TRUE(roster.has_value());
     EXPECT_DOUBLE_EQ(roster->epoch_year, year);
 
-    // Exactly the full SIF coordinate function at the run date.
+    // Equal to the full SIF coordinate function at the run date.
     const StationInfo* s = sif_->find("CIT100USA");
     ASSERT_NE(s, nullptr);
     const ResolvedStationCoord direct = resolveStationCoordinate(*s, year, true, true);
     ASSERT_TRUE(direct.valid);
     EXPECT_TRUE(roster->ecef.isApprox(direct.ecef, 1e-12));
 
-    // Velocity propagation actually applied: 4.36 years of ~ -2.9 cm/yr in X.
+    // Velocity propagation is applied: 4.36 years of about -2.9 cm/yr in X.
     const SifOccupation& o = s->occupations.front();
     EXPECT_GT((roster->ecef - o.coordinates).norm(), 0.05);
     EXPECT_LT((roster->ecef - o.coordinates).norm(), 1.0);   // still survey-grade close

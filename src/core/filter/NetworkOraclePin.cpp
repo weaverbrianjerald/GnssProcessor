@@ -1,8 +1,8 @@
 /**
  * @file NetworkOraclePin.cpp
- * @brief Implementation of the sim-only ORACLE AMBIGUITY PIN.  See the header
- *        banner for the card, the gauge argument and the field-inertness
- *        mechanism.
+ * @brief Implementation of the simulation-only oracle ambiguity pin.  The header's
+ *        file comment holds the purpose, the gauge argument and the
+ *        field-inertness mechanism.
  */
 
 #include "filter/NetworkOraclePin.hpp"
@@ -63,7 +63,7 @@ double opinMedian(std::vector<double>& v) {
     return 0.5 * (lo + hi);
 }
 
-/// "<sat>_<signal>" — the key form `this_epoch_anchor` / `pinned_amb_targets` use.
+/// "<sat>_<signal>": the key form that `this_epoch_anchor` and `pinned_amb_targets` use.
 std::string opinFamilyKey(const std::string& sat, const std::string& sig) {
     return sat + "_" + sig;
 }
@@ -114,9 +114,9 @@ OraclePinScope oraclePinParseScope(const std::string& s, std::string& why) {
     }
 
     if (head == "band") {
-        // '+'-separated RINEX-3 PHASE codes.  A non-phase token is refused by
-        // NAME: a pin on a code observable's "ambiguity" does not exist, and a
-        // silently-empty scope would read as an inert arm.
+        // '+'-separated RINEX-3 phase codes.  A token without a leading 'L' is
+        // refused with its name: a code observable has no ambiguity to pin, and a
+        // scope that silently matched nothing would read as an inert arm.
         std::string tok;
         for (char c : tail + "+") {
             if (c == '+') {
@@ -193,8 +193,9 @@ networkOraclePinParseAmbCsv(const std::string& path) {
         throw std::runtime_error(
             "oracle_pin: truth ambiguity file '" + path + "' is empty");
     // Header contract (src/sim/main.cpp): satellite,signal,N_int,wavelength_m.
-    // Pinned by NAME, like the slip oracle's, so a fixture that grows a column
-    // fails loudly here instead of silently mis-reading N_int.
+    // Checked by name as a prefix of the header line, as in the slip oracle, so a
+    // column inserted before or among these four fails here instead of being
+    // misread as N_int; a column appended after wavelength_m passes and is ignored.
     {
         const std::string hdr = opinTrim(line);
         if (hdr.rfind("satellite,signal,N_int,wavelength_m", 0) != 0)
@@ -236,9 +237,9 @@ networkOraclePinParseAmbCsv(const std::string& path) {
 
 int networkOraclePinTrueN(const NetworkOraclePin::Truth& t, double now_s) {
     long long n = t.n_int;
-    // Slips are ASCENDING in s; the bound is INCLUSIVE — a jump stamped exactly
-    // at this epoch is already in the observation, so the true integer must
-    // contain it too.
+    // Slips are ascending in s, and the bound is inclusive: a jump stamped exactly
+    // at this epoch is already in the observation, so the true integer contains it
+    // too.
     for (const auto& sl : t.slips) {
         if (sl.s > now_s) break;
         n += sl.delta_cyc;
@@ -261,11 +262,11 @@ std::unique_ptr<NetworkOraclePin> networkOraclePinLoad(
     pin->truth_root = nc.slip_qc.oracle_truth_root;
     pin->utils      = std::make_unique<PppUtils>(log_manager);
 
-    // Collect the armed events.  The loader already refused a bad scope / sigma
-    // and a missing truth root; re-checked here because this function is also
-    // the unit suite's entry point (a hand-built config never passed through
-    // loadFromJson) — and because a silently-degraded oracle would produce a
-    // WRONG SCIENTIFIC VERDICT, not merely a quiet run.
+    // Collect the armed events.  The loader already refuses a bad scope or sigma
+    // and a missing truth root.  The checks are repeated here because this function
+    // is also the unit suite's entry point (a hand-built config does not pass
+    // through loadFromJson), and because a silently degraded oracle would produce a
+    // wrong scientific verdict, not only a quiet run.
     for (std::size_t i = 0; i < nc.inject.events.size(); ++i) {
         const auto& e = nc.inject.events[i];
         if (e.kind != "oracle_pin") continue;
@@ -324,11 +325,11 @@ std::unique_ptr<NetworkOraclePin> networkOraclePinLoad(
                 t.slips = sit->second;
                 n_slips += static_cast<long long>(t.slips.size());
             }
-            // ⚠ The RUN's wavelength, not the CSV's: FDMA satellites have a
-            // per-satellite lambda, and the pin's metres must be the SAME metres
-            // the estimator's ambiguity column carries.  An arc whose wavelength
-            // the provider cannot resolve is dropped LOUDLY (counted, reported in
-            // the arming line) rather than pinned at a wrong scale.
+            // Use the run's wavelength, not the CSV's: FDMA satellites have a
+            // per-satellite lambda, and the pin's metres must be the metres the
+            // estimator's ambiguity column carries.  An arc whose wavelength the
+            // provider cannot resolve is dropped and counted (reported in the arming
+            // line) instead of being pinned at a wrong scale.
             const double lam = pin->utils->getWavelength(opinSystemOf(key.first),
                                                          key.second, key.first);
             if (!(lam > 0.0)) { ++n_nolam; continue; }
@@ -370,17 +371,17 @@ int networkOraclePinFit(
     if (active.empty()) return 0;
 
     const int n_sta = static_cast<int>(stations.size());
-    std::map<std::string, int> idx_of;          // station NAME -> index (anchor_of holds names)
+    std::map<std::string, int> idx_of;          // station name -> index (anchor_of holds names)
     for (int i = 0; i < n_sta; ++i) idx_of[stations[static_cast<std::size_t>(i)].name] = i;
 
-    // ---- the families that have an ANCHOR this epoch ------------------------
-    // A family is usable only when its anchor resolves to a roster station AND
-    // that station's own arc has truth: without the anchor's true integer there
-    // is no frame term, and a pin built on a guessed one would be a gauge of the
-    // pin's own making — exactly what this fit exists to avoid.
+    // ---- the families that have an anchor this epoch ------------------------
+    // A family is usable only when its anchor resolves to a roster station and
+    // that station's own arc has truth.  Without the anchor's true integer there
+    // is no frame term, and a pin built on a guessed one would impose a gauge of
+    // its own, which this fit is designed to avoid.
     struct Fam {
         int    a{-1};             ///< anchor station index
-        double target{0.0};       ///< its ENFORCED pin target t_sj (m) — READ, never assumed 0
+        double target{0.0};       ///< its enforced pin target t_sj (m); read, not assumed 0
         double lam_n_a{0.0};      ///< lambda_j * N_true(anchor arc) at this epoch
         double lam{0.0};
     };
@@ -404,16 +405,16 @@ int networkOraclePinFit(
         fams[{sat, sig}] = f;
     }
 
-    // ---- the observations: one per CARRIED non-anchor arc -------------------
+    // ---- the observations: one per carried non-anchor arc -------------------
     // Eliminating beta between an arc and its family's anchor leaves a pure
-    // STATION-OFFSET DIFFERENCE, with every frame term gone:
+    // station-offset difference, with every frame term gone:
     //
     //     g(r,s,j) = value_abs(r,s,j) - t_sj - lambda_j*(N_rsj - N_{a s j})
     //              = v_rj - v_{a(s,j) j}
     //
-    // so the fit is a LEVELLING NETWORK over the per-(station, band) offsets v,
-    // determined up to ONE constant per band — the free constant the pinned
-    // values are invariant to (header banner property 3).
+    // so the fit is a levelling network over the per-(station, band) offsets v
+    // (u in the header), determined up to one constant per band; the pinned values
+    // are invariant to that constant (header, property 3).
     std::map<std::pair<int, std::string>,
              std::vector<std::pair<int, double>>> obs;   // (sta, band) -> [(anchor idx, g)]
     for (const auto& [key, lc] : carry) {
@@ -423,7 +424,7 @@ int networkOraclePinFit(
         const std::string& sig = std::get<2>(key);
         const auto fit = fams.find({sat, sig});
         if (fit == fams.end()) continue;                 // family has no usable anchor
-        if (fit->second.a == sta) continue;              // the anchor's own arc: t_sj IS its level
+        if (fit->second.a == sta) continue;              // the anchor's own arc: t_sj is its level
         const std::string fam_key = opinFamilyKey(sat, sig);
         if (stations[static_cast<std::size_t>(sta)].pinned_amb_targets.count(fam_key))
             continue;                                    // gauge-pinned here too (eq34 / legacy)
@@ -437,21 +438,21 @@ int networkOraclePinFit(
             lc.value_abs - fit->second.target - (lam_n_r - fit->second.lam_n_a));
     }
 
-    // ---- resolve v, band by band, by DETERMINATION (never re-estimation) ----
-    // The obvious scheme — alternate "beta from the anchors, u from the medians"
-    // to a tolerance — does NOT converge.  Its error recursion is
-    // e_r = median over the station's families of e_{anchor(family)}, and a
-    // median is a SELECTION, not an average, so the anchors' errors cycle among
-    // their own values forever (reproduced on the 6x8x2 unit bed: 20/20
-    // iterations, oscillating between two values).
+    // ---- resolve v, band by band, by determination (no re-estimation) -------
+    // Alternating "beta from the anchors, u from the medians" to a tolerance does
+    // not converge.  Its error recursion is
+    // e_r = median over the station's families of e_{anchor(family)}; a median
+    // selects one sample instead of averaging, so the anchors' errors cycle among
+    // their own values indefinitely (on the 6x8x2 unit bed: 20 of 20 iterations,
+    // oscillating between two values).
     //
-    // Since the pinned values are invariant to the free constant, the fix is to
-    // FIX IT: pick a ROOT anchor per band, declare v_root = 0, and PROPAGATE.
-    // A station's v is estimated ONCE, from anchors whose v is already known,
-    // and is then frozen — so the pass terminates in at most one round per
-    // station, and every value is a robust median of >= 3 samples.  The root is
-    // deterministic: the anchor owning the most families in that band, ties
-    // broken by station index.
+    // The pinned values are invariant to the free constant, so the constant is
+    // fixed instead: one root anchor per band gets v_root = 0, and values
+    // propagate from it.  A station's v is estimated once, from anchors whose v is
+    // already known, and then frozen, so the pass ends after at most one round per
+    // station and every value is a median of >= 3 samples.  The root is
+    // deterministic: the anchor owning the most families in that band, ties broken
+    // by lowest station index.
     std::map<std::pair<int, std::string>, double> v;
     std::set<std::pair<int, std::string>> v_ok;
     {
@@ -475,11 +476,11 @@ int networkOraclePinFit(
                 const auto vit = v.find({a, rb.second});
                 if (vit != v.end()) vals.push_back(g + vit->second);
             }
-            // >= 3 arcs: a station-band offset fitted on one or two arcs is not a
-            // station term, it is that arc's own error re-labelled — and pinning
-            // on it would inject that error into every other arc of the station.
-            // A MEDIAN, not a mean: on the slipped bed a single un-repaired arc is
-            // a multi-cycle outlier and a mean would drag the whole station with it.
+            // At least 3 arcs: a station-band offset fitted on one or two arcs is
+            // that arc's own error under another name, and pinning on it would
+            // inject that error into every other arc of the station.  A median, not
+            // a mean: on the slipped bed a single unrepaired arc is a multi-cycle
+            // outlier, and a mean would shift the whole station with it.
             if (vals.size() < 3) continue;
             v[rb] = opinMedian(vals);
             v_ok.insert(rb);
@@ -490,13 +491,14 @@ int networkOraclePinFit(
     }
 
     // ---- build the table ----------------------------------------------------
-    // The UNIVERSE is the truth table (every arc of the day), not the carry: an
-    // arc in scope with no LocalCarry entry — a newborn leg, an arc the slip
-    // response just freed — is still pinned.  That independence is the point.
+    // The loop runs over the truth table (every arc of the day), not the carry, so
+    // an arc in scope with no LocalCarry entry (a newborn leg, an arc the slip
+    // response just freed) is still pinned; the pin is independent of the carry by
+    // design.
     //
     //     pinned(r,s,j) = t_sj + (v_rj - v_{a j}) + lambda_j*(N_rsj - N_{a s j})
     //
-    // which IS beta_sj + v_rj + lambda_j*N_rsj with
+    // which equals beta_sj + v_rj + lambda_j*N_rsj with
     // beta_sj = t_sj - lambda_j*N_{a s j} - v_{a j}, written so that every term
     // is a difference and the free constant cancels by construction.
     for (const auto& [key, t] : pin.truth) {
@@ -510,12 +512,12 @@ int networkOraclePinFit(
         for (std::size_t ai : active)
             if (pin.scopes[ai].scope.covers(sta_name, sat, sig)) {
                 owner = &pin.scopes[ai];
-                break;                       // the FIRST covering event owns the row
+                break;                       // the first covering event owns the row
             }
         if (!owner) continue;
 
-        // Never pin an ANCHOR arc: its 1e10 datum pin defines the family's gauge
-        // and a second row there would fight it (header banner property 2).
+        // Never pin an anchor arc: its 1e10 datum pin defines the family's gauge,
+        // and a second row there would conflict with it (header, property 2).
         const std::string fam_key = opinFamilyKey(sat, sig);
         const auto ait = anchor_of.find(fam_key);
         if (ait != anchor_of.end() && ait->second == sta_name) continue;
@@ -538,11 +540,11 @@ int networkOraclePinFit(
         pin.table.emplace(key, p);
     }
 
-    // ---- the fit residual = the ACTUATION delta -----------------------------
-    // value_abs - pinned, in cycles, over the pinned arcs that HAVE a carry.  It
-    // is what the pin is about to move, so an arm whose residual is ~0 pinned a
-    // solution that was already at truth, and one with a large residual is
-    // measuring exactly how far the float ambiguities sit from the integers.
+    // ---- the fit residual, which is the actuation delta ---------------------
+    // value_abs - pinned, in cycles, over the pinned arcs that have a carry entry.
+    // It is what the pin is about to move: a residual near 0 means the solution
+    // was already at truth, and a large one measures how far the float
+    // ambiguities sit from the integers.
     double sum2 = 0.0, mx = 0.0;
     long long n = 0;
     for (const auto& [key, p] : pin.table) {
@@ -574,15 +576,15 @@ void networkOraclePinEpoch(NetworkRunContext& ctx,
                            const std::shared_ptr<spdlog::logger>& log,
                            NetworkRunTraces& traces) {
     auto* pin = ctx.carry.oracle_pin.get();
-    if (!pin) return;                    // unreachable OFF (the caller tests too)
+    if (!pin) return;                    // not reached when off (the caller tests too)
 
     const auto& nc   = config_.getNetworkConfig();
     const double tow   = t.tow;
     const double now_s = t.week * 604800.0 + t.tow;   // continuous-GPS seconds
 
-    // PERSISTENT from `tow` on, exactly like sat_clock_step: once a scope has
-    // started it stays started for the rest of the run.  Half-epoch guard = the
-    // injector's own 0.25 s.
+    // Persistent from `tow` on, as for sat_clock_step: once a scope has started it
+    // stays started for the rest of the run.  The 0.25 s tolerance is the
+    // injector's own.
     std::vector<std::size_t> active;
     for (std::size_t i = 0; i < pin->scopes.size(); ++i)
         if (tow >= pin->scopes[i].tow - 0.25) active.push_back(i);
@@ -597,19 +599,16 @@ void networkOraclePinEpoch(NetworkRunContext& ctx,
     networkOraclePinFit(*pin, stations, ctx.carry.local_carry,
                         ctx.carry.this_epoch_anchor, now_s, active);
 
-    // --- the two edges of invariant #7 — counted AND IDENTIFIED ---------------
-    // Both edges get a per-arc event row, not just a counter.  The counter alone
-    // was measured to be insufficient: a grader that reconstructs "which arcs are
-    // pinned at epoch t" from the ONSET rows alone under-counts by every arc that
-    // joined later (7 828 at onset vs 9 381 at the run end on the first quiet
-    // arm), and then reads a working pin as a failure.  With the ENTRY row and
-    // the EXIT row both emitted, the pinned set at any epoch is exactly
-    // (entries − exits) up to that epoch — which is what invariant #7 means by
-    // "with counters AND identities".
+    // --- the two edges of invariant #7, counted and identified ----------------
+    // Both edges get a per-arc event row as well as a counter.  Counters alone are
+    // not enough: the set of arcs pinned at epoch t, reconstructed from the onset
+    // rows alone, misses every arc that joined later, and a working pin then reads
+    // as a failure.  With entry and exit rows both emitted, the pinned set at any
+    // epoch is (entries − exits) up to that epoch, which is what invariant #7 asks
+    // for ("counters and identities").
     //
     // Volume: the onset epoch emits the whole table once; after that only the
-    // edges, which are the few tens of arcs per epoch a rising or setting
-    // satellite moves.
+    // edges, a few tens of arcs per epoch as satellites rise and set.
     std::set<std::tuple<int, std::string, std::string>> keys;
     long long first_here = 0;
     for (const auto& [k, p] : pin->table) {
@@ -623,7 +622,7 @@ void networkOraclePinEpoch(NetworkRunContext& ctx,
     // --- telemetry -----------------------------------------------------------
     const bool onset = (pin->epochs_active == 1);
     for (const auto& [k, p] : pin->table) {
-        if (pin->prev_keys.count(k)) continue;           // ENTRY edge only
+        if (pin->prev_keys.count(k)) continue;           // entry edge only
         const int sta = std::get<0>(k);
         const auto cit = ctx.carry.local_carry.find(k);
         const auto tit = pin->truth.find(k);
@@ -631,9 +630,9 @@ void networkOraclePinEpoch(NetworkRunContext& ctx,
         const double before = (cit != ctx.carry.local_carry.end())
                                   ? cit->second.value_abs
                                   : std::numeric_limits<double>::quiet_NaN();
-        // The ACTUATION delta: how far this arc's carried level sits from the
-        // truth-consistent value the pin is about to hold it at.  NaN when the
-        // arc has no carry (a newborn leg — pinned anyway, which is the point).
+        // The actuation delta: how far this arc's carried level sits from the
+        // truth-consistent value the pin is about to hold it at.  NaN when the arc
+        // has no carry entry (a newborn leg, which is pinned all the same).
         const double dcyc = (lam > 0.0 && std::isfinite(before))
                                 ? (before - p.value_m) / lam
                                 : std::numeric_limits<double>::quiet_NaN();
@@ -649,14 +648,14 @@ void networkOraclePinEpoch(NetworkRunContext& ctx,
                                      p.n_true));
     }
     for (const auto& k : pin->prev_keys) {
-        if (keys.count(k)) continue;                      // EXIT edge only
+        if (keys.count(k)) continue;                      // exit edge only
         const int sta = std::get<0>(k);
         traces.emitEvent(t, "INJECT", "oracle_pin", std::get<1>(k),
                          stations[static_cast<std::size_t>(sta)].name,
                          std::nullopt, std::nullopt, "released",
                          fmt::format("signal={}", std::get<2>(k)));
     }
-    // Every active epoch: ONE summary row.
+    // One summary row per active epoch (the no_* counts are run totals).
     traces.emitEvent(t, "INJECT", "oracle_pin", std::string{}, std::string{},
                      static_cast<double>(pin->table.size()), std::nullopt,
                      "oracle_pin_epoch",
@@ -678,12 +677,12 @@ void networkOraclePinEpoch(NetworkRunContext& ctx,
                   pin->no_station_term, pin->no_truth);
 
     pin->prev_keys = std::move(keys);
-    // The injector's never-fired ledger (NetworkInject.cpp's run-end rule: an
-    // armed event that NEVER fires is a HARD error, because an exam fixture must
-    // not silently not exist).  A non-empty pin table IS this kind's actuation.
-    // The bounds test is defensive only — the pin is constructed solely when
-    // network.inject is enabled with an oracle_pin event, so networkInjectArm has
-    // always sized this vector by the time the loop runs.
+    // Feed the injector's never-fired ledger (NetworkInject.cpp run-end rule: an
+    // armed event that never fires is logged as a failure and the check returns
+    // nonzero, because a test fixture must not silently be absent).  For this
+    // kind, a non-empty pin table counts as actuation.  The bounds test is
+    // defensive only: the pin is constructed only when network.inject is enabled
+    // with an oracle_pin event, so networkInjectArm has already sized this vector.
     if (!pin->table.empty())
         for (std::size_t ai : active) {
             const std::size_t ev = pin->scopes[ai].ev_index;

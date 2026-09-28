@@ -1,17 +1,18 @@
 /**
  * @file test_relevel_bridge_v3.cpp
- * @brief Bridge v3 — the better second equation (GF float row E4 + EWL integer
- *        slot E3) over the pend cascade: networkSlipBridgeV3Solve /
- *        networkSlipBridgeV3Replace / networkSlipFillEwlSlot.
+ * @brief Bridge v3: the second equation from a GF float row (E4) and an EWL
+ *        integer slot (E3) over the pend cascade (networkSlipBridgeV3Solve,
+ *        networkSlipBridgeV3Replace, networkSlipFillEwlSlot).
  *
- * Kernel-first, the test_relevel_delta_bridge.cpp style.  The two sign traps
- * this file exists to pin: (1) the GAL EWL candidate arrives frequency-sorted
- * as (L7Q,L5Q) = ΔN3 − ΔN2 while GPS's (L2W,L5Q) = ΔN2 − ΔN3 — a missed flip
- * passes every σ cap; (2) the E4 GF row's λ1ΔN1 − λ2ΔN2 form (the documented
- * λ1-in-numerator trap family).  Also pinned: the E1/E4 correlation direction —
- * in the shared-phase-noise limit INDEPENDENT propagation OVERSTATES σ(ΔN)
- * (the errors partially cancel through the solve), so ρ tightens honestly and
- * ρ = 1 with phase-consistent inputs recovers the exact single-noise σ.
+ * Kernel-level tests in the style of test_relevel_delta_bridge.cpp.  Two sign
+ * conventions are pinned: (1) the Galileo EWL candidate arrives frequency-sorted
+ * as (L7Q,L5Q) = ΔN3 − ΔN2, while GPS's (L2W,L5Q) = ΔN2 − ΔN3, and a missed
+ * flip passes every σ cap; (2) the E4 GF row has the form λ1ΔN1 − λ2ΔN2 (the
+ * documented λ1-in-numerator error family).  The E1/E4 correlation direction is
+ * also pinned: under shared phase noise, independent propagation overstates
+ * σ(ΔN) because the errors partially cancel through the solve, so a positive ρ
+ * tightens σ, and the exact ρ of phase-consistent inputs recovers the
+ * single-noise σ.
  */
 #include <gtest/gtest.h>
 
@@ -75,7 +76,7 @@ TEST(RelevelBridgeV3, GfRouteIntegerInjectionRoundTrips) {
 }
 
 TEST(RelevelBridgeV3, GfRouteConditioningLandsInTheDerivedBand) {
-    // The panel's verified numbers: at σ_if = 2 cm / σ_gf = 1.5 cm, ρ = 0,
+    // Reference values: at σ_if = 2 cm / σ_gf = 1.5 cm, ρ = 0,
     // σ(ΔN1) ≈ 0.161 cyc and σ(ΔN2) ≈ 0.177 cyc (det ≈ −0.0465 m²).
     auto pd = gpsPend();
     pd.dif_m = difFor(3, 2);  pd.sigma_if_m = 0.02;
@@ -89,10 +90,10 @@ TEST(RelevelBridgeV3, GfRouteConditioningLandsInTheDerivedBand) {
 
 TEST(RelevelBridgeV3, CorrelationDirectionSharedPhaseNoiseLimit) {
     // Pure shared band-TD phase noise σφ: σ_if = √(2.546²+1.546²)·σφ,
-    // σ_gf = √2·σφ, ρ → +0.97…1.  At ρ = 1 the solve's ΔN1 error collapses to
-    // 5.257·σφ exactly (the e2 coefficient cancels); independent propagation
-    // (ρ = 0) OVERSTATES it ~3.7×.  Pins both the sign of the cross term and
-    // the claim in the kernel doc.
+    // σ_gf = √2·σφ, ρ ≈ +0.971.  At that exact ρ the solve's ΔN1 error is the
+    // L1 phase noise alone, σφ/λ1 = 5.255·σφ cycles (the e2 coefficient
+    // cancels); independent propagation (ρ = 0) overstates it about 3.7×.
+    // Pins both the sign of the cross term and the claim in the kernel doc.
     const double sphi = 0.003;
     const double a1 = kF1 * kF1 / (kF1 * kF1 - kF2 * kF2);   // 2.546
     const double a2 = kF2 * kF2 / (kF1 * kF1 - kF2 * kF2);   // 1.546
@@ -118,9 +119,9 @@ TEST(RelevelBridgeV3, CorrelationDirectionSharedPhaseNoiseLimit) {
 }
 
 TEST(RelevelBridgeV3, PlaneResidualScreensWrongWlInteger) {
-    // Truth (5,3): WL = 2.  Hand the kernel the WRONG detector-rounded integer
-    // (3) with the TRUE δIF and TRUE dGF — the E2 route solves a biased plane
-    // and the E4 over-determination must catch it (±1 WL ≈ 2.5–5σ off).
+    // Truth (5,3): WL = 2.  The kernel receives a wrong detector-rounded
+    // integer (3) with the true δIF and dGF; the E2 route then solves a biased
+    // plane, and the E4 over-determination rejects it (±1 WL ≈ 2.5–5σ off).
     auto pd = gpsPend();
     pd.dif_m = difFor(5, 3);  pd.sigma_if_m = 0.005;
     pd.has_dn = true;  pd.dn_wl = 3;  pd.sigma_wl = 0.05;
@@ -129,7 +130,7 @@ TEST(RelevelBridgeV3, PlaneResidualScreensWrongWlInteger) {
     const auto r = networkSlipBridgeV3Solve(pd, 0.0, 200.0, 2.0);
     EXPECT_FALSE(r.ok);
     EXPECT_GT(r.plane_resid_sigma, kBridgePlaneResidMax);
-    // The CORRECT integer sails through with a small residual.
+    // The correct integer passes with a small residual.
     pd.dn_wl = 2;
     const auto r2 = networkSlipBridgeV3Solve(pd, 0.0, 200.0, 2.0);
     ASSERT_TRUE(r2.ok);
@@ -177,7 +178,7 @@ TEST(RelevelBridgeV3, EwlFillAndChainGpsSign) {
 
 TEST(RelevelBridgeV3, EwlFillAndChainGalSignFlip) {
     // GAL: IF pair (L1C,L5Q); EWL candidate freq-sorted (L7Q,L5Q) carries
-    // ΔN3 − ΔN2 — the OPPOSITE of GPS.  Truth (dn1,dn2,dn3) = (6,2,-3):
+    // ΔN3 − ΔN2, the opposite of GPS.  Truth (dn1,dn2,dn3) = (6,2,-3):
     // cand.dn = −3 − 2 = −5 (same raw number as the GPS case, different band3).
     RelevelPend pd;
     pd.sig1 = "L1C";  pd.sig2 = "L5Q";
@@ -189,9 +190,9 @@ TEST(RelevelBridgeV3, EwlFillAndChainGalSignFlip) {
     pd.dgf_m = kLam1 * 6 - kLam5 * 2;  pd.sigma_gf_m = 1e-12;
     MwBridgeCand cand{0, "E11", "L7Q", "L5Q", -5, 0.03, kLamEwlGal};
     ASSERT_TRUE(networkSlipFillEwlSlot(pd, cand, 0.05));
-    EXPECT_EQ(pd.dn_ewl_b3, -5);           // ΔN3 − ΔN2 = −5 (kept, NOT flipped)
+    EXPECT_EQ(pd.dn_ewl_b3, -5);           // ΔN3 − ΔN2 = −5 (kept, not flipped)
     EXPECT_EQ(pd.ewl_shared_band, 2);
-    EXPECT_TRUE(pd.ewl_b3_hi);             // L7Q is the EWL pair's HIGH side
+    EXPECT_TRUE(pd.ewl_b3_hi);             // L7Q is the EWL pair's high side
     EXPECT_EQ(pd.sig3, "L7Q");
     const auto r = networkSlipBridgeV3Solve(pd, 0.0, 200.0, 0.35);
     ASSERT_TRUE(r.ok);
@@ -217,7 +218,8 @@ TEST(RelevelBridgeV3, EwlFillRefusalLadder) {
     MwBridgeCand good{0, "G05", "L2W", "L5Q", -5, 0.05, kLamEwlGps};
     EXPECT_TRUE(networkSlipFillEwlSlot(pd, good, 0.05));
     EXPECT_FALSE(networkSlipFillEwlSlot(pd, good, 0.05));
-    // The σ floor applies (0.03 < 0.20 floor-effective).
+    // The stored σ is max(candidate σ, floor) = max(0.05, 0.05); a floor that
+    // raises the value is covered by FillEwlSigmaFloorApplies.
     EXPECT_DOUBLE_EQ(pd.sigma_ewl, 0.05);
 }
 
@@ -283,7 +285,7 @@ TEST(RelevelBridgeV3, ReplaceNoPartialApplyOnBand3CorrobFailure) {
     const auto out = networkSlipBridgeV3Replace(pd, 2, "G05", carry, 0.0,
                                                 200.0, 0.35, 3.0);
     EXPECT_EQ(out, BridgeReplaceOutcome::CorrobReject);
-    // NOTHING moved — bands 1/2 included.
+    // No band moved, bands 1 and 2 included.
     const auto& c1 = carry[std::make_tuple(2, std::string("G05"), std::string("L1C"))];
     const auto& c2 = carry[std::make_tuple(2, std::string("G05"), std::string("L2W"))];
     EXPECT_NEAR(c1.value_abs, 10.0 + kLam1 * dn1, 1e-12);
@@ -295,7 +297,8 @@ TEST(RelevelBridgeV3, FillEwlSigmaFloorApplies) {
     auto pd = gpsPend();
     MwBridgeCand good{0, "G05", "L2W", "L5Q", -5, 0.01, kLamEwlGps};
     ASSERT_TRUE(networkSlipFillEwlSlot(pd, good, 0.20));
-    EXPECT_DOUBLE_EQ(pd.sigma_ewl, 0.20);   // floored up (the low-el honesty guard)
+    EXPECT_DOUBLE_EQ(pd.sigma_ewl, 0.20);   // raised to the floor (the frac proxy
+                                            // understates the EWL σ at low elevation)
 }
 
 TEST(RelevelBridgeV3, GfRouteRejectLadder) {

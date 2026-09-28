@@ -6,20 +6,20 @@ consumer's error against the roster position it already differences against, per
         [--prefix _cm_] [--marks 30,60,90,120] [--tail-min 30] [--json out.json]
 
 Per arm it prints, straight off `<armdir>/logs/closed_loop_trace.csv`:
-  * 3D / E / N / U at 30, 60, 90 and 120 min AFTER THE CONSUMER'S OWN FIRST EPOCH (not after the
-    producer's — a consumer that starts late would otherwise be graded on a shifted clock).  The
+  * 3D / E / N / U at 30, 60, 90 and 120 min after the consumer's own first epoch, not the
+    producer's: a consumer that starts late would otherwise be graded on a shifted clock. The
     mark is the trace row nearest that time; the actual offset is printed beside it, and a mark
     further than half an epoch off is flagged.
   * the p50 (and p90 / max) of 3D over the last `--tail-min` minutes of the trace.
-  * consumer RESETS.  This lineage has no `rt_engine.log` and `closed_loop_trace.csv` has no reset
+  * consumer resets. This lineage has no `rt_engine.log` and `closed_loop_trace.csv` has no reset
     column (its columns are week,tow,n_sats,ar_ran,ar_success,num_fixed,num_candidates,ratio,
     pos_err_3d_m,east_m,north_m,up_m,ar_gate,p_succ), so the count is taken from the producer's own
-    voice in stdout.txt — the consumer 'initialized' line and any reset/re-init/restart line — and a
-    STEP proxy (|d 3D| > --step-m between consecutive epochs) is reported beside it, labelled as a
-    proxy.  A zero reset count that rests only on the absence of a channel says so.
+    voice in stdout.txt: the consumer 'initialized' line and any reset/re-init/restart line. A
+    step proxy (|d 3D| > --step-m between consecutive epochs) is reported beside it, labelled as a
+    proxy. A zero reset count that rests only on the absence of a channel says so.
   * the sha256 of the arm's products.txt, and the row / epoch counts.
 
-NO BAR (s24.1): the cold 2 h consumer number is reported, never graded — s24.3 has it at metres on
+No bar (s24.1): the cold 2 h consumer number is reported, never graded. s24.3 has it at metres on
 every network product, and the point of the card is the producer-side (i)-(iii) bars.
 """
 import argparse
@@ -64,14 +64,14 @@ def read_trace(path):
 
 
 def resets_from_stdout(path):
-    """(init_lines, reset_lines) from the producer's own voice — the only reset channel this lineage has."""
+    """(init_lines, reset_lines) from the producer's own voice, the only reset channel this lineage has."""
     init, rst = [], []
     if not os.path.isfile(path):
         return init, rst
     with open(path, encoding="utf-8", errors="replace") as fh:
         for line in fh:
-            # [gnss_config] lines are the loader's DESCRIPTIONS of what a knob does ("…no consumer
-            # reset…"), not events — counting them gave a0 two phantom resets.
+            # [gnss_config] lines are the loader's descriptions of what a knob does ("...no consumer
+            # reset..."), not events; counting them gave a0 two phantom resets.
             if "[gnss_config]" in line:
                 continue
             if not re.search(r"closed.loop|consumer", line, re.I):
@@ -123,8 +123,8 @@ def grade(arm, armdir, marks, tail_min, step_m):
     R["fix_epochs"] = int(sum(1 for r in tr if r["fixed"] > 0))
     gates = {}
     for r in tr:
-        # collapse sigma_gate(0.0912m) etc. to the gate NAME — the per-epoch threshold makes every
-        # row its own key otherwise, and the useful read is which gate held, not at what value
+        # collapse sigma_gate(0.0912m) etc. to the gate name: the per-epoch threshold makes every
+        # row its own key otherwise, and the useful read is which gate held, not at what value.
         g = re.sub(r"\(.*\)", "", r["gate"]) or "(none)"
         gates[g] = gates.get(g, 0) + 1
     R["ar_gates"] = gates

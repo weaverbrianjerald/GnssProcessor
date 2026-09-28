@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""run_test_suite.py -- manifest-driven "standard test run" harness.
+"""run_test_suite.py: manifest-driven "standard test run" harness.
 
 Runs ``gnss_processor.exe`` over a matrix of (station x config-cell) defined in a
-JSON manifest, grading each run's position against an **independent** truth
-coordinate (IGS SINEX/SSC primary -- auto-downloaded -- with NGS SIF fallback).
+JSON manifest, grading each run's position against a truth coordinate that the
+engine never sees (IGS SINEX/SSC primary, auto-downloaded, with NGS SIF fallback).
 Produces:
 
   * a SINEX-vs-SIF truth cross-check (flags stations whose truth sources disagree),
@@ -14,7 +14,7 @@ Produces:
     regression-vs-golden diff, and auto-generated per-cell convergence curves
     (disable with ``--no-report``).
 
-This supersedes the inline tables in run_test_slice.py -- the matrix now lives in
+This supersedes the inline tables in run_test_slice.py: the matrix now lives in
 ``config/test_suite/manifest.json``.
 
 Usage
@@ -45,9 +45,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "pyviz"))
 
-# NOTE: gnssviz.eval (numpy/pandas) is imported lazily inside main() so the
-# ProcessPoolExecutor workers -- which only need stdlib for _run_exe -- don't
-# pay the import cost on every spawn.
+# NOTE: gnssviz.eval (numpy/pandas) is imported lazily inside main(), since the
+# ProcessPoolExecutor workers only need stdlib for _run_exe and should not pay
+# the import cost on every spawn.
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -93,9 +93,10 @@ def build_cell_config(base_cfg: dict, station: dict, overrides: dict,
     if cfg.get("app_mode") == "real_time":
         # Real-time replay cell.  The fixture drives ``realtime.input_path``; the
         # truth coordinate is independent because the a-priori comes from the
-        # stream (SBF PVTGeodetic / RTCM 1005), NOT a seeded reference_position.
-        # Respect the base config's data_source + data_download (precise products
-        # are staged for production replay) rather than forcing internal mode.
+        # stream (SBF PVTGeodetic / RTCM 1005) rather than a seeded
+        # reference_position.  Respect the base config's data_source and
+        # data_download (precise products are staged for production replay)
+        # rather than forcing internal mode.
         rt = cfg.setdefault("realtime", {})
         rt["input_path"] = str(rp(station["input_path"]))
         files = cfg.setdefault("files", {})
@@ -146,7 +147,7 @@ def _write_per_cell_reports(jobs, *, backend_name: str = "matplotlib") -> None:
 
     These are the standard per-run viewer reports (``run_report.py``); the suite
     report links to them when present.  A failure on one cell is reported and
-    skipped -- it must not abort the suite.
+    skipped, and must not abort the suite.
     """
     from gnssviz import TraceContext, run_viewers
     from gnssviz.backends import get_backend
@@ -413,8 +414,8 @@ def main(argv=None) -> int:
         print(f"Updated golden: {args.update_golden}")
 
     # ---- visual suite report (scorecard + regression + convergence) ----
-    # Emitted here -- after any --update-golden write but before the gate's
-    # compare/early-return -- so (a) it still lands when the gate exits early on a
+    # Emitted here, after any --update-golden write but before the gate's
+    # compare/early-return, so (a) it still lands when the gate exits early on a
     # missing golden, and (b) when --update-golden seeds the same file passed to
     # --golden it reads the just-written baseline, so the report's pass/fail
     # banner matches the gate's exit code instead of the pre-update golden.
@@ -437,7 +438,7 @@ def main(argv=None) -> int:
 
     if args.golden:
         if not args.golden.is_file():
-            # A gate that can't find its baseline must NOT report success.
+            # A gate that cannot find its baseline reports failure rather than success.
             print(f"! golden not found: {args.golden} (use --update-golden to seed it); "
                   f"gate cannot run", file=sys.stderr)
             return 2

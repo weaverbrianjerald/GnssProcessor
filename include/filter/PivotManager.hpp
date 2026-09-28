@@ -14,7 +14,7 @@
  * PivotManager encapsulates all BSSD pivot satellite management:
  *   - Sticky pivot selection with elevation hysteresis.
  *   - Pivot disturbance detection (cycle slip, outlier corruption).
- *   - Lossless T�P�T' re-referencing of ambiguity, ionosphere, and
+ *   - Lossless T·P·T' re-referencing of ambiguity, ionosphere, and
  *     satellite bias states during pivot handovers.
  *   - Pivot covariance freezing after handover.
  *
@@ -51,27 +51,27 @@ public:
     /**
      * @brief Run pivot selection and handover for one epoch.
      *
-     * Sticky pivot selection: keeps the current pivot while it remains
-     * above the configured elevation threshold and undisturbed.  When a
-     * new pivot is needed (disturbance, low elevation, first epoch),
-     * candidates are scored using lexicographic (coverage, score)
-     * ordering — full signal coverage is a hard tier above any partial-
-     * coverage candidate, and within a tier candidates rank by float-
-     * ambiguity convergence and elevation.
+     * Sticky pivot selection: the current pivot is kept while it remains
+     * above the configured elevation threshold, is not excluded, has no
+     * outlier-stale broadcast ephemeris, and is undisturbed.  When a new
+     * pivot is needed (disturbance, low elevation, exclusion, first epoch),
+     * candidates are ranked by lexicographic (coverage, score) ordering:
+     * full signal coverage is a hard tier above any partial-coverage
+     * candidate, and within a tier candidates rank by float-ambiguity
+     * convergence and elevation.
      *
      * @param observations   Modeled observations for this epoch.
      * @param state_manager  Filter state (modified on handover).
      * @param epoch_prefix   Log prefix string.
-     * @param forced_only    When true, skip the implicit
-     *                       @c isPivotDisturbed branch — only
-     *                       constellations with a pending
-     *                       @c requestForcedHandover are processed.
-     *                       Used by the same-epoch re-entry path so
-     *                       a rebuild pass after a KF-detected pivot
-     *                       slip applies the handover before the
-     *                       rebuild's measurement update.  Default
-     *                       (first-pass behaviour) runs both forced
-     *                       and disturbance-detection paths.
+     * @param forced_only    When true, the implicit @c isPivotDisturbed
+     *                       branch is skipped and only constellations
+     *                       with a pending @c requestForcedHandover are
+     *                       handed over.  Used by the same-epoch re-entry
+     *                       path so that a rebuild pass after a
+     *                       KF-detected pivot slip applies the handover
+     *                       before the rebuild's measurement update.  The
+     *                       default (first-pass behaviour) runs both the
+     *                       forced and the disturbance-detection paths.
      */
     void handlePivotHandover(
         const std::vector<PppObservation>& observations,
@@ -99,38 +99,38 @@ public:
      *        the next call to @c handlePivotHandover.
      *
      * Used by external detectors (the KF post-fit residual analyzer) to
-     * signal that the current pivot's observation has slipped even though
-     * its filter STATE is intact (so @c isPivotDisturbed wouldn't flag
-     * it on its own). On the next @c handlePivotHandover call, the
-     * disturbance branch is entered for the requested constellations as
-     * if @c isPivotDisturbed had returned true; the same lossless
-     * re-referencing logic that handles state-disturbed pivots picks a
-     * replacement and updates state. The request is consumed (cleared)
-     * after the handover runs, so it must be re-issued each epoch the
-     * detector wants the handover repeated.
+     * signal that the current pivot's observation has slipped while its
+     * filter state is intact, so @c isPivotDisturbed would not flag it.
+     * On the next @c handlePivotHandover call, the disturbance branch is
+     * entered for the requested constellations as if @c isPivotDisturbed
+     * had returned true; the lossless re-referencing logic that handles
+     * state-disturbed pivots picks a replacement and updates state.  The
+     * request is consumed (cleared) when @c handlePivotHandover processes
+     * the constellation, so the detector re-issues it each epoch it still
+     * wants a handover.
      *
-     * Idempotent — multiple requests for the same constellation in a
-     * row collapse to one handover.  Repeated requests accumulate their
-     * @p exclude_sats (set union) so each rebuild pass can add freshly
-     * flagged satellites to the exclusion.
+     * Idempotent: repeated requests for the same constellation collapse to
+     * one handover.  Repeated requests accumulate their @p exclude_sats
+     * (set union), so each rebuild pass can add newly flagged satellites to
+     * the exclusion.
      *
      * @param constellation Constellation name (e.g. "GPS", "Galileo").
      * @param reason        Free-text reason logged at warn level.
-     * @param exclude_sats  Satellites that must NOT be elected as the
+     * @param exclude_sats  Satellites that are not to be elected as the
      *                      replacement pivot for this constellation (the
      *                      offset pivot plus the post-fit detector's
      *                      within-group residual outliers).  Stashed and
      *                      unioned into @c handlePivotHandover's effective
      *                      exclusion so the forced handover lands on a
-     *                      consensus satellite rather than bouncing to
-     *                      another offset sat.  Consumed with the request.
+     *                      consensus satellite instead of another offset
+     *                      satellite.  Consumed with the request.
      * @param reinflate_sats Non-pivot satellites whose ionosphere / sat-bias
-     *                      state absorbed a coherent pivot-side CODE bias and
-     *                      must have their covariance re-inflated AFTER the
-     *                      lossless re-reference (the re-reference conserves the
-     *                      filter's information and cannot evict the absorbed
-     *                      offset on its own).  This is the code-only analogue
-     *                      of the phase path's @c was_disturbed re-seed.  Unioned
+     *                      state absorbed a coherent pivot-side code bias.
+     *                      Their covariance is re-inflated after the lossless
+     *                      re-reference, because the re-reference conserves the
+     *                      filter's information and cannot remove the absorbed
+     *                      offset by itself.  This is the code-only analogue of
+     *                      the phase path's @c was_disturbed re-seed.  Unioned
      *                      per constellation and consumed with the request.
      */
     void requestForcedHandover(const std::string& constellation,
@@ -164,15 +164,16 @@ public:
      * @brief Clean (elevation / quality) pivot handovers performed this epoch.
      *
      * Maps constellation name -> {old_pivot, new_pivot} for handovers that were
-     * pure datum changes on an UNDISTURBED, continuous old pivot — i.e. neither
-     * forced (KF post-fit / slip-phase) nor triggered by a disturbed pivot.
-     * For exactly these the SD re-reference is a lossless, invertible frame
-     * change, so the RTS smoother can inverse-reference the affected ambiguity
-     * states back to the old pivot instead of segmenting them (audit P2-1).
+     * pure datum changes on an undisturbed, continuous old pivot, that is,
+     * neither forced (KF post-fit / slip-phase) nor triggered by a disturbed
+     * pivot.  For these handovers the SD re-reference is a lossless, invertible
+     * frame change, so the RTS smoother can inverse-reference the affected
+     * ambiguity states back to the old pivot instead of segmenting them
+     * (audit P2-1).
      *
-     * Disturbed / forced handovers (where the old pivot's own ambiguity slipped
-     * and is therefore discontinuous across the epoch) are deliberately NOT
-     * recorded here, so the smoother defaults to segmentation for them.
+     * Disturbed or forced handovers (the old pivot's own ambiguity slipped and
+     * is discontinuous across the epoch) are not recorded here, so the smoother
+     * segments at them.
      *
      * Reset at the start of each epoch's first-pass handover
      * (@c forced_only == false) and populated as clean legs fire; read by
@@ -190,19 +191,21 @@ public:
      * @brief Forget all sticky pivots and unfreeze sat-specific states.
      *
      * Used by @c Application::handleGap on long-gap detection so the
-     * post-gap epoch picks fresh pivots rather than re-referencing
+     * post-gap epoch picks fresh pivots instead of re-referencing
      * against stale pre-gap incumbents.  After this call:
-     *   - @c pivot_sat_ is empty (next @c handlePivotHandover treats
+     *   - @c pivot_sat_ is empty (the next @c handlePivotHandover treats
      *     the epoch as a fresh BSSD start)
-     *   - @c forced_handover_requests_ is dropped (the request set
-     *     refers to pre-gap constellations that may no longer exist)
+     *   - @c forced_handover_requests_ and its companion exclude and
+     *     re-inflate sets are dropped (they refer to pre-gap
+     *     constellations that may no longer exist), and the per-epoch
+     *     retired-pivot and clean-handover maps are cleared
      *   - @c StateManager's frozen-pivot set is cleared so iono and
      *     sat-bias process noise applies to all satellites again
      *
-     * The actual iono / sat-bias / ambiguity STATE values for the old
-     * pivot are not modified here — they remain at value=0 with
-     * variance=0 (the frozen-pivot signature).  The caller (handleGap)
-     * is expected to drop those states via the relevant
+     * The iono / sat-bias / ambiguity state values of the old pivot are
+     * not modified here; they remain at value=0 with variance=0 (the
+     * frozen-pivot signature).  The caller (handleGap) is expected to drop
+     * those states via the relevant
      * @c StateManager::pruneXxxStatesExcept({}) calls before the
      * next ensureRequiredStates() pass rebuilds them around the
      * newly-elected pivots.
@@ -227,8 +230,9 @@ private:
         double      max_amb_variance{-1.0};
         /// Signed broadcast-ephemeris age (s, obs epoch − toe) for this sat;
         /// |value| is the extrapolation magnitude.  0 in post-processing (no
-        /// live ephemeris).  The selector bars a satellite whose |age| is far
-        /// above its constellation's freshest qualified peer from PIVOT election.
+        /// live ephemeris).  The selector bars a satellite from pivot election
+        /// when its |age| exceeds its constellation's freshest qualified peer by
+        /// more than kPivotToeSpreadMaxS (1200 s, in PivotManager.cpp).
         double      eph_toe_age_s{0.0};
     };
 
@@ -252,19 +256,19 @@ private:
      * pivot's variance propagates into every same-group SD state via the
      * T·P·T' re-reference).
      *
-     * For each constellation the best candidate is selected using
-     * lexicographic ordering on (coverage, score) — full-coverage
-     * candidates always rank above any partial-coverage candidate,
-     * regardless of score.  This is a hard tier rather than an additive
-     * penalty: the BSSD frame requires the pivot to track every signal
-     * any other satellite tracks, so dropping below max coverage in the
-     * presence of a full-coverage alternative is never acceptable.  The
-     * fallback to highest-available coverage is implicit — when no
-     * satellite has full coverage, the comparator picks the maximum
-     * coverage count it sees.
+     * For each constellation the best candidate is selected by
+     * lexicographic ordering on (coverage, score): full-coverage
+     * candidates rank above any partial-coverage candidate regardless of
+     * score.  This is a hard tier instead of an additive penalty because
+     * the BSSD frame requires the pivot to track every signal any other
+     * satellite tracks, so a candidate below maximum coverage is not
+     * acceptable while a full-coverage alternative exists.  The fallback
+     * to highest-available coverage is implicit: when no satellite has
+     * full coverage, the comparator picks the maximum coverage count it
+     * sees.
      *
      * @param observations  Epoch observations.
-     * @param state_manager State manager (read-only — used for variance lookups).
+     * @param state_manager State manager (read-only; used for variance lookups).
      * @param[out] sat_info Per-satellite info (constellation, elevation, variance).
      * @param[out] cons_info Per-constellation info (best candidate, max coverage).
      */
@@ -292,9 +296,9 @@ private:
      *     pivots regardless of convergence (troposphere and multipath
      *     dominate at low elevation).
      *
-     * On the first BSSD epoch every candidate within a coverage tier has
-     * no state, so the convergence term is constant across candidates
-     * and elevation decides — no special initial-election path needed.
+     * On the first BSSD epoch no candidate has a state yet, so the
+     * convergence term is constant within a coverage tier and elevation
+     * decides; no separate initial-election path is needed.
      *
      * @param sat Satellite identifier (currently unused; retained for
      *            future per-sat hooks like elevation-rate or lock-loss
@@ -314,9 +318,13 @@ private:
     /**
      * @brief Select pivot candidates with sticky hysteresis.
      *
-     * Keeps the current pivot if it is still above the minimum elevation
-     * and undisturbed.  Otherwise selects the best-scoring satellite
-     * using scorePivotCandidate().
+     * Keeps the current pivot if it is still above the minimum elevation,
+     * not in @p exclude_sats, and not outlier-stale in broadcast-ephemeris
+     * age.  Otherwise selects the best (coverage, score) satellite among
+     * those passing the same three filters, ranked with
+     * scorePivotCandidate(), and falls back to the precomputed best or
+     * highest satellite only when none passes.  Pivot disturbance is not
+     * checked here; handlePivotHandover() handles it afterwards.
      *
      * @param cons_info Per-constellation info from buildEpochMaps().
      * @param sat_info  Per-satellite info from buildEpochMaps().
@@ -330,9 +338,12 @@ private:
     /**
      * @brief Handle a disturbed pivot for one constellation.
      *
-     * Searches for a healthy replacement.  If found, updates @p pivot and
-     * returns true.  If no replacement exists, re-zeroes the disturbed
-     * pivot's states in-place and returns false.
+     * Searches the constellation for a replacement (any satellite other
+     * than the disturbed pivot and not in @p exclude_sats, ranked by
+     * (coverage, score)).  If one is found, updates @p pivot and returns
+     * true.  If none exists, re-zeroes the disturbed pivot's phase
+     * ambiguity states in place (value and covariance row/column set to 0)
+     * and returns false.
      *
      * @param cons        Constellation name.
      * @param[in,out] pivot  Current pivot (updated to replacement on success).
@@ -362,8 +373,10 @@ private:
     /**
      * @brief Check whether a pivot satellite's frozen state is disturbed.
      *
-     * A pivot's ambiguity state should be exactly (0, 0).  Any deviation
-     * indicates external corruption (cycle-slip reset, filter reset, etc.).
+     * A pivot's ambiguity state is expected at (0, 0).  The pivot is
+     * reported disturbed when any of its phase ambiguity states has
+     * |x| > 1e-6 or P > 1e-12, which indicates external corruption
+     * (cycle-slip reset, filter reset, etc.).
      */
     bool isPivotDisturbed(
         const std::string& sat,
@@ -377,7 +390,7 @@ private:
     // -------------------------------------------------------------------
 
     /**
-     * @brief Apply lossless T�P�T' re-referencing for ambiguity states.
+     * @brief Apply lossless T·P·T' re-referencing for ambiguity states.
      */
     void reReferenceAmbiguities(
         const std::string& cons,
@@ -389,7 +402,7 @@ private:
         const std::string& epoch_prefix);
 
     /**
-     * @brief Apply lossless T�P�T' re-referencing for ionosphere states.
+     * @brief Apply lossless T·P·T' re-referencing for ionosphere states.
      */
     void reReferenceIonosphere(
         const std::string& cons,
@@ -400,7 +413,7 @@ private:
         const std::string& epoch_prefix);
 
     /**
-     * @brief Apply lossless T�P�T' re-referencing for satellite bias states.
+     * @brief Apply lossless T·P·T' re-referencing for satellite bias states.
      */
     void reReferenceSatBiases(
         const std::string& cons,
@@ -411,7 +424,7 @@ private:
         const std::string& epoch_prefix);
 
     /**
-     * @brief Apply the T�P�T' covariance transform for a group of states.
+     * @brief Apply the T·P·T' covariance transform for a group of states.
      *
      * Implements the common row-subtract / col-subtract / zero-pivot pattern
      * shared by ambiguity, ionosphere, and satellite bias re-referencing.
@@ -442,35 +455,38 @@ private:
     std::map<std::string, std::string> pivot_sat_;
 
     /// Constellations whose pivot is flagged for forced handover on the next
-    /// @c handlePivotHandover call. Populated by @c requestForcedHandover,
-    /// consumed (erased) inside @c handlePivotHandover after the disturbance
-    /// branch processes each entry.
+    /// @c handlePivotHandover call.  Populated by @c requestForcedHandover and
+    /// consumed (erased) inside @c handlePivotHandover when its loop reaches
+    /// the constellation, before the disturbance branch runs.
     std::set<std::string> forced_handover_requests_;
 
     /// Per-constellation replacement-pivot exclusions carried alongside a
     /// forced-handover request (offset pivot + post-fit residual outliers).
     /// Unioned into the effective @c exclude_sats in @c handlePivotHandover
-    /// and erased when the matching request is consumed.  This is what stops
-    /// the forced handover from re-anchoring on another offset satellite.
+    /// and erased when the matching request is consumed.  This keeps the
+    /// forced handover from re-anchoring on another offset satellite.
     std::map<std::string, std::set<std::string>> forced_handover_exclude_;
 
     /// Per-constellation non-pivot satellites whose ionosphere / sat-bias
-    /// state must be re-inflated after a CODE-detected forced handover, carried
+    /// state is re-inflated after a code-detected forced handover, carried
     /// alongside @c forced_handover_requests_.  Applied in @c handlePivotHandover
-    /// AFTER the lossless re-reference (and after the re-referenced covariance is
-    /// committed) via @c StateManager::reinflateIonosphereVariance /
-    /// @c reinflateSatBiasVariancesForSat, so the post-handover clean SD frame
-    /// can re-estimate the states the information-conserving re-reference cannot
-    /// fix.  Empty unless a code-only-style coherent pivot code bias was detected.
+    /// after the lossless re-reference and after the re-referenced covariance
+    /// is committed, via @c StateManager::reinflateIonosphereVariance /
+    /// @c reinflateSatBiasVariancesForSat, and only when the slip-state
+    /// re-inflation config is enabled.  The post-handover SD frame can then
+    /// re-estimate the states that the information-conserving re-reference
+    /// cannot correct.  Empty unless a coherent pivot code bias (code-only
+    /// style) was detected.
     std::map<std::string, std::set<std::string>> forced_handover_reinflate_;
 
     /// Satellites already retired as a pivot during the current epoch's
     /// handover sequence, keyed by constellation.  Reset at each epoch's
     /// first-pass handover (@c forced_only == false) and accumulated across
     /// the rebuild loop's forced re-entries, then treated as additional
-    /// exclusions.  This is the backstop that guarantees the post-fit
-    /// handover terminates: a satellite handed off this epoch can never be
-    /// bounced back to, so the anchor is forced onto a fresh satellite.
+    /// exclusions.  This guarantees that the post-fit handover sequence
+    /// terminates: a satellite handed off this epoch cannot be re-elected
+    /// within the epoch, so each forced handover moves the anchor to a
+    /// satellite not yet used.
     std::map<std::string, std::set<std::string>> retired_pivots_this_epoch_;
 
     /// Clean (undisturbed, non-forced) pivot handovers performed this epoch,

@@ -6,7 +6,7 @@ the first n epochs are star-basis double-differenced within a uniform channel
 group, and the fractional-cycle stats are reported for n = 1, 2, 5, 30.
 
 Lanes:
-  GPS  WL  (L1,L2)  lam 0.862 m   (reference — the known circR~0.62 @ n=30)
+  GPS  WL  (L1,L2)  lam 0.862 m   (reference, the known circR~0.62 @ n=30)
   GPS  EWL (L2,L5)  lam 5.861 m   (the WL-2 front rung)
   GAL  WL  (E1,E5a) lam 0.751 m   (reference)
   GAL  EWL (E5b,E5a) lam 9.768 m
@@ -24,7 +24,7 @@ FREQ = {  # (sys, band) -> Hz
     ('E', '1'): 1575.42e6, ('E', '5'): 1176.45e6, ('E', '7'): 1207.14e6,
     ('E', '8'): 1191.795e6,
 }
-# channel preference per (sys, band) — same-channel code/phase required
+# Channel preference per (sys, band): same-channel code/phase is required.
 CHAN = {
     ('G', '1'): 'CWX', ('G', '2'): 'WLSX', ('G', '5'): 'QXI',
     ('E', '1'): 'CX',  ('E', '5'): 'QX',   ('E', '7'): 'QX', ('E', '8'): 'QX',
@@ -69,7 +69,7 @@ def parse_station(path):
     out = {}
     with open(path, 'r', errors='replace') as f:
         types = parse_header(f)
-        want = {}   # sys -> set of field indices we need, per pair spec
+        want = {}   # sys -> set of field indices needed, per pair spec
         for label, sys, b1, b2 in PAIRS:
             p1, p2 = pick(types, sys, b1), pick(types, sys, b2)
             if p1 and p2:

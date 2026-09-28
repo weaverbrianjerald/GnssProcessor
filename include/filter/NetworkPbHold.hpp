@@ -1,56 +1,56 @@
 /**
  * @file NetworkPbHold.hpp
- * @brief Card PBH: the emit-side phase-bias HOLD seam (@c network.emit_pb_hold).
+ * @brief Emit-side phase-bias hold seam (@c network.emit_pb_hold, card PBH).
  *
- * One concern, one seam, per the network-producer decision tree: the emitted
- * phase bias of a (satellite, signal) is frozen at the first value of its
- * generation and a new generation is DECLARED, so a float consumer re-floats on
- * the declaration instead of integrating a wandering correction.
+ * A single-concern seam in the network-producer decision tree.  The emitted phase
+ * bias of a (satellite, signal) is frozen at the first value of its generation, and
+ * each new generation is declared, so a float consumer re-floats on the declaration
+ * instead of integrating a wandering correction.
  *
  * ### Why a hold and not a signed delta
  *
- * PBH read 3 graded the wire against truth on both beds.  Within-arc RMS of the
- * phase bias ALONE is 0.0227 m on the sim and 0.0467 m on the field, against the
- * clock's 0.0030 / 0.0274 m, and the first differences of the two errors
- * correlate at +0.006 — the phase bias does not compensate the clock, it ADDS to
- * it.  The simulator's true satellite phase bias is constant in time, so on that
- * bed every movement of the emitted value is error by construction.  A
- * delta-passing contract would therefore transfer a frame move that is mostly
- * not a frame move; an IDENTITY-passing contract, in the manner of the @c iode=
- * ephemeris cutover, states instead that the value has not changed and names the
- * epoch at which that claim restarts.
+ * Graded against truth on both beds, the within-arc RMS of the phase bias alone is
+ * 0.0227 m on the sim and 0.0467 m on the field, against 0.0030 / 0.0274 m for the
+ * clock, and the first differences of the two errors correlate at +0.006: the phase
+ * bias error adds to the clock error instead of compensating it.  The simulator's
+ * true satellite phase bias is constant in time, so on that bed every movement of
+ * the emitted value is error.  A delta-passing contract would therefore transfer, as
+ * a frame move, a change that is mostly not one.  An identity-passing contract,
+ * like the @c iode= ephemeris cutover, states that the value has not changed and
+ * names the epoch at which that statement restarts.  See
+ * docs/refound/PBH_phase_bias_hold_2026-09-19.md §1.
  *
  * ### Ordering contract
  *
- * @ref networkPbHold is the LAST writer of @c NetworkPhaseBias::bias_m in an
- * epoch and runs immediately before @c NetworkProductEmitter::emitToStore:
+ * @ref networkPbHold is the last writer of @c NetworkPhaseBias::bias_m in an epoch.
+ * Only read-only steps (the ledger-emit capture and the signal-roster declaration
+ * build) run between it and @c NetworkProductEmitter::emitToStore.  It runs:
  *
- *  - AFTER the carry-invariant emission re-base and the PB emission filter, both
- *    of which rewrite @c bias_m in @c sol, so the hold freezes what they produced
- *    rather than being overwritten by them;
- *  - AHEAD of the emitter's phase-bias value-jump test, so that test screens the
- *    HELD value — the declared population and the payload agree by construction;
- *  - AFTER every marking site of the epoch, so @ref NetworkProductEmitter::pendingMarkChannels
- *    reports the complete set of channels about to be declared, which is what the
- *    coupled-mark cost telemetry needs;
- *  - BEFORE the on-disk product write, which consumes the same @c sol, so the file
+ *  - after the carry-invariant emission re-base and the PB emission filter, both of
+ *    which rewrite @c bias_m in @c sol, so the hold freezes their output instead of
+ *    being overwritten by them;
+ *  - ahead of the emitter's phase-bias value-jump test, so that test screens the held
+ *    value and the declared population agrees with the payload;
+ *  - after every marking site of the epoch, so @ref NetworkProductEmitter::pendingMarkChannels
+ *    reports the complete set of channels about to be declared, which the coupled-mark
+ *    cost telemetry needs;
+ *  - before the on-disk product write, which consumes the same @c sol, so the file
  *    and the in-process store carry the same held values.
  *
- * The estimator is never touched: the solve, the C records and the B records are
- * byte-identical with the knob ON, and OFF the seam returns before reading
+ * The estimator is not touched: with the knob on, the solve, the C records and the
+ * B records are byte-identical; with it off, the seam returns before reading
  * anything.
  *
  * ### Invariant #7, both edges
  *
- * The DECOUPLING edge is the hold itself, and what it can accumulate is bounded
- * and MEASURED rather than asserted: every held emission contributes
- * |estimate - held| to a run-end distribution, so "what the hold hides" is a
- * number in the summary, not a hope.  The RE-COUPLING edge is the generation
- * start — a @c PB_HOLD / @c gen_start event with its cause, a counter, and the
- * @c gen= declaration the consumer re-floats on.  The one thing the hold
- * deliberately does NOT transfer is a coupled frame move (a mark naming the clock
- * and the phase bias together), so that cost is measured too: the de-commoned
- * satellite clock step at every such mark reaching a held key.
+ * The decoupling edge is the hold itself.  What it can accumulate is measured: every
+ * held emission adds |estimate - held| to a run-end distribution, so the amount the
+ * hold hides is reported in the run summary.  The re-coupling edge is the generation
+ * start: a @c PB_HOLD / @c gen_start event with its cause, a counter, and the
+ * @c gen= declaration the consumer re-floats on.  The hold does not transfer a
+ * coupled frame move (a mark naming the clock and the phase bias together), so that
+ * cost is measured as well: the de-commoned satellite clock step at every such mark
+ * that reaches a held key.
  */
 #ifndef GNSSPROCESSOR_NETWORK_PB_HOLD_HPP
 #define GNSSPROCESSOR_NETWORK_PB_HOLD_HPP
@@ -69,35 +69,39 @@ struct NetworkSolutionEpoch;
 struct SyncedEpoch;
 
 /**
- * @brief Apply the card-PBH emit-side phase-bias hold to one epoch's solution.
+ * @brief Apply the emit-side phase-bias hold (card PBH) to one epoch's solution.
  *
  * Per emitted (satellite, signal):
- *  - no held entry yet, or the key was last emitted more than
- *    @c network.emit_pb_hold_max_gap_s ago ⇒ START a generation.  The current
- *    estimate becomes the held value, the generation advances (first = 1), and a
- *    @c PB_HOLD / @c gen_start event is emitted with action @c first or @c gap.
- *  - otherwise ⇒ overwrite @c NetworkPhaseBias::bias_m with the held value and
- *    record |estimate - held| into the run-end distribution.
+ *  - no held entry yet, or @c network.emit_pb_hold_max_gap_s is positive and the key
+ *    was last emitted more than that many seconds ago: start a generation.  The
+ *    current estimate becomes the held value, the generation advances (the first is
+ *    1), and a @c PB_HOLD / @c gen_start event is emitted with action @c first or
+ *    @c gap.
+ *  - otherwise: overwrite @c NetworkPhaseBias::bias_m with the held value and record
+ *    |estimate - held| into the run-end distribution.  With card CLV
+ *    (@c network.clock_level_carry) armed, the held value is first shifted by the
+ *    satellite's clock-level transfer accumulated since the generation started.
  *
- * Either way the entry is stamped with its generation, which travels to the
+ * In both cases the entry is stamped with its generation, which travels to the
  * consumer on @c SsrPhaseBiasEntry::hold_generation and to the file on the
  * P-record @c gen= token.
  *
- * @param ctx      Run context — owns the hold state (@c ctx.carry.pb_hold*), the
+ * @param ctx      Run context: owns the hold state (@c ctx.carry.pb_hold*), the
  *                 counters and the knob snapshot.  The seam owns nothing.
- * @param config_  Run configuration (read for nothing but the knob's documented
- *                 home; the live values come from @c ctx.knobs).
- * @param log      Run logger (a one-shot arming line on the first held epoch).
- * @param traces   Trace sinks — the @c PB_HOLD event rows.
- * @param emitter  The product emitter, read ONLY through
+ * @param config_  Run configuration.  Not read; the live values come from
+ *                 @c ctx.knobs.  The parameter keeps the seam signature uniform.
+ * @param log      Run logger (one arming line, at the end of the first epoch that
+ *                 starts a generation).
+ * @param traces   Trace sinks: the @c PB_HOLD event rows.
+ * @param emitter  The product emitter, read only through
  *                 @ref NetworkProductEmitter::pendingMarkChannels for the coupled
- *                 clock+phase-bias mark census.  Never mutated.
+ *                 clock+phase-bias mark census.  Not mutated.
  * @param se       The synced epoch (its @c time stamps the event rows).
  * @param sol      The epoch about to be emitted; its @c phase_bias values are the
- *                 ONLY thing this seam writes.
+ *                 only thing this seam writes.
  *
- * @note A no-op returning immediately when @c ctx.knobs.emit_pb_hold is false, so
- *       the OFF path is byte-identical and allocates nothing.
+ * @note Returns immediately when @c ctx.knobs.emit_pb_hold is false (or the epoch
+ *       has no satellites), so the off path is byte-identical and allocates nothing.
  */
 void networkPbHold(NetworkRunContext& ctx,
                    const GnssConfig& config_,

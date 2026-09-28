@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Canonical Niell Mapping Function (NMF) reference, mirroring cssrlib's
-tropmapfNiell / interpc (gnss.py) verbatim — itself a port of RTKLIB
+tropmapfNiell / interpc (gnss.py) verbatim: itself a port of RTKLIB
 tropmapf.  Used to generate golden mf_d / mf_w for the GnssProcessor
 regression test that locks the May-2026 NMF fixes:
 
@@ -9,7 +9,7 @@ regression test that locks the May-2026 NMF fixes:
 
 Both POINT (Troposphere.cpp abc_amp) and cssrlib agree on these; the
 prior GnssProcessor code dropped the 0.0 (shifting amplitudes one bin)
-and used + instead of −.
+and added the amplitude term instead of subtracting it.
 
 Usage:
     python scripts/nmf_reference.py
@@ -19,7 +19,7 @@ from __future__ import annotations
 import math
 import sys
 
-# Coefficient table — copied verbatim from cssrlib gnss.py:1417-1426.
+# Coefficient table: copied verbatim from cssrlib gnss.py:1417-1426.
 COEF = [
     [1.2769934E-3, 1.2683230E-3, 1.2465397E-3, 1.2196049E-3, 1.2045996E-3],  # ah_avg
     [2.9153695E-3, 2.9152299E-3, 2.9288445E-3, 2.9022565E-3, 2.9024912E-3],  # bh_avg
@@ -60,7 +60,7 @@ def nmf(lat_deg, doy, el_deg, hgt_m):
     lat = abs(lat_deg)
 
     c = [interpc(COEF[k], lat) for k in range(9)]
-    # avg − amp·cosy   (the canonical MINUS)
+    # avg − amp·cosy (the canonical form: subtraction, not addition)
     ah = [c[0] - c[3] * cosy, c[1] - c[4] * cosy, c[2] - c[5] * cosy]
     aw = [c[6], c[7], c[8]]
 
@@ -71,10 +71,10 @@ def nmf(lat_deg, doy, el_deg, hgt_m):
 
 
 def main():
-    # (label, lat_deg, lon_deg, h_m, doy, el_deg)
-    # doy 129.25 -> 2024-05-08 06:00 (week 2313, tow 280800)
-    # doy 210.0  -> 2024-07-28 00:00 (week 2325, tow 0); cos_annual ≈ -1,
-    #              maximally exercising the seasonal sign.
+    # Columns: (label, lat_deg, lon_deg, h_m, doy, el_deg).
+    # doy 129.25 is 2024-05-08 06:00 (week 2313, tow 280800).
+    # doy 210.0 is 2024-07-28 00:00 (week 2325, tow 0), where cos_annual ≈ -1,
+    # giving the seasonal term its largest magnitude.
     cases = [
         ("mid45_doy129_el10",  45.0,  -75.0, 200.0, 129.25, 10.0),
         ("high70_doy129_el15", 70.0,   10.0, 100.0, 129.25, 15.0),

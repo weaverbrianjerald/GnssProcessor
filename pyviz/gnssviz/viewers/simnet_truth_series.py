@@ -1,26 +1,25 @@
-"""Simulated-network truth-error time series — formal σ vs true error, over the run.
+"""Simulated-network truth-error time series: formal sigma vs true error, over the run.
 
-Reads ``simnet_grade_series.csv`` (written by ``scripts/simnet_grade.py --series``:
-per-epoch aggregates of the SAME residuals the grader grades, produced by the same
-transform code path so the plots cannot drift from the verdict).  Four figures:
+Reads ``simnet_grade_series.csv`` (written by ``scripts/simnet_grade.py --series``):
+per-epoch aggregates of the same residuals the grader grades, produced by the same
+transform code path so the plots cannot drift from the verdict. Four figures:
 
-  1. **Truth error vs formal σ** — per-epoch rms truth error beside the published
-     formal σ, per channel.  This is the calibration exhibit: the fixture exists
-     because a confidently wrong estimator shows a COLLAPSING σ while the true
-     error grows, with every internal instrument silent (SPEC §9).  The settle
-     boundary is drawn on every axis; everything left of it is ignition and is
-     shown, never graded.
-  2. **ZWD truth error per station** — the determinability exhibit (n=3 carries a
+  1. **Truth error vs formal sigma**: per-epoch rms truth error beside the published
+     formal sigma, per channel. This is the calibration exhibit: a confidently wrong
+     estimator shows a shrinking sigma while the true error grows, with every
+     internal instrument silent (SPEC §9). The settle boundary is drawn on every
+     axis; everything left of it is ignition and is shown, never graded.
+  2. **ZWD truth error per station**: the determinability exhibit (n=3 carries a
      metre-class ZWD bias that two more stations remove entirely).
-  3. **Receiver-side channels** — rx-DCB between-station contrast (graded) and
-     fleet-mean level (the absorbed Table-8 gauge, NOT an error), plus the rx
+  3. **Receiver-side channels**: rx-DCB between-station contrast (graded) and
+     fleet-mean level (the absorbed Table-8 gauge, not an error), plus the rx
      clock contrast.
-  4. **Phase SD fractional** — the between-satellite SD phase-bias residual in
+  4. **Phase SD fractional**: the between-satellite SD phase-bias residual in
      fractional cycles; med|frac| pinned near 0.25 means uniform, i.e. zero
      integer information.
 
-The code-bias series covers the settled window only (the grader's transform
-deliberately never runs on ignition epochs).
+The code-bias series covers the settled window only: the grader's transform
+never runs on ignition epochs.
 """
 
 from __future__ import annotations
@@ -223,7 +222,7 @@ def _fig_phase_frac(df, h_settle):
         traces.append(Line(x=sub["h"].to_numpy(float), y=sub["value"].to_numpy(float),
                            color=colors[i], width=1.2, label=str(s)))
     # No inline label: the backend draws HLine labels at the line, which sits
-    # inside the data here — the 0.25-uniform meaning lives in the subtitle.
+    # inside the data here. The 0.25-uniform meaning lives in the subtitle instead.
     traces.append(HLine(y=0.25, color=(0.72, 0.11, 0.11), style="--"))
     if h_settle is not None:
         traces.append(_settle_vline(h_settle))

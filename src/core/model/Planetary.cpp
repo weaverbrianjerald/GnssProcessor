@@ -1,12 +1,12 @@
 ﻿/**
 * @file Planetary.cpp
-* @brief Implementation of planetary utilities: Sun & Moon positions and ephemeris handling.
+* @brief Implementation of planetary utilities: Sun and Moon positions and ephemeris handling.
 *
-* Provides the rigorous IAU 1976/1980 Sun/Moon model with enhanced solar
-* longitude series, GAST, and polar motion from ERP data, evaluated on
-* demand per epoch.
+* IAU 1976/1980 Sun/Moon model with an extended solar longitude series, GAST,
+* and polar motion from ERP data, evaluated on demand per epoch; optional
+* CIO-based IAU 2000A/2006 ECI→ECEF transform via SOFA.
 *
-* All principal-axis rotations use the static Rxyz() helper for consistency.
+* All principal-axis rotations use the static Rxyz() helper.
 * All returned position vectors are ECEF Cartesian vectors in meters.
 */
 
@@ -14,9 +14,9 @@
 #include "model/Planetary.hpp"
 #include "common/PppTypes.hpp"
 
-// IAU SOFA (vendored, third_party/sofa) — used by celestialToTerrestrial for the
+// IAU SOFA (vendored in third_party/sofa), used by celestialToTerrestrial for the
 // CIO-based IAU 2000A/2006 frame transform.  sofa.h carries its own extern "C"
-// guards, so it can be included directly from this C++ TU.
+// guards, so it is included directly from this C++ TU.
 #include "sofa.h"
 
 namespace GnssProcessor {
@@ -45,7 +45,7 @@ namespace GnssProcessor {
     }
 
     // =====================================================================
-    // Rigorous RTKLIB-style Sun/Moon model
+    // RTKLIB-style Sun/Moon model
     // =====================================================================
 
     /**
@@ -97,7 +97,7 @@ namespace GnssProcessor {
     }
 
     /**
-     * @brief IAU 1980 nutation model — 106 term series.
+     * @brief IAU 1980 nutation model, 106-term series.
      *
      * Reference: Seidelmann (1982), "1980 IAU Theory of Nutation".
      * Table columns: [l, l', F, D, Omega, period, psi_s, psi_t, eps_s, eps_t]
@@ -236,43 +236,46 @@ namespace GnssProcessor {
     /**
      * @brief Compute Greenwich Mean Sidereal Time (GMST) from UT1.
      *
-     * Implements the RTKLIB utc2gmst() algorithm (ERA-based + equation of equinoxes).
+     * Implements the RTKLIB utc2gmst() algorithm: IAU 1982 GMST at 0h UT1 plus
+     * the sidereal rotation over the elapsed UT1 day fraction.  The equation of
+     * the equinoxes is not applied here; eci2ecef() adds it to form GAST.
      *
      * @param t_ut1  Julian centuries of UT1 from J2000.0.
-     * @param ut1_d  UT1 day fraction (fractional part of UT1 JD).
+     * @param ut1_d  Fraction of the UT1 day elapsed since 0h UT1, i.e.
+     *               frac(UT1 JD + 0.5), as computeSunMoonPosition() passes it.
      * @return GMST in radians.
      */
     double Planetary::utc2gmst(double t_ut1, double ut1_d) {
-        // Earth Rotation Angle (ERA) — IERS 2003 / RTKLIB
+        // UT1 Julian date.
         double ut1_jd = TimeUtils::J2000_JD + t_ut1 * TimeUtils::DAYS_PER_JULIAN_CENTURY;
-        // tut0 must be Julian centuries from J2000.0 at 0h UT1 of the current day.
-        // Since JD is referenced to noon (JD xxx.0 = noon), the start of the
-        // calendar day (0h = midnight) is at floor(JD - 0.5) + 0.5.
-        // Using floor(JD) alone gives the previous noon, which is 12 hours off
-        // for times after midnight — producing ~0.5° GMST error and ~10^6 km
-        // Sun position error.
+        // tut0 is Julian centuries from J2000.0 at 0h UT1 of the current day.
+        // JD is referenced to noon (JD xxx.0 = noon), so 0h (midnight) of the
+        // calendar day is floor(JD - 0.5) + 0.5.  floor(JD) alone would give the
+        // previous noon, a 12 h offset after midnight that shifts GMST by about
+        // 0.5° (about 10^6 km in the Sun position).
         double tut0 = (std::floor(ut1_jd - 0.5) + 0.5 - TimeUtils::J2000_JD) / TimeUtils::DAYS_PER_JULIAN_CENTURY;
 
-        // GMST at 0h UT1 (degrees) — IAU 1982 model
+        // GMST at 0h UT1 (seconds of time), IAU 1982 model.
         double gmst0 = 24110.54841 + 8640184.812866 * tut0
             + 0.093104 * tut0 * tut0
             - 6.2e-6 * tut0 * tut0 * tut0;
-        // Convert from seconds to radians and add Earth rotation for fractional day
+        // Add the sidereal rotation over the UT1 day fraction (seconds).
         double gmst = gmst0 + 1.002737909350795 * ut1_d * 86400.0;
-        // Convert seconds -> radians: 2*pi / 86400 = 7.272205...e-5
+        // Wrap to one day and convert seconds -> radians: 2*pi / 86400 = 7.272205...e-5
         gmst = std::fmod(gmst, 86400.0) * (2.0 * Constants::PI / 86400.0);
         if (gmst < 0.0) gmst += 2.0 * Constants::PI;
         return gmst;
     }
 
     /**
-     * @brief Compute Sun and Moon ECI positions with enhanced Sun longitude series.
+     * @brief Compute Sun and Moon ECI positions with an extended Sun longitude series.
      *
-     * Extends the RTKLIB sunmoonpos_eci() Sun model with additional terms for
-     * the 3rd harmonic of the mean anomaly, Venus perturbation, Jupiter
-     * perturbation, Moon perturbation, and ecliptic latitude of the Sun.
-     * These terms reduce the ecliptic longitude error from ~1' to ~10"
-     * and improve the Sun position accuracy from ~1000 km to ~100 km.
+     * Extends the RTKLIB sunmoonpos_eci() Sun model with terms for the third
+     * harmonic of the mean anomaly, the Venus, Jupiter and Moon perturbations,
+     * and the ecliptic latitude of the Sun.  These terms reduce the ecliptic
+     * longitude error from about 1' to about 10" (at 1 AU, about 43 500 km to
+     * about 7 300 km across track).  The output is in the mean equator and
+     * equinox of date (tropical rates, of-date obliquity), not J2000.
      *
      * Reference: Meeus, "Astronomical Algorithms" (1991), Ch. 25;
      *            Montenbruck & Gill, "Satellite Orbits" (2000), Ch. 3.3.2.
@@ -298,7 +301,7 @@ namespace GnssProcessor {
         double Ms = 357.5277233 + 35999.05034 * t;  // mean anomaly of the Sun (deg)
         double Ms_rad = Ms * D2R;
 
-        // Mean longitude of Venus and Jupiter for perturbation terms
+        // Mean longitudes of Venus, Jupiter and the Moon for the perturbation terms
         double Lv = 181.979800853 + 58517.8156748 * t;  // Venus mean longitude (deg)
         double Lj = 34.351518723  + 3034.9056746  * t;  // Jupiter mean longitude (deg)
         double Lm = 218.3164591   + 481267.88134  * t;  // Moon mean longitude (deg)
@@ -317,7 +320,7 @@ namespace GnssProcessor {
         // the barycentric motion of the Earth-Moon system.
         double bs = (0.03 * std::sin((Lm - ls) * D2R)) / 3600.0;  // degrees
 
-        // Distance (AU) — include 3rd harmonic
+        // Distance (AU), including the third harmonic
         double rs_au = 1.000140612
             - 0.016708617 * std::cos(Ms_rad)
             - 0.000139589 * std::cos(2.0 * Ms_rad)
@@ -359,9 +362,9 @@ namespace GnssProcessor {
     /**
      * @brief IAU 1976 precession matrix P (J2000 → mean equinox/equator of date).
      *
-     * Verbatim extraction of the block that previously lived inline in
-     * eci2ecef(), kept as a single definition so the rotation chain and the
-     * of-date→J2000 de-precession cannot drift apart.
+     * Single definition used by the eci2ecef() rotation chain and by the
+     * of-date→J2000 de-precession, so the two cannot diverge.  The expression
+     * matches the legacy inline eci2ecef() code term for term.
      */
     Eigen::Matrix3d Planetary::precessionIau1976(double t_tt)
     {
@@ -419,7 +422,7 @@ namespace GnssProcessor {
     /**
      * @brief CIO-based IAU 2000A/2006 celestial-to-terrestrial (ECI→ECEF) matrix.
      *
-     * Mirrors M-PAGES Coordinate::NgsFormC2T using SOFA.  The (X, Y, s) path
+     * Follows M-PAGES Coordinate::NgsFormC2T, using SOFA.  The (X, Y, s) path
      * (iauXys00a + iauC2ixys) is used instead of bare iauC2i00a so the observed
      * celestial-pole offsets dX, dY can be injected; with dX=dY=0 the result is
      * identical to iauC2i00a.  Returns R such that r_ecef = R · r_eci.
@@ -434,7 +437,7 @@ namespace GnssProcessor {
         const double uta = TimeUtils::MJD_OFFSET;
         const double utb = ut1_jd - TimeUtils::MJD_OFFSET;  // UT1 as MJD
 
-        // CIP coordinates (X, Y) and CIO locator s — IAU 2000A precession-nutation.
+        // CIP coordinates (X, Y) and CIO locator s from IAU 2000A precession-nutation.
         double x = 0.0, y = 0.0, s = 0.0;
         iauXys00a(tta, ttb, &x, &y, &s);
 
@@ -468,9 +471,11 @@ namespace GnssProcessor {
     /**
      * @brief Interpolate ERP values for a given epoch.
      *
-     * Uses binary search (O(log n)) to locate the bracketing ERP entries
-     * instead of a linear scan. The ERP vector is assumed to be sorted
-     * chronologically; if not, the function falls back to the nearest entry.
+     * Uses binary search (O(log n)) to locate the bracketing ERP entries, so
+     * the ERP vector must be sorted chronologically; unsorted input is not
+     * detected.  Outside the tabulated span the nearest end entry is held; two
+     * entries less than 1e-9 s apart use the earlier one; an empty vector
+     * leaves every output at 0.
      */
     void Planetary::interpolateErp(const GnssTime& time,
         const std::vector<ErpData>& erps,
@@ -487,7 +492,7 @@ namespace GnssProcessor {
 
         double t_query = TimeUtils::continuousGpsSeconds(time);
 
-        // Binary search for the first ERP entry with time > t_query
+        // Binary search for the first ERP entry with time >= t_query
         auto upper = std::lower_bound(erps.begin(), erps.end(), t_query,
             [](const ErpData& e, double t) {
                 return TimeUtils::continuousGpsSeconds(e.time) < t;
@@ -540,17 +545,19 @@ namespace GnssProcessor {
     }
 
     /**
-     * @brief Compute Sun and Moon positions in ECEF using the rigorous model.
+     * @brief Compute Sun and Moon positions in ECEF.
      *
-     * Full pipeline matching RTKLIB sunmoonpos():
-     * 1. Interpolate ERP (xp, yp, ut1_utc)
-     * 2. Compute UT1 time from GPS time + leap seconds + UT1-UTC
-     * 3. Compute fundamental arguments (ast_args)
-     * 4. Compute Sun/Moon ECI positions (sunmoonpos_eci)
-     * 5. Compute TT for precession/nutation
-     * 6. Compute GMST
-     * 7. Build ECI→ECEF matrix (eci2ecef) with precession, nutation, GAST, polar motion
-     * 8. Transform to ECEF
+     * Pipeline following RTKLIB sunmoonpos():
+     * 1. Interpolate ERP (xp, yp, ut1_utc, dX, dY).
+     * 2. Compute UTC from GPS time (leap seconds), then UT1 = UTC + (UT1-UTC).
+     * 3. Compute TT and the fundamental arguments (ast_args, from TT).
+     * 4. Compute Sun/Moon ECI positions (sunmoonpos_eci, from UT1).
+     *    4b. With correct_sun_frame_, de-precess them from mean-of-date to J2000.
+     * 5. Compute GMST.
+     * 6. Build the ECI→ECEF matrix: eci2ecef (precession, nutation, GAST, polar
+     *    motion), or celestialToTerrestrial with enable_cio_frame_.
+     * 7. Transform to ECEF.  Non-finite results are replaced by fixed
+     *    placeholder vectors and a warning is logged.
      */
     void Planetary::computeSunMoonPosition(const GnssTime& time,
         const std::vector<ErpData>& erps,
@@ -575,7 +582,7 @@ namespace GnssProcessor {
         // Julian centuries of UT1 from J2000.0
         double t_ut1 = TimeUtils::jdToJ2000Centuries(ut1_jd);
 
-        // UT1 fractional day
+        // Fraction of the UT1 day since 0h UT1 (JD days start at noon, hence + 0.5)
         double ut1_d = std::fmod(ut1_jd + 0.5, 1.0);
 
         // Step 3: Compute fundamental arguments
@@ -591,27 +598,27 @@ namespace GnssProcessor {
         Eigen::Vector3d rsun_eci, rmoon_eci;
         sunMoonPosEci(t_ut1, f, rsun_eci, rmoon_eci);
 
-        // Step 4b: FRAME REPAIR (default OFF -- estimation.enable_sun_frame_correction).
+        // Step 4b: frame correction (off by default; estimation.enable_sun_frame_correction).
         //
-        // sunMoonPosEci evaluates its series with TROPICAL mean-longitude rates
-        // (Sun 36000.770 deg/cy, Moon 481267.883 deg/cy -- the sidereal rates are
-        // 35999.373 and 481266.494) and rotates ecliptic->equatorial with the
-        // OF-DATE mean obliquity, so rsun_eci / rmoon_eci are in the mean equinox
-        // and equator OF DATE, not J2000.  Both ECI->ECEF chains below then apply
-        // precession a SECOND time -- eci2ecef through its IAU-1976 P, and
-        // celestialToTerrestrial through the SOFA bias-precession-nutation matrix.
-        // The delivered ECEF directions therefore carry a spurious rotation about
-        // the ecliptic pole growing at 50.3"/yr from J2000: 1224.7" = 20.41' at
-        // 2024-05-08.  (Nutation and GAST are NOT double-counted -- the series
-        // carries no nutation term and uses the MEAN obliquity -- so N and the
-        // equation of the equinoxes are correct and are left alone.)
+        // sunMoonPosEci evaluates its series with tropical mean-longitude rates
+        // (Sun 36000.770 deg/cy, Moon 481267.883 deg/cy; the sidereal rates are
+        // lower by the general precession, about 1.397 deg/cy) and rotates
+        // ecliptic->equatorial with the of-date mean obliquity, so rsun_eci and
+        // rmoon_eci are in the mean equinox and equator of date, not J2000.  Both
+        // ECI->ECEF chains below apply precession again: eci2ecef through its
+        // IAU 1976 P, and celestialToTerrestrial through the SOFA
+        // bias-precession-nutation matrix.  Without this step the ECEF directions
+        // carry a spurious rotation about the ecliptic pole that grows at about
+        // 50.3"/yr from J2000: 1224.7" (20.41') on 2024-05-08.  Nutation and GAST
+        // are not double-counted (the series has no nutation term and uses the
+        // mean obliquity), so N and the equation of the equinoxes stay as they are.
         //
-        // Applying P^T here returns the vectors to J2000, after which the existing
-        // chain is exactly right.  Doing the repair on the VECTOR rather than in
-        // the matrix keeps one code path for both the legacy and CIO transforms.
-        // Residual for the CIO arm: the J2000 mean equinox differs from GCRS by
-        // the 23 mas frame bias, which is 5e-5 of the 1224.7" being removed and
-        // well under the Sun series' own 18.6" mean truncation error.
+        // Applying P^T returns the vectors to J2000, after which either chain is
+        // correct.  Correcting the vector rather than the matrix keeps one code
+        // path for both the legacy and CIO transforms.  Residual for the CIO arm:
+        // the J2000 mean equinox differs from GCRS by the 23 mas frame bias, about
+        // 2e-5 of the 1224.7" removed and well under the Sun series' own 18.6"
+        // mean truncation error.
         if (correct_sun_frame_) {
             const Eigen::Matrix3d Pt = precessionIau1976(t_tt).transpose();
             rsun_eci  = Pt * rsun_eci;
@@ -623,7 +630,7 @@ namespace GnssProcessor {
 
         // Step 6: Compute ECI→ECEF matrix.  With enable_cio_frame_, use the
         // CIO-based IAU 2000A/2006 transform (SOFA); otherwise the legacy
-        // IAU 1976/1980 equinox chain (byte-identical to the historical path).
+        // IAU 1976/1980 equinox chain (byte-identical to the legacy output).
         Eigen::Matrix3d U;
         if (enable_cio_frame_) {
             const double tt_jd  = TimeUtils::gpsJdToTtJd(gps_jd);
@@ -632,7 +639,7 @@ namespace GnssProcessor {
             U = celestialToTerrestrial(tt_jd, ut1_jd, xp_rad, yp_rad, dX_rad, dY_rad);
 
             // One-shot startup diagnostic: angular difference between the CIO and
-            // legacy Sun directions (expected « 1e-3 rad — frame bias + model diff).
+            // legacy Sun directions (expected « 1e-3 rad: frame bias plus model difference).
             if (!cio_diag_logged_) {
                 cio_diag_logged_ = true;
                 const Eigen::Matrix3d U_legacy = eci2ecef(t_tt, f, gmst, xp_rad, yp_rad);
@@ -685,10 +692,10 @@ namespace GnssProcessor {
     bool Planetary::isSatelliteEclipsing(const Eigen::Vector3d& sat_pos_ecef,
                                           const Eigen::Vector3d& sun_pos_ecef,
                                           double shadow_scale) {
-        // Defensive: a zero Sun vector means the cache hasn't been populated
-        // yet (first call before computeSunMoonPosition).  Return false so we
-        // don't spuriously eclipse every satellite at startup; the elevation
-        // mask remains the operative early filter.
+        // A Sun vector shorter than 1e6 m means the caller's Sun position has not
+        // been computed yet (first call before computeSunMoonPosition).  Return
+        // false so no satellite is flagged at startup; the elevation mask remains
+        // the effective early filter.  Non-finite inputs also return false.
         const double sun_norm = sun_pos_ecef.norm();
         if (sun_norm < 1e6 || !sat_pos_ecef.allFinite() || !sun_pos_ecef.allFinite()) {
             return false;

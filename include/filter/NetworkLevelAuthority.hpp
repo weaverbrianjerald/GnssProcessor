@@ -1,26 +1,27 @@
 #pragma once
 /**
  * @file NetworkLevelAuthority.hpp
- * @brief LV-6 — the internal per-epoch level-authority CENSUS
- *        (`network.level_authority_csgf`; `docs/SPEC_level_authority_internal.md`).
+ * @brief Internal per-epoch level-authority census
+ *        (`network.level_authority_csgf`; `docs/SPEC_level_authority_internal.md`; LV-6).
  *
- * Measure-only: reduces THIS epoch's mature CS-GF states (`ctx.carry.iono_cs`,
- * joined against `modeled[i]` rows — never the map alone, which is
- * deliberately unpruned) to one fleet level L_cs(t) in vertical TECU via the
- * two-tier robust reduction (`levelAuthorityReduce`), traces it beside the
- * per-station means (the d_r,GF-class diagnostic), and folds NOTHING.  The
- * fold is a separate future card gated on this census's tracking verdict.
+ * Measure-only.  Reduces the mature CS-GF states of the current epoch
+ * (`ctx.carry.iono_cs`, looked up from the `modeled[i]` rows; the map itself is
+ * not pruned and is never iterated) to one fleet level L_cs(t) in vertical TECU
+ * through the two-tier robust reduction (`levelAuthorityReduce`), and traces it
+ * beside the per-station means (the d_r,GF-class diagnostic).  Nothing is folded
+ * into the solve; a fold would be a separate card, gated on this census's
+ * tracking verdict.  Arming the census also arms the CS-GF advance in PASS A.
  *
- * Placement: serial, after PASS A's CS-GF advance, BEFORE
- * `networkAssemblyRegisterColumns_`'s SkipEpoch (an empty-system epoch still
- * gets its census row) — and therefore also upstream of every withhold
- * decision: the census measures THROUGH withhold eras
- * (`SPEC_withhold_era_release.md` — instruments upstream of emission survive
- * them).
+ * Placement: serial, after PASS A's CS-GF advance and before the SkipEpoch
+ * return of `networkAssemblyRegisterColumns_`, so an empty-system epoch still
+ * gets its census row.  The census therefore also runs upstream of every
+ * withhold decision and measures through withhold eras
+ * (`SPEC_withhold_era_release.md`: instruments upstream of emission are not
+ * suspended by a withhold).
  *
- * Vertical mapping: exact reuse of `computeIppGeometry` with the SH
- * configuration's shell constants, and the PAIR's own primary-band wavelength
- * (`IonoCsState::lam1_m`) for the TECU conversion — never an assumed L1.
+ * Vertical mapping: `computeIppGeometry` with the SH configuration's shell
+ * constants, and the pair's own primary-band wavelength (`IonoCsState::lam1_m`)
+ * for the TECU conversion rather than an assumed L1.
  */
 
 #include "common/PppObservation.hpp"
@@ -35,8 +36,8 @@ namespace spdlog { class logger; }
 namespace GnssProcessor {
 
 class GnssConfig;
-struct NetworkRunContext;   // app/NetworkRunContext.hpp — included in the .cpp only
-struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp — included in the .cpp only
+struct NetworkRunContext;   // app/NetworkRunContext.hpp, included in the .cpp only
+struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cpp only
 
 /// The LV-6 census (no-op unless `network.level_authority_csgf`).
 void networkLevelAuthorityCensus(

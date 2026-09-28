@@ -45,38 +45,49 @@ namespace GnssProcessor {
         ProductParser(const GnssConfig& config, LogManager& log_manager);
 
         /**
-         * @brief Get list of orbit product file paths defined in configuration.
-         * @return Vector of filesystem paths to orbit (SP3) products.
+         * @brief Get the configured orbit product file paths.
+         * @return Configured product paths with extension ".SP3" (case-sensitive) that
+         *         exist on disk.
          */
         std::vector<std::filesystem::path> getOrbitPaths() const;
 
         /**
-         * @brief Get list of clock product file paths defined in configuration.
-         * @return Vector of filesystem paths to clock (CLK) products.
+         * @brief Get the configured clock product file paths.
+         * @return Configured product paths with extension ".CLK" (case-sensitive) that
+         *         exist on disk.
          */
         std::vector<std::filesystem::path> getClockPaths() const;
 
         /**
          * @brief Get product file path for a specific product type.
-         * @param type Product type string (e.g., "SP3", "CLK", "ATX").
-         * @return Path to product file for the requested type. If not present, may be empty.
+         * @param type Product type string (e.g., "ATX", "BIA", "ERP", "RNX").
+         * @return Path to the product file for the requested type, or an empty path
+         *         (with a warning) when none is configured or the file does not exist.
          */
         std::filesystem::path getProductPath(const std::string& type) const;
 
         /**
          * @brief Parse SP3 orbit files into OrbitData entries.
+         *
+         * Positions are converted from km to m and velocities from dm/s to m/s.  Epochs
+         * are read as GPS time.  Records with an invalid position are dropped; across
+         * files, an epoch within 1 s of one already stored for that satellite is skipped
+         * (the first file read wins).  This is the only source of the orbit list.
+         *
          * @param sp3_paths Paths to SP3 files to parse.
          * @param orbits Output vector populated with parsed @ref OrbitData entries.
-         * @return True on success, false on failure (parsing/logging performed via LogManager).
+         * @return True when at least one orbit entry was parsed, false otherwise
+         *         (errors are logged via LogManager).
          */
         bool parseSp3(const std::vector<std::filesystem::path>& sp3_paths, std::vector<OrbitData>& orbits);
 
         /**
          * @brief Parse satellite clock (CLK) files into ClockData entries.
          *
-         * Reads one or more CLK files and merges the results, discarding duplicate
-         * epochs (same satellite and time within 1 s).  This supports multi-day
-         * processing where clock products span day boundaries.
+         * Reads the "AS" (satellite) records of one or more CLK files and merges the
+         * results, discarding duplicate epochs (same satellite and time within 1 s;
+         * the first file read wins).  This supports multi-day processing where clock
+         * products span day boundaries.
          *
          * @param clk_paths Paths to CLK files to parse.
          * @param clocks Output vector populated with parsed @ref ClockData entries.
@@ -93,12 +104,14 @@ namespace GnssProcessor {
         bool parseAtx(const std::filesystem::path& path, std::vector<AntennaData>& antennas);
 
         /**
-         * @brief Parse bias (BIA) file.
+         * @brief Parse a bias (BIA, SINEX-BIAS) file.
          * @param path Path to the BIA file.
-         * @param biases Output vector populated with parsed @ref BiasData entries.
+         * @param biases Output vector populated with the satellite OSB records as
+         *               @ref BiasData entries (bias and std-dev converted from ns to m).
+         *               Receiver records go to @ref getReceiverBiases.
          * @param clock_refs Output map populated with per-system clock reference signal pairs
          *                   parsed from the BIAS/DESCRIPTION block (may be empty if not present).
-         * @return True on success, false on failure.
+         * @return True when at least one satellite or receiver record was parsed, false otherwise.
          */
         bool parseBia(const std::filesystem::path& path, std::vector<BiasData>& biases,
                       ClockRefMap& clock_refs);
@@ -114,8 +127,9 @@ namespace GnssProcessor {
         /**
          * @brief Parse Klobuchar ionospheric coefficients file.
          * @param path Path to the Klobuchar coefficient file.
-         * @param klobuchar_coeffs Output vector populated with coefficients (size typically 4).
-         * @return True on success, false on failure.
+         * @param klobuchar_coeffs Output vector: the 8 GPS coefficients (alpha0..alpha3,
+         *        then beta0..beta3) read from the RINEX navigation header; cleared on failure.
+         * @return True when exactly 8 coefficients were read, false otherwise.
          */
         bool parseKlobuchar(const std::filesystem::path& path, std::vector<double>& klobuchar_coeffs);
 
@@ -127,18 +141,18 @@ namespace GnssProcessor {
          *
          * @param load_precise_orbits When true (default), precise SP3 orbit products
          *        are parsed into the cache.  Pass false in real-time when a live
-         *        broadcast+SSR orbit source supplants them (see
+         *        broadcast+SSR orbit source replaces them (see
          *        @c GnssConfig::realtimeUsesLiveOrbitSource).
          * @param load_precise_clocks When true (default), precise CLK clock products
          *        are parsed into the cache.  Pass false in real-time when a
-         *        live/network clock source supplants them (see
-         *        @c GnssConfig::realtimeUsesLiveOrbitClockSource).  RTB-4: these are
-         *        SEPARATE so a config can load precise (ultra-rapid) orbits while
-         *        taking clocks live ("ULT orbits + network clocks").  Leaving a
-         *        cache empty makes the corresponding @c Geometry / @c GnssCorrections
-         *        query resolve directly through the live store instead of routing
-         *        around a stale fixture.  The static products (ATX, BIA, ERP,
-         *        Klobuchar, Sun ephemeris) always load.
+         *        live/network clock source replaces them (see
+         *        @c GnssConfig::realtimeUsesLiveOrbitClockSource).  The two flags are
+         *        separate so a config can load precise (ultra-rapid) orbits while
+         *        taking clocks live ("ULT orbits + network clocks") (RTB-4).  An empty
+         *        cache makes the corresponding @c Geometry / @c GnssCorrections query
+         *        resolve through the live store instead of a stale fixture.  The
+         *        remaining products (ATX, BIA, ERP, and Klobuchar from the navigation
+         *        file) are always loaded.
          */
         void loadProducts(bool load_precise_orbits = true, bool load_precise_clocks = true);
 
@@ -173,14 +187,14 @@ namespace GnssProcessor {
         const std::vector<BiasData>& getBiases() const { return biases_; }
 
         /**
-         * @brief Get parsed RECEIVER bias entries (item 0b of the EXT-CB ladder).
+         * @brief Get parsed receiver bias entries (item 0b of the EXT-CB ladder).
          *
-         * Station-bearing OSB and DSB records from the BIAS/SOLUTION block —
-         * previously skipped silently.  Satellite entries never appear here and
-         * receiver entries never appear in @ref getBiases, so every existing
-         * consumer of the satellite vector is byte-identical.  Populated by
-         * @ref parseBia; empty until then, and empty for satellite-only files.
-         * NOTHING consumes these yet (the estimation rung is its own card).
+         * OSB and DSB records from the BIAS/SOLUTION block whose STATION field is
+         * non-empty.  Satellite entries never appear here and receiver entries never
+         * appear in @ref getBiases, so consumers of the satellite vector are
+         * unaffected.  Populated by @ref parseBia (appended per call, never cleared);
+         * empty before the first call, and a satellite-only file adds nothing.  No production
+         * code consumes these yet; estimating receiver biases is a separate card.
          */
         const std::vector<ReceiverBiasData>& getReceiverBiases() const { return receiver_biases_; }
 
@@ -239,7 +253,7 @@ namespace GnssProcessor {
         std::vector<ClockData> clocks_;    ///< Parsed satellite clock data (CLK).
         std::vector<AntennaData> antennas_;///< Parsed antenna corrections (ATX).
         std::vector<BiasData> biases_;     ///< Parsed differential bias data (BIA).
-        std::vector<ReceiverBiasData> receiver_biases_;  ///< Parsed RECEIVER bias records (item 0b; stored, not yet consumed).
+        std::vector<ReceiverBiasData> receiver_biases_;  ///< Parsed receiver bias records (item 0b; stored, not yet consumed).
         ClockRefMap clock_refs_;              ///< Per-system satellite clock reference observables from BIA DESCRIPTION.
         std::vector<ErpData> erps_;        ///< Parsed Earth rotation parameters (ERP).
         std::vector<double> klobuchar_coeffs_; ///< Parsed Klobuchar ionospheric coefficients.

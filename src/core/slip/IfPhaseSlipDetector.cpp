@@ -154,9 +154,8 @@ namespace GnssProcessor {
     // =================================================================
 
     double IfPhaseSlipDetector::computeMedian(std::vector<double>& values) {
-        // Delegates to the shared RobustStats::median.  This no longer sorts
-        // `values` in place; every call site uses only the return value
-        // (verified), so the dropped side effect is immaterial.
+        // Delegates to the shared RobustStats::median, which does not sort
+        // `values` in place.  Every call site uses only the return value.
         return RobustStats::median(values);
     }
 
@@ -258,29 +257,26 @@ namespace GnssProcessor {
                 }
                 if (phase_signals.size() < 2) continue;
 
-                // §14.10 PAIR WIDTH.  Off, exactly the pre-knob behaviour: the
-                // FIRST two phase signals form the one IF combination, filed
-                // under the bare system string.  On, every distinct pair is
-                // formed; the first pair keeps that same chain (so its
-                // population, its reference election, its double differences and
-                // its log lines are unchanged) and each additional pair gets a
-                // chain of its own, "<system>|<sig1>_<sig2>" — its own reference,
-                // its own gradient history, its own reset key.
+                // Pair width (§14.10).  With all_pairs_ off, the first two phase
+                // signals in key order form the one IF combination, filed under the
+                // bare system string.  With it on, every distinct pair is formed; the
+                // first pair keeps that chain (so its population, reference election,
+                // double differences and log lines are unchanged) and each additional
+                // pair gets a chain of its own, "<system>|<sig1>_<sig2>", with its own
+                // reference, gradient history and reset key.
                 //
-                // Card SID phase 6a: with `network.second_phase_channel` two of these
-                // signals can share a FREQUENCY (L1C beside L1W), and index pair (0, 1)
-                // is then the degenerate one — it fails the `denom` guard below and
-                // files nothing.  Tagging the bare-system chain by INDEX would therefore
-                // starve it: every real pair would land on a "<system>|<sig1>_<sig2>"
-                // chain and the chain that owns the original reference election, the
-                // gradient history and the reset keys would receive no rows at all.  The
-                // tag is therefore "the first pair with distinct frequencies", tracked
-                // by the flag below.  On every posture without this card no two phases
-                // share a frequency, so the first pair to pass the guard IS (0, 1) and
-                // the behaviour is byte-identical — including the case where (0, 1)
-                // passes the frequency guard and then fails a later check, because the
-                // flag is set at the frequency guard, exactly where the old index test
-                // would have committed.
+                // With `network.second_phase_channel`, two of these signals can share a
+                // frequency (L1C beside L1W); index pair (0, 1) then fails the `denom`
+                // guard below and files nothing.  Assigning the bare-system chain by
+                // index would leave it empty: every valid pair would land on a
+                // "<system>|<sig1>_<sig2>" chain, and the chain that owns the reference
+                // election, the gradient history and the reset keys would receive no
+                // rows.  The bare-system chain therefore goes to the first pair with
+                // distinct frequencies, tracked by if_pair_taken.  When no two phases
+                // share a frequency that pair is (0, 1) and the output is
+                // byte-identical, also when (0, 1) passes the frequency guard and then
+                // fails a later check, because the flag is set at the frequency guard,
+                // where an index test would also have committed (card SID phase 6a).
                 const std::string sys_key = PppUtils::getSystemString(obs.system);
                 const std::size_t n_use =
                     all_pairs_ ? phase_signals.size() : std::size_t{ 2 };
@@ -298,8 +294,8 @@ namespace GnssProcessor {
                 const double f2sq = f2 * f2;
                 const double denom = f1sq - f2sq;
                 if (std::abs(denom) < 1e-12) continue;
-                // Card SID phase 6a: claim the bare-system chain here, at the frequency
-                // guard, and not at the row push (see the comment above the loop).
+                // Claim the bare-system chain here, at the frequency guard, and not at
+                // the row push (see the comment above the loop; card SID phase 6a).
                 const bool is_first_pair = !if_pair_taken;
                 if_pair_taken = true;
 
@@ -319,8 +315,8 @@ namespace GnssProcessor {
                 result[is_first_pair ? sys_key : (sys_key + "|" + synth_key)].push_back(
                     { obs.satellite, synth_key, sig1, sig2,
                       phi_if_omc, obs.elevation, lambda_if, obs.system, obs.los });
-                }  // b — second band of the pair
-                }  // a — first band of the pair
+                }  // b: second band of the pair
+                }  // a: first band of the pair
             }
         }
 
@@ -330,12 +326,12 @@ namespace GnssProcessor {
     bool IfPhaseSlipDetector::selectReference(const std::vector<SatData>& sat_vec,
         ConstellationState& cs) const {
 
-        // Check if current reference is still present and above threshold.
-        // Card R: an escalation (max_consecutive fires on this reference) sets
-        // ref_force_reselect, which skips the retention test so the election
-        // below runs even though the incumbent is perfectly healthy by
-        // elevation.  Inert while the gate is disabled (the flag is only ever
-        // set inside evaluateRefGate).
+        // Keep the current reference if it is present at or above
+        // kRefElevThreshDeg.  An escalation of the reference gate (more than
+        // max_consecutive fires on this reference) sets ref_force_reselect, which
+        // skips this retention test so the election below runs whatever the
+        // incumbent's elevation.  Only evaluateRefGate sets the flag, so this is
+        // inert while the gate is disabled (card R).
         bool ref_valid = false;
         if (!cs.ref_force_reselect) {
             for (const auto& sd : sat_vec)
@@ -353,10 +349,10 @@ namespace GnssProcessor {
         cs.ref_satellite.clear();
         cs.ref_elevation = -1.0;
         for (const auto& sd : sat_vec) {
-            // Card R: the escalated reference is excluded from THIS election
-            // only (never a permanent exclusion — rule 5: qualify, never drop).
-            // ref_exclude is empty unless the gate escalated, so this branch is
-            // structurally dead on the legacy path.
+            // The escalated reference is excluded from this election only, never
+            // permanently (rule 5: qualify, never drop).  ref_exclude is empty
+            // unless the gate escalated, so the legacy path never takes this
+            // branch (card R).
             if (!cs.ref_exclude.empty() && sd.satellite == cs.ref_exclude) continue;
             if (sd.elevation > cs.ref_elevation) {
                 cs.ref_elevation = sd.elevation;
@@ -379,7 +375,7 @@ namespace GnssProcessor {
     }
 
     // =================================================================
-    // Card R — hardened reference-satellite slip gate
+    // Hardened reference-satellite slip gate (card R)
     // =================================================================
 
     double IfPhaseSlipDetector::updateRefDispersion(ConstellationState& cs,
@@ -387,11 +383,11 @@ namespace GnssProcessor {
         double median_dd, double cold_prior, double sin_bar, double& disp_out) {
 
         // --- Dispersion of the family about its own median (raw m) ---------
-        // The step-vs-drift discriminator.  A genuine reference slip is a
-        // COMMON step: every non-reference DD moves by the same amount, so the
-        // scatter about the median is the ordinary between-epoch phase noise.
-        // A per-satellite drift (or a mis-modelled thin family) produces
-        // scatter of the SAME order as the median it is being judged against.
+        // Separates a step from a drift.  A genuine reference slip is a common
+        // step: every non-reference DD moves by the same amount, so the scatter
+        // about the median is the ordinary between-epoch phase noise.  A
+        // per-satellite drift (or a mis-modelled thin family) produces scatter
+        // of the same order as the median it is judged against.
         std::vector<double> devs;
         devs.reserve(non_ref_dds.size());
         for (const double d : non_ref_dds) devs.push_back(std::abs(d - median_dd));
@@ -399,38 +395,39 @@ namespace GnssProcessor {
         disp_out = disp;
 
         // --- Effective empirical scale (empirical-Bayes, pool-arm shape) ----
-        // The cold prior is the PHYSICAL floor expressed as a scale
-        // (floor_frac·λ_IF / k), NOT this epoch's own dispersion.  Shrinking
-        // toward the current epoch would be self-contaminating: on the very
-        // first candidate the gate would reduce to "|median| > k·(this epoch's
-        // scatter)", which a genuine multi-satellite station event can never
-        // pass — measured, that silently swallowed the OWMG00NZL/G31 re-lock
-        // the spec's R4 protects.  With this prior, zero empirical information
-        // ⇒ the gate degenerates to exactly the legacy physical floor, and the
-        // empirical arm takes over only as real samples accumulate.  Nothing
-        // here comes from the stochastic model (project rule 4).
+        // The cold prior is the physical floor expressed as a scale
+        // (floor_frac·λ_IF / k), not this epoch's own dispersion.  Shrinking
+        // toward the current epoch would let the event under test set its own
+        // scale: on the first candidate the gate would reduce to "|median| >
+        // k·(this epoch's scatter)", which a genuine multi-satellite station
+        // event cannot pass (the station re-lock case the spec's R4 protects).
+        // With this prior and no empirical samples the gate reduces to the
+        // legacy physical floor, and the empirical arm takes over as samples
+        // accumulate.  Nothing here comes from the stochastic model (project
+        // rule 4).
         const double w = static_cast<double>(cs.ref_scale_count)
                        / (static_cast<double>(cs.ref_scale_count) + ref_gate_.shrink_kappa);
         double s_eff = w * cs.ref_scale_ewma + (1.0 - w) * cold_prior;
         if (!(s_eff > 0.0)) s_eff = cold_prior;
 
-        // Fold this epoch's dispersion in.  Called on EVERY epoch with a usable
-        // family — NOT only on the epochs where the legacy condition fired —
-        // so the scale is a genuine quiet-epoch noise reference rather than a
-        // statistic conditioned on a large median (which would let a persistent
-        // drift raise its own acceptance threshold until a real slip is missed).
-        // Folding is safe on a real slip too: a COMMON step leaves the
-        // dispersion at the noise level, so the scale can never be inflated by
-        // the event it must catch — the opposite of folding the median would be.
+        // Fold this epoch's dispersion in.  This runs on every epoch with a
+        // usable family, not only on epochs where the legacy condition fired, so
+        // the scale is a quiet-epoch noise reference and not a statistic
+        // conditioned on a large median (which would let a persistent drift
+        // raise its own acceptance threshold until a real slip is missed).
+        // Folding is also safe on a real slip: a common step leaves the
+        // dispersion at the noise level, so the event under test cannot inflate
+        // the scale, as folding the median would.  The sample count advances by
+        // the family size n.
         //
-        // §6.14.6 item 2: under elev_norm the quantity folded is the
-        // ZENITH-EQUIVALENT dispersion disp·⟨sin el⟩.  `disp` itself is the
-        // family's scatter at whatever elevations happened to be up this epoch,
-        // so folding it raw makes the EWMA a running mixture over a changing
-        // geometry — and the state it lives in (ConstellationState) outlives
-        // both the geometry and the reference satellite it is meant to describe.
-        // Normalized, it is a stationary per-station receiver-noise scale, and
-        // evaluateRefGate re-inflates it to the elevations that actually matter.
+        // Under elev_norm (§6.14.6 item 2) the folded quantity is the
+        // zenith-equivalent dispersion disp·⟨sin el⟩.  `disp` is the family's
+        // scatter at the elevations present this epoch, so folding it raw makes
+        // the EWMA a running mixture over a changing geometry, held in
+        // ConstellationState, which outlives both that geometry and the
+        // reference satellite.  Normalized, it is a stationary per-station
+        // receiver-noise scale, and evaluateRefGate rescales it to the
+        // elevations under test.
         const double fold = ref_gate_.elev_norm ? (disp * sin_bar) : disp;
         cs.ref_scale_ewma = (cs.ref_scale_count == 0)
             ? fold
@@ -453,15 +450,14 @@ namespace GnssProcessor {
 
         // --- (0) Warm-up abstention (§6.14.6 item 1) ------------------------
         // Below shrink_kappa samples the empirical-Bayes weight w is under ½ and
-        // s_eff is still mostly the cold prior floor_frac·λ_IF/k, which makes
-        // k·s_eff collapse onto phys — i.e. the hardened gate silently reverts to
-        // the legacy 3σ fixed bar for exactly the epochs where it has no basis to
-        // decide.  Those are also the epochs where carry_warm is false, so a fire
-        // can only ever be logged as `diagnostic`: it cannot refloat anything.
-        // Abstaining asserts nothing about the scale (contrast the falsified
-        // "shrink toward this epoch's dispersion", which asserts a great deal and
-        // swallowed the OWMG00NZL/G31 re-lock); it declines to decide until the
-        // empirical arm means something.  MW/LLI still screens the window.
+        // s_eff is still mostly the cold prior floor_frac·λ_IF/k, so k·s_eff stays
+        // close to phys and the hardened gate reduces to the legacy fixed bar (3σ)
+        // in the epochs where it has no basis to decide.  Those are also the
+        // epochs where carry_warm is false, so a fire is only logged as
+        // `diagnostic` and refloats nothing.  Abstaining asserts nothing about the
+        // scale (unlike the rejected "shrink toward this epoch's dispersion", which
+        // suppressed a genuine station re-lock); it declines to decide until the
+        // empirical arm is informative.  MW/LLI still screen the window.
         if (ref_gate_.warmup_abstain
             && static_cast<double>(cs.ref_scale_count) < ref_gate_.shrink_kappa) {
             ++ref_gate_counters_.suppressed_warmup;
@@ -474,22 +470,22 @@ namespace GnssProcessor {
             return RefGateVerdict::Suppress;
         }
 
-        // --- (1) Thin-family honesty (R3) ----------------------------------
-        // §6.14.6 item 2: under elev_norm, s_eff is a ZENITH-equivalent scale and
-        // the bar is rebuilt as the sigma of the statistic actually under test —
-        // the MEDIAN of the family — rather than as k× the family's raw scatter:
+        // --- (1) Threshold, widened for a thin family (R3) ------------------
+        // Under elev_norm (§6.14.6 item 2) s_eff is a zenith-equivalent scale, and
+        // the bar is rebuilt as the sigma of the statistic under test, the median
+        // of the family, instead of k times the family's raw scatter:
         //
         //   σ_ref = s_z / sin(el_ref)                 the common term.  It is in
-        //           EVERY member (dd = ΔOMC(sat) − ΔOMC(ref)) so no family size
-        //           averages it away — measured, σ(median) is flat 17.3–18.4 mm
-        //           for n = 3…10, and 88 % of its variance is this term.
-        //   σ_fam = 1.2533 · s_raw / √n               the part that DOES average
+        //           every member (dd = ΔOMC(sat) − ΔOMC(ref)), so no family size
+        //           averages it away: σ(median) measures flat at 17.3–18.4 mm
+        //           for n = 3…10, and this term is 88 % of its variance.
+        //   σ_fam = 1.2533 · s_raw / √n               the part that averages
         //           down: the asymptotic SD of a median of n iid samples.
         //
-        // Validated on the 24 h bed: s_z ≈ 12.8 mm at el_ref ≈ 62° gives σ_ref
-        // 14.5 mm against a measured station-local common of 14.83, σ_fam
-        // 10.1 mm, hypot 17.7 mm against a measured σ(median) of 17.70 mm.  The
-        // flat k·s_eff form is blind to both el_ref and n; this tracks them.
+        // On the 24 h bed, s_z ≈ 12.8 mm at el_ref ≈ 62° gives σ_ref 14.5 mm
+        // (measured station-local common term 14.83 mm) and σ_fam 10.1 mm, hypot
+        // 17.7 mm, against a measured σ(median) of 17.70 mm.  The flat k·s_eff
+        // form does not follow el_ref or n; this one does.
         const bool   thin = (static_cast<int>(n) < ref_gate_.min_n);
         double scale = s_eff;
         if (ref_gate_.elev_norm) {
@@ -498,8 +494,8 @@ namespace GnssProcessor {
             const double sig_fam = 1.2533 * s_raw / std::sqrt(static_cast<double>(n));
             scale = std::hypot(sig_ref, sig_fam);
         }
-        // The physical floor stays RAW in both modes: a slip is a slip at any
-        // elevation (slip-QC lesson 7).  Only the empirical arm is normalized.
+        // The physical floor is not elevation-normalized in either mode: a slip is
+        // a slip at any elevation (slip-QC lesson 7).  Only the empirical arm is.
         const double thr  = thin ? std::max(ref_gate_.thin_widen * phys, ref_gate_.k * scale)
                                  : std::max(phys, ref_gate_.k * scale);
         if (!(amed > thr)) {
@@ -513,32 +509,33 @@ namespace GnssProcessor {
             return RefGateVerdict::Suppress;
         }
 
-        // --- (2) Coherence: the family must AGREE on the step (R2) ----------
-        // A COHERENT family (small scatter about a large median) is the only
-        // signature that identifies the REFERENCE as the thing that slipped —
-        // and it is the only case where rebasing prev_grad by the median is a
-        // defensible claim.
+        // --- (2) Coherence: the family must agree on the step (R2) ----------
+        // A coherent family (small scatter about a large median) is the only
+        // signature that identifies the reference as the satellite that slipped,
+        // and the only case in which rebasing prev_grad by the median is
+        // justified.
         RefGateVerdict kind = RefGateVerdict::FireRebase;
         if (!(disp <= ref_gate_.coherence * amed)) {
-            // Incoherent.  Two very different physical situations land here and
-            // the 2026-07-21 ON smoke proved that collapsing them loses a real
-            // event (the OWMG00NZL/G31 station re-lock the spec's R4 protects):
+            // Incoherent.  Two different situations land here, and treating them
+            // alike loses a real event (a station re-lock, the case the spec's R4
+            // protects):
             //
-            //   • DRIFT — a sub-slip trend on a thin/quiet family: the median
-            //     is modest and NO individual double difference is slip-sized.
-            //     Nothing happened; suppress.
-            //   • STATION EVENT — a multi-satellite re-lock: many individual
-            //     DDs are independently slip-sized, so the median is a MIXTURE,
-            //     not a common step.  Whether the reference itself slipped is
-            //     unknowable from these DDs — and under a zero-q carry the
-            //     conservative action is to reset it (standing invariant #1:
-            //     never let a stiff prior ride a jump), while REFUSING to claim
-            //     the median as its slip magnitude.  So: fire, do not rebase.
+            //   - Drift: a sub-slip trend on a thin or quiet family.  The median
+            //     is modest and no individual double difference is slip-sized.
+            //     Suppress.
+            //   - Station event: a multi-satellite re-lock.  Many individual DDs
+            //     are independently slip-sized, so the median is a mixture, not a
+            //     common step.  These DDs cannot tell whether the reference itself
+            //     slipped; under a zero-q carry the conservative action is to
+            //     reset it (standing invariant #1: a stiff prior must not carry a
+            //     value across a jump), without claiming the median as its slip
+            //     magnitude.  Fire, do not rebase.
             //
-            // "Independently slip-sized" is a FULL IF cycle, not the half-cycle
-            // candidate floor: a sub-slip drift can sit just above phys on every
-            // member and would otherwise be promoted to a station event, which is
-            // exactly the false family this card removes.
+            // "Independently slip-sized" means larger than a full IF cycle
+            // (λ_IF), not the half-cycle candidate floor: a sub-slip drift can sit
+            // just above phys on every member and would otherwise be promoted to a
+            // station event, which is the false family this card removes.  At
+            // least max(2, ⌈n/2⌉) members must exceed it.
             std::size_t n_large = 0;
             for (const double d : non_ref_dds) if (std::abs(d) > lambda_if) ++n_large;
             const std::size_t need = std::max<std::size_t>(2, (n + 1) / 2);
@@ -565,25 +562,21 @@ namespace GnssProcessor {
 
         // --- (3) Persistence cap + escalation (R2) --------------------------
         //
-        // NOT IMPLEMENTED, deliberately: spec §2's third CANDIDATE ("if the NEW
-        // reference immediately slips too, the common mode is station-local —
-        // hand it to the pool/RAIM layer").  That test is unreachable at this
-        // seam, for two independent structural reasons, and shipping it would
-        // have left a permanently-zero counter that reads as "no station-local
-        // events occurred" (the standing-invariant-#4 failure mode):
-        //   (a) a genuine receiver-level common mode cancels in the
-        //       BETWEEN-SATELLITE single difference by construction, so it can
-        //       never reach the non-reference double differences this gate
-        //       adjudicates; and
-        //   (b) the only epoch the test could fire on is the forced
-        //       re-election epoch, where ref_changed is true and
-        //       processDoubleDifferences applies the median-offset rebase —
-        //       which removes exactly the common mode the test looks for
-        //       before the gate is consulted.
-        // Verified by construction in tests/test_if_phase_slip_detector.cpp
-        // (ReferenceHandoverDoesNotManufactureASlip pins (b)).  The pool/RAIM
-        // layer already owns station-local modes; the escalation below is what
-        // R2 actually requires.
+        // Not implemented: spec §2's third candidate ("if the new reference
+        // slips at once as well, the common mode is station-local; hand it to the
+        // pool/RAIM layer").  That test cannot be reached at this seam, for two
+        // structural reasons, and a counter for it would stay at zero and read
+        // as "no station-local events occurred" (standing invariant #4):
+        //   (a) a receiver-level common mode cancels in the between-satellite
+        //       single difference, so it never reaches the non-reference double
+        //       differences this gate evaluates; and
+        //   (b) the only epoch the test could fire on is the forced re-election
+        //       epoch, where ref_changed is true and processDoubleDifferences
+        //       applies the median-offset rebase, which removes that common mode
+        //       before the gate runs.
+        // tests/test_if_phase_slip_detector.cpp pins (b)
+        // (ReferenceHandoverDoesNotManufactureASlip).  Station-local modes belong
+        // to the pool/RAIM layer; the escalation below is what R2 requires.
         const bool consecutive = (cs.ref_last_fire_epoch == epoch_counter_ - 1)
                               && (cs.ref_fire_sat == cs.ref_satellite);
         cs.ref_consec_fires    = consecutive ? (cs.ref_consec_fires + 1) : 1;
@@ -628,22 +621,23 @@ namespace GnssProcessor {
 
         auto logger = log_manager_.getLogger("if_slip_detector");
 
-        // §22.6 SECOND LOCK.  An ADDITIONAL chain may run the arm only through
-        // the EMPIRICAL gate.  With ref_gate_.enable off the legacy candidate
-        // condition |median| > floor_frac·λ_IF IS the decision, and that is the
-        // §14.10.3 flood: on (L2W,L5Q) the IF coefficients are 12.26 / −11.26
-        // (noise amplification 16.6) against λ_IF = 0.1248 m, so NOISE clears it
-        // — 5 351 candidates / 64 fires on a quiet 70-epoch null.  The loader
-        // disarms if_phase_td_ref_arm_all without the gate; this refuses the
-        // combination in code, where the invariant actually lives.
+        // Second lock (§22.6): an additional chain may run the arm only through
+        // the empirical gate.  With ref_gate_.enable off, the legacy candidate
+        // condition |median| > floor_frac·λ_IF is the decision, and on the wide
+        // combinations noise meets it (§14.10.3): on (L2W,L5Q) the IF
+        // coefficients are 12.26 / −11.26 (noise amplification 16.6) against
+        // λ_IF = 0.1247 m, giving 5 351 candidates and 64 fires on a quiet
+        // 70-epoch null.  The loader already disarms if_phase_td_ref_arm_all
+        // without the gate; this check enforces the same rule in the detector.
         const bool extra_chain = (sys_str.find('|') != std::string::npos);
         if (extra_chain && !ref_gate_.enable) {
             run_ref_arm = false;
             inherit     = nullptr;
         }
-        // ONE definition, set by detect() — position uncertainty OR model nuisance.
-        // Re-deriving it from position_sigma_3d here would silently exclude the
-        // §6.14.6 item 3 arm and leave the reference gate firing through a closed gate.
+        // One gating definition, set by detect(): position uncertainty or model
+        // nuisance.  Re-deriving it here from position_sigma_3d would omit the
+        // model-nuisance gate (§6.14.6 item 3) and let the reference gate fire
+        // through a closed gate.
         const bool pos_gated = epoch_gated_;
 
         // Build sat lookup
@@ -685,10 +679,10 @@ namespace GnssProcessor {
         for (const auto& [sat, dd] : delta_grad)
             if (!std::isfinite(dd)) { all_finite = false; break; }
 
-        // --- Geometry correction: remove (e_sat - e_ref) · ?pos ---
-        // The between-satellite single-difference does NOT perfectly cancel
-        // geometry.  The epoch-to-epoch position change produces a residual
-        // of (e_sat - e_ref) · ?pos in each double difference.  Correct it
+        // --- Geometry correction: remove (e_sat - e_ref) · Δpos ---
+        // The between-satellite single difference does not fully cancel
+        // geometry.  The epoch-to-epoch position change leaves a residual of
+        // (e_sat - e_ref) · Δpos in each double difference; it is removed here
         // using the current-epoch LOS vectors and the position change.
         if (delta_pos.norm() > 1e-6) {
             const Eigen::Vector3d& ref_los = ref_data->los;
@@ -707,26 +701,27 @@ namespace GnssProcessor {
         }
 
         // --- Reference satellite slip check (runs regardless of all_finite) ---
-        // §14.10.4: ONE reference arm per (station, constellation).  The
-        // ADDITIONAL chains of `if_phase_td_pairs = all` share the first chain's
-        // reference satellite and do NOT re-run its test — running it three times
-        // is not a pure addition, it is three tests on three DIFFERENT iono-free
-        // combinations of the same arcs, and the extra-wide ones are
-        // ill-conditioned: (L2W,L5Q) has IF coefficients 12.26 / −11.26 (noise
-        // amplification 16.6 against 2.98 on (L1C,L2W)) while its λ_IF is
-        // 0.1248 m, so the legacy candidate condition |median(non-ref ΔΔ)| >
-        // 0.5·λ_IF is met by NOISE.  Measured on a 70-epoch quiet 60-station null:
-        // legacy candidates 25 → 5 351 and FIRES 1 → 64 (52 of them marked
-        // incoherent multi-satellite STATION EVENTS), with the POOL arm flagging
-        // ZERO extra — a false-alarm cost entirely invisible in the per-pair
-        // evaluated/flagged tally.  Sharing the reference keeps every chain's
-        // gradients in one frame and leaves the screening where it was.
-        // §22.6: the ACTION of a reference-arm fire, shared by the chain's own
-        // arm and by the ADOPTED-reference inheritance path below, so the two
-        // cannot drift apart.  `inherited` only changes the telemetry — the
-        // reset key, the rebase and the trace record are the same response,
-        // because the claim being acted on ("this chain's reference stepped") is
-        // the same claim whichever arm established it.
+        // By default there is one reference arm per (station, constellation)
+        // (§14.10.4).  The additional chains of `if_phase_td_pairs = all` share
+        // the first chain's reference satellite where present and do not re-run
+        // its test.  Re-running it is not a pure addition: it adds tests on other
+        // iono-free combinations of the same arcs, and the wide ones are
+        // ill-conditioned.  (L2W,L5Q) has IF coefficients 12.26 / −11.26 (noise
+        // amplification 16.6, against 2.98 on (L1C,L2W)) with λ_IF = 0.1247 m, so
+        // noise meets the legacy candidate condition |median(non-ref ΔΔ)| >
+        // 0.5·λ_IF.  On a quiet 70-epoch, 60-station null, legacy candidates went
+        // from 25 to 5 351 and fires from 1 to 64 (52 of them incoherent
+        // multi-satellite station events), while the pool arm flagged nothing
+        // extra, so the per-pair evaluated/flagged tally does not show the
+        // false-alarm cost.  Sharing the reference keeps every chain's gradients
+        // in one frame and leaves the screening where it was.
+        //
+        // applyRefFire is the action of a reference-arm fire (§22.6), shared by
+        // the chain's own arm and by the adopted-reference inheritance path below
+        // so the two stay identical.  `inherited` changes only the telemetry and
+        // the log text: the reset key, the rebase and the trace record are the
+        // same response, because the claim acted on ("this chain's reference
+        // stepped") is the same whichever arm established it.
         auto applyRefFire = [&](double median_dd, RefGateVerdict verdict,
                                 std::size_t n_finite, bool inherited) {
             auto& rc = ref_arm_chain_counters_[sys_str];
@@ -735,8 +730,8 @@ namespace GnssProcessor {
             const std::string ref_amb_key = cs.ref_satellite + "_" + ref_data->phase_if_key;
             reset_keys.push_back(ref_amb_key);
 
-            // The OFF-path text is preserved verbatim; only an INHERITED fire
-            // adds a clause, so an existing log line cannot change under the knob.
+            // An own-arm fire logs the unchanged text; only an inherited fire
+            // adds a clause, so no existing log line changes under the knob.
             if (inherited)
                 logger->warn("{}: Reference satellite {} IF phase slip INHERITED from the "
                     "first chain's verdict: median(delta_grad)={:.4f} m ({:.1f} IF cyc), "
@@ -755,30 +750,29 @@ namespace GnssProcessor {
                 cs.ref_satellite, false, lambda_if, true, "ref_slip",
                 position_sigma_3d, false);
 
-            // Correct prev gradients by the median offset and recompute double
-            // diffs so that subsequent outlier detection - here, or the network
-            // pool the driver runs on the cached DDs - sees only the
-            // per-satellite residual after removing the reference slip.  THIS is
-            // what stops the fan-out: without it the reference's own step rides
-            // every non-reference DD of the chain and is attributed to innocent
-            // arcs (§22.6: six false refloats on G11/G25/G32).
+            // Correct the previous gradients by the median offset and recompute
+            // the double differences, so that the later outlier detection (here,
+            // or the network pool the driver runs on the cached DDs) sees only
+            // the per-satellite residual after the reference slip is removed.
+            // This prevents fan-out: without it the reference's own step appears
+            // in every non-reference DD of the chain and is attributed to arcs
+            // that did not slip (§22.6).
             //
-            // Card R: SKIPPED for a FireNoRebase verdict.  The rebase asserts
-            // "the reference slipped by exactly median_dd", which is only
-            // defensible for a coherent common step.  On an incoherent
-            // multi-satellite station event the median is a mixture, and
-            // subtracting it from every OTHER satellite's history would inject a
-            // fictitious step into arcs that are fine - while also hiding the
-            // real per-satellite jumps from the network pool arm downstream.
-            // Resetting the reference arc (above) is kept; inventing its
-            // magnitude is not.
+            // Skipped for a FireNoRebase verdict (card R).  The rebase asserts
+            // that the reference slipped by median_dd, which holds only for a
+            // coherent common step.  On an incoherent multi-satellite station
+            // event the median is a mixture, and subtracting it from every other
+            // satellite's history would inject a false step into clean arcs and
+            // hide the real per-satellite jumps from the network pool arm
+            // downstream.  The reference arc is still reset (above); only the
+            // magnitude claim is dropped.
             if (verdict != RefGateVerdict::FireRebase) return;
 
-            // Fan-out rows this rebase de-implicates: non-reference DDs above the
-            // chain's own physical floor before it and below after.  The honest
-            // ON-path number for "what would otherwise have been attributed to an
-            // innocent arc" (invariant #4) - a floor-crossing count, not a claim
-            // about what the network pool would have flagged.
+            // Count the fan-out rows this rebase clears: non-reference DDs above
+            // the chain's physical floor before it and below the floor after.  This
+            // is the on-path count of rows that would otherwise have been
+            // attributed to a clean arc (invariant #4); it counts floor crossings
+            // and makes no claim about what the network pool would have flagged.
             const double floor_m = ref_gate_.floor_frac * lambda_if;
             for (const auto& [sat, dd] : delta_grad)
                 if (sat != cs.ref_satellite && std::isfinite(dd)
@@ -802,17 +796,18 @@ namespace GnssProcessor {
         };
 
         if (run_ref_arm)
-        // Collect finite non-reference double differences. If the median is
-        // large, the reference satellite slipped  not the non-ref satellites.
-        // This must run before individual outlier detection so that the
-        // common-mode reference slip is removed first.
+        // Collect finite non-reference double differences.  If their median is
+        // large, the reference satellite slipped, not the non-reference ones.
+        // This runs before individual outlier detection so that the common-mode
+        // reference slip is removed first.
         {
             std::vector<double> non_ref_dds;
-            // §6.14.6 item 2 geometry: the mean sin(elevation) of the family that
-            // forms the median, and sin(el) of the reference whose own noise is
-            // the median's dominant term.  Both clamped so a horizon arc cannot
-            // explode 1/sin(el).  Computed unconditionally (a few flops) but READ
-            // only under ref_gate_.elev_norm, so the OFF path stays byte-identical.
+            // Geometry for §6.14.6 item 2: the mean sin(elevation) of the family
+            // that forms the median, and sin(el) of the reference, whose own noise
+            // is the median's dominant term.  Both are clamped so a horizon arc
+            // cannot blow up 1/sin(el).  Computed always (a few flops) but read
+            // only under ref_gate_.elev_norm, so with it off the output is
+            // byte-identical.
             constexpr double kDegToRad = 0.017453292519943295;
             double sin_sum = 0.0;
             int    sin_n   = 0;
@@ -834,30 +829,31 @@ namespace GnssProcessor {
 
             if (non_ref_dds.size() >= 2) {
                 // Tier T1r opportunity (invariant #4): a usable family existed, so
-                // this station-epoch-constellation was screenable by the reference
-                // arm.  Counted UNCONDITIONALLY — the legacy condition below runs
-                // whether or not the hardened gate is armed, and its own denominator
-                // is NOT the pool arm's per-(station,sat,pair) sample count, which
-                // is exactly why T1r must stay a separate tier from T1.
+                // the reference arm could screen this station-epoch-chain.  Counted
+                // whether or not the hardened gate is armed, because the legacy
+                // condition below runs in both modes.  Its denominator is not the
+                // pool arm's per-(station, sat, pair) sample count, which is why
+                // T1r is a separate tier from T1.
                 ++ref_gate_counters_.gate_opportunities;
-                // 22.6: the SAME tier, split per gradient chain.  The aggregate
-                // above sums every chain into one number and so cannot answer
-                // whether the ADDITIONAL chains' arm is a flood or a backstop.
+                // The same tier split per gradient chain (§22.6).  The aggregate
+                // above sums every chain into one number, so it cannot show
+                // whether the additional chains' arm is a flood or a backstop.
                 auto& rc_own = ref_arm_chain_counters_[sys_str];
                 ++rc_own.opportunities;
                 const double median_dd = computeMedian(non_ref_dds);
 
-                // Card R: the LEGACY condition is the candidate filter; when the
-                // hardened gate is armed it then adjudicates (empirical scale +
-                // coherence + thin-family + persistence).  Disabled ⇒ the legacy
-                // condition IS the decision ⇒ byte-identical.
+                // The legacy condition is the candidate filter; when the hardened
+                // gate is armed it then decides (empirical scale, coherence, thin
+                // family, persistence).  With the gate disabled the legacy
+                // condition is the decision, and the output is byte-identical
+                // (card R).
                 RefGateVerdict verdict =
                     (std::abs(median_dd) > ref_gate_.floor_frac * lambda_if)
                         ? RefGateVerdict::FireRebase
                         : RefGateVerdict::Suppress;
                 if (verdict != RefGateVerdict::Suppress) ++rc_own.candidates;
                 if (ref_gate_.enable) {
-                    // The dispersion scale advances on EVERY epoch with a usable
+                    // The dispersion scale advances on every epoch with a usable
                     // family, candidate or not (see updateRefDispersion).
                     double disp = 0.0;
                     const double s_eff = updateRefDispersion(
@@ -881,10 +877,10 @@ namespace GnssProcessor {
 
                 if (ref_fire) applyRefFire(median_dd, verdict, non_ref_dds.size(), false);
 
-                // 22.6: publish this chain's verdict so the ADDITIONAL chains that
-                // ADOPTED its reference can inherit it.  Recorded whether or not it
-                // fired: the inheritance path must be able to tell "the arm ran and
-                // found nothing" (exactly today) from "the arm did not run".
+                // Publish this chain's verdict so the additional chains that
+                // adopted its reference can inherit it (§22.6).  Recorded whether or
+                // not it fired, so the inheritance path can tell "the arm ran and
+                // found nothing" from "the arm did not run".
                 if (out_outcome) {
                     out_outcome->satellite = cs.ref_satellite;
                     out_outcome->verdict   = verdict;
@@ -893,19 +889,20 @@ namespace GnssProcessor {
             }
         }
 
-        // --- 22.6: the ADOPTED-reference inheritance path -------------------
-        // An additional chain that adopted the first chain's reference has no
-        // arm of its own by construction (its reference's own DD is identically
-        // 0), and today the first chain's fire does not reach it: the step stays
-        // on every one of THIS chain's non-reference DDs and is attributed to
-        // innocent arcs by the pooled test.  That fan-out is the defect (six
-        // false refloats on GOPE00CZE G11/G25/G32 from E1's slip on G24).
+        // --- Adopted-reference inheritance path (§22.6) ----------------------
+        // An additional chain that adopted the first chain's reference does not
+        // run the arm (its reference's own DD is identically 0).  Without this
+        // path the first chain's fire does not reach it: the step stays on every
+        // non-reference DD of this chain, and the pooled test attributes it to
+        // arcs that did not slip (fan-out, §22.6).
         //
-        // The verdict is inherited, never re-derived: re-testing would be the
-        // 14.10.3 flood on a wide combination.  The MAGNITUDE is this chain's
-        // own median of its own non-reference DDs, because the step in metres is
-        // per-combination (the same integer slip moves each IF pair by its own
-        // coefficients) - only the QUESTION "did this satellite step?" is shared.
+        // The verdict is inherited, never re-derived: re-testing would bring back
+        // the §14.10.3 false alarms on a wide combination.  The magnitude is this
+        // chain's own median of its own non-reference DDs, because the step in
+        // metres is per combination (the same integer slip moves each IF pair by
+        // its own coefficients); only the question "did this satellite step?" is
+        // shared.  Runs only when the verdict fired and names this chain's
+        // current reference, and needs n ≥ 2 finite non-reference DDs.
         if (!run_ref_arm && inherit && inherit->fired
             && !inherit->satellite.empty()
             && inherit->satellite == cs.ref_satellite) {
@@ -924,10 +921,10 @@ namespace GnssProcessor {
         }
 
         // --- Non-reference outlier detection ---
-        // Deferred mode (network producer): the per-satellite outlier flag is done
-        // by the driver against a NETWORK-POOLED per-signal-pair MAD; skip it here.
-        // The between-epoch double differences are still computed, cached, and
-        // carried forward. The reference-slip common-mode check above still runs.
+        // Deferred mode (network producer): the driver applies the per-satellite
+        // outlier flag against a network-pooled per-signal-pair MAD, so it is
+        // skipped here.  The between-epoch double differences are still computed,
+        // cached and carried forward, and the reference-slip check above still runs.
         if (!defer_flagging_) {
         if (all_finite && delta_grad.size() >= 2) {
             // Full MAD-based adaptive outlier check
@@ -987,20 +984,20 @@ namespace GnssProcessor {
         auto logger = log_manager_.getLogger("if_slip_detector");
         last_if_jumps_.clear();
         last_if_jumps_all_.clear();
-        // Card R: monotonic detect() index — the unit the reference-gate
-        // persistence run-length is measured in.  Incremented unconditionally
-        // (inert while the gate is disabled) so the counter never depends on
-        // which constellations happened to be processed.
+        // Monotonic detect() index: the unit of the reference gate's persistence
+        // run length (card R).  Incremented on every call (inert while the gate
+        // is disabled), so it does not depend on which constellations were
+        // processed.
         ++epoch_counter_;
 
         for (const auto& obs : observations)
             if (!obs.satellite.empty()) { current_epoch_ = obs.time; break; }
 
-        // §6.14.6 item 3: the model-nuisance gate is the SIBLING of the position
-        // gate, for the term that actually survives on the network path.  Both
-        // land in the same `pos_gated` flag because the response is identical —
-        // keep differencing and keep the gradient chain warm, but do not flag on
-        // a statistic whose null is invalid this epoch.
+        // The model-nuisance gate (§6.14.6 item 3) is the counterpart of the
+        // position gate for the term that survives on the network path.  Both set
+        // the same `pos_gated` flag because the response is the same: keep
+        // differencing and keep the gradient chain current, but do not flag on a
+        // statistic whose null hypothesis does not hold this epoch.
         const bool nuisance_gated =
             (nuisance_max_m_ > 0.0) && (model_nuisance_m > nuisance_max_m_);
         const bool pos_gated = (position_sigma_3d > kPositionSigmaThresholdM) || nuisance_gated;
@@ -1013,20 +1010,22 @@ namespace GnssProcessor {
 
         auto by_constellation = groupByConstellation(observations);
 
-        // §14.10: one iteration per GRADIENT CHAIN, not per constellation.  With
-        // the pair width at `first` there is exactly one chain per system and
-        // `sys_str` is the bare system string, so everything below — including
-        // every log line, which names the chain — is the pre-knob text.  With it
-        // at `all` the additional chains are named "GPS|L1C_L5Q" and are wholly
-        // independent: own reference election, own prev_grad, own reset keys.
-        // §14.10.4: the FIRST chain's elected reference per system.  std::map
-        // orders "GPS" before "GPS|…" ('|' > every alphanumeric), so the first
-        // chain of a system is always processed before its additional chains and
-        // this is filled by the time they need it.
+        // One iteration per gradient chain, not per constellation (§14.10).  With
+        // the pair width at `first` there is one chain per system and `sys_str` is
+        // the bare system string, so everything below, including every log line
+        // (each names the chain), is unchanged from the single-pair text.  With it
+        // at `all` the additional chains are named "GPS|L1C_L5Q" and keep their
+        // own prev_grad and reset keys; each adopts the first chain's reference
+        // where that satellite is present and elects its own otherwise.
+        //
+        // first_ref_by_sys holds the first chain's elected reference per system
+        // (§14.10.4).  std::map orders a string before any string it is a prefix
+        // of, so "GPS" precedes "GPS|…": the first chain of a system is processed
+        // before its additional chains and this map is filled when they read it.
         std::map<std::string, std::string> first_ref_by_sys;
-        // §22.6: and its reference arm's VERDICT this epoch, for the additional
-        // chains that adopted it.  Same ordering argument — the first chain has
-        // already run by the time an additional chain of its system is reached.
+        // The first chain's reference-arm verdict this epoch, for the additional
+        // chains that adopted its reference (§22.6).  The same ordering argument
+        // applies.
         std::map<std::string, RefArmOutcome> first_ref_arm_by_sys;
 
         for (auto& [sys_str, sat_vec] : by_constellation) {
@@ -1051,16 +1050,15 @@ namespace GnssProcessor {
             for (const auto& sd : sat_vec) lambdas.push_back(sd.lambda_if);
             const double lambda_if = computeMedian(lambdas);
 
-            // Reference selection.  §14.10.4: an ADDITIONAL chain does not hold
-            // its own election — it adopts the first chain's reference whenever
-            // that satellite is present here, so the whole satellite's pairs sit
-            // in ONE between-satellite frame and the reference arm (which only
-            // the first chain runs) still covers the reference it screens.  The
-            // fallback to its own election matters only for a satellite set that
-            // does not contain the first chain's reference at all, e.g. a
-            // satellite tracking L1/L2 but not L5.
+            // Reference selection (§14.10.4).  An additional chain adopts the
+            // first chain's reference whenever that satellite is present here,
+            // so all of a satellite's pairs share one between-satellite frame and
+            // the reference arm (by default run on the first chain only) still
+            // covers the reference.  The chain elects its own reference only when
+            // its satellite set does not contain the first chain's reference, e.g.
+            // when that reference tracks L1/L2 but not L5.
             bool ref_changed;
-            bool adopted_ref = false;        // §22.6: which of the two paths ran
+            bool adopted_ref = false;        // which of the two paths ran (§22.6)
             if (first_pair_chain) {
                 ref_changed = selectReference(sat_vec, cs);
                 first_ref_by_sys[sys_only] = cs.ref_satellite;
@@ -1080,16 +1078,17 @@ namespace GnssProcessor {
                 adopted_ref = adopted;
             }
 
-            // §22.6: the two backstops for a slip ON an additional chain's
-            // reference, both OFF unless ref_arm_all_ is armed.
-            //   OWN-ELECTED  ⇒ run the arm on this chain, through the EMPIRICAL
+            // The two backstops for a slip on an additional chain's reference
+            // (§22.6), both off unless ref_arm_all_ is set:
+            //   own-elected  ⇒ run the arm on this chain through the empirical
             //                  gate, on this chain's own cs.ref_scale_* state and
-            //                  this chain's own λ_IF.  Requires ref_gate_.enable:
-            //                  the legacy 0.5·λ_IF candidate condition IS the
-            //                  §14.10.3 flood on a wide combination, and
-            //                  processDoubleDifferences refuses the pair again.
-            //   ADOPTED      ⇒ inherit the first chain's verdict for that
-            //                  satellite this epoch (no second test, so no flood).
+            //                  its own λ_IF.  Requires ref_gate_.enable: on a wide
+            //                  combination noise meets the legacy 0.5·λ_IF
+            //                  candidate condition (§14.10.3), and
+            //                  processDoubleDifferences refuses the combination
+            //                  a second time.
+            //   adopted      ⇒ inherit the first chain's verdict for that
+            //                  satellite this epoch (no second test).
             const bool run_extra_own_arm =
                 !first_pair_chain && ref_arm_all_ && ref_gate_.enable && !adopted_ref;
             const RefArmOutcome* inherit = nullptr;
@@ -1167,21 +1166,20 @@ namespace GnssProcessor {
                 } else {
                     info.lambda_if_m = lambda_if;                   // fallback: constellation median
                 }
-                // §6.14.6 item 3, the GATING LEAK.  A gated epoch suppressed this
-                // detector's own flagging but still published its jumps as VALID,
-                // and the network pool arm admits any sample with `jp.valid` — so
-                // the pool kept thresholding double differences the detector had
-                // just declared untrustworthy.  The gate has to mean the same thing
-                // to both arms or it protects neither.  The jumps are still cached
-                // (a downstream consumer may want the number) and the gradient
-                // chain still advances, so detection resumes seamlessly.
+                // A gated epoch publishes its jumps as invalid (§6.14.6 item 3).
+                // The network pool arm admits any sample with `jp.valid`, so a
+                // jump marked valid on a gated epoch would be thresholded by the
+                // pool even though this detector suppressed its own flagging; the
+                // gate has to hold for both arms.  The jumps are still cached (a
+                // downstream consumer may read the value) and the gradient chain
+                // still advances, so detection resumes directly after the gate.
                 info.valid        = std::isfinite(dd) && !pos_gated;
                 info.is_reference = (sat == cs.ref_satellite);
-                // §14.10: the chain this sample rode, so a driver that flags it
-                // can restart THAT chain and only that one.
+                // The chain this sample came from (§14.10), so a driver that flags
+                // it can restart that chain alone.
                 info.state_key    = sys_str;
                 // The all-pairs cache is a superset and is always filled; the
-                // per-satellite one keeps its pre-knob contract (the FIRST pair).
+                // per-satellite cache holds the first pair only, as with the knob off.
                 if (!info.sig1.empty() && !info.sig2.empty())
                     last_if_jumps_all_[{ sat, info.sig1 + "_" + info.sig2 }] = info;
                 if (first_pair_chain) last_if_jumps_[sat] = info;
@@ -1236,9 +1234,9 @@ namespace GnssProcessor {
 
     void IfPhaseSlipDetector::resetSatelliteInState(const std::string& state_key,
         const std::string& satellite) {
-        // §14.10.  Scoped to ONE gradient chain: a flag on the (L1C,L5Q) pair must
-        // not throw away the (L1C,L2W) chain, which did not flag.  Same two
-        // actions resetSatellite takes, on one entry instead of every entry.
+        // Scoped to one gradient chain (§14.10): a flag on the (L1C,L5Q) pair
+        // leaves the (L1C,L2W) chain, which did not flag, intact.  Takes the same
+        // two actions as resetSatellite, on one entry instead of every entry.
         auto sit = constellation_state_.find(state_key);
         if (sit == constellation_state_.end()) return;
         auto& cs = sit->second;

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Which RECORD KINDS of two ``products.txt`` wires differ, and by how much.
+"""Reports which record kinds of two ``products.txt`` wires differ, and by how much.
 
 A sha mismatch says "not byte-identical" and nothing else.  For a default-OFF knob
 the useful statement is *which* channel moved and by what magnitude, so this keys
@@ -11,7 +11,7 @@ differ, and the worst |Δ| per numeric column.
 Record kinds in ``gnss_network_product v2`` (kind = field 0):
   S  the run's self-describing header (one row)
   C  satellite clock       B  satellite code bias (per signal)
-  P  satellite phase bias  U/H/E  auxiliary / health / ephemeris-ish rows
+  P  satellite phase bias  U/H/E  auxiliary / health / ephemeris-like rows
   R  declared discontinuity bumps
 
 Usage:  python scripts/d5v5_prodiff.py A/products.txt B/products.txt [--kinds C,B,P]
@@ -27,9 +27,9 @@ from collections import defaultdict
 def load(path):
     """kind -> {key: (numeric fields, raw line)}.
 
-    The wire has NO time tag on the payload rows (C/B/P/U/R): they are written as a
+    The wire carries no time tag on the payload rows (C/B/P/U/R): they are written as a
     block under the epoch's ``H``/``E`` header, so the epoch must be carried forward
-    from the last header seen or every epoch's rows collapse onto one key.  The key
+    from the last header seen, or every epoch's rows collapse onto one key.  The key
     is (epoch tow, the row's non-numeric identity fields) and the value is the row's
     numeric fields, which is what gets differenced.
     """
@@ -50,9 +50,9 @@ def load(path):
             nums, ident = [], []
             for i, tok in enumerate(p[1:], start=1):
                 # Self-describing 'key=value' tokens (sigma=, sigcc=, iode=, ...) are
-                # VALUES, not identity — leaving them in the key makes every row with
+                # values, not identity. Leaving them in the key would make every row with
                 # a moved sigma read as "only in A" plus "only in B" instead of as one
-                # differing row, which is the wrong diagnosis entirely.
+                # differing row.
                 if '=' in tok:
                     kk, _, vv = tok.partition('=')
                     try:

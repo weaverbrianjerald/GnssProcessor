@@ -2,7 +2,7 @@
  * @file RealTimeEngine.cpp
  * @brief Real-time GNSS PPP processing engine implementation.
  *
- * Mirrors the per-epoch logic of Application (post-processing) but designed
+ * Mirrors the per-epoch logic of Application (post-processing), structured
  * for epoch-at-a-time streaming operation rather than batch iteration.
  */
 
@@ -53,7 +53,7 @@ bool isSystemActive(System sys, const std::vector<std::string>& active) {
 /// Push the live store's GLONASS FDMA channel map (R## → k) into PppModel
 /// whenever this frame delivered GLONASS broadcast ephemeris.  Shared by the
 /// RTCM and SBF ingest paths so both seed per-satellite GLONASS wavelengths
-/// identically — from the live 1020 / GLONav @c freq_channel, not the
+/// the same way: from the live 1020 / GLONav @c freq_channel, not the
 /// hard-coded default table.  No-op when the frame carried no GLONASS nav.
 void refreshGlonassSlots(const std::vector<BroadcastEphemeris>& fresh,
                          LiveEphemerisStore& store, PppModel& model) {
@@ -100,9 +100,9 @@ bool RealTimeEngine::initialize() {
     auto log = log_manager_.getLogger("rt_engine");
     log->info("Initializing real-time engine");
 
-    // Construction phase.  ORDER IS A DEPENDENCY CHAIN, not a style choice --
-    // see the seam block in RealTimeEngine.hpp for what depends on what.  In
-    // particular seedInitialState() must follow initProcessingComponents().
+    // Construction phase.  The call order is a dependency chain; the seam
+    // block in RealTimeEngine.hpp lists what depends on what.  In particular,
+    // seedInitialState() must follow initProcessingComponents().
     armSsrStoreOptions();
     if (!initProducts()) return false;
     initStateManagerAndApriori();
@@ -110,10 +110,10 @@ bool RealTimeEngine::initialize() {
     initAmbiguityResolver();
     seedInitialState();
     initTraceLoggers();
-    // RT filter-state snapshot (consumer warm start): parse + STAGE only — the
-    // fingerprint depends on post-initialize setters (setSsrStore etc.) and the
-    // age gate needs a real epoch, so application defers to the first
-    // processed epoch.  No-op with realtime.state_snapshot_path empty.
+    // RT filter-state snapshot (consumer warm start): parse and stage only.
+    // The fingerprint depends on post-initialize setters (setSsrStore etc.)
+    // and the age gate needs a real epoch, so the snapshot is applied at the
+    // first processed epoch.  No-op with realtime.state_snapshot_path empty.
     loadStateSnapshotStaged_();
 
     log->info("Real-time engine initialized (position seeded at ({:.1f}, {:.1f}, {:.1f}))",
@@ -126,18 +126,19 @@ bool RealTimeEngine::initialize() {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// RTA-8(b): SSR ingest filter — pure record-kind → push-action policy matrix,
-// factored out of feedRtcmFrame so it is unit-testable (record-in →
-// push-decision-out) without a parser or an engine.
+// SSR ingest filter: a pure record-kind → push-action policy matrix, kept
+// outside feedRtcmFrame so it is unit-testable (record in, push decision out)
+// without a parser or an engine (RTA-8(b)).
 // ---------------------------------------------------------------------------
 
 RealTimeEngine::SsrPushAction
 RealTimeEngine::ssrPushAction(SsrAcceptPolicy policy, SsrRecordKind kind) {
     if (policy == SsrAcceptPolicy::All) return SsrPushAction::Push;
-    // OrbitOnly: orbit + URA flow as today; combined records are decomposed at
-    // the push site (never entering the store, so its combined-wins merge is
-    // untouched); everything carrying clock or bias content is dropped —
-    // including the high-rate clock, an additive delta on the clock polynomial.
+    // OrbitOnly: orbit and URA records are pushed; combined records are
+    // decomposed at the push site (they never enter the store, so its
+    // combined-wins merge is untouched); every record carrying clock or bias
+    // content is dropped, including the high-rate clock, which is an additive
+    // delta on the clock polynomial.
     switch (kind) {
         case SsrRecordKind::Orbit:
         case SsrRecordKind::Ura:            return SsrPushAction::Push;
@@ -160,9 +161,9 @@ RealTimeEngine::combinedOrbitPart(const SsrCombinedCorrection& rec) {
     orb.received_time   = rec.received_time;
     orb.epoch_time      = rec.epoch_time;    // shared orbit+clock content epoch → orbit dt base
     orb.iod_ssr         = rec.iod_ssr;
-    orb.reference_point = rec.reference_point;  // RTB-5(b): the orbit part keeps its dialect tag
-    // c0/c1/c2 intentionally discarded: the whole point of the decomposition is
-    // that no clock content from this stream reaches the store.
+    orb.reference_point = rec.reference_point;  // the orbit part keeps its dialect tag (RTB-5(b))
+    // c0/c1/c2 are discarded: the decomposition exists so that no clock content
+    // from this stream reaches the store.
     return orb;
 }
 
@@ -181,60 +182,62 @@ RealTimeEngine::parseSsrAcceptPolicy(const std::string& value, bool* recognized)
 void RealTimeEngine::feedRtcmFrame(const std::vector<uint8_t>& frame,
                                    SsrAcceptPolicy accept,
                                    std::chrono::steady_clock::time_point receipt) {
-    // Decode the frame through the engine's PERSISTENT parser (RTB-1(a)):
-    // outputs are drained per frame (clear() below), but the parser's
+    // Decode the frame through the engine's persistent parser (RTB-1(a)).
+    // Outputs are drained per frame (clear() below), but the parser's
     // stream-time tracker survives, so mod-week epoch fields are promoted by
     // nearest continuation to the last decoded epoch instead of re-anchoring
-    // on the host clock every frame.  All three RTCM streams (primary /
-    // corrections / ephemeris) share this parser — same GPS timeline.
+    // on the host clock every frame.  All three RTCM streams (primary,
+    // corrections, ephemeris) share this parser, and so one GPS timeline.
     rtcm_parser_.clear();
     RtcmParser& parser = rtcm_parser_;
     parser.parseFrame(frame);
 
-    // RTB-3: MSM lock-time → LLI 0x1 derivation, armed by
-    // realtime.msm_lli_from_locktime (default OFF — arming changes
-    // slip-detection behaviour on RT replays).
+    // MSM lock-time → LLI 0x1 derivation, armed by
+    // realtime.msm_lli_from_locktime (default off; arming it changes
+    // slip-detection behaviour on RT replays).  (RTB-3)
     const bool lli_from_locktime =
         config_.getRealTimeConfig().msm_lli_from_locktime;
 
     // Observations: buffer until a new epoch is detected, then submit the
     // previous epoch.
-    // Drop disabled constellations BEFORE the epoch-boundary test (not just in
-    // processEpoch): a mis-tagged clock — notably GLONASS, carried as week-0
-    // seconds-of-day until full GPS-week promotion lands — emits a wildly
-    // different tow that would split a coherent epoch in two.  The leading
-    // systems get submitted early (without the trailing ones), and the trailing
-    // systems then arrive at the same tow as the just-submitted epoch and are
-    // dropped by processEpoch's dt==0 duplicate guard.  That silently starved
-    // GPS+Galileo of Galileo whenever GLONASS was present-but-disabled.
+    // Disabled constellations are dropped before the epoch-boundary test, not
+    // only in processEpoch.  A disabled constellation whose epoch is tagged on
+    // a different time base (for example a GLONASS MSM epoch that could not be
+    // promoted to a GPS week and comes back as {0, 0}) carries a very different
+    // tow and would split a coherent epoch in two: the leading systems would be
+    // submitted early without the trailing ones, and the trailing systems would
+    // then arrive at the tow of the just-submitted epoch and be dropped by
+    // processEpoch's dt == 0 duplicate guard (for example, Galileo lost from a
+    // GPS+Galileo run with GLONASS present but disabled).
     const auto& active = config_.getActiveSystems();
     for (const auto& obs : parser.getObservations()) {
         if (!isSystemActive(obs.system, active)) continue;
         if (pending_obs_.empty()) {
             pending_epoch_time_ = obs.time;
-            // RTB-1(b): the assembling epoch's receipt = the stamp of the
-            // first frame that contributed observations to it.
+            // The assembling epoch's receipt is the stamp of the first
+            // frame that contributed observations to it (RTB-1(b)).
             pending_epoch_receipt_       = receipt;
             pending_epoch_receipt_valid_ = true;
         } else if (std::abs(obs.time.tow - pending_epoch_time_.tow) > 0.5) {
-            // RTB-1(b): carry the buffered epoch's receipt stamp into
-            // processEpoch for the sub-second latency diagnostics.
+            // Carry the buffered epoch's receipt stamp into processEpoch for
+            // the sub-second latency diagnostics (RTB-1(b)).
             processing_epoch_receipt_       = pending_epoch_receipt_;
             processing_epoch_receipt_valid_ = pending_epoch_receipt_valid_;
-            // New epoch  process the buffered one.
+            // New epoch: process the buffered one.
             processEpoch(pending_obs_);
             processing_epoch_receipt_valid_ = false;
             pending_obs_.clear();
             pending_epoch_time_          = obs.time;
-            pending_epoch_receipt_       = receipt;   // RTB-1(b): new epoch's first frame
+            pending_epoch_receipt_       = receipt;   // new epoch's first frame (RTB-1(b))
             pending_epoch_receipt_valid_ = true;
         }
         pending_obs_.push_back(obs);
         if (lli_from_locktime) {
-            // RTB-3: derive the loss-of-lock bit from the decoded MSM lock
-            // times on the STORED copy (never the parser's).  Station key ""
-            // — single-rover engine; the multi-station front-end reuses one
-            // LockTimeTracker across streams with per-stream station keys.
+            // Derive the loss-of-lock bit from the decoded MSM lock times on
+            // the stored copy, never the parser's (RTB-3).  The station key is
+            // "" because this engine serves a single rover; the multi-station
+            // front-end reuses one LockTimeTracker across streams with
+            // per-stream station keys.
             auto& stored = pending_obs_.back();
             for (const auto& [code, lock_ms] : stored.lock_time_ms) {
                 if (lock_time_tracker_.update("", stored.satellite, code, lock_ms)) {
@@ -246,8 +249,8 @@ void RealTimeEngine::feedRtcmFrame(const std::vector<uint8_t>& frame,
 
     const std::size_t n_ssr_dropped = ingestSsrRecords(parser, accept);
 
-    // Push decoded broadcast ephemeris into the live store — this is what lets
-    // Geometry::getSatellitePV resolve satellite orbits with no SP3 file loaded.
+    // Push decoded broadcast ephemeris into the live store, from which
+    // Geometry::getSatellitePV resolves satellite orbits when no SP3 file is loaded.
     auto& eph_store = LiveEphemerisStore::getInstance();
     for (const auto& eph : parser.getBroadcastEphemeris()) eph_store.insert(eph);
     refreshGlonassSlots(parser.getBroadcastEphemeris(), eph_store, *ppp_model_);
@@ -271,7 +274,7 @@ void RealTimeEngine::feedSbfFrame(const std::vector<uint8_t>& block) {
     // fallback (geographic pole) from which almost every satellite sits below
     // the elevation mask and the filter can never converge.  A configured
     // reference_position always wins; once first_epoch_ clears, the KF owns the
-    // position and we stop overwriting it.
+    // position and this seeding stops.
     if (first_epoch_ && !config_.hasReferencePosition()) {
         if (const auto& pvt = parser.getReceiverPositionEcef()) {
             const size_t pidx = state_manager_->getPositionIndex();
@@ -290,11 +293,12 @@ void RealTimeEngine::feedSbfFrame(const std::vector<uint8_t>& block) {
         }
     }
 
-    // Broadcast ephemeris -> live store (same path RTCM nav uses).  These are
-    // the receiver's DECODED nav blocks, emitted only on ephemeris change.
-    // from_igs=false: receiver nav must not clobber an authoritative IGS-stream
-    // record (the IGS-RTS SSR is referenced to IGS broadcast — pairing it with a
-    // receiver ephemeris is inconsistent; see LiveEphemerisStore::insert).
+    // Broadcast ephemeris -> live store (the same path RTCM nav uses).  These
+    // are the receiver's decoded nav blocks, emitted only on ephemeris change.
+    // from_igs=false: receiver nav must not overwrite an authoritative
+    // IGS-stream record, because the IGS-RTS SSR is referenced to the IGS
+    // broadcast and pairing it with a receiver ephemeris is inconsistent (see
+    // LiveEphemerisStore::insert).
     auto& eph_store = LiveEphemerisStore::getInstance();
     for (const auto& eph : parser.getBroadcastEphemeris()) eph_store.insert(eph, /*from_igs=*/false);
     refreshGlonassSlots(parser.getBroadcastEphemeris(), eph_store, *ppp_model_);
@@ -316,7 +320,7 @@ void RealTimeEngine::feedSbfFrame(const std::vector<uint8_t>& block) {
         }
     }
 
-    // A MeasEpoch carries a complete epoch of observations — process it
+    // A MeasEpoch carries a complete epoch of observations, so it is processed
     // directly (no multi-message assembly as in the RTCM/MSM path).
     const auto& obs = parser.getObservations();
     if (!obs.empty()) {
@@ -335,8 +339,8 @@ void RealTimeEngine::feedImuSample(const AidingSample& sample) {
 }
 
 void RealTimeEngine::flush() {
-    // Final drain at stream stop: process whatever is buffered WITHOUT the
-    // obs↔SSR hold or skip-to-latest (there is no "later" to defer to).  A held
+    // Final drain at stream stop: process whatever is buffered without the
+    // obs↔SSR hold or skip-to-latest (no later epoch exists to defer to).  A held
     // sync epoch (older) is submitted before the still-assembling pending epoch
     // (newer) so they reach the filter in time order.
     draining_final_ = true;
@@ -345,7 +349,7 @@ void RealTimeEngine::flush() {
         held_obs_.clear();
     }
     if (!pending_obs_.empty()) {
-        // RTB-1(b): the final buffered epoch still carries its receipt stamp.
+        // The final buffered epoch still carries its receipt stamp (RTB-1(b)).
         processing_epoch_receipt_       = pending_epoch_receipt_;
         processing_epoch_receipt_valid_ = pending_epoch_receipt_valid_;
         processEpoch(pending_obs_);
@@ -355,24 +359,25 @@ void RealTimeEngine::flush() {
     }
     draining_final_ = false;
 
-    // RTA-13: end-of-run obs-code attribute-mismatch summary (flush is the
-    // engine's end-of-stream hook).  Silent when no mismatch was counted.
+    // End-of-run obs-code attribute-mismatch summary (flush is the engine's
+    // end-of-stream hook).  Silent when no mismatch was counted.  (RTA-13)
     logBiasAttrMismatchSummary("end of run");
-    // Card 7: ditto for the orbit/clock coherence-echo mismatches.
+    // The same summary for the orbit/clock coherence-echo mismatches (card 7).
     logOrbitEchoMismatchSummary("end of run");
-    // Card CC (A): the declared-step carry counters (silent unless armed).  The
+    // The declared-step carry counters, silent unless armed (card CC (A)).  The
     // closed-loop harness never calls flush(); its consumer's counters go out on
     // the closed-loop summary in NetworkTeardown instead.
     logPbDiscCarrySummary_("end of run");
-    // Card PBT (A): ditto for the every-step translation counters.
+    // The every-step translation counters (card PBT (A)).
     logPbStepTranslateSummary_("end of run");
-    // Card PBH: ditto for the hold reaction (silent unless a held entry was seen).
+    // The hold reaction, silent unless a held entry was seen (card PBH).
     logPbHoldSummary_("end of run");
-    // Card ALC: ditto for the ambiguity level-check counters.
+    // The ambiguity level-check counters (card ALC).
     logAmbLevelCheckSummary_("end of run");
-    // Card SID phase 5: the declared-roster census (silent unless a declaration
-    // was seen or the 5b knob is armed).  The closed-loop harness and the replay
-    // driver never call flush(), so both call this directly at their own tails.
+    // The declared-roster census, silent unless a declaration was seen or the
+    // 5b knob is armed (card SID phase 5).  The closed-loop harness and the
+    // replay driver never call flush(), so both call this directly at their
+    // own tails.
     logRosterConsumerSummary("end of run");
     logReinflateSummary("end of run");   // card OWD (O2)
 }
@@ -402,40 +407,40 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     state_manager_->setStateEpochTime(ctx.current_time);
     LogManager::setCurrentEpochTime(ctx.current_time);
 
-    // Card CST: drop the previous epoch's per-satellite readout HERE, before any
-    // gate can end the epoch — so an epoch the admission gates defer leaves the
-    // buffer EMPTY (the honest reading: that epoch produced no consumer
-    // solution) instead of handing the harness a stale repeat.  No-op unarmed.
+    // Clear the previous epoch's per-satellite readout here, before any gate can
+    // end the epoch, so an epoch the admission gates defer leaves the buffer
+    // empty (that epoch produced no consumer solution) instead of handing the
+    // harness a stale repeat.  No-op unarmed.  (card CST)
     if (consumer_sat_trace_) {
         consumer_sat_rows_.clear();
         consumer_sat_events_.clear();
     }
 
-    // Card ALC: the same contract for the level check's per-epoch transport — a
-    // deferred epoch must hand the harness an EMPTY event list and a zero check
-    // count, never the previous epoch's.  No-op unarmed.
+    // The same contract for the level check's per-epoch transport: a deferred
+    // epoch hands the harness an empty event list and a zero check count, never
+    // the previous epoch's.  No-op unarmed.  (card ALC)
     if (config_.ambLevelCheck()) {
         amb_level_events_.clear();
         amb_level_epoch_checks_ = 0;
     }
 
-    // Mode tag only — the spdlog %E field already carries the GPS time.
+    // Mode tag only; the spdlog %E field already carries the GPS time.
     // "[RT] " distinguishes realtime-engine output from post-processing
     // when both modes share a console.
     ctx.epoch_prefix = "[RT] ";
 
-    // RT filter-state snapshot: one-shot staged warm resume, BEFORE the
-    // admission gates — restoring the prev-epoch time here lets
-    // stepTimeAndDetectGap compute the first dt over the TRUE outage gap, and
-    // an epoch the gates then defer leaves the applied state waiting exactly
-    // like any other quiet epoch.  No-op unless a snapshot was staged.
+    // RT filter-state snapshot: one-shot staged warm resume, applied before the
+    // admission gates.  Restoring the previous-epoch time here lets
+    // stepTimeAndDetectGap compute the first dt over the true outage gap, and
+    // an epoch the gates then defer leaves the applied state waiting like any
+    // other quiet epoch.  No-op unless a snapshot was staged.
     applyStagedStateSnapshot_(ctx);
 
     // --- Admission gates ---------------------------------------------------
-    // The only steps that can end the epoch early.  Ordered exactly as before:
+    // The only steps that can end the epoch early, in this required order:
     // lag/sync deferral, then the data-time budget, then the time step (whose
     // duplicate-TOW guard must precede any state advance), then the
-    // corrections-ready startup gate — which needs modeled observations and so
+    // corrections-ready startup gate, which needs modeled observations and so
     // runs after computeModels below.
     if (!admitBacklogAndSync(ctx)) return false;
     if (!gateMaxDuration(ctx))     return false;
@@ -465,11 +470,11 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
         return false;
     }
 
-    // Card SID phase 5: the producer's DECLARED SIGNAL ROSTER reaches the latch
-    // here and nowhere else: computeModels decides a constellation's canonical
-    // signals on its FIRST epoch, so a declaration handed over after this call is
-    // too late for the band it would have moved.  No-op on a wire that carries
-    // none (every pre-card producer, every RTCM stream).
+    // The producer's declared signal roster reaches the latch here and nowhere
+    // else: computeModels decides a constellation's canonical signals on its
+    // first epoch, so a declaration handed over after this call is too late for
+    // the band it would have moved.  No-op on a wire that carries no roster
+    // (producers without the declaration, every RTCM stream).  (card SID phase 5)
     refreshDeclaredRoster_();
 
     if (!ppp_model_->computeModels(filtered_obs, ppp_state_, ctx.modeled_obs,
@@ -481,7 +486,7 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     if (!gateCorrectionsReady(ctx)) return false;
 
     // --- Observability -----------------------------------------------------
-    // Both run BEFORE the broadcast-grade drop so dropped sats still appear.
+    // Both run before the broadcast-grade drop so dropped sats still appear.
     logSsrCoverage(ctx);
     traceSsrConsumer(ctx);
 
@@ -492,14 +497,13 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     seedClockFromWls(ctx);
     regaugeBssd(ctx);
 
-    // First real epoch processed — clear first_epoch_ UNCONDITIONALLY.  This was
-    // previously inside the hasClock() WLS block above, but BSSD / PPP-RTK has no
-    // receiver-clock state, so that block is skipped and the flag never cleared.
-    // Leaving it set wedged the engine: dt stayed pinned at 1 s (gaps never
-    // detected) and the PVTGeodetic a-priori was re-seeded every epoch, hard-
-    // pinning the position so the filter could never converge.  Cold-start
-    // epochs with no modelable observations return earlier, so reaching here
-    // means this epoch produced a usable measurement set.
+    // First real epoch processed: clear first_epoch_ unconditionally, not inside
+    // the hasClock() WLS seeding, because BSSD / PPP-RTK has no receiver-clock
+    // state and skips that step.  A flag left set keeps dt pinned at 1 s (gaps
+    // go undetected) and re-seeds the PVTGeodetic a-priori every epoch, which
+    // pins the position so the filter cannot converge.  Cold-start epochs with
+    // no modelable observations return earlier, so reaching here means this
+    // epoch produced a usable measurement set.
     first_epoch_ = false;
 
     // Anchor the max-duration window on this first fully-processed epoch (epoch
@@ -529,8 +533,8 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     detectAndRepairSlips(ctx);
 
     // --- SSR datum-break reactions -----------------------------------------
-    // "The producer moved its datum under us."  Order is load-bearing: the
-    // global generation-id break subsumes the fine-grained reactions that
+    // Reactions to the producer moving its datum.  The order is load-bearing:
+    // the global generation-id break subsumes the fine-grained reactions that
     // follow, so it must run first.  All five no-op without SSR content.
     reactToGenerationChange(ctx);
     logProducerStatus(ctx);
@@ -548,38 +552,38 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
         soft_lli_->recordSnapshot(*state_manager_,
                                   TimeUtils::continuousGpsSeconds(ctx.current_time));
 
-    // Both pseudo-observation constraints sit AFTER the measurement update and
-    // BEFORE AR, so the shrunk covariance feeds the resolver.
+    // Both pseudo-observation constraints sit after the measurement update and
+    // before AR, so the shrunk covariance feeds the resolver.
     applyZwdConstraint(ctx);
     applyNetworkIonoPrior(ctx);
 
     resolveAmbiguities(ctx);
     writeEpochTraces(ctx);
 
-    // Card ALC: RE-VALIDATE this epoch's float ambiguities against their own
-    // windowed code level and refloat the ones the code refuses -- invariant #7's
-    // re-coupling edge for the card-CC carry and the card-PBT translation.  It
-    // sits AFTER the update / constraints / AR (it reads the epoch's committed
-    // pre-fit innovations) and BEFORE the CST harvest (so the row reports the
-    // refloat_level event and the re-inflated amb_var).  The epoch's own position
-    // is untouched: a refloat re-inflates the variance and marks the key pending
-    // re-seed, which lands at the NEXT epoch's ensureRequiredStates.  No-op
-    // unless processing.amb_level_check.
+    // Re-validate this epoch's float ambiguities against their own windowed code
+    // level and refloat the ones the code rejects: invariant #7's re-coupling
+    // edge for the card-CC carry and the card-PBT translation (card ALC).  It
+    // sits after the update, constraints and AR (it reads the epoch's committed
+    // pre-fit innovations) and before the CST harvest (so the row reports the
+    // refloat_level event and the re-inflated amb_var).  The epoch's own
+    // position is untouched: a refloat re-inflates the variance and marks the
+    // key pending re-seed, which lands at the next epoch's ensureRequiredStates.
+    // No-op unless processing.amb_level_check.
     checkAmbiguityLevel_(ctx);
 
-    // Card CST: harvest the per-satellite readout LAST — after the update, the
-    // pseudo-observation constraints and AR — so the ambiguity / slant-iono
-    // values and variances it reports are the epoch's COMMITTED ones.
+    // Harvest the per-satellite readout last (after the update, the
+    // pseudo-observation constraints and AR), so the ambiguity / slant-iono
+    // values and variances it reports are the epoch's committed ones (card CST).
     // Measure-only; no-op unless network.trace_consumer_sat armed the engine.
     traceConsumerSat_(ctx);
 
-    // Card CC (B): the live filter memory is now "as of" this epoch — the
-    // stamp writeStateSnapshotTo uses (and checks against the network copy).
+    // The live filter memory is now "as of" this epoch: the stamp that
+    // writeStateSnapshotTo uses and checks against the network copy (card CC (B)).
     last_processed_epoch_ = ctx.current_time;
     has_processed_epoch_  = true;
 
     // RT filter-state snapshot: cadence-gated atomic write of the live filter
-    // memory, AFTER the epoch's full estimation tail so the snapshot carries
+    // memory, after the epoch's full estimation tail so the snapshot carries
     // this epoch's posterior.  No-op with realtime.state_snapshot_path empty.
     writeStateSnapshot_(ctx);
 
@@ -599,35 +603,37 @@ const SsrCorrectionStore& RealTimeEngine::ssrStore() const {
 void RealTimeEngine::setSsrStore(const SsrCorrectionStore* store,
                                  bool consume_clock, bool consume_bias,
                                  SsrOrbitSource orbit_source) {
-    // Clock/orbit overlay lives in PppModel (geometry + corrections); bias overlay
-    // + the phase-bias-discontinuity reset hook live in MeasurementModel.  Route
-    // each independently so the caller can, e.g., keep precise SP3/CLK for the
-    // clock while consuming only the network phase bias (clean integer test).
-    // Called after initialize(), so the models exist.
+    // The clock/orbit overlay lives in PppModel (geometry + corrections); the
+    // bias overlay and the phase-bias-discontinuity reset hook live in
+    // MeasurementModel.  Each is routed independently so the caller can, e.g.,
+    // keep precise SP3/CLK for the clock while consuming only the network phase
+    // bias (clean integer test).  Called after initialize(), so the models exist.
     ssr_store_override_ = consume_bias ? store : nullptr;   // discontinuity hook reads phase bias
-    // Card 7: remember the CLOCK routing — the orbit-echo mismatch tallies land
-    // on the store GnssCorrections reads clocks from, which the echo summary
-    // must therefore read (it differs from the bias-routed override above
-    // whenever consume_clock != consume_bias).
+    // Remember the clock routing (card 7): the orbit-echo mismatch tallies land
+    // on the store GnssCorrections reads clocks from, so the echo summary must
+    // read that store (it differs from the bias-routed override above whenever
+    // consume_clock != consume_bias).
     clock_store_override_ = consume_clock ? store : nullptr;
     if (ppp_model_) {
         switch (orbit_source) {
         case SsrOrbitSource::FollowClock:
-            // Legacy coupled routing (the default): orbit overlay rides with the
-            // clock, exactly as the pre-split setSsrStore did.  The closed-loop
-            // harness call site lands here — byte-identical.
+            // Coupled routing (the default): the orbit overlay follows the
+            // clock store.  The closed-loop harness call site takes this path,
+            // byte-identical to the routing before the orbit source was split.
             ppp_model_->setSsrStore(consume_clock ? store : nullptr);
             break;
         case SsrOrbitSource::External:
-            // RTA-8(a): clocks from the injected store (per consume_clock), orbit
-            // overlay pinned to the SINGLETON — the external RTS corrections
-            // stream (ideally ingest-filtered to orbit_only, RTA-8(b)).
+            // Clocks from the injected store (per consume_clock); the orbit
+            // overlay is pinned to the singleton store, which holds the external
+            // RTS corrections stream (ideally ingest-filtered to orbit_only,
+            // RTA-8(b)).  (RTA-8(a))
             ppp_model_->setSsrClockStore(consume_clock ? store : nullptr);
             ppp_model_->setSsrOrbitStore(nullptr);
             break;
         case SsrOrbitSource::Network:
-            // RTA-8(a): a future orbit-bearing network product — orbit overlay
-            // reads the injected store even when the clock is kept precise.
+            // For an orbit-bearing network product (not yet produced): the orbit
+            // overlay reads the injected store even when the clock is kept
+            // precise.  (RTA-8(a))
             ppp_model_->setSsrClockStore(consume_clock ? store : nullptr);
             ppp_model_->setSsrOrbitStore(store);
             break;
@@ -662,14 +668,14 @@ void RealTimeEngine::logBiasAttrMismatchSummary(const char* tag) {
 }
 
 void RealTimeEngine::logOrbitEchoMismatchSummary(const char* tag) {
-    // Read the CLOCK-routed store: that is where GnssCorrections tallies the
-    // echo mismatches (the engine-level ssrStore() is bias-routed and would
-    // stay empty forever under a clock-on/bias-off consumer profile).
+    // Read the clock-routed store: GnssCorrections tallies the echo mismatches
+    // there (the engine-level ssrStore() is bias-routed and stays empty under a
+    // clock-on/bias-off consumer profile).
     const SsrCorrectionStore& clock_store =
         clock_store_override_ ? *clock_store_override_
                               : SsrCorrectionStore::getInstance();
     const auto counts = clock_store.orbitEchoMismatchCounts();
-    if (counts.empty()) return;   // clean / pre-Card-7 run: never logs (byte-identical)
+    if (counts.empty()) return;   // no mismatches counted: never logs (byte-identical)
     std::uint64_t total = 0;
     for (const auto& [key, n] : counts) total += n;
     // Top offenders by count (deterministic tie-break: map key order).

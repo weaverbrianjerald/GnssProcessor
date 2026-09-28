@@ -8,18 +8,18 @@ Consumes two CSVs the run writes (network.trace_events + service_mode must be on
 Card 8 criteria this checks:
   (2) At every ephemeris-cutover re-level (event 'eph_cutover_relevel', statistic = the
       applied shift = -Delta_eph in metres), the emitted clock C0 steps by ~= that shift so
-      the reconstructed clock brdc(iode)+C0 stays continuous.  We check the emitted C0
-      first-difference against the logged shift and flag residuals beyond --tol.
-      NOTE: this is a PROXY.  Full absolute-clock reconstruction (evaluating the broadcast
-      Kepler clock at the stamped IODE) needs the C++ LiveEphemerisStore; a residual near 0
+      the reconstructed clock brdc(iode)+C0 stays continuous.  The script checks the emitted
+      C0 first-difference against the logged shift and flags residuals beyond --tol.
+      This check is a proxy: full absolute-clock reconstruction (evaluating the broadcast
+      Kepler clock at the stamped IODE) needs the C++ LiveEphemerisStore. A residual near 0
       confirms the re-level absorbed the reference change with no extra transient, but the
       absolute continuity number is a Card-8 C++ tooling item.
-  (3) A CLEAN re-level must NOT bump the clock disc counter.  We FAIL any sat whose
-      disc_counter increments at a re-level epoch, and separately report 'eph_cutover_disc'
-      forced-bump fallbacks (previous eph version evicted) — a large count there means the
+  (3) A clean re-level does not bump the clock disc counter. The script fails any sat whose
+      disc_counter increments at a re-level epoch, and separately reports 'eph_cutover_disc'
+      forced-bump fallbacks (previous eph version evicted): a large count there means the
       store's current/previous retention is not holding the old version.
 
-Column mapping for network_events.csv is POSITIONAL (verified against emitEvent in
+Column mapping for network_events.csv is positional (verified against emitEvent in
 ApplicationNetwork.cpp).  If a future edit reorders those columns, fix EVENT_COLS below.
 Sanity-check the first-run output; this script has not been run against live output.
 

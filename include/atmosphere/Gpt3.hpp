@@ -5,11 +5,11 @@
  * @brief Global Pressure and Temperature 3 (GPT3) empirical model.
  *
  * Provides station pressure and temperature lookups from the 5° GPT3 grid
- * (Landskron & Boehm 2018), replacing the standard-atmosphere assumption
- * (frozen 1013.25 mbar / 288.15 K at sea level) used by the Saastamoinen
- * zenith hydrostatic delay.  The grid is shipped as a single ASCII file
- * (@c gpt3_5.grd, 36 latitudes × 72 longitudes, 64 parameters per cell)
- * obtained from https://vmf.geo.tuwien.ac.at/codes/.
+ * (Landskron & Boehm 2018), an alternative to the standard-atmosphere
+ * assumption (fixed 1013.25 mbar / 288.15 K at sea level) for the Saastamoinen
+ * zenith hydrostatic delay, plus the VMF3 "a" coefficients.  The grid is a
+ * single ASCII file (@c gpt3_5.grd, 36 latitudes × 72 longitudes, 64
+ * parameters per cell) obtained from https://vmf.geo.tuwien.ac.at/codes/.
  *
  * Reference:
  *   Landskron, D., and J. Boehm (2018), VMF3/GPT3: refined discrete and
@@ -33,11 +33,11 @@ namespace GnssProcessor {
      * using the standard barometric form; temperature is reduced with
      * the grid's seasonally-varying lapse rate @c dT.
      *
-     * The MVP implementation returns pressure and temperature only;
-     * the same file carries water-vapour pressure, mapping-function
-     * coefficients, weighted-mean temperature, and tropospheric
-     * gradients, which can be added later without changing the grid
-     * load.
+     * The implementation returns pressure, temperature and the VMF3
+     * hydrostatic and wet "a" coefficients.  The same file also carries
+     * water-vapour content, the water-vapour decrease factor (lambda),
+     * weighted-mean temperature and tropospheric gradients; these can be
+     * added without changing the grid load.
      */
     class Gpt3 {
     public:
@@ -67,16 +67,20 @@ namespace GnssProcessor {
         /**
          * @brief Load the 5° grid from the given file.
          *
-         * Parses an ASCII @c gpt3_5.grd: one header line followed by
-         * 36 × 72 = 2592 data rows of 64 whitespace-separated values
-         * each.  Rows iterate longitude-fastest from (lat = 87.5,
-         * lon = 2.5) southwards/eastwards in 5° steps.
+         * Parses an ASCII @c gpt3_5.grd: one header line starting with '%',
+         * followed by 36 × 72 = 2592 data rows of 64 whitespace-separated
+         * values each (blank lines are skipped).  Rows iterate
+         * longitude-fastest from (lat = 87.5, lon = 2.5) southwards/eastwards
+         * in 5° steps.
          *
          * @param grid_file Filesystem path to @c gpt3_5.grd.
          * @param log_mgr   Logger used to report load progress / errors.
          * @return @c true if the grid loaded successfully (full 2592
          *         cells with no parse failures), @c false otherwise.
-         *         On failure the instance is left empty.
+         *         On failure an empty instance stays empty and unloaded.
+         *         @c loaded_ is not reset on failure: a failing call on an
+         *         already loaded instance leaves @c isLoaded() true (with the
+         *         cells cleared if the header line was valid).
          */
         bool load(const std::filesystem::path& grid_file, LogManager& log_mgr);
 
@@ -86,7 +90,7 @@ namespace GnssProcessor {
         bool isLoaded() const { return loaded_; }
 
         /**
-         * @brief Look up pressure and temperature at a station.
+         * @brief Look up pressure, temperature and VMF3 coefficients at a station.
          *
          * Combines four-corner bilinear interpolation in latitude /
          * longitude with annual + semi-annual harmonic evaluation in
@@ -94,18 +98,20 @@ namespace GnssProcessor {
          * 5.225) and temperature (linear lapse rate @c dT) from the
          * grid's orthometric reference height to the station's
          * orthometric height (ellipsoidal height minus geoid undulation).
+         * The VMF3 coefficients have no height reduction.
          *
          * Latitudes outside [-87.5°, 87.5°] are clamped to the edge
          * row; longitudes are wrapped into [0°, 360°).
          *
          * @param lat_deg            Geodetic latitude in degrees.
          * @param lon_deg            Geodetic longitude in degrees (any
-         *                           range — internally normalized).
+         *                           range; normalized internally).
          * @param h_ellipsoidal_m    Station ellipsoidal height (meters).
          * @param doy                Fractional day-of-year
          *                           (1.0 = 1 Jan 00:00 UTC).
-         * @param[out] out           Populated with pressure (mbar) and
-         *                           temperature (K) on success.
+         * @param[out] out           Populated with pressure (mbar),
+         *                           temperature (K), @c a_h and @c a_w
+         *                           on success.
          * @return @c true on success, @c false if the model is unloaded
          *         or the inputs are not finite.
          */
@@ -121,12 +127,12 @@ namespace GnssProcessor {
         static constexpr double LON_STEP = 5.0;     /**< Longitude spacing (deg). */
 
         /**
-         * @brief Per-cell parameters used by the MVP query.
+         * @brief Per-cell parameters used by the query.
          *
-         * Only the columns needed for pressure + temperature are
-         * retained; the remaining GPT3 columns (humidity, mapping
-         * coefficients, lambda, Tm, gradients) are parsed and
-         * discarded so the on-disk format can stay unchanged.
+         * Only the columns needed for pressure, temperature and the VMF3
+         * "a" coefficients are retained; the remaining GPT3 columns
+         * (humidity, lambda, Tm, gradients) are parsed and discarded, so
+         * the file is read in its published format.
          */
         struct Cell {
             double p[5];   /**< Pressure harmonic (a0, A1, B1, A2, B2) in Pa. */

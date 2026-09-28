@@ -1,8 +1,8 @@
-"""TurboEdit (MW+GF joint slip resolver) viewer -- the port of
+"""TurboEdit (MW+GF joint slip resolver) viewer: the port of
 ``view_turbo_edit_trace.m``.
 
-Reads ``turbo_edit_trace.csv`` -- one row per *mature* (satellite, phase-pair)
-per epoch (the first TWO epochs after any arc (re)start emit no rows) -- and
+Reads ``turbo_edit_trace.csv``, one row per mature (satellite, phase-pair)
+per epoch (the first two epochs after any arc (re)start emit no rows), and
 draws the cycle-slip-repair diagnostics that mirror the look of the MW wide-lane
 viewer: per-constellation columns, the constellation's own (sig1/sig2) phase
 pairs stacked within each column, one coloured line per satellite, and a
@@ -12,20 +12,20 @@ Figures produced (guarded by the same content switches the MATLAB exposes, each
 defaulting to its MATLAB default):
 
   * **TD2 grid** (``show_td2``): the geometry-free second time-difference
-    ``td2_gf_m`` (m) -- the detector statistic.  A slip ``(dN1,dN2)`` spikes it
-    by ``lambda1*dN1 - lambda2*dN2`` at the slip epoch.  One *Figure per
-    constellation* (a column), with the constellation's signal pairs stacked as
+    ``td2_gf_m`` (m), the detector statistic. A slip ``(dN1,dN2)`` spikes it
+    by ``lambda1*dN1 - lambda2*dN2`` at the slip epoch. One figure per
+    constellation (a column), with the constellation's signal pairs stacked as
     vertically-linked axes (rows), one coloured line per satellite, NaN-broken at
     time gaps, plus a per-tile ``mu/sigma`` text read-out.
   * **IVI** (``show_ivi``): per-constellation cross-satellite ionospheric
     variability index ``median(|TD2|) + MAD-sigma(|TD2|)``, one line per
-    constellation on a single axes with the 0.06 m iono-active gate.  Built from
-    the *pre-filter* snapshot (all rows, flagged included).
+    constellation on a single axes with the 0.06 m iono-active gate. Built from
+    the pre-filter snapshot (all rows, flagged included).
   * **Event examples** (``show_event_examples``): a two-panel zoom on one
     ``repair``, one ``reset`` and one ``code_event`` exemplar (each only if
-    present in the trace).  Top panel: raw GF with -- for a repair -- the
+    present in the trace). Top panel: raw GF with, for a repair, the
     ``lambda1*dN1 - lambda2*dN2`` step removed from the post-event samples (the
-    "repaired" overlay).  Bottom panel: TD2 against the +/- per-row threshold
+    "repaired" overlay). Bottom panel: TD2 against the +/- per-row threshold
     envelope, with the event sample starred.
 
 The remaining MATLAB content switches (``showRatioPlot``, ``showThresholdPlot``,
@@ -41,11 +41,11 @@ Fidelity notes
 * The flag columns (``iono_stable``, ``mw_flagged``, ``gf_flagged``,
   ``wl_known``) are coerced to numeric with NaN -> 0.
 * ``hide_flagged_epochs`` (default ``True``) drops rows the resolver flagged
-  (``mw_flagged | gf_flagged``) from the GRID figures only, so they autoscale on
+  (``mw_flagged | gf_flagged``) from the grid figures only, so they autoscale on
   in-arc noise; the IVI plot, the event inventory and the example figures are all
   built from the full ``Tall`` snapshot.
 * Per-satellite colour is taken from the numeric PRN (chars 2-3) through the
-  shared ``color_by_prn`` palette -- the data-layer analogue of MATLAB's
+  shared ``color_by_prn`` palette, the data-layer analogue of MATLAB's
   ``distinguishable_colors`` indexed by ``str2double(sat(2:3))``.
 * Time gaps larger than ``gap_factor x median(dt)`` get a NaN break so lines do
   not cross them (the MATLAB ``insertGapBreaks``).
@@ -67,7 +67,7 @@ from .base import Viewer, ViewerResult
 _SYS_ORDER = ("GPS", "Galileo", "GLONASS", "BeiDou", "QZSS", "SBAS", "IRNSS")
 
 # Reference-line / gate constants (mirror the MATLAB literals).
-_IVI_GATE = 0.06          # m -- iono deemed active above this
+_IVI_GATE = 0.06          # m, iono deemed active above this
 _FLOOR_M = 0.04           # kMinThresholdM, the GF gate floor
 _HALF_WIN = 60            # samples either side of an event in the zoom panels
 
@@ -466,7 +466,7 @@ def build_turbo_edit_trace(
     show_ivi: bool = True,           # per-constellation IVI + 0.06 gate
     show_event_examples: bool = True,  # zoomed repair/reset/code-event panels
     show_legend: bool = False,       # per-tile satellite legend on top tile
-    hide_flagged_epochs: bool = True,  # drop flagged rows from GRID figures
+    hide_flagged_epochs: bool = True,  # drop flagged rows from grid figures
 ) -> ViewerResult:
     """Build the TurboEdit MW+GF resolver diagnostic figures.
 

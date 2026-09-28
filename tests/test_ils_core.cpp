@@ -2,14 +2,14 @@
  * @file test_ils_core.cpp
  * @brief Unit tests for the pure ILS core (filter/IlsCore.hpp).
  *
- * test_estimation_core.cpp already covers the MLAMBDA numerical kernels
- * (ldlDecompose / reduction / search / mlambda / bootstrap) — now relocated to
- * ils:: free functions and still exercised there through AmbiguityResolver's
- * forwarders.  This file covers the previously-untested layer: the acceptance
- * battery (ratio lower/upper → bootstrap FFR → per-entry frac cap) and the
- * partial-AR backward elimination, as implemented in ils::ilsFix and
- * ils::selectFixableSubset.  These gate the producer-side network AR fixes, so
- * a regression here would silently pass or reject network integer fixes.
+ * test_estimation_core.cpp covers the MLAMBDA numerical kernels
+ * (ldlDecompose / reduction / search / mlambda / bootstrap), which are ils:: free
+ * functions exercised there through AmbiguityResolver's forwarders.  This file
+ * covers the layer above them: the acceptance battery (ratio lower/upper →
+ * bootstrap FFR → per-entry frac cap) and the partial-AR backward elimination, as
+ * implemented in ils::ilsFix and ils::selectFixableSubset.  These gate the
+ * producer-side network AR fixes, so a regression here would pass or reject network
+ * integer fixes without any other visible symptom.
  *
  * Every case is constructed analytically on diagonal covariances (Z = I, so the
  * decorrelated metric is the raw one) with floats placed at known distances

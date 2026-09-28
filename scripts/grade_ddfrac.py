@@ -1,63 +1,65 @@
 #!/usr/bin/env python3
-"""Grade a network producer run's DATUM-INVARIANT double-differenced ambiguities.
+"""Grade a network producer run's datum-invariant double-differenced ambiguities.
 
 This is the go/no-go instrument for producer-side (and downstream user) integer
-AR: it reads ``<run>/logs/network_dd_fractional.csv`` — the between-station,
-between-satellite DD of the float ambiguities per (constellation, signal) — and
+AR: it reads ``<run>/logs/network_dd_fractional.csv`` (the between-station,
+between-satellite DD of the float ambiguities per (constellation, signal)) and
 reports how tightly those DDs sit on integers (fractional pile-up, circular R)
 and how much a fixed DD wanders epoch-to-epoch (the DD step).
 
-WHY THE DD, NOT THE WIRE (the Psychas single-realization mandate)
------------------------------------------------------------------
-The emitted phase-bias *wire* (``network_solution.csv`` PB ``value_m``) is
-DATUM-DEPENDENT: the whole per-(constellation,signal) frame drifts with the
-datum receiver's fractional phase bias (2-4 cyc/ep of benign common-mode is
-normal, not a defect).  Grading the raw wire step penalises that benign drift
-and gives a misleading "sick" verdict.  A double difference cancels both the
-receiver and the satellite frame terms, so the DD is invariant to the datum
-choice — grading it measures genuine solve health.  Grade the DD here; to look
-at the wire directly, use ``grade_wire.py``, which pivot-differences per
-constellation FIRST so it, too, judges a datum-invariant quantity.
+Why the DD, not the wire (the Psychas single-realization mandate)
+-------------------------------------------------------------------
+The emitted phase-bias wire (``network_solution.csv`` PB ``value_m``) is datum-
+dependent: the whole per-(constellation,signal) frame drifts with the datum
+receiver's fractional phase bias (2-4 cyc/ep of benign common-mode is normal,
+not a defect). Grading the raw wire step penalises that benign drift and gives
+a misleading "sick" verdict. A double difference cancels both the receiver and
+the satellite frame terms, so the DD is invariant to the datum choice, and
+grading it measures genuine solve health. Grade the DD here; to look at the
+wire directly, use ``grade_wire.py``, which pivot-differences per constellation
+first so it, too, judges a datum-invariant quantity.
 
-TOW-JITTER / GAP ROBUSTNESS
----------------------------
-The DD step is now computed between EPOCH-ADJACENT samples only.  Product tow
-carries ~1e-5 s jitter and the network skips epochs (arc births/deaths, missed
-syncs), so a naive ``zip(sorted, sorted[1:])`` pairs samples ACROSS multi-epoch
-gaps and reports a spurious "step".  We infer the nominal epoch spacing, snap
-each sample to an epoch index, and count a step only where the index advances by
-exactly one.  For reference the un-corrected (gap-crossing) median is printed in
-parentheses so the effect of the fix is visible.
+Tow-jitter and gap robustness
+-------------------------------
+The DD step is computed between epoch-adjacent samples only. Product tow
+carries about 1e-5 s of jitter and the network skips epochs (arc births/deaths,
+missed syncs), so a naive ``zip(sorted, sorted[1:])`` would pair samples across
+multi-epoch gaps and report a spurious step. The nominal epoch spacing is
+inferred, each sample is snapped to an epoch index, and a step counts only
+where the index advances by exactly one. For reference the uncorrected
+(gap-crossing) median is printed in parentheses so the effect of the fix is
+visible.
 
 Usage
 -----
     python scripts/grade_ddfrac.py <run_dir> [tail_seconds=3600]
 
 ``<run_dir>`` holds ``logs/network_dd_fractional.csv`` (enable
-``network.trace_dd_fractional``).  ``tail_seconds`` restricts every statistic to
+``network.trace_dd_fractional``). ``tail_seconds`` restricts every statistic to
 the final window (default 3600 s) so warm-up transients do not dominate.
 
 Reading the numbers
 -------------------
-* ``mean|f|`` / ``med|f|`` — fractional-cycle magnitude; UNIFORM (no integer
-  information) = 0.25.  AR-grade biases pull this well below 0.25.
-* ``P(<0.1)`` — fraction of DDs within 0.1 cyc of an integer; uniform = 0.20.
-* ``circR`` — circular resultant of 2*pi*frac; 0 = uniform, ->1 = on integers.
-* ``DD step med`` — median |ΔDD| between adjacent epochs (cyc/ep).  A healthy
-  producer holds a fixed DD steady (golden lineage ~0.085 cyc/ep); a churning
-  chain datum re-levels DDs network-wide and inflates this.  NOTE: a step is
-  only differenced WITHIN a fixed (…, ref_sat, …) series, so a re-level that
+* ``mean|f|`` / ``med|f|``: fractional-cycle magnitude; uniform (no integer
+  information) is 0.25. AR-grade biases pull this well below 0.25.
+* ``P(<0.1)``: fraction of DDs within 0.1 cyc of an integer; uniform is 0.20.
+* ``circR``: circular resultant of 2*pi*frac; 0 is uniform, approaching 1 means
+  the DDs sit on integers.
+* ``DD step med``: median |ΔDD| between adjacent epochs (cyc/ep). A healthy
+  producer holds a fixed DD steady (golden lineage about 0.085 cyc/ep); a
+  churning chain datum re-levels DDs network-wide and inflates this. A step is
+  only differenced within a fixed (…, ref_sat, …) series, so a re-level that
   coincides with a reference/pivot-satellite flip (ref_sat changes) is split
-  across two series and not counted — a known blind spot that can under-report
+  across two series and not counted: a known blind spot that can under-report
   churn at pivot switches.
-* ``calib`` — DD step / (sqrt(2)*formal σ): a rough optimism ratio.  It is NOT
+* ``calib``: DD step / (sqrt(2)*formal σ), a rough optimism ratio. It is not
   centred on 1: for temporally-independent DD errors |Δ| is half-normal, whose
-  MEDIAN is 0.6745*sqrt(2)*σ, so an honest filter reads calib ~0.67; carried
-  DDs are time-correlated, pushing the honest baseline lower still.  Read it
-  RELATIVELY — calib well above ~1 flags formal-σ optimism (the σ-incest
-  signature); a big jump between arms matters more than the absolute value.
+  median is 0.6745*sqrt(2)*σ, so a well-calibrated filter reads calib about
+  0.67; carried DDs are time-correlated, which pushes that baseline lower
+  still. Read it relatively: calib well above 1 flags formal-σ optimism, and a
+  jump between arms matters more than the absolute value.
 
-Only compares SD/datum-invariant quantities — never the raw wire (see above).
+Compares only SD/datum-invariant quantities, never the raw wire (see above).
 """
 import csv, math, cmath, sys, os, statistics as st
 from collections import defaultdict
@@ -72,7 +74,7 @@ def _f(x, default=None):
 
 
 def infer_epoch_dt(tows):
-    """Nominal epoch spacing = median gap between DISTINCT sorted tows.
+    """Nominal epoch spacing: median gap between distinct sorted tows.
 
     Robust to the ~1e-5 s product-tow jitter (distinct-tow rounding absorbs it)
     and to occasional multi-epoch gaps (single-epoch spacing is the majority, so
@@ -83,9 +85,9 @@ def infer_epoch_dt(tows):
 
 
 def adjacent_steps(series, dt0, tow0):
-    """|Δvalue| between epoch-ADJACENT samples of each series.
+    """|Δvalue| between epoch-adjacent samples of each series.
 
-    series: {key: [(tow, value), ...]}.  A sample's epoch index is
+    series: {key: [(tow, value), ...]}. A sample's epoch index is
     round((tow - tow0)/dt0); one value per epoch (last wins); a step counts only
     when the index advances by exactly 1 (never across a gap)."""
     steps = []
@@ -143,7 +145,7 @@ def main():
           (med_sig, med_step, med_naive, dt0,
            med_step / (math.sqrt(2) * med_sig) if sig and steps else float('nan')))
 
-    # T1a health trace: LOS>3sigma fraction
+    # Health trace: fraction of LOS residuals beyond 3 sigma (card T1a)
     h = os.path.join(run, 'logs', 'network_vtec_sh_health.csv')
     if os.path.exists(h):
         hr = [r for r in csv.DictReader(open(h)) if r.get('tow')]

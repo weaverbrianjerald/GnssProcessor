@@ -2,34 +2,32 @@
  * \file GnssConfigLoad.cpp
  * \brief JSON configuration loading split into per-section helpers.
  *
- * @c GnssConfig::loadFromJson lives here as a thin orchestrator that
- * opens the file, parses the JSON once, and dispatches to one private
- * member function per top-level config section.  Each section helper
- * is independently readable and follows the same shape:
+ * @c GnssConfig::loadFromJson is a thin orchestrator: it resolves the
+ * config file and its @c extends chain into one JSON document, then
+ * dispatches to one private member function per top-level config
+ * section (loadNetworkSection_ lives in GnssConfigLoadNetwork.cpp).
+ * Each section helper can be read on its own and follows the same shape:
  *
  *   1. Pull a section reference via @c detail::jsection(...) (or read
  *      a few scalars directly via @c detail::jval<T>(...)).
  *   2. Populate the corresponding GnssConfig private members.
  *   3. Emit one or two summary log lines on the @c gnss_config logger.
  *
- * The hierarchical/legacy-flat fallback chain — try the new dotted
- * path, fall back to the legacy top-level key, otherwise use a default
- * — is implemented once in @c GnssConfigJsonHelpers.hpp and reused by
- * every section.
+ * The hierarchical/legacy-flat fallback chain (try the new dotted path,
+ * then the legacy top-level key, otherwise use a default) is implemented
+ * once in @c GnssConfigJsonHelpers.hpp and reused by every section.
  *
- * Behavior is unchanged from the previous monolithic
- * @c GnssConfig::loadFromJson; only the file layout has moved.  The
- * commented-out "smart defaults" block from the old file (PPP-RTK
- * sat-bias / require-bia coupling) has been deleted; git history
- * preserves it should it ever need to come back.
+ * The commented-out "smart defaults" block of the former monolithic
+ * loader (PPP-RTK sat-bias / require-bia coupling) is not carried here;
+ * git history holds it.
  */
 
 #include "config/GnssConfig.hpp"
 #include "config/GnssConfigJsonHelpers.hpp"
 #include "config/BaselineFixtures.hpp"
-#include "common/Constants.hpp"                   // GPS_Lx_WAVELENGTH (H3 per-λ log line)
+#include "common/Constants.hpp"                   // GPS_Lx_WAVELENGTH (H3); unused in this file
 #include "math/TimeUtils.hpp"
-#include "products/NetworkProductEmitter.hpp"   // kDefaultDiscThresholdM (R9 single source of truth)
+#include "products/NetworkProductEmitter.hpp"   // kDefaultDiscThresholdM (R9); unused in this file
 #include "products/StationInfoFile.hpp"
 #include <algorithm>
 #include <cctype>
@@ -56,7 +54,7 @@ namespace GnssProcessor {
     using detail::jsection;
 
     // =================================================================
-    //  "extends" — config inheritance (base + delta)
+    //  "extends": config inheritance (base + delta)
     // =================================================================
     namespace {
 
@@ -67,25 +65,32 @@ namespace GnssProcessor {
         /// @brief Resolve one config file into a fully merged JSON document.
         ///
         /// A config may declare `"extends": "<path>"` or `"extends": ["<a>", "<b>"]` to
-        /// inherit from one or more base configs.  Bases are merged left-to-right and the
-        /// CHILD always wins (see detail::deepMergeJson for the object-vs-replace rule).
+        /// inherit from one or more base configs.  Bases are merged left to right, each
+        /// over the previous ones, and the child is merged last, so it always wins
+        /// (detail::deepMergeJson: objects merge key by key, arrays, scalars and null
+        /// replace).
         ///
-        /// Paths are resolved relative to the DECLARING file's directory first, then to the
-        /// process working directory — so `"extends": "../profiles/network_base.json"` works
+        /// A base path is resolved relative to the declaring file's directory first; if
+        /// no file exists there, the path is used as written (relative to the process
+        /// working directory).  So `"extends": "../profiles/network_base.json"` works
         /// from a config in `config/test_suite/`, and a repo-root-relative
         /// `"config/profiles/network_base.json"` works when invoked from the repo root.
         ///
-        /// Byte-identity: a config with no `extends` key takes the `chain.empty()` path and
-        /// this function returns exactly what `json::parse` produced, so every one of the
-        /// project's existing configs parses bit-for-bit as before.
+        /// Byte-identity: a config with no `extends` key is returned exactly as
+        /// `json::parse` produced it and adds nothing to @p chain, so a config without
+        /// inheritance loads as a plain parse.
         ///
         /// @param p        file to load.
         /// @param log      logger for diagnostics.
-        /// @param chain    OUT — every base actually merged, in application order.
+        /// @param chain    OUT: every base actually merged, in application order
+        ///                 (a base's own bases precede it).
         /// @param seen     cycle-detection set of canonical paths.
         /// @param depth    recursion depth.
-        /// @param out      OUT — the merged document.
-        /// @return false on a missing/unparseable base, a cycle, or depth overflow.
+        /// @param out      OUT: the merged document.
+        /// @return false on a file that cannot be opened, a malformed `extends` value
+        ///         (neither a string nor an array of strings), a cycle, or depth
+        ///         overflow.  A JSON syntax error throws from `json::parse`; the caller
+        ///         (loadFromJson) catches it and returns false.
         bool loadConfigWithExtends(const std::filesystem::path& p,
                                    const std::shared_ptr<spdlog::logger>& log,
                                    std::vector<std::string>& chain,
@@ -117,7 +122,7 @@ namespace GnssProcessor {
                 f, /*callback=*/nullptr, /*allow_exceptions=*/true, /*ignore_comments=*/true);
 
             if (!self.is_object() || !self.contains("extends")) {
-                out = std::move(self);       // no inheritance — verbatim, byte-identical path
+                out = std::move(self);       // no inheritance: returned verbatim (byte-identical)
                 return true;
             }
 
@@ -138,8 +143,8 @@ namespace GnssProcessor {
                            "an array of strings.", p.string());
                 return false;
             }
-            // `extends` is a loader directive, not a settings key — drop it so no section
-            // loader ever sees it and so the merged document looks hand-written.
+            // `extends` is a loader directive, not a settings key.  Erase it so no section
+            // loader sees it and the merged document reads like a single config file.
             self.erase("extends");
 
             nlohmann::json merged = nlohmann::json::object();
@@ -160,7 +165,7 @@ namespace GnssProcessor {
     }  // namespace
 
     // =================================================================
-    // loadFromJson — orchestrator
+    // loadFromJson: orchestrator
     // =================================================================
 
     bool GnssConfig::loadFromJson(const std::filesystem::path& path, LogManager& log_manager) {
@@ -172,10 +177,10 @@ namespace GnssProcessor {
             }
             file.close();
 
-            // Resolve `extends` BEFORE any section loader runs, so every loader sees one
-            // flat document and none of them needs to know inheritance exists.  With no
-            // `extends` key this is a parse and nothing else — byte-identical to the
-            // pre-inheritance loader for all ~493 existing configs.
+            // Resolve `extends` before any section loader runs, so every loader sees one
+            // merged document and none of them handles inheritance.  With no `extends`
+            // key this step is a plain parse, byte-identical to loading without
+            // inheritance support.
             nlohmann::json json;
             {
                 auto cfg_log = log_manager.getLogger("gnss_config");
@@ -214,11 +219,10 @@ namespace GnssProcessor {
             // multiple sections in their error messages.
             {
                 auto cfg_log = log_manager.getLogger("gnss_config");
-                // Doppler is needed for receiver-velocity estimation; if the
-                // user opts in to estimate_velocity but trimmed 'D' out of
-                // rinex_types, the velocity update would silently have no
-                // observations to drive it.  Warn loudly so the
-                // misconfiguration is obvious.
+                // Doppler is needed for receiver-velocity estimation; with
+                // estimate_velocity on and 'D' absent from rinex_types, the
+                // velocity update has no observations to drive it and nothing
+                // else reports that, so warn at load time.
                 if (estimate_velocity_ &&
                     rinex_types_.find('D') == std::string::npos) {
                     cfg_log->warn("estimation.estimate_velocity=true but 'D' is "
@@ -292,12 +296,11 @@ namespace GnssProcessor {
                                                                        "Baseline-Multi";
             log->info("Processing mode: {}", mode_label);
         }
-        // Legacy "signal_mode: all" used to mean both "all bands" AND
-        // "every tracking-mode channel per band".  The new design splits
-        // those into frequency_mode + channel_mode.  Track whether the
-        // legacy path with "all" was taken so the channel_mode block
-        // below can preserve back-compat by defaulting channel_mode to
-        // "all" when the user didn't set it explicitly.
+        // The legacy key "signal_mode: all" means both "all bands" and "every
+        // tracking-mode channel per band"; the current keys split those into
+        // frequency_mode and channel_mode.  Record whether the legacy key was read
+        // with "all", so the channel_mode block below can default channel_mode to
+        // "all" when it is not set explicitly (back-compat).
         bool legacy_signal_mode_all = false;
         // ----- KF frequency mode (prefer new name; accept legacy signal_mode) -----
         {
@@ -345,8 +348,8 @@ namespace GnssProcessor {
         // Which tracking attribute a station latches per band at its first
         // processed epoch.  "count" is the historical rule and the default, so an
         // absent key is byte-identical.  "priority" walks the priority list and
-        // takes the first entry that clears the coverage floor, then makes the
-        // code follow the phase's attribute.
+        // takes the first entry that clears the coverage floor, then (by default,
+        // see card CSL-3 below) makes the code follow the phase's attribute.
         {
             std::string raw = jval<std::string>(json, "processing.canonical_signal_rule",
                                                 "canonical_signal_rule", std::string{"count"});
@@ -366,13 +369,13 @@ namespace GnssProcessor {
                 canonical_signal_min_coverage_ =
                     std::min(1.0, std::max(0.0, canonical_signal_min_coverage_));
             }
-            // ----- Card CSL-3: does the CODE follow the PHASE's attribute? -----
-            // True is the clause CSL-1 built, so an absent key is byte-identical.
-            // False decides the code by the same first-in-the-list-with-coverage
-            // rule as the phase, on its own list: the census measured what the
-            // follow costs a wire whose C1W code biases thin when the 16 stations
-            // that track L1C phase with C1W code move their code to C1C (MSC §4).
-            // Read only under Priority — Count never had the clause.
+            // ----- Whether the code follows the phase's attribute (card CSL-3) -----
+            // True is the CSL-1 clause, so an absent key is byte-identical.  False
+            // decides the code by the same rule as the phase (first list entry that
+            // clears the coverage floor), on the code's own list.  Under true, a
+            // station that tracks L1C phase with C1W code moves its code to C1C,
+            // which thins the wire's C1W code biases; the census measured that cost
+            // (MSC §4).  Consulted only under Priority; Count has no such clause.
             canonical_signal_code_follows_phase_ = jval<bool>(json,
                 "processing.canonical_signal_code_follows_phase",
                 "canonical_signal_code_follows_phase", true);
@@ -389,13 +392,13 @@ namespace GnssProcessor {
             else
                 log->info("Canonical-signal rule: count (highest satellite count per band, "
                           "ties to priority order).");
-            // ----- Card CSL-2: the per-station scope of the rule -----
-            // Empty (the default) leaves the rule global, so an absent key is
-            // byte-identical.  A non-empty list is a SCOPE: the listed stations
-            // decide under Priority and every other station under Count, which is
-            // what separates a station-local cause from a support count (CSL §6).
-            // Names are upper-cased here so the comparison at the decision site is
-            // a plain equality on the station label the network already carries.
+            // ----- Per-station scope of the rule (card CSL-2) -----
+            // Empty (the default) applies the rule to every station, so an absent key
+            // is byte-identical.  A non-empty list scopes it: the listed stations
+            // decide under Priority and every other station under Count, which
+            // separates a station-local cause from a support count (CSL §6).  Names
+            // are upper-cased here so the decision site can compare them to the
+            // station label the network already carries with plain equality.
             canonical_signal_priority_stations_.clear();
             {
                 const auto& arr = jsection(json, "processing.canonical_signal_priority_stations",
@@ -612,12 +615,13 @@ namespace GnssProcessor {
             log->warn("Non-positive ssr_max_age_s ({:.1f}) → 30 s default", ssr_max_age_s_);
             ssr_max_age_s_ = 30.0;
         }
-        // A5: SSR code/phase-bias staleness gate (default matches the clock max-age).
+        // SSR code/phase-bias staleness gate; its max age defaults to the clock max age (A5).
         enable_ssr_bias_max_age_ = jval<bool>(json,
             "processing.enable_ssr_bias_max_age", "enable_ssr_bias_max_age", false);
-        // RTA-9(a): remember whether the USER wrote the key (either form) — the
-        // network-consumer profile arms the gate under bias consumption only
-        // when the user expressed no preference (explicit false is respected).
+        // Record whether the config sets the key (dotted or legacy form): the
+        // network-consumer profile (and deriveClosedLoopConsumerConfig) arms the gate
+        // under bias consumption only when the key is absent, so an explicit false is
+        // respected (RTA-9(a)).
         enable_ssr_bias_max_age_explicit_ =
             detail::resolvePath(json, "processing.enable_ssr_bias_max_age") != nullptr
             || json.contains("enable_ssr_bias_max_age");
@@ -628,10 +632,10 @@ namespace GnssProcessor {
                       ssr_bias_max_age_s_, ssr_max_age_s_);
             ssr_bias_max_age_s_ = ssr_max_age_s_;
         }
-        // A5 stale-hold: the apply gate (and its freshness-flip ambiguity reset)
-        // drops a bias only past factor × ssr_bias_max_age_s, HOLDING the last value
-        // over shorter staleness gaps — a provider update interval hovering near the
-        // max age then produces no model step and no reset per update cycle.
+        // Stale-hold (A5): the apply gate (and its freshness-flip ambiguity reset)
+        // drops a bias only past factor × ssr_bias_max_age_s and holds the last value
+        // over shorter staleness gaps, so a provider update interval near the max age
+        // produces no model step and no reset per update cycle.
         ssr_bias_stale_hold_factor_ = jval<double>(json,
             "processing.ssr_bias_stale_hold_factor", "ssr_bias_stale_hold_factor", 2.0);
         if (ssr_bias_stale_hold_factor_ < 1.0) {
@@ -646,10 +650,10 @@ namespace GnssProcessor {
                       ssr_bias_max_age_s_,
                       ssr_bias_max_age_s_ * ssr_bias_stale_hold_factor_,
                       ssr_bias_stale_hold_factor_);
-        // Card CC (A): the declared-step ambiguity carry for a network-product
-        // consumer.  Default false = the existing reset reaction (byte-identical);
-        // the closed-loop harness derives it from network.closed_loop.pb_disc_carry
-        // (deriveClosedLoopConsumerConfig), a standalone consumer sets it here.
+        // Declared-step ambiguity carry for a network-product consumer (card CC (A)).
+        // Default false keeps the reset reaction (byte-identical).  The closed-loop
+        // harness derives it from network.closed_loop.pb_disc_carry
+        // (deriveClosedLoopConsumerConfig); a standalone consumer sets it here.
         ssr_phase_bias_disc_carry_ = jval<bool>(json,
             "processing.ssr_phase_bias_disc_carry", "ssr_phase_bias_disc_carry", false);
         if (ssr_phase_bias_disc_carry_)
@@ -657,10 +661,10 @@ namespace GnssProcessor {
                       "freshness flip translates the float ambiguity by -delta (value-only, "
                       "covariance kept) instead of resetting it; first sightings, an NL/WL "
                       "basis, a BSSD consumer and unknown keys still take the reset.");
-        // Card PBT (A): the EVERY-step ambiguity translation.  Default false =
-        // the existing reset (or, under card CC, the declared-step carry) —
-        // byte-identical; the closed-loop harness derives it from
-        // network.closed_loop.pb_step_translate (deriveClosedLoopConsumerConfig),
+        // Ambiguity translation on every applied phase-bias step, declared or not
+        // (card PBT (A)).  Default false keeps the reset (or, with card CC armed, the
+        // declared-step carry), byte-identical.  The closed-loop harness derives it
+        // from network.closed_loop.pb_step_translate (deriveClosedLoopConsumerConfig);
         // a standalone consumer sets it here.
         ssr_phase_bias_step_translate_ = jval<bool>(json,
             "processing.ssr_phase_bias_step_translate", "ssr_phase_bias_step_translate", false);
@@ -691,11 +695,11 @@ namespace GnssProcessor {
                           "stay 0).  The declared population is handled by the translation and "
                           "is reported on its own summary line.");
         }
-        // Card ALC: the consumer's ambiguity LEVEL re-validation — invariant #7's
-        // re-coupling edge for the carry and the translation.  Default false =
-        // nothing measured and nothing written (byte-identical); the closed-loop
+        // Consumer ambiguity level re-validation: the re-coupling edge (invariant #7)
+        // of the declared-step carry and the step translation (card ALC).  Default
+        // false measures and writes nothing (byte-identical).  The closed-loop
         // harness derives it from network.closed_loop.amb_level_check
-        // (deriveClosedLoopConsumerConfig), a standalone consumer sets it here.
+        // (deriveClosedLoopConsumerConfig); a standalone consumer sets it here.
         amb_level_check_ = jval<bool>(json,
             "processing.amb_level_check", "amb_level_check", false);
         amb_level_check_window_ep_ = jval<int>(json,
@@ -733,13 +737,12 @@ namespace GnssProcessor {
                       "spanning a product step can never trip.",
                       amb_level_check_mode_, amb_level_check_window_ep_, amb_level_check_k_);
         }
-        // RTA-9(b): CLOCK stale-hold rung.  0 (default) = off — the historic
-        // two-state gate (fresh/rejected) is byte-identical.  >0 opens the
-        // middle rung: a clock aged in (ssr_max_age, factor x ssr_max_age] is
-        // still applied (C0+C1*dt over the true dt) with URA-staleness R
-        // inflation on the consuming rows; beyond the window the original
-        // broadcast-grade cliff stands.  Values in (0,1] cannot shrink the base
-        // gate — clamp to 1 (no hold).
+        // Clock stale-hold rung (RTA-9(b)).  0 (default) is off: the two-state gate
+        // (fresh / rejected) is byte-identical.  A factor above 1 opens a middle
+        // rung: a clock aged in (ssr_max_age, factor x ssr_max_age] is still applied
+        // (C0+C1*dt over the true dt) with URA-staleness R inflation on the
+        // consuming rows; beyond that window the broadcast-grade cliff applies.
+        // Values in (0,1] cannot shrink the base gate and are clamped to 1 (no hold).
         ssr_clock_stale_hold_factor_ = jval<double>(json,
             "processing.ssr_clock_stale_hold_factor", "ssr_clock_stale_hold_factor", 0.0);
         if (ssr_clock_stale_hold_factor_ < 0.0) {
@@ -758,8 +761,8 @@ namespace GnssProcessor {
                       "beyond {:.1f}s the broadcast-grade cliff applies",
                       ssr_max_age_s_, ssr_max_age_s_ * ssr_clock_stale_hold_factor_,
                       ssr_max_age_s_ * ssr_clock_stale_hold_factor_);
-        // RTA-13 (opt-in): CODE-domain band-wise bias fallback.  Armed on the
-        // stores by RealTimeEngine::initialize (singleton) / runRealTime (owned).
+        // Code-domain band-wise bias fallback (RTA-13, opt-in).  Armed on the bias
+        // stores by RealTimeEngine::initialize (singleton) or runRealTime (owned).
         ssr_bias_band_fallback_ = jval<bool>(json,
             "processing.ssr_bias_band_fallback", "ssr_bias_band_fallback", false);
         if (ssr_bias_band_fallback_)
@@ -850,9 +853,9 @@ namespace GnssProcessor {
         relinearize_max_count_        = jval<int>(json,
             "processing.relinearize_max_count",        "relinearize_max_count",        -1);
 
-        // Eigen thread count.  Default 1 (sequential) — PPP-RTK matrix sizes
-        // (n≈350, m≈250) sit below the threshold where OpenMP fork/join
-        // overhead is absorbed by the parallel speedup.  0 = OpenMP default.
+        // Eigen thread count.  Default 1 (sequential): PPP-RTK matrix sizes
+        // (n≈350, m≈250) sit below the size at which the parallel speedup
+        // outweighs the OpenMP fork/join overhead.  0 = OpenMP default.
         eigen_threads_ = jval<int>(json, "processing.eigen_threads", "eigen_threads", 1);
 
         // Backward RTS smoother: post-processing only. Real-time guard
@@ -983,8 +986,8 @@ namespace GnssProcessor {
             }
         }
 
-        // RTA-7: standalone AR MW-WL suppression + first-class network-consumer
-        // profile.  Both default OFF/inert — byte-identical when absent.
+        // Standalone AR MW-WL suppression and the network-consumer profile (RTA-7).
+        // Both default off and inert, so a config without them is byte-identical.
         ar_ignore_mw_wl_ = jval<bool>(json, "processing.ar_ignore_mw_wl",
                                       "ar_ignore_mw_wl", false);
         if (ar_ignore_mw_wl_)
@@ -1000,10 +1003,10 @@ namespace GnssProcessor {
                                           "network_consumer_bias", true);
             nc.undifferenced = jval<bool>(json, "processing.network_consumer.undifferenced",
                                           "network_consumer_undifferenced", true);
-            // RTA-8(a): orbit-overlay source for the injected-store wiring.
+            // Orbit-overlay source for the injected-store wiring (RTA-8(a)).
             // "external" (default) keeps the orbit overlay on the singleton (the
             // external RTS corrections stream); "network" points it at the
-            // injected product store (future orbit-bearing product).
+            // injected product store (for a future orbit-bearing product).
             nc.orbit_source  = detail::toLower(jval<std::string>(
                 json, "processing.network_consumer.orbit_source",
                 "network_consumer_orbit_source", std::string{"external"}));
@@ -1013,8 +1016,9 @@ namespace GnssProcessor {
                           nc.orbit_source);
                 nc.orbit_source = "external";
             }
-            // Tri-state: only an EXPLICIT key becomes an override (-1 = derive
-            // exactly as the closed-loop driver does; see networkConsumerArIgnoreMwWl).
+            // Tri-state: only an explicit key becomes an override.  Absent leaves -1,
+            // which derives the value the way the closed-loop driver does (see
+            // networkConsumerArIgnoreMwWl).
             if (const auto* p = detail::resolvePath(json, "processing.network_consumer.ar_ignore_mw_wl"))
                 nc.ar_ignore_mw_wl = p->get<bool>() ? 1 : 0;
             nc.expect_reference_receiver = jval<std::string>(
@@ -1023,8 +1027,8 @@ namespace GnssProcessor {
             nc.expect_apriori_product_id = jval<std::string>(
                 json, "processing.network_consumer.expect_apriori_product_id",
                 "network_consumer_expect_apriori_product_id", std::string{});
-            // RTA-12: optional S-contract identity pins (frame=/atx=/oref= fields).
-            // Empty (default) = don't pin — checkContract only compares a field
+            // Optional S-contract identity pins, the frame=/atx=/oref= fields (RTA-12).
+            // Empty (default) does not pin: checkContract compares a field only
             // when the expectation declares it non-empty.
             nc.expect_frame_id = jval<std::string>(
                 json, "processing.network_consumer.expect_frame_id",
@@ -1035,10 +1039,10 @@ namespace GnssProcessor {
             nc.expect_orbit_ref = jval<std::string>(
                 json, "processing.network_consumer.expect_orbit_ref",
                 "network_consumer_expect_orbit_ref", std::string{});
-            // Card 7 (RTF-2): orbit/clock coherence age-skew budget.  0 (default)
-            // = the epoch-skew comparison + the clock withhold are OFF (IOD-SSR
-            // identity mismatches still count).  Armed on the stores at the
-            // setCodeBiasBandFallback sites (RealTimeEngine::initialize /
+            // Orbit/clock coherence age-skew budget (card 7, RTF-2).  0 (default)
+            // turns off the epoch-skew comparison and the clock withhold; IOD-SSR
+            // identity mismatches are still counted.  Armed on the stores at the
+            // setCodeBiasBandFallback sites (RealTimeEngine::initialize,
             // Application::runRealTime).
             nc.orbit_clock_max_skew_s = jval<double>(
                 json, "processing.network_consumer.orbit_clock_max_skew_s",
@@ -1095,7 +1099,7 @@ namespace GnssProcessor {
                                                  "require_bia_for_signals", false);
         estimate_sat_biases_       = jval<bool>(json, "estimation.estimate_sat_biases",
                                                  "estimate_sat_biases", false);
-        // Network producer (PPP_RTK_Network) toggles.  Both default false so the
+        // Network producer (PPP_RTK_Network) toggles.  All three default false so the
         // single-receiver user / baseline paths are byte-identical; they only
         // take effect once the network estimator (W4) creates the shared states.
         estimate_sat_phase_biases_ = jval<bool>(json, "estimation.estimate_sat_phase_biases",
@@ -1106,8 +1110,8 @@ namespace GnssProcessor {
                                                  "promote_sat_code_bias", false);
         // Sat-bias cache thresholds (only meaningful when estimate_sat_biases
         // is on).  warm_age_s controls full warm restore; max_age_s caps
-        // entry lifetime.  Validate warm<=max; if not, clamp warm down so
-        // both stay positive and the warm band is never empty.
+        // entry lifetime.  Negative values clamp to 0, and a warm age above
+        // the max age is clamped down to it, so warm <= max always holds.
         sat_bias_cache_warm_age_s_ = jval<double>(json,
             "estimation.sat_bias_cache.warm_age_s",
             "sat_bias_cache_warm_age_s", 300.0);
@@ -1145,12 +1149,13 @@ namespace GnssProcessor {
         cycle_slip_.gf      = jval<bool>(json, "estimation.cycle_slip.gf",      "cycle_slip_gf",      false);
         cycle_slip_.ifp     = jval<bool>(json, "estimation.cycle_slip.if",      "cycle_slip_if",      enable_if_slip_detector_);
         // turbo_edit is a coordination mode (MW+GF joint per-signal repair), not
-        // a detector kind — rate-adaptive via the split gate; see CycleSlipConfig doc.
+        // a detector kind; it is rate-adaptive through the split gate (see the
+        // CycleSlipConfig doc).
         cycle_slip_.turbo_edit = jval<bool>(json, "estimation.cycle_slip.turbo_edit", "cycle_slip_turbo_edit", false);
         // MW-only code-domain veto: an MW flag with an affirmatively stable
         // GF is classified as a code artifact and the phase reset is skipped
-        // (KF residual gate backstops).  Default on — it only fires inside
-        // turbo_edit's own trust gates; see CycleSlipConfig doc.
+        // (the KF residual gate is the backstop).  Default on: it fires only
+        // inside turbo_edit's own trust gates; see the CycleSlipConfig doc.
         cycle_slip_.turbo_edit_mw_only_veto =
             jval<bool>(json, "estimation.cycle_slip.turbo_edit_mw_only_veto",
                        "cycle_slip_turbo_edit_mw_only_veto", true);
@@ -1189,10 +1194,10 @@ namespace GnssProcessor {
             }
             cycle_slip_.turbo_edit_wl_settle_max_s = cap;
         }
-        // Split-capability gate (cycles): the rate-adaptive lever — the joint
+        // Split-capability gate (cycles), the rate-adaptive lever: the joint
         // solve emits per-signal integers only when the arc's measured GF
         // noise satisfies σ_TD2 ≤ this × |λ1−λ2|.  Must be > 0; an invalid
-        // override warns and keeps the default.  See CycleSlipConfig doc.
+        // override warns and keeps the default.  See the CycleSlipConfig doc.
         {
             const double v = jval<double>(
                 json, "estimation.cycle_slip.turbo_edit_split_max_sigma",
@@ -1244,9 +1249,9 @@ namespace GnssProcessor {
         // MW detection reference: which statistic the slip gate tests.
         // "hatch_mean" (legacy slow recursive mean, TD1-MAD spread),
         // "local_median" (short causal window median with a matching
-        // window-MAD spread — trend-immune), or "time_difference" (the
-        // deviation IS the MW time-difference, order per mw_td_order —
-        // trend- AND curvature-immune; see MwDetectReference doc).
+        // window-MAD spread; immune to trends), or "time_difference" (the
+        // deviation is the MW time difference of order mw_td_order; immune
+        // to trends and curvature).  See the MwDetectReference doc.
         {
             const std::string raw = jval<std::string>(json, "estimation.cycle_slip.mw_detect_reference",
                                                       "cycle_slip_mw_detect_reference", "hatch_mean");
@@ -1275,8 +1280,8 @@ namespace GnssProcessor {
             }
 
             // Window length for the local-median reference.  Bounds match the
-            // detector: ≥ 15 (MwSlipDetector::kMinEpochsForAdaptive — shorter
-            // windows give a statistically marginal MAD and would retire the
+            // detector: ≥ 15 (MwSlipDetector::kMinEpochsForAdaptive; a shorter
+            // window gives a statistically marginal MAD and would retire the
             // warmup floors early) and ≤ 64 (fixed per-arc ring capacity).
             int win = jval<int>(json, "estimation.cycle_slip.mw_local_window",
                                 "cycle_slip_mw_local_window", cycle_slip_.mw_local_window);
@@ -1326,11 +1331,11 @@ namespace GnssProcessor {
         enable_glonass_ifb_          = jval<bool>(json, "estimation.glonass_ifb.enable",
                                                    "enable_glonass_ifb", false);
         if (enable_glonass_ifb_ && !estimate_ifb_) {
-            // The PPP-RTK network producer force-enables BOTH estimate_ifb and
-            // glonass_ifb under network.estimate_glonass (loadNetworkSection_, which
-            // dispatches AFTER this estimation section), so the prerequisite is
-            // satisfied there — don't warn on that config (the warning, evaluated on
-            // the pre-force values, would be misleading).
+            // Under network.estimate_glonass the PPP-RTK network producer forces
+            // both estimate_ifb and glonass_ifb on (loadNetworkSection_, which runs
+            // after this estimation section), so the prerequisite is met there.
+            // Skip the warning for that config: evaluated on the values before the
+            // force, it would be misleading.
             const bool glonass_network =
                 jval<bool>(json, "network.estimate_glonass", "estimate_glonass", false);
             if (!glonass_network) {
@@ -1396,12 +1401,11 @@ namespace GnssProcessor {
         if (persistent_bias_min_cycles_ < 0.0) persistent_bias_min_cycles_ = 0.0;
 
         // In-update Huber R-inflation threshold (standardized residual).
-        // Acts on a standardized phase residual, no history needed —
-        // catches first-epoch biases that the EWMA persistence detector
-        // is too slow to identify.  Default 6.0 — the same threshold as
-        // the outlier reset (sub-cycle phase rows whose standardized
-        // residual exceeds it get their R inflated toward the
-        // threshold).  0 disables.
+        // Acts on a standardized phase residual and needs no history, so it
+        // catches first-epoch biases that the EWMA persistence detector is
+        // too slow to identify.  Default 6.0, the same threshold as the
+        // outlier reset (sub-cycle phase rows whose standardized residual
+        // exceeds it get their R inflated toward the threshold).  0 disables.
         phase_huber_sres_threshold_ = jval<double>(json,
             "estimation.phase_huber_sres_threshold", "phase_huber_sres_threshold", 6.0);
         if (phase_huber_sres_threshold_ < 0.0) phase_huber_sres_threshold_ = 0.0;
@@ -1448,9 +1452,9 @@ namespace GnssProcessor {
         }
 
         // Residual history tracker (post-fit temporal corroboration of
-        // spatial pivot-slip detection).  Defaults are off — opt in
-        // via JSON.  See ResidualHistoryTracker.hpp for the EWMA
-        // recurrence and reset semantics.
+        // spatial pivot-slip detection).  Off by default; enabled from
+        // JSON.  See ResidualHistoryTracker.hpp for the EWMA recurrence
+        // and reset semantics.
         residual_history_.enabled = jval<bool>(json,
             "estimation.residual_history.enabled",   "residual_history_enabled",   false);
         residual_history_.alpha   = jval<double>(json,
@@ -1468,13 +1472,13 @@ namespace GnssProcessor {
                 residual_history_.z_threshold, residual_history_.fraction_threshold);
         }
 
-        // Stuck-code-bias detector — breaks the closed loop where an
-        // over-converged sat-bias state keeps causing its own code
-        // rows to be rejected as outliers (innovation → reject →
-        // bias never updates → same innovation next epoch).  Driven
-        // by the residual-history tracker's per-row EWMA mean and
-        // consecutive-rejection streak.  Default-on; cheap when no
-        // row is stuck.  See StuckCodeBiasConfig docs for trigger
+        // Stuck-code-bias detector: breaks the closed loop in which an
+        // over-converged sat-bias state keeps causing its own code rows
+        // to be rejected as outliers (innovation → reject → bias never
+        // updates → same innovation next epoch).  Driven by the
+        // residual-history tracker's per-row EWMA mean and
+        // consecutive-rejection streak.  On by default; cheap when no
+        // row is stuck.  See the StuckCodeBiasConfig docs for trigger
         // semantics.
         stuck_code_bias_.enabled = jval<bool>(json,
             "estimation.stuck_code_bias.enabled",     "stuck_code_bias_enabled",     true);
@@ -1514,15 +1518,16 @@ namespace GnssProcessor {
                 slip_state_reinflation_.sat_bias_std_m > 0.0 ? "on" : "fallback-cold-start");
         }
 
-        // Real-time startup gate: defer ALL estimation until the SSR
-        // correction stream is ready — every modeled above-mask satellite is
-        // broadcast+SSR (cm-grade clock, phase retained) and a solvable floor
-        // of them is present — so the filter seeds code+phase together instead
-        // of cold-starting code-only on metre-grade broadcast clocks (which
-        // bakes a contaminated iono/bias/ambiguity partition as each sat's SSR
-        // flips it cm-grade mid-arc).  Real-time only; no-op in post-processing
-        // (precise CLK present -> never broadcast_only).  See
-        // CorrectionsReadyGateConfig docs.
+        // Real-time startup gate: defer all estimation until the SSR correction
+        // stream is ready, so the filter seeds code+phase together instead of
+        // cold-starting code-only on metre-grade broadcast clocks (which bakes in
+        // a contaminated iono/bias/ambiguity partition as each satellite's SSR
+        // turns it cm-grade mid-arc).  Ready means a quorum of broadcast+SSR
+        // satellites (cm-grade clock, phase retained): min_satellites in total
+        // and, when min_satellites_per_system > 0, a per-constellation floor;
+        // require_all_above_mask also demands every modeled above-mask satellite.
+        // Real-time only; a no-op in post-processing (precise CLK present, so
+        // never broadcast_only).  See the CorrectionsReadyGateConfig docs.
         corrections_ready_gate_.enabled = jval<bool>(json,
             "estimation.defer_until_corrections_ready.enabled",        "defer_until_corrections_ready_enabled",        false);
         corrections_ready_gate_.min_satellites = std::max<int>(1, jval<int>(json,
@@ -1548,9 +1553,9 @@ namespace GnssProcessor {
                 corrections_ready_gate_.timeout_s > 0.0 ? "timeout -> degraded" : "wait indefinitely");
         }
 
-        // Soft a-priori ZWD constraint — anchors the BSSD [up, ZWD] null space
+        // Soft a-priori ZWD constraint: anchors the BSSD [up, ZWD] null space
         // so a common-mode start error cannot run ZWD/height to ~1000 m.  See
-        // ZwdConstraintConfig docs.  Default off; opt in for real-time BSSD.
+        // the ZwdConstraintConfig docs.  Default off; intended for real-time BSSD.
         zwd_constraint_.enabled = jval<bool>(json,
             "estimation.zwd_constraint.enabled",   "zwd_constraint_enabled",   false);
         zwd_constraint_.apriori_m = jval<double>(json,
@@ -1562,8 +1567,8 @@ namespace GnssProcessor {
                 zwd_constraint_.apriori_m, zwd_constraint_.sigma_m);
         }
 
-        // Adaptive ionospheric process noise (GF second-difference driven).
-        // Defaults off — opt in via JSON.  See AdaptiveIonoQConfig and
+        // Adaptive ionospheric process noise (driven by GF second differences).
+        // Off by default; enabled from JSON.  See AdaptiveIonoQConfig and
         // IonoVariabilityMonitor for the recent/baseline MAD-sigma ratio scheme.
         adaptive_iono_q_.enabled = jval<bool>(json,
             "estimation.adaptive_iono_process_noise.enable", "adaptive_iono_q_enable", false);
@@ -1587,7 +1592,7 @@ namespace GnssProcessor {
         }
 
         // GIM ionosphere weighting (PPP-RTK soft iono constraint).
-        // Defaults off — opt in via JSON.  See IonosphereWeightingConfig.
+        // Off by default; enabled from JSON.  See IonosphereWeightingConfig.
         iono_weighting_.enabled = jval<bool>(json,
             "estimation.ionosphere_weighting.enable", "ionosphere_weighting_enable", false);
         iono_weighting_.common_mode_sigma_m = jval<double>(json,
@@ -1637,14 +1642,14 @@ namespace GnssProcessor {
             "estimation.global_vtec_sh.sun_fixed", "global_vtec_sh_sun_fixed", true);
         global_vtec_sh_.trace = jval<bool>(json,
             "estimation.global_vtec_sh.trace", "global_vtec_sh_trace", false);
-        // T1a physical-band probe on the estimated mean VTEC (a₀₀): a WARN fires when
-        // a₀₀ leaves [low, high] TECU so a diverging global field is visible + attributable.
-        // Pure diagnostic — never touches state.  Set low ≥ high to silence.
+        // Physical-band probe on the estimated mean VTEC a₀₀ (T1a): a warning fires when
+        // a₀₀ leaves [low, high] TECU, so a diverging global field is visible and
+        // attributable.  Diagnostic only; never touches state.  Set low ≥ high to silence.
         global_vtec_sh_.a00_warn_low_tecu = jval<double>(json,
             "estimation.global_vtec_sh.a00_warn_low_tecu", "global_vtec_sh_a00_warn_low_tecu", 2.0);
         global_vtec_sh_.a00_warn_high_tecu = jval<double>(json,
             "estimation.global_vtec_sh.a00_warn_high_tecu", "global_vtec_sh_a00_warn_high_tecu", 150.0);
-        // T1b: SH pseudo-obs row cadence (0/1 = every epoch = current behaviour).
+        // SH pseudo-obs row cadence (T1b): 0 or 1 = every epoch (the default behaviour).
         global_vtec_sh_.row_decimation_epochs = jval<int>(json,
             "estimation.global_vtec_sh.row_decimation_epochs", "global_vtec_sh_row_decimation_epochs", 0);
         if (global_vtec_sh_.row_decimation_epochs < 0) global_vtec_sh_.row_decimation_epochs = 0;
@@ -1656,7 +1661,7 @@ namespace GnssProcessor {
             global_vtec_sh_.mean_vtec_prior_sigma_tecu = 30.0;
         if (global_vtec_sh_.representation_sigma_tecu <= 0.0)
             global_vtec_sh_.representation_sigma_tecu = 5.0;
-        // Iono-2 mechanism A: optional second thin shell (dual-layer SH field).
+        // Optional second thin shell, a dual-layer SH field (Iono-2 mechanism A).
         global_vtec_sh_.layer2_max_degree = jval<int>(json,
             "estimation.global_vtec_sh.layer2_max_degree", "global_vtec_sh_layer2_max_degree", 0);
         global_vtec_sh_.layer2_height_km = jval<double>(json,
@@ -1689,16 +1694,17 @@ namespace GnssProcessor {
                       global_vtec_sh_.layer2_kaula_scale_tecu,
                       global_vtec_sh_.layer2_mean_vtec_prior_tecu,
                       global_vtec_sh_.layer2_mean_vtec_prior_sigma_tecu);
-        // T5: correlated per-LOS SH representativeness-error deviation (GM carry).
+        // Correlated per-LOS SH representativeness-error deviation, a GM carry (T5).
         global_vtec_sh_.rep_error_tau_s = jval<double>(json,
             "estimation.global_vtec_sh.rep_error_tau_s", "global_vtec_sh_rep_error_tau_s", 0.0);
         if (global_vtec_sh_.rep_error_tau_s < 0.0) global_vtec_sh_.rep_error_tau_s = 0.0;
-        // Iono-2 v3: carried-prior common-mode de-mean (the anti-ratchet;
+        // Common-mode de-mean of the carried prior, the anti-ratchet (Iono-2 v3;
         // docs/SPEC_iono2_mechB_v3.md).  Inert without the GM deviation itself.
         global_vtec_sh_.rep_error_demean = jval<bool>(json,
             "estimation.global_vtec_sh.rep_error_demean", "global_vtec_sh_rep_error_demean", false);
-        // Iono-2 v3k: erase-policy split (raw-confirmed slip ⇒ erase; D5-only
-        // re-tap ⇒ keep level, re-tap variance).  Inert without the GM deviation.
+        // Erase-policy split (Iono-2 v3k): a raw-confirmed slip erases; a D5-only
+        // re-tap keeps the level and re-taps the variance.  Inert without the GM
+        // deviation.
         global_vtec_sh_.rep_error_d5_keep = jval<bool>(json,
             "estimation.global_vtec_sh.rep_error_d5_keep", "global_vtec_sh_rep_error_d5_keep", false);
         if (global_vtec_sh_.rep_error_tau_s > 0.0) {
@@ -1761,11 +1767,12 @@ namespace GnssProcessor {
                                                  "ar_wl_max_frac", 0.40);
         ar_min_success_rate_     = jval<double>(json, "estimation.ambiguity_resolution.min_success_rate",
                                                  "ar_min_success_rate", 0.999);
-        // The WL-only / MW-WL paths apply MW integers directly and had NO
-        // success-rate gate at all — only the wl_max_frac point test.  Default
-        // ON: this closes a fail-unsafe path (an ungated 5-constraint fix put a
-        // held-out consumer 35 m off, SPEC_clock_temporal_anchor §8.11).  Set
-        // false to reproduce the pre-fix behaviour exactly.
+        // The WL-only / MW-WL paths apply MW integers directly; without
+        // wl_only_ffr their only test is the wl_max_frac point test.  The
+        // bootstrap success-rate gate is on by default because the ungated path
+        // is fail-unsafe (an ungated 5-constraint fix put a held-out consumer
+        // 35 m off; SPEC_clock_temporal_anchor §8.11).  Set false only to
+        // reproduce a lineage stored without the gate.
         ar_wl_only_ffr_          = jval<bool>(json, "estimation.ambiguity_resolution.wl_only_ffr",
                                               "ar_wl_only_ffr", true);
         ar_wl_only_min_arc_count_ = jval<int>(json, "estimation.ambiguity_resolution.wl_only_min_arc_count",
@@ -1824,18 +1831,15 @@ namespace GnssProcessor {
                 state_ambiguity_basis_ = StateAmbiguityBasis::PerBand;
             }
         }
-        // NOTE: the consolidated "Toggles: …" echo used to print HERE, and printed
-        // PRE-RESOLUTION values.  It moved to logConfigurationSummary_ (same reason
-        // the aiding block below is loaded at the tail of the IMU section): this
-        // helper is call #2 of 12 in loadFromJson, and NINE of the fields that line
-        // reports are still mutated by three LATER sections — the IMU section, the
-        // app-mode/real-time section, and the whole network section.  `ifb=` was the
-        // reported case (the W6 and EXT-CB slices and the GLONASS slice all force
-        // estimate_ifb_ on afterwards); `imu=` was strictly worse, since
-        // imu_config_.enabled is still its NSDMI `false` here and is not parsed until
-        // ~800 lines later, so that field could only ever print "off".  Because the
-        // mutations span three different sections, an in-place annotation could not
-        // have named the affected fields — relocation is the fix.
+        // NOTE: the consolidated "Toggles: …" echo is printed by
+        // logConfigurationSummary_, not here.  This helper is the second of the
+        // twelve section loaders in loadFromJson, and several fields that line
+        // reports are still changed by later sections (the IMU section, the
+        // app-mode/real-time section and the network section): the W6, EXT-CB and
+        // GLONASS network slices force estimate_ifb_ on, and imu_config_.enabled
+        // keeps its NSDMI `false` until the IMU section parses it.  An echo here
+        // would print values before those sections resolve them.  (The aiding
+        // block is loaded at the tail of the IMU section for the same reason.)
     }
 
     // =================================================================
@@ -1874,12 +1878,12 @@ namespace GnssProcessor {
             process_noise_.system_time_rate_offset =
                 pn.value("system_time_rate_offset_q", 1e-10);
             // Ambiguity process noise.  Default 1e-12 is a numerical
-            // safety floor — sub-mm accumulation per day, physically
-            // indistinguishable from the constant-ambiguity model,
-            // keeps per-(sat, signal) ambiguity covariance from
-            // underflowing on long phase arcs (which on its own can
-            // trigger non-positive-definite Cholesky downstream).
-            // Set 0.0 in the JSON to enforce strict constant
+            // safety floor that keeps per-(sat, signal) ambiguity
+            // covariance from underflowing on long phase arcs (underflow
+            // alone can trigger a non-positive-definite Cholesky
+            // downstream); its sub-mm accumulation per day is physically
+            // indistinguishable from the constant-ambiguity model.
+            // Set 0.0 in the JSON to enforce a strictly constant
             // ambiguity.
             process_noise_.ambiguity           = pn.value("ambiguity_q", 1e-12);
         }
@@ -1913,21 +1917,21 @@ namespace GnssProcessor {
             default_meas_noise_.code_std_m, default_meas_noise_.phase_std_m, default_meas_noise_.doppler_std_m);
 
         // -----------------------------------------------------------
-        // Derive per-block code/phase σ tables from the unitless
-        // ratio table × the measurement_noise baselines.  The user
-        // tunes one σ per observable type (code, phase) via
-        // filter.measurement_noise; the per-block proportions follow
-        // automatically.  This keeps the relative hardware-quality
-        // hierarchy (Block III at 1/3 of legacy Block II, etc.)
-        // anchored to a single user knob and prevents drift between
-        // the code and phase block tables that previously had to be
-        // hand-edited in tandem.
+        // The per-block code/phase σ tables are derived (further below)
+        // from the unitless ratio table × the measurement_noise
+        // baselines.  One σ per observable type (code, phase) is tuned
+        // via filter.measurement_noise and the per-block proportions
+        // follow, so the relative hardware-quality hierarchy (Block III
+        // at 0.85 × legacy Block II in the default table, etc.) stays
+        // anchored to a single knob and the code and phase block tables
+        // cannot drift apart.
         // -----------------------------------------------------------
         // -----------------------------------------------------------
-        // JSON overrides for sat-block scale tables.  Optional —
-        // each subsection independently merges into / replaces the
-        // hard-coded defaults.  Parsed before the absolute-σ
-        // derivation below so any user override is reflected.
+        // Optional JSON overrides for the sat-block scale tables: a
+        // block_scale_factors list with at least one valid entry replaces
+        // the default table, while freq_band_scale / tracking_attr_scale
+        // entries merge into the defaults key by key.  Parsed before the
+        // absolute-σ derivation below so any override is reflected.
         // -----------------------------------------------------------
         {
             const auto& sb = jsection(json, "filter.satellite_block",
@@ -1967,9 +1971,9 @@ namespace GnssProcessor {
                                   sat_block_noise_params_.block_scale_factors.size());
                     }
                 }
-                // freq_band_scale + tracking_attr_scale: now split into
-                // per-observable tables.  Accepted JSON forms (mixable
-                // in the same block — keys are classified by position):
+                // freq_band_scale and tracking_attr_scale are per-observable
+                // tables.  Accepted JSON forms (they can be mixed in the same
+                // block; keys are classified by position):
                 //
                 //   1. Nested per-observable (preferred):
                 //        "code":  { "freq_band_scale": {...}, "tracking_attr_scale": {...} },
@@ -1979,9 +1983,8 @@ namespace GnssProcessor {
                 //      while GPS [phase][C] = 1.0 (no chip-rate effect
                 //      on carrier).
                 //
-                //   2. Legacy top-level (deprecated): old configs may
-                //      have set @c freq_band_scale or
-                //      @c tracking_attr_scale at the top level of
+                //   2. Legacy top-level (deprecated): @c freq_band_scale
+                //      or @c tracking_attr_scale set at the top level of
                 //      @c satellite_block.  Those are routed to the
                 //      @c code side with a deprecation warning, because
                 //      the original tables were calibrated for code
@@ -2022,8 +2025,8 @@ namespace GnssProcessor {
                         size_t merged_legacy = 0;
                         for (const auto& [k, v] : obs_json["tracking_attr_scale"].items()) {
                             if (k.size() == 1 && v.is_number()) {
-                                // Legacy flat key inside an observable block —
-                                // route to the observable's "default" table.
+                                // Legacy flat key inside an observable block:
+                                // route it to the observable's "default" table.
                                 target.tracking_attr_scale["default"][k[0]] =
                                     v.get<double>();
                                 ++merged_legacy;
@@ -2119,8 +2122,8 @@ namespace GnssProcessor {
                 bp.block_phase_std_m.emplace_back(block,
                     scale * default_meas_noise_.phase_std_m);
             }
-            // Fallback when no block match: scale factor 1.0 →
-            // baseline σ unchanged (conservative — matches the
+            // Fallback when no block matches: scale factor 1.0, so the
+            // baseline σ is unchanged (conservative; matches the
             // legacy / worst-case zenith noise).
             bp.default_code_std_m  = default_meas_noise_.code_std_m;
             bp.default_phase_std_m = default_meas_noise_.phase_std_m;
@@ -2147,10 +2150,12 @@ namespace GnssProcessor {
 
         // Stochastic model.  Drives both code and phase weighting,
         // but each model handles phase per its own per-model rule
-        // (see GnssConfig::getStochasticModel() docstring).  In
-        // particular, SatelliteBlock uses the block + freq + elevation
-        // pipeline on code while phase reduces to just the configured
-        // phase_std_m amplified by elevation.
+        // (see GnssConfig::getStochasticModel() docstring).  Under
+        // SatelliteBlock, code uses the block + freq + elevation
+        // pipeline; phase uses the same pipeline with the phase tables
+        // when satellite_block.apply_to_phase is true (the default),
+        // and only the configured phase_std_m amplified by elevation
+        // when it is false (see SatBlockNoiseParams::apply_to_phase).
         {
             std::string raw = jval<std::string>(json, "filter.stochastic_model", "stochastic_model", "elevation");
             const std::string low = toLower(raw);
@@ -2168,9 +2173,10 @@ namespace GnssProcessor {
         // code and phase.  Variance scales as 1/sin^(2·power)(elev),
         // i.e. σ = σ_zen / sin^power(elev).  Defaults: code=1.0
         // (legacy csc²(θ) on variance, fits code multipath and tropo
-        // path-length physics), phase=0.5 (csc(θ) on variance, fits
-        // phase carrier-loop noise + PCV miscalibration physics and
-        // keeps low-elevation residual checks usable).
+        // path-length physics) and phase=1.0 (the project standard,
+        // matching code).  A phase power of 0.5 (csc(θ) on variance)
+        // fits phase carrier-loop noise + PCV miscalibration physics
+        // and keeps low-elevation residual checks usable.
         code_elevation_power_  = jval<double>(json,
             "filter.code_elevation_power",  "code_elevation_power",  1.0);
         phase_elevation_power_ = jval<double>(json,
@@ -2257,16 +2263,15 @@ namespace GnssProcessor {
             model_corrections_.enable_atx_frequency_fallback  ? "on" : "off");
         log->info("Emission-time refinement: {} (second-pass slant-ZHD + IF-ATX subtraction in geometry pipeline)",
             model_corrections_.refine_emission_time ? "ENABLED" : "disabled");
-        // SPEC_phase_windup_sign.md §7: with the correction modeled but NOT
-        // accumulated, the raw atan2 angle is applied per epoch, so every
-        // half-cycle crossing steps the modeled phase by EXACTLY one cycle
-        // mid-pass — a band-common, equal-in-cycles staircase that is invisible
-        // to MW (ΔWL = 0) and lands as a phantom slip/level event (measured 43
-        // one-cycle jumps/day/sat ⇒ ~753/day at 63 stations; a standing
-        // invariant #1/#7 instance).  Every field lineage inherits this silently
-        // because the estimation key parses absent ⇒ false.  Behavior-neutral
-        // WARN only: flipping the loader default is a migration card
-        // (fingerprint-invalidating), not a quick edit.
+        // With the wind-up correction modeled but not accumulated, the raw atan2
+        // angle is applied per epoch, so every half-cycle crossing steps the
+        // modeled phase by exactly one cycle mid-pass: a band-common,
+        // equal-in-cycles staircase that is invisible to MW (ΔWL = 0) and lands
+        // as a phantom slip/level event (an instance of invariant #1 and
+        // invariant #7; see SPEC_phase_windup_sign.md §7 for details).  A config
+        // that omits estimation.accumulate_phase_windup reads false and runs in
+        // this mode.  The warning changes no behavior; flipping the loader default
+        // is a migration card (fingerprint-invalidating), not a quick edit.
         if (model_corrections_.enable_phase_windup && !accumulate_phase_windup_) {
             log->warn("Phase wind-up runs in FRACTIONAL (wrapping) mode — "
                       "estimation.accumulate_phase_windup is absent/false.  Each "
@@ -2374,17 +2379,16 @@ namespace GnssProcessor {
                 tropo_apriori_source_   == TroposphereAprioriSource::Gpt3 ||
                 tropo_mapping_function_ == TroposphereMappingFunction::Vmf3;
 
-            // Explicit receiver.gpt3_grid_path wins.  Otherwise leave the path
-            // EMPTY here and let the consumer (Troposphere) default to
+            // An explicit receiver.gpt3_grid_path wins.  Otherwise the path stays
+            // empty here and the consumer (Troposphere) defaults it to
             // <internal_data_root>/static/gpt3/gpt3_5.grd at construction time.
-            // The internal data root is not resolved until loadFilesSection_,
-            // which runs *after* this section, so baking the default here would
-            // build it from an empty root -> the bogus relative path
-            // "static/gpt3/gpt3_5.grd", which fails to open and silently drops
-            // VMF3/GPT3 back to GMF.  Deferring to the consumer mirrors how the
-            // ocean-pole-tide (opt_grid_path) and atmospheric-loading
-            // (atm_tide_grid_path) static grids default in ModelGeometry, where
-            // the internal data root is always known.
+            // The internal data root is resolved in loadFilesSection_, which runs
+            // after this section, so a default built here would use an empty root
+            // and yield the relative path "static/gpt3/gpt3_5.grd", which fails to
+            // open and silently drops VMF3/GPT3 back to GMF.  Deferring to the
+            // consumer matches how the ocean-pole-tide (opt_grid_path) and
+            // atmospheric-loading (atm_tide_grid_path) static grids default in
+            // ModelGeometry, where the internal data root is always known.
             const std::string gpt3_str = jval<std::string>(json, "receiver.gpt3_grid_path",
                                                             "gpt3_grid_path", std::string{});
             if (!gpt3_str.empty()) {
@@ -2506,20 +2510,19 @@ namespace GnssProcessor {
         }
 
         // --- Direct file overrides (optional) -------------------------
-        // The user may still pin specific paths in the config.  When
-        // set, these win over PathResolver auto-discovery.  Empty
-        // values let PathResolver fill them in.  No hard-coded fallback
-        // strings — PathResolver is the single source of truth for
-        // "what to do when the user didn't specify".
+        // A config may pin specific paths.  When set, these win over
+        // PathResolver auto-discovery; empty values let PathResolver
+        // fill them in.  There are no hard-coded fallback strings here:
+        // PathResolver alone decides what an unset path resolves to.
         observation_path_ = jval<std::string>(json, "files.observation_path", "observation_path", "");
         navigation_path_  = jval<std::string>(json, "files.navigation_path",  "navigation_path",  "");
 
         // --- Legacy product_list_path (optional override) -------------
         // When non-empty, the file's contents seed @c product_paths_
-        // directly and PathResolver leaves the list alone.  This is the
-        // escape hatch for runs that need a hand-curated product set
-        // (e.g. comparing analysis centres on the same epoch).  Empty
-        // means "let PathResolver do it" — the common case.
+        // directly and PathResolver leaves the list alone.  This serves
+        // runs that need a hand-curated product set (e.g. comparing
+        // analysis centres on the same epoch).  Empty (the common case)
+        // leaves the list to PathResolver.
         product_list_path_ = jval<std::string>(json, "files.product_list_path", "product_list_path", "");
         if (!product_list_path_.empty()) {
             if (std::filesystem::exists(product_list_path_)) {
@@ -2695,12 +2698,12 @@ namespace GnssProcessor {
 
         // --- estimation.aiding.{imu,zupt,nhc,wheel,baro,vision} ---------------
         // Aiding-source selection (AidingSourceRegistry / AidingSourceManager,
-        // the navigation-aiding analog of estimation.cycle_slip).  Loaded HERE,
+        // the navigation-aiding analog of estimation.cycle_slip).  Loaded here,
         // at the tail of the IMU section, rather than in loadEstimationSection_,
-        // because `imu` back-compat-defaults to the already-parsed imu.enabled
-        // (enableImu()) and the estimation section runs first.  An explicit
-        // estimation.aiding.imu always wins.  The AidingSourceManager is live
-        // (predictAided / collectPredict in Application::run and
+        // because `imu` defaults (back-compat) to imu.enabled (enableImu()),
+        // parsed above, and the estimation section runs before this one.  An
+        // explicit estimation.aiding.imu always wins.  The AidingSourceManager is
+        // live (predictAided / collectPredict in Application::run and
         // RealTimeEngine::run); see docs/aiding_source_abstraction_design.md.
         {
             aiding_.imu    = jval<bool>(json, "estimation.aiding.imu",    "aiding_imu",    imu_config_.enabled);
@@ -2760,9 +2763,8 @@ namespace GnssProcessor {
         // Internal mode is mutually exclusive with auto-download.
         // loadFilesSection_ runs before this, so data_source_ is set.
         // Forcing the flag here means downstream code (Application,
-        // ApplicationBaseline, PathResolver) only has to check one
-        // condition — DownloadConfig::enabled — to know whether it
-        // should hit the network.
+        // ApplicationBaseline, PathResolver) checks one condition,
+        // DownloadConfig::enabled, to know whether to use the network.
         if (data_source_ == DataSource::Internal && download_config_.enabled) {
             log->info("data_source=internal overrides data_download.enabled "
                       "(no network access in internal mode)");
@@ -2783,13 +2785,12 @@ namespace GnssProcessor {
                 app_mode_ = AppMode::PostProcessing;
             }
             log->info("Application mode: {}", app_mode_ == AppMode::RealTime ? "realtime" : "post");
-            // Wiring reality (invariant #4), sited HERE because app_mode_ is
-            // settled only at this point: the wind-up census is armed on the
-            // network producer and on the single-receiver Application::run path
-            // only.  In baseline and real-time modes it collects nothing and
-            // prints nothing, which is indistinguishable from a clean result —
-            // so say so at load time rather than let a reader infer a null from
-            // silence.
+            // Wiring check (invariant #4), placed here because app_mode_ is
+            // settled only at this point: the wind-up census is armed only on the
+            // network producer and on the single-receiver Application::run path.
+            // In baseline and real-time modes it collects and prints nothing,
+            // which is indistinguishable from a clean result, so the loader warns
+            // rather than let a reader infer a null result from silence.
             if (trace_windup_census_
                 && (isBaselineMode() || app_mode_ == AppMode::RealTime)) {
                 log->warn("estimation.trace_windup_census has no wiring in this "
@@ -2834,21 +2835,21 @@ namespace GnssProcessor {
             realtime_config_.output_type        = rt.value("output_type", "console");
             realtime_config_.output_path        = rt.value("output_path", "");
             realtime_config_.max_epoch_buffer   = rt.value("max_epoch_buffer", 100U);
-            // RTB-4: pin precise (ultra-rapid) orbits while clocks stay live/network.
+            // Pin precise (ultra-rapid) orbits while clocks stay live/network (RTB-4).
             realtime_config_.use_precise_orbits = rt.value("use_precise_orbits", false);
             if (realtime_config_.use_precise_orbits) {
                 log->info("realtime.use_precise_orbits enabled — precise (ultra-rapid) "
                           "SP3 orbits pinned; satellite clocks stay on the live/network "
                           "source (RTB-4)");
             }
-            // RTA-6: live network product file to tail (empty = off).  Consumed
-            // by runRealTime via NetworkProductTail into an OWNED SsrCorrectionStore.
+            // Live network product file to tail; empty = off (RTA-6).  Consumed
+            // by runRealTime via NetworkProductTail into an owned SsrCorrectionStore.
             realtime_config_.network_products_path = rt.value("network_products_path", "");
-            // RT filter-state snapshot (consumer warm start — the RTB-7 complement).
-            // Non-empty path arms the periodic write AND the staged warm resume on
-            // any engine built from this config; the closed-loop consumer inherits
-            // it through deriveClosedLoopConsumerConfig's full copy.  Empty =
-            // byte-identical off.
+            // RT filter-state snapshot (consumer warm start, the complement of
+            // RTB-7).  A non-empty path arms both the periodic write and the staged
+            // warm resume on any engine built from this config; the closed-loop
+            // consumer inherits it through deriveClosedLoopConsumerConfig's full
+            // copy.  Empty is off and byte-identical.
             realtime_config_.state_snapshot_path = rt.value("state_snapshot_path", "");
             realtime_config_.state_snapshot_interval_s =
                 rt.value("state_snapshot_interval_s", 10.0);
@@ -2885,13 +2886,13 @@ namespace GnssProcessor {
                           realtime_config_.state_snapshot_interval_s,
                           realtime_config_.state_snapshot_horizon_s);
             }
-            // RTA-12(3): blunder gate on the RTCM 1005/1006 a-priori seed (m).
-            // 0 (default) = off, legacy seed-always behaviour; suggested 10.0.
+            // Blunder gate (m) on the RTCM 1005/1006 a-priori seed (RTA-12(3)).
+            // 0 (default) = off, the legacy seed-always behaviour; suggested 10.0.
             realtime_config_.arp_blunder_gate_m = rt.value("arp_blunder_gate_m", 0.0);
-            // RTB-1(c): GPS-UTC leap seconds for the RT wall-clock -> GPS
-            // conversion.  Default = the compiled TimeUtils::LEAP_SECONDS, so
-            // an absent key is byte-identical; a non-default value is applied
-            // via TimeUtils::setLeapSecondsOverride in RealTimeEngine::initialize.
+            // GPS-UTC leap seconds for the RT wall-clock -> GPS conversion
+            // (RTB-1(c)).  Default = the compiled TimeUtils::LEAP_SECONDS, so an
+            // absent key is byte-identical; a non-default value is applied via
+            // TimeUtils::setLeapSecondsOverride in RealTimeEngine::initialize.
             realtime_config_.leap_seconds = rt.value(
                 "leap_seconds", static_cast<int>(TimeUtils::LEAP_SECONDS));
             if (realtime_config_.leap_seconds != static_cast<int>(TimeUtils::LEAP_SECONDS)) {
@@ -2901,17 +2902,17 @@ namespace GnssProcessor {
                           realtime_config_.leap_seconds,
                           static_cast<int>(TimeUtils::LEAP_SECONDS));
             }
-            // RTB-3: MSM lock-time -> LLI loss-of-lock derivation (default off —
-            // arming changes slip-detection behaviour on RT replays).
+            // MSM lock-time -> LLI loss-of-lock derivation (RTB-3).  Default off,
+            // because arming it changes slip-detection behaviour on RT replays.
             realtime_config_.msm_lli_from_locktime =
                 rt.value("msm_lli_from_locktime", false);
             if (realtime_config_.msm_lli_from_locktime) {
                 log->info("realtime.msm_lli_from_locktime enabled — LLI 0x1 derived "
                           "from MSM lock-time decreases at epoch assembly (LockTimeTracker)");
             }
-            // RTB-5(c): skip the satellite-PCO range term for satellites whose
-            // applied SSR orbit is APC-referenced (legacy-SSR dialect).  Default
-            // off = byte-identical (historical double count preserved).
+            // Skip the satellite-PCO range term for satellites whose applied SSR
+            // orbit is APC-referenced, the legacy-SSR dialect (RTB-5(c)).  Default
+            // off is byte-identical and keeps the historical double count.
             realtime_config_.honor_ssr_reference_point =
                 rt.value("honor_ssr_reference_point", false);
             if (realtime_config_.honor_ssr_reference_point) {
@@ -2920,7 +2921,7 @@ namespace GnssProcessor {
             }
 
             // Optional SSR corrections stream (separate NTRIP mountpoint
-            // or file-replay).  Default: disabled — single-stream behaviour.
+            // or file-replay).  Default disabled: single-stream behaviour.
             if (rt.contains("corrections") && rt.at("corrections").is_object()) {
                 const auto& cc = rt.at("corrections");
                 auto& c = realtime_config_.corrections;
@@ -2938,8 +2939,8 @@ namespace GnssProcessor {
                 c.input_path         = cc.value("input_path", std::string{});
                 c.tcp_host           = cc.value("tcp_host", std::string{});
                 c.tcp_port           = cc.value("tcp_port", 28784);
-                // RTA-8(b): per-stream SSR ingest accept policy.  "all" (default)
-                // = byte-identical unfiltered push; "orbit_only" drops this
+                // Per-stream SSR ingest accept policy (RTA-8(b)).  "all" (default)
+                // is the byte-identical unfiltered push; "orbit_only" drops this
                 // stream's clock/bias content and decomposes combined records so
                 // an RTS clock can never shadow an injected network clock.
                 c.accept             = detail::toLower(
@@ -2953,7 +2954,7 @@ namespace GnssProcessor {
 
             // Optional third RTCM stream: dedicated broadcast ephemeris (nav),
             // for an obs-only station mountpoint that carries no 1019/1020/etc.
-            // Default disabled — a self-contained obs+nav station needs only
+            // Default disabled: a self-contained obs+nav station needs only
             // primary + corrections.  Same transport descriptor as corrections.
             if (rt.contains("ephemeris") && rt.at("ephemeris").is_object()) {
                 const auto& ec = rt.at("ephemeris");
@@ -2972,9 +2973,9 @@ namespace GnssProcessor {
                 e.input_path         = ec.value("input_path", std::string{});
                 e.tcp_host           = ec.value("tcp_host", std::string{});
                 e.tcp_port           = ec.value("tcp_port", 28784);
-                // RTA-8(b): same per-stream ingest policy as the corrections
-                // block (the two streams share the transport descriptor).  A nav
-                // stream normally carries no SSR, so this is a guard against a
+                // Same per-stream ingest policy as the corrections block
+                // (RTA-8(b)); the two streams share the transport descriptor.  A
+                // nav stream normally carries no SSR, so this guards against a
                 // mixed mountpoint leaking clock content.
                 e.accept             = detail::toLower(
                     ec.value("corrections_accept", std::string{"all"}));
@@ -3002,7 +3003,7 @@ namespace GnssProcessor {
                     } else {
                         log->info("Real-time corrections: file={}", c.input_path);
                     }
-                    // RTA-8(b): surface a non-default ingest policy once at startup.
+                    // Report a non-default ingest policy once at startup (RTA-8(b)).
                     if (c.accept != "all")
                         log->info("Real-time corrections ingest policy: {} — this stream's "
                                   "standalone clock / code-bias / phase-bias / high-rate-clock "
@@ -3055,14 +3056,13 @@ namespace GnssProcessor {
             };
             baseline_config_.reference.has_position = true;
         }
-        // NOTE: an empty rinex_path is NOT an error here — PathResolver
-        // runs after config-load (in runBaseline → resolveData) and
+        // NOTE: an empty rinex_path is not an error here: PathResolver
+        // runs after config load (in runBaseline → resolveData) and
         // fills it in by station-name match against the internal data
-        // tree.  Empty position_ecef is similarly tolerated here: the
-        // baseline-fixture preset block below may fill it in from the
-        // catalog.  Final validation happens AFTER the preset has had
-        // its chance — see the @c has_position check just past the
-        // preset block.
+        // tree.  An empty position_ecef is tolerated here too, because
+        // the baseline-fixture preset block below may fill it in from
+        // the catalog.  Final validation follows the preset block (the
+        // @c has_position check just past it).
 
         // --- Rovers (required: one for Single, one-or-more for Multi) ---
         baseline_config_.rovers.clear();
@@ -3134,11 +3134,11 @@ namespace GnssProcessor {
                         applied_anything  = true;
                     }
 
-                    // Rovers: when none configured, seed one from the
-                    // preset.  When one slot already exists with a
-                    // placeholder name ("ROV") that we want to fill,
-                    // fill it; otherwise leave the user's roster
-                    // untouched (e.g. multi-rover networks).
+                    // Rovers: when none is configured, seed one from the
+                    // preset.  When exactly one slot exists with an empty
+                    // or placeholder name ("ROV"), fill its name; otherwise
+                    // leave the configured roster untouched (e.g.
+                    // multi-rover networks).
                     if (baseline_config_.rovers.empty()) {
                         StationConfig rv;
                         rv.name  = p.rover_name;
@@ -3157,7 +3157,7 @@ namespace GnssProcessor {
                     // preset's year/doy into data_download when the
                     // user hasn't typed their own.  This lets a
                     // baseline run flip between fixtures by changing
-                    // a single field without nuking a year/doy that
+                    // a single field without overwriting a year/doy that
                     // was set up for an unrelated PPP run.
                     if (download_config_.year == 0) download_config_.year = p.year;
                     if (download_config_.doy == 0) download_config_.doy = p.doy;
@@ -3175,11 +3175,11 @@ namespace GnssProcessor {
         }
 
         // ---- Post-preset validation --------------------------------
-        // Reference station must have a position by now: either the
-        // user supplied position_ecef explicitly, or a recognised
-        // baseline_fixture preset filled it in.  Fail loudly when
-        // neither happened — without coordinates the DD solution has
-        // no anchor and the rover absolute position is meaningless.
+        // The reference station must have a position by now: either
+        // position_ecef was set explicitly, or a recognised
+        // baseline_fixture preset filled it in.  Fail with an error
+        // when neither happened: without coordinates the DD solution
+        // has no anchor and the rover absolute position is meaningless.
         if (!baseline_config_.reference.has_position) {
             log->error("Baseline: reference station '{}' requires position_ecef [X,Y,Z] "
                        "(neither user-supplied nor filled by a baseline_fixture preset).",
@@ -3250,15 +3250,14 @@ namespace GnssProcessor {
                 baseline_config_.rovers.size());
             baseline_config_.rovers.resize(1);
         }
-        // Rover rinex_path may be empty here too — PathResolver fills
-        // it in on the same pass that resolves the reference station.
-        // Final rinex_path check happens in runBaseline() after
-        // resolveData().  Names, however, must be set by now: either
-        // the user typed them or a baseline_fixture preset filled
-        // them in.  An empty rover name would defeat PathResolver's
-        // station-name match (findObservationByStation returns empty
-        // on empty input), and the downstream "no rinex_path" error
-        // would be confusing.
+        // A rover rinex_path may be empty here too: PathResolver fills
+        // it in on the same pass that resolves the reference station,
+        // and the final rinex_path check happens in runBaseline() after
+        // resolveData().  Names, however, must be set by now, either
+        // explicitly or by a baseline_fixture preset.  An empty rover
+        // name would defeat PathResolver's station-name match
+        // (findObservationByStation returns empty on empty input), and
+        // the downstream "no rinex_path" error would be confusing.
         for (size_t i = 0; i < baseline_config_.rovers.size(); ++i) {
             if (baseline_config_.rovers[i].name.empty()) {
                 log->error("Baseline: rover #{} has no name. "
@@ -3346,8 +3345,8 @@ namespace GnssProcessor {
         logging_config_.enable_turbo_edit_trace   = lg.value("enable_turbo_edit_trace", false);
         logging_config_.enable_windup_trace       = lg.value("enable_windup_trace", false);
 
-        // Concise KF log mode — suppresses intermediate rebuild passes,
-        // keeps pass-1 + final-pass output verbatim. Default off (full).
+        // Concise KF log mode: suppresses intermediate rebuild passes and
+        // keeps pass-1 + final-pass output verbatim.  Default off (full).
         logging_config_.kalman_filter_concise_log = lg.value("kalman_filter_concise_log", false);
 
         // Per-logger level overrides: logging.levels = { "name": "level", ... }
@@ -3383,14 +3382,13 @@ namespace GnssProcessor {
             uncombined_enabled_, elevation_mask_deg_, observation_path_.string(),
             navigation_path_.string(), product_paths_.size(), leap_seconds_tai_);
 
-        // Consolidated toggle echo.  RELOCATED here from the tail of
-        // loadEstimationSection_ so every field reports its FINAL, post-resolution
-        // value.  loadFromJson calls this last, after all twelve section helpers and
+        // Consolidated toggle echo, printed here rather than at the tail of
+        // loadEstimationSection_ so every field reports its final, post-resolution
+        // value.  loadFromJson calls this last, after every section helper and
         // every cross-section forcing (the W6 / EXT-CB / GLONASS estimate_ifb_
         // promotions, the IMU parse, the real-time overrides), so what this prints is
-        // what the run actually uses.  Keep it last: a toggle added to this line that
-        // a later section can still mutate re-introduces exactly the staleness this
-        // move removed.
+        // what the run uses.  Keep it last: a toggle on this line that a later
+        // section could still change would print a stale value.
         const char* basis_label =
             state_ambiguity_basis_ == StateAmbiguityBasis::NlWl ? "nl_wl" : "per_band";
 

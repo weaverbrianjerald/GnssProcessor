@@ -4,15 +4,15 @@
  * @brief Septentrio SBF signal-number / SVID mapping to RINEX-3 + PRN.
  *
  * SBF identifies a signal by a "signal number" (Type field, bits 0-4, with an
- * escape to >31) and a satellite by an "SVID" byte — both DIFFERENT from the
- * RTCM signal-ID / satellite-mask conventions, so this is an SBF-specific map
- * (the analogue of @c RtcmSignalMap).  Numbering is transcribed from the
- * Septentrio SBF Reference Guide (mosaic-X5 v4.8.0, section 4.1.10) and
- * cross-checked against pysbf2; see the .cpp for the per-number table.
+ * escape to >31) and a satellite by an "SVID" byte.  Both differ from the RTCM
+ * signal-ID and satellite-mask conventions, so this is an SBF-specific map (the
+ * analogue of @c RtcmSignalMap).  Numbering is transcribed from the Septentrio
+ * SBF Reference Guide (mosaic-X5 v4.8.0, section 4.1.10) and cross-checked
+ * against pysbf2; the .cpp holds the per-number table.
  *
- * The suffix returned is the RINEX-3 frequency-band + tracking-mode code
- * (e.g. "1C", "5Q"); callers prepend 'C'/'L'/'D'/'S'.  Empty suffix ⇒ the
- * signal has no RINEX mapping (reserved / L-band / NavIC) and is skipped.
+ * The returned suffix is the RINEX-3 frequency-band and tracking-mode code
+ * (e.g. "1C", "5Q"); callers prepend 'C', 'L', 'D' or 'S'.  An empty suffix means
+ * the signal has no RINEX mapping (reserved, L-band, NavIC) and is skipped.
  */
 
 #include "common/GnssTypes.hpp"

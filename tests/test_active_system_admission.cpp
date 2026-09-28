@@ -1,15 +1,15 @@
 /**
  * @file test_active_system_admission.cpp
- * @brief Card OWD (O4): the network admits observations by processing.active_systems.
+ * @brief The network admits observations by processing.active_systems (card OWD, O4).
  *
- * The network used to admit an observation by its signal priority list and allocate the
- * inter-system bias by @c processing.active_systems, so card GAL's loader refused a list
- * for an inactive system (it would enter the rows with no bias column), which made two
- * archived GPS-only configs unloadable.  The admission door is now one: the synced epochs
- * are stripped of every inactive system right after the sync
- * (@c MultiRinexSync::retainSystems), and the loader only warns that such a list is
- * ignored.  Covered here: the strip on synthetic epochs, the warning on an inline config,
- * and the two real archived configs loading with the warning (G3 of card OWD).
+ * Admission and the inter-system bias allocation both follow
+ * @c processing.active_systems: the synced epochs are stripped of every inactive system
+ * right after the sync (@c MultiRinexSync::retainSystems), so a signal priority list for
+ * an inactive system cannot put rows in the solve without a bias column.  The loader
+ * therefore accepts such a list and only warns that it is ignored (the card GAL loader
+ * refused it, which made two archived GPS-only configs unloadable).  Covered here: the
+ * strip on synthetic epochs, the warning on an inline config, and the two real archived
+ * configs loading with the warning (G3 of card OWD).
  */
 #include <gtest/gtest.h>
 
@@ -125,8 +125,8 @@ TEST(ActiveSystemAdmission, ListOfAnInactiveSystemIsIgnoredWithAWarning) {
     fs::remove(p, ec);
 }
 
-// G3 of card OWD: the two archived GPS-only configs card GAL's check refused now load, and
-// the log names the ignored Galileo list.
+// The two archived GPS-only configs that card GAL's check refused load, and the log names
+// the ignored Galileo list (G3 of card OWD).  Skipped when neither file is present.
 TEST(ActiveSystemAdmission, ArchivedGpsOnlyConfigsLoadWithTheWarning) {
     const fs::path root = GNSS_PROJECT_ROOT;
     const fs::path configs[] = {

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""EVENT HARNESS — slip-DOSE legs (Study 4, docs/SPEC_event_harness.md §12).
+"""Event harness: slip-dose legs (Study 4, docs/SPEC_event_harness.md §12).
 
-The single-event legs price ONE event.  A dose leg prices a SCHEDULE: a converged
+The single-event legs price one event.  A dose leg prices a schedule: a converged
 snapshot is resumed and a scripted sequence of true slips is injected at a chosen
-rate — the campaign bed's own statistics by default — on one station, a few, or the
+rate (the campaign bed's own statistics by default) on one station, a few, or the
 whole roster.  The question it answers is the one the storm beds cannot: does a
-CONVERGED network stay converged under the campaign's slip rate, and if it decays,
-which station channel (ZWD / receiver clock / per-LOS iono / arc levels) goes first
+converged network stay converged under the campaign's slip rate, and if it decays,
+which station channel (ZWD, receiver clock, per-LOS iono, arc levels) goes first
 and which response tier (detector re-level, T4 erase) drives it?
 
 Campaign-bed slip statistics (runs/simnet60_campaign_wu93, measured 2026-09-11):
@@ -25,24 +25,25 @@ events are the campaign's events in kind.
     python scripts/ev_dose_legs.py make --null --seed-run ... --snapshot-ep 665 \
         --epochs 240 --name null240 --exe <abs exe> --run
 
-    # an ATTRIBUTION twin: same schedule (same --rng), one knob changed.  NOTE:
-    # `raim_attribution: false` is silently RE-ARMED by the golden's raim_within_epoch
-    # (loader ~4752); the T4 starve that survives a resume is the persistence window.
+    # an attribution twin: same schedule (same --rng), one knob changed.  Note that
+    # `raim_attribution: false` is silently re-armed by the golden's raim_within_epoch
+    # (loader GnssConfigLoadNetwork.cpp:6618); the T4 starve that survives a resume is
+    # the persistence window.
     python scripts/ev_dose_legs.py make ... --rng 1 --extra '{"network":{"raim_arc_persist_epochs":1000000}}'
 
     # the whole roster (needs the raised injector cap, 4096 events)
     python scripts/ev_dose_legs.py make ... --stations all --rng 1
 
-    # a density rung: the SAME events, a subset of stations, or every 2nd event
+    # a density rung: the same events, a subset of stations, or every 2nd event
     python scripts/ev_dose_legs.py make ... --from-leg runs/evleg_doseall --stations S05000SIM,S10000SIM
     python scripts/ev_dose_legs.py make ... --from-leg runs/evleg_doseall --stations all --thin 2
 
-Every leg is built THROUGH scripts/event_leg.py (make-leg / null), so it inherits the
+Every leg is built through scripts/event_leg.py (make-leg / null), so it inherits the
 validated warm-restart posture, the seed-copy rule and the half-epoch back-off; this
 script only widens ``network.inject.events`` to the full schedule afterwards and
 records it in ``leg_meta.json`` (``events``) and ``schedule.csv`` for the graders.
-A leg is not re-runnable in place — use ``python scripts/event_leg.py rerun``.
-WARNING: ``--from-leg`` copies the source leg's SCHEDULE only — never its config knobs.
+A leg is not re-runnable in place; use ``python scripts/event_leg.py rerun``.
+``--from-leg`` copies only the source leg's schedule, never its config knobs.
 Every knob the source leg armed through ``--extra`` must be passed again in this
 call's ``--extra`` or the twin silently runs without it (a knob-on subset built
 without re-passing ``anchor_slip_handover`` is a two-knob A/B, not a subset).
@@ -106,7 +107,7 @@ def elevations(fixture, sta, lo_tow, hi_tow):
 
 
 def poisson(rng, lam):
-    """Knuth's method — fine for the means this harness uses (< ~100)."""
+    """Knuth's method, fine for the means this harness uses (under about 100)."""
     if lam <= 0:
         return 0
     L, k, p = math.exp(-lam), 0, 1.0
@@ -189,7 +190,7 @@ def cmd_make(a):
     rng = random.Random(a.rng)
     events = []
     if a.from_leg and not a.null:
-        # A SUBSET of an existing leg's schedule: same events, fewer stations
+        # A subset of an existing leg's schedule: same events, fewer stations
         # (--stations) and/or every --thin-th event.  This is how a density ladder
         # keeps the events themselves identical across rungs.
         src = a.from_leg if os.path.isabs(a.from_leg) else os.path.join(REPO, a.from_leg)

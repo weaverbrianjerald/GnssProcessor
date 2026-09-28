@@ -3,9 +3,9 @@
  * @brief Config-contract + kernel tests for LV-6
  *        (@c network.level_authority_csgf; `SPEC_level_authority_internal.md`).
  *
- * The census is measure-only and default-OFF; the loader side locks the
- * defaults, the reject bands, and the arming independence from the
- * (falsified, OFF) iono-carry inject path.  The kernel side pins the
+ * The census is measure-only and off by default.  The loader tests cover the
+ * defaults, the reject bands, and arming independently of the (FALSIFIED,
+ * off) iono-carry inject path.  The kernel tests cover the
  * two-tier reduction: tier-1 information weighting, the tier-2 median's
  * outlier immunity (the fleet-clustered bias tail), the min_los screen, and
  * the nullopt "unavailable is not 0" sentinel.  The tracking verdict is
@@ -76,8 +76,8 @@ TEST(LevelAuthorityConfig, DefaultsAreOff) {
 }
 
 TEST(LevelAuthorityConfig, ArmsWithoutTheIonoCarry) {
-    // The census arms the CS advance INDEPENDENTLY of the falsified carry
-    // inject path — carry_iono must stay off and unrequired (SPEC §3).
+    // The census arms the CS advance independently of the falsified carry
+    // inject path: carry_iono stays off and is not required (SPEC §3).
     GnssConfig cfg;
     const std::string extra = "    \"level_authority_csgf\": true,\n";
     ASSERT_TRUE(loadInto("independent", networkConfig(extra), cfg));
@@ -96,24 +96,24 @@ TEST(LevelAuthorityConfig, RejectBandsResetToDefaults) {
     EXPECT_EQ(cfg.networkLevelAuthorityMinLos(), 4);
 }
 
-// LV-6 G2 support: the per-LOS pierce-point dump exists so a reference field can
-// be reduced through the census's OWN sampling (SPEC §4 G2 / §5.2 — an unmatched
-// LOS set reintroduces, in miniature, the sampling error that killed the naive
-// planetary-mean grade).  Default OFF, and INERT without the census it dumps.
+// The per-LOS pierce-point dump lets a reference field be reduced through the
+// census's own sampling; an unmatched LOS set reintroduces the sampling error
+// of a planetary-mean grade on a smaller scale (SPEC §4 G2 / §5.2; LV-6 G2).
+// Off by default, and disarmed without the census it dumps.
 TEST(LevelAuthorityConfig, LosDumpDefaultsOffAndNeedsTheCensus) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("losdump_default", networkConfig(), cfg));
     EXPECT_FALSE(cfg.networkLevelAuthorityLosDump());
 
-    // Armed WITHOUT the census: there is no census to dump, so it is
-    // warn-and-disarmed rather than left armed-but-inert (invariant #4).
+    // Armed without the census: there is no census to dump, so it is
+    // warn-and-disarmed rather than left armed but inert (invariant #4).
     GnssConfig alone;
     ASSERT_TRUE(loadInto("losdump_alone",
         networkConfig("    \"level_authority_los_dump\": true,\n"), alone));
     EXPECT_FALSE(alone.networkLevelAuthorityLosDump())
         << "the dump must not survive without level_authority_csgf";
 
-    // Armed WITH the census: survives, and does not disturb the census knobs.
+    // Armed with the census: survives, and does not disturb the census knobs.
     GnssConfig both;
     ASSERT_TRUE(loadInto("losdump_armed",
         networkConfig("    \"level_authority_csgf\": true,\n"
@@ -128,7 +128,7 @@ TEST(LevelAuthorityConfig, LosDumpDefaultsOffAndNeedsTheCensus) {
 
 TEST(LevelAuthorityKernel, WeightedMeanThenMedian) {
     // Three stations at levels 10/12/40 (one bias-tail outlier): the fleet
-    // MEDIAN reads 12 — the outlier never enters (the tier-2 rationale).
+    // median reads 12 and the outlier does not enter it (the tier-2 rationale).
     Rows rows(3);
     for (int k = 0; k < 4; ++k) rows[0].push_back({10.0, 1.0});
     for (int k = 0; k < 4; ++k) rows[1].push_back({12.0, 1.0});
@@ -141,8 +141,9 @@ TEST(LevelAuthorityKernel, WeightedMeanThenMedian) {
 }
 
 TEST(LevelAuthorityKernel, InformationWeightingInsideAStation) {
-    // One precise LOS at 20 (w=100) + one noisy at 0 (w=1): the station mean
-    // sits near 20, not at 10 — tier 1 is information-weighted.
+    // Three precise LOS at 20 (w=100 each) and one noisy at 0 (w=1): tier 1 is
+    // information-weighted, so the station mean is 20·300/301 ≈ 19.93, not the
+    // unweighted 15.
     Rows rows(1);
     rows[0] = {{20.0, 100.0}, {0.0, 1.0}, {20.0, 100.0}, {20.0, 100.0}};
     const auto r = levelAuthorityReduce(rows, 4);
@@ -153,7 +154,7 @@ TEST(LevelAuthorityKernel, InformationWeightingInsideAStation) {
 TEST(LevelAuthorityKernel, MinLosScreensAStationOut) {
     Rows rows(2);
     rows[0] = {{10.0, 1.0}, {10.0, 1.0}, {10.0, 1.0}, {10.0, 1.0}};
-    rows[1] = {{99.0, 1.0}};   // below min_los — must not enter the median
+    rows[1] = {{99.0, 1.0}};   // below min_los: must not enter the median
     const auto r = levelAuthorityReduce(rows, 4);
     ASSERT_TRUE(r.has_value());
     EXPECT_DOUBLE_EQ(r->level_tecu, 10.0);

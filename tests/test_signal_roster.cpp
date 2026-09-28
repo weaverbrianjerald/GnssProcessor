@@ -1,24 +1,23 @@
 /**
  * @file test_signal_roster.cpp
- * @brief Card SID phase 1: the per-station signal roster
+ * @brief The per-station signal roster, card SID phase 1
  *        (docs/refound/SID_signal_identity_2026-09-22.md section 5, P5).
  *
- * The roster's first obligation is that it REPRODUCES the rules that already
- * decide which signal stands for a band, rather than re-deriving them: phase 1's
- * armed byte-identity protects the solve, but only these tests protect the ROLE
- * assignment that phases 2 to 6 will read.  Pinned here, over synthetic header
- * contents with no station, no model and no solve:
+ * The roster reproduces the rules that already decide which signal stands for a
+ * band; it does not re-derive them.  Phase 1's armed byte-identity protects the
+ * solve, but only these tests protect the role assignment that phases 2 to 6 read.
+ * Pinned here, over synthetic header contents with no station, model or solve:
  *
- *  - the Modelled role is the LATCH's own row, under the priority rule and under
- *    the count rule alike (the roster never re-runs the decision, so the two cases
- *    are the same code path fed two different latches, which is exactly the
- *    property that makes a latch change invisible to the roster);
- *  - a card SCC companion carries the Companion role and is NOT an exclusion;
- *  - every other tracked signal is an exclusion WITH a reason, and the reason
- *    separates the allow list from a band the latch decided against from a band
- *    the latch does not carry at all;
+ *  - the Modelled role is the latch's own row, under the priority rule and under the
+ *    count rule alike (the roster never re-runs the decision, so both cases are one
+ *    code path fed two different latches, and the roster does not depend on which
+ *    rule produced the latch);
+ *  - a card SCC companion carries the Companion role and is not an exclusion;
+ *  - every other tracked signal is an exclusion with a reason, and the reasons
+ *    distinguish the allow list, a band the latch decided against, and a band the
+ *    latch does not carry;
  *  - a band the model does not carry is Tracked only;
- *  - the arc-level tracker's own pick, reproduced, so the disagreement the card is
+ *  - the arc-level tracker's own pick is reproduced, so the disagreement the card is
  *    named for is stated in one place instead of inferred.
  */
 
@@ -67,9 +66,9 @@ bool hasExclusion(const BandRoster& br, const std::string& sig, const std::strin
 
 TEST(SignalRosterTest, ModelledRoleIsTheLatchUnderThePriorityRule) {
     // The priority list of the RF-0hv postures is W before C, so a station that
-    // tracks both latches L1W / C1W.  The roster must report exactly that and must
-    // NOT fall back to the lexically first channel, which is what the arc-level
-    // tracker does and what the card is about.
+    // tracks both latches L1W / C1W.  The roster reports that and does not fall back
+    // to the lexically first channel, which is what the arc-level tracker does and
+    // what the card is about.
     const auto cells = signalRosterBuildCells(
         kTrackedL1cL1w, latch({ { 'L', "L1W" }, { 'C', "C1W" },
                                 { 'L', "L2W" }, { 'C', "C2W" } }),
@@ -112,7 +111,7 @@ TEST(SignalRosterTest, ModelledRoleIsTheLatchUnderTheCountRule) {
 }
 
 TEST(SignalRosterTest, ALatchedBandTheReceiverDoesNotReportStillHasItsCell) {
-    // The latch is the estimator's KEY, so a reader asking what this station
+    // The latch is the estimator's key, so a reader asking what this station
     // carries on band 2 needs an answer on the epochs the arc is absent too.  That
     // is the same reason the arc-level tracker reads the latch and not the epoch's
     // admitted row set.
@@ -133,9 +132,9 @@ TEST(SignalRosterTest, ALatchedBandTheReceiverDoesNotReportStillHasItsCell) {
 
 TEST(SignalRosterTest, ABandTheModelDoesNotCarryIsTrackedOnly) {
     // Band 5 on a dual posture: the receiver reports it, the latch does not name
-    // it, and the roster must say TRACKED with no modelled role rather than
+    // it, and the roster reports it as tracked with no modelled role rather than
     // inventing one.  Its exclusions carry `no_latch`, which is a different
-    // statement from `not_latched` and has to stay separable.
+    // statement from `not_latched` and stays separable from it.
     const auto cells = signalRosterBuildCells(
         { "C1W", "L1W", "C5Q", "L5Q", "C5X", "L5X" },
         latch({ { 'L', "L1W" }, { 'C', "C1W" } }), {}, false, nullptr);
@@ -151,7 +150,7 @@ TEST(SignalRosterTest, ABandTheModelDoesNotCarryIsTrackedOnly) {
 }
 
 // ---------------------------------------------------------------------------
-// Card SCC companions
+// Companions (card SCC)
 // ---------------------------------------------------------------------------
 
 TEST(SignalRosterTest, CompanionCodesCarryTheCompanionRoleAndAreNotExclusions) {
@@ -165,9 +164,9 @@ TEST(SignalRosterTest, CompanionCodesCarryTheCompanionRoleAndAreNotExclusions) {
     // C1X is on the allow list but untracked here, so it is neither a companion nor
     // an exclusion: the roster reports what exists, not what a list mentions.
     EXPECT_FALSE(hasExclusion(b1, "C1X", "not_latched"));
-    // The companion is NOT also an exclusion, and the phase it shares its attribute
-    // with still is: the code side has a second channel, the phase side does not,
-    // which is the whole asymmetry the audit measured.
+    // The companion is not also an exclusion, and the phase it shares its attribute
+    // with still is: the code side has a second channel and the phase side does not,
+    // which is the asymmetry the audit measured.
     EXPECT_FALSE(hasExclusion(b1, "C1C", "not_latched"));
     EXPECT_TRUE(hasExclusion(b1, "L1C", "not_latched"));
     EXPECT_EQ(b1.excluded.size(), 1u);
@@ -196,9 +195,9 @@ TEST(SignalRosterTest, CompanionsNeedTheCanonicalPresentAndStayOnBandOne) {
 // ---------------------------------------------------------------------------
 
 TEST(SignalRosterTest, TheAllowListIsAPerStationExclusionReason) {
-    // network.signal_min_station_fraction is a GLOBAL whole-run gate today, so a
-    // dropped channel is invisible per station.  As a roster reason it becomes
-    // visible where it bites, which is what phase 1 has to demonstrate.
+    // network.signal_min_station_fraction is a global whole-run gate, so a dropped
+    // channel is not visible per station.  As a roster reason it becomes visible at
+    // each station where it removes a channel, which is what phase 1 demonstrates.
     const std::set<std::string> allow{ "C1W", "L1W", "C2W", "L2W" };
     const auto cells = signalRosterBuildCells(
         kTrackedL1cL1w, latch({ { 'L', "L1W" }, { 'C', "C1W" },
@@ -208,8 +207,8 @@ TEST(SignalRosterTest, TheAllowListIsAPerStationExclusionReason) {
     const BandRoster& b1 = cells.at('1');
     EXPECT_TRUE(hasExclusion(b1, "L1C", "allowlist"));
     EXPECT_TRUE(hasExclusion(b1, "C1C", "allowlist"));
-    // The allow list is the EARLIER gate, so it names the exclusion rather than the
-    // latch: the two reasons must not be interchangeable.
+    // The allow list is the earlier gate, so it names the exclusion rather than the
+    // latch: the two reasons are not interchangeable.
     EXPECT_FALSE(hasExclusion(b1, "L1C", "not_latched"));
 }
 
@@ -226,9 +225,9 @@ TEST(SignalRosterTest, AnEmptyAllowListAdmitsEverything) {
 
 TEST(SignalRosterTest, TrackerPicksTheLexicallyLowestPhaseWithAMatchingCode) {
     // NetworkRawObservables.cpp keeps a phase only when its matching code is
-    // reported, then sorts on the BAND DIGIT ALONE and takes the front.  On this
+    // reported, then sorts on the band digit alone and takes the front.  On this
     // toolchain that is lexical order within a band, which is why a station
-    // latching L1W is tracked as L1C: 46 station-band cells on the field baseline.
+    // latching L1W is tracked as L1C.
     const auto picks = signalRosterTrackerPicks(kTrackedL1cL1w);
     EXPECT_EQ(picks.at('1'), "L1C");
     EXPECT_EQ(picks.at('2'), "L2W");
@@ -237,26 +236,25 @@ TEST(SignalRosterTest, TrackerPicksTheLexicallyLowestPhaseWithAMatchingCode) {
     const auto no_code = signalRosterTrackerPicks({ "L1C", "C1W", "L1W" });
     EXPECT_EQ(no_code.at('1'), "L1W");
 
-    // And the disagreement the card is named for, in one line.
+    // The disagreement the card is named for, in one line.
     const auto cells = signalRosterBuildCells(
         kTrackedL1cL1w, latch({ { 'L', "L1W" }, { 'C', "C1W" } }), {}, false, nullptr);
     EXPECT_NE(picks.at('1'), cells.at('1').modelled_phase);
 }
 
 // ---------------------------------------------------------------------------
-// Card SID phase 2: the IF pin as a roster WRITER
+// The IF pin as a roster writer (card SID phase 2)
 // ---------------------------------------------------------------------------
 
 TEST(SignalRosterTest, TheIfPinDesignationIsPerConstellationAndBand) {
-    // The pin is elected PER SATELLITE over the network's registered code keys and
-    // it names two CODE signals, while a roster cell is per (station, constellation,
+    // The pin is elected per satellite over the network's registered code keys and
+    // names two code signals, while a roster cell is per (station, constellation,
     // band).  The resolution is therefore a vote, and a band whose satellites did
-    // not agree has to be REPORTED as such rather than collapsed silently.
+    // not agree is reported as ambiguous rather than collapsed silently.
     //
-    // The key is the ROSTER's constellation string, not the satellite id's first
-    // character: the datum seam keys its own maps by the letter, and tallying under
-    // the letter produced picks that matched no cell at all (measured 0 designated
-    // cells on the first armed field run).
+    // The key is the roster's constellation string, not the satellite id's first
+    // character: the datum seam keys its own maps by the letter, and picks tallied
+    // under the letter match no roster cell.
     std::map<std::string, std::pair<std::string, std::string>> pins{
         { "G01", { "C1W", "C2W" } },
         { "G02", { "C1W", "C2W" } },
@@ -295,7 +293,7 @@ TEST(SignalRosterTest, TheDatumFieldsAreWrittenAndThePhaseIsNeverDerived) {
     EXPECT_EQ(sr.at("GPS").at('2').datum_code, "C2W");
     EXPECT_EQ(sr.at("GPS").at('2').datum_phase, "L2W");
 
-    // A station whose latch chose the OTHER band-1 channel gets the designation but
+    // A station whose latch chose the other band-1 channel gets the designation but
     // no datum phase: the pinned code is not what this station models, so naming a
     // phase would derive a signal the estimator does not carry.
     StationRoster other;
@@ -322,7 +320,7 @@ TEST(SignalRosterTest, TheDatumFieldsAreWrittenAndThePhaseIsNeverDerived) {
 }
 
 // ---------------------------------------------------------------------------
-// Card SID phase 2: the tracker's lookup bound to the ROSTER
+// The tracker's lookup bound to the roster (card SID phase 2)
 // ---------------------------------------------------------------------------
 
 namespace {
@@ -365,7 +363,7 @@ TEST(SignalRosterTest, TheTrackerLookupBoundToTheRosterReturnsTheModelledPhase) 
                                              { 'L', "L2W" }, { 'C', "C2W" } }));
     EXPECT_EQ(signalRosterModelledPhase(rs, 0, "GPS", '1'), "L1W");
     EXPECT_EQ(signalRosterModelledPhase(rs, 0, "GPS", '2'), "L2W");
-    // Every way the roster can have no answer is EMPTY, never a guess: an unknown
+    // Every way the roster can have no answer returns empty, never a guess: an unknown
     // station, an unknown constellation, an unknown band.  The caller decides what
     // an empty answer means, and the run-loop binding counts it.
     EXPECT_TRUE(signalRosterModelledPhase(rs, 1, "GPS", '1').empty());
@@ -375,8 +373,8 @@ TEST(SignalRosterTest, TheTrackerLookupBoundToTheRosterReturnsTheModelledPhase) 
 }
 
 TEST(SignalRosterTest, TheRosterBoundTrackerNamesTheModelledPhaseAndFallsBackWithoutItsCode) {
-    // The whole of card SID phase 2 in one pass: the same selection rule card GRK
-    // built, driven from the ROSTER instead of the station latch.
+    // The selection rule of card GRK, driven from the roster instead of the station
+    // latch: card SID phase 2 in one pass.
     LogManager     lm;
     PppUtils       utils{ lm };
     const auto     rs = oneStationRoster(kTrackedL1cL1w,
@@ -404,9 +402,9 @@ TEST(SignalRosterTest, TheRosterBoundTrackerNamesTheModelledPhaseAndFallsBackWit
             << "armed, the tracker's signal IS the roster's by construction";
     }
 
-    // (2) The modelled phase is reported WITHOUT its matching code: the observables
-    //     are built from the pair, so that band falls back to the lexical rule and
-    //     the mismatch is what the counter is for.
+    // (2) The modelled phase is reported without its matching code: the observables
+    //     are built from the pair, so that band falls back to the lexical rule.
+    //     This mismatch is what the counter exists for.
     {
         const std::vector<std::vector<PppObservation>> modeled{
             { rawObs("G01", { "L1C", "L1W", "L2W" }, /*no_code=*/{ "L1W" }) } };
@@ -420,9 +418,9 @@ TEST(SignalRosterTest, TheRosterBoundTrackerNamesTheModelledPhaseAndFallsBackWit
         EXPECT_EQ(ep.rows.at(0)[0].sig2, "L2W");
     }
 
-    // (3) UNARMED with the same lookup bound: the lexical rule stands untouched and
-    //     the counter states the size of the population instead (the both-states
-    //     telemetry card GRK built and this phase inherits).
+    // (3) Unarmed with the same lookup bound: the lexical rule is unchanged and the
+    //     counter reports the size of the affected population instead (the
+    //     both-states telemetry of card GRK, inherited by this phase).
     {
         const std::vector<std::vector<PppObservation>> modeled{
             { rawObs("G01", { "L1C", "L1W", "L2W" }) } };
@@ -438,11 +436,11 @@ TEST(SignalRosterTest, TheRosterBoundTrackerNamesTheModelledPhaseAndFallsBackWit
 }
 
 // ---------------------------------------------------------------------------
-// Card SID phase 4 (S2): FIRST-SIGHTING-ON-RETURN detection
+// First-sighting-on-return detection (card SID phase 4, S2)
 // ---------------------------------------------------------------------------
 //
 // The election calls a family a first sighting when it had no incumbent at the
-// previous epoch.  The read that phase 4a adds asks the LEDGER whether that family
+// previous epoch.  The read that phase 4a adds asks the ledger whether that family
 // had in fact just returned, and the answer is built from the family census below.
 // These cases pin the census the detection is decided on: what "returning" counts
 // as, what it does not, and that another family never contributes to it.
@@ -456,7 +454,7 @@ ArcLedger::Key FK(int sta, const char* sat, const char* sig) {
 /// One admitted epoch, raw side driven alongside (the producer's own ordering).
 void fsAdmit(ArcLedger& led, long long ep, const std::vector<ArcLedger::Key>& arcs) {
     // One keeper arc per station, on a satellite no case queries: a station that
-    // contributed nothing has its arcs FROZEN rather than gapped, so a test that
+    // contributed nothing has its arcs frozen rather than gapped, so a test that
     // drops a station's only arc would exercise the freeze instead of the gap.
     std::vector<ArcLedger::Key> all = arcs;
     for (int sta = 0; sta < 3; ++sta) all.push_back(FK(sta, "G99", "L9X"));
@@ -472,7 +470,7 @@ void fsAdmit(ArcLedger& led, long long ep, const std::vector<ArcLedger::Key>& ar
 }  // namespace
 
 TEST(SignalRosterTest, FirstSightingOnReturnSeesTheReturningArcs) {
-    // A family whose arcs are in a GAP or have just RE-ENTERED is a RETURN, and the
+    // A family whose arcs are in a Gap or have just Reentered is a return, and the
     // election reading it as a birth is the class the audit named.  Both states
     // count toward the returning half; a Tracking arc does not.
     ArcLedger led;
@@ -495,8 +493,8 @@ TEST(SignalRosterTest, FirstSightingOnReturnSeesTheReturningArcs) {
 }
 
 TEST(SignalRosterTest, FirstSightingOnReturnIgnoresOtherFamilies) {
-    // The detection is per (satellite, signal): the SAME satellite on another band
-    // and another satellite on the same band must never be counted into it.
+    // The detection is per (satellite, signal): the same satellite on another band
+    // and another satellite on the same band are not counted into it.
     ArcLedger led;
     led.configure(3900.0, kArcLedgerForgetEp);
     const auto a  = FK(0, "G30", "L1W");
@@ -519,7 +517,7 @@ TEST(SignalRosterTest, FirstSightingOnReturnIgnoresOtherFamilies) {
 
 TEST(SignalRosterTest, AGenuineFirstSightingHasNoReturningArcs) {
     // The other side of the class, and the reason the counter needs a denominator:
-    // a family rising for the first time must read ZERO returning arcs, so a run
+    // a family rising for the first time reads zero returning arcs, so a run
     // whose first-sighting count is high and whose return count is zero is a run
     // with nothing to fix.
     ArcLedger led;

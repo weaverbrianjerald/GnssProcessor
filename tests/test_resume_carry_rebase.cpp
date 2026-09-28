@@ -1,64 +1,67 @@
 /**
  * @file test_resume_carry_rebase.cpp
- * @brief RS-2 (docs/SPEC_event_harness.md §21.4) — the carry blob's LINEARIZATION
- *        frame: @c network.state_snapshot_carry_lin (the @c ZL row) and
- *        @c network.resume_carry_rebase (the re-base at the first post-resume build).
+ * @brief The linearization frame of the carry blob (RS-2,
+ *        docs/SPEC_event_harness.md §21.4): @c network.state_snapshot_carry_lin
+ *        (the @c ZL row) and @c network.resume_carry_rebase (the re-base at the
+ *        first post-resume build).
  *
- * ## The defect this file pins
+ * ## The case this file pins
  *
  * @ref GnssProcessor::NetworkInvariantCarryDriver stores each chord's mean in the
- * CORRECTION frame: @f$\hat z=\sum c\,x_r=\lambda N-\sum c\,x_{\rm lin}@f$.  A resumed
+ * correction frame: @f$\hat z=\sum c\,x_r=\lambda N-\sum c\,x_{\rm lin}@f$.  A resumed
  * run re-seeds every station ambiguity @c x_lin from code at its first epoch (the
- * station layer is deliberately not snapshotted), so a restored @f$\hat z@f$ is wrong
- * by @f$\sum c\,(x_{\rm lin,writer}-x_{\rm lin,now})@f$ — metres per chord, folded at
- * the carry's stiffness on the whole branch at once, with the D5 gate post-solve and
- * therefore only able to flag the damage.  Measured on the field golden's 60-epoch null
- * legs: the first post-resume solve discharges through ONE prior class (`dd_fold` RHS
- * norm 7.8e7 against 616 for every code observation of 61 stations) and the SH health
- * gate then withholds all 61 epochs.
+ * station layer is not snapshotted, by design), so a restored @f$\hat z@f$ is off by
+ * @f$\sum c\,(x_{\rm lin,writer}-x_{\rm lin,now})@f$.  That is metres per chord,
+ * folded at the carry's stiffness on the whole branch at once; the D5 gate runs
+ * post-solve and can only flag the result.  On the field golden's 60-epoch null legs
+ * the first post-resume solve discharges through the `dd_fold` prior class and the
+ * SH health gate then withholds every epoch.
  *
- * The repair is a frame TRANSLATION, in two default-OFF halves: the writer stores
- * @f$z_\ell=\sum c\,x_{\rm lin}@f$ per chord (one @c ZL row per block, beside @c Z), and
- * the first DD prior build after a restore adds @f$W z_{\ell,\rm writer}-z_{\ell,\rm now}@f$
- * to the projected prior means, with @f$W@f$ the cycle-basis projection the build already
- * forms.  @f$P^z@f$ is untouched.
+ * The repair is a frame translation in two halves, both off by default: the writer
+ * stores @f$z_\ell=\sum c\,x_{\rm lin}@f$ per chord (one @c ZL row per block, beside
+ * @c Z), and the first DD prior build after a restore adds
+ * @f$W z_{\ell,\rm writer}-z_{\ell,\rm now}@f$ to the projected prior means, with
+ * @f$W@f$ the cycle-basis projection the build already forms.  @f$P^z@f$ is untouched.
  *
- * ## What the cases are, and why each one is here
+ * ## The cases
  *
- * 1. **RoundTripRebasesToTheSameAbsoluteDd** — the load-bearing one.  Two blocks are
- *    harvested against a known @c x_lin, serialized WITH the @c ZL rows, restored, and
- *    re-based against a SHIFTED @c x_lin.  The shift is placed on ONE arc, so the
- *    predicted correction is exact and per-chord (a chord whose fundamental cycle misses
- *    that arc must not move) — a uniform shift would be cancelled by @f$\sum c=0@f$ and
- *    would pass even if the re-base did nothing.  @f$P^z@f$ is asserted byte-equal, and
- *    an UN-shifted control asserts the re-base is the identity when the two frames agree.
- * 2. **UnbasableContributorIsMarginalizedNotFolded** — the invariant-#7 edge.  A restored
- *    block that is UNBASED but carries no @c ZL row cannot be re-based; its chords take
- *    the ordinary birth path (diffuse prior, zero prior mean) instead of folding the
- *    writer's frame, and the drop is COUNTED.  Without the count the behaviour is
- *    indistinguishable from a chord that simply had no predecessor.
- * 3. **LegacyBlobRestoresUntouchedAndRebasesNothing** — the format-forward contract.  A
- *    blob with no @c ZL rows (every snapshot written before this card) restores exactly
- *    today's means, reports zero re-basable blocks, and re-bases nothing even with the
- *    read knob armed.  This is the "armed but inert" case the run-end line exists to make
- *    visible (standing invariant #4).
- * 4. **WriteKnobOffEmitsNoZlRow** — the byte-identity half: with the write knob off the
- *    blob carries no @c ZL row at all, so a snapshot is unchanged by the card's presence.
- * 5. **DiagnosticOnlyWindowCountsTheTripButKeepsTheCarry** — RS-2b (§21.6), the
- *    @c network.resume_d5_warmup_ep window.  Three arms off ONE noise stream (gate off /
- *    gate on / gate on + diagnostic-only) are warmed together and then given the same
- *    unsignalled 12-cycle jump.  The load-bearing assertion is that the suppressed arm's
- *    carried DD equals the GATE-OFF arm's bit-for-bit: a "diagnostic" gate that still
- *    nudged the posterior would pass any looser test.  Also pinned: the trip is still
- *    reported (flags 1) and counted (@c d5_warmup_suppressed 1) with @c innov_retaps 0,
- *    @ref GnssProcessor::NetworkInvariantCarryDriver::lastInnovWarmupSuppressed marks it
- *    so the caller can keep it out of the slip funnel, the control arm genuinely differs
- *    (non-vacuous), and an untouched neighbour chord is identical everywhere — the flag
- *    must not be a global mute.
+ * 1. **RoundTripRebasesToTheSameAbsoluteDd**: the main case.  Two blocks are
+ *    harvested against a known @c x_lin, serialized with the @c ZL rows, restored,
+ *    and re-based against a shifted @c x_lin.  The shift is placed on one arc, so the
+ *    predicted correction is exact and per chord (a chord whose fundamental cycle
+ *    misses that arc does not move).  A uniform shift would cancel through
+ *    @f$\sum c=0@f$ and would pass even if the re-base did nothing.  @f$P^z@f$ is
+ *    asserted byte-equal, and an unshifted control asserts that the re-base is the
+ *    identity when the two frames agree.
+ * 2. **UnbasableContributorIsMarginalizedNotFolded**: the invariant-#7 edge.  A
+ *    restored block that is marked unbased but carries no @c ZL row cannot be
+ *    re-based; its chords take the ordinary birth path (diffuse prior, zero prior
+ *    mean) instead of folding the writer's frame, and the drop is counted.  Without
+ *    the count the behaviour cannot be told apart from a chord that had no
+ *    predecessor.
+ * 3. **LegacyBlobRestoresUntouchedAndRebasesNothing**: the format-forward contract.
+ *    A blob with no @c ZL rows (any snapshot written without the write knob)
+ *    restores the stored means unchanged, reports zero re-basable blocks, and
+ *    re-bases nothing even with the read knob armed.  The run-end line exists to
+ *    make this armed-but-inert case visible (standing invariant #4).
+ * 4. **WriteKnobOffEmitsNoZlRow**: the byte-identity half.  With the write knob off
+ *    the blob carries no @c ZL row, so a snapshot does not change.
+ * 5. **DiagnosticOnlyWindowCountsTheTripButKeepsTheCarry**: the
+ *    @c network.resume_d5_warmup_ep window (RS-2b, §21.6 of the spec).  Three arms on one noise
+ *    stream (gate off, gate on, gate on and diagnostic-only) are warmed together and
+ *    then given the same unsignalled 12-cycle jump.  The main assertion is that the
+ *    suppressed arm's carried DD equals the gate-off arm's bit for bit; a diagnostic
+ *    gate that still nudged the posterior would pass any looser test.  Also pinned:
+ *    the trip is still reported (flags 1) and counted (@c d5_warmup_suppressed 1)
+ *    with @c innov_retaps 0;
+ *    @ref GnssProcessor::NetworkInvariantCarryDriver::lastInnovWarmupSuppressed marks
+ *    it so the caller can keep it out of the slip funnel; the control arm differs
+ *    (the test is not vacuous); and an untouched neighbour chord is identical
+ *    everywhere, so the flag is not a global mute.
  *
  * Out of scope: the estimator-side fold itself (tests/test_network_invariant_carry_driver.cpp
- * and tests/test_pd_safe_fold.cpp own that), and the end-to-end resume, which is a harness
- * leg pair — §21.4's P1/P2/P3 gates and §21.6's window legs.
+ * and tests/test_pd_safe_fold.cpp cover it), and the end-to-end resume, which is a
+ * harness leg pair: the P1/P2/P3 gates of §21.4 and the window legs of §21.6.
  */
 
 #include <gtest/gtest.h>
@@ -140,7 +143,7 @@ NetworkInvariantCarryDriver::Config rs2Cfg(bool write, bool read) {
     return c;
 }
 
-/// Seed ONE component of @p group with means @p z (chord order = @ref chordsOf) and a
+/// Seed one component of @p group with means @p z (chord order = @ref chordsOf) and a
 /// diagonal @f$P^z@f$, then attach @p zl as its linearization DD.
 void seedBlock(NetworkInvariantCarryDriver& d, int group, int R, int S,
                const Eigen::VectorXd& z, const Eigen::MatrixXd& Pz,
@@ -158,7 +161,7 @@ void seedBlock(NetworkInvariantCarryDriver& d, int group, int R, int S,
 
 // ---------------------------------------------------------------------------
 // 1.  The round trip: harvested at x_lin = A, restored, re-based at A + δ, and the
-//     ABSOLUTE DD (ẑ + zl) is unchanged — with a per-arc δ, so the correction is
+//     absolute DD (ẑ + zl) is unchanged.  δ is per arc, so the correction is
 //     chord-specific and a do-nothing implementation cannot pass.
 // ---------------------------------------------------------------------------
 TEST(ResumeCarryRebaseTest, RoundTripRebasesToTheSameAbsoluteDd) {
@@ -168,7 +171,7 @@ TEST(ResumeCarryRebaseTest, RoundTripRebasesToTheSameAbsoluteDd) {
     const Eigen::Index K = static_cast<Eigen::Index>(ch.size());
 
     const double kBase = 4.0;                   // the writer's x_lin on every arc
-    const double kDelta = 1.75;                 // the shift, on ONE arc only
+    const double kDelta = 1.75;                 // the shift, on one arc only
 
     // --- writer: two blocks (two groups), means and Pᶻ known, ZL captured ------
     Eigen::VectorXd z0(K);  z0 << 0.25, -0.75;
@@ -179,8 +182,8 @@ TEST(ResumeCarryRebaseTest, RoundTripRebasesToTheSameAbsoluteDd) {
     const Eigen::MatrixXd Pz1 = 2.0 * Pz0;
 
     // zl over the writer's frame: every arc at kBase ⇒ Σ c·x_lin = 0 (Σ c = 0 on a DD
-    // cycle).  That is the honest writer value here, and it is precisely why the READER's
-    // shift has to be non-uniform for this test to discriminate.
+    // cycle).  That is the correct writer value here, and it is why the reader's shift
+    // has to be non-uniform for this test to discriminate.
     const Eigen::VectorXd zl_w = Eigen::VectorXd::Zero(K);
 
     NetworkInvariantCarryDriver src(rs2Cfg(/*write=*/true, /*read=*/false));
@@ -193,7 +196,7 @@ TEST(ResumeCarryRebaseTest, RoundTripRebasesToTheSameAbsoluteDd) {
     EXPECT_NE(blob.find("\nZL,"), std::string::npos)
         << "the write knob is armed but no ZL row was emitted";
 
-    // --- reader: restore, then build against a SHIFTED linearization -----------
+    // --- reader: restore, then build against a shifted linearization -----------
     NetworkInvariantCarryDriver dst(rs2Cfg(/*write=*/false, /*read=*/true));
     std::istringstream is(blob);
     std::string err;
@@ -202,7 +205,7 @@ TEST(ResumeCarryRebaseTest, RoundTripRebasesToTheSameAbsoluteDd) {
 
     // δ on the chord arc (1,1) only.  Its own fundamental cycle carries it at +1
     // (ZComponent::fundamentalCycle seeds the chord in reference orientation), and the
-    // cycle of (1,2) does not contain it at all — so the prediction is
+    // cycle of (1,2) does not contain it at all, so the prediction is
     //     chord (1,1): ẑ -= δ        chord (1,2): unchanged.
     std::map<ArcKey, double> lin_now = linMap(R, S, kBase);
     lin_now[ArcKey(rxV(1), satV(1))] = kBase + kDelta;
@@ -225,8 +228,8 @@ TEST(ResumeCarryRebaseTest, RoundTripRebasesToTheSameAbsoluteDd) {
             << "block " << b << ": the shifted arc's chord was not re-based";
         EXPECT_NEAR(blocks[b].zhat(1), want(1), 1e-12)
             << "block " << b << ": a chord whose cycle misses the shifted arc moved";
-        // Pᶻ is an exact frame TRANSLATION's invariant — the projection here is the
-        // identity (the tree and chord set are unchanged), so it must come through
+        // Pᶻ is invariant under a frame translation, and the projection here is the
+        // identity (the tree and chord set are unchanged), so Pᶻ comes through
         // verbatim, off-diagonal included.
         for (Eigen::Index i = 0; i < K; ++i)
             for (Eigen::Index j = 0; j < K; ++j)
@@ -234,8 +237,8 @@ TEST(ResumeCarryRebaseTest, RoundTripRebasesToTheSameAbsoluteDd) {
                     << "block " << b << " Pz(" << i << "," << j << ") moved";
     }
 
-    // Control: the SAME restore built against the writer's own linearization must be the
-    // identity — a re-base that shifts an already-correct frame is as wrong as one that
+    // Control: the same restore built against the writer's own linearization is the
+    // identity.  A re-base that shifts an already-correct frame is as wrong as one that
     // does not shift a stale one.
     NetworkInvariantCarryDriver ctl(rs2Cfg(false, true));
     std::istringstream is2(blob);
@@ -251,9 +254,9 @@ TEST(ResumeCarryRebaseTest, RoundTripRebasesToTheSameAbsoluteDd) {
 }
 
 // ---------------------------------------------------------------------------
-// 2.  A restored block that is UNBASED but carries no ZL row cannot be re-based.
-//     Its chords must take the birth path (prior mean 0, diffuse Pᶻ) rather than fold
-//     the writer's frame, and the drop must be counted.
+// 2.  A restored block that is marked unbased but carries no ZL row cannot be
+//     re-based.  Its chords take the birth path (prior mean 0, diffuse Pᶻ) rather
+//     than fold the writer's frame, and the drop is counted.
 // ---------------------------------------------------------------------------
 TEST(ResumeCarryRebaseTest, UnbasableContributorIsMarginalizedNotFolded) {
     constexpr int R = 2, S = 3;
@@ -265,10 +268,10 @@ TEST(ResumeCarryRebaseTest, UnbasableContributorIsMarginalizedNotFolded) {
     Pz.diagonal() << 0.04, 0.09;
 
     NetworkInvariantCarryDriver d(rs2Cfg(/*write=*/false, /*read=*/true));
-    // UNBASED with NO zl — the state a reader would be in if the blob's frame were
-    // asserted but its rows were missing.  seedCarriedLinForTest with an EMPTY vector is
-    // the only way to reach it from a test; restoreCarry can never produce it (it sets
-    // unbased only when it parsed a full ZL row), which is the point of the guard.
+    // Unbased with no zl: the state a reader would be in if the blob's frame were
+    // asserted but its rows were missing.  seedCarriedLinForTest with an empty vector is
+    // the only way to reach it from a test.  restoreCarry does not produce it (it sets
+    // unbased only when it parsed a full ZL row); the guard covers any other path.
     std::set<int> verts;
     for (int r = 0; r < R; ++r) verts.insert(rxV(r));
     for (int s = 0; s < S; ++s) verts.insert(satV(s));
@@ -296,8 +299,8 @@ TEST(ResumeCarryRebaseTest, UnbasableContributorIsMarginalizedNotFolded) {
 }
 
 // ---------------------------------------------------------------------------
-// 3.  Format-forward: a blob with NO ZL rows restores today's means untouched, reports
-//     nothing re-basable, and re-bases nothing even with the read knob armed.
+// 3.  Format-forward: a blob with no ZL rows restores the stored means untouched,
+//     reports nothing re-basable, and re-bases nothing even with the read knob armed.
 // ---------------------------------------------------------------------------
 TEST(ResumeCarryRebaseTest, LegacyBlobRestoresUntouchedAndRebasesNothing) {
     constexpr int R = 2, S = 3;
@@ -326,8 +329,8 @@ TEST(ResumeCarryRebaseTest, LegacyBlobRestoresUntouchedAndRebasesNothing) {
         EXPECT_DOUBLE_EQ(zd, z(i)) << "a legacy restore must not touch the means";
     }
 
-    // The build against a DIFFERENT linearization must still carry, unchanged — today's
-    // behaviour, which is what "armed but nothing to re-base from" means.
+    // The build against a different linearization still carries the means unchanged:
+    // armed, but with nothing to re-base from, the unarmed behaviour.
     std::map<ArcKey, double> lin_now = linMap(R, S, 4.0);
     lin_now[ArcKey(rxV(1), satV(1))] = 9.0;
     std::vector<NetworkInvariantCarryDriver::GroupInput> groups{makeGroup(0, R, S, lin_now)};
@@ -342,8 +345,8 @@ TEST(ResumeCarryRebaseTest, LegacyBlobRestoresUntouchedAndRebasesNothing) {
 }
 
 // ---------------------------------------------------------------------------
-// 4.  Byte-identity half: with the write knob OFF the harvest captures no zl, so the
-//     blob a run writes is unchanged by this card's presence.
+// 4.  Byte-identity half: with the write knob off the harvest captures no zl, so the
+//     blob a run writes does not change.
 // ---------------------------------------------------------------------------
 TEST(ResumeCarryRebaseTest, WriteKnobOffEmitsNoZlRow) {
     constexpr int R = 2, S = 3;
@@ -356,7 +359,7 @@ TEST(ResumeCarryRebaseTest, WriteKnobOffEmitsNoZlRow) {
         const auto blocks = d.buildDdPriors(groups);
         ASSERT_EQ(blocks.size(), 1u);
         // A first epoch carries nothing, so every chord is born with a zero prior mean in
-        // BOTH arms — the write knob is capture-only and must not touch the fold.
+        // both arms; the write knob only captures and does not touch the fold.
         for (Eigen::Index i = 0; i < blocks[0].zhat.size(); ++i)
             EXPECT_DOUBLE_EQ(blocks[0].zhat(i), 0.0) << "write=" << write;
         EXPECT_EQ(d.counters().resume_rebased, 0) << "write=" << write;
@@ -364,21 +367,21 @@ TEST(ResumeCarryRebaseTest, WriteKnobOffEmitsNoZlRow) {
 }
 
 // ---------------------------------------------------------------------------
-// 5.  RS-2b (§21.6) — the DIAGNOSTIC-ONLY D5 window.  A chord that trips the gate while
-//     Config::innov_diagnostic_only is set must be COUNTED and reported (so it reaches
-//     network_d5_flags.csv and the epoch's n_d5_flags) and otherwise left completely
-//     alone: prior mean kept, Pᶻ row/col kept, re-tap counter not bumped, and marked in
-//     lastInnovWarmupSuppressed so the caller keeps it out of the slip funnel.  With the
-//     flag clear the SAME chord must re-tap exactly as before — the two arms are run off
-//     one shared setup so the only difference is the flag.
+// 5.  The diagnostic-only D5 window (RS-2b, §21.6 of SPEC_event_harness).  A chord
+//     that trips the gate while Config::innov_diagnostic_only is set is counted and
+//     reported (so it reaches network_d5_flags.csv and the epoch's n_d5_flags) and
+//     otherwise left alone: prior mean kept, Pᶻ row/col kept, re-tap counter not
+//     incremented, and marked in lastInnovWarmupSuppressed so the caller keeps it out
+//     of the slip funnel.  With the flag clear the same chord re-taps as usual.  The
+//     arms share one setup, so the flags are the only difference.
 // ---------------------------------------------------------------------------
 namespace {
 
 // A synthetic eq34 network just large enough for the D5 gate to have something to
 // catch: integer ambiguities, a per-receiver RPB so the DD is truly integer, a
 // spanning-tree ambiguity datum pinned per station and r0's RPB + a shared clock pin.
-// Deliberately a LOCAL copy rather than a shared header — these helpers are the
-// fixture, and a fixture shared between suites drifts under whichever one edits it.
+// A local copy rather than a shared header: these helpers are the fixture, and a
+// fixture shared between suites changes under whichever suite edits it.
 struct Net {
     int R, S;
     std::vector<double> a, c, b, d;      // rx clock, sat clock, sat bias, rx RPB
@@ -486,12 +489,12 @@ TEST(ResumeCarryRebaseTest, DiagnosticOnlyWindowCountsTheTripButKeepsTheCarry) {
     const ArcKey slip_chord(rxV(2), satV(3));   // a chord under star(0,0)
     const ArcKey keep_chord(rxV(1), satV(1));   // an untouched neighbour
 
-    // THREE arms off one shared noise stream, so they differ only in the two flags:
-    //   ref  — gate OFF: the fold posterior, untouched by any gate decision;
-    //   ctl  — gate ON: today's behaviour, the flagged chord re-taps data-only;
-    //   diag — gate ON + diagnostic-only: the trip is counted and NOTHING else.
-    // The load-bearing assertion is diag == ref BIT-FOR-BIT on the flagged chord: a
-    // "diagnostic" gate that still nudged the posterior would pass a looser test.
+    // Three arms on one shared noise stream, so they differ only in the two flags:
+    //   ref:  gate off, the fold posterior, untouched by any gate decision;
+    //   ctl:  gate on, the ordinary behaviour, the flagged chord re-taps data-only;
+    //   diag: gate on and diagnostic-only, the trip is counted and nothing else.
+    // The main assertion is diag == ref bit for bit on the flagged chord: a diagnostic
+    // gate that still nudged the posterior would pass a looser test.
     NetworkInvariantCarryDriver ref(gateCfg(false, false));
     NetworkInvariantCarryDriver ctl(gateCfg(true, false));
     NetworkInvariantCarryDriver diag(gateCfg(true, true));
@@ -512,7 +515,7 @@ TEST(ResumeCarryRebaseTest, DiagnosticOnlyWindowCountsTheTripButKeepsTheCarry) {
     ASSERT_EQ(ctl.counters().innov_flags, 0) << "no arm may fire on clean warm-up epochs";
     ASSERT_EQ(diag.counters().innov_flags, 0);
 
-    // An UNSIGNALLED integer jump — the fine slip the coarse layer misses.
+    // An unsignalled integer jump: the fine slip the coarse layer misses.
     n.z[2][3] += 12;
     std::vector<std::vector<double>> jump(R, std::vector<double>(S));
     for (int r = 0; r < R; ++r) for (int s = 0; s < S; ++s) jump[r][s] = nd(gen);
@@ -525,19 +528,19 @@ TEST(ResumeCarryRebaseTest, DiagnosticOnlyWindowCountsTheTripButKeepsTheCarry) {
     ASSERT_TRUE(ctl.carriedDdForTest(0, slip_chord, z_ctl, v_ctl));
     ASSERT_TRUE(diag.carriedDdForTest(0, slip_chord, z_diag, v_diag));
 
-    // --- the gate still SEES it, in both armed arms -----------------------------
+    // --- the gate still sees it, in both armed arms -----------------------------
     EXPECT_EQ(ctl.counters().innov_flags, 1);
     EXPECT_EQ(diag.counters().innov_flags, 1) << "the trip must still be REPORTED";
     EXPECT_EQ(ref.counters().innov_flags, 0)  << "gate OFF must never evaluate";
 
-    // --- but only the ordinary arm ACTS on it ----------------------------------
+    // --- but only the ordinary arm acts on it ----------------------------------
     EXPECT_EQ(ctl.counters().innov_retaps, 1);
     EXPECT_EQ(ctl.counters().d5_warmup_suppressed, 0);
     EXPECT_EQ(diag.counters().innov_retaps, 0)
         << "flags N / re-taps 0 is the window's whole readout";
     EXPECT_EQ(diag.counters().d5_warmup_suppressed, 1);
 
-    // --- the funnel mask, without which "diagnostic" is false next epoch --------
+    // --- the funnel mask; without it the slip funnel acts on the trip next epoch --
     ASSERT_EQ(diag.lastInnovWarmupSuppressed().size(), 1u);
     EXPECT_EQ(diag.lastInnovWarmupSuppressed()[0], 1);
     ASSERT_EQ(ctl.lastInnovWarmupSuppressed().size(), 1u);

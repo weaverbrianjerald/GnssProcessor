@@ -20,9 +20,10 @@ struct SideFit {
 /**
  * @brief Least-squares @f$ y = a + b\,u @f$ with @f$ u = t - t_b @f$.
  *
- * Returns a degenerate-but-flagged fit (slope 0, level = mean) when the time
- * spread is too small to resolve a slope; the caller decides whether that is
- * acceptable.  Any non-finite sample fails the side.
+ * Returns a constant fit (slope 0, level = mean) with @c ok set when the time
+ * spread is too small to resolve a slope (|det| < 1e-12).  SideFit carries no
+ * flag for this case, and fitStep() accepts it.  A length mismatch, too few
+ * samples or any non-finite sample fails the side.
  */
 SideFit fitSide(const JumpGapFitter::Window& w, double t_boundary_s,
                 int min_points) {

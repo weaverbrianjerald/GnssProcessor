@@ -2,12 +2,12 @@
 """Per-constellation network satellite-clock RMS, epoch by epoch.
 
 Reads a network producer run's logs/ and reports, for each epoch, the
-per-constellation RMS and max |clock| of the emitted satellite clocks — the
-diagnostic for watching BeiDou (system 'C') clock contamination/divergence in a
-GPS+Galileo+BeiDou PPP-RTK network.
+per-constellation RMS and max |clock| of the emitted satellite clocks: the
+diagnostic for watching BeiDou (system 'C') clock contamination or divergence
+in a GPS+Galileo+BeiDou PPP-RTK network.
 
 Usage: python analyze_network_clock_rms.py <run_dir>
-  <run_dir> contains logs/network_solution.csv and logs/network_trace.csv
+  <run_dir> contains logs/network_solution.csv
 """
 import csv
 import math

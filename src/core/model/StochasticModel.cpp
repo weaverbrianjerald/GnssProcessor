@@ -86,21 +86,18 @@ namespace GnssProcessor {
 
         const char mt = obs_type[0];
         if (mt == 'C') {
-            // Code: full block + freq + tracking-attr + elevation
-            // pipeline (always — code is the canonical SatBlock target).
+            // Code always takes the full block + band + tracking-attribute
+            // + elevation pipeline.
             return computeSatBlock(obs_type, elevation_deg, default_var, satellite, antennas);
         }
         if (mt == 'L') {
-            // Phase: route through the full pipeline when
-            // @c apply_to_phase is on (default), or fall back to the
-            // flat phase σ × elevation path.  See
-            // SatBlockNoiseParams::apply_to_phase for the physics-vs-
-            // empirical justification: PLL noise alone is below the
-            // observed phase residual spread, so the per-block,
-            // per-band, per-attribute structure captures meaningful
-            // variation on real data.  Users with data that doesn't
-            // exhibit that structure can disable the toggle and get
-            // the legacy default_phase_std_m × elevation behavior.
+            // Phase takes the full pipeline when @c apply_to_phase is on
+            // (default), and otherwise the flat default_phase_std_m ×
+            // elevation path.  PLL noise alone is below the observed
+            // phase residual spread, so the per-block, per-band,
+            // per-attribute structure captures real variation; data
+            // without that structure can turn the toggle off.  See
+            // SatBlockNoiseParams::apply_to_phase for the justification.
             if (sat_block_params_.apply_to_phase) {
                 return computeSatBlock(obs_type, elevation_deg, default_var, satellite, antennas);
             }
@@ -126,12 +123,12 @@ namespace GnssProcessor {
                                                     double elevation_deg) const {
         const double sin_el = std::sin(elevation_deg * Constants::PI / 180.0);
         if (sin_el <= 1e-6) {
-            return default_var; // near-zero elevation — don't amplify to infinity
+            return default_var; // near-zero elevation: return unscaled rather than amplify toward infinity
         }
-        // var_actual = var_zen / sin^(2·power)(elev).  Power = 1.0 on
-        // code (gives legacy csc²(θ) scaling); power = 0.5 on phase
-        // (gives csc(θ), gentler at low elevation).  Empty obs_type
-        // (rare; fallback paths) uses the code power.
+        // var_actual = var_zen / sin^(2·power)(elev).  'L' rows use the
+        // phase power, all others the code power (an empty obs_type, from
+        // fallback paths, included).  Both default to 1.0, which gives
+        // csc²(θ) on variance; a phase power of 0.5 gives the gentler csc(θ).
         const double power = (!obs_type.empty() && obs_type[0] == 'L')
             ? phase_elevation_power_
             : code_elevation_power_;
@@ -168,12 +165,11 @@ namespace GnssProcessor {
         if (snr_dbhz > snr_params_.snr_ceil_dbhz)  snr_dbhz = snr_params_.snr_ceil_dbhz;
 
         // -------- (2) Variance-additive base ----------------------
-        // Hadas & Bosy 2015: σ² = a² + b² · 10^(-CN0/10).  This is
-        // mathematically the right composition for two independent
-        // noise contributions (the high-SNR floor a and the SNR-
-        // dependent term b).  The legacy σ-additive form
-        // σ = a + b·10^(-CN0/10) generated an unphysical 2ab cross-
-        // term on squaring.
+        // Hadas & Bosy 2015: σ² = a² + b² · 10^(-CN0/10).  Variances add
+        // for two independent noise contributions (the high-SNR floor a
+        // and the SNR-dependent term b).  The σ-additive form
+        // σ = a + b·10^(-CN0/10) would add an unphysical 2ab cross-term
+        // on squaring.
         const bool is_code = (obs_type[0] == 'C');
         const double a = is_code ? snr_params_.code_a : snr_params_.phase_a;
         const double b = is_code ? snr_params_.code_b : snr_params_.phase_b;
@@ -183,13 +179,12 @@ namespace GnssProcessor {
         // -------- (3) Per-band scaling (code only) ----------------
         // Chip-rate-driven scaling reduces code σ on wider-bandwidth
         // signals (L5/E5a at 10× the L1 chip rate get ~√10 less
-        // correlator-noise σ).  Reuse the SatelliteBlock model's
-        // code-side freq_band_scale so both models stay calibrated
-        // to the same per-band factors.  Phase σ in the SNR model
-        // stays band-flat — PLL noise is set by carrier-loop
-        // bandwidth and SNR only, not chip rate.  (SatBlock has its
-        // own phase-side band table for the empirical per-band
-        // structure observed on real data.)
+        // correlator-noise σ).  The SatelliteBlock model's code-side
+        // freq_band_scale is reused so both models share the same
+        // per-band factors.  Phase σ in the SNR model stays band-flat:
+        // PLL noise is set by carrier-loop bandwidth and SNR, not chip
+        // rate.  (SatBlock has its own phase-side band table for the
+        // empirical per-band structure observed on real data.)
         if (is_code && obs_type.size() >= 2) {
             const char band = obs_type[1];
             const auto& band_tbl = sat_block_params_.code.freq_band_scale;
@@ -207,10 +202,10 @@ namespace GnssProcessor {
         // -------- (4) Wieser hybrid elevation amplification -------
         // σ²_final = σ²_SNR / sin^(2·power)(el).  Captures the
         // elevation-correlated multipath that pure SNR weighting
-        // under-weights (the carrier loop tracks fine even when
-        // multipath is corrupting the range).  computeElevation
-        // applies code_elevation_power for 'C…' rows and
-        // phase_elevation_power for 'L…' rows.
+        // under-weights (the carrier loop tracks well even when
+        // multipath corrupts the range).  computeElevation applies
+        // phase_elevation_power for 'L…' rows and code_elevation_power
+        // for all others.
         return computeElevation(obs_type, var, elevation_deg);
     }
 
@@ -292,15 +287,15 @@ namespace GnssProcessor {
         // --- Tracking-attribute scale factor ---
         // Multiplies on top of the band scale.  Lookup is per-system
         // because RINEX 3 attributes have constellation-specific
-        // meanings — 'C' on GPS is the (code-only) noisy C/A while
+        // meanings: 'C' on GPS is the (code-only) noisy C/A while
         // 'C' on Galileo is the high-precision E1C pilot.  See
         // SatBlockNoiseParams::ObservableScale doxygen for the
         // hierarchy and the code-vs-phase split rationale.
         //
         // Lookup order: [system][attr] → [default][attr] → 1.0.  When
-        // the system-specific table has no entry for this attribute we
-        // fall through to the cross-system default; when the default
-        // has no entry either we leave the scale at 1.0.
+        // the system-specific table has no entry for this attribute, the
+        // cross-system default is used; when the default has no entry
+        // either, the scale stays at 1.0.
         double attr_scale = 1.0;
         if (obs_type.size() >= 3) {
             const char attr = obs_type[2];
@@ -334,10 +329,11 @@ namespace GnssProcessor {
             zenith_std, freq_scale, attr_scale, scaled_std);
 
         // Apply elevation amplification.  @c computeElevation dispatches
-        // on @c obs_type[0]: code ('C') gets @c code_elevation_power
-        // (typically 1.0 → 1/sin²(elev) variance), phase ('L') gets
-        // @c phase_elevation_power (typically 0.5 → 1/sin(elev), much
-        // gentler).  Phase only reaches this function when
+        // on @c obs_type[0]: code ('C') gets @c code_elevation_power and
+        // phase ('L') gets @c phase_elevation_power.  Both default to 1.0
+        // (filter.code_elevation_power, filter.phase_elevation_power),
+        // giving 1/sin²(elev) on variance; a phase power of 0.5 gives the
+        // gentler 1/sin(elev).  Phase only reaches this function when
         // @c SatBlockNoiseParams::apply_to_phase is true; otherwise the
         // @c computeVariance dispatch handles phase via the flat
         // @c default_phase_std_m path before getting here.

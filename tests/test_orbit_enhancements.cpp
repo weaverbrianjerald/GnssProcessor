@@ -8,18 +8,20 @@
  *
  * Coverage:
  *   trigSvdInterp
- *     - Reproduces a function lying exactly in the 9-term trig span (value AND
- *       analytic derivative) — the rigorous basis/solve/derivative check.
+ *     - Reproduces a function lying exactly in the 9-term trig span, both the value
+ *       and the analytic derivative (checks basis, solve and derivative together).
  *     - Passes through the nodes when n == 9 (square exact fit).
- *     - With 11 nodes is an LS smoother (does NOT pass through, residual small).
+ *     - With 11 nodes it is an LS smoother: it does not pass through the nodes, and
+ *       the residual stays bounded.
  *     - A uniform (all-equal) sigma set is inert: identical to an empty/unweighted
  *       fit (mirrors M-PAGES' per-satellite SVsig).
  *     - Agrees with the legacy Neville fit on a smooth orbit-like function.
  *   SatAttitude
- *     - Yaw-steering frame is bit-identical (<1e-12) to the legacy inline engine
- *       construction (flag-off byte-identity for GPS/GAL/GLO/BDS-MEO).
- *     - BeiDou-2 GEO orbit-normal frame is bit-identical to the legacy inline ON
- *       construction (flag-off byte-identity for the GEO PRN list).
+ *     - Yaw-steering frame matches the legacy inline engine construction to
+ *       <1e-12 (flag-off byte-identity for GPS/GAL/GLO/BDS-MEO).
+ *     - BeiDou-2 GEO orbit-normal frame matches the legacy inline orbit-normal
+ *       construction to <1e-12 when that construction is fed the inertial velocity,
+ *       and differs from it when fed the raw ECEF velocity.
  *     - A non-GEO BeiDou PRN on the legacy path stays yaw-steering.
  *     - The returned frame is orthonormal and right-handed.
  *     - determineMode() reproduces the M-PAGES signed-beta threshold table.
@@ -45,7 +47,7 @@ constexpr double kPi = 3.14159265358979;
 // Same fundamental as trigSvdInterp: sidereal day expressed per second.
 const double kP0 = 2.0 * kPi / (0.99726956634 * 86400.0);
 
-// A function lying exactly in the 9-term basis span {1, sin(f*P0*t), cos(f*P0*t)}
+// A function that lies exactly in the 9-term basis span {1, sin(f*P0*t), cos(f*P0*t)}
 // for f = 1..4, evaluated at the window-local offset tau (seconds).
 double trigRef(double tau, double& deriv) {
     static const double c0 = 137.0;
@@ -107,9 +109,9 @@ TEST(TrigSvdInterp, PassesThroughNodesWhenNine) {
 
 TEST(TrigSvdInterp, ElevenNodesIsSmootherNotInterpolator) {
     // 11 nodes carrying a high-frequency alternating component the smooth 9-term
-    // basis cannot represent -> an overdetermined LS fit (rank 9 < 11 nodes) that
-    // does NOT pass through the nodes.  A Neville degree-10 fit WOULD pass through
-    // all 11 exactly; the trig smoother leaves clear residuals.
+    // basis cannot represent, giving an overdetermined LS fit (rank 9 < 11 nodes)
+    // that does not pass through the nodes.  A degree-10 Neville fit would pass
+    // through all 11 exactly; the trig smoother leaves residuals above 0.1 m.
     const double X0 = 1.36e8;
     std::vector<double> x(11), y(11);
     for (int i = 0; i < 11; ++i) {
@@ -165,7 +167,7 @@ TEST(TrigSvdInterp, AgreesWithNevilleOnSmoothOrbit) {
 }
 
 // ---------------------------------------------------------------------------
-//  SatAttitude — flag-off byte-identity vs the legacy inline construction
+//  SatAttitude: flag-off byte-identity against the legacy inline construction
 // ---------------------------------------------------------------------------
 
 namespace {
@@ -221,18 +223,15 @@ TEST(SatAttitude, YawSteerMatchesLegacyEngineBitForBit) {
 TEST(SatAttitude, GeoOrbitNormalMatchesLegacyEngineOnInertialVelocity) {
     // A BeiDou GEO PRN (C01) on the legacy path uses orbit-normal.
     //
-    // This was originally a bit-for-bit pin against the inline Antenna.cpp block,
-    // proving the SatAttitude extraction changed nothing.  The extraction is still
-    // exact -- but the orbit-normal branch now converts the incoming ECEF velocity
-    // to inertial first, because the orbit plane is an inertial construct and
+    // The orbit-normal branch converts the incoming ECEF velocity to inertial
+    // before forming the frame: the orbit plane is inertial, and
     // r x v_ecef = h - r x (omega x r) is not the orbit normal (see
-    // SatAttitude::inertialVelocity; measured 2.2-30.3 deg for GPS, up to 65 deg
-    // for BeiDou IGSO on real CODE MGX orbits).  So the pin is against the same
-    // legacy construction fed the CORRECTED velocity.
+    // SatAttitude::inertialVelocity).  The reference is therefore the legacy
+    // inline Antenna.cpp construction fed the inertial velocity, which the
+    // extracted SatAttitude code reproduces to 1e-12.
     //
-    // The branch is dormant on current lineages: it is reachable only for the
-    // BeiDou-2 GEO PRNs C01-C05/C59/C60, which are absent from the CODE MGX
-    // products this repo consumes.
+    // The branch is reachable only for the BeiDou-2 GEO PRNs C01-C05/C59/C60,
+    // which are absent from the CODE MGX products the project consumes.
     const Eigen::Vector3d pos(-30000e3, 28000e3, 1500e3);   // near-GEO geometry
     const Eigen::Vector3d vel(-2000.0, -2100.0, 50.0);      // ECEF, as getSatellitePV returns
     const Eigen::Vector3d sun(1.40e11, 0.40e11, 0.10e11);
@@ -247,8 +246,8 @@ TEST(SatAttitude, GeoOrbitNormalMatchesLegacyEngineOnInertialVelocity) {
     EXPECT_LT((att.k_s - ke).norm(), 1e-12);
     EXPECT_EQ(att.mode, SatAttitude::Mode::OrbitNormalPositive);
 
-    // Pin the repair as ACTIVE: the raw-ECEF-velocity frame is measurably different,
-    // so this test fails if the conversion is ever dropped.
+    // The frame built from the raw ECEF velocity differs by more than 1e-6, so
+    // this test fails if the velocity conversion is removed.
     Eigen::Vector3d ir, jr, kr;
     legacyOrbitNormal(pos, vel, ir, jr, kr);
     EXPECT_GT((att.i_s - ir).norm(), 1e-6);
@@ -284,7 +283,7 @@ TEST(SatAttitude, FrameIsOrthonormalRightHanded) {
 }
 
 // ---------------------------------------------------------------------------
-//  SatAttitude — mode table + beta sign (M-PAGES parity)
+//  SatAttitude: mode table and beta sign (M-PAGES parity)
 // ---------------------------------------------------------------------------
 
 TEST(SatAttitude, DetermineModeMatchesMpagesTable) {

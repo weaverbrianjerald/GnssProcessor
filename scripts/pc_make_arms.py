@@ -5,11 +5,11 @@ Every arm derives from the standing FT63 leg-19 replay config
 (``config/test_suite/_ft63_leg19_rhsat.json``) so the estimation configuration
 is identical across arms and only this card's knobs differ.  The §12 interaction
 discipline is enforced here: no arm carries a deweight-release-hygiene knob, and
-the FUSE arm is the only one that touches the solve.
+the fuse arm is the only one that touches the solve.
 
-Each arm gets its OWN run directory and its own copy of the seed snapshot,
-because the producer OVERWRITES ``state_snapshot_path`` at its first hour
-boundary — sharing one file between arms would silently re-seed the later arms
+Each arm gets its own run directory and its own copy of the seed snapshot,
+because the producer overwrites ``state_snapshot_path`` at its first hour
+boundary: sharing one file between arms would silently re-seed the later arms
 from the earlier arm's output.
 
 Usage::
@@ -29,31 +29,31 @@ BASE = ROOT / "config" / "test_suite" / "_ft63_leg19_rhsat.json"
 SNAP_DIR = ROOT / "runs" / "ft63_24h_allon" / "snap_archive"
 
 # (arm tag, snapshot index, start_offset_hours, network-knob overrides)
-# ``None`` as a value DELETES the key inherited from the base config.
+# ``None`` as a value removes the key inherited from the base config.
 ARMS = [
-    # Control for the OFF byte-identity check — same build, no card knobs at all.
+    # Control for the off byte-identity check: same build, no card knobs at all.
     ("pcbase", 20, 19.1125, {"rhs_attrib_tow": None, "rhs_attrib_n_ep": None}),
-    # INC-0 hoist regression: byte-identical attribution against runs/ft63_leg19_rhsat.
+    # Hoist regression: byte-identical attribution against runs/ft63_leg19_rhsat (INC-0).
     ("rhsat2", 20, 19.1125, {}),
-    # INC-1 census (+ the negative clock-step gate at TOW 329340, URUM00CHN).
+    # Census, plus the negative clock-step gate at TOW 329340, URUM00CHN (INC-1).
     ("census", 20, 19.1125, {
         "rhs_attrib_tow": None, "rhs_attrib_n_ep": None,
         "trace_prefit_census": True,
         "prefit_event_sigma": 1000.0,
         "prefit_event_holdoff_ep": 20,
     }),
-    # INC-4 topology ledger.
+    # Topology ledger (INC-4).
     ("topo", 20, 19.1125, {
         "rhs_attrib_tow": None, "rhs_attrib_n_ep": None,
         "trace_topology": True,
     }),
-    # INC-5 flight recorder — the hand-picked window is DISARMED on purpose.
+    # Flight recorder; the hand-picked window is disarmed on purpose (INC-5).
     ("trip", 20, 19.1125, {
         "rhs_attrib_tow": None, "rhs_attrib_n_ep": None,
         "rhs_attrib_on_trip": True,
         "rhs_attrib_on_trip_prev": True,
     }),
-    # INC-2 structural fuse — the one SOLVE-AFFECTING arm, graded on its own leg.
+    # Structural fuse, the one solve-affecting arm, graded on its own leg (INC-2).
     # The census rides along so the events name what the fuse cut.
     ("fuse", 20, 19.1125, {
         "rhs_attrib_tow": None, "rhs_attrib_n_ep": None,
@@ -61,12 +61,12 @@ ARMS = [
         "prefit_fuse_sigma": 1000.0,
         "prefit_event_holdoff_ep": 20,
     }),
-    # INC-3 seed-birth tripwire on the leg that CONTAINS G07@BSHM's ~18:34 arc
-    # birth.  NOTE the snapshot index is NOT the hour: the archive's snap_N is
-    # written ~30 s before offset (N-1).1125, which is why the main leg pairs
-    # snap_20 with 19.1125.  Pairing snap_18 with 18.1125 (as the spec's §12.6
-    # text does) makes the snapshot 3690 s stale and, with
-    # state_snapshot_require on, hard-aborts the leg — measured.
+    # Seed-birth tripwire on the leg that contains G07@BSHM's ~18:34 arc birth
+    # (INC-3).  The snapshot index is not the hour: the archive's snap_N is
+    # written about 30 s before offset (N-1).1125, which is why the main leg
+    # pairs snap_20 with 19.1125.  Pairing snap_18 with 18.1125, as the spec's
+    # §12.6 text does, makes the snapshot 3690 s stale and, with
+    # state_snapshot_require on, hard-aborts the leg.
     ("birth18", 19, 18.1125, {
         "rhs_attrib_tow": None, "rhs_attrib_n_ep": None,
         "trace_prefit_census": True,

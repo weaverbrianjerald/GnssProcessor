@@ -1,18 +1,19 @@
 #pragma once
 /**
  * @file NetworkDdPriorBuild.hpp
- * @brief The two per-epoch DD-prior BUILD steps of the PPP-RTK network producer,
- *        relocated VERBATIM out of Application::runNetwork at decomposition INC-9b
- *        (2026-07-22): the ensemble Sum-Zero phase-bias gauges and the Card-4 invariant
- *        DD-carry prior blocks + WL/UWL lane machinery (mw_wl / ewl / uwl / lane_carry).
+ * @brief The two per-epoch DD-prior build steps of the PPP-RTK network producer: the
+ *        ensemble sum-zero phase-bias gauges, and the invariant DD-carry prior blocks
+ *        (card 4) with the WL/UWL lane machinery (mw_wl / ewl / uwl / lane_carry).
+ *        Relocated verbatim from Application::runNetwork (decomposition INC-9b).
  *
- * Both run-TU lambdas are RETAINED as thin `[&]` wrappers forwarding to these free
- * functions, so the initial gauge/DD build AND the within-epoch RAIM re-solve
- * (`resolve_dropping`) keep byte-identical capture semantics.  These functions own NO
- * state; every WL run-state instance (ewl_lanes / wl_inject_epoch / mw_wl_layer /
- * mw_wl_f6 / ...) and the three dangerous cross-epoch channels (carry_slipped_ambs via
- * ctx, carry_innov_pending via ctx, lane_admit_pairs via ctx) are references from the
- * run TU; every other argument is named exactly as the former runNetwork() capture.
+ * The run TU keeps both lambdas as thin `[&]` wrappers that forward to these free
+ * functions, so the initial gauge/DD build and the within-epoch RAIM re-solve
+ * (`resolve_dropping`) keep byte-identical capture semantics.  These functions own no
+ * state.  Every WL run-state instance (ewl_lanes / wl_inject_epoch / mw_wl_layer /
+ * mw_wl_f6 / ...) is a reference into the run TU.  Two inputs carry state across
+ * epochs or passes and need care: carry_slipped_ambs, the driver's per-epoch slip
+ * funnel, passed by reference, and lane_admit_pairs, read and written through
+ * ctx.carry.  Every other argument keeps the name of the former runNetwork() capture.
  */
 
 #include "filter/NetworkEstimator.hpp"          // NetworkEstimator
@@ -43,7 +44,7 @@ struct NetworkRunTraces;
 
 /**
  * @brief Fold the ensemble Sum-Zero phase-bias gauges for this epoch into @p est.
- *        No-op unless @p phase_datum_ensemble.  See the .cpp for the verbatim body.
+ *        No-op unless @p phase_datum_ensemble.  The body is documented in the .cpp.
  */
 void networkBuildEnsembleGauges(NetworkEstimator& est,
                                 const std::vector<NetStation>& stations,
@@ -56,10 +57,10 @@ void networkBuildEnsembleGauges(NetworkEstimator& est,
 
 
 /**
- * @brief Build this epoch's Card-4 invariant DD-carry prior blocks (+ the WL/UWL lane
- *        machinery) and install them via NetworkEstimator::setDdPriors.  Early-returns
- *        (OFF byte-identical) unless carry_invariant.  All WL run-state args are in/out
- *        references into the run-TU-owned instances.
+ * @brief Build this epoch's invariant DD-carry prior blocks (card 4) and the WL/UWL
+ *        lane rows, and install them via NetworkEstimator::setDdPriors.  Returns early
+ *        unless carry_invariant, so with it off the output is byte-identical.  All WL
+ *        run-state arguments are in/out references into instances owned by the run TU.
  */
 void networkBuildCarryDdPriors(
     NetworkRunContext& ctx,
@@ -77,12 +78,13 @@ void networkBuildCarryDdPriors(
     std::map<int, std::map<ArcKey, std::string>>& carry_arc_amb_key,
     std::map<int, std::map<ArcKey, std::string>>& carry_arc_amb_key2,
     std::set<std::pair<int, std::string>>& carry_slipped_ambs,
-    /// Card 4 (M1) D5 v4: the RAW-detector subset of this epoch's funnel.  The
-    /// complement `carry_slipped_ambs \ carry_slipped_raw` is EXACTLY the D5 drain
-    /// (every non-D5 inserter writes both sets — NetworkSlipQc via the PASS-A binding,
+    /// The raw-detector subset of this epoch's slip funnel (card 4, M1, D5 v4).  Every
+    /// raw-observable inserter writes both sets (NetworkSlipQc via the PASS-A binding,
     /// networkSignalIntegrity, networkMeasurementAdmission, the deweight-release
-    /// drain), which is the same idiom the Iono-2 v3k erase-policy split already
-    /// relies on.  Read ONLY under network.carry_invariant_innov_retap_only.
+    /// drain), so the complement `carry_slipped_ambs \ carry_slipped_raw` holds the
+    /// estimation-side entries: the D5 innovation drain and the post-fit RAIM refloat
+    /// drain (raim_refloat_pending).  The Iono-2 v3k erase-policy split uses the same
+    /// idiom.  Read only under network.carry_invariant_innov_retap_only.
     const std::set<std::pair<int, std::string>>& carry_slipped_raw,
     const std::set<std::string>* carry_we_drop_sats,
     const std::map<int, std::set<std::string>>* carry_we_drop_arcs,

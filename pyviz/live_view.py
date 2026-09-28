@@ -45,7 +45,7 @@ def main(argv=None) -> int:
     from gnssviz.realtime import LiveDashboard
 
     # Curated default live set (fast, high-signal; excludes the multi-MB slip
-    # traces -- add them with --only or --all). --all / --only override.
+    # traces, which can be added with --only or --all). --all / --only override.
     default_live = ["state", "dops", "satellite_status", "measurement_residuals",
                     "ionosphere", "ambiguities"]
     only = None if args.all else (args.only if args.only else default_live)

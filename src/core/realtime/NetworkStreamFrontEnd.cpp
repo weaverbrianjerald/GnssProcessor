@@ -2,10 +2,11 @@
  * @file NetworkStreamFrontEnd.cpp
  * @brief RTF-3 multi-station streaming front-end (implementation).
  *
- * See the header for the architecture.  The ingest loop is deliberately
- * single-threaded over all lanes: every transport buffers on its own receive
- * thread, so the sweep here only drains ring buffers and decodes — cheap at
- * the 50-station 1 Hz design point, and it keeps the aligner single-writer.
+ * See the header for the architecture.  One ingest thread serves all lanes by
+ * design: network transports buffer on their own receive threads, so the sweep
+ * only drains buffers and decodes (file lanes are read in the sweep).  That is
+ * cheap at the 50-station 1 Hz design point, and it keeps the aligner
+ * single-writer.
  */
 #include "realtime/NetworkStreamFrontEnd.hpp"
 
@@ -23,16 +24,17 @@
 namespace GnssProcessor {
 
 // ---------------------------------------------------------------------------
-// LaneByteSource — minimal transport wrapper (see header for the deliberate
-// RealtimeStream duplication note).
+// LaneByteSource: minimal transport wrapper (the header explains why it
+// duplicates RealtimeStream).
 // ---------------------------------------------------------------------------
 
 bool NetworkStreamFrontEnd::LaneByteSource::active() const {
     switch (kind) {
         case Kind::File:  return !file_eof;
-        // Running, NOT momentarily-connected: the clients auto-reconnect and
-        // are briefly unconnected at startup — gating on isConnected() here
-        // would end a lane on any transient drop (the RealtimeStream lesson).
+        // Gate on running, not on connected: the clients reconnect
+        // automatically and are briefly unconnected at startup, so gating on
+        // isConnected() would end a lane on any transient drop (the same rule
+        // as in RealtimeStream).
         case Kind::Ntrip: return ntrip && ntrip->isRunning();
         case Kind::Tcp:   return tcp   && tcp->isRunning();
     }
@@ -156,7 +158,7 @@ bool NetworkStreamFrontEnd::start() {
         auto lane = std::make_unique<Lane>();
         lane->station       = sc->name;
         lane->stats.station = sc->name;
-        if (!openLane(*lane, sc->transport)) continue;   // prefer-degraded: skip, never sink the roster
+        if (!openLane(*lane, sc->transport)) continue;   // skip the failed lane; the others still run
         lane->stats.active = true;
         lanes_.push_back(std::move(lane));
     }
@@ -220,14 +222,14 @@ NetworkStreamFrontEnd::tagAndGroup(std::vector<RinexObservation> obs,
                                    bool lli_from_locktime) {
     std::vector<std::pair<GnssTime, std::vector<RinexObservation>>> batches;
     for (auto& o : obs) {
-        // STATION IDENTITY at the framer boundary: the lane's roster name, not
-        // anything inferred from the stream.  This is the single write that
-        // keeps N streams from merging into one phantom station.
+        // Station identity at the framer boundary: the lane's roster name, not
+        // anything inferred from the stream.  This single write keeps N
+        // streams from merging into one station.
         o.receiver_id = station;
         if (lli_from_locktime && tracker) {
-            // RTB-3: LLI 0x1 from MSM lock-time regression, tracked per
-            // (station, sat, signal) through the SHARED tracker — the
-            // station key is what keeps two lanes' histories apart.
+            // LLI 0x1 from an MSM lock-time regression, tracked per
+            // (station, sat, signal) through the shared tracker; the station
+            // key keeps the lanes' histories apart (RTB-3).
             for (const auto& [code, lock_ms] : o.lock_time_ms) {
                 if (tracker->update(station, o.satellite, code, lock_ms))
                     o.lli_flags[code] |= 0x1;
@@ -235,7 +237,7 @@ NetworkStreamFrontEnd::tagAndGroup(std::vector<RinexObservation> obs,
         }
         // Millisecond-exact epoch grouping (a drain may span an epoch
         // boundary; one MSM frame is one constellation at one tow).  Batches
-        // keep first-seen order — the aligner merges same-epoch batches.
+        // keep first-seen order; the aligner merges same-epoch batches.
         const auto same_epoch = [&](const GnssTime& t) {
             return t.week == o.time.week
                    && std::llround(t.tow * 1e3) == std::llround(o.time.tow * 1e3);
@@ -265,9 +267,9 @@ std::size_t NetworkStreamFrontEnd::drainLane(Lane& lane,
     auto log = log_manager_.getLogger("main_log");
     std::vector<std::uint8_t> chunk;
     std::size_t drained = 0;
-    // Bounded drain (the pumpFrames doctrine): consume what is buffered, cap
-    // the burst so one lane never starves the sweep.  Timeout 0 — the sweep
-    // must not block on any single lane.
+    // Bounded drain (as in pumpFrames): consume what is buffered, capped at
+    // kMaxDrainPerLane so one lane cannot starve the sweep.  The read timeout
+    // is 0 so the sweep never blocks on a single lane.
     while (drained < kMaxDrainPerLane) {
         const std::size_t n = lane.source.read(chunk, kReadChunk, /*timeout_ms=*/0);
         if (n == 0) break;
@@ -275,8 +277,8 @@ std::size_t NetworkStreamFrontEnd::drainLane(Lane& lane,
         lane.framer.feed(chunk);
         while (auto frame = lane.framer.nextFrame()) {
             ++lane.stats.frames;
-            // Persistent per-lane parser: outputs are per-frame (clear), the
-            // stream-time tracker survives per lane (RTB-1(a), per stream).
+            // Persistent per-lane parser: clear() resets the per-frame outputs,
+            // and the stream-time tracker persists per lane (RTB-1(a), per stream).
             lane.parser.clear();
             lane.parser.parseFrame(*frame);
 
@@ -303,9 +305,9 @@ std::size_t NetworkStreamFrontEnd::drainLane(Lane& lane,
                 lane.stats.nav_records += lane.parser.getBroadcastEphemeris().size();
             }
 
-            // SSR content on an obs lane: counted and DROPPED — the producer
-            // estimates its own corrections; a foreign SSR stream here would
-            // be circular.  One-shot log so the drop is never silent.
+            // SSR content on an observation lane is counted and dropped: the
+            // producer estimates its own corrections, and a foreign SSR stream
+            // here would be circular.  The first drop per lane is logged.
             const std::size_t n_ssr =
                 lane.parser.getSsrOrbits().size() + lane.parser.getSsrClocks().size()
                 + lane.parser.getSsrCombined().size()
@@ -359,7 +361,7 @@ void NetworkStreamFrontEnd::ingestLoop() {
             break;
         }
 
-        // Heartbeat: the operator's staleness surface for a silent session.
+        // Heartbeat: lets an operator see that a session has gone silent.
         if (ns.log_interval_s > 0.0
             && std::chrono::duration<double>(now - last_heartbeat).count()
                    >= ns.log_interval_s) {

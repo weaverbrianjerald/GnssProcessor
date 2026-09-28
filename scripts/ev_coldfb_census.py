@@ -1,29 +1,29 @@
 #!/usr/bin/env python3
-"""COLD ANCHOR-FALLBACK card, STEP 1 — the family-selection census (no runs).
+"""Cold anchor-fallback card, step 1: the family-selection census (no runs).
 
-Answers, from a seed run's OWN traces, the question the card's harness legs need
-answered before any leg exists: *which (sat, signal) families, at the snapshot
-epoch, would hand over to a candidate whose arc is NOT carry-usable while a
-lower-ranked candidate's IS?*  Those are the families whose handover goes COLD
-today and would go CONTINUOUS under `network.phase_datum_candidacy_usable`.
+Answers, from a seed run's own traces, the question the card's harness legs need
+answered before any leg exists: which (sat, signal) families, at the snapshot
+epoch, would hand over to a candidate whose arc is not carry-usable while a
+lower-ranked candidate's is?  Those are the families whose handover goes cold
+today and would go continuous under `network.phase_datum_candidacy_usable`.
 
 Two traces, both written by the seed itself:
 
 ``logs/network_phase_anchor.csv``   week,tow,cons,signal,sat,anchor_sta
-    who anchors what at the epoch — the INCUMBENT of every family.
+    who anchors what at the epoch: the incumbent of every family.
 
 ``logs/network_slip_raw.csv``       week,tow,station,sat,sig1,sig2,elev_deg,...
-    every station x satellite x epoch with elevation, so an arc's AGE at the
+    every station x satellite x epoch with elevation, so an arc's age at the
     epoch is the number of consecutive 30 s epochs the satellite has been seen
     at that station, and the signals it tracks are the union of the sig1/sig2
-    columns of its rows.  (The residual trace cannot be used: a PINNED arc never
-    appears in it — SPEC_event_harness.md §15.)
+    columns of its rows.  (The residual trace cannot be used: a pinned arc never
+    appears in it, SPEC_event_harness.md §15.)
 
-The candidate ORDER is reproduced the way `networkElectPhaseAnchors` builds it
+The candidate order is reproduced the way `networkElectPhaseAnchors` builds it
 (`src/core/filter/NetworkPhaseDatum.cpp`): per constellation, stations ranked by
-DESCENDING coverage — the number of satellites of that constellation the station
-tracks at elevation >= `network.phase_datum_pref_elev_deg` (default 15) — then by
-ASCENDING station name.  `usable_keys` (the station allocated a phase-bias state
+descending coverage, the number of satellites of that constellation the station
+tracks at elevation >= `network.phase_datum_pref_elev_deg` (default 15), then by
+ascending station name.  `usable_keys` (the station allocated a phase-bias state
 for the (sat, signal)) is approximated, as the brief specifies, by "the station
 tracks that satellite on that signal at that epoch".
 
@@ -56,9 +56,9 @@ def load_tracking(path, tow):
     """Walk network_slip_raw.csv once, up to and including `tow`.
 
     Returns (sigs, elev, age) where
-      sigs[(sta, sat)] = set of signals tracked AT `tow`
-      elev[(sta, sat)] = elevation (deg) AT `tow`
-      age[(sta, sat)]  = consecutive-epoch arc length ENDING at `tow` (0 = absent)
+      sigs[(sta, sat)] = set of signals tracked at `tow`
+      elev[(sta, sat)] = elevation (deg) at `tow`
+      age[(sta, sat)]  = consecutive-epoch arc length ending at `tow` (0 = absent)
     """
     last = {}      # (sta,sat) -> last tow seen
     run = {}       # (sta,sat) -> consecutive epochs ending at `last`
@@ -131,7 +131,7 @@ def main():
             continue
         top = others[0]
         top_age, top_el = age.get((top, sat), 0), elev.get((top, sat), 0.0)
-        # The best MATURE+HIGH alternative anywhere below the top-ranked one.
+        # The best mature, high-elevation alternative anywhere below the top-ranked one.
         better = [s for s in others[1:]
                   if age.get((s, sat), 0) >= a.mature and elev.get((s, sat), 0.0) > a.high]
         qualifies = (top_age < a.mature or top_el < a.low) and bool(better)
@@ -154,7 +154,7 @@ def main():
     print(hdr)
     print("-" * len(hdr))
     shortlist = [r for r in rows if r["q"]]
-    # Strongest first: the YOUNGEST top-ranked candidate (the most likely to have
+    # Strongest first: the youngest top-ranked candidate (the most likely to have
     # no carry-usable ledger value at all), then the highest mature alternative.
     shortlist.sort(key=lambda r: (r["top_age"], -r["alt_el"]))
     for r in (shortlist or rows)[:a.top]:

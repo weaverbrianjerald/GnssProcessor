@@ -1,4 +1,4 @@
-"""WLS-trace viewer -- the port of ``wls.m``.
+"""WLS-trace viewer: the port of ``wls.m``.
 
 Reads ``wls_trace.csv`` (WLS seed / clock-jump diagnostics, one row per reseed)
 and produces: ECEF X/Y/Z components, ENU components, 3D error magnitude, clock

@@ -2,9 +2,9 @@
 """Rapid one-change arms for the two-bed (sim / field) bisection loop.
 
 A fault that shows on one bed and not on the other is isolated by a series of short
-arms that each change ONE thing: on the field bed an ingredient is SUBTRACTED
+arms that each change one thing: on the field bed an ingredient is subtracted
 (observation types stripped for a station or satellite subset, a station dropped, a
-knob flipped), on the sim bed an ingredient is ADDED (a bias, a relabel, a slip
+knob flipped), on the sim bed an ingredient is added (a bias, a relabel, a slip
 process, a drift).  This tool turns a one-line spec into a runnable arm, runs a batch
 in parallel, and prints one scorecard.
 
@@ -23,22 +23,23 @@ RINEX ops (GPS by default, `sys=` to change).  Common selectors:
 Ops:
   strip;types=?5?                     remove the types (header too when sats=all)
   strip;types=???;sats=G30;tow_from=277200[;tow_to=278700]
-                                      a strip restricted to a TIME WINDOW (GPS seconds of week,
-                                      inclusive, either bound may be omitted).  The epoch's TOW is
+                                      a strip restricted to a time window (GPS seconds of week,
+                                      inclusive; either bound may be omitted).  The epoch's TOW is
                                       read from the `> yyyy mm dd hh mm ss` header (the files are in
-                                      GPS time; the day of week comes from the date, no leap-second
-                                      arithmetic).  A windowed strip NEVER edits the header type
-                                      list, not even with sats=all, because the types exist outside
-                                      the window; it blanks the selected fields of the records whose
-                                      epoch falls inside it.  A subtraction in a time window is the
-                                      field bed's equivalent of an injected event (card EV7).
+                                      GPS time; the day of week comes from the date, with no
+                                      leap-second arithmetic).  A windowed strip does not edit the
+                                      header type list, even with sats=all, because the types exist
+                                      outside the window; it blanks the selected fields of the
+                                      records whose epoch falls inside it.  A subtraction in a time
+                                      window is the field bed's equivalent of an injected event
+                                      (card EV7).
   relabel;from=?5Q;to=?5X             rename observation types in the header
   bias;types=C5?;per=station|sat;sigma=3.0;seed=1      constant, metres (N(0, sigma))
   slip;types=L5?;rate=1.0;max=5;seed=1                 integer-cycle steps, rate per arc-hour
   drift;types=L5?;amp_m=0.03;period_s=5400;per=station|sat|los;seed=1   sinusoid, metres
   dropslip;types=L1?,L2?,C2?;rate=0.15;len=3;max=300;seed=1
                                       a loss of lock: the listed types are blanked for `len` epochs
-                                      (rate per arc-hour) and every listed PHASE type returns with
+                                      (rate per arc-hour) and every listed phase type returns with
                                       its own integer-cycle step, while the other types track through
   primaryonly;bands=12                remove every observation type of `bands` whose tracking
                                       attribute is not the station's primary one (first phase
@@ -48,59 +49,60 @@ Ops:
                                       primary phase of one of `bands` is missing inside an arc
                                       (a good epoch within `window` epochs), so that a
                                       phase-only dropout becomes a full tracking gap;
-                                      where=mid keeps only epochs with a good epoch on BOTH
+                                      where=mid keeps only epochs with a good epoch on both
                                       sides, where=edge only those with one on a single side;
                                       where=causal;keep=N deletes a partial epoch that comes
                                       before the satellite's first good epoch or more than N
                                       epochs after its last good one (a rule a filter can run)
   ecc;stations=A,B;h=2.0[;e=0.0][;n=0.0]
-                                      GIVE the selected stations an antenna eccentricity (card
+                                      give the selected stations an antenna eccentricity (card
                                       UPO).  The vector is written into the `ANTENNA: DELTA
                                       H/E/N` record of each station's RINEX copy (the record is
-                                      inserted before END OF HEADER when the file has none), AND
-                                      the station's `position_ecef` in the ARM's config is moved
-                                      by MINUS the same vector along the local up / east / north
+                                      inserted before END OF HEADER when the file has none), and
+                                      the station's `position_ecef` in the arm's config is moved
+                                      by minus the same vector along the local up / east / north
                                       at the configured coordinate.  The true antenna therefore
-                                      stays exactly where the simulator put it and the configured
-                                      coordinate becomes a MONUMENT coordinate, which is the
-                                      ingredient the sim bed lacks (every sim station is 0/0/0).
-                                      `network.station_marker_to_arp` reduces it back, so ON must
-                                      reproduce the un-eccentric baseline and OFF must show the
-                                      defect.  Repeatable: one op per (h, e, n) group of stations.
+                                      stays where the simulator put it and the configured
+                                      coordinate becomes a monument coordinate, which the sim bed
+                                      otherwise lacks (every sim station has a 0/0/0 eccentricity).
+                                      `network.station_marker_to_arp` reduces it back: with the
+                                      knob on, the arm is expected to reproduce the baseline
+                                      without eccentricity, and with it off, to show the offset.
+                                      Repeatable: one op per (h, e, n) group of stations.
   clone;from=C1C;to=C1W;noise=0.3;seed=7
-                                      ADD an observation type `to` as a copy of `from` plus
+                                      add an observation type `to` as a copy of `from` plus
                                       white noise N(0, noise) metres drawn per (seed, station,
                                       satellite, epoch).  The type is appended to the header
                                       (count and continuation lines rebuilt), a blank source
                                       field stays blank, and the LLI / signal-strength digits
-                                      are copied.  The new column is visible to every LATER op,
+                                      are copied.  The new column is visible to every later op,
                                       so `clone` followed by `bias;types=<to>` gives the second
-                                      signal known receiver and satellite inter-signal biases —
-                                      which is how a sim bed whose files carry ONE band-1 code
-                                      gets a second one (card SCC, R9).  Put the clone FIRST.
+                                      signal known receiver and satellite inter-signal biases.
+                                      This gives a sim bed whose files carry one band-1 code a
+                                      second one (card SCC, R9).  Put the clone first.
   clone;from=L1C;to=L1W;noise=0.002;seed=7[;rx_sigma=0.03][;sat_sigma=0.05]
-                                      A PHASE clone (card SID phase 6a).  The field of an L type
-                                      is in CYCLES and every magnitude here is in metres, so the
+                                      a phase clone (card SID phase 6a).  The field of an L type
+                                      is in cycles and every magnitude here is in metres, so the
                                       draws are converted with the band frequency.  A phase clone
-                                      also adds a per-STATION constant (the receiver inter-channel
+                                      also adds a per-station constant (the receiver inter-channel
                                       phase bias, N(0, rx_sigma) metres, default 0.03) and a
-                                      per-SATELLITE constant (N(0, sat_sigma) metres, default
+                                      per-satellite constant (N(0, sat_sigma) metres, default
                                       0.05), so the second family carries a known inter-signal
                                       truth without a following `bias` op.  Both sigmas default to
-                                      0 for a CODE clone, which therefore behaves exactly as
+                                      0 for a code clone, which therefore behaves as described
                                       above.  The consumer is excluded unless `consumer=1`.
 An op on a phase type is given in metres and applied in cycles.  Every draw is keyed
 on (seed, station, satellite), so the same spec gives the same file in every arm.
 `draws` prints those constants without writing a file, so an injected truth can be
 compared against what a wire carries.
 
-Ops act IN SPEC ORDER on the names the file has at that point (card GAL): a record
+Ops act in spec order on the names the file has at that point (card GAL): a record
 op (bias, slip, drift, strip, dropslip) that follows a `relabel` finds the column
-under its NEW name, exactly as one that follows a `clone` finds the cloned column.
-So `relabel;sys=E;from=C1C;to=C1X` then `bias;sys=E;types=C1X;per=sat` injects the
-constant on the relabelled column.  Every op of one file must name the same `sys=`
-(the file is rewritten against that system's type block); mixing G and E ops on one
-station in one arm is refused rather than silently applied to the wrong block.
+under its new name, in the same way that one following a `clone` finds the cloned
+column.  So `relabel;sys=E;from=C1C;to=C1X` then `bias;sys=E;types=C1X;per=sat`
+injects the constant on the relabelled column.  Every op of one file must name the
+same `sys=` (the file is rewritten against that system's type block); mixing G and E
+ops on one station in one arm is refused rather than applied to the wrong block.
 Galileo (`sys=E`): FREQ carries E1, E5a, E5b, E6 and E5 (AltBOC), so a phase op on
 an E type is converted to cycles with the Galileo carrier.  The `family:` selector
 reads the GPS header block; select Galileo stations with `every:N`, `first:N` or a
@@ -128,7 +130,7 @@ RUNS = ROOT + "/runs"
 LABEL = "SYS / # / OBS TYPES"
 C = 299792458.0
 FREQ = {"G": {"1": 1575.42e6, "2": 1227.60e6, "5": 1176.45e6},
-        # Card GAL: Galileo E1, E5a, E5b, E6 and the E5 (AltBOC) centre, MHz * 1e6.
+        # Galileo E1, E5a, E5b, E6 and the E5 (AltBOC) centre, in Hz (card GAL).
         "E": {"1": 1575.42e6, "5": 1176.45e6, "7": 1207.14e6, "6": 1278.75e6,
               "8": 1191.795e6}}
 IIF = "G03 G06 G08 G09 G10 G24 G25 G26 G27 G30 G32".split()
@@ -157,9 +159,9 @@ def parse_op(text):
 # ----------------------------------------------------------------------------- geodesy
 # WGS84, matching include/common/Constants.hpp and src/core/math/Coordinates.cpp
 # (ecefToLlh's Bowring start + fixed-point refinement, enuToEcefMatrix's E/N/U
-# columns).  Used ONLY by the `ecc` op, to move a configured coordinate by minus
+# columns).  Used only by the `ecc` op, to move a configured coordinate by minus
 # the eccentricity it writes into the header, so that the estimator's own
-# markerToArp puts the station back exactly where it was.
+# markerToArp puts the station back where it was.
 WGS84_A, WGS84_F = 6378137.0, 1.0 / 298.257223563
 
 
@@ -201,12 +203,12 @@ def ecc_hen(op):
 
 
 def lower_to_marker(pos, hen):
-    """Move an ARP coordinate DOWN by `hen` in the local frame: the monument it came from.
+    """Move an ARP coordinate down by `hen` in the local frame, to the monument below it.
 
-    The single-shot inverse of Coordinates::markerToArp evaluated at the ARP rather
-    than at the marker, which closes to O(|ecc|^2 / R) — 6e-7 m for a 2 m tower, four
-    orders below anything graded here.  This is deliberately the literal "minus the
-    same vector at the configured coordinate" the card asks for.
+    The single-shot inverse of Coordinates::markerToArp, evaluated at the ARP rather
+    than at the marker, which closes to O(|ecc|^2 / R): 6e-7 m for a 2 m tower, four
+    orders below anything graded here.  It implements the card's definition literally:
+    minus the same vector, at the configured coordinate.
     """
     lat, lon, _ = ecef_to_llh(*pos)
     d = enu_to_ecef((hen[1], hen[2], hen[0]), lat, lon)
@@ -227,9 +229,9 @@ def apply_ecc_header(lines, hen):
 def op_window(op):
     """(tow_from, tow_to) of a windowed op, or None when it has no window.
 
-    Bounds are GPS seconds of week and INCLUSIVE; either may be omitted.  `None`
+    Bounds are GPS seconds of week and inclusive; either may be omitted.  `None`
     (no window at all) is kept distinct from an open-ended window so that the
-    un-windowed code path stays byte-for-byte what it was.
+    un-windowed code path is left unchanged by window support.
     """
     if "tow_from" not in op and "tow_to" not in op:
         return None
@@ -255,13 +257,13 @@ def match_types(codes, patterns):
 def norm_sat(sat):
     """Canonical satellite id for a RINEX record (card RXP).
 
-    A RINEX 3 record may write its number blank-padded — "G 7" for "G07" — and 16
-    of the 310 observation files of 2024-129 do.  Every id this tool is COMPARED
-    against (the `sats=` selectors, IIF / III, the draw keys) is zero-padded, so a
-    raw slice silently skips those records: an op asked for on G03 never reaches a
-    station that writes "G 3".  Only comparisons and dictionary keys are
-    normalized; the record's own three bytes are written back untouched, because
-    re-padding the file would make the arm a second change.
+    A RINEX 3 record may write its number blank-padded ("G 7" for "G07"), and 16 of
+    the 310 observation files of 2024-129 do.  Every id this tool compares against
+    (the `sats=` selectors, IIF / III, the draw keys) is zero-padded, so a raw slice
+    would skip those records: an op asked for on G03 would not reach a station that
+    writes "G 3".  Only comparisons and dictionary keys are normalized; the record's
+    own three bytes are written back untouched, because re-padding the file would
+    make the arm a second change.
     """
     return sat[:1] + "0" + sat[2:3] if len(sat) >= 3 and sat[1] == " " else sat
 
@@ -293,7 +295,7 @@ def file_selected(op, idx, name, codes):
     """Does `op` apply to the file of station `name` (index `idx`, -1 = the consumer)?
 
     The consumer is reached only with `consumer=1`, and then by `all`, by a
-    `family:` selector it satisfies, or by its NAME in a station list (card GAL's
+    `family:` selector it satisfies, or by its name in a station list (card GAL's
     `stations=SZZ000SIM;consumer=1`).  A roster station is reached by
     `station_selected`, never through the consumer flag.
     """
@@ -394,15 +396,16 @@ def apply_holes(lines, i0, codes, system, op):
 def rewrite_rinex(src, dst, ops, station, hours=None):
     """Apply `ops` (already selected for this station) to one RINEX 3 file; returns the records deleted by `holes`."""
     lines = open(src, "r", encoding="ascii", errors="replace").read().split("\n")
-    # `ecc` is a HEADER op: it rewrites (or inserts) the ANTENNA: DELTA H/E/N
+    # `ecc` is a header op: it rewrites (or inserts) the ANTENNA: DELTA H/E/N
     # record and touches no observation.  Applied before read_header so the line
     # indices below are those of the final header.
     for op in ops:
         if op["op"] == "ecc":
             lines = apply_ecc_header(lines, ecc_hen(op))
     system = ops[0]["sys"]
-    # Card GAL: one file is rewritten against ONE system's type block, so every op
-    # that reaches it must name that system (an `ecc` op is header-only and has none).
+    # One file is rewritten against one system's type block, so every op that
+    # reaches it must name that system; an `ecc` op is header-only and is exempt
+    # (card GAL).
     mixed = sorted({op["sys"] for op in ops if op["op"] != "ecc"} - {system})
     assert not mixed, (src, "every op of one file must name the same sys= (the file is "
                        "rewritten against the first op's type block)", system, mixed)
@@ -413,11 +416,12 @@ def rewrite_rinex(src, dst, ops, station, hours=None):
         if op["op"] == "holes":
             lines, n = apply_holes(lines, i, codes, system, op)
             n_holes += n
-    # A CLONE appends a new observation type, so every later step works against the
-    # WIDENED type list: a `bias;types=C1W` that follows a `clone;to=C1W` has to find
+    # A clone appends a new observation type, so every later step works against the
+    # widened type list: a `bias;types=C1W` that follows a `clone;to=C1W` has to find
     # the column the clone created, which is why the clone is parsed first and why
-    # match_types reads `work` below.  With no clone op `work` IS `codes`, so every
-    # index, the header block and every record line are byte-for-byte what they were.
+    # match_types reads `work` below.  With no clone op `work` equals `codes`, so every
+    # index, the header block and every record line are byte-identical to a clone-free
+    # rewrite.
     clones = []
     for op in ops:
         if op["op"] != "clone":
@@ -426,15 +430,15 @@ def rewrite_rinex(src, dst, ops, station, hours=None):
         assert src_code in codes, (src, "clone source type not in the file", src_code)
         assert dst_code not in codes, (src, "clone target type already exists", dst_code)
         assert dst_code not in [c["to"] for c in clones], (src, "cloned twice", dst_code)
-        # Card SID phase 6a: a PHASE clone.  The RINEX field of an L type is in CYCLES
+        # Phase clone (card SID phase 6a).  The RINEX field of an L type is in cycles
         # while `noise` (like every other op's magnitude) is given in metres, so the
-        # per-record draw is converted here exactly as delta_m's callers convert theirs.
-        # A phase clone also carries the two inter-signal CONSTANTS the card needs, so
-        # that a bed whose files hold one band-1 phase gets a second one with a known
-        # receiver inter-channel bias and a known satellite inter-signal bias: drawing
-        # them inside the clone (rather than leaving them to a following `bias` op) is
-        # what keeps the two constants attached to the signal they define.  A CODE clone
-        # keeps sigma 0 for both, so card SCC's spec produces the identical file.
+        # per-record draw is converted here in the same way delta_m's callers convert
+        # theirs.  A phase clone also carries two inter-signal constants, so that a bed
+        # whose files hold one band-1 phase gets a second one with a known receiver
+        # inter-channel bias and a known satellite inter-signal bias.  Drawing them
+        # inside the clone, rather than in a following `bias` op, keeps the two
+        # constants attached to the signal they define.  A code clone keeps sigma 0 for
+        # both, so card SCC's spec produces an identical file.
         phase = dst_code[0] == "L"
         cyc = 1.0
         if phase:
@@ -448,13 +452,13 @@ def rewrite_rinex(src, dst, ops, station, hours=None):
                        "sat_sigma": float(op.get("sat_sigma", 0.05 if phase else 0.0))})
     work = codes + [c["to"] for c in clones]
     new_codes, drop = list(work), set()
-    # Card GAL: the names each op SEES, in spec order.  A relabel renames the column
-    # for every LATER op (header and record ops alike), the way a clone adds one; an
-    # op before it still sees the old name.  With no relabel `names` IS `work`, so
-    # every earlier spec produces the file it always produced.
+    # The names each op sees, in spec order (card GAL).  A relabel renames the column
+    # for every later op (header and record ops alike), the way a clone adds one; an
+    # op before it still sees the old name.  With no relabel `names` equals `work`, so
+    # a spec without a relabel is unaffected by this ordering.
     names = list(work)
     for op in ops:
-        # A WINDOWED strip never touches the header: the types exist outside the window.
+        # A windowed strip does not touch the header: the types exist outside the window.
         if op["op"] == "strip" and op["sats"] == "all" and op_window(op) is None:
             drop |= set(match_types(names, op["types"]))
         if op["op"] == "primaryonly":
@@ -495,11 +499,11 @@ def rewrite_rinex(src, dst, ops, station, hours=None):
                 i += n
             continue
         if ln[:1] == system and len(ln) > 3:
-            # Card RXP: compare and key on the canonical id, write back ln[:3].
+            # Compare and key on the canonical id; write back ln[:3] (card RXP).
             sat = norm_sat(ln[:3])
             p = ln.ljust(width)
             fld = [p[3 + 16 * k: 19 + 16 * k] for k in range(len(codes))]
-            # The cloned columns, formed from the RAW source field before any record
+            # The cloned columns, formed from the raw source field before any record
             # op touches it, so `clone` then `bias;types=<to>` injects the bias once
             # and the source column keeps its own value.  A blank source stays blank
             # (the clone inherits the tracking gaps of the signal it copies), and the
@@ -513,7 +517,7 @@ def rewrite_rinex(src, dst, ops, station, hours=None):
                 if c["noise"] > 0.0:
                     d = draw(c["seed"], "clone", c["to"], station, sat,
                              "%.3f" % sod).gauss(0.0, c["noise"])
-                # The two inter-signal CONSTANTS (metres, drawn once per station and
+                # The two inter-signal constants (metres, drawn once per station and
                 # once per satellite).  Both sigmas are 0 for a code clone, so its draw
                 # sequence and its output are unchanged.
                 if c["rx_sigma"] > 0.0:
@@ -634,12 +638,12 @@ def cmd_make(a):
                 n_holes += rewrite_rinex(path, dst, mine, name, hours=(a.hours + 0.05) if a.hours else None)
                 node["rinex_path"] = dst
                 touched.append(name)
-                # `ecc` also LOWERS the configured coordinate by the vector it wrote
+                # `ecc` also lowers the configured coordinate by the vector it wrote
                 # into the header, so the true antenna stays where it was and the
-                # config value becomes a monument coordinate (card UPO, U5).  Done
-                # here rather than in rewrite_rinex because it edits the ARM, not
+                # config value becomes a monument coordinate (card UPO, U5).  This is
+                # done here rather than in rewrite_rinex because it edits the arm, not
                 # the RINEX.  A station may carry at most one ecc op: two would
-                # compose two rotations and neither header could hold both.
+                # compose two offsets and the header record can hold only one.
                 eccs = [op for op in mine if op["op"] == "ecc"]
                 assert len(eccs) < 2, (name, "more than one ecc op selects this station")
                 for op in eccs:
@@ -751,10 +755,10 @@ def cmd_score(a):
 def cmd_draws(a):
     """Print the constants the `bias` ops of a spec list draw, without writing a file.
 
-    The draw key of a bias includes the op's INDEX in the per-file record-op list, so
+    The draw key of a bias includes the op's index in the per-file record-op list, so
     a spec cannot be graded in isolation: the same `bias;per=sat;seed=12` draws
     different numbers depending on what precedes it.  The whole list is therefore
-    given here exactly as `make --rinex` takes it, in the same order, and the indices
+    given here as `make --rinex` takes it, in the same order, and the indices
     are rebuilt the way rewrite_rinex builds them (a clone, a relabel, a holes, an
     ecc, a primaryonly and a whole-file strip are structural and take no index).
     """
@@ -879,7 +883,7 @@ def cmd_selftest(_):
     first = next(k for k in range(blank[0] + 1, len(g)) if g[k].ljust(99)[3 + 48:3 + 62].strip())
     after = [float(g[first][3 + 48:3 + 62]) - 1.0e8]
     chk(after and abs(after[0]) >= 1 and abs(after[0] - round(after[0])) < 1e-3, f"dropslip integer step {after}")
-    # 10: card RXP — a blank-padded number ("G 3") is SELECTED as G03 and keyed as
+    # 10: card RXP.  A blank-padded number ("G 3") is selected as G03 and keyed as
     #     G03, while the record's own three bytes are written back untouched.
     pad_b, bln_b = [], []
     for e in range(4):
@@ -904,9 +908,10 @@ def cmd_selftest(_):
     ub = [x[3:] for x in open(d + "/u_bln.rnx").read().split("\n")]
     steps = [float(ub[5 + 3 * k][80:94]) - 0.7e8 for k in range(4)]
     chk(up == ub and any(abs(s) >= 1 for s in steps), f"blank-padded draw matches the padded twin {steps}")
-    # 11: card EV7 — a windowed strip acts at BOTH edges of the window and nowhere else,
-    #     keeps the header even with sats=all, and is a no-op on the un-windowed path.
-    #     The bed epochs are 2024-05-08 00:00 .. 00:03, a Wednesday, so TOW 259200 + 60*e.
+    # 11: card EV7.  A windowed strip acts inside the window, inclusive at both edges,
+    #     and nowhere else; it keeps the header even with sats=all, and leaves the
+    #     un-windowed path unchanged.  The bed epochs are 2024-05-08 00:00 .. 00:03, a
+    #     Wednesday, so TOW 259200 + 60*e.
     chk(abs(epoch_tow(["2024", "05", "08", "05", "22", "00.0000000"]) - 278520.0) < 1e-6,
         "epoch_tow of 2024-129 05:22:00 is TOW 278520")
     rewrite_rinex(src, d + "/w.rnx", [parse_op("strip;types=?5?;tow_from=259260;tow_to=259320")], "AAAA")
@@ -920,7 +925,7 @@ def cmd_selftest(_):
         and all(x.ljust(99)[3:3 + 14].strip() for x in w if x.startswith("G03")), "windowed strip hits every ?5? type")
     chk([w[k] for k, x in enumerate(w) if x.startswith("E01")] == [body[3 + 4 * j].rstrip() for j in range(4)],
         "other system untouched by a windowed strip")
-    # an open-ended window, a satellite subset, and the no-window twin byte-for-byte as before
+    # an open-ended window, a satellite subset, and the no-window twin byte-identical to test 1
     rewrite_rinex(src, d + "/w2.rnx", [parse_op("strip;types=?5?;sats=G03;tow_from=259320")], "AAAA")
     w2 = open(d + "/w2.rnx").read().split("\n")
     g5b = [k for k, x in enumerate(w2) if x.startswith("G03")]
@@ -930,9 +935,9 @@ def cmd_selftest(_):
         "another satellite untouched inside the window")
     rewrite_rinex(src, d + "/w3.rnx", [parse_op("strip;types=?5?")], "AAAA")
     chk(open(d + "/w3.rnx").read() == open(d + "/b.rnx").read(), "no window: byte-for-byte the old path")
-    # 12: card SCC — `clone` adds an observation type as a noisy copy, the header count
+    # 12: card SCC.  `clone` adds an observation type as a noisy copy, the header count
     #     and its continuation lines are rebuilt, a blank source stays blank, the
-    #     LLI / signal-strength digits are copied, and a LATER op sees the new column.
+    #     LLI / signal-strength digits are copied, and a later op sees the new column.
     rewrite_rinex(src, d + "/x.rnx", [parse_op("clone;from=C1C;to=C1W;noise=0.3;seed=7")], "AAAA")
     x = open(d + "/x.rnx").read().split("\n")
     chk(x[1].startswith("G    7 C1C C2W C5Q L1C L2W L5Q C1W"), f"clone header {x[1]!r}")
@@ -959,7 +964,7 @@ def cmd_selftest(_):
     y = open(d + "/y2.rnx").read().split("\n")
     chk(y[5].ljust(3 + 16 * 7)[3 + 16 * 6:3 + 16 * 6 + 14].strip() == "", "blank source stays blank")
     chk(y[6].ljust(3 + 16 * 7)[3 + 16 * 6:3 + 16 * 6 + 14].strip() != "", "the next record still clones")
-    # a LATER op acts on the cloned column, and only on it
+    # a later op acts on the cloned column, and only on it
     two = [parse_op("clone;from=C1C;to=C1W;noise=0;seed=7"),
            parse_op("bias;types=C1W;per=sat;sigma=0.5;seed=12")]
     rewrite_rinex(src, d + "/z.rnx", two, "AAAA")
@@ -969,8 +974,8 @@ def cmd_selftest(_):
     chk(len(set(round(v, 6) for v in inj)) == 1 and abs(inj[0]) > 1e-4,
         f"a bias on the clone is one constant per satellite {inj}")
     chk(z[5][3:3 + 16] == body[1][3:3 + 16], "the bias did not reach the source column")
-    # `draws` reproduces that constant from the spec alone — the op INDEX included.
-    # The tolerance is the FILE's: RINEX writes F14.3, so an injected truth read back
+    # `draws` reproduces that constant from the spec alone, op index included.
+    # The tolerance is the file's: RINEX writes F14.3, so an injected truth read back
     # out of the file is quantized to the millimetre.
     got = draw("12", 0, "bias", "G03").gauss(0.0, 0.5)
     chk(abs(got - inj[0]) < 1e-3, f"draws key matches the injected constant {got} vs {inj[0]}")
@@ -986,9 +991,9 @@ def cmd_selftest(_):
     c14 = open(d + "/c14.rnx").read().split("\n")
     chk(c14[1].startswith("G   14 C1C") and c14[2].startswith("       C1W")
         and c14[2][60:].strip() == LABEL, f"continuation line {c14[1]!r} / {c14[2]!r}")
-    # 13: card UPO — `ecc` writes the eccentricity into ANTENNA: DELTA H/E/N (inserting
+    # 13: card UPO.  `ecc` writes the eccentricity into ANTENNA: DELTA H/E/N (inserting
     #     the record when the file has none), leaves every observation untouched, and
-    #     LOWERS the configured coordinate by the same vector, so that the estimator's
+    #     lowers the configured coordinate by the same vector, so that the estimator's
     #     own marker -> ARP reduction returns it to where it started.
     he = list(hdr)
     he.insert(1, "        0.0000        0.0000        0.0000                  ANTENNA: DELTA H/E/N")
@@ -1001,7 +1006,7 @@ def cmd_selftest(_):
         "ecc leaves every observation record untouched")
     chk([x for x in e1 if x.startswith(">")] == [b for b in body if b[:1] == ">"],
         "ecc leaves every epoch header untouched")
-    # the record is INSERTED, in the header, when the file carries none
+    # the record is inserted in the header when the file carries none
     rewrite_rinex(src, d + "/ec2.rnx", [parse_op("ecc;stations=AAAA;h=1.5")], "AAAA")
     e2 = open(d + "/ec2.rnx").read().split("\n")
     k_rec = [k for k, x in enumerate(e2) if x[60:].strip() == "ANTENNA: DELTA H/E/N"]
@@ -1009,7 +1014,7 @@ def cmd_selftest(_):
     chk(len(k_rec) == 1 and k_rec[0] < k_end[0], f"ecc inserts the record in the header {k_rec}")
     chk(e2[k_rec[0]][:42] == "%14.4f%14.4f%14.4f" % (1.5, 0.0, 0.0), f"ecc default e/n zero {e2[k_rec[0]]!r}")
     chk(len(e2) == len(hdr + body) + 2, f"ecc adds exactly one line {len(e2)}")
-    # the configured coordinate goes DOWN by h, and the estimator's markerToArp
+    # the configured coordinate goes down by h, and the estimator's markerToArp
     # (the same rotation, opposite sign, at the lowered point) returns it to within
     # the O(|ecc|^2/R) closure of a single-shot inverse
     pos = [4194423.4920, 1162703.0403, 4647245.6154]          # GRAZ00AUT
@@ -1042,11 +1047,11 @@ def cmd_selftest(_):
         chk(False, "ecc with stations=all must be refused")
     except AssertionError as ex:
         chk("ecc must name its stations" in str(ex), f"ecc stations=all refused {ex}")
-    # 14: card SID phase 6a — a PHASE clone.  The field is in CYCLES while every
+    # 14: card SID phase 6a, a phase clone.  The field is in cycles while every
     #     magnitude is in metres, so the injected constants must come back divided by
-    #     the wavelength; the per-STATION and per-SATELLITE constants are constant over
-    #     epochs and differ between satellites; and a CODE clone is unchanged by the
-    #     addition (card SCC's spec must give the identical file it always gave).
+    #     the wavelength; the per-station and per-satellite constants are constant over
+    #     epochs and differ between satellites; and a code clone carries no constants,
+    #     so card SCC's spec still gives an exact copy plus its noise.
     L1 = FREQ["G"]["1"] / C                                   # cycles per metre at L1
     rewrite_rinex(src, d + "/p.rnx", [parse_op("clone;from=L1C;to=L1W;noise=0;seed=5")], "AAAA")
     p = open(d + "/p.rnx").read().split("\n")
@@ -1084,14 +1089,14 @@ def cmd_selftest(_):
     nz = [col7(p4[5 + 4 * k]) - 1.0e8 for k in range(4)]
     chk(len(set(round(v, 6) for v in nz)) == 4, f"phase clone noise is per epoch {nz}")
     chk(max(abs(v) for v in nz) < 0.02 * L1 + 1e-6, f"phase clone noise is metres, not cycles {nz}")
-    # a CODE clone is untouched by all of this (card SCC's own spec)
+    # a code clone is untouched by all of this (card SCC's own spec)
     rewrite_rinex(src, d + "/p5.rnx", [parse_op("clone;from=C1C;to=C1W;noise=0;seed=7")], "AAAA")
     chk(abs(col7(open(d + "/p5.rnx").read().split("\n")[5]) - 2.0e7) < 1e-6,
         "a noiseless code clone stays an exact copy (no constants)")
     # 15: card GAL, Galileo ops.  A relabel on the E block renames only the E types;
-    #     a LATER per-satellite bias on the relabelled name lands on that column with
+    #     a later per-satellite bias on the relabelled name lands on that column with
     #     one constant per satellite, identical at every station and equal to what
-    #     `draws` prints; an op BEFORE the relabel still sees the old name; a phase op
+    #     `draws` prints; an op before the relabel still sees the old name; a phase op
     #     on an E type converts with the Galileo carrier; ops naming two systems for
     #     one file are refused; and the consumer is reached by name with consumer=1.
     he = [hdr[0], hdr[1], "E    4 C1C L1C C5Q L5Q".ljust(60) + LABEL, hdr[3]]

@@ -56,14 +56,15 @@ void networkChannelAllEpoch(NetworkRunContext& ctx, const GnssConfig& config_,
                             const std::vector<NetStation>& stations,
                             const std::vector<std::vector<PppObservation>>& modeled,
                             const std::vector<bool>& present) {
-    // Card GAL: the census also runs on a single-channel posture when a second
-    // constellation is active, so its families can be read per constellation (the
-    // run-end line is then card GAL's; the three phase-6b lines stay under `all`).
+    // The census also runs on a single-channel posture when a second constellation
+    // is active, so its families can be read per constellation.  The run-end line is
+    // then card GAL's; the three phase-6b lines are written only under `all`
+    // (card GAL).
     if (!config_.networkChannelModeAll() && !networkMultiGnssActive(config_)) return;
     auto& C = ctx.counters.channel_all;
     ++C.epochs;
 
-    // Per-(constellation, signal) tallies of THIS epoch, so the census stores peaks.
+    // Per-(constellation, signal) tallies of this epoch only, so the census stores peaks.
     std::map<std::string, std::set<int>>         sta_tracking, sta_modelling;
     std::map<std::string, std::set<std::string>> cols;
     std::set<char> extra_code_bands;
@@ -102,9 +103,9 @@ void networkChannelAllEpoch(NetworkRunContext& ctx, const GnssConfig& config_,
                 }
             }
         }
-        // R5's CROSS-CHANNEL EXPOSURE, measured where it is defined: a cell carrying
-        // more than one modelled attribute of a band is a cell every screen keyed on
-        // "SAT|<band>" or on (station, satellite) acts on wholesale.
+        // Cross-channel exposure (R5): a cell carrying more than one modelled attribute
+        // of a band is one that every screen keyed on "SAT|<band>" or on (station,
+        // satellite) acts on as a whole.
         for (const auto& [k, n] : cell) {
             (void)k;
             ++C.xchan_cells_total;

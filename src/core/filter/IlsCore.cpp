@@ -2,10 +2,10 @@
  * @file IlsCore.cpp
  * @brief Pure integer-least-squares (MLAMBDA) core implementation.
  *
- * The MLAMBDA kernels (Chang et al. 2005) and the acceptance battery,
- * relocated verbatim from AmbiguityResolver so the single-station user path
- * and the PPP-RTK network producer path share one implementation.  No
- * StateManager / Kalman / config / logging dependencies — see IlsCore.hpp.
+ * The MLAMBDA kernels (Chang et al. 2005) and the acceptance battery, shared
+ * by the single-station user path (AmbiguityResolver) and the PPP-RTK network
+ * producer path.  No StateManager, Kalman, config or logging dependencies;
+ * see IlsCore.hpp.
  */
 
 #include "filter/IlsCore.hpp"
@@ -19,7 +19,7 @@ namespace GnssProcessor {
 namespace ils {
 
 // ===========================================================================
-// LDL^T decomposition
+// Q = L^T D L factorization (unit lower-triangular L, eliminated from the last row up)
 // ===========================================================================
 
 bool ldlDecompose(const Eigen::MatrixXd& Q,
@@ -235,10 +235,10 @@ bool mlambda(const Eigen::VectorXd& a,
     if (found < 2) return false;
 
     s = sq.head(2);
-    if (d_out) *d_out = d;  // post-reduction diagonal — caller may compute P_s,boot
+    if (d_out) *d_out = d;  // post-reduction diagonal, for the caller's P_s,boot
 
-    // Back-transform best candidate: afix = inv(Z^T) * E(:,0)
-    // Since Z is integer, inv(Z^T) = round(inv(Z^T))
+    // Back-transform the best candidate: afix = inv(Z^T) * E(:,0).
+    // Z is unimodular, so inv(Z^T) is an integer matrix and rounding it is exact.
     Eigen::MatrixXd Zt_inv = Z.transpose().inverse();
     // Round to nearest integer to clean up numerical noise
     for (int i = 0; i < Zt_inv.rows(); ++i) {
@@ -272,9 +272,8 @@ double computeBootstrapSuccessRate(const Eigen::VectorXd& d) {
 // ===========================================================================
 // Partial ambiguity resolution (greedy backward elimination)
 //
-// Relocated verbatim from AmbiguityResolver::selectFixableSubset_; the only
-// change is that the four gate thresholds are read from @p gates rather than
-// a member AmbiguityResolverConfig.
+// AmbiguityResolver::selectFixableSubset_ forwards here with its config copied
+// into @p gates; the gate thresholds are read from @p gates.
 // ===========================================================================
 
 PartialFix selectFixableSubset(const Eigen::VectorXd& y_cycles,
@@ -288,10 +287,10 @@ PartialFix selectFixableSubset(const Eigen::VectorXd& y_cycles,
     std::vector<int> active(nb);
     std::iota(active.begin(), active.end(), 0);
 
-    // Each iteration strictly shrinks `active`, so the loop terminates.  We
-    // allow the subset to shrink to a single entry: the ratio/bootstrap/frac
-    // gates remain meaningful for one ambiguity and reject all but the most
-    // confident lone fixes.
+    // Each iteration either returns or shrinks `active` by one, so the loop
+    // terminates.  The subset may shrink to a single entry: the ratio,
+    // bootstrap and frac gates remain meaningful for one ambiguity and reject
+    // all but the most confident lone fixes.
     while (static_cast<int>(active.size()) >= 1) {
         const int m = static_cast<int>(active.size());
 
@@ -307,9 +306,9 @@ PartialFix selectFixableSubset(const Eigen::VectorXd& y_cycles,
         // sub-block robust to any caller that passes a not-quite-symmetric Q.
         Q_sub = 0.5 * (Q_sub + Q_sub.transpose());
 
-        // Drop the entry with the largest formal float variance (cycles²) —
-        // the least precise ambiguity, whose removal most improves the
-        // bootstrap success rate and search conditioning.
+        // Drop the entry with the largest formal float variance (cycles²): the
+        // least precise ambiguity, whose removal is expected to improve the
+        // bootstrap success rate and search conditioning most.
         auto drop_worst_variance = [&]() {
             int worst = 0;
             double worst_var = -1.0;
@@ -333,7 +332,7 @@ PartialFix selectFixableSubset(const Eigen::VectorXd& y_cycles,
         if (p_s < gates.min_success_rate) { drop_worst_variance(); continue; }
 
         // Per-entry fractional cap: when this is the failing gate, drop the
-        // specific entry sitting nearest a half-cycle boundary rather than the
+        // entry with the largest |float − fixed| rather than the
         // highest-variance one.
         double max_frac = 0.0;
         int    worst_frac = 0;
@@ -346,7 +345,7 @@ PartialFix selectFixableSubset(const Eigen::VectorXd& y_cycles,
             continue;
         }
 
-        // Subset passes the full acceptance battery — accept it.
+        // The subset passes the full acceptance battery: accept it.
         out.success     = true;
         out.kept        = active;
         out.afix_cycles = afix_sub;

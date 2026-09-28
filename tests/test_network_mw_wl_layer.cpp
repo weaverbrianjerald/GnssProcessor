@@ -1,17 +1,18 @@
 /**
  * @file test_network_mw_wl_layer.cpp
- * @brief M5 card WL-1 gate — the MW-seeded wide-lane pseudo-observation layer.
+ * @brief Gate tests for the MW-seeded wide-lane pseudo-observation layer (M5 card WL-1,
+ *        with the WL-2 and UWL-1 extensions).
  *
- * The layer is the load-bearing NEW math of the card: from the carry driver's
- * fundamental-cycle chord basis + a per-arc MW resolver it emits WL rows
+ * The layer holds the card's new math.  From the carry driver's fundamental-cycle
+ * chord basis and a per-arc MW resolver it emits WL rows:
  *   terms:  +c/λ1 on the L1 ambiguity column, −c/λ2 on the L2 column (per cycle arc);
  *   z    :  Σ c·MW̄/λ_WL   (measured wide-lane double difference, cycles);
  *   R    :  max(Σ c²·var/λ_WL², sigma_floor²).
- * These gates pin the signs, the λ scaling, the R propagation + floor, the
- * eligibility classification (with counters), the max-rows cap, and the per-carry-
- * block grouping (so the WL rows of one component fold jointly).  A resolver stub
- * feeds synthetic ArcData so the tests are pure and deterministic (no estimator,
- * no detector) — the SPEC §7.3 "unit battery" for the row builder.
+ * These gates check the signs, the λ scaling, the R propagation and floor, the
+ * eligibility classification (with counters), the max-rows cap, and the grouping per
+ * carry block (so the WL rows of one component fold jointly).  A resolver stub feeds
+ * synthetic ArcData, so the tests are pure and deterministic (no estimator, no
+ * detector): the SPEC §7.3 "unit battery" for the row builder.
  */
 
 #include <gtest/gtest.h>
@@ -244,7 +245,7 @@ TEST(NetworkMwWlLayer, UnresolvableTermSkipsMissingBand) {
     EXPECT_EQ(ctr.cycles_seen, 0);
 }
 
-// Rows of ONE carry block group into one WL block (jointly foldable); distinct carry
+// Rows of one carry block group into one WL block (jointly foldable); distinct carry
 // blocks yield distinct WL blocks (column-disjoint ⇒ exact composition).
 TEST(NetworkMwWlLayer, RowsGroupedByCarryBlock) {
     NetworkMwWlLayer::Config cfg; cfg.enable = true;
@@ -263,7 +264,7 @@ TEST(NetworkMwWlLayer, RowsGroupedByCarryBlock) {
     EXPECT_EQ(out[0].rows.size(), 2u);
     EXPECT_EQ(out[0].Pz.rows(), 2);            // K×K within the block
     EXPECT_EQ(out[0].Pz.cols(), 2);
-    // Identical cycles share EVERY arc ⇒ fully correlated: the off-diagonal equals
+    // Identical cycles share every arc ⇒ fully correlated: the off-diagonal equals
     // the (un-floored) shared-arc variance Σ c²·var/λ_WL² = 4·0.01/0.64 = 0.0625,
     // the same as the diagonal (review F2: shared-arc covariance, not diagonal Pz).
     EXPECT_NEAR(out[0].Pz(0, 0), 0.0625, 1e-12);
@@ -274,9 +275,9 @@ TEST(NetworkMwWlLayer, RowsGroupedByCarryBlock) {
     EXPECT_EQ(ctr.cycles_seen, 3);
 }
 
-// Review F2 gate: two cycles of one component sharing exactly ONE arc — the block
-// covariance is that arc's contribution g² = c_i·c_j·var/λ_WL² (signs included);
-// disjoint cycles in the SAME block stay uncorrelated.
+// Two cycles of one component sharing exactly one arc: the block covariance is that
+// arc's contribution g² = c_i·c_j·var/λ_WL² (signs included); disjoint cycles in the
+// same block stay uncorrelated (review F2 gate).
 TEST(NetworkMwWlLayer, SharedArcCovarianceExact) {
     NetworkMwWlLayer::Config cfg;
     cfg.enable = true; cfg.sigma_floor_cyc = 1e-6;   // floor out of the way
@@ -291,7 +292,7 @@ TEST(NetworkMwWlLayer, SharedArcCovarianceExact) {
     Block blk;
     blk.rows.push_back({ Term{0, 0, +1.0}, Term{0, 1, -1.0}, Term{1, 0, -1.0}, Term{1, 1, +1.0} });
     blk.rows.push_back({ Term{0, 0, +1.0}, Term{0, 2, -1.0}, Term{2, 0, -1.0}, Term{2, 2, +1.0} });
-    // cycle3 shares NOTHING with cycle1: arcs (1,2)+ (2,1)- ... use disjoint cols.
+    // cycle3 shares no arc with cycle1 or cycle2: arcs (1,2)+ (2,1)- on disjoint cols.
     blk.rows.push_back({ Term{1, 2, +1.0}, Term{2, 1, -1.0} });
     NetworkMwWlLayer::Counters ctr;
     auto out = layer.build({ blk }, tableResolver(tbl), ctr);
@@ -311,9 +312,9 @@ TEST(NetworkMwWlLayer, SharedArcCovarianceExact) {
     EXPECT_NEAR(out2[0].Pz(0, 1), -0.015625, 1e-12);
 }
 
-// Review F5 gate (Jul-15 verification finding): the kernel solves CORRECTIONS about
-// x_lin, so the absolute MW measurement must be re-expressed by subtracting the row
-// functional at the linearization point: z = Σc·MW̄/λ_WL − Σ[(c/λ1)x1 − (c/λ2)x2].
+// The kernel solves corrections about x_lin, so the absolute MW measurement is
+// re-expressed by subtracting the row functional at the linearization point:
+// z = Σc·MW̄/λ_WL − Σ[(c/λ1)x1 − (c/λ2)x2] (review F5 gate).
 TEST(NetworkMwWlLayer, LinearizationFrameSubtraction) {
     NetworkMwWlLayer::Config cfg; cfg.enable = true; cfg.sigma_floor_cyc = 1e-6;
     NetworkMwWlLayer layer(cfg);
@@ -339,8 +340,8 @@ TEST(NetworkMwWlLayer, LinearizationFrameSubtraction) {
     EXPECT_NEAR(out[0].zhat(0), -10.0, 1e-12);
 }
 
-// Review F3 gate: a cycle mixing BIA-corrected and raw satellite-bias frames is
-// skipped (cancellation would break) and counted; uniform frames (either) pass.
+// A cycle mixing BIA-corrected and raw satellite-bias frames is skipped (the biases
+// would not cancel) and counted; a cycle in either uniform frame passes (review F3 gate).
 TEST(NetworkMwWlLayer, MixedBiasFrameSkipped) {
     NetworkMwWlLayer::Config cfg; cfg.enable = true;
     NetworkMwWlLayer layer(cfg);
@@ -369,7 +370,7 @@ TEST(NetworkMwWlLayer, MaxRowsCapKeepsLowestR) {
     cfg.max_rows_per_epoch = 1;
     NetworkMwWlLayer layer(cfg);
 
-    // Two blocks referencing DISTINCT columns so a single resolver table serves both:
+    // Two blocks referencing distinct columns, so a single resolver table serves both:
     // block "lowR" (cols {0,1}, var 0.01) and block "hiR" (cols {2,3}, var 1.0).
     std::map<ArcKeyT, NetworkMwWlLayer::ArcData> tbl;
     tbl[{0, 0}] = eligibleArc(0, 100, 0.5, 0.01, 30);
@@ -408,12 +409,12 @@ TEST(NetworkMwWlLayer, EmptyCarryRowIgnored) {
 }
 
 // =========================================================================
-// M5 card WL-2 (SPEC §3.2/§3.4) — FFR integer-hard fixing + the FixedEwlRow
-// exposure the WL phase bridge keys off.
+// FFR integer-hard fixing and the FixedEwlRow exposure the WL phase bridge keys
+// off (M5 card WL-2, SPEC §3.2/§3.4).
 // =========================================================================
 
 // A cycle whose statistic DD z_abs = Σc·MW̄/λ_WL sits on an integer with a tight σ
-// folds INTEGER-hard (Pz = fix_weight²) AND is exposed as a FixedEwlRow (block,row,
+// folds integer-hard (Pz = fix_weight²) and is exposed as a FixedEwlRow (block, row,
 // integer) so the bridge can pair it back to its carry chord.
 TEST(NetworkMwWlLayer, FfrFixExposesFixedRow) {
     NetworkMwWlLayer::Config cfg;
@@ -441,8 +442,8 @@ TEST(NetworkMwWlLayer, FfrFixExposesFixedRow) {
     EXPECT_EQ(fixed[0].integer, 3);
 }
 
-// A cycle whose fractional part exceeds fix_frac_cyc stays FLOAT: a row is built,
-// but no FixedEwlRow is exposed (the bridge only rides FFR-fixed cycles).
+// A cycle whose fractional part exceeds fix_frac_cyc stays float: a row is built,
+// but no FixedEwlRow is exposed (the bridge uses only FFR-fixed cycles).
 TEST(NetworkMwWlLayer, FfrUnfixedExposesNothing) {
     NetworkMwWlLayer::Config cfg;
     cfg.enable = true; cfg.min_arc_epochs = 10; cfg.ffr_fix = true;
@@ -483,12 +484,12 @@ TEST(NetworkMwWlLayer, FloatLaneExposesNothing) {
 }
 
 // =====================================================================
-// M5 card UWL-1 (docs/SPEC_uwl_card.md §3.3) — cold fix + per-cons lanes.
+// Cold fix and per-constellation lanes (M5 card UWL-1, docs/SPEC_uwl_card.md §3.3).
 // =====================================================================
 
-// A COLD cycle (any arc served by the unlagged cold read) that passes FFR is
-// DECISION-ONLY: no block is emitted (not even a float), the integer IS exposed
-// via FixedEwlRow, and rows_fixed_cold counts it.  The cold flag also bypasses
+// A cold cycle (any arc served by the unlagged cold read) that passes FFR is
+// decision-only: no block is emitted (not even a float one), the integer is exposed
+// through FixedEwlRow, and rows_fixed_cold counts it.  The cold flag also bypasses
 // the young gate (mw_count=1 < min_arc_epochs).
 TEST(NetworkMwWlLayer, ColdCycleIsDecisionOnly) {
     NetworkMwWlLayer::Config cfg;
@@ -496,8 +497,8 @@ TEST(NetworkMwWlLayer, ColdCycleIsDecisionOnly) {
     cfg.fix_sigma_cyc = 0.10; cfg.fix_frac_cyc = 0.20;
     NetworkMwWlLayer layer(cfg);
     // One re-warming arc (n=1, a-priori variance in m², UWL-scale λ) inside an
-    // otherwise-mature cycle — the slip re-warm shape the cold fix exists for.
-    // λ_wl = 9.768: z_abs = 19.536/9.768 = 2.0 (frac 0); row σ ≈ √(0.49/9.768²+3e-6·...)
+    // otherwise-mature cycle: the post-slip re-warm case the cold fix is for.
+    // λ_wl = 9.768: z_abs = 19.536/9.768 = 2.0 (frac 0); row σ = √((0.49 + 3·1e-6)/9.768²),
     // dominated by the cold arc: 0.7/9.768 ≈ 0.0717 < 0.10 ⇒ FFR passes.
     std::map<ArcKeyT, NetworkMwWlLayer::ArcData> tbl;
     auto arc = [](Eigen::Index c1, Eigen::Index c2, double mean, double var,
@@ -515,7 +516,7 @@ TEST(NetworkMwWlLayer, ColdCycleIsDecisionOnly) {
     std::vector<NetworkMwWlLayer::FixedEwlRow> fixed;
     auto out = layer.build({ oneRowBlock(ddCycleRow()) }, tableResolver(tbl), ctr, &fixed);
 
-    EXPECT_TRUE(out.empty());               // NEVER emitted — not even under a fold study
+    EXPECT_TRUE(out.empty());               // never emitted as a block
     EXPECT_EQ(ctr.rows_built, 0);
     EXPECT_EQ(ctr.rows_fixed, 0);
     EXPECT_EQ(ctr.rows_fixed_cold, 1);
@@ -523,8 +524,8 @@ TEST(NetworkMwWlLayer, ColdCycleIsDecisionOnly) {
     ASSERT_EQ(fixed.size(), 1u);
     EXPECT_EQ(fixed[0].integer, 2);
 
-    // Control: the SAME cycle without the cold flag is just a young arc — no
-    // decision, no row (the legacy eligibility, untouched).
+    // Control: the same cycle without the cold flag is only a young arc: no
+    // decision, no row (the existing eligibility rule, unchanged).
     tbl[{0, 0}].mw_cold = false;
     NetworkMwWlLayer::Counters ctr2;
     std::vector<NetworkMwWlLayer::FixedEwlRow> fixed2;
@@ -535,7 +536,7 @@ TEST(NetworkMwWlLayer, ColdCycleIsDecisionOnly) {
     EXPECT_TRUE(fixed2.empty());
 }
 
-// A COLD cycle whose FFR fails (frac too wide) is dropped entirely and counted —
+// A cold cycle whose FFR fails (fraction too large) is dropped entirely and counted:
 // a cold float row would fold same-epoch data (the once-only discipline).
 TEST(NetworkMwWlLayer, ColdUnfixedIsDroppedAndCounted) {
     NetworkMwWlLayer::Config cfg;
@@ -558,8 +559,9 @@ TEST(NetworkMwWlLayer, ColdUnfixedIsDroppedAndCounted) {
     EXPECT_TRUE(fixed.empty());
 }
 
-// UWL-1 per-cons routing: a cons_filter instance processes ONLY its constellation's
-// cycles; the foreign cycle is left silently to its own instance (no counter).
+// Per-constellation routing (UWL-1): a cons_filter instance processes only its
+// constellation's cycles; a cycle of another constellation is left to its own
+// instance without a counter.
 TEST(NetworkMwWlLayer, ConsFilterRoutesCycles) {
     std::map<ArcKeyT, NetworkMwWlLayer::ArcData> tbl;
     for (Eigen::Index c : { 0, 1 })
@@ -594,14 +596,14 @@ TEST(NetworkMwWlLayer, ConsFilterRoutesCycles) {
 }
 
 // Ordering contract: warm FixedEwlRows keep the legacy (block,row) order; cold
-// decisions append AFTER them (the walk order feeds the solve bytes).
+// decisions are appended after them (the walk order determines the solve bytes).
 TEST(NetworkMwWlLayer, ColdFixedRowsAppendAfterWarm) {
     NetworkMwWlLayer::Config cfg;
     cfg.enable = true; cfg.min_arc_epochs = 2; cfg.ffr_fix = true;
     cfg.fix_sigma_cyc = 0.10; cfg.fix_frac_cyc = 0.20;
     NetworkMwWlLayer layer(cfg);
     std::map<ArcKeyT, NetworkMwWlLayer::ArcData> tbl;
-    // Block 0 = a COLD Galileo-style cycle (fixes cold); block 1 = a warm fixed cycle.
+    // Block 0 = a cold Galileo-style cycle (fixes cold); block 1 = a warm fixed cycle.
     auto c0 = eligibleArc(0, 100, 19.536, 0.49, 1, 0.2, 0.25, 9.768);
     c0.mw_cold = true;
     tbl[{0, 0}] = c0;

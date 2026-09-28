@@ -1,4 +1,4 @@
-"""Tests for gnssviz.eval.metrics -- ENU error recovery and convergence window."""
+"""Tests for gnssviz.eval.metrics: ENU error recovery and convergence window."""
 
 from __future__ import annotations
 
@@ -72,7 +72,7 @@ def test_warmup_excludes_garbage_epochs(tmp_path):
     offset = (0.01, 0.01, 0.01)
     path = _make_trace(tmp_path, truth, offset, warmup_garbage=4)
 
-    # With no warmup the garbage epochs poison the bias; with warmup they don't.
+    # With no warmup the garbage epochs skew the bias; with warmup they are excluded.
     m_no = evaluate_state_trace(path, truth, warmup_s=0.0)
     m_yes = evaluate_state_trace(path, truth, warmup_s=100.0)
     assert abs(m_no.bias_enu[2]) > abs(m_yes.bias_enu[2])

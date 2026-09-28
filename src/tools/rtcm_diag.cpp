@@ -136,7 +136,8 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Latest SSR per satellite — orbit RAC.
+    // Latest SSR orbit correction (RAC) per satellite, from orbit messages, then from
+    // combined messages for satellites without an orbit message.
     if (!parser.getSsrOrbits().empty() || !parser.getSsrCombined().empty()) {
         std::map<std::string, GnssProcessor::SsrOrbitCorrection> latest_orbit;
         for (const auto& o : parser.getSsrOrbits())   latest_orbit[o.sat] = o;
@@ -176,7 +177,7 @@ int main(int argc, char** argv) {
         }
         std::printf("  unique satellites seen: %zu\n", msm_obs_per_sat.size());
 
-        // Show the first few satellites' epoch counts.
+        // Show the epoch counts of the 16 satellites with the most epochs.
         std::vector<std::pair<std::string, std::size_t>> sats_sorted(
             msm_obs_per_sat.begin(), msm_obs_per_sat.end());
         std::sort(sats_sorted.begin(), sats_sorted.end(),

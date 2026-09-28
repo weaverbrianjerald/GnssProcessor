@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""RF-NS-b — the vehicle observation-loss read.
+"""RF-NS-b: the vehicle observation-loss read.
 
 Why this exists
 ---------------
-`network_pf_keyed.csv` / `network_pf_rows.csv` are written ONLY for stations that
+`network_pf_keyed.csv` / `network_pf_rows.csv` are written only for stations that
 survived `NetworkNormalEquations::addStation` (the per-station PD test,
 `src/core/filter/NetworkNormalEquations.cpp:476-484`); every trace that keys off
 `est_index_of[i] >= 0` inherits that filter.  Reading a satellite's post-fit row
 count as "the satellite left the network" therefore confounds
 
-  (1) the satellite not being TRACKED (an observation fact), with
-  (2) its tracking stations being REJECTED by the local-block PD test
+  (1) the satellite not being tracked (an observation fact), with
+  (2) its tracking stations being rejected by the local-block PD test
       (a solve fact, and the one the float vehicle moves).
 
 This grader separates them:
@@ -18,11 +18,11 @@ This grader separates them:
   tracked   := stations with a row for (sat, epoch) in network_if_slip.csv.
                That trace is written from the raw observation stream and is
                byte-identical across the RF-0g golden and the RF-1/2b/2d vehicle,
-               so it is the coverage TRUTH for both arms.
+               so it is the coverage truth for both arms.
   dropped   := stations named by "addStation rejected ... dropping it this epoch"
                in main_log*.log at that epoch.
   in_solve  := tracked - dropped  (cross-checked against the distinct stations
-               actually carrying a post-fit CODE row for that satellite in
+               actually carrying a post-fit code row for that satellite in
                network_pf_rows.csv on emitted epochs).
 
 Usage
@@ -86,7 +86,7 @@ def dropped_by_epoch(run: Path, lo: float, hi: float):
 
 
 def pf_code_stations(run: Path, sat: str, lo: float, hi: float):
-    """Distinct stations with a post-fit CODE row for `sat`, per emitted epoch."""
+    """Distinct stations with a post-fit code row for `sat`, per emitted epoch."""
     out = defaultdict(set)
     path = run / "logs" / "network_pf_rows.csv"
     with path.open(newline="") as fh:

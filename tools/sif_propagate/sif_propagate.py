@@ -16,14 +16,14 @@ per-station ITRF coordinates + velocities + seasonal (periodic) motion +
 post-seismic deformation, all referred to the SIF reference frame/epoch
 (typically ITRF2020 @ 2020.0).
 
-The coordinate function evaluated here is exactly the one the C++ engine uses to
-seed held-fixed network-station coordinates::
+The coordinate function evaluated here is the one the C++ engine uses to seed
+held-fixed network-station coordinates::
 
     x(t) = x_ref + v * (t - t_ref)
                  + SUM periodic(t)            (annual + semiannual seasonal terms)
                  + SUM post-seismic(t)        (log/exp relaxation per E/N/U, ENU->ECEF)
 
-and the position covariance is propagated from the OCCUPATION 6x6
+and the position covariance is propagated from the occupation's 6x6
 coordinate/velocity covariance::
 
     Cxx(t) = Cxx + dt * (Cxv + Cxv^T) + dt^2 * Cvv,   dt = t - t_ref
@@ -47,8 +47,8 @@ Usage
     python sif_propagate.py CORV00USA --epoch 2010.0 --datasheet
 
 Identifiers may be a 9-char IGS long name (``CIT100USA``), a 4-char marker
-(``CIT1``, case-insensitive), or a DOMES number (``40400S201``) -- matching the
-C++ ``find()`` resolution order.
+(``CIT1``, case-insensitive), or a DOMES number (``40400S201``), in the same
+resolution order as the C++ ``find()``.
 """
 from __future__ import annotations
 
@@ -73,9 +73,9 @@ WGS84_F = 1.0 / 298.257223563
 _PI = 3.14159265358979323846  # matches the literal used in the C++ periodic term
 
 # Provenance for the geodetic lat/lon/height columns.  WGS84 is used because it is
-# exactly the ellipsoid GnssProcessor's own ECEF<->LLH uses, so the tool stays
-# consistent with the engine; WGS84 vs GRS80/ITRF differ only in the last digits of
-# the flattening (sub-mm in latitude/height), so WGS84 is sufficient here.
+# the ellipsoid GnssProcessor's own ECEF<->LLH uses, so the tool stays consistent
+# with the engine; WGS84 and GRS80/ITRF differ only in the last digits of the
+# flattening (sub-mm in latitude/height), so WGS84 is sufficient here.
 WGS84_NOTE = ("lat_deg/lon_deg/height_m are geodetic on the WGS84 ellipsoid "
               "(a=6378137.0 m, 1/f=298.257223563); matches GnssProcessor's ECEF<->LLH "
               "and is sub-mm-equivalent to GRS80/ITRF.")
@@ -96,10 +96,12 @@ def decimal_year_from_ymd(year: int, month: int, day: int,
                           hour: int = 0, minute: int = 0, second: int = 0) -> float:
     """Convert a calendar date/time to a decimal year (SIF convention).
 
-    Mirrors ``decimalYearFromSif`` in the C++ loader byte-for-byte: day-of-year is
-    zero-based, leap days count only after February, and any timezone (UTC/GPS)
-    suffix is ignored -- the <=18 s GPS-UTC offset is far below the precision at
-    which window selection or velocity propagation matters.
+    Mirrors ``decimalYearFromSif`` in the C++ loader: day-of-year is zero-based,
+    leap days count only after February, and any timezone (UTC/GPS) suffix is
+    ignored, because the <=18 s GPS-UTC offset is far below the precision at which
+    window selection or velocity propagation matters.  Years >= 9000 return the
+    open-ended sentinel 9999.0; an out-of-range month is clamped to 1 and a day
+    below 1 to 1.
     """
     if year >= 9000:
         return _END_SENTINEL
@@ -120,7 +122,7 @@ def decimal_year_from_sif(ts: str) -> float:
     """Parse a SIF timestamp ("YYYY-MM-DDTHH:MM:SS TZ") to a decimal year.
 
     Returns 0.0 for anything that does not present at least YYYY-MM-DD, matching
-    the C++ ``sscanf(...) < 3`` guard.  An open-ended END ("9999-...") maps to the
+    the C++ ``sscanf(...) < 3`` guard.  An open-ended end ("9999-...") maps to the
     sentinel so it always compares as "in the future".
     """
     if not ts:
@@ -266,8 +268,8 @@ class SifRegistry:
     """Parses SIF JSON files and resolves per-station metadata by identifier.
 
     Indexing mirrors the C++ ``StationInfoFile``: full 9-char ID, 4-char prefix
-    (first-wins), and DOMES number, all upper-cased.  ``find()`` tries ID, then
-    DOMES, then 4-char prefix -- case-insensitive.
+    (first wins), and DOMES number, all upper-cased.  ``find()`` tries ID, then
+    DOMES, then 4-char prefix, case-insensitively.
     """
 
     def __init__(self) -> None:
@@ -388,7 +390,7 @@ class SifRegistry:
         """Assemble the symmetric 6x6 [X Y Z Vx Vy Vz] covariance, or None.
 
         Diagonal from the (already-SI) sigma arrays; the 15 off-diagonal terms from
-        6X6_COVARIANCE_MATRIX scaled mm^2 -> m^2 (1e-6) -- position, velocity, and
+        6X6_COVARIANCE_MATRIX scaled mm^2 -> m^2 (1e-6); position, velocity, and
         cross terms all share that factor.  Requires >= 15 elements, matching C++.
         """
         c = _jarr(oj, "6X6_COVARIANCE_MATRIX")
@@ -517,9 +519,9 @@ def _select_occupation(station: Station, year: float,
     the occupation whose window covers ``year`` (start<=year<end, not flagged),
     else the non-flagged occupation whose window midpoint is nearest.
 
-    ``mode="latest"``: the last non-flagged occupation by window start -- the
-    *current* solution for the mark.  This is the NGS datasheet convention: a
-    published NAD83(2011) epoch-2010.00 coordinate is the CURRENT occupation
+    ``mode="latest"``: the last non-flagged occupation by window start, i.e. the
+    current solution for the mark.  This is the NGS datasheet convention: a
+    published NAD83(2011) epoch-2010.00 coordinate is the current occupation
     propagated linearly back to 2010.0, not the occupation that was live in 2010.
     Returns None when the station has no usable occupation.
     """
@@ -565,15 +567,15 @@ def resolve_station_coordinate(station: Station, decimal_year: float,
                                occupation: str = "covering") -> ResolvedCoord:
     """Evaluate a station's SIF coordinate function at ``decimal_year``.
 
-    With the default ``occupation="covering"`` this is a faithful port of
+    With the default ``occupation="covering"`` this is a port of
     ``GnssProcessor::resolveStationCoordinate``.  ``occupation="latest"`` instead
-    evaluates the CURRENT (last-starting, non-flagged) occupation -- the NGS
+    evaluates the current (last-starting, non-flagged) occupation, the NGS
     datasheet convention for a published legacy-epoch coordinate.  Everything
     else (linear term, periodic/PSD toggles, covariance propagation, dt measured
     from the SIF reference epoch) is identical and applies to whichever
-    occupation was selected; periodic and post-seismic terms are keyed on the
-    EPOCH, not the occupation, so "latest" does not imply "no periodic" --
-    pass ``with_periodic=False`` for that.
+    occupation was selected.  Periodic and post-seismic terms are keyed on the
+    epoch, not the occupation, so "latest" does not imply "no periodic"; pass
+    ``with_periodic=False`` for that.
 
     Returns a ``ResolvedCoord`` whose ``valid`` is False when the station has no
     usable occupation (the caller should then fall back to its own a-priori).
@@ -591,7 +593,7 @@ def resolve_station_coordinate(station: Station, decimal_year: float,
     y = occ.coordinates[1] + occ.velocity[1] * dt
     z = occ.coordinates[2] + occ.velocity[2] * dt
 
-    # Periodic (seasonal) terms over the block whose window covers the epoch.
+    # Periodic (seasonal) terms, summed over every block whose window covers the epoch.
     if with_periodic:
         for b in station.periodic:
             if decimal_year < b.start_year or decimal_year >= b.end_year:
@@ -722,15 +724,15 @@ _CSV_COLUMNS = [
     "x", "y", "z", "lat_deg", "lon_deg", "height_m",
     "sigma_x", "sigma_y", "sigma_z", "sigma_e", "sigma_n", "sigma_u",
     "in_window", "window_start", "window_end", "source",
-    # Appended LAST so the historical column order is untouched for existing
+    # Last column, so the earlier column order stays unchanged for existing
     # consumers; default runs report "covering".
     "occupation_mode",
 ]
 
 
 # Fixed decimal places per float column.  Angles need ~11 places (~1 micrometre at
-# the Earth's surface); metric columns get 6 (micrometre) -- both far below any GNSS
-# precision, so nothing meaningful is ever truncated.  A blanket format cannot serve
+# the Earth's surface); metric columns get 6 (micrometre).  Both are far below any
+# GNSS precision, so nothing meaningful is truncated.  A single format cannot serve
 # both: 6 places on a degree is only ~0.1 m.
 _CSV_DECIMALS = {
     "lat_deg": 11, "lon_deg": 11,

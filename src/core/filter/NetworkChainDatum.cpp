@@ -2,13 +2,10 @@
  * @file NetworkChainDatum.cpp
  * @brief Card-3 Eq-34 single-receiver-chain phase-bias datum (see the header).
  *
- * Decomposition INC-8b (2026-07-22) — body relocated VERBATIM from
- * Application::runNetwork (dedent 16 -> 4, no other change).  The alias
- * preamble below is a byte-copy of the run TU's own `auto& X = ctx.carry.X;`
- * block, restricted to the 24 entries this body actually references (22 from
- * the mechanical INC-8b derivation + zwd_carry and eq34_cpl_sprev_total for the
- * §14 coupling re-base), so the relocated code reads the former local names
- * unchanged.
+ * The body was moved out of Application::runNetwork at decomposition INC-8b.  The
+ * alias preamble below reproduces the run TU's local names for the entries this body
+ * references: 20 `auto& X = ctx.carry.X;` references (zwd_carry and
+ * eq34_cpl_sprev_total serve the §14 coupling re-base) and 7 `ctx.knobs` values.
  */
 
 #include "filter/NetworkChainDatum.hpp"
@@ -69,11 +66,11 @@ const bool eq34_slip_aware = ctx.knobs.eq34_slip_aware;
 const bool eq34_seed_round = ctx.knobs.eq34_seed_round;
 const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
 
-    // Card 3/4 slip-aware election: did THIS arc slip this epoch?  The funnel is
-    // complete here by the ordering contract (every PASS-A drain, signal integrity
-    // and measurement admission run ahead of the election).  Keyed per
-    // (station, ambiguity) exactly as the C3c membership test is, so the election and
-    // the DD-prior build can never disagree about which arcs are slipped.
+    // Slip-aware election (Card 3/4): true when this arc slipped this epoch.  The
+    // funnel is complete here by the ordering contract (every PASS-A drain, signal
+    // integrity and measurement admission run before the election).  The key is
+    // (station, ambiguity), the same as the C3c membership test, so the election and
+    // the DD-prior build agree on which arcs are slipped.
     auto arcSlipped = [&](std::size_t ri, const std::string& sat,
                           const std::string& sig) -> bool {
         return eq34_slip_aware
@@ -90,28 +87,28 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
         auto jt = it->second.find(i); return jt == it->second.end() ? 0 : jt->second;
     };
 
-    // Card 3: Eq-34 / de Jonge SINGLE-RECEIVER-CHAIN datum.  Per
+    // Eq-34 / de Jonge single-receiver-chain datum (Card 3).  Per
     // (constellation,signal) connected component of the bipartite
     // (receiver × satellite) observation graph, elect a datum receiver
     // r1 (its RPB is pinned to 0) and pin the ambiguities on the edges
-    // of a spanning tree rooted at r1.  Then every between-satellite
-    // reference is an integer combination across the whole component —
-    // including satellites r1 never sees — because each chain hop
-    // contributes only an integer (the hop receiver's fractional bias
-    // is its OWN estimable RPB state δ_{r,σ}, no longer part of the
-    // pin).  Full-visibility regional case degenerates to the Odijk
-    // Eq-34 star (CC-R).  The shared set is the ungated union (as
-    // ensemble); the chain pins fix the enlarged (receiver+satellite)
-    // gauge.  Per (const,σ) component with n_c stations, m_c sats:
-    // (n_c+m_c−1) tree-edge ambiguity pins + 1 RPB pin = n_c+m_c =
-    // the exact gauge dimension.  Every RPB-carrying station is a tree
-    // vertex, so it gets ≥1 pin ⇒ its N_rr stays PD (the load-bearing
-    // rank invariant, D3c).
+    // of a spanning tree rooted at r1.  Every between-satellite
+    // reference is then an integer combination across the whole
+    // component, including satellites r1 does not see, because each
+    // chain hop contributes only an integer (the hop receiver's
+    // fractional bias is its own estimable RPB state δ_{r,σ} and is not
+    // part of the pin).  With full visibility (regional case) this is
+    // the Odijk Eq-34 star (CC-R).  The shared set is the ungated union
+    // (as in the ensemble datum); the chain pins fix the enlarged
+    // (receiver+satellite) gauge.  Per (const,σ) component with n_c
+    // stations and m_c sats: (n_c+m_c−1) tree-edge ambiguity pins + 1
+    // RPB pin = n_c+m_c, the gauge dimension.  Every RPB-carrying
+    // station is a tree vertex, so it gets ≥1 pin and its N_rr stays PD
+    // (the rank invariant D3c).
     for (auto& st : stations) {
         st.pinned_amb_targets.clear();
         st.pinned_rpb_keys.clear();
         st.pinned_amb_sigma_scale.clear();   // eq34 hygiene INC-3 (empty ⇒ no scaling)
-        st.pinned_amb_seed_lambda.clear();   // SEED-ROUND fold-deferred (empty ⇒ inert)
+        st.pinned_amb_seed_lambda.clear();   // seed-round fold-deferred (empty ⇒ inert)
     }
     this_epoch_anchor.clear();
     // Chain-pin audit (SPEC_synthetic_minimum_network §14 T1): this epoch's per-group
@@ -123,8 +120,8 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     for (const auto& [amb, pbkey] : union_keys) shared_phase_keys.insert(pbkey);
     if (!eq34_ppp_utils) eq34_ppp_utils = std::make_unique<PppUtils>(log_manager_);
     // This epoch's receiver-side parent edges + per-sat component roots;
-    // become eq34_rx_parent / eq34_sat_root after the election (wholesale
-    // replacement — the maps always describe exactly one epoch's tree).
+    // they replace eq34_rx_parent / eq34_sat_root wholesale after the
+    // election, so the maps always describe one epoch's tree.
     std::map<std::string, std::string> new_rx_parent, new_sat_root;
     // This epoch's pin targets (→ eq34_prev_target) and the carry
     // S-transformation shift maps collected by the per-component shift
@@ -135,8 +132,9 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     std::map<std::pair<int, std::string>, double>         shift_rpb;
 
     const std::string eq34_pref_rx = config_.networkPhaseDatumEq34Receiver();
-    // Card 4: the per-epoch datum targets are plain 0 (the frame is re-realized
-    // freely; continuity moves to the invariant DD carry), so pin-to-round is off.
+    // Under carry_invariant (Card 4) pin-to-round is off: the frame is re-realized
+    // each epoch and continuity is held by the invariant DD carry.  (Seed-round,
+    // below, can still round the targets.)
     const bool        eq34_round   = config_.networkPhaseDatumEq34PinRound()
                                   && !carry_invariant;
     auto eqSysOfChar = [](char c) -> System {
@@ -173,20 +171,21 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     }
 
     // Rank bookkeeping (D3, theory ref §7.1): the recorded pins must
-    // equal the exact gauge dimension Σ_components (n_c + m_c).  A cheap
+    // equal the gauge dimension Σ_components (n_c + m_c).  A cheap
     // always-on cross-check of the W5 null-space gate; logged below.
     int eq34_n_pins = 0, eq34_gauge_dim = 0;
-    // Carry hygiene (D4): (sat,σ) whose chain path changed vs last
-    // epoch — the emitted b_s re-references, so the phase-leveling local
-    // carries for it are stale by an integer AND its D2/C1 shared PB
-    // prior belongs to the retired frame.  Collected into the member
-    // set (cleared here), erased below BEFORE PASS B consumes the local
+    // Carry hygiene (D4): (sat,σ) whose chain frame stepped and whose
+    // step the shift walk below does not transform (unknown, or nonzero
+    // with the carry shift off).  The emitted b_s re-references, so the
+    // phase-leveling local carries for it are stale and its D2/C1 shared
+    // PB prior belongs to the retired frame.  Collected into the member
+    // set (cleared here), erased below before PASS B consumes the local
     // carry, and marginalized at the shared-carry consume.
     eq34_reref.clear();
     for (auto& [g, sats] : grp_sats) {
-        // Normal locals (NOT the structured bindings g/sats) so the
-        // recordEdge lambda below can capture them — C++17 forbids
-        // capturing structured bindings.
+        // Plain locals rather than the structured bindings g/sats, so the
+        // recordEdge lambda below can capture them (C++17 does not allow
+        // capturing structured bindings).
         const char        grp_cons = g.cons;
         const std::string grp_sig  = g.signal;
         const System      system  = eqSysOfChar(grp_cons);
@@ -198,27 +197,28 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
         auto rV = [](size_t i){ return "R" + std::to_string(i); };
         auto sV = [](const std::string& s){ return "S" + s; };
 
-        // I4 longevity score of arc (station ri, sat): higher = longer
-        // expected life ⇒ a better NEW tree edge (fewer future deaths ⇒
-        // fewer b_s re-references).  A RISING arc (elevation grew vs last
-        // epoch, tracked in eq34_prev_el) will not set for a long time, so
-        // it is lifted above EVERY setting arc (+90°, one full quadrant);
-        // within a class higher elevation wins.  The churn source is the
-        // low-elevation SETTING arc — this ranks it dead last.  Unread
-        // unless eq34_longevity (sat_el/eq34_prev_el stay valid here).
+        // Longevity score of arc (station ri, sat) (I4): higher means a longer
+        // expected life and so a better new tree edge (fewer future deaths,
+        // fewer b_s re-references).  A rising arc (elevation grew since last
+        // epoch, tracked in eq34_prev_el) will not set soon, so it is lifted
+        // above every setting arc (+90°, one quadrant); within a class the
+        // higher elevation wins.  Low-elevation setting arcs cause the churn
+        // and rank last.  Called only under eq34_longevity (sat_el and
+        // eq34_prev_el are valid here).
         auto arcLife = [&](size_t ri, const std::string& sat) -> double {
             auto ei = sat_el[ri].find(sat);
             if (ei == sat_el[ri].end()) return -1e9;   // no elevation (unreachable for a live arc)
             const double el = ei->second;
             auto pe = eq34_prev_el.find({ri, sat});
             const bool rising = (pe != eq34_prev_el.end() && el > pe->second + 1e-6);
-            // Slip-aware (Card 3/4): an arc that slipped THIS epoch is the worst possible
-            // new tree edge whatever its elevation — seating it poisons every fundamental
-            // cycle that closes through it, so the whole dependent chord set refloats
-            // instead of the one DD the slip actually invalidated.  Demote it below every
-            // clean arc (the clean band is [0,180]) while keeping the ordering WITHIN the
-            // slipped set, so if the graph leaves no alternative the completion still picks
-            // the most durable of a bad lot rather than an arbitrary one.
+            // Slip-aware (Card 3/4): an arc that slipped this epoch is the worst new
+            // tree edge at any elevation.  As a tree edge it invalidates every
+            // fundamental cycle that closes through it, so the whole dependent chord set
+            // refloats instead of the one DD the slip affects.  Demote it below every
+            // clean arc (the clean band is [0,180]) and keep the ordering within the
+            // slipped set, so that if the graph leaves no alternative the completion
+            // picks the most durable slipped arc.  The counter increments on every
+            // evaluation, including repeated comparator calls during a sort.
             const double life = el + (rising ? 90.0 : 0.0);
             if (arcSlipped(ri, sat, grp_sig)) {
                 ++ctx.counters.eq34_slip_demoted;
@@ -227,14 +227,14 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             return life;
         };
 
-        // STICKY-tree seed (spec D2 step 3): the incumbent tree edges —
-        // sat-side parents in anchor_incumbent ("sat_signal" → station),
-        // receiver-side parents in eq34_rx_parent ("station|c|σ" → sat) —
-        // that are still LIVE this epoch (station present in this group's
+        // Sticky-tree seed (spec D2 step 3): the incumbent tree edges
+        // (sat-side parents in anchor_incumbent, "sat_signal" → station;
+        // receiver-side parents in eq34_rx_parent, "station|c|σ" → sat)
+        // that are still live this epoch (station present in this group's
         // arcs and still tracking the satellite).  Both maps are replaced
-        // wholesale each election, so together they are exactly last
-        // epoch's tree: each edge in exactly one map, and any live subset
-        // is a forest — seeding it can never close a cycle.
+        // wholesale each election, so together they hold last epoch's tree
+        // with each edge in one map.  Any live subset of a tree is a
+        // forest, so seeding it cannot close a cycle.
         std::set<std::pair<size_t, std::string>> arc_set;
         std::map<std::string, size_t> name2idx;
         for (const auto& [i, slist] : arcs) {
@@ -245,15 +245,15 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
         auto seedEdge = [&](const std::string& sta, const std::string& sat) {
             auto ni = name2idx.find(sta);
             if (ni == name2idx.end() || !arc_set.count({ni->second, sat})) return;
-            // Slip-aware (Card 3/4): a slipped INCUMBENT loses its sticky seed.  The
-            // incumbent queue drains ahead of the new-edge walk, so a seeded edge is
-            // effectively unconditional — and an incumbent that slipped this epoch is
-            // exactly the edge that must NOT stay in the tree, because every chord whose
-            // fundamental cycle runs through it dies with it.  Dropping the seed does not
-            // discard the edge: it demotes it to the new-edge walk, where arcLife has it
-            // ranked last, so it is re-admitted only if the component has no other way to
-            // reach the vertex.  In that case the mass refloat still happens and that is
-            // correct — the topology forced it, not the policy.
+            // Slip-aware (Card 3/4): a slipped incumbent loses its sticky seed.  The
+            // incumbent queue drains before the new-edge walk, so a seeded edge is in
+            // effect unconditional, and an incumbent that slipped this epoch should
+            // leave the tree: every chord whose fundamental cycle runs through it is
+            // lost with it.  Dropping the seed does not discard the edge; it moves it to
+            // the new-edge walk, where the first pass refuses it (and arcLife ranks it
+            // last under longevity), so it is re-admitted only if the component has no
+            // other route to the vertex.  The resulting mass refloat is then forced by
+            // the topology.
             if (arcSlipped(ni->second, sat, grp_sig)) {
                 ++ctx.counters.eq34_slip_deseeded;
                 return;
@@ -303,20 +303,19 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
         for (auto& [root, rx_list] : comp_rx) {
             std::sort(rx_list.begin(), rx_list.end());   // determinism
 
-            // Elect r1: config pref → per-COMPONENT sticky (sat-root
+            // Elect r1: config pref → per-component sticky (sat-root
             // vote) → group incumbent → highest coverage.
             size_t r1 = static_cast<size_t>(-1);
             if (!eq34_pref_rx.empty())
                 for (size_t i : rx_list)
                     if (stations[i].name == eq34_pref_rx) { r1 = i; break; }
-            // Per-COMPONENT stickiness: the component's sats remember
-            // last epoch's root (eq34_sat_root) — re-elect the majority-
-            // remembered station still present in this component.  The
-            // group-level eq34_datum_rx slot below only remembers the
-            // LARGEST component's r1, which left small fragments
-            // re-electing by coverage every epoch (Jul-10 field: ~8
-            // chronic (sat,σ) re-references per epoch, each a full
-            // fragment re-level).  Vote ties break by station name.
+            // Per-component stickiness: the component's sats remember
+            // last epoch's root (eq34_sat_root); re-elect the station most
+            // of them remember, if it is still in this component.  The
+            // group-level eq34_datum_rx slot below remembers only the
+            // largest component's r1, so without this vote small fragments
+            // would re-elect by coverage every epoch, each change a full
+            // fragment re-level.  Vote ties break by station name.
             if (r1 == static_cast<size_t>(-1)) {
                 std::map<std::string, int> root_votes;
                 for (const auto& s : comp_sat[root]) {
@@ -355,7 +354,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                 best_datum_rx = stations[r1].name;
             }
 
-            // r1's RPB pin — the receiver half of the gauge (δ_{r1,σ}=0).
+            // r1's RPB pin: the receiver half of the gauge (δ_{r1,σ}=0).
             stations[r1].pinned_rpb_keys.insert(rpb_key);
             ++eq34_n_pins;
             eq34_gauge_dim += static_cast<int>(rx_list.size()
@@ -363,31 +362,32 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             ctx.carry.eq34_epoch_declared[dr_key] +=
                 static_cast<int>(rx_list.size() + comp_sat[root].size());
 
-            // STICKY spanning tree (two-queue BFS from r1).  The
-            // incumbent queue drains to exhaustion before any NEW graph
-            // edge is explored, so a surviving old subtree — even one
-            // detached upstream — is re-attached through its OWN old
-            // edges (one new edge per detached fragment), never re-wired
-            // vertex-by-vertex: a tree-edge pin moves only when its arc
-            // actually died.  One ambiguity pin per tree edge; each
-            // attachment records (child, parent, edge-changed) for the
-            // dirty walk below.
+            // Sticky spanning tree (two-queue BFS from r1).  The
+            // incumbent queue drains completely before any new graph edge
+            // is explored, so a surviving old subtree, even one detached
+            // upstream, is re-attached through its own old edges (one new
+            // edge per detached fragment) and is not re-wired vertex by
+            // vertex: a tree-edge pin moves only when its arc died (or,
+            // under slip-aware election, slipped).  One ambiguity pin per
+            // tree edge; each attachment records (child, parent,
+            // edge-changed) for the dirty walk below.
             //
-            // Records one tree edge (r,s): pin ambiguity z^s_r at station
-            // r.  Target = 0 on a first-sighting edge; on a re-pin of an
-            // already-lit (sat,σ) (pin-to-round), the |·|-minimizing
-            // integer λ·round(carried float/λ) so the emitted-bias frame
-            // step ≈ 0 cyc.  sat_is_child: which endpoint this edge
-            // ATTACHES — the sat (parent-edge → this_epoch_anchor) or the
-            // receiver (parent-edge → new_rx_parent).
+            // recordEdge records one tree edge (r,s): pin ambiguity z^s_r
+            // at station r.  Target = 0 on a first-sighting edge (unless
+            // seed-round applies, below); on a re-pin of an already-lit
+            // (sat,σ) (pin-to-round), the |·|-minimizing integer
+            // λ·round(carried float/λ), so the emitted-bias frame step is
+            // ≈ 0 cyc.  sat_is_child selects which endpoint the edge
+            // attaches: the sat (parent edge → this_epoch_anchor) or the
+            // receiver (parent edge → new_rx_parent).
             std::set<std::string> visited;
             std::deque<std::string> inc_q, new_q;
             // (child, parent, pinmove, known, frame_shiftable): pinmove =
             // this pin's exact displacement of its pinned float vs last
-            // epoch's frame; known = false where the step is NOT computable
-            // (re-pin without a carry; root handover — a common
-            // FRACTIONAL step no integer transform can express);
-            // frame_shiftable = INC-2, this step came from the new host's
+            // epoch's frame; known = false where the step is not computable
+            // (re-pin without a carry; root handover, a common fractional
+            // step that no integer transform can express);
+            // frame_shiftable (INC-2) = this step came from the new host's
             // own state and may be S-transformed even with the global
             // carry-shift knob off (always false unless INC-2 is armed).
             std::vector<std::tuple<std::string, std::string, double, bool, bool>>
@@ -395,18 +395,18 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             auto recordEdge = [&](size_t ri, const std::string& sat,
                                   bool sat_is_child) {
                 const std::string amb = sat + "_" + grp_sig;
-                // Slip-aware (Card 3/4): this arc is becoming a TREE EDGE.  If it slipped
-                // this epoch the election tried and failed to avoid it — the component has
-                // no other route to the vertex — so every cycle through it will refloat
-                // anyway.  Counted so "deseeded > 0" can never be misread as "no slipped
-                // arc ended up in the tree".
+                // Slip-aware (Card 3/4): this arc is becoming a tree edge.  If it slipped
+                // this epoch, the election could not avoid it (the component has no other
+                // route to the vertex), and every cycle through it refloats.  Counted
+                // separately so that "deseeded > 0" is not read as "no slipped arc ended
+                // up in the tree".
                 if (arcSlipped(ri, sat, grp_sig)) ++ctx.counters.eq34_slip_readmitted;
-                // I2 metric: this edge was retained across a gap (its
-                // carry outlived the row absence) and is resuming now —
-                // the incumbent seed made it a recognized edge, so the
+                // Gap re-pin metric (I2): this edge was retained across a gap
+                // (its carry outlived the row absence) and is resuming now.
+                // The incumbent seed made it a recognized edge, so the
                 // pin-to-round below re-pins it to its pre-gap integer
                 // (step ~0) instead of the first-sighting 0 a wholesale
-                // replace would have forced.  Count the save.
+                // replace would have used.  Counts these re-pins.
                 if (eq34_extend_only
                     && eq34_retained_edges.count({static_cast<int>(ri), amb}))
                     ++eq34_gap_repin_total;
@@ -427,23 +427,23 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                         }
                     }
                 }
-                // SEED-ROUND (docs/SPEC_eq34_seed_round.md): the carry-round above
-                // did not engage (first sighting; incumbent whose carry is dead;
-                // or every epoch under carry_invariant, where eq34_round is off by
-                // Card-4 design) — so the target would be the cold absolute 0,
-                // which prices the datum frame at the seeded phase−code lump
-                // (km-scale on the synthetic fixture's N draws; SPEC §12.8).
-                // Round to the value the state actually holds instead: |pin
-                // innovation| ≤ λ/2 by construction.  When the state does not
-                // exist yet (cold start / new arc — PASS B's pre-pass allocates
-                // it), defer the rounding to the fold via pinned_amb_seed_lambda;
-                // the realized target flows back into eq34_prev_target through
-                // the serial consume.  `known` is cleared below for deferred pins.
+                // Seed-round (docs/SPEC_eq34_seed_round.md) applies when the
+                // carry-round above did not engage (first sighting; incumbent whose
+                // carry is dead; or every epoch under carry_invariant, where
+                // eq34_round is off by the Card-4 design).  The target would then be
+                // the cold absolute 0, which puts the seeded phase−code offset into
+                // the datum frame (km-scale on the synthetic fixture; SPEC §12.8).
+                // Instead, round the value the state holds, so |pin innovation| ≤ λ/2
+                // by construction.  When the state does not exist yet (cold start or
+                // new arc; PASS B's pre-pass allocates it), defer the rounding to the
+                // fold via pinned_amb_seed_lambda; the realized target flows back into
+                // eq34_prev_target through the serial consume.  `known` is cleared
+                // below for deferred pins.
                 bool seed_deferred = false, seed_rounded = false;
-                // INC-2 (SPEC §8.5): the new host's PRE-PIN float.  Finite only when
-                // the state exists AND INC-2 is armed; it is this pin's exact frame
-                // step baseline on a re-host (the pin displaces the float from here
-                // to `target`, so Δb_s = −(target − seed_x) exactly).
+                // The new host's pre-pin float (INC-2, SPEC §8.5).  Finite only when
+                // the state exists and INC-2 is armed; on a re-host it is this pin's
+                // exact frame-step baseline (the pin moves the float from here to
+                // `target`, so Δb_s = −(target − seed_x) exactly).
                 double seed_x = std::numeric_limits<double>::quiet_NaN();
                 bool   frame_shiftable = false;
                 auto ambStateValue = [&]() -> double {
@@ -453,22 +453,21 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                 };
                 if (eq34_seed_round && !std::isfinite(carry_val)
                     && system != System::Unknown) {
-                    // INC-1 FREEZE-AFTER-FIRST-REALIZATION (SPEC §8.5): a frame is
-                    // realized ONCE.  Reuse this (station, amb)'s previously
-                    // realized target verbatim — pinmove 0, no step, no reref —
-                    // and re-round only on a true first realization.  The v0
-                    // every-epoch re-round ratcheted the invariant carry ~1720 cyc
-                    // settled (§13.7); this branch is what severs it.
+                    // Freeze after first realization (INC-1, SPEC §8.5): a frame is
+                    // realized once.  Reuse this (station, amb)'s previously realized
+                    // target unchanged (on the same host: pinmove 0, no step, no
+                    // reref) and round only on a first realization.  Re-rounding
+                    // every epoch ratchets the invariant carry (§13.7).
                     auto ptf = eq34_prev_target.find({static_cast<int>(ri), amb});
                     if (ptf != eq34_prev_target.end()) {
                         target = ptf->second;
                         seed_rounded = true;
                         ++ctx.counters.seed_round_frozen;
-                        // INC-2: a FROZEN target can still land on a re-hosted edge
-                        // (the entry survived through the I2 retention or the fold
-                        // feedback), and that step is just as computable — read the
-                        // pre-pin float here too.  Armed-only, so the OFF path keeps
-                        // the freeze branch's single map lookup.
+                        // A frozen target can still land on a re-hosted edge (the
+                        // entry survived through the I2 retention or the fold
+                        // feedback), and that step is equally computable, so read the
+                        // pre-pin float here too (INC-2).  Only when armed, so with
+                        // INC-2 off the freeze branch keeps its single map lookup.
                         if (eq34_seed_rehost) seed_x = ambStateValue();
                     } else {
                     const double lam =
@@ -479,7 +478,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                             const double x =
                                 stations[ri].sm->getStateVector()(sidx);
                             if (std::isfinite(x)) {
-                                if (eq34_seed_rehost) seed_x = x;   // INC-2 baseline
+                                if (eq34_seed_rehost) seed_x = x;   // re-host step baseline (INC-2)
                                 target = lam * std::round(x / lam);
                                 seed_rounded = true;
                                 ++ctx.counters.seed_round_pins;
@@ -492,7 +491,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                             seed_deferred = true;
                         }
                     }
-                    }   // INC-1 freeze else-arm
+                    }   // end of the freeze else-arm (INC-1)
                 }
                 double pinmove = 0.0;
                 bool known = true;
@@ -503,8 +502,8 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                                     && ai->second != stations[ri].name);
                     this_epoch_anchor[amb] = stations[ri].name;
                     // Root handover: the component frame steps by the
-                    // datum receivers' fractional δ difference — not an
-                    // integer, not computable here ⇒ unknown.
+                    // datum receivers' fractional δ difference, which is
+                    // not an integer and not computable here, so unknown.
                     auto rt = eq34_sat_root.find(amb);
                     if (rt != eq34_sat_root.end()
                         && rt->second != stations[r1].name) known = false;
@@ -517,18 +516,18 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                     new_rx_parent[rxkey] = sat;
                 }
                 if (edge_changed) {
-                    // Re-pin at a NEW station: the float there sat at
-                    // carry_val; the pin drives it to target — an exact,
+                    // Re-pin at a new station: the float there sat at
+                    // carry_val and the pin drives it to target, an exact,
                     // known displacement iff the carry exists.
                     if (std::isfinite(carry_val)) pinmove = target - carry_val;
-                    // INC-2 (SPEC §8.5): no carry — but under seed-round the
-                    // station's OWN ambiguity state is the pre-pin value, and it
-                    // is exact (the estimator's own number, not a leveling carry
-                    // that drifted: the I1c mechanism behind carry_shift's Jul-11
-                    // field harm is structurally absent here).  So the frame step
-                    // IS computable, and this edge stays shiftable even with the
-                    // global carry-shift knob off — which is what keeps the
-                    // (sat,σ) out of eq34_reref and its carried PB prior folded
+                    // No carry, but under seed-round (INC-2, SPEC §8.5) the
+                    // station's own ambiguity state is the pre-pin value, and it
+                    // is exact: it is the estimator's own number, not a leveling
+                    // carry that can drift (the I1c mechanism that made carry_shift
+                    // harmful in the field does not apply).  The frame step is
+                    // therefore computable, and the edge stays shiftable even with
+                    // the global carry-shift knob off.  That keeps the (sat,σ) out
+                    // of eq34_reref, so its carried PB prior is folded
                     // (S-transformed) instead of marginalized for the epoch.
                     else if (eq34_seed_rehost && std::isfinite(seed_x)) {
                         pinmove = target - seed_x;
@@ -539,8 +538,8 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                             ctx.counters.seed_round_rehost_max_step_m = st_abs;
                     } else {
                         known = false;
-                        // Counted only when armed: an INC-2 run's OFF twin must
-                        // keep its run-end block byte-identical.
+                        // Counted only when armed, so that with INC-2 off the
+                        // run-end block stays byte-identical.
                         if (eq34_seed_rehost) ++ctx.counters.seed_round_rehost_cold;
                     }
                 } else {
@@ -552,17 +551,18 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                     pinmove = target
                         - (pt != eq34_prev_target.end() ? pt->second : 0.0);
                 }
-                // SEED-ROUND bookkeeping: a DEFERRED pin's target is decided at
+                // Seed-round bookkeeping: a deferred pin's target is decided at
                 // the fold, so no frame step is computable here (the serial
-                // consume feeds the realized target back for next epoch's
-                // baseline).  An election-side seed target that MOVED vs last
-                // epoch (float crossed a half-integer; or a dropped station lost
-                // last epoch's deferred feedback) is a frame RE-REALIZATION, not
-                // a transformable shift — route it through the validated reref
-                // hygiene, never the v2-shift walk.
-                // INC-2 exempts the framed re-host: its step is not a same-station
-                // target change but an exactly-computed frame move, so it takes the
-                // shift walk (and its own counter) rather than the reref hygiene.
+                // consume feeds the realized target back as next epoch's
+                // baseline).  An election-side seed target that moved since last
+                // epoch (the float crossed a half-integer, or a dropped station
+                // lost last epoch's deferred feedback) is a frame re-realization,
+                // not a transformable shift: it goes through the validated reref
+                // hygiene, not the v2-shift walk.
+                // INC-2 exempts the framed re-host: its step is an exactly
+                // computed frame move, not a same-station target change, so it
+                // takes the shift walk (and its own counter) instead of the reref
+                // hygiene.
                 if (seed_deferred) known = false;
                 else if (seed_rounded && pinmove != 0.0 && !frame_shiftable) {
                     known = false;
@@ -571,15 +571,15 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                 new_prev_target[{static_cast<int>(ri), amb}] = target;
                 stations[ri].pinned_amb_targets[amb] = target;
                 ++eq34_n_pins;
-                // eq34 REATTACH HYGIENE (docs/SPEC_eq34_reattach_hygiene.md): this
-                // pin's HOST arc is (ri, amb) whichever endpoint the edge attaches.
-                // Count the reattach (the sat-side host actually moved — the event
-                // NetworkSolPrep traces as PHASE_DATUM/eq34_reattach) and, when the
-                // eligible pass could not avoid a fresh host, hand the pin fold an
-                // INC-3 σ multiplier so the datum row is soft enough for the data to
-                // pull the cold ambiguity instead of re-levelling the component onto
-                // its code-seeded value.  Inert (no map entry, no counter) when the
-                // card is off.
+                // eq34 reattach hygiene (docs/SPEC_eq34_reattach_hygiene.md): this
+                // pin's host arc is (ri, amb) whichever endpoint the edge attaches.
+                // Count the reattach (the sat-side host moved; NetworkSolPrep traces
+                // this event as PHASE_DATUM/eq34_reattach) and, when the eligible
+                // pass could not avoid a fresh host, give the pin fold an INC-3 σ
+                // multiplier so the datum row is soft enough for the data to pull
+                // the cold ambiguity instead of re-levelling the component onto its
+                // code-seeded value.  Inert (no map entry, no counter) when the card
+                // is off.
                 if (hyg.active) {
                     if (edge_changed && sat_is_child) ++ctx.counters.hyg.reattaches;
                     const double sc = hyg.pinSigmaScale(ri, amb);
@@ -598,14 +598,14 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                 new_q.push_back(v);
             };
             attach(rV(r1));
-            // eq34 REATTACH HYGIENE INC-2: a BRIDGED satellite's gauge is realized on
-            // the SHARED side — a soft pseudo-obs row holding b_s at its last solved
-            // level (networkInjectPinBridgePrior) — so it enters the walk already
-            // GROUNDED: no parent edge, no ambiguity pin, and the walk may traverse
-            // THROUGH it to reach receivers.  The spanning structure is then a
-            // FOREST rooted at {r1} ∪ {bridged sats}, and the rank arithmetic still
-            // closes exactly: 1 RPB pin + B bridge rows + (n_c + m_c − 1 − B) tree
-            // edges = n_c + m_c.  Counted as pins for that cross-check.
+            // eq34 reattach hygiene INC-2: a bridged satellite's gauge is realized on
+            // the shared side, by a soft pseudo-obs row holding b_s at its last solved
+            // level (networkInjectPinBridgePrior).  It enters the walk already
+            // grounded: no parent edge, no ambiguity pin, and the walk may pass
+            // through it to reach receivers.  The spanning structure is then a forest
+            // rooted at {r1} ∪ {bridged sats}, and the rank arithmetic still closes:
+            // 1 RPB pin + B bridge rows + (n_c + m_c − 1 − B) tree edges = n_c + m_c.
+            // Bridge rows are counted as pins for that cross-check.
             std::vector<std::string> bridged_roots;
             if (hyg.active && !hyg.bridged.empty()) {
                 for (const auto& s : comp_sat[root]) {
@@ -614,33 +614,32 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                     attach(sV(s));
                     bridged_roots.push_back(sV(s));
                     ++eq34_n_pins;
-                    // Audit: a bridge pin is realized on the SHARED side, so the
+                    // Audit: a bridge pin is realized on the shared side, so the
                     // station-side fold expectation is declared − bridged.
                     ++ctx.carry.eq34_epoch_bridged[dr_key];
                 }
             }
-            // INC-1: a NEW tree edge may only be grown onto an arc whose ambiguity
-            // has converged (age ≥ eq34_anchor_min_arc_ep).  Run the walk TWICE: the
+            // A new tree edge is grown only onto an arc whose ambiguity has converged
+            // (age ≥ eq34_anchor_min_arc_ep; INC-1).  The walk runs twice: the
             // first pass admits eligible edges only, so a mature host wins over a
             // fresh one regardless of the I4/longevity rank order; if that leaves
             // vertices unreachable (their only connection to the component runs
-            // through a fresh arc) the second pass admits everything, counting each
-            // unavoidable cold pin.  The INCUMBENT queue is deliberately NOT filtered
-            // — keeping the incumbent is not a reattach, and blocking it would CAUSE
-            // the handover this card exists to prevent.
+            // through a fresh arc), the second pass admits everything and counts
+            // each unavoidable cold pin.  The incumbent queue is not filtered:
+            // keeping the incumbent is not a reattach, and blocking it would cause
+            // the handover this card is meant to prevent.
             const std::size_t comp_vertices =
                 rx_list.size() + comp_sat[root].size();
             bool allow_cold = !hyg.active || hyg.min_arc_ep <= 0;
-            // Card 3/4 slip-aware: a SLIPPED arc is refused in the first pass on exactly
-            // the same terms as a cold host, and admitted in the second.  It has to be
-            // here and not only in the arcLife ranking: arcLife is read ONLY under the
-            // longevity election, so gating slip-avoidance on it would make this knob
-            // silently half-inert wherever longevity is off — which is the shipped field
-            // configuration.  Avoiding a slipped tree edge is a CORRECTNESS preference,
-            // not a longevity heuristic, so it gets its own second-chance flag rather
-            // than riding one.  De-seeding an incumbent (above) without this is worse
-            // than doing nothing: it hands the edge straight back through the walk and
-            // pays a datum handover for it.
+            // Slip-aware (Card 3/4): a slipped arc is refused in the first pass on the
+            // same terms as a cold host, and admitted in the second.  The refusal is
+            // here and not only in the arcLife ranking because arcLife is read only
+            // under the longevity election; relying on it would leave slip avoidance
+            // inactive wherever longevity is off (its default).
+            // Avoiding a slipped tree edge is a correctness preference, not a longevity
+            // heuristic, so it has its own second-chance flag.  Without this refusal,
+            // de-seeding an incumbent (above) would be worse than no action: the walk
+            // would hand the edge straight back and pay a datum handover for it.
             bool allow_slipped = !eq34_slip_aware;
             auto newEdgeOk = [&](size_t ri, const std::string& sat) {
                 if (!allow_slipped && arcSlipped(ri, sat, grp_sig)) return false;
@@ -685,10 +684,11 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                         const size_t ri =
                             static_cast<size_t>(std::stoul(v.substr(1)));
                         std::vector<std::string> ss = arcs[ri];
-                        // I4: attach this receiver's longest-lived
-                        // unvisited sats first (rising/high-elevation),
-                        // so the NEW edge is picked to outlive the epoch.
-                        // OFF = legacy sat-name order (byte-identical).
+                        // Longevity (I4): attach this receiver's
+                        // longest-lived unvisited sats first (rising or
+                        // high-elevation), so the new edge is picked to
+                        // outlive the epoch.  Off: legacy sat-name order
+                        // (byte-identical).
                         if (eq34_longevity)
                             std::sort(ss.begin(), ss.end(),
                                       [&](const std::string& a, const std::string& b) {
@@ -701,18 +701,19 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                             std::sort(ss.begin(), ss.end());
                         for (const auto& s : ss) {
                             if (visited.count(sV(s))) continue;
-                            if (!newEdgeOk(ri, s)) continue;   // INC-1: fresh host
+                            if (!newEdgeOk(ri, s)) continue;   // pass 1 refuses a fresh host or slipped arc (INC-1)
                             recordEdge(ri, s, /*sat_is_child=*/true);
                             attach(sV(s));
                         }
                     } else {
                         const std::string s = v.substr(1);
                         std::vector<size_t> rr = satrx[s];
-                        // I4: attach this sat through its most durable
-                        // unvisited tracker first — high per-constellation
-                        // coverage (the robust receiver, spec D2 step 3),
-                        // then the arc's own longevity at that station.
-                        // OFF = legacy station-index order (byte-identical).
+                        // Longevity (I4): attach this sat through its most
+                        // durable unvisited tracker first: highest
+                        // per-constellation coverage (the robust receiver,
+                        // spec D2 step 3), then the arc's own longevity at
+                        // that station.
+                        // Off: legacy station-index order (byte-identical).
                         if (eq34_longevity)
                             std::sort(rr.begin(), rr.end(),
                                       [&](size_t a, size_t b) {
@@ -728,7 +729,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                             std::sort(rr.begin(), rr.end());
                         for (size_t ri : rr) {
                             if (visited.count(rV(ri))) continue;
-                            if (!newEdgeOk(ri, s)) continue;   // INC-1: fresh host
+                            if (!newEdgeOk(ri, s)) continue;   // pass 1 refuses a fresh host or slipped arc (INC-1)
                             recordEdge(ri, s, /*sat_is_child=*/false);
                             attach(rV(ri));
                         }
@@ -736,42 +737,43 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                 }
                 }
             }
-            // Shift walk — the carry S-TRANSFORMATION (spec D4 "v2 =
-            // SHIFT", realized at election: no emit-site plumbing
-            // needed, the step is known here).  A pin displacement
+            // Shift walk: the carry S-transformation (spec D4 "v2 =
+            // SHIFT", realized at election, where the step is known, so
+            // no emit-site plumbing is needed).  A pin displacement
             // propagates down the chain with alternating sign:
             //   Δb_s = −Δδ_parent − pinmove(edge)
             //   Δδ_r = −Δb_parent − pinmove(edge)
-            // so the whole subtree's frame move is EXACT and every
+            // so the whole subtree's frame move is exact and every
             // carried quantity can be transformed into the new basis
-            // (variances untouched — zero information loss) instead of
-            // erased.  Erase/skip (eq34_reref) remains ONLY where the
-            // step is unknown: a re-pin with no carry, or a root
-            // handover (common fractional).  order is attachment-
-            // ordered, parents strictly first — one forward pass.
+            // (variances untouched, no information lost) instead of
+            // erased.  Erase/skip (eq34_reref) remains only where the
+            // step is not transformed: a re-pin with no carry, a root
+            // handover (common fractional), and, with the shift off,
+            // any nonzero step (see the loop).  `order` is in attachment
+            // order, parents strictly first, so one forward pass works.
             std::map<std::string, double> vshift;
             std::map<std::string, bool>   vknown;
             vshift[rV(r1)] = 0.0;
             vknown[rV(r1)] = true;
-            // INC-2: a bridged satellite is a second root whose frame provably does
-            // NOT move — the bridge row holds b_s at exactly its previous value — so
-            // it seeds the walk with a KNOWN zero shift.  That is the whole point of
-            // the bridge: the subtree hanging off it keeps its carries instead of
-            // being re-referenced (no eq34_reref entry, no local-carry erase).
+            // A bridged satellite (INC-2) is a further root whose frame does not move
+            // (the bridge row holds b_s at its previous value), so it seeds the walk
+            // with a known zero shift.  The subtree below it therefore keeps its
+            // carries instead of being re-referenced (no eq34_reref entry, no
+            // local-carry erase); this is the purpose of the bridge.
             for (const auto& v : bridged_roots) {
                 vshift[v] = 0.0;
                 vknown[v] = true;
             }
             for (const auto& [v, p, pinmove, known, shiftable] : order) {
-                // Shift OFF (default): any nonzero pin displacement is
-                // treated as unknown ⇒ the erase/skip hygiene handles it
-                // (the validated B4/B7-class behavior).  Shift ON: exact
-                // transforms flow to the apply block below.  INC-2 opens a
-                // THIRD door for one edge class only — a seed-round re-host
-                // whose step came from the new host's own state — and it
+                // Shift off (default): any nonzero pin displacement is
+                // treated as unknown, so the erase/skip hygiene handles it
+                // (the validated B4/B7-class behavior).  Shift on: exact
+                // transforms flow to the apply block below.  INC-2 adds a
+                // third case for one edge class only, a seed-round re-host
+                // whose step came from the new host's own state, and it
                 // composes with the walk unchanged: the nonzero vshift it
                 // seeds propagates through the (pinmove == 0) frozen edges
-                // below it exactly as a shift-ON run's would.
+                // below it as it would in a shift-on run.
                 const bool   k = known && vknown[p]
                               && (eq34_shift_on || pinmove == 0.0 || shiftable);
                 const double s = k ? (-vshift[p] - pinmove) : 0.0;
@@ -811,17 +813,17 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                    "(1 RPB + tree edges per component).",
                    eq34_n_pins, eq34_gauge_dim);
     // Carry hygiene (D4): erase the phase-leveling local carries for any
-    // re-referenced (sat,σ) at EVERY station, before PASS B consumes the
-    // carry — the b_s frame stepped by an integer, so the carried floats
-    // are stale.  Refloat next epoch (safe; the realized wire step is
-    // usually 0 under pin-to-round, but erasing an already-integer carry
-    // costs only one epoch's continuity).
+    // re-referenced (sat,σ) at every station, before PASS B consumes the
+    // carry.  The b_s frame stepped by an amount the shift walk did not
+    // transform, so the carried floats are stale.  They refloat next epoch
+    // (safe: the realized wire step is usually 0 under pin-to-round, and
+    // erasing an already-integer carry costs one epoch of continuity).
     if (!eq34_reref.empty()) {
         eq34_reref_total += static_cast<long long>(eq34_reref.size());
-        // RS-3 (SPEC_event_harness §21.7): the first post-resume epoch's share of that
-        // total, which is what the datum-continuity card is graded on (110 at the seam
-        // against the seed's 2 per epoch).  Measure-only; the latch is cleared at the
-        // emit site, so a withheld first epoch simply folds into the window.
+        // The first post-resume epoch's share of that total, the quantity the
+        // datum-continuity card is graded on (RS-3, SPEC_event_harness §21.7).
+        // Measure-only; the latch is cleared at the emit site, so a withheld first
+        // epoch folds into the window.
         if (ctx.carry.resume_datum_first_ep)
             ctx.counters.n_resume_datum_first_reref +=
                 static_cast<long long>(eq34_reref.size());
@@ -831,7 +833,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             if (eq34_reref.count({std::get<1>(key), std::get<2>(key)})) {
                 it = local_carry.erase(it);
                 ++n_erased;
-                ++ctx.counters.n_cr_eq34_reref;   // carry-retirement census: FRAME step
+                ++ctx.counters.n_cr_eq34_reref;   // carry-retirement census: frame step
             } else {
                 ++it;
             }
@@ -845,32 +847,30 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     // Carry S-transformation apply: shift every carried quantity into
     // this epoch's frame (Δz = −Δb_s − Δδ_r on the local ambiguity
     // carries; Δδ_r on the RPB carries; Δb_s on the shared PB carried
-    // priors).  Variances untouched — this is an exact basis change,
-    // not a refloat.  Runs BEFORE PASS B consumes any carry.
+    // priors).  Variances untouched: this is an exact basis change,
+    // not a refloat.  Runs before PASS B consumes any carry.
     //
-    // ⚠ FILED LATENT DEFECT (docs/SPEC_card1_coupling_carry.md §9, 2026-08-15) —
-    // D4 shifts `lc.value_abs` below AND every coupling `s_prev` on a shifted PB
-    // column (SPEC_card1_coupling_carry §14).  A Card-1 coupling row's RHS is
-    // y = (value_abs − x_lin) + Σ_j M_j·ŝ_prev,j , and `CoupledShared::s_prev`
-    // and `CarryPrior::value` are literally the same number for the same identity
-    // (both are `x_s(j)` at harvest: NetworkRunContext.cpp s_prev assignment and
-    // the prev_carry stash) — so for a gauge-invariant row, whose correct
-    // y-change under a KNOWN frame step is the exact cancellation of the two
-    // moves, shifting one reference and not the other injects precisely the
-    // frame step as row bias.  Precedent: NetworkRelevel.cpp's Card-6 eph
-    // cutover ("the row's functional u = r + Mᵀs is frame-consistent only if
-    // ALL carried references move together").
+    // Coupling references move with the carries (docs/SPEC_card1_coupling_carry.md
+    // §9): D4 shifts `lc.value_abs` below and also every coupling `s_prev` on a
+    // shifted PB column (SPEC_card1_coupling_carry §14).  A Card-1 coupling row's RHS is
+    // y = (value_abs − x_lin) + Σ_j M_j·ŝ_prev,j , and `CoupledShared::s_prev` and
+    // `CarryPrior::value` hold the same number for the same identity (both are
+    // `x_s(j)` at harvest: the NetworkRunContext.cpp s_prev assignment and the
+    // prev_carry stash).  For a gauge-invariant row the two moves cancel under a
+    // known frame step; shifting one reference without the other injects the frame
+    // step as row bias.  The same rule holds at NetworkRelevel.cpp's Card-6 eph
+    // cutover: the row's functional u = r + Mᵀs is frame-consistent only if all
+    // carried references move together.
     //
-    // The coupling walk is hoisted OUT of the per-carry `d != 0` guard — a carry
-    // whose own (sat,σ) did not move can still hold coupling terms on OTHER
-    // satellites' shifted columns — and only `shift_sat` participates:
-    // SharedParamKind spans satellite-side + SH columns, so the receiver-side
-    // maps (`shift_rxg`/`shift_rpb`) have no coupling image.  Note the D4 ERASE
-    // above does NOT make this moot — the erase set (`eq34_reref`) and the shift
-    // set (`shift_sat`) are MUTUALLY EXCLUSIVE by construction at the population
-    // site, so the shifted keys are precisely the ones whose carries survive.
-    // With coupling off the stashes are empty and the walk is structurally
-    // byte-identical.
+    // The coupling walk sits outside the per-carry `d != 0` guard, because a carry
+    // whose own (sat,σ) did not move can still hold coupling terms on other
+    // satellites' shifted columns.  Only `shift_sat` participates: SharedParamKind
+    // spans satellite-side + SH columns, so the receiver-side maps
+    // (`shift_rxg`/`shift_rpb`) have no coupling image.  The D4 erase above does not
+    // cover these keys: the erase set (`eq34_reref`) and the shift set (`shift_sat`)
+    // are mutually exclusive by construction at the population site, so the shifted
+    // keys are exactly those whose carries survive.  With coupling off the stashes
+    // are empty and the walk leaves the output byte-identical.
     if (!shift_sat.empty() || !shift_rxg.empty()) {
         long long n_shifted = 0;
         for (auto& [key, lc] : local_carry) {
@@ -921,29 +921,29 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     }
     // Sticky baselines for next epoch: this epoch's tree becomes the
     // incumbent forest (sat parents + receiver parents, replaced
-    // wholesale so the pair of maps always describes exactly one tree),
-    // each sat remembers its component root for the r1-handover check,
-    // and each pin remembers its target for the same-station pinmove.
+    // wholesale so the pair of maps always describes one tree), each
+    // sat remembers its component root for the r1-handover check, and
+    // each pin remembers its target for the same-station pinmove.
     // anchor_incumbent doubles as the was-lit gate for pin-to-round
     // (every tree sat has exactly one parent edge).
     //
-    // I2 (de Jonge §3.5 extend-only) — before the wholesale swap, MERGE
-    // back the identity of any tree edge that was NOT seen this epoch but
+    // I2 (de Jonge §3.5 extend-only): before the wholesale swap, merge
+    // back the identity of any tree edge that was not seen this epoch but
     // whose phase-leveling memory (local_carry) is still alive: its
     // sat-side parent (this_epoch_anchor), receiver-side parent
     // (new_rx_parent), component root (new_sat_root) and pinned integer
-    // (new_prev_target).  A momentary row gap is then NOT a dead arc — the
-    // edge sits inertly in the incumbent maps (never seeded, because the
-    // seed admits LIVE arcs only ⇒ the spanning-forest invariant holds),
-    // and the epoch its arc RESUMES it is a recognized incumbent whose
-    // pin-to-round re-pins to the SAME integer (emitted-bias step ≈ 0)
-    // rather than re-leveling from a first-sighting 0.  local_carry
-    // liveness is the age stamp: it is gap-pruned at phase_leveling_max
-    // _gap_s, and a genuine reroute/handover erases it — so an edge past
-    // that horizon (or truly re-referenced) is dropped and re-floats as a
-    // first sighting, by which point the peer carries are gone too.  Keys
-    // are all receiver-indexed pins {receiver idx, "sat_signal"}; the two
-    // parent maps hold each edge in exactly one direction (unchanged).
+    // (new_prev_target).  A momentary row gap then does not count as a
+    // dead arc.  The edge sits inert in the incumbent maps (never seeded,
+    // because the seed admits live arcs only, so the spanning-forest
+    // invariant holds), and in the epoch its arc resumes it is a
+    // recognized incumbent whose pin-to-round re-pins to the same integer
+    // (emitted-bias step ≈ 0) instead of re-leveling from a first-sighting
+    // 0.  local_carry liveness serves as the age stamp: it is gap-pruned at
+    // phase_leveling_max_gap_s, and a genuine reroute or handover erases
+    // it, so an edge past that horizon (or re-referenced) is dropped and
+    // refloats as a first sighting, by which point the peer carries are
+    // gone too.  Keys are receiver-indexed pins {receiver idx,
+    // "sat_signal"}; the two parent maps hold each edge in one direction.
     if (eq34_extend_only) {
         std::map<std::string, size_t> gname2idx;
         for (size_t i = 0; i < stations.size(); ++i)
@@ -1003,10 +1003,10 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     eq34_rx_parent   = std::move(new_rx_parent);
     eq34_sat_root    = std::move(new_sat_root);
     eq34_prev_target = std::move(new_prev_target);
-    // I4: snapshot this epoch's arc elevations so next epoch's arcLife
+    // Snapshot this epoch's arc elevations (I4) so next epoch's arcLife
     // can tell a rising arc from a setting one.  Rebuilt wholesale (a
-    // pruned arc simply drops out); skipped entirely when longevity
-    // election is off, so it stays empty on the B9 baseline.
+    // pruned arc drops out); skipped when the longevity election is
+    // off, so the map stays empty on the B9 baseline.
     if (eq34_longevity) {
         eq34_prev_el.clear();
         for (size_t i = 0; i < stations.size(); ++i) {

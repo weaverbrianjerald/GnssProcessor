@@ -31,7 +31,7 @@ void GatedSink::set_pattern(const std::string& pattern) {
 }
 
 void GatedSink::set_formatter(std::unique_ptr<spdlog::formatter> formatter) {
-    // Each inner sink needs its own clone — formatters are not shareable.
+    // Each inner sink gets its own clone: formatters are not shareable.
     for (auto& s : inner_) s->set_formatter(formatter->clone());
 }
 
@@ -45,9 +45,9 @@ void GatedSink::clearBuffer() {
 }
 
 void GatedSink::replayBuffer() {
-    // Take a snapshot under the mutex, then forward without holding it
-    // (the inner sinks may take their own locks; nesting them under our
-    // mutex is unnecessary and risks ordering surprises).
+    // Take a snapshot under the mutex, then forward without holding it: the
+    // inner sinks take their own locks, and nesting those under the buffer
+    // mutex is unnecessary and risks lock-ordering problems.
     std::vector<spdlog::details::log_msg_buffer> snapshot;
     {
         std::lock_guard<std::mutex> lk(buffer_mutex_);

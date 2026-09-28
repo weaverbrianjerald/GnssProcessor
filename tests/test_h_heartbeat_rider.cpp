@@ -1,25 +1,24 @@
 /**
  * @file test_h_heartbeat_rider.cpp
  * @brief The H-heartbeat rider (docs/HANDOFF_edge_response_queue.md §1.6 item 3):
- *        (a) the batch product read surfaces EVERY H record — before this,
- *        1440/12 h were written and dropped unread (only the live tail saw
- *        them), so the replay consumer's producer-status channel was
- *        structurally blind; (b) the census-fed σ̂₀'s wire self-description
- *        (S-line hsig= token) and its loader contract.
+ *        (a) the batch product read returns every H record, so the replay
+ *        consumer's producer-status channel sees the same heartbeats as the
+ *        live tail; (b) the census-fed σ̂₀'s wire self-description (S-line
+ *        hsig= token) and its loader contract.
  *
- * What is pinned here:
- *   1. The 4-arg read returns every H in file order, INCLUDING the standalone
- *      H of a fully WITHHELD epoch — which completes no product record and is
- *      therefore invisible to both the returned records and the per-record
- *      epoch_status field.  That standalone case is the whole point: withheld
- *      stretches are exactly when a consumer must hear from the producer.
- *   2. The pre-existing surfaces are untouched: matching-H attach to the next
- *      E record still works, and the 3-arg read still parses the same file.
- *   3. The hsig= contract token round-trips, and its absence round-trips
- *      (byte-identical S line when the feed is off).
- *   4. Loader contract (invariant #4): default OFF; INERT-safe without the H
- *      records or without the census walk it reads; hard error on an empty
- *      class set (a permanent 0.0000 masquerading as a measurement).
+ * Checks:
+ *   1. The 4-arg read returns every H in file order, including the standalone
+ *      H of a fully withheld epoch.  That H completes no product record, so it
+ *      appears neither in the returned records nor in any per-record
+ *      epoch_status field; withheld stretches are when a consumer most needs
+ *      the producer's status.
+ *   2. The existing surfaces are unchanged: an H still attaches to the next
+ *      matching E record, and the 3-arg read still parses the same file.
+ *   3. The hsig= contract token round-trips, and so does its absence (the S
+ *      line is byte-identical when the feed is off).
+ *   4. Loader contract (invariant #4): off by default; forced off without the
+ *      H records or without the census walk it reads; the load fails on an
+ *      empty class set, which would report a constant 0.0000 as a measurement.
  */
 
 #include <gtest/gtest.h>
@@ -52,9 +51,9 @@ fs::path writeTempFile(const std::string& tag, const std::string& body) {
 // ===========================================================================
 
 TEST(HHeartbeatRider, BatchReadSurfacesEveryHeartbeatIncludingStandaloneWithheld) {
-    // Three heartbeats: an emitted epoch's H (attaches to its E), a STANDALONE
-    // withheld-gate H (no E — the previously invisible case), and a second
-    // emitted epoch's H.  E-line field counts match the live writer.
+    // Three heartbeats: an emitted epoch's H (attaches to its E), a standalone
+    // withheld-gate H (no E), and a second emitted epoch's H.  E-line field
+    // counts match the live writer.
     const fs::path p = writeTempFile("read.txt",
         "# gnss_network_product v1\n"
         "H,2313,259200,ok,1.2345,32,-\n"
@@ -222,7 +221,7 @@ TEST(HHeartbeatRider, CensusFeedSurvivesFullyArmed) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-// An empty class set is a permanent 0.0000 masquerading as a measurement.
+// An empty class set would report a constant 0.0000 as if it were a measurement.
 TEST(HHeartbeatRider, CensusFeedRejectsAnEmptyClassSet) {
     LogManager log;
     const fs::path p = writeTempConfig("emptymask",

@@ -1,22 +1,23 @@
 /**
  * @file test_resume_frame_restore.cpp
- * @brief Contract tests for the RESUME FRAME RESTORE card
+ * @brief Contract tests for the resume frame restore card
  *        (SPEC_synthetic_minimum_network §18.10): the snapshot format-v2 frame
  *        records (PA/PT phase-anchor incumbent + sticky pin target, CA clock-anchor
  *        per-satellite state, FA/FP/FE CLK-R held frame), their backward
  *        compatibility with v1 files, and the loader's side of the two knobs
  *        (@c network.resume_frame_restore, @c network.resume_slip_warmup_ep).
  *
- * What is locked here: (1) a snapshot carrying frame rows round-trips them
- * exactly and is written under the v2 header; (2) a snapshot carrying NONE is
- * written under the v1 header byte-for-byte (the unconditional capture cannot
- * change a run that has nothing to capture); (3) a v1 file parses with empty
- * frame maps (an old snapshot restores today's cold-pin behaviour); (4) the
- * CLK-R engine exports and restores its frame state exactly; (5) the knobs
- * default OFF / 0, a negative warm-up is rejected, and the warn-inert posture
- * (no snapshot path) still loads.  The seam mechanics themselves (the election
- * keeping its incumbents, the anchored first fold, the absent 1(d) erase) are
- * graded on the .ep1440 branch legs, not here.
+ * Checked here: (1) a snapshot carrying frame rows round-trips them exactly and
+ * is written under the v2 header; (2) a snapshot carrying none is written under
+ * the v1 header with no frame rows, so a run with nothing captured writes the
+ * same file as before (capture itself is gated by
+ * @c network.state_snapshot_frame_capture, off by default); (3) a v1 file parses
+ * with empty frame maps, so an old snapshot restores the cold-pin behaviour;
+ * (4) the CLK-R engine exports and restores its frame state exactly; (5) the knobs
+ * default to off / 0, a negative warm-up is rejected, and the warn-inert posture
+ * (no snapshot path) still loads.  The seam mechanics (the election keeping its
+ * incumbents, the anchored first fold, the absent 1(d) erase) are graded on the
+ * .ep1440 branch legs, not here.
  */
 #include <gtest/gtest.h>
 #include "config/GnssConfig.hpp"
@@ -142,11 +143,11 @@ TEST(ResumeFrameRestoreTest, FrameRecordsRoundTripUnderV2Header) {
     EXPECT_TRUE(r.hasFrameState());
 }
 
-/// §18.12 (2a): the dense D2 covariance side-car (QK keys + QP lower-triangle rows)
-/// and the OPTIONAL L var_first field round-trip exactly and put the file under the
-/// v3 header on their own; an L row without the field parses with var_first = 0 (a
-/// pre-ratio file); a block missing a row is a HARD parse failure, never a partial
-/// restore.
+/// The dense D2 covariance side-car (QK keys + QP lower-triangle rows) and the
+/// optional L-row var_first field round-trip exactly (§18.12 (2a)).  The side-car
+/// alone, with no frame rows, puts the file under the v3 header.  An L row without
+/// the var_first field (a pre-ratio file) parses with var_first = 0.  A block missing
+/// a row fails the parse as a whole; it is never partially restored.
 TEST(ResumeFrameRestoreTest, DenseCarryCovAndVarFirstRoundTripUnderV3) {
     NetworkStateSnapshot s = baseSnapshot();
     s.local_carry[{3, "G01", "L1C"}] = NetworkStateSnapshot::Local{12.5, 2.2e-3, 302400.0, 0.81};
@@ -181,7 +182,7 @@ TEST(ResumeFrameRestoreTest, DenseCarryCovAndVarFirstRoundTripUnderV3) {
     EXPECT_DOUBLE_EQ(r.local_carry.at({4, "E02", "L5Q"}).var_first, 0.0);
     EXPECT_TRUE(r.hasCouplingState());
 
-    // A block missing one row is refused WHOLE.
+    // A block missing one row is refused as a whole.
     NetworkStateSnapshot bad = s;
     bad.carry_cov_rows.pop_back();
     std::ostringstream ob;
@@ -193,8 +194,9 @@ TEST(ResumeFrameRestoreTest, DenseCarryCovAndVarFirstRoundTripUnderV3) {
 }
 
 TEST(ResumeFrameRestoreTest, NoFrameStateWritesV1HeaderByteIdentical) {
-    // The unconditional capture must not change a snapshot that has nothing to
-    // capture: same header, same bytes as the pre-card writer.
+    // A snapshot with no frame state is written as before the card: v1 header and
+    // no frame rows.  (Frame capture is gated by network.state_snapshot_frame_capture;
+    // the serializer picks the header from the rows actually present.)
     const NetworkStateSnapshot s = baseSnapshot();
     ASSERT_FALSE(s.hasFrameState());
     std::ostringstream os;
@@ -207,11 +209,11 @@ TEST(ResumeFrameRestoreTest, NoFrameStateWritesV1HeaderByteIdentical) {
     EXPECT_EQ(text.find("\nFA,"), std::string::npos);
     EXPECT_EQ(text.find("\nFP,"), std::string::npos);
     EXPECT_EQ(text.find("\nFE,"), std::string::npos);
-    // §18.12: the format-v3 Card-1 coupling records belong in the same absence
-    // list — the coupling capture is knob-gated and its containers stay
-    // default-constructed, so hasCouplingState() is false, the three-way header
-    // selector still yields v1, the four emit loops iterate zero times and the
-    // END,<n> trailer is unchanged.  This is the OFF-path byte-identity lock.
+    // The format-v3 coupling records (§18.12, Card-1) are absent too: the coupling
+    // capture is knob-gated and its containers stay default-constructed, so
+    // hasCouplingState() is false, the three-way header selector yields v1, the
+    // QS/QL/QZ/QR loops emit nothing and the END,<n> trailer is unchanged.  This
+    // checks byte-identity of the off path.
     EXPECT_EQ(text.find("\nQS,"), std::string::npos);
     EXPECT_EQ(text.find("\nQL,"), std::string::npos);
     EXPECT_EQ(text.find("\nQZ,"), std::string::npos);
@@ -219,8 +221,9 @@ TEST(ResumeFrameRestoreTest, NoFrameStateWritesV1HeaderByteIdentical) {
 }
 
 TEST(ResumeFrameRestoreTest, V1FileParsesWithEmptyFrameMaps) {
-    // An old (pre-card) snapshot restores today's cold-pin behaviour: every
-    // frame map empty, hasFrameState() false — the armed knob logs INERT.
+    // An old (pre-card) snapshot restores the cold-pin behaviour: every frame map
+    // is empty and hasFrameState() is false, so an armed resume_frame_restore is
+    // logged as inert.
     const NetworkStateSnapshot s = baseSnapshot();
     std::ostringstream os;
     NetworkStateSnapshotIO::serialize(os, s);
@@ -313,7 +316,7 @@ TEST(ResumeFrameRestoreConfig, DefaultsAreOff) {
     ASSERT_TRUE(loadInto("defaults", networkConfig(), cfg));
     EXPECT_FALSE(cfg.networkResumeFrameRestore());
     EXPECT_EQ(cfg.networkResumeSlipWarmupEp(), 0);
-    // The write-side capture is OFF too: a default snapshot stays format v1.
+    // The write-side capture is off too, so a default snapshot stays format v1.
     EXPECT_FALSE(cfg.getNetworkConfig().state_snapshot_frame_capture);
 }
 
@@ -354,11 +357,12 @@ TEST(ResumeFrameRestoreConfig, ArmedWithoutSnapshotPathIsWarnInert) {
     EXPECT_EQ(cfg.networkResumeSlipWarmupEp(), 3);
 }
 
-// --- READMIT continuity (E2 seed-first re-admission + the block re-coupling edge) ---
-// The loader side of the two knobs: default OFF / 0 (the byte-identity contract),
-// both parse, negative values are refused.  The seam mechanics (parking at a
-// departure, the seed at re-registration, the coupling window) are graded on the
-// sim bed's eclipse schedule, not here.
+// --- Readmit continuity (E2 seed-first re-admission + the block re-coupling edge) ---
+// The loader side of the two knobs (readmit_seed_horizon_s, readmit_coupling_marg_ep):
+// both default to 0 (the byte-identity contract), both parse, and negative values are
+// refused.  Under a nonzero horizon, readmit_seed_code_bias defaults to true and can be
+// turned off.  The seam mechanics (parking at a departure, the seed at re-registration,
+// the coupling window) are graded on the sim bed's eclipse schedule, not here.
 
 TEST(ReadmitContinuityConfig, DefaultsOffAndKnobsParse) {
     GnssConfig cfg;

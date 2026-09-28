@@ -1,35 +1,38 @@
 /**
  * @file RealTimeEngineStateSnap.cpp
- * @brief RT filter-state snapshot seam — the consumer-side warm start (the
- *        RTB-7 complement).
+ * @brief RT filter-state snapshot seam: the consumer-side warm start (the
+ *        complement of RTB-7).
  *
  * Three private members on @ref RealTimeEngine, all armed by
  * @c realtime.state_snapshot_path and all no-ops (byte-identical) with the
  * path empty:
  *
- *  - @ref RealTimeEngine::loadStateSnapshotStaged_  (initialize() tail) —
- *    parses the file and STAGES it.  No engine state is touched: the
+ *  - @ref RealTimeEngine::loadStateSnapshotStaged_  (initialize() tail):
+ *    parses the file and stages it.  No engine state is touched.  The
  *    fingerprint depends on post-initialize setters (setSsrStore /
- *    setConsumeNetworkIono), and the age gate needs a real epoch time, so
- *    both checks defer to the first processed epoch.
+ *    setConsumeNetworkIono) and the age gate needs a real epoch time, so
+ *    both checks are deferred to the first processed epoch.
  *  - @ref RealTimeEngine::applyStagedStateSnapshot_  (top of processEpoch,
- *    one-shot) — age + fingerprint + layout-precondition gates, then the
- *    exact-layout rebuild (StateManager::restoreDynamicState replay) and the
- *    wholesale x/P + SSR-continuity-baseline restore.  Restoring
- *    prev-epoch time to the snapshot epoch makes the first KF predict
- *    inflate over the TRUE gap, and restoring the generation id, the
- *    disc-counter memory and the A5 applied maps keeps the engine's existing
- *    datum-break reactions armed against everything the producer did during
- *    the outage — the invariant-#7 re-coupling edge is re-validated by
- *    already-wired responses (reactToGenerationChange / resetOnPhaseBiasDisc
- *    / the A5 flips / slip QC + LLI), not by new machinery.  Any refused
- *    gate discards the stage with a logged reason and the cold start
- *    proceeds untouched.
- *  - @ref RealTimeEngine::writeStateSnapshot_  (processEpoch tail) — cadence-
+ *    one-shot): age, fingerprint and layout-precondition gates, then the
+ *    restore.  Scope "core" (the default) restores the core block only;
+ *    scope "full" does the exact-layout rebuild (StateManager::restoreDynamicState
+ *    replay) and restores x/P wholesale.  Both scopes restore the
+ *    SSR-continuity baselines.  Restoring the previous-epoch time to the
+ *    snapshot epoch makes the first KF predict inflate over the true gap.
+ *    Restoring the generation id, the disc-counter memory and the A5 applied
+ *    maps keeps the engine's existing datum-break reactions armed against
+ *    everything the producer signalled during the outage, so the invariant-#7
+ *    re-coupling edge is re-validated by responses that are already wired
+ *    (reactToGenerationChange / resetOnPhaseBiasDisc / the A5 flips / slip QC
+ *    + LLI).  An unsignalled transient from a producer that itself
+ *    warm-resumed is handled by the seam response
+ *    (@c realtime.state_snapshot_seam_refloat).  A refused gate discards the
+ *    stage with a logged reason and the cold start proceeds unchanged.
+ *  - @ref RealTimeEngine::writeStateSnapshot_  (processEpoch tail): cadence-
  *    gated atomic write of the live filter memory.  The dynamic-layout
  *    harvest is verified gapless before anything is written; a layout this
  *    seam cannot represent (an unregistered dynamic index) logs once and
- *    writes nothing — a partial snapshot is never produced.
+ *    writes nothing, so a partial snapshot is never produced.
  *
  * Seam contract: private member functions (every persistent value is an
  * engine member), alias-free (the bodies are new code, not relocations).
@@ -41,7 +44,7 @@
 #include "realtime/RealTimeEngine.hpp"
 
 #include "config/GnssConfig.hpp"
-#include "filter/NetworkSbasis.hpp"          // kWindUpYawModelId (the wu93 lesson)
+#include "filter/NetworkSbasis.hpp"          // kWindUpYawModelId (wind-up model revision, wu93)
 #include "filter/StateManager.hpp"
 #include "math/TimeUtils.hpp"
 #include "products/NetworkStateSnapshot.hpp" // NetworkStateSnapshotIO::fnv1a64
@@ -61,11 +64,11 @@
 namespace GnssProcessor {
 
 uint64_t RealTimeEngine::rtSnapshotFingerprint_() const {
-    // The STATE-MEANING facts: anything that changes what a serialized state
-    // value or key means, or which states exist.  Deliberately NOT included:
-    // measurement noise / process noise / thresholds (they shape future
-    // evolution, not the meaning of the carried memory — the RTB-7 rule), and
-    // the a-priori position (position is data, restored with the state).
+    // State-meaning facts: anything that changes what a serialized state value
+    // or key means, or which states exist.  Not included: measurement noise,
+    // process noise and thresholds (they shape future evolution, not the
+    // meaning of the carried memory; the RTB-7 rule), and the a-priori
+    // position (position is data, restored with the state).
     std::string fp;
     auto add = [&fp](const std::string& v) { fp += v; fp += '\x1f'; };
     // Carrier-phase wind-up model revision + accumulation mode: both change the
@@ -91,7 +94,7 @@ uint64_t RealTimeEngine::rtSnapshotFingerprint_() const {
     // absorbed; the network iono prior changes what the iono states carry.
     add(fmt::format("route:{}:{}:{}", ssr_store_override_ ? 1 : 0,
                     clock_store_override_ ? 1 : 0, consume_network_iono_ ? 1 : 0));
-    // The A5 applied maps only exist (and only mean anything) under the gate.
+    // The A5 applied maps exist, and have meaning, only under the age gate.
     add(fmt::format("agegate:{}", config_.enableSsrBiasMaxAge() ? 1 : 0));
     return NetworkStateSnapshotIO::fnv1a64(fp);
 }
@@ -125,8 +128,8 @@ void RealTimeEngine::loadStateSnapshotStaged_() {
 void RealTimeEngine::applyStagedStateSnapshot_(RtEpochContext& ctx) {
     if (!staged_rt_snap_) return;
     auto log = log_manager_.getLogger("rt_engine");
-    // One-shot: whatever happens below, the stage is consumed — a refused
-    // snapshot must not retry on every epoch.
+    // One-shot: the stage is consumed whatever happens below, so a refused
+    // snapshot is not retried on every epoch.
     const std::unique_ptr<RtStateSnapshot> snap = std::move(staged_rt_snap_);
     const auto& rt = config_.getRealTimeConfig();
     auto cold = [&](const std::string& why) {
@@ -135,9 +138,9 @@ void RealTimeEngine::applyStagedStateSnapshot_(RtEpochContext& ctx) {
         log->warn("{}RT state snapshot: staged snapshot DISCARDED — {} — COLD START.",
                   ctx.epoch_prefix, why);
     };
-    // Card CC (B): the one-line RESTORED rider a grader asserts against (the
-    // COLD counterpart is the DISCARDED line above); also kept on the status
-    // getter so a harness / test needs no log parsing.
+    // The one-line RESTORED log line that a grader asserts against (the cold
+    // counterpart is the DISCARDED line above).  The outcome is also kept on
+    // the status getter so a harness or test needs no log parsing (Card CC (B)).
     auto restored = [&](const char* scope) {
         rt_snap_restore_.outcome   = RtSnapshotRestoreStatus::Outcome::Restored;
         rt_snap_restore_.week      = snap->snap_week;
@@ -199,14 +202,14 @@ void RealTimeEngine::applyStagedStateSnapshot_(RtEpochContext& ctx) {
     }
 
     // --- Restore scope -------------------------------------------------------
-    // "core": restore ONLY the core block (position / clock / ZWD-seed / ISBs)
-    // + the producer-continuity baselines; dynamic states re-create per epoch
-    // exactly as on a cold start.  Measured (sim ladder): across a producer
-    // that itself warm-resumed, EVERY restored dynamic state fights the
-    // deliberately-unsignalled product transient (stiff: U walks to -9 m;
-    // freed: the tension re-parks in whatever was freed, ZWD to 2.9 m) — the
-    // core memory is the part that starts warm.  "full" is for a product
-    // stream continuous across the outage (consumer-only restart).
+    // "core": restore the core block only (position / clock / ZWD seed / ISBs)
+    // plus the producer-continuity baselines; dynamic states are re-created per
+    // epoch as on a cold start.  Across a producer that itself warm-resumed,
+    // every restored dynamic state opposes the producer's unsignalled product
+    // transient (on the sim ladder: kept stiff, U walks to -9 m; freed, the
+    // tension moves into whatever was freed, ZWD to 2.9 m), so only the core
+    // memory starts warm.  "full" is for a product stream that is continuous
+    // across the outage (a consumer-only restart).
     const bool core_only = rt.state_snapshot_restore_scope != "full";
     if (core_only) {
         const auto nc = static_cast<Eigen::Index>(snap->core_size);
@@ -235,12 +238,13 @@ void RealTimeEngine::applyStagedStateSnapshot_(RtEpochContext& ctx) {
                 sm.setCovariance(P);
                 zwd_freed = true;
             }
-            // The ISB is the STIFFEST core state (near-zero random walk) and it
-            // is frame-tied to the producer's per-constellation realization —
-            // measured as the last standing invariant-#1 liar on this seam
-            // (core-scope epoch-0 10.95 m vs cold 4.46 with everything else
-            // freed).  Value-preserving re-inflation via the SAME response the
-            // A2 clock-disc reaction uses; 0.0 selects its initial_std fallback.
+            // The ISB is the stiffest core state (near-zero random walk) and is
+            // tied to the producer's per-constellation realization, so a
+            // restored ISB carries a stale value past the seam (invariant #1;
+            // on the sim ladder, core-scope epoch-0 error 10.95 m against 4.46 m
+            // cold with everything else freed).  Its variance is re-inflated,
+            // value kept, through the response the A2 clock-disc reaction uses;
+            // 0.0 selects that response's initial_std fallback.
             for (const auto& [sys, idx] : sm.getSystemTimeOffsetStates()) {
                 (void)idx;
                 sm.reinflateSystemTimeOffsetVariance(sys, 0.0);
@@ -265,7 +269,7 @@ void RealTimeEngine::applyStagedStateSnapshot_(RtEpochContext& ctx) {
         return;
     }
 
-    // --- Exact-layout rebuild (ascending, gapless — parse-enforced) --------
+    // --- Exact-layout rebuild (ascending, gapless; enforced by the parser) ---
     std::size_t n_amb = 0, n_ion = 0, n_rxcb = 0;
     for (const auto& d : snap->dyn) {
         StateManager::RestoredStateKind kind;
@@ -282,8 +286,9 @@ void RealTimeEngine::applyStagedStateSnapshot_(RtEpochContext& ctx) {
                                     d.kind));
         if (!sm.restoreDynamicState(kind, d.key,
                                     snap->x(static_cast<Eigen::Index>(d.idx)), d.idx)) {
-            // Unreachable on a parse-clean file against a verified-empty manager;
-            // if it fires the manager is part-mutated — scream, do not limp.
+            // Unreachable on a parse-clean file against a verified-empty manager.
+            // If it fires, the manager is partly mutated: log an error and stop
+            // rather than continue as if the restore succeeded.
             log->error("{}RT state snapshot: layout replay FAILED at index {} ('{}') "
                        "AFTER preconditions passed — the state manager is partially "
                        "restored; treat this run's estimates as cold-start-degraded and "
@@ -298,31 +303,34 @@ void RealTimeEngine::applyStagedStateSnapshot_(RtEpochContext& ctx) {
     ssr_code_bias_applied_   = snap->code_bias_applied;
     last_ssr_generation_id_  = snap->generation_id;
     epoch_count_             = snap->epoch_count;
-    // The first predict must inflate over the TRUE gap: step time off the
-    // snapshot epoch, not off a synthetic first-epoch dt.
+    // The first predict inflates over the true gap: time steps from the
+    // snapshot epoch, not from a synthetic first-epoch dt.
     first_epoch_     = false;
     prev_tow_        = snap->snap_tow;
     prev_epoch_time_ = GnssTime{ snap->snap_week, snap->snap_tow };
 
-    // --- The invariant-#1 SEAM RESPONSE (measured in two steps, 2026-09-01) --
-    // A producer that itself warm-resumed emits a deliberately UNSIGNALLED
-    // product transient (gen id preserved, no disc bumps — the seamlessness
-    // that protects COLD consumers), so none of the restored datum-break
-    // baselines fire on it.  The restored state fights it wherever it is
-    // STIFF:  the pinned ZWD (troposphere q ~1e-9) is the measured killer —
-    // a cold consumer parks the transient's elevation-common part in ZWD
-    // (0.16 -> 0.64 m excursion, relaxing back as the producer settles) while
-    // the warm consumer's pinned 0.1015 sent the same tension to the VERTICAL
-    // at mapping-amplified scale, a monotone U walk to ~-9 m (h6 rms 7.44 vs
-    // cold 1.07).  Response, default ON: (a) mark every restored ambiguity
-    // pending-reseed through the SAME resetAmbiguity path the disc/slip
-    // reactions use (measured inert on this per-epoch-reseeding consumer;
-    // load-bearing for engines that carry ambiguities across epochs), and
-    // (b) re-inflate the restored ZWD VARIANCE to initial_std.troposphere
-    // with zeroed cross-covariances — the VALUE stays as the (correct) seed,
-    // so the transient can park in ZWD exactly as a cold start would while
-    // position starts warm.  Per-sat iono is left alone: its own q relaxes it
-    // within an epoch and its value re-anchors the geometry-free split.
+    // --- Seam response (invariant #1) ---------------------------------------
+    // A producer that itself warm-resumed emits a deliberately unsignalled
+    // product transient (gen id preserved, no disc bumps, which keeps cold
+    // consumers seamless), so none of the restored datum-break baselines fire
+    // on it.  Restored states that are stiff resist it.  The pinned ZWD
+    // (troposphere q ~1e-9) is the dominant case: a cold consumer absorbs the
+    // transient's elevation-common part in ZWD (a 0.16 -> 0.64 m excursion that
+    // relaxes as the producer settles), while a warm consumer with ZWD pinned
+    // pushes the same tension into the vertical at mapping-amplified scale (on
+    // the sim ladder, a monotone U walk to about -9 m; hour-6 rms 7.44 m against
+    // 1.07 m cold).  The response, on by default
+    // (realtime.state_snapshot_seam_refloat):
+    //   (a) mark every restored ambiguity pending-reseed through the
+    //       resetAmbiguity path the disc/slip reactions use (inert on this
+    //       consumer, which reseeds every epoch; required for engines that
+    //       carry ambiguities across epochs);
+    //   (b) re-inflate the restored ZWD variance to initial_std.troposphere
+    //       with zeroed cross-covariances.  The value stays as the seed, so the
+    //       transient can move into ZWD as on a cold start while position
+    //       starts warm.
+    // Per-sat iono is left alone: its own q relaxes it within an epoch and its
+    // value re-anchors the geometry-free split.
     std::size_t n_refloat = 0, n_isb_freed = 0;
     bool zwd_refloated = false;
     if (rt.state_snapshot_seam_refloat) {
@@ -341,8 +349,8 @@ void RealTimeEngine::applyStagedStateSnapshot_(RtEpochContext& ctx) {
             sm.setCovariance(P);
             zwd_refloated = true;
         }
-        // ISB: the stiffest core state, frame-tied to the producer realization
-        // — same response as the core scope (value kept, variance to initial).
+        // ISB: the stiffest core state, tied to the producer realization.  Same
+        // response as in the core scope (value kept, variance to initial).
         for (const auto& [sys, idx] : sm.getSystemTimeOffsetStates()) {
             (void)idx;
             sm.reinflateSystemTimeOffsetVariance(sys, 0.0);
@@ -378,10 +386,10 @@ bool RealTimeEngine::harvestStateSnapshot_(RtStateSnapshot& snap, const GnssTime
     auto log = log_manager_.getLogger("rt_engine");
     auto& sm = *state_manager_;
 
-    // Harvest the dynamic layout from the key→index maps and verify it tiles
-    // the dynamic block exactly (gapless, nothing below the derived core).  A
-    // layout this seam cannot represent writes NOTHING — the previous good
-    // snapshot on disk stays intact — and warns once.
+    // Harvest the dynamic layout from the key→index maps and verify that it
+    // tiles the dynamic block exactly (gapless, nothing below the derived
+    // core).  A layout this seam cannot represent writes nothing, leaving the
+    // previous good snapshot on disk intact, and warns once.
     const std::size_t n = sm.getStateSize();
     std::vector<RtStateSnapshot::DynState> rows;
     auto harvest = [&rows](const std::map<std::string, std::size_t>& m, const char* kind) {
@@ -471,10 +479,10 @@ bool RealTimeEngine::writeStateSnapshotTo(const std::filesystem::path& path,
         if (err) *err = std::move(m);
         return false;
     };
-    // Card CC (B): the beside-the-network-copy write.  No cadence gate and no
-    // realtime.state_snapshot_path involvement; the last-write stamp of the
-    // cadence writer is deliberately NOT advanced (the two writers are
-    // independent).
+    // Writes a consumer snapshot beside the network snapshot copy.  No cadence
+    // gate and no use of realtime.state_snapshot_path; the cadence writer's
+    // last-write stamp is not advanced, because the two writers are
+    // independent (Card CC (B)).
     if (!has_processed_epoch_ || !state_manager_)
         return fail("no epoch has been processed yet — nothing to snapshot");
     if (expected_epoch

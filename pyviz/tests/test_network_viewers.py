@@ -1,7 +1,7 @@
 """Build-time tests for the five network viewers (synthetic trace CSVs).
 
-Exercises each viewer's ``build`` against stub CSVs -- enough to catch schema /
-contract regressions -- plus the :class:`ViewerSkip` paths.  Figures are *built*
+Exercises each viewer's ``build`` against stub CSVs, enough to catch schema and
+contract regressions, plus the :class:`ViewerSkip` paths.  Figures are *built*
 (spec objects), not rendered, so these stay fast and backend-free.
 """
 import pytest

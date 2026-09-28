@@ -1,27 +1,27 @@
 /**
  * @file NetworkBlockBaarda.cpp
- * @brief BlockFormal — the (station, satellite) LOS block sweep and its emission
- *        (docs/SPEC_redundancy_census.md BB-INC-1..3).  See NetworkBlockBaarda.hpp for
- *        the design argument and the two corrections to SPEC §3's recipe.
+ * @brief BlockFormal: the (station, satellite) LOS block sweep and its emission
+ *        (docs/SPEC_redundancy_census.md BB-INC-1..3).  NetworkBlockBaarda.hpp holds
+ *        the design and the two corrections to SPEC §3's recipe.
  *
- * Measure-only.  Nothing here writes a weight, a state or a decision; the whole
- * translation unit reads the SOLVED system and emits counters, ladders and
- * events.  SPEC §9 row 1 pre-declares that ANY response to a loud block — a
- * deweight, a refloat, an exclusion — belongs to a different card, and §11 says
- * this one does not act on a block "including the loud ones".
+ * Measure-only.  Nothing here writes a weight, a state or a decision; this
+ * translation unit reads the solved system and emits counters, ladders and events.
+ * SPEC §9 row 1 assigns any response to a loud block (a deweight, a refloat, an
+ * exclusion) to a different card, and §11 states that this card does not act on a
+ * block "including the loud ones".
  *
- * ## Where the cost goes
+ * ## Cost
  *
- * The sweep rides the redundancy census's SWEPT branch, so it inherits that
- * card's stride / targeted-escalation / trip schedule and adds no scheduler
- * (SPEC §4).  Per swept station it pays one @c reconstructStation (a cached
- * LDLᵀ solve, no factorization), two GEMVs for the post-fit residual, and then
- * per block one @f$b\times b@f$ cofactor plus one @f$b\times b@f$ LDLᵀ — with
- * @f$b\le 8@f$ that is bounded by the @c rowRedundancy call the census already
- * made for the same station (measured there at 6.1 ms/station-sweep).  SPEC §5's
- * budget is "≤ 2× the census sweep it rides"; @c tallies.wall_ms is the number
- * that has to be checked against it, which is why the sweep is timed here rather
- * than trusted.
+ * The sweep runs inside the redundancy census's swept branch, so it inherits that
+ * card's stride, targeted-escalation and trip schedule and adds no scheduler
+ * (SPEC §4).  Per swept station the census forms the post-fit residual once (one
+ * @c reconstructStation, a cached LDLᵀ solve with no factorization, and two
+ * GEMVs), shared with the congruence rider.  Per block this file then pays one
+ * @f$b\times b@f$ cofactor and one @f$b\times b@f$ LDLᵀ; with @f$b\le 8@f$ that is
+ * bounded by the @c rowRedundancy call the census already made for the same
+ * station.  SPEC §5's budget is "≤ 2× the census sweep it rides".  The sweep and
+ * the emission are timed into @c tallies.wall_ms so the budget can be checked
+ * rather than assumed; the residual formation is timed by the census.
  */
 
 #include "filter/NetworkBlockBaarda.hpp"
@@ -43,7 +43,7 @@
 namespace GnssProcessor {
 
 // ===========================================================================
-//  The UNCHECKABLE test (SPEC §3's degenerate guard)
+//  Uncheckable test (the degenerate guard of SPEC §3)
 // ===========================================================================
 
 bool blockCofactorIsCheckable(const Eigen::MatrixXd& Q, double rcond_eps,
@@ -52,15 +52,15 @@ bool blockCofactorIsCheckable(const Eigen::MatrixXd& Q, double rcond_eps,
     if (nonfinite) *nonfinite = false;
     const Eigen::Index b = Q.rows();
     if (b <= 0 || Q.cols() != b) { if (singular) *singular = true; return false; }
-    // A non-positive row weight puts a non-finite entry on the diagonal ON
-    // PURPOSE (the kernel's header note) precisely so it fails HERE rather than
-    // becoming a finite number nobody questions.
+    // A non-positive row weight puts a non-finite entry on the diagonal by design
+    // (see the kernel's header note), so the block fails here instead of yielding
+    // a finite number that would pass unquestioned.
     if (!Q.allFinite()) { if (nonfinite) *nonfinite = true; return false; }
 
-    // Q is PSD by construction, so an LDLᵀ is the right factorization and its
-    // pivots are the conditioning statistic.  The test is RELATIVE: a phase-only
-    // block's cofactor entries run ~1e-6 m² and an absolute floor would call
-    // every one of them singular.
+    // Q is PSD by construction, so LDLᵀ is the appropriate factorization and its
+    // pivots are the conditioning statistic.  The test is relative: a phase-only
+    // block's cofactor entries are around 1e-6 m², and an absolute floor would
+    // call every such block singular.
     const Eigen::LDLT<Eigen::MatrixXd> ldlt(Q);
     if (ldlt.info() != Eigen::Success) { if (singular) *singular = true; return false; }
     const Eigen::VectorXd d = ldlt.vectorD();
@@ -69,9 +69,9 @@ bool blockCofactorIsCheckable(const Eigen::MatrixXd& Q, double rcond_eps,
     for (Eigen::Index i = 0; i < b; ++i) {
         const double v = d(i);
         if (!std::isfinite(v)) { if (nonfinite) *nonfinite = true; return false; }
-        // A NEGATIVE pivot is a genuine finding, not a small one: the cofactor of
-        // a PSD quantity cannot have one, so the block's leverage path has lost
-        // definiteness and its quadratic form would not even be a norm.
+        // A negative pivot is a real finding, not a small value: the cofactor of a
+        // PSD quantity cannot have one, so the block's leverage path has lost
+        // definiteness and its quadratic form is not a norm.
         if (v <= 0.0) { if (singular) *singular = true; return false; }
         dmax = std::max(dmax, v);
         dmin = std::min(dmin, v);
@@ -81,7 +81,7 @@ bool blockCofactorIsCheckable(const Eigen::MatrixXd& Q, double rcond_eps,
 }
 
 // ===========================================================================
-//  INC-1 — the per-station block sweep
+//  Per-station block sweep (INC-1)
 // ===========================================================================
 
 void networkBlockBaardaSweepStation(NetworkBlockBaarda& acc,
@@ -105,13 +105,13 @@ void networkBlockBaardaSweepStation(NetworkBlockBaarda& acc,
     const auto t0 = std::chrono::steady_clock::now();
     ++tallies.station_sweeps;
 
-    // Group the station's DATA rows by satellite.  Pins and coupling rows are
+    // Group the station's data rows by satellite.  Pins and coupling rows are
     // excluded: on a within-epoch re-solve the assembly's coupling rows are
-    // re-whitened in a COPY before addStation, so they no longer describe the
-    // system that was solved, and a pin's ~1e10 weight would swamp any block it
-    // joined.  std::map keeps the block order deterministic across runs, which a
-    // hash map would not — the run-end worst-block identity has to be
-    // reproducible for the A/B to mean anything.
+    // re-whitened in a copy before addStation, so they no longer describe the
+    // system that was solved, and a pin's weight of about 1e10 would dominate any
+    // block it joined.  std::map keeps the block order deterministic across runs,
+    // which a hash map would not; the run-end worst-block identity must be
+    // reproducible for an A/B comparison.
     std::map<std::string, std::vector<Eigen::Index>> by_sat;
     for (Eigen::Index row = 0; row < m; ++row) {
         const NetRowClass k = cls[static_cast<std::size_t>(row)];
@@ -137,17 +137,17 @@ void networkBlockBaardaSweepStation(NetworkBlockBaarda& acc,
             if (k == NetRowClass::ObsCode)  ++in.n_code;
             if (k == NetRowClass::ObsPhase) ++in.n_phase;
         }
-        // SPEC §4's union rule, and the prior-residual census's ordering: any
-        // RESPONDED row makes the block RESPONDED; only otherwise does FRAME
-        // apply.  RESPONDED is an ESTIMATOR-side signal and the INC-2
-        // corroboration is a RAW-observable one, so §8.2's positive control
-        // (RESPONDED ladder vs CLEAN ladder) is not circular.
+        // SPEC §4's union rule, in the prior-residual census's order: any Responded
+        // row makes the block Responded; only otherwise does Frame apply.  Responded
+        // is an estimator-side signal and the INC-2 corroboration a raw-observable
+        // one, so §8.2's positive control (Responded ladder against Clean ladder)
+        // is not circular.
         in.label = (responded_sats.find(s) != responded_sats.end())
                        ? PriorResidualLabel::Responded
                        : (datum_changed ? PriorResidualLabel::Frame
                                         : PriorResidualLabel::Clean);
 
-        // The block's rows, as the kernel wants them.
+        // The block's rows, in the form the kernel takes.
         Eigen::MatrixXd Bs(b, R.A_s.cols()), Br(b, R.A_r.cols());
         Eigen::VectorXd bw(b), be(b);
         for (Eigen::Index i = 0; i < b; ++i) {
@@ -166,7 +166,7 @@ void networkBlockBaardaSweepStation(NetworkBlockBaarda& acc,
 
         bool sing = false, nonfin = false;
         if (!blockCofactorIsCheckable(Q, kBlockCofactorRcondEps, &sing, &nonfin)) {
-            // UNCHECKABLE: counted with its identity, NEVER inverted through.
+            // Uncheckable: counted with its identity, never inverted.
             in.uncheckable = true;
             acc.addBlock(in);
             ++tallies.blocks; tallies.rows += b; ++tallies.uncheckable;
@@ -175,9 +175,9 @@ void networkBlockBaardaSweepStation(NetworkBlockBaarda& acc,
             continue;
         }
 
-        // T_B = e' Q^-1 e / b, and the ROW tier's statistic on the same rows in
-        // the same units (the b = 1 case) so INC-3's comparison is apples to
-        // apples rather than a threshold on two different scales.
+        // T_B = e' Q^-1 e / b, plus the row tier's statistic on the same rows in
+        // the same units (the b = 1 case), so the INC-3 comparison applies one
+        // threshold on one scale.
         const Eigen::VectorXd z = Q.ldlt().solve(be);
         const double quad = be.dot(z);
         if (!(quad >= 0.0) || !std::isfinite(quad)) {
@@ -303,8 +303,8 @@ void networkBlockBaardaEmit(NetworkRunContext& ctx, const GnssConfig& config_,
             continue;
         ctx.carry.bb_event_last[key] = now_ep;
         // The statistic goes in `detail` as well as in the typed column: emitEvent
-        // formats statistic/threshold with a FIXED 6 decimals, which prints a
-        // well-conditioned small t_B as 0.000000.
+        // formats statistic and threshold with a fixed 6 decimals, which prints a
+        // small t_B from a well-conditioned block as 0.000000.
         traces.emitEvent(se.time, "BLOCKBAARDA",
                          h.block_only ? "block_only_outlier" : "block_outlier",
                          h.sat, sname, h.t, acc.reportSigma(), "observe",
@@ -334,8 +334,8 @@ void networkBlockBaardaReport(const NetworkRunContext& ctx,
     const NetworkBlockBaardaTallies& t = ctx.counters.bb;
     if (!acc.enabled()) return;
 
-    // DENOMINATORS FIRST.  "The sweep ran and found nothing" and "the sweep never
-    // ran" are the two readings this line exists to separate.
+    // Denominators first: this line separates "the sweep ran and found nothing"
+    // from "the sweep never ran".
     log->info("Network (block-Baarda census): {} emission pass(es), {} with blocks, "
               "{} station-sweep(s), {} block(s) over {} data row(s); {} uncheckable "
               "({} singular, {} non-finite), {} unnamed row(s), {} station(s) with no "
@@ -358,10 +358,10 @@ void networkBlockBaardaReport(const NetworkRunContext& ctx,
         return;
     }
 
-    // The SIZE HISTOGRAM, before any ladder.  A run whose blocks were all b = 1
-    // would produce a ladder identical to the scalar w-test and an INC-3 fraction
-    // of 0 BY CONSTRUCTION — the card would read "no smearing" when what actually
-    // happened is "there was never a block to smear across".
+    // The size histogram comes before any ladder.  A run whose blocks were all
+    // b = 1 produces a ladder identical to the scalar w-test and an INC-3 fraction
+    // of 0 by construction, which would read as "no smearing" when there was no
+    // multi-row block for a fault to spread across.
     {
         const auto& hb = acc.sizeHistogram();
         std::string hist;
@@ -427,7 +427,8 @@ void networkBlockBaardaReport(const NetworkRunContext& ctx,
             tot_block_only += L.n_block_only;
 
             if (acc.corroborating()) {
-                // INC-2's b-cell: loud block, raw observable measurably FLAT.
+                // The b-cell of the INC-2 contingency: loud block, raw observable
+                // measurably flat.
                 const auto& c = L.contingency;
                 const long long hi_n = c[0][0] + c[0][1] + c[0][2];
                 log->info("Network (block-Baarda census) '{}'/{}: contingency  "
@@ -444,7 +445,7 @@ void networkBlockBaardaReport(const NetworkRunContext& ctx,
         }
     }
 
-    // ---- INC-3: THE NUMBER THE CARD EXISTS TO PRODUCE ---------------------
+    // ---- block-only fraction, the card's headline number (INC-3) ----------
     if (tot_reported == 0) {
         log->info("Network (block-Baarda census): INC-3 — ZERO blocks cleared t_B > "
                   "{:.3g} over {} block(s), so the smearing fraction is UNDEFINED, not "

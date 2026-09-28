@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""RF-2d one-command grade: the held-basis handover fix against its controls (a DIAGNOSTIC + the two bars).
+"""RF-2d one-command grade: the held-basis handover fix against its controls.
 
 Per run: exit, emitted / withheld, the cold consumer p50 by hour (refound_grade's own read of
-closed_loop_trace.csv, in METRES), the per-satellite IF-correction dispersion (refound_grade.if_dispersion),
-the declaration census (STRANSFORM rows: continuous / cold x marked), the reref erase count from the events,
-and rf3_if_attrib's handover-mode table (cold handovers with an IF step > 1 m is the mechanism bar).
+closed_loop_trace.csv, in metres), the per-satellite IF-correction dispersion (refound_grade.if_dispersion),
+the declaration census (STRANSFORM rows: continuous / cold, marked / unmarked), the CLK_STEP and
+cta_decouple counts from the events, and rf3_if_attrib's handover-mode table (cold handovers with an
+IF step over 1 m is the mechanism bar).
 
 Usage: python scripts/rf2d_grade.py runs/_rf0g_sim6 runs/_rf3p_sim6 runs/_rf2d_sim6_mark ...
 """

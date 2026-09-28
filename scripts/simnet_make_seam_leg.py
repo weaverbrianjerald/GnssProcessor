@@ -1,26 +1,29 @@
 #!/usr/bin/env python3
-"""Generate a warm-resume BRANCH LEG of the 24 h quiet bed from its .ep snapshot library.
+"""Generate a warm-resume branch leg of the 24 h quiet bed from its .ep snapshot library.
 
 STABILITY campaign (SPEC_synthetic_minimum_network §18.7 / §18.9): the continuous
 run `runs/camp60wu_quiet24h_r2q3` keeps a per-epoch snapshot history
 (`state_snapshot.bin.ep<NNNN>`, one per emitted epoch); any hour can be resumed
 as a leg that shares the continuous run's eclipse schedule, so a leg's h12-h24
-grades against the SAME hours of the continuous run.  This script reproduces
+grades against the same hours of the continuous run.  This script reproduces
 the leg-A recipe (`config/test_suite/_camp60wu_q12warm_szv.json`) with an
 arbitrary knob set, so an ON/OFF pair differs in exactly the knobs named:
 
-  1. copy `<base_run>/state_snapshot.bin.ep<N>` -> `runs/<leg>/state_snapshot.snap`
-     (a resume OVERWRITES the snapshot it read — never point a leg at the library file);
-  2. write `config/test_suite/_<leg>.json` = leg-A config with
+  1. copy `<base_run>/state_snapshot.bin.ep<N>` to `runs/<leg>/state_snapshot.snap`
+     (a resume overwrites the snapshot it read, so a leg must never point directly
+     at the library file);
+  2. write `config/test_suite/_<leg>.json` as the leg-A config with
        network.state_snapshot_path -> runs/<leg>/state_snapshot.snap
        network.state_snapshot_require true, keep_history false
        network.product_output_path  -> runs/<leg>/products.txt
        network.start_offset_hours   -> (hour - 15 s)/3600 (half-epoch back-off)
-     plus every `--set section.key=value` (JSON-parsed value; dotted path; arrays REPLACE).
+     plus every `--set section.key=value` (JSON-parsed value; dotted path; arrays
+     replace rather than merge).
 
-Rails (CLAUDE.md): fingerprinted knobs need a FRESH convergence — a leg can only flip
-knobs OUTSIDE the warm-resume fingerprint (forward-only response policies); the loader
-enforces it via state_snapshot_require (a mismatch is a hard error, not a silent cold start).
+Rails (CLAUDE.md): a fingerprinted knob needs a fresh convergence, so a leg can only
+flip knobs outside the warm-resume fingerprint (forward-only response policies); the
+loader enforces this via state_snapshot_require (a mismatch is a hard error, not a
+silent cold start).
 
 Usage:
   python scripts/simnet_make_seam_leg.py --leg camp60wu_q12warm_xyz --ep 1440 \

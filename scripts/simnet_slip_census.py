@@ -1,30 +1,30 @@
 #!/usr/bin/env python3
-"""Organic-slip detection census — truth_slips (ALL rows, not just scripted) joined
+"""Organic-slip detection census: truth_slips (every row, not just scripted) joined
 against the run's slip/RAIM response events.  The injection bench
 (simnet_inject_grade.py) answers "does an injected event at a chosen magnitude trip
-the guards"; THIS answers, on a fixture with a natural slip population, "what
+the guards"; this script answers, on a fixture with a natural slip population, "what
 fraction of the truth slips produced any response, through which tier, at what
-latency — and how many responses had no truth slip behind them" (the false-alarm
+latency, and how many responses had no truth slip behind them" (the false-alarm
 census a truth-carrying fixture makes possible without a null twin).
 
 Classification per truth slip (earliest matching event wins):
-  DETECTED   — a slip-tier event (T0_mw_detect, T1_if_slip, DATUM_SLIP) on the same
-               (station,sat) — or network-wide for refsat/datum events (sat only) —
+  DETECTED   : a slip-tier event (T0_mw_detect, T1_if_slip, DATUM_SLIP) on the same
+               (station,sat), or network-wide for refsat/datum events (sat only),
                within the latency window.
-  RESPONDED  — no slip-tier event, but a RAIM-tier response (T2/T3/T4 event or a
+  RESPONDED  : no slip-tier event, but a RAIM-tier response (T2/T3/T4 event or a
                network_raim.csv refloated row) on (sat) within the window: the slip
                was not named but the network reacted.
-  SILENT     — nothing fired.  NOT automatically a failure: a small slip absorbed by
+  SILENT     : nothing fired.  Not automatically a failure: a small slip absorbed by
                a free ambiguity refloat at the next epoch's chord re-tap can be
-               harmless — the channel grades (wire/integer/interaction) price that.
-               The census REPORTS; it does not verdict (invariant: report counters,
+               harmless; the channel grades (wire/integer/interaction) price that.
+               The census reports; it does not verdict (invariant: report counters,
                grade channels).
 
 Traps defended:
-  * truth_slips row counts differ per station — walk every <sta>/truth_slips.csv
-  * `flagged` (LLI) slips are the easy class — the table splits on it
-  * refsat_reset / datum events carry no (or the pivot's) station — matched by sat
-  * an event row belongs to at most ONE truth slip (earliest-tow greedy)
+  * truth_slips row counts differ per station: walk every <sta>/truth_slips.csv
+  * `flagged` (LLI) slips are the easy class: the table splits on it
+  * refsat_reset / datum events carry no (or the pivot's) station: matched by sat
+  * an event row belongs to at most one truth slip (earliest-tow greedy)
 
 Usage:
   python scripts/simnet_slip_census.py <run_dir> <fixture_dir>

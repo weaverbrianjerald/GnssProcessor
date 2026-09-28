@@ -1,24 +1,24 @@
 /**
  * @file test_arc_ledger.cpp
- * @brief Card SID phase 1: the arc lifecycle state machine
- *        (docs/refound/SID_signal_identity_2026-09-22.md section 5, P5).
+ * @brief Tests for the arc lifecycle state machine (card SID phase 1;
+ *        docs/refound/SID_signal_identity_2026-09-22.md section 5, P5).
  *
- * The ledger is the single state machine the 29 arc-keyed containers of the audit
- * can later read, and phase 1's whole job is that it be RIGHT before anything reads
- * it.  The properties pinned here are the ones every later phase depends on:
+ * The ledger is the single state machine that the 29 arc-keyed containers of the
+ * audit can later read, so it has to be correct before anything reads it.  The
+ * properties tested here are the ones every later phase depends on:
  *
  *  - the state sequence over a synthetic presence pattern, including that a
  *    re-entry is a state and not an inference;
- *  - the GENERATION counter, which is what tells a returning key from a first
- *    sighting (the distinction the anchor election does not make today);
- *  - the HORIZON, which is a TIME and not an epoch count, so a run at a different
+ *  - the generation counter, which tells a returning key from a first sighting
+ *    (the distinction the anchor election does not make);
+ *  - the horizon, which is a time and not an epoch count, so a run at a different
  *    epoch interval means the same thing;
- *  - the FORGET window, after which a record stops being remembered at all;
- *  - the event throttle, which is what keeps a 305-station first epoch from
- *    writing about 12 000 birth rows;
- *  - that an arc whose STATION reported nothing is frozen and never gapped.
+ *  - the forget window, after which a record is erased;
+ *  - the event throttle, which keeps a 305-station first epoch from writing about
+ *    12 000 birth rows;
+ *  - that an arc whose station reported nothing is frozen and never gapped.
  *
- * Everything below drives the class directly: no station, no model, no solve.
+ * Every test drives the class directly: no station, no model, no solve.
  */
 
 #include <gtest/gtest.h>
@@ -70,7 +70,7 @@ TEST(ArcLedgerTest, BirthTrackingGapReentryIsTheFullSequence) {
     ASSERT_EQ(obs.size(), 1u);
     EXPECT_EQ(obs[0].transition, ArcTransition::Birth);
     EXPECT_EQ(obs[0].generation, 1);
-    EXPECT_EQ(obs[0].prev_generation, 0);   // a TRUE first sighting
+    EXPECT_EQ(obs[0].prev_generation, 0);   // a true first sighting
     ASSERT_NE(led.find(a), nullptr);
     EXPECT_EQ(led.find(a)->state, ArcState::Tracking);
 
@@ -88,12 +88,12 @@ TEST(ArcLedgerTest, BirthTrackingGapReentryIsTheFullSequence) {
     EXPECT_TRUE(edges.empty());             // still gapped: no second edge
     EXPECT_EQ(led.find(a)->state, ArcState::Gap);
 
-    // The return is a RE-ENTRY with the gap length in epochs, not a birth.
+    // The return is a re-entry with the gap length in epochs, not a birth.
     obs.clear();
     runEpoch(led, 4, { a }, present, &obs);
     EXPECT_EQ(obs[0].transition, ArcTransition::Reentry);
     EXPECT_EQ(obs[0].gap_len_ep, 2);        // epochs 2 and 3 were missed
-    EXPECT_EQ(obs[0].generation, 1);        // a re-entry does NOT advance it
+    EXPECT_EQ(obs[0].generation, 1);        // a re-entry does not advance it
     EXPECT_EQ(led.find(a)->state, ArcState::Reentered);
 
     // Reentered is one epoch wide.
@@ -111,7 +111,7 @@ TEST(ArcLedgerTest, HorizonIsATimeAndKillsTheArcOnce) {
     runEpoch(led, 0, { a }, present);
 
     // 900 s at 30 s per epoch is 30 epochs.  The gap opens at epoch 1 and the arc
-    // is still alive at the boundary; it dies on the first epoch PAST it.
+    // is still alive at the boundary; it dies on the first epoch past it.
     for (long long ep = 1; ep <= 30; ++ep) {
         const auto edges = runEpoch(led, ep, {}, present);
         if (ep == 1) {
@@ -127,7 +127,7 @@ TEST(ArcLedgerTest, HorizonIsATimeAndKillsTheArcOnce) {
     EXPECT_EQ(edges[0].second.transition, ArcTransition::Death);
     EXPECT_EQ(edges[0].second.reason_mask & kArcReasonHorizon, kArcReasonHorizon);
     EXPECT_EQ(led.find(a)->state, ArcState::Dead);
-    // A death is reported ONCE: the state is terminal until the arc returns.
+    // A death is reported once: the state is terminal until the arc returns.
     EXPECT_TRUE(runEpoch(led, 32, {}, present).empty());
 }
 
@@ -145,7 +145,7 @@ TEST(ArcLedgerTest, ReturnAfterDeathIsABirthThatRemembersItsGeneration) {
     ASSERT_EQ(obs.size(), 1u);
     EXPECT_EQ(obs[0].transition, ArcTransition::Birth);
     EXPECT_EQ(obs[0].generation, 2);
-    // THE distinction the anchor election does not make: a return carries its
+    // The distinction the anchor election does not make: a return carries its
     // previous generation, a first sighting carries zero.
     EXPECT_EQ(obs[0].prev_generation, 1);
     EXPECT_EQ(led.find(a)->ep_first_seen, 0);   // the first sighting survives a death
@@ -179,15 +179,15 @@ TEST(ArcLedgerTest, AnAbsentStationFreezesItsArcsInsteadOfGappingThem) {
     const auto b = K(1, "G01", "L1W");
     runEpoch(led, 0, { a, b }, { 0, 1 });
 
-    // Station 1 reports nothing at all.  Its arc must NOT be gapped: a station
-    // outage would otherwise manufacture a gap at every one of its arcs, and the
-    // population the card is about is the arc that vanished while its station kept
-    // reporting.
+    // Station 1 reports nothing at all, and its arc is not gapped.  Otherwise a
+    // station outage would create a gap at every one of its arcs, while the
+    // population the card is about is the arc that vanished while its station
+    // kept reporting.
     const auto edges = runEpoch(led, 1, { a }, { 0 });
     EXPECT_TRUE(edges.empty());
     EXPECT_EQ(led.find(b)->state, ArcState::Tracking);
 
-    // Station 0 kept reporting and dropped this arc: THAT is a gap.
+    // Station 0 kept reporting and dropped this arc: that is a gap.
     const auto edges2 = runEpoch(led, 2, {}, { 0 });
     ASSERT_EQ(edges2.size(), 1u);
     EXPECT_EQ(std::get<0>(edges2[0].first), 0);
@@ -221,12 +221,12 @@ TEST(ArcLedgerTest, FirstEpochBirthsAreSuppressedAndTheHoldoffRateLimitsTheRest)
     led.configure(900.0, kArcLedgerForgetEp);
 
     // Epoch 0: every arc is born there and the volume carries no information, so
-    // NOTHING is evented (the NetworkSignalIntegrity.cpp rule).
+    // no birth is evented (the NetworkSignalIntegrity.cpp rule).
     led.beginEpoch(0, 0.0);
     EXPECT_FALSE(led.eventAllowed(0, ArcTransition::Birth));
     EXPECT_FALSE(led.eventAllowed(1, ArcTransition::Birth));
     // A gap at epoch 0 is structurally impossible, but the holdoff is shared, so
-    // the suppression must apply to births ALONE.
+    // the suppression applies to births alone.
     EXPECT_TRUE(led.eventAllowed(0, ArcTransition::Gap));
 
     // A later birth is evented once per station, then held off.
@@ -241,12 +241,12 @@ TEST(ArcLedgerTest, FirstEpochBirthsAreSuppressedAndTheHoldoffRateLimitsTheRest)
 }
 
 // ---------------------------------------------------------------------------
-// Card SID phase 2: the ADMITTED lifecycle beside the raw one
+// The admitted lifecycle beside the raw one (card SID phase 2)
 // ---------------------------------------------------------------------------
 
 namespace {
 
-/// Drive one epoch on BOTH sides: the raw pass (build seam) and then the admitted
+/// Drive one epoch on both sides: the raw pass (build seam) and then the admitted
 /// pass (audit seam), which is the order the producer runs them in.
 struct BothSides {
     std::vector<std::pair<ArcLedger::Key, ArcStep>> raw_edges;
@@ -270,11 +270,11 @@ BothSides runBoth(ArcLedger& led, long long ep,
 }  // namespace
 
 TEST(ArcLedgerTest, ARawPresentButUnadmittedEpochIsTrackingAndAdmittedGap) {
-    // THE structural finding of phase 1, as a state: the raw side arrives upstream
+    // The structural finding of phase 1, as a state: the raw side arrives upstream
     // of the elevation mask, the allow list and every admission screen, so an arc
     // can be reported by the receiver and carried by nothing.  A reader that keys on
-    // the carry (phase 3) has to see the ADMITTED state, and it must be Gap here
-    // while the raw state stays Tracking.
+    // the carry (phase 3) needs the admitted state, which is Gap here while the raw
+    // state stays Tracking.
     ArcLedger led;
     led.configure(/*horizon_s=*/900.0, kArcLedgerForgetEp);
     const auto a = K(0, "G01", "L1W");
@@ -310,7 +310,7 @@ TEST(ArcLedgerTest, TheAdmittedGapHasItsOwnLengthAndReentryEdge) {
     for (long long ep = 1; ep <= 3; ++ep) runBoth(led, ep, { a, b }, { b }, present);
     EXPECT_EQ(led.find(a)->adm_state, ArcState::Gap);
     EXPECT_EQ(led.find(a)->adm_gap_len_ep, 3);
-    EXPECT_EQ(led.find(a)->admittedGapEp(3), 2);   // epochs MISSED, not epochs since
+    EXPECT_EQ(led.find(a)->admittedGapEp(3), 2);   // epochs missed before epoch 3 (1, 2), not epochs since
 
     const auto s = runBoth(led, 4, { a, b }, { a, b }, present);
     ASSERT_EQ(s.adm_edges.size(), 1u);
@@ -347,7 +347,7 @@ TEST(ArcLedgerTest, ARawStepCarriesBothGapLengths) {
     EXPECT_EQ(led.find(a)->state, ArcState::Gap);
     EXPECT_EQ(led.find(a)->adm_state, ArcState::Gap);
 
-    s = runBoth(led, 5, { a, b }, { b }, present);  // the RAW side returns alone
+    s = runBoth(led, 5, { a, b }, { b }, present);  // the raw side returns alone
     ASSERT_EQ(s.observed.size(), 2u);
     EXPECT_EQ(s.observed[0].transition, ArcTransition::Reentry);
     EXPECT_EQ(s.observed[0].gap_len_ep, 2);          // raw: epochs 3 and 4
@@ -365,7 +365,7 @@ TEST(ArcLedgerTest, TheAdmittedSideDiesOnItsOwnHorizonAndAnAbsentStationFreezesI
 
     runBoth(led, 0, { a, b, c }, { a, b, c }, present);
     // Station 0 keeps modelling G02 and stops modelling G01; station 1 models
-    // nothing at all, so its arc must be FROZEN rather than gapped.
+    // nothing at all, so its arc is frozen rather than gapped.
     for (long long ep = 1; ep <= 3; ++ep) runBoth(led, ep, { a, b, c }, { b }, present);
     EXPECT_EQ(led.find(a)->adm_state, ArcState::Dead);
     EXPECT_EQ(led.find(a)->adm_reason_mask & kArcReasonHorizon, kArcReasonHorizon);
@@ -373,8 +373,8 @@ TEST(ArcLedgerTest, TheAdmittedSideDiesOnItsOwnHorizonAndAnAbsentStationFreezesI
     EXPECT_EQ(led.find(c)->adm_state, ArcState::Tracking)
         << "a station with no admitted row must not gap its arcs";
 
-    // A return after an admitted death is an admitted BIRTH that remembers its
-    // generation, exactly as on the raw side.
+    // A return after an admitted death is an admitted birth that remembers its
+    // generation, as on the raw side.
     const auto s = runBoth(led, 4, { a, b, c }, { a, b }, present);
     bool seen = false;
     for (const auto& [key, step] : s.adm_edges) {
@@ -404,7 +404,7 @@ TEST(ArcLedgerTest, AdmittedLiveCountIsItsOwnPopulation) {
 }
 
 // ---------------------------------------------------------------------------
-// Card SID phase 4 (S1): the REASON MASK folded into the admitted gap
+// The reason mask folded into the admitted gap (card SID phase 4, S1)
 // ---------------------------------------------------------------------------
 
 namespace {
@@ -439,7 +439,7 @@ std::size_t rIdx(unsigned bit) {
 }  // namespace
 
 TEST(ArcLedgerTest, ReasonBitsFoldIntoTheAdmittedGapThatOpened) {
-    // S1's whole contract: a screen that removes a modelled row records its bit,
+    // The S1 contract: a screen that removes a modelled row records its bit,
     // and the gap the removal opens carries it.  Two arcs, two different screens,
     // so a per-arc mask cannot be a per-epoch one in disguise.
     ArcLedger led;
@@ -464,8 +464,8 @@ TEST(ArcLedgerTest, ReasonBitsFoldIntoTheAdmittedGapThatOpened) {
 }
 
 TEST(ArcLedgerTest, ReasonMaskSurvivesTheGapAndIsReadableAtTheReentry) {
-    // The no-verdict split reads the mask AT THE RETURN, so the mask has to
-    // survive the whole gap untouched and only reset at a genuine re-birth.
+    // The no-verdict split reads the mask at the return, so the mask survives
+    // the whole gap unchanged and resets only at a genuine re-birth.
     ArcLedger led;
     led.configure(900.0, kArcLedgerForgetEp);
     ArcReasonEpoch buf;
@@ -488,8 +488,8 @@ TEST(ArcLedgerTest, ReasonMaskSurvivesTheGapAndIsReadableAtTheReentry) {
 }
 
 TEST(ArcLedgerTest, AnUnexplainedAdmittedGapIsUnknown) {
-    // The number phase 3 is owed: an admitted gap no writer explains.  It must be
-    // NAMED rather than left empty, so a zero in the unknown row means "every gap
+    // The number phase 3 needs: an admitted gap that no writer explains.  It is
+    // named rather than left empty, so a zero in the unknown row means "every gap
     // was attributed" and not "the fold never ran".
     ArcLedger led;
     led.configure(900.0, kArcLedgerForgetEp);
@@ -505,10 +505,10 @@ TEST(ArcLedgerTest, AnUnexplainedAdmittedGapIsUnknown) {
 }
 
 TEST(ArcLedgerTest, ADeweightIsNotAGapOpener) {
-    // The brief's own rule, and the reason kArcReasonGapMask exists: the gross-LOS
-    // screen caps a code row's weight and the row still folds, so a de-weight must
-    // never be read as the screen that removed the arc.  An arc whose ONLY record
-    // is a de-weight and which then gaps reads unknown.
+    // The brief's rule, and the reason kArcReasonGapMask exists: the gross-LOS
+    // screen caps a code row's weight and the row still folds, so a de-weight is
+    // never read as the screen that removed the arc.  An arc whose only record is
+    // a de-weight and which then gaps reads unknown.
     ArcLedger led;
     led.configure(900.0, kArcLedgerForgetEp);
     ArcReasonEpoch buf;
@@ -523,7 +523,7 @@ TEST(ArcLedgerTest, ADeweightIsNotAGapOpener) {
     EXPECT_EQ(buf.calls[rIdx(kArcReasonDeweight)], 1)
         << "the de-weight is still COUNTED as a writer call";
 
-    // A de-weight BESIDE a real removal leaves the real reason alone.
+    // A de-weight beside a real removal leaves the real reason alone.
     const auto b = K(1, "G01", "L1W");
     const auto d = K(1, "G03", "L1W");
     const std::set<int> two{ 0, 1 };
@@ -534,8 +534,8 @@ TEST(ArcLedgerTest, ADeweightIsNotAGapOpener) {
 }
 
 TEST(ArcLedgerTest, TheLateBitSurvivesExactlyOneEpoch) {
-    // The readmit park runs downstream of the fold, so its record has to reach the
-    // NEXT epoch's fold and no further; every other bit is dropped at the epoch
+    // The readmit park runs downstream of the fold, so its record reaches the
+    // next epoch's fold and no further; every other bit is dropped at the epoch
     // boundary so an early writer cannot attribute a gap it did not open.
     ArcReasonEpoch buf;
     buf.armed = true;
@@ -551,8 +551,8 @@ TEST(ArcLedgerTest, TheLateBitSurvivesExactlyOneEpoch) {
 }
 
 TEST(ArcLedgerTest, AnUnarmedReasonBufferLeavesTheMachineAsPhase3WroteIt) {
-    // Invariant 6 in both knob states, at the unit level: the fold is handed the
-    // buffer on every run, and an unarmed one must change nothing at all.
+    // Invariant #6 in both knob states, at the unit level: the fold is handed the
+    // buffer on every run, and an unarmed buffer changes nothing.
     ArcLedger led;
     led.configure(900.0, kArcLedgerForgetEp);
     ArcReasonEpoch buf;   // armed stays false
@@ -590,7 +590,7 @@ TEST(ArcLedgerTest, ReasonExpansionReachesOnlyAdmittedAliveArcs) {
     EXPECT_EQ(arcReasonOf(buf, b1), kArcReasonNone) << "another station is not reached";
     EXPECT_EQ(arcReasonOf(buf, o), kArcReasonNone)  << "another satellite is not reached";
 
-    // Every station (-1), narrowed to ONE signal: the coverage gate's own shape.
+    // Every station (-1), narrowed to one signal: the coverage gate's shape.
     EXPECT_EQ(arcReasonExpand(buf, led, -1, "G01", "L1W", kArcReasonGate), 2);
     EXPECT_EQ(arcReasonOf(buf, b1), kArcReasonGate);
     EXPECT_EQ(arcReasonOf(buf, a2), kArcReasonMask) << "L2W is not in the family";
@@ -601,13 +601,13 @@ TEST(ArcLedgerTest, ReasonExpansionReachesOnlyAdmittedAliveArcs) {
 }
 
 TEST(ArcLedgerTest, ReasonExpansionNeverRunsPastItsStation) {
-    // A defect of the first build of this helper, pinned here.  The scan starts at
-    // lower_bound(station, sat, ""), which for a station holding NO arc of that
-    // satellite lands on the first key of a LATER station — and the satellite test
-    // alone does not stop it there, because the satellite is exactly what matches.
-    // The elevation mask reaches this every time it refuses a satellite at a
-    // station that was not carrying it, which would have mis-attributed a
-    // neighbouring station's gap to the mask and deflated `unknown`.
+    // The scan starts at lower_bound(station, sat, ""), which for a station
+    // holding no arc of that satellite lands on the first key of a later station;
+    // the satellite test alone does not stop the scan there, because that key's
+    // satellite matches.  The elevation mask reaches this case whenever it refuses
+    // a satellite at a station that is not carrying it.  Without the station
+    // check, a neighbouring station's gap would be attributed to the mask and
+    // `unknown` would be undercounted.
     ArcLedger led;
     led.configure(900.0, kArcLedgerForgetEp);
     ArcReasonEpoch buf;

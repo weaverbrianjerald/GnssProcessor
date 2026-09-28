@@ -1,28 +1,29 @@
 /**
  * @file test_network_solprep_disc.cpp
- * @brief The emit-site per-satellite discontinuity LANDINGS in networkSolPrep —
- *        the Q3 trap-1 rule (docs/SPEC_clock_temporal_anchor.md) applied to the
- *        sibling landing sites: eph_cutover, cb_excursion, basis_relatch, the
- *        T3c hold-OFF IF-pin re-selection, and the Card-2 CB re-seed queue.
+ * @brief The emit-site landings of per-satellite discontinuities in
+ *        networkSolPrep: the Q3 trap-1 rule (docs/SPEC_clock_temporal_anchor.md)
+ *        applied to the sibling landing sites eph_cutover, cb_excursion,
+ *        basis_relatch, the IF-pin re-selection with the hold off (T3c), and the
+ *        CB re-seed queue (Card-2).
  *
- * The contract under test: a queue's landed mark must not stop at
- * markSatDiscontinuity.  That call bumps only the emitter's IN-PROCESS
+ * The contract under test: a queue's landed mark does not stop at
+ * markSatDiscontinuity.  That call bumps only the emitter's in-process
  * counters; on a lineage without network.serialize_disc_counters the R record
- * is the ONLY carrier a NetworkProductIO replay can read, so a mark that is
- * not folded into retro_emit_sats is live-visible but replay-INVISIBLE — the
- * live consumer resets while a replay of the same product integrates straight
+ * is the only carrier a NetworkProductIO replay can read.  A mark that is not
+ * folded into retro_emit_sats is visible live but not on replay: the live
+ * consumer resets while a replay of the same product integrates straight
  * across the step, and the two graders disagree about the same wire.  Each
- * case therefore proves the full chain per queue:
+ * case therefore checks the full chain per queue:
  *
  *   pending queue → present/pending split → retro_emit_sats (the fold under
  *   test) → NetworkProductWriter R record → NetworkProductReader::replay →
- *   the SAME per-sat discontinuity counters as the live emitter.
+ *   the same per-sat discontinuity counters as the live emitter.
  *
  * Also pinned:
- *  - a satellite landed by MORE than one queue in the same epoch steps its
- *    counters ONCE (the Q3 "one event, one step" dedupe, now chained across
- *    all four queue blocks);
- *  - a queued satellite ABSENT from this epoch's emission stays PENDING and
+ *  - a satellite landed by more than one queue in the same epoch steps its
+ *    counters once (the Q3 "one event, one step" dedupe, chained across all
+ *    five queues);
+ *  - a queued satellite absent from this epoch's emission stays pending and
  *    is neither marked nor serialized (mark == land, RT0-5 P0-1);
  *  - each queue writes its own trace_events row when it lands.
  */
@@ -121,10 +122,10 @@ struct Harness {
         for (const char* s : {"G01", "G02", "G03", "G04"}) est.registerClock(s);
         x_s = Eigen::VectorXd::Zero(est.numShared());
         se.time = GnssTime{2313, 259200.0};
-        // The clock disc counter is edge-semantics: first sighting records only
-        // (NetworkProductEmitter's seen_before gate), so a mark can only step a
-        // satellite with emitted HISTORY.  Emit one unmarked warm-up epoch — as
-        // every real lineage has — before the marked epoch under test.
+        // The clock disc counter has edge semantics: a first sighting only records
+        // (NetworkProductEmitter's seen_before gate), so a mark can step only a
+        // satellite with emitted history.  One unmarked warm-up epoch, as every
+        // real lineage has, is emitted before the marked epoch under test.
         warm_sol = est.toSolutionEpoch(x_s, GnssTime{2313, 259170.0}, /*iod_ssr=*/0);
         setup.emitter->emitToStore(warm_sol, setup.network_store);
     }
@@ -155,7 +156,7 @@ struct Harness {
 };
 
 /// Write the warm-up epoch + `sol` with its R-record set the way SB_EMITSTORE
-/// does, read the file back, replay every record through a FRESH emitter, and
+/// does, read the file back, replay every record through a fresh emitter, and
 /// return that emitter's clock-disc counter for `sat` (-1 on any structural
 /// failure).  This is the replay grader's entire view of the mark: if the fold
 /// did not put `sat` into retro_emit_sats, this comes back 0 no matter what
@@ -237,10 +238,10 @@ TEST(NetworkSolPrepDiscTest, BasisRelatchMarkLandsInRRecordAndReplays) {
 
 TEST(NetworkSolPrepDiscTest, IfPinReselectMarkLandsInRRecordAndReplays) {
     Harness h("reselect");
-    // The emitted pair moved vs the last EMITTED product's pair → a genuine
+    // The emitted pair differs from the last emitted product's pair → a genuine
     // re-selection: the emitted δtˢ↔dˢ split re-references, and the clock disc
     // counter (datum-change components only, no magnitude jump test) is
-    // signalled ONLY by this mark — which must therefore reach the R record.
+    // signalled by this mark alone, so the mark has to reach the R record.
     h.ctx->carry.last_if_pin_sel["G02"]      = {"C1W", "C2W"};
     h.ctx->carry.this_epoch_if_pin_sel["G02"] = {"C1W", "C5Q"};
 
@@ -273,7 +274,7 @@ TEST(NetworkSolPrepDiscTest, CbReseedMarkLandsInRRecordAndReplays) {
 }
 
 // ---------------------------------------------------------------------------
-// Cross-queue dedupe: one event, one step — even when several queues land the
+// Cross-queue dedupe: one event, one step, even when several queues land the
 // same satellite in the same epoch (the Q3 rule, chained across the blocks).
 // ---------------------------------------------------------------------------
 
@@ -294,7 +295,7 @@ TEST(NetworkSolPrepDiscTest, SameSatInFiveQueuesStepsCountersOnce) {
     EXPECT_EQ(h.setup.emitter->clockDiscontinuityCounter("G01"), 1);   // once, not 5×
     EXPECT_EQ(replayedClockDisc(h, r, "G01", "dedupe"), 1);            // one R entry, one step
 
-    // Provenance stays honest: each queue still writes its own trace row.
+    // Provenance is kept: each queue still writes its own trace row.
     const std::string csv = h.eventsCsv();
     EXPECT_NE(csv.find("eph_cutover_disc_landed"), std::string::npos);
     EXPECT_NE(csv.find("cb_excursion_disc_landed"), std::string::npos);
@@ -304,8 +305,8 @@ TEST(NetworkSolPrepDiscTest, SameSatInFiveQueuesStepsCountersOnce) {
 }
 
 // ---------------------------------------------------------------------------
-// mark == land: a queued satellite absent from this emission must stay PENDING
-// and appear in NO R record (the emitter would clear a mark that never stepped,
+// mark == land: a queued satellite absent from this emission stays pending and
+// appears in no R record (the emitter would clear a mark that never stepped,
 // and the R record would overstate a bump the product never carried).
 // ---------------------------------------------------------------------------
 

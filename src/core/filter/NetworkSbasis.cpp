@@ -24,11 +24,11 @@ std::pair<std::string, std::string> NetworkSbasis::selectIfPinPair(
     std::vector<std::string> sigs,
     const std::function<double(const std::string&)>& freqOf) {
     if (sigs.empty()) return {};
-    // Strict TOTAL order — (RINEX band digit, full signal name).  The band digit
-    // orders bands (GPS L1 before L2 before L5), and the full name breaks
-    // same-band ties (C1C before C1W, C2L before C2W) so the result is invariant
-    // to the order signals were registered/passed in — the whole point of the
-    // pin (a same-band swap would silently re-datum the emitted clock).
+    // Strict total order on (RINEX band digit, full signal name).  The band digit
+    // orders bands (GPS L1 before L2 before L5), and the full name breaks same-band
+    // ties (C1C before C1W, C2L before C2W), so the result does not depend on the
+    // order in which signals were registered or passed.  A same-band swap would
+    // re-datum the emitted clock without any other sign.
     std::sort(sigs.begin(), sigs.end(),
               [](const std::string& a, const std::string& b) {
                   const char ba = a.size() >= 2 ? a[1] : '\0';  // RINEX band digit
@@ -38,8 +38,8 @@ std::pair<std::string, std::string> NetworkSbasis::selectIfPinPair(
               });
     const std::string first = sigs.front();
     const double      f1     = freqOf(first);
-    // second = first later signal on a DISTINCT frequency (skips a same-band,
-    // same-frequency co-channel like C1C vs C1W); empty ⇒ single-frequency sat.
+    // second = the first later signal on a distinct frequency (skips a same-band,
+    // same-frequency co-channel such as C1C vs C1W); empty ⇒ single-frequency sat.
     for (std::size_t k = 1; k < sigs.size(); ++k) {
         const double fk = freqOf(sigs[k]);
         if (std::isfinite(fk) && fk > 0.0 && std::isfinite(f1) &&
@@ -149,13 +149,14 @@ NetworkSbasis::GroupDelayLatch NetworkSbasis::latchBroadcastGroupDelays(
             g.reason  = all_unhealthy ? GroupDelayLatchReason::AllUnhealthyInForceAtStart
                                       : GroupDelayLatchReason::InForceAtStart;
         }
-        // The SAME broadcast value keeps the first record's exact bits.  A merged
-        // navigation file prints one broadcast value with different last digits in
-        // different records (DOY 129: G02 "-1.769512891770E-08" in 6 records,
-        // "-1.769512891769E-08" in 9), so the median can pick a representation 1e-20 s
-        // from the first record's; that is no datum change, yet it moved the solve at the
-        // numerical-noise level.  1 ps sits two orders below the smallest broadcast step
-        // (BeiDou's 0.1 ns) and eight above that noise.
+        // A value equal to the first record's broadcast value keeps the first record's
+        // exact bits.  A merged navigation file can print one broadcast value with
+        // different last digits in different records (for example "-1.769512891770E-08"
+        // and "-1.769512891769E-08" for one GPS satellite), so the median can pick a
+        // representation about 1e-20 s away from the first record's.  That is not a
+        // datum change, but it moves the solve at the numerical-noise level.  The 1 ps
+        // threshold is two orders below the smallest broadcast step (BeiDou, 0.1 ns) and
+        // eight orders above that noise.
         if (std::abs(g.value_s - g.first_s) < kSameBroadcastGroupDelayS) g.value_s = g.first_s;
         if (all_unhealthy)                                          ++out.n_all_unhealthy;
         else if (g.reason == GroupDelayLatchReason::InForceAtStart) ++out.n_in_force;
@@ -167,46 +168,44 @@ NetworkSbasis::GroupDelayLatch NetworkSbasis::latchBroadcastGroupDelays(
 
 NetworkSbasis::ChannelFamily NetworkSbasis::channelFamilyOf(
     const std::string& constellation, const std::string& signal) {
-    // Raw RINEX-3 code observable, "C<band><attribute>"; the attribute is signal[2]
-    // and is NEVER canonicalized on the way in (MeasurementModel keys the sat-bias
-    // state on the raw 3-char code), so reading it here is reading the receiver's
-    // own declaration.
+    // Raw RINEX-3 code observable, "C<band><attribute>".  The attribute is signal[2]
+    // and is not canonicalized on input (MeasurementModel keys the sat-bias state on
+    // the raw 3-character code), so this reads the receiver's own declaration.
     if (signal.size() < 3) return ChannelFamily::Primary;
     const char attr = signal[2];
-    // §7 ALLOW-LIST, enforced here rather than at the call site: only constellations
-    // whose family split has been reasoned about can report a secondary family at
-    // all.  An unrecognised constellation returns Primary for every signal, so its
-    // census can never find a partition and the row emitter can never fire on it.
-    // This is the guard against the original draft's open-ended "rows emit wherever
-    // partition is detected" — combined with a naive attribute key that would have
-    // started emitting rows on GPS postures that work today.
+    // The §7 allow-list is enforced here rather than at the call site: only
+    // constellations whose family split has been analysed (Galileo, GPS, BeiDou) can
+    // report a secondary family.  Any other constellation returns Primary for every
+    // signal, so its census cannot find a partition and the row emitter cannot fire
+    // on it.  This keeps extra rows from appearing on a posture merely because a
+    // partition is detected.
     if (constellation != "E" && constellation != "G" && constellation != "C")
         return ChannelFamily::Primary;
-    // 'X' is the COMBINED I+Q correlator output — a physically distinct hardware
-    // path with its own bias.  Everything else (Galileo A/B/C/I/Q/Z, GPS
-    // C/W/P/Y/S/L/I/Q/M, BeiDou I/Q/D/P/A/Z) is a discrete component sharing the
-    // receiver's component chain, and belongs to one family.  NB this is why the
-    // family key cannot be the attribute character itself: the Galileo primary
-    // family is C1C/C5Q/C7Q — attributes 'C','Q','Q'.
+    // 'X' is the combined I+Q correlator output, a physically distinct hardware path
+    // with its own bias.  Every other attribute (Galileo A/B/C/I/Q/Z, GPS
+    // C/W/P/Y/S/L/I/Q/M, BeiDou I/Q/D/P/A/Z) is a discrete component on the
+    // receiver's component chain and belongs to one family.  For this reason the
+    // family key cannot be the attribute character itself: the Galileo primary family
+    // is C1C/C5Q/C7Q, attributes 'C', 'Q', 'Q'.
     return attr == 'X' ? ChannelFamily::Secondary : ChannelFamily::Primary;
 }
 
 NetworkSbasis::FamilyCensus NetworkSbasis::runFamilyCensus(
     const std::map<std::string, std::set<std::string>>& station_signals) {
     FamilyCensus out;
-    // Per constellation: how many stations hold ONLY primary channels, ONLY
-    // secondary channels, or BOTH (a bridge).  A bridging station is the entire
-    // question — with one, the inter-family geometry-free difference is observable
-    // through that receiver and the primary pin DOES reach the secondary columns,
-    // so no extra row is warranted (and one would over-pin).
+    // Per constellation: how many stations hold only primary channels, only
+    // secondary channels, or both (a bridge).  The bridge count decides the outcome:
+    // with a bridging station, the inter-family geometry-free difference is
+    // observable through that receiver and the primary pin reaches the secondary
+    // columns, so no extra row is warranted (one would over-pin).
     struct Tally { int primary_only{0}; int secondary_only{0}; int bridges{0}; };
     std::map<std::string, Tally> per_const;
     for (const auto& [station, keys] : station_signals) {
         (void)station;
         std::map<std::string, std::pair<bool, bool>> seen;  // const -> (has primary, has secondary)
         for (const auto& key : keys) {
-            // Key shape is "SAT|SIGNAL" (StateKeySchema); split rather than parse —
-            // the constellation is the satellite's first character.
+            // Key shape is "SAT|SIGNAL" (StateKeySchema); a plain split suffices,
+            // since the constellation is the satellite's first character.
             const auto bar = key.find('|');
             if (bar == std::string::npos || bar == 0 || bar + 1 >= key.size()) continue;
             const std::string sat = key.substr(0, bar);
@@ -229,8 +228,8 @@ NetworkSbasis::FamilyCensus NetworkSbasis::runFamilyCensus(
         out.n_stations_secondary += t.secondary_only;
         out.n_bridges            += t.bridges;
         if (t.secondary_only == 0 && t.bridges == 0) {
-            // No secondary family observed at all — the single-family case every
-            // validated posture to date has run.  Say so anyway (invariant #4).
+            // No secondary family observed: the single-family case, which every
+            // validated posture runs.  It is still logged (invariant #4).
             out.lines.push_back(fmt::format(
                 "constellation {} — no secondary (X) channel family observed on {} "
                 "station(s): SINGLE-FAMILY, no extra rows.", cst, t.primary_only));
@@ -238,9 +237,10 @@ NetworkSbasis::FamilyCensus NetworkSbasis::runFamilyCensus(
         }
         if (t.bridges > 0) {
             // A bridge exists: the primary pin reaches the secondary columns through
-            // that receiver, so the direction is NOT null and an extra row would be
-            // an over-pin on a determinable quantity.  Refuse to partition and say
-            // exactly why — this is the branch a future mixed-family roster lands in.
+            // that receiver, so the direction is not null and an extra row would
+            // over-pin a determinable quantity.  The constellation is not
+            // partitioned, and the log line states why.  A mixed-family roster takes
+            // this branch.
             out.lines.push_back(fmt::format(
                 "constellation {} family X — {} station(s), {} BRIDGE(s) to the "
                 "primary family: NOT partitioned, no extra rows (a bridging receiver "
@@ -263,8 +263,9 @@ NetworkSbasis::CodeS2zTimeLink NetworkSbasis::codeS2zTimeLink(
     const std::map<std::string, double>& prev_vals) {
     CodeS2zTimeLink out;
     // Veterans = present satellites that also have a previous-epoch solved value.
-    // The row spans them with RHS Σ b̂_prev, pinning the CHANGE of their mean to zero
-    // (each referenced to itself → membership changes never move the target).
+    // The row spans them with RHS Σ b̂_prev, which pins the change of their mean to
+    // zero.  Each satellite is referenced to its own previous value, so membership
+    // changes do not move the target.
     for (const auto& sat : present_sats) {
         const auto it = prev_vals.find(sat);
         if (it != prev_vals.end()) {
@@ -272,8 +273,9 @@ NetworkSbasis::CodeS2zTimeLink NetworkSbasis::codeS2zTimeLink(
             out.rhs += it->second;
         }
     }
-    // No veteran (cold start / warm-resume miss / every satellite fresh): fall back to
-    // the legacy all-present Σ = 0 seed — a REAL re-reference the driver must signal.
+    // No veteran (cold start, warm-resume miss, or every satellite new): fall back to
+    // the legacy all-present Σ = 0 seed.  This is a real re-reference, and the driver
+    // must signal it (reseed = true).
     if (out.jac_sats.empty()) {
         out.jac_sats = present_sats;
         out.rhs      = 0.0;
@@ -289,11 +291,11 @@ NetworkSbasis::Plan NetworkSbasis::buildSharedDatum(
     const std::map<std::string, std::string>* sticky_prev_pivot) const {
     Plan plan;
 
-    // Group the registered clock satellites by constellation in a stable
-    // (lexical) order so the fallback auto-pick is deterministic.  NOTE: the
-    // lexical auto-pick is per-EPOCH, not sticky — a lexically lower satellite
-    // rising flips the pivot (a datum re-reference).  Stickiness is opt-in via
-    // sticky_prev_pivot (network.sticky_pivot, RTA-1) below.
+    // Group the registered clock satellites by constellation in a stable (lexical)
+    // order so the fallback auto-pick is deterministic.  The lexical auto-pick is
+    // made per epoch and is not sticky: a lexically lower satellite rising flips the
+    // pivot, which is a datum re-reference.  Stickiness is opt-in via
+    // sticky_prev_pivot below (network.sticky_pivot, RTA-1).
     std::map<std::string, std::vector<std::string>> by_const;
     for (const auto& sat : registered_clock_sats) {
         if (sat.empty()) continue;
@@ -301,17 +303,16 @@ NetworkSbasis::Plan NetworkSbasis::buildSharedDatum(
     }
     for (auto& [c, sats] : by_const) std::sort(sats.begin(), sats.end());
 
-    // --- BROADCAST-ANCHORED clock datum (network.clock_datum_broadcast_anchored)
-    // brdc_rts only: each satellite's Δδtˢ (relative to its OWN broadcast
-    // a-priori) is anchored toward 0 by a soft per-satellite constraint row at
-    // 1/σ² — the anchors ARE the gauge, folded BEFORE the rank gate.  No pivot
-    // (no handover seam), and unlike sum-to-zero there is no redistribution
-    // when membership changes: the common-mode stays bound to the external
-    // broadcast reference, so the absolute clock-product frame holds still.
-    // Rows are per-SATELLITE (single-entry), deliberately soft (σ ≈ 3 m ≫ the
-    // between-sat data information) so the estimable clock structure stays
-    // data-driven; the rank gate still sees the common-mode at ≈ N/σ², far
-    // above the relative cutoff.
+    // --- Broadcast-anchored clock datum (network.clock_datum_broadcast_anchored)
+    // brdc_rts only: each satellite's Δδtˢ (relative to its own broadcast a-priori)
+    // is anchored toward 0 by a soft single-entry constraint row at weight 1/σ².
+    // The anchors are the gauge and are folded before the rank gate.  There is no
+    // pivot (so no handover seam), and unlike sum-to-zero there is no redistribution
+    // when membership changes: the common mode stays bound to the external broadcast
+    // reference, so the absolute clock-product frame does not move.  The rows are
+    // deliberately soft (σ ≈ 3 m, far weaker than the between-satellite data
+    // information) so the estimable clock structure stays data-driven; the rank gate
+    // still sees the common mode at about N/σ², far above the relative cutoff.
     if (decl.isb_datum == SbasisDeclaration::IsbDatum::BroadcastAnchoredPerSatellite) {
         const double sigma = decl.broadcast_anchor_sigma_m;
         if (!(std::isfinite(sigma) && sigma > 0.0)) {
@@ -334,14 +335,15 @@ NetworkSbasis::Plan NetworkSbasis::buildSharedDatum(
         return plan;                   // shared_datum + clock_pivot intentionally empty
     }
 
-    // --- SUM-TO-ZERO clock datum (network.clock_datum_sum_to_zero) -----------
-    // Anchor-free: fix each constellation's clock common-mode with a sum-to-zero
-    // over its OWN satellite clocks (Σ δtˢ = 0), realized exactly like the
-    // code-bias per-(const,signal) gauge — a tight all-ones row folded onto the
-    // shared border BEFORE the rank gate.  No pivot satellite is chosen, so the
-    // shared hard-pin datum and the clock_pivot map stay EMPTY (no handover seam
-    // ever) and the declared residual dimension is 0 (the folded rows close the
-    // per-constellation clock deficiency).  Pivot overrides / stickiness are moot.
+    // --- Sum-to-zero clock datum (network.clock_datum_sum_to_zero) -----------
+    // Anchor-free: each constellation's clock common mode is fixed by a sum-to-zero
+    // over that constellation's satellite clocks (Σ δtˢ = 0), realized like the
+    // code-bias per-(const, signal) gauge: a tight all-ones row folded onto the
+    // shared border before the rank gate.  No pivot satellite is chosen, so the
+    // shared hard-pin datum and the clock_pivot map stay empty (there is no handover
+    // seam) and the declared residual dimension is 0 (the folded rows close the
+    // per-constellation clock deficiency).  Pivot overrides and stickiness do not
+    // apply.
     if (decl.isb_datum == SbasisDeclaration::IsbDatum::SumToZeroPerConstellation) {
         const Eigen::Index nshared = est.numShared();
         Eigen::MatrixXd H(static_cast<Eigen::Index>(by_const.size()), nshared);
@@ -359,12 +361,12 @@ NetworkSbasis::Plan NetworkSbasis::buildSharedDatum(
         return plan;                   // shared_datum + clock_pivot intentionally empty
     }
 
-    // One satellite-clock pin per constellation (the clock gauge per timing
-    // system).  Pivot priority: (1) the declared config pin, if present in the
-    // registered set (BOTH modes — user intent wins, including the deliberate
-    // flip-back when a pinned satellite returns); (2) sticky mode only: the
-    // incumbent pivot from sticky_prev_pivot, kept as long as it is still
-    // registered; (3) the first registered satellite of that constellation.
+    // One satellite-clock pin per constellation (the clock gauge per timing system).
+    // Pivot priority: (1) the declared config pin, if present in the registered set
+    // (in both modes; the configured pin wins, including the deliberate flip-back
+    // when a pinned satellite returns); (2) in sticky mode only, the incumbent pivot
+    // from sticky_prev_pivot, kept while it is still registered; (3) the first
+    // registered satellite of that constellation.
     for (const auto& [c, sats] : by_const) {
         const auto present = [&sats](const std::string& s) {
             return std::find(sats.begin(), sats.end(), s) != sats.end();
@@ -375,10 +377,10 @@ NetworkSbasis::Plan NetworkSbasis::buildSharedDatum(
             && present(it->second)) {
             pivot = it->second;
         } else if (sticky_prev_pivot) {
-            // RTA-1 sticky mode: keep the incumbent while it is registered.  When
-            // it is absent, fall back to the lexical pick — the driver's emit-
-            // baseline map then advances to the NEW pivot at the next emit, so the
-            // NEW pivot is sticky in turn (no flip-back on the old one's return).
+            // Sticky mode: keep the incumbent while it is registered.  When it is
+            // absent, fall back to the lexical pick; the driver's emit-baseline map
+            // then advances to the new pivot at the next emit, so the new pivot is
+            // sticky in turn and the old one's return causes no flip-back (RTA-1).
             const auto pit = sticky_prev_pivot->find(c);
             if (pit != sticky_prev_pivot->end() && !pit->second.empty()
                 && present(pit->second)) {
@@ -401,9 +403,9 @@ NetworkSbasis::Plan NetworkSbasis::buildSharedDatum(
 std::vector<std::pair<std::string, double>> NetworkSbasis::clockNullDirection(
     const std::vector<std::string>& registered_clock_sats,
     const std::string& constellation) {
-    // Same grouping + lexical sort buildSharedDatum uses, so the direction spans
-    // exactly the columns that builder pinned this epoch (§8.1 rule 1: the
-    // direction must be the STRUCTURAL one this class owns).
+    // Same grouping and lexical sort as buildSharedDatum, so the direction spans the
+    // columns that builder pinned this epoch (§8.1 rule 1: the direction must be the
+    // structural one this class owns).
     std::vector<std::string> sats;
     for (const auto& sat : registered_clock_sats) {
         if (sat.empty()) continue;
@@ -412,9 +414,9 @@ std::vector<std::pair<std::string, double>> NetworkSbasis::clockNullDirection(
     std::sort(sats.begin(), sats.end());
     std::vector<std::pair<std::string, double>> out;
     out.reserve(sats.size());
-    // Coefficient 1.0 on every satellite clock of the constellation: the gauge is
-    // the COMMON shift (header §Datum).  No other shared family has a component
-    // here — see the Doxygen for the measurement that confirms it.
+    // Coefficient 1.0 on every satellite clock of the constellation: the gauge is the
+    // common shift (header §Datum).  No other shared family has a component here; the
+    // header Doxygen cites the measurement that confirms it.
     for (auto& s : sats) out.emplace_back(std::move(s), 1.0);
     return out;
 }
@@ -423,22 +425,23 @@ std::vector<NetworkEstimator::SharedPrior> NetworkSbasis::buildCodeBiasKaulaPrio
     const std::vector<std::pair<std::string, std::string>>& registered_code_keys,
     double sigma_m) {
     std::vector<NetworkEstimator::SharedPrior> out;
-    // A non-positive sigma would mean info = 1/0 = inf, i.e. a HARD pin on every
-    // admitted OSB — the opposite of a loose physical bound, and a silent datum
-    // takeover.  Refuse it here rather than trusting the loader alone.
+    // A zero sigma would mean info = 1/0 = inf, a hard pin on every admitted OSB:
+    // the opposite of a loose physical bound, and an unannounced datum takeover.  A
+    // non-positive (or NaN) sigma therefore returns no priors here, independent of the
+    // loader's own check.
     if (!(sigma_m > 0.0)) return out;
     const double info = 1.0 / (sigma_m * sigma_m);
     out.reserve(registered_code_keys.size());
-    // First-seen registration order, mirroring buildCodeBiasDatumRows' own
-    // contractual ordering over the same vector.  The prior is diagonal, so the
-    // order cannot change the folded information — but keeping it identical means
-    // the two W6 datum products read the same way in a trace.
+    // First-seen registration order, matching the contractual ordering of
+    // buildCodeBiasDatumRows over the same vector.  The prior is diagonal, so the
+    // order cannot change the folded information; keeping it identical makes the two
+    // W6 datum products read the same way in a trace.
     for (const auto& kv : registered_code_keys) {
         NetworkEstimator::SharedPrior p;
         p.kind   = SharedParamKind::CodeBias;
         p.sat    = kv.first;
         p.signal = kv.second;
-        p.value  = 0.0;   // the physical bound is CENTRED on zero, not on an estimate
+        p.value  = 0.0;   // the physical bound is centred on zero, not on an estimate
         p.info   = info;
         out.push_back(p);
     }
@@ -454,15 +457,15 @@ NetworkSbasis::GaugeCompletion NetworkSbasis::completeSbasisDimension(
     const Eigen::Index n = reduced_N_ss.rows();
     if (n == 0 || reduced_N_ss.cols() != n || declared_dim < 0) return out;
 
-    // Same decomposition family and cutoff arithmetic as assertNullSpaceRank —
-    // the completion must count exactly what the gate will count, or it would
-    // "complete" against a decision the gate does not make (the DG2 lesson,
-    // extended to a fourth consumer).  Vectors are needed here (the rows ARE
-    // the eigenvectors); this runs only when armed, and the gate-failure heal
-    // already pays the same decomposition on exactly the epochs that fire.
+    // Same decomposition family and cutoff arithmetic as assertNullSpaceRank: the
+    // completion must count what the gate will count, or it would complete against a
+    // decision the gate does not make (the shared-tolerance rule of card DG2).
+    // Eigenvectors are needed here because the rows are the eigenvectors.  This runs
+    // only when armed, and the gate-failure drop-and-heal already pays for the same
+    // decomposition on the epochs where the gate fails.
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(reduced_N_ss,
                                                       Eigen::ComputeEigenvectors);
-    if (es.info() != Eigen::Success) return out;   // the gate will report it loudly
+    if (es.info() != Eigen::Success) return out;   // the gate reports the failure (throws)
     const Eigen::VectorXd& ev = es.eigenvalues();  // ascending
     const double smax   = ev.size() > 0 ? ev(ev.size() - 1) : 0.0;
     const double cutoff = tol * std::max(smax, 1.0);
@@ -471,28 +474,28 @@ NetworkSbasis::GaugeCompletion NetworkSbasis::completeSbasisDimension(
     for (Eigen::Index i = 0; i < ev.size(); ++i)
         if (ev(i) < cutoff) ++observed;
     out.observed = observed;
-    // observed < declared is the gate's "over-specified" verdict (a tolerance
-    // below this config's gauge depth) — nothing to complete either way.
+    // observed < declared is the gate's "over-specified" verdict (a tolerance below
+    // this configuration's gauge depth); there is nothing to complete in either case.
     if (observed <= declared_dim) return out;
 
-    // Per-DIRECTION degeneracy skip: the structural gauges sit at machine-zero
-    // (locals absorb them exactly); an extra unseparated from that cluster (not
-    // ≥ 1 decade above the running cluster top, or below the 1e-14·λmax
-    // machine-zero floor — the relative test alone is defeated by an exactly-
-    // 0.0 gauge, since 10·0 = 0 admits everything) is SKIPPED, because
-    // eigenvectors mix arbitrarily within a degenerate cluster and a row there
-    // could re-target a combination the declared pins own; an extra AT machine
-    // zero is an orphaned EXACT gauge — Card PA's class.  Each skipped extra
-    // extends the cluster (its |ev| joins the running top), so the first
-    // CONSTRAINED extra is ≥ 1 decade above everything left unpinned below it
-    // and cannot mix with any of it.  With declared_dim == 0 and no skips
-    // there is nothing to mix with — exact-zero orphans are then legitimately
-    // completable (the constraint-realized clock datums leave no pins to
-    // conflict with).  |·| because near-zero eigenvalues carry rounding sign.
-    // Attribution shared by constrained AND skipped directions: every column
-    // at |component| ≥ kSbasisAttrSpan, heaviest first; the heaviest column is
-    // always named even when the direction is spread below the threshold (an
-    // anonymous direction would make the engage/skip event un-actionable).
+    // Per-direction degeneracy skip.  The structural gauges sit at machine zero (the
+    // locals absorb them exactly).  An extra that is not separated from that cluster
+    // is skipped: less than one decade above the running cluster top, or below the
+    // machine-zero floor 1e-14·max(λmax, 1).  The floor is needed because the
+    // relative test alone admits everything above an exactly-0.0 gauge (10·0 = 0).
+    // Eigenvectors mix arbitrarily within a degenerate cluster, so a row there could
+    // re-target a combination the declared pins own; an extra at machine zero is an
+    // orphaned exact gauge (card PA's class).  Each skipped extra extends the cluster
+    // (its |ev| joins the running top), so the first constrained extra is at least
+    // one decade above everything left unpinned below it and cannot mix with any of
+    // it.  With declared_dim == 0 there is no cluster to mix with, nothing is
+    // skipped, and exact-zero orphans are legitimately completable (the
+    // constraint-realized clock datums leave no pins to conflict with).  |·| is used
+    // because near-zero eigenvalues carry a rounding sign.
+    // Attribution, shared by constrained and skipped directions: every column at
+    // |component| ≥ kSbasisAttrSpan, heaviest first.  The heaviest column is named
+    // even when the direction is spread below that threshold, so every engage or
+    // skip event identifies at least one column.
     const auto attribute = [&](Eigen::Index j) {
         GaugeCompletion::Dir d;
         d.ev = ev(j);
@@ -552,14 +555,15 @@ NetworkSbasis::GaugeCompletion NetworkSbasis::completeSbasisDimension(
     const int n_extra = observed - static_cast<int>(first);
     if (n_extra <= 0) return out;
 
-    // K2 anti-fragility: the folded row must land ≥ 2 decades above the armed
-    // cutoff, or the "completion" itself sits at the cutoff it exists to clear.
+    // The folded row must land at least two decades above the armed cutoff;
+    // otherwise the completion itself sits at the cutoff it is meant to clear (K2).
     if (kSbasisCompleteWeight < 100.0 * cutoff) {
         out.weight_marginal = true;
         return out;
     }
-    // No silent mass-pinning: a deficiency burst beyond the cap is a
-    // pathological epoch (or a mis-calibrated tolerance) — withhold honestly.
+    // A deficiency burst beyond the cap indicates a pathological epoch (or a
+    // mis-calibrated tolerance); no rows are emitted, the flag is counted, and the
+    // gate withholds the epoch rather than pinning many directions at once.
     if (max_extra > 0 && n_extra > max_extra) {
         out.capped = true;
         return out;
@@ -584,13 +588,13 @@ NetworkSbasis::GaugeCompletion NetworkSbasis::completeSbasisDimension(
 void NetworkSbasis::assertNullSpaceRank(const Eigen::MatrixXd& reduced_N_ss,
                                         int declared_dim, double tol,
                                         int* observed_out, double* ev_max_out) const {
-    // DG6: report the observed count on EVERY exit that computed one, including
-    // the throwing one — the caller cannot recompute it from the exception and
-    // "over-specified" (observed < declared) has to be countable separately from
-    // a generic withhold.  Structurally observational: nothing below reads it.
+    // Report the observed count on every exit that computed one, including the
+    // throwing one: the caller cannot recover it from the exception, and
+    // "over-specified" (observed < declared) must be countable separately from a
+    // generic withhold (card DG6).  Observational only: nothing below reads it.
     if (observed_out) *observed_out = 0;
-    // Invariant #7: same contract for λmax (the caller reconstructs the gate's own
-    // cutoff from it).  -1 = "no spectrum was computed on this exit".
+    // Same contract for λmax, from which the caller reconstructs the gate's cutoff
+    // (invariant #7).  -1 means no spectrum was computed on this exit.
     if (ev_max_out) *ev_max_out = -1.0;
     const Eigen::Index n = reduced_N_ss.rows();
     if (n == 0) {
@@ -606,16 +610,17 @@ void NetworkSbasis::assertNullSpaceRank(const Eigen::MatrixXd& reduced_N_ss,
             "NetworkSbasis null-space gate: reduced normals not square");
     }
 
-    // The reduced shared normals are SYMMETRIC (the kernel symmetrizes them) and
-    // positive-SEMIdefinite (a Schur complement of weighted Gram normals, gated
-    // BEFORE any indefinite modification such as the D2 prior), so their
-    // eigenvalues equal their singular values.  A self-adjoint eigensolve
-    // (eigenvalues only) is therefore the SAME count test as the SVD at a small
-    // fraction of JacobiSVD's cost (this runs once per emitted epoch).  Eigenvalues
-    // come back ASCENDING, so the largest is the LAST entry.  Count those below the
-    // RELATIVE threshold (a true gauge => ~0 eigenvalue; a well-observed direction
-    // => O(largest)).  A tiny-negative gauge eigenvalue (rounding) is still below
-    // the positive cutoff, so it is counted exactly as the SVD magnitude would be.
+    // The reduced shared normals are symmetric (the kernel symmetrizes them) and
+    // positive semidefinite (a Schur complement of weighted Gram normals, gated
+    // before any indefinite modification such as the D2 prior), so their eigenvalues
+    // equal their singular values.  A self-adjoint eigensolve (eigenvalues only)
+    // therefore gives the same count as an SVD at a small fraction of JacobiSVD's
+    // cost; this runs once per emitted epoch.  Eigenvalues come back ascending, so
+    // the largest is the last entry.  The count is of eigenvalues below the relative
+    // threshold (a true gauge has an eigenvalue near 0; a well-observed direction is
+    // of the order of the largest).  A slightly negative gauge eigenvalue (rounding)
+    // is still below the positive cutoff, so it is counted as the SVD magnitude would
+    // be.
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(reduced_N_ss,
                                                       Eigen::EigenvaluesOnly);
     if (es.info() != Eigen::Success) {
@@ -687,12 +692,12 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
     }
 
     std::vector<Eigen::VectorXd> rows;                 // length-nshared constraint Jacobians
-    std::vector<double>          zs;                   // Card 2: per-row RHS target (all 0.0 unless code_datum_time_linked)
+    std::vector<double>          zs;                   // per-row RHS target (all 0.0 unless code_datum_time_linked; card 2)
 
-    // Card 2 (network.code_datum_time_linked): fetch a satellite's PREVIOUS
-    // kept-epoch solved code bias for a signal — a "veteran" reference.  An
-    // empty map (off, or first appearance) ⇒ always false ⇒ the zero-target
-    // legacy path (byte-identical).
+    // network.code_datum_time_linked (card 2): fetch a satellite's previous
+    // kept-epoch solved code bias for a signal, the "veteran" reference.  With the
+    // knob off, or at a first appearance, the lookup fails and the zero-target legacy
+    // path runs (byte-identical).
     auto prevCb = [&](const std::string& sat, const std::string& sig,
                       double& out) -> bool {
         const auto it = code_bias_prev_.find(
@@ -704,16 +709,15 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
         return true;
     };
 
-    // (2) Per-(constellation, signal) sum-to-zero — one row per registered
-    // signal, summed over the satellites that carry it (keyed
-    // "<constellation>|<signal>").  Pins every channel's absolute level; see
-    // the block header for why this is per-SIGNAL (robust to non-co-tracked
-    // same-band channels at network scale) rather than per-band.  Collected as
-    // (sat, column) per channel (std::map → sorted-skey order, unchanged); the
-    // rows are BUILT after the IF-pin loop so their order in `rows` is preserved
-    // (IF pins first, then sum-to-zero) — and, under time-linking, each row
-    // spans the channel's VETERANS with RHS Σ b̂_prev instead of all present
-    // satellites with RHS 0.
+    // (2) Per-(constellation, signal) sum-to-zero: one row per registered signal,
+    // summed over the satellites that carry it (keyed "<constellation>|<signal>").
+    // It pins every channel's absolute level per signal rather than per band, which
+    // is robust to same-band channels that are not co-tracked at network scale (see
+    // the header documentation).  The (sat, column) pairs are collected per channel
+    // here (std::map, so sorted channel-key order); the rows are built after the
+    // IF-pin loop so that their position in `rows` stays after the IF pins.  Under
+    // time-linking each row spans the channel's veterans with RHS Σ b̂_prev instead
+    // of all present satellites with RHS 0.
     std::map<std::string, std::vector<std::pair<std::string, Eigen::Index>>> st0_chan;
     for (const auto& kv : registered_code_keys) {
         Eigen::Index col;
@@ -723,47 +727,44 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
         st0_chan[skey].emplace_back(kv.first, col);
     }
 
-    // RF-0d: (constellation|signal) -> the satellites whose column the geometry-free
-    // datum pinned this epoch.  Used below to SUPPRESS the sum-to-zero row of any
-    // channel the datum already fixes completely — see the suppression block.
+    // (constellation|signal) -> the satellites whose column the geometry-free datum
+    // pinned this epoch.  Used below to suppress the sum-to-zero row of any channel
+    // the datum already fixes completely; see the suppression block (RF-0d).
     std::map<std::string, std::set<std::string>> sat_gf_pinned;
 
-    // RF-0e e1: the ABSOLUTE ionosphere-free LEVEL row, accumulated per constellation
-    // as the satellite loop discovers each one's IF pin weights.  Built here rather
-    // than in a second pass because a1/a2 are the pin's OWN post-hold weights — deriving
-    // them again from the frequencies would silently disagree with the pin on any
-    // satellite whose pair was held or re-selected.
+    // The absolute ionosphere-free level row, accumulated per constellation as the
+    // satellite loop finds each satellite's IF pin weights (RF-0e e1).  It is built in
+    // the loop rather than in a second pass because a1/a2 are the pin's own post-hold
+    // weights; deriving them again from the frequencies would disagree with the pin on
+    // any satellite whose pair was held or re-selected.
     std::map<std::string, Eigen::VectorXd> if_level_row;
     std::map<std::string, int>             if_level_n;
 
     // (1) Per-satellite ionosphere-free pin (clock-common gauge).
     for (const std::string& sat : sat_order) {
         std::vector<std::string>& sigs = sat_signals[sat];
-        // IF pin: two lowest DISTINCT-frequency code signals → a1+a2=1.
-        // Selection is DETERMINISTIC in the signal SET (sorted by band
-        // digit THEN full signal name), so same-band channels (C1C vs
-        // C1W) no longer swap with registered_code_keys insertion order
-        // and silently re-datum the emitted clock — see
-        // NetworkSbasis::selectIfPinPair.
+        // IF pin: the two lowest distinct-frequency code signals, a1 + a2 = 1.
+        // The selection is deterministic in the signal set (sorted by band digit,
+        // then full signal name), so same-band channels (C1C vs C1W) do not swap
+        // with the insertion order of registered_code_keys and re-datum the emitted
+        // clock; see NetworkSbasis::selectIfPinPair.
         const auto if_pin = NetworkSbasis::selectIfPinPair(
             sigs, [&](const std::string& s) { return freqOf(sat, s); });
         std::string sig1 = if_pin.first;
         std::string sig2 = if_pin.second;
         double      f1   = sig1.empty() ? 0.0 : freqOf(sat, sig1);
         double      f2   = sig2.empty() ? 0.0 : freqOf(sat, sig2);
-        // network.clock_signal_basis_hold: anchor this satellite's clock to
-        // ONE ionosphere-free reference pair for the whole run so the emitted
-        // (δtˢ, dˢ) split is time-consistent, instead of re-selecting the
-        // pair from THIS epoch's coverage (which re-references the clock by
-        // the satellite's inter-channel code bias whenever a sparse channel
-        // enters/leaves the ≥2-station set — the defect-2 differential-clock
-        // wander a receiver clock cannot absorb).  Byte-identical OFF for the
-        // HOLD feature: held_clock_ref is neither read nor written (the
-        // deterministic selection above stands unchanged).
+        // network.clock_signal_basis_hold: anchor this satellite's clock to one
+        // ionosphere-free reference pair for the whole run, so the emitted (δtˢ, dˢ)
+        // split is time-consistent.  Re-selecting the pair from each epoch's
+        // coverage re-references the clock by the satellite's inter-channel code
+        // bias whenever a sparse channel enters or leaves the ≥2-station set (the
+        // defect-2 differential-clock wander, which a receiver clock cannot absorb).
+        // With the hold off, held_clock_ref is neither read nor written and the
+        // deterministic selection above stands (byte-identical).
         if (clock_signal_basis_hold) {
             // Is a held reference signal still in this satellite's registered
-            // ≥2-station set this epoch?  (Named to avoid shadowing the outer
-            // per-station `present` vector.)
+            // ≥2-station set this epoch?
             auto held_present = [&](const std::string& s) {
                 return !s.empty() &&
                        std::find(sigs.begin(), sigs.end(), s) != sigs.end();
@@ -771,60 +772,60 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
             auto held = held_clock_ref.find(sat);
             if (held != held_clock_ref.end() &&
                 held_present(held->second.first) && held_present(held->second.second)) {
-                // HOLD: both held reference signals are still registered —
-                // reuse them so the clock stays on the prior signal basis.
+                // Hold: both held reference signals are still registered, so reuse
+                // them and keep the clock on the prior signal basis.
                 sig1 = held->second.first;
                 sig2 = held->second.second;
                 f1   = freqOf(sat, sig1);
                 f2   = freqOf(sat, sig2);
             } else if (!sig2.empty() && f2 > 0.0) {
-                // LATCH (first sight) / RE-LATCH (a held reference signal left
-                // the ≥2-station set): adopt the freshly-selected pair and hold
-                // it forward.  A re-latch is a genuine (rare) datum move — log
-                // it for observability (network.trace_events); the emitted clock
-                // step it causes is the satellite's inter-channel bias.
+                // Latch (first sighting) or re-latch (a held reference signal left
+                // the ≥2-station set): adopt the newly selected pair and hold it
+                // forward.  A re-latch is a real (rare) datum move and is logged as
+                // an event (network.trace_events); the emitted clock step it causes
+                // equals the satellite's inter-channel bias.
                 if (held != held_clock_ref.end() &&
                     (held->second.first != sig1 || held->second.second != sig2)) {
                     emitEvent("CLK_BASIS", "relatch", sat, "", std::nullopt,
                               std::nullopt, "held_ref_change",
                               held->second.first + "+" + held->second.second +
                                   "->" + sig1 + "+" + sig2);
-                    // T3c: the re-latch stepped the emitted clock↔code split — signal it as
-                    // a per-sat discontinuity (bumped at the next emit) so the consumer resets
-                    // instead of integrating across the unsignalled step.  Guarded by the
+                    // The re-latch stepped the emitted clock↔code split: signal it as a
+                    // per-satellite discontinuity (bumped at the next emit) so the consumer
+                    // resets instead of integrating across the step (T3c).  Guarded by the
                     // clock-disc channel; the CLK_BASIS event above is logged either way.
                     if (emit_clock_disc) basis_relatch_disc_pending.insert(sat);
                 }
                 held_clock_ref[sat] = { sig1, sig2 };
             }
         }
-        // Hold OFF: the pin is re-derived from THIS epoch's coverage every
-        // epoch.  With the deterministic selection above the pair is a pure
-        // function of the registered signal SET, so a change BETWEEN EMITTED
-        // products means a channel actually entered/left the ≥2-station set —
-        // the same defect-2 clock↔code re-reference a hold re-latch signals,
-        // only here it happens silently every time coverage churns.  Record
-        // THIS epoch's selection in the main-pass scratch and defer the compare
-        // + disc bump to the EMIT site (against the last EMITTED pair), so a
-        // transient pin move on a withheld epoch cannot fabricate a bump — the
-        // same emit-only discipline prev_pivot / emitted_anchor follow.  Guarded
-        // by emit_clock_disc AND a real IF pair (f1,f2 > 0) ⇒ byte-identical when
-        // the disc channel is off or the sat is single-frequency.  Skipped under
-        // hold (that path owns its own re-latch signalling above).
+        // Hold off: the pin is re-derived from each epoch's coverage.  With the
+        // deterministic selection above, the pair is a pure function of the
+        // registered signal set, so a change between emitted products means a
+        // channel entered or left the ≥2-station set: the same defect-2 clock↔code
+        // re-reference that a hold re-latch signals, here occurring on every
+        // coverage change without an event.  This epoch's selection is recorded in
+        // the main-pass scratch, and the compare and disc bump are deferred to the
+        // emit site (against the last emitted pair), so a transient pin move on a
+        // withheld epoch cannot produce a bump; prev_pivot and emitted_anchor follow
+        // the same emit-only rule.  Guarded by emit_clock_disc and a real IF pair
+        // (f1, f2 > 0), so it is byte-identical when the disc channel is off or the
+        // satellite is single-frequency.  Skipped under hold, whose re-latch
+        // signalling is above.
         if (!clock_signal_basis_hold && emit_clock_disc && f1 > 0.0 && f2 > 0.0)
             this_epoch_if_pin_sel[sat] = { sig1, sig2 };
-        // S-contract §1.5 DECLARATION record — SEPARATE from the disc scratch above and
-        // deliberately unguarded by either knob.  sig1/sig2 are POST-hold here, so this
-        // is the pair the datum actually realizes on both the held and the re-selected
-        // path.  The scratch above cannot serve: it is gated on the QC-channel
-        // emit_clock_disc (default false, and absent from the entire ft63→pc305 field
-        // chain), which is why every field posture-C product declared no cbpin= at all
-        // while the sim arms declared fine.  Read only by the NetworkSolPrep fill ⇒ the
-        // solve and every emitted numeric value are untouched; only the S line changes.
-        // Written BELOW, after the row is known to have folded — see the record site.
+        // The S-contract §1.5 declaration record is kept separate from the disc
+        // scratch above and is deliberately not guarded by either knob.  sig1/sig2 are
+        // post-hold here, so this is the pair the datum realizes on both the held and
+        // the re-selected path.  The scratch above cannot serve as the declaration: it
+        // is gated on the QC-channel knob emit_clock_disc (default false), and a
+        // product whose run leaves it off would declare no cbpin= token.  The record is
+        // read only by the NetworkSolPrep fill, so the solve and every emitted numeric
+        // value are unchanged; only the S line changes.  It is written below, after the
+        // row is known to have folded (see the record site).
         Eigen::VectorXd row = Eigen::VectorXd::Zero(nshared);
         bool row_ok = false;
-        double zval = 0.0;   // Card 2: legacy zero target unless time-linked
+        double zval = 0.0;   // legacy zero target unless time-linked (card 2)
         if (f1 > 0.0 && f2 > 0.0) {
             const double den = f1 * f1 - f2 * f2;
             const double a1 =  f1 * f1 / den;     // ionosphere-free (clock-preserving) weights
@@ -834,23 +835,24 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                 row(est.codeBiasColumn(sat, sig2)) = a2;
                 row_ok = true;
             } catch (...) { row.setZero(); row_ok = false; }
-            // Card 2: pin the CHANGE of the clock↔code split — RHS is the
-            // satellite's PREVIOUS solved ionosphere-free combination
-            // a1·b̂_prev(σ1)+a2·b̂_prev(σ2).  This is genuine continuity ONLY
-            // when the pair is UNCHANGED from the last kept epoch AND both
-            // signals had a previous solved value.  A pair CHANGE (the band-1
-            // C1C↔C1W flip, or a band entering/leaving) re-references the split
-            // by the satellite's inter-channel bias even if the new pair's
-            // signals both have prior values, so it must re-seed to 0 and bump —
-            // otherwise the emitted clock steps unsignalled.  On any re-seed that
-            // is NOT the satellite's first appearance (seen before, or the run
-            // resumed), bump its disc so the value step coincides with a
-            // signalled discontinuity.  Record this epoch's pair for the next
-            // epoch's comparison (persisted at the harvest, kept epochs only).
-            // RF-0e e1: accumulate this satellite into its constellation's ABSOLUTE
-            // ionosphere-free level row, using the pin's own a1/a2.  Gated on
-            // row_ok so a satellite whose columns could not be resolved is not summed
-            // into a row that would then span a column it never contributed.
+            // Time-linking (card 2, the cb_time_linked block below) pins the change
+            // of the clock↔code split: the RHS is the satellite's previous solved
+            // ionosphere-free combination a1·b̂_prev(σ1) + a2·b̂_prev(σ2).  That is
+            // continuity only when the pair is unchanged from the last kept epoch and
+            // both signals have a previous solved value.  A pair change (the band-1
+            // C1C↔C1W flip, or a band entering or leaving) re-references the split by
+            // the satellite's inter-channel bias even when both new signals have prior
+            // values, so the row re-seeds to 0 and the satellite is marked for a disc
+            // bump; otherwise the emitted clock would step without a signal.  The bump
+            // (this_epoch_cb_reseed) applies to any re-seed that is not the
+            // satellite's first appearance (seen before, or the run resumed), so the
+            // value step coincides with a signalled discontinuity.  This epoch's pair
+            // is recorded for the next epoch's comparison (persisted at the harvest,
+            // kept epochs only).
+            // Accumulate this satellite into its constellation's absolute
+            // ionosphere-free level row, using the pin's own a1/a2 (RF-0e e1).  Gated
+            // on row_ok so a satellite whose columns could not be resolved is not
+            // summed into a row that would then span a column it never contributed.
             if (row_ok && sat_if_level_datum) {
                 const std::string cst = NetworkSbasis::constellationOf(sat);
                 auto it = if_level_row.find(cst);
@@ -886,53 +888,55 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
         if (row_ok && row.cwiseAbs().sum() > 0.0) {
             rows.push_back(std::move(row));
             zs.push_back(zval);
-            // S-contract §1.5 DECLARATION record — placed HERE, after the push, so it
-            // records only a pair whose IF row actually FOLDED.  Guarded on a real dual-
-            // frequency pin (f1,f2 > 0), which also excludes the degenerate single-
-            // frequency all-ones branch above: that one sets row_ok but realizes no IF
-            // pair, so it must not claim one.  Recording it earlier (guarded on f1,f2
-            // alone) let a satellite whose codeBiasColumn lookup threw still enter the
-            // emit-site unanimity tally as a satellite WITHOUT a GF row, which reads as a
-            // partial split and suppresses an otherwise legitimate gfpin= declaration —
-            // the GF record below is correctly inside its own success branch, and this is
-            // the matching guard.
+            // S-contract §1.5 declaration record, placed after the push so it records
+            // only a pair whose IF row folded.  Guarded on a real dual-frequency pin
+            // (f1, f2 > 0), which also excludes the degenerate single-frequency
+            // all-ones branch above: that branch sets row_ok but realizes no IF pair.
+            // A record made before the fold (guarded on f1, f2 alone) would let a
+            // satellite whose codeBiasColumn lookup threw enter the emit-site unanimity
+            // tally as a satellite without a GF row; that reads as a partial split and
+            // suppresses a legitimate gfpin= declaration.  The GF record below sits
+            // inside its own success branch for the same reason.
             if (f1 > 0.0 && f2 > 0.0) this_epoch_if_pin_real[sat] = { sig1, sig2 };
         }
-        // (1a-RF0c) HARD per-satellite GEOMETRY-FREE datum (network.sat_gf_datum).
+        // (1a) Hard per-satellite geometry-free datum (network.sat_gf_datum, RF-0c).
         //
-        // The SAME estimable function as the (1b) block below — Odijk 2016 Eq. (30),
-        // (d_2 - d_1)/(mu_2 - mu_1) on the ionosphere-free pin's own pair — built here as
-        // a separate block because it is a DIFFERENT CARD with a different precondition,
-        // a different RHS and its own counters.  (1b) belongs to network.code_bias_gf_datum,
-        // which the loader refuses under frequency_mode = dual (there the IF and GF pins
-        // together leave nothing estimable, which is Odijk §5.1's own statement); RF-0c is
-        // armed independently of that gate because under dual "nothing estimable on the
-        // pinned pair" is the CORRECT answer, not a defect — RF-0b measured what happens
-        // without it (31 open directions per constellation, datumed by a 3 m shrinkage
-        // prior).  The loader hard-errors if both knobs are armed, so the two blocks can
-        // never both fold a row for the same satellite.
+        // The same estimable function as the (1b) block below, Odijk 2016 Eq. (30),
+        // (d_2 - d_1)/(mu_2 - mu_1) on the ionosphere-free pin's own pair.  It is a
+        // separate block because it belongs to a different card, with a different
+        // precondition, a different RHS and its own counters.  (1b) belongs to
+        // network.code_bias_gf_datum, which the loader refuses under
+        // frequency_mode = dual (there the IF and GF pins together leave nothing
+        // estimable, as Odijk §5.1 states).  RF-0c is armed independently of that gate
+        // because under dual, "nothing estimable on the pinned pair" is the correct
+        // result rather than a defect; without the row the directions stay open (RF-0b
+        // measured 31 per constellation, held only by a 3 m shrinkage prior).  The
+        // loader rejects the configuration when both knobs are armed, so the two blocks
+        // cannot both fold a row for the same satellite.
         //
-        // WHY THE TARGET MAY BE NON-ZERO HERE, when (1b)'s must be 0.  d^s_GF is a datum
-        // quantity: any value is legal and the estimable parameters absorb the difference
-        // (their Table 8 — the geometry-free lump moves into the slant ionosphere,
-        // iota~ = iota + d_r,GF - d^s_GF).  Zero is the conventional choice; the broadcast
-        // T_GD is the PHYSICAL one, and it composes with the IF pin exactly rather than
-        // approximately.  IS-GPS-200 §20.3.3.3.3.2 defines the single-frequency
-        // corrections Δt_L1 = Δt_SV - T_GD and Δt_L2 = Δt_SV - gamma*T_GD against a
-        // broadcast clock referenced to the L1/L2 ionosphere-free combination, i.e.
-        // d^s_1 = c*T_GD and d^s_2 = c*gamma*T_GD in this model's sign convention.  Their
-        // IF combination a1*d_1 + a2*d_2 is IDENTICALLY zero (a1 + a2*gamma = 0 is the
-        // definition of the ionosphere-free weights), so the TGD target never fights the
-        // IF pin's own zero target; and their geometry-free combination is
-        // (d_2 - d_1)/(mu_2 - mu_1) = c*T_GD*(gamma - 1)/(gamma - 1) = c*T_GD exactly.
-        // That identity is why the RHS below is the latched metres value verbatim, with
-        // no frequency factor: it is already the pinned combination's value.
+        // Why the target may be non-zero here while (1b)'s must be 0: d^s_GF is a datum
+        // quantity, so any value is legal and the estimable parameters absorb the
+        // difference (Odijk 2016 Table 8: the geometry-free lump moves into the slant
+        // ionosphere, iota~ = iota + d_r,GF - d^s_GF).  Zero is the conventional choice;
+        // the broadcast T_GD is the physical one, and it composes with the IF pin
+        // exactly.  IS-GPS-200 §20.3.3.3.3.2 defines the single-frequency corrections
+        // Δt_L1 = Δt_SV - T_GD and Δt_L2 = Δt_SV - gamma*T_GD, gamma = (f1/f2)^2, against
+        // a broadcast clock referenced to the L1/L2 ionosphere-free combination, so
+        // d^s_1 = c*T_GD and d^s_2 = c*gamma*T_GD in this model's sign convention.
+        // - Their IF combination a1*d_1 + a2*d_2 is identically zero (a1 + a2*gamma = 0
+        //   follows from the ionosphere-free weights), so the T_GD target does not
+        //   conflict with the IF pin's own zero target.
+        // - Their geometry-free combination is
+        //   (d_2 - d_1)/(mu_2 - mu_1) = c*T_GD*(gamma - 1)/(gamma - 1) = c*T_GD exactly.
+        // That identity is why the RHS below is the latched value in metres, with no
+        // frequency factor: it is already the value of the pinned combination.
         //
-        // mu_2 here is relative to sig1 (the builder's own convention), so the identity
-        // holds only when the pinned pair IS an (L1, L2) pair — the pair the navigation
-        // message describes.  Any other pair falls back to a zero target and is counted,
-        // because asserting a group delay for a pair T_GD never referenced would be a
-        // fabricated datum wearing a physical name.
+        // mu_2 here is relative to sig1 (the builder's convention, mu_1 = 1), so the
+        // identity holds only when the pinned pair is the pair the broadcast group delay
+        // describes: (L1, L2) for GPS T_GD, (E1, E5a) for Galileo BGD(E1, E5a) (card
+        // GAL; the rule lives in satGfBroadcastTarget).  Any other pair falls back to a
+        // zero target and is counted, because a group delay asserted for a pair it does
+        // not describe would be an arbitrary datum presented as a physical one.
         if (sat_gf_datum != NetworkSatGfDatum::NoneMode && f1 > 0.0 && f2 > 0.0) {
             const double mu2_minus_mu1 = (f1 * f1) / (f2 * f2) - 1.0;
             if (std::abs(mu2_minus_mu1) > 1e-12) {
@@ -945,7 +949,7 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                 } catch (...) { srow.setZero(); s_ok = false; }
                 if (s_ok && srow.cwiseAbs().sum() > 0.0) {
                     double target = 0.0;
-                    // Card GAL (R3 iii): the same branches, counted per constellation.
+                    // The same branches, counted per constellation (card GAL, R3 iii).
                     SatGfConstCounts& gcc =
                         out.sat_gf_by_const[NetworkSbasis::constellationOf(sat)];
                     if (sat_gf_datum == NetworkSatGfDatum::BroadcastTgd) {
@@ -953,7 +957,7 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                         // band 2) for GPS (T_GD), (band 1, band 5) for Galileo (BGD(E1,
                         // E5a), card GAL).  The rule and its order of tests live in
                         // satGfBroadcastTarget, which the extra-channel anchor below
-                        // reads too, so the two can never disagree about a satellite.
+                        // reads too, so the two cannot disagree about a satellite.
                         const SatGfTarget gt =
                             NetworkSbasis::satGfBroadcastTarget(sat, sig1, sig2,
                                                                 sat_gf_target_m);
@@ -977,19 +981,19 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                             break;
                         }
                     }
-                    // Card GAL (R3 ii): the ABSOLUTE target of this satellite, kept
-                    // before the time link below replaces the value with the carried
-                    // one, because the extra-channel anchor at a first sighting must
-                    // assert exactly what this pair was pinned at.
+                    // The absolute target of this satellite, saved before the time
+                    // link below replaces the value with the carried one, because the
+                    // extra-channel anchor at a first sighting must assert the value
+                    // this pair was pinned at (card GAL, R3 ii).
                     const double abs_target = target;
-                    // RF-0e e2: TIME-LINK the geometry-free row.  RF-0c/RF-0d re-assert
-                    // the absolute target every epoch while the IF pins beside them are
-                    // CHANGE pins under code_datum_time_linked (:722-735) — two families
-                    // pulling on the same satellite's columns with different notions of
-                    // where "now" is.  Carrying the previous kept epoch's solved
-                    // geometry-free combination makes them agree; the absolute target
-                    // survives as the FIRST-SIGHTING anchor, which is the only place the
-                    // broadcast frame needs asserting at all.
+                    // Time-link the geometry-free row (RF-0e e2).  Without it, RF-0c and
+                    // RF-0d re-assert the absolute target every epoch while the IF pins
+                    // beside them are change pins under code_datum_time_linked (the
+                    // cb_time_linked block above), so two row families act on the same
+                    // satellite's columns with different reference epochs.  Carrying the
+                    // previous kept epoch's solved geometry-free combination makes them
+                    // agree; the absolute target remains as the first-sighting anchor,
+                    // the only place the broadcast frame needs to be asserted.
                     if (sat_gf_datum_time_linked) {
                         double p1 = 0.0, p2 = 0.0;
                         if (prevCb(sat, sig1, p1) && prevCb(sat, sig2, p2)) {
@@ -1010,38 +1014,38 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                     sat_gf_pinned[NetworkSbasis::constellationOf(sat) + "|" + sig2]
                         .insert(sat);
 
-                    // --- RF-0d: the PER-SIGNAL extension -------------------------
-                    // RF-0c pinned the ionosphere-free PAIR only, which closes every
-                    // rank-deficiency-3b direction (the mu-shift moves all of the
-                    // satellite's columns together, so one row on the pair reaches it
-                    // — proved on a 4-signal roster).  What it does NOT do is make the
-                    // EXTRA channels' levels a datum: d(C2X) stays determined by the
-                    // stations that happen to track C2X, and on DOY-129 that is a
-                    // sparse set — RF-0c measured the consequence as a 66 m within-arc
-                    // rms on the L2X phase-bias wire after the pair pin had already cut
-                    // the worst arc 4.7x.
+                    // --- Per-signal extension (RF-0d) ----------------------------
+                    // The pair row above closes every rank-deficiency-3b direction (the
+                    // mu-shift moves all of the satellite's columns together, so one row
+                    // on the pair reaches it; shown on a 4-signal roster).  It does not
+                    // make the extra channels' levels a datum: d(C2X) stays determined
+                    // by the stations that track C2X, which can be a sparse set, and a
+                    // sparse set leaves a large within-arc scatter on that channel's
+                    // phase-bias wire (measured in RF-0c).
                     //
-                    // So pin them too.  Each extra signal k is pinned through its
-                    // geometry-free combination against the SAME band-1 reference the
-                    // pair pin uses: (d_k - d_ref)/(mu_k - 1), at the SAME c*T_GD.
-                    // That target is not a coincidence — under the broadcast convention
-                    // d_j = c*T_GD*mu_j, so (d_k - d_ref)/(mu_k - 1) = c*T_GD for EVERY
-                    // band k, which is why one latched value serves the whole satellite.
+                    // The extra signals are therefore pinned too.  Each extra signal k is
+                    // pinned through its geometry-free combination against the band-1
+                    // reference the pair pin uses, (d_k - d_ref)/(mu_k - 1), at the same
+                    // c*T_GD.  Under the broadcast convention d_j = c*T_GD*mu_j, so
+                    // (d_k - d_ref)/(mu_k - 1) = c*T_GD for every band k, and one latched
+                    // value serves the whole satellite.
                     //
-                    // WHAT IT ASSERTS, said plainly: an inter-signal correction of ZERO
-                    // between channels of the same band (RINEX navigation carries no ISC
-                    // for GPS — only T_GD, BroadcastEphemerisTypes.hpp:65 — so there is
-                    // no broadcast value to use).  The real ISC is centimetre-class and
-                    // is a DATUM quantity here like the rest: a consumer applying the
+                    // What the row asserts: an inter-signal correction (ISC) of zero
+                    // between the extra channel and the pinned pair.  RINEX navigation
+                    // carries no ISC for GPS, only T_GD (tgd0 in
+                    // BroadcastEphemerisTypes.hpp), so there is no broadcast value to use.
+                    // The real ISC is centimetre-class between same-band channels and is
+                    // a datum quantity here like the rest: a consumer that applies the
                     // emitted ionosphere and code biases as a pair absorbs it.  Every
-                    // such row is counted so the product can say how much of it is
+                    // such row is counted, so the product reports how much of it is
                     // asserted rather than broadcast.
                     //
-                    // SAME-BAND extras are SKIPPED, not pinned: with mu_k = mu_ref their
-                    // geometry-free combination does not exist (the divisor is zero), and
-                    // their difference is the pure ISC, which needs no ionosphere to be
-                    // observable and IS estimable from the data at any coverage.  Pinning
-                    // it would throw away real content; leaving it free costs nothing.
+                    // Extras in the reference band are skipped, not pinned: with
+                    // mu_k = mu_ref their geometry-free combination does not exist (the
+                    // divisor is zero), and their difference to the reference is the pure
+                    // ISC, which needs no ionosphere to be observable and is estimable
+                    // from the data at any coverage.  Pinning it would discard real
+                    // information; leaving it free costs nothing.
                     for (const std::string& sk : sigs) {
                         if (sk == sig1 || sk == sig2) continue;
                         const double fk = freqOf(sat, sk);
@@ -1052,21 +1056,22 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                             ++gcc.sameband_free;
                             continue;
                         }
-                        // --- RF-0f: the band-2 same-band companion -------------------
-                        // The pin's SECOND band gets the same treatment RF-0d already gave
-                        // its first: a companion sharing sig2's band differs from sig2 by a
-                        // pure inter-signal correction — no ionosphere (equal frequency, so
-                        // the iono terms cancel exactly), no clock — so it needs no datum to
-                        // be observable, only a station that tracks BOTH.  RF-0d pinned it
-                        // anyway, at c*T_GD, which asserts ISC = 0: a number RINEX
-                        // navigation does not carry, applied to a channel ten satellites and
-                        // two single-band-2 stations depend on.  RF-0e measured the bill.
+                        // --- Band-2 same-band companion (RF-0f) ----------------------
+                        // The pin's second band gets the treatment the first band gets
+                        // above: a companion sharing sig2's band differs from sig2 by a pure
+                        // inter-signal correction, with no ionosphere (equal frequency, so
+                        // the iono terms cancel exactly) and no clock.  It needs no datum to
+                        // be observable, only a station that tracks both signals.  Without
+                        // network.sat_isc_state it is pinned below at c*T_GD, which asserts
+                        // ISC = 0, a value RINEX navigation does not carry (the cost was
+                        // measured in RF-0e).
                         //
-                        // So leave it free WHERE IT IS OBSERVABLE, and only there.  A
-                        // satellite with no dual-tracking station this epoch has an ISC the
-                        // data cannot reach; that column falls through to the pin below,
-                        // which is counted separately so the wire can say which satellites'
-                        // C2X is an estimate and which is an assertion.
+                        // With the ISC state armed, the companion is left free where it is
+                        // observable, and only there.  A satellite with no station tracking
+                        // both signals this epoch has an ISC the data cannot reach; that
+                        // column falls through to the pin below and is counted separately
+                        // (n_isc_pinned), so the wire can report which satellites' C2X is an
+                        // estimate and which is an assertion.
                         const bool same_band_as_sig2 =
                             sig2.size() >= 2 && sk.size() >= 2 && sk[1] == sig2[1];
                         if (sat_isc_state && same_band_as_sig2) {
@@ -1076,46 +1081,42 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                             }
                             ++out.n_isc_pinned;         // unobservable: pinned below, flagged
                         }
-                        // --- B5D: the EXTRA BAND is not a companion ------------------
-                        // RF-0f freed the band-2 companion because its difference to the
-                        // pinned signal is a pure inter-signal correction the data reach
-                        // without any ionosphere.  A THIRD BAND is a different quantity
-                        // and needs a different argument, which card TBI supplied: with
-                        // the slant ionosphere and the satellite clock already fixed by
-                        // the PINNED pair, a cell carrying code on both of the pair's
-                        // bands and on this signal determines d_k too — up to one
-                        // constant per (constellation, signal) family, and that constant
-                        // is exactly what the receiver's own extra-band code bias
-                        // absorbs.  The channel's sum-to-zero row is the constant's
-                        // datum, and it re-enables by itself below, because the
-                        // completeness test only suppresses a channel every one of whose
-                        // columns this loop PINNED.
+                        // --- Extra band, not a companion (B5D) -----------------------
+                        // The band-2 companion above can be freed because its difference to
+                        // the pinned signal is a pure inter-signal correction the data
+                        // reach without any ionosphere.  A third band is a different
+                        // quantity and needs a different argument (card TBI): with the slant
+                        // ionosphere and the satellite clock already fixed by the pinned
+                        // pair, a cell carrying code on both of the pair's bands and on this
+                        // signal also determines d_k, up to one constant per (constellation,
+                        // signal) family, and that constant is what the receiver's own
+                        // extra-band code bias absorbs.  The channel's sum-to-zero row is
+                        // the constant's datum, and it stays active below because the
+                        // completeness test suppresses only a channel all of whose columns
+                        // this loop pinned.
                         //
-                        // WHAT THE PIN COST, measured (TBI section 5).  The row asserts
-                        // an inter-signal correction of zero; between same-band channels
-                        // that is centimetres, across a band it is metres.  The
-                        // estimator-free triple-code combination on DOY-129 puts the six
-                        // Block III satellites 4 to 5 m above the eleven Block IIF ones;
-                        // the wire carried 0.43 m of that 2.97 m truth, the network
-                        // pushed the rest into band 2 (post-fit station-median sd across
-                        // satellites 0.740 m against 0.066 m on the dual run), and a DUAL
-                        // consumer replayed on the triple wire lagged by the same amount.
+                        // Cost of the pin (TBI section 5): the row asserts an inter-signal
+                        // correction of zero, which is centimetres between same-band
+                        // channels but metres across bands (GPS Block III and Block IIF
+                        // satellites differ by several metres in the triple-code
+                        // combination).  The network pushes the unmodelled part into band 2,
+                        // and a dual-frequency consumer replayed on the triple wire lags by
+                        // the same amount.
                         //
-                        // WHERE THE DATA DO NOT REACH IT, the row must still not assert
-                        // the broadcast value.  Once the family stands in the sum-to-zero
-                        // frame, folding c*T_GD on one of its columns is the RF-0d defect
-                        // in reverse — an absolute target and a carried level pulling on
-                        // the same channel at the same gauge weight.  So: carry the
-                        // column's OWN previous geometry-free combination when there is
-                        // one, and at a first sighting HOLD it with a level row in the
-                        // channel's own frame (below) and keep it off the wire.  Both are
-                        // counted; standing invariant #3 wants the "inert" claim carrying
-                        // data, and this count is the data.
+                        // Where the data do not reach the column, the row still must not
+                        // assert the broadcast value.  Once the family is in the sum-to-zero
+                        // frame, folding c*T_GD on one of its columns is the RF-0d defect in
+                        // reverse: an absolute target and a carried level acting on the same
+                        // channel at the same gauge weight.  The column therefore carries its
+                        // own previous geometry-free combination when one exists, and at a
+                        // first sighting is held with a level row in the channel's own frame
+                        // (below) and kept off the wire.  Both cases are counted, which is
+                        // the data standing invariant #3 requires for an "inert" claim.
                         bool extra_band_carry = false;
                         bool extra_band_hold  = false;
                         if (sat_gf_extra_band_free && sig1.size() >= 2 && sig2.size() >= 2
                             && sk[1] != sig1[1] && sk[1] != sig2[1]) {
-                            // The roster is keyed on the pin pair the builder REALIZED,
+                            // The roster is keyed on the pin pair the builder realized,
                             // not on an assumed (L1, L2): a held or re-selected pair
                             // changes which two bands the determination needs.
                             const std::string dkey = sat + "|" + sk + "|"
@@ -1133,17 +1134,16 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                             }
                         }
                         if (extra_band_hold) {
-                            // A single +1 on the column, target 0: the channel's own
-                            // frame, in which the sum-to-zero row puts the family's level
-                            // near zero, so this asserts "this newborn sits at its
-                            // family's level" rather than "this newborn sits at the
-                            // broadcast T_GD".  Deliberately NOT recorded in
-                            // sat_gf_pinned: the channel's sum-to-zero row is what the
-                            // hold's zero is referred to, so suppressing it would leave
-                            // the hold pointing at nothing.  The value never reaches a
-                            // consumer (NetworkSolPrep withholds it) — a fabricated bias
-                            // is indistinguishable from an estimate by value alone, which
-                            // is the RF-0f rule.
+                            // A single +1 on the column, target 0, in the channel's own
+                            // frame, where the sum-to-zero row puts the family's level near
+                            // zero.  The row asserts that the new column sits at its
+                            // family's level, not at the broadcast T_GD.  Deliberately not
+                            // recorded in sat_gf_pinned: the hold's zero is referred to the
+                            // channel's sum-to-zero row, so suppressing that row would
+                            // leave the hold without a reference.  The value does not reach
+                            // a consumer (NetworkSolPrep withholds it), because an asserted
+                            // bias cannot be told from an estimate by its value alone (the
+                            // RF-0f rule).
                             Eigen::VectorXd hrow = Eigen::VectorXd::Zero(nshared);
                             bool h_ok = false;
                             try {
@@ -1166,18 +1166,18 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                             k_ok = true;
                         } catch (...) { krow.setZero(); k_ok = false; }
                         if (k_ok && krow.cwiseAbs().sum() > 0.0) {
-                            // The same c*T_GD by the identity above — EXCEPT under e2,
-                            // where this row carries its OWN previous geometry-free
-                            // combination (d_k - d_ref)/(mu_k - 1).  Reusing the pair's
-                            // carried value here would time-link the extra column to a
-                            // combination it is not part of.
-                            // B5D: an undetermined extra-band column carries even when
-                            // the e2 time link is off — R3's "never an absolute
-                            // broadcast-frame value in a sum-to-zero family" is a
-                            // property of THIS knob, not of that one (the loader warns
-                            // about the mixed frame the combination leaves).  The guard
-                            // is only reached with both previous values in hand, so the
-                            // anchored fallback below is unreachable for it.
+                            // The same c*T_GD by the identity above, except under e2, where
+                            // this row carries its own previous geometry-free combination
+                            // (d_k - d_ref)/(mu_k - 1).  Reusing the pair's carried value
+                            // here would time-link the extra column to a combination it is
+                            // not part of.
+                            // An undetermined extra-band column carries even when the e2
+                            // time link is off (B5D): the R3 rule "no absolute
+                            // broadcast-frame value in a sum-to-zero family" belongs to
+                            // sat_gf_extra_band_free, not to the e2 knob (the loader warns
+                            // about the mixed frame that combination leaves).
+                            // extra_band_carry is set only when both previous values
+                            // exist, so the anchored fallback below is unreachable for it.
                             double k_target = target;
                             if (sat_gf_datum_time_linked || extra_band_carry) {
                                 double q1 = 0.0, qk = 0.0;
@@ -1186,16 +1186,14 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                                     ++out.n_sat_gf_carried;
                                     ++gcc.carried;
                                 } else {
-                                    // Card GAL (R3 ii): the first-sighting anchor asserts
-                                    // the target the PAIR was pinned at (abs_target, from
-                                    // satGfBroadcastTarget), never the latched value
-                                    // unconditionally.  Before card GAL this read
-                                    // sat_gf_target_m with no pair check, so a Galileo
-                                    // C5X column was anchored at c*BGD while its (C1C,
-                                    // C5Q) pair sat at zero.  For a GPS (L1, L2) pair the
-                                    // two expressions are the same number on every branch
-                                    // (hit, broadcast zero, missing record), so GPS alone
-                                    // is byte-identical.
+                                    // The first-sighting anchor asserts the target the pair
+                                    // was pinned at (abs_target, from satGfBroadcastTarget),
+                                    // not the latched value unconditionally; otherwise a
+                                    // Galileo C5X column could be anchored at c*BGD while
+                                    // its (C1C, C5Q) pair sits at zero (card GAL, R3 ii).
+                                    // For a GPS (L1, L2) pair the two give the same number
+                                    // on every branch (hit, broadcast zero, missing
+                                    // record), so a GPS-only run is byte-identical.
                                     k_target = abs_target;
                                     ++out.n_sat_gf_anchored;
                                     ++gcc.anchored;
@@ -1216,26 +1214,26 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                 }
             }
         }
-        // (1b) Per-satellite GEOMETRY-FREE pin — Odijk 2016 rank deficiency 3b
-        // (Table 7), armed ONLY in the slant posture (the loader refuses it
-        // alongside an ionosphere constraint).  Their Eq. (30):
+        // (1b) Per-satellite geometry-free pin: Odijk 2016 rank deficiency 3b
+        // (Table 7), armed only in the slant posture (the loader refuses it alongside
+        // an ionosphere constraint).  Odijk Eq. (30):
         //
         //     mu_GF = [-1, 1, 0, ..., 0]^T / (mu_2 - mu_1),   mu_j = (f_1/f_j)^2
         //
-        // so the pinned combination is (d_2 - d_1)/(mu_2 - mu_1) = 0 on the SAME pair
-        // the IF pin uses.  Deliberately the same pair: IF and GF then span the pinned
-        // pair's whole 2-D subspace, which drives d_1 = d_2 = 0 exactly — Odijk's
-        // "code biases are not estimable for the first two frequencies" (§5.1)
-        // realized as a datum rather than asserted.  What survives is the modernized
-        // DCB d^s_1 - d^s_j for j >= 3, which is the entire point of the third band.
+        // so the pinned combination is (d_2 - d_1)/(mu_2 - mu_1) = 0 on the pair the IF
+        // pin uses.  The pair is deliberately the same: IF and GF then span the pinned
+        // pair's whole 2-D subspace, which drives d_1 = d_2 = 0 exactly.  This realizes
+        // Odijk's "code biases are not estimable for the first two frequencies" (§5.1)
+        // as a datum.  What remains estimable is the modernized DCB d^s_1 - d^s_j for
+        // j >= 3, the quantity the third band exists to provide.
         //
-        // TARGET 0 IS THE S-BASIS CHOICE, NOT A GUESS.  d^s_GF is a datum quantity: its
-        // value is arbitrary and the estimable parameters absorb it (their Table 8 —
-        // the geometry-free biases move INTO the slant ionosphere, iota~ = iota +
-        // d_r,GF - d^s_GF).  That is why a zero target is safe HERE and is not the same
-        // move as a zero-target ambiguity pin, which fights an injected integer truth
+        // Target 0 is the S-basis choice.  d^s_GF is a datum quantity: its value is
+        // arbitrary and the estimable parameters absorb it (Odijk Table 8: the
+        // geometry-free biases move into the slant ionosphere,
+        // iota~ = iota + d_r,GF - d^s_GF).  A zero target is therefore safe here, unlike
+        // a zero-target ambiguity pin, which conflicts with an injected integer truth
         // and discharges km-scale tension into the field (§12.8.1).  The quantity
-        // pinned here is metre-scale and genuinely gauge.
+        // pinned here is metre-scale and a pure gauge.
         if (gf_datum && f1 > 0.0 && f2 > 0.0) {
             const double mu2_minus_mu1 = (f1 * f1) / (f2 * f2) - 1.0;
             if (std::abs(mu2_minus_mu1) > 1e-12) {
@@ -1251,19 +1249,20 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                     zs.push_back(0.0);
                     ++out.n_gf_pin_sats;
                     // S-contract §1.5: this satellite's code-bias datum is the IF+GF
-                    // PAIR, not the IF pin alone — a different estimable function on
-                    // the same wire (the pinned pair's B records are identically the
-                    // datum; only j >= 3 carries content, and the geometry-free lump
-                    // moved into the slant ionosphere).  Record it so the S line can
-                    // DECLARE it: a consumer or grader that reads the B records under
-                    // the single-layer assumption applies the wrong S-transform, and
-                    // nothing else on the wire distinguishes the two postures.
+                    // pair, not the IF pin alone, which is a different estimable
+                    // function on the same wire (the pinned pair's B records are
+                    // identically the datum; only j >= 3 carries content, and the
+                    // geometry-free lump has moved into the slant ionosphere).  It is
+                    // recorded so the S line can declare it: a consumer or grader that
+                    // reads the B records under the single-layer assumption applies the
+                    // wrong S-transform, and nothing else on the wire distinguishes the
+                    // two postures.
                     this_epoch_gf_pin_real.insert(sat);
-                    // A satellite with no signal outside the pinned pair has NOTHING
+                    // A satellite with no signal outside the pinned pair has nothing
                     // estimable left on the code side once IF and GF are both pinned.
-                    // That is correct under Odijk, and it is also invisible downstream
-                    // (an all-datum satellite emits values indistinguishable from a
-                    // well-determined zero), so it is counted rather than left implicit.
+                    // That is correct under Odijk, but it cannot be seen downstream (an
+                    // all-datum satellite emits values indistinguishable from a
+                    // well-determined zero), so it is counted.
                     bool has_third = false;
                     for (const std::string& s : sigs)
                         if (s != sig1 && s != sig2) { has_third = true; break; }
@@ -1271,42 +1270,44 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                 }
             }
         }
-        // (1c) FAMILY-GF — one EXTRA geometry-free row per PARTITIONED secondary
-        // channel family (docs/SPEC_family_gf_datum.md §2).  Odijk rd 3b re-derives
-        // PER RECEIVER CHANNEL FAMILY: the pin above is built on the satellite's two
+        // (1c) FAMILY-GF: one extra geometry-free row per partitioned secondary channel
+        // family (docs/SPEC_family_gf_datum.md §2).  Odijk rank deficiency 3b applies
+        // per receiver channel family.  The pin above is built on the satellite's two
         // lowest-ordered signals, which on a Galileo Q+X roster is always the Q pair
-        // (C1C, C5Q) — and with the station population partitioned by family, NO
-        // observation of an X station ever touches a pinned channel.  The X subsystem
+        // (C1C, C5Q), and with the station population partitioned by family no
+        // observation of an X station touches a pinned channel.  The X subsystem
         // therefore keeps its own null direction per satellite,
-        //     Delta d_jx = mu_j * delta   (code AND phase together),
-        // compensated by iota -> iota - delta on every X-station line of sight, which
-        // is exactly what the 2026-08-12 estimability dump measured (band weights
-        // 1 : 1.7933 : 1.7032 = mu on E1/E5a/E5b) and exactly why the null-space gate
-        // withheld every epoch of `_pc305_gg_tri_slant_20m`.
+        //     Delta d_jx = mu_j * delta   (code and phase together),
+        // compensated by iota -> iota - delta on every X-station line of sight.  An
+        // estimability dump shows this direction (band weights 1 : 1.7933 : 1.7032 = mu
+        // on E1/E5a/E5b), and without this row the null-space gate withholds every epoch
+        // of such a posture.
         //
-        // GEOMETRY-FREE ONLY, NEVER AN IF ROW.  The satellite clock is SHARED with the
+        // Geometry-free only, never an IF row.  The satellite clock is shared with the
         // primary family and is already realized by the primary IF pin plus the
         // per-constellation clock datum, so the secondary family's IF combination has a
-        // fixed reference and is ESTIMABLE — it is the per-satellite inter-family ISC, a
+        // fixed reference and is estimable: it is the per-satellite inter-family ISC, a
         // real product quantity.  Pinning it would over-pin a data-determined quantity
-        // and inject tension that has to discharge somewhere.  The IF row is in any case
-        // structurally blind to this direction: with a1 = f1^2/(f1^2-f2^2) and
-        // a2 = -f2^2/(f1^2-f2^2), a1*mu_1 + a2*mu_2 = a1 + a2*(f1^2/f2^2) = 0 identically.
+        // and inject tension into the solution.  The IF row is in any case structurally
+        // blind to this direction: with a1 = f1^2/(f1^2-f2^2) and a2 = -f2^2/(f1^2-f2^2),
+        // a1*mu_1 + a2*mu_2 = a1 + a2*(f1^2/f2^2) = 0 identically.
         //
-        // Target 0 for the same reason the primary GF row uses it, and the distinction
-        // matters: `network.sbasis_complete` closes THIS SAME null space generically, by
-        // constraining the numerically discovered direction at the CARRIED level — and on
-        // this exact posture that passes the rank gate and destroys the ionosphere on a
-        // cold start (a00 = -6292 TECU, SPEC_synthetic_minimum_network §12 rung 3).  A
-        // gauge quantity pinned at 0 is a datum choice the estimable parameters absorb
-        // (Odijk Table 8, per family); the same direction pinned at a cold carried value
-        // is a hard constraint at a wrong value.  Gate closure is therefore NOT acceptance
-        // for this row — the ionosphere level is (SPEC §6.0).
+        // Target 0, for the same reason as the primary GF row.  The distinction from
+        // `network.sbasis_complete` matters: that knob closes the same null space
+        // generically, by constraining the numerically found direction at the carried
+        // level, and on this posture it passes the rank gate but drives the ionosphere
+        // level to an unphysical value on a cold start (a00 of several thousand TECU,
+        // SPEC_synthetic_minimum_network §12 rung 3).  A gauge quantity pinned at 0 is a
+        // datum choice the estimable parameters absorb (Odijk Table 8, per family); the
+        // same direction pinned at a cold carried value is a hard constraint at a wrong
+        // value.  Passing the gate is therefore not the acceptance test for this row; the
+        // ionosphere level is (docs/SPEC_family_gf_datum.md §6.0).
         if (gf_datum && !gf_family_constellations.empty() &&
             gf_family_constellations.count(NetworkSbasis::constellationOf(sat))) {
-            // The family's own signal subset, and its own pin pair chosen by the SAME
-            // selector and the SAME frequency source as the primary pin — determinism
-            // contract preserved by construction rather than by a parallel implementation.
+            // The family's own signal subset, and its own pin pair chosen by the same
+            // selector and the same frequency source as the primary pin, so the
+            // determinism contract holds by construction rather than through a parallel
+            // implementation.
             std::vector<std::string> fam_sigs;
             for (const std::string& s : sigs)
                 if (NetworkSbasis::channelFamilyOf(NetworkSbasis::constellationOf(sat), s) ==
@@ -1332,17 +1333,17 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                         rows.push_back(std::move(frow));
                         zs.push_back(0.0);
                         ++out.n_family_gf_rows;
-                        // S-contract §1.5: record the SECONDARY family's realized pair so
+                        // S-contract §1.5: record the secondary family's realized pair so
                         // the S line can declare the '+'-joined per-family gfpin=.  Without
                         // it the emit-site fill sees only the primary pair and declares a
-                        // confident single-family token on a two-family product — which the
-                        // grader then accepts, applying the primary family's transform to
-                        // the secondary family's channels.
+                        // single-family token on a two-family product, which the grader
+                        // accepts and then applies the primary family's transform to the
+                        // secondary family's channels.
                         this_epoch_family_gf_pin_real[sat] = { fs1, fs2 };
-                        // Same accounting as n_gf_only_pair, but scanned over the FAMILY's
-                        // signals — `sigs` spans BOTH families here, so a satellite whose X
-                        // family is a bare pair would otherwise always look like it had a
-                        // third band (its Q channels) and never be counted.
+                        // Same accounting as n_gf_only_pair, but over the family's signals:
+                        // `sigs` spans both families here, so a satellite whose X family is
+                        // a bare pair would otherwise always appear to have a third band
+                        // (its Q channels) and would never be counted.
                         bool fam_has_third = false;
                         for (const std::string& s : fam_sigs)
                             if (s != fs1 && s != fs2) { fam_has_third = true; break; }
@@ -1352,32 +1353,32 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
             }
         }
     }
-    // (1c-RF0e) The ABSOLUTE ionosphere-free LEVEL row, one per constellation.
+    // (1c) The absolute ionosphere-free level row, one per constellation (RF-0e).
     //
     // Pushed after the per-satellite loop and before the sum-to-zero rows, so the row
-    // order stays IF pins (+ their GF companions) → level → sum-to-zero and a reader of
-    // the stacked H can still say which family a row came from by position.
+    // order stays IF pins (with their GF companions), then level, then sum-to-zero, and
+    // a reader of the stacked H can tell which family a row came from by its position.
     //
-    // WHAT IT CONSTRAINS, and what it deliberately does not.  The geometry-free pins fix
-    // each satellite's code-bias DIFFERENCES; nothing in this builder fixes the
-    // ionosphere-free LEVEL absolutely once code_datum_time_linked turns the IF pins into
-    // change pins (:722-735) — each satellite is anchored at its own first sighting and
-    // carried thereafter at a finite weight, so the SET's level is free to walk and takes
-    // the clock / code-bias split with it.  This row is the restoring force.  It is
-    // deliberately ONE row per constellation, not one per satellite: per-satellite
-    // absolute pins would overwrite the carry the time-link exists to provide, which is
-    // the mistake in the other direction.  It is NOT a weak nudge, though: its Jacobian
-    // carries one entry per satellite, so at equal gauge weight its leverage on the level
-    // beats the n single-entry change pins and the realized level lands at carried/(n+1).
-    // The LEVEL is re-zeroed each epoch; only the DIFFERENCES carry.
+    // What it constrains, and what it deliberately does not.  The geometry-free pins
+    // fix each satellite's code-bias differences.  Once code_datum_time_linked turns the
+    // IF pins into change pins (the cb_time_linked block in the satellite loop), nothing
+    // else in this builder fixes the ionosphere-free level absolutely: each satellite is
+    // anchored at its own first sighting and carried afterwards at a finite weight, so
+    // the level of the set can walk and take the clock / code-bias split with it.  This
+    // row restores it.  It is deliberately one row per constellation, not one per
+    // satellite: per-satellite absolute pins would overwrite the carry the time link
+    // exists to provide.  It is not weak, though: its Jacobian carries one entry per
+    // satellite, so at equal gauge weight its leverage on the level outweighs the n
+    // single-entry change pins, and the realized level lands at carried/(n+1).  The
+    // level is re-zeroed each epoch; only the differences carry.
     //
-    // TARGET 0 IS EXACT UNDER broadcast_tgd, not conventional.  IS-GPS-200's broadcast
-    // clock is referenced to the L1/L2 ionosphere-free combination, so a satellite whose
-    // code biases are the broadcast ones has d_IF = a1*c*T_GD + a2*c*gamma*T_GD = 0
-    // identically (a1 + a2*gamma = 0 IS the definition of the weights).  A pinned roster
-    // therefore satisfies this row with ZERO residual — the two datum families are
-    // consistent by construction, which is exactly what the per-signal sum-to-zero rows
-    // were not.
+    // Under broadcast_tgd the target 0 is exact, not conventional.  The IS-GPS-200
+    // broadcast clock is referenced to the L1/L2 ionosphere-free combination, so a
+    // satellite whose code biases are the broadcast ones has
+    // d_IF = a1*c*T_GD + a2*c*gamma*T_GD = 0 identically (a1 + a2*gamma = 0 follows from
+    // the weights).  A pinned roster therefore satisfies this row with zero residual:
+    // the two datum families are consistent by construction, which the per-signal
+    // sum-to-zero rows are not (see the suppression block below).
     if (sat_if_level_datum) {
         for (auto& [cst, lrow] : if_level_row) {
             if (lrow.cwiseAbs().sum() <= 0.0) continue;
@@ -1387,31 +1388,29 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
             out.n_if_level_sats += if_level_n[cst];
         }
     }
-    // (2) Build the sum-to-zero rows now (after the IF pins, preserving row
-    // order).  OFF: span every present satellite with RHS 0 (byte-identical).
-    // Time-linked: span the channel's VETERANS with RHS Σ b̂_prev (pin the
-    // change of the veteran mean); a no-veteran channel falls back to the
-    // all-present Σ = 0 seed and disc-bumps its present satellites (the level
-    // genuinely re-references) — first-ever appearances excepted, matching the
-    // IF-pin rule.
+    // (2) Build the sum-to-zero rows now (after the IF pins, preserving row order).
+    // Time link off: span every present satellite with RHS 0 (byte-identical).
+    // Time-linked: span the channel's veterans with RHS Σ b̂_prev (pinning the change
+    // of the veteran mean).  A channel with no veteran falls back to the all-present
+    // Σ = 0 seed and disc-bumps its present satellites, since the level really does
+    // re-reference; first-ever appearances are excepted, as in the IF-pin rule.
     for (const auto& [skey, entries] : st0_chan) {
-        // --- RF-0d: SUPPRESS a channel the geometry-free datum already fixes -----
-        // A DEFECT RF-0c shipped and this card closes.  The sum-to-zero row asserts
-        // Sum_s d^s_j = 0 over the channel's satellites.  Once the geometry-free datum
-        // has pinned every one of those columns, that row is not merely redundant: it
-        // is INCONSISTENT with them, because the pinned values sum to
-        // mu_j * c * Sum_s T_GD^s, which is nothing like zero (GPS T_GD is one-sided,
-        // roughly -12..+7 ns, so the sum over ~32 satellites is tens of metres).  Both
-        // families fold at the same gauge weight, so they simply fight, and the
-        // least-squares compromise shifts every emitted code bias of the channel by
-        // -Sum/(n+1) — a systematic the wire carries and nothing declares.  Under
-        // `zero` the two agree and the row is only redundant; the suppression is
-        // correct in both modes and is applied in both so the two differ by the datum
-        // value alone and by nothing structural.
+        // --- Suppress a channel the geometry-free datum already fixes (RF-0d) ---
+        // The sum-to-zero row asserts Sum_s d^s_j = 0 over the channel's satellites.
+        // Once the geometry-free datum has pinned every one of those columns, that row
+        // is not only redundant but inconsistent with them: the pinned values sum to
+        // mu_j * c * Sum_s T_GD^s, which is far from zero (GPS T_GD is not centred on
+        // zero, roughly -12..+7 ns, so the sum over about 32 satellites is tens of
+        // metres).  Both families fold at the same gauge weight, and the least-squares
+        // compromise shifts every emitted code bias of the channel by -Sum/(n+1), a
+        // systematic error that the wire carries and nothing declares.  Under `zero`
+        // the two agree and the row is only redundant.  The suppression is correct in
+        // both modes and is applied in both, so the two modes differ only by the datum
+        // value and not structurally.
         //
-        // The test is COMPLETENESS, per channel: a channel with even one unpinned
+        // The test is completeness, per channel: a channel with even one unpinned
         // satellite column keeps its row, because that column's level is then still
-        // free and the sum-to-zero row is the only thing holding it.
+        // free and the sum-to-zero row is the only constraint holding it.
         if (sat_gf_datum != NetworkSatGfDatum::NoneMode) {
             const auto pit = sat_gf_pinned.find(skey);
             if (pit != sat_gf_pinned.end()) {
@@ -1444,14 +1443,13 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
             for (const auto& sat : tl.jac_sats) srow(col_of[sat]) += 1.0;
             zval = tl.rhs;
             if (tl.reseed) {
-                // B5D / standing invariant #7: a re-seed IS the channel's level
-                // re-referencing, so it is an event at both edges.  The marks (the
-                // DECOUPLING edge) already existed and drive the emit-site disc bumps;
-                // what was missing is the COUNT, without which "the level never
-                // re-referenced" and "nothing was ever instrumented" read the same in a
-                // run summary.  Counted here rather than at the emit site because a
-                // withheld epoch never reaches that site and its re-seed is still a fact
-                // about the datum this run realized.
+                // A re-seed is the channel's level re-referencing, so it is an event
+                // at both edges (standing invariant #7, B5D).  The marks (the
+                // decoupling edge) drive the emit-site disc bumps; the counters let a
+                // run summary tell "the level never re-referenced" apart from "nothing
+                // was instrumented".  They are counted here rather than at the emit
+                // site because a withheld epoch does not reach that site, and its
+                // re-seed is still a fact about the datum this run realized.
                 ++out.n_s2z_reseed_rows;
                 for (const auto& sat : present_sats)
                     if (code_bias_sat_seen_.count(sat) || code_bias_datum_resumed_) {
@@ -1467,22 +1465,21 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
             zs.push_back(zval);
         }
     }
-    // Card 2: this_epoch_cb_reseed now holds every satellite whose datum
-    // re-referenced THIS epoch.  It is NOT merged into the persistent
-    // cb_reseed_disc_pending here — that merge is deferred to the EMIT site
-    // (below), which every whole-epoch withhold path `continue`s BEFORE reaching.
-    // So a transient re-seed on a since-withheld epoch (the frame reverts by the
-    // next kept epoch) never enters the pending set and cannot fire a bump with no
-    // emitted value step — the emit-only discipline, without needing to erase (an
-    // erase would destroy a bump legitimately DEFERRED for a satellite re-seeded
-    // while pruned from the emission).
+    // this_epoch_cb_reseed now holds every satellite whose datum re-referenced this
+    // epoch (card 2).  It is not merged into the persistent cb_reseed_disc_pending
+    // here; the caller defers that merge to the emit site (NetworkSolPrep), which
+    // every whole-epoch withhold path skips.  A transient re-seed on a withheld epoch
+    // (the frame reverts by the next kept epoch) therefore never enters the pending
+    // set and cannot fire a bump without an emitted value step.  This is the emit-only
+    // rule, and it needs no erase; an erase would drop a bump legitimately deferred
+    // for a satellite re-seeded while pruned from the emission.
 
     if (!rows.empty()) {
         Eigen::MatrixXd H(static_cast<Eigen::Index>(rows.size()), nshared);
         for (size_t r = 0; r < rows.size(); ++r)
             H.row(static_cast<Eigen::Index>(r)) = rows[r];
-        // Card 2: per-row targets — all 0 on the legacy path (byte-identical),
-        // the veteran-referenced / previous-IF values under time-linking.
+        // Per-row targets (card 2): all 0 on the legacy path (byte-identical); the
+        // veteran-referenced and previous-IF values under time-linking.
         Eigen::VectorXd z(static_cast<Eigen::Index>(rows.size()));
         for (size_t r = 0; r < zs.size(); ++r)
             z(static_cast<Eigen::Index>(r)) = zs[r];

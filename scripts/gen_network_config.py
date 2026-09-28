@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Generate a PPP-RTK network config from a resolved station list.
 
-Loads the committed network config as a template (settings, estimation, filter,
-model blocks), strips JSONC comments, and replaces the network.stations[] with
-the resolved global set + a chosen clock-datum station and a held-out closed-loop
-consumer.  Writes clean JSON (a superset the C++ nlohmann loader accepts).
+Loads the committed network config as a template (settings, estimation, filter and
+model blocks), strips JSONC comments, and replaces network.stations[] with every
+station of the resolved set.  Sets network.clock_datum_station to the chosen datum
+station and network.closed_loop.station to the held-out consumer; both must be in
+the station set.  Writes plain JSON, which the C++ nlohmann loader accepts.
 """
 from __future__ import annotations
 
@@ -88,7 +89,7 @@ def main() -> int:
     cfg["network"]["closed_loop"]["enable"] = True
     cfg["network"]["closed_loop"]["consumer_undifferenced"] = True
     cfg["network"]["closed_loop"]["consume_network_products"] = True
-    cfg["network"]["closed_loop"]["consume_network_clock"] = False   # BIAS-ONLY
+    cfg["network"]["closed_loop"]["consume_network_clock"] = False   # bias-only: the consumer does not take the network clock
     cfg["network"]["closed_loop"]["ar_wl_only"] = False
     cfg["files"]["observation_path"] = rinex(args.datum)
     cfg["processing"]["max_duration_s"] = args.max_duration

@@ -1,36 +1,37 @@
 """Per-station network residual-field viewer (Card L13, pyviz half).
 
-Reads ``network_station_residuals.csv`` -- the PPP-RTK NETWORK producer's
-per-(station, satellite, epoch) post-fit residual field -- and renders two views
+Reads ``network_station_residuals.csv``, the PPP-RTK network producer's
+per-(station, satellite, epoch) post-fit residual field, and renders two views
 of the station health:
 
-  1. **Station health raster** -- a raw (station x epoch) ``imagesc`` grid whose
+  1. **Station health raster**: a raw (station x epoch) ``imagesc`` grid whose
      cell value is the RMS of ``s_norm`` over that station's satellites at that
      epoch (a single "how noisy is this station right now" scalar).  Stations are
-     sorted by their overall RMS of ``s_norm`` with the *worst on top* (row 0 is
+     sorted by their overall RMS of ``s_norm`` with the worst on top (row 0 is
      drawn at the top of the raster), so a chronically noisy or thin station reads
-     at a glance.  Coloured with the sequential **viridis** map -- the residual
-     magnitudes are absolute / non-negative (``s_raw``/``s_norm`` are ABSOLUTE),
-     so a sequential ramp is correct; there is no sign to a diverging map.
-  2. **Worst-station drill-down** -- for the single worst station, a per-(sat,
+     at a glance.  Coloured with the sequential **viridis** map: the residual
+     magnitudes are absolute / non-negative (``s_raw``/``s_norm`` are non-negative
+     magnitudes), so a sequential ramp is correct; there is no sign to a diverging
+     map.
+  2. **Worst-station drill-down**: for the single worst station, a per-(sat,
      epoch) strip built through the shared :func:`build_sat_epoch_strip` renderer
      (``colormap="viridis"``, ``caxis="auto"``), so the offending satellites /
      epochs behind that station's RMS are visible individually.
 
-CSV schema (EXACT header):
+CSV schema (exact header):
 ``week,tow,station,sat,s_raw,s_norm,sigma0``
-where ``s_raw`` / ``s_norm`` are ABSOLUTE (non-negative) raw and normalized
-residual magnitudes and ``sigma0`` the a-priori sigma used to normalize.
+where ``s_raw`` / ``s_norm`` are non-negative raw and normalized residual
+magnitudes and ``sigma0`` the a-priori sigma used to normalize.
 
-Coverage note: rows exist only for NON-PIVOT stations that carry ambiguities --
-the network pivot station is the differencing reference and NEVER appears here.
-Rows are also only written on RAIM (residual-QC) epochs, so the expected row
-count is roughly ``sats x non-pivot-stations x RAIM-epochs`` -- a VERY heavy
-file.  The viewer is therefore ``default_enabled=False`` and only runs via
-``--only network_station_strip`` / ``--all``.
+Coverage note: rows exist only for non-pivot stations that carry ambiguities;
+the network pivot station is the differencing reference and does not appear
+here.  Rows are also only written on RAIM (residual-QC) epochs, so the
+expected row count is roughly ``sats x non-pivot-stations x RAIM-epochs``, a
+heavy file.  The viewer is therefore ``default_enabled=False`` and only runs
+via ``--only network_station_strip`` / ``--all``.
 
-Metric convention (matches the network clock-stat read-outs): per station we
-report the **median + std + worst-satellite (by name)** of ``s_norm``, and a
+Metric convention (matches the network clock-stat read-outs): per station,
+report the median, std and worst-satellite (by name) of ``s_norm``, and a
 top-3 ranking of the worst stations.
 """
 
@@ -81,7 +82,7 @@ def build_network_station_strip(ctx) -> ViewerResult:
     # Worst (largest RMS) first; NaN RMS sorts last.
     ranked = list(station_rms.sort_values(ascending=False, na_position="last").index)
 
-    # --- (1) Station-health raster (raw Raster/ColorBar/Axes) -------------- #
+    # --- (1) Station-health raster: raw Raster/ColorBar/Axes --------------- #
     epochs = np.sort(pd.unique(df["utc"]))
     n_epochs = epochs.size
     epoch_pos = {int(k): j for j, k in enumerate(
@@ -134,7 +135,7 @@ def build_network_station_strip(ctx) -> ViewerResult:
             figs = build_sat_epoch_strip(
                 long,
                 mode="continuous",
-                colormap="viridis",       # ABSOLUTE residuals -> sequential map
+                colormap="viridis",       # non-negative residuals -> sequential map
                 diverging=False,
                 caxis="auto",
                 fig_title=f"Worst station {worst} -- normalized residual |s_norm|",

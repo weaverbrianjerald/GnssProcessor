@@ -44,7 +44,10 @@ namespace GnssProcessor {
     class TimeUtils {
     public:
         /**
-         * @brief Converts Gregorian date and time to GPS time.
+         * @brief Converts a UTC Gregorian date and time to GPS time.
+         *
+         * Adds the epoch-dependent GPS-UTC leap-second offset from the internal table.
+         *
          * @param year Year (e.g., 2023).
          * @param month Month (1-12).
          * @param day Day of month (1-31).
@@ -52,16 +55,17 @@ namespace GnssProcessor {
          * @param minute Minute (0-59).
          * @param second Second (0-59.999...).
          * @return GnssTime struct with GPS week and TOW.
+         * @throws std::invalid_argument if the date fails isValidGregorianDate().
          */
         static GnssTime gregorianToGpsTime(int year, int month, int day, int hour, int minute, double second);
 
         /**
-         * @brief Converts Gregorian date and time already on the GPS time scale
-         *        to GPS week and TOW � without applying any leap-second correction.
+         * @brief Converts a Gregorian date and time already on the GPS time scale
+         *        to GPS week and TOW, without any leap-second correction.
          *
-         * Use this for timestamps that are already expressed in GPS time (e.g.
-         * SP3 / CLK product epochs).  For UTC timestamps use gregorianToGpsTime()
-         * which adds the appropriate leap-second offset.
+         * For timestamps already expressed in GPS time (e.g. SP3 / CLK product
+         * epochs).  UTC timestamps go through gregorianToGpsTime(), which adds the
+         * leap-second offset.
          *
          * @param year Year (e.g., 2023).
          * @param month Month (1-12).
@@ -70,24 +74,36 @@ namespace GnssProcessor {
          * @param minute Minute (0-59).
          * @param second Second (0-59.999...).
          * @return GnssTime struct with GPS week and TOW.
+         * @throws std::invalid_argument if the date fails isValidGregorianDate().
          */
         static GnssTime gregorianGpsToGpsTime(int year, int month, int day, int hour, int minute, double second);
 
         /**
-         * @brief Converts date and time to GNSS time for a specified time system.
+         * @brief Converts a date and time on a named time system to GPS time.
+         *
+         * "GPS", "GAL" and an empty string are taken as the GPS scale (no leap
+         * seconds); "BDS" adds 14 s (BDT = GPS - 14 s); "GLO" is taken as UTC and
+         * gets the leap-second offset.  Any other string is treated as the GPS scale
+         * and logged at trace level.  An invalid date logs a warning and returns
+         * {0, 0}.
+         *
          * @param year Year (e.g., 2023).
          * @param month Month (1-12).
          * @param day Day of month (1-31).
          * @param hour Hour (0-23).
          * @param minute Minute (0-59).
          * @param second Second (0-59.999...).
-         * @param time_system Time system string (e.g., "GPS", "GAL", "BDS").
-         * @return GnssTime struct adjusted for the specified system.
+         * @param time_system Time system string (e.g., "GPS", "GAL", "BDS", "GLO").
+         * @return GnssTime struct on the GPS time scale.
          */
         static GnssTime GnssTimeFromDate(int year, int month, int day, int hour, int minute, double second, const std::string& time_system);
 
         /**
-         * @brief Converts GPS time to Gregorian date and time.
+         * @brief Converts GPS time to a UTC Gregorian date and time.
+         *
+         * Subtracts the epoch-dependent GPS-UTC leap-second offset.  For calendar
+         * fields on the GPS scale, see gpsTimeToGpsScaleCalendar().
+         *
          * @param gpsTime The GPS time to convert.
          * @param year Output: Year.
          * @param month Output: Month (1-12).
@@ -134,6 +150,7 @@ namespace GnssProcessor {
          * @param week GPS week.
          * @param tow Time of week in seconds.
          * @return Julian Date as a double (GPS time scale).
+         * @throws std::invalid_argument if week < 0 or tow is outside [0, 604800).
          */
         static double gpsTimeToJulianDate(int week, double tow);
 
@@ -206,10 +223,10 @@ namespace GnssProcessor {
         /**
          * @brief Converts a Julian Date to Julian centuries from J2000.0.
          *
-         * T = (JD ? 2451545.0) / 36525.0
+         * T = (JD − 2451545.0) / 36525.0
          *
-         * @param jd Julian Date (on any time scale � caller is responsible
-         *           for ensuring the correct scale for the intended use).
+         * @param jd Julian Date on any time scale (the caller chooses the scale
+         *           the intended use requires).
          * @return Julian centuries from J2000.0.
          */
         static double jdToJ2000Centuries(double jd);
@@ -218,9 +235,9 @@ namespace GnssProcessor {
          * @brief Converts an MJD to a decimal year.
          *
          * Uses the J2000.0 MJD (51544.5) as the pivot:
-         *   decimal_year = 2000.0 + (mjd ? 51544.5) / 365.25
+         *   decimal_year = 2000.0 + (mjd − 51544.5) / 365.25
          *
-         * Useful for mean-pole and other slow-varying models.
+         * Intended for mean-pole and other slowly varying models.
          *
          * @param mjd Modified Julian Date (on any time scale).
          * @return Decimal year.
@@ -231,18 +248,19 @@ namespace GnssProcessor {
          * @brief Converts day-of-year to month and day.
          *
          * @param year  Calendar year (used for leap-year determination).
-         * @param doy   Day of year (1-based, 1�365 or 1�366 for leap years).
-         * @param month Output: month (1�12).
-         * @param day   Output: day of month (1�31).
+         * @param doy   Day of year (1-based, 1–365, or 1–366 in leap years).
+         * @param month Output: month (1–12).
+         * @param day   Output: day of month (1–31).
          * @return True if conversion succeeded; false if doy is out of range.
          */
         static bool dayOfYearToDate(int year, int doy, int& month, int& day);
 
         /**
-         * @brief Look up the number of leap seconds (GPS - UTC) for a given GPS JD.
+         * @brief Looks up the number of leap seconds (GPS - UTC) for a given GPS JD.
          *
-         * Uses a built-in table of leap second insertions. The returned value
-         * is the number of seconds by which GPS time leads UTC at the given epoch.
+         * Uses a built-in table of leap-second insertions.  The returned value is
+         * the number of seconds by which GPS time leads UTC at the given epoch
+         * (0 before the first table entry).
          *
          * @param gps_jd Julian Date on the GPS time scale.
          * @return GPS-UTC offset in seconds (integer-valued as double).
@@ -250,7 +268,7 @@ namespace GnssProcessor {
         static double leapSecondsGpsUtc(double gps_jd);
 
         /**
-         * @brief Look up the number of leap seconds (TAI - UTC) for a given GPS JD.
+         * @brief Looks up the number of leap seconds (TAI - UTC) for a given GPS JD.
          *
          * TAI - UTC = (GPS - UTC) + 19, since GPS = TAI - 19.
          *
@@ -274,21 +292,21 @@ namespace GnssProcessor {
         /**
          * @brief Formats GNSS time as a human-readable string.
          *
-         * Includes GPS week/TOW and UTC calendar time.
+         * Includes GPS week/TOW and the UTC calendar time (from gpsTimeToGregorian).
          * @param time The GNSS time to format.
-         * @return Formatted string (e.g., "Week 1234, TOW 12345.67 (2023-10-01 12:34:56.789)").
+         * @return Formatted string (e.g., "GPS week 1234, TOW 12345.670 (2023-10-01 12:34:56.789 UTC)").
          */
         static std::string formatGnssTime(const GnssTime& time);
 
         /**
-         * @brief Convert (week, tow) to a GPS-time-scale calendar date.
+         * @brief Converts (week, tow) to a calendar date on the GPS time scale.
          *
-         * Unlike @c gpsTimeToGregorian, this does NOT subtract the
-         * GPS-UTC leap-second offset, so the returned wall-clock fields
-         * align exactly with the TOW grid (a 30-second RINEX file produces
-         * times at HH:MM:00.000 and HH:MM:30.000, never a 42-second offset).
-         * Used by log formatters that want every line to read on the same
-         * grid as the data.
+         * Unlike @c gpsTimeToGregorian, this does not subtract the GPS-UTC
+         * leap-second offset, so the returned wall-clock fields sit on the TOW
+         * grid: a 30-second RINEX file gives HH:MM:00.000 and HH:MM:30.000, not
+         * times shifted by the leap-second count (HH:MM:42 and HH:MM:12 at 18 s).
+         * Used by log formatters so that every line reads on the same grid as the
+         * data.
          */
         static void gpsTimeToGpsScaleCalendar(const GnssTime& time, int& year, int& month,
                                               int& day, int& hour, int& minute, double& second);
@@ -296,8 +314,10 @@ namespace GnssProcessor {
         /**
          * @brief Computes the offset from a time system to Terrestrial Time (TT).
          *
-         * TT = TAI + 32.184 s. GPS = TAI - 19 s, so TT - GPS = 51.184 s (constant).
-         * For UTC-based systems: TT - UTC = TAI_UTC_offset + 32.184 s.
+         * TT = TAI + 32.184 s and GPS = TAI - 19 s, so TT - GPS = 51.184 s
+         * (constant).  "GPS", "GAL" and an empty string use 51.184 s; "BDS" uses
+         * 65.184 s (BDT = GPS - 14 s).  Any other string, including "UTC" and
+         * "GLO", is treated as UTC: TT - UTC = tai_utc_offset + 32.184 s.
          *
          * @param time_system Time system string (e.g., "GPS", "GAL", "UTC").
          * @param tai_utc_offset Current TAI-UTC leap second offset (e.g. 37.0).
@@ -321,8 +341,11 @@ namespace GnssProcessor {
         }
 
         /**
-         * @brief Converts GPS Modified Julian Date (MJD) to TT MJD.
-         * @param mjd_gps GPS MJD.
+         * @brief Converts an MJD on the scale named by @p time_system to TT MJD.
+         *
+         * Adds offsetToTT(time_system, tai_utc_offset) / 86400 days.
+         *
+         * @param mjd_gps MJD on the @p time_system scale (the GPS scale for "GPS").
          * @param time_system Time system string.
          * @param tai_utc_offset Current TAI-UTC leap seconds (e.g. 37.0).
          * @return TT MJD.
@@ -333,28 +356,28 @@ namespace GnssProcessor {
         }
 
         /**
-         * @brief Convert a GLONASS time-of-day to full GPS time, anchored on a known epoch.
+         * @brief Converts a GLONASS time-of-day to full GPS time, anchored on a known epoch.
          *
          * GLONASS broadcasts time on the UTC(SU)+3h ("Moscow") day.  Several RTCM
-         * fields carry only the seconds-of-day within that Moscow day with no
-         * year/week: the MSM epoch @c tk (DF034) and the legacy/IGS SSR GLONASS
-         * epoch (DF389).  This reconstructs the full @c GnssTime on the GPS scale
-         * by framing the time-of-day in the Moscow day nearest
-         * @p anchor_gps_seconds (resolving the midnight wrap to within ±12 h),
-         * then carrying it back through UTC to GPS time (applying the
-         * epoch-dependent GPS-UTC leap-second offset).  Mirrors RTKLIB's
+         * fields carry only the seconds-of-day within that Moscow day, with no
+         * year or week: the MSM epoch @c tk (DF034) and the legacy/IGS SSR GLONASS
+         * epoch (DF389).  This function places the time-of-day in the Moscow day
+         * nearest @p anchor_gps_seconds (resolving the midnight wrap to within
+         * ±12 h), then converts it through UTC to GPS time with the
+         * epoch-dependent GPS-UTC leap-second offset.  Mirrors RTKLIB's
          * @c adjday_glot.
          *
-         * The leap-second offset is looked up once at the anchor epoch and reused
-         * for the forward (GPS→UTC) and return (UTC→GPS) legs, so it cancels
-         * exactly except across a leap-second insertion boundary, where the
-         * single-epoch error self-corrects on the next epoch.
+         * The leap-second offset is looked up once, at the anchor epoch, and used
+         * for both the forward (GPS→UTC) and return (UTC→GPS) legs.  It is
+         * therefore exact except when the anchor and the target epoch lie on
+         * opposite sides of a leap-second insertion; that error lasts one epoch,
+         * because the next call uses a later anchor.
          *
          * @param tod_glonass_s      Seconds since the start of the GLONASS (Moscow)
          *                           day, i.e. RTCM @c tk (MSM) or the SSR GLONASS
          *                           epoch field, nominally in [0, 86400).
          * @param anchor_gps_seconds Continuous GPS seconds (week·604800 + tow) of a
-         *                           known nearby epoch — the rover's current time —
+         *                           known nearby epoch (the rover's current time),
          *                           used to resolve which GLONASS day the
          *                           time-of-day falls in.
          * @return GnssTime{week, tow} on the GPS time scale.  Returns {0, 0} if
@@ -363,7 +386,7 @@ namespace GnssProcessor {
         static GnssTime glonassTodToGpsTime(double tod_glonass_s, double anchor_gps_seconds);
 
         /**
-         * @brief Convert a GNSS time to continuous GPS seconds for sorting / interpolation.
+         * @brief Converts a GNSS time to continuous GPS seconds for sorting / interpolation.
          *
          * Builds a monotonic scalar time value by converting the GPS week + time-of-week
          * representation into seconds since the GPS epoch:
@@ -377,38 +400,38 @@ namespace GnssProcessor {
         /**
          * @brief Current system wall-clock time as continuous GPS seconds.
          *
-         * Reads the host clock (UTC/POSIX) and converts to continuous GPS
-         * seconds (week·604800 + tow), adding @ref currentLeapSeconds for the
-         * UTC→GPS offset (the compiled @c LEAP_SECONDS unless overridden via
-         * @ref setLeapSecondsOverride).  Used by the real-time engine to
-         * measure how far an observation epoch lags real time (obs-backlog /
-         * skip-to-latest), and as the COLD-START anchor of the RTCM parser's
-         * stream-time tracker (RTB-1(a)).
+         * Reads the host clock (UTC/POSIX, whole seconds) and converts it to
+         * continuous GPS seconds (week·604800 + tow), adding @ref currentLeapSeconds
+         * for the UTC→GPS offset (the compiled @c LEAP_SECONDS unless overridden
+         * via @ref setLeapSecondsOverride).  The real-time engine uses it to
+         * measure how far an observation epoch lags real time (obs backlog,
+         * skip-to-latest), and the RTCM parser's stream-time tracker uses it as
+         * its cold-start anchor (RTB-1(a)).
          *
          * @return Continuous GPS seconds for "now" (≤ 0 if before the GPS epoch).
          */
         static double nowContinuousGpsSeconds();
 
         /**
-         * @brief Override the GPS-UTC leap-second count used by the wall-clock
+         * @brief Overrides the GPS-UTC leap-second count used by the wall-clock
          *        → GPS conversion (RTB-1(c); config key @c realtime.leap_seconds).
          *
-         * Affects @ref nowContinuousGpsSeconds (and therefore everything built
-         * on it: the RT decode paths' cold-start week/day promotion,
-         * @ref nowGpsTime product stamps, RT lag measurement).  The
-         * epoch-dependent TABLE lookups (@ref leapSecondsGpsUtc — used for
-         * historical epochs, GLONASS day arithmetic at the anchor epoch, UTC
-         * formatting) are deliberately NOT overridden: they are already
-         * correct per epoch; this override exists so a future leap-second
-         * insertion doesn't strand the compiled constant on live streams
-         * before a rebuild.  Set once at startup (RealTimeEngine::initialize)
-         * before the receive threads spin up; the value is stored atomically
-         * so a late set is safe, just not atomic with in-flight conversions.
+         * Affects @ref nowContinuousGpsSeconds and everything built on it: the RT
+         * decode paths' cold-start week/day promotion, @ref nowGpsTime product
+         * stamps, and RT lag measurement.  The epoch-dependent table lookups
+         * (@ref leapSecondsGpsUtc, used for historical epochs, GLONASS day
+         * arithmetic at the anchor epoch and UTC formatting) are not overridden:
+         * they are already correct per epoch.  The override lets a future
+         * leap-second insertion be applied to live streams without a rebuild.
+         * Set once at startup (RealTimeEngine::initialize, via
+         * armSsrStoreOptions) before the receive threads start.  The value is
+         * stored atomically, so a late set is safe, though not atomic with
+         * conversions already in flight.
          *
          * Deriving the leap count from the broadcast navigation message
-         * (GPS LNAV page-18 ΔtLS and equivalents) is the principled follow-on
-         * — RTF-scale, since it needs the nav decoders to surface the field
-         * and a policy for pre-first-nav frames.
+         * (GPS LNAV page-18 ΔtLS and equivalents) is the planned follow-on
+         * (RTF scale): it needs the nav decoders to surface the field and a
+         * policy for frames that arrive before the first navigation message.
          *
          * @param leap_s GPS-UTC offset in seconds (e.g. 18.0).
          */
@@ -427,13 +450,14 @@ namespace GnssProcessor {
          * @brief Current system wall-clock time as a @c GnssTime (GPS week + TOW).
          *
          * Wraps @ref nowContinuousGpsSeconds and splits it into (week, tow).  Used
-         * to stamp a product's TIME-OF-GENERATION so a downstream consumer can
-         * measure end-to-end latency (received − generated) — RT0-4.  This is the
-         * wall clock, NOT a content-reference epoch (those come from the observation
-         * stream); it is non-deterministic by nature, so never use it on a path that
-         * must be byte-reproducible.
+         * to stamp a product's time of generation so that a downstream consumer can
+         * measure end-to-end latency (received − generated) (RT0-4).  This is the
+         * wall clock, not a content-reference epoch (those come from the
+         * observation stream).  It is non-deterministic, so it does not belong on
+         * any path that must be byte-reproducible.
          *
-         * @return Wall-clock "now" as a GnssTime (week 0, tow 0 semantics unused).
+         * @return Wall-clock "now" as a GnssTime (the {0, 0} "unavailable"
+         *         convention is not used).
          */
         static GnssTime nowGpsTime();
 
@@ -454,8 +478,8 @@ namespace GnssProcessor {
         static constexpr int64_t SECONDS_IN_DAY = 86400;      ///< Seconds in a day.
         static constexpr double DAYS_PER_JULIAN_CENTURY = 36525.0; ///< Days in a Julian century.
 
-        /// @brief Current-era GPS-UTC leap second count. Use leapSecondsGpsUtc() for
-        ///        epoch-dependent lookups. This value (18) is valid from 2017-01-01 onwards.
+        /// @brief GPS-UTC leap-second count of the current era, valid from 2017-01-01.
+        ///        Epoch-dependent lookups use leapSecondsGpsUtc().
         static constexpr double LEAP_SECONDS = 18.0;
 
     private:

@@ -3,24 +3,24 @@
 
 Two of the card's four grading axes, side by side across arms:
 
-  CHURN      -- n_chord_births / n_slip_refloats / n_d5_flags per epoch, from
-                network_epoch_status.csv.  This is what the knobs act on.
-  DD         -- med|frac_cyc|, median dd_sigma_cyc and the adjacent-epoch DD step,
-                from network_dd_fractional.csv, over the LAST hour (the tail, so
-                cold ignition is excluded -- never verdict inside ignition).
-                This is whether acting on the churn bought anything.
+  CHURN      n_chord_births / n_slip_refloats / n_d5_flags per epoch, from
+             network_epoch_status.csv. This is what the knobs act on.
+  DD         med|frac_cyc|, median dd_sigma_cyc and the adjacent-epoch DD step,
+             from network_dd_fractional.csv, over the last hour (the tail, so
+             cold ignition is excluded from the verdict).
+             This is whether acting on the churn bought anything.
 
-The other two axes are deliberately NOT wrapped here, because each has an
-existing owner whose methodology is the one on record and re-implementing it
-would create a second, quietly different answer:
+The other two axes are deliberately not wrapped here: each has an existing
+owner whose methodology is the one on record, and re-implementing it here
+would create a second, quietly different answer.
 
-  python scripts/chain_stability.py --runroot runs/<arm>      # total_IF, the NO-HARM check
+  python scripts/chain_stability.py --runroot runs/<arm>      # total_IF, the no-harm check
   python scripts/grade_ddfrac_perhour.py runs/<arm>           # per-hour DD convergence
 
-Epoch-status columns are read BY NAME.  The positional indices around
+Epoch-status columns are read by name. The positional indices around
 n_arc_refloat(17) / n_d5_flags(18) / n_d5_retaps(19) / n_chord_births(20) /
-n_slip_refloats(21) are off by one and reading them positionally has cost this
-project two measurement-hygiene errors already.
+n_slip_refloats(21) are off by one; reading them positionally has already
+produced two measurement errors in this project.
 
 Usage:
     python scripts/grade_churn_arms.py runs/churn_base runs/churn_v3 runs/churn_v4
@@ -68,8 +68,8 @@ def dd_tail(run: Path, tail_s: float) -> dict:
     """med|frac|, median dd_sigma_cyc and the adjacent-epoch |dDD| over the tail.
 
     The DD step is formed per (cons, signal, sat_i, ref_sat, sta_a, sta_b) series
-    between CONSECUTIVE epochs only -- a step across a gap is not a step, it is two
-    different arcs, and averaging it in is how a churn metric flatters itself.
+    between consecutive epochs only: a step across a gap is not a step, it is two
+    different arcs, and averaging it in would flatter the churn metric.
     """
     p = run / "logs" / "network_dd_fractional.csv"
     if not p.exists():
@@ -102,7 +102,7 @@ def dd_tail(run: Path, tail_s: float) -> dict:
     for s in series.values():
         ts = sorted(s)
         for a, b in zip(ts, ts[1:]):
-            if abs((b - a) - dt) < 1e-6:          # ADJACENT epochs only
+            if abs((b - a) - dt) < 1e-6:          # adjacent epochs only
                 steps.append(abs(s[b] - s[a]))
     return {
         "tail_rows": len(keep),

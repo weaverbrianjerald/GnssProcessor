@@ -1,19 +1,18 @@
 /**
  * @file test_wl_only_ffr.cpp
- * @brief Card Q3 §8.11 — the WL-only AR acceptance gate
- *        (@ref AmbiguityResolverConfig::wl_only_ffr).
+ * @brief The WL-only AR acceptance gate (@ref AmbiguityResolverConfig::wl_only_ffr),
+ *        card Q3 (§8.11 of the card).
  *
- * The WL-only / MW-WL-constraint paths assert MW wide-lane integers directly:
- * no LAMBDA search, so no ratio test and — until this gate existed — no
- * success-rate gate either, only the `wl_max_frac` POINT test on each arc's
- * running residual.  A point test cannot bound P(the integer is wrong), and
- * that is what an acceptance decision has to control.  Measured cost of the
- * gap: an ungated 5-constraint fix put a held-out consumer 35 m off while
- * `ratio` reported the "+inf = no LAMBDA ran" sentinel.
+ * The WL-only / MW-WL-constraint paths assert MW wide-lane integers directly: there
+ * is no LAMBDA search, so no ratio test, and without this gate no success-rate gate
+ * either, only the `wl_max_frac` point test on each arc's running residual.  A point
+ * test cannot bound P(the integer is wrong), which is what an acceptance decision has
+ * to control.  Without the gate a wrong fix passes unflagged: an ungated 5-constraint
+ * fix placed a held-out consumer 35 m off while `ratio` reported the
+ * "+inf = no LAMBDA ran" sentinel.
  *
- * What is pinned here is the FAIL-SAFE behaviour, because that is precisely
- * what a field run cannot demonstrate — a clean run only shows that nothing
- * went wrong, never that the guard would have fired.
+ * The tests pin the fail-safe behaviour, because a field run cannot demonstrate it: a
+ * clean run shows only that nothing went wrong, not that the guard would have fired.
  */
 #include <gtest/gtest.h>
 
@@ -27,7 +26,7 @@
 
 namespace GnssProcessor {
 
-/// Befriended in AmbiguityResolver.hpp — forwards to the private gate.  MUST be
+/// Befriended in AmbiguityResolver.hpp; forwards to the private gate.  It has to be
 /// declared in this namespace: the friend declaration names
 /// GnssProcessor::WlFfrTestAccess, and a global-scope twin is a different type.
 struct WlFfrTestAccess {
@@ -60,10 +59,10 @@ double arcTerm(double sigma_cycles) { return std::erf(kInv2Sqrt2 / sigma_cycles)
 
 }  // namespace
 
-// --- The gate must agree with the LAMBDA tier's own functional ------------
-// Both tiers have to report ONE comparable number, or "p_succ" means something
-// different depending on which machinery fixed — which is the ambiguity this
-// whole card is about.
+// --- The gate agrees with the LAMBDA tier's own functional ----------------
+// Both tiers report one comparable number; otherwise "p_succ" would mean something
+// different depending on which machinery fixed, which is the ambiguity this card
+// removes.
 TEST(WlOnlyFfr, PerArcTermMatchesTheLambdaTierBootstrap) {
     AmbiguityResolver r = makeResolver();
     const double sigma = 0.08;                       // cycles
@@ -71,15 +70,15 @@ TEST(WlOnlyFfr, PerArcTermMatchesTheLambdaTierBootstrap) {
         {"G01_L1_L2", WlArcQuality{sigma, 50, false}}};
     const double got = WlFfrTestAccess::rate(r, {"G01_L1_L2"}, q, nullptr);
 
-    // ils::computeBootstrapSuccessRate takes VARIANCES; one arc of variance
-    // sigma^2 must give the identical number.
+    // ils::computeBootstrapSuccessRate takes variances; one arc of variance
+    // sigma^2 gives the identical number.
     Eigen::VectorXd d(1);
     d(0) = sigma * sigma;
     EXPECT_NEAR(got, ils::computeBootstrapSuccessRate(d), 1e-12);
     EXPECT_NEAR(got, arcTerm(sigma), 1e-12);
 }
 
-// --- Product runs over DISTINCT ARCS --------------------------------------
+// --- The product runs over distinct arcs ----------------------------------
 TEST(WlOnlyFfr, ProductIsOverDistinctArcs) {
     AmbiguityResolver r = makeResolver();
     std::map<std::string, WlArcQuality> q{
@@ -90,9 +89,9 @@ TEST(WlOnlyFfr, ProductIsOverDistinctArcs) {
     EXPECT_NEAR(got, arcTerm(0.05) * arcTerm(0.09), 1e-12);
 }
 
-// --- FAIL-SAFE: an arc we cannot bound contributes ZERO, never 1 -----------
-// "No quality entry" means the arc's failure rate is UNKNOWN.  Treating unknown
-// as fine is the exact shape of the defect this gate closes.
+// --- Fail-safe: an arc that cannot be bounded contributes 0, not 1 --------
+// "No quality entry" means the arc's failure rate is unknown.  Treating unknown as
+// fine is the defect this gate closes.
 TEST(WlOnlyFfr, MissingArcQualityIsZeroNotOne) {
     AmbiguityResolver r = makeResolver();
     std::map<std::string, WlArcQuality> q{
@@ -103,7 +102,7 @@ TEST(WlOnlyFfr, MissingArcQualityIsZeroNotOne) {
     EXPECT_EQ(worst, "G99_L1_L2");   // and it is named, so elimination can drop it
 }
 
-// --- FAIL-SAFE: an IMMATURE arc contributes zero even with a tiny sigma ----
+// --- Fail-safe: an immature arc contributes zero even with a tiny sigma ----
 // Two samples that happen to agree give sigma ~ 0 and so a success rate of ~1
 // on one degree of freedom.  Without the maturity requirement a meaningless
 // variance buys a fix.
@@ -113,13 +112,13 @@ TEST(WlOnlyFfr, ImmatureArcIsRejectedDespiteTinySigma) {
         {"G01_L1_L2", WlArcQuality{1e-9, 2, false}}};   // sigma ~ 0, count 2
     EXPECT_DOUBLE_EQ(WlFfrTestAccess::rate(r, {"G01_L1_L2"}, q, nullptr), 0.0);
 
-    // The SAME sigma on a mature arc is a decided integer and saturates at 1.
+    // The same sigma on a mature arc is a decided integer and saturates at 1.
     std::map<std::string, WlArcQuality> mature{
         {"G01_L1_L2", WlArcQuality{1e-9, 40, false}}};
     EXPECT_NEAR(WlFfrTestAccess::rate(r, {"G01_L1_L2"}, mature, nullptr), 1.0, 1e-9);
 }
 
-// --- A zero-sigma MATURE arc must not divide by zero ----------------------
+// --- A zero-sigma mature arc does not divide by zero ----------------------
 TEST(WlOnlyFfr, ExactlyZeroSigmaOnMatureArcSaturatesAtOne) {
     AmbiguityResolver r = makeResolver();
     std::map<std::string, WlArcQuality> q{
@@ -142,7 +141,7 @@ TEST(WlOnlyFfr, ExactPivotContributesOneRegardlessOfCount) {
 
 // --- The weakest arc is identified for backward elimination ---------------
 // Reported even when the product is already 0, because the caller needs the
-// TRUE worst arc to drop, not whichever zero came first in key order.
+// true worst arc to drop, not whichever zero came first in key order.
 TEST(WlOnlyFfr, WorstArcIsTheLowestContributorNotTheFirstKey) {
     AmbiguityResolver r = makeResolver();
     std::map<std::string, WlArcQuality> q{
@@ -169,9 +168,10 @@ TEST(WlOnlyFfr, EmptyArcSetIsZero) {
     EXPECT_DOUBLE_EQ(WlFfrTestAccess::rate(r, {}, {}, nullptr), 0.0);
 }
 
-// --- The realistic case the field hit: a marginal arc drags the set under --
-// One 0.25-cycle arc among four good ones is enough to fail a 0.999 target,
-// which is the behaviour that stops the 35 m fix.
+// --- The field case: one marginal arc pulls the set below target ----------
+// One 0.25-cycle arc among three good ones is enough to fail a 0.999 target
+// (its own term is erf(1/(2√2·0.25)) ≈ 0.954); this is the behaviour that stops
+// the 35 m fix.
 TEST(WlOnlyFfr, OneMarginalArcFailsA999Target) {
     AmbiguityResolver r = makeResolver();
     std::map<std::string, WlArcQuality> q{
@@ -186,18 +186,18 @@ TEST(WlOnlyFfr, OneMarginalArcFailsA999Target) {
     EXPECT_LT(p, 0.999);
     EXPECT_EQ(worst, "D_L1_L2");
 
-    // Drop it and the survivors clear the bar — the point of eliminating the
+    // With it dropped, the survivors clear the bar: the reason for eliminating the
     // weakest arc rather than refusing the whole set.
     const double p_after =
         WlFfrTestAccess::rate(r, {"A_L1_L2", "B_L1_L2", "C_L1_L2"}, q, nullptr);
     EXPECT_GT(p_after, 0.999);
 }
 
-// --- The DEFAULT-ON contract ----------------------------------------------
-// Both guards default ON because they close a fail-unsafe path, and both are
-// reversible.  A later edit that silently flips a default back would restore
-// the 35 m blunder with nothing in the logs to say so, so the contract is
-// pinned here rather than left to review.
+// --- The default-on contract ----------------------------------------------
+// Both guards default to on because they close a fail-unsafe path, and both are
+// reversible.  An edit that flipped a default back would reopen that path with
+// nothing in the logs to show it, so the contract is pinned here rather than left
+// to review.
 TEST(WlOnlyFfr, GuardsAreOnByDefaultAndReversible) {
     AmbiguityResolverConfig cfg;                     // untouched defaults
     EXPECT_TRUE(cfg.wl_only_ffr)
@@ -215,9 +215,9 @@ TEST(WlOnlyFfr, GuardsAreOnByDefaultAndReversible) {
 
 // --- The innovation screen's own arithmetic, at the boundary ---------------
 // The screen itself is |asserted - predicted| > cap, applied identically in
-// resolveWlOnly and applyMwWlConstraintsNlWl_.  What is worth pinning is the
-// SEMANTIC: the cap is on the DISAGREEMENT, so a constraint sitting exactly on
-// the cap is kept and one beyond it is dropped, symmetrically in sign.
+// resolveWlOnly and applyMwWlConstraintsNlWl_; this test restates it in a local
+// lambda to pin the semantics: the cap is on the disagreement, so a constraint
+// exactly on the cap is kept and one beyond it is dropped, symmetrically in sign.
 TEST(WlOnlyFfr, InnovationScreenIsSymmetricAndInclusiveAtTheCap) {
     const double cap = 0.5;
     auto dropped = [&](double asserted, double predicted) {

@@ -1,13 +1,14 @@
 /**
  * @file NetworkTeardown.cpp
- * @brief Implementation of @ref networkTeardown — the run-end readout tail relocated
- *        VERBATIM out of Application::runNetwork at the teardown-tail decomposition
- *        (2026-07-23).  The body is a byte-copy (dedent-0); the only added code is the
- *        alias preamble that byte-copies the run-TU ctx/config/setup/traces aliases.
+ * @brief Implementation of @ref networkTeardown, the run-end readout tail of
+ *        Application::runNetwork.  The body was moved out of the driver without edits
+ *        (dedent 0) at the teardown-tail decomposition; the code added at the move is
+ *        the alias preamble, which re-creates the driver's ctx/config/setup/traces
+ *        aliases so the moved body reads its original names.
  */
 
 #include "filter/NetworkInject.hpp"
-#include "filter/NetworkCanonicalPairAdmission.hpp" // card CPA: run-end counter readout
+#include "filter/NetworkCanonicalPairAdmission.hpp" // run-end counter readout (card CPA)
 #include "filter/NetworkTeardown.hpp"
 
 #include "app/NetworkRunContext.hpp"
@@ -18,35 +19,35 @@
 #include "app/Application.hpp"
 #include "rinex/MultiRinexSync.hpp"
 #include "products/SsrCorrectionStore.hpp"
-#include "products/NetworkEmitRebase.hpp"   // Card 4 (M1) phase D: emit-layer frame re-base
-#include "products/NetworkProductEmitter.hpp" // Card JT: kDiscDecommonMinSats for the run-end line
-#include "products/NetworkPbEmitFilter.hpp" // M5 prereq: PB emission-continuity filter
+#include "products/NetworkEmitRebase.hpp"   // emit-layer frame re-base (Card 4 (M1) phase D)
+#include "products/NetworkProductEmitter.hpp" // kDiscDecommonMinSats for the run-end line (card JT)
+#include "products/NetworkPbEmitFilter.hpp" // PB emission-continuity filter (M5 prerequisite)
 #include "filter/NetworkEstimator.hpp"
-#include "filter/NetworkCarryVce.hpp"        // M2: LS-VCE carry-row variance-component monitor
+#include "filter/NetworkCarryVce.hpp"        // LS-VCE carry-row variance-component monitor (M2)
 #include "filter/NetworkIonoDeweightGate.hpp" // Station-adaptive SH-VTEC-constraint deweight (iono deweight card)
-#include "filter/NetworkInvariantCarryDriver.hpp"  // Card 4 (M1) C3b: DD cycle-basis invariant carry
-#include "filter/NetworkMwWlLayer.hpp"             // M5 card WL-1: MW-seeded wide-lane pseudo-obs layer
+#include "filter/NetworkInvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (Card 4 (M1) C3b)
+#include "filter/NetworkMwWlLayer.hpp"             // MW-seeded wide-lane pseudo-obs layer (M5 card WL-1)
 #include "filter/StateKeySchema.hpp"
-#include "filter/NetworkRunTypes.hpp"      // INC-2: run-loop record types (NetStation / StationAssembly / carry PODs)
-#include "filter/NetworkWlRunTypes.hpp" // INC-9b: hoisted runNetwork()-local WL/RAII types
-#include "filter/NetworkRobustStats.hpp"   // INC-2: median/MAD robust attribution helpers
+#include "filter/NetworkRunTypes.hpp"      // run-loop record types: NetStation, StationAssembly, carry PODs (INC-2)
+#include "filter/NetworkWlRunTypes.hpp" // WL and RAII types hoisted out of runNetwork() (INC-9b)
+#include "filter/NetworkRobustStats.hpp"   // median/MAD robust attribution helpers (INC-2)
 #include "filter/NetworkBlockBaarda.hpp"       // BlockFormal LOS-block census (networkBlockBaardaReport)
 #include "filter/NetworkCongruence.hpp"        // station congruence screen (networkCongruenceReport)
-#include "filter/NetworkMdb.hpp"               // Baarda MDB (networkMdbReport — the run-end body lives there)
-#include "filter/NetworkClockAnchor.hpp"       // Card Q3 §3: kCtaWLadder / kCtaELadder for the guard-ladder run-end line
-#include "filter/NetworkClockLevel.hpp"        // card CLV: the level re-base run-end readout
+#include "filter/NetworkMdb.hpp"               // Baarda MDB (networkMdbReport, which holds the run-end body)
+#include "filter/NetworkClockAnchor.hpp"       // kCtaWLadder / kCtaELadder for the guard-ladder run-end line (card Q3 §3)
+#include "filter/NetworkClockLevel.hpp"        // level re-base run-end readout (card CLV)
 #include "filter/NetworkRedundancyCensus.hpp"  // redundancy census (kCensusMinPoolRows for the run-end line)
 #include "filter/NetworkPrefitCensus.hpp"      // prefit census (kNetPrefitMinTypeRows / kNetPrefitPinWeight for the run-end line)
-#include "app/NetworkSetupResult.hpp"   // INC-5: setup-phase handoff (setup) + navAvailabilityGpsSeconds
+#include "app/NetworkSetupResult.hpp"   // setup-phase handoff (setup) and navAvailabilityGpsSeconds (INC-5)
 #include "slip/IfPhaseSlipDetector.hpp" // IF-phase between-sat/between-epoch slip detection
 #include "common/Constants.hpp"
-#include "common/PppUtils.hpp"        // B5: signal wavelengths for the DD fractional-cycle diagnostic
+#include "common/PppUtils.hpp"        // signal wavelengths for the DD fractional-cycle diagnostic (B5)
 #include "math/TimeUtils.hpp"
 #include "math/Coordinates.hpp"
 #include <Eigen/Dense>
-#include <Eigen/Core>          // Eigen::setNbThreads / nbThreads (pin Eigen to 1 thread inside our per-station OpenMP region — avoids nested oversubscription and keeps the result deterministic)
+#include <Eigen/Core>          // Eigen::setNbThreads / nbThreads, used by the driver to pin Eigen to 1 thread inside its per-station OpenMP region (no nested oversubscription, deterministic result); not called in this file
 #include <fmt/format.h>
-#include <omp.h>               // per-station PASS A/B parallelism (gated on station count); pragmas degrade to no-ops when the toolchain lacks /openmp
+#include <omp.h>               // per-station PASS A/B parallelism (gated on station count); pragmas degrade to no-ops when the toolchain lacks /openmp.  Carried over from the driver; this file has no OpenMP code
 #include <algorithm>
 #include <cmath>
 #include <chrono>
@@ -57,7 +58,7 @@
 #include <fstream>
 #include <map>
 #include <memory>
-#include <numeric>             // std::iota (netar ILS-cap subset ordering)
+#include <numeric>             // std::iota (netar ILS-cap subset ordering); carried over from the driver, not used in this file
 #include <optional>
 #include <set>
 #include <sstream>
@@ -114,8 +115,8 @@ int networkTeardown(
     const Coordinates::Llh& cl_truth_llh,
     const std::filesystem::path& log_dir_) {
     // --- Alias preamble (byte-copies of the run-TU pre-loop alias block). ---
-    /// RF-1 step 3: the joint-block PD-fallback bar's verdict, folded into the run's
-    /// return code at the tail.  0 until the bar below sets it.
+    /// Verdict of the joint-block PD-fallback bar, folded into the run's return code at
+    /// the tail.  0 until the bar below sets it (RF-1 step 3).
     int amb_block_rc = 0;
     const auto& nc = config_.getNetworkConfig();
     const ClosedLoopConfig& cl = nc.closed_loop;
@@ -138,17 +139,17 @@ int networkTeardown(
     auto& eq34_gap_repin_total = ctx.carry.eq34_gap_repin_total;
     auto& eq34_mismatch_epochs = ctx.carry.eq34_mismatch_epochs;
     const double pl_var_floor  = ctx.knobs.pl_var_floor;  // lock-in guard; 0 = off
-    const double pb_var_floor  = ctx.knobs.pb_var_floor;  // B4: D2 phase-bias carry floor; 0 = off
-    const double cb_var_floor  = ctx.knobs.cb_var_floor;  // B4: D2 code-bias carry floor;  0 = off
-    const bool   carry_cpl_cond = ctx.knobs.carry_cpl_cond; // Card 1: conditional local carry (coupling rows) — requires fullcov_on (enforced at load)
-    const bool   carry_cpl_joint = ctx.knobs.carry_cpl_joint; // Card 1b: JOINTLY whiten the coupling rows (departed cols → M_w) — requires carry_cpl_cond (enforced at load)
-    const bool   carry_cpl_tu   = ctx.knobs.carry_cpl_tu;  // Card 1d: border time update of the coupling rows at injection (κ shrink + M²κq inflation) — requires carry_cpl_cond (enforced at load)
+    const double pb_var_floor  = ctx.knobs.pb_var_floor;  // phase-bias carry floor (D2, B4); 0 = off
+    const double cb_var_floor  = ctx.knobs.cb_var_floor;  // code-bias carry floor (D2, B4);  0 = off
+    const bool   carry_cpl_cond = ctx.knobs.carry_cpl_cond; // conditional local carry (coupling rows); requires fullcov_on, enforced at load (Card 1)
+    const bool   carry_cpl_joint = ctx.knobs.carry_cpl_joint; // joint whitening of the coupling rows (departed cols → M_w); requires carry_cpl_cond, enforced at load (Card 1b)
+    const bool   carry_cpl_tu   = ctx.knobs.carry_cpl_tu;  // border time update of the coupling rows at injection (κ shrink + M²κq inflation); requires carry_cpl_cond, enforced at load (Card 1d)
     const bool   carry_vce     = ctx.knobs.carry_vce;
-    const double contract_rebroadcast_s = ctx.knobs.contract_rebroadcast_s; // RTA-5: S-contract re-broadcast period (product time, s; 0 = off)
-    const bool   clk_runaway_on  = ctx.knobs.clk_runaway_on;        // RT0-5: per-constellation clock-runaway quarantine
-    const double clk_runaway_mag = ctx.knobs.clk_runaway_mag;         // RT0-5: median |clock−global median| ceiling (m)
-    const double clk_runaway_rate= ctx.knobs.clk_runaway_rate;      // RT0-5: median |drift| ceiling (m/s)
-    const bool   perconst_on       = ctx.knobs.perconst_on;          // RTA-10: per-constellation carve-out of the A4 σ̂0 withhold
+    const double contract_rebroadcast_s = ctx.knobs.contract_rebroadcast_s; // S-contract re-broadcast period in product time, s; 0 = off (RTA-5)
+    const bool   clk_runaway_on  = ctx.knobs.clk_runaway_on;        // per-constellation clock-runaway quarantine (RT0-5)
+    const double clk_runaway_mag = ctx.knobs.clk_runaway_mag;         // ceiling on median |clock − global median|, m (RT0-5)
+    const double clk_runaway_rate= ctx.knobs.clk_runaway_rate;      // ceiling on median |drift|, m/s (RT0-5)
+    const bool   perconst_on       = ctx.knobs.perconst_on;          // per-constellation carve-out of the A4 σ̂0 withhold (RTA-10)
     auto& n_emitted = ctx.counters.n_emitted;
     auto& n_skipped = ctx.counters.n_skipped;
     auto& n_gate_withheld = ctx.counters.n_gate_withheld;
@@ -191,8 +192,8 @@ int networkTeardown(
     const bool sec_timers_on = nc.trace_section_timers;
     const int SB_COUNT = static_cast<int>(sec_sub.size());  // reconstructed run-TU SubBlock count
 
-    double loop_ms = 0.0;   // L3/L15: hoisted out of the timing block so the run-summary CSV / manifest can read it
-    {  // [TIMING] per-epoch scaling measurement (loop wall only; startup excluded)
+    double loop_ms = 0.0;   // hoisted out of the timing block so the run-summary CSV / manifest can read it (L3/L15)
+    {  // Timing: per-epoch scaling measurement (loop wall only; startup excluded)
         loop_ms = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - t_loop_begin).count();
         log->info("Network[timing]: epoch-loop wall {:.1f} ms over {} epochs = {:.2f} ms/epoch "
@@ -202,20 +203,19 @@ int networkTeardown(
                   stations.size(), parallel_on ? "PARALLEL" : "SERIAL", n_threads);
     }
 
-    // === Tier D0: section-timer RUN TOTALS ===================================
-    // The whole-run breakdown that decides which Tier-D lever matters.  The kernel
-    // accumulators are run-cumulative (assembly / reduce / solve / cov-inverse /
-    // cov-consumers); `other` = the epoch-loop wall minus those + the driver
-    // assembly wall (QC decision logic, emit, I/O, tracers).  Only the ratios are
-    // load-bearing — absolute ms depend on the machine and the parallel settings.
+    // === Tier D0: section-timer run totals ===================================
+    // Whole-run time breakdown that ranks the Tier-D optimizations.  The accumulators
+    // are run-cumulative: the driver's assembly wall and the kernel's reduce, solve,
+    // cov-inverse and cov-consumers timers.  `other` is the epoch-loop wall minus all
+    // five (QC decision logic, emit, I/O, tracers).  Only the ratios carry meaning;
+    // absolute ms depend on the machine and the parallel settings.
     //
-    // On the card's "QC tiers" section: the RAIM / attribution / clock-monitor tiers
-    // are not a wall-separable phase — they are interleaved with and dominated by
-    // covariance-consumer calls (rowRedundancy / reconstructStation), which ARE timed
-    // and attributed to cov-consumers above; their residual decision logic (median
-    // polish, standardization, thresholding) is cheap and falls into `other`.  So the
-    // D1-relevant QC cost is already isolated in cov-consumers — bracketing the
-    // scattered QC blocks would only double-count those covariance calls.
+    // The RAIM, attribution and clock-monitor tiers have no timer of their own: they are
+    // interleaved with, and dominated by, covariance-consumer calls (rowRedundancy /
+    // reconstructStation), which are timed under cov-consumers.  Their remaining decision
+    // logic (median polish, standardization, thresholding) is cheap and falls into
+    // `other`.  The D1-relevant QC cost is therefore already isolated in cov-consumers,
+    // and bracketing the scattered QC blocks would count those covariance calls twice.
     if (sec_timers_on) {
         const auto& stmr = est.sectionTimers();
         const double other_ms = loop_ms - sec_asm_wall_ms - stmr.reduce_ms - stmr.solve_ms
@@ -237,14 +237,14 @@ int networkTeardown(
                   stmr.cov_consumers_ms, pct(stmr.cov_consumers_ms), stmr.cov_consumer_calls);
         log->info("Network (D0)   other         {:>9.0f} ms ({:4.1f}%)  [QC / emit / I/O / tracers]",
                   other_ms, pct(other_ms));
-        // Cross-cutting: kernel est.addStation (normal-forming + N_rr factorization).  Mostly
-        // inside the assembly wall, but also captures within-epoch RAIM re-solve adds that fall
-        // after the wall (in `other`), so it is NOT a strict sub-part of the assembly-wall bucket.
+        // Cross-cutting: kernel est.addStation (normal forming and N_rr factorization).  Mostly
+        // inside the assembly wall, but it also captures within-epoch RAIM re-solve adds that
+        // fall after the wall (in `other`), so it is not a strict sub-part of the assembly wall.
         log->info("Network (D0)   est.addStation {:>8.0f} ms ({:4.1f}%)  [{} adds; cross-cutting — "
                   "overlaps assembly-wall + any re-solve in other]",
                   stmr.add_station_ms, pct(stmr.add_station_ms), stmr.add_station_calls);
-        // P0b: foldReducedDdPriors internal breakdown (serial-fold path only, i.e. under
-        // parallel_carry) — which sub-part of the 49%-of-epoch DD fold dominates.
+        // Internal breakdown of foldReducedDdPriors (serial-fold path only, i.e. under
+        // parallel_carry): which sub-part of the DD fold dominates (P0b).
         if (stmr.fold_loop_ms + stmr.fold_minv_ms + stmr.fold_gmg_ms > 0.0)
             log->info("Network (D0)   foldDdPriors: per-station-loop {:>8.0f} ms ({:4.1f}%) | "
                       "M-inverse {:>8.0f} ms ({:4.1f}%) | GMGᵀ {:>7.0f} ms ({:4.1f}%)  [serial-fold path]",
@@ -252,13 +252,13 @@ int networkTeardown(
                       stmr.fold_minv_ms, pct(stmr.fold_minv_ms),
                       stmr.fold_gmg_ms, pct(stmr.fold_gmg_ms));
 
-        // === INC-C0: the invariant-carry driver's per-op split + census =========
-        // Splits the SB_DDBUILD / SB_INSTALL wall brackets (which lump the whole driver)
-        // into the primitive ops the perf-restructure card ranks — the dense-K² change-of-
-        // basis projection (buildDdPriors) and posterior read-back (installPosterior) that
-        // INC-C2's factored (A + U Σ_ss Uᵀ) store removes.  The census reconciles the
-        // "K≈7834 never marginalized" finding (§0): whether marginalization has nothing to
-        // kill (giant live components, case (a)) or the kill path is silent (case (b)).
+        // === Invariant-carry driver: per-op split and census (INC-C0) ===========
+        // Splits the SB_DDBUILD / SB_INSTALL wall brackets, which lump the whole driver,
+        // into its primitive ops: the dense-K² change-of-basis projection (buildDdPriors)
+        // and the posterior read-back (installPosterior), both of which INC-C2's factored
+        // (A + U Σ_ss Uᵀ) store removes.  The census separates the two cases of §0 for a
+        // large carry that is never marginalized: marginalization has nothing to kill
+        // (giant live components, case (a)), or the kill path is silent (case (b)).
         if (carry_invariant) {
             const auto& dp = carry_driver.perfTimers();
             log->info("Network (D0/INC-C0) carry-driver per-op over {} build / {} serial-install "
@@ -270,8 +270,8 @@ int networkTeardown(
                       dp.post_mean_ms, pct(dp.post_mean_ms),
                       dp.post_cov_ms, pct(dp.post_cov_ms),
                       dp.d5_gate_ms, pct(dp.d5_gate_ms), dp.time_update_ms);
-            // LF-1 INC-0: the WL-3 lane-fold split — the ~10³ per-epoch rank-1/rank-2 covariance
-            // touches the perf card exists to shrink, which SB_DDBUILD lumps into basis-project.
+            // Split of the WL-3 lane fold: the ~10³ per-epoch rank-1/rank-2 covariance updates,
+            // which SB_DDBUILD lumps into basis-project (LF-1 INC-0).
             log->info("Network (D0/LF-1) lane-fold per-op: applyLaneMeasurement {:>8.0f} ms ({:4.1f}%) "
                       "over {} row(s) | applyLaneFix {:>8.0f} ms ({:4.1f}%) over {} row(s)  "
                       "[measurement = irreducible O(K²)/row dense downdate; fix = the ~65%-decided "
@@ -287,19 +287,20 @@ int networkTeardown(
                       cc.max_component_kc, cc.max_z_dim, marg_total,
                       cc.chords_marg_perchord, cc.chords_marginalized,
                       cc.chords_born, cc.slip_kills);
-            // LF-1 INC-0: emitted-component fold-dim distribution (SPEC §7.4 — INC-4's Amdahl
-            // ceiling ≈ heaviest component's work / total.  A single tall high bucket ⇒ one
-            // giant G component dominates; a spread ⇒ the component-parallel fold balances).
+            // Emitted-component fold-dim distribution.  INC-4's Amdahl ceiling is about the
+            // heaviest component's work over the total (SPEC §7.4): a single tall high bucket
+            // means one giant G component dominates; a spread means the component-parallel
+            // fold balances (LF-1 INC-0).
             log->info("Network (D0/LF-1) K_c histogram (emitted components by fold-dim, log2 "
                       "buckets 0|1|2|4|8|16|32|64|128|256+): {} {} {} {} {} {} {} {} {} {}",
                       cc.comp_kc_hist[0], cc.comp_kc_hist[1], cc.comp_kc_hist[2], cc.comp_kc_hist[3],
                       cc.comp_kc_hist[4], cc.comp_kc_hist[5], cc.comp_kc_hist[6], cc.comp_kc_hist[7],
                       cc.comp_kc_hist[8], cc.comp_kc_hist[9]);
-            // INC-C0 D-c viability: short fundamental cycles keep the cycle matrix G sparse,
-            // which is NECESSARY BUT NOT SUFFICIENT for a bounded exact info-form carry
-            // (SPEC_carry_factored_pz_C2 D-c) — the border term is Gᵀ Σ_ss G, so the BINDING
-            // probe is Σ_ss sparsity/rank, not cycle length (that doc's §6.1 corrects the
-            // original "sparse iff cycles are short" claim; this counter only screens G).
+            // D-c viability screen: short fundamental cycles keep the cycle matrix G sparse,
+            // which is necessary but not sufficient for a bounded exact information-form
+            // carry (SPEC_carry_factored_pz_C2 D-c).  The border term is Gᵀ Σ_ss G, so the
+            // binding condition is the sparsity and rank of Σ_ss, not cycle length (that
+            // spec's §6.1); this counter screens only G (INC-C0).
             log->info("Network (D0/INC-C0) D-c viability screen (G-side only): max "
                       "fundamental-cycle length {} | mean {:.1f} over {} folded chord(s) — {} "
                       "(short cycles ⇒ sparse G: NECESSARY, not sufficient — the binding probe "
@@ -309,9 +310,10 @@ int networkTeardown(
                                       / static_cast<double>(chords_folded) : 0.0,
                       chords_folded,
                       cc.max_cycle_len <= 8 ? "SPARSE-G likely" : "DENSE-G risk");
-            // INC-C1 growth bound (also a 12 h robustness assert): a large, still-growing carry
-            // with ZERO marginalization over a long run means dead chords are being retained —
-            // the §0 case (b) kill-path bug.  A large per-chord count instead means case (a).
+            // Growth bound, also a robustness assert on 12 h runs (INC-C1): a nonzero peak
+            // carry with no marginalization over more than 100 driven epochs means dead chords
+            // are being retained, the kill-path defect of §0 case (b).  A large per-chord count
+            // instead points to case (a).
             if (marg_total == 0 && cc.max_z_dim > 0 && cc.epochs > 100)
                 log->warn("Network (INC-C1 growth bound): {} carried DD(s) at peak with ZERO "
                           "marginalization(s) over {} driven epoch(s) — dead chords are NOT being "
@@ -320,13 +322,13 @@ int networkTeardown(
                           cc.max_z_dim, cc.epochs);
         }
 
-        // === Tier D0b: `other` sub-block RUN TOTALS, ranked =================
-        // net = wall − Δ(reduce+solve+cov-inverse+cov-consumers) inside each block, so the
-        // recon/solve already in the five D0 sections above is not double-counted.  Σ net vs
-        // the D0 `other` figure closes the accounting; "unattributed" = loop regions no
-        // bracket covers (pre-slip pivot pass, the trace/readout tail, small comment gaps).
-        // This is the ranked table the perlos card acts on (SPEC_dev_tier_perf_cards
-        // §3 gate P0): P1/P2 target the measured top blocks, not §2's guesses.
+        // === Tier D0b: `other` sub-block run totals, ranked =====================
+        // net = wall − Δ(reduce + solve + cov-inverse + cov-consumers) inside each block, so
+        // the recon/solve time already in the five D0 sections above is not counted twice.
+        // Σ net against the D0 `other` figure closes the accounting; "unattributed" is loop
+        // time that no bracket covers (pre-slip pivot pass, the trace/readout tail, small
+        // unbracketed gaps).  This ranked table is gate P0 of SPEC_dev_tier_perf_cards §3
+        // (the perlos card); P1/P2 target the measured top blocks.
         std::vector<int> d0b_order(SB_COUNT);
         for (int b = 0; b < SB_COUNT; ++b) d0b_order[b] = b;
         std::sort(d0b_order.begin(), d0b_order.end(), [&](int a, int c) {
@@ -352,24 +354,24 @@ int networkTeardown(
                   other_ms - d0b_sum_net, pct(other_ms - d0b_sum_net));
     }
 
-    // Card DG5/DG6: the run-wide rank-gate telemetry rides INSIDE the one artifact
-    // a trace-armed run is allowed to add (network_estimability.csv), not as a new
-    // run-end log line — the estim golden arm byte-gates the log TEXT, and an
-    // unarmed control run must stay text-identical while still yielding the
-    // arm-vs-arm numbers the storm analyzer compares.  No-op with the trace off.
+    // The run-wide rank-gate telemetry goes into network_estimability.csv, the one
+    // artifact a trace-armed run adds, and not into a new run-end log line: the estim
+    // golden arm byte-compares the log text, and an unarmed control run has to keep
+    // identical text while still yielding the arm-against-arm numbers the storm
+    // analyzer compares.  No-op with the trace off (cards DG5/DG6).
     traces.writeEstimabilityRunRow(ctx.counters, est.rankGateTol());
-    traces.closeAll();   // INC-4: the exact former 14-stream close list
+    traces.closeAll();   // closes every run trace stream; the list is in NetworkRunTraces::closeAll (INC-4)
 
     log->info("Network producer complete: {} epochs emitted, {} skipped "
               "({} of those withheld by the observability gate, {} by the A4 σ̂0 ceiling) — "
               "of {} synced.",
               n_emitted, n_skipped, n_gate_withheld, n_sigma0_withheld, synced.size());
-    // --- Card RF-PD-fix: the TRUTHFUL in-solve station count -----------------
-    // UNCONDITIONAL, unlike the RF-PD readout below.  The whole point of this line
-    // is that `network_epoch_status.csv`'s `n_present` is NOT the number of stations
-    // in the solve — an unarmed run has exactly the same need to know that, and the
-    // count cannot be recovered from any other artifact.  Standing invariant #4: the
-    // denominator is printed so "min 59" is distinguishable from "never recorded".
+    // --- In-solve station count (card RF-PD-fix) -------------------------------
+    // Printed unconditionally, unlike the RF-PD readout below: `n_present` in
+    // `network_epoch_status.csv` is not the number of stations in the solve, an unarmed
+    // run needs that number as much as an armed one, and no other artifact records it.
+    // The denominator is printed so that a minimum such as "min 59" can be told apart
+    // from a count that was never recorded (invariant #4).
     {
         const auto& c = ctx.counters;
         if (c.sta_in_solve_epochs > 0) {
@@ -392,12 +394,13 @@ int networkTeardown(
                       "consume epoch completed (every epoch aborted, or the loop never ran).");
         }
     }
-    // --- Card RF-PD: the addStation PD drop, read out ------------------------
-    // Standing invariant #4: this drop is an uninstrumented amputation —
-    // `present[i]=false` while network_epoch_status.csv still reports the station in
-    // `n_present` — whose only prior record was a warn line in a ROTATING log.  The
-    // counters are always accumulated; the READOUT is armed-only so an unarmed run's
-    // log text stays byte-identical (the estimability-arm precedent above).
+    // --- addStation PD drop readout (card RF-PD) ------------------------------
+    // When addStation rejects a station's block as not PD, the station leaves the solve
+    // (`present[i]=false`) while network_epoch_status.csv still counts it in
+    // `n_present`; without these counters the drop shows only as a warn line in the
+    // rotating log (invariant #4).  The counters always accumulate; the readout prints
+    // only with network.trace_station_pd_null armed, so an unarmed run's log text stays
+    // byte-identical (as for the estimability telemetry above).
     if (config_.getNetworkConfig().trace_station_pd_null) {
         const auto& c = ctx.counters;
         const double per_ep = c.pd_drop_epochs
@@ -431,22 +434,22 @@ int networkTeardown(
                       "never reached addStation, or every throw came from a non-PD guard).  "
                       "The rows in network_events.csv carry no direction.", c.pd_drop_total);
     }
-    // RTA-10 gap fix: heartbeats buffered for a v2 writer open that never came.
-    // A run that NEVER emits cannot stamp the contract header (no realized
-    // datum), so no product file is fabricated — but the withheld era must not
-    // vanish silently (invariant #4).
+    // Heartbeats buffered for a v2 writer open that never happened.  A run that never
+    // emits cannot stamp the contract header (no realized datum), so no product file is
+    // created; this warning keeps the withheld era on record (invariant #4; RTA-10 gap
+    // fix).
     if (!setup.pending_h_pre_open.empty())
         log->warn("Network (RTA-10): run ended with {} withheld-epoch heartbeat(s) "
                   "never written — the run NEVER EMITTED, the deferred v2 product "
                   "writer never opened, and the product file does not exist.  Every "
                   "epoch was withheld; read the run log / traces, not the wire.",
                   setup.pending_h_pre_open.size());
-    // Card DG6 — rank-gate calibration telemetry.  Gated on the tolerance being
-    // ARMED (non-default) so a default run's log text is byte-identical, per DG5's
-    // "with the trace on, the new FILE is the only artifact delta".  The same
-    // numbers reach every trace-armed run through network_estimability.csv's RUN
-    // record, so the control arm is not left dark.  Standing invariant #4: an
-    // armed calibration whose counters never move is a MISWIRE, not a quiet run.
+    // Rank-gate calibration telemetry (card DG6).  Printed only when the tolerance is set
+    // to a non-default value, so a default run's log text is byte-identical (DG5: with
+    // the trace on, the new file is the only artifact that differs).  The same numbers
+    // reach every trace-armed run through the RUN record of network_estimability.csv, so
+    // the control arm still gets them.  An armed calibration whose counters never move is
+    // a miswire, not a quiet run (invariant #4).
     if (config_.networkRankGateTol() != NetworkEstimator::kNullSpaceTol)
         log->info("Network (Card DG): rank gate evaluated on {} epoch(s) at tol={:g} — {} "
                   "emitted, {} withheld UNDER-specified (observed > declared: a missing "
@@ -457,17 +460,15 @@ int networkTeardown(
                   n_emitted, ctx.counters.n_gate_withheld_under,
                   ctx.counters.n_gate_withheld_over,
                   ctx.counters.nullspace_obs_min, ctx.counters.nullspace_obs_max);
-    // The OVER-specified verdict has TWO causes that need OPPOSITE fixes, and the old
-    // advice ("RE-CALIBRATE, do not chase the datum") named only one of them.  It is
-    // provably WRONG for the other: when a pre-gate fold DEPOSITS information along a
-    // declared gauge direction, that direction moves INTO the real layer, and no
-    // tolerance recovers it — below the filled value it is still not counted as gauge,
-    // above it you begin counting genuine parameter directions as gauge.  Measured on
-    // simnet24: gauge depth 1e-11, carry-filled direction 9.43e-3, weakest-real
-    // phase-bias layer 1.25e-2 — the admissible band is EMPTY, and the placement rule's
-    // own "2 decades either side" cannot be met by any cutoff whatsoever.  The
-    // invariant-#7 ratio is what tells the two apart, so the advice now branches on it
-    // instead of asserting a cause.
+    // An over-specified withhold has two causes with opposite fixes.  A tolerance set
+    // below the config's own gauge depth is fixed by re-calibrating.  A pre-gate fold that
+    // deposits information along a declared gauge direction moves that direction up into
+    // the real-parameter layer, and no tolerance recovers it: a cutoff below the filled
+    // value still does not count it as gauge, and a cutoff above it starts counting real
+    // parameter directions as gauge.  (On simnet24: gauge depth 1e-11, carry-filled
+    // direction 9.43e-3, weakest real phase-bias layer 1.25e-2, so no cutoff meets the
+    // placement rule's 2 decades on either side.)  The invariant-#7 ratio separates the
+    // two cases, so the advice below branches on it.
     if (ctx.counters.n_gate_withheld_over > 0) {
         if (ctx.counters.ddi_over_breach > 0)
             log->warn("Network (Card DG): {} of the {} OVER-specified withhold(s) landed on an "
@@ -520,13 +521,12 @@ int networkTeardown(
                                                          : ctx.counters.ddi_ratio_max_dir,
                   ctx.counters.ddi_ratio_max_tow,
                   ctx.counters.ddi_breach_epochs, ctx.counters.ddi_breach_edges);
-    // SBC (network.sbasis_complete) run-end telemetry.  Standing invariant #4
-    // with the WE-CI twist: an armed completion that never fired on a
-    // multi-constellation run means the deficiency it was built for never
-    // materialized (fine) OR the block is miswired — the observed-count
-    // envelope in the Card-DG line above tells the two apart (a max above the
-    // declared dim with n_sbc_epochs == 0 is the miswire).  Refusals are
-    // per-cause because each demands a different fix.
+    // SBC (network.sbasis_complete) run-end telemetry.  An armed completion that never
+    // fired on a multi-constellation run means either that the deficiency it targets
+    // never occurred (fine) or that the block is miswired (invariant #4, read as for
+    // WE-CI).  The observed-count envelope in the Card-DG line above separates the two:
+    // a max above the declared dimension with n_sbc_epochs == 0 is the miswire.
+    // Refusals are counted per cause because each needs a different fix.
     if (ctx.knobs.sbasis_complete_on) {
         log->info("Network (SBC): S-basis completion constrained {} extra near-null "
                   "direction(s) on {} epoch(s) (max {}/epoch); {} release edge(s) "
@@ -550,12 +550,11 @@ int networkTeardown(
                       ctx.counters.nullspace_obs_min,
                       ctx.counters.nullspace_obs_max);
     }
-    // DATUM GRAPH CENSUS (docs/SPEC_datum_graph_census.md) run-end telemetry.
-    // Standing invariant #4 in the form this card owns: the EXPECTED healthy
-    // reading is "k = 1 everywhere, zero predictions", which is byte-for-byte
-    // what a seam that was never called produces.  So `epochs` and
-    // `epochs_quiet` are BOTH printed, and a run that walked zero support edges
-    // is called out as a miswire rather than reported as a clean network.
+    // Datum graph census run-end telemetry (docs/SPEC_datum_graph_census.md).  The
+    // reading expected when nothing is wrong, "k = 1 everywhere, zero predictions", is
+    // also exactly what a seam that was never called produces (invariant #4).  So both
+    // `epochs` and `epochs_quiet` are printed, and a run that walked zero support edges
+    // is reported as a miswire rather than as a network with no deficiency.
     if (ctx.knobs.dg_on) {
         const auto& dg = ctx.counters.dg;
         log->info("Network (datum graph): census ran {} epoch(s) — {} quiet (k = 1 on "
@@ -624,14 +623,14 @@ int networkTeardown(
                       "otherwise the window was quiet or the triggers sit above its misfit "
                       "scale (invariant #4).");
     }
-    // --- R0: within-epoch tier response census (SPEC_pivot_visibility_gauge_defect
-    // §5.07.5).  Before this, only the WITHHOLD had a first-class run counter; the
-    // refloats and exclusions existed solely as per-epoch T2 event rows.  The clock
-    // move is the §5.07.2 impulse-channel meter — how far the tier's re-solves
-    // moved a satellite clock off the PRIMARY solve — with its identity
-    // (invariant #7: counters AND identities).  0 responses on an armed run is a
-    // QUIET run, not dead wiring — n_adapt trips are logged per epoch, and the
-    // carry_warm gate note on the WE-CI line above applies here identically.
+    // --- Within-epoch tier response census (SPEC_pivot_visibility_gauge_defect
+    // §5.07.5, R0).  Run counters for the tier's refloats and exclusions, which
+    // otherwise appear only as per-epoch T2 event rows; the withhold has its own run
+    // counter.  The clock move is the §5.07.2 impulse-channel meter: how far the tier's
+    // re-solves moved a satellite clock off the primary solve, reported with the
+    // satellite's identity (invariant #7: counters and identities).  Zero responses on
+    // an armed run means a quiet run, not dead wiring: n_adapt trips are logged per
+    // epoch, and the carry_warm gating noted on the WE-CI line above applies here too.
     if (config_.networkRaimWithinEpoch()) {
         const auto& sc = ctx.counters;
         log->info("Network (T2 within-epoch responses): {} whole-sat refloat(s), {} "
@@ -667,10 +666,10 @@ int networkTeardown(
                   ctx.admission.active ? "ran" : "did-not-run", ctx.admission.active,
                   ctx.counters.n_cbadm_phase_orphan_key_epochs);
     // --- Adaptive iono q run-end telemetry (network.adaptive_iono_q) ---
-    // Standing invariant #4: an armed run with zero boosts is either genuinely quiet
-    // iono (feeds high, max multiplier ~1 — the monitor ran and said "calm") or DEAD
-    // WIRING (feeds == 0) — the two are distinguished explicitly, never left to look
-    // alike.
+    // An armed run with zero boosts is either a quiet ionosphere (many feeds, max
+    // multiplier about 1: the monitor ran and found nothing) or dead wiring (zero
+    // feeds).  The feed count is printed, and zero feeds warned, so the two cases do
+    // not look alike (invariant #4).
     if (config_.getNetworkConfig().adaptive_iono_q) {
         long long aiq_fed = 0;
         for (const auto& st : stations) aiq_fed += st.iono_var_epochs_fed;
@@ -688,14 +687,14 @@ int networkTeardown(
                       "not 'no effect').");
     }
 
-    // --- TWO-EDGE CONTINUOUS HANDOVER run-end telemetry -------------------------
-    // (docs/SPEC_pivot_visibility_gauge_defect.md §5.1).  Standing invariant #4: the
-    // DENOMINATOR is `reattaches` — how many gauge changes the run made at all — and
-    // it is reported whether or not the fix is armed, because a run that made zero
-    // handovers proves nothing about the mechanism.  The two edges are then split:
-    // `handover_continuous` are the frame-preserving ones, `handover_cold` the
-    // unavoidable re-realizations, and a cold one is NOT a failure — it is the
-    // honest report of a step the consumer must be told about.
+    // --- Two-edge continuous handover run-end telemetry --------------------------
+    // (docs/SPEC_pivot_visibility_gauge_defect.md §5.1).  The denominator is
+    // `reattaches`, the number of gauge changes the run made at all, which is counted
+    // whether or not the fix is armed: a run with zero handovers says nothing about the
+    // mechanism (invariant #4).  The two edges are then split: `handover_continuous`
+    // counts the frame-preserving handovers and `handover_cold` the unavoidable
+    // re-realizations.  A cold handover is not a failure; it reports a frame step the
+    // consumer has to be told about.
     if (ctx.knobs.pd_handover_continuous) {
         const auto& h = ctx.counters.hyg;
         const long long total = h.handover_continuous + h.handover_cold;
@@ -735,13 +734,13 @@ int networkTeardown(
                       "That is a quiet window, not evidence the fix works.");
     }
 
-    // --- COLD ANCHOR-FALLBACK run-end telemetry (docs/SPEC_event_harness.md §15) --
-    // Invariant #4.  Three populations, and only all three together say what the
-    // pass did: elected-from-usable (it found one), rank_changed (that one was NOT
-    // today's pick — the population the card exists for), and no_usable_fallback
-    // (nobody was usable, so today's honest cold path ran).  The four skip splits
-    // partition the skipped total and say WHY a candidate was refused, which is what
-    // separates "the ledger is thin" from "the maturity bar is too tight".
+    // --- Cold anchor-fallback run-end telemetry (docs/SPEC_event_harness.md §15) --
+    // Three populations together describe what the pass did (invariant #4):
+    // usable_elected (the pass elects a usable candidate), rank_changed (that candidate
+    // is not the station the coverage sweep takes first; the population the pass
+    // targets), and no_usable_fallback (no candidate is usable, so the sweeps' cold path
+    // runs).  The four skip counters partition the skipped total by the reason for each
+    // refusal, which separates "the ledger is thin" from "the maturity bar is too tight".
     if (ctx.knobs.pd_candidacy_usable) {
         const auto& h = ctx.counters.hyg;
         const long long entered = h.candidacy_usable_elected
@@ -770,11 +769,11 @@ int networkTeardown(
                       "station today's coverage sweep takes first.  Byte-identical to OFF "
                       "on this window by construction, not by luck.",
                       entered);
-        // ITERATION 2 — the SATELLITE clause (docs/SPEC_event_harness.md §15.8).
-        // Rule (c): the distinct-anchor census is NOT recomputed here — it is read
-        // from the SAME always-on counters the storm grade reads
-        // (networkSplitReferencedSats, run every epoch knob-independently), so the
-        // clause and the grade agree by construction rather than by agreement.
+        // Satellite clause, iteration 2 (docs/SPEC_event_harness.md §15.8).  Rule (c):
+        // the distinct-anchor census is not recomputed here; it is read from the
+        // always-on counters the storm grade also reads (networkSplitReferencedSats, run
+        // every epoch whatever the knobs), so the clause and the grade agree by
+        // construction.
         if (ctx.knobs.pd_candidacy_satellite) {
             const auto& C = ctx.counters;
             const double ep = C.n_cb_split_epochs > 0
@@ -813,11 +812,11 @@ int networkTeardown(
         }
     }
 
-    // --- QUEUE item 1(d): PHASE_ANCHOR carry re-reference run-end telemetry -----
-    // (docs/SPEC_pivot_visibility_gauge_defect.md §5.07.5 R1).  Same invariant-#4
-    // discipline as the handover block above: `reattaches` is the denominator, and
-    // an armed run whose election handed over but whose set never populated is
-    // DEAD WIRING, called out explicitly.
+    // --- PHASE_ANCHOR carry re-reference run-end telemetry (queue item 1(d)) ------
+    // (docs/SPEC_pivot_visibility_gauge_defect.md §5.07.5 R1).  As in the handover
+    // block above, `reattaches` is the denominator (invariant #4), and an armed run
+    // whose elections handed over while the re-reference set never populated is
+    // reported as dead wiring.
     if (ctx.knobs.pa_carry_reref) {
         const auto& h = ctx.counters.hyg;
         log->info("Network (PHASE_ANCHOR carry reref, 1(d)): {} marked "
@@ -842,10 +841,10 @@ int networkTeardown(
     }
 
     // --- eq34 reattach hygiene run-end telemetry -------------------------------
-    // (docs/SPEC_eq34_reattach_hygiene.md).  Standing invariant #4: an armed run whose
-    // gate never RAN is a different failure from one that ran and found nothing to
-    // block, so the denominators (`epochs`, `arcs_tracked`) are reported first and an
-    // all-zero feed is called out explicitly rather than left to look quiet.
+    // (docs/SPEC_eq34_reattach_hygiene.md).  An armed run whose gate never ran is a
+    // different failure from one that ran and found nothing to block (invariant #4), so
+    // the denominators (`epochs`, `arcs_tracked`) are reported first and an all-zero
+    // feed gets a warning rather than looking quiet.
     if (ctx.knobs.anchor_hygiene_on) {
         const auto& h = ctx.counters.hyg;
         log->info("Network (eq34 hygiene): {} election pass(es), {} arc-epoch(s) aged; "
@@ -898,12 +897,12 @@ int networkTeardown(
                       h.reattach_blocked_cold);
     }
 
-    // --- RAIM POOL RE-HOST run-end telemetry -----------------------------------
-    // (docs/SPEC_raim_pool_rehost.md).  Standing invariant #4, stated sharply because a
-    // silently-inert tier is the exact defect this card fixes: post-fit RAIM read ARMED
-    // in the loader summary on every Card-4 lineage while screening literally nothing.
-    // The denominators come FIRST so that four previously-identical-looking outcomes are
-    // distinguishable — seam never ran / census empty / nothing flagged / actuator off.
+    // --- RAIM pool re-host run-end telemetry -----------------------------------
+    // (docs/SPEC_raim_pool_rehost.md).  Without the re-host, post-fit RAIM shows as
+    // armed in the loader summary on a carry_invariant run while screening nothing, so
+    // an inert tier is the failure this readout has to expose (invariant #4).  The
+    // denominators come first so that four outcomes that otherwise look identical can
+    // be told apart: seam never ran, census empty, nothing flagged, actuator off.
     if (ctx.knobs.raim_ci_on) {
         const auto& rc = ctx.counters.raim_ci;
         const double s0_mean = (rc.sigma0_n > 0)
@@ -961,18 +960,18 @@ int networkTeardown(
                       rc.refloats_queued, rc.refloats_drained);
     }
 
-    // --- GROSS LINE-OF-SIGHT SCREEN run-end telemetry --------------------------
-    // (card GL, docs/SPEC_event_harness.md §24.18.)  Standing invariant #4: these
-    // counters ARE the ON-path telemetry.  The denominators come first so four
-    // outcomes that all look like "the screen found nothing" stay distinguishable:
-    // the seam never ran / no code row reached it / nothing cleared the bar /
-    // evidence never persisted.  The per-station and per-satellite declaration
-    // tables come last because they are the IDENTITIES the grade needs (invariant
-    // #7: an edge without an identity is not an event).
+    // --- Gross line-of-sight screen run-end telemetry ---------------------------
+    // (card GL, docs/SPEC_event_harness.md §24.18.)  These counters are the ON-path
+    // telemetry (invariant #4).  The denominators come first so that four outcomes that
+    // all look like "the screen found nothing" stay distinguishable: the seam never
+    // ran, no code row reached it, nothing cleared the bar, or the evidence never
+    // persisted.  The per-station and per-satellite declaration tables come last; they
+    // are the identities the grade needs (invariant #7: an edge without an identity is
+    // not an event).
     if (ctx.knobs.gl_on) {
-        // The fold itself runs inside the PARALLEL produce phase, so its row count
-        // lives per-station (the si_rows_demoted precedent); sum it here, once,
-        // before the block reads it.
+        // The fold runs inside the parallel produce phase, so its row count is kept per
+        // station (as si_rows_demoted is); it is summed here, once, before the block
+        // reads it.
         ctx.counters.gross_los.rows_deweighted = 0;
         for (const auto& st : stations) ctx.counters.gross_los.rows_deweighted += st.gl_rows_deweighted;
         const auto& g = ctx.counters.gross_los;
@@ -1023,10 +1022,13 @@ int networkTeardown(
                   "(retirement census family [C], the same one-solve refloat the T4 attribution "
                   "erase performs — the arc stays tracked and the next harvest re-stashes it).",
                   ctx.counters.n_cr_gross_los);
-        // --- RF-3b (docs/refound/RF-3_code_row_qc_2026-09-22.md §4 B5, requirement F6).
-        //     Every line here is maintained in BOTH states of the sub-knob it reports on,
-        //     so an arm that leaves a rule off still states the population it would have
-        //     reached (standing invariant #4).
+        // --- Per-rule readout (docs/refound/RF-3_code_row_qc_2026-09-22.md §4 B5,
+        //     requirement F6; RF-3b).  Every line prints in both states of the sub-knob
+        //     it reports on.  The populations a rule targets (B1's short-row count over
+        //     the bar, B2's largest folded |v|, releases and expiries) are counted in both
+        //     states, so an arm that leaves a rule off still states the population it
+        //     would have reached (invariant #4).  The counts of a rule's own actions (B2
+        //     holds, B3 exclusions, B4 station declarations) move only with it on.
         {
             const NetworkConfig& gnc3 = config_.getNetworkConfig();
             const bool mrr_av = gnc3.gross_los_min_rows_rule
@@ -1105,8 +1107,9 @@ int networkTeardown(
                 log->info("Network (gross-LOS screen): {:.3f} % of LOS-epochs cleared the bar "
                           "(§24.18's threshold sanity line is 5 %).", frac);
         }
-        // Invariant #7: an edge without an IDENTITY is not an event.  These are the
-        // identities — who was declared, and where the screen stood down instead.
+        // Identity tables: which stations and satellites were declared, and where the
+        // screen stood down instead (invariant #7: an edge without an identity is not an
+        // event).
         auto topTable = [&](const char* what, const char* axis,
                             const std::map<std::string, long long>& m) {
             if (m.empty()) return;
@@ -1123,7 +1126,7 @@ int networkTeardown(
             log->info("Network (gross-LOS screen): {} by {} ({} distinct): {}",
                       what, axis, v.size(), line);
         };
-        // --- GL-2 (§24.19): the whole-SATELLITE stand-down -------------------
+        // --- Whole-satellite stand-down (§24.19, GL-2) -------------------------
         if (ctx.knobs.gl2_on) {
             log->info("Network (gross-LOS, GL-2 whole-SATELLITE stand-down): {} satellite "
                       "stand-down edge(s) and {} release(s) over {} epoch(s) with at least "
@@ -1170,15 +1173,14 @@ int networkTeardown(
         topTable("stand-down station-epochs", "station", g.standdown_by_station);
     }
 
-    // --- iono-deweight RELEASE hygiene run-end telemetry -----------------------
-    // (docs/SPEC_deweight_release_hygiene.md).  Standing invariant #4, with a twist
-    // this card has to state out loud: at the event it was SPEC'd against, the
-    // station carrying the parked column was never deweighted, so INC-1 / INC-2 have
-    // ZERO OPPORTUNITY there by construction.  A run reporting zero releases is
-    // therefore NOT evidence that the release response works or fails — the
-    // denominators (`epochs`, `gate_advances`, `releases_seen`) are reported first so
-    // "the seam never ran", "it ran and the gate never advanced", and "the gate
-    // advanced and nothing ever released" are three distinguishable answers.
+    // --- Iono-deweight release hygiene run-end telemetry -----------------------
+    // (docs/SPEC_deweight_release_hygiene.md).  At the event the spec was written
+    // against, the station carrying the parked column was never deweighted, so INC-1
+    // and INC-2 have no opportunity there by construction.  A run reporting zero
+    // releases is therefore not evidence that the release response works or fails
+    // (invariant #4).  The denominators (`epochs`, `gate_advances`, `releases_seen`) are
+    // reported first, so "the seam never ran", "it ran and the gate never advanced" and
+    // "the gate advanced and nothing ever released" are three distinguishable answers.
     if (ctx.knobs.dw_hygiene_on) {
         const auto& d = ctx.counters.dwr;
         log->info("Network (dw release hygiene): {} seam pass(es), {} gate advance(s), "
@@ -1250,16 +1252,15 @@ int networkTeardown(
                       d.gate_advances);
     }
 
-    // --- flicker/gap signal integrity run-end telemetry ------------------------
-    // (docs/SPEC_flicker_gap_integrity.md).  Standing invariant #4: the classifier
-    // is the ON-path telemetry for this card — a clean-looking run with zero
-    // classified lines of sight is DEAD WIRING, not a quiet network, and only the
-    // denominators can tell those apart.  The demoted-ROW count is summed from the
-    // per-station counters here because the fold runs inside the PARALLEL produce:
-    // a live map with zero demoted rows means the map was WRITTEN and never READ,
-    // which is the exact live-counters-dead-wiring trap the rx-CB carry card paid
-    // for.  The census block reports the INC-0 audit answer explicitly rather than
-    // leaving a reader to infer it from two raw counts.
+    // --- Flicker/gap signal integrity run-end telemetry ------------------------
+    // (docs/SPEC_flicker_gap_integrity.md).  The classifier counters are the ON-path
+    // telemetry (invariant #4): a run with zero classified lines of sight is dead
+    // wiring, not a quiet network, and only the denominators tell the two apart.  The
+    // demoted-row count is summed here from the per-station counters because the fold
+    // runs inside the parallel produce phase.  A live map with zero demoted rows means
+    // the map is written and never read: live counters over dead wiring, the failure
+    // the rx-CB carry card documents.  The census block states the INC-0 audit answer
+    // directly rather than leaving it to be inferred from two raw counts.
     if (ctx.knobs.sig_integrity_on) {
         auto& s = ctx.counters.sig;
         for (const auto& st : stations) s.demoted_rows += st.si_rows_demoted;
@@ -1277,10 +1278,11 @@ int networkTeardown(
                   s.band_lost, s.band_regain, ctx.knobs.sig_flicker_max_ep,
                   s.band_dropped_perm, s.band_gained, s.degraded_epochs,
                   s.no_phase_epochs);
-        // THE INC-0 AUDIT ANSWER.  The spec asks whether a DUAL-born arc that
-        // degrades mid-arc ever CONTINUES single-frequency (an unmonitorable phase
-        // at full weight, no gap registered).  The two numbers are reported together
-        // and interpreted in-line, because either one alone is ambiguous.
+        // Audit answer (spec INC-0).  The spec asks whether an arc born dual-frequency
+        // that degrades mid-arc ever continues single-frequency (a phase that cannot be
+        // monitored, at full weight, with no gap registered).  The two numbers are
+        // reported together and interpreted in the line, because either one alone is
+        // ambiguous.
         log->info("Network (signal integrity AUDIT — spec INC-0): {} LOS-epoch(s) in "
                   "which an EVER-DUAL arc contributed with fewer than two phase "
                   "bands, against {} disappearance(s) of a dual arc.  A large first "
@@ -1372,23 +1374,21 @@ int networkTeardown(
                       s.arcs_forgotten);
     }
 
-    // --- prior-residual census run-end telemetry ------------------------------
-    // (docs/SPEC_prior_residual_census.md §6).  Standing invariant #4, ladder
-    // edition: THE LADDER IS THE TELEMETRY, and a family with n_rows = 0 must
-    // read as "ran, saw nothing" rather than "never ran".  Body in
-    // filter/NetworkPriorResidual.cpp, next to the emission that produced it.
+    // --- Prior-residual census run-end telemetry ------------------------------
+    // (docs/SPEC_prior_residual_census.md §6).  The ladder is the telemetry
+    // (invariant #4), and a family with n_rows = 0 has to read as "ran, saw nothing"
+    // rather than "never ran".  The body is in filter/NetworkPriorResidual.cpp, next
+    // to the emission that feeds it.
     if (ctx.knobs.prires_on)
         networkPriorResidualReport(ctx, config_, log, setup.stations, prires_est);
 
-    // --- redundancy / testability census run-end telemetry --------------------
-    // (docs/SPEC_redundancy_census.md).  Standing invariant #4, statistical
-    // edition.  The claim this card makes is "the cross-flag has essentially zero
-    // false-positive surface", and the ONLY way a reader can check it here is to
-    // see the denominators next to the findings: how many passes, how many
-    // sweeps, how many ROWS, how many were uncheckable, and how many of THOSE
-    // were also hot.  A run reporting 0 hot cells over 0 swept rows says nothing
-    // about the network; a run reporting 0 hot cells over 400k swept rows with
-    // 2k uncheckable ones is a real negative result.  Reported in that order.
+    // --- Redundancy / testability census run-end telemetry --------------------
+    // (docs/SPEC_redundancy_census.md).  The census claims that the cross-flag has
+    // essentially zero false-positive surface, and a reader can check that only with
+    // the denominators next to the findings (invariant #4): passes, sweeps, rows,
+    // uncheckable rows, and uncheckable rows that were also hot.  Zero hot cells over
+    // zero swept rows says nothing about the network; zero hot cells over 400k swept
+    // rows with 2k uncheckable is a real negative result.  The lines follow that order.
     if (ctx.knobs.redun_census_on) {
         const auto& q = ctx.counters;
         log->info("Network (redundancy census): {} seam pass(es), {} sweep epoch(s) "
@@ -1423,10 +1423,9 @@ int networkTeardown(
                       "so nothing downstream would have flagged it.  This is the parked-"
                       "garbage signature; read it against the topology at that epoch.",
                       q.redun_max_hot_id, q.redun_max_hot_s, q.redun_max_hot_s);
-        // The prefer-fallback control.  Uncheckable-but-quiet rows are exactly the
-        // healthy single-frequency risers the directive says to KEEP; naming the
-        // worst one turns "we counted them and none was hot" into a claim a reader
-        // can check rather than one they have to take on faith.
+        // Prefer-fallback control.  Uncheckable rows that stay quiet are the
+        // single-frequency risers the prefer-fallback directive keeps; naming the worst
+        // of them makes "counted, and none was hot" a claim a reader can check.
         if (q.redun_uncheckable > q.redun_uncheckable_hot)
             log->info("Network (redundancy census): {} uncheckable row(s) stayed BELOW "
                       "the cross-flag and were counted, never evented and never "
@@ -1441,10 +1440,10 @@ int networkTeardown(
                   "edge(s) evented and {} RE-COUPLING edge(s) counted.",
                   q.redun_pivot_cols, q.redun_pivot_flagged, nc.redundancy_pivot_eps,
                   q.redun_unobs_entered, q.redun_unobs_cleared);
-        // Closure: trace(H) over the swept rows may never exceed the free
-        // parameters they span.  A negative slack means the covariance or the row
-        // stack does not describe the system that was solved, which invalidates
-        // every r_i above — so it is reported as a WARN, not buried.
+        // Closure: trace(H) over the swept rows can never exceed the number of free
+        // parameters they span.  A negative slack means the covariance or the row stack
+        // does not describe the system that was solved, which invalidates every r_i
+        // above, so a violation is logged as a warning.
         if (q.redun_closure_any)
             log->info("Network (redundancy census): closure worst slack "
                       "n_free - trace(H) = {:.4e} over {} sweep(s) (must be >= 0); {} "
@@ -1480,12 +1479,11 @@ int networkTeardown(
                       "the state in which the cross-flag CANNOT fire, so do not read a "
                       "quiet run as validation of the alarm.",
                       q.redun_rows, nc.redundancy_eps);
-        // The escalation path needs BOTH numbers to be readable.  "0 escalations"
-        // alone is ambiguous and, under stride 1, GUARANTEED — the scheduled sweep
-        // already covered every station, so no latch could ever need acting on.
-        // Reporting only the action would be a conclusion the counters do not
-        // support, which is the failure this project calls a live-counter over
-        // dead wiring in reverse.
+        // The escalation path needs both numbers to be readable.  "0 escalations" alone
+        // is ambiguous, and under stride 1 it is guaranteed: the scheduled sweep already
+        // covers every station, so no latch ever needs acting on.  Reporting only the
+        // action would claim more than the counters support (the reverse of live
+        // counters over dead wiring).
         if (nc.redundancy_escalate_sigma > 0.0) {
             if (q.redun_escalate_flagged == 0)
                 log->info("Network (redundancy census): the free tier ran and NEVER "
@@ -1511,41 +1509,38 @@ int networkTeardown(
     }
 
     // --- Baarda reliability numbers / MDB run-end telemetry -------------------
-    // (docs/SPEC_redundancy_census.md §11.4).  Standing invariant #4 in its
-    // reliability form: the aggregates must distinguish "ran, all rows checkable"
-    // from "never ran", and the two are reported by the SAME line only if the
-    // denominators come first.  Body in filter/NetworkMdb.cpp, next to the
-    // aggregation that produced the numbers.
+    // (docs/SPEC_redundancy_census.md §11.4).  The aggregates have to distinguish
+    // "ran, all rows checkable" from "never ran" (invariant #4); one line can report
+    // both only if the denominators come first.  The body is in filter/NetworkMdb.cpp,
+    // next to the aggregation that produces the numbers.
     if (ctx.knobs.mdb_on)
         networkMdbReport(ctx, config_, log);
 
-    // --- BLOCKFORMAL LOS-block census run-end telemetry ----------------------
-    // (docs/SPEC_redundancy_census.md §10.4).  Standing invariant #4 in this card's
-    // form: "the block tier found no smearing" and "there was never a block to
-    // smear across" produce identical ladders, so the BLOCK-SIZE HISTOGRAM is
-    // reported before any occupancy and INC-3's fraction is reported last, with
-    // its denominator.  Body in filter/NetworkBlockBaarda.cpp, next to the sweep
-    // that produced the numbers.
+    // --- BlockFormal LOS-block census run-end telemetry ----------------------
+    // (docs/SPEC_redundancy_census.md §10.4).  "The block tier found no smearing" and
+    // "there was never a block to smear across" produce identical ladders
+    // (invariant #4), so the block-size histogram is reported before any occupancy,
+    // and INC-3's fraction comes last, with its denominator.  The body is in
+    // filter/NetworkBlockBaarda.cpp, next to the sweep that produces the numbers.
     if (ctx.knobs.bb_on)
         networkBlockBaardaReport(ctx, log, setup.stations);
 
-    // --- STATION CONGRUENCE run-end telemetry --------------------------------
-    // (docs/SPEC_redundancy_census.md §13.7.3).  Standing invariant #4 in this
-    // card's form: "every held coordinate on this network is right" and "the
-    // screen never swept a station" produce identical silence, so the
-    // denominators come first — and then THE MDB TABLE, which is the card's
-    // service deliverable rather than a diagnostic: the smallest coordinate fault
-    // this network can see, per station, per direction.  Body in
-    // filter/NetworkCongruence.cpp, next to the sweep that produced the numbers.
+    // --- Station congruence run-end telemetry --------------------------------
+    // (docs/SPEC_redundancy_census.md §13.7.3).  "Every held coordinate on this
+    // network is right" and "the screen never swept a station" produce identical
+    // silence (invariant #4), so the denominators come first.  Then comes the MDB
+    // table, a service deliverable rather than a diagnostic: the smallest coordinate
+    // fault this network can detect, per station and per direction.  The body is in
+    // filter/NetworkCongruence.cpp, next to the sweep that produces the numbers.
     if (ctx.knobs.cg_on)
         networkCongruenceReport(ctx, log, setup.stations);
 
-    // --- PREFIT census / fuse / seed-birth / topology / flight-recorder --------
-    // (docs/SPEC_prefit_census_observability.md §10).  Standing invariant #4 in
-    // its sharpest form for this card: a TRIPWIRE that never fires and a tripwire
-    // that was never CONNECTED produce identical logs.  Only the denominators
-    // (`epochs`, `station_epochs`, `rows`, `rec_consults`) separate them, so they
-    // are reported first and every zero-finding line names which one it is.
+    // --- Prefit census / fuse / seed-birth / topology / flight-recorder --------
+    // (docs/SPEC_prefit_census_observability.md §10).  A tripwire that never fires and
+    // a tripwire that was never connected produce identical logs (invariant #4).  Only
+    // the denominators (`epochs`, `station_epochs`, `rows`, `rec_consults`) separate
+    // them, so they are reported first, and every zero-finding line says which case
+    // it is.
     {
         const auto& p = ctx.counters.pc;
         if (ctx.knobs.pc_walk_on) {
@@ -1569,8 +1564,8 @@ int networkTeardown(
                                             p.max_s_tow));
                 // The hand-off to INC-3 is reported whether or not INC-3 is armed:
                 // "the census went quiet" and "the census deferred N births to a
-                // DISARMED birth check" are different states and must not read the
-                // same (invariant #4 applied to a filter rather than to wiring).
+                // disarmed birth check" are different states and must not read the same
+                // (invariant #4, applied to a filter rather than to wiring).
                 log->info("Network (prefit census INC-1): {} row(s) in {} born cell(s) "
                           "were DEFERRED to INC-3 rather than counted here — a fresh "
                           "arc is seeded to ~0 innovation against a station level that "
@@ -1692,17 +1687,15 @@ int networkTeardown(
         }
     }
 
-    // --- product-referenced measurement admission run-end telemetry -----------
-    // (docs/SPEC_measurement_admission.md).  Standing invariant #4 in its purest
-    // form: this card's entire claim is that an ABSOLUTE screen sees a class every
-    // differential check passes by construction, and the ONLY way a reader can
-    // check that claim from a log is to see the denominators next to the findings.
-    // A run reporting 0 rejections over 0 screened channels says nothing about the
-    // network; a run reporting 0 rejections over 400k screened channels with a
-    // worst |z| of 38 m is a real negative result — and one reporting two
-    // rejections at 1e5 m against that same sea is the positive one the card was
-    // written for.  Reported in that order: denominators, then the census
-    // separation, then the response, then the warns.
+    // --- Product-referenced measurement admission run-end telemetry -----------
+    // (docs/SPEC_measurement_admission.md).  The screen is absolute: it sees a class of
+    // fault that every differential check passes by construction, and a reader can
+    // check that from a log only with the denominators next to the findings
+    // (invariant #4).  Zero rejections over zero screened channels says nothing about
+    // the network; zero rejections over 400k screened channels with a worst |z| of
+    // 38 m is a real negative result; two rejections at 1e5 m against that background
+    // is the positive result the screen exists for.  Order of the lines: denominators,
+    // census separation, response, warnings.
     if (ctx.knobs.adm_on) {
         const auto& a = ctx.counters.adm;
         log->info("Network (measurement admission): {} screen pass(es), {} station-epoch "
@@ -1761,13 +1754,12 @@ int networkTeardown(
                       a.revet_bound_refusals, ctx.knobs.adm_revet_bound_m,
                       a.revet_census_refusals, a.revet_census_reads,
                       a.revet_census_absent);
-            // The headline field readout of this increment, stated as a ratio rather
-            // than left for the reader to compute.  On the FT63 24 h control, 16 of
-            // 17 mid-arc onsets were re-entries wearing an onset's label; an armed
-            // run should move that population into reject_reentry and leave `onsets`
-            // holding only channels that genuinely went bad while continuously
-            // present.  If `onsets` is still the larger of the two, the vet is not
-            // reaching the class this increment was built for.
+            // The split of mid-arc withholds, printed side by side rather than left for
+            // the reader to compute.  On the FT63 24 h control, 16 of 17 mid-arc onsets
+            // were re-entries counted as onsets; an armed run should move that
+            // population into reject_reentry and leave `onsets` holding only channels
+            // that went bad while continuously present.  If `onsets` is still the
+            // larger of the two, the vet is not reaching the class it targets.
             if (a.reject_reentry + a.onsets > 0)
                 log->info("Network (measurement admission INC-4): mid-arc withhold split "
                           "-- {} refused as RE-ENTRIES vs {} as true onsets on a "
@@ -1814,9 +1806,9 @@ int networkTeardown(
                       "time-linked carry with no re-tap behind it, which is standing "
                       "invariant #1 violated, not a tuning detail.",
                       a.onsets + a.reject_resume + a.station_events);
-        // --- INC-4, invariant #4 -------------------------------------------
-        // Every one of these separates "the vet ran and found nothing" from "the vet
-        // never got the chance", which no amount of clean log output distinguishes.
+        // --- Re-entry vet: ran or never engaged (INC-4, invariant #4) ----------
+        // Each of these separates "the vet ran and found nothing" from "the vet never
+        // got the chance", which clean log output alone cannot distinguish.
         if (ctx.knobs.adm_revet && a.channels > 0 && a.reentries == 0)
             log->warn("Network (measurement admission INC-4): the re-entry vet is ARMED "
                       "and {} channel(s) were screened, yet NOT ONE re-entry was seen. "
@@ -1869,16 +1861,14 @@ int networkTeardown(
     }
 
     // --- PD-safe invariant-DD fold run-end telemetry (SPEC_pd_safe_dd_fold.md) ------
-    // Standing invariant #4 in its most expensive instance to date.  Before this card the
-    // fold's response to a non-PD Pᶻ+B was `M := 0` with NO counter, NO log and NO event:
-    // the block's posterior became its prior forever, the D5 gate skipped its rows because
-    // Cov(v) inherited the negative diagonals, and dd_sigma_cyc / the AR probe read a
-    // covariance that never noticed.  Measured 2026-08-02 on `runs/churn_base` (63 sta,
-    // 3 h, DOY-129): 568 of 686 carried rows — 78 % of the state — diffusing behind that
-    // silence, in the control AND every arm of the lineage.  INC-0 is always-on, so a
-    // carry_invariant run ALWAYS gets a line here, armed or not — the branch below carries
-    // the zero-fold case rather than letting it fall through silently (SPEC §3, "Run-end
-    // summary always").  Keep those two branches exhaustive over `carry_invariant`.
+    // An inert fold (`M := 0`, the fallback when Pᶻ+B fails the PD screen and is not
+    // repaired) leaves the block's posterior equal to its prior; the D5 gate skips its
+    // rows because Cov(v) inherits the negative diagonals, and dd_sigma_cyc and the AR
+    // probe read a covariance that does not show the failure.  The INC-0 counters are
+    // always on, so a carry_invariant run always gets a line here, armed or not; the
+    // branch below covers the zero-fold case so that it too prints a line (SPEC §3,
+    // "Run-end summary always"; invariant #4).  Keep those two branches exhaustive over
+    // `carry_invariant`.
     if (ctx.knobs.carry_invariant && ctx.counters.ddfold_epochs > 0) {
         const auto& c = ctx.counters;
         const double degen_frac = (c.ddfold_fold_rows > 0)
@@ -1926,15 +1916,16 @@ int networkTeardown(
                       c.ddfold_degen_rows, 100.0 * degen_frac);
         }
     } else if (ctx.knobs.carry_invariant) {
-        // SPEC §3: "Run-end summary always."  The gate above is `ddfold_epochs > 0`, and
-        // that counter only advances on an ACCEPTED install whose fold saw blocks
-        // (NetworkInstallCarry, under `if (fs.blocks > 0)`).  Zero is genuinely reachable
-        // with no fault at all — buildCarryDdPriors emits nothing when there is no shared
-        // datum or no foldable chord, and the fold early-returns before it ever tallies —
-        // so without this branch a carry_invariant run could print NO INC-0 line and take
-        // d5_nonpos_var_rows down with it (its only readout is the block above).  The
-        // per-epoch trace columns are gated on the same `blocks > 0`, so there is no
-        // fallback there either: the run would be silent, and silence reads as "clean".
+        // Zero-fold branch of the run-end summary (SPEC §3, "Run-end summary always").
+        // The gate above is `ddfold_epochs > 0`, and that counter advances only on an
+        // accepted install whose fold saw blocks (NetworkInstallCarry, under
+        // `if (fs.blocks > 0)`).  Zero is reachable with no fault at all: buildCarryDdPriors
+        // emits nothing when there is no shared datum or no foldable chord, and the fold
+        // returns early before it tallies.  Without this branch a carry_invariant run could
+        // print no INC-0 line, and d5_nonpos_var_rows (read out only in the block above)
+        // would go unreported.  The per-epoch trace columns are gated on the same
+        // `blocks > 0`, so they give no fallback either, and a run with no line reads as
+        // "clean".
         log->warn("Network (Card 4 PD-safe fold, INC-0): network.carry_invariant is ON but "
                   "the DD-prior fold ran on ZERO epochs — no accepted install ever reached a "
                   "factorization, so every INC-0 tally is structurally empty and this run is "
@@ -1955,12 +1946,12 @@ int networkTeardown(
     }
 
     // --- Producer-AR Phase-2 diagnostic run-end readout ------------------------------
-    // docs/network_ambiguity_resolution_design.md, the 2026-09-10 note §4.1: "a fix
-    // count is not a grade".  This clause is the RUN-level half of that — the per-epoch
-    // spdlog line said what one epoch did, and nothing said what the run did, so the
-    // only way to read an armed run was to grep 2 879 lines.  Standing invariant #4:
-    // `netar_epochs == 0` on an ARMED run means the search NEVER REACHED the ILS and
-    // every number below is structurally empty; that case gets its own warn.
+    // Run-level summary of the producer AR search.  The per-epoch spdlog line describes
+    // one epoch; this readout describes the run, following §4.1 of the 2026-09-10 note in
+    // docs/network_ambiguity_resolution_design.md ("a fix count is not a grade").
+    // `netar_epochs == 0` on an armed run means the search never reached the ILS and
+    // every number below is structurally empty; that case gets its own warning
+    // (invariant #4).
     if (nc.ambiguity_resolution.enable) {
         auto& c = ctx.counters;
         auto p50 = [](std::vector<double> v) {
@@ -1968,9 +1959,9 @@ int networkTeardown(
             std::sort(v.begin(), v.end());
             return v[v.size() / 2];
         };
-        // ratio / p_succ are collected on ACCEPTED-fix epochs only (a rejected epoch's
-        // IlsResult zeroes them), so on a run that never fixed the sample is EMPTY.
-        // "n/a" says that; a printed "nan" or "0.00" reads like a measured value.
+        // ratio and p_succ are collected on accepted-fix epochs only (a rejected epoch's
+        // IlsResult zeroes them), so on a run that never fixed the sample is empty.
+        // "n/a" says so; a printed "nan" or "0.00" would read like a measured value.
         auto p50s = [&](const std::vector<double>& v, int prec) {
             return v.empty() ? std::string("n/a")
                              : fmt::format("{:.{}f}", p50(v), prec);
@@ -2022,9 +2013,9 @@ int networkTeardown(
     }
 
     // --- Carry-aware covariance readback (docs/SPEC_carry_aware_covariance.md §4) -----
-    // ALWAYS on a carry_invariant run, armed or not: the whole point of the card is that a
-    // σ published without its covariance mode is unreadable, and the run that most needs
-    // to be told its σ is carry-BLIND is the one that did not arm the knob.
+    // Printed on every carry_invariant run, armed or not: a σ published without its
+    // covariance mode cannot be read, and the run that most needs to be told its σ is
+    // carry-blind is the one that did not arm network.carry_aware_covariance.
     if (ctx.knobs.carry_invariant) {
         const auto& cc = est.carryCovStats();
         if (ctx.knobs.carry_aware_covariance) {
@@ -2070,9 +2061,9 @@ int networkTeardown(
     }
 
     // --- SD pre-reduce EWL constraint run-end telemetry (SPEC_sd_ewl_prereduce.md) ---
-    // Standing invariant #4: rows_built == 0 on an armed run means the wiring never fired,
-    // which is NOT "the feature had no effect" — so the skip tallies are reported too, and
-    // an all-zero build is called out explicitly rather than left to look quiet.
+    // rows_built == 0 on an armed run means the wiring never fired, which is not the same
+    // as "the feature had no effect" (invariant #4), so the skip tallies are reported too
+    // and an all-zero build gets a warning that names the dominant cause.
     if (config_.getNetworkConfig().sd_ewl.enable) {
         NetStation::SdEwlCounters t;
         for (const auto& st : stations) t += st.sd_ewl_ctr;
@@ -2096,9 +2087,9 @@ int networkTeardown(
                   t.skip_missing_shared_col, t.skip_missing_code, t.skip_bad_lambda,
                   t.skip_big_z);
         if (t.rows_built == 0) {
-            // Name the DOMINANT cause: "zero rows" plus a table of ten tallies is a
-            // puzzle, and the three failure classes have entirely different fixes
-            // (wiring / signal availability / maturity).
+            // Name the dominant cause: "zero rows" next to a table of ten tallies is hard
+            // to read, and the three failure classes (wiring, signal availability,
+            // maturity) have entirely different fixes.
             const char* lead =
                 t.sat_seen == 0                                  ? "the appender never saw a single EWL-tier satellite — the hook is not running, or no GPS/Galileo station-epoch reached PASS B"
               : t.skip_missing_amb_col >= t.sat_seen / 2         ? "the dominant cause is NO AMBIGUITY-COLUMN PAIR: the second EWL band (GPS L5 / Galileo E5a) is not being ESTIMATED at these stations — check processing.frequency_mode / signal_priorities, not the detector"
@@ -2112,7 +2103,7 @@ int networkTeardown(
                       "no-detector count means phase_leveling / cycle_slip.mw_detect "
                       "are off or every station is the clock datum.)", lead);
         }
-        // --- increment 2a+2b: the INTEGER path (docs/SPEC_sd_ewl_prereduce.md §8) -----
+        // --- Integer path, increments 2a and 2b (docs/SPEC_sd_ewl_prereduce.md §8) ------
         if (config_.getNetworkConfig().sd_ewl.fix_enable) {
             const auto& K = ctx.counters;
             log->info("Network (SD EWL integer fix, 2a decision): {} epoch(s), {} "
@@ -2152,9 +2143,9 @@ int networkTeardown(
                       t.fix_pair_mismatch, t.fix_lone_arc, t.fix_datum_only,
                       config_.getNetworkConfig().sd_ewl.fix_sigma_floor_m);
             if (t.rows_fixed == 0) {
-                // Invariant #4 again, one level down: the row layer can be healthy and
-                // the INTEGER layer still inert, and the two have completely different
-                // fixes.  Name the dominant cause rather than leaving nine tallies.
+                // Invariant #4 one level down: the row layer can work while the integer
+                // layer stays inert, and the two have different fixes.  Name the dominant
+                // cause rather than leaving nine tallies to read.
                 const char* lead2 =
                     K.sdewl_epochs == 0
                         ? "the 2a decision seam never ran — the call site is not reached "
@@ -2197,9 +2188,10 @@ int networkTeardown(
     }
 
     // --- Slip-QC hardening run-end telemetry (docs/SPEC_slip_qc_hardening.md) ---
-    // Standing invariant #4: a card whose counters are all zero on an armed run
-    // is a MISWIRE, not a quiet run.  Card E's line is unconditional under
-    // mw_detect because reporting only refloats is the L3 defect it fixes.
+    // All-zero counters on an armed run mean a miswire, not a quiet run (invariant #4).
+    // Card E's line prints whenever mw_detect is on and counts detections as well as
+    // refloats, because a refloat-only count makes the funnel wiring look dead on a cold
+    // run (the L3 defect).
     if (config_.networkCycleSlipMwDetect()) {
         const auto& qcc = slip_qc.counters;
         log->info("Network (slip-QC card E / MW-detect): {} wide-lane slip detection(s) "
@@ -2211,10 +2203,10 @@ int networkTeardown(
                   qcc.mw_detections, qcc.mw_refloats,
                   qcc.lli_detections, qcc.lli_refloats);
     }
-    // SPEC_slip_relevel_walk §6 run-end readout (invariant #4: either knob
-    // armed with its headline counter at 0 on a slip-bearing run is a MISWIRE,
-    // not a quiet run — the drains latched but the inject never consulted, or
-    // the bridge never met a joint (MW, IF-TD) delta).
+    // Slip re-level run-end readout (SPEC_slip_relevel_walk §6).  Either knob armed with
+    // its headline counter at 0 on a slip-bearing run is a miswire, not a quiet run
+    // (invariant #4): the drains latched but the inject site never consulted them, or
+    // the bridge never met a joint (MW, IF-TD) delta.
     if (config_.networkCycleSlipRelevelFreeEpoch()) {
         const auto& qcc = slip_qc.counters;
         log->info("Network (slip re-level response): {} detector-marked (station, amb) "
@@ -2239,10 +2231,9 @@ int networkTeardown(
                                     qcc.bridge_fallback_refsat,
                                     qcc.bridge_fallback_unpaired)
                       : std::string{});
-        // Bridge v3 riders (the better second equation): both coupling edges of
-        // the new equation menu, run-end (invariant #4 — gf armed with
-        // gf_captured=0 on a slip-bearing run is a MISWIRE, as is ewl armed
-        // with both fill counters at 0).
+        // Bridge v3 riders (the GF and EWL second equations): both coupling edges at
+        // run end.  gf armed with gf_captured = 0 on a slip-bearing run is a miswire, as
+        // is ewl armed with both fill counters at 0 (invariant #4).
         if (config_.networkCycleSlipRelevelBridgeGf()
             || config_.networkCycleSlipRelevelBridgeEwl())
             log->info("Network (bridge v3): GF rows captured {} (E1+E4 float-plane "
@@ -2262,26 +2253,24 @@ int networkTeardown(
                   ctx.counters.n_relevel_retap_escalated,
                   config_.networkCycleSlipRelevelRetapStreakMax(),
                   ctx.counters.n_relevel_retap_miss);
-    // ---- Leveling-carry RETIREMENT census (SPEC_withhold_era_release §8) ----
-    // Always on: pure counters, no CSV row, no solve effect.  It exists so a
-    // fleet-scale carry loss can be ATTRIBUTED rather than inferred.
+    // ---- Leveling-carry retirement census (SPEC_withhold_era_release §8) ----
+    // Always on: counters only, no CSV row, no solve effect.  It lets a fleet-scale
+    // carry loss be attributed rather than inferred.
     //
-    // Reported as FOUR FAMILIES, never as one total: the units are not
-    // commensurable.  A frame skip costs one solve of continuity for an arc the
-    // same epoch re-stashes; a refloat costs one solve on the next epoch; a
-    // departure is permanent; and the inject-side stale skip erases nothing at
-    // all yet is the mechanism behind the §1.3 mass re-level.  Summing them
-    // would make a lineage with a churning chain datum look like it retires an
-    // order of magnitude more carry than one that does not — precisely the
-    // inference the §7 promotion argument would misuse.
+    // Reported as four families and never as one total, because the units are not
+    // commensurable.  A frame skip costs one solve of continuity for an arc the same
+    // epoch re-stashes; a refloat costs one solve on the next epoch; a departure is
+    // permanent; and the inject-side stale skip erases nothing at all, yet it is the
+    // mechanism behind the §1.3 mass re-level.  Summed, they would make a lineage with a
+    // churning chain datum look like it retires an order of magnitude more carry than
+    // one without, which is the inference the §7 promotion argument must not draw.
     {
         const auto& C = ctx.counters;
         const double pl_gap = config_.networkPhaseLevelingMaxGapS();
-        // Armed-state disclosure, the same qualifier family [C] already carries.
-        // Families [A] and [B] both live on the phase-leveling carry, and [B]
-        // additionally sits at an inject site that carry_invariant supersedes —
-        // so on those postures a 0 means UNWIRED, not clean.  Saying so is the
-        // whole point of the census (invariant #4).
+        // Armed-state disclosure, the same qualifier family [C] carries.  Families [A]
+        // and [B] both live on the phase-leveling carry, and [B] also sits at an inject
+        // site that carry_invariant supersedes, so on those postures a 0 means unwired,
+        // not clean (invariant #4).
         const bool pl_live    = config_.networkPhaseLeveling();
         const bool cliff_live = pl_live && !config_.networkCarryInvariant();
         log->info("Network (leveling-carry retirement census) [B] THE CLIFF{} — "
@@ -2318,13 +2307,13 @@ int networkTeardown(
                       : 0.0,
                   C.n_cr_gap_prune_max_week, C.cr_gap_prune_max_tow,
                   C.n_cr_zwd_gap_prune, C.n_cr_rpb_gap_prune);
-        // F1 (network.phase_leveling_los_scale, SPEC_amb_iono_split_overcount) — the
-        // inject-side per-LOS variance scale's ON-path telemetry (invariant #4).
-        // Printed ONLY when armed, so an OFF log is byte-identical.  Armed on a
-        // multi-band posture with 0 rows scaled means the inject never saw two
-        // carried bands on one LOS — a MISWIRE, not a quiet run; a histogram
-        // concentrated at B_eff = 1 on a triple-frequency bed says the sibling
-        // bands were being skipped (freed / stale / reseed), not carried.
+        // ON-path telemetry of the inject-side per-LOS variance scale (F1,
+        // network.phase_leveling_los_scale, SPEC_amb_iono_split_overcount; invariant
+        // #4).  Printed only when armed, so a log with the knob off is byte-identical.
+        // Armed on a multi-band posture with 0 rows scaled means the inject never saw two
+        // carried bands on one LOS: a miswire, not a quiet run.  A histogram concentrated
+        // at B_eff = 1 on a triple-frequency bed says the sibling bands were skipped
+        // (freed, stale, reseed) rather than carried.
         if (ctx.knobs.pl_los_scale)
             log->info("Network (leveling LOS-scale F1){}: {} row(s) scaled over {} LOS "
                       "group(s); B_eff histogram 1:{} 2:{} 3:{} 4+:{}",
@@ -2336,15 +2325,15 @@ int networkTeardown(
                           + C.n_pl_los_scale_hist[2] + C.n_pl_los_scale_hist[3],
                       C.n_pl_los_scale_hist[0], C.n_pl_los_scale_hist[1],
                       C.n_pl_los_scale_hist[2], C.n_pl_los_scale_hist[3]);
-        // F3 (network.phase_leveling_local_block, SPEC_amb_iono_split_overcount) — the
-        // station-wide jointly-whitened leveling-carry block's ON-path telemetry
-        // (invariant #4).  Printed ONLY when armed, so an OFF log is byte-identical.
-        // Armed with 0 blocks means the inject never built one — a MISWIRE
-        // (carry_conditional_coupling off, carry_coupling_joint_whiten on, or the
-        // carry never warmed), not a quiet run; a histogram sitting below the
-        // station's carried-column count says the sibling columns were being
-        // marginalized out (freed / stale / reseed), not carried; fallbacks are the
-        // station-epochs that got F1/diagonal rows instead of the block.
+        // ON-path telemetry of the station-wide, jointly whitened leveling-carry block
+        // (F3, network.phase_leveling_local_block, SPEC_amb_iono_split_overcount;
+        // invariant #4).  Printed only when armed, so a log with the knob off is
+        // byte-identical.  Armed with 0 blocks means the inject never built one: a
+        // miswire (carry_conditional_coupling off, carry_coupling_joint_whiten on, or the
+        // carry never warmed), not a quiet run.  A histogram below the station's
+        // carried-column count says the sibling columns were marginalized out (freed,
+        // stale, reseed) rather than carried; fallbacks are the station-epochs that got
+        // F1 or diagonal rows instead of the block.
         if (ctx.knobs.pl_local_block)
             log->info("Network (leveling local-block F3){}: {} block(s) whitened, {} row(s) "
                       "emitted, {} column(s) marginalized at inject, {} pair(s) zeroed "
@@ -2377,12 +2366,12 @@ int networkTeardown(
                       C.n_pl_blk_refloat_rewhiten, C.n_pl_blk_refloat_fail,
                       config_.networkPhaseLevelingLocalBlockMinAgeEp(),
                       config_.networkPhaseLevelingLocalBlockYoungMode(), C.n_pl_blk_young_cols,
-                      // B9-in-block (network.carry_zwd_in_block) — invariant #4: printed on
-                      // the F3 line because the block IS the vehicle.  0 columns under an
-                      // armed knob is UNWIRED, not clean; a large fallback count says the
-                      // ZWD kept taking the diagonal B9 row this card exists to replace
-                      // (n_pl_blk_fallback above attributes how many of those were a
-                      // non-SPD block vs a station-epoch with no block at all).
+                      // ZWD in the block (B9-in-block, network.carry_zwd_in_block), printed
+                      // on the F3 line because the block carries it.  0 columns under an
+                      // armed knob means unwired, not clean (invariant #4); a large fallback
+                      // count says the ZWD kept taking the diagonal B9 row the block
+                      // replaces (n_pl_blk_fallback above splits those into non-SPD blocks
+                      // and station-epochs with no block at all).
                       C.n_pl_blk_zwd_cols, C.n_pl_blk_zwd_fallback_diag,
                       C.n_pl_blk_zwd_missing_cross, C.n_raim_pool_zwd_rows,
                       config_.networkCarryZwdInBlock()
@@ -2392,11 +2381,11 @@ int networkTeardown(
                                    "block with a live ZWD carry), not quiet."
                                  : "")
                           : " (knob OFF — these are structurally 0)",
-                      // I-in-block (network.carry_iono_in_block) — invariant #4, on the F3
-                      // line because the block IS the vehicle.  0 columns under an armed
-                      // knob is UNWIRED, not clean; a large not-folded count says the
-                      // station blocks kept failing to factorize, and since this card has
-                      // no diagonal row that means the iono carry did NOTHING there.
+                      // Iono in the block (I-in-block, network.carry_iono_in_block), on the
+                      // F3 line because the block carries it.  0 columns under an armed knob
+                      // means unwired, not clean (invariant #4); a large not-folded count
+                      // says the station blocks kept failing to factorize, and with no
+                      // diagonal iono row the iono carry then contributes nothing there.
                       C.n_pl_blk_iono_cols, C.n_pl_blk_iono_not_folded,
                       C.n_pl_blk_iono_missing_cross, C.n_raim_pool_iono_rows,
                       C.n_iono_blk_erased_t4, C.n_iono_blk_gap_drop,
@@ -2410,14 +2399,14 @@ int networkTeardown(
                                    "MISWIRE, not a quiet run."
                                  : "")
                           : " (knob OFF — these are structurally 0)",
-                      // RX-CLK-in-block (network.carry_rx_clock_in_block) — invariant #4,
-                      // on the F3 line because the block IS the vehicle.  0 columns under
-                      // an armed knob is UNWIRED, not clean.  ⚠ Read `refused` as the
-                      // clock-JUMP census: it is the ONLY jump detector the network's
-                      // receiver clock has, so a field lineage with 0 refusals over a day
-                      // is either a very well behaved receiver fleet or a gate set too
-                      // loose — and a large count means the carry is being rebuilt
-                      // constantly, i.e. the drift model is not tracking.
+                      // Receiver clock in the block (RX-CLK-in-block,
+                      // network.carry_rx_clock_in_block), on the F3 line because the block
+                      // carries it.  0 columns under an armed knob means unwired, not clean
+                      // (invariant #4).  `refused` is the clock-jump census and the only
+                      // jump detector the network's receiver clock has: 0 refusals over a
+                      // field day means either a well-behaved receiver fleet or a gate set
+                      // too loose, and a large count means the carry is rebuilt constantly
+                      // (the drift model is not tracking).
                       C.n_pl_blk_rxclk_cols, C.n_pl_blk_rxclk_isb_cols,
                       C.n_pl_blk_rxclk_not_folded, C.n_pl_blk_rxclk_missing_cross,
                       C.n_raim_pool_rxclk_rows, C.n_rxclk_carry_refused,
@@ -2433,14 +2422,14 @@ int networkTeardown(
                                    "not a quiet run."
                                  : "")
                           : " (knob OFF — these are structurally 0)");
-        // The jump gate's own SCALE, printed only when the card is armed (an OFF
-        // run's log is byte-identical).  `refused` above is a count; without the
-        // metres a report can only quote k, and k alone does not say whether a given
-        // event is above or below the gate.  var_pred is per station-epoch (harvested
-        // variance + drift extrapolation + q), so the gate is a distribution — mean,
-        // min and max.  `max |innov|` is the loudest step the gate actually saw; on a
-        // quiet bed with no injected event it is the noise ceiling, and an injected
-        // rx_clock_step must clear the gate at its own station to be refused.
+        // The jump gate's scale in metres, printed only with network.carry_rx_clock_in_block
+        // armed (with it off the log is byte-identical).  `refused` above is a count, and
+        // k alone does not say whether a given event is above or below the gate.  var_pred
+        // is per station-epoch (harvested variance + drift extrapolation + q), so the gate
+        // is a distribution, reported as mean, min and max.  The largest |innovation| is
+        // the largest step the gate saw; on a quiet bed with no injected event it is the
+        // noise ceiling, and an injected rx_clock_step must clear the gate at its own
+        // station to be refused.
         if (config_.networkCarryRxClockInBlock())
             log->info("Network (F3 carry, rx-clock JUMP GATE): k = {:.1f} sigma over {} "
                       "station-epoch test(s) ⇒ gate mean {:.4f} m, min {:.4f} m, max {:.4f} m; "
@@ -2451,18 +2440,17 @@ int networkTeardown(
                       C.n_rxclk_gate_tests ? C.sum_rxclk_gate_m / C.n_rxclk_gate_tests : 0.0,
                       C.min_rxclk_gate_m, C.max_rxclk_gate_m, C.max_rxclk_innov_m,
                       C.n_rxclk_carry_refused);
-        // AGE-AWARE young-arc inflate (network.phase_leveling_young_inflate_var_m2,
-        // SPEC_amb_iono_split_overcount §6.17–§6.18) — the ON-path telemetry
-        // (invariant #4).  Printed ONLY when armed, so an OFF log is byte-identical.
-        // What to read: 0 inflated column-epochs under an armed knob is ARMED AND
-        // INERT — the stamps never reached an inject, not a quiet run; a mean age near
-        // the ceiling says the population being inflated is nearly mature and the knob
-        // is buying almost nothing; and the stamp split (created vs freed) says which
-        // event is actually producing the code-quality levels on this bed.  The
-        // block-scaled count read against the inflated count separates "computed" from
-        // "actually applied inside Σ" — a gap is columns that took the per-column route
-        // (F3 off, factorization fallback, young-leg gate) or were refused by the
-        // block's scalar screen.
+        // ON-path telemetry of the age-aware young-arc inflate
+        // (network.phase_leveling_young_inflate_var_m2, SPEC_amb_iono_split_overcount
+        // §6.17–§6.18; invariant #4).  Printed only when armed, so a log with the knob off
+        // is byte-identical.  0 inflated column-epochs under an armed knob means armed and
+        // inert (the stamps never reached an inject), not a quiet run.  A mean age near
+        // the ceiling says the inflated population is nearly mature and the knob changes
+        // little.  The stamp split (created against freed) says which event produces the
+        // code-quality levels on this bed.  The block-scaled count against the inflated
+        // count separates "computed" from "applied inside Σ": the difference is columns
+        // that took the per-column route (F3 off, factorization fallback, young-leg gate)
+        // or were refused by the block's scalar screen.
         if (config_.networkPhaseLevelingYoungInflateVarM2() > 0.0)
             log->info("Network (young-arc inflate): {} column-epoch(s) inflated (V0 {:.4g} m², "
                       "tau {:.4g} ep, max age {} ep), mean age {:.2f} ep, Σ var_add {:.4g} m²; "
@@ -2485,14 +2473,9 @@ int networkTeardown(
                             "(no stamps, no leveling inject, or an epoch spacing the run "
                             "never resolved), not a quiet run."
                           : "");
-        // Seam-scoped ZWD re-seed (network.zwd_seam_reseed) — the ON-path telemetry
-        // (standing invariant #4): an armed knob with 0 folds means the window never
-        // armed (no warm resume, or the snapshot carried no Z rows) or every fold
-        // was skipped (stale entries / carry_warm cold) — the resume-time ARMED /
-        // INERT log line says which.
-        // Resume FRAME restore + slip warm-up (§18.10) — ON-path telemetry (invariant
-        // #4): the re-coupling edge's identities.  0 anchors under an ARMED knob means
-        // the snapshot carried no frame rows (a v1 file) or no resume happened.
+        // Resume frame restore and slip warm-up (§18.10): ON-path telemetry (invariant
+        // #4), the identities of the re-coupling edge.  0 anchors under an armed knob
+        // means the snapshot carried no frame rows (a v1 file) or no resume happened.
         if (config_.networkResumeFrameRestore() || config_.networkResumeSlipWarmupEp() > 0)
             log->info("Network (resume frame restore): {} phase-anchor incumbent(s), {} sticky "
                       "pin target(s), {} clock-anchor sat state(s) ({} anchored), {} CLK-R "
@@ -2507,21 +2490,21 @@ int networkTeardown(
                             "carried no frame rows (pre-v2 writer?) or no warm resume "
                             "happened; check the resume log for the FRAME line."
                           : "");
-        // §18.12 coupling-regressor restore — the RE-COUPLING edge of the seam (standing
-        // invariant #7): what came back, and what it actually BOUND TO at the first fold.
-        // Restoring (value, var) alone injects a carried leveling row as a PLAIN DIAGONAL
-        // prior asserted at the PURE CONDITIONAL variance — a combination no continuous
-        // epoch produces — so the row drives the shared border by the full α‖M_d‖ at
-        // α ≈ 1/cond_var ≈ 1e6 m⁻², four orders above the Q3 anchored clock prior's
-        // 1/9e-5 ≈ 1.1e4 m⁻².  That is the §18.11 first-fold trip count, so "how many rows
-        // came back" is NOT the readout — "how many of their terms resolved to a live
-        // column" is, and both edges are printed here.
+        // Coupling-regressor restore (§18.12), the re-coupling edge of the seam
+        // (invariant #7): what came back, and what it bound to at the first fold.
+        // Restoring (value, var) alone injects a carried leveling row as a plain diagonal
+        // prior at the pure conditional variance, a combination no continuous epoch
+        // produces, so the row drives the shared border by the full α‖M_d‖ at
+        // α ≈ 1/cond_var ≈ 1e6 m⁻², about 90 times the Q3 anchored clock prior's
+        // 1/9e-5 ≈ 1.1e4 m⁻².  This is the mechanism behind the §18.11 first-fold trips, so
+        // the readout is not how many rows came back but how many of their terms resolved
+        // to a live column; both edges are printed here.
         //
-        // The census vectors hold ONE entry per row of the FIRST post-resume harvest (the
-        // measure-only observatory in networkHarvestLocalCarries), so they are reduced HERE
+        // The census vectors hold one entry per row of the first post-resume harvest (the
+        // measure-only observatory in networkHarvestLocalCarries), so they are reduced here
         // rather than accumulated online: nth_element is O(n), the run is over, and the
-        // observatory stays byte-identical on every solve artifact.  Reduced on COPIES so
-        // the readout never permutes carried state.
+        // observatory stays byte-identical on every solve artifact.  The reduction works on
+        // copies so the readout never permutes carried state.
         double rel_p50 = 0.0, rel_p90 = 0.0, rel_max = 0.0, rhs_p50 = 0.0, rhs_max = 0.0;
         {
             using Diff = std::vector<double>::difference_type;
@@ -2591,14 +2574,14 @@ int networkTeardown(
                       "row); {} border key(s) folded DIAGONALLY at the first warm fold.",
                       C.n_resume_cpl_cov_keys, C.n_resume_cpl_cov_dropped,
                       C.n_resume_cpl_diag_border);
-        // RS-7 (§21.14) — the DENSE-BORDER restore's own run-end readout, and the C1
-        // border's readout on a plain warm resume that arms NEITHER restore.  Both edges
-        // of the same instrument (standing invariant #7): how much of the border came
-        // back, and how much of it the first fold still had to take diagonally.  The Q3
-        // first-fold decouple count is §18.11's own trip statistic — the number the
-        // restored border is supposed to return to a continuous run's level — and it is
-        // structurally 0 on a lineage that does not arm network.clock_anchor, which the
-        // line says outright rather than letting a 0 read as health (invariant #4).
+        // Run-end readout of the dense-border restore (§21.14, RS-7), and of the C1 border
+        // on a plain warm resume that arms neither restore.  Both edges of one instrument
+        // (invariant #7): how much of the border came back, and how much of it the first
+        // fold still took diagonally.  The Q3 first-fold decouple count is §18.11's trip
+        // statistic, the number the restored border should bring back to a continuous
+        // run's level.  It is structurally 0 on a lineage that does not arm
+        // network.clock_anchor, and the line says so rather than letting a 0 read as a
+        // good result (invariant #4).
         {
             const std::string cta_note =
                 ctx.knobs.cta_on
@@ -2633,11 +2616,12 @@ int networkTeardown(
                           C.n_resume_dense_carry_keys, C.n_resume_cpl_diag_border,
                           C.n_resume_first_fold_cta_trips, cta_note);
         }
-        // READMIT continuity (E2 seed-first re-admission + the block re-coupling edge) —
-        // BOTH edges printed (standing invariant #7): parked = what left; seeded = what came
-        // back; moved / outlier = what the data rejected; the coupling window's diverted-term
-        // count is the block edge's own denominator.  0 seeds under an armed horizon with
-        // parks > 0 reads as INERT-on-this-bed (invariant #4), and says so.
+        // Re-admission continuity (E2 seed-first re-admission and the block re-coupling
+        // edge), both edges printed (invariant #7): parked is what left, seeded is what came
+        // back, moved and outlier are what the data rejected, and the coupling window's
+        // diverted-term count is the block edge's denominator.  0 seeds under an armed
+        // horizon with parks > 0 means inert on this bed, and the line says so
+        // (invariant #4).
         if (config_.networkReadmitSeedHorizonS() > 0.0
             || config_.networkReadmitCouplingMargEp() > 0)
             log->info("Network (READMIT continuity): {} re-admission(s) detected; seed horizon {} "
@@ -2660,12 +2644,12 @@ int networkTeardown(
                           ? "  ⚠ entries were parked but NONE seeded — every return expired or "
                             "was dropped; the horizon is shorter than this bed's absences."
                           : "");
-        // §6.12.5 — the DD trace's REFERENCE identity, on both policies.  Printed whenever the
-        // trace ran, including under the `lowest` default: the switch rate was always there and
-        // always silent, and a grade built on a single reference element has to state that
-        // element's behaviour (SPEC_synthetic §13.8).  `age_win` is the invariant-#4 denominator
-        // for `oldest` — 0 means the policy never elected anything `lowest` would not have, so the
-        // arm is INERT and its A/B proves nothing no matter how clean the file looks.
+        // Reference identity of the DD trace under either policy (§6.12.5).  Printed whenever
+        // the trace ran, including under the `lowest` default: reference switches occur under
+        // both policies, and a grade built on a single reference element has to state that
+        // element's behaviour (SPEC_synthetic §13.8).  `age_win` is the invariant-#4
+        // denominator for `oldest`: 0 means the policy never elected a satellite `lowest`
+        // would not have, so the arm is inert and its A/B proves nothing.
         if (nc.trace_dd_fractional && C.n_ddfrac_ref_epochs > 0) {
             const bool oldest = nc.trace_dd_fractional_ref == NetworkDdFracRef::Oldest;
             log->info("Network (DD-frac reference, §6.12.5): policy '{}' — {} election(s) over the "
@@ -2682,6 +2666,11 @@ int networkTeardown(
                             "so this run is byte-identical to the default and cannot A/B the policy."
                           : "");
         }
+        // Seam-scoped ZWD re-seed (network.zwd_seam_reseed): ON-path telemetry
+        // (invariant #4).  An armed knob with 0 folds means the window never armed (no
+        // warm resume, or the snapshot carried no Z rows) or every fold was skipped
+        // (stale entries, carry_warm cold); the resume-time ARMED/INERT log line says
+        // which.
         if (config_.networkZwdSeamReseed())
             log->info("Network (ZWD seam re-seed): {} station-fold(s) over {} epoch(s) of the "
                       "post-resume window (horizon {} epochs).{}",
@@ -2710,11 +2699,10 @@ int networkTeardown(
     }
 
     // ---- Phase wind-up census (estimation.trace_windup_census) -------------
-    // The FIRST instrument to reach the network path's wind-up channel:
-    // windup_trace.csv is written only from Application::run (one caller,
-    // Application.cpp), which runNetwork never reaches, so until now the
-    // fractional staircase was measured on exactly one PPP station and scaled
-    // by hand to 63.  Read-only — arming this cannot move a byte of the solve.
+    // Reads the per-station wind-up counters directly, because windup_trace.csv is
+    // written only from Application::run (one caller, Application.cpp), which
+    // runNetwork never reaches.  Read-only: arming it cannot change a byte of the
+    // solve.
     if (config_.traceWindUpCensus()) {
         GnssCorrections::WindUpCensus c{};
         int n_sta = 0;
@@ -2738,11 +2726,10 @@ int networkTeardown(
         const bool acc      = config_.accumulatePhaseWindUp();
         const double wu_gap = config_.phaseWindUpMaxGapS();
         const double cy_gap = config_.networkPhaseLevelingMaxGapS();
-        // The exposure narrative is only true when the carry OUTLIVES the
-        // accumulator.  At the loader default it does not (120 s vs 300 s), and
-        // printing the sentence anyway would let a structural zero read as a
-        // clean bill of health — the invariant-#4 failure mode this whole card
-        // exists to avoid.
+        // The exposure sentence holds only when the leveling carry outlives the
+        // accumulator.  At the loader defaults it does not (120 s against 300 s), and
+        // printing the sentence anyway would let a structural zero read as a clean
+        // result (invariant #4).
         const bool exposure_ordering = cy_gap > wu_gap;
         log->info("Network (wind-up census, SPEC_phase_windup_sign §10): mode {}, "
                   "horizons wind-up {:.0f} s / leveling carry {:.0f} s ({}).  {} "
@@ -2802,8 +2789,8 @@ int networkTeardown(
                           : "with NO ambiguity response armed this run (invariants #1 "
                             "and #7; arm network.cycle_slip.windup_restart_refloat).");
     }
-    // §10.4 wind-up restart RESPONSE readout (the wired invariant-#1 response;
-    // counters are the ON-path telemetry — invariant #4).
+    // Wind-up restart response readout (§10.4), the wired invariant-#1 response; its
+    // counters are the ON-path telemetry (invariant #4).
     if (config_.networkCycleSlipWindupRestartRefloat()) {
         const auto& qcc = slip_qc.counters;
         const long long closure = qcc.wu_restart_refloated + qcc.wu_restart_cold
@@ -2823,11 +2810,11 @@ int networkTeardown(
                   closure == qcc.wu_restart_events ? "OK" : "*** MISWIRE ***");
     }
 
-    // ---- ANCHOR-SLIP HANDOVER (docs/SPEC_event_harness.md §12.7) ------------
-    // Invariant #4: these counters ARE the ON-path telemetry.  The card's whole
-    // claim is that a slip landing on a GAUGE arc is a different event from one
-    // landing anywhere else, so an armed run reporting 0 staged on a lineage whose
-    // detectors fired has not proved the network is quiet — it has proved nothing.
+    // ---- Anchor-slip handover (docs/SPEC_event_harness.md §12.7) ------------
+    // These counters are the ON-path telemetry (invariant #4).  A slip that lands on a
+    // gauge arc is a different event from one that lands anywhere else, so an armed run
+    // reporting 0 staged on a lineage whose detectors fired has not shown the network
+    // is quiet; it has shown nothing.
     if (config_.networkCycleSlipAnchorSlipHandover()) {
         const auto& C = ctx.counters;
         log->info("Network (anchor-slip handovers, §12.7): {} family(ies) staged over "
@@ -2852,12 +2839,12 @@ int networkTeardown(
                       C.n_anc_slip_no_successor);
     }
 
-    // ---- MW DETECT-ONLY ADMISSION (network.cycle_slip.mw_evidence_refloat) --
-    // Printed ALWAYS, armed or not: the drop populations were silent before this
-    // card (no counter, no event row), and the would-admit count is what sizes
-    // the knob on a lineage without running it armed.  An OFF run reporting
-    // would-admit 0 says the card is inert there; an ON run reporting evidence 0
-    // with would-admit > 0 on the same leg is dead wiring (invariant #4).
+    // ---- MW detect-only admission (network.cycle_slip.mw_evidence_refloat) --
+    // Printed on every run, armed or not: this line is the readout of the drop
+    // populations, and the would-admit count sizes the knob on a lineage without
+    // running it armed.  A run with the knob off reporting would-admit 0 says the knob
+    // is inert there; a run with it on reporting evidence 0 with would-admit > 0 on the
+    // same leg is dead wiring (invariant #4).
     {
         const auto& C = ctx.counters;
         log->info("Network (MW detect-only admission): legacy {}, evidence {} "
@@ -2868,11 +2855,10 @@ int networkTeardown(
                   C.n_mw_drop_unknown);
     }
 
-    // ---- L5P: the MW PAIR SCOPE (network.cycle_slip.mw_detect_pairs) --------
-    // Printed only when the scope is armed — it has nothing to say otherwise (the
-    // counter is structurally 0 under `all`).  Standing invariant #4: the count IS
-    // the ON-path telemetry, and an armed run reporting 0 on a three-band lineage
-    // is the wiring being inert, not the detector being quiet.
+    // ---- MW pair scope (network.cycle_slip.mw_detect_pairs, card L5P) --------
+    // Printed only when the scope is armed; the counter is structurally 0 under `all`.
+    // The count is the ON-path telemetry (invariant #4), and an armed run reporting 0
+    // on a three-band lineage means the wiring is inert, not that the detector is quiet.
     if (config_.networkCycleSlipMwDetectPairs() == NetworkMwDetectPairs::Primary) {
         const auto& C = ctx.counters;
         log->info("Network (card L5P, MW pair scope = primary): {} detector row(s) NOT "
@@ -2888,9 +2874,9 @@ int networkTeardown(
                       "reading this arm as a scoped one.");
     }
 
-    // ---- L5P: the EXTRA-BAND code deweight (network.extra_band_code_sigma_scale)
-    // Same contract.  The fold runs inside the PARALLEL produce phase, so its row
-    // counts live per-station (the gl_rows_deweighted precedent); sum them here,
+    // ---- Extra-band code deweight (network.extra_band_code_sigma_scale, card L5P)
+    // Same contract.  The fold runs inside the parallel produce phase, so its row
+    // counts are kept per station (as gl_rows_deweighted is); they are summed here,
     // once, before the block reads them.
     if (config_.networkExtraBandCodeSigmaScale() > 1.0) {
         auto& C = ctx.counters;
@@ -2912,15 +2898,14 @@ int networkTeardown(
                       "clock-reference entry answers 'nothing is extra-band' by design).");
     }
 
-    // ---- SCC: the SECOND CODE CHANNEL (network.second_code_channel) ----------
-    // (docs/refound/SCC_second_code_channel_2026-09-21.md, R7.)  Armed-only run-end
-    // line.  Nothing else can say what this card did: a companion code row is
-    // indistinguishable from a canonical one in every trace and on the wire, and the
-    // whole claim is about which SATELLITE columns reached the two-station
-    // registration bar — so the run has to state it (standing invariant #4).  The
-    // ROW counts are accumulated inside the PARALLEL produce phase and live
-    // per-station (the eb_rows_deweighted precedent); sum them here, before the
-    // block reads them.
+    // ---- Second code channel (network.second_code_channel, card SCC) ---------
+    // (docs/refound/SCC_second_code_channel_2026-09-21.md, R7.)  Run-end line, printed
+    // only when armed.  No other output records what the channel did: a companion code
+    // row looks like a canonical one in every trace and on the wire, and the effect is
+    // which satellite columns reach the two-station registration bar, so the run states
+    // it here (invariant #4).  The row counts accumulate inside the parallel produce
+    // phase and are kept per station (as eb_rows_deweighted is); they are summed here,
+    // before the block reads them.
     if (config_.networkSecondCodeRowsActive()) {
         auto& C = ctx.counters.second_code;
         C.rows          = 0;
@@ -2969,14 +2954,13 @@ int networkTeardown(
         }
     }
 
-    // ---- SID phase 6a: the SECOND PHASE CHANNEL (network.second_phase_channel) --
-    // (docs/refound/SID_signal_identity_2026-09-22.md section 4, R7.)  Armed-only
-    // run-end line, on the card SCC precedent and for the same reason: a second-phase
-    // row is indistinguishable from the latched one in every trace and on the wire,
-    // and the whole claim is about which SATELLITE families reached the registration
-    // bar, so the run has to state it (standing invariant #4).  The ROW count is
-    // accumulated inside the PARALLEL produce phase and lives per-station; sum it
-    // here, before the block reads it.
+    // ---- Second phase channel (network.second_phase_channel, SID phase 6a) ------
+    // (docs/refound/SID_signal_identity_2026-09-22.md section 4, R7.)  Run-end line,
+    // printed only when armed, for the same reason as the SCC line: a second-phase row
+    // looks like the latched one in every trace and on the wire, and the effect is
+    // which satellite families reach the registration bar, so the run states it here
+    // (invariant #4).  The row count accumulates inside the parallel produce phase and
+    // is kept per station; it is summed here, before the block reads it.
     if (config_.networkSecondPhaseRowsActive()) {
         auto& C = ctx.counters.second_phase;
         C.rows = 0;
@@ -3006,10 +2990,9 @@ int networkTeardown(
                       C.cells, C.cell_open, C.cell_close, C.arcs_born, C.rows,
                       config_.networkSecondPhaseSigmaScale(), C.arcs_live_max,
                       C.stations_max, C.fallback_rows, C.cols_via_second, C.anchors);
-            // R4 + standing invariant #1: a second-phase arc must have a wired slip
-            // response beyond the post-fit attribution, and this line is what says
-            // whether it does.  A tier reading zero here while arcs exist is a tier
-            // that does not screen this card's rows.
+            // A second-phase arc needs a wired slip response beyond the post-fit
+            // attribution (invariant #1; R4), and this line says whether it has one.  A
+            // tier reading zero here while arcs exist does not screen second-phase rows.
             log->info("Network (SECOND PHASE CHANNEL, card SID phase 6a): slip census on "
                       "second-phase arcs — {} arc-epoch(s) freed by any tier: MW {}, LLI "
                       "{}, IF-TD {}, T4 attribution {}, T3 consensus {}, wind-up restart "
@@ -3037,7 +3020,7 @@ int networkTeardown(
                           "armed with the IF-TD tier on and if_phase_td_pairs NOT 'all', so "
                           "that tier's single pair was degenerate for every satellite with "
                           "two band-1 phases (the load-time warning, restated here).");
-            // R8, the between-channel WITNESS: observatory only, no action taken.
+            // Between-channel witness (R8): observatory only, no action taken.
             log->info("Network (SECOND PHASE CHANNEL, card SID phase 6a, R8): the "
                       "between-channel WITNESS — {} consecutive-epoch pair(s) of the two "
                       "band-1 phases compared, {} with a change above 0.5 cycle(s); largest "
@@ -3050,18 +3033,19 @@ int networkTeardown(
         }
     }
 
-    // ---- COMMON-BAND SCOPE (network.cycle_slip.common_band_scope, §14) ------
-    // Printed ALWAYS, armed or not, for the same reason as the clause above: the
-    // would-narrow count sizes the card on a lineage without running it armed,
-    // and an ARMED run reporting narrowed 0 while verdicts > 0 is dead wiring,
-    // not a quiet network (invariant #4).  `bands kept` is the headline — under
-    // the all-band union every live band of a fired arc would have been freed.
+    // ---- Common-band scope (network.cycle_slip.common_band_scope, §14) ------
+    // Printed on every run, armed or not, for the same reason as the MW detect-only
+    // admission line: the would-narrow count sizes the knob on a lineage without
+    // running it armed, and an armed run reporting narrowed 0 while verdicts > 0 is
+    // dead wiring, not a quiet network (invariant #4).  `bands kept` is the main
+    // number: under the all-band union every live band of a fired arc would have been
+    // freed.
     {
         const auto& C = ctx.counters;
         const double ep = static_cast<double>(std::max<long long>(C.n_cb_split_epochs, 1));
-        // §22: the reference-arc clause's own refusals, with the per-CHAIN
-        // breakdown inline — the cost is one dead zone per chain whose reference
-        // the arc is, so the total alone cannot say which chains paid.
+        // Refusals of the reference-arc clause (§22), with the per-chain breakdown
+        // inline: each refusal costs one dead zone per chain whose reference the arc
+        // is, so the total alone cannot say which chains bore the cost.
         std::string ref_arc_by;
         for (const auto& [pr, n] : C.n_cb_iftd_ref_arc_by_pair)
             ref_arc_by += fmt::format("{}{}: {}", ref_arc_by.empty() ? "" : ", ", pr, n);
@@ -3092,9 +3076,9 @@ int networkTeardown(
                   config_.networkCycleSlipCommonBandScope()
                       ? std::string{}
                       : fmt::format("; would-narrow {}", C.n_cb_would_narrow));
-        // §14.10: attribute the vetoes to the IF-TD PAIR KIND that made them.
-        // The card's claim is that the vetoes come from pairs the single-pair
-        // detector never watched, and the total alone cannot show that.
+        // Attribute the vetoes to the IF-TD pair kind that made them (§14.10).  The
+        // expectation is that the vetoes come from pairs the single-pair detector never
+        // watched, and the total alone cannot show that.
         if (!C.n_cb_iftd_veto_by_pair.empty()) {
             std::string by;
             for (const auto& [pr, n] : C.n_cb_iftd_veto_by_pair)
@@ -3103,13 +3087,13 @@ int networkTeardown(
         }
     }
 
-    // ---- §14.10 IF-TD PAIR WIDTH (network.cycle_slip.if_phase_td_pairs) -----
-    // Invariant #4: the per-pair-kind tally IS the ON-path telemetry.  Printed
-    // whichever mode is set, because the `first` line sizes the card before
-    // arming it — it names the ONE pair the detector watches and how often that
-    // pair fires, so the pairs missing from the list are exactly the unwatched
-    // ones.  Under `all`, a pair kind with evaluated >> 0 and flagged 0 over a
-    // slipped bed is dead wiring, not a quiet lane.
+    // ---- IF-TD pair width (network.cycle_slip.if_phase_td_pairs, §14.10) -----
+    // The per-pair-kind tally is the ON-path telemetry (invariant #4).  Printed in
+    // either mode, because the `first` line sizes the `all` mode before it is armed:
+    // it names the one pair the detector watches and how often that pair fires, so the
+    // pairs missing from the list are the unwatched ones.  Under `all`, a pair kind
+    // with evaluated >> 0 and flagged 0 over a slipped bed is dead wiring, not a quiet
+    // lane.
     if (config_.networkCycleSlipIfPhaseTd()) {
         const auto& C = ctx.counters;
         if (C.n_iftd_pair.empty()) {
@@ -3134,12 +3118,11 @@ int networkTeardown(
         }
     }
 
-    // ---- §Z BAND-SCOPED RESPONSES (docs/SPEC_event_harness.md) --------------
-    // Invariant #4: these counters ARE the ON-path telemetry.  Either knob armed
-    // with its headline count at 0 on a run whose T4 tier fires (or whose
-    // whole-satellite detectors fire) is dead wiring, not a quiet run — the whole
-    // point of the card is that the response population is large (~21 T4 arc
-    // erases per station-hour on the slipped bed).
+    // ---- Band-scoped responses (docs/SPEC_event_harness.md §Z) --------------
+    // These counters are the ON-path telemetry (invariant #4).  Either knob armed with
+    // its headline count at 0 on a run whose T4 tier fires (or whose whole-satellite
+    // detectors fire) is dead wiring, not a quiet run: the response population is large
+    // (about 21 T4 arc erases per station-hour on the slipped bed).
     {
         const auto& nc = config_.getNetworkConfig();
         const bool t4_bs = nc.raim_erase_band_scope
@@ -3173,7 +3156,7 @@ int networkTeardown(
         }
     }
 
-    // ---- Rung 3 v3: carry-domain lane observatory (SPEC_lane_slip_response §7.3)
+    // ---- Carry-domain lane observatory, rung 3 v3 (SPEC_lane_slip_response §7.3)
     if (config_.networkCycleSlipRelevelLaneSnap()) {
         const auto& C = ctx.counters;
         const long long closure = C.n_lane_measured + C.n_lane_skip_no_row
@@ -3224,10 +3207,10 @@ int networkTeardown(
                   closure == C.n_lane_attempts ? "OK" : "*** MISWIRE ***",
                   hsum, C.n_lane_measured,
                   hsum == C.n_lane_measured ? "OK" : "*** MISWIRE ***");
-        // §7.6(b)+(c): the band-scoped subset histogram (vertex-wide = bin-wise
-        // difference against the line above) and the freeing-cause split.  The
-        // cause counts are BIT counts — a pair freed by two detectors lands in
-        // two of them, so they sum to >= measured.
+        // Band-scoped subset histogram (the vertex-wide one is the bin-wise difference
+        // against the line above) and the freeing-cause split (§7.6(b) and (c)).  The
+        // cause counts are bit counts: a pair freed by two detectors lands in two of
+        // them, so they sum to at least the measured count.
         const long long bs_sum = C.n_lane_hist_bandscoped[0] + C.n_lane_hist_bandscoped[1]
                                + C.n_lane_hist_bandscoped[2] + C.n_lane_hist_bandscoped[3]
                                + C.n_lane_hist_bandscoped[4] + C.n_lane_hist_bandscoped[5]
@@ -3247,12 +3230,12 @@ int networkTeardown(
                   C.n_lane_hist_bandscoped[8],
                   bs_sum, C.n_lane_one_freed,
                   bs_sum == C.n_lane_one_freed ? "OK" : "*** MISWIRE ***");
-        // §7.6(d): the T4-side census — the SAME delta on the RAIM
-        // attribution/consensus erase channel (97.3 % of field freeing,
-        // structurally invisible to free_ambs).  Read APART from the lane-cost
-        // grade: dMW ≈ 0 there, so a large delta is the carry error the refloat
-        // REMOVED — response working, not response damage.  0 captured on a run
-        // with nonzero n_cr_raim_attrib/consensus = dead wiring (invariant #4).
+        // T4-side census (§7.6(d)): the same delta on the RAIM attribution/consensus
+        // erase channel, which carries 97.3 % of field freeing and is structurally
+        // invisible to free_ambs.  Read it apart from the lane-cost grade: dMW ≈ 0 there,
+        // so a large delta is carry error the refloat removed (the response working, not
+        // damage it did).  0 captured on a run with nonzero n_cr_raim_attrib/consensus is
+        // dead wiring (invariant #4).
         const long long t4_closure = C.n_lane_t4_measured + C.n_lane_t4_skip_no_row
                                    + C.n_lane_t4_skip_no_mw + C.n_lane_t4_skip_unmeasured
                                    + C.n_lane_t4_skip_pair_changed + C.n_lane_t4_skip_gauge
@@ -3292,12 +3275,11 @@ int networkTeardown(
                   t4_hsum == C.n_lane_t4_measured ? "OK" : "*** MISWIRE ***");
     }
 
-    // Lane snap (SPEC_lane_slip_response rung 3): the v1/v2/v2.1 SEED-SITE
-    // readout is deleted with its mechanism — see the DELETED banner in
-    // MeasurementModel::ensureRequiredStates.  Its counters described a write
-    // that was a proven exact solve no-op, so a nonzero `snapped` was never
-    // evidence of an effect; leaving the line would have kept reporting one.
-    // Rung 3 v3 measures the lane in the CARRY domain and reports there.
+    // Lane snap (SPEC_lane_slip_response rung 3): the v1/v2/v2.1 seed-site readout was
+    // removed together with its mechanism (see the seed-site lane snap banner in
+    // MeasurementModel::ensureRequiredStates).  Its counters described a write that is
+    // an exact solve no-op, so a nonzero `snapped` never showed an effect.  Rung 3 v3
+    // measures the lane in the carry domain and reports in the observatory block above.
     if (config_.networkCycleSlipRelevelRetapCorroborate())
         log->info("Network (retap corroboration, SPEC_lane_slip_response): {} keep(s) "
                   "carried positive raw-observable continuity evidence; {} refused — "
@@ -3308,10 +3290,10 @@ int networkTeardown(
                   ctx.counters.n_relevel_retap_corr_kept,
                   ctx.counters.n_relevel_retap_corr_stepped,
                   ctx.counters.n_relevel_retap_corr_unmeasured);
-    // QUEUE 8b slant-iono carry: run-end ON-path telemetry at BOTH coupling edges
-    // (invariants #4/#7).  Armed with injected=0 on a slip-bearing run is a
-    // MISWIRE.  refused_datum is the DECLARED-ZERO open valve (the code-datum
-    // re-realization edge ships bare — see the SPEC's valve inventory entry).
+    // Slant-iono carry (queue item 8b): run-end ON-path telemetry at both coupling
+    // edges (invariants #4 and #7).  Armed with injected = 0 on a slip-bearing run is a
+    // miswire.  refused_datum is the declared-zero open valve: the code-datum
+    // re-realization edge has no response yet (see the spec's valve inventory entry).
     if (config_.networkCarryIono())
         log->info("Network (slant-iono carry, QUEUE 8b, scope={} source={} q={} "
                   "floor={} m² gap={} s): {} prior(s) injected ({} clamped at the "
@@ -3337,9 +3319,9 @@ int networkTeardown(
                                     ctx.counters.n_iono_cs_resets,
                                     ctx.carry.iono_cs.size())
                       : std::string{});
-    // Withhold-era release policy (SPEC_withhold_era_release §3): both-edge era
-    // telemetry per invariant #7.  An armed run whose eras never enter/exit or
-    // whose escalation counters stay 0 through a known sick window is a MISWIRE
+    // Withhold-era release policy (SPEC_withhold_era_release §3): era telemetry at both
+    // edges (invariant #7).  An armed run whose eras never enter or exit, or whose
+    // escalation counters stay 0 through a known degraded window, is a miswire
     // (invariant #4), not a quiet day.  landed + exhausted must sum to escalated.
     if (config_.networkRaimWithholdAdaptEscalate() > 0 ||
         config_.networkRaimWithholdFreeErase())
@@ -3361,9 +3343,9 @@ int networkTeardown(
                   ctx.counters.n_wh_free_erases,
                   ctx.counters.n_wh_free_erases == 1 ? "y" : "ies",
                   ctx.counters.n_wh_perconst_exits);
-    // QUEUE item 4 R2/R4 (SPEC_t3_null_derivation §6): run-end declaration telemetry.
-    // An armed R2 run with n_staf_epochs = 0 is a MISWIRE (invariant #4) — the seam
-    // never produced a factor (raim off? rowRedundancy throwing fleet-wide?).
+    // Run-end declaration telemetry for R2/R4 (queue item 4, SPEC_t3_null_derivation §6).
+    // An armed R2 run with n_staf_epochs = 0 is a miswire (invariant #4): the seam never
+    // produced a factor (possible causes: RAIM off, rowRedundancy throwing fleet-wide).
     if (config_.networkRaimStationFactor())
         log->info("Network (R2 station factor): {} epoch(s) computed over {} station(s); "
                   "{} depart(s) / {} return(s) at ratio {:.1f} (run-max ratio {:.2f}); "
@@ -3380,8 +3362,8 @@ int networkTeardown(
                   "counted UNCONDITIONALLY (satellites with cells at >= {} stations).",
                   ctx.counters.n_t3_untestable_cells,
                   config_.networkRaimMinStations());
-    // LV-6 census run-end readout (invariant #4: an armed run with 0 census
-    // epochs past warmup is a MISWIRE, not a quiet day).
+    // Level-authority census run-end readout (LV-6).  An armed run with 0 census epochs
+    // past warmup is a miswire, not a quiet day (invariant #4).
     if (config_.networkLevelAuthorityCsgf()) {
         const auto& c = ctx.counters;
         if (c.n_lvlauth_epochs > 0)
@@ -3397,11 +3379,11 @@ int networkTeardown(
                       "fleet epochs — past the min_n warmup this is a MISWIRE "
                       "(invariant #4), not a quiet day.");
     }
-    // §9.7.10 datum-station slip detect: run-end ON-path telemetry (invariant #4 —
-    // an armed run with injected datum-station slips reporting 0/0 is a MISWIRE,
-    // not a quiet day).  Counted separately from Card E: those are non-pivot
-    // detections answered by a local refloat; these are the gauge-pinned datum
-    // station, answered by a network re-reference.
+    // Datum-station slip detect (§9.7.10): run-end ON-path telemetry.  An armed run with
+    // injected datum-station slips reporting 0/0 is a miswire, not a quiet day
+    // (invariant #4).  Counted separately from Card E: those are non-pivot detections
+    // answered by a local refloat; these are at the gauge-pinned datum station and are
+    // answered by a network re-reference.
     if (config_.networkCycleSlipDatumStationDetect()) {
         const auto& qcc = slip_qc.counters;
         log->info("Network (datum-station slip detect): {} MW/LLI detection(s) at the "
@@ -3422,8 +3404,8 @@ int networkTeardown(
                   "qualified.", qcc.lli_asserted, qcc.lli_corr_mw, qcc.lli_corr_gf,
                   qcc.lli_unmeasurable, qcc.lli_offpair, qcc.lli_suppressed,
                   qcc.lli_credible_epochs, qcc.lli_demoted_epochs);
-        // M4: the per-run top-offenders line — the audit's STK2/ISHI/MCIL/CCJ2 list
-        // must be reproducible from the log alone, without the CSV traces.
+        // Per-run top-offenders line, so the audit's station list (STK2, ISHI, MCIL,
+        // CCJ2) can be reproduced from the log alone, without the CSV traces (M4).
         std::vector<std::pair<long long, std::size_t>> offenders;
         for (std::size_t si = 0; si < slip_qc.hist.size(); ++si)
             if (slip_qc.hist[si].lli_suppressed > 0)
@@ -3452,26 +3434,26 @@ int networkTeardown(
                       offenders.size(), top);
         }
     }
-    // ---- SIM-ONLY ORACLE AMBIGUITY PIN (include/filter/NetworkOraclePin.hpp) ----
-    // Standing invariant #4: the ONLY way to tell a working pin from dead wiring
-    // is the injected-row count.  A run reporting 0 has NOT measured a ceiling on
-    // what integer information buys — it has measured an unpinned run, and the
-    // line says so in-band so nobody grades it as the former.
+    // ---- Sim-only oracle ambiguity pin (include/filter/NetworkOraclePin.hpp) ----
+    // The injected-row count is the only way to tell a working pin from dead wiring
+    // (invariant #4).  A run reporting 0 has not measured a ceiling on what integer
+    // information buys; it has measured an unpinned run, and the line says so in the
+    // log so the run is not graded as the former.
     networkOraclePinRunEnd(ctx.carry.oracle_pin.get(), log);
-    // ---- SIM-ONLY ORACLE slip response (include/slip/NetworkSlipOracle.hpp) ----
-    // Standing invariant #4: the ONLY way to tell a working oracle from dead
-    // wiring is the applied count.  The pre-registered P1 for this card is
-    // applied > 1500 on a 6 h campaign arm; a run that reports 0 has not measured
-    // a ceiling, it has measured nothing, and the line says so in-band.
+    // ---- Sim-only oracle slip response (include/slip/NetworkSlipOracle.hpp) ----
+    // The actuation count (applied, or fa_kept under true_slip 'free'; see below) is
+    // the only way to tell a working oracle from dead wiring (invariant #4).  The
+    // pre-registered P1 is applied > 1500 on a 6 h campaign arm; a run that reports 0
+    // has not measured a ceiling, it has measured nothing, and the line says so in the
+    // log.
     if (ctx.carry.slip_oracle) {
         const auto& o = *ctx.carry.slip_oracle;
         const bool ts_free = (o.true_slip == NetworkSlipOracle::TrueSlip::Free);
         const bool fa_free = (o.false_alarm == NetworkSlipOracle::FalseAlarm::Free);
-        // The ACTUATION counter depends on the policy pair: with true_slip 'free'
-        // nothing is ever repaired BY CONSTRUCTION, so keying inertness on
-        // `applied` there would fire the dead-wiring warning on a correctly
-        // working false-alarm-isolation arm — the mirror of the failure that
-        // warning exists to catch.  The arm's own actuation is the KEEP.
+        // The actuation counter depends on the policy pair.  With true_slip 'free'
+        // nothing is ever repaired by construction, so keying inertness on `applied`
+        // would fire the dead-wiring warning on a correctly working false-alarm
+        // isolation arm; that arm's own actuation is the keep (fa_kept).
         const long long acted = ts_free ? o.fa_kept : o.applied;
         log->warn("Network (slip ORACLE): {} detector actuation(s) on carried arcs, {} "
                   "repaired (sum |delta| {:.1f} cyc, max |delta| {:.1f}, {} multi-slip), {} "
@@ -3529,14 +3511,13 @@ int networkTeardown(
     if (nc.slip_qc.gap_instrument || nc.slip_qc.gap_reentry
         || nc.slip_qc.gap_reentry_per_signal) {
         const auto& qcc = slip_qc.counters;
-        // ---- the RESPONSE clause (network.cycle_slip.gap_reentry_relevel) ----
-        // Appended to the Card-G line rather than logged apart, because the G3
-        // rule is read off the SHIFTED→bridged number in the same sentence: with
-        // the response armed that number is the residual, and the reader needs
-        // to see immediately whether it is small because nothing re-entered or
-        // small because the response acted.  Invariant #4: an armed response
-        // whose freed counts are 0 on a run with resumptions is MISWIRED, not
-        // quiet, and the clause says so in-band.
+        // ---- Response clause (network.cycle_slip.gap_reentry_relevel) ----
+        // Appended to the Card-G line rather than logged separately, because the G3
+        // rule is read off the SHIFTED→bridged number in the same sentence: with the
+        // response armed that number is the residual, and the reader needs to see at
+        // once whether it is small because nothing re-entered or because the response
+        // acted.  An armed response whose freed counts are 0 on a run with resumptions
+        // is miswired, not quiet, and the clause says so in the log (invariant #4).
         const std::string response_clause =
             !nc.slip_qc.gap_reentry
                 ? std::string("  RESPONSE: gap_reentry_relevel OFF (arcs re-enter with "
@@ -3572,12 +3553,12 @@ int networkTeardown(
                           ? "  ⚠ ARMED AND INERT: resumptions exist and ZERO arcs were "
                             "reached — this is dead wiring, not a quiet run."
                           : "");
-        // H2 (spec-followups N3): the two counting levels are LABELLED at every
-        // number.  RESUMPTIONS are per (station, satellite) re-entry; ARCS are per
-        // (station, satellite, signal) — a dual-band satellite returning once is
-        // 1 resumption and 2 independently bridgeable arcs, which is why the arc
-        // totals exceed the resumption totals.  Both arc ledgers are closed
-        // (bridged + fresh) so no reader has to infer a missing cell.
+        // The two counting levels are labelled at every number (H2, spec-followups N3).
+        // Resumptions are per (station, satellite) re-entry; arcs are per (station,
+        // satellite, signal).  A dual-band satellite returning once is 1 resumption and
+        // 2 independently bridgeable arcs, which is why the arc totals exceed the
+        // resumption totals.  Both arc ledgers are closed (bridged + fresh) so no reader
+        // has to infer a missing cell.
         log->info("Network (slip-QC card G / gap instrumentation): {} RESUMPTION(s) "
                   "[unit: (station,satellite) re-entry after ≥1 missed epoch] = {} SHIFTED "
                   "(raw MW/GF level moved across the break) + {} measured-and-unshifted + {} "
@@ -3608,14 +3589,13 @@ int networkTeardown(
                   qcc.d5_retaps, qcc.d5_retaps_stepped,
                   qcc.d5_retap_ambs, qcc.d5_retap_ambs_stepped,
                   response_clause);
-        // ---- Card GRK: the tracker key against the carried key --------------
-        // Reported in BOTH states of network.cycle_slip.tracker_modeled_first.
-        // Unarmed, gap_reentry_unreachable is the share of gap_reentry_no_carry
-        // that had a carry the response could not reach, so a nonzero count is
-        // a wired response with a hole in it rather than a quiet run, and the
-        // line is a WARNING naming the knob that closes it.  Armed, both
-        // counters are 0 by construction and the line says so, which is what
-        // makes the knob's effect readable from the run end alone.
+        // ---- Tracker key against the carried key (card GRK) -----------------
+        // Reported in both states of network.cycle_slip.tracker_modeled_first.  Unarmed,
+        // gap_reentry_unreachable is the share of gap_reentry_no_carry that had a carry
+        // the response could not reach, so a nonzero count means a wired response with a
+        // gap in its coverage rather than a quiet run, and the line is a warning naming
+        // the knob that closes it.  Armed, both counters are 0 by construction and the
+        // line says so, which makes the knob's effect readable from the run end alone.
         {
             const std::string grk_line = fmt::format(
                 "Network (slip-QC card GRK / tracker key): {} cell(s) [unit: (station, "
@@ -3642,9 +3622,9 @@ int networkTeardown(
             else
                 log->info("{}", grk_line);
         }
-        // ---- Card SID phase 3: the LEDGER-DRIVEN population ------------------
-        // Printed only when the knob is armed: unarmed every counter here is zero
-        // by construction and a line of zeros would read as a measurement.
+        // ---- Ledger-driven gap re-entry population (SID phase 3) -------------
+        // Printed only when the knob is armed: unarmed, every counter here is zero by
+        // construction and a line of zeros would read as a measurement.
         if (slip_qc.params.ledger_reentry) {
             const long long disp = qcc.ledger_reentry_freed + qcc.ledger_reentry_bridged
                                  + qcc.ledger_reentry_no_carry
@@ -3696,11 +3676,10 @@ int networkTeardown(
                       "whole run, so the ledger drove nothing.  Dead wiring, not a "
                       "quiet run."
                     : "");
-            // Card SID phase 4a (S1): the NO-VERDICT population, ATTRIBUTED.  Phase 3
-            // could only name it; the reason mask of the gap that preceded each return
-            // says which screen removed the row while both raw tiers kept seeing the
-            // satellite.  Printed only where the writers are armed, so a phase-3 run's
-            // line is unchanged.
+            // Attribution of the no-verdict population (SID phase 4a, S1): the reason
+            // mask of the gap that preceded each return says which screen removed the row
+            // while both raw tiers kept seeing the satellite.  Printed only where the
+            // writers are armed, so a run without them keeps the phase-3 line unchanged.
             if (!qcc.ledger_reentry_nv_reason.empty()) {
                 std::string sp;
                 for (int b = 0; b < kArcReasonCount; ++b) {
@@ -3723,12 +3702,12 @@ int networkTeardown(
                         : "");
             }
         }
-        // ---- Card GRS: the PER-SIGNAL tier ------------------------------
-        // Reported only when the rider is armed, so an unarmed run's Card-G
-        // line is unchanged.  Its populations are DISJOINT from the row-level
-        // ones above (a satellite reported there contributes nothing here), so
-        // the two are added, never reconciled.  Invariant #4: resumptions above
-        // zero with arcs at zero is dead wiring.
+        // ---- Per-signal tier (card GRS) --------------------------------
+        // Reported only when the rider is armed, so an unarmed run's Card-G line is
+        // unchanged.  Its populations are disjoint from the row-level ones above (a
+        // satellite reported there contributes nothing here), so the two are added,
+        // never reconciled.  Resumptions above zero with arcs at zero is dead wiring
+        // (invariant #4).
         if (nc.slip_qc.gap_reentry_per_signal) {
             const auto& sg = qcc.gap_sig;
             log->info("Network (slip-QC card GRS / PER-SIGNAL gap re-entry): {} SIGNAL "
@@ -3766,9 +3745,8 @@ int networkTeardown(
                           ? "  ⚠ ARMED AND INERT: ZERO per-signal re-entries on a run with "
                             "multi-signal tracking.  This is dead wiring, not a quiet run."
                           : "");
-            // Closure, in ARCS (the row-level tier's precedent): every reached
-            // arc lands in exactly one bucket, so a reader never infers a
-            // missing cell.
+            // Closure in arcs, as for the row-level tier: every reached arc lands in
+            // exactly one bucket, so a reader never infers a missing cell.
             const long long closure = sg.freed_shifted + sg.freed_lli + sg.freed_unmeas
                                     + sg.cold_skipped + sg.no_relevel + sg.dd_only;
             if (closure != sg.arcs)
@@ -3808,13 +3786,13 @@ int networkTeardown(
                   nc.slip_qc.ref_min_n, rg.suppressed_persistence, rg.suppressed_warmup,
                   rg.reselects);
 
-        // §22.6 REF-FAN — the SAME tier split PER GRADIENT CHAIN.  The aggregate
-        // above cannot answer this card's question (is the additional chains' arm
-        // a flood or a backstop?) because it sums every chain into one number.
-        // Printed whenever the ref gate is armed, ref_arm_all or not: with the
-        // knob OFF the additional chains show 0 opportunities, which is the
-        // reading that makes the ON number interpretable (invariant #4 — the
-        // yardstick is the FIRST chain's own count over the same window).
+        // The same tier split per gradient chain (§22.6, REF-FAN).  The aggregate above
+        // sums every chain into one number, so it cannot say whether arming the
+        // additional chains floods the detector or backs it up.  Printed whenever the
+        // ref gate is armed, whether or not ref_arm_all is: with that knob off the
+        // additional chains show 0 opportunities, which is the reading that makes the
+        // armed number interpretable (invariant #4; the yardstick is the first chains'
+        // own count over the same window).
         {
             std::map<std::string, IfPhaseSlipDetector::RefArmChainCounters> per_chain;
             for (const auto& st : stations) {
@@ -3861,16 +3839,15 @@ int networkTeardown(
                   eq34_reref_total, eq34_erase_total, eq34_shift_total,
                   eq34_cpl_sprev_total,
                   eq34_gap_repin_total, eq34_mismatch_epochs);
-    // Chain-pin AUDIT (docs/SPEC_synthetic_minimum_network.md §14 T1 (measured record §12.8)): declared → folded →
-    // landed per (constellation,signal).  The election's per-epoch cross-check
-    // only proves the election RECORDED Σ (n_c + m_c) pins; foldAmb/foldRpb
-    // early-return silently (no state / no live phase row) and a station drop
-    // takes its folded pins with it — so "landed" is the number that actually
-    // constrained the gauge.  A short group means the chain datum ran
-    // under-constrained and the W5 near-null it was meant to remove is still
-    // open (the W6+SH n-invariant L2W phase-bias common mode is the motivating
-    // case).  Standing invariant #4: report the number, not the absence of a
-    // complaint.
+    // Chain-pin audit (docs/SPEC_synthetic_minimum_network.md §14 T1, measured record
+    // §12.8): declared → folded → landed per (constellation, signal).  The election's
+    // per-epoch cross-check only proves that the election recorded Σ (n_c + m_c) pins;
+    // foldAmb/foldRpb return early without a message (no state, no live phase row), and
+    // a station drop takes its folded pins with it, so "landed" is the number that
+    // constrained the gauge.  A short group means the chain datum ran under-constrained
+    // and the W5 near-null it is meant to remove is still open (the motivating case is
+    // the W6+SH n-invariant L2W phase-bias common mode).  The number is reported rather
+    // than inferred from the absence of a warning (invariant #4).
     if (config_.networkPhaseDatumEq34()) {
         const auto& pa = ctx.counters.eq34_pin_audit;
         if (pa.epochs == 0) {
@@ -3915,10 +3892,10 @@ int networkTeardown(
                       "group landed its full declared gauge dimension every "
                       "audited epoch — the chain pins are NOT the open near-null.");
     }
-    // SEED-ROUND run tallies (docs/SPEC_eq34_seed_round.md §5).  The health
-    // assertion is |pin innovation| ≤ λ/2 ALWAYS — by construction of
-    // std::round at both computation sites, so a violation is a logic error
-    // (stale λ map entry, mismatched state), never a data property.
+    // Seed-round run tallies (docs/SPEC_eq34_seed_round.md §5).  The assertion is
+    // |pin innovation| ≤ λ/2 on every pin, which holds by construction of std::round
+    // at both computation sites, so a violation is a logic error (stale λ map entry,
+    // mismatched state), never a property of the data.
     if (config_.networkPhaseDatumEq34SeedRound()) {
         const auto& c = ctx.counters;
         const long long sr_total = c.seed_round_pins + c.seed_round_deferred;
@@ -3947,8 +3924,8 @@ int networkTeardown(
                           "trust this run's datum realization.",
                           c.seed_round_max_abs_y_m);
         }
-        // INC-2 (§8.5) — the re-host ledger.  Reported only when armed, so an OFF
-        // twin's run-end block stays byte-identical to the pre-card build.
+        // Re-host ledger (§8.5, INC-2).  Reported only when armed, so a twin with the
+        // knob off keeps a run-end block byte-identical to a build without it.
         if (config_.networkPhaseDatumEq34SeedRoundRehostFrame()) {
             const long long rh = c.seed_round_rehost_framed
                                + c.seed_round_rehost_cold;
@@ -4006,10 +3983,10 @@ int networkTeardown(
                   carry_slipkills_total, carry_dropped_total,
                   carry_swaps_total, carry_merges_total, carry_splits_total,
                   config_.networkCarryInvariantQz());
-    // FC-1 (network.fast_clock): the split-cadence fast tier runs on epochs the full
-    // pipeline SKIPS, so it leaves no trace in any of the per-epoch readouts above.  These
-    // counters ARE its ON-path telemetry (standing invariant #4) — a clean log proves
-    // nothing about whether a single tick ever fired.
+    // Split-cadence fast clock (network.fast_clock, FC-1): the fast tier runs on epochs
+    // the full pipeline skips, so it leaves no trace in the per-epoch readouts above.
+    // These counters are its ON-path telemetry (invariant #4); a clean log says nothing
+    // about whether a single tick fired.
     if (config_.getNetworkConfig().fast_clock.enable) {
         const auto& fcc = config_.getNetworkConfig().fast_clock;
         const auto& c = ctx.counters;
@@ -4060,15 +4037,13 @@ int networkTeardown(
                       "profile before threading; the WLS must stay serial-deterministic.",
                       c.fc_wall_ms_max);
     }
-    // RTB-7(d) RE-4 / invariant #4: the resume event's wiring is only visible through
-    // counters — "0 restored / no shock" must be stated, never inferred from absence.
+    // Resume event readout (RTB-7(d), RE-4): its wiring is visible only through counters,
+    // so "0 restored / no shock" is stated rather than inferred from absence (invariant #4).
     if (carry_invariant && !config_.getNetworkConfig().state_snapshot_path.empty()) {
-        // RE-1 σ̂₀ SEED PROVENANCE.  The old text asserted a cause the code never checked —
-        // it printed "(v1 blob / calibration off)" on the not-seeded branch unconditionally,
-        // so a COLD run with calibration ARMED published two false clauses while its own
-        // config line said CALIBRATION ON (`runs/pdfix_qz0_deg15/run.log`).  Four distinct
-        // conditions suppress the seed; the driver knows which one held, so say THAT
-        // (invariant #4, and the same instrument fix as SPEC_pd_safe_dd_fold.md §11).
+        // Provenance of the σ̂₀ seed (RE-1).  Four distinct conditions suppress the seed (no
+        // carry restored, calibration off, no 'S,' line, a rejected 'S,' line); the driver
+        // reports which one held, and the line names it rather than a generic cause
+        // (invariant #4; the same instrument fix as SPEC_pd_safe_dd_fold.md §11).
         using Seed = NetworkInvariantCarryDriver::ResumeSeedState;
         const auto seed_st = carry_driver.resumeSigma0Status();
         std::string sigma0_txt;
@@ -4116,15 +4091,15 @@ int networkTeardown(
                   carry_driver.resumeShockSigmaM() > 0.0
                       ? fmt::format("APPLIED sigma={:.3f} m", carry_driver.resumeShockSigmaM())
                       : std::string("NONE"),
-                  // RTB-7(e): which SHAPE was actually restored.  Without this the
-                  // diagonal arm of the A/B is indistinguishable from the dense one in
-                  // every log line and counter (invariant #4).
+                  // The shape that was restored (RTB-7(e)).  Without it the diagonal arm
+                  // of the A/B looks the same as the dense one in every log line and
+                  // counter (invariant #4).
                   carry_driver.resumeCarryDiagonal()
                       ? fmt::format("DIAGONAL-ONLY (v3, {} block(s) — cross-covariances "
                                     "started at zero)",
                                     carry_driver.resumeCarryDiagonalBlocks())
                       : std::string("dense (v1/v2) or nothing restored"));
-        // RTB-7(e) WRITE side: the blob is ~99% of the snapshot, so its size IS the
+        // Write side (RTB-7(e)): the blob is about 99 % of the snapshot, so its size is the
         // readout that the diagonal knob took effect.
         if (config_.getNetworkConfig().state_snapshot_carry)
             log->info("Network (RTB-7e snapshot write): {} snapshot(s) written; last carry "
@@ -4134,10 +4109,10 @@ int networkTeardown(
                       ctx.carry.snap_carry_diagonal
                           ? "DIAGONAL-ONLY (v3 — Sum K_c numbers)"
                           : "dense (v2 — Sum K_c^2 numbers)");
-        // RS-2 (SPEC_event_harness §21.4): the linearization-frame halves.  Both are
-        // reported whenever EITHER is armed — an armed reader that re-based nothing and an
-        // armed writer that wrote no rows are the two invariant-#4 cases this line exists
-        // to make visible, and a bare "OFF" on the other half is what says which it is.
+        // Linearization-frame halves (SPEC_event_harness §21.4, RS-2).  Both are reported
+        // whenever either is armed: an armed reader that re-based nothing and an armed
+        // writer that wrote no rows are the two invariant-#4 cases this line exposes, and
+        // the bare "off" on the other half says which one it is.
         if (config_.getNetworkConfig().state_snapshot_carry_lin
             || config_.networkResumeCarryRebase()) {
             const auto& cc = carry_driver.counters();
@@ -4153,16 +4128,16 @@ int networkTeardown(
                       cc.resume_dropped_unbased);
         }
     }
-    // RS-3 (SPEC_event_harness §21.7): the DATUM-continuity halves.  At FUNCTION scope,
-    // beside the coupling-capture readout and NOT inside the carry_invariant-gated
-    // RTB-7(d/e) block above — the eq34 chain datum and the time-linked code-bias datum
-    // both run on lineages that do and do not carry the invariant branch, so nesting it
-    // there would make the ON-path telemetry structurally inert on half the postures that
-    // arm it (standing invariant #4).  Printed whenever EITHER half is armed: an armed
-    // writer that wrote no rows and an armed reader that restored none are exactly the
-    // two invariant-#4 cases this line exists to expose, and the bare "off" on the other
-    // half is what says which it is.  The first-post-resume-epoch figures are counted on
-    // every warm resume regardless, so an A/B control leg reports them too.
+    // Datum-continuity halves (SPEC_event_harness §21.7, RS-3).  At function scope, like
+    // the coupling-capture readout, and outside the carry_invariant-gated RTB-7(d/e) block
+    // above: the eq34 chain datum and the time-linked code-bias datum run on lineages
+    // with and without the invariant branch, so nesting the line there would leave the
+    // ON-path telemetry structurally inert on half the postures that arm it (invariant
+    // #4).  Printed whenever either half is armed: an armed writer that wrote no rows and
+    // an armed reader that restored none are the two invariant-#4 cases this line
+    // exposes, and the bare "off" on the other half says which one it is.  The
+    // first-post-resume-epoch figures are counted on every warm resume regardless, so an
+    // A/B control leg reports them too.
     if (config_.getNetworkConfig().state_snapshot_datum_capture
         || config_.networkResumeDatumRestore()) {
         const auto& C = ctx.counters;
@@ -4193,12 +4168,12 @@ int networkTeardown(
                         "happened; check the resume log for the RS-3 line."
                       : "");
     }
-    // RS-5 (SPEC_event_harness §21.10): the EMIT-LAYER continuity halves, beside the RS-3
-    // line and at the same (function) scope for the same invariant-#4 reason — the two
-    // engines run on lineages that do and do not carry the invariant branch.  Printed
-    // whenever EITHER half is armed: an armed writer that wrote no rows and an armed
-    // reader that restored none are exactly the two invariant-#4 cases this line exists
-    // to expose, and the bare "off" on the other half is what says which it is.
+    // Emit-layer continuity halves (SPEC_event_harness §21.10, RS-5), beside the RS-3 line
+    // and at the same function scope for the same invariant-#4 reason: the two engines run
+    // on lineages with and without the invariant branch.  Printed whenever either half is
+    // armed: an armed writer that wrote no rows and an armed reader that restored none are
+    // the two invariant-#4 cases this line exposes, and the bare "off" on the other half
+    // says which one it is.
     if (config_.getNetworkConfig().state_snapshot_emit_capture
         || config_.networkResumeEmitRestore()) {
         const auto& C = ctx.counters;
@@ -4220,14 +4195,13 @@ int networkTeardown(
                         "log for the RS-5 line."
                       : "");
     }
-    // RS-6 (SPEC_event_harness §21.13): the STATION-LAYER continuity halves, beside the
-    // RS-5 line and at the same (function) scope for the same invariant-#4 reason — the
-    // two carries run on lineages that do and do not arm each other.  Printed whenever
-    // EITHER half is armed: an armed writer that wrote no rows and an armed reader that
-    // restored none are exactly the two invariant-#4 cases this line exists to expose,
-    // and the bare "off" on the other half is what says which it is.  The sub-switch
-    // states are always named: an attribution leg that restored one half must be
-    // readable from the run-end tail alone.
+    // Station-layer continuity halves (SPEC_event_harness §21.13, RS-6), beside the RS-5
+    // line and at the same function scope for the same invariant-#4 reason: the two
+    // carries run on lineages that do and do not arm each other.  Printed whenever either
+    // half is armed: an armed writer that wrote no rows and an armed reader that restored
+    // none are the two invariant-#4 cases this line exposes, and the bare "off" on the
+    // other half says which one it is.  The sub-switch states are always named, so an
+    // attribution leg that restored one half can be read from the run-end tail alone.
     if (config_.getNetworkConfig().state_snapshot_station_capture
         || config_.networkResumeStationRestore()) {
         const auto& C = ctx.counters;
@@ -4249,17 +4223,17 @@ int networkTeardown(
                         "happened; check the resume log for the RS-6 line."
                       : "");
     }
-    // RS-8 (SPEC_event_harness §21.16): the CANONICAL-SIGNAL latch, beside the RS-6 line
-    // and on the same armed-only discipline.  The DISAGREE count is this card's own
-    // instrument and it reads in BOTH directions: > 0 is the defect being prevented (so
-    // many restored entries this run's first epoch would have latched differently), 0
-    // says the seam epoch happened to agree — never that the wiring did nothing, which
-    // is what the stations/entries pair reports (standing invariant #4).
+    // Canonical-signal latch (SPEC_event_harness §21.16, RS-8), beside the RS-6 line and
+    // printed only when armed, as that line is.  The disagree count reads in both
+    // directions: > 0 is the defect being prevented (that many restored entries would
+    // have latched differently on this run's first epoch), and 0 says the seam epoch
+    // happened to agree.  It never says the wiring did nothing; the stations/entries pair
+    // reports that (invariant #4).
     if (config_.getNetworkConfig().state_snapshot_signal_capture
         || config_.networkResumeSignalCanonRestore()) {
         auto& C = ctx.counters;
-        // The audit runs INSIDE the station models on the first post-resume epoch, so
-        // the roster is the only place the result lives; sum it here.
+        // The audit runs inside the station models on the first post-resume epoch, so
+        // the roster is the only place the result lives; it is summed here.
         long long audited = 0, disagree = 0;
         for (const auto& st : setup.stations) {
             if (!st.model) continue;
@@ -4289,20 +4263,20 @@ int networkTeardown(
                                "per-band channel at the seam."
                              : ""));
     }
-    // RS-9 (SPEC_event_harness §21.18): the CODE-BIAS LINEARIZATION-POINT half, beside
-    // the RS-6 line for the same invariant-#4 reason — RS-6 restores the rx-CB carry's
+    // Code-bias linearization-point half (SPEC_event_harness §21.18, RS-9), beside the
+    // RS-6 line for the same invariant-#4 reason: RS-6 restores the rx-CB carry's
     // numerator and this restores the reference its inject gate differences it against,
-    // and a run that restored one without the other must be readable from the run-end
-    // tail alone.  Printed whenever EITHER half is armed.
+    // and a run that restored one without the other has to be readable from the run-end
+    // tail alone.  Printed whenever either half is armed.
     if (config_.getNetworkConfig().state_snapshot_rxcb_lin_capture
         || config_.networkResumeRxCbLinRestore()) {
         const auto& C = ctx.counters;
         // The applied / uncovered tallies are written station-locally inside the
         // parallel produce phase (one out-slot per station, never resized) and summed
-        // HERE — the first and only place that needs them, and serial by construction.
+        // here, the only place that needs them, which is serial by construction.
         long long applied = 0, uncovered = 0;
         for (const auto& [a, u] : ctx.carry.rxcb_lin_sta_counts) { applied += a; uncovered += u; }
-        // "uncovered" is scoped to the CARRIED keys (the RL rows pair 1:1 with the RC
+        // "uncovered" is scoped to the carried keys (the RL rows pair 1:1 with the RC
         // rows): a code-bias family with no carry never reaches the gate and is not a
         // miss, so a nonzero here is a carried key whose reference could not be applied.
         log->info("Network (RS-9 rx-CB frame restore): write {} / read {}; last snapshot "
@@ -4335,13 +4309,13 @@ int networkTeardown(
                                       "NOT counted here."
                                     : "")));
     }
-    // RS-4 (SPEC_event_harness §21.9): the DECLARATION half, beside the RS-3 line and
-    // at the same (function) scope for the same invariant-#4 reason.  The census is
-    // taken on EVERY warm resume the knob is armed for, so an armed run that marked
-    // nothing reports its tested/over counts and an armed run that never resumed
-    // reports zeros — the two cases this line exists to tell apart.  Printed only when
-    // the knob is armed: with it off nothing is measured and a 0/0 line would be a
-    // false instrument (the OFF path never calls pbSeamCensus at all).
+    // Declaration half (SPEC_event_harness §21.9, RS-4), beside the RS-3 line and at the
+    // same function scope for the same invariant-#4 reason.  The census is taken on every
+    // warm resume the knob is armed for, so an armed run that marked nothing reports its
+    // tested/over counts and an armed run that never resumed reports zeros; the line
+    // tells those two cases apart.  Printed only when the knob is armed: with it off
+    // nothing is measured (pbSeamCensus is never called), and a 0/0 line would be a false
+    // instrument.
     if (config_.networkResumePbSeamMark()) {
         const auto& C = ctx.counters;
         const double pct = C.n_pb_seam_keys_tested > 0
@@ -4358,14 +4332,14 @@ int networkTeardown(
                         "snapshot without an EMITTER blob); the rule is INERT here."
                       : "");
     }
-    // §18.12 coupling CAPTURE, write side — the RTB-7(e) snapshot readout's sibling, but
-    // at FUNCTION scope on purpose: the RTB-7(d/e) block above is gated on carry_invariant,
-    // while the coupling capture rides the phase-leveling carries
-    // (carry_conditional_coupling, which supersedes carry_invariant — the target lineage
-    // runs carry_invariant: false), so nesting it there would make the ON-path telemetry
-    // structurally INERT on exactly the postures that arm it (standing invariant #4).
-    // ~25 B per (id, coeff) pair is the §2.7 size budget's own figure; it is what turns
-    // "rows captured" into the disk/IO fact a keep-history leg has to plan for.
+    // Coupling capture, write side (§18.12): the sibling of the RTB-7(e) snapshot readout,
+    // but at function scope on purpose.  The RTB-7(d/e) block above is gated on
+    // carry_invariant, while the coupling capture rides the phase-leveling carries
+    // (carry_conditional_coupling, which supersedes carry_invariant; the target lineage
+    // runs carry_invariant: false), so nesting it there would leave the ON-path telemetry
+    // structurally inert on the postures that arm it (invariant #4).  About 25 B per
+    // (id, coeff) pair is the §2.7 size budget's figure; it turns "rows captured" into
+    // the disk and I/O size a keep-history leg has to plan for.
     if (config_.getNetworkConfig().state_snapshot_coupling_capture)
         log->info("Network (§18.12 coupling capture): last snapshot carried {} L row(s) "
                   "+ {} Z row(s), {} regressor term(s) over {} shared column(s) "
@@ -4390,13 +4364,13 @@ int networkTeardown(
                   ctx.carry.shdev_slip_resets_total, ctx.carry.shdev_nodata_total,
                   sh_dev_carry.size(), shc.rep_error_tau_s,
                   shc.representation_sigma_tecu);
-        // v3k clause only when armed — the v2/v3 OFF lines stay byte-identical.
+        // v3k clause only when armed, so the v2/v3 lines stay byte-identical with it off.
         if (shc.rep_error_d5_keep)
             log->info("Network (Iono-2/v3k D5-keep): {} D5-only re-tap(s) KEPT the level "
                       "(variance re-tapped to σ_ss), {} raw-confirmed erase(s) — the erase "
                       "policy split (SPEC_iono2_mechB_v3 addendum).",
                       ctx.carry.shdev_d5_keeps_total, ctx.carry.shdev_slip_resets_total);
-        // v3 clause only when armed — the v2 OFF line stays byte-identical.
+        // v3 clause only when armed, so the v2 line stays byte-identical with it off.
         if (shc.rep_error_demean)
             log->info("Network (Iono-2/v3 de-mean): global common-mode removed on {} epoch(s) "
                       "(mean |g| = {:.3f} TECU), per-station means removed {} station-epoch(s) "
@@ -4411,13 +4385,12 @@ int networkTeardown(
     }
     // rx-CB carry (SPEC_rx_cb_carry): armed-only run-end line, independent of iono2.
     if (config_.networkCarryRxCodeBias()) {
-        // RS-9 rider (§21.18) — EVERY run, trace-class, products byte-identical.  The
-        // pooled fold/withhold pair above is an invariant-#4 blind spot: a station
-        // refused EVERY epoch is refreshed by the unconditional harvest and never
-        // pruned (< 900 s), so it shows up in "N carried at run end" while carrying
-        // nothing at all.  On the field seed 7 of 61 stations are in that state for a
-        // whole 6 h day and nothing said so; on a warm-resume leg without RS-9 it is 17.
-        // Named here so the census does not have to be re-derived from the traces.
+        // Stations that carried nothing (RS-9 rider, §21.18): printed on every run with the
+        // rx-CB carry armed; trace-class, products byte-identical.  The pooled fold/withhold
+        // counts in the line below cannot show a station refused on every epoch: the
+        // unconditional harvest refreshes it and it is never pruned (< 900 s), so it counts
+        // in "N carried at run end" while carrying nothing (invariant #4).  Such stations
+        // are named here so the census does not have to be re-derived from the traces.
         constexpr double kRs9WithholdShare = 0.90;
         std::vector<std::string> carried_nothing;
         for (const auto& [name, t] : ctx.carry.rx_cb_sta_tally)
@@ -4442,12 +4415,12 @@ int networkTeardown(
                   ctx.carry.rx_cb_harvested_total, ctx.carry.rx_cb_carry.size(),
                   config_.networkRxCbCarryQ(), nothing_tail);
     }
-    // Card LV-2 (docs/SPEC_level_information_budget.md): armed-only run-end line.
-    // Standing invariant #4 — "0 demeaned" must be visible, never silent, because a
-    // de-mean that never fired is indistinguishable from a healthy one in every
-    // other trace.  The skip rate is printed against its own denominator: the whole
-    // point of judging |innov − μ| is that a coherent frame move stops
-    // mass-triggering the receiver-reset response.
+    // Receiver code-bias de-mean (card LV-2, docs/SPEC_level_information_budget.md):
+    // run-end line, printed only when armed.  "0 demeaned" has to be visible, because a
+    // de-mean that never fired looks like a working one in every other trace (invariant
+    // #4).  The skip rate is printed against its own denominator: judging |innov − μ| is
+    // meant to stop a coherent frame move from triggering the receiver-reset response at
+    // many stations at once.
     if (config_.networkRxCbCarryDemean()) {
         const long long lv2_seen = ctx.carry.rx_cb_injected_total
                                  + ctx.carry.rx_cb_innov_skips_total;
@@ -4489,11 +4462,11 @@ int networkTeardown(
                                         "DEMEANED innovation.",
                                         ctx.carry.rx_cb_innov_skips_total, lv2_seen, skip_pct));
     }
-    // Card LV-5 (docs/SPEC_level_information_budget.md §12): armed-only run-end line.
-    // The load-bearing number is the RESIDUAL — the folded set's own common mode
-    // minus the μ that was applied to it.  Near zero means the within-epoch
-    // correction actually nulled the force on the frame direction; a residual of the
-    // same size as μ means it did not, and the de-mean is decorative.
+    // Within-epoch μ (card LV-5, docs/SPEC_level_information_budget.md §12): run-end
+    // line, printed only when armed.  The key number is the residual: the folded set's
+    // own common mode minus the μ applied to it.  Near zero means the within-epoch
+    // correction nulled the force on the frame direction; a residual the size of μ means
+    // it did not, and the de-mean had no effect.
     if (config_.networkRxCbCarryDemeanWithin()) {
         const double mean_resid = ctx.carry.lv5_resid_n > 0
             ? ctx.carry.lv5_resid_sum / static_cast<double>(ctx.carry.lv5_resid_n)
@@ -4519,11 +4492,11 @@ int networkTeardown(
                       ctx.carry.lv5_max_abs_resid_m, ctx.carry.lv5_resid_n,
                       ctx.carry.lv2_max_abs_mu_m);
     }
-    // Card LV-4 (docs/SPEC_level_information_budget.md §11): armed-only run-end line.
-    // The headline is the SAME-RUN A/B — how many folds the retired frame-dependent
-    // screen would have withheld on exactly these rows, against how many genuine
-    // invariant steps the new screen found.  A large first number with a near-zero
-    // second one IS the finding: the old screen was measuring the seed, not the
+    // Invariant carry gate (card LV-4, docs/SPEC_level_information_budget.md §11):
+    // run-end line, printed only when armed.  The main number is the same-run A/B: how
+    // many folds the retired frame-dependent screen would have withheld on these rows,
+    // against how many invariant steps the step screen found.  A large first number with
+    // a near-zero second one means the retired screen was measuring the seed, not the
     // receiver.
     if (config_.networkRxCbCarryStepGate()) {
         const long long lv4_folds = ctx.carry.rx_cb_injected_total;
@@ -4556,9 +4529,10 @@ int networkTeardown(
                       config_.networkRxCbCarryDemeanMinStations(),
                       lv4_folds, ctx.carry.lv4_frame_gate_would_skip, would_pct);
     }
-    // H-rider (edge-queue §1.6 item 3a): armed-only run-end line.  Invariant #4:
-    // a census-fed wire whose pool was empty every epoch shipped 1440 sentinel
-    // zeros while reading as "armed and healthy" — the counter is the tell.
+    // H-rider census σ̂₀ (edge-queue §1.6 item 3a): run-end line, printed only when armed.
+    // A census-fed wire whose pool is empty on every epoch ships the 0.0000 sentinel on
+    // every record while its configuration reads as armed; the count of epochs with a
+    // usable value is what shows it (invariant #4).
     if (config_.networkHSigma0PrefitCensus()) {
         if (ctx.carry.h_sig0_census_nonzero == 0)
             log->warn("Network (H-rider census σ̂₀): ARMED but NO epoch ever produced a "
@@ -4574,12 +4548,12 @@ int networkTeardown(
                       ctx.carry.h_sig0_census_nonzero, config_.networkHSigma0Classes(),
                       ctx.carry.ep_h_sigma0_census);
     }
-    // Card S2H (docs/SPEC_level_information_budget.md §17 item 3): armed-only
-    // run-end line.  Standing invariant #4 — "0 epochs applied" must be visible:
-    // a transform that never ran leaves the carry with its full common-mode
-    // force, indistinguishable from a healthy run in every other trace.  The
-    // headline is mean/max |μ| — the common-mode content removed per epoch — and
-    // the thin-skip count (identity epochs, invariant #7's decoupling edge).
+    // S-consistent harvest (card S2H, docs/SPEC_level_information_budget.md §17 item 3):
+    // run-end line, printed only when armed.  "0 epochs applied" has to be visible: a
+    // transform that never ran leaves the carry with its full common-mode force, which
+    // looks like a working run in every other trace (invariant #4).  The main numbers
+    // are mean and max |μ| (the common-mode content removed per epoch) and the thin-skip
+    // count (identity epochs, the decoupling edge of invariant #7).
     if (config_.networkRxCbHarvestDemean()) {
         const double mean_mu = ctx.carry.s2h_mu_n > 0
             ? ctx.carry.s2h_mu_abs_sum / static_cast<double>(ctx.carry.s2h_mu_n)
@@ -4611,10 +4585,10 @@ int networkTeardown(
                       config_.networkRxCbHarvestScreenZ(),
                       ctx.carry.s2h_last_mu_m, mean_mu, ctx.carry.s2h_max_abs_mu_m);
     }
-    // Card LV-1 (docs/SPEC_level_information_budget.md): armed-only run-end line.
-    // The per-station counters live on each station's StateInitializer (the reframe
-    // happens inside the PARALLEL produce phase), summed here serially — the same
-    // pattern as the SD-EWL and iono_var feed counters.
+    // Iono seed frame (card LV-1, docs/SPEC_level_information_budget.md): run-end line,
+    // printed only when armed.  The per-station counters live on each station's
+    // StateInitializer (the reframe happens inside the parallel produce phase) and are
+    // summed here serially, as the SD-EWL and iono_var feed counters are.
     if (config_.networkIonoSeedFieldFrame()) {
         long long reframed = 0, fb_raw = 0, fb_field = 0, offsets = 0;
         for (const auto& st : stations) {
@@ -4646,11 +4620,12 @@ int networkTeardown(
                       config_.networkIonoSeedFieldFrameMinSats(), fb_field,
                       ctx.carry.lv1_field_snapshots);
     }
-    // RF-0b (network.w6_iono_constraint = none): armed-only run-end line, placed beside
-    // RXCB-DATUM's because it answers the same question for the SATELLITE half — in this
-    // posture the sum-to-zero rows are not a gauge beside an ionosphere constraint, they
-    // ARE the satellite code-bias datum, so the fold count is the only thing separating a
-    // live datum from an armed-but-inert one (standing invariant #4).
+    // No-ionosphere-constraint posture (network.w6_iono_constraint = none, RF-0b): run-end
+    // line, printed only when armed.  It answers for the satellite half the question the
+    // RXCB-DATUM line answers for the receivers: in this posture the sum-to-zero rows are
+    // not a gauge beside an ionosphere constraint but the satellite code-bias datum
+    // itself, so the fold count is what separates a live datum from an armed-but-inert
+    // one (invariant #4).
     if (config_.getNetworkConfig().w6_iono_constraint == NetworkW6IonoConstraint::None) {
         if (ctx.counters.n_w6_iono_none_epochs == 0)
             log->warn("Network (W6-IONO-NONE): the no-ionosphere-constraint posture is ARMED but "
@@ -4685,10 +4660,10 @@ int networkTeardown(
                           ? fmt::format("ON, sigma {:.1f} m", config_.networkCbKaulaSigmaM())
                           : std::string{"OFF"});
     }
-    // RF-0c (network.sat_gf_datum): armed-only run-end line.  Under the no-constraint
-    // posture this row is the ONLY thing closing each satellite's geometry-free
-    // direction, so its fold count is the difference between a datumed product and one
-    // whose code biases were shaped by whatever loose prior happened to be armed.
+    // Satellite geometry-free datum (network.sat_gf_datum, RF-0c): run-end line, printed
+    // only when armed.  Under the no-constraint posture this row alone closes each
+    // satellite's geometry-free direction, so its fold count separates a datumed product
+    // from one whose code biases were shaped by whatever loose prior was armed.
     if (config_.getNetworkConfig().sat_gf_datum != NetworkSatGfDatum::NoneMode) {
         const bool tgd = config_.getNetworkConfig().sat_gf_datum
                              == NetworkSatGfDatum::BroadcastTgd;
@@ -4755,9 +4730,9 @@ int networkTeardown(
                                         ctx.counters.n_sat_gf_sameband,
                                         ctx.counters.n_sat_gf_s2z_suppressed));
     }
-    // RF-0e: armed-only run-end lines for the two level-datum arms.  Both exist to fix
-    // a measured CONSUMER regression, so "did it fold at all" is the first thing any
-    // reading of that consumer has to be able to answer (standing invariant #4).
+    // Level-datum arms (RF-0e): run-end lines, printed only when armed.  Both arms target a
+    // measured consumer regression, so whether they folded at all is the first thing any
+    // reading of that consumer has to answer (invariant #4).
     if (config_.getNetworkConfig().sat_if_level_datum) {
         if (ctx.counters.n_if_level_rows == 0)
             log->warn("Network (IF-LEVEL-DATUM, RF-0e e1): ARMED but folded ZERO row(s) — no "
@@ -4800,9 +4775,9 @@ int networkTeardown(
                       100.0 * static_cast<double>(ctx.counters.n_sat_gf_anchored)
                           / static_cast<double>(tot));
     }
-    // RF-0f: armed-only run-end line.  The split between an ESTIMATED and an ASSERTED
-    // inter-signal correction is invisible on the wire except through the isc= token and
-    // the missing record, so the run has to state it (standing invariant #4).
+    // Inter-signal correction state (RF-0f): run-end line, printed only when armed.  On the
+    // wire an estimated and an asserted inter-signal correction differ only by the isc=
+    // token and the missing record, so the run states the split (invariant #4).
     if (config_.getNetworkConfig().sat_isc_state) {
         const std::size_t tot = ctx.counters.n_isc_observed + ctx.counters.n_isc_pinned;
         if (tot == 0)
@@ -4821,9 +4796,9 @@ int networkTeardown(
                       100.0 * static_cast<double>(ctx.counters.n_isc_pinned)
                           / static_cast<double>(tot));
     }
-    // B5D: armed-only run-end line.  The whole card is a claim about WHICH columns stop
-    // being asserted, and neither the wire nor the trace stream can say it — a freed
-    // column looks exactly like a pinned one in the B record (standing invariant #4).
+    // Extra-band free columns (B5D): run-end line, printed only when armed.  The effect is
+    // which columns stop being asserted, and neither the wire nor the trace stream shows
+    // it: a freed column looks the same as a pinned one in the B record (invariant #4).
     if (config_.getNetworkConfig().sat_gf_extra_band_free) {
         const std::size_t tot = ctx.counters.n_extra_band_free
                               + ctx.counters.n_extra_band_carried
@@ -4860,9 +4835,9 @@ int networkTeardown(
                       ctx.counters.n_sat_gf_isc0,
                       ctx.counters.n_s2z_reseed_rows, ctx.counters.n_s2z_reseed_sats);
     }
-    // RXCB-DATUM: armed-only run-end line.  Standing invariant #4 — the ONLY way to
-    // tell a live gauge from an armed-but-inert one is the fold count, so print it
-    // even (especially) when it is zero.
+    // Receiver code-bias datum (RXCB-DATUM): run-end line, printed only when armed.  The
+    // fold count is the only way to tell a live gauge from an armed-but-inert one, so it
+    // is printed even when it is zero (invariant #4).
     if (config_.networkRxCodeBiasDatum()) {
         if (ctx.counters.n_rxcb_gauges == 0)
             log->warn("Network (RXCB-DATUM): receiver code-bias datum is ARMED but folded ZERO "
@@ -4899,10 +4874,10 @@ int networkTeardown(
                   mw_wl_run.skip_mixed_frame);
     }
     if (ewl_on) {
-        // UWL-1: one line per lane instance — per-constellation when the card is armed
-        // (a pooled line hides which lane is storming; an armed constellation that
-        // decided 0 cycles is a LOUD 0-line, invariant #4), the legacy pooled line
-        // otherwise (lane.cons == 0).
+        // One line per lane instance (UWL-1): per constellation when the card is armed,
+        // since a pooled line hides which lane the rows come from and an armed
+        // constellation that decided 0 cycles gets its own 0 line (invariant #4); the
+        // legacy pooled line otherwise (lane.cons == 0).
         for (const auto& lane : ewl_lanes) {
             const auto& er = lane.run;
             const double mean_R = er.rows_built > 0
@@ -4955,7 +4930,7 @@ int networkTeardown(
                   wl_run.skip_basis);
     }
     if (uwl_on && (wl_inject_on || lane_on)) {
-        // UWL-1: the per-constellation WL-walk breakdown (never pooled-only — SPEC §2).
+        // Per-constellation WL-walk breakdown, never pooled only (SPEC §2; UWL-1).
         for (const auto& [wcons, wr] : wl_cons_run) {
             const double mean_R = wr.cycles_decided > 0
                 ? wr.sum_bridge_R / static_cast<double>(wr.cycles_decided) : 0.0;
@@ -4974,10 +4949,10 @@ int networkTeardown(
                       wr.skip_bridge_missing, wr.skip_no_iono, wr.skip_bridge_wide,
                       wr.skip_not_fixed, wr.skip_closure, wr.skip_quarantine, wr.skip_basis,
                       wr.mid_fallback, wr.mid_closure, wr.mid_disagree);
-            // Increment 5 (uwl_dual_top): the dual-rung + sibling-closure breakdown.
-            // mean|frac| ≈ 0 ⇒ the 2·N(8,5)=N(7,5) identity holds on this data;
-            // ≈ 0.5 ⇒ a receiver half-cycle convention offsets it (learn a constant
-            // BEFORE arming uwl_sib_gate — SPEC reconciliation note 2).
+            // Dual-rung and sibling-closure breakdown (increment 5, uwl_dual_top).
+            // mean|frac| ≈ 0 means the 2·N(8,5) = N(7,5) identity holds on this data;
+            // ≈ 0.5 means a receiver half-cycle convention offsets it, and a constant has
+            // to be learned before arming uwl_sib_gate (SPEC reconciliation note 2).
             if (nmw.uwl_dual_top
                 && (wr.top2_decided || wr.dual_dedupe || wr.sib_checked
                     || wr.sib_unavail || wr.sib_blocked))
@@ -4995,9 +4970,9 @@ int networkTeardown(
         }
     }
     if (lane_on) {
-        // WL-3 run-end line (invariant #4: counters or it didn't happen).  In the LANE
-        // shape the interesting numbers are the continuous increments + fold-on-change
-        // ratio + the inject-RETIREMENT count (≈0 expected — the WL-2 fallback path).
+        // Lane-coordinate carry run-end line (WL-3; invariant #4).  In the lane shape the
+        // numbers to read are the continuous increments, the fold-on-change ratio and the
+        // inject retirement count (about 0 expected; the WL-2 fallback path).
         const double mean_R = wl_run.cycles_decided > 0
             ? wl_run.sum_bridge_R / static_cast<double>(wl_run.cycles_decided) : 0.0;
         const double med_dl = wl_run.injects > 0
@@ -5022,10 +4997,10 @@ int networkTeardown(
                   wl_run.injects, med_dl, wl_run.skip_basis);
     }
     if (carry_innov_gate)
-        // RS-2b: the warm-up clause is printed whenever the knob is armed, INCLUDING at 0
-        // suppressions — "armed and suppressed nothing" is a finding (the window closed
-        // before any chord tripped, or nothing was restored to trip), and a clause that
-        // appeared only on a non-zero count could not say it (standing invariant #4).
+        // The warm-up clause is printed whenever the knob is armed, including at 0
+        // suppressions (RS-2b): "armed and suppressed nothing" is a finding (the window
+        // closed before any chord tripped, or nothing was restored to trip), and a clause
+        // printed only on a nonzero count could not state it (invariant #4).
         log->info("Network (Card 4/M1 D5 fine-slip innovation gate): {} carried-DD innovation "
                   "flag(s), {} fresh re-tap(s) over the run (k={}; the estimation-side reset for "
                   "the fine slips the coarse MW/LLI/IF-TD layer is relaxed against — each flagged "
@@ -5108,13 +5083,11 @@ int networkTeardown(
                       "population one level earlier and leaves this correctly at zero.");
     }
     if (carry_innov_gate && config_.networkCarryInvariantInnovCalibrate()) {
-        // σ̂₀ CLAMP VISIBILITY.  The old line published the CLAMPED σ̂₀ alone, and a clamped
-        // 1.00× is indistinguishable from a calibrated 1.00× — which is how the whole
-        // `churn_base2` / `pdfix_off` lineage ran its D5 gate as the raw formal (v1) test
-        // for entire campaigns while this line said "calibration armed" (raw σ̂₀² was 0.0099,
-        // clamped up to 1; SPEC_pd_safe_dd_fold.md §10 finding 2).  Report the STATE
-        // HISTOGRAM, the RAW range, and warn when the calibration was inert for most of the
-        // run — standing invariant #4: an armed knob at its neutral value is not benign.
+        // σ̂₀ clamp visibility.  A clamped 1.00× looks the same as a calibrated 1.00×, so the
+        // clamped σ̂₀ alone cannot show that the D5 gate is running as the raw formal (v1)
+        // test (SPEC_pd_safe_dd_fold.md §10 finding 2).  The line reports the state
+        // histogram and the raw range, and warns when the calibration was inert for most of
+        // the run: an armed knob at its neutral value is not benign (invariant #4).
         const auto& cc  = carry_driver.counters();
         const auto  st  = carry_driver.innovInflationStatus();
         const long long den = std::max<long long>(1, cc.d5_calib_epochs);
@@ -5124,10 +5097,10 @@ int networkTeardown(
             (cc.d5_calib_raw_max > 0.0)
                 ? fmt::format("{:.4g} … {:.4g}", cc.d5_calib_raw_min, cc.d5_calib_raw_max)
                 : std::string{"(never estimated past warm-up)"};
-        // NOTE the two σ̂₀² figures are deliberately different quantities: the FINAL one is
-        // the post-run accumulator state (it includes the last install's own rows, which no
-        // gate ever consulted), while the range is over the values the gate actually USED.
-        // The final can therefore sit outside the range — that is correct, not a bug.
+        // The two σ̂₀² figures are different quantities on purpose: the final one is the
+        // post-run accumulator state (it includes the last install's own rows, which no gate
+        // consulted), while the range covers the values the gate used.  The final value can
+        // therefore sit outside the range; that is correct.
         log->info("Network (Card 4/M1 D5 v2 LS-VCE calibration): post-run empirical inflation "
                   "σ̂₀ = {:.2f}× in state '{}' (raw σ̂₀² = {:.4g}, n_eff = {:.0f}; gate threshold "
                   "k·σ̂₀ = {:.1f} formal-σ).  Over {} install(s) the σ̂₀ state was: active {} / "
@@ -5184,9 +5157,9 @@ int networkTeardown(
                       iono_deweight.staticCount(), iono_deweight.staticWeight(),
                       idw_list.empty() ? "" : "  Stations: ", idw_list);
     }
-    // SPEC_day129_frame_guards Phase 2.1 run-end telemetry.  Standing invariant #4:
-    // "0 trips / 0 reinits" means the guard is INERT no matter how clean the run
-    // looks — this line is the ON-path evidence, and the validation gate reads it.
+    // CB-excursion guard run-end telemetry (SPEC_day129_frame_guards Phase 2.1).
+    // "0 trips / 0 reinits" means the guard is inert however clean the run looks
+    // (invariant #4); this line is the ON-path evidence, and the validation gate reads it.
     if (config_.getNetworkConfig().cb_excursion_reinit) {
         log->info("Network (Phase 2.1 CB-excursion guard): {} trip(s), {} code-bias "
                   "carry reinit(s), {} discontinuity bump(s) landed; largest median "
@@ -5214,10 +5187,9 @@ int networkTeardown(
                       "emission) — the reinit stepped a value the product did not signal.",
                       ctx.carry.cb_excursion_pending_bump.size());
     }
-    // SPEC_day129_frame_guards Phase 2.2 run-end telemetry (invariant #4): the
-    // out-of-band count is per EPOCH — the throttled T1a WARN under-read the
-    // reference run 23.8× (9 warnings vs 214 out-of-band epochs), which is the
-    // defect this gate replaces.
+    // SH health gate run-end telemetry (SPEC_day129_frame_guards Phase 2.2; invariant
+    // #4).  The out-of-band count is per epoch: the throttled T1a warning fires far less
+    // often than the field leaves its band, so it cannot serve as the count.
     if (config_.getNetworkConfig().sh_health_gate) {
         log->info("Network (Phase 2.2 SH health gate): {} out-of-band EPOCH(s), {} "
                   "engagement(s), {} emission(s) withheld (band [{:.1f}, {:.1f}] TECU, "
@@ -5238,10 +5210,10 @@ int networkTeardown(
                       "never left its band over this run — the gate is untested here.  "
                       "Do NOT read this run as evidence the gate works.");
     }
-    // SPEC_day129_frame_guards P1-3/P1-4 run-end telemetry.  Standing invariant #4:
-    // an instrumented run must state how many epochs the instrumentation actually
-    // produced — "0 traced" means the wiring is inert no matter how clean the log
-    // looks, and the trigger verdict would be built on an empty file.
+    // Post-fit σ̂0 run-end telemetry (SPEC_day129_frame_guards P1-3/P1-4).  An
+    // instrumented run states how many epochs the instrumentation produced: "0 traced"
+    // means the wiring is inert however clean the log looks, and the trigger verdict
+    // would rest on an empty file (invariant #4).
     if (config_.getNetworkConfig().trace_postfit_sigma0)
         log->info("Network (P1-4 post-fit σ̂0): {} emitted epoch(s) pooled a post-fit "
                   "residual statistic (last epoch: {} rows = {} code + {} phase; σ̂0 "
@@ -5257,7 +5229,8 @@ int networkTeardown(
                   ctx.carry.ep_sigma0_pf, ctx.carry.ep_sigma0_pf_code,
                   ctx.carry.ep_sigma0_pf_phase);
     if (config_.getNetworkConfig().trace_postfit_rows)
-        // Invariant #4: "0 rows under an ARMED trace" is a WARN, never a clean line.
+        // "0 rows under an armed trace" logs at warn level, not as a clean line
+        // (invariant #4).
         log->log(ctx.carry.pf_rows_written > 0 ? spdlog::level::info : spdlog::level::warn,
                  "Network (§24.6 post-fit rows): {} SIGNED per-row post-fit residual(s) written "
                  "to network_pf_rows.csv ({} code + {} phase; {} written with an empty "
@@ -5273,9 +5246,9 @@ int networkTeardown(
                  ctx.carry.pf_rows_no_elev, ctx.carry.pf_rows_unattributed,
                  ctx.carry.pf_rows_no_signal, ctx.carry.pf_rows_sig_relabel);
     {
-        // Card OWD (O2): the producer's state-manager re-inflations, summed over the
-        // stations (the deweight-release hygiene's ionosphere re-inflation is the only
-        // producer caller; a kept count names a variance the pre-OWD rule deflated).
+        // The producer's state-manager re-inflations, summed over the stations (card OWD,
+        // O2).  The deweight-release hygiene's ionosphere re-inflation is the only producer
+        // caller; a kept count names a variance the rule before OWD would have deflated.
         StateManager::ReinflateCounters sum{};
         std::string kept_at;
         for (const auto& st : stations) {
@@ -5295,9 +5268,9 @@ int networkTeardown(
                   StateManager::reinflateSummary(sum), kept_at.empty() ? "none" : kept_at);
     }
     if (config_.getNetworkConfig().trace_station_block)
-        // Invariant #4: "0 rows under an ARMED trace" is a WARN, never a clean line.
-        // The two refusal counts distinguish the two ways the sweep finds nothing —
-        // no station reached the audit, or the block could not be decomposed.
+        // "0 rows under an armed trace" logs at warn level, not as a clean line
+        // (invariant #4).  The two refusal counts distinguish the two ways the sweep finds
+        // nothing: no station reached the audit, or the block could not be decomposed.
         log->log(ctx.carry.sb_rows_written > 0 ? spdlog::level::info : spdlog::level::warn,
                  "Network (§24.10 card ZP station block): {} station-epoch row(s) written to "
                  "network_station_block.csv over {} traced emission(s) (the first 20 EMITTED "
@@ -5307,13 +5280,12 @@ int networkTeardown(
                  "epoch ever reached the wire — read the emission counters.",
                  ctx.carry.sb_rows_written, ctx.carry.sb_epochs_written,
                  ctx.carry.sb_stations_skipped, ctx.carry.sb_decomp_failed);
-    // RF-1 (docs/refound/RF-1_float_ambiguities_design.md §7.2): the AMBIGUITY-VEHICLE
-    // run-end readout.  Emitted only when the vehicle is non-default or the trace is
-    // armed, so an unarmed run's stdout is unchanged (structural byte-identity,
-    // invariant #6).  ⚠ STEP 1: the four mechanism counters are PLACEHOLDERS and read 0
-    // by construction — they are printed anyway because invariant #4's failure mode is
-    // exactly a counter nobody looked at, and design §7.4's D3 states the converse rule:
-    // a float_kf run with 0 drops is a miswire, not a quiet run.
+    // Ambiguity-vehicle run-end readout (docs/refound/RF-1_float_ambiguities_design.md
+    // §7.2, RF-1).  Emitted only when the vehicle is non-default or the trace is armed,
+    // so an unarmed run's stdout is unchanged (structural byte-identity, invariant #6).
+    // The mechanism counters (drops, declared S-transforms and the columns they move,
+    // joint-block fallbacks) are printed even at 0: a float_kf run with 0 drops is a
+    // miswire, not a quiet run (design §7.4 D3; invariant #4).
     if (ctx.knobs.amb_float_kf || config_.getNetworkConfig().trace_amb_state)
         log->info("Network (RF-1 ambiguity vehicle): vehicle=\"{}\"{}, birth_var_floor={} "
                   "m^2, q={} m^2/s, declared_handover={}.  Mechanism counters: {} drop(s) "
@@ -5328,10 +5300,10 @@ int networkTeardown(
                   ctx.counters.n_amb_drop, ctx.counters.n_amb_drop_epochs,
                   ctx.counters.n_amb_stransform, ctx.counters.n_amb_stransform_cols,
                   ctx.counters.n_amb_block_fallback);
-    // RF-1 step 4 (§3.4 / §7.4 D3): the DROP inventory by cause, and the birth floor's
-    // own ON-path evidence.  Invariant #4 in the direction design §7.4 states it: "a
-    // float_kf run with 0 drops is a MISWIRE, not a quiet run" — so 0 is a WARN, with
-    // the population that WOULD have been dropped named beside it.
+    // Drop inventory by cause, and the ON-path evidence of the birth floor (RF-1 step 4,
+    // §3.4 and §7.4 D3).  A float_kf run with 0 drops is a miswire, not a quiet run
+    // (design §7.4; invariant #4), so 0 logs at warn level, with the population that
+    // would have been dropped named beside it.
     if (ctx.knobs.amb_float_kf && ctx.knobs.amb_birth_var_floor > 0.0) {
         const auto& C = ctx.counters;
         log->log(C.n_amb_drop > 0 ? spdlog::level::info : spdlog::level::warn,
@@ -5350,13 +5322,13 @@ int networkTeardown(
                  C.n_amb_birth_floored, C.n_cr_gap_prune,
                  C.n_relevel_free_skips, C.n_cr_inject_stale);
     }
-    // RF-3a (docs/refound/RF-3_code_row_qc_2026-09-22.md §4 A2): the DROP-ONLY floor's
-    // inventory and the WALK it is aimed at.  Emitted in BOTH knob states — an OFF run
-    // reports the walk it suffers, which is the only way the ON run's number means
-    // anything (standing invariant #4).  The two fold buckets separate the correction
-    // the first fold after a drop absorbed from the walk that followed it: a stiff
-    // restored prior lets a 40 m level error through a few metres per epoch for tens of
-    // epochs, a floored one lands it at once.
+    // Inventory of the drop-only floor and the walk it targets
+    // (docs/refound/RF-3_code_row_qc_2026-09-22.md §4 A2, RF-3a).  Emitted in both knob
+    // states: a run with the knob off reports the walk it has, which is what gives the
+    // armed run's number a meaning (invariant #4).  The two fold buckets separate the
+    // correction absorbed by the first fold after a drop from the walk that follows it:
+    // a stiff restored prior lets a 40 m level error through a few metres per epoch for
+    // tens of epochs, while a floored one takes it in at once.
     if (ctx.knobs.amb_float_kf) {
         const auto& C = ctx.counters;
         auto stat = [](std::vector<double> v) {
@@ -5370,8 +5342,8 @@ int networkTeardown(
         };
         const auto w1 = stat(C.amb_walk_fold1_m);
         const auto w2 = stat(C.amb_walk_fold2_m);
-        // RF-3c: the WARM-UP GATE's own two populations, printed in both knob states so a
-        // run with no gate says so rather than leaving the reader to infer it.
+        // The two populations of the warm-up gate (RF-3c), printed in both knob states so a
+        // run with no gate says so rather than leaving it to be inferred.
         log->info("Network (RF-3c drop-floor warm-up gate): "
                   "network.amb_float_drop_floor_after_ep = {} ({}).  {} drop(s) were taken "
                   "BEFORE the gate opened and restored max(var_birth, var_first, birth "
@@ -5396,10 +5368,10 @@ int networkTeardown(
                   ctx.knobs.amb_birth_var_floor, C.n_amb_drop_floored, C.n_amb_drop,
                   w1.max, w1.med, w1.n, w2.max, w2.med, w2.n);
     }
-    // RF-1 step 5 (§3.6): the DECLARED ANCHOR S-TRANSFORM's inventory, with the REFUSED
-    // population beside it — that split IS the honest limit of the step: a cold handover
-    // has no Δ, so its family keeps the erase, and how often that happens is RF-2's
-    // (the election policy's) subject, not this card's.
+    // Inventory of the declared anchor S-transform, with the refused population beside it
+    // (RF-1 step 5, §3.6).  The split marks the limit of the step: a cold handover has no
+    // Δ, so its family keeps the erase, and how often that happens is a question for the
+    // election policy (RF-2).
     if (ctx.knobs.amb_float_kf && ctx.knobs.amb_float_declared_handover) {
         const auto& C = ctx.counters;
         log->log(C.n_amb_stransform > 0 ? spdlog::level::info : spdlog::level::warn,
@@ -5416,12 +5388,12 @@ int networkTeardown(
                  C.n_amb_sts_refused_cold, C.n_amb_sts_refused_no_level,
                  ctx.carry.pa_reref_erase_total, C.n_amb_sts_selfcheck_fail);
     }
-    // RF-1 step 3, design risk #3 made a GATE rather than a note: "count it, log it at
-    // WARN with identities, and make a fallback rate above a small threshold a run-end
-    // FAILURE rather than a note".  Under float_kf a non-SPD block silently returns those
-    // station-epochs to the per-column route the whole card exists to replace, so a run
+    // Joint-block fallback bar (RF-1 step 3, design risk #3): a fallback rate above a
+    // small threshold is a run-end failure, not a note.  Under float_kf a non-SPD block
+    // returns those station-epochs to the per-column route the vehicle replaces, so a run
     // that fell back on more than 1 % of its attempted station-epochs did not run the
-    // vehicle it claims in its manifest — and must not be graded as if it had.
+    // vehicle its manifest claims and is not to be graded as if it had.  A failure sets
+    // amb_block_rc, which the tail folds into the run's return code.
     if (ctx.knobs.pl_blk_from_vehicle) {
         const long long attempted = ctx.counters.n_pl_blk_blocks
                                   + ctx.counters.n_pl_blk_fallback;
@@ -5452,11 +5424,12 @@ int networkTeardown(
                       ctx.counters.n_pl_blk_fallback, 100.0 * rate);
         }
     }
-    // RF-2 — the HELD S-BASIS's run-end readout (invariant #4: the counters ARE the
-    // ON-path telemetry).  Four things a reader must be able to check at a glance:
-    // the basis was actually HELD (n_held ≫ n_elected); every handover was DECLARED;
-    // the network-wide erase is RETIRED (pa_reref_erase_total must read 0); and the
-    // held property itself never slipped (value_drift must read 0).
+    // Held S-basis run-end readout (RF-2); the counters are the ON-path telemetry
+    // (invariant #4).  Four things to check at a glance: the basis was held
+    // (n_held ≫ n_elected); every handover was declared; the network-wide erase is
+    // retired (pa_reref_erase_total reads 0); and the held property never slipped
+    // (value_drift reads 0).  The line logs at error level when either of the last two
+    // is nonzero.
     if (ctx.knobs.pd_held_basis) {
         const auto& C = ctx.counters;
         const bool clean = C.n_pb_basis_value_drift == 0
@@ -5477,12 +5450,11 @@ int networkTeardown(
                  C.n_pb_basis_refuse_flagged, ctx.knobs.pa_flag_quiet_ep,
                  C.n_pb_basis_rank_changed,
                  ctx.carry.pa_reref_erase_total, C.n_pb_basis_value_drift);
-        // RF-2b: WHY the datum moved.  RF-2 could only say HOW OFTEN, which is why its
-        // sim failure (67 % cold elections) had to be read out of the event CSV instead
-        // of off a counter.  The three deposition causes partition the incumbent losses;
-        // `refuse_unusable` and `elev_fallback` are the composed rank's own evidence —
-        // a large fallback count means the ledger screen found nothing to prefer, which
-        // is the sim's failure mode, visible at run end instead of after a grade.
+        // Why the datum moved (RF-2b); the line above says only how often.  The three
+        // deposition causes partition the incumbent losses; `refuse_unusable` and
+        // `elev_fallback` are the composed rank's own evidence: a large fallback count
+        // means the ledger screen found nothing to prefer, the failure mode seen on the
+        // sim bed, visible at run end rather than after a grade.
         log->info("Network (RF-2b election): ledger screen refused {} candidate "
                   "evaluation(s) as not usable AS A DATUM; {} election(s) fell back to "
                   "elevation-only because NO candidate was usable (each a COLD pin).  "
@@ -5495,13 +5467,13 @@ int networkTeardown(
                   C.n_pb_basis_depose_unusable);
     }
     if (config_.getNetworkConfig().trace_amb_state)
-        // Invariant #4: "0 rows under an ARMED trace" is a WARN, never a clean line —
-        // on this vehicle the trace rides the leveling HARVEST, so 0 rows means the
-        // carry never ran (carry_warm never reached, or carry_invariant) rather than a
-        // quiet network.  The erase split is reported beside the total because D3's
-        // whole inventory is that class, and because a run with births and trajectory
-        // rows but ZERO erase rows on a 60-station field hour would itself be the
-        // finding (the four erase paths are the population §3.4 replaces).
+        // "0 rows under an armed trace" logs at warn level, not as a clean line
+        // (invariant #4).  On this vehicle the trace rides the leveling harvest, so 0 rows
+        // means the carry never ran (carry_warm never reached, or carry_invariant) rather
+        // than a quiet network.  The erase split is reported beside the total because it
+        // is the whole of D3's inventory, and because a run with births and trajectory
+        // rows but no erase rows over a 60-station field hour would itself be a finding
+        // (the four erase paths are the population §3.4 replaces).
         log->log(ctx.counters.n_amb_state_rows > 0 ? spdlog::level::info : spdlog::level::warn,
                  "Network (RF-1 §7.4 carry-state trace): {} row(s) written to "
                  "network_amb_state.csv over {} traced epoch(s) — {} carrying an event, "
@@ -5523,11 +5495,11 @@ int networkTeardown(
                   "flag→ambiguity reverse map (next-epoch re-tap skipped for them) — a reverse-map/"
                   "block wiring inconsistency; investigate.", carry_innov_map_miss);
     if (emit_rebase_on) {
-        // Card 4 (M1) phase D: the emit-layer re-base telemetry (spec §3) — the
-        // integer cycles + common-fractional shift removed onto the previous emission
-        // frame (an S-selection on OUTPUTS ONLY; user DDs are invariant to it).  Feeds
-        // the consumer A/B: high integer/frac churn with a silent disc counter is the
-        // datum-freedom the carry buys; a surviving disc step is a genuine event.
+        // Emit-layer re-base telemetry (Card 4 (M1) phase D, spec §3): the integer cycles
+        // and common-fractional shift removed onto the previous emission frame (an
+        // S-selection on outputs only; user DDs are invariant to it).  For the consumer
+        // A/B: high integer/fractional churn with a silent disc counter is the datum
+        // freedom the carry buys; a disc step that survives is a genuine event.
         const auto& rb = emit_rebase_engine.counters();
         log->info("Network (Card 4/M1 phase D emit re-base): {} emit epoch(s), {} component "
                   "re-base(s), {} integer cycle(s) removed across {} key(s), {} reference-path "
@@ -5540,11 +5512,11 @@ int networkTeardown(
     }
     if (emit_pb_filter_on) {
         // PB emission-continuity filter telemetry (M5 prerequisite).  A high
-        // smoothed:reset ratio with a small mean posterior σ is the win — the
-        // per-epoch noise absorbed into the filter, so the emitter jump test fires
-        // (via the reset raw-value steps) only at genuine events.  ref-path + gap
-        // resets are the structural (never-laundered) events; innovation resets are
-        // the calibrated k·σ̂_step genuine steps.  ON-path counters (inv #4).
+        // smoothed:reset ratio with a small mean posterior σ is the intended result: the
+        // per-epoch noise is absorbed into the filter, so the emitter jump test fires (via
+        // the reset raw-value steps) only at genuine events.  Ref-path and gap resets are
+        // the structural events, always passed through unsmoothed; innovation resets are
+        // the calibrated k·σ̂_step genuine steps.  ON-path counters (invariant #4).
         const auto& pf = pb_filter_engine.counters();
         const long long resets = pf.resets_refpath + pf.resets_innovation + pf.resets_gap;
         log->info("Network (M5 prereq / PB emission-continuity filter): {} emit epoch(s), "
@@ -5569,11 +5541,11 @@ int networkTeardown(
         }
     }
     if (ctx.knobs.clk_frame_hold || ctx.knobs.clk_jump_test) {
-        // Card CLK-R run-end telemetry (invariant #4 — the ON-path counters).
-        // Σ|μ| is the common-mode churn the wire no longer carries (stage 1);
-        // marks are the per-sat re-realizations the wire now DECLARES (stage 2);
-        // re-anchors count the leash's marked re-coupling edges (should be 0 on
-        // a ≤24 h run — the measured 12 h frame wander is ~23 m vs a 50 m leash).
+        // Clock emission re-base run-end telemetry (card CLK-R; the ON-path counters,
+        // invariant #4).  Σ|μ| is the common-mode churn removed from the wire (stage 1);
+        // marks are the per-satellite re-realizations the wire declares (stage 2);
+        // re-anchors count the leash's marked re-coupling edges, expected 0 on a run of
+        // 24 h or less (the measured 12 h frame wander is about 23 m against a 50 m leash).
         const auto& cr = clk_rebase_engine.counters();
         log->info("Network (Card CLK-R / clock emission re-base): {} emit epoch(s), {} row(s); "
                   "frame hold {} — Σ|μ| drained {:.2f} m, max |A_c| {:.2f} m, {} leash "
@@ -5589,7 +5561,7 @@ int networkTeardown(
                   config_.networkClockDiscGapJumpM() > 0.0
                       ? fmt::format("ON at {:.2f} m", config_.networkClockDiscGapJumpM())
                       : std::string("off — a stale return is an UNTESTED first sighting"));
-        // Card GAL: the same tallies per constellation, when a second one is active.
+        // The same tallies per constellation, when a second one is active (card GAL).
         if (networkMultiGnssActive(config_)) {
             std::string t;
             for (const auto& [c, k] : clk_rebase_engine.constCounters())
@@ -5601,18 +5573,18 @@ int networkTeardown(
                       t.empty() ? std::string("none") : t);
         }
     }
-    // Card CLV: the level re-base's run-end readout (one line per constellation, the
-    // mechanism's counters, the wire).  Silent unless network.clock_level_carry.
+    // Level re-base run-end readout (card CLV): one line per constellation with the
+    // mechanism's counters and the wire.  Silent unless network.clock_level_carry is armed.
     networkClockLevelTeardown(ctx, setup.emitter ? &*setup.emitter : nullptr, log);
     if (ctx.knobs.cta_on) {
-        // Card Q3 run-end telemetry (standing invariant #4 — the ON-path counters
-        // ARE the evidence).  `folded_anchored = 0` means the anchor never bound a
-        // single row: the mechanism is INERT and every downstream number in the run
-        // is the legacy carry, no matter how clean the log reads.  Trips are split
-        // by REASON because they are not interchangeable evidence — a run that only
-        // ever shows `resume`/`datum` has tested neither the detector nor the
-        // staleness guard, and per standing invariant #1 an untested guard is not a
-        // guard (the DOY-129 event-window arm is what closes that).
+        // Guarded temporal clock anchor run-end telemetry (card Q3); the ON-path counters
+        // are the evidence (invariant #4).  `folded_anchored = 0` means the anchor never
+        // bound a single row: the mechanism is inert and every downstream number in the
+        // run is the legacy carry, however clean the log reads.  Trips are split by
+        // reason because they are not interchangeable evidence: a run that only shows
+        // `datum`/`ext` trips has tested neither the detector (nis, abs) nor the
+        // staleness guard (gap), and an untested guard is not a guard (invariant #1; the
+        // DOY-129 event-window arm tests them).
         const auto& c = ctx.counters;
         const long long folds = c.cta_folded_anchored + c.cta_folded_loose;
         const long long trips = c.cta_trip_nis + c.cta_trip_abs + c.cta_trip_gap
@@ -5632,10 +5604,10 @@ int networkTeardown(
                   c.cta_max_w_sat.empty() ? std::string("(none)") : c.cta_max_w_sat,
                   c.cta_max_w_tow);
         if (ctx.knobs.carry_gauge_free) {
-            // §2.1: the gauge-free step's own denominator.  `gf_keys = 0` on an
-            // armed run means the downdate never reached a group of ≥ 2 carried
-            // clocks, so the anchor is STILL constraining the gauge — the exact
-            // failure the step exists to prevent, and invisible without this line.
+            // Denominator of the gauge-free step (§2.1).  `gf_keys = 0` on an armed run
+            // means the downdate never reached a group of ≥ 2 carried clocks, so the
+            // anchor still constrains the gauge: the failure the step exists to prevent,
+            // which only this line shows.
             log->info("Network (Card Q3 §2.1 / gauge-free fold): {} clock prior key(s) "
                       "gauge-downdated over {} epoch(s); {} epoch(s) INERT (no constellation "
                       "contributed 2+ carried clocks, or UᵀΛU was singular).  Expect the "
@@ -5655,13 +5627,11 @@ int networkTeardown(
                       "re-validation ({} consecutive in-band epochs) and that the staleness "
                       "bound ({:.0f} s) is above this run's epoch spacing.",
                       ctx.knobs.cta_recouple_ep, ctx.knobs.cta_max_gap_s);
-        // Only the FAULT-class trips (nis/abs) are resolve candidates: a gap,
-        // datum or ext decouple withdraws the prior BECAUSE the frame or the
-        // visibility moved, emits a fresh solve, and has no anchored value to
-        // correct.  Counting them here cried "214 warped epochs" on a 12 h quiet
-        // arm whose fault-trip count was exactly zero (0 nis + 0 abs + 13 gap +
-        // 201 datum, `camp60wu_quiet12h_r2q3`) — the ratio=inf lesson again: a
-        // composite denominator makes a healthy run read as a broken one.
+        // Only the fault-class trips (nis, abs) are resolve candidates: a gap, datum or
+        // ext decouple withdraws the prior because the frame or the visibility moved,
+        // emits a fresh solve, and has no anchored value to correct.  Counting those here
+        // would report warped epochs on a quiet run with zero fault trips: a composite
+        // denominator makes a working run read as a broken one.
         if (const long long fault_trips = c.cta_trip_nis + c.cta_trip_abs;
             ctx.knobs.cta_resolve && c.cta_resolves == 0 && fault_trips > 0)
             log->warn("Network (Card Q3): {} FAULT trip(s) (nis+abs) but ZERO in-epoch "
@@ -5669,18 +5639,18 @@ int networkTeardown(
                       "value correction, so each shipped an anchor-warped epoch.  See the "
                       "per-trip warnings for the cause (prior-dominated column, or no "
                       "captured prior to withdraw).", fault_trips);
-        // §2.1 — which DENOMINATOR this run's guard and census standardized by.
-        // Two arms of the bisection differ ONLY here, so a run-end line that omits
-        // it makes the pair indistinguishable in the archived console.
+        // The denominator this run's guard and census standardized by (§2.1).  Two arms
+        // of the bisection differ only here, so without this line the pair cannot be told
+        // apart in the archived console.
         log->info("Network (Card Q3 §2.1): guard/census denominator — P⁻ {} , P⁺ {} (fold: {}).",
                   ctx.knobs.cta_stat_proj_prior ? "GAUGE-PROJECTED" : "raw per-satellite var_eff",
                   ctx.knobs.cta_stat_proj_post  ? "GAUGE-PROJECTED" : "raw marginal cov(c,c)",
                   ctx.knobs.carry_gauge_free ? "gauge-free" : "raw state");
-        // §3's k derivation, per rung.  The denominator √S shrinks as q tightens, so
-        // a FIXED k is a different number of METRES at every rung — the ladder below
-        // is what makes that visible without a second disarmed run per rung, and the
-        // metre ladder is what the ABSOLUTE backstop's rail is read off (the 3 h arm
-        // found 0 of 63 nis trips would have been caught by the shipped 2.0 m).
+        // The k derivation of §3, per rung.  The denominator √S shrinks as q tightens, so
+        // a fixed k is a different number of metres at every rung; the ladder below shows
+        // that without a second disarmed run per rung, and the metre ladder is what the
+        // absolute backstop's rail is read from (on the 3 h arm, none of the 63 nis trips
+        // would have been caught by the shipped 2.0 m rail).
         if (c.cta_w_rows > 0) {
             const double n     = static_cast<double>(c.cta_w_rows);
             const double msq   = c.cta_sum_sqrt_s / n;
@@ -5709,12 +5679,12 @@ int networkTeardown(
                       "q·Δt) — the consistency cap is armed but inactive at this q, which is the "
                       "expected reading while q·Δt stays above it.", ctx.knobs.cta_var_floor);
         else if (ctx.knobs.cta_var_floor > 0.0 && c.cta_folded_anchored > 0)
-            // The floor BINDING at the bottom rungs is the design, not a warning
-            // condition (§7.4): below q·Δt ≈ (3 mm)² the anchor would otherwise
-            // claim precision no honest correlated-error floor supports, and
-            // deviation #1's consistency cap is what stops it.  Say how hard it
-            // bound, because "the floor governs" and "the floor is a rounding
-            // error" are different postures and only the fraction separates them.
+            // The floor binding at the bottom rungs is the design, not a warning
+            // condition (§7.4): below q·Δt ≈ (3 mm)² the anchor would otherwise claim
+            // precision that no realistic correlated-error floor supports, and deviation
+            // #1's consistency cap stops it.  The line reports how often it bound,
+            // because "the floor governs" and "the floor is a rounding error" are
+            // different postures and only the fraction separates them.
             log->info("Network (Card Q3 / deviation-#1 consistency floor): the floor BOUND on {} "
                       "of {} anchored fold(s) ({:.1f} %) at {:.3e} m² (σ = {:.2f} mm) against the "
                       "armed q·Δt = {:.3e} m² at 30 s.  A binding floor is the DESIGN at these "
@@ -5728,13 +5698,13 @@ int networkTeardown(
                       ctx.knobs.cta_var_floor, 1000.0 * std::sqrt(ctx.knobs.cta_var_floor),
                       std::max(0.0, ctx.knobs.cta_q) * 30.0);
     }
-    // Queue 1(b) — the clock-pivot handover BASELINE + the S-transform's ON-path
-    // telemetry.  The handover COUNT is reported unconditionally: increment 0 named
-    // this observability gap (before this card the edge existed only as a PIVOT event
-    // row and the E/R records, so an OFF run could not state the population an ON run
-    // acts on).  The sts_* clause follows only when the transform is armed.
-    // Invariant #4: `edges > 0` with `rows_retained == 0` means the INC-1 fold release
-    // is mis-wired — the transform ran and nothing folded.
+    // Clock-pivot handover baseline and the S-transform's ON-path telemetry (queue item
+    // 1(b)).  The handover count is reported whether or not the transform is armed:
+    // otherwise the edge appears only as a PIVOT event row and in the E/R records, and a
+    // run with the transform off could not state the population an armed run acts on
+    // (increment 0).  The sts_* clause follows only when the transform is armed.
+    // `edges > 0` with `rows_retained == 0` means the INC-1 fold release is miswired: the
+    // transform ran and nothing folded (invariant #4).
     if (!ctx.counters.pivot_handovers.empty() || ctx.knobs.handover_stransform) {
         const auto& sc = ctx.counters;
         std::string per_const;
@@ -5777,13 +5747,14 @@ int networkTeardown(
         log->info("Network: prioritized-datum drop-and-heal recovered the gate on {} epoch(s) "
                   "({} near-null phase-bias column(s) soft-anchored).",
                   n_healed_epochs, n_healed_cols);
-    // Card PA2 — the heal's ATTEMPTS, which the success-only line above hides.
-    // Gated on attempts so a run that never reaches the gate-failure path (every
-    // healthy config, incl. the whole golden matrix) prints nothing new.
+    // Attempts of the drop-and-heal, which the success-only line above does not show
+    // (card PA2).  Gated on attempts, so a run that never reaches the gate-failure path
+    // (every config without that failure, including the whole golden matrix) prints
+    // nothing new.
     if (ctx.counters.n_heal_attempt_epochs > 0) {
-        // The insufficiency caveat is the whole reason the ATTEMPT counters exist,
-        // but it is only TRUE when the heal fired more than it rescued.  Printing
-        // it when attempts == recoveries (a fully successful heal — the PA4 emit
+        // The insufficiency caveat is the reason the attempt counters exist, but it holds
+        // only when the drop-and-heal fired more often than it recovered the gate.
+        // Printing it when attempts == recoveries (every firing recovered, the PA4 emit
         // case) would read as a warning on a clean run.
         const bool insufficient = ctx.counters.n_heal_attempt_epochs > n_healed_epochs;
         log->info("Network (Card PA): drop-and-heal FIRED on {} epoch(s), soft-anchoring {} "
@@ -5812,10 +5783,10 @@ int networkTeardown(
                   n_cpl_stash, n_cpl_stash_empty, n_cpl_harvest_fail,
                   n_cpl_terms_present, n_cpl_terms_departed, n_cpl_terms_shrunk,
                   carry_cpl_tu ? "ON" : "OFF");
-    // Card C-GF run-end readout.  Deliberately OUTSIDE the Card-Q3 `cta_on` nest below:
-    // the downdate can now be armed by the CARRY (shared_carry_gauge_free) with the Q3
-    // temporal anchor off, and the Q3 readout would then print nothing at all — an armed
-    // mechanism with zero telemetry, which is exactly the standing-invariant-#4 failure.
+    // Gauge-free shared carry readout (card C-GF), placed outside the Card-Q3 `cta_on`
+    // block above on purpose: the downdate can be armed by the carry
+    // (shared_carry_gauge_free) with the Q3 temporal anchor off, and the Q3 readout would
+    // then print nothing, leaving an armed mechanism with no telemetry (invariant #4).
     if (ctx.knobs.carry_gauge_free && !ctx.knobs.cta_on) {
         log->info("Network (Card C-GF): gauge-free shared carry active WITHOUT the Q3 clock "
                   "anchor — {} clock prior key(s) gauge-downdated, {} epoch(s) inert, {} "
@@ -5839,8 +5810,9 @@ int networkTeardown(
                   "the border turns over faster than the carry, so the gauge-free treatment "
                   "is reaching only a minority of epochs.",
                   est.gaugeFreePartialSkipped());
-    // Card 1g run-end readout.  Its own denominator — the run-total departed count moves
-    // for many reasons and cannot tell armed-and-working from armed-and-inert.
+    // Realization-step reinit readout (Card 1g), with its own denominator: the run-total
+    // departed count moves for many reasons and cannot tell armed-and-working from
+    // armed-and-inert.
     if (carry_cpl_cond && ctx.knobs.carry_cpl_reinit) {
         log->info("Network (Card 1g): realization-step reinit sources — {} coupling term(s) "
                   "diverted to the departed route by the WIDENED (kind,sat,signal) probe "
@@ -5854,9 +5826,9 @@ int networkTeardown(
                       "PBGAUGE / eq34 / datum-slip event counts before reading an A/B as "
                       "'no effect'.");
     }
-    // Card 1f run-end readout.  Standing invariant #4: this card acts only on TRUNCATED
-    // rows, so "0 held / 0 orphan" with departed terms > 0 is a MISWIRE, not a quiet run —
-    // the two are distinguished here rather than left to the reader.
+    // Coupling-row datum-gauge projection readout (Card 1f).  The projection acts only on
+    // truncated rows, so "0 held / 0 orphan" with departed terms > 0 is a miswire, not a
+    // quiet run; the line distinguishes the two (invariant #4).
     if (carry_cpl_cond && ctx.knobs.carry_cpl_gauge) {
         log->info("Network (Card 1f): coupling-row datum-gauge projection — {} "
                   "(constellation,kind) family sum(s) HELD at their harvest value against a "
@@ -5872,11 +5844,10 @@ int networkTeardown(
                       "Investigate before reading an A/B as 'no effect'.",
                       n_cpl_terms_departed);
         if (ctx.counters.n_cpl_gauge_orphan > 0) {
-            // Orphan ATTRIBUTION (multi-constellation owed item, closed 2026-08-20):
-            // per-(constellation,kind) totals so the run-end line names WHERE the
-            // gauge-dirty residue lives; per-epoch lines are in the run log
-            // ("Card 1f orphan attribution").  Recipient-fallback decision:
-            // NONE by design — the sums realize per-constellation.
+            // Orphan attribution: per-(constellation, kind) totals, so the run-end line
+            // names where the gauge-dirty residue lives; per-epoch lines are in the run log
+            // ("Card 1f orphan attribution").  There is no recipient fallback, by design:
+            // the sums are realized per constellation.
             std::string fam_detail;
             for (const auto& [fam, o] : ctx.counters.cpl_orphan_fam_total) {
                 const char* kind_s =
@@ -5897,11 +5868,10 @@ int networkTeardown(
         }
     }
     if (carry_vce) {
-        // M2 (LS-VCE): run-end honesty summary — the trailing-window measured
-        // carry-variance FLOOR σ̂ vs the hand floor, per (family, constellation).
-        // ratio > 1 ⇒ the hand floor is optimistic (real carry disagreement
-        // exceeds it); ratio < 1 ⇒ the hand floor is conservative.  The per-hour
-        // series is in network_carry_vce.csv.
+        // Carry-variance summary (M2, LS-VCE): the trailing-window measured carry-variance
+        // floor σ̂ against the hand floor, per (family, constellation).  ratio > 1 means
+        // the hand floor is optimistic (the real carry disagreement exceeds it); ratio < 1
+        // means it is conservative.  The per-hour series is in network_carry_vce.csv.
         log->info("Network (M2/LS-VCE): carry-variance monitor summary "
                   "(components='{}', window={} ep) — ROBUST (geometric-mean, tail-safe) "
                   "carry-innovation variance vs the hand floor:",
@@ -5922,11 +5892,11 @@ int networkTeardown(
         }
     }
     if (ctx.knobs.vce_apply_on) {
-        // M2 v2 (docs/SPEC_carry_vce_apply.md §9.4): the ON-path telemetry.  "0
-        // steps" means the wiring is inert no matter how clean the log reads —
-        // standing invariant #4 — so the step / freeze split is printed against a
-        // denominator, per group, and a run that never left warm-up says so in one
-        // line rather than being inferred from a missing effect.
+        // ON-path telemetry of the carry variance factor (M2 v2,
+        // docs/SPEC_carry_vce_apply.md §9.4).  "0 steps" means the wiring is inert however
+        // clean the log reads (invariant #4), so the step / freeze split is printed against
+        // a denominator, per group, and a run that never left warm-up says so in one line
+        // rather than leaving it to be inferred from a missing effect.
         const NetworkCarryVceApply& va = ctx.carry.vce_apply;
         log->info("Network (M2 v2 / LASER 5-95): carry variance-FACTOR summary — "
                   "families='{}', slew {}, ceiling {}, min_rows {}; {} epoch(s) stepped "
@@ -5976,9 +5946,9 @@ int networkTeardown(
                   "phase-bias column(s) on {} epoch(s) ({} column-epoch(s) total; their phase "
                   "rows served the satellite clock through the local blocks).",
                   config_.networkPhaseDatumMinStations(), n_gated_epochs, n_gated_key_epochs);
-    // Card EV7 §6 — the DROP EDGE of that same gate.  Reported in BOTH knob states
-    // (standing invariant #4): with the knob OFF this line IS the size of the class,
-    // which is the number the fix is judged against.
+    // Drop edge of the same gate (card EV7 §6), reported in both knob states
+    // (invariant #4): with the knob off this line gives the size of the class, the number
+    // the fix is judged against.
     if (ctx.counters.n_pd_gate_drop_edges > 0) {
         if (config_.networkPhaseDatumGateDropErase())
             log->info("Network (EV7 gate-drop erase): {} coverage-gate DROP EDGE(s) — a "
@@ -5998,10 +5968,10 @@ int networkTeardown(
                       "is the size of the class on this run.",
                       ctx.counters.n_pd_gate_drop_edges);
     }
-    // Card UPO — the marker → antenna-reference-point roster frame.  Reported in
-    // BOTH knob states (standing invariant #4): with the knob OFF this line is the
-    // size of the modelling error the run carried, which is the number the fix is
-    // judged against; armed it states that the roster is no longer at the published
+    // Marker to antenna-reference-point roster frame (card UPO), reported in both knob
+    // states (invariant #4).  With the knob off this line gives the size of the modelling
+    // error the run carried, the number the fix is judged against; armed, it states that
+    // the roster is held at the antenna reference points rather than the published
     // monument coordinates, which a reader of the products has to know.
     if (ctx.counters.n_marker_arp_ecc > 0 || ctx.counters.n_marker_arp_no_record > 0) {
         if (config_.networkStationMarkerToArp())
@@ -6033,21 +6003,21 @@ int networkTeardown(
                   "constellation individually clean while the global σ̂0 tripped).",
                   n_perconst_partial_epochs, n_perconst_diffuse_published);
 
-    // L15 end-of-run manifest record (body relocated to NetworkRunTraces, INC-4).
+    // End-of-run manifest record (L15); the body is in NetworkRunTraces (INC-4).
     traces.writeRunManifestComplete(nc, ctx.counters, synced.size(), loop_ms,
                                     networkMultiGnssManifestJson(ctx, config_));
 
-    // --- B6 (P1-1): serialized-contract round-trip self-check --------------------
-    // Close the writer (flush the header), read it back, and cross-check the parsed
-    // S-basis contract against what we serialized.  This is a LIVE checkContract call
-    // site (previously dead code) that guards the write→read→consume replay path a
-    // real product consumer would take: a header serialization/parse regression fails
-    // here loudly instead of silently mis-declaring the datum to a downstream user.
+    // --- Serialized-contract round-trip self-check (B6, P1-1) --------------------
+    // Close the writer (flush the header), read the file back, and cross-check the parsed
+    // S-basis contract against the one serialized.  This checkContract call guards the
+    // write → read → consume replay path a product consumer takes: a regression in header
+    // serialization or parsing fails here with warnings instead of mis-declaring the
+    // datum to a downstream user.
     if (contract_pending && !prod_path.empty()) {
         // Zero epochs emitted: the deferred writer never opened, and the round-trip
-        // self-check below is skipped.  The stale previous file was removed at
-        // staging — unless that removal failed (locked/read-only), in which case a
-        // PREVIOUS run's products still sit at the path: check, don't assert.
+        // self-check below is skipped.  The previous run's file was removed at staging
+        // unless that removal failed (locked or read-only), in which case the previous
+        // run's products still sit at the path; the code checks rather than assumes.
         if (std::filesystem::exists(prod_path))
             log->warn("Network[B6]: no epochs were emitted AND a stale product file from a "
                       "PREVIOUS run remains at '{}' (removal failed at startup) — do NOT "
@@ -6056,9 +6026,9 @@ int networkTeardown(
             log->warn("Network[B6]: no epochs were emitted — the deferred contract writer never "
                       "opened; no product file exists at '{}' (round-trip self-check skipped).",
                       prod_path.string());
-        // L14: record the distinguishable "writer never opened" outcome so an absent
-        // contract-check CSV unambiguously means "the check never ran".  Card OWD: the
-        // contract is on every wire, so the record is unconditional.
+        // Record the "writer never opened" outcome, so an absent contract-check CSV means
+        // only "the check never ran" (L14).  The contract is on every wire, so the record
+        // is unconditional (card OWD).
         {
             std::ofstream cc(log_dir_ / "network_contract_check.csv");
             if (cc) cc << "check,status,detail\n"
@@ -6066,21 +6036,21 @@ int networkTeardown(
         }
     }
     if (product_writer && !prod_path.empty()) {
-        // Card OWD: the check runs on every wire now; it re-reads the whole product file,
-        // so its wall time is measured and reported (the line after the verdict).
+        // The check runs on every wire and re-reads the whole product file, so its wall
+        // time is measured and reported in the line after the verdict (card OWD).
         const auto b6_t0 = std::chrono::steady_clock::now();
         product_writer.reset();   // flush + close so the reader sees the complete header
         SbasisContract parsed;
         bool           rok = false;
         const std::vector<NetworkProductRecord> check_recs =
             NetworkProductReader::read(prod_path.string(), &parsed, &rok);
-        // RTA-5: with re-broadcast armed, run checkContract on EVERY S receipt (each
-        // record's contract_refresh), not once — the per-receipt behaviour a late-
-        // joining consumer relies on.  The per-receipt expectation drops the pivot
-        // map (pivots legitimately evolve across re-broadcasts; the FINAL pivot map
-        // is checked separately below against the last-written contract) but keeps
-        // every run-constant convention field AND the run's single generation id.
-        // Gated on the toggle so an OFF run's check output is byte-identical.
+        // With re-broadcast armed, checkContract runs on every S receipt (each record's
+        // contract_refresh), not once: that per-receipt behaviour is what a late-joining
+        // consumer relies on (RTA-5).  The per-receipt expectation drops the pivot map
+        // (pivots evolve across re-broadcasts; the final pivot map is checked separately
+        // below against the last-written contract) but keeps every run-constant convention
+        // field and the run's single generation id.  Gated on the toggle, so a run with it
+        // off keeps byte-identical check output.
         std::size_t s_receipts = 0, s_receipt_fails = 0;
         std::vector<std::string> s_receipt_mism;
         if (contract_rebroadcast_s > 0.0) {
@@ -6132,10 +6102,12 @@ int networkTeardown(
                       std::chrono::duration<double>(std::chrono::steady_clock::now() - b6_t0)
                           .count());
         }
-        // L14: machine-readable check result.  The pivot-map round-trip is checked SEPARATELY
-        // (checkContract only compares the expected-side pivots, so a realized-pivot mismatch is
-        // NOT in `mism`) and must fail 'overall' too.  Written on PASS as well — an ABSENT file
-        // means the check never ran (crash / zero epochs), distinct from a recorded FAIL.
+        // Machine-readable check result (L14).  The pivot-map round-trip is checked
+        // separately (checkContract compares only the expected-side pivots, so a
+        // realized-pivot mismatch is not in `mism`) and also fails 'overall'.  Written on
+        // PASS as well: an absent file means the check never ran (a crash, for example),
+        // which is distinct from a recorded FAIL; zero emitted epochs write their own FAIL
+        // row in the branch above.
         const bool pivot_ok = parsed.present
             && (parsed.decl.clock_pivot_sat == pending_contract.decl.clock_pivot_sat);
         const bool overall = rok && parsed.present && mism.empty() && pivot_ok
@@ -6148,8 +6120,8 @@ int networkTeardown(
             cc << "contract_present," << (parsed.present ? "PASS" : "FAIL") << ",\n";
             for (const auto& m : mism)
                 cc << "field_mismatch,FAIL," << NetworkProductReader::csvSanitize(m) << '\n';
-            // RTA-5 (toggle-gated so an OFF run's CSV is byte-identical): per-receipt
-            // contract-check summary across every positional S line in the file.
+            // Per-receipt contract-check summary across every positional S line in the file
+            // (RTA-5; gated on the toggle, so a run with it off keeps a byte-identical CSV).
             if (contract_rebroadcast_s > 0.0) {
                 cc << "s_receipts," << (s_receipt_fails == 0 ? "PASS" : "FAIL") << ','
                    << s_receipts << " receipt(s); " << s_receipt_fails << " failed\n";
@@ -6165,11 +6137,11 @@ int networkTeardown(
         }
     }
 
-    // Tier T1r (§6.14.5 defect 1 / invariant #4): drain the IF-TD REFERENCE arm's
-    // own opportunities and flags out of the per-station detectors.  NOT gated on
-    // nc.slip_qc.ref_gate — the LEGACY reference condition runs and acts on every
-    // lineage, armed or not, so gating this on the hardening toggle would leave the
-    // tier reading 0 on precisely the runs where it is the only reference screen.
+    // Collect the IF-TD reference arm's own opportunities and flags from the per-station
+    // detectors (flag-rate tier T1r, §6.14.5 defect 1; invariant #4).  Not gated on
+    // nc.slip_qc.ref_gate: the legacy reference condition runs and acts on every
+    // lineage, armed or not, so gating this on the hardening toggle would leave the tier
+    // reading 0 on the runs where it is the only reference screen.
     if (ctx.knobs.trace_flag_rates) {
         auto& fr = ctx.counters.fr_if_refgate;
         fr.opp = fr.flag = 0;
@@ -6181,8 +6153,8 @@ int networkTeardown(
         }
     }
 
-    // B8 flag-rate empirical-alpha summary + L3 run-summary CSV (bodies relocated
-    // to NetworkRunTraces, INC-4; ONE trace_flag_rates gate covers both).
+    // Flag-rate empirical-alpha summary (B8) and run-summary CSV (L3); the bodies are in
+    // NetworkRunTraces (INC-4), and one trace_flag_rates gate covers both.
     traces.writeFlagRateAndRunSummary(config_, ctx.knobs, ctx.counters, synced.size(),
                                       stations.size(), n_threads, parallel_on, loop_ms, log);
 
@@ -6215,11 +6187,11 @@ int networkTeardown(
             std::string(cl.consumer_undifferenced ? "UNDIFFERENCED" : "BSSD")
             + " user / " + product_label;
 
-        // Honest, fix-rate-led verdict.  WL-only AR does not fix the narrow lane,
-        // so the post-fix position stays at the WL-float level (~m) even on a
-        // healthy product — the WL fix RATE, not the position, is the recovery
-        // metric.  Flag a marginal result and point at the A/B baseline knob so a
-        // reader never reads a degraded run as a clean pass.
+        // Verdict led by the fix rate.  WL-only AR does not fix the narrow lane, so the
+        // post-fix position stays at the WL-float level (metres) even on a good product;
+        // the WL fix rate, not the position, is the recovery metric.  A marginal result is
+        // flagged with a pointer to the A/B baseline knob, so a degraded run is not read
+        // as a clean pass.
         std::string verdict;
         if (cl_ar_fixed == 0)
             verdict = "NO integers recovered — inspect closed_loop_trace.csv / SSR coverage";
@@ -6251,20 +6223,21 @@ int networkTeardown(
         log->info("  VERDICT                   : {}", verdict);
         log->info("  closed-loop trace         : {}",
                   (log_dir_ / "closed_loop_trace.csv").string());
-        // Card CST: the per-satellite readout's ON-path telemetry (invariant #4).
-        // Printed ONLY when armed, so an OFF run's summary is byte-identical.  A
-        // run that reports 0 epochs has an instrument that never fired — the
-        // consumer deferred every epoch — however clean the log reads.
+        // ON-path telemetry of the per-satellite readout (card CST; invariant #4).
+        // Printed only when armed, so a run with it off keeps a byte-identical summary.  A
+        // run that reports 0 epochs has an instrument that never fired (the consumer
+        // deferred every epoch), however clean the log reads.
         if (config_.getNetworkConfig().trace_consumer_sat) {
             log->info("  per-sat consumer trace    : {} rows over {} consumer epoch(s) -> {}",
                       ctx.counters.n_cst_rows, ctx.counters.n_cst_epochs,
                       (log_dir_ / "closed_loop_sat_trace.csv").string());
         }
-        // Card JT: the de-commoned phase jump test's four declaration classes —
-        // invariant #4's ON-path telemetry.  Printed ONLY when armed, so an OFF run's
-        // summary is byte-identical.  `decommon_only` is the population the raw test
-        // MISSED and `raw_only` the population it MINTED: 0 in BOTH means the knob is
-        // inert on this lineage no matter how clean the run reads.
+        // The four declaration classes of the de-commoned phase jump test (card JT), the
+        // ON-path telemetry (invariant #4).  Printed only when armed, so a run with it off
+        // keeps a byte-identical summary.  `decommon_only` is the population the raw test
+        // missed and `raw_only` the population only the raw test declared (suppressed
+        // here): 0 in both means the knob is inert on this lineage however clean the run
+        // reads.
         if (config_.getNetworkConfig().disc_jump_test_decommon) {
             const auto& k = ctx.counters;
             log->info("  pb jump de-common (JT)    : decl_decommon_only {} (the raw test MISSED "
@@ -6275,14 +6248,13 @@ int networkTeardown(
                       NetworkProductEmitter::kDiscDecommonMinSats,
                       k.n_jt_decommon_only + k.n_jt_both);
         }
-        // Card PBH: the emit-side phase-bias hold — invariant #4's ON-path telemetry
-        // and invariant #7's two edges, printed ONLY when armed so an OFF run's
-        // summary is byte-identical.  `held_emissions 0` means the hold never wrote,
-        // however clean the wire reads.  The DECOUPLING edge's cost is the
-        // |estimate - held| distribution (what the hold HIDES) and the coupled-mark
-        // clock step (the frame move it refuses to transfer); the RE-COUPLING edge is
-        // the generation starts, each one a PB_HOLD/gen_start event the consumer
-        // re-floats on.
+        // Emit-side phase-bias hold (card PBH): the ON-path telemetry (invariant #4) and
+        // both edges (invariant #7), printed only when armed so a run with it off keeps a
+        // byte-identical summary.  `held_emissions 0` means the hold never wrote, however
+        // clean the wire reads.  The cost of the decoupling edge is the |estimate - held|
+        // distribution (what the hold hides) and the coupled-mark clock step (the frame
+        // move it does not transfer); the re-coupling edge is the generation starts, each
+        // a PB_HOLD/gen_start event the consumer refloats on.
         if (config_.getNetworkConfig().emit_pb_hold) {
             const auto& k = ctx.counters;
             auto        dev = ctx.carry.pb_hold_dev_abs_m;      // copy: run-end readout
@@ -6313,10 +6285,10 @@ int networkTeardown(
                       k.n_pbh_coupled_marks, c50, c90, cmax,
                       ctx.carry.pb_hold_coupled_step_m.size());
         }
-        // Card MS: the per-channel mark scope — invariant #4's ON-path telemetry.
-        // Printed ONLY when armed, so a `sat`-scope run's summary is byte-identical.
-        // `suppressed` is the whole point of the knob: 0 there means the scope
-        // narrowed nothing, no matter how clean the run reads.
+        // Per-channel mark scope (card MS): the ON-path telemetry (invariant #4).  Printed
+        // only when armed, so a `sat`-scope run keeps a byte-identical summary.
+        // `suppressed` is the knob's effect: 0 there means the scope narrowed nothing,
+        // however clean the run reads.
         if (config_.getNetworkConfig().disc_mark_scope == "channel") {
             const auto& k = ctx.counters;
             log->info("  disc mark scope (MS)      : applied n_mark_clk {} / n_mark_cb {} / "
@@ -6325,9 +6297,9 @@ int networkTeardown(
                       k.n_mark_suppressed_by_scope, k.n_mark_suppressed_by_scope_clk,
                       k.n_mark_suppressed_by_scope_cb, k.n_mark_suppressed_by_scope_pb);
         }
-        // Card CC (A): the declared-step carry counters — the consumer's ON-path
-        // telemetry (invariant #4).  Printed only when the knob is armed, so an
-        // OFF run's summary is byte-identical.  Closure: carried + resets == events.
+        // Declared-step carry counters (card CC (A)), the consumer's ON-path telemetry
+        // (invariant #4).  Printed only when the knob is armed, so a run with it off keeps
+        // a byte-identical summary.  Closure: carried + resets == events.
         if (consumer->pbDiscCarryArmed()) {
             const auto& c = consumer->pbDiscCarryCounters();
             log->info("  pb-disc carry (card CC)   : events {} (disc bumps {} + freshness flips {}) "
@@ -6338,12 +6310,12 @@ int networkTeardown(
                       c.reset_first_sight, c.reset_basis, c.reset_bssd, c.reset_unknown_key,
                       c.closureHolds() ? "HOLDS" : "BROKEN");
         }
-        // Card PBT (A): the EVERY-step translation counters — the consumer's
-        // ON-path telemetry (invariant #4), printed only when the knob is armed so
-        // an OFF run's summary is byte-identical.  BOTH edges: the DECOUPLING edge
-        // is what the ambiguity absorbed (declared + undeclared, with Sigma|delta|),
-        // the RE-COUPLING edge is every cell it refused or reset, and the
-        // declared-but-EMPTY count is the population card MS exists to remove.
+        // Every-step translation counters (card PBT (A)), the consumer's ON-path telemetry
+        // (invariant #4), printed only when the knob is armed so a run with it off keeps a
+        // byte-identical summary.  Both edges: the decoupling edge is what the ambiguity
+        // absorbed (declared + undeclared, with Sigma|delta|), the re-coupling edge is
+        // every cell it refused or reset, and the declared-but-empty count is the
+        // population card MS removes.
         if (consumer->pbStepTranslateArmed()) {
             const auto& t = consumer->pbStepTranslateCounters();
             log->info("  pb step translate (PBT)   : cells {} (declared {}) -> "
@@ -6358,13 +6330,13 @@ int networkTeardown(
                       t.reset_bssd, t.reset_unknown_key, t.refused_undeclared, t.no_pair,
                       t.closureHolds() ? "HOLDS" : "BROKEN");
         }
-        // Card ALC: the ambiguity LEVEL check's counters -- the consumer's ON-path
-        // telemetry at invariant #7's re-coupling edge, printed only when the knob is
-        // armed so an OFF run's summary is byte-identical.  The two totals are read
-        // from DIFFERENT places on purpose: the left-hand ones are the engine's own
-        // ledger and the right-hand ones are what the harness drained into
-        // network_events.csv, so a mismatch means an epoch's events were lost between
-        // the two (which no absence-of-crash reading would show).
+        // Ambiguity level check counters (card ALC), the consumer's ON-path telemetry at
+        // the re-coupling edge of invariant #7, printed only when the knob is armed so a
+        // run with it off keeps a byte-identical summary.  The two sets of totals are read
+        // from different places on purpose: the left-hand ones are the engine's own ledger
+        // and the right-hand ones are what the harness drained into network_events.csv, so
+        // a mismatch means an epoch's events were lost between the two (which the absence
+        // of a crash would not show).
         if (consumer->ambLevelCheckArmed()) {
             const auto& a = consumer->ambLevelCheckCounters();
             const auto& k = ctx.counters;
@@ -6383,10 +6355,10 @@ int networkTeardown(
                       k.n_amb_level_trips_if, k.n_amb_level_refloats,
                       agree ? "AGREE" : "MISMATCH");
         }
-        // Card PBH: the consumer's half of the hold contract.  Printed only when a
-        // held entry was actually seen, so an unheld run's summary is byte-identical
-        // -- and `cells 0` with the producer's hold armed would mean the generation
-        // never reached the store, which is the failure no clean log would show.
+        // The consumer's half of the hold contract (card PBH).  Printed only when a held
+        // entry was seen, so an unheld run keeps a byte-identical summary.  With the
+        // producer's hold armed, the absence of this line (cells 0) means the generation
+        // never reached the store, a failure a clean log would not otherwise show.
         {
             const auto& p = consumer->pbHoldCounters();
             if (p.cells > 0)
@@ -6396,54 +6368,52 @@ int networkTeardown(
                           p.cells, p.keys, p.first_sight, p.held, p.refloats, p.disc_ignored,
                           p.closureHolds() ? "HOLDS" : "BROKEN");
         }
-        // Card SID phase 5: the consumer's half of the declaration: the latch
-        // against the declared roster and the attributed freshness flips.  The
-        // harness never calls RealTimeEngine::flush(), so the census is printed
-        // here; silent on a wire that carries no declaration.
+        // The consumer's half of the declaration (SID phase 5): the latch against the
+        // declared roster and the attributed freshness flips.  The harness never calls
+        // RealTimeEngine::flush(), so the census is printed here; silent on a wire that
+        // carries no declaration.
         consumer->logRosterConsumerSummary("closed loop");
-        consumer->logReinflateSummary("closed loop");   // card OWD (O2)
-        // Card CC (B): consumer snapshots written beside the network history
-        // copies (0 written on an armed seed = no warm start on offer).
+        consumer->logReinflateSummary("closed loop");   // consumer re-inflation summary (card OWD, O2)
+        // Consumer snapshots written beside the network history copies (card CC (B));
+        // 0 written on an armed seed means no warm start is on offer.
         if (cl.state_snapshot)
             log->info("  consumer snapshots (CC-B) : {} written beside network history copies "
                       "(matching tow), {} skipped (consumer had not processed that tow)",
                       ctx.counters.cl_snap_written, ctx.counters.cl_snap_skipped);
         log->info("==============================================================");
     }
-    // EVENT HARNESS run-end (filter/NetworkInject.cpp): the clause, and the
-    // never-fired HARD error.  Read BEFORE the zero-emit guard so an armed-but-
+    // Event harness run-end (filter/NetworkInject.cpp): the clause, and the hard error
+    // for a schedule that never fired.  Read before the zero-emit guard so an armed but
     // silent schedule is reported even on a run that also produced nothing.
     const int inject_rc = networkInjectRunEnd(ctx, log);
-    // Card CPA run-end (filter/NetworkCanonicalPairAdmission.cpp): the withheld
-    // census and both edges, in one line.  Silent when the rule is disarmed; the
-    // ARMED AND INERT clause is what standing invariant 4 asks of an armed run
-    // whose counters never moved.  Read BEFORE the zero-emit guard for the same
-    // reason the injector's clause is: a rule that withheld the whole network
-    // must be visible on a run that also produced nothing.
+    // Canonical-pair admission run-end (card CPA,
+    // filter/NetworkCanonicalPairAdmission.cpp): the withheld census and both edges, in
+    // one line.  Silent when the rule is disarmed; the ARMED AND INERT clause covers an
+    // armed run whose counters never moved (invariant #4).  Read before the zero-emit
+    // guard for the same reason as the injector's clause: a rule that withheld the whole
+    // network has to be visible on a run that also produced nothing.
     networkCanonicalPairRunEnd(ctx, log);
-    // Card SID phase 1 run-end (app/SignalRoster.cpp): the OBSERVATORY's table —
-    // the roster's own build census with its bar-0 self-check, every disagreement
-    // class with its denominator, and the arc ledger's transitions, horizon and
-    // cost.  Silent when the knob is disarmed.  Read here, before the zero-emit
-    // guard, for the reason the two clauses above give: an observatory that ran on
-    // a run which produced nothing is exactly the run whose table matters.
+    // Signal-roster observatory run-end (SID phase 1, app/SignalRoster.cpp): the roster's
+    // build census with its bar-0 self-check, every disagreement class with its
+    // denominator, and the arc ledger's transitions, horizon and cost.  Silent when the
+    // knob is disarmed.  Read here, before the zero-emit guard, for the reason the two
+    // clauses above give: the observatory's table matters most on a run that produced
+    // nothing.
     networkSignalRosterRunEnd(ctx, log);
-    // Card SID phase 6b: the all-channel family census and the cross-channel
-    // exposure, beside the roster's own table because the two answer the same
-    // question at different granularities.  Returns on its first line when the
-    // widening is not active.
+    // All-channel family census and cross-channel exposure (SID phase 6b), beside the
+    // roster's table because the two answer the same question at different
+    // granularities.  Returns on its first line when the widening is not active.
     networkChannelAllRunEnd(ctx, config_, log,
                             slip_qc.counters.gap_reentry_extra_channel);
-    // Card GAL: the second-constellation lines (inter-system bias, the clock
-    // S-basis per constellation, the geometry-free datum per constellation, the
-    // family census on a single-channel posture, the clock anchor per
-    // constellation).  Silent unless a constellation other than GPS is active.
+    // Second-constellation lines (card GAL): the inter-system bias; per constellation,
+    // the clock S-basis, the geometry-free datum and the clock anchor; and the family
+    // census on a single-channel posture.  Silent unless a constellation other than GPS
+    // is active.
     networkMultiGnssRunEnd(ctx, config_, log);
-    // Card SID phase 5a run-end (filter/NetworkLedgerEmit.cpp): the emitter's
-    // bookkeeping against the ledger, both generation classes with their
-    // denominators, the first-sighting split, and the declared roster's own wire
-    // census.  Silent when the knob is disarmed; read here for the reason the
-    // clauses above give.
+    // Ledger-driven emission run-end (SID phase 5a, filter/NetworkLedgerEmit.cpp): the
+    // emitter's bookkeeping against the ledger, both generation classes with their
+    // denominators, the first-sighting split, and the declared roster's wire census.
+    // Silent when the knob is disarmed; read here for the reason the clauses above give.
     networkLedgerEmitRunEnd(ctx, log);
 
     if (n_emitted == 0) {
@@ -6458,8 +6428,8 @@ int networkTeardown(
                    "pairs stay station-local sponges, and confirm >= 2 overlapping stations.");
         return 1;
     }
-    // RF-1 step 3: the PD-fallback bar is a RUN-END FAILURE, not a note (design risk #3).
-    // Folded last so a run that also produced zero epochs still reports that first.
+    // The PD-fallback bar is a run-end failure, not a note (RF-1 step 3, design risk #3).
+    // Folded last, so a run that also produced zero epochs reports that first.
     return inject_rc != 0 ? inject_rc : amb_block_rc;
 }
 

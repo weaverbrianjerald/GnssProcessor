@@ -10,11 +10,14 @@
  *                             (compact differential code+phase; see that class)
  *   - GPSNav (5891), GALNav (4002), BDSNav (4081), QZSNav (4095),
  *     GLONav (4004) -> BroadcastEphemeris
- * reusing the SAME downstream types as the RTCM path (RinexObservation,
+ *   - GPSRawCA (4017), GALRawINAV (4023), BDSRaw (4047), GLORawCA (4026)
+ *                          -> RawNavMessage
+ *   - PVTGeodetic (4007)   -> receiver ECEF a-priori position
+ * The outputs use the same downstream types as the RTCM path (RinexObservation,
  * BroadcastEphemeris fed into LiveEphemerisStore), so the realtime engine
  * is format-agnostic past the framer.
  *
- * Field layouts transcribed from the Septentrio SBF Reference Guide
+ * Field layouts are transcribed from the Septentrio SBF Reference Guide
  * (mosaic-X5 v4.8.0) and cross-checked against RTKLIB septentrio.c.  SBF is
  * little-endian; this parser assumes a little-endian host (x64/MSVC).
  */
@@ -31,15 +34,15 @@ namespace GnssProcessor {
 /**
  * @brief One raw navigation message lifted from an SBF RawNavBits block.
  *
- * The receiver emits its DECODED ephemeris blocks (GPSNav 5891, …) only on
+ * The receiver emits its decoded ephemeris blocks (GPSNav 5891, …) only on
  * ephemeris change, which is too sparse for a cold start.  The RawNavBits
- * blocks (GPSRawCA 4017, GALRawINAV 4023, BDSRaw 4047, GLORawCA 4026) instead
- * stream the raw navigation subframes/pages/strings continuously.  This carrier
- * holds one such message before @c SubframeAssembler stitches the subframes of
- * one satellite into a @c BroadcastEphemeris.
+ * blocks (GPSRawCA 4017, GALRawINAV 4023, BDSRaw 4047, GLORawCA 4026) stream
+ * the raw navigation subframes/pages/strings continuously.  This struct holds
+ * one such message before @c SubframeAssembler stitches the subframes of one
+ * satellite into a @c BroadcastEphemeris.
  *
- * @c words holds the SBF NAVBits verbatim — one little-endian u32 per entry;
- * for GPS/BeiDou each u32 carries one 30-bit nav word right-justified in bits
+ * @c words holds the SBF NAVBits verbatim, one little-endian u32 per entry.
+ * For GPS/BeiDou each u32 carries one 30-bit nav word right-justified in bits
  * 29..0 (the GPS TLM preamble 0x8B sits in bits 29..22 of words[0]).
  */
 struct RawNavMessage {
@@ -66,8 +69,8 @@ public:
     /**
      * @brief Decode one complete SBF block (Sync..body).
      * @return true if the block was recognised and decoded; false for an
-     *         unsupported block number or a malformed/short block.  Unknown
-     *         blocks are NOT errors (logged at trace, return false).
+     *         unsupported block number or a malformed/short block.  An unknown
+     *         block is not an error: it is logged at trace level and returns false.
      */
     bool parseFrame(const uint8_t* block, std::size_t len);
 
@@ -84,7 +87,8 @@ public:
     const std::vector<RawNavMessage>&      getRawNavMessages()    const { return raw_nav_; }
 
     /// Receiver ECEF position [m] from a PVTGeodetic (4007) block with a valid
-    /// fix, or @c std::nullopt when no such block was in the parsed frame.  Used
+    /// fix, or @c std::nullopt when no such block has been parsed since the last
+    /// @c clear().  Used
     /// to seed the filter a-priori on a live stream (no RINEX header available).
     const std::optional<Eigen::Vector3d>&  getReceiverPositionEcef() const { return receiver_position_ecef_; }
 

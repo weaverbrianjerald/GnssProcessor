@@ -10,22 +10,22 @@
  * under the historical rule.
  *
  * What is pinned here:
- *   (a) @c CanonicalSignalRule::Count — the default — reproduces the historical
+ *   (a) @c CanonicalSignalRule::Count (the default) reproduces the historical
  *       pick: highest satellite count wins, a tie goes to the earlier entry of
  *       the priority list, and a one-satellite deficit loses;
  *   (b) @c CanonicalSignalRule::Priority takes the priority-first signal at full
  *       coverage, falls through when that signal is below the coverage floor,
  *       and clamps a floor outside [0, 1];
- *   (c) under @c Priority the CODE follows the PHASE's tracking attribute when
+ *   (c) under @c Priority the code follows the phase's tracking attribute when
  *       such a code exists at the station and clears the same floor, and keeps
  *       its own pick when it does not;
  *   (d) a band offering one signal is latched identically by both rules;
- *   (e) the runner-up reported alongside the latch is what the SAME rule would
+ *   (e) the runner-up reported alongside the latch is what the same rule would
  *       have chosen without the winner.
  *
- * The rule is pure — no config, no logger, no observations — so these cases
- * carry no fixture.  That a run actually applies it per station is the run's own
- * "Canonical latch for ..." line, graded on the arms, not here.
+ * The rule is pure (no config, no logger, no observations), so these cases carry
+ * no fixture.  Whether a run applies it per station is checked on the run's own
+ * "Canonical latch for ..." log line in the arms, not here.
  */
 #include <gtest/gtest.h>
 
@@ -67,7 +67,7 @@ std::string latched(const std::map<Key, PppModel::CanonicalPick>& p,
 
 TEST(CanonicalSignalLatchRule, CountBreaksATieByPriorityOrder) {
     // Ten satellites carry both attributes: the counts tie, so the earlier
-    // priority-list entry wins — the historical tie-break.
+    // priority-list entry wins (the historical tie-break).
     const auto p = PppModel::decideCanonicalPicks(band1(10, 10, 10, 10),
                                                   CanonicalSignalRule::Count, 0.5);
     EXPECT_EQ(latched(p, "L1", 'C'), "C1W");
@@ -147,7 +147,7 @@ TEST(CanonicalSignalLatchRule, PriorityFloorIsClampedToTheUnitInterval) {
 // --------------------------------------------------------------------------
 
 TEST(CanonicalSignalLatchRule, PriorityCodeFollowsThePhaseAttribute) {
-    // A priority list whose CODE order disagrees with its PHASE order: the code
+    // A priority list whose code order disagrees with its phase order: the code
     // would be C1C on its own, but the phase latches L1W, so the code follows.
     std::vector<Cand> v{ Cand{ "C1C", "L1", 'C', 10 }, Cand{ "C1W", "L1", 'C', 9 },
                          Cand{ "L1W", "L1", 'L', 9 },  Cand{ "L1C", "L1", 'L', 10 } };
@@ -180,7 +180,7 @@ TEST(CanonicalSignalLatchRule, PriorityCodeDoesNotFollowBelowTheFloor) {
 }
 
 TEST(CanonicalSignalLatchRule, CountNeverFollowsThePhaseAttribute) {
-    // The follow belongs to the priority rule only — the default is untouched.
+    // Only the priority rule follows the phase; the default Count rule does not.
     std::vector<Cand> v{ Cand{ "C1C", "L1", 'C', 10 }, Cand{ "C1W", "L1", 'C', 9 },
                          Cand{ "L1W", "L1", 'L', 10 }, Cand{ "L1C", "L1", 'L', 9 } };
     const auto p = PppModel::decideCanonicalPicks(v, CanonicalSignalRule::Count, 0.5);

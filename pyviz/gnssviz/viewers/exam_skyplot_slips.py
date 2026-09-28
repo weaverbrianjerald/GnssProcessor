@@ -1,4 +1,4 @@
-"""Sky plot of az/el tracks + cycle-slip events -- the exam's slip-geometry panel.
+"""Sky plot of az/el tracks + cycle-slip events: the exam's slip-geometry panel.
 
 Draws a single polar sky plot (compass-north zero, clockwise, elevation rings)
 from the GnssSimulator answer key's per-satellite pierce geometry
@@ -15,9 +15,9 @@ from the GnssSimulator answer key's per-satellite pierce geometry
     false-alarm) and sized by ``|Delta cycles|``.  A ``Delta=0`` false alarm still
     plots at the size floor.
 
-Because a :class:`~gnssviz.figures.PolarScatter` carries no per-class legend -- and
-the polar backends render *only* PolarScatter traces, dropping any TextBox on a
-polar axes -- the colour key (constellation colours + slip class->count) is drawn
+Because a :class:`~gnssviz.figures.PolarScatter` carries no per-class legend, and
+the polar backends render only PolarScatter traces, dropping any TextBox on a
+polar axes, the colour key (constellation colours + slip class->count) is drawn
 as TextBox lines on a companion frameless axes beneath the sky plot.  When
 ``truth_slips.csv`` is absent the viewer still draws the tracks (no crash); slips
 whose ``(week, tow, satellite)`` finds no atmo ``(az, el)`` are counted and
@@ -140,7 +140,7 @@ def build_exam_skyplot_slips(ctx) -> ViewerResult:
         slip_counts = jm["_class"].value_counts().to_dict()
 
         # One PolarScatter per slip so each carries its own |Delta|-scaled size
-        # with a fixed per-class RGB (color=, not c= -- no cmap for slip classes).
+        # with a fixed per-class RGB (color=, not c=: no cmap for slip classes).
         for _, row in jm.iterrows():
             cls = str(row["_class"])
             traces.append(PolarScatter(

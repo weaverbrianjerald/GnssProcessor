@@ -4,25 +4,24 @@
  *        (@c estimation.trace_windup_census, @c estimation.phase_windup_max_gap_s;
  *        `SPEC_phase_windup_sign.md` §7).
  *
- * Both knobs are telemetry / behaviour-preserving by construction:
+ * Neither knob changes the solution at its default:
  *
  *  - @c phase_windup_max_gap_s replaces a hard-coded 300 s constant with the
- *    SAME default, so an absent key must resolve to exactly 300.0 or every
- *    existing accumulated-mode lineage silently changes its restart population.
- *    A non-positive value is rejected-to-default rather than honoured: a
- *    horizon of 0 restarts the accumulator every epoch, which collapses
- *    accumulated mode back to fractional while still REPORTING as accumulated
- *    — an armed-but-inert posture, the shape standing invariant #4 exists to
- *    catch.
- *  - @c trace_windup_census arms read-only counters.  Its whole value is that
- *    it is armable in the FRACTIONAL posture, which is what every field
- *    lineage runs and what no instrument has ever reached on the network path
- *    (@c windup_trace.csv is written only from @c Application::run).  So the
- *    test that matters is that arming the census does NOT drag
- *    @c accumulate_phase_windup with it in either direction.
+ *    same default, so an absent key resolves to exactly 300.0; any other value
+ *    would change the restart population of every existing accumulated-mode
+ *    lineage.  A non-positive value falls back to the default instead of being
+ *    used: a horizon of 0 restarts the accumulator every epoch, which reduces
+ *    accumulated mode to fractional while the run still reports accumulated.
+ *    That is an armed-but-inert posture (standing invariant #4).
+ *  - @c trace_windup_census arms read-only counters.  It is useful because it
+ *    can be armed in the fractional posture, which every field lineage runs and
+ *    which no other instrument covers on the network path (@c windup_trace.csv
+ *    is written only from @c Application::run).  The tests therefore check that
+ *    arming the census does not change @c accumulate_phase_windup, and that
+ *    arming accumulation does not arm the census.
  *
- * The census's own arithmetic is graded on a run, not here; what is locked
- * here is that the knobs cannot resolve to a posture that lies about itself.
+ * The census arithmetic is graded on a run, not here; these tests check that the
+ * knobs cannot resolve to a posture that misreports itself.
  */
 
 #include <gtest/gtest.h>
@@ -73,24 +72,23 @@ bool loadInto(const std::string& tag, const std::string& body, GnssConfig& cfg) 
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// Defaults — the behaviour-preserving contract.
+// Defaults: the behaviour-preserving contract.
 // ---------------------------------------------------------------------------
 
 TEST(WindUpCensusConfig, DefaultsAreBehaviourPreserving) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("defaults", pppConfig(), cfg));
-    // 300.0 is the value that was hard coded as kMaxGapSeconds before the knob
-    // existed.  If this ever changes, every accumulated-mode lineage's restart
-    // population moves and its products are no longer comparable to its own
-    // history — a migration, not an edit.
+    // 300.0 is the former hard-coded kMaxGapSeconds.  Changing the default moves
+    // the restart population of every accumulated-mode lineage, so its products
+    // are no longer comparable to its own history; that requires a migration card.
     EXPECT_DOUBLE_EQ(cfg.phaseWindUpMaxGapS(), 300.0);
     EXPECT_FALSE(cfg.traceWindUpCensus());
-    // The posture this whole card exists to characterise: absent => fractional.
+    // The posture the census characterises: absent key => fractional.
     EXPECT_FALSE(cfg.accumulatePhaseWindUp());
 }
 
 // ---------------------------------------------------------------------------
-// The horizon: honoured when sane, rejected-to-default when it would create an
+// The horizon: used when positive, replaced by the default when it would create an
 // armed-but-inert posture.
 // ---------------------------------------------------------------------------
 
@@ -103,8 +101,8 @@ TEST(WindUpCensusConfig, HorizonIsHonouredWhenPositive) {
 
 TEST(WindUpCensusConfig, NonPositiveHorizonRejectsToDefault) {
     // A zero/negative horizon makes `gap < max_gap_s` false for every gap, so
-    // the accumulator restarts every epoch: accumulated mode silently degrades
-    // to fractional while the summary line still reports "accumulated".
+    // the accumulator restarts every epoch: accumulated mode reduces to
+    // fractional while the summary line still reports "accumulated".
     for (const char* v : { "0.0", "-1.0", "-900.0" }) {
         GnssConfig cfg;
         const std::string body =
@@ -115,9 +113,8 @@ TEST(WindUpCensusConfig, NonPositiveHorizonRejectsToDefault) {
 }
 
 // ---------------------------------------------------------------------------
-// The census flag is independent of the accumulation posture in BOTH
-// directions — the property that makes it usable as the fractional-mode
-// instrument.
+// The census flag and the accumulation posture are independent in both
+// directions, which makes the census usable as the fractional-mode instrument.
 // ---------------------------------------------------------------------------
 
 TEST(WindUpCensusConfig, CensusArmsWithoutTouchingAccumulation) {
@@ -125,8 +122,8 @@ TEST(WindUpCensusConfig, CensusArmsWithoutTouchingAccumulation) {
     ASSERT_TRUE(loadInto("census_frac",
                          pppConfig("    \"trace_windup_census\": true,\n"), cfg));
     EXPECT_TRUE(cfg.traceWindUpCensus());
-    // Load-bearing: if arming the census implied accumulation, the instrument
-    // could never measure the posture it was built to measure.
+    // If arming the census implied accumulation, the census could not measure
+    // the fractional posture it was built for.
     EXPECT_FALSE(cfg.accumulatePhaseWindUp());
 }
 
@@ -152,8 +149,8 @@ TEST(WindUpCensusConfig, CensusAndAccumulationCoexist) {
 
 // ---------------------------------------------------------------------------
 // Flat-alias parity.  The loader accepts a flat alias beside every dotted key;
-// a knob that resolves only under one spelling is a trap for the config
-// inheritance chains, where sections are merged at different depths.
+// a knob that resolves under only one spelling breaks in config inheritance
+// chains, where sections are merged at different depths.
 // ---------------------------------------------------------------------------
 
 TEST(WindUpCensusConfig, FlatAliasesResolve) {

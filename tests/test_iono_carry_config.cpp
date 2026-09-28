@@ -1,13 +1,13 @@
 /**
  * @file test_iono_carry_config.cpp
- * @brief Config-contract tests for the QUEUE-8b slant-iono carry knob set
- *        (@c network.carry_iono and riders).
+ * @brief Config-contract tests for the slant-iono carry knob set
+ *        (@c network.carry_iono and riders; QUEUE-8b).
  *
- * The carry is solve-affecting and default-OFF; what these tests lock is the
- * loader's side of the safety story: the defaults, the four warn-and-disarm
- * interlocks (carry_invariant / no-phase-leveling / estimate_iono_sh /
- * mech-B rep_error_tau_s), the scope=relevel ↔ relevel_free_epoch dependency,
- * the hard rejections (negative q / negative floor / unknown scope), and the
+ * The carry is solve-affecting and off by default.  These tests cover the
+ * loader's side: the defaults, the four warn-and-disarm interlocks
+ * (carry_invariant / no phase_leveling / estimate_iono_sh / mech-B
+ * rep_error_tau_s), the scope=relevel ↔ relevel_free_epoch dependency, the
+ * load failures (negative q / negative floor / unknown scope), and the
  * @c NetworkQClass::IonoCarry table routing.  The estimator-side behavior is
  * graded on the sim fixture, not here.
  */
@@ -215,7 +215,7 @@ TEST(IonoCarryConfig, BridgeV3RidersSurviveWithDeltaBridge) {
     EXPECT_DOUBLE_EQ(cfg.networkCycleSlipRelevelBridgeEwlSigmaFloorCyc(), 0.05);
 }
 
-// --- CS-GF authority (QUEUE 8b successor): source knob + the pure recursion.
+// --- CS-GF authority: the source knob and the pure recursion (successor to QUEUE 8b).
 #include "slip/NetworkRawObservables.hpp"
 
 TEST(IonoCarryConfig, SourceDefaultsToSolveAndParsesSmoothed) {
@@ -268,7 +268,7 @@ TEST(IonoCsKernel, SlipGateAndGapBothReset) {
     networkIonoCsUpdate(cs, 5.0, 0.0, false, false, 0.7);
     for (int k = 0; k < 50; ++k) networkIonoCsUpdate(cs, 5.0, 0.0, true, false, 0.7);
     ASSERT_GT(cs.n, 10);
-    // Slip: the empirical gate tripped — re-seed from the fresh code sample.
+    // Slip: the empirical gate tripped, so re-seed from the fresh code sample.
     EXPECT_TRUE(networkIonoCsUpdate(cs, 9.0, 123.0, true, true, 0.7));
     EXPECT_DOUBLE_EQ(cs.val, 9.0);
     EXPECT_EQ(cs.n, 1);

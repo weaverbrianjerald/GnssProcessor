@@ -3,9 +3,9 @@
  * @brief Static signal-ID tables per RTCM 3.x Annex 1.
  *
  * Tables transcribed from RTCM 3.3 (Amendments 1-2 included).  Where the
- * standard reserves an ID, the corresponding entry is empty.  Adding new
- * signal IDs from later amendments (e.g. additional BeiDou-3 signals) is
- * a matter of extending the appropriate per-system array.
+ * standard reserves an ID, the corresponding entry is empty.  Signal IDs from
+ * later amendments (e.g. additional BeiDou-3 signals) are added by extending
+ * the per-system array.
  */
 
 #include "rtcm/RtcmSignalMap.hpp"
@@ -31,8 +31,9 @@ constexpr SignalTable kGps = {
 //  24    25    26    27    28    29    30    31
     "5X", "",   "",   "",   "",   "",   "1S", "1L"
 };
-// Note: ID 32 doesn't fit in 5 bits; "1X" (id 32 in some old refs) would
-// alias 0.  The 5-bit encoding caps GPS signals at the 32 IDs above.
+// ID 32 does not fit in 5 bits: "1X" (ID 32 in some older references) would
+// alias ID 0, so it is not represented.  The 5-bit index limits GPS to the 32
+// IDs above.
 
 constexpr SignalTable kGlonass = {
     "",   "",   "1C", "1P", "",   "",   "",   "",
@@ -54,9 +55,9 @@ constexpr SignalTable kBeidou = {
     "7X", "",   "",   "",   "",   "",   "5D", "5P",
     "5X", "7D", "7P", "7Z", "8D", "8P", "8X", "1D"
 };
-// IDs 31..33 (1D / 1P / 1X for B1C) cluster at the top; ID 31 is "1D".
-// IDs 32-33 are out of 5-bit range and only addressable via IGS-SSR
-// extended fields; not represented here.
+// B1C uses IDs 31..33 (1D, 1P, 1X); the table holds ID 31 as "1D".  IDs 32 and 33
+// are outside the 5-bit range, are addressable only through IGS-SSR extended
+// fields, and are not represented here.
 
 constexpr SignalTable kQzss = {
     "",   "",   "1C", "",   "",   "",   "",   "",

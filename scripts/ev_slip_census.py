@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""EVENT HARNESS — detector-coverage census over injected slips (SPEC_event_harness §13.1): for each schedule row, what caught it
-(within +0..+2 epochs, same station+sat) and at what elevation / band / size / LLI.
+"""Detector-coverage census over injected slips (SPEC_event_harness §13.1): for each schedule row, what caught it
+(within +0..+2 epochs, same station and satellite) and at what elevation, band, size, and LLI.
 Usage: slip_census.py <leg> [<leg> ...]"""
 import sys, os, csv, collections
 def load(leg):

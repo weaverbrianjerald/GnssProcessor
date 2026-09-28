@@ -1,33 +1,33 @@
 #!/usr/bin/env python3
-"""Take the D5 innovation gate's standardized number APART.
+"""Break the D5 innovation gate's standardized number into its components.
 
-`network_d5_flags.csv` has always carried `std_innov` = |v| / sqrt(Cov(v)_ii).  A
-population sitting at a standing 76-230 sigma (measured 2026-08-02 on
-`runs/ft63_24h_conv`, per-chord and FLAT for hours) says the formal covariance and
-the data disagree by orders -- but the ratio alone cannot say WHICH factor is
-responsible, and that determines the fix:
+`network_d5_flags.csv` carries `std_innov` = |v| / sqrt(Cov(v)_ii).  A population
+sitting at a standing 76 to 230 sigma (measured 2026-08-02 on `runs/ft63_24h_conv`,
+per-chord and flat for hours) shows the formal covariance and the data disagreeing
+by orders of magnitude, but the ratio alone cannot say which factor is responsible,
+and that determines the fix:
 
   * v large, var_v sane          -> a real physical event the coarse layer missed;
   * v small, var_v tiny          -> the formal Cov(v) is over-optimistic and the
                                     gate is a "large-innovation selective re-tap",
                                     not an N-sigma test (the D5 v2 finding);
-  * v large AND var_v tiny       -> both, and they must be attacked separately.
+  * v large and var_v tiny       -> both, and they need to be addressed separately.
 
 The `zhat,v,var_v,sigma0,z_post` columns (added with this script) make the
-question answerable per chord.  The decisive extra test here is the FRACTIONAL
-PART of v/lambda: a cycle slip displaces the DD by an INTEGER number of cycles, so
-if the re-tap magnitudes pile up near integers the population contains
-integer-scale events regardless of what the MW/GF detector said, while a uniform
-fractional part is the signature of continuous model tension.  That distinction is
-the difference between "harden the slip detector" and "fix the ionosphere
-representation", so it is worth measuring rather than assuming.
+question answerable per chord.  The additional test here is the fractional part
+of v/lambda: a cycle slip displaces the DD by an integer number of cycles, so if
+the re-tap magnitudes cluster near integers the population contains integer-scale
+events regardless of what the MW/GF detector reported, while a uniform fractional
+part is the signature of continuous model tension.  That distinction separates
+"harden the slip detector" from "fix the ionosphere representation", so it is
+measured rather than assumed.
 
-CAVEAT worth keeping in view: `zhat` and `z_post` are CORRECTION-frame values
-(state units, about x_lin), so differencing z_post across epochs mixes the
-estimate's real movement with any x_lin re-seed -- x_lin is a FRAME and reseeds
-are exact solve no-ops (project_network_xlin_invariance).  `v` has no such
-exposure: it is a residual, z_free - G'x_s - zhat, so every statistic below is
-built from `v` and `var_v` and never from a z_post difference.
+Caveat: `zhat` and `z_post` are correction-frame values (state units, relative to
+x_lin), so differencing z_post across epochs mixes the estimate's real movement
+with any x_lin re-seed; x_lin is a frame, and reseeds are exact solve no-ops
+(project_network_xlin_invariance).  `v` has no such exposure: it is a residual,
+z_free - G'x_s - zhat, so every statistic below is built from `v` and `var_v`
+and never from a z_post difference.
 
 Usage:
     python scripts/grade_d5_algebra.py runs/<arm>/logs/network_d5_flags.csv
@@ -75,7 +75,7 @@ def load(path: Path):
     with path.open(newline="") as fh:
         for r in csv.DictReader(fh):
             if not r.get("v") or not r.get("var_v"):
-                continue          # pre-2026-08-02 file, or a row the driver had no term for
+                continue          # file predates 2026-08-02, or the driver had no term for this row
             try:
                 r["v"] = float(r["v"])
                 r["var_v"] = float(r["var_v"])
@@ -117,11 +117,11 @@ def report(path: Path, station: str | None, top: int, born_sigma: float) -> None
     print(f"    sigma0         {med([r['sigma0'] for r in rows]):10.4f}        "
           f"<- empirical inflation already applied")
 
-    # --- BORN vs CARRIED: the single most decisive split in this file ------
-    # A chord born this epoch has the DIFFUSE prior (Config::fresh_prior_var, 1e6 by
+    # --- Born vs carried: the most decisive split in this file --------------
+    # A chord born this epoch has the diffuse prior (Config::fresh_prior_var, 1e6 by
     # default), so var_v lands on it almost exactly and |v| is just the correction
-    # frame's distance from x_lin -- not a physical DD disagreement, and not a
-    # hypothesis test, because there is no carried prior for H0 to be about.  The
+    # frame's distance from x_lin, not a physical DD disagreement, and not a
+    # hypothesis test, since there is no carried prior for H0 to be about.  The
     # threshold is a floor on sqrt(var_v), so it identifies the population without
     # needing the driver's chord_carried mask in the CSV.
     born = [r for r in rows if math.sqrt(r["var_v"]) >= born_sigma]

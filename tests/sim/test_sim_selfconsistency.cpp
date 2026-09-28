@@ -2,14 +2,14 @@
  * @file test_sim_selfconsistency.cpp
  * @brief Self-consistency battery for gnss_simulator (CTest gnss_simulator_selftest).
  *
- * The product-/processor-free subset of the DESIGN §10.6 battery — the invariants
- * that can be locked without the precise-product chain or an out-of-process
- * gnss_processor run (those are exercised end-to-end by harness/gnss_verify_loop.ps1):
- *   - RINEX writer<->parser round-trip across GPS+Galileo / all 8 codes (tests 1,2),
- *   - the first-order iono delay law + ionosphere-free cancellation + dateline
- *     continuity of the storm field,
- *   - the Verifier grading each quantity independently (good=PASS, position-biased
- *     and too-perfect=FAIL), the anti-circularity guard included.
+ * The subset of the DESIGN §10.6 battery that needs neither precise products nor an
+ * out-of-process gnss_processor run (harness/gnss_verify_loop.ps1 exercises those
+ * end to end):
+ *   - RINEX writer/parser round trip across GPS+Galileo, all 8 codes (tests 1, 2);
+ *   - the first-order iono delay law, ionosphere-free cancellation, and dateline
+ *     continuity of the storm field;
+ *   - the Verifier grading each quantity independently (good = PASS, position-biased
+ *     and too-perfect = FAIL), including the anti-circularity guard.
  */
 
 #include <gtest/gtest.h>
@@ -111,7 +111,7 @@ TEST(SimSelfConsistency, RinexRoundTripAllCodes) {
 TEST(SimSelfConsistency, IonoDelayLawMagnitude) {
     const double i_l1 = sim::IonoDisturbance::slantDelayMetres(30.0, Constants::GPS_L1_FREQ);
     EXPECT_NEAR(i_l1, 4.871, 0.02);
-    // L2 > L1 by (f1/f2)^2.
+    // The L2 delay exceeds the L1 delay by the factor (f1/f2)^2.
     const double i_l2 = sim::IonoDisturbance::slantDelayMetres(30.0, Constants::GPS_L2_FREQ);
     const double r = (Constants::GPS_L1_FREQ * Constants::GPS_L1_FREQ) /
                      (Constants::GPS_L2_FREQ * Constants::GPS_L2_FREQ);
@@ -158,9 +158,9 @@ TEST(SimSelfConsistency, IonoDatelineContinuous) {
 }
 
 // --- Landfall mode: drift start -> destination, grounding on the sea surface. -
-// The vessel must land EXACTLY on the destination, at rest, and stay on the
-// ellipsoid (h ~ 0) the whole way — a flat ENU tangent plane would bow ~L^2/(2R)
-// (hundreds of m) off the surface over a ~90 km arc.
+// The vessel ends on the destination, at rest, and stays on the ellipsoid (h ~ 0)
+// throughout.  A flat ENU tangent plane would depart from the surface by ~L^2/(2R),
+// several hundred metres over this ~90 km arc.
 TEST(SimSelfConsistency, LandfallGroundsAtDestinationOnSeaSurface) {
     sim::TrajectoryConfig c;
     c.kinematic = true;
@@ -190,10 +190,10 @@ TEST(SimSelfConsistency, LandfallGroundsAtDestinationOnSeaSurface) {
     EXPECT_GT(lomax, 180.0);
 }
 
-// Waypoints => a smooth Catmull-Rom spline start -> waypoints... -> dest.  The
-// spline must pass THROUGH start and dest exactly (grounding on the reef), stay on
-// the sea surface, and — with a waypoint on the far side of the antimeridian —
-// carry the track across the +/-180 dateline (a reference-frame teaching point).
+// Waypoints give a smooth Catmull-Rom spline start -> waypoints -> dest.  The spline
+// passes through start and dest (grounding on the reef) and stays on the sea surface.
+// With a waypoint on the far side of the antimeridian, the track crosses the +/-180
+// dateline (a reference-frame teaching point).
 TEST(SimSelfConsistency, LandfallSplineMeanderCrossesDatelineAndGrounds) {
     sim::TrajectoryConfig c;
     c.kinematic = true;
@@ -212,7 +212,7 @@ TEST(SimSelfConsistency, LandfallSplineMeanderCrossesDatelineAndGrounds) {
     EXPECT_NEAR(s.back().h_m, 0.0, 1e-2);                   // at the waterline
     EXPECT_LT(s.back().speed_mps, 0.6);                     // grounded (at rest)
     for (const auto& st : s) EXPECT_LT(std::abs(st.h_m), c.heave_amp_m + 0.1);  // on the surface
-    // The bow reaches WEST of the antimeridian while the ends sit east of it.
+    // The bow reaches west of the antimeridian while both ends sit east of it.
     double lo360min = 1e9, lo360max = -1e9;
     for (const auto& st : s) {
         const double L = std::fmod(st.lon_deg + 360.0, 360.0);
@@ -222,11 +222,11 @@ TEST(SimSelfConsistency, LandfallSplineMeanderCrossesDatelineAndGrounds) {
     EXPECT_GT(lo360max, 180.0);   // east of the dateline (start + dest)
 }
 
-// A non-zero landfall_terminal_frac lets the vessel CREEP aground still moving
-// (terminal speed ~ tf*Vmax) instead of dead-stopping — this removes a float-PPP
-// position spike that keys off the truth speed being exactly 0 at the grounding.
-// The speed integral renormalises (Vmax = L/S), so the creep run still grounds on
-// the EXACT same destination as the tf=0 dead-stop run.
+// A non-zero landfall_terminal_frac makes the vessel creep aground still moving
+// (terminal speed ~ tf*Vmax) instead of stopping dead.  This avoids a float-PPP
+// position spike that occurs when the truth speed is exactly 0 at the grounding.
+// The speed integral renormalises (Vmax = L/S), so the creep run grounds on the same
+// destination as the tf=0 dead-stop run.
 TEST(SimSelfConsistency, LandfallTerminalFracCreepsAgroundStillMoving) {
     auto make = [](double tf) {
         sim::TrajectoryConfig c;
@@ -245,7 +245,7 @@ TEST(SimSelfConsistency, LandfallTerminalFracCreepsAgroundStillMoving) {
     ASSERT_EQ(stop.size(), 241u);
     ASSERT_EQ(creep.size(), 241u);
 
-    // Both ground on the EXACT same destination (the along-track speed renormalises).
+    // Both ground on the same destination (the along-track speed renormalises).
     EXPECT_NEAR(creep.back().lat_deg, -16.169, 1e-4);
     EXPECT_NEAR(creep.back().lon_deg, 179.723, 1e-4);
     EXPECT_NEAR(creep.back().lat_deg, stop.back().lat_deg, 1e-5);
@@ -256,12 +256,12 @@ TEST(SimSelfConsistency, LandfallTerminalFracCreepsAgroundStillMoving) {
     EXPECT_GT(creep.back().speed_mps, stop.back().speed_mps + 0.5);
     // Both start essentially at rest (identical ramp-up shape; only the terminal differs).
     EXPECT_LT(creep.front().speed_mps, 0.3);
-    // Stays on the sea surface throughout (heave floor is a fraction of a metre).
+    // Stays on the sea surface throughout (|h| within the 1 m heave amplitude + 0.1 m).
     for (const auto& st : creep) EXPECT_LT(std::abs(st.h_m), 1.0 + 0.1);
 }
 
-// Absent dest_* (NaN default) => the analytic heading-weave model runs, NOT
-// landfall — the byte-identity guard for every existing scenario.
+// With dest_* absent (NaN default), the analytic heading-weave model runs instead of
+// landfall.  This guards byte identity for every existing scenario.
 TEST(SimSelfConsistency, LandfallDisabledByDefault) {
     sim::TrajectoryConfig c;                 // dest_* default to NaN
     c.kinematic = true; c.n_epochs = 10;
@@ -273,13 +273,13 @@ TEST(SimSelfConsistency, LandfallDisabledByDefault) {
 }
 
 // --- Receiver clock model -----------------------------------------------------
-// The truth receiver clock is bias0 + drift*t + random walk.  The exam depends on
-// it NOT being a constant: a batch adjustment that shares one clock parameter
-// across all epochs is then a modelling error, which is what forces the per-epoch
-// clock indexing Part A grades (see SimConfig.hpp).
+// The truth receiver clock is bias0 + drift*t + random walk.  The exam relies on it
+// not being constant: a batch adjustment that shares one clock parameter across all
+// epochs is then a modelling error, which requires the per-epoch clock indexing that
+// Part A grades (see SimConfig.hpp).
 
-// Defaults (drift 0, q 0) must reproduce the historical CONSTANT bias exactly —
-// the byte-identity guard for every dataset generated before the knob existed.
+// The defaults (drift 0, q 0) reproduce the original constant bias exactly.  This
+// guards byte identity for every dataset generated before these knobs existed.
 TEST(SimSelfConsistency, ClockDefaultsToConstantBias) {
     sim::TrajectoryConfig c;
     c.kinematic = true; c.n_epochs = 50;
@@ -288,9 +288,9 @@ TEST(SimSelfConsistency, ClockDefaultsToConstantBias) {
     for (const auto& s : g.states()) EXPECT_DOUBLE_EQ(s.clock_bias_s, c.clock_bias0_s);
 }
 
-// Drift alone => an EXACTLY linear clock: zero second difference, and a total
-// excursion of drift*T.  (A pure ramp is 2-parameter modellable, which is why the
-// hero scenario also turns on the random walk below.)
+// Drift alone gives an exactly linear clock: zero second difference and a total
+// excursion of drift*T.  (A pure ramp is modellable with 2 parameters, which is why
+// the hero scenario also enables the random walk below.)
 TEST(SimSelfConsistency, ClockDriftIsExactlyLinear) {
     sim::TrajectoryConfig c;
     c.kinematic = true; c.n_epochs = 100; c.interval_s = 30.0;
@@ -311,9 +311,9 @@ TEST(SimSelfConsistency, ClockDriftIsExactlyLinear) {
     EXPECT_NEAR(arc_m, c.clock_drift_sps * 99.0 * 30.0 * Constants::SPEED_OF_LIGHT, 1e-6);
 }
 
-// The random walk: reproducible from its own seed, correctly scaled (per-epoch
-// increment sigma = sqrt(q*dt) METRES), anchored so epoch 0 is still exactly
-// bias0, and genuinely NOT a polynomial in time.
+// The random walk is reproducible from its own seed, correctly scaled (per-epoch
+// increment sigma = sqrt(q*dt), in metres), anchored so that epoch 0 is exactly
+// bias0, and not a polynomial in time.
 TEST(SimSelfConsistency, ClockRandomWalkIsSeededScaledAndNonLinear) {
     const double C = Constants::SPEED_OF_LIGHT;
     auto make = [](std::uint64_t seed, double q) {
@@ -350,8 +350,8 @@ TEST(SimSelfConsistency, ClockRandomWalkIsSeededScaledAndNonLinear) {
     const double rms = std::sqrt(sum2 / double(sa.size() - 1));
     EXPECT_NEAR(rms, std::sqrt(q * 30.0), 0.03);        // 0.300 m +/- 10%
 
-    // Not representable by ANY low-order polynomial: the second difference, which a
-    // bias+drift model kills exactly, is metres here.
+    // Not representable by a low-order polynomial: the second difference, which is
+    // exactly zero under a bias+drift model, exceeds 0.5 m here.
     double max_d2_m = 0.0;
     for (std::size_t i = 2; i < sa.size(); ++i)
         max_d2_m = std::max(max_d2_m,
@@ -360,8 +360,8 @@ TEST(SimSelfConsistency, ClockRandomWalkIsSeededScaledAndNonLinear) {
     EXPECT_GT(max_d2_m, 0.5);
 }
 
-// q = 0 is a true no-op even with a seed set (no draw, no perturbation) — and the
-// random walk applies on the LANDFALL path too, not just the analytic one.
+// q = 0 is a no-op even with a seed set (no draw, no perturbation), and the random
+// walk applies on the landfall path as well as the analytic one.
 TEST(SimSelfConsistency, ClockRandomWalkOffIsNoOpAndAppliesToLandfall) {
     sim::TrajectoryConfig c;
     c.kinematic = true; c.n_epochs = 40; c.interval_s = 30.0;
@@ -468,7 +468,7 @@ TEST(SimSelfConsistency, VerifierFailsTooPerfect) {
 }
 
 // --- verify_report.json: emitted, valid JSON, checks agree with report lines. -
-// (SPEC §4.6 — the dashboard displays this; it must round-trip the printed verdict.)
+// (SPEC §4.6: the dashboard displays this file, so it round-trips the printed verdict.)
 TEST(SimSelfConsistency, VerifyReportJsonGoodRoundTrips) {
     const auto base = tmpDir("verify_json_good");
     writeFixture(base / "truth", base / "logs", /*pos_err=*/0.025, /*std=*/0.03,
@@ -543,8 +543,8 @@ TEST(SimSelfConsistency, VerifyReportJsonBiasedAgreesWithReport) {
 }
 
 // --- Verifier degrades gracefully on malformed external state_trace.csv. ------
-// (It grades student submissions, so a truncated / missing-column file must fail
-//  cleanly, never index out of bounds — the review found two OOB paths here.)
+// (It grades student submissions, so a truncated or missing-column file fails
+//  cleanly without an out-of-bounds index.  The two tests cover the two OOB paths.)
 TEST(SimSelfConsistency, VerifierMissingPositionColumnIsGraceful) {
     const auto base = tmpDir("verify_missing_ym");
     writeFixture(base / "truth", base / "logs", 0.03, 0.03, 8.0, 0.15, 5);
@@ -578,9 +578,9 @@ TEST(SimSelfConsistency, VerifierTruncatedSigmaRowIsGraceful) {
 }
 
 // ============================================================================
-// Scripted "gotcha" cycle slips (SPEC_scripted_slips.md §6).  All product-free:
-// the ScriptedSlipSchedule state machine + the loadSimConfig validator on temp
-// JSON, no precise products or processor run.
+// Scripted cycle slips (SPEC_scripted_slips.md §6).  All product-free: the
+// ScriptedSlipSchedule state machine and the loadSimConfig validator on temporary
+// JSON, with no precise products and no processor run.
 // ============================================================================
 
 namespace {
@@ -592,8 +592,9 @@ sim::ScriptedSlip mkEvent(const std::string& sat, const std::string& sig) {
 }
 } // namespace
 
-// §6.1 — Form A fires at its epoch exactly once; repeat=k applies on k consecutive
-// calls; a visibility gap stalls (skipped calls => repetitions resume, count k).
+// Form A fires at its epoch exactly once; repeat=k applies on k consecutive calls; a
+// visibility gap stalls it (after skipped calls the repetitions resume, k in total).
+// (§6.1 of the spec)
 TEST(ScriptedSlips, FormAFiresRepeatsAndStalls) {
     auto e = mkEvent("G05", "L1C");
     e.epoch = 10;
@@ -619,7 +620,7 @@ TEST(ScriptedSlips, FormAFiresRepeatsAndStalls) {
     };
     apply(10);                 // first repetition (trigger epoch)
     apply(11);                 // second repetition
-    // epoch 12: satellite not visible => onEpoch simply is NOT called (stall).
+    // Epoch 12: satellite not visible, so onEpoch is not called (stall).
     apply(13);                 // third repetition resumes after the gap
     EXPECT_TRUE(sched.onEpoch("G05", "L1C", 14, 40.0).empty()); // repeat exhausted
 
@@ -628,8 +629,8 @@ TEST(ScriptedSlips, FormAFiresRepeatsAndStalls) {
     EXPECT_TRUE(sched.unfinished().empty());
 }
 
-// §6.1 (corollary) — a form-A event whose exact epoch is never presented (sat not
-// visible then) never fires and is reported unfinished.
+// A form-A event whose epoch is never presented (satellite not visible then) never
+// fires and is reported unfinished.  (§6.1, corollary)
 TEST(ScriptedSlips, FormANeverFiresIfEpochMissed) {
     auto e = mkEvent("G05", "L1C");
     e.epoch = 10;
@@ -640,8 +641,9 @@ TEST(ScriptedSlips, FormANeverFiresIfEpochMissed) {
     EXPECT_EQ(sched.unfinished().size(), 1u);
 }
 
-// §6.2 — Form B fires at the first qualifying (not_before, window) call; the window
-// is [lo, hi) and selects the START only; a never-qualifying event is unfinished.
+// Form B fires at the first call that satisfies not_before and the window.  The
+// window is [lo, hi) and selects only the start; an event that never qualifies is
+// reported unfinished.  (§6.2 of the spec)
 TEST(ScriptedSlips, FormBFiresAtFirstQualifyingCall) {
     auto e = mkEvent("E11", "L5Q");
     e.elev_lo_deg = 10.0;
@@ -673,8 +675,8 @@ TEST(ScriptedSlips, FormBNeverQualifyingIsUnfinished) {
     EXPECT_EQ(sched.unfinished().size(), 1u);
 }
 
-// §6.3 — Same-key same-epoch events each contribute a Fired (caller sums the
-// deltas and ORs the LLI flags).
+// Events with the same key and epoch each contribute a Fired record; the caller sums
+// the deltas and ORs the LLI flags.  (§6.3 of the spec)
 TEST(ScriptedSlips, SameKeySameEpochSumAndLliOr) {
     auto a = mkEvent("G05", "L1C");
     a.epoch = 20;
@@ -712,7 +714,7 @@ std::string oneEvent(const std::string& ev) {
 }
 } // namespace
 
-// §6.5 — absent key and "scripted": [] are equal empty schedules.
+// An absent key and "scripted": [] both give an empty schedule.  (§6.5 of the spec)
 TEST(ScriptedSlipsLoader, AbsentAndEmptyAreEqualEmpty) {
     std::string err;
     sim::SimConfig a, b;
@@ -722,7 +724,7 @@ TEST(ScriptedSlipsLoader, AbsentAndEmptyAreEqualEmpty) {
     EXPECT_TRUE(b.slips.scripted.empty());
 }
 
-// §6.4 — a valid event loads; ints are read tolerantly (20.0 rounds).
+// A valid event loads; integers are read tolerantly (20.0 rounds to 20).  (§6.4 of the spec)
 TEST(ScriptedSlipsLoader, AcceptsValidWithTolerantInt) {
     std::string err;
     sim::SimConfig cfg;
@@ -747,7 +749,7 @@ TEST(ScriptedSlipsLoader, AcceptsValidWithTolerantInt) {
     EXPECT_EQ(cfg2.slips.scripted[0].not_before_epoch, 105);
 }
 
-// §4.5 — delta_cycles == 0 is accepted ONLY with flag_lli=true (LLI false alarm).
+// delta_cycles == 0 is accepted only with flag_lli=true (an LLI false alarm).  (§4.5 of the spec)
 TEST(ScriptedSlipsLoader, ZeroDeltaRequiresFlag) {
     std::string err;
     EXPECT_TRUE(tryLoadScript(oneEvent(
@@ -757,7 +759,7 @@ TEST(ScriptedSlipsLoader, ZeroDeltaRequiresFlag) {
         "{\"sat\":\"G05\",\"signal\":\"L1C\",\"epoch\":12,\"delta_cycles\":0}"), &err, nullptr));
 }
 
-// §6.4 — each rejection case from §3 returns false with a message.
+// Each rejection case from §3 returns false with a message.  (§6.4 of the spec)
 TEST(ScriptedSlipsLoader, RejectsInvalidEvents) {
     std::string err;
     auto rej = [&](const std::string& ev) { return !tryLoadScript(oneEvent(ev), &err, nullptr); };
@@ -781,13 +783,13 @@ TEST(ScriptedSlipsLoader, RejectsInvalidEvents) {
     EXPECT_TRUE(rej("{\"sat\":\"G05\",\"signal\":\"L1C\",\"elev_deg\":[-1,10],\"delta_cycles\":3}"));  // lo < 0
     EXPECT_TRUE(rej("{\"sat\":\"G05\",\"signal\":\"L1C\",\"elev_deg\":[10],\"delta_cycles\":3}"));     // not a 2-array
     EXPECT_TRUE(rej("{\"sat\":\"G05\",\"signal\":\"L1C\",\"elev_deg\":[10,20],\"not_before_epoch\":121,\"delta_cycles\":3}")); // nbe out of range
-    // Out-of-int-range magnitudes must saturate (not wrap mod 2^32 into a valid range).
-    EXPECT_TRUE(rej("{\"sat\":\"G05\",\"signal\":\"L1C\",\"epoch\":10,\"delta_cycles\":4294967346,\"flag_lli\":true}")); // 2^32+50 must NOT become +50
-    EXPECT_TRUE(rej("{\"sat\":\"G05\",\"signal\":\"L1C\",\"epoch\":4294967306,\"delta_cycles\":3}"));                    // 2^32+10 must NOT become epoch 10
+    // Out-of-int-range magnitudes saturate instead of wrapping mod 2^32 into a valid range.
+    EXPECT_TRUE(rej("{\"sat\":\"G05\",\"signal\":\"L1C\",\"epoch\":10,\"delta_cycles\":4294967346,\"flag_lli\":true}")); // 2^32+50 does not become +50
+    EXPECT_TRUE(rej("{\"sat\":\"G05\",\"signal\":\"L1C\",\"epoch\":4294967306,\"delta_cycles\":3}"));                    // 2^32+10 does not become epoch 10
 }
 
-// M7 — the full-correction stack flags parse; absent block -> all false (so the
-// bare dataset stays byte-identical).  Product-free (loader only).
+// The full-correction stack flags parse; an absent block gives all false, so the bare
+// dataset stays byte-identical.  Product-free (loader only).  (M7)
 TEST(SimConfigLoader, ParsesM7CorrectionsFlags) {
     std::string err;
     sim::SimConfig cfg;
@@ -810,9 +812,9 @@ TEST(SimConfigLoader, ParsesM7CorrectionsFlags) {
     EXPECT_FALSE(cfg2.corrections.signal_bias);   // unset -> default false (byte-identity)
 }
 
-// M10 phase wind-up: opt-in knob, default OFF (byte-identity contract — an absent
-// key must reproduce the pre-M10 dataset exactly; the injected value is then the
-// literal 0.0 added to every phase row).
+// Phase wind-up is an opt-in knob, off by default (byte-identity contract: an absent
+// key reproduces the pre-M10 dataset exactly, because the injected value is then the
+// literal 0.0 added to every phase row).  (M10)
 TEST(SimConfigLoader, PhaseWindupIsOptInDefaultOff) {
     std::string err;
     sim::SimConfig cfg;
@@ -825,9 +827,9 @@ TEST(SimConfigLoader, PhaseWindupIsOptInDefaultOff) {
 }
 
 // ---------------------------------------------------------------------------
-// Along-track ocean tidal loading.  The EOT20 sampling half needs the 286 MB
-// grid and so cannot live here; these cover the blending math, which is where
-// the silent-corruption risk actually is.
+// Along-track ocean tidal loading.  The EOT20 sampling half needs the 286 MB grid
+// and is not tested here; these tests cover the blending math, where an error would
+// corrupt the output without any visible failure.
 // ---------------------------------------------------------------------------
 
 namespace {
@@ -842,8 +844,8 @@ OtlStationCoefficients otlWithM2(double amp_up, double phase_up_deg) {
 }
 } // namespace
 
-// Anchors must be reproduced EXACTLY: an epoch that lands on an anchor may not
-// drift by a round trip through the complex plane.
+// Anchors are reproduced exactly: an epoch that lands on an anchor does not drift by
+// a round trip through the complex plane.
 TEST(OtlField, LerpEndpointsAreExact) {
     const auto a = otlWithM2(0.0123, 47.5);
     const auto b = otlWithM2(0.0201, -132.25);
@@ -857,10 +859,10 @@ TEST(OtlField, LerpEndpointsAreExact) {
     EXPECT_DOUBLE_EQ(at1.constituents[0].phase_up, b.constituents[0].phase_up);
 }
 
-// THE trap: Greenwich phase lag is circular.  Blending +179 deg with -179 deg
-// arithmetically gives 0 deg — a half-cycle error that flips the sign of the
-// constituent — and it only bites on the few segments that straddle the wrap.
-// Blending through the complex plane must stay near +/-180 and keep the amplitude.
+// Greenwich phase lag is circular.  Blending +179 deg with -179 deg arithmetically
+// gives 0 deg, a half-cycle error that flips the sign of the constituent, and it
+// affects only the few segments that straddle the wrap.  Blending through the complex
+// plane stays near +/-180 and keeps the amplitude.
 TEST(OtlField, LerpCrossesPhaseWrapWithoutCollapsing) {
     const auto a = otlWithM2(0.02, 179.0);
     const auto b = otlWithM2(0.02, -179.0);
@@ -868,15 +870,14 @@ TEST(OtlField, LerpCrossesPhaseWrapWithoutCollapsing) {
     const auto mid = sim::lerpOtlCoefficients(a, b, 0.5);
     // Amplitude survives (two nearly-equal phasors): |cos(1 deg)| of the input.
     EXPECT_NEAR(mid.constituents[0].amp_up, 0.02 * std::cos(1.0 * Constants::PI / 180.0), 1e-9);
-    // Phase stays at the wrap, NOT at 0.
+    // Phase stays at the wrap, not at 0.
     EXPECT_GT(std::abs(mid.constituents[0].phase_up), 179.0);
-    // The naive arithmetic mean would have been 0 deg; prove we are nowhere near it.
+    // The naive arithmetic mean would be 0 deg; the result is far from it.
     EXPECT_GT(std::abs(mid.constituents[0].phase_up), 90.0);
 }
 
 // A blend of two phasors is the phasor of the blended signal: evaluating the
-// interpolated coefficients at any argument must equal the interpolated
-// evaluation.  This is the property that makes anchor spacing a pure accuracy
+// interpolated coefficients at any argument equals the interpolated evaluation.  This is the property that makes anchor spacing a pure accuracy
 // knob rather than a change of model.
 TEST(OtlField, LerpIsLinearInTheSignal) {
     const auto a = otlWithM2(0.031, 20.0);
@@ -893,8 +894,8 @@ TEST(OtlField, LerpIsLinearInTheSignal) {
     }
 }
 
-// Zero-amplitude components (EOT20 carries no horizontals) must stay zero rather
-// than picking up a phase from atan2(0, 0).
+// Zero-amplitude components (EOT20 carries no horizontals) stay zero rather than
+// picking up a phase from atan2(0, 0).
 TEST(OtlField, LerpLeavesAbsentComponentsZero) {
     const auto m = sim::lerpOtlCoefficients(otlWithM2(0.02, 30.0), otlWithM2(0.03, 60.0), 0.5);
     for (std::size_t j = 0; j < m.constituents.size(); ++j) {
@@ -904,8 +905,8 @@ TEST(OtlField, LerpLeavesAbsentComponentsZero) {
     EXPECT_TRUE(m.valid);
 }
 
-// The along-track field is opt-in and cannot be switched on by itself: silently
-// falling back to the frozen (cancelling) path would be invisible in the output.
+// The along-track field is opt-in and cannot be switched on by itself, because a
+// silent fallback to the frozen (cancelling) path would not be visible in the output.
 TEST(SimConfigLoader, OceanTideAlongTrackIsOptInAndRequiresOceanTide) {
     std::string err;
     sim::SimConfig def;
@@ -930,7 +931,7 @@ TEST(SimConfigLoader, OceanTideAlongTrackIsOptInAndRequiresOceanTide) {
     EXPECT_DOUBLE_EQ(on.corrections.otl_anchor_spacing_km, 2.5);
 }
 
-// §3 — the >64-event paste-accident guard.
+// More than 64 events are rejected (guard against accidental pastes).  (§3 of the spec)
 TEST(ScriptedSlipsLoader, RejectsMoreThan64Events) {
     std::string arr;
     for (int i = 0; i < 65; ++i) {
@@ -942,13 +943,13 @@ TEST(ScriptedSlipsLoader, RejectsMoreThan64Events) {
 }
 
 // ============================================================================
-//  RINEX header realism / leak knobs (SPEC R2 / R2.4).  Loader defaults +
-//  validation, plus the APPROX-POSITION quantization contract.  The quantization
-//  math in quantizeApprox() below MIRRORS runSynth (src/sim/main.cpp): truth start
-//  ECEF -> geodetic, round lat/lon to the grid, force h = 0, convert back.  The full
-//  end-to-end path (header bytes + OTL x0 following the quantized point) is exercised
-//  by the A2 loop in harness/gnss_verify_loop.ps1; here we lock the loader contract
-//  and the geodesy so a refactor cannot silently move the disclosed LKP.
+//  RINEX header realism and leak knobs (SPEC R2 / R2.4): loader defaults and
+//  validation, plus the APPROX POSITION quantization contract.  quantizeApprox()
+//  below mirrors the quantization in runSynth (src/sim/main.cpp): truth start ECEF ->
+//  geodetic, round lat/lon to the grid, round h to the nearest metre, convert back.
+//  The A2 loop in harness/gnss_verify_loop.ps1 exercises the full end-to-end path
+//  (header bytes, and the OTL x0 following the quantized point); these tests lock the
+//  loader contract and the geodesy so a refactor cannot silently move the disclosed LKP.
 // ============================================================================
 namespace {
 Eigen::Vector3d quantizeApprox(const Eigen::Vector3d& truth, double q_deg) {
@@ -956,16 +957,16 @@ Eigen::Vector3d quantizeApprox(const Eigen::Vector3d& truth, double q_deg) {
     const Coordinates::Llh llh = Coordinates::ecefToLlh(truth);
     const double lat_q = std::round((llh.lat_rad / d2r) / q_deg) * q_deg;
     const double lon_q = std::round((llh.lon_rad / d2r) / q_deg) * q_deg;
-    // Height rounds to the nearest METRE (not forced to 0): the vessel floats at the sea
-    // SURFACE, which sits at +geoid-undulation ellipsoidal height (~+48 m at the hero LKP),
-    // and a zeroed header height would put the disclosed fix ~50 m under water.
+    // Height rounds to the nearest metre rather than being set to 0: the vessel floats at
+    // the sea surface, whose ellipsoidal height is the geoid undulation (~+48 m at the hero
+    // LKP), and a zeroed header height would put the disclosed fix ~50 m under water.
     return Coordinates::llhToEcef(lat_q * d2r, lon_q * d2r, std::round(llh.h_m));
 }
 } // namespace
 
-// R2.1 / R2.4 — an absent rinex block and an all-default rinex block both leave the
-// defaults, and those defaults ARE today's behaviour (truth APPROX, build date stamp),
-// which is the loader half of the byte-identity gate.
+// An absent rinex block and an all-default rinex block both leave the defaults, and the
+// defaults are the unchanged behaviour (truth APPROX, build date stamp).  This is the
+// loader half of the byte-identity gate.  (R2.1 / R2.4)
 TEST(RinexKnobsLoader, DefaultsAreByteIdenticalContract) {
     std::string err;
     sim::SimConfig a, b;
@@ -986,8 +987,9 @@ TEST(RinexKnobsLoader, DefaultsAreByteIdenticalContract) {
     }
 }
 
-// R2 — overrides parse; a typo'd enum / overlong field / non-positive grid is REJECTED,
-// never silently accepted (a silent fallback would ship a leaky or malformed header).
+// Overrides parse; a misspelled enum, an overlong field or a non-positive grid is
+// rejected, not silently accepted (a silent fallback would ship a leaky or malformed
+// header).  (R2)
 TEST(RinexKnobsLoader, ParsesOverridesAndRejectsBadValues) {
     std::string err;
     sim::SimConfig cfg;
@@ -1011,15 +1013,15 @@ TEST(RinexKnobsLoader, ParsesOverridesAndRejectsBadValues) {
     EXPECT_FALSE(tryLoadScript("{\"rinex\":{\"pgm\":123}}", &err, nullptr));   // not a string
 }
 
-// R2.2 / R2.4 — quantized APPROX differs from the exact truth start for an OFF-GRID
-// last-known position, stays within the quantization bound, and rounds h to the metre.
+// For an off-grid last-known position, the quantized APPROX differs from the exact truth
+// start, stays within the quantization bound, and rounds h to the metre.  (R2.2 / R2.4)
 TEST(RinexKnobsQuantize, DiffersFromTruthWithinBoundAndHeightRounded) {
     const double q = 0.001, d2r = Constants::PI / 180.0;
     // An off-grid LKP with a non-round height (the exact, sub-mm truth start).
     const Eigen::Vector3d truth = Coordinates::llhToEcef(-15.20074 * d2r, -179.00037 * d2r, 3.2);
     const Eigen::Vector3d qz = quantizeApprox(truth, q);
 
-    // Different from the truth row-1 ECEF (the leak the mode fixes) — metres, not sub-mm.
+    // Differs from the truth row-1 ECEF (the leak the mode removes) by metres, not sub-mm.
     EXPECT_GT((qz - truth).norm(), 1.0);
 
     const Coordinates::Llh tl = Coordinates::ecefToLlh(truth);
@@ -1034,7 +1036,7 @@ TEST(RinexKnobsQuantize, DiffersFromTruthWithinBoundAndHeightRounded) {
                                     dlon_deg * 111000.0 * std::cos(tl.lat_rad));
     EXPECT_LT(horiz, q * 111000.0 * std::sqrt(2.0));
     // ...and the disclosed height is the truth height rounded to the metre (3.2 -> 3),
-    // NOT forced to 0 — a floating vessel's ellipsoidal height is +N (geoid), not 0.
+    // not set to 0: a floating vessel's ellipsoidal height is +N (geoid), not 0.
     EXPECT_NEAR(ql.h_m, 3.0, 1e-6);
     // The geodetically-consistent hero case: a vessel at the sea surface near the LKP
     // (EGM2008 undulation +48.07 m) discloses h = 48 m, sub-metre from the truth height.
@@ -1043,9 +1045,10 @@ TEST(RinexKnobsQuantize, DiffersFromTruthWithinBoundAndHeightRounded) {
     EXPECT_NEAR(al.h_m, 48.0, 1e-6);
 }
 
-// R2.2 — a point already ON the grid at h = 0 (round-number coordinates, as the hero
-// LKP -15.200/-179.000 happens to be) barely moves: documents why 0.001 deg quantization
-// is a near no-op there and a coarser grid or an off-grid start is needed to anonymize.
+// A point already on the grid at h = 0 (round-number coordinates, as the hero LKP
+// -15.200/-179.000 is) moves by less than 1 mm.  This documents why 0.001 deg
+// quantization is nearly a no-op there, and why anonymizing needs a coarser grid or an
+// off-grid start.  (R2.2)
 TEST(RinexKnobsQuantize, OnGridRoundNumbersAreUnchanged) {
     const double d2r = Constants::PI / 180.0;
     const Eigen::Vector3d truth = Coordinates::llhToEcef(-15.200 * d2r, -179.000 * d2r, 0.0);

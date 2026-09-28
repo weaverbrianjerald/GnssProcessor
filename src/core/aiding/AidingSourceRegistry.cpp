@@ -4,10 +4,9 @@
  *
  * Holds the kind->creator table (a Meyers singleton, mirroring
  * @c SlipDetectorRegistry) and the string<->kind mapping.  Only sources whose
- * .cpp is compiled into @c gnss_core are registered; the staged Vision source
- * is intentionally absent, so @c createEnabled degrades gracefully (warn +
- * skip) if a config selects it before it is finished and added to
- * CMakeLists.txt.
+ * .cpp is compiled into @c gnss_core are registered.  The staged Vision source
+ * is absent on purpose: if a config selects it before it is finished and added
+ * to CMakeLists.txt, @c createEnabled warns and skips it.
  *
  * @see docs/aiding_source_abstraction_design.md
  */
@@ -64,10 +63,9 @@ AidingSourceRegistry::creators() {
           [](const GnssConfig& c, LogManager& l) -> std::unique_ptr<IAidingSource> {
               return std::make_unique<ZuptAidingSource>(c, l);
           } },
-        // Nhc / WheelOdom / Baro / Vision are not yet implemented — their sources
-        // land in later steps (or, for Vision, stay STAGED with the .cpp excluded
-        // from the build).  createEnabled warns and skips any selected kind
-        // without a creator here.
+        // Nhc / WheelOdom / Baro / Vision have no implementation yet and so no
+        // creator; Vision is staged, with its .cpp excluded from the build.
+        // createEnabled warns and skips any selected kind without a creator here.
     };
     return table;
 }

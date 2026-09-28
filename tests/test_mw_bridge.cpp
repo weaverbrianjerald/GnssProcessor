@@ -1,20 +1,20 @@
 /**
  * @file test_mw_bridge.cpp
- * @brief M5 card WL-2 gate — the tri-frequency phase bridge accumulator
- *        (SPEC docs/SPEC_ewl_wl_cascade_card.md §3.4).
+ * @brief Unit gates for the tri-frequency phase bridge accumulator in MwSlipDetector
+ *        (card WL-2, M5; docs/SPEC_ewl_wl_cascade_card.md §3.4).
  *
- * The bridge is the load-bearing NEW math of the WL lane: a per-arc Welford of the
- * geometry-free phase-only observable GF_b = φ_WL − φ_EWL (meters, ZD), lagged one
- * epoch (the same double-count guard as arcZdMean), reset from the same funnel that
- * resets the ambiguity, and guarded against a missed slip by a gross-jump refloat.
- * These gates pin: the GF_b assembly + λ table, the lag, the maturity/validity,
- * the gap + jump refloats, the per-signal / per-sat / full reset hooks, and — the
- * standing-invariant-#6 crux — that with the bridge DISARMED (default) the detector
- * never touches a bridge arc (byte-identical).
+ * The bridge is the new estimator input of the WL lane: a per-arc Welford mean of the
+ * geometry-free phase-only observable GF_b = φ_WL − φ_EWL (metres, zero-differenced),
+ * lagged one epoch (the same double-count guard as arcZdMean), reset from the same
+ * funnel that resets the ambiguity, and refloated on a gross jump in case a slip was
+ * missed.  The gates cover the GF_b assembly and λ table, the lag, maturity and
+ * validity, the gap and jump refloats, the per-signal, per-satellite and full reset
+ * hooks, and invariant #6: with the bridge disarmed (the default) the detector never
+ * touches a bridge arc, so its output is byte-identical.
  *
- * These are pure unit gates: a MwSlipDetector fed hand-built phase-only observations,
- * no estimator, no network.  frequencies come from the production PppUtils table so
- * the λ assertions double as a wavelength-table check.
+ * The detector is fed hand-built phase-only observations; no estimator or network is
+ * involved.  Frequencies come from the production PppUtils table, so the λ assertions
+ * also check the wavelength table.
  */
 
 #include <gtest/gtest.h>
@@ -33,7 +33,7 @@ using namespace GnssProcessor;
 
 namespace {
 
-// GPS carrier frequencies (Hz) — the hand-value reference for the λ table.
+// GPS carrier frequencies (Hz): the hand-value reference for the λ table.
 constexpr double kF1 = 1575.42e6, kF2 = 1227.60e6, kF5 = 1176.45e6;
 constexpr double kC  = 299792458.0;
 const double kLamWl  = kC / (kF1 - kF2);   // ≈ 0.8619 m
@@ -45,7 +45,7 @@ double handGf(double l1c, double l2c, double l5c) {
 }
 
 // Hand C_iono = f_ref²·(1/(f1·f2) − 1/(f2·f5)), f_ref = GPS L1 (the estimator iono frame).
-// GPS: ≈ −0.4351 (a −0.44 cyc/m WL-domain bias per meter of L1-referenced slant iono).
+// GPS: ≈ −0.4352, i.e. about −0.44 m of GF_b per metre of L1-referenced slant iono.
 const double kIonoCoeff = kF1 * kF1 * (1.0 / (kF1 * kF2) - 1.0 / (kF2 * kF5));
 
 // A tri-frequency phase-only observation.  `observed` drives the detector's band
@@ -73,8 +73,8 @@ void driveConst(MwSlipDetector& det, const std::string& sat, int n,
 
 }  // namespace
 
-// The core assembly + λ table + validity/maturity.  Constant phases ⇒ the lagged
-// mean IS the hand GF_b and the variance collapses toward zero.
+// Assembly, λ table, validity and maturity.  With constant phases the lagged mean
+// equals the hand GF_b and the variance collapses toward zero.
 TEST(MwBridge, AssemblyHandValueAndLambdaTable) {
     LogManager log; GnssConfig cfg;
     MwSlipDetector det(cfg, log);
@@ -86,27 +86,27 @@ TEST(MwBridge, AssemblyHandValueAndLambdaTable) {
     EXPECT_GE(b.count, 2u);
     EXPECT_NEAR(b.lambda_wl,  kLamWl,  5e-3);
     EXPECT_NEAR(b.lambda_ewl, kLamEwl, 5e-3);
-    // Internal consistency (against the RETURNED λ) — exact — and the hand value.
+    // Exact consistency against the returned λ values, then against the hand value.
     EXPECT_NEAR(b.gf_mean_m, b.lambda_wl * 20.0 - b.lambda_ewl * 10.0, 1e-9);
     EXPECT_NEAR(b.gf_mean_m, handGf(100.0, 80.0, 70.0), 1e-2);
     EXPECT_LT(b.var_of_mean_m2, 1e-12);   // constant input ⇒ ~zero variance
-    // §3.4 v2 iono coefficient (the frequency-derived de-bias sensitivity): GPS ≈ −0.4351.
+    // Iono coefficient of §3.4 v2 (the frequency-derived de-bias sensitivity): GPS ≈ −0.4352.
     EXPECT_NEAR(b.iono_coeff, kIonoCoeff, 5e-4);
     EXPECT_NEAR(b.iono_coeff, -0.4351, 2e-3);
 }
 
-// Byte-identity crux (invariant #6): with the bridge disarmed (default) NO arc is
-// ever accumulated, so arcBridge is always invalid.
+// Byte identity (invariant #6): with the bridge disarmed (the default) no arc is
+// accumulated, so arcBridge is always invalid.
 TEST(MwBridge, DisarmedNeverAccumulates) {
     LogManager log; GnssConfig cfg;
-    MwSlipDetector det(cfg, log);           // setBridgeEnabled NOT called
+    MwSlipDetector det(cfg, log);           // setBridgeEnabled is not called
     driveConst(det, "G01", 5, 100.0, 80.0, 70.0);
     EXPECT_FALSE(det.arcBridge("G01", "L1C", "L2W", "L5Q").valid);
     EXPECT_FALSE(det.bridgeEnabled());
 }
 
-// Lag + maturity: the arc is invalid at count_lag < 2 (one processed epoch) and
-// becomes valid only once a LAGGED pair exists — the same-epoch double-count guard.
+// Lag and maturity: the arc is invalid while count_lag < 2 and becomes valid once
+// the lagged state holds two samples (the same-epoch double-count guard).
 TEST(MwBridge, LaggedMaturity) {
     LogManager log; GnssConfig cfg;
     MwSlipDetector det(cfg, log);
@@ -117,8 +117,8 @@ TEST(MwBridge, LaggedMaturity) {
     EXPECT_TRUE(det.arcBridge("G07", "L1C", "L2W", "L5Q").valid);   // count_lag == 2
 }
 
-// Data-gap refloat: a gap beyond the tolerance restarts the arc (invalid until it
-// re-matures) — the pre-gap history is not carried across.
+// Data-gap refloat: a gap beyond the tolerance (120 s by default) restarts the arc,
+// which stays invalid until it matures again; no pre-gap history is carried across.
 TEST(MwBridge, GapRefloat) {
     LogManager log; GnssConfig cfg;
     MwSlipDetector det(cfg, log);
@@ -129,9 +129,9 @@ TEST(MwBridge, GapRefloat) {
     EXPECT_FALSE(det.arcBridge("G05", "L1C", "L2W", "L5Q").valid);   // refloated (count_lag 0)
 }
 
-// Gross-jump refloat: a WL/EWL slip the funnel missed (GF_b jump ≥ kBridgeJumpResetM)
-// resets the accumulator rather than poisoning the slow mean.  A +0.6 cyc L1 step is
-// a ~0.5 m GF_b jump (> 0.4 m guard).
+// Gross-jump refloat: a WL/EWL slip the funnel missed (a GF_b jump above
+// kBridgeJumpResetM) resets the accumulator instead of entering the slow mean.  A
+// +0.6 cycle L1 step is a 0.52 m GF_b jump (0.6·λ_WL), above the 0.4 m guard.
 TEST(MwBridge, GrossJumpRefloat) {
     LogManager log; GnssConfig cfg;
     MwSlipDetector det(cfg, log);
@@ -142,8 +142,9 @@ TEST(MwBridge, GrossJumpRefloat) {
     EXPECT_FALSE(det.arcBridge("G09", "L1C", "L2W", "L5Q").valid);   // jump refloated
 }
 
-// Reset funnel: a per-signal reset on ANY band of the triple erases the bridge arc;
-// a reset on an unrelated signal leaves it intact; resetSatellite / resetAll clear it.
+// Reset funnel: a per-signal reset on any band of the triple erases the bridge arc,
+// a reset on an unrelated signal leaves it intact, and resetSatellite and resetAll
+// clear it.
 TEST(MwBridge, ResetFunnelHooks) {
     LogManager log; GnssConfig cfg;
     MwSlipDetector det(cfg, log);
@@ -151,16 +152,16 @@ TEST(MwBridge, ResetFunnelHooks) {
 
     auto rewarm = [&](const std::string& sat) { driveConst(det, sat, 4, 100.0, 80.0, 70.0); };
 
-    // (a) unrelated signal — arc survives.
+    // (a) Unrelated signal: the arc survives.
     rewarm("G01");
     det.resetSatelliteSignal("G01", "L9X");
     EXPECT_TRUE(det.arcBridge("G01", "L1C", "L2W", "L5Q").valid);
 
-    // (b) the third (EWL) band — arc erased.
+    // (b) The third (EWL) band: the arc is erased.
     det.resetSatelliteSignal("G01", "L5Q");
     EXPECT_FALSE(det.arcBridge("G01", "L1C", "L2W", "L5Q").valid);
 
-    // (c) a WL-pair band — arc erased.
+    // (c) A WL-pair band: the arc is erased.
     rewarm("G02");
     det.resetSatelliteSignal("G02", "L2W");
     EXPECT_FALSE(det.arcBridge("G02", "L1C", "L2W", "L5Q").valid);
@@ -176,7 +177,8 @@ TEST(MwBridge, ResetFunnelHooks) {
     EXPECT_FALSE(det.arcBridge("G04", "L1C", "L2W", "L5Q").valid);
 }
 
-// LLI on a phase re-warms the bridge (it has no detection statistic of its own).
+// An LLI flag on a phase restarts the bridge arc (the bridge has no detection
+// statistic of its own).
 TEST(MwBridge, LossOfLockRefloats) {
     LogManager log; GnssConfig cfg;
     MwSlipDetector det(cfg, log);
@@ -190,7 +192,7 @@ TEST(MwBridge, LossOfLockRefloats) {
 }
 
 // =====================================================================
-// M5 card UWL-1 (docs/SPEC_uwl_card.md) — per-constellation lane tiers.
+// Per-constellation lane tiers (card UWL-1, M5; docs/SPEC_uwl_card.md).
 // =====================================================================
 
 namespace {
@@ -265,13 +267,13 @@ TEST(MwLaneTiers, TableDigitsAndNonDegeneracy) {
     EXPECT_FALSE(mwLaneTierOf('R').has_value());   // GLONASS excluded (FDMA)
 }
 
-// SPEC §1 fact 3, made loud: under the LEGACY digit scan a Galileo tri-freq obs
-// (no band '2') forms NO bridge arc; with the tier table armed the (E5b,E5a) UWL
-// bridge forms, λ/iono hand values check out.
+// SPEC §1 fact 3: under the legacy digit scan a Galileo tri-frequency observation
+// (no band '2') forms no bridge arc.  With the tier table armed the (E5b,E5a) UWL
+// bridge forms, and its λ and iono coefficient match the hand values.
 TEST(MwBridge, GalileoUwlBridgeHandValues) {
     LogManager log; GnssConfig cfg;
 
-    // Legacy: no arc under any plausible key (the silent GPS-only failure mode).
+    // Legacy scan: no arc forms (the bridge is silently GPS-only).
     MwSlipDetector legacy(cfg, log);
     legacy.setBridgeEnabled(true);
     for (int k = 0; k < 4; ++k)
@@ -287,17 +289,17 @@ TEST(MwBridge, GalileoUwlBridgeHandValues) {
     const auto b = det.arcBridge("E01", "L1C", "L5Q", "L7Q");
     ASSERT_TRUE(b.valid);
     EXPECT_NEAR(b.lambda_wl,  kLamGalWl,   5e-3);   // (E1,E5a) WL pair
-    EXPECT_NEAR(b.lambda_ewl, kLamGalUwl7, 5e-3);   // (E5b,E5a) top pair, λ POSITIVE
+    EXPECT_NEAR(b.lambda_ewl, kLamGalUwl7, 5e-3);   // (E5b,E5a) top pair, λ positive
     // GF_b = λ_WL(φ_E1 − φ_E5a) − λ_UWL(φ_E5b − φ_E5a): the top-pair term is ordered
-    // (hi,lo) by frequency even though the shared band E5a is the pair's LOW side.
+    // (hi,lo) by frequency even though the shared band E5a is the low side of the pair.
     EXPECT_NEAR(b.gf_mean_m, b.lambda_wl * 20.0 - b.lambda_ewl * (-10.0), 1e-9);
-    // Iono coefficient: f_ref²(1/(f_E1·f_E5a) − 1/(f_E5a·f_E5b)) — pair products.
+    // Iono coefficient f_ref²(1/(f_E1·f_E5a) − 1/(f_E5a·f_E5b)), from the pair products.
     const double iono_hand = kF1 * kF1
         * (1.0 / (kFE1 * kFE5a) - 1.0 / (kFE5a * kFE5b));
     EXPECT_NEAR(b.iono_coeff, iono_hand, 5e-4);
 }
 
-// The user's ~19.5 m option: gal_top_band '8' pairs (E5 AltBOC, E5a), λ ≈ 19.537 m.
+// The ~19.5 m option: gal_top_band '8' pairs (E5 AltBOC, E5a), λ ≈ 19.537 m.
 TEST(MwBridge, GalileoAltBocUwlLambda) {
     LogManager log; GnssConfig cfg;
     MwSlipDetector det(cfg, log);
@@ -312,8 +314,9 @@ TEST(MwBridge, GalileoAltBocUwlLambda) {
     EXPECT_NEAR(b.gf_mean_m, b.lambda_wl * 20.0 + b.lambda_ewl * 10.0, 1e-9);
 }
 
-// §6.1 GPS bit-identity at the unit level: pushing the armed table changes NOTHING
-// for GPS (same digits fall out) — arc key, mean, variance, λs, iono coefficient.
+// GPS bit identity at the unit level (§6.1): pushing the armed table leaves GPS
+// unchanged, because the same digits fall out.  Arc key, mean, variance, λ values
+// and iono coefficient are all compared exactly.
 TEST(MwBridge, GpsBitIdenticalUnderArmedTable) {
     LogManager log; GnssConfig cfg;
     MwSlipDetector legacy(cfg, log), armed(cfg, log);
@@ -327,12 +330,12 @@ TEST(MwBridge, GpsBitIdenticalUnderArmedTable) {
     ASSERT_TRUE(bl.valid);
     ASSERT_TRUE(ba.valid);
     EXPECT_EQ(bl.count, ba.count);
-    EXPECT_EQ(bl.gf_mean_m, ba.gf_mean_m);           // bit-exact, not NEAR
+    EXPECT_EQ(bl.gf_mean_m, ba.gf_mean_m);           // bit-exact, not EXPECT_NEAR
     EXPECT_EQ(bl.var_of_mean_m2, ba.var_of_mean_m2);
     EXPECT_EQ(bl.lambda_wl, ba.lambda_wl);
     EXPECT_EQ(bl.lambda_ewl, ba.lambda_ewl);
     EXPECT_EQ(bl.iono_coeff, ba.iono_coeff);
-    // And a constellation ABSENT from the pushed table forms no arc (BDS-3 dark).
+    // A constellation absent from the pushed table forms no arc (BDS-3 here).
     PppObservation bds{};
     bds.satellite = "C06"; bds.system = System::BeiDou;
     bds.time = GnssTime{ 2400, 100000.0 }; bds.elevation = 45.0;
@@ -345,8 +348,8 @@ TEST(MwBridge, GpsBitIdenticalUnderArmedTable) {
     EXPECT_FALSE(armed.arcBridge("C06", "L1P", "L2I", "L5P").valid);
 }
 
-// UWL-1 §3.3 cold accessors — the bridge half: arcBridgeCold serves the UNLAGGED
-// state at n ≥ 2 (one epoch ahead of the lagged arcBridge), never at n == 1.
+// Cold accessors, bridge half (card UWL-1, §3.3): arcBridgeCold serves the unlagged
+// state from n = 2 (one epoch ahead of the lagged arcBridge) and never at n = 1.
 TEST(MwBridge, ColdBridgeServesOneEpochEarly) {
     LogManager log; GnssConfig cfg;
     MwSlipDetector det(cfg, log);
@@ -364,9 +367,10 @@ TEST(MwBridge, ColdBridgeServesOneEpochEarly) {
     EXPECT_TRUE(det.arcBridge("G21", "L1C", "L2W", "L5Q").valid);        // count_lag 2
 }
 
-// UWL-1 §3.3 cold accessors — the MW half: arcZdMeanCold serves the UNLAGGED n ≥ 1
-// state (variance NaN at n=1 for the caller's a-priori substitution; Welford from
-// n ≥ 2), while the lagged arcZdMean contract is untouched.
+// Cold accessors, MW half (card UWL-1, §3.3): arcZdMeanCold serves the unlagged state
+// from n = 1.  At n = 1 the variance is NaN so the caller substitutes its a-priori
+// value; from n = 2 the Welford variance is used.  The lagged arcZdMean contract is
+// unchanged.
 TEST(MwBridge, ColdMwServesUnlaggedFromOneSample) {
     LogManager log; GnssConfig cfg;
     MwSlipDetector det(cfg, log);
@@ -405,14 +409,15 @@ TEST(MwBridge, ColdMwServesUnlaggedFromOneSample) {
 }
 
 // =====================================================================
-// E6 mid-ladder bridge hop (uwl_mid_enable; census-motivated Jul-16).
+// E6 mid-ladder bridge hop (uwl_mid_enable).
 // =====================================================================
 
-// The mid-armed tier feeds THREE triples per Galileo observation: the base
-// (WL vs top), hop-hi (mid lane vs top), hop-lo (WL vs mid lane) — with hand
-// λs, and the exact chain identity GF_direct = GF_hi + GF_lo (the two-hop
-// decomposition is algebraically lossless; the GAIN is the intermediate
-// rounding at λ_MID, which strips the top hop's noise before the WL).
+// The mid-armed tier feeds three triples per Galileo observation: the base (WL
+// against top), hop-hi (mid lane against top) and hop-lo (WL against mid lane).
+// The test checks the hand λ values and the exact chain identity
+// GF_direct = GF_hi + GF_lo.  The two-hop decomposition loses nothing
+// algebraically; its benefit is the intermediate rounding at λ_MID, which removes
+// the top hop's noise before the WL step.
 TEST(MwBridge, GalileoMidHopTriplesAndChainIdentity) {
     constexpr double kFE6 = 1278.75e6;                 // E6
     const double kLamGalMid = kC / (kFE6 - kFE5a);     // ≈ 2.931 m
@@ -447,8 +452,8 @@ TEST(MwBridge, GalileoMidHopTriplesAndChainIdentity) {
     EXPECT_NEAR(bd.iono_coeff, bh.iono_coeff + bl.iono_coeff, 1e-12);
 }
 
-// Mid-off (the default): only the base triple forms — byte-compatibility of
-// the armed-without-mid shape with the pre-mid build.
+// Mid off (the default): only the base triple forms, so an armed tier without the
+// mid rung behaves as the build without mid support did.
 TEST(MwBridge, MidOffFormsBaseTripleOnly) {
     LogManager log; GnssConfig cfg;
     MwSlipDetector det(cfg, log);
@@ -471,14 +476,14 @@ TEST(MwLaneTiers, MidRungTable) {
 }
 
 // =====================================================================
-// Increment 5: dual-top tier (uwl_dual_top) — preferred '8' / fallback '7'.
+// Dual-top tier (uwl_dual_top): preferred '8', fallback '7' (increment 5).
 // =====================================================================
 
-// Tier-table contract: the dual tier prefers '8' with the '7' fallback,
-// ignores gal_top_band, keeps the primary pair, composes with the mid rung;
-// GPS (no sibling pair) and single-top tiers never grow a fallback.
+// Tier-table contract: the dual tier prefers '8' with the '7' fallback, ignores
+// gal_top_band, keeps the primary pair and composes with the mid rung.  GPS (no
+// sibling pair) and single-top tiers never get a fallback.
 TEST(MwLaneTiers, DualTopTable) {
-    const auto ed = mwLaneTierOf('E', '7', false, true);   // gal_top_band IGNORED
+    const auto ed = mwLaneTierOf('E', '7', false, true);   // gal_top_band is ignored
     ASSERT_TRUE(ed.has_value());
     EXPECT_EQ(ed->b1, '1');  EXPECT_EQ(ed->b2, '5');
     EXPECT_EQ(ed->b_top, '8');
@@ -490,10 +495,10 @@ TEST(MwLaneTiers, DualTopTable) {
     EXPECT_EQ(mwLaneTierOf('E', '7', false, false)->b_top2, '\0');// dual off
 }
 
-// The sibling identity's frequency basis: f_E5 = (f_E5a + f_E5b)/2 EXACTLY
-// (Galileo ICD), so λ(8,5) = 2·λ(7,5) and the closure expectation
-// N(7,5) = 2·N(8,5) is an exact integer relation — verified against the
-// PRODUCTION frequency table via the bridge λ cache, not the test constants.
+// Frequency basis of the sibling identity: f_E5 = (f_E5a + f_E5b)/2 exactly (Galileo
+// ICD), so λ(8,5) = 2·λ(7,5) and the closure expectation N(7,5) = 2·N(8,5) is an
+// exact integer relation.  It is checked against the production frequency table
+// through the bridge λ cache, not against the test constants.
 TEST(MwBridge, DualTopSiblingLambdaIdentity) {
     EXPECT_NEAR(kFE5, 0.5 * (kFE5a + kFE5b), 1e-3);   // hand constants agree
 
@@ -520,21 +525,21 @@ TEST(MwBridge, DualTopSiblingLambdaIdentity) {
     EXPECT_NEAR(b7.lambda_ewl, kLamGalUwl7, 5e-3);
 }
 
-// The fallback triple must form even when the PREFERRED band is untracked at
-// the (rx,sat) — that is the point of the fallback rung (the legacy early-out
-// would have dropped the whole observation for want of band 8).
+// The fallback triple forms even when the preferred band is not tracked at the
+// (rx,sat); that is the purpose of the fallback rung.  The single-top early-out
+// drops the whole observation when band 8 is missing.
 TEST(MwBridge, DualTopFallbackFormsWithoutPreferredBand) {
     LogManager log; GnssConfig cfg;
     MwSlipDetector det(cfg, log);
     det.setBridgeEnabled(true);
     det.setLaneTiers(armedTiers('7', false, /*gal_dual=*/true));
-    for (int k = 0; k < 4; ++k)   // tri-freq obs: bands 1,5,7 — NO band 8
+    for (int k = 0; k < 4; ++k)   // tri-frequency obs: bands 1, 5, 7 and no band 8
         det.detectLargeMwResets({ galTriObs("E11", 100000.0 + k, 100.0, 80.0, 90.0, "L7Q") });
     EXPECT_FALSE(det.arcBridge("E11", "L1C", "L5Q", "L8Q").valid);  // preferred absent
     const auto b7 = det.arcBridge("E11", "L1C", "L5Q", "L7Q");      // fallback forms
     ASSERT_TRUE(b7.valid);
     EXPECT_NEAR(b7.lambda_ewl, kLamGalUwl7, 5e-3);
-    // And single-top '8' (dual OFF) keeps the legacy early-out: nothing forms.
+    // Single-top '8' (dual off) keeps the legacy early-out: nothing forms.
     MwSlipDetector single(cfg, log);
     single.setBridgeEnabled(true);
     single.setLaneTiers(armedTiers('8', false, /*gal_dual=*/false));
@@ -545,17 +550,18 @@ TEST(MwBridge, DualTopFallbackFormsWithoutPreferredBand) {
 }
 
 // =====================================================================
-// Per-sample bridge iono de-bias (network.mw_wl.bridge_sample_debias) —
-// the 60-epoch age-bias fix.  The raw GF Welford accumulates C_iono·I over
-// the arc's LIFETIME while the read-time de-bias subtracts C_iono·ı̃(now);
-// per-sample folding (GF_k − C_iono·ı̃(t_k)) makes the statistic stationary.
+// Per-sample bridge iono de-bias (network.mw_wl.bridge_sample_debias), the
+// 60-epoch age-bias fix.  The raw GF Welford accumulates C_iono·I over the whole
+// arc while the read-time de-bias subtracts C_iono·ı̃(now); folding
+// GF_k − C_iono·ı̃(t_k) per sample makes the statistic stationary.
 // =====================================================================
 
-// THE fix gate: under a linear iono drift injected into the phases, the raw
-// arc's mean is biased by C_iono·mean(I) and its variance is drift-inflated;
-// the armed arc folds stationary samples — mean = the true constant, variance
-// collapses.  (Drift injected via the L5 phase so gf_k = gf0 + C_iono·I_k;
-// the matching ı̃_k push uses the SAME C_iono frame the detector computes.)
+// Main gate of the de-bias: under a linear iono drift injected into the phases, the
+// raw arc's mean is biased by C_iono·mean(I) and its variance is inflated by the
+// drift.  The armed arc folds stationary samples, so its mean is the true constant
+// and its variance collapses.  The drift enters through the L5 phase so that
+// gf_k = gf0 + C_iono·I_k, and the matching ı̃_k push uses the same C_iono the
+// detector computes.
 TEST(MwBridge, PerSampleDebiasStationaryUnderIonoDrift) {
     LogManager log; GnssConfig cfg;
     MwSlipDetector raw(cfg, log), deb(cfg, log);
@@ -564,7 +570,7 @@ TEST(MwBridge, PerSampleDebiasStationaryUnderIonoDrift) {
     deb.setBridgePerSampleDebias(true);
 
     const double gf0 = handGf(100.0, 80.0, 70.0);
-    std::vector<double> iono;   // I_k ramp (m): 0.0, 0.1, ... — a strong 30-min-class drift
+    std::vector<double> iono;   // I_k ramp (m): 0.0, 0.1, ...; a strong drift
     for (int k = 0; k < 6; ++k) iono.push_back(0.1 * k);
     for (int k = 0; k < 6; ++k) {
         // gf_k = gf0 + C_iono·I_k  ⇔  L5c_k = L5c0 + C_iono·I_k/λ_EWL (∂gf/∂L5c = +λ_EWL).
@@ -586,9 +592,9 @@ TEST(MwBridge, PerSampleDebiasStationaryUnderIonoDrift) {
     EXPECT_GT(br.var_of_mean_m2, 1e3 * std::max(bd.var_of_mean_m2, 1e-30));
 }
 
-// A sample without a pushed estimate is SKIPPED (counted), never folded raw
-// into a de-biased arc (mixed frames are the disease); the arc simply warms
-// once estimates arrive.
+// A sample without a pushed estimate is skipped and counted; it is never folded raw
+// into a de-biased arc, which would mix frames.  The arc starts once estimates
+// arrive.
 TEST(MwBridge, PerSampleDebiasSkipsWithoutEstimate) {
     LogManager log; GnssConfig cfg;
     MwSlipDetector det(cfg, log);
@@ -606,13 +612,13 @@ TEST(MwBridge, PerSampleDebiasSkipsWithoutEstimate) {
     EXPECT_NEAR(b.gf_mean_m, handGf(100.0, 80.0, 70.0) - kIonoCoeff * 0.25, 1e-9);
 }
 
-// Default OFF is byte-neutral: pushed estimates are ignored, accumulation is
-// bit-identical to a never-pushed detector, and nothing is counted skipped.
+// Off by default and byte-neutral: pushed estimates are ignored, accumulation is
+// bit-identical to a detector that never received them, and no skip is counted.
 TEST(MwBridge, PerSampleDebiasOffIsRawByteIdentical) {
     LogManager log; GnssConfig cfg;
     MwSlipDetector plain(cfg, log), pushed(cfg, log);
     plain.setBridgeEnabled(true);
-    pushed.setBridgeEnabled(true);                            // debias NOT armed
+    pushed.setBridgeEnabled(true);                            // de-bias not armed
     pushed.setBridgeIonoEstimates({ { "G09", 1.234 } });
     driveConst(plain,  "G09", 5, 100.0, 80.0, 70.0);
     driveConst(pushed, "G09", 5, 100.0, 80.0, 70.0);
@@ -625,8 +631,8 @@ TEST(MwBridge, PerSampleDebiasOffIsRawByteIdentical) {
     EXPECT_EQ(pushed.bridgeDebiasSkipped(), 0u);
 }
 
-// Dual + mid: BOTH hop-hi triples form ((6,5,8) and (6,5,7)) plus the shared
-// hop-lo (1,5,6); the chain identity holds against EACH top rung.
+// Dual plus mid: both hop-hi triples form, (6,5,8) and (6,5,7), plus the shared
+// hop-lo (1,5,6); the chain identity holds against each top rung.
 TEST(MwBridge, DualTopMidFeedsBothHopHiTriples) {
     LogManager log; GnssConfig cfg;
     MwSlipDetector det(cfg, log);

@@ -1,16 +1,16 @@
 /**
  * @file test_codebias_network_config.cpp
- * @brief Config-contract tests for satellite CODE-bias (OSB) estimation in the
+ * @brief Config-contract tests for satellite code-bias (OSB) estimation in the
  *        PPP-RTK network producer (W6).
  *
- * network.estimate_sat_code_bias is the single switch that lands the coupled W6
- * slice: the network estimates its OWN per-(satellite,signal) code biases and
- * emits them so the user can skip the external .BIA.  Because the satellite DCB is
- * unobservable without the receiver DCB, the GIM ionosphere constraint, and the
- * satellite code-bias state all present together, the flag MUST force them on (and
- * force .BIA off so the network bias is the sole code-bias source).  These tests
- * lock that contract, and that it stays OFF by default (no regression to the
- * clock+phase-bias-only V1 network).
+ * network.estimate_sat_code_bias is the single switch for the coupled W6 slice:
+ * the network estimates its own per-(satellite,signal) code biases and emits
+ * them so the user can skip the external .BIA.  The satellite DCB is observable
+ * only with the receiver DCB, the GIM ionosphere constraint and the satellite
+ * code-bias state all present, so the flag forces them on (and forces .BIA off so
+ * the network bias is the sole code-bias source).  These tests pin that contract,
+ * and that the flag is off by default (the clock+phase-bias-only V1 network is
+ * unchanged).
  */
 
 #include <gtest/gtest.h>
@@ -87,7 +87,7 @@ TEST(CodeBiasNetworkConfig, EstimateSatCodeBiasForcesPrerequisites) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-// The derived closed-loop consumer config CONSUMES the OSB (never estimates it):
+// The derived closed-loop consumer config consumes the OSB and does not estimate it:
 // the producer-only switch is cleared and .BIA stays off (inherited), so the
 // network code bias applies via ssr_bias_term as the sole code-bias source.
 TEST(CodeBiasNetworkConfig, DerivedConsumerConsumesNotEstimates) {
@@ -103,8 +103,8 @@ TEST(CodeBiasNetworkConfig, DerivedConsumerConsumesNotEstimates) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-// Default network config (no estimate_sat_code_bias): code bias is DEFERRED and
-// .BIA stays on — the clock+phase-bias-only V1 network is byte-identical.
+// Default network config (no estimate_sat_code_bias): code bias is deferred and
+// .BIA stays on, so the clock+phase-bias-only V1 network is byte-identical.
 TEST(CodeBiasNetworkConfig, DefaultNetworkHasCodeBiasOff) {
     LogManager log;
     const fs::path p = writeTempConfig("default",
@@ -119,13 +119,13 @@ TEST(CodeBiasNetworkConfig, DefaultNetworkHasCodeBiasOff) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-// bias_coverage_requires_apply: parses (default false), is NOT clobbered by the
+// bias_coverage_requires_apply: parses (default false), is not overwritten by the
 // estimate_sat_code_bias coupling that forces enable_code_phase_bias off, and is
-// inherited by the derived closed-loop consumer.  This is the exact defect chain
-// the toggle exists for: the coupling silently disables .BIA APPLICATION while
-// the loaded .BIA still reports phantom COVERAGE to the "already corrected?"
-// gates (sat-bias absorber allocation + no-BIA code downweight) — the toggle
-// makes those gates consult applied coverage instead.
+// inherited by the derived closed-loop consumer.  The toggle exists for this
+// combination: the coupling disables .BIA application while the loaded .BIA
+// still reports coverage to the "already corrected?" gates (sat-bias absorber
+// allocation and no-BIA code downweight).  With the toggle on, those gates
+// consult applied coverage instead.
 TEST(CodeBiasNetworkConfig, BiasCoverageRequiresApplyParsesAndSurvivesCoupling) {
     LogManager log;
     // Default: key absent -> false (legacy presence-only semantics, byte-identical).
@@ -138,8 +138,8 @@ TEST(CodeBiasNetworkConfig, BiasCoverageRequiresApplyParsesAndSurvivesCoupling) 
         std::error_code ec; fs::remove(p, ec);
     }
     // Armed alongside the coupled code-bias slice: the coupling forces .BIA
-    // application OFF, and the toggle survives it unchanged — together the
-    // defect configuration (loaded .BIA, unapplied) now reads as uncovered.
+    // application off and the toggle survives it unchanged, so a loaded but
+    // unapplied .BIA reads as uncovered.
     {
         const std::string body = std::string("{\n") +
             "  \"processing\": {\n"
@@ -169,11 +169,11 @@ TEST(CodeBiasNetworkConfig, BiasCoverageRequiresApplyParsesAndSurvivesCoupling) 
 }
 
 // clock_signal_basis_hold: parses (default false, so the per-epoch IF-pin
-// reference selection is byte-identical), and — armed alongside the W6 slice it
-// modifies — survives the estimate_sat_code_bias coupling (the toggle holds the
-// per-satellite clock↔code-bias IF-pin reference pair fixed in time; it is only
-// meaningful when the network estimates its own code biases, so it MUST coexist
-// with that flag rather than being clobbered by the coupling).
+// reference selection is byte-identical), and, armed alongside the W6 slice it
+// modifies, survives the estimate_sat_code_bias coupling.  The toggle holds the
+// per-satellite clock↔code-bias IF-pin reference pair fixed in time; it is
+// meaningful only when the network estimates its own code biases, so it has to
+// coexist with that flag rather than be overwritten by the coupling.
 TEST(CodeBiasNetworkConfig, ClockSignalBasisHoldParsesAndSurvivesCoupling) {
     LogManager log;
     // Default: key absent -> false (per-epoch reference re-selection, byte-identical).
@@ -186,8 +186,8 @@ TEST(CodeBiasNetworkConfig, ClockSignalBasisHoldParsesAndSurvivesCoupling) {
         std::error_code ec; fs::remove(p, ec);
     }
     // Armed with the W6 code-bias slice: the coupling forces the prerequisites on,
-    // and the hold toggle survives it — both are true, so the emitted (δtˢ, dˢ)
-    // split is estimated (W6) AND held to a fixed signal basis in time.
+    // and the hold toggle survives it.  Both are true, so the emitted (δtˢ, dˢ)
+    // split is estimated (W6) and held to a fixed signal basis in time.
     {
         const fs::path p = writeTempConfig("basis_armed",
             networkConfig(kGpsGal, kPriosGps,
@@ -203,8 +203,8 @@ TEST(CodeBiasNetworkConfig, ClockSignalBasisHoldParsesAndSurvivesCoupling) {
 
 // network.code_datum_time_linked (Card 2): parses (default false = the legacy zero-
 // target code-bias datum, byte-identical) and survives the estimate_sat_code_bias
-// coupling (the datum it re-times only exists in W6, so it must coexist with that flag
-// rather than be clobbered).
+// coupling (the datum it re-times exists only in W6, so it has to coexist with that
+// flag rather than be overwritten).
 TEST(CodeBiasNetworkConfig, CodeDatumTimeLinkedParsesAndSurvivesCoupling) {
     LogManager log;
     // Default: key absent -> false (per-epoch zero-target datum, byte-identical).
@@ -217,7 +217,7 @@ TEST(CodeBiasNetworkConfig, CodeDatumTimeLinkedParsesAndSurvivesCoupling) {
         std::error_code ec; fs::remove(p, ec);
     }
     // Armed with the W6 code-bias slice: the coupling forces the prerequisites on, and
-    // the time-linked toggle survives it — the datum is now imposed as a time datum.
+    // the time-linked toggle survives it, so the datum is imposed as a time datum.
     {
         const fs::path p = writeTempConfig("cbtl_armed",
             networkConfig(kGpsGal, kPriosGps,
@@ -231,7 +231,7 @@ TEST(CodeBiasNetworkConfig, CodeDatumTimeLinkedParsesAndSurvivesCoupling) {
     }
 }
 
-// code_datum_time_linked and clock_signal_basis_hold BOTH re-target the per-satellite
+// code_datum_time_linked and clock_signal_basis_hold both re-target the per-satellite
 // IF-pin row (the clock↔code split): the time-linked datum subsumes the hold for the
 // pin value, so arming both is a hard load error rather than a silent last-wins.
 TEST(CodeBiasNetworkConfig, CodeDatumTimeLinkedWithSignalBasisHoldIsError) {
@@ -247,8 +247,8 @@ TEST(CodeBiasNetworkConfig, CodeDatumTimeLinkedWithSignalBasisHoldIsError) {
 }
 
 // phase_bias_exclude_unmatched_antenna: parses (default false, so every station
-// contributes to phase-bias emission — byte-identical), and arms independently of
-// the W6 code-bias slice (it gates only which STATIONS feed the satellite phase
+// contributes to phase-bias emission, byte-identical), and arms independently of
+// the W6 code-bias slice (it gates only which stations feed the satellite phase
 // biases, orthogonal to whether the network also estimates code biases).
 TEST(CodeBiasNetworkConfig, PhaseBiasExcludeUnmatchedAntennaParses) {
     LogManager log;
@@ -261,8 +261,8 @@ TEST(CodeBiasNetworkConfig, PhaseBiasExcludeUnmatchedAntennaParses) {
         EXPECT_FALSE(cfg.networkPhaseBiasExcludeUnmatchedAntenna());
         std::error_code ec; fs::remove(p, ec);
     }
-    // Armed on its own (no code-bias slice): the toggle is honoured — an unmatched-
-    // receiver-antenna station will be withheld from satellite phase-bias emission.
+    // Armed on its own (no code-bias slice): the toggle is honoured, so a station
+    // with an unmatched receiver antenna is withheld from satellite phase-bias emission.
     {
         const fs::path p = writeTempConfig("pbexcl_armed",
             networkConfig(kGpsGal, kPriosGps,
@@ -278,10 +278,10 @@ TEST(CodeBiasNetworkConfig, PhaseBiasExcludeUnmatchedAntennaParses) {
 // pre-seeds the receiver clock and every fixture is byte-identical), and arms
 // independently of the W6 code-bias slice (it only pre-writes x(clock) from the
 // median GPS code residual before the first ambiguity seed, orthogonal to
-// whether the network estimates code biases).  The defect it exists for: on the
+// whether the network estimates code biases).  Reason for the toggle: on the
 // network path nothing solves the receiver clock before the first ambiguity
-// seed, so a free-running receiver's whole clock offset leaks uniformly into
-// every cold ambiguity seed.
+// seed, so without it a free-running receiver's whole clock offset leaks
+// uniformly into every cold ambiguity seed.
 TEST(CodeBiasNetworkConfig, ColdClockSeedParses) {
     LogManager log;
     // Default: key absent -> false (no pre-seed, byte-identical).
@@ -293,8 +293,8 @@ TEST(CodeBiasNetworkConfig, ColdClockSeedParses) {
         EXPECT_FALSE(cfg.networkColdClockSeed());
         std::error_code ec; fs::remove(p, ec);
     }
-    // Armed on its own (no code-bias slice): the toggle is honoured, and it does
-    // NOT drag the W6 prerequisites on — it is orthogonal to code-bias estimation.
+    // Armed on its own (no code-bias slice): the toggle is honoured and does not
+    // turn the W6 prerequisites on; it is orthogonal to code-bias estimation.
     {
         const fs::path p = writeTempConfig("coldclk_armed",
             networkConfig(kGpsGal, kPriosGps,
@@ -302,11 +302,11 @@ TEST(CodeBiasNetworkConfig, ColdClockSeedParses) {
         GnssConfig cfg;
         ASSERT_TRUE(cfg.loadFromJson(p, log));
         EXPECT_TRUE(cfg.networkColdClockSeed());
-        EXPECT_FALSE(cfg.estimateNetworkSatCodeBias());   // orthogonal — no coupling
+        EXPECT_FALSE(cfg.estimateNetworkSatCodeBias());   // orthogonal: no coupling
         std::error_code ec; fs::remove(p, ec);
     }
     // Armed alongside the W6 code-bias slice: both survive (the pre-seed helps the
-    // cold ambiguity seeds that feed the very code-bias/iono slice W6 estimates).
+    // cold ambiguity seeds that feed the code-bias/iono slice W6 estimates).
     {
         const fs::path p = writeTempConfig("coldclk_w6",
             networkConfig(kGpsGal, kPriosGps,
@@ -335,7 +335,7 @@ TEST(CodeBiasNetworkConfig, CodeBiasWithGlonassIsError) {
 }
 
 // ===========================================================================
-// RTA-7: first-class network-consumer profile (processing.network_consumer)
+// Network-consumer profile (processing.network_consumer, RTA-7)
 // ===========================================================================
 
 namespace {
@@ -366,9 +366,9 @@ std::string networkConfigRt(const std::string& processing_extra,
 
 } // namespace
 
-// The standalone profile applies the SAME couplings as the closed-loop
-// derivation (applyNetworkConsumerCouplings is the shared source of truth) —
-// full mode (network clock consumed), undifferenced user model.
+// The standalone profile applies the same couplings as the closed-loop
+// derivation (applyNetworkConsumerCouplings is the shared source of truth).
+// Full mode (network clock consumed), undifferenced user model.
 TEST(NetworkConsumerProfile, MatchesClosedLoopDerivationFullUndifferenced) {
     LogManager log;
 
@@ -413,7 +413,7 @@ TEST(NetworkConsumerProfile, MatchesClosedLoopDerivationFullUndifferenced) {
     std::error_code ec; fs::remove(p1, ec); fs::remove(p2, ec);
 }
 
-// BIAS-ONLY mode (precise clock kept, network bias consumed): the
+// Bias-only mode (precise clock kept, network bias consumed): the
 // estimate_sat_biases coupling flips exactly as the closed-loop derivation's
 // consume_network_clock=false branch does.
 TEST(NetworkConsumerProfile, BiasOnlyClockKeepsResidualSatBiasEstimation) {
@@ -438,7 +438,7 @@ TEST(NetworkConsumerProfile, BiasOnlyClockKeepsResidualSatBiasEstimation) {
 }
 
 // ar_ignore_mw_wl resolution: an explicit profile key overrides the derivation;
-// the standalone processing.ar_ignore_mw_wl key (the previously key-less
+// the standalone processing.ar_ignore_mw_wl key (the config key for the
 // RealTimeEngine::setArIgnoreMwWl seam) works without the profile; everything
 // defaults off.
 TEST(NetworkConsumerProfile, ArIgnoreMwWlOverrideStandaloneKeyAndDefaults) {
@@ -462,7 +462,7 @@ TEST(NetworkConsumerProfile, ArIgnoreMwWlOverrideStandaloneKeyAndDefaults) {
     EXPECT_TRUE(c2.arIgnoreMwWl());
     EXPECT_TRUE(c2.networkConsumerArIgnoreMwWl());   // profile off -> the standalone key
 
-    // Defaults: profile off, tri-state unset, keys false/empty — the OFF path.
+    // Defaults: profile off, tri-state unset, keys false/empty (the off path).
     const fs::path p3 = writeTempConfig("consumer_defaults", networkConfigRt("", ""));
     GnssConfig c3;
     ASSERT_TRUE(c3.loadFromJson(p3, log));
@@ -479,10 +479,10 @@ TEST(NetworkConsumerProfile, ArIgnoreMwWlOverrideStandaloneKeyAndDefaults) {
     std::error_code ec; fs::remove(p1, ec); fs::remove(p2, ec); fs::remove(p3, ec);
 }
 
-// The profile arms estimation.estimate_ifb when consuming network code biases —
+// The profile arms estimation.estimate_ifb when consuming network code biases:
 // a standalone consumer has no producer config to inherit it from, and without
-// receiver code-bias states a code-bias datum re-reference has nothing to
-// absorb it (renders the engine's one-shot A5 warning moot on this path).
+// receiver code-bias states nothing absorbs a code-bias datum re-reference.  On
+// this path the engine's one-shot A5 warning therefore does not apply.
 TEST(NetworkConsumerProfile, ArmsEstimateIfbForBiasConsumption) {
     LogManager log;
     const fs::path p = writeTempConfig("profile_ifb",
@@ -495,8 +495,8 @@ TEST(NetworkConsumerProfile, ArmsEstimateIfbForBiasConsumption) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-// RTA-6 key parsing: network.product_flush_per_epoch and
-// realtime.network_products_path land in their config structs.
+// Key parsing: network.product_flush_per_epoch and
+// realtime.network_products_path land in their config structs (RTA-6).
 TEST(NetworkConsumerProfile, FlushToggleAndProductsPathParse) {
     LogManager log;
     const fs::path p = writeTempConfig("rt_tail_keys",
@@ -512,7 +512,7 @@ TEST(NetworkConsumerProfile, FlushToggleAndProductsPathParse) {
 }
 
 // ===========================================================================
-// RTA-8: orbit_source profile field + per-stream corrections_accept ingest key
+// orbit_source profile field + per-stream corrections_accept ingest key (RTA-8)
 // ===========================================================================
 
 // processing.network_consumer.orbit_source: defaults to "external", accepts
@@ -543,9 +543,9 @@ TEST(NetworkConsumerProfile, OrbitSourceParsesAndValidates) {
     std::error_code ec; fs::remove(p1, ec); fs::remove(p2, ec); fs::remove(p3, ec);
 }
 
-// Card 7 (RTF-2): processing.network_consumer.orbit_clock_max_skew_s — defaults
-// 0 (echo skew check + withhold off), parses a positive budget, and a negative
-// value clamps back to 0 with a warning.
+// processing.network_consumer.orbit_clock_max_skew_s defaults to 0 (echo skew
+// check and withhold off), parses a positive budget, and clamps a negative value
+// back to 0 with a warning (Card 7, RTF-2).
 TEST(NetworkConsumerProfile, OrbitClockMaxSkewParsesAndClamps) {
     LogManager log;
 
@@ -608,12 +608,12 @@ TEST(NetworkConsumerProfile, CorrectionsAcceptParsesPerStream) {
 }
 
 // ===========================================================================
-// RTA-9: bias-gate arming under consumption + clock stale-hold / fallback keys
+// Bias-gate arming under consumption + clock stale-hold / fallback keys (RTA-9)
 // ===========================================================================
 
-// RTA-9(a): the profile arms processing.enable_ssr_bias_max_age when bias
-// consumption is on and the user wrote NO key; an explicit false is respected;
-// an explicit true is simply kept.
+// The profile arms processing.enable_ssr_bias_max_age when bias consumption is
+// on and the config has no such key; an explicit false is respected and an
+// explicit true is kept (RTA-9(a)).
 TEST(NetworkConsumerProfile, ArmsBiasMaxAgeUnderConsumption) {
     LogManager log;
 
@@ -656,9 +656,9 @@ TEST(NetworkConsumerProfile, ArmsBiasMaxAgeUnderConsumption) {
     fs::remove(p1, ec); fs::remove(p2, ec); fs::remove(p3, ec); fs::remove(p4, ec);
 }
 
-// RTA-9(b)/RTA-13 processing keys: ssr_clock_stale_hold_factor defaults 0 (rung
-// off), parses a widening factor, and clamps (0,1] to 1 (the factor can only
-// widen the clock apply window); ssr_bias_band_fallback defaults false.
+// Processing keys: ssr_clock_stale_hold_factor defaults to 0 (rung off), parses
+// a widening factor, and clamps (0,1] to 1 (the factor can only widen the clock
+// apply window); ssr_bias_band_fallback defaults to false (RTA-9(b), RTA-13).
 TEST(NetworkConsumerProfile, ClockStaleHoldAndBandFallbackKeysParse) {
     LogManager log;
 
@@ -685,15 +685,15 @@ TEST(NetworkConsumerProfile, ClockStaleHoldAndBandFallbackKeysParse) {
     std::error_code ec; fs::remove(p1, ec); fs::remove(p2, ec); fs::remove(p3, ec);
 }
 
-// RTB-8: network.service_mode arms the coherent RT-service producer toggle set.
-// BUNDLE-WINS semantics: an explicit non-zero numeric wins, but an explicit
-// false on an armed bool (or an explicit 0 numeric) is overridden with a warn
+// network.service_mode arms the coherent RT-service producer toggle set (RTB-8).
+// The bundle wins: an explicit non-zero numeric is kept, but an explicit false
+// on an armed bool (or an explicit 0 numeric) is overridden with a warning
 // (see BundleOverridesExplicitDisables below).
 TEST(NetworkServiceProfile, ServiceModeArmsCoherentSet) {
     LogManager log;
 
     // Default (no service_mode): every armed toggle stays at its factory default
-    // (the OFF-path byte-identity proxy, incl. every P2-added knob).
+    // (the off-path byte-identity proxy, including every knob added in P2).
     const fs::path p0 = writeTempConfig("svc_off", networkConfig(kGpsGal, kPriosGps, ""));
     GnssConfig c0;
     ASSERT_TRUE(c0.loadFromJson(p0, log));
@@ -708,7 +708,7 @@ TEST(NetworkServiceProfile, ServiceModeArmsCoherentSet) {
     EXPECT_DOUBLE_EQ(c0.networkContractRebroadcastS(), 0.0);
     EXPECT_DOUBLE_EQ(c0.getNetworkConfig().health_interval_s, 0.0);
     EXPECT_FALSE(c0.getNetworkConfig().product_flush_per_epoch);
-    // P2 additions stay at their defaults without service_mode.
+    // The knobs added in P2 stay at their defaults without service_mode.
     EXPECT_FALSE(c0.networkPerConstWithhold());
     EXPECT_FALSE(c0.networkEmitEpochStatusRecord());
     EXPECT_FALSE(c0.networkPivotVanishReturnSignal());
@@ -716,7 +716,7 @@ TEST(NetworkServiceProfile, ServiceModeArmsCoherentSet) {
     EXPECT_FALSE(c0.networkScopedHandoverResponse());
     EXPECT_DOUBLE_EQ(c0.getNetworkConfig().trace_rotate_mb, 0.0);
 
-    // service_mode on → the FULL coherent producer set is armed.
+    // service_mode on → the full coherent producer set is armed.
     const fs::path p1 = writeTempConfig("svc_on",
         networkConfig(kGpsGal, kPriosGps, "    \"service_mode\": true,\n"));
     GnssConfig c1;
@@ -737,8 +737,8 @@ TEST(NetworkServiceProfile, ServiceModeArmsCoherentSet) {
     EXPECT_TRUE(c1.getNetworkConfig().product_flush_per_epoch);
     EXPECT_DOUBLE_EQ(c1.networkContractRebroadcastS(), 30.0);
     EXPECT_DOUBLE_EQ(c1.getNetworkConfig().health_interval_s, 30.0);
-    // P2 additions: withhold carve-out, heartbeat, datum-signalling + handover
-    // controls, trace rotation (keep stays at its parsed default 3).
+    // Additions from P2: withhold carve-out, heartbeat, datum-signalling and
+    // handover controls, trace rotation (keep stays at its parsed default 3).
     EXPECT_TRUE(c1.networkPerConstWithhold());
     EXPECT_TRUE(c1.networkEmitEpochStatusRecord());
     EXPECT_TRUE(c1.networkPivotVanishReturnSignal());
@@ -746,12 +746,12 @@ TEST(NetworkServiceProfile, ServiceModeArmsCoherentSet) {
     EXPECT_TRUE(c1.networkScopedHandoverResponse());
     EXPECT_DOUBLE_EQ(c1.getNetworkConfig().trace_rotate_mb, 256.0);
     EXPECT_EQ(c1.getNetworkConfig().trace_rotate_keep, 3);
-    // NOT armed: user-path / policy numerics.
+    // Not armed: user-path / policy numerics.
     EXPECT_TRUE(c1.getNetworkConfig().state_snapshot_path.empty());
     EXPECT_DOUBLE_EQ(c1.getNetworkConfig().warmup_ura_floor_m, 0.0);
     EXPECT_FALSE(c1.networkClockRunawayCheck());
 
-    // Explicit NON-ZERO numeric wins over the profile default.
+    // An explicit non-zero numeric wins over the profile default.
     const fs::path p2 = writeTempConfig("svc_override",
         networkConfig(kGpsGal, kPriosGps,
                       "    \"service_mode\": true,\n"
@@ -766,10 +766,10 @@ TEST(NetworkServiceProfile, ServiceModeArmsCoherentSet) {
 }
 
 // network.emit_clock_rate: the decoupled C1 (clock-rate) emission toggle round-trips,
-// is off by default (byte-identical), and is NOT armed by service_mode (it is the
-// alternative to clock_model, which service_mode arms instead).  See
-// docs/CLOCK_HADAMARD_CALIB — clock_model's two-state CARRY is a no-go; this emits the
-// rate WITHOUT carrying.
+// is off by default (byte-identical), and is not armed by service_mode (it is the
+// alternative to clock_model, which service_mode arms instead).  It emits the rate
+// without carrying it; clock_model's two-state carry is a no-go (see
+// docs/CLOCK_HADAMARD_CALIB).
 TEST(NetworkEmitClockRate, TogglesAndDefaults) {
     LogManager log;
 
@@ -786,7 +786,7 @@ TEST(NetworkEmitClockRate, TogglesAndDefaults) {
     EXPECT_TRUE(con.networkEmitClockRate());                     // explicit on parses
     EXPECT_FALSE(con.networkClockModel());                       // independent of clock_model
 
-    // service_mode does NOT arm emit_clock_rate (clock_model carries C1 under the bundle).
+    // service_mode does not arm emit_clock_rate (clock_model carries C1 under the bundle).
     const fs::path psvc = writeTempConfig("emit_rate_svc",
         networkConfig(kGpsGal, kPriosGps, "    \"service_mode\": true,\n"));
     GnssConfig csvc;
@@ -797,11 +797,12 @@ TEST(NetworkEmitClockRate, TogglesAndDefaults) {
     std::error_code ec; fs::remove(pdef, ec); fs::remove(pon, ec); fs::remove(psvc, ec);
 }
 
-// RTB-8/P1: BUNDLE-WINS — an explicit `false` on an armed bool, an explicit 0
-// numeric, and a negative numeric (clamped to 0 at parse) are all overridden by
-// the bundle.  Each such override emits one WARN at load; the warn itself is
-// NOT assertable in this harness (LogManager writes to spdlog file sinks and
-// exposes no inspectable capture sink), so these are behavioral asserts only.
+// The bundle wins: an explicit `false` on an armed bool, an explicit 0 numeric,
+// and a negative numeric (clamped to 0 at parse) are all overridden by the
+// bundle.  Each such override emits one warning at load.  This test checks the
+// resulting config only; it does not capture the warning (the
+// loadCapturingConfigLog helper further down does that for other tests).
+// (RTB-8/P1)
 TEST(NetworkServiceProfile, BundleOverridesExplicitDisables) {
     LogManager log;
 
@@ -820,7 +821,7 @@ TEST(NetworkServiceProfile, BundleOverridesExplicitDisables) {
     EXPECT_TRUE(c1.networkEmitUra());
     EXPECT_DOUBLE_EQ(c1.networkContractRebroadcastS(), 30.0);    // explicit 0 = disable → re-armed
 
-    // Explicit NEGATIVE numeric: clamped to 0 at parse, then re-armed by the
+    // Explicit negative numeric: clamped to 0 at parse, then re-armed by the
     // bundle (the "clamped-then-armed" funnel the override warn covers).
     const fs::path p2 = writeTempConfig("svc_explicit_neg",
         networkConfig(kGpsGal, kPriosGps,
@@ -835,12 +836,12 @@ TEST(NetworkServiceProfile, BundleOverridesExplicitDisables) {
     std::error_code ec; fs::remove(p1, ec); fs::remove(p2, ec);
 }
 
-// RTB-8/P3(a) regression: the R11/R1 pathological-withhold clamp runs at parse,
-// BEFORE the arming block — so a service-armed withhold of 2×trigger with a
-// small explicit trigger (2×0.4 = 0.8 <= 1; σ̂0 is floored at 1) used to slip
-// through and withhold essentially every warm epoch.  The post-arming re-run
-// must catch it: the withhold comes out DISABLED (0), not armed <= 1, and the
-// rest of the bundle stays armed.
+// The pathological-withhold clamp (R11/R1) runs at parse, before the arming
+// block, so it does not see a service-armed withhold of 2×trigger.  With a small
+// explicit trigger that withhold is 2×0.4 = 0.8 <= 1, and since σ̂0 is floored at
+// 1 it would withhold nearly every warm epoch.  The clamp re-runs after arming:
+// the withhold comes out disabled (0), not armed at <= 1, and the rest of the
+// bundle stays armed.  (RTB-8/P3(a) regression)
 TEST(NetworkServiceProfile, ServiceArmedPathologicalWithholdIsReclamped) {
     LogManager log;
 
@@ -850,24 +851,24 @@ TEST(NetworkServiceProfile, ServiceArmedPathologicalWithholdIsReclamped) {
                       "    \"raim_sigma0_trigger\": 0.4,\n"));
     GnssConfig c1;
     ASSERT_TRUE(c1.loadFromJson(p1, log));
-    EXPECT_DOUBLE_EQ(c1.networkRaimWithholdSigma0(), 0.0);       // re-clamped, NOT 0.8
+    EXPECT_DOUBLE_EQ(c1.networkRaimWithholdSigma0(), 0.0);       // re-clamped, not 0.8
     EXPECT_TRUE(c1.networkRaimWithinEpoch());                    // rest of the bundle unaffected
     EXPECT_TRUE(c1.networkRaim());
 
-    // Non-service parse-site clamp still behaves as before (idempotency anchor:
-    // an explicit pathological ceiling is disabled at parse; the post-arming
-    // re-run then sees an already-valid 0 and must NOT fire again).
+    // The non-service parse-site clamp is unchanged (idempotency anchor: an
+    // explicit pathological ceiling is disabled at parse, and the post-arming
+    // re-run then sees an already-valid 0 and does not fire again).
     const fs::path p2 = writeTempConfig("nosvc_patho_withhold",
         networkConfig(kGpsGal, kPriosGps,
                       "    \"raim_withhold_sigma0\": 0.5,\n"));
     GnssConfig c2;
     ASSERT_TRUE(c2.loadFromJson(p2, log));
     EXPECT_DOUBLE_EQ(c2.networkRaimWithholdSigma0(), 0.0);       // parse-site clamp
-    EXPECT_FALSE(c2.networkRaimWithinEpoch());                   // clamped BEFORE the coupling
+    EXPECT_FALSE(c2.networkRaimWithinEpoch());                   // clamped before the coupling
 
-    // P3(b) companion: a stray invalid clock_model_q2 with clock_model UNSET is
-    // unvalidated at parse (the restore gates on the pre-arming flag); the
-    // service bundle arms clock_model, so the post-arming re-run must restore it.
+    // P3(b) companion: a stray invalid clock_model_q2 with clock_model unset is
+    // not validated at parse (the restore gates on the pre-arming flag); the
+    // service bundle arms clock_model, so the post-arming re-run restores it.
     const fs::path p3 = writeTempConfig("svc_bad_q2",
         networkConfig(kGpsGal, kPriosGps,
                       "    \"service_mode\": true,\n"
@@ -880,11 +881,10 @@ TEST(NetworkServiceProfile, ServiceArmedPathologicalWithholdIsReclamped) {
     std::error_code ec; fs::remove(p1, ec); fs::remove(p2, ec); fs::remove(p3, ec);
 }
 
-// RTB-8/P4(b): service_mode with an EMPTY network.product_output_path parses
-// fine — the load emits the one coherence warn listing the inert file-side
-// knobs (not assertable in this harness, see above) and the armed set is
-// unchanged (the knobs stay armed; they simply have no file to write to until
-// a path is configured).
+// service_mode with an empty network.product_output_path parses: the load emits
+// one coherence warning listing the inert file-side knobs (not captured here),
+// and the armed set is unchanged (the knobs stay armed and have no file to write
+// to until a path is configured).  (RTB-8/P4(b))
 TEST(NetworkServiceProfile, EmptyProductPathParsesWithArmedSetUnchanged) {
     LogManager log;
 
@@ -902,10 +902,10 @@ TEST(NetworkServiceProfile, EmptyProductPathParsesWithArmedSetUnchanged) {
     std::error_code ec; fs::remove(p1, ec);
 }
 
-// RTB-6 P4(d) + P1: the service-observability knobs parse with sibling-convention
-// clamps — health_interval_s < 0 → 0 (heartbeat off), trace_rotate_mb < 0 → 0
-// (rotation off), trace_rotate_keep < 1 → 1 (at least one rolled generation).
-// Defaults: 0 / 0 / 3 (heartbeat + rotation off ⇒ byte-identical).
+// The service-observability knobs parse with the sibling-convention clamps:
+// health_interval_s < 0 → 0 (heartbeat off), trace_rotate_mb < 0 → 0 (rotation
+// off), trace_rotate_keep < 1 → 1 (at least one rolled generation).  Defaults:
+// 0 / 0 / 3 (heartbeat and rotation off ⇒ byte-identical).  (RTB-6 P4(d) + P1)
 TEST(NetworkServiceProfile, HealthAndRotationKnobsParseAndClamp) {
     LogManager log;
 
@@ -926,7 +926,7 @@ TEST(NetworkServiceProfile, HealthAndRotationKnobsParseAndClamp) {
     EXPECT_DOUBLE_EQ(c1.getNetworkConfig().trace_rotate_mb, 256.0);
     EXPECT_EQ(c1.getNetworkConfig().trace_rotate_keep, 5);
 
-    // Clamps (each logs a WARN; the load still succeeds).
+    // Clamps (each logs a warning; the load still succeeds).
     const fs::path p2 = writeTempConfig("rot_clamp",
         networkConfig(kGpsGal, kPriosGps,
                       "    \"health_interval_s\": -5.0,\n"
@@ -943,7 +943,7 @@ TEST(NetworkServiceProfile, HealthAndRotationKnobsParseAndClamp) {
 }
 
 // ===========================================================================
-// RTA-12: contract identity keys + SIF roster coordinates + ARP blunder gate
+// Contract identity keys + SIF roster coordinates + ARP blunder gate (RTA-12)
 // ===========================================================================
 
 #ifndef GNSS_TEST_DATA_DIR
@@ -953,7 +953,7 @@ TEST(NetworkServiceProfile, HealthAndRotationKnobsParseAndClamp) {
 // network.{frame_id,coord_epoch,use_sif_coordinates,coord_age_warn_years},
 // the processing.network_consumer.expect_{frame_id,atx_id,orbit_ref} pins and
 // realtime.arp_blunder_gate_m parse; everything defaults empty/off (the
-// byte-identical OFF path).
+// byte-identical off path).
 TEST(NetworkIdentityConfig, IdentityAndGateKeysParseWithInertDefaults) {
     LogManager log;
 
@@ -995,8 +995,8 @@ TEST(NetworkIdentityConfig, IdentityAndGateKeysParseWithInertDefaults) {
 
 namespace {
 
-// Network config with a station that carries NO position_ecef (splice hooks as
-// networkConfigRt): the RTA-12 SIF-roster scenarios.
+// Network config with a station that carries no position_ecef (splice hooks as
+// networkConfigRt), for the SIF-roster scenarios (RTA-12).
 std::string networkConfigNoPos(const std::string& station_name,
                                const std::string& processing_extra,
                                const std::string& network_extra,
@@ -1021,9 +1021,9 @@ std::string networkConfigNoPos(const std::string& station_name,
 
 } // namespace
 
-// The pre-RTA-12 hard error is UNTOUCHED when use_sif_coordinates is off (the
+// The pre-RTA-12 hard error is unchanged when use_sif_coordinates is off (the
 // default): a roster station without position_ecef fails the load.  With the
-// toggle ON but no SIF registry loaded, the load still fails (the relaxation
+// toggle on but no SIF registry loaded, the load still fails (the relaxation
 // requires an actual coordinate source).
 TEST(NetworkIdentityConfig, MissingPositionStaysHardErrorWithoutSif) {
     LogManager log;
@@ -1079,13 +1079,13 @@ TEST(NetworkIdentityConfig, SifResolvesRosterCoordinates) {
     EXPECT_NEAR(sts[1].position_ecef[0], -2491490.590, 1.0);
     EXPECT_NEAR(sts[1].position_ecef[1], -4660802.919, 1.0);
     EXPECT_NEAR(sts[1].position_ecef[2],  3559129.086, 1.0);
-    // ...but NOT the un-propagated reference coordinate: the 4.35-year velocity
-    // propagation (~ -0.0286 m/yr in X alone) must actually be applied.
+    // ...but not the un-propagated reference coordinate: the 4.35-year velocity
+    // propagation (~ -0.0286 m/yr in X alone) has to be applied.
     EXPECT_GT(std::abs(sts[1].position_ecef[0] - (-2491490.58952111)), 0.05);
     // coord_epoch defaulted to the propagation date (decimal year 2024.35...).
     EXPECT_EQ(c1.getNetworkConfig().coord_epoch.rfind("2024.35", 0), 0u);
 
-    // Unknown station: fail loud, don't silently run without coordinates.
+    // Unknown station: the load fails rather than running without coordinates.
     const fs::path p2 = writeTempConfig("sif_unknown",
         networkConfigNoPos("ZZZZ99XXX",
             "    \"enable_station_info\": true,\n",
@@ -1107,11 +1107,11 @@ TEST(NetworkIdentityConfig, SifResolvesRosterCoordinates) {
 }
 
 // ===========================================================================
-// RTB-4: realtime.use_precise_orbits — the "ULT orbits + network clocks" pin
+// realtime.use_precise_orbits: the "ULT orbits + network clocks" pin (RTB-4)
 // ===========================================================================
 
-// The key parses, defaults OFF, and splits the orbit gate from the clock gate
-// exactly as documented: with the default the two gates are EQUAL (every
+// The key parses, defaults off, and splits the orbit gate from the clock gate
+// as documented: with the default the two gates are equal (every
 // product-resolution site byte-identical); armed in a live real-time session,
 // precise SP3 orbits are loaded (orbit gate false) while satellite clocks stay
 // on the live/network source (clock gate true).
@@ -1137,7 +1137,7 @@ TEST(RealtimePreciseOrbitConfig, UsePreciseOrbitsParsesDefaultsOffAndSplitsGates
     GnssConfig c2;
     ASSERT_TRUE(c2.loadFromJson(p2, log));
     EXPECT_TRUE(c2.getRealTimeConfig().use_precise_orbits);
-    EXPECT_FALSE(c2.realtimeUsesLiveOrbitSource());        // SP3 orbits ARE loaded
+    EXPECT_FALSE(c2.realtimeUsesLiveOrbitSource());        // SP3 orbits are loaded
     EXPECT_TRUE(c2.realtimeUsesLiveOrbitClockSource());    // precise CLK still skipped
 
     // Post-processing: the key parses but both gates stay false (precise
@@ -1155,11 +1155,11 @@ TEST(RealtimePreciseOrbitConfig, UsePreciseOrbitsParsesDefaultsOffAndSplitsGates
 }
 
 // ===========================================================================
-// RTF-1 Card 1: network.apriori_source + network.apriori_clock_anchor_sigma_m
+// network.apriori_source + network.apriori_clock_anchor_sigma_m (RTF-1 Card 1)
 // ===========================================================================
 
-// Default network config: a-priori source is Sp3 (precise SP3/CLK identity —
-// today's byte-identical behaviour) and the anchor sigma is 0.0 (auto).
+// Default network config: the a-priori source is Sp3 (precise SP3/CLK identity,
+// the byte-identical behaviour) and the anchor sigma is 0.0 (auto).
 TEST(NetworkAprioriSourceConfig, DefaultsToSp3AutoAnchor) {
     LogManager log;
     const fs::path p = writeTempConfig("apri_default", networkConfig(kGpsGal, kPriosGps, ""));
@@ -1170,8 +1170,8 @@ TEST(NetworkAprioriSourceConfig, DefaultsToSp3AutoAnchor) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-// "brdc_rts" parses to BrdcRts (case-insensitive) and — on its own, with the
-// clock+phase-bias-only V1 slice (no code bias) — loads without error.  The
+// "brdc_rts" parses to BrdcRts (case-insensitive) and, on its own with the
+// clock+phase-bias-only V1 slice (no code bias), loads without error.  The
 // anchor sigma parses to its explicit value.
 TEST(NetworkAprioriSourceConfig, ParsesBrdcRtsAndAnchorSigma) {
     LogManager log;
@@ -1209,9 +1209,9 @@ TEST(NetworkAprioriSourceConfig, UnknownSourceFallsBackToSp3) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-// Validation 1 (hard error): brdc_rts + estimate_sat_code_bias but NOT
-// estimate_iono_sh — the external GIM iono constraint is post-processing-only,
-// so the real-time code-bias slice has no iono constraint.  Fail loud at load.
+// Validation 1 (hard error): brdc_rts + estimate_sat_code_bias without
+// estimate_iono_sh.  The external GIM iono constraint is post-processing-only,
+// so the real-time code-bias slice would have no iono constraint; the load fails.
 TEST(NetworkAprioriSourceConfig, BrdcRtsCodeBiasWithoutIonoShIsError) {
     LogManager log;
     const fs::path p = writeTempConfig("apri_brdc_gim",
@@ -1223,8 +1223,8 @@ TEST(NetworkAprioriSourceConfig, BrdcRtsCodeBiasWithoutIonoShIsError) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-// Validation 1 legal path: brdc_rts + estimate_iono_sh (which FORCES the code
-// bias slice on) is the supported real-time W6 combination — loads fine, both
+// Validation 1 legal path: brdc_rts + estimate_iono_sh (which forces the code
+// bias slice on) is the supported real-time W6 combination; it loads with both
 // flags on.  (The sp3-mode GIM path is unaffected: EstimateSatCodeBiasForces-
 // Prerequisites above still loads code bias with the default sp3 source.)
 TEST(NetworkAprioriSourceConfig, BrdcRtsWithIonoShIsLegal) {
@@ -1241,7 +1241,7 @@ TEST(NetworkAprioriSourceConfig, BrdcRtsWithIonoShIsLegal) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-// service_mode does NOT arm apriori_source (an input-source selection, orthogonal
+// service_mode does not arm apriori_source (an input-source selection, orthogonal
 // to the toggle bundle): a service run left at the default stays Sp3, and an
 // explicit brdc_rts is preserved through the bundle.
 TEST(NetworkAprioriSourceConfig, ServiceModeDoesNotArmAprioriSource) {
@@ -1267,14 +1267,14 @@ TEST(NetworkAprioriSourceConfig, ServiceModeDoesNotArmAprioriSource) {
 }
 
 // ---------------------------------------------------------------------------
-// RTF-1 Card 5 (plan D6): resolveNetworkAprioriClockAnchorSigmaM() — the
-// mode-aware AUTO resolution the producer folds.  Pure config function; the
-// driver's < 100 m binding gate is NOT applied here.
+// resolveNetworkAprioriClockAnchorSigmaM(): the mode-aware auto resolution the
+// producer folds.  Pure config function; the driver's < 100 m binding gate is
+// not applied here.  (RTF-1 Card 5, plan D6)
 // ---------------------------------------------------------------------------
 
-// sp3 + auto (default): resolves to initial_std.sat_clock UNCHANGED — the
-// byte-identity guarantee.  The loose default (>100 m) keeps the driver anchor
-// OFF, so every existing sp3 network config is unaffected.
+// sp3 + auto (default): resolves to initial_std.sat_clock unchanged, which is
+// the byte-identity guarantee.  The loose default (>100 m) keeps the driver
+// anchor off, so every existing sp3 network config is unaffected.
 TEST(NetworkAprioriSourceConfig, ResolveAnchorSp3AutoIsInitialStdUnchanged) {
     LogManager log;
     const fs::path p = writeTempConfig("apri_res_sp3", networkConfig(kGpsGal, kPriosGps, ""));
@@ -1288,7 +1288,7 @@ TEST(NetworkAprioriSourceConfig, ResolveAnchorSp3AutoIsInitialStdUnchanged) {
 }
 
 // brdc_rts + auto: resolves to the 3.0 m broadcast-grade default (< 100 m ⇒ the
-// driver anchor binds), NOT the loose initial_std.sat_clock.
+// driver anchor binds), not the loose initial_std.sat_clock.
 TEST(NetworkAprioriSourceConfig, ResolveAnchorBrdcRtsAutoIsThreeMetres) {
     LogManager log;
     const fs::path p = writeTempConfig("apri_res_brdc",
@@ -1301,7 +1301,7 @@ TEST(NetworkAprioriSourceConfig, ResolveAnchorBrdcRtsAutoIsThreeMetres) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-// Explicit positive sigma wins in BOTH modes (overrides the auto), sp3 case:
+// An explicit positive sigma wins in both modes (overrides the auto), sp3 case:
 // a user pinning 5 m in sp3 mode gets 5 m, not initial_std.sat_clock.
 TEST(NetworkAprioriSourceConfig, ResolveAnchorExplicitWinsInSp3) {
     LogManager log;
@@ -1314,7 +1314,7 @@ TEST(NetworkAprioriSourceConfig, ResolveAnchorExplicitWinsInSp3) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-// Explicit positive sigma wins in BOTH modes, brdc_rts case: 5 m overrides the
+// An explicit positive sigma wins in both modes, brdc_rts case: 5 m overrides the
 // 3 m auto default.
 TEST(NetworkAprioriSourceConfig, ResolveAnchorExplicitWinsInBrdcRts) {
     LogManager log;
@@ -1335,20 +1335,20 @@ TEST(NetworkAprioriSourceConfig, ResolveAnchorExplicitWinsInBrdcRts) {
 // reinflation, and the closed-loop bias-age arming counterpart of RTA-9(a)
 // ===========================================================================
 
-// network.clock_datum_broadcast_anchored defaults OFF (byte-identical).  The
-// datum soft-anchors each satellite clock to its OWN a-priori, so WHICH a-priori
-// is in force decides what the toggle means:
+// network.clock_datum_broadcast_anchored defaults off (byte-identical).  The
+// datum soft-anchors each satellite clock to its own a-priori, so the a-priori
+// in force decides what the toggle means:
 //   - brdc_rts: the target is the broadcast clock and the auto sigma resolves to
 //     the binding 3.0 m broadcast grade -> legal with no extra keys;
-//   - sp3: the target is the PRECISE product clock, i.e. the EXTERNAL-CLOCK HOLD
-//     rung of the external-constraint ladder.  Legal, but ONLY with an explicit
+//   - sp3: the target is the precise product clock, i.e. the external-clock hold
+//     rung of the external-constraint ladder.  Legal only with an explicit
 //     sigma: the sp3 auto resolution is initial_std.sat_clock (default 1000 m),
 //     which is not a binding anchor, so an omitted key there is always a mistake
-//     and must fail loud rather than run with an unrealized clock gauge.
+//     and the load fails rather than running with an unrealized clock gauge.
 TEST(NetworkClockDatumConfig, BroadcastAnchoredDefaultsOffAndSigmaPolicyByAprioriSource) {
     LogManager log;
 
-    // Default: key absent -> false (the OFF path — no anchors folded).
+    // Default: key absent -> false (the off path: no anchors folded).
     {
         const fs::path p = writeTempConfig("ba_default",
             networkConfig(kGpsGal, kPriosGps, ""));
@@ -1357,7 +1357,7 @@ TEST(NetworkClockDatumConfig, BroadcastAnchoredDefaultsOffAndSigmaPolicyByAprior
         EXPECT_FALSE(cfg.networkClockDatumBroadcastAnchored());
         std::error_code ec; fs::remove(p, ec);
     }
-    // sp3 (default a-priori) with NO explicit sigma: hard error.  The auto value
+    // sp3 (default a-priori) with no explicit sigma: hard error.  The auto value
     // is initial_std.sat_clock = 1000 m, far past the binding gate.
     {
         const fs::path p = writeTempConfig("ba_sp3_auto",
@@ -1367,8 +1367,9 @@ TEST(NetworkClockDatumConfig, BroadcastAnchoredDefaultsOffAndSigmaPolicyByAprior
         EXPECT_FALSE(cfg.loadFromJson(p, log));
         std::error_code ec; fs::remove(p, ec);
     }
-    // sp3 + an explicit BINDING sigma: the EXTERNAL-CLOCK HOLD posture.  Loads,
-    // and the resolved sigma is the explicit value in both modes.
+    // sp3 + an explicit binding sigma: the external-clock hold posture.  Loads,
+    // and the resolved sigma is the explicit value (an explicit sigma wins in
+    // both modes).
     {
         const fs::path p = writeTempConfig("ba_sp3_explicit",
             networkConfig(kGpsGal, kPriosGps,
@@ -1381,7 +1382,7 @@ TEST(NetworkClockDatumConfig, BroadcastAnchoredDefaultsOffAndSigmaPolicyByAprior
         EXPECT_DOUBLE_EQ(cfg.resolveNetworkAprioriClockAnchorSigmaM(), 0.02);
         std::error_code ec; fs::remove(p, ec);
     }
-    // sp3 + an explicit NON-binding sigma still fails: the explicit-value gate
+    // sp3 + an explicit non-binding sigma still fails: the explicit-value gate
     // and the < 100 m binding gate are independent, and both must pass.
     {
         const fs::path p = writeTempConfig("ba_sp3_weak",
@@ -1407,17 +1408,17 @@ TEST(NetworkClockDatumConfig, BroadcastAnchoredDefaultsOffAndSigmaPolicyByAprior
     }
 }
 
-// Exactly one clock-gauge realization may be selected — sum-to-zero and the
+// Only one clock-gauge realization may be selected: sum-to-zero and the
 // broadcast anchors both close the same rank deficiency, so together they
-// over-constrain and the rank gate CANNOT catch it (both look valid to it).
-// And the anchors ARE the gauge: a non-binding explicit sigma (>= 100 m)
-// leaves the clock common-mode eigenvalue at or below the rank-gate cutoff —
-// an undefined datum.  Both misconfigurations fail loud at load.
+// over-constrain, and the rank gate cannot detect it (both look valid to it).
+// The anchors are the gauge: a non-binding explicit sigma (>= 100 m) leaves the
+// clock common-mode eigenvalue at or below the rank-gate cutoff, an undefined
+// datum.  Both misconfigurations fail the load.
 TEST(NetworkClockDatumConfig, BroadcastAnchoredRejectsSumToZeroAndNonBindingSigma) {
     LogManager log;
 
     // Both clock gauges armed (brdc_rts satisfied so the mutual exclusion is
-    // the ONLY failing constraint): hard error.
+    // the only failing constraint): hard error.
     {
         const fs::path p = writeTempConfig("ba_s2z",
             networkConfig(kGpsGal, kPriosGps,
@@ -1443,12 +1444,12 @@ TEST(NetworkClockDatumConfig, BroadcastAnchoredRejectsSumToZeroAndNonBindingSigm
 }
 
 // network.clock_disc_on_set_change models "membership change = clock-datum
-// re-reference", which is true ONLY for the sum-to-zero gauge (the pivot pin
+// re-reference", which holds only for the sum-to-zero gauge (the pivot pin
 // holds while the pivot is up; the broadcast anchors never move).  Armed under
-// any other datum it would mint spurious consumer resets — the exact churn
-// class (defect 3) this trigger exists to signal away — so it fails loud.
-// With s2z it loads and AUTO-ARMS network.emit_clock_disc: the set-change
-// trigger only reaches the wire through the clock discontinuity channel.
+// any other datum it would cause spurious consumer resets, the churn class
+// (defect 3) this trigger exists to signal, so the load fails.  With s2z it
+// loads and auto-arms network.emit_clock_disc: the set-change trigger reaches
+// the wire only through the clock discontinuity channel.
 TEST(NetworkDiscSignalConfig, ClockDiscOnSetChangeRequiresSumToZeroAndArmsEmit) {
     LogManager log;
 
@@ -1472,7 +1473,7 @@ TEST(NetworkDiscSignalConfig, ClockDiscOnSetChangeRequiresSumToZeroAndArmsEmit) 
         std::error_code ec; fs::remove(p, ec);
     }
     // Armed with s2z: loads, and emit_clock_disc (unset by the user) is
-    // auto-armed so the set-change counter bump actually travels on the wire.
+    // auto-armed so the set-change counter bump travels on the wire.
     {
         const fs::path p = writeTempConfig("setchg_s2z",
             networkConfig(kGpsGal, kPriosGps,
@@ -1486,15 +1487,15 @@ TEST(NetworkDiscSignalConfig, ClockDiscOnSetChangeRequiresSumToZeroAndArmsEmit) 
     }
 }
 
-// network.code_bias_disc_jump_test (emitter-side VALUE-jump disc trigger for
+// network.code_bias_disc_jump_test (emitter-side value-jump disc trigger for
 // weak-separation code-bias wander) and estimation.clock_disc_isb_reinflate_std
 // (consumer-side ISB covariance reinflation on a clock disc bump) parse with
-// inert defaults — both are default-OFF additions on the producer-wire-defect
-// path and must not perturb any existing config (the OFF byte-identity proxy).
+// inert defaults.  Both are default-off additions on the producer-wire-defect
+// path and leave every existing config unchanged (the off byte-identity proxy).
 TEST(NetworkDiscSignalConfig, JumpTestAndIsbReinflateParseWithInertDefaults) {
     LogManager log;
 
-    // Defaults: false / 0.0 — nothing armed, nothing reinflated.
+    // Defaults: false / 0.0 (nothing armed, nothing reinflated).
     {
         const fs::path p = writeTempConfig("disc_defaults",
             networkConfig(kGpsGal, kPriosGps, ""));
@@ -1505,8 +1506,8 @@ TEST(NetworkDiscSignalConfig, JumpTestAndIsbReinflateParseWithInertDefaults) {
         std::error_code ec; fs::remove(p, ec);
     }
     // Explicit values land in their getters.  The jump test without
-    // network.estimate_sat_code_bias is INERT (warn-only, no code biases are
-    // emitted) — the load must still succeed.
+    // network.estimate_sat_code_bias is inert (warning only; no code biases are
+    // emitted), and the load still succeeds.
     {
         const fs::path p = writeTempConfig("disc_armed",
             networkConfigRt("",
@@ -1521,10 +1522,10 @@ TEST(NetworkDiscSignalConfig, JumpTestAndIsbReinflateParseWithInertDefaults) {
 }
 
 // deriveClosedLoopConsumerConfig arms processing.enable_ssr_bias_max_age on the
-// DERIVED config when network products are consumed and the user wrote no key —
-// bias consumption without the staleness gate silently applies unboundedly
-// stale biases across producer withhold gaps (the A5/RTA-9(a) defect class the
-// standalone profile already guards; this is its closed-loop counterpart).
+// derived config when network products are consumed and the config has no such
+// key.  Bias consumption without the staleness gate applies arbitrarily stale
+// biases across producer withhold gaps (the A5/RTA-9(a) defect class that the
+// standalone profile guards; this is its closed-loop counterpart).
 // The producer's own config is untouched, and an explicit user key (either
 // polarity) is respected via the same presence check as the profile path.
 TEST(ClosedLoopBiasGateConfig, DerivedConsumerArmsBiasMaxAge) {
@@ -1540,7 +1541,7 @@ TEST(ClosedLoopBiasGateConfig, DerivedConsumerArmsBiasMaxAge) {
     const GnssConfig d1 = c1.deriveClosedLoopConsumerConfig();
     EXPECT_TRUE(d1.enableSsrBiasMaxAge());                // armed under consumption
 
-    // Explicit false in the producer JSON: respected — the derived stays off.
+    // Explicit false in the producer JSON is respected: the derived config stays off.
     const fs::path p2 = writeTempConfig("cl_biasage_false",
         networkConfigRt("    \"enable_ssr_bias_max_age\": false,\n",
             "    \"closed_loop\": { \"consume_network_products\": true },\n"));
@@ -1558,8 +1559,8 @@ TEST(ClosedLoopBiasGateConfig, DerivedConsumerArmsBiasMaxAge) {
     const GnssConfig d3 = c3.deriveClosedLoopConsumerConfig();
     EXPECT_TRUE(d3.enableSsrBiasMaxAge());
 
-    // Consumption off (the A/B BASELINE consumer: precise SP3/CLK + .BIA only):
-    // nothing consumed, nothing to age-gate — not armed.
+    // Consumption off (the A/B baseline consumer: precise SP3/CLK + .BIA only):
+    // nothing is consumed, so there is nothing to age-gate and nothing is armed.
     const fs::path p4 = writeTempConfig("cl_biasage_noconsume",
         networkConfigRt("",
             "    \"closed_loop\": { \"consume_network_products\": false },\n"));
@@ -1572,11 +1573,11 @@ TEST(ClosedLoopBiasGateConfig, DerivedConsumerArmsBiasMaxAge) {
     fs::remove(p1, ec); fs::remove(p2, ec); fs::remove(p3, ec); fs::remove(p4, ec);
 }
 
-// Card 3 (network.phase_datum_eq34): parses OFF by default, ON in isolation, and
-// with the two sub-knobs (preferred datum receiver, pin-to-round).
+// network.phase_datum_eq34 parses off by default, on in isolation, and with the
+// two sub-knobs (preferred datum receiver, pin-to-round).  (Card 3)
 TEST(CodeBiasNetworkConfig, Eq34PhaseDatumParses) {
     LogManager log;
-    // Default OFF, byte-identical.
+    // Default off, byte-identical.
     {
         const fs::path p = writeTempConfig("eq34_default",
             networkConfig(kGpsGal, kPriosGps, ""));
@@ -1587,7 +1588,7 @@ TEST(CodeBiasNetworkConfig, Eq34PhaseDatumParses) {
         EXPECT_TRUE(cfg.networkPhaseDatumEq34Receiver().empty());
         std::error_code ec; fs::remove(p, ec);
     }
-    // ON in isolation, with sub-knobs.
+    // On in isolation, with sub-knobs.
     {
         const fs::path p = writeTempConfig("eq34_on",
             networkConfig(kGpsGal, kPriosGps,
@@ -1603,8 +1604,8 @@ TEST(CodeBiasNetworkConfig, Eq34PhaseDatumParses) {
     }
 }
 
-// Card 3 mutual exclusion: eq34 + ensemble is two realizations of the SAME gauge
-// — the load must FAIL loud.  eq34 + prioritized is allowed (eq34 supersedes).
+// Mutual exclusion: eq34 + ensemble are two realizations of the same gauge, so
+// the load fails.  eq34 + prioritized is allowed (eq34 supersedes).  (Card 3)
 TEST(CodeBiasNetworkConfig, Eq34EnsembleMutexFailsPrioritizedSupersedes) {
     LogManager log;
     // eq34 && ensemble -> load fails.
@@ -1632,11 +1633,11 @@ TEST(CodeBiasNetworkConfig, Eq34EnsembleMutexFailsPrioritizedSupersedes) {
     }
 }
 
-// Card 4 (M1) D5 (network.carry_invariant_innov_gate): parses OFF by default (byte-
-// identical), ON with carry_invariant (which itself needs eq34), and reads the k knob.
+// network.carry_invariant_innov_gate parses off by default (byte-identical), on with
+// carry_invariant (which itself needs eq34), and reads the k knob.  (Card 4 (M1) D5)
 TEST(CodeBiasNetworkConfig, CarryInvariantInnovGateParses) {
     LogManager log;
-    // Default OFF, k defaults to 4.0.
+    // Default off, k defaults to 4.0.
     {
         const fs::path p = writeTempConfig("d5_default",
             networkConfig(kGpsGal, kPriosGps, ""));
@@ -1647,7 +1648,7 @@ TEST(CodeBiasNetworkConfig, CarryInvariantInnovGateParses) {
         EXPECT_FALSE(cfg.networkCarryInvariantInnovRefold());
         std::error_code ec; fs::remove(p, ec);
     }
-    // ON atop carry_invariant + eq34, with a custom k.
+    // On atop carry_invariant + eq34, with a custom k.
     {
         const fs::path p = writeTempConfig("d5_on",
             networkConfig(kGpsGal, kPriosGps,
@@ -1663,8 +1664,8 @@ TEST(CodeBiasNetworkConfig, CarryInvariantInnovGateParses) {
     }
 }
 
-// Card 4 (M1) D5: the innovation gate is defined only on the carried DDs — arming it
-// without carry_invariant is an incoherent config and must FAIL loud at load.
+// The innovation gate is defined only on the carried DDs, so arming it without
+// carry_invariant is an incoherent config and fails the load.  (Card 4 (M1) D5)
 TEST(CodeBiasNetworkConfig, CarryInvariantInnovGateRequiresCarryInvariant) {
     LogManager log;
     const fs::path p = writeTempConfig("d5_no_carry",
@@ -1677,11 +1678,12 @@ TEST(CodeBiasNetworkConfig, CarryInvariantInnovGateRequiresCarryInvariant) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-// Card 4 (M1) D5 v2: the LS-VCE calibration parses OFF by default (byte-identical), ON atop
-// the innovation gate with a window, and is REJECTED without the gate (nothing to calibrate).
+// The LS-VCE calibration parses off by default (byte-identical), on atop the innovation
+// gate with a window, and is rejected without the gate (nothing to calibrate).
+// (Card 4 (M1) D5 v2)
 TEST(CodeBiasNetworkConfig, CarryInvariantInnovCalibrateParsesAndRequiresGate) {
     LogManager log;
-    // Default OFF, window 60.
+    // Default off, window 60.
     {
         const fs::path p = writeTempConfig("d5v2_default",
             networkConfig(kGpsGal, kPriosGps, ""));
@@ -1691,7 +1693,7 @@ TEST(CodeBiasNetworkConfig, CarryInvariantInnovCalibrateParsesAndRequiresGate) {
         EXPECT_DOUBLE_EQ(cfg.networkCarryInvariantInnovCalibrateWindow(), 60.0);
         std::error_code ec; fs::remove(p, ec);
     }
-    // ON atop carry_invariant + eq34 + gate, with a custom window.
+    // On atop carry_invariant + eq34 + gate, with a custom window.
     {
         const fs::path p = writeTempConfig("d5v2_on",
             networkConfig(kGpsGal, kPriosGps,
@@ -1706,7 +1708,7 @@ TEST(CodeBiasNetworkConfig, CarryInvariantInnovCalibrateParsesAndRequiresGate) {
         EXPECT_DOUBLE_EQ(cfg.networkCarryInvariantInnovCalibrateWindow(), 30.0);
         std::error_code ec; fs::remove(p, ec);
     }
-    // Calibrate without the gate → load FAILS.
+    // Calibrate without the gate → the load fails.
     {
         const fs::path p = writeTempConfig("d5v2_no_gate",
             networkConfig(kGpsGal, kPriosGps,
@@ -1720,16 +1722,16 @@ TEST(CodeBiasNetworkConfig, CarryInvariantInnovCalibrateParsesAndRequiresGate) {
     }
 }
 
-// Card 4 (M1) D5 v4: network.carry_invariant_innov_retap_only parses OFF by default
-// (byte-identical), ON atop the innovation gate, and — unlike calibrate, which is a hard
-// load REJECT — is FORCED OFF with a warning when the gate is absent.  That asymmetry is
-// deliberate and worth pinning: calibrate changes the gate's THRESHOLD (a silently
-// different gate is a wrong answer), while retap_only only decides what happens to flags
-// that, without the gate, do not exist at all.  Same fail-safe shape as the v3
-// corroboration knob it sits beside.
+// network.carry_invariant_innov_retap_only parses off by default (byte-identical), on
+// atop the innovation gate, and, unlike calibrate (a hard load rejection), is forced off
+// with a warning when the gate is absent.  The asymmetry is deliberate: calibrate changes
+// the gate's threshold (an unannounced different gate gives a wrong answer), while
+// retap_only only decides what happens to flags that do not exist without the gate.  It
+// has the same fail-safe shape as the v3 corroboration knob beside it.
+// (Card 4 (M1) D5 v4)
 TEST(CodeBiasNetworkConfig, CarryInvariantInnovRetapOnlyParsesAndNeedsGate) {
     LogManager log;
-    // Default OFF.
+    // Default off.
     {
         const fs::path p = writeTempConfig("d5v4_default",
             networkConfig(kGpsGal, kPriosGps, ""));
@@ -1738,7 +1740,7 @@ TEST(CodeBiasNetworkConfig, CarryInvariantInnovRetapOnlyParsesAndNeedsGate) {
         EXPECT_FALSE(cfg.networkCarryInvariantInnovRetapOnly());
         std::error_code ec; fs::remove(p, ec);
     }
-    // ON atop carry_invariant + eq34 + gate.
+    // On atop carry_invariant + eq34 + gate.
     {
         const fs::path p = writeTempConfig("d5v4_on",
             networkConfig(kGpsGal, kPriosGps,
@@ -1751,7 +1753,7 @@ TEST(CodeBiasNetworkConfig, CarryInvariantInnovRetapOnlyParsesAndNeedsGate) {
         EXPECT_TRUE(cfg.networkCarryInvariantInnovRetapOnly());
         std::error_code ec; fs::remove(p, ec);
     }
-    // Without the gate the load SUCCEEDS but the knob is forced OFF (inert, not permissive).
+    // Without the gate the load succeeds but the knob is forced off (inert, not permissive).
     {
         const fs::path p = writeTempConfig("d5v4_no_gate",
             networkConfig(kGpsGal, kPriosGps,
@@ -1766,10 +1768,10 @@ TEST(CodeBiasNetworkConfig, CarryInvariantInnovRetapOnlyParsesAndNeedsGate) {
     }
 }
 
-// Card 3/4: network.phase_datum_eq34_slip_aware_election keeps a slipped arc out of the
-// eq34 spanning tree (a slipped TREE edge refloats every fundamental cycle through it; a
-// slipped CHORD costs one DD).  Default OFF, ON atop phase_datum_eq34, and forced OFF
-// without it — there is no spanning tree to keep anything out of.
+// network.phase_datum_eq34_slip_aware_election keeps a slipped arc out of the eq34
+// spanning tree (a slipped tree edge refloats every fundamental cycle through it; a
+// slipped chord costs one DD).  Default off, on atop phase_datum_eq34, and forced off
+// without it, since there is then no spanning tree.  (Card 3/4)
 TEST(CodeBiasNetworkConfig, PhaseDatumEq34SlipAwareElectionParsesAndNeedsEq34) {
     LogManager log;
     {
@@ -1803,12 +1805,12 @@ TEST(CodeBiasNetworkConfig, PhaseDatumEq34SlipAwareElectionParsesAndNeedsEq34) {
     }
 }
 
-// M5 card WL-1: network.mw_wl.enable rides the Card-4 chord basis, so it REQUIRES
-// network.carry_invariant (SPEC §11 Q1 mutex).  Default OFF (byte-identical), and the
-// knobs parse when armed alongside carry_invariant.
+// network.mw_wl.enable uses the Card-4 chord basis, so it requires
+// network.carry_invariant (SPEC §11 Q1 mutex).  Default off (byte-identical), and the
+// knobs parse when armed alongside carry_invariant.  (M5 card WL-1)
 TEST(CodeBiasNetworkConfig, MwWlSeedContract) {
     LogManager log;
-    // Default: absent → OFF (the producer is byte-identical).
+    // Default: absent → off (the producer is byte-identical).
     {
         const fs::path p = writeTempConfig("mwwl_default",
             networkConfig(kGpsGal, kPriosGps, ""));
@@ -1817,7 +1819,7 @@ TEST(CodeBiasNetworkConfig, MwWlSeedContract) {
         EXPECT_FALSE(cfg.networkMwWlSeed());
         std::error_code ec; fs::remove(p, ec);
     }
-    // enable=true WITHOUT carry_invariant → load FAILS (fail-loud mutex, not a silent no-op).
+    // enable=true without carry_invariant → the load fails (a hard mutex, not a silent no-op).
     {
         const fs::path p = writeTempConfig("mwwl_no_carry",
             networkConfig(kGpsGal, kPriosGps,
@@ -1827,7 +1829,7 @@ TEST(CodeBiasNetworkConfig, MwWlSeedContract) {
             << "network.mw_wl.enable without network.carry_invariant must be rejected.";
         std::error_code ec; fs::remove(p, ec);
     }
-    // enable=true WITH carry_invariant (+eq34) → loads; the knobs parse.
+    // enable=true with carry_invariant (+eq34) → loads; the knobs parse.
     {
         const fs::path p = writeTempConfig("mwwl_armed",
             networkConfig(kGpsGal, kPriosGps,
@@ -1857,16 +1859,16 @@ TEST(CodeBiasNetworkConfig, MwWlSeedContract) {
     }
 }
 
-// PD-safe invariant-DD fold (docs/SPEC_pd_safe_dd_fold.md §4): default OFF (the fold's
-// arithmetic is byte-identical), and it is INERT without network.carry_invariant — there
-// is no DD-prior fold to make PD-safe.  The advisory is deliberately a WARN + DISARM, not
-// a load failure: a config that carries the knob for a later leg is not a config error.
-// The check lives in the CROSS-KNOB validation pass, so this gate is also the regression
-// test for the loader-ordering trap (a check placed in the parse block reads
-// network_carry_invariant_ before it is parsed and disarms EVERY run).
+// PD-safe invariant-DD fold (docs/SPEC_pd_safe_dd_fold.md §4): default off (the fold's
+// arithmetic is byte-identical), and inert without network.carry_invariant, where there
+// is no DD-prior fold to make PD-safe.  The response is a warning plus disarm, not a load
+// failure, on purpose: a config that carries the knob for a later leg is not an error.
+// The check lives in the cross-knob validation pass, so this test is also the regression
+// test for loader ordering (a check placed in the parse block would read
+// network_carry_invariant_ before it is parsed and disarm every run).
 TEST(CodeBiasNetworkConfig, CarryInvariantPdSafeContract) {
     LogManager log;
-    // Default: absent → OFF.
+    // Default: absent → off.
     {
         const fs::path p = writeTempConfig("pdsafe_default",
             networkConfig(kGpsGal, kPriosGps, ""));
@@ -1875,7 +1877,7 @@ TEST(CodeBiasNetworkConfig, CarryInvariantPdSafeContract) {
         EXPECT_FALSE(cfg.networkCarryInvariantPdSafe());
         std::error_code ec; fs::remove(p, ec);
     }
-    // Armed WITHOUT carry_invariant → loads, but DISARMED (inert, not an error).
+    // Armed without carry_invariant → loads, but disarmed (inert, not an error).
     {
         const fs::path p = writeTempConfig("pdsafe_no_carry",
             networkConfig(kGpsGal, kPriosGps,
@@ -1886,7 +1888,7 @@ TEST(CodeBiasNetworkConfig, CarryInvariantPdSafeContract) {
             << "without carry_invariant there is no DD-prior fold — the knob must disarm.";
         std::error_code ec; fs::remove(p, ec);
     }
-    // Armed WITH carry_invariant (+eq34) → stays armed.  This is the loader-ordering
+    // Armed with carry_invariant (+eq34) → stays armed.  This is the loader-ordering
     // regression: the knob is parsed in loadNetworkDatumSignalling_ and its prerequisite
     // test runs later, in the cross-knob pass, where every flag is settled.
     {
@@ -1903,16 +1905,16 @@ TEST(CodeBiasNetworkConfig, CarryInvariantPdSafeContract) {
     }
 }
 
-// Carry-aware covariance readback (docs/SPEC_carry_aware_covariance.md §6): default OFF
-// (every readback expression is the pre-card one, verbatim), INERT without
-// network.carry_invariant — with no folded DD priors the rank-K correction is identically
-// zero — and the prerequisite check lives in the CROSS-KNOB pass for the same
-// loader-ordering reason as the PD-safe knob above.  Unlike that knob this one is NOT
-// fingerprinted: its consumers (dd_sigma_cyc, the log-only AR probe) feed nothing back, so
-// no stored state changes meaning when it flips.
+// Carry-aware covariance readback (docs/SPEC_carry_aware_covariance.md §6): default off
+// (every readback expression is the pre-card one, verbatim) and inert without
+// network.carry_invariant (with no folded DD priors the rank-K correction is identically
+// zero).  The prerequisite check lives in the cross-knob pass for the same loader-ordering
+// reason as the PD-safe knob above.  Unlike that knob, this one is not fingerprinted: its
+// consumers (dd_sigma_cyc, the log-only AR probe) feed nothing back, so no stored state
+// changes meaning when it flips.
 TEST(CodeBiasNetworkConfig, CarryAwareCovarianceContract) {
     LogManager log;
-    // Default: absent → OFF.
+    // Default: absent → off.
     {
         const fs::path p = writeTempConfig("cacov_default",
             networkConfig(kGpsGal, kPriosGps, ""));
@@ -1921,7 +1923,7 @@ TEST(CodeBiasNetworkConfig, CarryAwareCovarianceContract) {
         EXPECT_FALSE(cfg.networkCarryAwareCovariance());
         std::error_code ec; fs::remove(p, ec);
     }
-    // Armed WITHOUT carry_invariant → loads, but DISARMED (inert, not an error).
+    // Armed without carry_invariant → loads, but disarmed (inert, not an error).
     {
         const fs::path p = writeTempConfig("cacov_no_carry",
             networkConfig(kGpsGal, kPriosGps,
@@ -1933,7 +1935,7 @@ TEST(CodeBiasNetworkConfig, CarryAwareCovarianceContract) {
                "identically zero, so the knob must disarm rather than pretend to arm.";
         std::error_code ec; fs::remove(p, ec);
     }
-    // Armed WITH carry_invariant (+eq34) → stays armed.
+    // Armed with carry_invariant (+eq34) → stays armed.
     {
         const fs::path p = writeTempConfig("cacov_armed",
             networkConfig(kGpsGal, kPriosGps,
@@ -1963,13 +1965,14 @@ TEST(CodeBiasNetworkConfig, CarryAwareCovarianceContract) {
     }
 }
 
-// M5 card UWL-1 (docs/SPEC_uwl_card.md §5): the per-constellation top tier is the EWL
-// machinery run on the lane-tier table, so uwl_enable REQUIRES ewl_enable (fail-loud);
-// all knobs default OFF/inert (byte-identical); gal_top_band validates to {7,8}; the
-// cold-fix clamps keep the a-priori σ positive and the λ floor above the GPS EWL.
+// The per-constellation top tier is the EWL machinery run on the lane-tier table, so
+// uwl_enable requires ewl_enable (hard error); all knobs default off/inert
+// (byte-identical); gal_top_band validates to {7,8}; the cold-fix clamps keep the
+// a-priori σ positive and the λ floor above the GPS EWL.  (M5 card UWL-1,
+// docs/SPEC_uwl_card.md §5)
 TEST(CodeBiasNetworkConfig, UwlTierContract) {
     LogManager log;
-    // Defaults: absent → OFF, top band '7', cold fix off with the SPEC numbers.
+    // Defaults: absent → off, top band '7', cold fix off with the spec numbers.
     {
         const fs::path p = writeTempConfig("uwl_default",
             networkConfig(kGpsGal, kPriosGps, ""));
@@ -1984,7 +1987,7 @@ TEST(CodeBiasNetworkConfig, UwlTierContract) {
         EXPECT_NEAR(mw.uwl_cold_min_lambda_m, 8.0, 1e-12);
         std::error_code ec; fs::remove(p, ec);
     }
-    // uwl_enable without ewl_enable → load FAILS (the tier IS the EWL machinery).
+    // uwl_enable without ewl_enable → the load fails (the tier is the EWL machinery).
     {
         const fs::path p = writeTempConfig("uwl_no_ewl",
             networkConfig(kGpsGal, kPriosGps,
@@ -2036,14 +2039,14 @@ TEST(CodeBiasNetworkConfig, UwlTierContract) {
     }
 }
 
-// Increment 5 + v2 (docs/SPEC_uwl_card.md §1b/§7.5, HANDOFF reconciliation): the
-// dual-top tier and the per-family pair census.  Defaults OFF (byte-identical);
-// dual_top forces ewl_fold_rows OFF (a doubly-decided row must never fold twice);
-// family_min_arcs clamps to ≥1; the inert combinations load with warns, not errors
-// (the wiring gates them on the masters).
+// The dual-top tier and the per-family pair census.  Defaults off (byte-identical);
+// dual_top forces ewl_fold_rows off (a doubly-decided row is never folded twice);
+// family_min_arcs clamps to ≥1; the inert combinations load with warnings, not errors
+// (the wiring gates them on the masters).  (Increment 5 + v2, docs/SPEC_uwl_card.md
+// §1b/§7.5, HANDOFF reconciliation)
 TEST(CodeBiasNetworkConfig, UwlDualTopAndFamilyContract) {
     LogManager log;
-    // Defaults: absent → all OFF, min_arcs 8.
+    // Defaults: absent → all off, min_arcs 8.
     {
         const fs::path p = writeTempConfig("uwl_dual_default",
             networkConfig(kGpsGal, kPriosGps, ""));
@@ -2056,7 +2059,7 @@ TEST(CodeBiasNetworkConfig, UwlDualTopAndFamilyContract) {
         EXPECT_EQ(mw.uwl_family_min_arcs, 8);
         std::error_code ec; fs::remove(p, ec);
     }
-    // Armed dual + sib gate + family: knobs parse; ewl_fold_rows is FORCED off
+    // Armed dual + sib gate + family: knobs parse; ewl_fold_rows is forced off
     // under dual_top even when explicitly requested (the F-A refold class).
     {
         const fs::path p = writeTempConfig("uwl_dual_armed",
@@ -2080,7 +2083,7 @@ TEST(CodeBiasNetworkConfig, UwlDualTopAndFamilyContract) {
                "rungs must never fold two integer rows).";
         std::error_code ec; fs::remove(p, ec);
     }
-    // Inert combinations still LOAD (warned): dual/sib/family without their masters.
+    // Inert combinations still load (with warnings): dual/sib/family without their masters.
     // min_arcs clamps to 1.
     {
         const fs::path p = writeTempConfig("uwl_dual_inert",
@@ -2100,13 +2103,13 @@ TEST(CodeBiasNetworkConfig, UwlDualTopAndFamilyContract) {
     }
 }
 
-// LF-1 INC-1: network.lane_carry.fold_blocked — a PERF knob, default OFF
-// (byte-identical sequential fold), parses when armed, and must NOT be a
-// lane-SHAPE knob (it leaves lane_meas/bridge_meas untouched, so it cannot flip
-// a run out of the §6.1 equivalence shape).
+// network.lane_carry.fold_blocked is a performance knob: default off (byte-identical
+// sequential fold), parses when armed, and is not a lane-shape knob (it leaves
+// lane_meas/bridge_meas untouched, so it cannot move a run out of the §6.1
+// equivalence shape).  (LF-1 INC-1)
 TEST(CodeBiasNetworkConfig, LaneFoldBlockedContract) {
     LogManager log;
-    // Default absent → OFF; the other lane_carry knobs keep their defaults.
+    // Default absent → off; the other lane_carry knobs keep their defaults.
     {
         const fs::path p = writeTempConfig("foldblk_default",
             networkConfig(kGpsGal, kPriosGps,
@@ -2118,10 +2121,10 @@ TEST(CodeBiasNetworkConfig, LaneFoldBlockedContract) {
         ASSERT_TRUE(cfg.loadFromJson(p, log));
         const auto& lc = cfg.getNetworkConfig().lane_carry;
         EXPECT_FALSE(lc.fold_blocked);
-        EXPECT_FALSE(lc.skip_pinned_increments);   // INC-2 default OFF
-        EXPECT_EQ(lc.skip_pinned_within_n, 3);      // INC-2 default window
-        EXPECT_FALSE(lc.parallel_components);       // INC-4 default OFF
-        EXPECT_TRUE(lc.lane_meas);       // unaffected — perf knob, not a shape knob
+        EXPECT_FALSE(lc.skip_pinned_increments);   // default off (INC-2)
+        EXPECT_EQ(lc.skip_pinned_within_n, 3);      // default window (INC-2)
+        EXPECT_FALSE(lc.parallel_components);       // default off (INC-4)
+        EXPECT_TRUE(lc.lane_meas);       // unaffected: perf knob, not a shape knob
         EXPECT_TRUE(lc.bridge_meas);
         std::error_code ec; fs::remove(p, ec);
     }
@@ -2148,7 +2151,7 @@ TEST(CodeBiasNetworkConfig, LaneFoldBlockedContract) {
     }
 }
 
-// Per-sample bridge iono de-bias (the 60-ep age-bias fix): defaults OFF
+// Per-sample bridge iono de-bias (the 60-ep age-bias fix): defaults off
 // (byte-identical raw accumulation); parses when armed with the bridge;
 // inert-warns (loads) without ewl_enable.
 TEST(CodeBiasNetworkConfig, BridgeSampleDebiasContract) {
@@ -2186,17 +2189,17 @@ TEST(CodeBiasNetworkConfig, BridgeSampleDebiasContract) {
 }
 
 // ===========================================================================
-// EXT-CB — network.external_sat_code_bias: the satellite code AND phase biases
+// network.external_sat_code_bias (EXT-CB): the satellite code and phase biases
 // come from the external .BIA instead of being estimated (the third satellite-
 // bias posture, alongside V1 slant-absorption and W6 own-OSB)
 // ===========================================================================
 
 namespace {
 
-// A network config that can also carry estimation / model_corrections blocks —
-// the EXT-CB contract spans all three sections (it suppresses a network force
+// A network config that can also carry estimation / model_corrections blocks.
+// The EXT-CB contract spans all three sections: it suppresses a network force
 // chain whose observable effect is on model_corrections.enable_code_phase_bias
-// and estimation.estimate_ifb).
+// and estimation.estimate_ifb.
 std::string extCbConfig(const std::string& network_extra,
                         const std::string& estimation_block = "",
                         const std::string& model_corr_block = "") {
@@ -2220,15 +2223,15 @@ std::string extCbConfig(const std::string& network_extra,
 
 } // namespace
 
-// The gap EXT-CB closes: estimate_iono_sh force-chains estimate_sat_code_bias
-// on, which force-sets enable_code_phase_bias OFF — so "SH-VTEC ionosphere WITH
-// external satellite biases" (the classical known-DCB global-iono setup) was
-// UNREACHABLE.  Arming external_sat_code_bias suppresses exactly that force and
-// nothing else about the SH slice.
+// estimate_iono_sh force-chains estimate_sat_code_bias on, which force-sets
+// enable_code_phase_bias off, so without EXT-CB "SH-VTEC ionosphere with external
+// satellite biases" (the classical known-DCB global-iono setup) is unreachable.
+// Arming external_sat_code_bias suppresses that force and nothing else about the
+// SH slice.
 TEST(NetworkExternalSatCodeBiasConfig, SuppressesTheShToW6ForceChain) {
     LogManager log;
 
-    // Default: absent -> false, and NOTHING about the existing postures moves.
+    // Default: absent -> false, and nothing about the existing postures moves.
     {
         const fs::path p = writeTempConfig("extcb_default", extCbConfig(""));
         GnssConfig cfg;
@@ -2236,8 +2239,8 @@ TEST(NetworkExternalSatCodeBiasConfig, SuppressesTheShToW6ForceChain) {
         EXPECT_FALSE(cfg.networkExternalSatCodeBias());
         std::error_code ec; fs::remove(p, ec);
     }
-    // CONTROL — estimate_iono_sh alone still force-chains W6 and still turns the
-    // .BIA off.  This is the behaviour EXT-CB must leave untouched.
+    // Control: estimate_iono_sh alone still force-chains W6 and still turns the
+    // .BIA off.  EXT-CB leaves this behaviour untouched.
     {
         const fs::path p = writeTempConfig("extcb_control",
             extCbConfig("    \"estimate_iono_sh\": true,\n"));
@@ -2248,10 +2251,11 @@ TEST(NetworkExternalSatCodeBiasConfig, SuppressesTheShToW6ForceChain) {
         EXPECT_FALSE(cfg.getModelCorrections().enable_code_phase_bias);
         std::error_code ec; fs::remove(p, ec);
     }
-    // EXT-CB + SH: the SH field stays co-estimated, the W6 slice does NOT land,
-    // the .BIA stays applied, and the receiver DCB is forced on (trap #4 — on
+    // EXT-CB + SH: the SH field stays co-estimated, the W6 slice is not armed,
+    // the .BIA stays applied, and the receiver DCB is forced on (trap #4: on
     // undifferenced rows the per-(rx,constellation) GF code lump needs an
-    // explicit state or it rides inside the slant iono and fights the field).
+    // explicit state, or it is absorbed into the slant iono and conflicts with
+    // the field).
     {
         const fs::path p = writeTempConfig("extcb_sh",
             extCbConfig("    \"external_sat_code_bias\": true,\n"
@@ -2271,12 +2275,12 @@ TEST(NetworkExternalSatCodeBiasConfig, SuppressesTheShToW6ForceChain) {
     }
 }
 
-// Two satellite code-bias SOURCES cannot both be selected: W6 estimates its own
+// Two satellite code-bias sources cannot both be selected: W6 estimates its own
 // OSB and skips the .BIA entirely, EXT-CB consumes the .BIA and creates no
 // state.  Arming both would ask for a state on rows the product already
-// corrected.  And an explicit enable_code_phase_bias=false under EXT-CB leaves
-// the satellite code bias NEITHER applied nor estimated (that is the V1
-// slant-absorption posture wearing EXT-CB's name) — both fail loud.
+// corrected.  An explicit enable_code_phase_bias=false under EXT-CB leaves the
+// satellite code bias neither applied nor estimated (the V1 slant-absorption
+// posture under EXT-CB's name).  Both configurations fail the load.
 TEST(NetworkExternalSatCodeBiasConfig, RejectsW6AndAnExplicitBiaOff) {
     LogManager log;
 
@@ -2299,7 +2303,7 @@ TEST(NetworkExternalSatCodeBiasConfig, RejectsW6AndAnExplicitBiaOff) {
     }
 }
 
-// The .BIA is a daily post-processing bias product — the self-sufficient
+// The .BIA is a daily post-processing bias product, and the self-sufficient
 // real-time service does not have one (the same reasoning that makes the
 // external-GIM code-bias path post-processing-only).  A real-time producer
 // takes its satellite biases from an SSR stream, a different mechanism with its
@@ -2316,19 +2320,19 @@ TEST(NetworkExternalSatCodeBiasConfig, RejectsBrdcRtsApriori) {
 }
 
 // ---------------------------------------------------------------------------
-// Card 4 (M1), standing invariant #1: the invariant DD carry's event response.
+// The invariant DD carry's event response (standing invariant #1, Card 4 (M1)).
 // ---------------------------------------------------------------------------
-// The carried z is stiff (Φ = I, and q_z = 0 by default ⇒ a random CONSTANT), so
-// invariant #1 requires a wired erase/refloat/re-tap before an ON field run.  For
-// THIS carry that means a pre-fit raw detector (network.cycle_slip.mw_detect /
+// The carried z is stiff (Φ = I, and q_z = 0 by default ⇒ a random constant), so
+// invariant #1 requires a wired erase/refloat/re-tap before an on field run.  For
+// this carry that means a pre-fit raw detector (network.cycle_slip.mw_detect /
 // .if_phase_td, which drain into carry_slipped_ambs) or the post-fit D5 gate
-// (network.carry_invariant_innov_gate).  The interlock is WARN-only and changes no
-// state, so the solve stays byte-identical — which means it can only be asserted
+// (network.carry_invariant_innov_gate).  The interlock only warns and changes no
+// state, so the solve stays byte-identical and the interlock can be asserted only
 // through the log.  These tests attach an in-memory sink to the loader's own
-// "gnss_config" logger to do that.
+// "gnss_config" logger for that.
 namespace {
 
-/// Result of a load performed with the loader's WARN stream captured.
+/// Result of a load performed with the loader's warning stream captured.
 struct CapturedLoad {
     bool        ok{false};   ///< What loadFromJson returned.
     std::string text;        ///< Everything the "gnss_config" logger emitted.
@@ -2337,12 +2341,14 @@ struct CapturedLoad {
 
 /// Load @p p, capturing the "gnss_config" logger into a string.
 ///
-/// getLogger() before initialize() hands back a TRANSIENT console-only logger
+/// getLogger() before initialize() returns a transient console-only logger
 /// (LogManager.hpp:110-126), so a sink attached to it would not be the one the
-/// loader writes through — the manager has to be initialized first.
-/// @p tag must be unique per call: initialize() opens gnss_config.log in @p dir and
+/// loader writes through; the manager is initialized first.
+/// @p tag must be unique per call: initialize() opens gnss_config.log in @p dir, and
 /// re-initializing into a directory whose previous handle is still open throws on
-/// Windows, so each load gets its own directory and shuts its manager down again.
+/// Windows, so each load gets its own directory.  The manager is not shut down
+/// (shutdown() calls spdlog::drop_all(); see below); the helper drops the two
+/// loggers it created instead.
 CapturedLoad loadCapturingConfigLog(const fs::path& p, const std::string& tag) {
     CapturedLoad out;
     LogManager log;
@@ -2350,26 +2356,26 @@ CapturedLoad loadCapturingConfigLog(const fs::path& p, const std::string& tag) {
     std::error_code ec;
     fs::remove_all(dir, ec);
     fs::create_directories(dir, ec);
-    // Registry hygiene, TARGETED.  Another test in the same binary may have left a
-    // "gnss_processor" logger registered, and initialize() THROWS on the duplicate
-    // ("logger with name 'gnss_processor' already exists") — these tests pass in
-    // isolation and fail in the full suite without this, so the drop is load-bearing.
+    // Targeted registry cleanup.  Another test in the same binary may have left a
+    // "gnss_processor" logger registered, and initialize() throws on the duplicate
+    // ("logger with name 'gnss_processor' already exists"); without this drop these
+    // tests pass in isolation and fail in the full suite.
     //
-    // It must NOT be spdlog::drop_all() (nor LogManager::shutdown(), which calls it):
-    // that wipes loggers other live objects still hold, and doing so faults
-    // RtcmParserDecodeTest with 0xC0000005 — the same dangling-logger class of defect
-    // CLAUDE.md records from the VS 2026 migration.  Drop only the two names this
-    // helper is about to create, and restore that state on the way out.
+    // Do not use spdlog::drop_all() (or LogManager::shutdown(), which calls it): it
+    // removes loggers other live objects still hold, and doing so faults
+    // RtcmParserDecodeTest with 0xC0000005 (the dangling-logger defect class that
+    // CLAUDE.md records from the VS 2026 migration).  Only the two names this helper
+    // is about to create are dropped, here and again on the way out.
     spdlog::drop("gnss_processor");
     spdlog::drop("gnss_config");
-    log.initialize(dir, LogLevel::Info);          // WARN must pass this level
+    log.initialize(dir, LogLevel::Info);          // warnings pass this level
     auto cfg_log = log.getLogger("gnss_config");
     std::ostringstream oss;
     cfg_log->sinks().push_back(std::make_shared<spdlog::sinks::ostream_sink_mt>(oss));
     out.ok = out.cfg.loadFromJson(p, log);
     cfg_log->flush();
-    out.text = oss.str();                          // capture BEFORE dropping the logger
-    // Leave the registry as we found it, without disturbing anyone else's loggers.
+    out.text = oss.str();                          // capture before dropping the logger
+    // Leave the registry without these two names; other loggers are not touched.
     spdlog::drop("gnss_processor");
     spdlog::drop("gnss_config");
     return out;
@@ -2382,9 +2388,9 @@ constexpr const char* kDetectorOnly = "ONLY event response on the carry is the p
 
 } // namespace
 
-// carry_invariant with neither a pre-fit detector nor the D5 gate is the exact
-// posture invariant #1 forbids.  It must WARN loudly — and must NOT silently
-// "fix" itself, because auto-arming a detector here would change the solve.
+// carry_invariant with neither a pre-fit detector nor the D5 gate is the posture
+// invariant #1 forbids.  The loader warns and does not arm anything in response,
+// because auto-arming a detector here would change the solve.
 TEST(CodeBiasNetworkConfig, CarryInvariantWithoutEventResponseWarnsAndChangesNothing) {
     const fs::path p = writeTempConfig("ci_inv1_none",
         networkConfig(kGpsGal, kPriosGps,
@@ -2395,7 +2401,7 @@ TEST(CodeBiasNetworkConfig, CarryInvariantWithoutEventResponseWarnsAndChangesNot
     EXPECT_NE(r.text.find(kNoResponse), std::string::npos)
         << "carry_invariant with no detector and no D5 gate must warn under invariant #1.\n"
         << r.text;
-    // Byte-identity: the warning is the whole mechanism.  Nothing may be armed.
+    // Byte-identity: the warning is the only effect.  Nothing is armed.
     EXPECT_FALSE(r.cfg.networkCycleSlipMwDetect());
     EXPECT_FALSE(r.cfg.networkCycleSlipIfPhaseTd());
     EXPECT_FALSE(r.cfg.networkCarryInvariantInnovGate());
@@ -2404,9 +2410,9 @@ TEST(CodeBiasNetworkConfig, CarryInvariantWithoutEventResponseWarnsAndChangesNot
     std::error_code ec; fs::remove(p, ec);
 }
 
-// A pre-fit detector IS the response (it feeds carry_slipped_ambs from epoch 1,
-// gated on carry_invariant alone), so the loud warning must not fire.  The softer
-// q_z=0 advisory still does: detected slips are covered, model error is not.
+// A pre-fit detector is an event response (it feeds carry_slipped_ambs from epoch 1,
+// gated on carry_invariant alone), so the kNoResponse warning does not fire.  The
+// softer q_z=0 advisory still does: detected slips are covered, model error is not.
 TEST(CodeBiasNetworkConfig, CarryInvariantWithPrefitDetectorDropsToTheSofterAdvisory) {
     const fs::path p = writeTempConfig("ci_inv1_mw",
         networkConfig(kGpsGal, kPriosGps,
@@ -2425,8 +2431,8 @@ TEST(CodeBiasNetworkConfig, CarryInvariantWithPrefitDetectorDropsToTheSofterAdvi
     std::error_code ec; fs::remove(p, ec);
 }
 
-// The D5 innovation gate is the response that fires on MODEL ERROR rather than on
-// a detected raw slip, so it silences BOTH tiers on its own.
+// The D5 innovation gate is the response that fires on model error rather than on
+// a detected raw slip, so on its own it silences both tiers.
 TEST(CodeBiasNetworkConfig, CarryInvariantWithInnovGateIsQuiet) {
     const fs::path p = writeTempConfig("ci_inv1_d5",
         networkConfig(kGpsGal, kPriosGps,
@@ -2441,8 +2447,8 @@ TEST(CodeBiasNetworkConfig, CarryInvariantWithInnovGateIsQuiet) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-// A nonzero q_z is NOT an event response — it inflates Pᶻ's diagonal without moving
-// the carried mean.  It must not buy an exemption from the loud warning.
+// A nonzero q_z is not an event response: it inflates Pᶻ's diagonal without moving
+// the carried mean, so it does not suppress the kNoResponse warning.
 TEST(CodeBiasNetworkConfig, CarryInvariantNonzeroQzIsNotAnEventResponse) {
     const fs::path p = writeTempConfig("ci_inv1_qz",
         networkConfig(kGpsGal, kPriosGps,
@@ -2458,10 +2464,10 @@ TEST(CodeBiasNetworkConfig, CarryInvariantNonzeroQzIsNotAnEventResponse) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-// turbo_edit satisfies the PHASE-LEVELING invariant-#1 auto-arm, but under
+// turbo_edit satisfies the phase-leveling invariant-#1 auto-arm, but under
 // carry_invariant it takes the repair arm instead of collecting MW refloat
-// candidates and repairs only the superseded leveling local carry — so it feeds
-// carry_slipped_ambs nothing.  It must not silence this warning.
+// candidates and repairs only the superseded leveling local carry, so it feeds
+// nothing into carry_slipped_ambs.  It does not silence this warning.
 TEST(CodeBiasNetworkConfig, CarryInvariantTurboEditAloneStillWarns) {
     const fs::path p = writeTempConfig("ci_inv1_turbo",
         networkConfig(kGpsGal, kPriosGps,
@@ -2480,37 +2486,37 @@ TEST(CodeBiasNetworkConfig, CarryInvariantTurboEditAloneStillWarns) {
 }
 
 // ---------------------------------------------------------------------------
-// F1 — network.phase_leveling_los_scale (docs/SPEC_amb_iono_split_overcount.md).
+// network.phase_leveling_los_scale (F1; docs/SPEC_amb_iono_split_overcount.md).
 //
 // The knob multiplies each carried leveling-ambiguity row's variance by B_eff (the
 // carried columns injected on the same station-satellite LOS this epoch) so the
-// B rows of one LOS assert ONE unit of iono-direction precision instead of B.
-// Solve-affecting ON, byte-identical OFF.  The loader's whole contract is three
-// things, and every one of them is only visible through the "gnss_config" log:
-//   1. the default is OFF, and an OFF lineage prints NEITHER line;
-//   2. ON under a live leveling carry announces itself (the ARMED info line);
-//   3. ON with no leveling carry to scale — leveling off, or carry_invariant
-//      superseding the leveling ambiguity carry (`do_amb_carry` is false) —
-//      WARNS as INERT and does NOT silently disarm (standing invariant #4: the
-//      run-end 'Network (leveling LOS-scale F1)' counter line is the ON-path
-//      telemetry; this warn is its pre-run twin).
+// B rows of one LOS assert one unit of iono-direction precision instead of B.
+// Solve-affecting when on, byte-identical when off.  The loader's contract has three
+// parts, each visible only through the "gnss_config" log:
+//   1. the default is off, and an off lineage prints neither line;
+//   2. on under a live leveling carry, it prints the armed info line (kLosScaleArmed);
+//   3. on with no leveling carry to scale (leveling off, or carry_invariant
+//      superseding the leveling ambiguity carry so `do_amb_carry` is false), it
+//      warns as inert (kLosScaleInert) and is not disarmed (standing invariant #4:
+//      the run-end 'Network (leveling LOS-scale F1)' counter line is the on-path
+//      telemetry; this warning is its pre-run counterpart).
 // The B_eff arithmetic itself is pinned at the row-build seam in
 // test_network_coupling.cpp (LosScaledVarianceWeighsBandsAtOneThirdAndOffIsLegacyExact).
 // ---------------------------------------------------------------------------
 namespace {
 
-/// Stable phrase of the ARMED info line (GnssConfigLoadNetwork.cpp, emitted inside
+/// Stable phrase of the armed info line (GnssConfigLoadNetwork.cpp, emitted inside
 /// the `if (network_phase_leveling_)` post-parse block).
 constexpr const char* kLosScaleArmed = "per-LOS variance scale ARMED";
-/// Stable phrase of the INERT warn (the post-parse guard that needs
+/// Stable phrase of the inert warning (the post-parse guard that needs
 /// network_carry_invariant_ populated; fires on !phase_leveling || carry_invariant).
 constexpr const char* kLosScaleInert =
     "network.phase_leveling_los_scale is on but the phase-leveling";
 
 } // namespace
 
-// Default OFF, and silent — on a bare network block AND on a leveling lineage that
-// never wrote the key (the byte-identity posture of every pre-F1 leveling run).
+// Default off, and silent, both on a bare network block and on a leveling lineage
+// that never wrote the key (the byte-identity posture of every pre-F1 leveling run).
 TEST(NetworkPhaseLevelingConfig, LosScaleDefaultsOffAndIsSilent) {
     std::error_code ec;
     {
@@ -2538,8 +2544,9 @@ TEST(NetworkPhaseLevelingConfig, LosScaleDefaultsOffAndIsSilent) {
     }
 }
 
-// ON under a live leveling carry: parses true, announces ARMED, no INERT warn, and
-// moves no sibling leveling knob (the scale is applied at inject, "loosens only").
+// On under a live leveling carry: parses true, prints the armed line, no inert
+// warning, and moves no sibling leveling knob (the scale is applied at inject and
+// only loosens).
 TEST(NetworkPhaseLevelingConfig, LosScaleParsesTrueAndAnnouncesArmedUnderLeveling) {
     std::error_code ec;
     const fs::path p_off = writeTempConfig("pl_los_armed_ref",
@@ -2569,11 +2576,11 @@ TEST(NetworkPhaseLevelingConfig, LosScaleParsesTrueAndAnnouncesArmedUnderLevelin
     fs::remove(p_on, ec);
 }
 
-// ON with leveling OFF: the inject site the scale acts on does not exist, so the
-// guard WARNS (naming both predicates) and the ARMED line — which lives inside the
-// phase_leveling block — must not print.  The parsed value is kept as written:
-// the warn is the whole mechanism (no silent "fix", which would be a state change
-// the byte-identity story cannot see).
+// On with leveling off: the inject site the scale acts on does not exist, so the
+// guard warns (naming both predicates) and the armed line, which lives inside the
+// phase_leveling block, does not print.  The parsed value is kept as written; the
+// warning is the only effect (changing the value would be a state change that the
+// byte-identity comparison cannot see).
 TEST(NetworkPhaseLevelingConfig, LosScaleWithoutLevelingWarnsInertAndIsNotSilentlyDisarmed) {
     const fs::path p = writeTempConfig("pl_los_nopl",
         networkConfig(kGpsGal, kPriosGps,
@@ -2593,9 +2600,9 @@ TEST(NetworkPhaseLevelingConfig, LosScaleWithoutLevelingWarnsInertAndIsNotSilent
     std::error_code ec; fs::remove(p, ec);
 }
 
-// ON with leveling ON but carry_invariant superseding the leveling ambiguity carry
+// On with leveling on but carry_invariant superseding the leveling ambiguity carry
 // as a solve input (Card 4's DD carry; `do_amb_carry` is false, the inject is
-// skipped outright): the same INERT warn, naming carry_invariant.  carry_invariant
+// skipped): the same inert warning, naming carry_invariant.  carry_invariant
 // is legal only on the eq34 chain datum, so the posture carries phase_datum_eq34.
 TEST(NetworkPhaseLevelingConfig, LosScaleUnderCarryInvariantWarnsInert) {
     const fs::path p = writeTempConfig("pl_los_cinv",
@@ -2617,10 +2624,10 @@ TEST(NetworkPhaseLevelingConfig, LosScaleUnderCarryInvariantWarnsInert) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-// F3 block ADMISSION age gate (network.phase_leveling_local_block_min_age_ep,
-// SPEC_amb_iono_split_overcount §6.12): default 0 = OFF (byte-identical), parses,
-// a negative value is refused, and setting it without the block WARNS as INERT
-// (there is no block to keep a young leg out of) rather than silently disarming.
+// Block admission age gate for F3 (network.phase_leveling_local_block_min_age_ep,
+// SPEC_amb_iono_split_overcount §6.12): default 0 = off (byte-identical), parses,
+// a negative value is refused, and setting it without the block warns as inert
+// (there is no block to keep a young leg out of) rather than disarming.
 TEST(NetworkPhaseLevelingConfig, BlockMinAgeDefaultsOffParsesAndWarnsInertWithoutTheBlock) {
     std::error_code ec;
     {
@@ -2667,7 +2674,7 @@ TEST(NetworkPhaseLevelingConfig, BlockMinAgeDefaultsOffParsesAndWarnsInertWithou
         EXPECT_FALSE(r.ok) << "a negative gate must be refused";
         fs::remove(p, ec);
     }
-    // The gate's RESPONSE: "free" by default (young legs not injected), "diagonal" kept
+    // The gate's response: "free" by default (young legs not injected), "diagonal" kept
     // for the record and warned as measured-harmful, anything else refused.
     {
         const fs::path p = writeTempConfig("pl_blk_age_mode_default",

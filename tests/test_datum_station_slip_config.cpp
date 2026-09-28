@@ -1,16 +1,16 @@
 /**
  * @file test_datum_station_slip_config.cpp
  * @brief Config-contract tests for datum-station slip detection
- *        (@c network.cycle_slip.datum_station_detect — SPEC_synthetic_minimum_network §9.7.10).
+ *        (@c network.cycle_slip.datum_station_detect; SPEC_synthetic_minimum_network §9.7.10).
  *
  * Under the legacy single-pivot phase datum every slip-detection loop starts at
- * i_lo = 1, so the datum station — the one receiver whose ambiguity rides inside
- * every emitted phase bias — has zero slip exposure (§9.7.4, proven by roster
- * reorder).  The toggle arms MW/LLI detection at stations[0] with a NETWORK
- * re-reference response.  These tests lock the loader contract: default OFF
- * (byte-identical), the mw_detect prerequisite (hard-disable with a warning when
+ * i_lo = 1, so the datum station (the one receiver whose ambiguity enters every
+ * emitted phase bias) has no slip detection (§9.7.4, shown by roster reorder).
+ * The toggle arms MW/LLI detection at stations[0] with a network-wide
+ * re-reference response.  These tests check the loader contract: off by default
+ * (byte-identical), the mw_detect prerequisite (disabled with a warning when
  * absent), and that the invariant-#1 auto-arm of mw_detect under phase_leveling
- * satisfies the prerequisite (load order matters and must not regress).
+ * satisfies the prerequisite (which depends on load order).
  */
 
 #include <gtest/gtest.h>
@@ -58,7 +58,7 @@ std::string networkConfig(const std::string& network_extra) {
 
 } // namespace
 
-// Default: OFF.  The datum station stays outside the slip loops unless armed —
+// Default: off.  The datum station stays outside the slip loops unless armed, so
 // the solve is byte-identical by construction.
 TEST(DatumStationSlipDetectConfig, DefaultOff) {
     LogManager log;
@@ -81,9 +81,9 @@ TEST(DatumStationSlipDetectConfig, ArmsWithMwDetect) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-// Armed WITHOUT mw_detect (and nothing that auto-arms it): hard-disabled.  The
-// MW/LLI drain is the detection vehicle; without it the toggle would be an
-// armed-but-inert tier — exactly the §0 error class this campaign documented.
+// Armed without mw_detect (and nothing that auto-arms it): disabled.  The MW/LLI
+// drain is the detection vehicle; without it the toggle would be armed but inert
+// (the §0 error class).
 TEST(DatumStationSlipDetectConfig, DisabledWithoutMwDetect) {
     LogManager log;
     const fs::path p = writeTempConfig("novehicle", networkConfig(
@@ -96,9 +96,9 @@ TEST(DatumStationSlipDetectConfig, DisabledWithoutMwDetect) {
 }
 
 // phase_leveling with no detector auto-arms mw_detect (standing invariant #1),
-// and that auto-arm must SATISFY the datum_station_detect prerequisite — i.e.
-// the toggle is parsed after the auto-arm.  A regression that reorders the two
-// silently disarms the datum path on every leveling config.
+// and that auto-arm satisfies the datum_station_detect prerequisite because the
+// toggle is parsed after the auto-arm.  Reordering the two would silently disarm
+// the datum path on every leveling config.
 TEST(DatumStationSlipDetectConfig, LevelingAutoArmSatisfiesPrerequisite) {
     LogManager log;
     const fs::path p = writeTempConfig("autoarm", networkConfig(

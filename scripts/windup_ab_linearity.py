@@ -1,24 +1,25 @@
 #!/usr/bin/env python3
-"""windup_ab_linearity.py -- decide the carrier-phase wind-up SIGN defect on real data.
+"""windup_ab_linearity.py: decide the carrier-phase wind-up sign defect on real data.
 
-docs/SPEC_phase_windup_sign.md section 8 item 1.  The simulator is structurally blind
+docs/SPEC_phase_windup_sign.md section 8 item 1. The simulator is structurally blind
 to the defect (it injects wind-up through the same computePhaseWindUp), so the only
 decisive evidence is a real-data three-arm ladder:
 
-    arm1  wind-up ON, shipped exe   -> phase residual  2W + N   (W = wrapped wind-up,
-    arm2  wind-up OFF               -> phase residual   W + N        N = the fractional-
-    arm3  wind-up ON, FIXED exe     -> phase residual       N         mode wrap staircase)
+    arm1  wind-up on, shipped exe   -> phase residual  2W + N   (W = wrapped wind-up,
+    arm2  wind-up off               -> phase residual   W + N        N = the fractional-
+    arm3  wind-up on, fixed exe     -> phase residual       N         mode wrap staircase)
 
-Because the arms differ only by an ADDITIVE per-observation term, the estimator is
+Because the arms differ only by an additive per-observation term, the estimator is
 linear in it to second order, so two identities must hold:
 
     (1)  second difference   arm1 - 2*arm2 + arm3 == 0   (exact, both accumulation modes)
     (2)  ladder slope        (arm1 - arm3) == 2 * (arm2 - arm3)
 
-Under the NULL hypothesis (the shipped sign is already correct) arm3 IS arm1, so the
-slope is 0 and the second difference equals -(arm2 - arm1).  Slope 2 vs slope 0 is the
-discriminator, and it needs no truth coordinate -- only that the three runs are
-deterministic.  The truth-graded scorecard printed alongside is the PRICE, not the proof.
+Under the null hypothesis (the shipped sign is already correct), arm3 equals arm1, so
+the slope is 0 and the second difference equals -(arm2 - arm1). Slope 2 vs slope 0 is
+the discriminator, and it needs no truth coordinate, only that the three runs are
+deterministic. The truth-graded scorecard printed alongside is the cost of running
+this check, not the proof.
 
 Usage
 -----
@@ -58,8 +59,8 @@ def enu(run_dir: Path, truth: np.ndarray) -> pd.DataFrame:
 
 
 def resid_rms(run_dir: Path) -> dict:
-    """Phase-residual RMS with the per-(satellite, signal) mean removed -- the part no
-    constant float ambiguity can absorb.  The sharpest observable in the ladder."""
+    """Phase-residual RMS with the per-(satellite, signal) mean removed: the part no
+    constant float ambiguity can absorb. The sharpest observable in the ladder."""
     p = run_dir / "logs" / "measurement_residuals.csv"
     if not p.is_file():
         return {}
@@ -115,7 +116,7 @@ def main(argv=None) -> int:
             print("error: missing %s" % (d / "logs" / "state_trace.csv"), file=sys.stderr)
             return 2
 
-    # ---- control 0: wind-up OFF must be BYTE-IDENTICAL across the two exes ----
+    # ---- control 0: wind-up off must be byte-identical across the two exes ----
     a = (dirs["arm2_OFF"] / "logs" / "state_trace.csv").read_bytes()
     b = (dirs["null_OFF_fixed"] / "logs" / "state_trace.csv").read_bytes()
     print("\n[control] wind-up-OFF state_trace, shipped vs fixed exe: %s"

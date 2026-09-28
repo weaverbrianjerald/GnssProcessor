@@ -1,75 +1,85 @@
 /**
  * @file ApplicationNetworkSetup.cpp
- * @brief @internal Application::runNetwork setup phases (decomposition INC-5,
- *        2026-07-16) — Phase-0 input validation and Phases 2-4 + product sink
- *        + S-basis contract + closed-loop consumer, relocated VERBATIM from
- *        ApplicationNetwork.cpp.  Outputs land in NetworkSetupResult (filled
- *        in place; see its header for the address-stability contract).  Every
- *        former early `return 1` is preserved with its identical log line.
- *        Include block mirrors the source TU (INC-1 precedent); the cleanup
- *        pass is deferred to INC-12.
+ * @brief @internal Setup phases of Application::runNetwork: Phase-0 input
+ *        validation, Phases 2-4, the owned product sink, the S-basis contract
+ *        and the closed-loop consumer, split out of ApplicationNetwork.cpp
+ *        (decomposition step INC-5).  Outputs land in NetworkSetupResult,
+ *        filled in place; its header states the address-stability contract.
+ *        Each function returns 0 on success; on a fatal setup error it logs the
+ *        error and returns 1, which runNetwork returns unchanged.  The include
+ *        block is the source TU's, copied whole (the INC-1 precedent); its
+ *        pruning was left to the INC-12 cleanup and has not been done, so it
+ *        lists unused headers.
  */
 
 /**
  * @file ApplicationNetwork.cpp
  * @brief Implementation of Application::runNetwork (minimum-constraint
- *        S-system PPP-RTK NETWORK producer).
+ *        S-system PPP-RTK network producer).
  *
- * Extracted from Application.cpp to keep the per-mode processing pipelines in
- * dedicated translation units (mirrors ApplicationBaseline.cpp /
- * ApplicationRealtime.cpp).  The network producer is a joint multi-station
- * estimator: per-station local normals reduced onto a shared satellite-
- * parameter block via an exact Schur complement, estimating the estimable
- * satellite clock + satellite phase bias under an explicitly declared
- * minimum-constraint S-basis, emitted in IGS-SSR convention for the companion
- * PPP_RTK_User consumer.
+ * This block is a copy of the file header of ApplicationNetwork.cpp; that file
+ * holds the current version.
+ *
+ * runNetwork has its own translation unit, like the other per-mode pipelines
+ * (ApplicationBaseline.cpp, ApplicationRealtime.cpp).  The network producer is
+ * a joint multi-station estimator: per-station local normals are reduced onto a
+ * shared satellite-parameter block by an exact Schur complement, which estimates
+ * the estimable satellite clock and satellite phase bias under an explicitly
+ * declared minimum-constraint S-basis.  The products are emitted in IGS-SSR
+ * convention for the companion PPP_RTK_User consumer.
  *
  * See docs/SPEC_sbasis_realization_contract.md §F7 and the approved design plan
  * for the full architecture and the staged build-out (W1..W8).
  *
  * ===========================================================================
- * W4-S2b — the live epoch driver
+ * The live epoch driver (W4-S2b)
  * ===========================================================================
  *
- * Per solution epoch the driver runs the arrowhead estimator end to end:
+ * Each solution epoch runs the arrowhead estimator end to end:
  *
- *   PASS A (layout)  for each present station: PppModel::computeModels →
+ *   PASS A (layout)  For each present station, PppModel::computeModels, then
  *       MeasurementModel::ensureNetworkSharedStates pre-allocates the shared
- *       satellite states (per-sat clock + per-(sat,signal) phase bias) using the
- *       SAME usability gate the measurement build uses.  The DATUM (pivot)
- *       station is processed first so its usable phase-signal set restricts the
- *       phase-bias columns to ones backed by a pivot-receiver ambiguity pin.
- *       The estimator's shared column layout is then registered (clock for every
- *       satellite any station sees; phase bias for the pivot's signal set).
+ *       satellite states (per-satellite clock, per-(sat, signal) phase bias)
+ *       behind the same usability gate the measurement build uses.  The datum
+ *       (pivot) station is processed first, so its usable phase-signal set
+ *       restricts the phase-bias columns to those backed by a pivot-receiver
+ *       ambiguity pin.  The estimator's shared column layout is then registered:
+ *       a clock for every satellite any station sees, and a phase bias for each
+ *       signal in the pivot's set.
  *
- *   PASS B (assembly)  for each present station: MeasurementModel::compute-
- *       MeasurementUpdate produces an undifferenced H/innovations/R block (no
- *       receiver-side differencing — DifferencingMode::None).  Its columns are
- *       split: the satellite clock (−1) and phase-bias (+1) columns scatter into
- *       the shared border A_s; the 3 receiver-position columns are DROPPED
- *       (coordinates held fixed); the rest become the station's private nuisance
- *       block A_r.  The pivot station additionally folds tight-prior pins on its
- *       own ambiguities (the LOCAL half of the S-basis — the emitted phase bias
- *       then carries that pivot-receiver ambiguity lump, Odijk Eq. 4).
+ *   PASS B (assembly)  For each present station,
+ *       MeasurementModel::computeMeasurementUpdate produces an undifferenced
+ *       H / innovation / R block (no receiver-side differencing,
+ *       DifferencingMode::None).  Its columns are split: the satellite clock (−1)
+ *       and phase-bias (+1) columns scatter into the shared border A_s; the three
+ *       receiver-position columns are dropped (coordinates are held fixed); the
+ *       rest form the station's private nuisance block A_r.  The pivot station
+ *       also folds tight-prior pins on its own ambiguities.  These pins are the
+ *       local half of the S-basis, so the emitted phase bias carries that
+ *       pivot-receiver ambiguity lump (Odijk Eq. 4).
  *
- *   SOLVE  NetworkSbasis builds the SHARED minimum-constraint datum (one
- *       satellite-clock pin per constellation), the null-space rank gate
- *       verifies the reduced shared system carries exactly that deficiency, then
- *       NetworkEstimator::solve produces the shared estimate.  NetworkProduct-
- *       Emitter serializes it into an OWNED SsrCorrectionStore (closed-loop
- *       isolation — never the process-wide singleton the user side reads).
+ *   Solve  NetworkSbasis builds the shared minimum-constraint datum (one
+ *       satellite-clock pin per constellation); the null-space rank gate checks
+ *       that the reduced shared system has exactly that deficiency; then
+ *       NetworkEstimator::solve produces the shared estimate.
+ *       NetworkProductEmitter serializes it into an owned SsrCorrectionStore,
+ *       never the process-wide singleton the user side reads, which keeps the
+ *       closed loop isolated.
  *
- *   D2 (between-epoch)  the shared posterior (value, variance) is carried
- *       forward as a diagonal prior on the next epoch's shared border, inflated
- *       by the per-parameter process noise over the epoch gap.
+ *   Between epochs (D2)  The shared posterior (value, variance) is carried
+ *       forward as a diagonal prior on the next epoch's shared border (dense
+ *       with network.shared_carry_full_cov), inflated by the per-parameter
+ *       process noise over the epoch gap.
  *
- * Scope (V1): estimable satellite CLOCK + PHASE BIAS, coordinates/orbits fixed,
- * GPS + Galileo, per-band uncombined, float (no network AR).  Satellite code
- * bias, atmosphere products, real-time branch, GLONASS FCN bias, and network QC
- * are later slices (W6/W7/Phase 2).  Each station's coordinates MUST be known
- * (held fixed) and its observation RINEX path MUST be explicit in the config —
- * the PathResolver network gate is deferred, so resolveData() here serves only
- * products + broadcast nav.
+ * Base scope (V1): estimable satellite clock and phase bias, coordinates and
+ * orbits fixed, GPS and Galileo, per-band uncombined, float (no network AR).
+ * Satellite code bias, atmosphere products, the real-time branch, the GLONASS
+ * FCN bias and network QC were planned as later slices (W6/W7/Phase 2); some
+ * have landed since, among them satellite code-bias estimation (Phase 3b below)
+ * and the broadcast a-priori of the real-time service mode (brdc_rts).  Each
+ * station's coordinates must be known (they are held fixed) and its observation
+ * RINEX path must be set explicitly in the config: the PathResolver network gate
+ * is deferred, so resolveData() serves only products and broadcast navigation.
  */
 
 #include "app/Application.hpp"
@@ -78,41 +88,41 @@
 #include "products/ProductCache.hpp"
 #include "products/SsrCorrectionStore.hpp"
 #include "products/NetworkProductEmitter.hpp"
-#include "products/NetworkEmitRebase.hpp"   // Card 4 (M1) phase D: emit-layer frame re-base
-#include "products/NetworkPbEmitFilter.hpp" // M5 prereq: PB emission-continuity filter
+#include "products/NetworkEmitRebase.hpp"   // emit-layer frame re-base (Card 4, M1 phase D)
+#include "products/NetworkPbEmitFilter.hpp" // PB emission-continuity filter (M5 prereq)
 #include "products/NetworkProductIO.hpp"
-#include "products/CombinedCorrectionSigma.hpp"   // M4: combined-correction σ arithmetic
-#include "products/NetworkStateSnapshot.hpp"   // RTB-7: atomic state snapshot + warm resume
-#include "products/LiveEphemerisStore.hpp"     // Card 5 (RTF-1): broadcast a-priori store for brdc_rts
-#include "products/RinexNavParser.hpp"         // Card 5 (RTF-1): RINEX-nav → LiveEphemerisStore loader
+#include "products/CombinedCorrectionSigma.hpp"   // combined-correction σ arithmetic (M4)
+#include "products/NetworkStateSnapshot.hpp"   // atomic state snapshot and warm resume (RTB-7)
+#include "products/LiveEphemerisStore.hpp"     // broadcast a-priori store for brdc_rts (Card 5, RTF-1)
+#include "products/RinexNavParser.hpp"         // RINEX-nav → LiveEphemerisStore loader (Card 5, RTF-1)
 #include "filter/NetworkEstimator.hpp"
 #include "filter/IlsCore.hpp"                 // producer-side network AR (Phase 2+): ils::ilsFix
 #include "filter/NetworkSbasis.hpp"
-#include "filter/NetworkPivotHandover.hpp"   // A1/A2: pivot-handover datum-change detector
-#include "filter/NetworkCarryVce.hpp"        // M2: LS-VCE carry-row variance-component monitor
+#include "filter/NetworkPivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
+#include "filter/NetworkCarryVce.hpp"        // LS-VCE carry-row variance-component monitor (M2)
 #include "filter/NetworkIonoDeweightGate.hpp" // Station-adaptive SH-VTEC-constraint deweight (iono deweight card)
-#include "filter/NetworkInvariantCarryDriver.hpp"  // Card 4 (M1) C3b: DD cycle-basis invariant carry
-#include "filter/NetworkMwWlLayer.hpp"             // M5 card WL-1: MW-seeded wide-lane pseudo-obs layer
+#include "filter/NetworkInvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (Card 4, M1 C3b)
+#include "filter/NetworkMwWlLayer.hpp"             // MW-seeded wide-lane pseudo-obs layer (M5 card WL-1)
 #include "filter/StateKeySchema.hpp"
-#include "filter/NetworkRunTypes.hpp"      // INC-2: run-loop record types (NetStation / StationAssembly / carry PODs)
-#include "filter/NetworkRobustStats.hpp"   // INC-2: median/MAD robust attribution helpers
-#include "logging/CsvRotator.hpp"     // P1: size-based rotation of the unbounded service CSVs
-#include "logging/NetworkRunTraces.hpp" // INC-3: trace-stream ownership + open logic + roster + FlagRate
-#include "app/NetworkRunContext.hpp"    // INC-4: knobs + Tier-1 carry state + service counters (ctx)
-#include "slip/MwLaneTiers.hpp"         // UWL-1 per-constellation lane-tier band table
-#include "slip/MwSlipDetector.hpp"      // T0 phase-leveling slip repair (Increment 2)
+#include "filter/NetworkRunTypes.hpp"      // run-loop record types: NetStation, StationAssembly, carry PODs (INC-2)
+#include "filter/NetworkRobustStats.hpp"   // median/MAD robust attribution helpers (INC-2)
+#include "logging/CsvRotator.hpp"     // size-based rotation of the unbounded service CSVs (P1)
+#include "logging/NetworkRunTraces.hpp" // trace-stream ownership, open logic, roster, FlagRate (INC-3)
+#include "app/NetworkRunContext.hpp"    // ctx: knobs, Tier-1 carry state, service counters (INC-4)
+#include "slip/MwLaneTiers.hpp"         // per-constellation lane-tier band table (UWL-1)
+#include "slip/MwSlipDetector.hpp"      // phase-leveling slip repair (T0, Increment 2)
 #include "slip/TurboEditResolver.hpp"   // MW+GF per-signal integer repair (Increment 2)
 #include "slip/IfPhaseSlipDetector.hpp" // IF-phase between-sat/between-epoch slip detection
-#include "slip/NetworkSlipQc.hpp"       // INC-2: slip-QC pure helpers (ifElevMap / parseIfPairResetKey)
+#include "slip/NetworkSlipQc.hpp"       // slip-QC pure helpers: ifElevMap, parseIfPairResetKey (INC-2)
 #include "atmosphere/SphericalHarmonicIonosphere.hpp"
 #include "common/Constants.hpp"
-#include "common/PppUtils.hpp"        // B5: signal wavelengths for the DD fractional-cycle diagnostic
+#include "common/PppUtils.hpp"        // signal wavelengths for the DD fractional-cycle diagnostic (B5)
 #include "realtime/RealTimeEngine.hpp"
 #include "math/TimeUtils.hpp"
 #include "math/Coordinates.hpp"
 
 #include <Eigen/Dense>
-#include <Eigen/Core>          // Eigen::setNbThreads / nbThreads (pin Eigen to 1 thread inside our per-station OpenMP region — avoids nested oversubscription and keeps the result deterministic)
+#include <Eigen/Core>          // Eigen::setNbThreads / nbThreads: Eigen is pinned to one thread inside the per-station OpenMP region, which avoids nested oversubscription and keeps the result deterministic
 #include <fmt/format.h>
 
 #ifdef _OPENMP
@@ -146,11 +156,11 @@ int Application::networkValidateInputs_() {
     const auto& nc = config_.getNetworkConfig();
 
     // --- Phase 0: validate inputs (explicit RINEX + fixed coordinates) ------
-    // V1 requires an explicit observation RINEX path per station: the
-    // PathResolver network gate (filling paths from the internal data tree by
-    // station name) is deferred to avoid editing the shared Application.cpp
-    // resolve path while concurrent sessions are in flight.  Coordinates are
-    // validated by loadNetworkSection_ (every station needs a known position).
+    // Every station needs an explicit observation RINEX path: the PathResolver
+    // network gate (filling paths from the internal data tree by station name)
+    // is deferred, because it would edit the resolve path shared with the other
+    // modes in Application.cpp.  Coordinates are validated by
+    // loadNetworkSection_ (every station needs a known position).
     for (const auto& s : nc.stations) {
         if (s.rinex_path.empty()) {
             log->error("Network: station '{}' has no observation rinex_path. V1 "
@@ -192,21 +202,22 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         return 1;
     }
 
-    // Closed-loop integer-recovery harness: a HELD-OUT consumer station, added to
-    // the sync roster ONLY so its observations are time-aligned with the network
-    // schedule — it is deliberately kept OUT of the joint estimator stations
-    // (built below) and instead consumes the producer's emitted SSR products.
+    // Closed-loop integer-recovery harness: a held-out consumer station joins the
+    // sync roster only so that its observations are time-aligned with the network
+    // schedule.  It is not one of the joint estimator's stations (built below);
+    // it consumes the producer's emitted SSR products instead.
     const ClosedLoopConfig& cl = nc.closed_loop;
     setup.closed_loop_on = cl.enable && !cl.station.name.empty();
     const bool closed_loop_on = setup.closed_loop_on;
 
-    // Card 5 (RTF-1): a-priori orbit/clock source.  sp3 (default) = the precise
-    // SP3/CLK cache is the a-priori (today's behaviour, byte-identical).  brdc_rts =
-    // the a-priori is BROADCAST ephemeris (LiveEphemerisStore) — the self-sufficient
-    // real-time service mode.  Threaded through Phase 3 (nav load + SP3-error lift),
-    // the producer station gate-suppression (D1), the anchor-σ re-base (D6), the
-    // clock-IODE stamp, and the apriori_product_id.  Every use is guarded on this
-    // flag so the sp3 path is textually unchanged.
+    // A-priori orbit/clock source (network.apriori_source).  sp3 (default): the
+    // precise SP3/CLK cache is the a-priori, byte-identical to the producer before
+    // the knob existed.  brdc_rts: the a-priori is broadcast ephemeris
+    // (LiveEphemerisStore), the self-sufficient real-time service mode.  The flag is
+    // threaded through Phase 3 (nav load and SP3-error lift), the producer-station
+    // gate suppression (D1), the anchor-σ re-base (D6), the clock-IODE stamp and the
+    // apriori_product_id.  Every use is guarded on it, so the sp3 path is textually
+    // unchanged.  (Card 5, RTF-1)
     setup.brdc_rts =
         (config_.networkAprioriSource() == NetworkAprioriSource::BrdcRts);
     const bool brdc_rts = setup.brdc_rts;
@@ -220,18 +231,18 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                                                   *product_parser_);
     MultiRinexSync& sync = *setup.sync;
 
-    // Clip each station's parse to the processing window.  The epoch loop below
-    // is bounded by processing.max_duration_s (anchored on the first synced
-    // epoch); without this, load() would parse — and synchronize() would copy —
-    // the FULL 24h of every station even when only the first minutes are used,
-    // which dominates wall-time at ~50 full-day stations.  A small margin covers
-    // per-station first-epoch jitter; max_duration_s <= 0 keeps full-file parsing.
+    // Clip each station's parse to the processing window.  The epoch loop in
+    // runNetwork processes at most processing.max_duration_s of data; without the
+    // clip, load() would parse (and synchronize() would copy) the full 24 h of every
+    // station even when only the first minutes are used, which dominates wall time
+    // at ~50 full-day stations.  The 60 s margin covers per-station first-epoch
+    // jitter; max_duration_s <= 0 keeps full-file parsing.
     //
     // The parse window is anchored at the file start, but network.start_offset_hours
-    // fast-forwards the epoch loop PAST that offset before the max_duration cutoff
-    // begins counting (the cutoff anchors on the first PROCESSED epoch).  So the
-    // window must cover [0, start_offset + max_duration + margin]; clipping to only
-    // max_duration would strip out the offset window and leave zero epochs to solve.
+    // makes the epoch loop skip that span first, and the max-duration cutoff counts
+    // from the first epoch past the offset.  The window therefore covers
+    // [0, start_offset + max_duration + margin]; clipping to max_duration alone would
+    // cut off the offset span and leave no epochs to solve.
     if (config_.getMaxDuration() > 0.0) {
         const double start_offset_s = config_.networkStartOffsetHours() * 3600.0;
         const double span_s = start_offset_s + config_.getMaxDuration() + 60.0;
@@ -248,10 +259,10 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
 
     if (!sync.load()) {
         // Non-fatal: a station that failed to parse is excluded from the aligned
-        // schedule (synchronize() skips it; the datum/pivot is guarded below in
-        // buildStation).  This lets a large roster proceed when some stations'
-        // observation files are missing or corrupt — the expected case when
-        // fetching ~50 stations from a public archive.
+        // schedule (synchronize() skips it; the datum/pivot is checked below in
+        // buildStation).  A large roster therefore proceeds when some stations'
+        // observation files are missing or corrupt, which is expected when fetching
+        // ~50 stations from a public archive.
         log->warn("Network: one or more station RINEX files failed to parse; "
                   "proceeding with the stations that loaded (the datum station "
                   "is required and is checked next).");
@@ -260,12 +271,13 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         log->error("Network: failed to synchronise epochs across stations");
         return 1;
     }
-    // Card OWD (O4): the network's ONE admission door for constellations.  The parser keeps
-    // every system and the model admits an observation by its signal priority list, while
-    // each station's inter-system bias is allocated by processing.active_systems; an
-    // inactive system with a priority list would enter the rows with no bias column (the
-    // loader used to refuse the combination).  Stripping the inactive systems here, before
-    // any reader of the synced epochs runs, makes the two doors one.
+    // The network's single admission point for constellations.  The parser keeps every
+    // system and the model admits an observation by its signal priority list, while each
+    // station's inter-system bias is allocated by processing.active_systems, so an
+    // inactive system with a priority list would enter the rows with no bias column.  The
+    // loader accepts that combination with a warning; removing the inactive systems here,
+    // before any reader of the synced epochs runs, makes processing.active_systems the one
+    // admission rule.  (Card OWD, O4)
     {
         const std::map<std::string, std::size_t> removed =
             sync.retainSystems(config_.getActiveSystems());
@@ -288,10 +300,11 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         return 1;
     }
     log->info("Network: multi-station sync complete — {} synchronised epochs", synced.size());
-    // Card OWD: the processing window, with the epoch loop's own bounds (the start offset
-    // skip at ApplicationNetwork's fast-forward, the max-duration cutoff after it).  The
-    // group-delay latch takes the navigation records in force during it and the S contract
-    // names the product files in force during it.
+    // The processing window [window_t0_s, window_t1_s), with the epoch loop's own bounds:
+    // the start-offset skip of runNetwork's fast-forward, then the max-duration cutoff
+    // (without a cutoff the window ends 1 s after the last synced epoch).  The group-delay
+    // latch takes the navigation records in force during the window, and the S contract
+    // names the product files in force during it.  (Card OWD)
     setup.window_t0_s = TimeUtils::continuousGpsSeconds(synced.front().time)
                       + config_.networkStartOffsetHours() * 3600.0;
     setup.window_t1_s = config_.getMaxDuration() > 0.0
@@ -307,24 +320,26 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     }
     log->info("Network: product cache loaded — {} orbits, {} clocks",
               product_cache.getOrbitCount(), product_cache.getClockCount());
-    // Card 8 (replay parity): staged broadcast nav records + feed cursor for the
-    // progressive LiveEphemerisStore insertion in the epoch loop (brdc_rts only;
-    // empty otherwise).  Availability = GPS-continuous-scale toc (BDS toc is
-    // native BDT → shifted to the GPS scale, mirroring LiveEphemerisStore's
-    // toe convention).
-    // navAvailabilityGpsSeconds: ONE shared inline fn in app/NetworkSetupResult.hpp
-    // (INC-5) — the epoch-loop feed uses the identical definition.
+    // Staged broadcast nav records and the feed cursor for the progressive
+    // LiveEphemerisStore insertion in the epoch loop (brdc_rts only; empty
+    // otherwise).  A record's availability is its toc on the GPS-continuous scale
+    // (a BDS toc is native BDT and is shifted to the GPS scale, as
+    // LiveEphemerisStore does for toe).  The staging sort here and the epoch-loop
+    // feed both call navAvailabilityGpsSeconds, one inline function in
+    // app/NetworkSetupResult.hpp, so their orders cannot drift apart.
+    // (Card 8, replay parity; INC-5)
     auto& brdc_nav_staged = setup.brdc_nav_staged;
     auto& brdc_nav_cursor = setup.brdc_nav_cursor;
     if (brdc_rts) {
-        // Card 5 (RTF-1): the a-priori is BROADCAST ephemeris, not SP3/CLK.  Parse the
-        // RINEX navigation file into the shared LiveEphemerisStore — the SAME store the
-        // real-time engine fills from RTCM 1019/1042/1044/1046 — so replay resolves
-        // satellite orbit+clock through the identical code path as a live run (frame
-        // consistency, conventions §1 / plan D4).  Geometry::getSatellitePV falls back
-        // to this store when no SP3 is loaded, and GnssCorrections::getSatelliteClock-
-        // Correction supplies the broadcast SV clock (marked broadcast-grade) when no
-        // precise CLK covers the epoch — exactly the broadcast a-priori this mode needs.
+        // The a-priori is broadcast ephemeris, not SP3/CLK.  The RINEX navigation file
+        // is parsed here and its records are fed, from the epoch loop, into the shared
+        // LiveEphemerisStore, the store the real-time engine fills from RTCM
+        // 1019/1042/1044/1046, so replay resolves satellite orbit and clock through the
+        // same code path as a live run (frame consistency, conventions §1 / plan D4).
+        // Geometry::getSatellitePV falls back to this store when no SP3 is loaded, and
+        // GnssCorrections::getSatelliteClockCorrection supplies the broadcast SV clock
+        // (marked broadcast-grade) when no precise CLK covers the epoch, which is the
+        // broadcast a-priori this mode needs.  (Card 5, RTF-1)
         const std::filesystem::path nav_path = config_.getNavigationPath();
         if (nav_path.empty()) {
             log->error("Network (brdc_rts): network.apriori_source = brdc_rts requires a "
@@ -333,24 +348,22 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                        "covering the observation day.");
             return 1;
         }
-        // Parse first so a per-constellation loaded-sat summary is available.
+        // Parse first so a per-constellation loaded-satellite summary is available.
         //
-        // Card 8 fix (replay parity, plan D4): do NOT bulk-insert the whole day.
-        // LiveEphemerisStore retains only CURRENT+PREVIOUS per satellite (live
-        // streaming semantics — the retention Cards 3/6/7 pin against), so a
-        // full-file load leaves each satellite holding its LAST two records of
-        // the day; at any processing epoch more than a fit window (~4 h GPS,
-        // ~2 h GAL/BDS) before end-of-day the staleness guard then rejects
-        // EVERY satellite and the producer degenerates to n_present = 0.
-        // Instead STAGE the records sorted by availability and feed them to
-        // the store progressively as the epoch loop advances, so the store's
-        // current/previous evolve exactly as they would receiving a live nav
-        // stream.  Availability proxy = GPS-scale toc: the file carries no
-        // receipt stamp (RinexNavParser sets received_time = {0,0}), and toc
-        // is the closest file-derivable stand-in for "a live receiver holds
-        // this record" (live GPS broadcasts a data set from ~toe−2h, so the
-        // toc proxy is conservative by up to one fit half-window — records
-        // roll slightly LATER than live, never prematurely).
+        // The whole day is not inserted at once.  LiveEphemerisStore keeps only the
+        // current and previous record per satellite (live streaming semantics, which
+        // Cards 3/6/7 pin), so a full-file load would leave each satellite holding its
+        // last two records of the day; at any processing epoch more than a fit window
+        // (~4 h GPS, ~2 h GAL/BDS) before the end of the day, the staleness guard would
+        // then reject every satellite and the producer would degenerate to
+        // n_present = 0.  The records are therefore staged, sorted by availability, and
+        // fed to the store as the epoch loop advances, so the store's current/previous
+        // evolve as they would on a live nav stream.  Availability is the GPS-scale toc:
+        // the file carries no receipt stamp (RinexNavParser sets received_time = {0,0}),
+        // and toc is the closest file-derivable stand-in for "a live receiver holds this
+        // record".  Live GPS broadcasts a data set from about toe − 2 h, so the toc proxy
+        // is conservative by up to one fit half-window: records roll in slightly later
+        // than live, never early.  (Card 8, replay parity, plan D4)
         std::vector<BroadcastEphemeris> nav = RinexNavParser::parse(nav_path.string());
         std::map<char, std::set<std::string>> nav_by_const;
         for (const auto& e : nav)
@@ -380,16 +393,18 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                       "(live-arrival replay).", nav_path.filename().string(),
                       brdc_nav_staged.size(), n_sats, summary);
         }
-        // ANY precise product present in brdc_rts is an unsupported combination — refuse
-        // rather than mask it (revisit when the RTS-orbit seam, plan D9, lands).  BOTH the
-        // orbit AND the clock cache must be empty: a precise SP3 shadows the broadcast
-        // a-priori via getSatellitePV node interpolation, and a precise CLK shadows the
-        // broadcast clock in getSatelliteClockCorrection (interpolateClock wins over the
-        // broadcast fallback for covered epochs → used_broadcast=false, NOT broadcast-grade).
-        // Either alone is a silent orbit/clock frame split: the estimated C0 becomes a delta
-        // against the wrong baseline while its stamped IODE still names the broadcast eph, so
-        // the consumer reconstructs brdc(iode)+C0 and is metre-level wrong.  Gate on orbit OR
-        // clock count (getOrbitCount alone missed a CLK-without-SP3 product set).
+        // Any precise product loaded in brdc_rts is an unsupported combination and is
+        // refused rather than masked (to revisit when the RTS-orbit seam, plan D9, lands).
+        // The orbit cache and the clock cache must both be empty: a precise SP3 shadows
+        // the broadcast a-priori through getSatellitePV node interpolation, and a precise
+        // CLK shadows the broadcast clock in getSatelliteClockCorrection (interpolateClock
+        // takes precedence over the broadcast fallback for covered epochs, giving
+        // used_broadcast = false, not broadcast-grade).  Either one alone splits the
+        // orbit/clock frame with nothing to flag it: the estimated C0 becomes a delta
+        // against the wrong baseline while its stamped IODE still names the broadcast
+        // ephemeris, so the consumer reconstructs brdc(iode) + C0 and is wrong at the
+        // metre level.  The gate therefore tests the orbit count or the clock count; the
+        // orbit count alone would pass a CLK-without-SP3 product set.
         if (product_cache.getOrbitCount() > 0 || product_cache.getClockCount() > 0) {
             log->error("Network (brdc_rts): precise products are loaded alongside "
                        "apriori_source = brdc_rts ({} SP3 orbit node(s), {} CLK sample(s)). This "
@@ -400,23 +415,29 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             return 1;
         }
     } else if (product_cache.getOrbitCount() == 0) {
-        // sp3 mode (default): the precise orbit cache IS the a-priori — unchanged.
+        // sp3 mode (default): the precise orbit cache is the a-priori, so it must hold orbits.
         log->error("Network: no orbit data available; cannot compute satellite geometry. "
                    "Set navigation_path / products to cover the observation day.");
         return 1;
     }
 
-    // --- Phase 3b: GIM for satellite code-bias estimation (W6) ---------------
+    // --- Phase 3b: ionosphere and code-bias datum inputs (W6) ----------------
     // The satellite DCB (geometry-free code bias) is co-linear with each station's
-    // free per-(rx,sat) slant ionosphere until an external constraint imposes
-    // between-satellite structure.  When network.estimate_sat_code_bias is on,
-    // load the IONEX GIM and fold a common-mode-free pseudo-observation per station
-    // (see appendGimIonoRows); without it the satellite DCBs stay in the null space
-    // and the rank gate withholds every epoch, so this is a hard prerequisite.
-    // The satellite-DCB iono constraint comes from ONE of two mutually-exclusive
-    // sources: the external GIM (legacy W6) or the co-estimated SH-VTEC field
-    // (estimate_iono_sh).  They are never both applied — when the network estimates
-    // its own field it does NOT load a GIM.
+    // free per-(rx,sat) slant ionosphere until a constraint or a datum imposes
+    // between-satellite structure; without one the satellite DCBs stay in the null
+    // space and the rank gate withholds every epoch.  The branches below are
+    // exclusive and are tested in this order:
+    //   - network.estimate_iono_sh: the network co-estimates its own SH-VTEC field
+    //     and loads no GIM.
+    //   - network.estimate_sat_code_bias with network.code_bias_gf_datum (slant
+    //     posture): no ionosphere constraint; the geometry-free biases are the datum.
+    //   - network.estimate_sat_code_bias with network.w6_iono_constraint = none
+    //     (self-contained posture): no ionosphere constraint; the sum-to-zero rows
+    //     carry the code-bias datum.
+    //   - network.estimate_sat_code_bias otherwise (legacy W6): the IONEX GIM is
+    //     loaded and networkAppendGimIonoRows_ folds a common-mode-free
+    //     pseudo-observation per station, so a missing GIM is a hard error.
+    // The external GIM and the SH field are therefore never both applied.
     auto& sh_model = setup.sh_model;
     const GlobalVtecShConfig& shc = config_.getGlobalVtecShConfig();
     if (config_.estimateNetworkIonoSh()) {
@@ -425,7 +446,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                   "({} coeffs), shell {:.0f} km, {} longitude; external GIM NOT loaded.",
                   sh_model->maxDegree(), sh_model->numCoeffs(), shc.layer_height_km,
                   shc.sun_fixed ? "sun-fixed" : "geographic");
-        // Iono-2 mechanism A: second thin shell of the dual-layer field.
+        // Second thin shell of the dual-layer field (Iono-2, mechanism A).
         if (shc.layer2_max_degree > 0) {
             setup.sh_model2 =
                 std::make_unique<SphericalHarmonicIonosphere>(shc.layer2_max_degree);
@@ -434,7 +455,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                       setup.sh_model2->maxDegree(), setup.sh_model2->numCoeffs(),
                       shc.layer2_height_km);
         }
-        // T1a: echo the a₀₀ physical band the per-epoch divergence WARN uses.
+        // Echo the a₀₀ physical band that the per-epoch divergence warning uses (T1a).
         if (shc.a00_warn_low_tecu < shc.a00_warn_high_tecu)
             log->info("Network (SH-iono): a₀₀ physical band [{:.1f}, {:.1f}] TECU — a per-epoch "
                       "WARN fires if the estimated mean VTEC leaves it (field-divergence probe).",
@@ -442,14 +463,14 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         else
             log->info("Network (SH-iono): a₀₀ physical-band WARN disabled (low ≥ high).");
     } else if (config_.estimateNetworkSatCodeBias() && config_.networkCodeBiasGfDatum()) {
-        // SLANT posture (Odijk 2016 §5.1): the ionosphere stays free per-LOS slant and
-        // is NOT constrained at all — no SH field, no GIM.  What makes the satellite
-        // code bias observable here is not an ionosphere constraint but the third
-        // frequency: rank deficiencies 2b/3b are removed by pinning the geometry-free
-        // biases as datum (the GF pin + the receiver DCB gauge), which absorbs the GF
-        // lump into the slant ionosphere (their Table 8) and leaves the modernized DCB
-        // d^s_1 - d^s_j (j >= 3) as the estimable content.  Deliberately no GIM load and
-        // no hard error — this branch exists so that combination is reachable at all.
+        // Slant posture (Odijk 2016 §5.1): the ionosphere stays free per-LOS slant and
+        // is not constrained at all (no SH field, no GIM).  The satellite code bias is
+        // made observable by the third frequency, not by an ionosphere constraint:
+        // rank deficiencies 2b/3b are removed by pinning the geometry-free biases as
+        // datum (the GF pin and the receiver DCB gauge), which absorbs the GF lump into
+        // the slant ionosphere (their Table 8) and leaves the modernized DCB
+        // d^s_1 - d^s_j (j >= 3) as the estimable content.  No GIM is loaded and no
+        // error is raised; this branch exists so that the combination is reachable.
         log->info("Network (W6/slant): NO ionosphere constraint by design — free per-LOS "
                   "slant delays with the geometry-free code biases pinned as datum "
                   "(network.code_bias_gf_datum).  The estimable satellite code bias is the "
@@ -459,20 +480,20 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     } else if (config_.estimateNetworkSatCodeBias()
                && config_.getNetworkConfig().w6_iono_constraint
                       == NetworkW6IonoConstraint::None) {
-        // RF-0b (docs/refound/RF-0_baseline_2026-09-14.md Finding 2): the SELF-CONTAINED
-        // W6 posture.  Same "no ionosphere constraint" shape as the slant branch above,
-        // and deliberately a SEPARATE branch rather than a widened condition on it,
-        // because the two differ in the one thing that matters — the satellite code-bias
-        // DATUM.  The slant branch pins each satellite's geometry-free bias to zero
-        // (estimable content only from the third frequency); this one leaves it free and
-        // lets the per-(constellation, signal) sum-to-zero rows realize the IGS
-        // convention, which is what makes the posture reachable under
-        // processing.frequency_mode = dual, where the GF pin is refused at load.
+        // Self-contained W6 posture (RF-0b; docs/refound/RF-0_baseline_2026-09-14.md
+        // Finding 2).  It has the same "no ionosphere constraint" shape as the slant
+        // branch above and is kept as a separate branch, not a widened condition on it,
+        // because the two differ in the satellite code-bias datum.  The slant branch pins
+        // each satellite's geometry-free bias to zero (estimable content only from the
+        // third frequency); this one leaves it free and lets the per-(constellation,
+        // signal) sum-to-zero rows realize the IGS convention, which makes the posture
+        // reachable under processing.frequency_mode = dual, where the loader refuses the
+        // GF pin.
         //
-        // No GIM is loaded and there is no hard error: that is the whole point of the
-        // card.  `gim_` stays null, so networkAppendGimIonoRows_ returns immediately and
-        // the per-LOS slant ionosphere floats on its own — and the loader has already
-        // forced estimation.ionosphere_weighting off, so neither half can be half-armed.
+        // No GIM is loaded and no error is raised.  `gim_` stays null, so
+        // networkAppendGimIonoRows_ returns immediately and the per-LOS slant ionosphere
+        // floats on its own; the loader has already forced
+        // estimation.ionosphere_weighting off, so no ionosphere constraint is left armed.
         log->info("Network (W6/no-constraint, RF-0b): NO ionosphere constraint and NO external "
                   "GIM — free per-LOS slant delays, with the satellite code-bias datum carried "
                   "by the per-satellite ionosphere-free pin plus the per-(constellation, signal) "
@@ -481,16 +502,16 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                   "by a consumer AS A PAIR.  The between-satellite geometry-free split is "
                   "PRIOR-determined here, not data-determined: check the null-space gate's "
                   "observed-vs-declared and the run-end W6-IONO-NONE counter.");
-        // --- RF-0c: latch the broadcast group delays, once, for the GF pin's RHS ---
-        // The navigation message is SIGNAL IN SPACE, not an external product, so reading
-        // it here does not re-introduce the external-data dependence RF-0b removed.  It
-        // is parsed independently of `brdc_rts` (that mode is about the ORBIT/CLOCK
-        // a-priori; this is about a datum value) and LATCHED: T_GD is a hardware
-        // constant the control segment updates rarely, and a datum that moved mid-run
-        // would step the emitted code biases and the estimable ionosphere together with
-        // nothing on the wire declaring it.  The per-satellite spread across the day's
-        // records is measured and reported, so a satellite whose T_GD actually changed
-        // is visible rather than silently averaged away.
+        // --- Latch the broadcast group delays once, for the GF pin's RHS (RF-0c) ---
+        // The navigation message is signal in space, not an external product, so reading
+        // it here does not reintroduce the external-data dependence that RF-0b removed.
+        // It is parsed independently of `brdc_rts` (that mode concerns the orbit/clock
+        // a-priori; this is a datum value) and latched: T_GD is a hardware constant the
+        // control segment updates rarely, and a datum that moved mid-run would step the
+        // emitted code biases and the estimable ionosphere together with nothing on the
+        // wire declaring it.  The per-satellite spread across the navigation file's
+        // records is measured and reported, so a satellite whose T_GD changed is visible
+        // instead of being averaged away.
         if (config_.getNetworkConfig().sat_gf_datum == NetworkSatGfDatum::BroadcastTgd) {
             const std::filesystem::path nav_path = config_.getNavigationPath();
             if (nav_path.empty()) {
@@ -503,10 +524,11 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             }
             const std::vector<BroadcastEphemeris> nav =
                 RinexNavParser::parse(nav_path.string());
-            // Card OWD (O3): the value in force during the RUN, not the file's first record
-            // (the first record is the value in force when the file starts: right for a
-            // run that starts with it, wrong for any other).  The rule and its reasons live
-            // in NetworkSbasis::latchBroadcastGroupDelays, beside the pair rule it feeds.
+            // Latch the value in force during the processing window, not the file's first
+            // record: the first record is the value in force when the file starts, which is
+            // right only for a run that starts there.  The rule and its reasons are in
+            // NetworkSbasis::latchBroadcastGroupDelays, beside the pair rule it feeds.
+            // (Card OWD, O3)
             const NetworkSbasis::GroupDelayLatch latch = NetworkSbasis::latchBroadcastGroupDelays(
                 nav, setup.window_t0_s, setup.window_t1_s);
             if (latch.sats.empty()) {
@@ -562,11 +584,11 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                                         : fmt::format(" (on {})", worst_sat));
         }
     } else if (config_.estimateNetworkSatCodeBias()) {
-        // Card 5 belt-and-braces: the external-GIM code-bias path is post-processing-only
-        // (a GIM is a daily product, unavailable in the self-sufficient brdc_rts service).
-        // Card 1's load-time validation rejects brdc_rts + estimate_sat_code_bias +
-        // !estimate_iono_sh as a hard error, so reaching this branch in brdc_rts means the
-        // guard was bypassed — refuse rather than silently loading a GIM the service can't have.
+        // A second guard (Card 5): the external-GIM code-bias path is post-processing-only
+        // (a GIM is a daily product, unavailable to the self-sufficient brdc_rts service).
+        // The load-time validation (Card 1) rejects brdc_rts + estimate_sat_code_bias +
+        // !estimate_iono_sh as a hard error, so reaching this branch in brdc_rts means that
+        // check was bypassed; refuse rather than load a GIM the service cannot have.
         if (brdc_rts) {
             log->error("Network (brdc_rts): reached the external-GIM code-bias path, which is "
                        "post-processing-only. Set network.estimate_iono_sh = true to co-estimate "
@@ -591,27 +613,29 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
 
     // --- Network-wide signal coverage gate (network.signal_min_station_fraction) ---
     // A RINEX code enters the solve only if enough of the network tracks it, so a
-    // sparse channel (e.g. GPS L2S, ~13% of stations) is dropped EVERYWHERE rather
-    // than mixed in only at the stations that happen to track it (the flaw of the
-    // per-station channel_mode).  Every retained signal's satellite bias is then
-    // estimated from a dense, consistent station set.  Coverage is tallied over the
-    // synced epochs: a station "tracks" a code if it reports it for any satellite in
-    // any epoch; coverage = (#stations tracking the code) / (#stations observing that
-    // constellation).  Off (0) leaves the allowlist empty ⇒ every tracked channel is
-    // admitted (byte-identical to the ungated producer).
-    // Two independent gates share ONE coverage tally: signal_min_station_fraction
-    // DROPS a sparse code (PppModel::setSignalAllowlist); phase_bias_min_station_
-    // fraction instead FLOATS it — keeps the observation but withholds its satellite
-    // phase-bias state (MeasurementModel::setPhaseBiasSignalAllowlist), so the float
-    // ambiguity absorbs the bias and the signal is not AR-eligible.  Both default 0
-    // (empty allowlists ⇒ byte-identical).
-    std::map<std::string, std::set<std::string>> signal_allowlist;       // DROP gate (code + phase)
-    std::map<std::string, std::set<std::string>> phase_bias_allowlist;   // FLOAT gate (phase only)
+    // sparse channel (e.g. GPS L2S, ~13% of stations) is dropped at every station
+    // instead of being mixed in only at the stations that track it, which is what
+    // the per-station channel_mode does.  Every retained signal's satellite bias is
+    // then estimated from a dense, consistent station set.  Coverage is tallied over
+    // the synced epochs: a station tracks a code if it reports it for any satellite
+    // in any epoch, and coverage = (#stations tracking the code) / (#stations
+    // observing that constellation).  Off (0) leaves the allowlist empty, so every
+    // tracked channel is admitted (byte-identical to the ungated producer).
+    //
+    // Two independent gates share one coverage tally.  signal_min_station_fraction
+    // drops a sparse code (PppModel::setSignalAllowlist).
+    // network.phase_bias_min_station_fraction floats it instead: the observation is
+    // kept but its satellite phase-bias state is withheld
+    // (MeasurementModel::setPhaseBiasSignalAllowlist), so the float ambiguity absorbs
+    // the bias and the signal is not AR-eligible.  Both default to 0 (empty
+    // allowlists, byte-identical).
+    std::map<std::string, std::set<std::string>> signal_allowlist;       // drop gate (code and phase)
+    std::map<std::string, std::set<std::string>> phase_bias_allowlist;   // float gate (phase only)
     const double sig_cover_min = config_.networkSignalMinStationFraction();
     const double pb_cover_min  = config_.networkPhaseBiasMinStationFraction();
-    // Card SID phase 6b (R7): under the all-channel widening the TALLY is reported
-    // even with the gate at 0, because "0 = every tracked channel admitted" is a
-    // statement about which channels entered the solve and the run has to make it.
+    // Under the all-channel widening the tally is reported even with the gate at 0:
+    // "0 = every tracked channel admitted" is a statement about which channels
+    // entered the solve, and the run log has to make it.  (Card SID phase 6b, R7)
     const bool chan_all_tally = config_.networkChannelModeAll();
     if (sig_cover_min > 0.0 || pb_cover_min > 0.0 || chan_all_tally) {
         std::map<std::string, std::set<std::pair<std::string, std::string>>> sta_tracks; // station -> {(system, code)}
@@ -645,7 +669,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             const double frac = static_cast<double>(n) / sys_n[key.first];
             if (sig_cover_min > 0.0 && frac >= sig_cover_min)
                 signal_allowlist[key.first].insert(key.second);
-            // Float gate applies to PHASE codes only (it withholds phase-bias states).
+            // The float gate applies to phase codes only (it withholds phase-bias states).
             if (pb_cover_min > 0.0 && key.second[0] == 'L' && frac >= pb_cover_min)
                 phase_bias_allowlist[key.first].insert(key.second);
         }
@@ -665,10 +689,10 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                 auto ait = allow.find(sys);
                 for (const auto& c : codes) {
                     const std::string tag = fmt::format("{}({:.0f}%)", c, 100.0 * code_n[{sys, c}] / ns);
-                    // A threshold of 0 leaves the allow-list EMPTY, which the producer
+                    // A threshold of 0 leaves the allow-list empty, which the producer
                     // reads as "admit every tracked channel"; without this clause the
-                    // forced tally of card SID phase 6b would print the whole list
-                    // under GATE and say the opposite of what the run does.
+                    // forced tally (card SID phase 6b) would print the whole list under
+                    // GATE, the opposite of what the run does.
                     const bool admitted =
                         (thr <= 0.0) ? true : (ait != allow.end() && ait->second.count(c));
                     std::string& tgt = admitted ? keep : gate;
@@ -691,34 +715,36 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     }
 
     // --- Phase 4: per-station Kalman resources (pivot at index 0) -----------
-    // Each station: a single-receiver StateManager (coords fixed at the
-    // configured ECEF), PppModel bound to its RinexParser, and a MeasurementModel.
-    // Pivot first so PASS A can seed its phase-signal set before the others.
+    // Each station gets a single-receiver StateManager (coordinates fixed at the
+    // configured ECEF, or at its ARP reduction under network.station_marker_to_arp),
+    // a PppModel bound to its RinexParser, and a MeasurementModel.  The pivot is
+    // built first so PASS A can seed its phase-signal set before the others.
     auto& stations = setup.stations;
     // Stations whose RINEX receiver antenna matched no loaded ATX entry (zero receiver
-    // PCO/PCV applied).  Collected during buildStation for a single startup summary WARN
-    // (the per-observation site logs only at trace, invisible at 305-station scale).
+    // PCO/PCV applied).  Collected during buildStation for a single startup summary
+    // warning; the per-observation site logs only at trace level.
     std::vector<std::string> unmatched_antenna_stations;
-    // Tier 1 (always-on radome→NONE fallback): stations recovered by the
-    // type-preserving radome-agnostic NONE calibration (mm-level) — matched, but
-    // via the fallback rather than an exact (type, radome) hit.  Reported once.
+    // Tier 1 (the always-on radome→NONE fallback): stations matched through the
+    // type-preserving, radome-agnostic NONE calibration (mm-level) instead of an
+    // exact (type, radome) entry.  Reported once.
     std::vector<std::string> radome_fallback_stations;
     // Tier 2 (network.exclude_unmodeled_antenna_stations): stations dropped from
-    // the network because their receiver antenna TYPE is unknown to the loaded
+    // the network because their receiver antenna type is unknown to the loaded
     // ANTEX even after the radome→NONE fallback (unmodelled receiver PCO/PCV).
     std::vector<std::string> excluded_unmodeled_antenna_stations;
-    // Card GAL (R6): per active constellation with a priority list, the route each
-    // station's receiver correction takes on the two lowest bands of that list
-    // ("exact", "same_system", "cross_system", "none"), collected for one summary
-    // line.  Filled only when a constellation other than GPS is active, so a
-    // GPS-only setup log is unchanged.  system -> route -> station names.
+    // Per active constellation with a priority list, the route each station's
+    // receiver correction takes on the two lowest bands of that list ("exact",
+    // "same_system", "cross_system", "none"), collected for one summary line:
+    // system -> route -> station names.  Filled only when a constellation other than
+    // GPS is active, so a GPS-only setup log is unchanged.  (Card GAL, R6)
     const bool atx_src_on = networkMultiGnssActive(config_);
     std::map<std::string, std::map<std::string, std::vector<std::string>>> atx_src_by_sys;
-    // --- Card UPO (docs/refound/UPO_consumer_up_offset_2026-09-22.md §4) -------
+    // --- Marker → ARP roster reduction (card UPO) ----------------------------
     // Marker → antenna-reference-point reduction of the roster's configured
-    // coordinates.  Read in BOTH knob states (standing invariant #4: an OFF run
-    // has to state the size of the class it is not fixing), applied only when
-    // network.station_marker_to_arp is armed.
+    // coordinates (docs/refound/UPO_consumer_up_offset_2026-09-22.md §4).  The
+    // eccentricities are read in both knob states (standing invariant #4: a run
+    // with the knob off still reports the size of the error it does not correct);
+    // the reduction is applied only when network.station_marker_to_arp is armed.
     const bool marker_to_arp = config_.networkStationMarkerToArp();
     int    n_ecc_stations   = 0;        // roster stations with a nonzero header eccentricity
     int    n_ecc_reduced    = 0;        // of those, the ones actually moved
@@ -728,7 +754,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     std::string ecc_max_h_station;
     std::vector<std::string> no_ecc_record_stations;  // header carried no record at all
     // buildStation outcome: Built (pushed to `stations`), ExcludedUnmodeledAntenna
-    // (Tier 2 policy drop — counted, not built), or Failed (parser/load error).
+    // (tier-2 policy drop: counted, not built), or Failed (parser/load error).
     enum class StationBuild { Built, ExcludedUnmodeledAntenna, Failed };
     auto buildStation = [&](const StationConfig& cfg, bool is_pivot) -> StationBuild {
         const RinexParser* parser = sync.parserOf(cfg.name);
@@ -739,25 +765,26 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         NetStation st;
         st.name     = cfg.name;
         st.ecef      = Eigen::Vector3d(cfg.position_ecef.data());
-        // Card UPO §4 requirement U1: `position_ecef` is a PUBLISHED coordinate
-        // (IGS SSC/SINEX, NGS SIF, a surveyed RINEX header) and therefore
-        // references the MONUMENT, while the observations refer to the antenna and
-        // the ATX phase-centre model is defined relative to the antenna reference
-        // point.  Reduce here — once, and before st.ecef reaches the state vector
-        // (x0 below), the PppModel, the MeasurementModel, st.pstate or any
-        // geometry — through the same Coordinates::markerToArp the held-out
-        // consumer's truth uses.  markerToArp is an exact no-op below a 1e-6 m
-        // eccentricity, so a 0/0/0 station is bit-for-bit unchanged either way.
+        // `position_ecef` is a published coordinate (IGS SSC/SINEX, NGS SIF, a
+        // surveyed RINEX header) and therefore references the monument, while the
+        // observations refer to the antenna and the ATX phase-centre model is defined
+        // relative to the antenna reference point.  The reduction happens here, once,
+        // before st.ecef reaches the state vector (x0 below), the PppModel, the
+        // MeasurementModel, st.pstate or any geometry, through the same
+        // Coordinates::markerToArp that the held-out consumer's truth uses.
+        // markerToArp is an exact no-op at or below a 1e-6 m eccentricity, so a
+        // 0/0/0 station is bit-for-bit unchanged in either knob state.
+        // (Card UPO §4, requirement U1)
         {
             const Eigen::Vector3d hen = parser->getAntennaDeltaHen();
             const bool   has_record = parser->hasAntennaDeltaHen();
             const double ecc_norm   = hen.norm();
             const double abs_max    = hen.cwiseAbs().maxCoeff();
             if (!has_record) {
-                // U1: left unchanged and warned.  A missing record is NOT a zero
-                // eccentricity — it is an unreduced coordinate with no way to
-                // reduce it, which is a field-visible modelling error this run is
-                // carrying whether or not the knob is armed.
+                // Left unchanged, with a warning (U1).  A missing record is not a zero
+                // eccentricity: the coordinate cannot be reduced, so any eccentricity
+                // the station has stays in the run as a modelling error, whether or
+                // not the knob is armed.
                 no_ecc_record_stations.push_back(cfg.name);
                 log->warn("Network (card UPO): station '{}' has NO 'ANTENNA: DELTA H/E/N' record "
                           "in its RINEX header — its configured coordinate is used as given "
@@ -791,34 +818,38 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         st.sm->setStateEpochTime(synced.front().time);
         st.model = std::make_unique<PppModel>(
             config_, *product_parser_, log_manager_, *parser, *st.sm);
-        // RS-8 (SPEC_event_harness §21.16): the canonical-signal rider names the station.
-        // Log-only and unconditional — the latch's "locked for GPS …" line has always
-        // gone to the ppp_model logger, which is 0 bytes in every run, which is how a
-        // warm resume silently re-deciding a station's per-band channel survived unseen.
+        // Label the canonical-signal rider with the station name, unconditionally.  The
+        // latch's own "locked for GPS …" line goes to the ppp_model logger, which is
+        // empty in every run, so the labelled rider (RS-8, SPEC_event_harness §21.16)
+        // is what shows a warm resume re-deciding a station's per-band channel.
+        // The label is also the name matched against
+        // processing.canonical_signal_priority_stations (card CSL-2): with that list
+        // set it selects the station's canonical-signal rule; with the list empty it
+        // changes log text only.
         st.model->setCanonicalTraceLabel(cfg.name);
         // Wind-up census (estimation.trace_windup_census): read-only per-receiver
         // step/gap counters, armed on every station so the run-end readout is a
         // roster sum.  The carry horizon is passed so the census can bucket the
-        // gap population against it — the (wind-up horizon, carry horizon]
-        // bucket IS the invariant-#1 exposure that blocks arming accumulated
-        // mode on a leveling lineage.
+        // gap population against it: the (wind-up horizon, carry horizon] bucket
+        // is the invariant-#1 exposure that blocks arming accumulated mode on a
+        // leveling lineage.
         if (config_.traceWindUpCensus())
             st.model->enableWindUpCensus(config_.phaseWindUpMaxGapS(),
                                          config_.networkPhaseLevelingMaxGapS());
         // Network coverage gate: restrict this station's model to the codes that
         // enough of the whole network tracks (empty allowlist ⇒ no-op, admit all).
         if (!signal_allowlist.empty()) st.model->setSignalAllowlist(signal_allowlist);
-        // Card 5 (RTF-1 / plan D1): in brdc_rts the a-priori satellite clock is
-        // broadcast-grade, but the network ESTIMATES the clock (Δδtˢ vs that
-        // a-priori), so this PRODUCER station's carrier phase is informative and
-        // must be kept.  Suppress the code-only broadcast-phase gate on producer
-        // models only — buildStation never builds the held-out closed-loop consumer
-        // (the roster loop below skips it), so the consumer keeps the default gate.
-        // sp3 mode passes false ⇒ byte-identical.
+        // In brdc_rts the a-priori satellite clock is broadcast-grade, but the network
+        // estimates the clock (Δδtˢ against that a-priori), so a producer station's
+        // carrier phase is informative and must be kept.  The code-only
+        // broadcast-phase gate is therefore suppressed on producer models only:
+        // buildStation never builds the held-out closed-loop consumer (the roster loop
+        // below skips it), so the consumer keeps the default gate.  sp3 mode passes
+        // false (byte-identical).  (Card 5, RTF-1 / plan D1)
         st.model->setBroadcastPhaseGateSuppressed(brdc_rts);
         st.mm = std::make_unique<MeasurementModel>(
             *st.sm, *st.model, config_, log_manager_);
-        // Phase-bias FLOAT gate: withhold satellite phase-bias states for signals
+        // Phase-bias float gate: withhold satellite phase-bias states for signals
         // below network coverage (empty allowlist ⇒ no-op, every phase signal gets one).
         if (!phase_bias_allowlist.empty()) st.mm->setPhaseBiasSignalAllowlist(phase_bias_allowlist);
         // Seed this station's measurement-model frequency helper with its own
@@ -828,13 +859,13 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         // (empty map).  Matters only under enableGlonassNetwork().
         st.mm->setGlonassSlots(parser->getGlonassFreqSlots());
 
-        // Receiver-antenna ATX match check (startup diagnostic + optional phase-bias
+        // Receiver-antenna ATX match check (startup diagnostic and optional phase-bias
         // exclusion).  A receiver antenna type that matches no loaded ANTEX entry gets
-        // ZERO receiver PCO/PCV — getAntennaCorrection returns only the satellite-side
-        // terms — a cm-level, elevation-dependent phase-centre error otherwise visible
-        // ONLY at trace level (antenna.log is empty at default verbosity in a 305-station
-        // run).  Checked once per station here; the per-observation trace still fires.
-        // Only meaningful when a receiver correction would actually be applied.
+        // zero receiver PCO/PCV (getAntennaCorrection returns only the satellite-side
+        // terms): a cm-level, elevation-dependent phase-centre error that is otherwise
+        // visible only at trace level (antenna.log is empty at default verbosity).
+        // Checked once per station here; the per-observation trace still fires.  Only
+        // meaningful when a receiver correction would actually be applied.
         const auto& mc = config_.getModelCorrections();
         const bool rx_corr_on = (mc.enable_receiver_pco || mc.enable_receiver_pcv);
         if (rx_corr_on && !st.model->hasReceiverAntennaMatch()) {
@@ -847,13 +878,14 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                       cfg.name, rx_ant.empty() ? "<none in RINEX header>" : rx_ant);
 
             // Tier 2 (network.exclude_unmodeled_antenna_stations): the always-on
-            // radome→NONE fallback has already run, so a still-unmatched antenna is a
-            // genuinely unknown TYPE with entirely unmodelled receiver PCO/PCV — a
-            // systematic in every observation this station feeds into the shared
-            // clocks/biases.  DROP it from the network (policy backstop, default OFF).
+            // radome→NONE fallback has already run, so a still-unmatched antenna is an
+            // unknown type with entirely unmodelled receiver PCO/PCV, a systematic error
+            // in every observation this station feeds into the shared clocks and biases.
+            // With the knob armed the station is dropped from the network (a policy
+            // backstop, off by default).
             if (config_.networkExcludeUnmodeledAntennaStations()) {
-                // The clock-datum pivot realizes the datum and cannot be silently
-                // dropped — surface it to the caller as a hard build error.
+                // The clock-datum pivot realizes the datum and cannot be dropped; the
+                // caller turns this outcome into a hard build error.
                 if (is_pivot) return StationBuild::ExcludedUnmodeledAntenna;
                 excluded_unmodeled_antenna_stations.push_back(cfg.name);
                 log->warn("Network: station '{}' EXCLUDED from the network — unknown "
@@ -863,14 +895,14 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                 return StationBuild::ExcludedUnmodeledAntenna;
             }
 
-            // Kept (not hard-excluded) but unmatched → record for the loaded-station
-            // summary WARN below.
+            // Kept (not excluded) but unmatched: recorded for the loaded-station summary
+            // warning below.
             unmatched_antenna_stations.push_back(cfg.name);
             // Optional (network.phase_bias_exclude_unmatched_antenna): keep this station's
             // uncalibrated carrier phase out of the emitted satellite phase biases.  The
-            // clock-datum pivot is NEVER excluded — it realizes the phase-bias datum, and
-            // in the legacy single-pivot gauge its states ARE the shared set, so excluding
-            // it would zero all emission; fix its antenna model instead.
+            // clock-datum pivot is never excluded: it realizes the phase-bias datum, and in
+            // the legacy single-pivot gauge its states are the shared set, so excluding it
+            // would zero all emission.  Its antenna model has to be fixed instead.
             if (config_.networkPhaseBiasExcludeUnmatchedAntenna()) {
                 if (is_pivot) {
                     log->warn("Network: clock-datum station '{}' has the unmatched antenna "
@@ -885,10 +917,10 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                 }
             }
         } else if (rx_corr_on) {
-            // Matched — but note when the match came only through the always-on
-            // type-preserving radome→NONE fallback (mm-level radome-agnostic
-            // calibration), so the substitution is visible once per station rather
-            // than only at per-observation trace level.
+            // Matched.  A match that came only through the always-on type-preserving
+            // radome→NONE fallback (mm-level radome-agnostic calibration) is logged once
+            // per station, so the substitution is visible outside the per-observation
+            // trace.
             std::string detail;
             if (st.model->receiverAntennaViaRadomeFallback(&detail)) {
                 log->warn("Network: station '{}' receiver antenna {}", cfg.name, detail);
@@ -896,10 +928,10 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             }
         }
 
-        // Card GAL (R6): the receiver ATX frequency SOURCE per active constellation,
-        // on the two lowest bands of its priority list (the dual pair: GPS 1 and 2,
-        // Galileo 1 and 5).  A station whose route is not "exact" on some band gets
-        // its own line; every station lands in the summary.  Measure-only.
+        // The receiver ATX frequency source per active constellation, on the two lowest
+        // bands of its priority list (the dual pair: GPS 1 and 2, Galileo 1 and 5).  A
+        // station whose route is not "exact" on some band gets its own line; every
+        // station lands in the summary.  Measure-only.  (Card GAL, R6)
         if (rx_corr_on && atx_src_on) {
             std::string rx_ant = parser->getReceiverAntennaType();
             const auto last = rx_ant.find_last_not_of(" \t\r\n");
@@ -947,71 +979,77 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                           cfg.name, rx_ant.empty() ? "<none in RINEX header>" : rx_ant, per_sys);
         }
 
-        // Phase-leveling T0 (Increment 2): a persistent per-station MW + GF
-        // TurboEdit detector pair for cycle-slip REPAIR of the carried ambiguities.
-        // NON-pivot only on the legacy path — the single pivot's ambiguities are
-        // ALL gauge-pinned and a repair there needs Increment 4 (design §6).  Under
-        // the prioritized datum EVERY station (incl. the former pivot) carries the
-        // arcs it does not anchor, so it MUST slip-detect them — build for all; the
-        // PASS-A refloat still no-ops on a station's anchored (uncarried) arcs.
-        // Constructed only when the carry AND a detector are on, so OFF is
-        // byte-identical.  setCorrections(&this station's GnssCorrections) engages
-        // the BIA-corrected wide-lane path (integer dN) where biases are available;
-        // arc state lives on the detector and is station-local (parallel-safe).
-        // M5 card WL-1: the MW-seeded wide-lane layer also needs the per-station MW
-        // detector running (its per-arc Welford means feed the WL fold), and it must
-        // work in the 3card lineage where phase_leveling is OFF.  Relax the gate to
-        // build the detector on EVERY station when network.mw_wl.enable, independent of
-        // phase_leveling / turbo_edit / mw_detect.  OFF (mw_wl disabled) is unchanged.
-        // §9.7.10: datum_station_detect extends the pivot exemption — the datum
-        // station needs the SAME MW detector rolled so its slips can be detected
-        // at all (the response is a network re-reference, not a local refloat).
+        // Phase-leveling slip repair (T0, Increment 2): a persistent per-station MW
+        // detector, with the MW + GF TurboEdit resolver under turbo_edit (see below),
+        // for cycle-slip repair of the carried ambiguities.  On the legacy path it is
+        // built for non-pivot stations only: the single pivot's ambiguities are all
+        // gauge-pinned, and a repair there needs Increment 4 (design §6).  Under the
+        // prioritized datum every station (including the former pivot) carries the
+        // arcs it does not anchor and must slip-detect them, so it is built for all;
+        // the PASS-A refloat still does nothing on a station's anchored (uncarried)
+        // arcs.  network.cycle_slip.datum_station_detect extends this to the datum
+        // station, which needs the same MW detector running for its slips to be
+        // detected at all (§9.7.10, where the response is a network re-reference, not
+        // a local refloat).  Constructed only when the carry and a detector are both
+        // on, so the off path is byte-identical.  setCorrections(&this station's
+        // GnssCorrections) engages the BIA-corrected wide-lane path (integer dN) where
+        // biases are available; arc state lives on the detector and is station-local
+        // (parallel-safe).
+        //
+        // The MW-seeded wide-lane layer also needs the per-station MW detector running
+        // (its per-arc Welford means feed the WL fold), including in the 3card lineage
+        // where phase_leveling is off, so network.mw_wl.enable builds the detector on
+        // every station independent of phase_leveling / turbo_edit / mw_detect.  With
+        // mw_wl disabled the path is unchanged.  (M5 card WL-1)
         const bool build_slip_for_pl =
             (config_.networkPhaseDatumPrioritized() || !is_pivot
              || config_.networkCycleSlipDatumStationDetect())
             && config_.networkPhaseLeveling()
             && (config_.networkCycleSlipTurboEdit() || config_.networkCycleSlipMwDetect());
         // Adaptive iono q (network.adaptive_iono_q): per-station GF-TD2 variability
-        // monitor.  Station-local (fed in the PARALLEL PASS A produce, same contract
-        // as st.mw_slip below); consumed SERIALLY by the T5v2 GM deviation aging —
-        // on the network path the per-(station,satellite) deviation channel is the
-        // only time-linked slant-iono element, so the storm response scales ITS
-        // innovation term, not a slant q.  OFF ⇒ null pointer, byte-identical.
+        // monitor.  Station-local: fed in the parallel PASS A produce (the same
+        // contract as st.mw_slip below) and consumed serially by the T5v2 GM deviation
+        // aging.  On the network path the per-(station, satellite) deviation channel is
+        // the only time-linked slant-iono element, so the storm response scales its
+        // innovation term, not a slant q.  Off: null pointer, byte-identical.
         if (config_.getNetworkConfig().adaptive_iono_q)
             st.iono_var = std::make_unique<IonoVariabilityMonitor>(config_, log_manager_);
 
-        // M5 card WL-2 (SPEC_ewl_wl_cascade_card.md §4): the EWL/WL lanes also need the
-        // per-station MW detector running (its per-arc Welford means feed the EWL/MW(1,2)
-        // statistics).  OFF (all lanes disabled) ⇒ unchanged.
+        // The EWL/WL lanes also need the per-station MW detector running (its per-arc
+        // Welford means feed the EWL/MW(1,2) statistics).  With all lanes disabled the
+        // path is unchanged.  (M5 card WL-2, SPEC_ewl_wl_cascade_card.md §4)
         const auto& mwc = config_.getNetworkConfig().mw_wl;
-        const auto& lcc = config_.getNetworkConfig().lane_carry;   // M5 WL-3
+        const auto& lcc = config_.getNetworkConfig().lane_carry;   // lane carry (M5 WL-3)
         if (build_slip_for_pl || config_.networkMwWlSeed()
             || mwc.ewl_enable || mwc.wl_inject_enable || lcc.enable) {
             st.mw_slip = std::make_unique<MwSlipDetector>(config_, log_manager_);
-            // §14.10: every station's detector shares one logger, whose records
-            // are keyed only by <sat>_<sig1>_<sig2> — without this the MWDEC /
-            // MWSKIP decision lines cannot be read per station at all.  Log text
-            // only; nothing else reads the label.
+            // Every station's detector shares one logger, whose records are keyed
+            // only by <sat>_<sig1>_<sig2>; the label is what lets the MWDEC / MWSKIP
+            // decision lines be read per station.  Log text only; nothing else reads
+            // the label.  Design: §14.10 of docs/SPEC_event_harness.md.
             st.mw_slip->setStationLabel(st.name);
             st.mw_slip->setCorrections(&st.model->getCorrections());
-            // M5 card WL-2 (SPEC §3.4): arm the tri-frequency GF_b phase bridge accumulator
-            // only when a consumer of the bridge exists — the WL-2 inject path or the WL-3
-            // lane bridge increments — together with the EWL integers it bridges from.
-            // OFF ⇒ the detector never touches a bridge arc (byte-identical).
+            // Arm the tri-frequency GF_b phase bridge accumulator only when a consumer of
+            // the bridge exists (the WL-2 inject path or the WL-3 lane bridge increments)
+            // together with the EWL integers it bridges from.  Off: the detector never
+            // touches a bridge arc (byte-identical).  (M5 card WL-2, SPEC §3.4)
             st.mw_slip->setBridgeEnabled(
                 (mwc.wl_inject_enable || (lcc.enable && lcc.bridge_meas)) && mwc.ewl_enable);
-            // 60-ep age-bias fix: per-sample estimable-iono de-bias of the bridge
-            // accumulator (frame contract in the setter's doxygen).  Armed only with
-            // the bridge itself; the per-epoch ı̃ push rides the iono_of build below.
+            // Per-sample estimable-iono de-bias of the bridge accumulator
+            // (network.mw_wl.bridge_sample_debias), which removes the bridge's age bias
+            // (the 60-epoch fix); the frame contract is in the setter's Doxygen.  Armed
+            // only with the bridge itself; the per-epoch ı̃ push rides the iono_of build
+            // in NetworkDdPriorBuild.cpp.
             st.mw_slip->setBridgePerSampleDebias(
                 (mwc.wl_inject_enable || (lcc.enable && lcc.bridge_meas)) && mwc.ewl_enable
                 && mwc.bridge_sample_debias);
-            // M5 card UWL-1 (SPEC_uwl_card.md §3.1): push the per-constellation lane-tier
-            // band digits for the bridge band pick.  Not pushed (empty) unless the card is
-            // armed ⇒ the legacy {1,2,5} scan for every constellation, byte-identical —
-            // including under multi-GNSS active_systems (§6.1(b)).  With the table pushed,
-            // a constellation ABSENT from it (BDS-3, deferred on its clock divergence)
-            // forms NO bridge arc; the wiring warns loudly instead of skipping silently.
+            // Push the per-constellation lane-tier band digits for the bridge band pick
+            // (network.mw_wl.uwl_enable).  Unarmed, nothing is pushed and every
+            // constellation keeps the legacy {1,2,5} scan, byte-identical, including under
+            // multi-GNSS active_systems (§6.1(b)).  With the table pushed, a constellation
+            // absent from it (BDS-3, deferred on its clock divergence) forms no bridge arc,
+            // and the wiring warns instead of skipping it silently.
+            // (M5 card UWL-1, SPEC_uwl_card.md §3.1)
             if (mwc.uwl_enable) {
                 std::map<char, MwLaneTier> tiers;
                 for (const char cons : { 'G', 'E' })
@@ -1020,41 +1058,41 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                         tiers[cons] = *t;
                 st.mw_slip->setLaneTiers(std::move(tiers));
             }
-            // The TurboEdit MW+GF integer REPAIR resolver is built ONLY for turbo_edit
+            // The TurboEdit MW+GF integer repair resolver is built only for turbo_edit
             // (higher-rate 1 s data, where the geometry-free ionospheric drift over the
-            // epoch gap is small enough to trust an integer).  mw_detect uses the SAME MW
-            // detector as a pure DETECTOR → refloat, so it needs no resolver — and the null
-            // st.turbo_edit is exactly what steers the PASS-A branch to the refloat path.
+            // epoch gap is small enough to trust an integer).  mw_detect uses the same MW
+            // detector as a pure detector followed by a refloat, so it needs no resolver;
+            // the null st.turbo_edit is what steers the PASS-A branch to the refloat path.
             if (config_.networkCycleSlipTurboEdit()) {
                 st.turbo_edit = std::make_unique<TurboEditResolver>(config_, log_manager_);
                 st.turbo_edit->setCorrections(&st.model->getCorrections());
             }
         }
 
-        // IF-phase triple-difference slip DETECTION (this increment): a persistent
-        // per-station between-satellite/between-epoch ionosphere-free phase OMC
-        // detector.  NON-pivot only on the legacy path; under the prioritized datum
-        // build for EVERY station (the former pivot carries non-anchored arcs that
-        // need detection).  Constructed whenever network.cycle_slip.if_phase_td is
-        // on — independent of phase-leveling, so it can run as a pure diagnostic in
-        // the absolute solve; the refloat ACTION it drives is gated on the carry
-        // being active at the call site.  Station-local detector state (parallel-safe).
+        // IF-phase triple-difference slip detection: a persistent per-station
+        // between-satellite/between-epoch ionosphere-free phase OMC detector.  On the
+        // legacy path it is built for non-pivot stations only; under the prioritized
+        // datum it is built for every station (the former pivot carries non-anchored
+        // arcs that need detection).  Constructed whenever network.cycle_slip.if_phase_td
+        // is on, independent of phase leveling, so it can run as a pure diagnostic in the
+        // absolute solve; the refloat it drives is gated on the carry being active at the
+        // call site.  Detector state is station-local (parallel-safe).
         if ((config_.networkPhaseDatumPrioritized() || !is_pivot)
             && config_.networkCycleSlipIfPhaseTd()) {
             st.if_slip = std::make_unique<IfPhaseSlipDetector>(config_, log_manager_);
             st.if_slip->setDeferFlagging(true);  // network pools per-pair MAD; the driver flags
-            // §14.10 (docs/SPEC_event_harness.md): evaluate EVERY distinct band
+            // network.cycle_slip.if_phase_td_pairs = all evaluates every distinct band
             // pair, each on its own gradient chain, instead of only the first two
-            // signals of each satellite.  Default `first` leaves the detector
-            // exactly as it was, so the OFF path is byte-identical; `all` is what
-            // closes the equal-count trap on the pairs nothing watched.
+            // signals of each satellite.  The default `first` leaves the detector as it
+            // was, so the off path is byte-identical; `all` closes the equal-count trap
+            // on the pairs no chain watched.  Design: §14.10 of docs/SPEC_event_harness.md.
             st.if_slip->setAllPairs(
                 config_.networkCycleSlipIfPhaseTdPairs() == NetworkIfPhaseTdPairs::All);
-            // Card R (docs/SPEC_slip_qc_hardening.md §2): push the hardened
-            // reference-satellite gate.  Pushed ONLY here, so the STAGED
-            // user/kinematic path keeps the legacy gate untouched (spec R5); with
-            // network.cycle_slip.if_phase_td_ref_gate off the params are the
-            // default-constructed (disabled) ones ⇒ byte-identical.
+            // Push the hardened reference-satellite gate (Card R,
+            // docs/SPEC_slip_qc_hardening.md §2); it is pushed only here, so the staged
+            // user/kinematic path keeps the legacy gate (spec R5).  With
+            // network.cycle_slip.if_phase_td_ref_gate off, rg.enable is false and the
+            // gate is disabled (byte-identical).
             {
                 const auto& sq = config_.getNetworkConfig().slip_qc;
                 IfPhaseSlipDetector::RefGateParams rg;
@@ -1067,14 +1105,15 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                 rg.ewma_alpha      = sq.ref_ewma_alpha;
                 rg.shrink_kappa    = sq.ref_shrink_kappa;
                 rg.floor_frac      = sq.ref_floor_frac;
-                rg.warmup_abstain  = sq.ref_warmup_abstain;   // §6.14.6 item 1
-                rg.elev_norm       = sq.ref_elev_norm;        // §6.14.6 item 2
+                rg.warmup_abstain  = sq.ref_warmup_abstain;   // item 1 of §6.14.6
+                rg.elev_norm       = sq.ref_elev_norm;        // item 2 of §6.14.6
                 rg.elev_clamp_deg  = sq.ref_elev_clamp_deg;
                 st.if_slip->setRefGate(rg);
-                // REF-FAN (§22.6): run the reference arm on the ADDITIONAL
-                // chains too.  Loader-interlocked on pairs = all AND ref_gate,
-                // and the detector refuses the combination a second time, so
-                // pushing the raw flag here cannot re-open the §14.10.3 flood.
+                // Run the reference arm on the additional chains too (REF-FAN,
+                // §22.6); the loader disarms it unless pairs = all and ref_gate are
+                // both set, and the detector refuses the combination a second time,
+                // so pushing the raw flag here cannot reopen the noise-driven false
+                // detections that §14.10.3 describes.
                 st.if_slip->setRefArmAllChains(sq.ref_arm_all);
             }
         }
@@ -1139,8 +1178,8 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         for (size_t i = 0; i < v.size(); ++i) { if (i) s += ", "; s += v[i]; }
         return s;
     };
-    // Card GAL (R6): the receiver ATX source summary per constellation: the route
-    // of each station's WORST band (exact < same_system < cross_system < none).
+    // Receiver ATX source summary per constellation: the route of each station's
+    // worst band (exact < same_system < cross_system < none).  (Card GAL, R6)
     for (const auto& [sys_name, by_route] : atx_src_by_sys) {
         std::string t;
         for (const char* route : { "exact", "same_system", "cross_system", "none" }) {
@@ -1157,8 +1196,8 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                       ? "ARMED" : "off");
     }
     // Tier 1 (always-on radome→NONE): report the stations whose receiver PCO/PCV
-    // came from the radome-agnostic NONE calibration (mm-level) — matched, not
-    // dropped, but worth a single summary so the substitution is visible.
+    // came from the radome-agnostic NONE calibration (mm-level).  They are matched,
+    // not dropped; one summary line keeps the substitution visible.
     if (!radome_fallback_stations.empty()) {
         log->info("Network: {} of {} loaded station(s) matched their receiver antenna via "
                   "the type-preserving radome→NONE fallback (radome uncalibrated; NONE "
@@ -1166,9 +1205,10 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                   radome_fallback_stations.size(), stations.size(),
                   joinNames(radome_fallback_stations));
     }
-    // Tier 2 (network.exclude_unmodeled_antenna_stations): run-end counter for the
-    // stations dropped because their receiver antenna TYPE is unknown to the ANTEX
-    // even after the radome→NONE fallback (invariant #4 — ON-path telemetry).
+    // Tier 2 (network.exclude_unmodeled_antenna_stations): the count of stations
+    // dropped because their receiver antenna type is unknown to the ANTEX even after
+    // the radome→NONE fallback, logged at setup as the knob's on-path telemetry
+    // (invariant #4).  With the knob armed and nothing dropped, the zero is logged.
     if (!excluded_unmodeled_antenna_stations.empty()) {
         log->warn("Network: {} station(s) excluded (unmodeled receiver antenna): {}",
                   excluded_unmodeled_antenna_stations.size(),
@@ -1179,10 +1219,10 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                   "covered any uncalibrated radomes).");
     }
 
-    // --- Card UPO §4 requirement U2: the marker → ARP summary ----------------
-    // Emitted in BOTH knob states.  ON it records what the roster frame now is;
-    // OFF it is the measurement of the defect the run is carrying, which is the
-    // number the fix is judged against (standing invariant #4).
+    // --- Marker → ARP summary (card UPO §4, requirement U2) -----------------
+    // Emitted in both knob states.  With the knob on it records the roster's frame;
+    // with it off it measures the error the run carries, which is the number the
+    // fix is judged against (standing invariant #4).
     setup.n_marker_arp_ecc       = n_ecc_stations;
     setup.n_marker_arp_reduced   = n_ecc_reduced;
     setup.n_marker_arp_over_1cm  = n_ecc_over_1cm;
@@ -1230,16 +1270,18 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
 
     // === Per-station compute parallelism ====================================
     // PASS A (geometry) and the produce half of PASS B (measurement assembly) are
-    // embarrassingly parallel across stations — each owns an independent
-    // StateManager / PppModel / MeasurementModel, and the audited call trees
-    // touch no shared mutable state (product stores are const post-load; the
+    // embarrassingly parallel across stations: each owns an independent
+    // StateManager / PppModel / MeasurementModel, and the audited call trees touch
+    // no shared mutable state (product stores are const after load; the
     // per-instance model caches are thread-private; the live SSR/ephemeris
-    // singletons are mutex-guarded and empty in post-processing).  Only the
-    // shared-estimator scatter (est.addStation) and everything downstream of it
-    // stays serial, in deterministic station order, so the float solution is
-    // BIT-IDENTICAL to a serial run regardless of thread count.  Activated only
-    // above the configured station-count threshold (small networks run serially —
-    // no fork-join cost, and the internal 3-station fixture is unchanged).
+    // singletons are mutex-guarded, and in post-processing they are empty except
+    // for the LiveEphemerisStore that brdc_rts fills from the serial part of the
+    // epoch loop).  The shared-estimator scatter (est.addStation) and everything
+    // downstream of it stay serial, in deterministic station order, so the float
+    // solution is bit-identical to a serial run for any thread count.  Parallelism
+    // is used only above the configured station-count threshold
+    // (network.parallel_min_stations): small networks run serially, with no
+    // fork-join cost, and the internal 3-station fixture is unchanged.
     int hw_max_threads = 1;
 #ifdef _OPENMP
     hw_max_threads = omp_get_max_threads();
@@ -1258,11 +1300,12 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         : 1;
     const int n_threads = setup.n_threads;
     // Deterministic-parallel post-solve seam (network.parallel_seam): the per-block
-    // DD carry-fold + D5 innovation-gate readouts.  Rides on the per-station parallel
-    // path (same thread budget, Eigen already pinned to one thread for the epoch) and,
-    // unlike parallel_reduce, is BYTE-IDENTICAL at any thread count (compute per block
-    // in parallel, accumulate/install serially in fixed block order).  seam_threads == 1
-    // ⇒ the seam runs its original serial path (OFF is byte-for-byte the pre-seam run).
+    // DD carry fold and the D5 innovation-gate readouts.  It rides on the per-station
+    // parallel path (same thread budget, Eigen already pinned to one thread for the
+    // epoch) and, unlike network.parallel_reduce, is byte-identical at any thread
+    // count: blocks are computed in parallel and accumulated/installed serially in
+    // fixed block order.  With seam_threads == 1 the seam runs its original serial
+    // path, so with the knob off the run is byte-for-byte the run without the seam.
     const bool seam_on      = parallel_on && nc.parallel_seam;
     setup.seam_threads = seam_on ? n_threads : 1;
     const int  seam_threads = setup.seam_threads;
@@ -1270,12 +1313,14 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         log->info("Network: post-solve carry-fold/D5 seam PARALLEL across {} threads "
                   "(deterministic — byte-identical to the serial fold)", n_threads);
     // network.parallel_carry: thread the Card-4 carry's dense per-block algebra
-    // (buildDdPriors W·Pᶻ·Wᵀ, foldReducedDdPriors, installPosterior) via Eigen's own
-    // multi-threaded GEMM.  The seam only parallelizes the carry over the ~few blocks;
-    // this un-pins Eigen so each block's O(K²–K³) matmul fans across cores.  Runs those
-    // stages SERIAL-over-blocks (n_threads=1) so Eigen threading does not nest with the
-    // seam's OpenMP.  Reassociates the dense products ⇒ ~1e-X ULP drift vs serial (like
-    // parallel_reduce); default OFF keeps Eigen pinned and the seam/serial path (byte-id).
+    // (buildDdPriors W·Pᶻ·Wᵀ, foldReducedDdPriors, installPosterior) through Eigen's
+    // own multi-threaded GEMM.  The seam parallelizes the carry only over its few
+    // blocks; this un-pins Eigen so each block's O(K²–K³) matmul spreads across
+    // cores.  Those stages then run serially over blocks (n_threads = 1), so Eigen
+    // threading does not nest inside the seam's OpenMP.  The dense products are
+    // reassociated, which drifts from the serial result at the ~1e-X ULP level (as
+    // network.parallel_reduce does); the default (off) keeps Eigen pinned and the
+    // seam/serial path byte-identical.
     setup.carry_par = parallel_on && nc.parallel_carry;
     const bool carry_par = setup.carry_par;
     if (carry_par)
@@ -1295,18 +1340,17 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         log->info("Network: per-station compute SERIAL ({} stations)", n_sta_total);
 
     // Prewarm every logger the per-station model path can touch.  getLogger()'s
-    // first-touch CREATE path mutates a shared std::map; fetching an existing
-    // logger is lock-free and data-race-safe.  Creating each one now (single-
-    // threaded) guarantees no insert ever races a concurrent fetch inside the
-    // parallel region — the only shared-mutable hazard the thread-safety audit
-    // found in the per-station call tree.
+    // first-touch create path mutates a shared std::map; fetching an existing logger
+    // is lock-free and data-race-safe.  Creating each one now, single-threaded,
+    // ensures that no insert races a concurrent fetch inside the parallel region,
+    // the only shared-mutable hazard the thread-safety audit found in the
+    // per-station call tree.
     //
-    // INC-7 re-audit: the slip detectors' loggers ("mw_slip_detector",
-    // "if_slip_detector") are deliberately NOT on this list — they are
-    // first-touch-created by the detector CONSTRUCTORS in this (serial) setup
-    // phase above, before any parallel region runs, so the create-race cannot
-    // occur.  If detector construction ever moves out of the serial setup,
-    // add them here.
+    // The slip detectors' loggers ("mw_slip_detector", "if_slip_detector") are not
+    // on this list: the detector constructors create them in this serial setup
+    // phase above, before any parallel region runs, so the create race cannot
+    // occur.  If detector construction moves out of the serial setup, add them
+    // here.  (INC-7 re-audit)
     if (parallel_on) {
         for (const char* lname : {
                 "ppp_model", "geometry", "antenna", "antenna_model", "corrections",
@@ -1319,36 +1363,37 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
 
     // --- Owned product sink (closed-loop isolation) -------------------------
     SsrCorrectionStore& network_store = setup.network_store;
-    // A2: pass the clock-disc toggle so the emitter maintains + stamps the per-sat clock
-    // discontinuity counter.  R9: the phase-bias disc threshold is the emitter's own default
-    // constant (single source of truth shared with the serialized contract's disc_threshold_m).
-    // RTA-11: the staleness horizon (product-time seconds; 0 = off) makes a key returning
-    // after a longer gap a first sighting (no spurious disc bump against an hours-stale
-    // baseline); like the other two parameters it travels in the serialized contract.
+    // The clock-disc toggle makes the emitter maintain and stamp the per-satellite clock
+    // discontinuity counter (A2).  The phase-bias disc threshold is the emitter's own
+    // default constant, the single source of truth shared with the serialized contract's
+    // disc_threshold_m (R9).  The staleness horizon (product-time seconds; 0 = off) turns
+    // a key that returns after a longer gap into a first sighting, so no disc counter is
+    // bumped against an hours-stale baseline (RTA-11).  Every construction parameter also
+    // travels in the serialized contract (pending_contract below).
     setup.emitter.emplace(NetworkProductEmitter::kDefaultDiscThresholdM,
                           config_.networkEmitClockDisc(),
                           config_.networkEmitterStalenessHorizonS(),
                           config_.networkCodeBiasDiscJumpTest(),
                           config_.networkClockDiscOnSetChange(),
                           config_.networkDiscThresholdFracCycles(),
-                          nc.disc_jump_test_decommon,    // Card JT: de-commoned phase jump test
-                          nc.disc_mark_scope == "channel");  // Card MS: per-channel mark scope
+                          nc.disc_jump_test_decommon,    // de-commoned phase jump test (Card JT)
+                          nc.disc_mark_scope == "channel");  // per-channel mark scope (Card MS)
     NetworkProductEmitter& emitter = *setup.emitter;
 
     // --- Optional on-disk product serialization -----------------------------
     // A reusable per-epoch dump of the emitted solution (the same pre-emit
     // NetworkSolutionEpoch the in-memory closed loop consumes, plus this epoch's
-    // datum-change flag).  Lets consumer-side experiments — notably the consumer
-    // AR-frame work — replay the products WITHOUT re-running the multi-station
-    // network: NetworkProductReader::replay reproduces this store byte-for-byte
+    // datum-change flag).  Consumer-side experiments, such as the consumer AR-frame
+    // work, can replay the products without re-running the multi-station network:
+    // NetworkProductReader::replay reproduces this store byte-for-byte
     // (discontinuity counters included).
     auto& product_writer = setup.product_writer;
     auto& prod_path = setup.prod_path;
-    // B6 (P1-1): when the S-basis contract is serialized, DEFER opening the writer until
-    // the first emit so the realized per-constellation clock pivots (auto-picked, unknown
-    // until the first solve) can be stamped into the v2 header — not just the config
-    // intent.  pending_contract holds everything known up front; realized pivots merge in
-    // at the first emit.  contract_pending gates that one-shot construction.
+    // The writer is opened at the first emit, not here, so that the realized
+    // per-constellation clock pivots (auto-picked, unknown until the first solve) are
+    // stamped into the v2 header, not only the config intent.  pending_contract holds
+    // everything known up front; the realized pivots merge in at the first emit, and
+    // contract_pending gates that one-shot construction.  (B6, P1-1)
     auto& pending_contract = setup.pending_contract;
     auto& contract_pending = setup.contract_pending;
     if (!nc.product_output_path.empty()) {
@@ -1356,38 +1401,36 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         // network_solution.csv etc.; an absolute path is used verbatim.
         prod_path = nc.product_output_path;
         if (prod_path.is_relative()) prod_path = log_dir_ / prod_path;
-        // Card OWD (O1): the S-basis contract is part of the wire.  It used to be stamped only
-        // under network.serialize_sbasis_contract, and a replay of a wire without it rebuilt
-        // the DEFAULT emitter (no clock-discontinuity channel, the flat default phase-bias
-        // threshold), so card GAL's first census missed every declared clock re-reference: a
-        // declaration hung on an output option.  The knob is accepted and inert, and the v1
-        // branch that opened a contract-less writer at setup is gone; the records are
-        // unchanged byte for byte, only the header gains the S line.
+        // The S-basis contract is part of the wire and is always stamped.  A replay of a
+        // wire without it rebuilds the default emitter (no clock-discontinuity channel,
+        // the flat default phase-bias threshold) and misses every declared clock
+        // re-reference, so the declaration cannot depend on an output option.
+        // network.serialize_sbasis_contract is accepted and inert.  The records are the
+        // same byte for byte as a contract-less writer's; only the header gains the
+        // S line.  (Card OWD, O1)
         {
-            // B6: stamp the S-basis contract into a v2 header.  Declaration semantics are
-            // the A3-corrected per-constellation sat-clock-pin basis.
+            // Stamp the S-basis contract into a v2 header (B6).  The declaration semantics
+            // are the A3-corrected per-constellation satellite-clock-pin basis.
             pending_contract.decl.reference_receiver_id = nc.clock_datum_station;
             pending_contract.decl.emit_code_bias        = config_.estimateNetworkSatCodeBias();
-            // T3b: self-describe the phase-bias gauge in the on-disk contract too.  Under the
-            // anchor-free ensemble datum the emitted bias references the receiver ENSEMBLE, not
-            // a pivot receiver; the runtime per-solve decl already flips (see ~AmbDatum below),
-            // but the startup contract omitted it and mis-declared the default pivot frame.
-            // Mirrors the isb_datum self-description that follows.  OFF ⇒ default ⇒ byte-identical.
+            // Self-describe the phase-bias gauge in the on-disk contract (T3b).  Under the
+            // anchor-free ensemble datum the emitted bias references the receiver ensemble,
+            // not a pivot receiver; under phase_datum_eq34 it references a single-receiver
+            // chain (Card 3).  The per-solve decl in NetworkSolveGlue.cpp makes the same
+            // choice, but that object feeds only buildSharedDatum: the serialized
+            // declaration is this one.  Without these branches the product would declare
+            // amb_datum = 0 (PivotReceiverZeroAmbiguity), the legacy single-pivot datum it
+            // does not use, and an eq34 wire would contradict itself by also carrying pdr=
+            // (stamped only under eq34) two fields later.  A consumer trusting field 5 would
+            // build its between-satellite reference on the wrong frame; the enumerator
+            // exists so that such a consumer can refuse on "amb_datum differs".  Older eq34
+            // wires, written before the eq34 branch, carry that contradiction.  The branch
+            // mirrors the isb_datum self-description that follows; with both knobs off the
+            // default stays (byte-identical).
             //
-            // The eq34 arm of the SAME defect, fixed 2026-08-13.  T3b repaired the ensemble
-            // branch and left Card 3's: the per-solve decl in NetworkSolveGlue.cpp flips to
-            // SingleReceiverChain under phase_datum_eq34, but THAT object only feeds
-            // buildSharedDatum — the SERIALIZED declaration is this one, and it had no eq34
-            // branch at all.  So every eq34 product on record declares amb_datum = 0
-            // (PivotReceiverZeroAmbiguity), the legacy single-pivot datum it is NOT using,
-            // while carrying pdr= (stamped only under eq34) two fields later — a wire that
-            // contradicts itself.  A consumer trusting field 5 builds its between-satellite
-            // reference on the wrong frame, which is precisely the "amb_datum differs"
-            // refusal the enumerator was added to make possible.
-            //
-            // The precedence MUST mirror NetworkSolveGlue.cpp exactly (ensemble wins, then
-            // eq34) or the declaration and the realized datum disagree in the both-armed
-            // case.  It is an `else if` there; it is an `else if` here.
+            // The precedence must mirror NetworkSolveGlue.cpp (ensemble first, then eq34),
+            // or the declaration and the realized datum disagree when both are armed.  It is
+            // an `else if` there and an `else if` here.
             if (config_.networkPhaseDatumEnsemble())
                 pending_contract.decl.amb_datum =
                     SbasisDeclaration::AmbDatum::SumToZeroPerReceiver;
@@ -1406,31 +1449,32 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             } else if (config_.networkClockDatumSumToZero()) {
                 // Anchor-free clock datum: declare the sum-to-zero basis and leave
                 // clock_pivot_sat empty (there is no pivot; a config pin is ignored).
-                // (Local clock_sum_to_zero is declared further down; the getter is
-                // cheap and this one-shot startup block precedes it.)
+                // The getter is read directly: the run-loop copy
+                // (ctx.knobs.clock_sum_to_zero) is built after setup.
                 pending_contract.decl.isb_datum =
                     SbasisDeclaration::IsbDatum::SumToZeroPerConstellation;
             } else if (!nc.clock_datum_satellite.empty()) {
                 pending_contract.decl.clock_pivot_sat[NetworkSbasis::constellationOf(nc.clock_datum_satellite)]
                     = nc.clock_datum_satellite;
             }
-            // P1-1: resolve the a-priori orbit/clock identity to the ACTUAL resolved
-            // SP3 + CLK file basenames (the baseline the emitted clock C0 is a delta
-            // against).  Config intent alone is "CODFIN00000000" under auto-detect.
+            // Resolve the a-priori orbit/clock identity to the resolved SP3 and CLK file
+            // basenames (the baseline the emitted clock C0 is a delta against); the config
+            // intent alone is "CODFIN00000000" under auto-detect.  (P1-1)
             const auto& dl = config_.getDownloadConfig();
             std::string apriori_id =
                 fmt::format("{}{}{:04d}{:03d}", dl.product_source, dl.product_type, dl.year, dl.doy);
             if (brdc_rts) {
-                // Card 5 (plan D10): the a-priori is broadcast ephemeris, so the identity
-                // is the nav-file basename ("brdc:<file>").  Once an RTS-orbit source is
-                // attached (plan D9 seam / RTF-3), this becomes "brdc+rts:<mount>".
+                // The a-priori is broadcast ephemeris, so the identity is the nav-file
+                // basename ("brdc:<file>").  Once an RTS-orbit source is attached (plan D9
+                // seam / RTF-3), this becomes "brdc+rts:<mount>".  (Card 5, plan D10)
                 const std::string nav = config_.getNavigationPath().filename().string();
                 apriori_id = "brdc:" + (nav.empty() ? std::string("?") : nav);
             } else {
-                // Card OWD (O1): the files in force during the processing window.  The
-                // resolver merges the previous, the observation and the next day's products,
-                // and the first merged SP3 / CLK (getProductPath) is the PREVIOUS day's, so a
-                // DOY-129 wire used to declare DOY-128 products.
+                // Name the files in force during the processing window.  The resolver merges
+                // the previous, the observation and the next day's products, and the first
+                // merged SP3 / CLK (getProductPath) is the previous day's, so naming it would
+                // declare the previous day's products (DOY-128 on a DOY-129 wire).
+                // (Card OWD, O1)
                 bool named_all = false;
                 const std::string in_force = aprioriIdentityForWindow(
                     config_.getProductPaths(), setup.window_t0_s, setup.window_t1_s, &named_all);
@@ -1442,58 +1486,58 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                               "kind: '{}'.", apriori_id);
             }
             pending_contract.apriori_product_id = apriori_id;
-            // RTA-12: contract identity fields (each serialized as an optional
-            // key=value S-line field ONLY when non-empty).
-            //  - frame_id / coord_epoch are config DECLARATIONS (network.frame_id /
-            //    network.coord_epoch; the SIF-coordinate path defaults coord_epoch
-            //    to the propagation date) — no auto-detection.
-            //  - atx_id is the RESOLVED antenna-calibration file this run actually
-            //    loaded (basename of the merged product path).  Failure mode: when
-            //    no .atx resolved, getProductPath returns an empty path and the
-            //    atx= field is simply absent — a consumer that pins expect_atx_id
-            //    then flags "file '' vs expected ...".
+            // Contract identity fields, each serialized as an optional key=value S-line
+            // field only when non-empty (RTA-12):
+            //  - frame_id / coord_epoch are config declarations (network.frame_id /
+            //    network.coord_epoch; the SIF-coordinate path defaults coord_epoch to
+            //    the propagation date), with no auto-detection.
+            //  - atx_id is the resolved antenna-calibration file this run loaded (the
+            //    basename of the merged product path).  When no .atx resolved,
+            //    getProductPath returns an empty path and the atx= field is absent; a
+            //    consumer that pins expect_atx_id then flags "file '' vs expected ...".
             pending_contract.frame_id    = nc.frame_id;
             pending_contract.coord_epoch = nc.coord_epoch;
             pending_contract.atx_id      = config_.getProductPath("ATX").filename().string();
-            //  - orbit_ref: SP3 orbits + ATX satellite PCO/PCV mean the emitted
-            //    clock C0 is referred to the satellite CENTER OF MASS.  Hardcoded
-            //    until an SSR orbit source (APC-referred, per the RTCM SSR
-            //    convention) lands, at which point this becomes a variable of the
-            //    orbit path selection.
+            //  - orbit_ref: in sp3 mode, SP3 orbits and ATX satellite PCO/PCV mean the
+            //    emitted clock C0 is referred to the satellite centre of mass.  The value
+            //    is hardcoded, in every a-priori mode, until an SSR orbit source
+            //    (APC-referred, per the RTCM SSR convention) lands; then it becomes a
+            //    variable of the orbit path selection.
             pending_contract.orbit_ref   = "CoM";
-            pending_contract.disc_threshold_m   = NetworkProductEmitter::kDefaultDiscThresholdM;  // R9: same constant as the emitter above
-            // The replay-emitter construction parameters (disc threshold above + the
-            // clock-disc channel flag + the RTA-11 staleness horizon) travel in the
-            // contract so a consumer can replay the file with byte-identical
-            // discontinuity counters and no out-of-band knowledge of the producer's
-            // config.  The horizon serializes as an optional stale= field only when
-            // non-zero, so an OFF run's v2 header is byte-identical.
+            pending_contract.disc_threshold_m   = NetworkProductEmitter::kDefaultDiscThresholdM;  // same constant as the emitter above (R9)
+            // The emitter's construction parameters (the disc threshold above, the
+            // clock-disc channel flag, the RTA-11 staleness horizon, and the jump-test and
+            // mark-scope options below) travel in the contract, so a consumer can replay
+            // the file with byte-identical discontinuity counters and no out-of-band
+            // knowledge of the producer's config.  The horizon serializes as an optional
+            // stale= field only when non-zero, so a run with it off writes a
+            // byte-identical v2 header.
             pending_contract.emit_clock_disc    = config_.networkEmitClockDisc();
             pending_contract.staleness_horizon_s = config_.networkEmitterStalenessHorizonS();
             pending_contract.code_bias_jump_test = config_.networkCodeBiasDiscJumpTest();
             pending_contract.clock_disc_on_set_change = config_.networkClockDiscOnSetChange();
-            pending_contract.disc_threshold_frac_cycles = config_.networkDiscThresholdFracCycles();  // H3: per-λ jump gate (discfrac=)
-            pending_contract.disc_jump_test_decommon = nc.disc_jump_test_decommon;  // Card JT: de-commoned phase jump test (discdecom=)
-            pending_contract.disc_mark_scope_channel = (nc.disc_mark_scope == "channel");  // Card MS: per-channel mark scope (discscope=)
-            pending_contract.emit_pb_hold = nc.emit_pb_hold;  // Card PBH: the phase-bias hold reading rule (pbhold=)
-            // M4 (contract v2): advertise the combined-σ age-scaling coefficient on the
-            // S line ONLY when the combined-σ channel is on and a coefficient is set, so
-            // an OFF (or agek=0) run's v2 header is byte-identical (agek= token absent).
+            pending_contract.disc_threshold_frac_cycles = config_.networkDiscThresholdFracCycles();  // per-λ jump gate, discfrac= (H3)
+            pending_contract.disc_jump_test_decommon = nc.disc_jump_test_decommon;  // de-commoned phase jump test, discdecom= (Card JT)
+            pending_contract.disc_mark_scope_channel = (nc.disc_mark_scope == "channel");  // per-channel mark scope, discscope= (Card MS)
+            pending_contract.emit_pb_hold = nc.emit_pb_hold;  // the phase-bias hold reading rule, pbhold= (Card PBH)
+            // Advertise the combined-σ age-scaling coefficient on the S line only when the
+            // combined-σ channel is on and a coefficient is set, so a run with the channel
+            // off (or agek = 0) writes a byte-identical v2 header (no agek= token).
+            // (M4, contract v2)
             if (config_.networkEmitCombinedSigma())
                 pending_contract.age_scale_k = config_.networkCombinedSigmaAgek();
-            // H-rider: advertise which statistic the H heartbeat's sigma0 carries.
-            // ONLY when the census feed is armed (hsig= token absent otherwise,
-            // byte-identical) — the census σ̂₀ is a different population from the
-            // within-epoch RAIM's, and a consumer thresholding field 5 must know.
+            // Advertise which statistic the H heartbeat's sigma0 carries, only when the
+            // census feed is armed (otherwise no hsig= token, byte-identical).  The census
+            // σ̂₀ is a different population from the within-epoch RAIM's, and a consumer
+            // thresholding field 5 needs to know which one it reads.  (H-rider)
             if (config_.networkHSigma0PrefitCensus())
                 pending_contract.h_sigma0_source = "pc";
             pending_contract.present            = true;
             contract_pending = true;
-            // The deferred writer only opens (and truncates) at the FIRST emit; a run
-            // that emits zero epochs would otherwise leave a PREVIOUS run's complete
-            // product file at this path for a downstream consumer to silently replay.
-            // Do what the former v1 branch's truncate-at-startup did: remove any
-            // existing file.
+            // The deferred writer opens (and truncates) only at the first emit, so a run
+            // that emits no epochs would leave a previous run's complete product file at
+            // this path for a downstream consumer to replay unnoticed.  Remove any
+            // existing file now, as a truncate at startup would.
             std::error_code stale_ec;
             std::filesystem::remove(prod_path, stale_ec);
             if (stale_ec && std::filesystem::exists(prod_path))
@@ -1507,12 +1551,13 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     }
 
     // --- Closed-loop consumer (held-out station) ----------------------------
-    // The held-out station runs the user-side PPP-RTK + AR pipeline through a
-    // RealTimeEngine fed epoch-by-epoch from RINEX replay, with its SSR
-    // consumption repointed at the OWNED network_store (never the singleton).
-    // Each epoch: the producer emits into network_store, then the consumer reads
-    // that fresh epoch — closing the loop "does our own user engine recover
-    // integers from our own products on an independent station?".
+    // The held-out station runs the user-side PPP-RTK and AR pipeline through a
+    // RealTimeEngine fed epoch by epoch from RINEX replay, with its SSR consumption
+    // pointed at the owned network_store, never the singleton (with
+    // closed_loop.consume_network_products off it runs on precise products only, as
+    // a baseline).  Each epoch the producer emits into network_store and the consumer
+    // then reads that epoch, which tests whether the project's own user engine
+    // recovers integers from the producer's products on an independent station.
     setup.consumer_config = config_.deriveClosedLoopConsumerConfig();
     GnssConfig& consumer_config = setup.consumer_config;
     auto& consumer = setup.consumer;
@@ -1520,8 +1565,8 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     if (closed_loop_on) {
         // Reduce the configured (monument-referenced) truth into the ARP frame the
         // consumer estimates in, using the held-out station's own RINEX header.  A
-        // zero eccentricity leaves the value bit-identical, so every station in the
-        // current fixture set (CIT1, NRMG: 0/0/0) grades exactly as before.
+        // zero eccentricity leaves the value bit-identical, so the current fixture
+        // stations (CIT1, NRMG: 0/0/0) grade exactly as without the reduction.
         if (const RinexParser* cl_parser = sync.parserOf(cl.station.name)) {
             setup.cl_truth_hen = cl_parser->getAntennaDeltaHen();
             setup.cl_truth_arp = Coordinates::markerToArp(setup.cl_truth_arp, setup.cl_truth_hen);
@@ -1538,7 +1583,8 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         }
         // Point the consumer's RinexParser at the held-out station so its header
         // (antenna type, approximate position) seeds the consumer correctly; the
-        // per-epoch observations themselves come from the synced roster below.
+        // per-epoch observations themselves come from the synced roster in the epoch
+        // loop.
         consumer_config.setObservationPath(cl.station.rinex_path);
         consumer = std::make_unique<RealTimeEngine>(consumer_config, log_manager_);
         if (!consumer->initialize()) {
@@ -1546,15 +1592,16 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                        "disabling the harness for this run.");
             consumer.reset();
         } else {
-            // Direct LAMBDA on the network-bias-corrected float must NOT also take
-            // the MW WL (it is in the .BIA frame; see setArIgnoreMwWl).  wl_only AR
-            // keeps the MW WL by definition.
+            // Direct LAMBDA on the network-bias-corrected float must not also take the
+            // MW WL, which is in the .BIA frame (see setArIgnoreMwWl).  wl_only AR keeps
+            // the MW WL by definition.
             consumer->setArIgnoreMwWl(!consumer_config.getArWlOnly());
-            // Card CST: arm the per-satellite readout BEFORE the product-routing
-            // branch below, so the instrument exists on the BASELINE arm
-            // (consume_network_products=false) too — a consumer that consumes no
-            // products still has ambiguities, iono states and residuals, and the
-            // A/B between the two arms is one of the reads this trace is for.
+            // Arm the per-satellite readout (network.trace_consumer_sat) before the
+            // product-routing branch below, so the instrument also exists on the
+            // baseline arm (consume_network_products = false): a consumer that consumes
+            // no products still has ambiguities, iono states and residuals, and the A/B
+            // between the two arms is one of the comparisons this trace serves.
+            // (Card CST)
             consumer->setConsumerSatTrace(nc.trace_consumer_sat);
             const bool undiff = cl.consumer_undifferenced;
             if (undiff)
@@ -1573,14 +1620,15 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                           "(the WL-float-level position makes the NL search ill-conditioned).  "
                           "Prefer ar_wl_only=true, or consumer_undifferenced=true.");
             if (cl.consume_network_products) {
-                // Consume OUR products (never the singleton).  consume_network_clock
-                // gates the clock overlay: false keeps precise SP3/CLK and consumes
-                // only the network phase bias (the clean integer-recovery test).
+                // Consume the producer's own products (never the singleton).
+                // consume_network_clock gates the clock overlay: false keeps precise
+                // SP3/CLK and consumes only the network phase bias (the clean
+                // integer-recovery test).
                 consumer->setSsrStore(&network_store, cl.consume_network_clock, /*bias=*/true);
-                // Strong (ionosphere-corrected) user model: consume the network's
-                // SH-VTEC slant iono as a tight per-sat BLUP prior (the producer
-                // fills the store's slant-iono channel each epoch below).  Default
-                // OFF ⇒ the consumer floats its own iono (byte-identical).
+                // Strong (ionosphere-corrected) user model: consume the network's SH-VTEC
+                // slant iono as a tight per-satellite BLUP prior (the producer fills the
+                // store's slant-iono channel each epoch in the run loop).  Off by default:
+                // the consumer floats its own iono (byte-identical).
                 consumer->setConsumeNetworkIono(cl.consume_network_iono);
                 log->info("Network closed-loop: consumer '{}' initialized — AR mode {}, "
                           "wl_only {} — reading the OWNED network store ({}{}).",

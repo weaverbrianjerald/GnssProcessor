@@ -2,24 +2,25 @@
  * @file IlsCore.hpp
  * @brief Pure integer-least-squares (MLAMBDA) core, decoupled from StateManager.
  *
- * The numerical heart of integer ambiguity resolution — the LDLᵀ
- * decomposition, MLAMBDA lattice reduction, Schnorr-Euchner integer
- * least-squares search, bootstrap (FFR) success rate, and the full
- * acceptance battery with optional partial-AR backward elimination —
- * expressed as free functions operating purely on @c (â cycles, Q cycles²).
+ * Free functions for integer ambiguity resolution that operate only on
+ * @c (â cycles, Q cycles²): the Q = Lᵀ·D·L factorization, MLAMBDA lattice
+ * reduction, the Schnorr-Euchner integer least-squares search, the bootstrap
+ * (FFR) success rate, and the acceptance battery with optional partial-AR
+ * backward elimination.
  *
- * These routines have NO dependency on @c StateManager, @c KalmanFilter,
- * @c GnssConfig, or logging; they are the single implementation shared by
- * the single-station user path (@c AmbiguityResolver) and the PPP-RTK
- * network producer path (@c NetworkEstimator / @c runNetwork).  Callers
- * own all state-vector assembly (meters↔cycles scaling, per-pair λ lookups,
- * DD formation) and the application of the returned integer fix; this header
- * owns only the integer search and its acceptance gates.
+ * These routines do not depend on @c StateManager, @c KalmanFilter,
+ * @c GnssConfig or logging.  The kernels and @c selectFixableSubset are shared
+ * by the single-station user path (@c AmbiguityResolver) and the PPP-RTK
+ * network producer path (@c NetworkEstimator / @c runNetwork); @c ilsFix is
+ * called by the network path, while @c AmbiguityResolver runs the same gate
+ * sequence inline.  Callers own all state-vector assembly (metres to cycles
+ * scaling, per-pair λ lookups, DD formation) and the application of the
+ * returned integer fix; this header owns only the integer search and its
+ * acceptance gates.
  *
- * Units discipline (load-bearing): MLAMBDA must be run strictly in CYCLES.
- * Running it on meter-domain floats rounds to integer-meter values that have
- * no carrier-phase semantics and yields ratios near 1.0 regardless of float
- * quality.  Convert per-pair (÷λ) before calling.
+ * Units: MLAMBDA runs in cycles.  On metre-domain floats it rounds to
+ * integer-metre values that have no carrier-phase meaning and gives ratios
+ * near 1.0 whatever the float quality.  Convert per pair (÷λ) before calling.
  *
  * References:
  *   [1] P.J.G. Teunissen, "The least-squares ambiguity decorrelation
@@ -40,11 +41,15 @@ namespace ils {
 // ===========================================================================
 
 /**
- * @brief LDLᵀ decomposition of a positive-definite matrix.
+ * @brief Factorization Q = Lᵀ·D·L of a positive-definite matrix, D = diag(d).
+ *
+ * Eliminates from the last row upward, as in the MLAMBDA reference code, so
+ * the factor is Lᵀ·D·L rather than L·D·Lᵀ.
+ *
  * @param Q  Input covariance matrix (n x n).
  * @param L  Output unit lower-triangular matrix.
  * @param d  Output diagonal vector.
- * @return True on success, false if @p Q is not positive definite.
+ * @return True on success, false if a pivot d_i ≤ 0 (@p Q not positive definite).
  */
 bool ldlDecompose(const Eigen::MatrixXd& Q,
                   Eigen::MatrixXd& L, Eigen::VectorXd& d);
@@ -77,7 +82,7 @@ int search(const Eigen::MatrixXd& L, const Eigen::VectorXd& d,
  * @param Q     Ambiguity covariance matrix (cycles²).
  * @param afix  Output: best integer candidate (cycles).
  * @param s     Output: squared distances [s1, s2] for the ratio test.
- * @param d_out Optional output: post-reduction LDL diagonal (one variance
+ * @param d_out Optional output: post-reduction diagonal D (one variance
  *              per decorrelated ambiguity), fed to
  *              @c computeBootstrapSuccessRate.  Pass nullptr to skip.
  * @return True on success (PD covariance and ≥2 candidates found).
@@ -91,10 +96,10 @@ bool mlambda(const Eigen::VectorXd& a, const Eigen::MatrixXd& Q,
  *
  *     P_s,boot = Π_i  erf( 1 / (2·√(2 · d_i)) )
  *
- * A strict lower bound on the actual ILS success rate; used as a
- * Fixed-Failure-Rate acceptance criterion.
+ * A lower bound on the ILS success rate; used as a fixed-failure-rate
+ * acceptance criterion.
  *
- * @param d Post-reduction LDL diagonal (positive entries).
+ * @param d Post-reduction diagonal D of Q = Lᵀ·D·L (positive entries).
  * @return Bootstrap success rate ∈ [0, 1].  Zero if any d_i ≤ 0 or empty.
  */
 double computeBootstrapSuccessRate(const Eigen::VectorXd& d);
@@ -159,24 +164,6 @@ struct IlsResult {
     IlsFailReason full_fail = IlsFailReason::None;  ///< Why the full set failed (None if it passed).
 };
 
-/**
- * @brief Greedy backward-elimination partial ambiguity resolution.
- *
- * Starting from the full set, repeatedly runs @c mlambda on the current
- * subset and tests the same acceptance battery used by the full-set fix —
- * ratio (lower and upper), bootstrap success rate, and per-entry
- * |float − fixed| cap.  On any failure the least-fixable entry is dropped
- * (the largest |float − fixed| when the fractional cap is the failing gate,
- * otherwise the largest formal float variance) and the search retries down to
- * a single entry.  The accepted subset is always re-validated by the full
- * battery on its own sub-block, so it can only fix @e fewer ambiguities than
- * the full set, never a worse-conditioned one.
- *
- * @param y_cycles  Float ambiguity vector (cycles).
- * @param Q_cycles  Covariance of @p y_cycles (cycles²); symmetric PD.
- * @param gates     Acceptance-gate parameters.
- * @return PartialFix; @c success=false if no subset down to size 1 passes.
- */
 struct PartialFix {
     bool success = false;        ///< True if a fixable subset (≥1 entry) was found.
     std::vector<int> kept;       ///< Indices (into the input set) that survived and were fixed.
@@ -185,6 +172,24 @@ struct PartialFix {
     double p_s = 0.0;            ///< Bootstrap success rate of the accepted subset.
     double max_frac = 0.0;       ///< Worst |float − fixed| (cycles) over the accepted subset.
 };
+/**
+ * @brief Greedy backward-elimination partial ambiguity resolution.
+ *
+ * Starting from the full set, repeatedly runs @c mlambda on the current
+ * subset and applies the acceptance battery of the full-set fix: ratio (lower
+ * and upper bound), bootstrap success rate, and per-entry |float − fixed| cap.
+ * On a failure one entry is dropped (the one with the largest |float − fixed|
+ * when the fractional cap is the failing gate, otherwise the one with the
+ * largest formal float variance) and the search repeats, down to a single
+ * entry.  The accepted subset has passed the whole battery on its own
+ * sub-block, so it fixes fewer ambiguities than the full set but meets the
+ * same acceptance standard.
+ *
+ * @param y_cycles  Float ambiguity vector (cycles).
+ * @param Q_cycles  Covariance of @p y_cycles (cycles²); symmetric PD.
+ * @param gates     Acceptance-gate parameters.
+ * @return PartialFix; @c success=false if no subset down to size 1 passes.
+ */
 PartialFix selectFixableSubset(const Eigen::VectorXd& y_cycles,
                                const Eigen::MatrixXd& Q_cycles,
                                const IlsGateConfig& gates);
@@ -192,12 +197,13 @@ PartialFix selectFixableSubset(const Eigen::VectorXd& y_cycles,
 /**
  * @brief Fix integer ambiguities from a float estimate and covariance.
  *
- * Runs MLAMBDA on @p a_hat_cycles / @p Q_cycles, applies the full-set
+ * Runs MLAMBDA on @p a_hat_cycles / @p Q_cycles and applies the full-set
  * acceptance battery (ratio lower/upper → bootstrap FFR → per-entry frac
- * cap), and — when the full set fails and @c gates.enable_partial_ar is set —
- * falls back to @c selectFixableSubset.  Pure: performs no logging and no
- * state mutation; the returned @c IlsResult carries every value a caller
- * needs to apply the fix and to log the attempt.
+ * cap).  When the full set fails a gate and @c gates.enable_partial_ar is
+ * set, it falls back to @c selectFixableSubset; when MLAMBDA itself fails or
+ * the squared distances are not positive, it stays float with no fallback.
+ * Pure: no logging and no state mutation.  The returned @c IlsResult carries
+ * every value a caller needs to apply the fix and to log the attempt.
  *
  * @param a_hat_cycles Float ambiguity vector (cycles).
  * @param Q_cycles     Covariance (cycles²); symmetric PD.

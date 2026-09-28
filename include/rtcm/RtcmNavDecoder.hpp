@@ -45,8 +45,12 @@ bool isBroadcastEphemerisType(uint16_t msg_type);
  * @param len_bytes        Payload length in bytes.
  * @param msg_type         The 12-bit DF002 value (1019/1020/1042/1044/1046).
  * @param current_gps_week Current full GPS week, used to resolve the truncated
- *                         week field of each message into an unambiguous epoch.
- *                         Pass 0 to leave the week as the raw (un-rolled) value.
+ *                         10-bit (GPS, QZSS) and 12-bit (Galileo) week fields
+ *                         into an unambiguous epoch.  Pass 0 to leave the week
+ *                         as the raw (un-rolled) value; Galileo still adds the
+ *                         1024-week GST offset.  BeiDou (13-bit BDT week, kept
+ *                         raw) and GLONASS (toe anchored on the host clock)
+ *                         ignore it.
  * @param out              Destination vector; one record appended on success.
  * @return @c ok = true when the message decoded cleanly.
  */

@@ -1,10 +1,10 @@
 /**
  * @file test_jump_gap_fitter.cpp
- * @brief Unit tests for JumpGapFitter — the pure two-sided trend+step fitter
+ * @brief Unit tests for JumpGapFitter, the pure two-sided trend+step fitter
  *        behind the non-causal smoother cycle-slip bridge.
  *
- * All inputs are deterministic closed-form lines with an injected step, so
- * every assertion is an exact algebraic recovery, not a statistical margin.
+ * All inputs are deterministic closed-form lines with an injected step, so the
+ * tolerances cover floating-point rounding only, not a statistical margin.
  */
 #include <gtest/gtest.h>
 

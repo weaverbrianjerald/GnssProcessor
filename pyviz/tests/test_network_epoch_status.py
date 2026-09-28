@@ -1,9 +1,10 @@
 """Build-time tests for the network_epoch_status viewer (synthetic CSVs).
 
-Covers: figure/axes contract, the disposition classification with BLANK numeric
-fields at non-emitted dispositions, the plateau (LOCK-IN) heuristic on a growing
-clock-std vs a flat one, and the ViewerSkip / missing-CSV paths.  Figures are
-built (spec objects), never rendered, so these stay fast and backend-free.
+Covers the figure/axes contract, the disposition classification with blank
+numeric fields at non-emitted dispositions, the plateau ("LOCK-IN") heuristic
+on a growing clock-std versus a flat one, and the ViewerSkip / missing-CSV
+paths.  Figures are built as spec objects, never rendered, so these tests
+stay fast and backend-free.
 """
 import importlib
 
@@ -16,7 +17,7 @@ from gnssviz.viewers.network_epoch_status import build_network_epoch_status
 _HEADER = ("week,tow,disposition,sigma0,n_adapt,n_present,n_clock_sats,"
            "clock_median_m,clock_std_m,worst_sat,worst_dev_m,n_refloat_sats,"
            "n_retro_applied,datum_changed,sigma0_trigger,withhold_ceiling,"
-           "n_arc_refloat\n")   # T2d: isolated-arc RAIM refloats this epoch
+           "n_arc_refloat\n")   # isolated-arc RAIM refloats this epoch (T2d)
 
 
 def _ctx(tmp_path):
@@ -33,7 +34,7 @@ def _emitted_row(k, std):
 
 
 def _skip_row(k, disposition):
-    """A non-emitted row: numeric stat fields BLANK (-> NaN), datum unchanged."""
+    """A non-emitted row: numeric stat fields blank (read back as NaN), datum unchanged."""
     tow = 259200 + 30 * k
     # week,tow,disposition,sigma0(blank),n_adapt(blank),n_present,n_clock_sats(blank),
     # clock_median_m(blank),clock_std_m(blank),worst_sat(blank),worst_dev_m(blank),
@@ -42,8 +43,8 @@ def _skip_row(k, disposition):
 
 
 def test_plateau_fixture_flags_lockin(tmp_path):
-    # clock_std GROWS from ~0.02 to ~0.30 over 12 emitted epochs: last-third
-    # median >> 2x the first-third median -> LOCK-IN SUSPECTED.
+    # clock_std grows from ~0.02 to ~0.30 over 12 emitted epochs: the last-third
+    # median is more than twice the first-third median, which triggers "LOCK-IN SUSPECTED".
     stds = [0.02, 0.02, 0.03, 0.03, 0.04, 0.04, 0.15, 0.18, 0.22, 0.26, 0.30, 0.32]
     body = "".join(_emitted_row(k, s) + "\n" for k, s in enumerate(stds))
     (tmp_path / "network_epoch_status.csv").write_text(_HEADER + body,
@@ -52,7 +53,7 @@ def test_plateau_fixture_flags_lockin(tmp_path):
     assert len(res.figures) == 1
     assert len(res.figures[0].axes) == 3
     assert "LOCK-IN SUSPECTED" in res.summary
-    # Run-worst sat surfaced by NAME, not rms alone.
+    # Run-worst sat is surfaced by name, not by rms alone.
     assert "G13" in res.summary
 
 
@@ -68,9 +69,9 @@ def test_flat_fixture_does_not_flag_lockin(tmp_path):
 
 
 def test_disposition_classification_with_blank_fields(tmp_path):
-    # Mix of emitted + every skip disposition; skip rows have BLANK numeric fields
-    # which load_trace reads as NaN.  The viewer must classify all of them without
-    # tripping over the NaNs, and must NOT count a datum change on the skip rows.
+    # Mix of emitted and every skip disposition; skip rows have blank numeric fields,
+    # which load_trace reads as NaN.  The viewer classifies all of them without
+    # tripping over the NaNs, and does not count a datum change on the skip rows.
     rows = [_emitted_row(0, 0.05), _emitted_row(1, 0.06)]
     for k, disp in enumerate(("gate_withheld", "sigma0_withheld",
                               "solve_failed", "datum_failed", "sync_skip"),

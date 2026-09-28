@@ -25,10 +25,14 @@ namespace GnssProcessor {
          * Behavior:
          *  - If `x` is empty returns an empty vector.
          *  - If `x` has a single element returns {1.0}.
-         *  - If two abscissae are nearly identical (|dx| < 1e-12) the corresponding
-         *    weight is set to 0.0 and the caller should avoid duplicate nodes.
-         *  - The product of differences is computed in log-space to reduce overflow/
-         *    underflow; extremely large or small magnitudes are clamped to safe limits.
+         *  - The nodes are centred and divided by the smallest nonzero node spacing
+         *    before the products are formed, and the weights are rescaled so that
+         *    max|w_j| = 1.  Both are common factors that cancel in barycentricEval()
+         *    and barycentricDeriv().
+         *  - If a node lies within 1e-12 of another in these normalized units, its
+         *    weight is set to 0.0; callers should avoid duplicate nodes.
+         *  - The product of differences is computed in log-space to avoid overflow
+         *    and underflow; a weight below e^-700 times the largest is set to 0.0.
          *
          * @param[in] x Vector of node abscissae (x_0 .. x_{n-1}). Values should be distinct.
          * @return A vector of barycentric weights of the same length as `x`.
@@ -49,7 +53,7 @@ namespace GnssProcessor {
          *  - If `w.size() != x.size()` or `y.size() != x.size()` the function returns 0.0.
          *  - If the query `xq` coincides with a node `x[j]` within tolerance (|xq - x[j]| < 1e-12)
          *    the function returns `y[j]` directly to preserve node values and avoid division by zero.
-         *  - If the denominator is (nearly) zero the function returns 0.0 as a safe fallback.
+         *  - If the denominator is exactly zero the function returns 0.0.
          *
          * @param[in] x  Vector of node abscissae (x_0 .. x_{n-1}). Must correspond to `w` and `y`.
          * @param[in] w  Vector of barycentric weights computed for `x` (see barycentricWeights()).
@@ -104,10 +108,10 @@ namespace GnssProcessor {
          *    using the last two sorted nodes.
          *  - If `xq` lies between two nodes the function returns the linear interpolation
          *    between those nodes.
-         *  - If a node interval width `dx` is nearly zero (|dx| < 1e-12) the function
-         *    avoids division by zero and returns the nearer node's ordinate (implementation
-         *    chooses the left node's value for interior intervals and a sensible single-node
-         *    value for extrapolation).
+         *  - If the width `dx` of the interval used is below 1e-12, the function does
+         *    not divide and returns one node's ordinate: the left node for an interior
+         *    interval, the first sorted node below the range and the last sorted node
+         *    above it.
          *
          * @param[in] x  Vector of abscissae (may be unsorted; values should ideally be distinct).
          * @param[in] y  Vector of ordinates corresponding to `x`.
@@ -128,39 +132,43 @@ namespace GnssProcessor {
          * ---------------------------------------------------------------------
          * Natural cubic-spline and Hermite (monotone) helpers
          *
-         * These declarations add cubic-spline and monotone cubic-Hermite
-         * utilities to the Interpolate facade. Implementations belong in
-         * `src\core\common\Interpolate.cpp` (or a new .cpp) and are thread-safe
-         * (stateless) when given independent input vectors.
+         * Cubic-spline and cubic-Hermite utilities of the Interpolate facade.
+         * They are implemented in `src/core/math/Interpolate.cpp` and are
+         * stateless, so they are thread-safe on independent input vectors.
          * ---------------------------------------------------------------------
          */
 
          /**
-          * @brief Compute second derivatives for a natural cubic spline.
+          * @brief Compute the node coefficients of a natural cubic spline.
           *
-          * Produces the vector `c` of second derivatives at the nodes for a
-          * natural cubic spline (zero second derivative at endpoints).
+          * Produces the vector `c` for a natural cubic spline (zero second
+          * derivative at the endpoints).  Each piece is
+          *   S_i(x) = a_i + b_i·dx + c_i·dx² + d_i·dx³,  dx = x - x_i,
+          * so c_i = S''(x_i)/2: half the second derivative, despite the
+          * function name.  splineEval() and splineDeriv() expect exactly this `c`.
           *
           * - If `x.size() != y.size()` or `x.size() < 2` an empty vector is returned.
-          * - Requires strictly increasing `x` values; behavior is undefined for
-          *   non-monotonic or duplicate abscissae.
+          * - Requires strictly increasing `x` values.  A non-positive interval next
+          *   to an interior node returns an all-zero vector; results are otherwise
+          *   undefined for non-monotonic or duplicate abscissae.
           *
           * @param[in] x Node abscissae (strictly increasing).
           * @param[in] y Node ordinates.
-          * @return Vector `c` of length `x.size()` with spline second derivatives.
+          * @return Vector `c` of length `x.size()` with the coefficients c_i = S''(x_i)/2.
           */
         static std::vector<double> naturalSplineSecondDerivs(const std::vector<double>& x,
             const std::vector<double>& y);
 
         /**
-         * @brief Evaluate a natural cubic spline at `xq` using precomputed second derivatives.
+         * @brief Evaluate a natural cubic spline at `xq` using precomputed node coefficients.
          *
          * - `c` must be the result of `naturalSplineSecondDerivs(x, y)`.
-         * - If inputs are invalid the function returns 0.0.
+         * - If the sizes of `x`, `y` and `c` differ or `x` is empty, returns 0.0.
+         * - Outside [x_0, x_{n-1}] the first or last cubic piece is extrapolated.
          *
          * @param[in] x Node abscissae (strictly increasing).
          * @param[in] y Node ordinates.
-         * @param[in] c Second derivatives returned by naturalSplineSecondDerivs().
+         * @param[in] c Coefficients c_i = S''(x_i)/2 returned by naturalSplineSecondDerivs().
          * @param[in] xq Query abscissa.
          * @return Spline value at `xq`.
          */
@@ -177,7 +185,7 @@ namespace GnssProcessor {
          *
          * @param[in] x Node abscissae (strictly increasing).
          * @param[in] y Node ordinates.
-         * @param[in] c Second derivatives returned by naturalSplineSecondDerivs().
+         * @param[in] c Coefficients c_i = S''(x_i)/2 returned by naturalSplineSecondDerivs().
          * @param[in] xq Query abscissa.
          * @return Spline derivative at `xq`.
          */
@@ -192,12 +200,18 @@ namespace GnssProcessor {
          * Produces per-node derivatives `m` that preserve monotonicity of the
          * input data when used with a cubic-Hermite interpolant.
          *
+         * Endpoint slopes are the adjacent secants.  An interior slope is the
+         * weighted harmonic mean of the two adjacent secants, limited in magnitude
+         * to the smaller of them; it is zero where the secants differ in sign or
+         * either is zero, and both slopes of a zero secant are zero.
+         *
          * @warning This function forces slopes to zero at local extrema to preserve
-         *          monotonicity. It is **not suitable** for oscillating data such as
+         *          monotonicity, so it is unsuitable for oscillating data such as
          *          satellite ECEF coordinates. Use `catmullRomSlopes()` instead for
          *          general-purpose cubic Hermite interpolation of non-monotone data.
          *
          * - If `x.size() != y.size()` or `x.size() < 2` an empty vector is returned.
+         * - A zero node interval returns an all-zero vector.
          *
          * @param[in] x Node abscissae (strictly increasing).
          * @param[in] y Node ordinates.
@@ -213,7 +227,7 @@ namespace GnssProcessor {
          *   m[i] = (y[i+1] - y[i-1]) / (x[i+1] - x[i-1])
          * with one-sided differences at the endpoints.
          *
-         * Unlike `monotoneHermiteSlopes()`, this function does **not** clamp slopes
+         * Unlike `monotoneHermiteSlopes()`, this function does not clamp slopes
          * at local extrema and is therefore suitable for oscillating data such as
          * satellite ECEF coordinates.
          *
@@ -229,8 +243,8 @@ namespace GnssProcessor {
         /**
          * @brief Evaluate a cubic Hermite interpolant at `xq` using node slopes `m`.
          *
-         * - `m` should be produced by `monotoneHermiteSlopes(x, y)` to guarantee
-         *   monotonicity where applicable.
+         * - `m` comes from `monotoneHermiteSlopes(x, y)` when monotonicity must be
+         *   preserved, or from `catmullRomSlopes(x, y)` for oscillating data.
          *
          * @param[in] x Node abscissae (strictly increasing).
          * @param[in] y Node ordinates.
@@ -266,20 +280,21 @@ namespace GnssProcessor {
          * data points (x[i], y[i]) and its first derivative at the query point xq.
          * Uses the classical Neville tableau with an Aitken-like derivative extension.
          *
-         * The algorithm builds the interpolation incrementally from nearest to
-         * farthest node, so the node ordering supplied by the caller determines
-         * the convergence pattern. For best numerical behaviour, sort nodes by
-         * increasing distance from xq before calling.
+         * The tableau combines the nodes in the order the caller supplies them.
+         * The final polynomial does not depend on that order, but the rounding
+         * does; sorting the nodes by increasing distance from xq before the call
+         * gives the best numerical behaviour.  The nodes are shifted by xq before
+         * the recurrence, so large abscissae (GPS seconds) do not lose precision.
          *
          * The polynomial is unique for a given node set, but continuity of the
          * interpolant across a streaming query (where the caller selects nodes
-         * per query) depends entirely on the upstream node-selection strategy.
-         * A bracket-centered window (window slides one node per source-epoch
-         * crossing) preserves value continuity because the shared bracket node
-         * pins both old and new polynomials to the same value at the swap.
-         * A nearest-N window swaps a node at the midpoint between source
-         * epochs, where the two polynomials disagree — producing the classic
-         * sawtooth in interpolated position.
+         * per query) depends on the upstream node-selection strategy.
+         * A bracket-centered window (the window slides one node per source-epoch
+         * crossing) preserves value continuity, because the shared bracket node
+         * pins the old and the new polynomial to the same value at the swap.
+         * A nearest-N window swaps a node at the midpoint between source epochs,
+         * where the two polynomials disagree, which produces a sawtooth in the
+         * interpolated position.
          *
          * @param[in]  x   Node abscissae (must have same size as y; need not be sorted).
          * @param[in]  y   Node ordinates.
@@ -287,8 +302,9 @@ namespace GnssProcessor {
          * @param[out] val Interpolated value p(xq).
          * @param[out] deriv Interpolated derivative p'(xq).
          *
-         * @note Complexity: O(n^2) in both time and auxiliary space.
-         * @note If x is empty, val and deriv are set to 0.0.
+         * @note Complexity: O(n^2) time and O(n) auxiliary space.
+         * @note If x is empty or y.size() != x.size(), val and deriv are set to 0.0.
+         *       With one node, val = y[0] and deriv = 0.0.
          */
         static void nevilleInterpDeriv(const std::vector<double>& x,
             const std::vector<double>& y,
@@ -306,14 +322,14 @@ namespace GnssProcessor {
          *   a(t) = { 1,
          *            sin(1*P0*t), cos(1*P0*t), sin(2*P0*t), cos(2*P0*t),
          *            sin(3*P0*t), cos(3*P0*t), sin(4*P0*t), cos(4*P0*t) }
-         * (constant + four sin/cos harmonic pairs, sin before cos — matching the
-         * M-PAGES index order exactly).  The fundamental period is the sidereal
+         * (constant + four sin/cos harmonic pairs, sin before cos, in the
+         * M-PAGES index order).  The fundamental period is the sidereal
          * day (Astronomical Almanac 1995, 0.99726956634 mean solar days).
          *
          * @par Time units.
-         * @p P0 is expressed PER SECOND ( 2*pi / (0.99726956634 * 86400) ), so the
+         * @p P0 is in rad per second ( 2*pi / (0.99726956634 * 86400) ), so the
          * basis argument tau = (x[i] - x[0]) is in the caller's seconds and the
-         * analytic derivative is returned per second — no day<->second rescale.
+         * analytic derivative is returned per second, with no day/second rescale.
          * This is identical to the M-PAGES rad/day basis followed by its /86400
          * velocity scaling; only the unit of tau differs.  The fit origin is the
          * first node x[0]; an origin shift only re-phases the harmonics (absorbed
@@ -323,18 +339,19 @@ namespace GnssProcessor {
          * @par Fit regime.
          *   - n == 9 : square system; the model passes through all 9 nodes (exact,
          *              matching the M-PAGES 9-point ±4 window).
-         *   - n  > 9 : OVERDETERMINED least-squares smoother (does NOT pass through
-         *              the nodes).  The engine's default window is up to 11 nodes
-         *              (ModelGeometry IGS_POINTS), so the production call is an
-         *              11-point LS smoother — a deliberate divergence from the
-         *              M-PAGES exact fit, kept so the trig branch reuses the
-         *              existing derotated window verbatim.
+         *   - n  > 9 : overdetermined least-squares smoother, which does not pass
+         *              through the nodes.  The engine's default window is up to 11
+         *              nodes (ModelGeometry IGS_POINTS), so the production call is
+         *              an 11-point LS smoother.  This departs from the M-PAGES exact
+         *              fit on purpose, so that the trig branch reuses the existing
+         *              derotated window unchanged.
          *
          * @par Weighting.
          * Per-node sigmas weight the fit by 1/sigma row-scaling of both A and b.
-         * If @p sigmas is empty, has all positive entries equal, or has no entry
-         * > 0, the weight cancels out of the normal equations and the solve is
-         * effectively unweighted.  This mirrors M-PAGES, whose SP3 weight
+         * If @p sigmas is empty or not of size x.size(), has all positive entries
+         * equal, or has no entry > 0, unit weights are used (a uniform weight
+         * cancels out of the normal equations).  In a weighted fit a node with
+         * sigma <= 0 gets weight 1.  This mirrors M-PAGES, whose SP3 weight
          * sig[i] = 2^acc/1000 m is a single per-satellite value applied uniformly
          * to every node (hence inert for per-satellite interpolation); the
          * parameter exists so a future per-epoch accuracy source can drive a

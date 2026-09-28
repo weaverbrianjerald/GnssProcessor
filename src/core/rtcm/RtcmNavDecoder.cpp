@@ -8,9 +8,9 @@
  * @c BroadcastEphemeris::kepler; GLONASS populates @c glonass (sign-
  * magnitude PZ-90 state, km/km·s/km·s² → SI).
  *
- * Per-message field ORDER differs (notably QZSS 1044 leads with the clock
- * block and carries the week near the end) — the order below follows each
- * message's DF table exactly and must not be reordered.
+ * Field order differs between messages (QZSS 1044 leads with the clock block
+ * and carries the week near the end).  Each decoder reads its fields in the
+ * order of that message's DF table; the reads must not be reordered.
  */
 
 #include "rtcm/RtcmNavDecoder.hpp"
@@ -27,7 +27,7 @@ namespace {
 
 constexpr double kPi = Constants::PI;
 
-// 2^e as a double (e may be negative) — RTCM scale factors.
+// 2^e as a double (e may be negative), for RTCM scale factors.
 inline double p2(int e) { return std::ldexp(1.0, e); }
 
 std::string formatSat(char prefix, int id) {
@@ -37,7 +37,7 @@ std::string formatSat(char prefix, int id) {
 }
 
 // Reconstruct a full week from a truncated field + the current full week
-// (in the SAME week numbering as @p wn).  Picks the rollover epoch nearest
+// (in the same week numbering as @p wn).  Picks the rollover epoch nearest
 // the current week.  Returns @p wn unchanged when the current week is unknown.
 int resolveWeek(int current_full_week, int wn, int n_bits) {
     if (current_full_week <= 0) return wn;
@@ -60,7 +60,7 @@ GnssTime nowReceiveTime() {
 }
 
 // ---------------------------------------------------------------------------
-// 1019 — GPS LNAV ephemeris
+// 1019: GPS LNAV ephemeris
 // ---------------------------------------------------------------------------
 bool decodeGps1019(RtcmBitReader& r, int current_week, std::vector<BroadcastEphemeris>& out) {
     const int    sat   = static_cast<int>(r.u(6));     // DF009
@@ -114,7 +114,7 @@ bool decodeGps1019(RtcmBitReader& r, int current_week, std::vector<BroadcastEphe
 }
 
 // ---------------------------------------------------------------------------
-// 1044 — QZSS ephemeris (clock block leads; week near the end)
+// 1044: QZSS ephemeris (clock block leads; week near the end)
 // ---------------------------------------------------------------------------
 bool decodeQzss1044(RtcmBitReader& r, int current_week, std::vector<BroadcastEphemeris>& out) {
     const int    sat   = static_cast<int>(r.u(4));     // DF429
@@ -167,7 +167,7 @@ bool decodeQzss1044(RtcmBitReader& r, int current_week, std::vector<BroadcastEph
 }
 
 // ---------------------------------------------------------------------------
-// 1046 — Galileo I/NAV ephemeris
+// 1046: Galileo I/NAV ephemeris
 // ---------------------------------------------------------------------------
 bool decodeGalileo1046(RtcmBitReader& r, int current_week, std::vector<BroadcastEphemeris>& out) {
     const int    sat    = static_cast<int>(r.u(6));    // DF252
@@ -223,7 +223,7 @@ bool decodeGalileo1046(RtcmBitReader& r, int current_week, std::vector<Broadcast
 }
 
 // ---------------------------------------------------------------------------
-// 1042 — BeiDou D1 ephemeris (native BDT time scale; CGCS2000)
+// 1042: BeiDou D1 ephemeris (native BDT time scale; CGCS2000)
 // ---------------------------------------------------------------------------
 bool decodeBeidou1042(RtcmBitReader& r, int /*current_week*/, std::vector<BroadcastEphemeris>& out) {
     const int    sat   = static_cast<int>(r.u(6));     // DF488
@@ -275,11 +275,11 @@ bool decodeBeidou1042(RtcmBitReader& r, int /*current_week*/, std::vector<Broadc
 }
 
 // ---------------------------------------------------------------------------
-// 1020 — GLONASS ephemeris (sign-magnitude PZ-90 state)
+// 1020: GLONASS ephemeris (sign-magnitude PZ-90 state)
 //
-// Excluded from active_systems until the MSM time-of-day → GPS-week promotion
-// is plumbed (same gap as the MSM week=0 issue), so the toe epoch tagging is
-// best-effort.  The PZ-90 state vector itself is decoded correctly.
+// The broadcast toe (DF109 tb) is a time of day; it is promoted to a full GPS
+// time below by anchoring on the host clock.  The PZ-90 state vector is
+// converted from km, km/s and km/s² to SI.
 // ---------------------------------------------------------------------------
 bool decodeGlonass1020(RtcmBitReader& r, int current_week, std::vector<BroadcastEphemeris>& out) {
     const int sat  = static_cast<int>(r.u(6));         // DF038 slot number
@@ -317,11 +317,11 @@ bool decodeGlonass1020(RtcmBitReader& r, int current_week, std::vector<Broadcast
     eph.received_time = nowReceiveTime();
     GlonassEphemeris& g = eph.glonass;
     // tb indexes 15-minute marks in the GLONASS (UTC(SU)+3h) day, i.e. a
-    // time-of-day with no date.  Promote it to a full GPS-week toe by anchoring
-    // on the rover's current GPS time (same wall-clock anchor the MSM obs path
-    // uses) so the PZ-90 RK4 integration window (toe → query) stays small.
-    // current_week is no longer needed for GLONASS (the converter resolves the
-    // day); it remains the week source for the Keplerian decoders.
+    // time-of-day with no date.  It is promoted to a full GPS-week toe by
+    // anchoring on the rover's current GPS time (the same wall-clock anchor the
+    // MSM obs path uses), so the PZ-90 RK4 integration window (toe → query)
+    // stays small.  The converter resolves the day, so current_week is unused
+    // here; it is the week source for the Keplerian decoders only.
     (void)current_week;
     g.toe = TimeUtils::glonassTodToGpsTime(static_cast<double>(tb) * 900.0,
                                            TimeUtils::nowContinuousGpsSeconds());

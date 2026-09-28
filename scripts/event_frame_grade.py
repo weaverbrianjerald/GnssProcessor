@@ -1,57 +1,57 @@
 #!/usr/bin/env python3
-"""EVENT HARNESS — the STATION-FRAME channels (Study 2's instrument).
+"""Event harness: the station-frame channels (Study 2's instrument).
 
-``scripts/event_grade.py`` grades the injected ARC and the WIRE.  This grades the
+``scripts/event_grade.py`` grades the injected arc and the wire. This grades the
 station the arc belongs to: does the event stay in the arc it was injected into,
 or does the station's whole local frame move?
 
     python scripts/event_frame_grade.py runs/evleg_<name> --null runs/evleg_<null> \
         --fixture C:/GnssProcessor/runs/simnet60_quiet_wu93_24h [--json out.json]
 
-Channels (all at epochs RELATIVE to the event tow; ``_d`` columns are event - null,
-which cancels the warm-resume seam transient the two legs share):
+Channels (all at epochs relative to the event tow; ``_d`` columns are event minus
+null, which cancels the warm-resume seam transient the two legs share):
 
-  lvl<band>  the injected arc's DD level error per BAND (L1C/L2W/L5Q), chord-median,
+  lvl<band>  the injected arc's DD level error per band (L1C/L2W/L5Q), chord-median,
              from ``logs/network_dd_fractional.csv`` joined on the fixture's true
-             integers.  ⚠ inherits the DD trace's single reference satellite
-             (SPEC_amb_iono §6.12) — read the DIFF.
-  oth        the SAME station's OTHER arcs: mean |level error| over every (sat, band)
-             of that station except the injected satellite.  **This is the frame
-             reaction** — the number Study 2 exists for.  An event that stays in its
+             integers. Inherits the DD trace's single reference satellite
+             (SPEC_amb_iono §6.12); read the diff.
+  oth        the same station's other arcs: mean |level error| over every (sat, band)
+             of that station except the injected satellite. This is the frame
+             reaction, the number Study 2 exists for. An event that stays in its
              arc leaves this flat; an event the station absorbs by moving its own
              local frame (clock / ZWD / iono) shows here.
-  clk        the station's RECEIVER CLOCK error, ``network_rx_states.csv`` (kind=CLK,
+  clk        the station's receiver clock error, ``network_rx_states.csv`` (kind=CLK,
              absolute metres) minus ``truth_clock.csv`` ``clock_bias_m``, reported as
-             the CONTRAST: minus the per-epoch mean over every station in the trace.
+             the contrast: minus the per-epoch mean over every station in the trace.
              The network-common part of a receiver-clock datum is absorbed by the
              satellite clocks and is not a station property (standing invariant #5),
              so only the contrast is gradeable.
   zwd        station ZWD error vs ``truth_tropo.csv``, metres.
   ion        the station's per-LOS slant iono error for the injected satellite:
-             ``network_ionosphere.csv`` ``iono_total_m`` (the ABSOLUTE column — never
+             ``network_ionosphere.csv`` ``iono_total_m`` (the absolute column, never
              ``iono_m``, which is the correction alone) minus ``truth_atmo.csv``
-             ``I_L1_m``.  Carries the station's receiver-DCB offset; read the DIFF.
+             ``I_L1_m``. Carries the station's receiver-DCB offset; read the diff.
   C / P      the emitted satellite clock and L1 phase bias for the injected satellite.
-  Call       the emitted satellite clock event - null over EVERY satellite in the
-             product: its per-epoch MEAN is the network-common share a single-station
-             event pushed into the satellite clocks (expect ~ -step/N for a station
-             step), its RMS the total wire signature.
+  Call       the emitted satellite clock event minus null over every satellite in the
+             product: its per-epoch mean is the network-common share a single-station
+             event pushed into the satellite clocks (expect about -step/N for a
+             station step), its rms the total wire signature.
   cons       consumer 3D ENU error from ``closed_loop_trace.csv``.
   qc         detector rows on that (station, sat) from ``network_events.csv``.
 
 ``rx_clock_step`` legs (``--step-m``, or ``step_m`` read from the leg's own event
-json) additionally get the channel the kind exists for.  The injected step is
-SUBTRACTED from the event - null receiver-clock difference, so:
+json) additionally get the channel the kind exists for. The injected step is
+subtracted from the event minus null receiver-clock difference, so:
 
-  absorb     ``clk_raw_d / step_m`` -- the fraction of the injected step the
-             estimated receiver clock actually took.  Read the RAW difference, not
+  absorb     ``clk_raw_d / step_m``, the fraction of the injected step the
+             estimated receiver clock actually took. Read the raw difference, not
              the contrast: a single station's step is 1/N network-common, so a
              60-station contrast can structurally show at most ``(1 - 1/N)`` of it.
-  res        ``clk_raw_d - step_m`` -- what did NOT land in the clock, in metres.
+  res        ``clk_raw_d - step_m``, what did not land in the clock, in metres.
              Everything the clock did not absorb had to go somewhere else: the
              station's other arcs (``oth_d``), its ZWD, its slant iono, or the wire.
 
-Nothing here is a verdict.  It is an instrument.
+Nothing here is a verdict. It is an instrument.
 """
 import argparse
 import csv
@@ -146,10 +146,10 @@ def other_arcs_mean_abs(lv, sat):
 
 # ------------------------------------------------------------------- clock
 def rx_clock_contrast(legdir, fixture, sta, t0, lo, hi):
-    """Station receiver-clock error MINUS the per-epoch network mean, metres.
+    """Station receiver-clock error minus the per-epoch network mean, metres.
 
-    network_rx_states.csv holds the absolute per-station clock (kind=CLK).  The
-    truth is per-station truth_clock.csv `clock_bias_m`.  The network-common part
+    network_rx_states.csv holds the absolute per-station clock (kind=CLK). The
+    truth is per-station truth_clock.csv `clock_bias_m`. The network-common part
     of the pair is the receiver-clock datum, absorbed by the satellite clocks; the
     contrast is the only station-attributable half.
     """
@@ -196,7 +196,7 @@ def rx_clock_contrast(legdir, fixture, sta, t0, lo, hi):
 
 # -------------------------------------------------------------------- iono
 def los_iono_error(legdir, fixture, sta, sat, t0, lo, hi):
-    """iono_total_m (ABSOLUTE) minus truth_atmo I_L1_m for (sta, sat), metres."""
+    """iono_total_m (absolute) minus truth_atmo I_L1_m for (sta, sat), metres."""
     p = os.path.join(legdir, "logs", "network_ionosphere.csv")
     if not os.path.isfile(p):
         return {}, "no network_ionosphere.csv (arm network.trace_ionosphere)"
@@ -238,14 +238,14 @@ def los_iono_error(legdir, fixture, sta, sat, t0, lo, hi):
     return out, None
 
 
-# ------------------------------------------------------- wire, ALL satellites
+# ------------------------------------------------------- wire, all satellites
 def wire_all_clocks(legdir, t0, lo, hi):
     """{rel_ep: {sat: emitted clock, m}} over every satellite in products.txt.
 
-    The per-satellite `wire_series` answers "what happened to THIS satellite".  A
+    The per-satellite `wire_series` answers what happened to that one satellite. A
     single-station event has no satellite of its own: what it does to the wire is
-    a network-COMMON shift shared by every satellite (the station's share of the
-    clock datum, ~1/N), which only shows up when the whole set is read at once.
+    a network-common shift shared by every satellite (the station's share of the
+    clock datum, about 1/N), which only shows up when the whole set is read at once.
     """
     p = os.path.join(legdir, "products.txt")
     if not os.path.isfile(p):
@@ -329,7 +329,7 @@ def main():
     ev = m.get("event") or {}
     t0 = m.get("event_tow")
     if t0 is None:
-        # A NULL leg graded against ANOTHER null (the ON-vs-OFF quiet contrast):
+        # A null leg graded against another null (the on-vs-off quiet contrast):
         # take t0 from whichever leg has an event, else the +10 convention on the
         # null's own first processed epoch, so the epoch axis matches the event legs.
         mn = leg_meta(args.null)
@@ -343,9 +343,9 @@ def main():
     if sig == "all":
         sig = "L1C"
     inj = ev.get("delta_cycles", 0.0) if kind == "slip" else 0.0
-    # A station-wide range step (rx_clock_step) carries no satellite by construction —
-    # that IS the event — so the arc/iono/wire columns need one named on the command
-    # line, the same way anchor_handover needs --station.
+    # A station-wide range step (rx_clock_step) carries no satellite by construction,
+    # since that is the event, so the arc/iono/wire columns need one named on the
+    # command line, the same way anchor_handover needs --station.
     step_m = args.step_m
     if step_m is None:
         step_m = ev.get("step_m", 0.0) if kind == "rx_clock_step" else 0.0

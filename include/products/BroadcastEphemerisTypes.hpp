@@ -11,13 +11,13 @@
  * positions are computed from these elements and then corrected by the
  * SSR orbit/clock overlay in @c SsrCorrectionStore.
  *
- * The four Keplerian constellations (GPS, Galileo, BeiDou, QZSS) share an
- * identical orbit model and therefore one @c KeplerianEphemeris struct;
- * GLONASS is integrated from a PZ-90 state vector and gets its own.
- * Angular elements are stored in radians (the RTCM semicircle scaling is
- * applied at decode time), times on the GPS week/TOW convention EXCEPT
- * the BeiDou @c toe/@c toc which are kept on the native BDT scale (BDT =
- * GPS − 14 s); the consumer converts the query epoch to BDT so the
+ * The four Keplerian constellations (GPS, Galileo, BeiDou, QZSS) share one
+ * orbit model and therefore one @c KeplerianEphemeris struct; GLONASS is
+ * integrated from a PZ-90 state vector and has its own struct.  Angular
+ * elements are stored in radians (the RTCM semicircle scaling is applied at
+ * decode time).  Times follow the GPS week/TOW convention, with one
+ * exception: the BeiDou @c toe/@c toc stay on the native BDT scale
+ * (BDT = GPS − 14 s), and the consumer converts the query epoch to BDT so the
  * node-rotation term @c ωₑ·toe stays self-consistent (see
  * LiveEphemerisStore::computeSatellitePV).
  */
@@ -34,9 +34,9 @@ namespace GnssProcessor {
  *
  * Field set and units follow RTCM 10403.3 messages 1019/1042/1044/1046
  * after scale factors and the semicircle→radian conversion are applied.
- * For BeiDou, @c toe / @c toc are on the BDT time scale and the angles
- * are CGCS2000; for the others they are on the GPS scale (Galileo GST
- * time-of-week aligns with GPS).
+ * For BeiDou, @c toe / @c toc are on the BDT time scale and the elements
+ * refer to CGCS2000; for the others the times are on the GPS scale
+ * (Galileo GST time-of-week aligns with GPS).
  */
 struct KeplerianEphemeris {
     GnssTime toe{0, 0.0};        ///< Ephemeris reference epoch (native scale: GPS, or BDT for BeiDou).
@@ -72,14 +72,15 @@ struct KeplerianEphemeris {
  * GLONASS broadcasts an instantaneous position/velocity/luni-solar
  * acceleration at the reference epoch @c toe; the orbit is obtained by
  * numerically integrating the PZ-90 equations of motion.  Stored here in
- * SI units (RTCM 1020 km / km·s scaling already applied).
+ * SI units (the RTCM 1020 km, km/s and km/s² scaling is already applied).
  *
- * @note GLONASS is excluded from @c active_systems until the MSM
- *       time-of-day → GPS-week promotion is plumbed (the same gap as the
- *       MSM week=0 issue), so @c toe tagging here is best-effort.
+ * @note The broadcast @c toe (DF109 tb) is a GLONASS time of day with no
+ *       date; the 1020 decoder promotes it to a full GPS time by anchoring
+ *       on the host's current GPS time (TimeUtils::glonassTodToGpsTime, the
+ *       same converter the MSM observation path uses).
  */
 struct GlonassEphemeris {
-    GnssTime        toe{0, 0.0};                       ///< Reference epoch (GPS scale, best-effort).
+    GnssTime        toe{0, 0.0};                       ///< Reference epoch (GPS scale, day anchored on the host clock).
     Eigen::Vector3d pos{Eigen::Vector3d::Zero()};      ///< PZ-90 ECEF position [m].
     Eigen::Vector3d vel{Eigen::Vector3d::Zero()};      ///< PZ-90 ECEF velocity [m/s].
     Eigen::Vector3d acc{Eigen::Vector3d::Zero()};      ///< Luni-solar acceleration [m/s^2].
@@ -92,10 +93,10 @@ struct GlonassEphemeris {
  * @brief One decoded broadcast-ephemeris record for a single satellite.
  *
  * Exactly one of @c kepler / @c glonass is meaningful, selected by
- * @c system.  @c iode is the RAW broadcast issue-of-data as transmitted
+ * @c system.  @c iode is the raw broadcast issue-of-data as transmitted
  * (GPS/QZSS 8-bit IODE, Galileo 10-bit IODnav, BeiDou 5-bit AODE); −1 means
- * unknown.  NOTE this raw value is NOT what the IGS-SSR overlay gates against:
- * the IGS-SSR "GNSS IOD" (IDF012) is an 8-bit field with a per-constellation
+ * unknown.  The IGS-SSR overlay does not gate against this raw value: the
+ * IGS-SSR "GNSS IOD" (IDF012) is an 8-bit field with a per-constellation
  * definition (GAL = low 8 bits of IODnav, BDS = mod(toe/720,240), GPS = the
  * 8-bit IODE).  @c LiveEphemerisStore maps this raw field onto that matching
  * convention (see @c ssrMatchIode) when it reports the IODE to the SSR gate.
@@ -105,10 +106,10 @@ struct BroadcastEphemeris {
     System      system{System::Unknown};    ///< Constellation this record belongs to.
     int         iode{-1};                   ///< Issue of data, ephemeris (−1 = unknown).
     int         health{0};                  ///< SV health (0 = healthy; system-specific encoding).
-    /// Card OWD (O3): the Galileo "data sources" word (RINEX ORBIT-5 field 2): bit 0 I/NAV
-    /// E1-B, bit 1 F/NAV E5a-I, bit 2 I/NAV E5b-I, bit 8 clock and group delay for
-    /// (E5a, E1), bit 9 for (E5b, E1).  −1 for every other system and for a record whose
-    /// source carries no such word (the RTCM decoders).
+    /// The Galileo "data sources" word (RINEX ORBIT-5 field 2): bit 0 I/NAV E1-B,
+    /// bit 1 F/NAV E5a-I, bit 2 I/NAV E5b-I, bit 8 clock and group delay for (E5a, E1),
+    /// bit 9 for (E5b, E1).  −1 for every other system and for a record whose source
+    /// carries no such word (the RTCM decoders).  (Card OWD, O3.)
     int         data_source{-1};
     GnssTime    received_time{0, 0.0};      ///< Wall-clock receive time (GPS scale) for staleness.
 

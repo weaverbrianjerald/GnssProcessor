@@ -1,58 +1,58 @@
 #!/usr/bin/env python3
-"""R10 - the WIRE'S UNSIGNALLED STEPS: an M4 contract audit (SPEC_event_harness s24.19).
+"""R10: an M4 contract audit for the wire's unsignalled steps (SPEC_event_harness s24.19).
 
     python scripts/wire_step_audit.py [--runs C:/GnssProcessor/runs]
         [--arms _cm_pvb,_cm_c8b,_cm_c10,_gl_on6,_gl2_on6,_cm_pvb6,_cm_g4a,_cm_g4b]
         [--tow0 259200] [--attrib-m 2.0] [--json out.json]
 
-THE CONTRACT.  A network product's per-satellite clock and phase bias are only
+The contract: a network product's per-satellite clock and phase bias are only
 integrable by a consumer across an epoch boundary if every re-realization of them
-is SIGNALLED - that is what the per-key discontinuity counter in
+is signalled, which is what the per-key discontinuity counter in
 `network_solution.csv` is for, and what `NetworkProductEmitter::markSatDiscontinuity`
-bumps.  An emitted step with NO counter increment is a silent frame change: the
+bumps.  An emitted step with no counter increment is a silent frame change: the
 consumer integrates straight across it and its position moves by the step.  This
 script measures that population directly off the emitted products.
 
-WHAT IS MEASURED, per arm:
+Measured, per arm:
   * per (satellite, epoch): |dclock| = |c0(t) - c0(t-1)| and |dPB| per signal,
-    paired with whether that key's `disc_counter` INCREMENTED at the same epoch;
-  * the count of steps over 0.5 / 2 / 10 m, split SIGNALLED vs UNSIGNALLED, per
+    paired with whether that key's `disc_counter` incremented at the same epoch;
+  * the count of steps over 0.5 / 2 / 10 m, split signalled vs unsignalled, per
     arm and per hour;
-  * every UNSIGNALLED step over --attrib-m attributed to the nearest producer
+  * every unsignalled step over --attrib-m attributed to the nearest producer
     event within +-2 epochs (network_events.csv: CLK_ANCHOR cta_recouple /
     cta_decouple, PHASE_ANCHOR, GROSSLOS, RETRO, CLK_FRAME, CLK_STEP, datum and
     refloat rows), with the held-out consumer's own 3D step at that epoch from
     `closed_loop_trace.csv`.
 
-⚠ THE COMMON MODE IS NOT REMOVED HERE, DELIBERATELY.  The consumer integrates the
-RAW emitted value, so the raw step is what costs it - that is the contract being
-audited.  The per-epoch network MEDIAN step is reported beside every flagged row
-so a frame move (median large, deviation small) is never confused with a
-per-satellite re-realization (median ~0, deviation large), which is the
+The common mode is not removed here: the consumer integrates the raw emitted
+value, so the raw step is what costs it, which is the contract this script
+audits.  The per-epoch network median step is reported beside every flagged row
+so a frame move (median large, deviation small) is not confused with a
+per-satellite re-realization (median near zero, deviation large), the
 distinction the emitter's own stage-2 test is written on.
 
-THE ANCHOR READ (card CS part B, s24.20).  R10 attributed 88 % of the unsignalled
-clock steps to a `T4_attrib/attrib_arc` refloat of the SAME satellite in the SAME
-epoch.  That refloat names a (station, satellite) ARC.  The question this read
-settles is whether the refloated station was that satellite's elected PHASE
-ANCHOR at the time - i.e. whether the clock re-realization is the gauge moving
-under the satellite rather than a generic arc refloat:
+The anchor read (card CS part B, s24.20) takes each unsignalled clock step
+attributed to a `T4_attrib/attrib_arc` refloat of the same satellite in the same
+epoch, which names a (station, satellite) arc, and asks whether the refloated
+station was that satellite's elected phase anchor at the time: whether the
+clock re-realization is the gauge moving under the satellite rather than a
+generic arc refloat.
 
   * the incumbent anchor per (satellite, signal) is reconstructed by replaying the
     handover chain (`PBGAUGE/handover_cold|handover_continuous`, whose `sat` field
-    is "<SAT>_<SIGNAL>" and whose `station` is the NEW anchor, and
+    is "<SAT>_<SIGNAL>" and whose `station` is the new anchor, and
     `PHASE_ANCHOR/anchor_handover`), so `anchors(sat, t)` is the set of stations
-    holding ANY of that satellite's signals at epoch t - a set, not a scalar,
-    because the signal families demonstrably split-reference (s24.15 R6);
-  * each flagged step is then labelled ON_ANCHOR / off-anchor by whether the
+    holding any of that satellite's signals at epoch t: a set, not a scalar,
+    because the signal families split-reference independently (s24.15 R6);
+  * each flagged step is then labelled on-anchor / off-anchor by whether the
     refloated station is in that set;
-  * and the satellite's PHASE BIAS keys are checked at the same epoch, so the
-    report can state whether the PB HELD while the clock took the step.
+  * and the satellite's phase bias keys are checked at the same epoch, so the
+    report can state whether the PB held while the clock took the step.
 
-Frozen (s24.20): > 50 % on the anchor makes the anchor-election card the
-structural fix; < 20 % makes a "T4 refloat forces a clock mark" rule the fix.
+Frozen (s24.20): more than 50 % on the anchor makes the anchor-election card the
+structural fix; less than 20 % makes a "T4 refloat forces a clock mark" rule the fix.
 
-READ-ONLY: opens products and traces, writes nothing but its report.
+Read-only: opens products and traces, writes nothing but its report.
 """
 import argparse
 import bisect
@@ -119,10 +119,10 @@ def read_anchor_chain(path):
     """[(tow, sat, signal, station)] handovers, epoch-ordered.
 
     Two writers, both replayed: `PBGAUGE/handover_cold|handover_continuous` names
-    the key as "<SAT>_<SIGNAL>" in its sat column with the NEW anchor station in
+    the key as "<SAT>_<SIGNAL>" in its sat column with the new anchor station in
     its station column, and `PHASE_ANCHOR/anchor_handover` names the satellite
     with the new anchor and "OLD->NEW" in detail.  The PHASE_ANCHOR row has no
-    signal, so it is applied to EVERY signal of that satellite already seen.
+    signal, so it applies to every signal of that satellite already seen.
     """
     out = []
     if not os.path.exists(path):
@@ -144,7 +144,7 @@ def read_anchor_chain(path):
 
 
 def anchors_at(chain, sat, tow):
-    """Set of stations holding ANY signal of `sat` at `tow` (replay to that epoch)."""
+    """Set of stations holding any signal of `sat` at `tow` (replay to that epoch)."""
     cur = {}
     for t, s2, sig, sta in chain:
         if t > tow:
@@ -186,7 +186,7 @@ def audit_arm(rundir, tow0, attrib_m):
         return None
     ev = read_events(os.path.join(rundir, "logs", "network_events.csv"))
     chain = read_anchor_chain(os.path.join(rundir, "logs", "network_events.csv"))
-    # Raw T4 rows, for the ANCHOR read: (tow, sat) -> the refloated station(s).
+    # Raw T4 rows, for the anchor read: (tow, sat) -> the refloated station(s).
     t4 = defaultdict(set)
     evp = os.path.join(rundir, "logs", "network_events.csv")
     if os.path.exists(evp):
@@ -246,7 +246,7 @@ def audit_arm(rundir, tow0, attrib_m):
                     for e in ev[tt]:
                         near.append((abs(tt - t1), tt, e))
                 near.sort(key=lambda x: (x[0], x[2][0]))
-                # prefer an event naming THIS satellite, else the nearest of any
+                # prefer an event naming this satellite, else the nearest of any
                 same = [n for n in near if n[2][2] == sat or n[2][2].startswith(sat)]
                 pick = (same or near or [None])[0]
                 c3, cs = cons.get(t1, (float("nan"), float("nan")))
@@ -265,7 +265,7 @@ def audit_arm(rundir, tow0, attrib_m):
                     "consumer_step_m": None if cs != cs else round(cs, 3),
                 })
                 if kind == "CLK":
-                    # --- the ANCHOR read (card CS part B) -------------------
+                    # --- the anchor read (card CS part B) -------------------
                     stas = set()
                     for dt in (0.0, -DT, DT, -2 * DT, 2 * DT):
                         stas |= t4.get((t1 + dt, sat), set())

@@ -1,31 +1,30 @@
 /**
  * @file test_oracle_pin.cpp
- * @brief SIM-ONLY ORACLE AMBIGUITY PIN (`network.inject.events[] kind
+ * @brief The sim-only oracle ambiguity pin (`network.inject.events[] kind
  *        "oracle_pin"`, include/filter/NetworkOraclePin.hpp).
  *
- * Four suites, all structural (this suite does not validate estimation accuracy):
+ * Four suites, all structural (this file does not validate estimation accuracy):
  *
- *  * `OraclePinConfig` — the parse contract.  Every scope form loads, a garbage
- *    scope is refused BY NAME, a non-positive `sigma_m` is refused, a second
- *    selector (`sat` / `station` / `signal`) alongside `scope` is refused, and an
- *    `oracle_pin` event with no truth root FAILS the load.  That last one is the
- *    FIELD-INERTNESS mechanism: a field lineage has no truth root, so the knob
- *    cannot be armed on one at all.
- *  * `OraclePinTruth` — the `truth_ambiguities.csv` parser (header + row errors)
- *    and `N(t) = N_int + Σ delta over slips with s <= t`, INCLUSIVE at t.
- *  * `OraclePinFit` — the gauge-consistent two-way fit, on a synthetic carry with
- *    no estimator.  This is the case that matters: the pin's whole claim is that
- *    it asserts INTEGER information and no gauge of its own, so the assertions
- *    are the three properties of the header banner — every pinned double
- *    difference is exactly λ·DD(N_true), no anchor arc is ever in the table, and
- *    the free per-band constant of (β, u) moves nothing.
- *  * `OraclePinScope` — `covers()` for each form.
+ *  * `OraclePinConfig`: the parse contract.  Every scope form loads, an invalid
+ *    scope is refused by name, a missing scope and a non-positive `sigma_m` are
+ *    refused, a second selector (`sat` / `station` / `signal`) alongside `scope`
+ *    is refused, and an `oracle_pin` event with no truth root fails the load.  The
+ *    last rule keeps the knob off field lineages: a field lineage has no truth
+ *    root, so the knob cannot be armed there.
+ *  * `OraclePinTruth`: the `truth_ambiguities.csv` parser (header and row errors)
+ *    and `N(t) = N_int + Σ delta over slips with s <= t`, inclusive at t.
+ *  * `OraclePinFit`: the gauge-consistent two-way fit, on a synthetic carry with
+ *    no estimator.  The pin claims to assert integer information and no gauge of
+ *    its own, so the assertions are the three properties of the header banner:
+ *    every pinned double difference is exactly λ·DD(N_true), no anchor arc is
+ *    ever in the table, and the free per-band constant of (β, u) moves nothing.
+ *  * `OraclePinScope`: `covers()` for each form.
  *
- * ⚠ What is deliberately NOT here: the PASS-B row itself.  "the row folds with
- * Λ = 1/σ² and η = Λ(value − x_lin)" is a caller-side property certified by the
- * same-build byte-identity A/B and the run-end closure counters
- * (`offered == rows + gauge_pinned_skipped + no_column`), not by a unit test —
- * the same division of labour tests/test_slip_oracle.cpp draws.
+ * Not covered here: the PASS-B row itself.  "The row folds with Λ = 1/σ² and
+ * η = Λ(value − x_lin)" is a caller-side property certified by the same-build
+ * byte-identity A/B and the run-end closure counters
+ * (`offered == rows + gauge_pinned_skipped + no_column`), not by a unit test; the
+ * same division tests/test_slip_oracle.cpp draws.
  */
 #include <gtest/gtest.h>
 
@@ -52,7 +51,7 @@ namespace {
 
 namespace fs = std::filesystem;
 
-/// GPS week 2313 — the sim fixtures' frame; 30 s cadence.
+/// GPS week 2313, the sim fixtures' frame; 30 s cadence.
 constexpr double kW = 2313.0 * 604800.0;
 
 std::shared_ptr<spdlog::logger> nullLogger() {
@@ -71,7 +70,7 @@ fs::path writeTempConfig(const std::string& tag, const std::string& body) {
     return p;
 }
 
-/// Forward slashes only — the JSON body below does not escape backslashes.
+/// Forward slashes only: the JSON body below does not escape backslashes.
 std::string jsonPath(const fs::path& p) {
     std::string s = p.string();
     for (auto& ch : s) if (ch == '\\') ch = '/';
@@ -153,21 +152,21 @@ nlohmann::json pinEvent(const std::string& scope, double tow = 279300.0) {
 }
 
 // ===========================================================================
-// Fit harness — 6 stations x 8 satellites x 2 bands, no estimator
+// Fit harness: 6 stations x 8 satellites x 2 bands, no estimator
 // ===========================================================================
 
-/// The synthetic truth the fit must recover UP TO its one free per-band constant.
+/// The synthetic truth the fit recovers up to its one free per-band constant.
 ///
 /// Ground model (the header banner's):  alpha_rsj = beta_sj + u_rj + lambda_j*N_rsj.
 /// Anchors sit on stations 0, 1 and 2 (three different stations, so a bug that
 /// assumed one anchor station shows up), each with a target != 0 taken from the
-/// SAME model — that is what makes the anchor's enforced pin consistent with the
-/// carried arcs the fit sees.
+/// same model, so the anchor's enforced pin is consistent with the carried arcs
+/// the fit sees.
 struct FitBed {
     static constexpr int kNSta  = 6;
     static constexpr int kNSat  = 8;
     static constexpr const char* kBand[2] = {"L1C", "L2W"};
-    /// Station index 5 carries only TWO arcs => its band offsets are unfittable.
+    /// Station index 5 carries only two arcs => its band offsets are unfittable.
     static constexpr int kSparseSta = 5;
 
     LogManager log_manager;
@@ -183,8 +182,8 @@ struct FitBed {
     static std::string sta(int r) {
         return "S" + std::to_string(r) + "000SIM";
     }
-    /// Deterministic, reproducible "truth" values — no RNG, so a failure is
-    /// exactly reproducible from the case name alone.
+    /// Deterministic "truth" values with no RNG, so a failure is reproducible
+    /// from the case name alone.
     static int    trueN(int r, int s, int j) { return 13 * r - 7 * s + 29 * j - 40; }
     static double trueBeta(int s, int j)     { return 0.37 * s - 1.9 * j + 4.11; }
     static double trueU(int r, int j)        { return 0.083 * r + 0.57 * j - 0.21; }
@@ -195,8 +194,8 @@ struct FitBed {
     }
 
     /// @param c  the free per-band constant: the bed is built with (beta − c,
-    ///          u + c), which must leave every INPUT — and therefore the pin
-    ///          table — identical.
+    ///          u + c), which leaves every input, and therefore the pin table,
+    ///          identical.
     explicit FitBed(double c = 0.0, bool with_noise = true) {
         PppUtils utils(log_manager);
         for (int j = 0; j < 2; ++j)
@@ -207,7 +206,7 @@ struct FitBed {
 
         pin.utils = std::make_unique<PppUtils>(log_manager);
 
-        // --- truth for EVERY arc of the day (the fit's universe) -------------
+        // --- truth for every arc of the day (the fit's universe) -------------
         for (int r = 0; r < kNSta; ++r)
             for (int s = 0; s < kNSat; ++s)
                 for (int j = 0; j < 2; ++j) {
@@ -217,20 +216,20 @@ struct FitBed {
                     pin.truth[{r, sat(s), kBand[j]}] = t;
                 }
 
-        // --- anchors: 15 of the 16 families; (G08, L2W) deliberately has NONE --
+        // --- anchors: 15 of the 16 families; (G08, L2W) has none on purpose ---
         for (int s = 0; s < kNSat; ++s)
             for (int j = 0; j < 2; ++j) {
                 if (s == kNSat - 1 && j == 1) continue;      // the no-anchor family
                 const int a = (2 * s + j) % 3;               // stations 0 / 1 / 2
                 const std::string key = sat(s) + "_" + kBand[j];
                 anchor_of[key] = sta(a);
-                // The enforced pin target IS the anchor arc's own alpha in this
-                // model — non-zero, and read by the fit (never assumed 0).
+                // The enforced pin target is the anchor arc's own alpha in this
+                // model: non-zero, and read by the fit (never assumed 0).
                 stations[static_cast<std::size_t>(a)].pinned_amb_targets[key] =
                     (trueBeta(s, j) - c) + (trueU(a, j) + c) + lam[j] * trueN(a, s, j);
             }
 
-        // --- the carry: every NON-anchor arc, minus the deliberate holes ------
+        // --- the carry: every non-anchor arc, minus the intended holes --------
         for (int r = 0; r < kNSta; ++r)
             for (int s = 0; s < kNSat; ++s)
                 for (int j = 0; j < 2; ++j) {
@@ -241,7 +240,7 @@ struct FitBed {
                     // offset is not a station term, it is one arc's own error).
                     if (r == kSparseSta && !(j == 0 && s < 2)) continue;
                     // Two arcs absent from the carry but present in truth + scope:
-                    // they must STILL be pinned (the independence that is the point).
+                    // they are still pinned (the pin is independent of the carry).
                     if (r == 3 && j == 0 && (s == 4 || s == 5)) continue;
                     LocalCarry lc{};
                     lc.value_abs = (trueBeta(s, j) - c) + (trueU(r, j) + c)
@@ -295,13 +294,13 @@ TEST(OraclePinConfig, GarbageScopeIsRefusedByName) {
     TempTree tree("cfgbad");
     tree.writeAmb("STA1", "satellite,signal,N_int,wavelength_m", "G01,L1C,3,0.19\n");
     const std::string root = jsonPath(tree.root);
-    // Each of these fails for a DIFFERENT reason, and all five must be refused —
-    // a scope that silently widened (or emptied) would be graded as though it
-    // were the one the operator wrote.
+    // Each of these fails for a different reason, and all five are refused: a
+    // scope that silently widened (or emptied) would be graded as though it were
+    // the one the operator wrote.
     for (const char* sc : {"everything",        // unknown, no ':'
                            "bands:L1C",         // unknown selector
                            "band:",             // empty argument
-                           "band:C1C",          // not a PHASE code
+                           "band:C1C",          // not a phase code
                            "arc:STA1/G08"}) {   // missing the third component
         LogManager log; GnssConfig cfg;
         EXPECT_FALSE(loadPin(pinEvent(sc), root, cfg, log, "scope_bad"))
@@ -351,15 +350,16 @@ TEST(OraclePinConfig, ASecondSelectorAlongsideScopeIsRefused) {
 }
 
 TEST(OraclePinConfig, AnEmptyTruthRootFailsTheLoad) {
-    // THE FIELD-INERTNESS MECHANISM.  A field lineage has no truth root, so an
-    // oracle_pin event cannot be armed on one at all.  A HARD failure, not
-    // warn-and-disarm: a silently unpinned run would report the model's error
-    // budget WITHOUT the ambiguities held at truth and be read as the ceiling.
+    // This keeps the knob off field lineages: a field lineage has no truth root,
+    // so an oracle_pin event cannot be armed on one.  The load fails outright
+    // rather than warning and disarming, because a silently unpinned run would
+    // report the model's error budget without the ambiguities held at truth and
+    // be read as the ceiling.
     {
         LogManager log; GnssConfig cfg;
         EXPECT_FALSE(loadPin(pinEvent("all"), "", cfg, log, "noroot"));
     }
-    {   // …and a root that is simply not there is the same refusal.
+    {   // A root that does not exist is refused the same way.
         LogManager log; GnssConfig cfg;
         EXPECT_FALSE(loadPin(pinEvent("all"),
                              jsonPath(fs::temp_directory_path() / "gnss_opin_absent"),
@@ -369,10 +369,10 @@ TEST(OraclePinConfig, AnEmptyTruthRootFailsTheLoad) {
 
 TEST(OraclePinConfig, AbsentInjectLeavesNoOraclePinEventToConstructFrom) {
     // The driver constructs NetworkRunContext::oracle_pin iff network.inject is
-    // enabled AND holds an `oracle_pin` event; with the section absent that
+    // enabled and holds an `oracle_pin` event; with the section absent that
     // predicate is false, so the pointer stays null and no branch of the seam is
-    // reachable (standing invariant #6's structural byte-identity).  The
-    // predicate is what is asserted here — a NetworkRunContext needs a solve.
+    // reachable (standing invariant #6's structural byte-identity).  The test
+    // asserts the predicate, because a NetworkRunContext needs a solve.
     const fs::path p = writeTempConfig("noinject", networkConfig("", ""));
     LogManager log; GnssConfig cfg;
     ASSERT_TRUE(cfg.loadFromJson(p, log));
@@ -404,8 +404,8 @@ TEST(OraclePinTruth, ParsesTheFixtureHeaderAndRows) {
 }
 
 TEST(OraclePinTruth, RejectsAMalformedHeaderAndAMalformedRow) {
-    {   // A fixture that renamed or reordered a column must fail LOUDLY here
-        // rather than silently mis-read N_int.
+    {   // A fixture that renamed or reordered a column throws here rather than
+        // silently mis-reading N_int.
         TempTree tree("hdr");
         const auto f = tree.writeAmb("S01000SIM", "satellite,signal,N,wavelength_m",
                                      "G01,L1C,3,0.19\n");
@@ -450,9 +450,9 @@ TEST(OraclePinTruth, TrueIntegerFollowsTheSlipsInAscendingTime) {
 }
 
 TEST(OraclePinTruth, ASlipStampedExactlyAtTheEpochCounts) {
-    // INCLUSIVE upper bound: the observation at that epoch already carries the
-    // jump, so the true integer must contain it too.  An exclusive bound would
-    // put the pin one jump behind the phase for exactly one epoch.
+    // Inclusive upper bound: the observation at that epoch already carries the
+    // jump, so the true integer contains it too.  An exclusive bound would put
+    // the pin one jump behind the phase for one epoch.
     NetworkOraclePin::Truth t;
     t.n_int = 7;
     t.slips.push_back({kW + 279300.0, +3});
@@ -465,15 +465,15 @@ TEST(OraclePinTruth, ASlipStampedExactlyAtTheEpochCounts) {
 // ===========================================================================
 
 TEST(OraclePinFit, EveryPinnedDoubleDifferenceIsExactlyLambdaTimesTheTrueDD) {
-    // THE property.  beta and u both cancel in a double difference, so if the
-    // table carries anything but integer information this fails.  Every chord of
-    // every band over every pinned (station, satellite) pair is checked, not a
-    // sample — the fit is cheap and a partial check could miss one family.
+    // The central property.  beta and u both cancel in a double difference, so if
+    // the table carries anything but integer information this fails.  Every chord
+    // of every band over every pinned (station, satellite) pair is checked, not a
+    // sample: the fit is cheap and a partial check could miss one family.
     FitBed bed;
     const int rounds = bed.fit();
     EXPECT_GT(rounds, 0);
     // Determination, not iteration: every station-band whose family anchors are
-    // already resolved is fixed in ONE round and then frozen, so the pass is
+    // already resolved is fixed in one round and then frozen, so the pass is
     // bounded by the station count and on this bed every station resolves
     // straight off its band's root anchor.
     EXPECT_LE(rounds, FitBed::kNSta);
@@ -526,7 +526,7 @@ TEST(OraclePinFit, AFamilyWithNoAnchorIsCountedAndNotPinned) {
     FitBed bed;
     bed.fit();
     const std::string sat = FitBed::sat(FitBed::kNSat - 1);   // G08
-    const std::string sig = FitBed::kBand[1];                 // L2W — the no-anchor family
+    const std::string sig = FitBed::kBand[1];                 // L2W: the no-anchor family
     for (int r = 0; r < FitBed::kNSta; ++r)
         EXPECT_EQ(bed.pin.table.count({r, sat, sig}), 0u);
     // Every station's arc of that family reaches the beta check and is counted:
@@ -536,9 +536,9 @@ TEST(OraclePinFit, AFamilyWithNoAnchorIsCountedAndNotPinned) {
 }
 
 TEST(OraclePinFit, AStationWithTooFewCarriedArcsIsCountedNoStationTerm) {
-    // A station-band offset fitted on fewer than 3 arcs is not a station term,
-    // it is one arc's own error re-labelled — and pinning on it would inject
-    // that error into every other arc of the station.
+    // A station-band offset fitted on fewer than 3 arcs is not a station term but
+    // one arc's own error under another name, and pinning on it would inject that
+    // error into every other arc of the station.
     FitBed bed;
     bed.fit();
     const int r = FitBed::kSparseSta;
@@ -552,9 +552,9 @@ TEST(OraclePinFit, AStationWithTooFewCarriedArcsIsCountedNoStationTerm) {
 }
 
 TEST(OraclePinFit, ArcsAbsentFromTheCarryAreStillPinned) {
-    // The pin is INDEPENDENT of the leveling carry: a newborn leg, or an arc the
-    // slip response just freed, has no LocalCarry entry and must still be held at
-    // truth.  That independence is the whole point of the instrument.
+    // The pin is independent of the leveling carry: a newborn leg, or an arc the
+    // slip response just freed, has no LocalCarry entry and is still held at
+    // truth.  The instrument relies on that independence.
     FitBed bed;
     bed.fit();
     for (const int s : {4, 5}) {
@@ -567,14 +567,14 @@ TEST(OraclePinFit, ArcsAbsentFromTheCarryAreStillPinned) {
 TEST(OraclePinFit, TheFreePerBandConstantOfBetaAndUChangesNothing) {
     // (beta − c, u + c) is the same physical bed: alpha = beta + u + lambda*N is
     // invariant, so the anchor targets and the carried values describe the same
-    // network and the table must too.  The assertion is that the pin reads only
-    // that SUM — it introduces no gauge of its own to get wrong.
+    // network and the table does too.  The assertion is that the pin reads only
+    // that sum and introduces no gauge of its own.
     //
-    // Tolerance, not bit-identity: the BED re-associates the sum as
-    // (beta − c) + (u + c), which costs one ULP in the inputs themselves (measured
-    // 9e−16 m at c = 7.25) before the pin sees them.  The invariance is exact in
-    // exact arithmetic; 1e−12 m is 5e−12 cycles, eleven decades below anything the
-    // pin asserts.
+    // Tolerance, not bit-identity: the bed re-associates the sum as
+    // (beta − c) + (u + c), which costs about one ULP in the inputs themselves
+    // (9e−16 m at c = 7.25) before the pin sees them.  The invariance is exact in
+    // exact arithmetic; 1e−12 m is about 5e−12 cycles, eleven decades below one
+    // cycle.
     FitBed a(0.0), b(7.25);
     a.fit();
     b.fit();
@@ -608,7 +608,7 @@ TEST(OraclePinFit, WithoutNoiseThePinnedValuesAreTheTruthAlphaExactly) {
 }
 
 TEST(OraclePinFit, TheFitResidualReportsWhatThePinIsAboutToMove) {
-    // Standing invariant #4: the residual IS the actuation delta, so an arm whose
+    // Standing invariant #4: the residual is the actuation delta, so an arm whose
     // residual is ~0 pinned a solution already at truth and an arm with a large
     // one is measuring how far the float ambiguities sat from the integers.
     FitBed clean(0.0, /*with_noise=*/false);
@@ -669,8 +669,8 @@ TEST(OraclePinScope, CoversEachFormExactly) {
 }
 
 TEST(OraclePinScope, AnInvalidScopeCoversNothing) {
-    // Fail CLOSED: a scope that failed to parse must never silently pin the whole
-    // network.  (The loader refuses it first; this is the second edge.)
+    // Fail closed: a scope that failed to parse never silently pins the whole
+    // network.  (The loader refuses it first; this is the second line of defence.)
     std::string why;
     const auto bad = oraclePinParseScope("nonsense", why);
     ASSERT_EQ(bad.kind, OraclePinScope::Kind::Invalid);

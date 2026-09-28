@@ -1,24 +1,24 @@
-// Card 4 (M1) phase B: unit gates for the DD cycle-basis z-store
-// (include/filter/NetworkZStore.hpp) — the S-system-invariant carry the
-// generalized-LS network filter time-links.  Each gate drives the standalone
-// ZComponent / NetworkZStore DIRECTLY with a synthetic bipartite component of
-// KNOWN raw ambiguities N and covariance Cov(N); the carried z / Pz are checked
-// against the FROM-SCRATCH cycle-basis reference z = C·N, Pz = C·Cov·Cᵀ
-// (independent of the incremental transforms).  Standalone-class precedent:
+// Unit gates for the DD cycle-basis z-store (include/filter/NetworkZStore.hpp), the
+// S-system-invariant carry that the generalized-LS network filter time-links
+// (Card 4 (M1) phase B).  Each gate drives the standalone ZComponent /
+// NetworkZStore directly with a synthetic bipartite component of known raw
+// ambiguities N and covariance Cov(N).  The carried z / Pz are checked against the
+// from-scratch cycle-basis reference z = C·N, Pz = C·Cov·Cᵀ, which is independent
+// of the incremental transforms.  Standalone-class precedent:
 // test_network_carry_vce / test_neq_accumulator.  No ApplicationNetwork coupling.
 //
-//   Gate 1  CycleBasisUnimodular — kill a tree edge (a pivot); the applied T is
-//           integer with |det T| = 1, and z' / Pz' equal a from-scratch
+//   Gate 1  CycleBasisUnimodular: removing a tree edge (a pivot) applies an
+//           integer T with |det T| = 1, and z' / Pz' equal a from-scratch
 //           re-solve in the new basis (T·C_old == C_new).
-//   Gate 2  ChordLifecycle — birth (tap-off == the conditional mean/var/cross),
-//           prediction-only (predict is exact identity at q=0; an unmeasured
+//   Gate 2  ChordLifecycle: birth (tap-off == the conditional mean/var/cross),
+//           prediction-only (predict is an exact identity at q=0; an unmeasured
 //           chord is retained, not deleted), death (row/col drop == the Schur
 //           marginalization of the information form).
-//   Gate 3  FilterEqualsBatch — a 3-epoch recursion with a mid-stream pivot
+//   Gate 3  FilterEqualsBatch: a 3-epoch recursion with a mid-stream pivot
 //           equals the single batch WLS with ambiguity constancy (the GKF
-//           equivalence); a negative control proves the basis transform is
-//           load-bearing.
-//   Extra   MergeBlockIdentity — two independent components unify block-
+//           equivalence); a negative control shows that the basis transform is
+//           required.
+//   Extra   MergeBlockIdentity: two independent components unify block-
 //           diagonally (OPEN-2: the bridge is a cut edge, carried z is verbatim).
 
 #include "filter/NetworkZStore.hpp"
@@ -39,9 +39,9 @@ using Eigen::MatrixXd;
 using Eigen::VectorXd;
 using Eigen::Index;
 
-// A deterministic dense SPD matrix of order n (= M Mᵀ + I), our stand-in for the
-// raw ambiguity covariance Cov(N) so the DD covariance Pz = C·Cov·Cᵀ is dense
-// (the regime the spec calls out — independent per-chord folds would be inexact).
+// A deterministic dense SPD matrix of order n (= M Mᵀ + I), the stand-in for the
+// raw ambiguity covariance Cov(N), so the DD covariance Pz = C·Cov·Cᵀ is dense
+// (the regime the spec names, where independent per-chord folds would be inexact).
 MatrixXd makeSpd(Index n, unsigned seed, double scale = 1.0) {
     std::mt19937 gen(seed);
     std::normal_distribution<double> nrm(0.0, 1.0);
@@ -52,9 +52,10 @@ MatrixXd makeSpd(Index n, unsigned seed, double scale = 1.0) {
 }
 
 // The canonical phase-B fixture: 3 receivers (ids 0,1,2) × 3 satellites
-// (ids 100,101,102), fully connected (9 arcs).  Spanning tree (5 edges) chosen so
-// the pivot below exercises BOTH T-row cases (a chord that shares the dying edge
-// and one that does not).  Tree: rx0 fans to all 3 sats; rx1, rx2 hang off sat100.
+// (ids 100,101,102), fully connected (9 arcs).  The spanning tree (5 edges) is
+// chosen so the pivot below exercises both T-row cases (a chord whose cycle
+// contains the dying edge and one whose cycle does not).  Tree: rx0 fans to all 3
+// sats; rx1 and rx2 hang off sat100.
 struct Fx {
     std::vector<ArcKey> tree;      // 5 tree edges
     std::vector<ArcKey> chords;    // 4 chords, the z order
@@ -74,7 +75,7 @@ Fx makeFx() {
 }
 
 // Register a chord set on a tree-seeded component and return its cycle matrix C
-// (chords × arcOrder) — the from-scratch DD basis.
+// (chords × arcOrder), the from-scratch DD basis.
 MatrixXd registerAndCycle(ZComponent& c, const std::vector<ArcKey>& chords,
                           const std::vector<ArcKey>& arcOrder) {
     c.setEstimate(chords, VectorXd::Zero(static_cast<Index>(chords.size())),
@@ -83,11 +84,12 @@ MatrixXd registerAndCycle(ZComponent& c, const std::vector<ArcKey>& chords,
     return c.cycleMatrix(arcOrder);
 }
 
-// The signed vertex×arc incidence (boundary) matrix, built ONLY from raw arc
-// endpoints: column of arc (u,v) [canonical u<v, reference orientation u→v] is
-// −1 at u, +1 at v.  A genuine cycle χ satisfies B·χ = 0; this is INDEPENDENT of
-// ZComponent::fundamentalCycle, so it validates that primitive's sign logic
-// (de-circularizing the C = cycleMatrix references the other gates rely on).
+// The signed vertex×arc incidence (boundary) matrix, built only from raw arc
+// endpoints: the column of arc (u,v) [canonical u<v, reference orientation u→v]
+// is −1 at u, +1 at v.  A genuine cycle χ satisfies B·χ = 0.  This matrix is
+// independent of ZComponent::fundamentalCycle, so it validates that primitive's
+// sign logic and keeps the C = cycleMatrix references used by the other gates
+// from being circular.
 MatrixXd incidence(const std::vector<ArcKey>& arcOrder) {
     std::set<int> vs;
     for (const ArcKey& a : arcOrder) { vs.insert(a.u); vs.insert(a.v); }
@@ -121,8 +123,8 @@ MatrixXd dropRC(const MatrixXd& M, Index p) {
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// Primitive validator: every fundamental cycle is a GENUINE cycle (zero boundary
-// under the independent incidence matrix), before AND after a pivot.  This is the
+// Primitive validator: every fundamental cycle is a genuine cycle (zero boundary
+// under the independent incidence matrix), before and after a pivot.  This is the
 // non-circular anchor for the cycleMatrix references the gates below use.
 // ---------------------------------------------------------------------------
 TEST(NetworkZStore, FundamentalCyclesAreGenuineCycles) {
@@ -147,7 +149,7 @@ TEST(NetworkZStore, FundamentalCyclesAreGenuineCycles) {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 1: CycleBasisUnimodular — the pivot's T is integer, |det T| = 1, and the
+// Gate 1: CycleBasisUnimodular.  The pivot's T is integer, |det T| = 1, and the
 // carried z / Pz equal a from-scratch cycle re-derivation in the new basis.
 // ---------------------------------------------------------------------------
 TEST(NetworkZStore, CycleBasisUnimodular) {
@@ -172,7 +174,7 @@ TEST(NetworkZStore, CycleBasisUnimodular) {
     EXPECT_NEAR(std::abs(T.determinant()), 1.0, 1e-9)
         << "the pivot transform must be UNIMODULAR (|det T| = 1)";
 
-    // (b) The from-scratch cycle basis of the NEW tree.
+    // (b) The from-scratch cycle basis of the new tree.
     const MatrixXd C_new = c.cycleMatrix(fx.arcOrder);
     EXPECT_LT((T * C_old - C_new).cwiseAbs().maxCoeff(), 1e-9)
         << "T must carry the OLD fundamental-cycle basis onto the NEW one (T·C_old = C_new)";
@@ -185,25 +187,25 @@ TEST(NetworkZStore, CycleBasisUnimodular) {
     EXPECT_LT((c.Pz() - Pz_ref).cwiseAbs().maxCoeff(), 1e-9)
         << "Pz' must equal C_new·Cov·C_newᵀ (= T·Pz·Tᵀ)";
 
-    // The pivot did not change the ARC set nor the z-dimension (pure basis change);
-    // it swapped which arc is a tree edge and counted one tree swap.
+    // The pivot changed neither the arc set nor the z-dimension (a pure basis
+    // change); it swapped which arc is a tree edge and counted one tree swap.
     EXPECT_EQ(c.zDim(), 4);
     EXPECT_TRUE(c.isTreeEdge(fx.enteringChord));
     EXPECT_TRUE(c.isChord(fx.dyingEdge));
     EXPECT_EQ(c.counters().tree_swaps, 1);
 
-    // Non-vacuity guard: this fixture's T is genuinely non-trivial (it is NOT the
-    // identity — a pivot that changed nothing would make (b)/(c) meaningless).
+    // Non-vacuity guard: this fixture's T is not the identity; a pivot that
+    // changed nothing would make (b) and (c) meaningless.
     EXPECT_GT((T - MatrixXd::Identity(4, 4)).cwiseAbs().maxCoeff(), 0.5)
         << "the fixture lost its discrimination — T is (near) identity";
 }
 
 // ---------------------------------------------------------------------------
-// Gate 2: ChordLifecycle — birth (tap-off), prediction-only, death (Schur).
+// Gate 2: ChordLifecycle: birth (tap-off), prediction-only, death (Schur).
 // ---------------------------------------------------------------------------
 TEST(NetworkZStore, ChordLifecycleBirthMatchesConditional) {
     const Fx fx = makeFx();
-    // Start with only the FIRST three chords carried; the 4th is born by tap-off.
+    // Start with only the first three chords carried; the 4th is born by tap-off.
     const std::vector<ArcKey> sub(fx.chords.begin(), fx.chords.begin() + 3);
     const ArcKey newChord = fx.chords[3];   // (2,102)
 
@@ -249,14 +251,14 @@ TEST(NetworkZStore, ChordLifecyclePredictionOnly) {
     const VectorXd z_before = c.z();
     const MatrixXd Pz_before = c.Pz();
 
-    // q_z = 0 predict is an EXACT identity (ambiguities are random constants).
+    // A q_z = 0 predict is an exact identity (ambiguities are random constants).
     c.predict(0.0, 30.0);
     EXPECT_LT((c.z() - z_before).cwiseAbs().maxCoeff(), 0.0 + 1e-300);
     EXPECT_LT((c.Pz() - Pz_before).cwiseAbs().maxCoeff(), 1e-300);
     EXPECT_EQ(c.zDim(), 4) << "predict must never delete a chord";
 
     // A partial measurement (only chords 0,2 have a phase row this epoch) leaves
-    // the unmeasured chords 1,3 RETAINED — prediction-only, not deleted.
+    // the unmeasured chords 1,3 retained: prediction-only, not deleted.
     MatrixXd H(2, 4); H.setZero(); H(0, 0) = 1.0; H(1, 2) = 1.0;
     VectorXd o(2); o << c.z()(0) + 0.01, c.z()(2) - 0.01;
     MatrixXd R = 0.02 * 0.02 * MatrixXd::Identity(2, 2);
@@ -265,7 +267,7 @@ TEST(NetworkZStore, ChordLifecyclePredictionOnly) {
     EXPECT_TRUE(c.isChord(fx.chords[1]));
     EXPECT_TRUE(c.isChord(fx.chords[3]));
 
-    // A nonzero q_z inflates ONLY the diagonal, leaves z untouched.
+    // A nonzero q_z inflates only the diagonal and leaves z unchanged.
     const MatrixXd Pz_pre_q = c.Pz();
     const VectorXd z_pre_q = c.z();
     c.predict(1e-6, 60.0);
@@ -297,7 +299,7 @@ TEST(NetworkZStore, ChordLifecycleDeathMatchesSchur) {
     const MatrixXd Pz_drop = dropRC(Pz, p);
     EXPECT_LT((c.Pz() - Pz_drop).cwiseAbs().maxCoeff(), 1e-12);
 
-    // ... which must equal the Schur-complement marginalization of the INFORMATION
+    // ... which equals the Schur-complement marginalization of the information
     // form: I = Pz⁻¹; I_kept = I_kk − I_kf·I_ff⁻¹·I_fk; (I_kept)⁻¹ == the sub-block.
     const MatrixXd I = Pz.inverse();
     const MatrixXd I_kk = dropRC(I, p);
@@ -311,16 +313,17 @@ TEST(NetworkZStore, ChordLifecycleDeathMatchesSchur) {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 3: FilterEqualsBatch — a 3-epoch recursion (with a mid-stream unimodular
+// Gate 3: FilterEqualsBatch.  A 3-epoch recursion (with a mid-stream unimodular
 // pivot) equals the single batch WLS with ambiguity constancy.  This is the GKF
-// equivalence; the pivot inside the filter is the Φᶻ the 2021 paper left open.
+// equivalence; the pivot inside the filter is the Φᶻ that the 2021 paper leaves
+// open.
 // ---------------------------------------------------------------------------
 TEST(NetworkZStore, FilterEqualsBatch) {
     const Fx fx = makeFx();
     ZComponent c(fx.tree);
     registerAndCycle(c, fx.chords, fx.arcOrder);   // register the 4 chords (basis 0)
 
-    // Constant true DDs (integer) and a proper (dense) prior in the OLD basis.
+    // Constant true DDs (integer) and a proper (dense) prior in the old basis.
     VectorXd z_true(4); z_true << 3, -2, 5, -1;
     VectorXd m0(4);    m0 << 2.6, -1.7, 4.5, -0.6;
     const MatrixXd P0 = makeSpd(4, 2718u, 0.25);
@@ -335,7 +338,7 @@ TEST(NetworkZStore, FilterEqualsBatch) {
         return e;
     };
 
-    // Epoch 1 (OLD basis): observe all 4 DDs.
+    // Epoch 1 (old basis): observe all 4 DDs.
     const MatrixXd H1 = MatrixXd::Identity(4, 4);
     const MatrixXd R1 = 0.020 * 0.020 * MatrixXd::Identity(4, 4);
     const VectorXd o1 = H1 * z_true + noise(4, 0.020);
@@ -345,13 +348,13 @@ TEST(NetworkZStore, FilterEqualsBatch) {
     const MatrixXd T = c.pivot(fx.dyingEdge, fx.enteringChord);
     const VectorXd z_true_new = T * z_true;   // truth transforms with the basis
 
-    // Epoch 2 (NEW basis): partial — observe only DDs 0 and 2 (prediction-only 1,3).
+    // Epoch 2 (new basis): partial; observe only DDs 0 and 2 (prediction-only 1,3).
     MatrixXd H2(2, 4); H2.setZero(); H2(0, 0) = 1.0; H2(1, 2) = 1.0;
     const MatrixXd R2 = 0.030 * 0.030 * MatrixXd::Identity(2, 2);
     const VectorXd o2 = H2 * z_true_new + noise(2, 0.030);
     c.update(H2, o2, R2);
 
-    // Epoch 3 (NEW basis): observe all 4.
+    // Epoch 3 (new basis): observe all 4.
     const MatrixXd H3 = MatrixXd::Identity(4, 4);
     const MatrixXd R3 = 0.025 * 0.025 * MatrixXd::Identity(4, 4);
     const VectorXd o3 = H3 * z_true_new + noise(4, 0.025);
@@ -360,7 +363,7 @@ TEST(NetworkZStore, FilterEqualsBatch) {
     const VectorXd z_rec = c.z();
     const MatrixXd Pz_rec = c.Pz();
 
-    // Batch reference, expressed entirely in the NEW basis.  The prior and epoch-1
+    // Batch reference, expressed entirely in the new basis.  The prior and epoch-1
     // observation transform: m0' = T·m0, P0' = T·P0·Tᵀ, and o1 = H1·z_old =
     // (H1·T⁻¹)·z_new ⇒ design H1' = H1·T⁻¹.  Epochs 2,3 are already new-basis.
     const MatrixXd Tinv = T.inverse();
@@ -386,8 +389,8 @@ TEST(NetworkZStore, FilterEqualsBatch) {
     EXPECT_LT((Pz_rec - Pz_batch).cwiseAbs().maxCoeff(), 1e-8)
         << "the recursion covariance must equal the batch covariance";
 
-    // Negative control: a batch that IGNORES the basis change (uses H1, not H1·T⁻¹)
-    // must NOT match — proving the unimodular transform is load-bearing, not a no-op.
+    // Negative control: a batch that ignores the basis change (uses H1, not H1·T⁻¹)
+    // does not match, which shows the unimodular transform is required, not a no-op.
     const MatrixXd Lam_naive = Lam0
         + H1.transpose() * R1i * H1
         + H2.transpose() * R2i * H2
@@ -402,7 +405,7 @@ TEST(NetworkZStore, FilterEqualsBatch) {
 }
 
 // ---------------------------------------------------------------------------
-// Extra (OPEN-2): MergeBlockIdentity — two independent components join via a
+// Extra (OPEN-2): MergeBlockIdentity.  Two independent components join via a
 // bridge (a cut edge); carried z is verbatim, Pz block-diagonal, pre-existing
 // cycles unchanged, and a surplus bridge is tapped off as a new chord.
 // ---------------------------------------------------------------------------
@@ -438,7 +441,7 @@ TEST(NetworkZStore, MergeBlockIdentity) {
     EXPECT_NEAR(M.Pz()(0, 1), 0.0, 1e-15) << "the two merged sides start uncorrelated";
 
     // The bridge is a cut edge ⇒ every pre-existing chord's fundamental cycle is
-    // UNCHANGED (T = block-identity).  A's chord (1,101) must not traverse the bridge.
+    // unchanged (T = block-identity).  A's chord (1,101) does not traverse the bridge.
     const auto cyc = M.fundamentalCycle(ArcKey(1, 101));
     EXPECT_EQ(cyc.count(ArcKey(1, 102)), 0u) << "a pre-existing cycle must not cross the bridge";
     const auto cycA = A.fundamentalCycle(ArcKey(1, 101));
@@ -480,7 +483,7 @@ TEST(NetworkZStore, ContainerMergeAndCounters) {
 TEST(NetworkZStore, LeafGrowthAndGuard) {
     ZComponent c(std::vector<ArcKey>{ArcKey(0, 100), ArcKey(0, 101), ArcKey(1, 100)});
     ASSERT_EQ(c.zDim(), 0);
-    // Sat 102 rises at rx1: exactly one NEW endpoint → leaf growth, no cycle, no z.
+    // Sat 102 rises at rx1: exactly one new endpoint → leaf growth, no cycle, no z.
     c.addLeafArc(ArcKey(1, 102));
     EXPECT_EQ(c.zDim(), 0) << "leaf growth adds no cycle → no z entry";
     EXPECT_TRUE(c.isTreeEdge(ArcKey(1, 102)));
@@ -496,9 +499,9 @@ TEST(NetworkZStore, LeafGrowthAndGuard) {
 }
 
 // ---------------------------------------------------------------------------
-// Counter integrity: a merge must roll up BOTH sides' tallies, and the store
-// aggregate must survive the absorbed component's erasure.  (This gate fails on
-// the pre-fix mergedWith that dropped the absorbed side's predict tally.)
+// Counter integrity: a merge rolls up both sides' tallies, and the store
+// aggregate survives the absorbed component's erasure.  (This gate fails on a
+// mergedWith that drops the absorbed side's predict tally.)
 // ---------------------------------------------------------------------------
 TEST(NetworkZStore, MergeRollsUpCounters) {
     ZComponent A(std::vector<ArcKey>{ArcKey(0, 100), ArcKey(0, 101), ArcKey(1, 100)});
@@ -533,7 +536,7 @@ TEST(NetworkZStore, AggregateCountersSurviveMerge) {
 
 // ---------------------------------------------------------------------------
 // Invariant: re-seeding setEstimate with a smaller chord set prunes the displaced
-// chord's arc — no phantom arc / phantom all-zero cycle column.
+// chord's arc, leaving no stale arc and no all-zero cycle column.
 // ---------------------------------------------------------------------------
 TEST(NetworkZStore, SetEstimateReseedPrunesArcs) {
     ZComponent c(std::vector<ArcKey>{ArcKey(0, 100), ArcKey(0, 101),
@@ -544,7 +547,7 @@ TEST(NetworkZStore, SetEstimateReseedPrunesArcs) {
         const auto a = c.allArcs();
         EXPECT_NE(std::find(a.begin(), a.end(), ArcKey(1, 102)), a.end());
     }
-    // Re-seed SMALLER: (1,102) must no longer appear as a graph arc.
+    // Re-seed with a smaller set: (1,102) no longer appears as a graph arc.
     c.setEstimate({ArcKey(1, 101)}, (VectorXd(1) << 1.0).finished(),
                   (MatrixXd(1, 1) << 0.5).finished());
     EXPECT_EQ(c.zDim(), 1);

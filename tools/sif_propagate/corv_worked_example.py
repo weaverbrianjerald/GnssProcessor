@@ -29,7 +29,7 @@ sif=[s for s in json.load(open(r"C:\GnssProcessor\data\static\sif\ncn20_SIF.json
 occ=[o for o in sif['OCCUPATION'] if not o['DO_NOT_USE']][-1]
 X20=np.array(occ['COORDINATES']); V=np.array(occ['VELOCITY'])/1000.0          # ITRF2020 @ 2020.0, monument (GRP)
 dH=sif['ANTENNA'][-1]['ARP_MINUS_GRP_ENU'][2]                                  # = RINEX "ANTENNA: DELTA H/E/N"
-DS=llh2xyz(dms(44,35,7.91300),-dms(123,18,16.51681),105.953)                   # datasheet AH2488, NAD83(2011)@2010.00, MONUMENT
+DS=llh2xyz(dms(44,35,7.91300),-dms(123,18,16.51681),105.953)                   # datasheet AH2488, NAD83(2011)@2010.00, monument
 WS_ITRF_ARP=np.array([-2498424.007,-3802820.797,4454737.751])                  # workshop slide 19, ITRF2020@2020.0 (ARP)
 WS_NAD_ARP =np.array([-2498423.096,-3802822.020,4454737.741])                  # workshop slide 22, "NGS published" NAD83@2010.0 (ARP)
 la,lo,h=xyz2llh(X20); R=Renu(la,lo); up=R[:,2]
@@ -71,7 +71,7 @@ i=np.searchsorted(glon,lod)-1; j=np.searchsorted(glat,lad)-1; tx=(lod-glon[i])/(
 bil=lambda n:(lambda b:(1-tx)*(1-ty)*b[0,0]+tx*(1-ty)*b[0,1]+(1-tx)*ty*b[1,0]+tx*ty*b[1,1])(f[n][j:j+2,i:i+2])
 Vifdm=R@np.array([bil('ve'),bil('vn'),bil('vu')])/1000.0
 NCAT=np.array([-2498423.410,-3802819.901,4454736.682])                          # beta NCAT, input = datasheet XYZ
-rigid=np.array(inv.transform(*DS,2020.0)[:3])                                  # 14-parameter ONLY: assume v_NAD83 = 0
+rigid=np.array(inv.transform(*DS,2020.0)[:3])                                  # 14-parameter only: assume v_NAD83 = 0
 print(f"   truth (SIF ITRF2020@2020.0)                {X20[0]:.4f} {X20[1]:.4f} {X20[2]:.4f}")
 show("(i)   station velocity from the SIF              - truth", I10+10*V-X20, R)
 show("(ii)  IFDM2022 grid velocity (our interpolation) - truth", I10+10*Vifdm-X20, R)

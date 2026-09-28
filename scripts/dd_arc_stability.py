@@ -1,8 +1,8 @@
 #!/usr/bin/env python
-"""UNWRAPPED, truth-free DD scale readout: per-chord ARC STABILITY of the traced DD estimate — v3.
+"""Unwrapped, truth-free DD scale readout: per-chord arc stability of the traced DD estimate, v3.
 
-A chord (sat_i, ref_sat, sta_a, sta_b) has ONE true integer DD per band for as long as nothing re-references it,
-so its traced dd_cyc(t) should be constant.  The SAME chords are measured on the SAME arcs in both bands:
+A chord (sat_i, ref_sat, sta_a, sta_b) has one true integer DD per band for as long as nothing re-references it,
+so its traced dd_cyc(t) should be constant.  The same chords are measured on the same arcs in both bands:
 
     e1(t) = dd_cyc(L1 band), e2(t) = dd_cyc(L2 band), wl(t) = e1 - e2        (paired epochs only)
 
@@ -12,20 +12,20 @@ arc (the newborn leg's cold-birth convergence would otherwise dominate an endpoi
     drift  |median(last 10 epochs) - median(first 10)|    slow walk over the arc, cycles (tail medians, not endpoints)
     slope  a in (e2 - med e2) = a * (e1 - med e1)         cross-band fingerprint: 1.283 = iono-driven (f1/f2),
            0.779 = range-common (lambda1/lambda2), 1.0 = cycle-common
-REF-FREE: within each (epoch, sta_a, sta_b) group of chords inside a valid arc, the median over satellites of
+Ref-free: within each (epoch, sta_a, sta_b) group of chords inside a valid arc, the median over satellites of
 the arc-relative deviation is the reference satellite's own wander (common to the group); subtract it
-(groups >= --min-group) and re-take the arc statistics.  ⚠ Subtracting a group's OWN median shrinks the
-statistic by itself (the estimator trap), so a size-matched NULL is printed beside it: every chord's deviation
+(groups >= --min-group) and re-take the arc statistics.  Subtracting a group's own median shrinks the
+statistic by itself (the estimator trap), so a size-matched null is printed beside it: every chord's deviation
 series is replaced by iid Gaussian noise of that chord's own raw MAD (same epochs, same group membership), the
 same subtraction is applied, and the null's ref-free/raw ratio is what a pure-estimator shrinkage looks like.
-Quote the GAP between the real ratio and the null ratio, never the ref-free number alone.
+Quote the gap between the real ratio and the null ratio, never the ref-free number alone.
 Arcs are keyed on ref_sat, so a reference switch always starts a new arc (never enters a drift as a step).
 
 --hi accepts a comma list (e.g. L1C,L1W): the L1 band is split across two signals by receiver type on the field
 (a chord exists per signal), so the union represents the network where L1C alone is a receiver-type subset.
 
-Neither readout sees a CONSTANT bias (a frozen wrong level is perfectly stable) — that is the wrapped fraction
-test's job; together they split a multi-cycle DD error into BIAS (stable, wrapped-uniform) vs WANDER.
+Neither readout sees a constant bias (a frozen wrong level is perfectly stable); that is the wrapped fraction
+test's job.  Together they split a multi-cycle DD error into bias (stable, wrapped-uniform) versus wander.
 
 Usage: python dd_arc_stability.py <run_dir> [--hi L1C,L1W] [--lo L2W] [--settle-h 6] [--min-arc 20] [--gap-ep 2]
                                   [--min-group 3] [--trim 10] [--cons G] [--seed 1]
@@ -132,7 +132,7 @@ def main():
     print(f'RAW (as-traced, reference wander included; drift = |median(last 10) - median(first 10)| after trimming {a.trim} birth epochs)')
     for name in ('e1', 'e2', 'wl'): print(stats_line(name, *raw[name]))
     rf, n_groups, n_small = reffree_pass(dev, a.min_group, a.min_arc)
-    # size-matched NULL: iid Gaussian deviations with each chord's own raw MAD, same epochs/groups
+    # size-matched null: iid Gaussian deviations with each chord's own raw MAD, same epochs/groups
     rnd = random.Random(a.seed)
     dev_null = defaultdict(dict)
     for g, sats in dev.items():

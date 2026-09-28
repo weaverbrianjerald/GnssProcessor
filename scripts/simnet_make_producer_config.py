@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """Generate a network producer config from a synth-network fixture manifest.
 
-Exists so the station block can never drift from the fixture.  The producer HOLDS
-station coordinates fixed (CORS geometry), so a stale or mistyped position_ecef is
-invisible to every downstream gate — a held coordinate is by definition not
-estimated, and nothing in the run can tell a 1 km error from a real one.  Reading
-them straight out of network_fixture.json removes that whole failure mode.
+Keeps the station block from drifting out of sync with the fixture. The producer
+holds station coordinates fixed (CORS geometry), so a stale or mistyped
+position_ecef is invisible to every downstream gate: a held coordinate is by
+definition not estimated, and nothing in the run can tell a 1 km error from a real
+one. Reading the coordinates straight out of network_fixture.json removes that
+failure mode.
 
-By default the product lands in the FIXTURE dir (one arm per fixture).  A fixture
-that carries several arms — a posture A/B, a short smoke — needs a per-arm product
-path, or the second arm silently overwrites the first arm's products.txt and the
-grader then grades the wrong run against the right truth.  --products (and
---epochs, for a smoke that walks a prefix of the arc) exist for exactly that.
+By default the product lands in the fixture directory (one arm per fixture). A
+fixture that carries several arms (a posture A/B, a short smoke) needs a per-arm
+product path, or the second arm overwrites the first arm's products.txt and the
+grader then grades the wrong run against the right truth. --products (and
+--epochs, for a smoke that walks a prefix of the arc) provide that.
 
 Usage:
   python scripts/simnet_make_producer_config.py <fixture_dir> <template.json> <out.json>
@@ -60,9 +61,9 @@ def main():
         man = json.load(fh)
 
     src = open(template, encoding="utf-8").read()
-    # Strip // comments only for the parse; we rewrite the whole file from the parsed
-    # object, so the template's commentary does not survive (the generated file says
-    # where it came from instead).
+    # Strip // comments only for the parse; the whole file is rewritten from the
+    # parsed object, so the template's commentary does not survive (the generated
+    # file records its own provenance instead, in _comment below).
     cfg = json.loads(re.sub(r"^\s*//.*$", "", src, flags=re.M))
 
     solve = [s for s in man["stations"] if not s.get("consumer")]
@@ -73,11 +74,11 @@ def main():
         print(f"stride {args.stride}: {n_all} -> {len(solve)} solve stations "
               f"(near-uniform subset; a prefix would be a latitude band)")
 
-    # ABSOLUTIZE rinex_path too (same rationale as product_output_path below):
+    # Absolutize rinex_path too (same rationale as product_output_path below):
     # synth-network stores whatever path string it was launched with, so a
     # fixture generated from a relative output dir carries relative paths, and
-    # the producer — which runs from its own per-arm CWD — then resolves them
-    # against the run dir and fails every station load in 2 ms.
+    # the producer, which runs from its own per-arm working directory, then
+    # resolves them against the run dir and fails every station load in 2 ms.
     def _abs(p):
         return os.path.abspath(p).replace("\\", "/")
 
@@ -93,16 +94,16 @@ def main():
             "name": c["name"], "rinex_path": _abs(c["rinex_path"]),
             "position_ecef": c["position_ecef"],
         }
-    # QUEUE item 2 — datum-station election by criterion, not luck.  An explicit
-    # --datum-station wins but must exist in the (post-stride) roster: the old
-    # silent fallback to stations[0] handed a Fibonacci roster its MOST POLAR
-    # station (§9.8: ~8x more common-level wander), which is precisely the
-    # "arrived at by luck" failure the item names.  With no explicit choice, the
-    # election runs: fewest mid-arc satellite losses (each pivot loss is a
-    # network-wide avoidable gauge event — the measured 5.9x contrast / 40% T3
-    # lever), most equatorial among ties, name for determinism (the elected value
-    # is warm-resume-fingerprinted; a fixed roster must always elect the same
-    # station).
+    # Datum-station election by criterion, not by position in the list (queue item
+    # 2). An explicit --datum-station wins but must exist in the post-stride
+    # roster: the old silent fallback to stations[0] handed a Fibonacci roster its
+    # most polar station (SPEC_pivot_visibility_gauge_defect §9.8: about 8x
+    # more common-level wander). With no explicit choice, the election ranks
+    # stations by fewest mid-arc satellite losses (each pivot loss is a
+    # network-wide avoidable gauge event: the measured 5.9x contrast / 40 percent
+    # T3 lever, §4), then most equatorial among ties, then name for
+    # determinism (the elected value is warm-resume-fingerprinted, so a fixed
+    # roster must always elect the same station).
     roster_names = {s["name"] for s in solve}
     if args.datum_station:
         if args.datum_station not in roster_names:
@@ -148,17 +149,17 @@ def main():
                   f"truth_visibility.csv in this fixture; most equatorial station).")
 
     # Product path and any run-dir-derived path follow the fixture directory.
-    # ABSOLUTIZE: the producer resolves a relative product_output_path against its
-    # own hardcoded "logs" dir, so a relative fixture path silently becomes
-    # logs/<path> and the product lands somewhere nobody looks — the run still
-    # completes and only the round-trip self-check notices, in a warning.
+    # Absolutized: the producer resolves a relative product_output_path against
+    # its own hardcoded "logs" dir, so a relative fixture path silently becomes
+    # logs/<path> and the product lands somewhere nobody looks. The run still
+    # completes; only the round-trip self-check notices, in a warning.
     fx = os.path.abspath(fixture_dir).replace("\\", "/")
     cfg["network"]["product_output_path"] = (
         os.path.abspath(args.products).replace("\\", "/") if args.products
         else f"{fx}/products.txt")
 
     # Cover the whole arc with margin; a short max_duration_s truncates silently.
-    # --epochs walks a PREFIX instead: (N-1) intervals is the span of N epochs, and
+    # --epochs walks a prefix instead: (N-1) intervals is the span of N epochs, and
     # the margin is deliberately sub-interval so N+1 epochs cannot sneak in.
     n_ep = int(man["n_epochs"]) if args.epochs is None else min(args.epochs, int(man["n_epochs"]))
     dur = (float(man["interval_s"]) * n_ep + 300.0 if args.epochs is None

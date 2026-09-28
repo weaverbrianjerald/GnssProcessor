@@ -1,19 +1,19 @@
 /**
  * @file test_turbo_edit_resolver.cpp
- * @brief Unit tests for TurboEditResolver — the MW+GF joint cycle-slip
- *        repair resolver — exercised end-to-end through resolve() with
- *        synthetic carrier-phase epochs.
+ * @brief Unit tests for TurboEditResolver, the MW+GF joint cycle-slip repair
+ *        resolver, exercised end to end through resolve() with synthetic
+ *        carrier-phase epochs.
  *
- * Focus: the MW-only code-domain veto (an MW flag whose geometry-free
- * phase is affirmatively stable is classified as a code artifact and the
- * phase reset is skipped) plus regression coverage for the joint-solve
- * behaviors the veto must NOT disturb (real-pair repair, GF-only
- * equal-slip repair, reset fallbacks, trust gates).
+ * Focus: the MW-only code-domain veto (an MW flag whose geometry-free phase is
+ * affirmatively stable is classified as a code artifact and the phase reset is
+ * skipped), the gap-spanning GF bridge, low-rate operation, and regression
+ * coverage for the joint-solve behaviors the veto must not disturb (real-pair
+ * repair, GF-only equal-slip repair, reset fallbacks, trust gates).
  *
- * All inputs are deterministic: GF noise comes from a fixed table (no
- * RNG), epochs advance at an exact cadence, and wavelengths are computed
- * from the GPS broadcast frequencies — so every threshold crossing in
- * these tests is a designed margin, not a coin flip.
+ * All inputs are deterministic: GF noise comes from a fixed table (no RNG),
+ * epochs advance at an exact cadence, and wavelengths are computed from the GPS
+ * broadcast frequencies, so every threshold crossing in these tests is a designed
+ * margin.
  */
 
 #include <gtest/gtest.h>
@@ -41,14 +41,13 @@ const double kL2 = kC / 1227.60e6;   // GPS L2 wavelength ≈ 0.24421 m
 const double kL5 = kC / 1176.45e6;   // GPS L5 wavelength ≈ 0.25483 m
 
 // Deterministic GF "phase noise" (metres), sub-mm scale, derived from the
-// digits of π so the TD2 sign pattern is well mixed (a strictly
-// sign-alternating table makes the TD2 MAD collapse whenever the window
-// parity flips — the median lands on one sign cluster — which is a test
-// artifact, not receiver behavior).  TD2 of this sequence stays ~±1 mm,
-// far below the 4 cm GF detection floor (no spurious flags) yet wide
-// enough that the arc's TD2 MAD-σ is non-zero, arming the code-event
-// affirmative-zero gate (3.5σ ≈ 2 mm) with ~5× margin over the event-epoch
-// TD2 (~0.3–0.4 mm).
+// digits of π so the TD2 sign pattern is well mixed.  A strictly
+// sign-alternating table makes the TD2 MAD collapse whenever the window parity
+// flips (the median lands on one sign cluster), which is a test artifact, not
+// receiver behavior.  TD2 of this sequence stays within about ±1 mm, far below
+// the 4 cm GF detection floor (no spurious flags), yet wide enough that the
+// arc's TD2 MAD-σ is non-zero, which arms the code-event affirmative-zero gate
+// (3.5σ ≈ 2 mm) with about 5× margin over the event-epoch TD2 (0.3–0.4 mm).
 constexpr double kGfNoiseM[16] = {
     -0.00035, -0.00005, -0.00035,  0.00005,  0.00045, -0.00025,  0.00015,  0.00005,
     -0.00015,  0.00005,  0.00035,  0.00045,  0.00025,  0.00045, -0.00015, -0.00025 };
@@ -106,7 +105,7 @@ std::vector<PppObservation> flatEpoch(const std::string& sat, double tow, int k,
 }
 
 /// Roll a single-sat dual-frequency arc through n quiet epochs starting at
-/// tow0; returns the tow of the NEXT (event) epoch.  After 12 epochs the
+/// tow0; returns the tow of the next (event) epoch.  After 12 epochs the
 /// arc's TD2 MAD window is mature (≥ 5 samples) and the code-event
 /// affirmative-zero gate is armed.
 double warmupFlat(TurboEditResolver& te, const std::string& sat,
@@ -117,10 +116,10 @@ double warmupFlat(TurboEditResolver& te, const std::string& sat,
     return tow0 + n_epochs * interval_s;
 }
 
-/// Dual-frequency single-sat epoch whose GF noise is the π-digit table
-/// SCALED by noise_scale — the deterministic stand-in for the coarse-rate
-/// regime, where the un-cancelled iono residual inflates the arc's TD2
-/// noise from sub-mm to cm scale.  At scale 25 the TD2 MAD-σ is
+/// Dual-frequency single-sat epoch whose GF noise is the π-digit table scaled
+/// by noise_scale: the deterministic stand-in for the coarse-rate regime,
+/// where the uncancelled iono residual inflates the arc's TD2 noise from
+/// sub-mm to cm scale.  At scale 25 the TD2 MAD-σ is
 /// ≈ 25 × 0.67 mm ≈ 1.7 cm: the code-event zero gate (3.5σ ≈ 5.8 cm)
 /// overshoots its discrimination cap (0.5×|λ1−λ2| ≈ 2.7 cm) and the σ
 /// overshoots the split gate (0.2×|λ1−λ2| ≈ 1.1 cm), so both the veto and
@@ -151,10 +150,11 @@ double warmupNoisy(TurboEditResolver& te, const std::string& sat,
 // MW-only code-domain veto
 // ---------------------------------------------------------------------------
 
-// The headline case: MW flags ΔN_WL = +2 (whose only GF-consistent split is
-// the implausible null-line pair (9,7)) while the GF is flat.  Pre-veto this
-// produced a confident wrong (9,7) repair; with the veto it must classify as
-// a code-domain event — no repair, no reset, both signals adjudicated clean.
+// The main case: MW flags ΔN_WL = +2 (whose only GF-consistent split is the
+// implausible null-line pair (9,7)) while the GF is flat.  Without the veto the
+// joint solve produces a confident wrong (9,7) repair; with the veto the flag
+// must be classified as a code-domain event: no repair, no reset, both signals
+// adjudicated clean.
 TEST(TurboEditCodeEventVeto, MwOnlyFlatGfEvenKClassifiedAsCodeEvent) {
     TeHarness h;
     const double tow = warmupFlat(h.te, "G01", 12, 1.0);
@@ -178,11 +178,11 @@ TEST(TurboEditCodeEventVeto, MwOnlyFlatGfEvenKClassifiedAsCodeEvent) {
     EXPECT_EQ(r.clean_signals.at("G01").count("L2W"), 1u);
 }
 
-// Odd-k variant: ΔN_WL = +1 with flat GF has NO consistent integer pair at
-// all (frac ≈ 0.47 — the resets the veto exists to suppress).  Must now be
-// a code event, and a persistent code excursion (MW re-flags next epoch
-// after its arc re-baselines) must veto again — the GF arc keeps rolling
-// through a veto, so the evidence stays live.
+// Odd-k variant: ΔN_WL = +1 with flat GF has no consistent integer pair at all
+// (frac ≈ 0.47; these are the resets the veto suppresses).  It must be a code
+// event, and a persistent code excursion (MW re-flags the next epoch after its
+// arc re-baselines) must be vetoed again: the GF arc keeps rolling through a
+// veto, so the evidence stays current.
 TEST(TurboEditCodeEventVeto, OddKVetoedAndPersistentExcursionVetoedAgain) {
     TeHarness h;
     const double tow = warmupFlat(h.te, "G01", 12, 1.0);
@@ -199,9 +199,9 @@ TEST(TurboEditCodeEventVeto, OddKVetoedAndPersistentExcursionVetoedAgain) {
     EXPECT_TRUE(r2.repairs.empty());
 }
 
-// A non-integer MW excursion (slip_wl_known = false) with a still phase is,
-// if anything, MORE code-like: the veto must not require the WL integer.
-// Pre-veto this took the unconditional !wl_known reset.
+// A non-integer MW excursion (slip_wl_known = false) with a still phase is, if
+// anything, more code-like: the veto must not require the WL integer.  Without
+// the veto this case takes the unconditional !wl_known reset.
 TEST(TurboEditCodeEventVeto, NonIntegerMwStepAlsoVetoed) {
     TeHarness h;
     const double tow = warmupFlat(h.te, "G01", 12, 1.0);
@@ -234,11 +234,10 @@ TEST(TurboEditCodeEventVeto, WarmupArcFallsBackToReset) {
     EXPECT_EQ(r.reset_sats.count("G01"), 1u);
 }
 
-// Coarse rate, quiet ionosphere: GF trust is EVIDENCE-gated, not
-// rate-gated.  A 30 s arc whose measured TD2 noise stays sub-mm (quiet
-// iono) carries a zero gate far below the discrimination cap, so the veto
-// must engage exactly as at 1 s — the rate-adaptive contract that opens
-// TurboEdit to 30 s RINEX.
+// Coarse rate, quiet ionosphere: GF trust is gated on evidence, not on rate.
+// A 30 s arc whose measured TD2 noise stays sub-mm (quiet iono) carries a zero
+// gate far below the discrimination cap, so the veto must engage exactly as at
+// 1 s.  This rate-adaptive contract is what makes TurboEdit usable on 30 s RINEX.
 TEST(TurboEditCodeEventVeto, CoarseRateQuietArcStillVetoes) {
     TeHarness h;
     const double tow = warmupFlat(h.te, "G01", 12, 30.0);
@@ -253,10 +252,10 @@ TEST(TurboEditCodeEventVeto, CoarseRateQuietArcStillVetoes) {
 
 // Coarse rate, iono-inflated arc: with the TD2 MAD at cm scale the
 // affirmative-zero gate (3.5σ) overshoots the discrimination cap
-// (0.5×|λ1−λ2|) — "zero" can no longer be told from a small slip, the
-// veto stands down, and (the σ also exceeding the split gate) the MW
-// mandate takes the conservative reset.  This is the coarse-rate
-// stand-down that used to be a hard rate gate.
+// (0.5×|λ1−λ2|), so "zero" can no longer be told from a small slip and the
+// veto stands down; with the σ also above the split gate, the MW mandate takes
+// the conservative reset.  The noise evidence, not a fixed rate gate, produces
+// this coarse-rate stand-down.
 TEST(TurboEditCodeEventVeto, CoarseRateNoisyArcStandsDown) {
     TeHarness h;
     const double scale = 25.0;  // TD2 MAD-σ ≈ 1.7 cm (see noisyEpoch)
@@ -269,9 +268,9 @@ TEST(TurboEditCodeEventVeto, CoarseRateNoisyArcStandsDown) {
     EXPECT_EQ(r.reset_sats.count("G01"), 1u);
 }
 
-// Receiver-declared loss of lock on either pair signal is corroboration
-// that integer continuity really broke — the veto must stand down and let
-// the caller's LLI mandate govern.
+// Receiver-declared loss of lock on either pair signal corroborates that
+// integer continuity broke: the veto must stand down and let the caller's LLI
+// mandate govern.
 TEST(TurboEditCodeEventVeto, LliOnPairSignalBlocksVeto) {
     TeHarness h;
     const double tow = warmupFlat(h.te, "G01", 12, 1.0);
@@ -315,9 +314,9 @@ TEST(TurboEditCodeEventVeto, DisturbedIonoBlocksVeto) {
     EXPECT_EQ(r.reset_sats.count("G01"), 1u);
 }
 
-// Kill switch: estimation.cycle_slip.turbo_edit_mw_only_veto = false must
-// restore the pre-veto behavior exactly (loaded through the real JSON path
-// so a key typo in the loader fails here, not in the field).
+// Off switch: estimation.cycle_slip.turbo_edit_mw_only_veto = false must
+// restore the behavior without the veto exactly (loaded through the real JSON
+// path, so a key typo in the loader fails here, not in the field).
 TEST(TurboEditCodeEventVeto, ConfigKillSwitchRestoresReset) {
     namespace fs = std::filesystem;
     const fs::path cfg_path =
@@ -348,7 +347,7 @@ TEST(TurboEditCodeEventVeto, ConfigKillSwitchRestoresReset) {
     fs::remove(cfg_path, ec);
 }
 
-// Loader defaults and the legacy flat-key alias: the veto must be ON when
+// Loader defaults and the legacy flat-key alias: the veto must be on when
 // the key is absent (turbo_edit alone opted the user into the trust-gated
 // machinery), and the snake_case alias must reach the same field.
 TEST(TurboEditCodeEventVeto, LoaderDefaultOnAndFlatAlias) {
@@ -373,10 +372,10 @@ TEST(TurboEditCodeEventVeto, LoaderDefaultOnAndFlatAlias) {
     }
 }
 
-// The no-arg LogManager accessor must degrade (transient console logger),
-// not throw, before initialize() — GnssConfig::loadFromJson's catch
-// handler logs through it, so a throw here would escape the very handler
-// that wanted to report the original failure.
+// Before initialize(), the no-argument LogManager accessor must degrade to a
+// transient console logger, not throw: GnssConfig::loadFromJson's catch
+// handler logs through it, so a throw here would escape the handler that
+// reports the original failure.
 TEST(LogManagerFallback, UninitializedDefaultLoggerDoesNotThrow) {
     LogManager log_manager;
     std::shared_ptr<spdlog::logger> logger;
@@ -390,18 +389,18 @@ TEST(LogManagerFallback, UninitializedDefaultLoggerDoesNotThrow) {
 // ---------------------------------------------------------------------------
 
 // Triple-signal sat where the L1C/L2W pair earns a veto (MW flag, flat GF)
-// while a half-cycle artifact on L5Q trips BOTH L5 pairs' GF gates with no
-// affirmative MW-clean evidence (→ reset mandate).  The satellite-level
-// reset must win atomically: the code event is withdrawn and the staged
-// clean adjudication suppressed, so the caller cannot skip the very reset
-// this resolution demands.
+// while a half-cycle artifact on L5Q trips both L5 pairs' GF gates with no
+// affirmative MW-clean evidence (→ reset mandate).  The satellite-level reset
+// must win atomically: the code event is withdrawn and the staged clean
+// adjudication suppressed, so the caller cannot skip the reset this
+// resolution demands.
 //
 // Five quiet background satellites keep the constellation IVI calm at the
-// event epoch (pool median stays at noise scale despite G01's two ~13 cm
-// TD2s) — without them the IVI gate trips and the veto never fires,
-// making the withdrawal assertions vacuous.  Phase 1 (MW flag alone)
-// proves the veto is genuinely live in this exact configuration; phase 2
-// adds the conflicting L5 flags and pins the withdrawal.
+// event epoch (the pool median stays at noise scale despite G01's two ~13 cm
+// TD2s); without them the IVI gate trips, the veto never fires, and the
+// withdrawal assertions are vacuous.  Phase 1 (MW flag alone) shows the veto
+// is live in this configuration; phase 2 adds the conflicting L5 flags and
+// pins the withdrawal.
 TEST(TurboEditCodeEventVeto, ConflictingPairResetWithdrawsCodeEvent) {
     TeHarness h;
     const double interval = 1.0;
@@ -445,10 +444,10 @@ TEST(TurboEditCodeEventVeto, ConflictingPairResetWithdrawsCodeEvent) {
 }
 
 // Unknown sampling interval (interval_s <= 0, e.g. a RINEX file without an
-// INTERVAL header): irrelevant to the evidence gates — the arc's measured
-// TD2 noise carries the rate information.  Quiet 30 s spacing → the veto
-// engages; the iono-inflated variant is covered by
-// CoarseRateNoisyArcStandsDown (the noise, not the spacing, governs).
+// INTERVAL header) does not affect the evidence gates: the arc's measured TD2
+// noise carries the rate information.  With quiet 30 s spacing the veto
+// engages; the iono-inflated variant is covered by CoarseRateNoisyArcStandsDown
+// (the noise, not the spacing, governs).
 TEST(TurboEditCodeEventVeto, UnknownIntervalNoiseGovernsNotSpacing) {
     TeHarness h;
     const double tow = warmupFlat(h.te, "G01", 12, 30.0);
@@ -460,8 +459,8 @@ TEST(TurboEditCodeEventVeto, UnknownIntervalNoiseGovernsNotSpacing) {
     EXPECT_TRUE(r.reset_sats.empty());
 }
 
-// ...and the same at high-rate spacing, pinning that an unknown declared
-// interval never blocks the veto on a quiet arc.
+// The same at high-rate spacing, pinning that an unknown declared interval
+// never blocks the veto on a quiet arc.
 TEST(TurboEditCodeEventVeto, UnknownIntervalHighRateSpacingKeepsVeto) {
     TeHarness h;
     const double tow = warmupFlat(h.te, "G01", 12, 1.0);
@@ -499,10 +498,10 @@ TEST(TurboEditCodeEventVeto, CooldownEpochBlocksVeto) {
     EXPECT_EQ(r.reset_sats.count("G01"), 1u);
 }
 
-// An MW mandate on a pair the resolver could not evaluate (fresh arc, no
-// TD2 yet) must leave the resolution EMPTY — no reset_sats entry, no code
-// event, no clean signals.  The un-adjudicated mandate is the caller's to
-// honor; the resolver must neither veto nor duplicate it.
+// An MW mandate on a pair the resolver could not evaluate (fresh arc, no TD2
+// yet) must leave the resolution empty: no reset_sats entry, no code event, no
+// clean signals.  The caller honors the unadjudicated mandate; the resolver
+// must neither veto nor duplicate it.
 TEST(TurboEditCodeEventVeto, UncachedPairMandateLeavesResolverSilent) {
     TeHarness h;
 
@@ -515,10 +514,10 @@ TEST(TurboEditCodeEventVeto, UncachedPairMandateLeavesResolverSilent) {
     EXPECT_TRUE(r.clean_signals.empty());
 }
 
-// The veto must work identically on an L1/L5-family pair — the band
-// family where the null line sits at ΔN1 ≈ 3.95k and even a k=1 flag has
-// a GF-quiet (4,3) pair at 3.3 mm, i.e. where the magnitude prior (not
-// the GF geometry) carries the classification.
+// The veto must work identically on an L1/L5-family pair: in that band family
+// the null line sits at ΔN1 ≈ 3.95k and even a k=1 flag has a GF-quiet (4,3)
+// pair at 3.3 mm, so the magnitude prior (not the GF geometry) carries the
+// classification.
 TEST(TurboEditCodeEventVeto, L1L5FamilyPairVetoed) {
     TeHarness h;
     const double tow0 = 100000.0;
@@ -530,8 +529,8 @@ TEST(TurboEditCodeEventVeto, L1L5FamilyPairVetoed) {
     for (int k = 0; k < 12; ++k)
         h.te.resolve({}, {}, l15Epoch(tow0 + k, k), 1.0);
 
-    // The L1/L5 null-line premise itself: the (4,3) pair's GF jump is
-    // genuinely sub-noise (≈3.3 mm) — the geometry the doc claims.
+    // The L1/L5 null-line premise itself: the (4,3) pair's GF jump is below
+    // the noise (≈3.3 mm), as the comment above states.
     EXPECT_LT(std::abs(4.0 * kL1 - 3.0 * kL5), 0.004);
 
     const auto r = h.te.resolve(
@@ -548,20 +547,17 @@ TEST(TurboEditCodeEventVeto, L1L5FamilyPairVetoed) {
 // Gap-spanning GF bridge
 // ---------------------------------------------------------------------------
 
-// The reconstructed COVL145 G03 event: L2W drops for several epochs while
-// L1C survives; on return L2W has re-locked 3 cycles low.  The MW arc spans
-// the dropout and flags with the integer WITHHELD (locked-arc TD-confirm
-// contract) but a float estimate available.  The bridge must attribute
-// (dN1=0, dN2=-3) from the across-gap GF jump (+3λ₂ ≈ +0.733 m), adjudicate
-// L1C clean (mandate suppressed — the converged ambiguity survives) and L2W
-// MOOT (its ambiguity was pruned-and-reseeded on return; the slip is
-// already absorbed).  No resets, no repairs.
-// Per-signal dropout, instantaneous float only: with the lattice-honest
-// candidate window (±3) the float alone is AMBIGUOUS (k = 1, 3, 5 all fit
-// +3λ₂ within the fractional gate — null-line spacing is 2 in k), so the
-// resolver DEFERS to the WL-settle estimate; once the post-restart MW mean
-// settles, the solve re-runs and dispatches the dropped signal MOOT (its
-// ambiguity was pruned-and-reseeded) and the continuous partner clean.
+// Per-signal dropout, modelled on the COVL145 G03 event: L2W drops for several
+// epochs while L1C survives, and on return L2W has re-locked 3 cycles low
+// (across-gap GF jump +3λ₂ ≈ +0.733 m).  The MW arc spans the dropout and flags
+// with the integer withheld (locked-arc TD-confirm contract) but a float estimate
+// available.  With the lattice-aware candidate window (±3) the instantaneous
+// float alone is ambiguous (k = 1, 3, 5 all fit +3λ₂ within the fractional gate;
+// the null-line spacing is 2 in k), so the resolver defers to the WL-settle
+// estimate.  Once the post-restart MW mean settles, the solve re-runs and
+// dispatches (dN1 = 0, dN2 = -3) as: L2W moot (its ambiguity was pruned and
+// reseeded on return, so the slip is already absorbed), and L1C clean (mandate
+// suppressed; the converged ambiguity survives).  No resets, no repairs.
 TEST(TurboEditGapBridge, PerSignalDropoutMootAttribution) {
     namespace fs = std::filesystem;
     const fs::path p = fs::temp_directory_path() / "gnss_te_moot_settle_test.json";
@@ -581,18 +577,18 @@ TEST(TurboEditGapBridge, PerSignalDropoutMootAttribution) {
     for (int k = 0; k < 12; ++k)
         te.resolve({}, {}, flatEpoch("G01", tow0 + k, k), 1.0);
 
-    // 4 epochs with L2W absent (L1C keeps the satellite observed, so these
-    // epochs OCCUR — L2W's continuity breaks, and the state side would have
-    // pruned-and-reseeded its ambiguity).
+    // 4 epochs with L2W absent.  L1C keeps the satellite observed, so these
+    // epochs occur: L2W's continuity breaks, and the state side prunes and
+    // reseeds its ambiguity.
     for (int k = 12; k < 16; ++k) {
         const double l1 = 100.0 + kGfNoiseM[k % 16] / kL1;
         te.resolve({}, {}, { makePhaseObs("G01", tow0 + k, { { "L1C", l1 } }) },
                    1.0);
     }
 
-    // Return epoch: L2W re-locked 3 cycles LOW → GF jumps +3λ₂.  MW flags
-    // with unknown integer but float ≈ +3.2 WL cycles — lattice-ambiguous,
-    // so the adjudication must DEFER (nothing actioned, sat pending).
+    // Return epoch: L2W re-locked 3 cycles low → GF jumps +3λ₂.  MW flags with
+    // unknown integer but float ≈ +3.2 WL cycles, which is lattice-ambiguous,
+    // so the adjudication must defer (nothing actioned, sat pending).
     const auto r1 = te.resolve(
         { makeMwFlag("G01", 0, /*wl_known=*/false, "L1C", "L2W", /*float=*/3.2) },
         {},
@@ -625,9 +621,9 @@ TEST(TurboEditGapBridge, PerSignalDropoutMootAttribution) {
 }
 
 // Full receiver gap (no epochs at all for 8 s): nothing was pruned, so a
-// re-locked L2W carries a SURVIVING ambiguity that genuinely needs the
-// integer repair — continuity tracking must dispatch it to repairs, not
-// moot.  Here the MW integer is known (k = +3).
+// re-locked L2W carries a surviving ambiguity that needs the integer repair;
+// continuity tracking must dispatch it to repairs, not moot.  Here the MW
+// integer is known (k = +3).
 TEST(TurboEditGapBridge, ReceiverGapRepairAttribution) {
     TeHarness h;
     h.te.setMaxGapSeconds(1.5);
@@ -652,8 +648,9 @@ TEST(TurboEditGapBridge, ReceiverGapRepairAttribution) {
     EXPECT_TRUE(r.reset_sats.empty());
 }
 
-// Flat across the gap: the MW flag with an unmoved GF level is the
-// re-acquisition DLL transient — a bridged code event, everything spared.
+// Flat across the gap: an MW flag with an unmoved GF level is the
+// re-acquisition DLL transient, so it is a bridged code event and nothing is
+// reset or repaired.
 TEST(TurboEditGapBridge, FlatAcrossGapCodeEvent) {
     TeHarness h;
     h.te.setMaxGapSeconds(1.5);
@@ -679,8 +676,8 @@ TEST(TurboEditGapBridge, FlatAcrossGapCodeEvent) {
 }
 
 // Triple-signal single-sat epoch: L1C carries the GF noise, L2W and L2L
-// are constant unless offset.  GF(L1C/L2L) stays flat throughout — the
-// sibling arc.  Omitting L2W (have_l2w=false) models its per-signal outage
+// are constant unless offset.  GF(L1C/L2L) stays flat throughout (the
+// sibling arc).  Omitting L2W (have_l2w=false) models its per-signal outage
 // while the satellite stays observed.
 std::vector<PppObservation> flatEpoch3(const std::string& sat, double tow, int k,
                                        bool have_l2w = true,
@@ -691,15 +688,15 @@ std::vector<PppObservation> flatEpoch3(const std::string& sat, double tow, int k
     return { makePhaseObs(sat, tow, phases) };
 }
 
-// Field regression (G03 @ 2420:109772, covl145): the MW locked-arc
-// TD-confirmation delivers its across-gap flag only AFTER the GF chain has
-// rebuilt and owns its own (flat, gap-blind) TD2, AND the instantaneous
-// re-acquisition float is NL-code-biased (25.75 measured vs k = +28 truth)
-// — biased enough that the old ±1 window excluded the true integer and
-// minted a confident WRONG repair ((−9, −35) instead of (0, −28)).  The
-// sibling L1C/L2L arc ran flat and unbroken through the L2W outage,
-// affirming dN(L1C) = 0; with the wide candidate window that affirmation
-// must prune every nonzero-dN1 lattice candidate and select k = +28.
+// Field regression shape (G03 at week 2420 TOW 109772, covl145): the MW
+// locked-arc TD-confirmation delivers its across-gap flag only after the GF
+// chain has rebuilt and owns its own (flat, gap-blind) TD2, and the
+// instantaneous re-acquisition float is NL-code-biased (25.75 against the true
+// k = +28).  The bias is large enough that a ±1 candidate window excludes the
+// true integer and yields a confident wrong repair ((−9, −35) instead of
+// (0, −28)).  The sibling L1C/L2L arc runs flat and unbroken through the L2W
+// outage, affirming dN(L1C) = 0; with the wide candidate window that
+// affirmation must prune every nonzero-dN1 lattice candidate and select k = +28.
 TEST(TurboEditGapBridge, SiblingAffirmationSelectsTrueKOverBiasedFloat) {
     TeHarness h;
     h.te.setMaxGapSeconds(1.5);
@@ -709,16 +706,16 @@ TEST(TurboEditGapBridge, SiblingAffirmationSelectsTrueKOverBiasedFloat) {
         h.te.resolve({}, {}, flatEpoch3("G01", tow0 + k, k), 1.0);
 
     // The state side holds L2W's ambiguity across the outage (the gap-hold /
-    // LLI machinery) — the bridge must dispatch a REPAIR, not a moot.
+    // LLI machinery), so the bridge must dispatch a repair, not a moot.
     h.te.markHeldAcrossLli("G01", "L2W");
 
     // 2-epoch L2W outage; L1C and L2L stay continuous (their GF chain never
-    // breaks — the affirming sibling).
+    // breaks: the affirming sibling).
     for (int k = 12; k < 14; ++k)
         h.te.resolve({}, {}, flatEpoch3("G01", tow0 + k, k, /*have_l2w=*/false),
                      1.0);
 
-    // L2W returns 28 cycles LOW; two quiet epochs (MW TD-confirmation lag).
+    // L2W returns 28 cycles low; two quiet epochs (MW TD-confirmation lag).
     for (int k = 14; k < 16; ++k)
         h.te.resolve({}, {},
                      flatEpoch3("G01", tow0 + k, k, true, /*extra_l2w=*/-28.0),
@@ -746,8 +743,9 @@ TEST(TurboEditGapBridge, SiblingAffirmationSelectsTrueKOverBiasedFloat) {
 }
 
 // Without a sibling the same biased float is lattice-ambiguous.  With the
-// WL-settle deferral disabled (default: bridge_lli off) the resolver must
-// take the conservative reset — never a window-relative "unique" guess.
+// WL-settle deferral disabled (the default: turbo_edit_bridge_lli off) the
+// resolver must take the conservative reset, never a window-relative "unique"
+// guess.
 TEST(TurboEditGapBridge, AmbiguousFloatWithoutSiblingOrSettleResets) {
     TeHarness h;
     h.te.setMaxGapSeconds(1.5);
@@ -824,7 +822,7 @@ TEST(TurboEditGapBridge, AmbiguousFloatDefersThenSettlesToRepair) {
 }
 
 // A deferral that never settles must terminate in the conservative reset at
-// the configured cap — pending can never dangle.
+// the configured cap, so a satellite cannot stay pending indefinitely.
 TEST(TurboEditGapBridge, DeferralTimeoutFallsBackToReset) {
     namespace fs = std::filesystem;
     const fs::path p = fs::temp_directory_path() / "gnss_te_settle_timeout_test.json";
@@ -867,7 +865,7 @@ TEST(TurboEditGapBridge, DeferralTimeoutFallsBackToReset) {
     EXPECT_TRUE(reset_seen);
 }
 
-// Beyond the bridge cap the pre-bridge behavior must return exactly: full
+// Beyond the bridge cap the behavior without the bridge must return exactly: full
 // arc wipe, the post-gap pair is uncached, and the resolver stays silent
 // (the caller's own mandate resets).
 TEST(TurboEditGapBridge, GapBeyondCapLeavesResolverSilent) {
@@ -890,10 +888,10 @@ TEST(TurboEditGapBridge, GapBeyondCapLeavesResolverSilent) {
     EXPECT_TRUE(r.clean_signals.empty());
 }
 
-// No WL information at all (integer withheld AND no float): the bridge
-// cannot solve the 2×2 — the GF equation alone is degenerate along the
-// null-line lattice — so the resolver stays silent and the caller's
-// mandate fires, exactly the pre-bridge outcome.
+// No WL information at all (integer withheld and no float): the bridge cannot
+// solve the 2×2, because the GF equation alone is degenerate along the
+// null-line lattice.  The resolver stays silent and the caller's mandate
+// fires, exactly as without the bridge.
 TEST(TurboEditGapBridge, NoWlInformationStaysSilent) {
     TeHarness h;
     h.te.setMaxGapSeconds(1.5);
@@ -917,8 +915,8 @@ TEST(TurboEditGapBridge, NoWlInformationStaysSilent) {
     EXPECT_TRUE(r.reset_sats.empty());
 }
 
-// Bridge disabled (cap = 0): full pre-bridge behavior through the real
-// config loader.
+// Bridge disabled (cap = 0) through the real config loader: the behavior
+// without the bridge, in full.
 TEST(TurboEditGapBridge, ConfigDisableRestoresSilence) {
     namespace fs = std::filesystem;
     const fs::path p = fs::temp_directory_path() / "gnss_te_bridge_off_test.json";
@@ -955,15 +953,15 @@ TEST(TurboEditGapBridge, ConfigDisableRestoresSilence) {
 }
 
 // ---------------------------------------------------------------------------
-// Behaviors the veto must NOT disturb (regression)
+// Behaviors the veto must not disturb (regression)
 // ---------------------------------------------------------------------------
 
 // The window between the affirmative-zero gate (3.5×MAD ≈ 2.3 mm on this
 // harness noise) and the GF detection floor (0.04 m): a genuine (4,3)
-// L1/L2 pair jumps GF by 4λ1−3λ2 ≈ +2.85 cm — quiet enough that
-// gf_exceeds stays false and the veto eligibility is ENTERED, yet 12×
-// the zero gate, so the veto must decline and the joint solve must
-// deliver the (4,3) repair.  Pins the gate-tighter-than-floor property
+// L1/L2 pair jumps GF by 4λ1−3λ2 ≈ +2.85 cm: quiet enough that gf_exceeds
+// stays false and the veto eligibility check is entered, yet 12× the zero
+// gate, so the veto must decline and the joint solve must deliver the (4,3)
+// repair.  Pins the gate-tighter-than-floor property
 // and the no-absolute-floor constraint: any widening of the zero gate
 // toward the detection floor converts this repair into a veto and fails
 // here.
@@ -1032,9 +1030,9 @@ TEST(TurboEditJointSolve, GfOnlyEqualSlipStillRepairs) {
 // reset and unattributable GF-only transients are ignored (KF backstop).
 // ---------------------------------------------------------------------------
 
-// The headline expansion case: a large dual-signal slip ((10,7), ΔN_WL=+3,
-// GF jump ≈ +19.3 cm) at 30 s sampling under quiet ionosphere must split
-// and repair exactly as at 1 s — the measured sub-mm TD2 noise passes the
+// The main low-rate case: a large dual-signal slip ((10,7), ΔN_WL=+3, GF
+// jump ≈ +19.3 cm) at 30 s sampling under quiet ionosphere must split and
+// repair exactly as at 1 s: the measured sub-mm TD2 noise passes the
 // split gate regardless of the declared interval.
 TEST(TurboEditLowRate, QuietIonoLargeSlipRepairsAt30s) {
     TeHarness h;
@@ -1053,11 +1051,11 @@ TEST(TurboEditLowRate, QuietIonoLargeSlipRepairsAt30s) {
     EXPECT_EQ(by_sig["L2W"], 7);
 }
 
-// The same large slip on an iono-inflated arc (TD2 MAD-σ ≈ 1.7 cm — a
-// float ΔN2 noise of ≈0.3 cycles): the split gate must refuse the
-// per-signal attribution and the MW mandate must take the conservative
-// reset.  Pre-gate, the contaminated solve could round to a confident
-// WRONG integer pair — the hazard this gate exists to close.
+// The same large slip on an iono-inflated arc (TD2 MAD-σ ≈ 1.7 cm, a float
+// ΔN2 noise of about 0.3 cycles): the split gate must refuse the per-signal
+// attribution and the MW mandate must take the conservative reset.  Without
+// the gate, the contaminated solve can round to a wrong integer pair with high
+// confidence; the gate prevents that.
 TEST(TurboEditLowRate, IonoInflatedArcMwSlipFallsBackToReset) {
     TeHarness h;
     const double scale = 25.0;
@@ -1074,18 +1072,18 @@ TEST(TurboEditLowRate, IonoInflatedArcMwSlipFallsBackToReset) {
 }
 
 // A GF-only exceedance on a split-incapable arc carries no MW mandate and
-// cannot be attributed to per-signal integers — it must be IGNORED, not
-// reset: at 30 s a single-satellite iono transient (equatorial bubble,
-// TEC gradient) routinely trips the GF gate without any slip, and
-// resetting on each one would destroy converged precision for nothing.  A
-// genuine equal slip here is the KF phase-innovation backstop's to catch.
+// cannot be attributed to per-signal integers, so it must be ignored, not
+// reset: at 30 s a single-satellite iono transient (equatorial bubble, TEC
+// gradient) routinely trips the GF gate without any slip, and resetting on
+// each one would discard converged precision without cause.  A genuine equal
+// slip here is left to the KF phase-innovation backstop.
 TEST(TurboEditLowRate, GfOnlyExceedanceOnCoarseArcIgnored) {
     TeHarness h;
     const double scale = 25.0;
     const double tow = warmupNoisy(h.te, "G01", 12, 30.0, scale);
 
-    // (3,3)-equivalent GF jump (−16.2 cm) with MW silent and NO MW-clean
-    // affirmation — pre-gate this took the !wl_known blanket reset.
+    // (3,3)-equivalent GF jump (−16.2 cm) with MW silent and no MW-clean
+    // affirmation; without the gate this takes the !wl_known blanket reset.
     const auto r = h.te.resolve(
         {}, {},
         noisyEpoch("G01", tow, 12, scale, /*extra_l1=*/3.0, /*extra_l2=*/3.0),
@@ -1099,7 +1097,7 @@ TEST(TurboEditLowRate, GfOnlyExceedanceOnCoarseArcIgnored) {
 
 // MW's blind-spot coverage survives the rate expansion: a (1,1) equal slip
 // at 30 s on a quiet arc, with MW affirmatively clean, still splits via
-// the GF-only path (k=0) — the |λ1−λ2| quantum is detectable because the
+// the GF-only path (k=0): the |λ1−λ2| quantum is detectable because the
 // 4 cm floor sits below it and the quiet-arc σ passes the split gate.
 TEST(TurboEditLowRate, QuietIonoGfOnlyEqualSlipRepairsAt30s) {
     TeHarness h;
@@ -1120,9 +1118,9 @@ TEST(TurboEditLowRate, QuietIonoGfOnlyEqualSlipRepairsAt30s) {
 
 // The split gate is a config lever (estimation.cycle_slip.
 // turbo_edit_split_max_sigma), loaded through the real JSON path: an
-// extreme tightening (0.001 cycles ≈ 0.05 mm — below even the harness's
+// extreme tightening (0.001 cycles ≈ 0.05 mm, below even the harness's
 // sub-mm noise) must convert a quiet-arc 1 s repair into the conservative
-// reset, proving the key reaches the gate.
+// reset, which shows the key reaches the gate.
 TEST(TurboEditLowRate, SplitGateConfigLeverReachesTheSolve) {
     namespace fs = std::filesystem;
     const fs::path p =

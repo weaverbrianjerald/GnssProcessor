@@ -1,15 +1,15 @@
 """Scorecard / A-B / regression report for a test-suite run.
 
 Renders a ``suite_metrics.json`` (written by ``scripts/run_test_suite.py``) into a
-standalone HTML page.  Three layers, each its own section:
+standalone HTML page. Three layers, each its own section:
 
-* **Scorecard** -- text (truth cross-check + per-cell ENU bias/RMS/convergence +
+* **Scorecard**: text (truth cross-check + per-cell ENU bias/RMS/convergence +
   A/B deltas vs each base's reference cell) plus bar figures of 3D-RMS and
   vertical bias per cell.
-* **Regression vs golden** (when a golden ``suite_metrics.json`` is supplied) --
+* **Regression vs golden** (when a golden ``suite_metrics.json`` is supplied):
   the gate verdict, a per-cell delta table, and current-vs-golden / Δ-with-
   tolerance-band figures so a regression is visible at a glance.
-* **Convergence** -- auto-generated 3D-error-vs-time curves rebuilt from each
+* **Convergence**: auto-generated 3D-error-vs-time curves rebuilt from each
   cell's ``state_trace.csv`` (one panel per station, one line per cell).
 
 Reuses the backend-agnostic :mod:`gnssviz.figures` specs and
@@ -353,8 +353,8 @@ def render_suite_report(suite_metrics_path, out_html, *,
                   f"</span></div>")
     elif golden_path is not None:
         # --golden was requested but the file is absent: the suite's gate hard-
-        # fails (rc=2, "gate cannot run").  The report must mirror that -- never
-        # render clean/green -- so surface an explicit error banner.
+        # fails (rc=2, "gate cannot run"). The report mirrors that instead of
+        # rendering clean, so it surfaces an explicit error banner.
         banner = (f"<div class='banner fail'>"
                   f"{html.escape('REGRESSION GATE: ERROR — golden not found: ' + Path(golden_path).name)}"
                   f"</div>")

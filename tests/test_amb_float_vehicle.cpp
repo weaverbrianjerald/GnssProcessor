@@ -1,35 +1,34 @@
 /**
  * @file test_amb_float_vehicle.cpp
- * @brief Contract tests for @c network.ambiguity_vehicle — the RF-1 AMBIGUITY VEHICLE
- *        knob, its supporting knobs, its loader interlocks, the two @ref
- *        GnssProcessor::LocalCarry fields it adds, and the per-arc carry-state trace
- *        (@c network.trace_amb_state -> @c network_amb_state.csv).
+ * @brief Contract tests for @c network.ambiguity_vehicle (the RF-1 ambiguity vehicle
+ *        knob), its supporting knobs, its loader interlocks, the two @ref
+ *        GnssProcessor::LocalCarry fields it adds, the per-arc carry-state trace
+ *        (@c network.trace_amb_state -> @c network_amb_state.csv), and the vehicle's
+ *        operators (joint-block fold, drop, anchor S-transform).
  *
- * Card: docs/refound/RF-1_float_ambiguities_design.md (steps 1 and 2 of §7.3's commit
+ * Card: docs/refound/RF-1_float_ambiguities_design.md (steps 1 to 5 of §7.3's commit
  * order), under docs/refound/NETWORK_REFOUNDING_2026-09-14.md.
  *
- * WHY the card exists, in the sentence the tests are shaped around: today a network
- * ambiguity is a per-epoch FREE parameter made time-linked by a zero-process-noise
- * SCALAR prior that carries last epoch's marginal variance, is born with no prior at
- * all from ONE epoch of data at a variance the model reports rather than the value
- * deserves, and is returned to that state by four un-instrumented reset paths (design
- * §1.8) — a managed level, not an estimated state.
+ * Motivation (design §1.8): on the level vehicle a network ambiguity is a per-epoch
+ * free parameter made time-linked by a zero-process-noise scalar prior that carries the
+ * previous epoch's marginal variance.  It is born without a prior from one epoch of
+ * data, at the variance the model reports rather than one the value supports, and four
+ * uninstrumented reset paths return it to that state.  It is a managed level, not an
+ * estimated state.
  *
- * ⚠ WHAT THIS BUILD IS.  Steps 1 and 2 only: the vehicle is REGISTERED and carries NO
- * mechanism, and the trace is MEASURE-ONLY.  So the load-bearing property these cases
- * pin is the OFF/ON contract itself — that arming @c float_kf or @c trace_amb_state
- * changes no solve input — plus the interlocks that stop an arm being armed where it
- * could not act (standing invariant #4: an inert arm reads exactly like a clean one).
- * The 1/n fold test, the drop-restores-the-birth-variance test and the declared
- * S-transform exactness test of design §6.2 belong to steps 3–5 and are deliberately
- * NOT stubbed here — a passing test for an unbuilt mechanism is worse than none.
+ * Sections (1) to (5) cover steps 1 and 2, which register the vehicle and add a
+ * measure-only trace.  They pin the default-off contract and the interlocks that refuse
+ * an arm where it could not act (standing invariant #4: an inert arm reads like a clean
+ * one).  Sections (6) to (8) cover design §6.2's operator tests for steps 3 to 5: the
+ * 1/n fold, the drop that restores the birth variance, and the declared anchor
+ * S-transform.
  *
- * What a unit test can reach here: the loader (the enum grammar, the fallback, the two
- * hard-error interlocks, the two refusals and the WARN), the carried type's new fields
- * and their defaults, and the trace writer's row rule against a synthetic carry.  What
- * it cannot reach is the live harvest / inject seam that supplies the row — which is
- * why @ref GnssProcessor::ambStateFormatRow is factored out of the writer, so the ROW
- * RULE, not a paraphrase of it, is what both the seam and this file call.
+ * Reachable from a unit test: the loader (the enum grammar, the fallback, the two
+ * hard-error interlocks, the two refusals and the warning), the carried type's new
+ * fields and their defaults, the trace writer's row rule against a synthetic carry, and
+ * the operators on synthetic carries.  The live harvest and inject seam that supplies
+ * the trace row is not reachable; for that reason @ref GnssProcessor::ambStateFormatRow
+ * is factored out of the writer, so the seam and this file call the same row rule.
  */
 
 #include <gtest/gtest.h>
@@ -78,7 +77,7 @@ fs::path writeTempConfig(const std::string& tag, const std::string& body) {
     return p;
 }
 
-/// A minimal but LOADABLE ppp-rtk-network config; @p extra is spliced into the
+/// A minimal ppp-rtk-network config that loads; @p extra is spliced into the
 /// `network` object ahead of the station roster.
 std::string networkConfig(const std::string& extra) {
     return std::string("{\n")
@@ -98,20 +97,19 @@ std::string networkConfig(const std::string& extra) {
           "}\n";
 }
 
-/// RF-0's frozen posture, reduced to the knobs the vehicle interlocks read: the
-/// LEVELING vehicle (phase_leveling on, carry_invariant off) with Card-1's conditional
-/// coupling, F1 and F3 absent ⇒ off.
+/// The frozen posture of card RF-0, reduced to the knobs the vehicle interlocks read: the
+/// leveling vehicle (phase_leveling on, carry_invariant off) with Card-1's conditional
+/// coupling; F1 and F3 are absent and therefore off.
 const char* kRf0Posture =
     "    \"phase_leveling\": true,\n"
     "    \"carry_invariant\": false,\n"
     "    \"carry_conditional_coupling\": true,\n"
     "    \"shared_carry_full_cov\": true,\n";
 
-/// The OTHER vehicle — the Card-4 invariant DD carry the field golden ran until the
-/// re-founding decision.  @c carry_invariant has its own loader prerequisite
-/// (@c phase_datum_eq34: the DD cycle basis is defined only on the eq34 chain datum), so
-/// it is carried here — without it the interlock case below would pass on an unrelated
-/// validation failure.
+/// The other vehicle: the Card-4 invariant DD carry.  @c carry_invariant has its own
+/// loader prerequisite (@c phase_datum_eq34: the DD cycle basis is defined only on the
+/// eq34 chain datum), so it is included here; without it the interlock case below would
+/// pass on an unrelated validation failure.
 const char* kCarryInvariantPosture =
     "    \"phase_leveling\": true,\n"
     "    \"carry_invariant\": true,\n"
@@ -140,10 +138,10 @@ AmbStateRow sampleRow() {
     return r;
 }
 
-/// Split one CSV line, dropping the terminating newline and KEEPING trailing empty
-/// fields.  A `std::getline` loop would silently drop the last cell when it is empty,
-/// which is exactly the case the row rule has to get right: `event` is empty on an
-/// ordinary fold, and a reader that loses that column loses D3.
+/// Split one CSV line, dropping the terminating newline and keeping trailing empty
+/// fields.  A `std::getline` loop drops the last cell when it is empty, and that is the
+/// case the row rule has to get right: `event` is empty on an ordinary fold, and a
+/// reader that loses that column loses D3.
 std::vector<std::string> splitCsv(const std::string& line) {
     std::string s = line;
     while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
@@ -161,15 +159,15 @@ std::vector<std::string> splitCsv(const std::string& line) {
 }  // namespace
 
 // =============================================================================
-// (1) THE ENUM GRAMMAR.  A string enum on the established loader pattern.
+// (1) Enum grammar: a string enum on the established loader pattern.
 // =============================================================================
 
 TEST(AmbFloatVehicleTest, DefaultsToTheLevelVehicle) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("default", networkConfig(kRf0Posture), cfg));
     EXPECT_EQ(cfg.getNetworkConfig().ambiguity_vehicle, NetworkAmbiguityVehicle::Level);
-    // The supporting knobs are all default-inert; §3.5 exists precisely so the q
-    // default is EXPLICIT rather than implied, so it is pinned here.
+    // The supporting knobs are all inert by default.  Design §3.5 makes the q default
+    // explicit rather than implied, so it is pinned here.
     EXPECT_DOUBLE_EQ(cfg.getNetworkConfig().amb_float_birth_var_m2, 0.0);
     EXPECT_DOUBLE_EQ(cfg.getNetworkConfig().amb_float_q_m2s, 0.0);
     EXPECT_FALSE(cfg.getNetworkConfig().amb_float_declared_handover);
@@ -237,11 +235,11 @@ TEST(AmbFloatVehicleTest, TraceStrideIsClampedToAtLeastOne) {
 }
 
 // =============================================================================
-// (2) THE INTERLOCKS.  One vehicle, two beds — and never an arm that cannot act.
+// (2) Interlocks: one vehicle, two beds, and no arm that cannot act.
 // =============================================================================
 
-// float_kf replaces the LEVELING carry's scalar prior.  With phase_leveling off there
-// is no leveling carry to replace, so the arm could not move a byte (invariant #4).
+// float_kf replaces the leveling carry's scalar prior.  With phase_leveling off there
+// is no leveling carry to replace, so the arm could not change any output (invariant #4).
 TEST(AmbFloatVehicleTest, FloatKfWithoutPhaseLevelingIsAHardError) {
     GnssConfig cfg;
     EXPECT_FALSE(loadInto("nolevel",
@@ -252,9 +250,9 @@ TEST(AmbFloatVehicleTest, FloatKfWithoutPhaseLevelingIsAHardError) {
                           cfg));
 }
 
-// On a carry_invariant lineage the Card-4 DD carry IS the ambiguity time-link and
-// ApplicationNetworkAssembly's do_amb_carry skips the leveling inject outright — the
-// other vehicle, and the divergence the re-founding decision closes.
+// On a carry_invariant lineage the Card-4 DD carry is the ambiguity time-link, and
+// ApplicationNetworkAssembly's do_amb_carry skips the leveling inject entirely, so
+// float_kf would have nothing to replace.
 TEST(AmbFloatVehicleTest, FloatKfUnderCarryInvariantIsAHardError) {
     GnssConfig cfg;
     EXPECT_FALSE(loadInto("ci", networkConfig(std::string(kCarryInvariantPosture)
@@ -262,18 +260,18 @@ TEST(AmbFloatVehicleTest, FloatKfUnderCarryInvariantIsAHardError) {
                           cfg));
 }
 
-// The SAME posture without the vehicle must still load — otherwise the test above
-// would be passing on an unrelated validation failure.
+// The same posture without the vehicle must still load; otherwise the test above
+// could pass on an unrelated validation failure.
 TEST(AmbFloatVehicleTest, CarryInvariantLoadsFineOnTheLevelVehicle) {
     GnssConfig cfg;
     EXPECT_TRUE(loadInto("ci_level", networkConfig(kCarryInvariantPosture), cfg));
     EXPECT_EQ(cfg.getNetworkConfig().ambiguity_vehicle, NetworkAmbiguityVehicle::Level);
 }
 
-// F1 (×B_eff) and F3 (the station-wide whitened block) are the mechanisms float_kf
-// SUBSUMES — the joint block removes EXACTLY the over-count F1 corrects approximately,
-// and F3's buildLocalBlock IS the fold the vehicle makes structural.  Refused with a
-// line and forced off, so the effective fold is never attributable to two knobs.
+// float_kf subsumes F1 (×B_eff) and F3 (the station-wide whitened block): the joint
+// block removes the over-count that F1 corrects approximately, and F3's buildLocalBlock
+// is the fold the vehicle makes structural.  Both are refused with a log line and
+// forced off, so the effective fold is never attributable to two knobs.
 TEST(AmbFloatVehicleTest, FloatKfRefusesF1AndF3) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("refuse",
@@ -286,8 +284,8 @@ TEST(AmbFloatVehicleTest, FloatKfRefusesF1AndF3) {
     EXPECT_FALSE(cfg.networkPhaseLevelingLocalBlock());
 }
 
-// …and leaves them alone on the level vehicle: the refusal is scoped to the arm, not a
-// blanket disable that would silently re-posture every existing F3 lineage.
+// On the level vehicle both stay armed: the refusal is scoped to the float_kf arm, not
+// a blanket disable that would silently change every existing F3 lineage.
 TEST(AmbFloatVehicleTest, LevelVehicleLeavesF1AndF3Armed) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("keep",
@@ -299,9 +297,10 @@ TEST(AmbFloatVehicleTest, LevelVehicleLeavesF1AndF3Armed) {
     EXPECT_TRUE(cfg.networkPhaseLevelingLocalBlock());
 }
 
-// The young-arc inflate is a time-decaying patch on the inject for the same defect the
-// vehicle's floored birth prior fixes at the source — a WARN, not a refusal, because an
-// arm may deliberately want the contrast.  Pinned as "still armed after the load".
+// The young-arc inflate is a time-decaying patch on the inject for the same defect that
+// the vehicle's floored birth prior fixes at the source.  It draws a warning, not a
+// refusal, because an arm may want the contrast; the test pins that it is still armed
+// after the load.
 TEST(AmbFloatVehicleTest, FloatKfWarnsButKeepsTheYoungArcInflate) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("yng",
@@ -323,7 +322,7 @@ TEST(AmbFloatVehicleTest, NegativeSupportingKnobsAreRejected) {
 }
 
 // =============================================================================
-// (3) THE CARRIED TYPE.  var_birth and dropped_ep: declared, defaulted, inert.
+// (3) Carried type: var_birth and dropped_ep are declared, defaulted and inert.
 // =============================================================================
 
 TEST(AmbFloatVehicleTest, LocalCarryDefaultsTheNewFields) {
@@ -332,25 +331,25 @@ TEST(AmbFloatVehicleTest, LocalCarryDefaultsTheNewFields) {
     EXPECT_EQ(lc.dropped_ep, 0);
 }
 
-// A warm-resume-restored entry has NO snapshotted birth prior — design §6.1 names
-// var_birth as the field that must join the snapshot record when seams come back, and
-// 0 is the honest "unknown", not a floor of zero.
+// An entry restored on a warm resume has no snapshotted birth prior.  Design §6.1 names
+// var_birth as the field that must join the snapshot record when seams return; 0 means
+// "unknown", not a floor of zero.
 TEST(AmbFloatVehicleTest, RestoredCarryHasNoBirthPrior) {
     const LocalCarry lc = GnssProcessor::makeRestoredLocalCarry(
         /*value_abs=*/-3.0, /*var=*/1e-3, /*last_seen_s=*/1000.0, /*var_first=*/0.5);
     EXPECT_DOUBLE_EQ(lc.var_birth, 0.0);
     EXPECT_EQ(lc.dropped_ep, 0);
-    // The restored-arc AGE sentinels are untouched by this card.
+    // The restored-arc age sentinels are unchanged.
     EXPECT_EQ(lc.birth_ep, LocalCarry::kBirthEpRestored);
     EXPECT_DOUBLE_EQ(lc.birth_s, LocalCarry::kBirthSRestored);
 }
 
 // =============================================================================
-// (4) THE TRACE ROW.  §7.4's header, verbatim, and the row rule that fills it.
+// (4) Trace row: design §7.4's header, verbatim, and the row rule that fills it.
 // =============================================================================
 
-// The header is pre-registered in the design and scripts/amb_state_read.py parses by
-// NAME — but a column reordered or renamed silently changes what every read means, so
+// The header is pre-registered in the design, and scripts/amb_state_read.py parses by
+// column name.  A column reordered or renamed still changes what every read means, so
 // the exact string is pinned here.
 TEST(AmbFloatVehicleTest, TraceHeaderIsTheDesignsHeaderVerbatim) {
     EXPECT_EQ(std::string(kAmbStateHeader),
@@ -374,7 +373,7 @@ TEST(AmbFloatVehicleTest, TraceRowCarriesTheIdentitiesAndTheFoldFacts) {
     EXPECT_EQ(c[2], "WROC00POL");
     EXPECT_EQ(c[3], "G07");
     EXPECT_EQ(c[4], "L1C");
-    EXPECT_EQ(c[10], "17");          // n_folds — D1's abscissa
+    EXPECT_EQ(c[10], "17");          // n_folds: D1's abscissa
     EXPECT_EQ(c[11], "19");          // age_ep
     EXPECT_EQ(c[12], "19");          // age_since_relevel_ep
     EXPECT_EQ(c[13], "1");           // folded
@@ -385,9 +384,9 @@ TEST(AmbFloatVehicleTest, TraceRowCarriesTheIdentitiesAndTheFoldFacts) {
     EXPECT_EQ(row.substr(row.size() - 2), ",\n");
 }
 
-// `route` is the fold as the INJECT actually took it — the column that makes design
-// risk #3 (a joint-block fallback silently changing the vehicle on one station-epoch)
-// visible per arc rather than only as a run total.
+// `route` is the fold as the inject actually took it.  The column makes design risk #3
+// (a joint-block fallback silently changing the vehicle on one station-epoch) visible
+// per arc rather than only as a run total.
 TEST(AmbFloatVehicleTest, RouteNamesAreTheDesignsVocabulary) {
     EXPECT_STREQ(ambStateRouteName(AmbFoldRoute::None), "");
     EXPECT_STREQ(ambStateRouteName(AmbFoldRoute::Diag), "diag");
@@ -395,8 +394,8 @@ TEST(AmbFloatVehicleTest, RouteNamesAreTheDesignsVocabulary) {
     EXPECT_STREQ(ambStateRouteName(AmbFoldRoute::CouplingScalar), "coupling-scalar");
 }
 
-// An UNFOLDED arc still gets a row — that is the whole point of D2/D3: the epochs a
-// carry did not act are exactly where the level is re-drawn from one epoch of code.
+// An unfolded arc still gets a row, which D2/D3 depend on: the epochs where a carry did
+// not act are the epochs where the level is re-drawn from one epoch of code.
 TEST(AmbFloatVehicleTest, UnfoldedRowReportsZeroFoldVarAndNoRoute) {
     AmbStateRow r = sampleRow();
     r.folded = false;
@@ -411,7 +410,7 @@ TEST(AmbFloatVehicleTest, UnfoldedRowReportsZeroFoldVarAndNoRoute) {
 }
 
 // The value and the variances are the quantities D1/D2/D4 are fitted on, so they are
-// written at full double precision — a 6-digit default would quantize fold_var at the
+// written at full double precision.  A 6-digit default would quantize fold_var at the
 // 1e-4 m² scale a settled arc lives at and flatten D1's own slope.
 TEST(AmbFloatVehicleTest, TraceRowKeepsFullPrecisionOnTheGradedQuantities) {
     AmbStateRow r = sampleRow();
@@ -424,7 +423,7 @@ TEST(AmbFloatVehicleTest, TraceRowKeepsFullPrecisionOnTheGradedQuantities) {
 }
 
 // =============================================================================
-// (5) THE OFF CONTRACT.  Default OFF ⇒ no stream, no file, no rows.
+// (5) Off contract: with the trace off (the default) there is no stream, file or row.
 // =============================================================================
 
 TEST(AmbFloatVehicleTest, TraceStreamStaysClosedWhenUnarmed) {
@@ -442,32 +441,31 @@ TEST(AmbFloatVehicleTest, TraceStreamStaysClosedWhenUnarmed) {
 }
 
 // =============================================================================
-// (6) THE 1/n GATE (design §6.2 test 2) — the single most direct test of §3.2,
-//     run at the REAL seam: CouplingRowBuilder::buildLocalBlock over a registered
-//     NetworkEstimator, driven through the producer's own recursion
+// (6) The 1/n gate (design §6.2 test 2, RF-1 step 3): the most direct test of §3.2,
+//     run at the production seam, CouplingRowBuilder::buildLocalBlock over a
+//     registered NetworkEstimator, driven through the producer's recursion
 //     (assemble -> fold -> solve -> harvest -> fold ...).
 //
-// THE FIXTURE, and why it is the right minimal one.  ONE station, ONE satellite,
-// TWO bands, no shared border.  Local states [dt_r, I, N1, N2]; four rows per
-// epoch — two code (sigma 1 m) and two phase (sigma 3 mm) — so the block is
-// exactly determined each epoch and the ONLY thing that can make the carried
-// variance fall is the prior fold.  That is the F1 comment made executable: the
-// B = 2 carried columns of ONE line of sight are tied to each other through the
-// station-common receiver clock and through the LOS's own free slant iono, so
-// folding them as TWO independent marginals asserts those directions twice per
-// epoch where the joint block asserts them once.
+// Fixture: one station, one satellite, two bands, no shared border.  Local states
+// [dt_r, I, N1, N2]; four rows per epoch, two code (sigma 1 m) and two phase
+// (sigma 3 mm), so the block is exactly determined each epoch and only the prior fold
+// can make the carried variance fall.  This is the over-count that F1 addresses, in
+// executable form: the B = 2 carried columns of one line of sight are tied to each
+// other through the station-common receiver clock and through the LOS's own free slant
+// iono, so folding them as two independent marginals asserts those directions twice
+// per epoch where the joint block asserts them once.
 //
-// THE ALGEBRA THE TEST PINS.  Let S be the Schur complement of one epoch's normal
-// matrix onto (N1, N2) after eliminating (dt_r, I).  A birth epoch has no prior,
-// so C_1 = S^-1.  Folding the JOINT prior adds exactly C_{n-1}^-1 on that
-// subspace, so C_n = (S + C_{n-1}^-1)^-1 = S^-1/n — i.e. var(n)*n/var(1) = 1 for
-// every n, to numerical precision.  Folding diag(1/C_11, 1/C_22) instead is the
-// legacy route, and the contrast between the two is the test.
+// Algebra pinned by the test: let S be the Schur complement of one epoch's normal
+// matrix onto (N1, N2) after eliminating (dt_r, I).  A birth epoch has no prior, so
+// C_1 = S^-1.  Folding the joint prior adds exactly C_{n-1}^-1 on that subspace, so
+// C_n = (S + C_{n-1}^-1)^-1 = S^-1/n, i.e. var(n)*n/var(1) = 1 for every n, to
+// numerical precision.  Folding diag(1/C_11, 1/C_22) instead is the legacy route; the
+// test is the contrast between the two.
 // =============================================================================
 
 namespace {
 
-/// GPS L1/L2 iono scaling gamma = (f1/f2)^2 — the real ratio, so the two carried
+/// GPS L1/L2 iono scaling gamma = (f1/f2)^2, the real ratio, so the two carried
 /// columns are correlated through I exactly as they are in the producer.
 constexpr double kGamma = (154.0 / 120.0) * (154.0 / 120.0);
 constexpr Eigen::Index kColN1 = 2, kColN2 = 3;
@@ -489,7 +487,7 @@ Eigen::VectorXd oneEpochWeights() {
     return w;
 }
 
-/// A reproducible per-epoch noise draw — a fixed xorshift, so the recursion
+/// A reproducible per-epoch noise draw (a fixed-seed xorshift), so the recursion
 /// wanders and converges like a real one and the test stays deterministic.
 struct Lcg {
     unsigned long long s{88172645463325252ULL};
@@ -507,11 +505,11 @@ struct RecursionResult {
 /// One arm of the producer's recursion.  @p joint selects the vehicle's fold (the
 /// whitened joint block) over the legacy one (N independent diagonal priors).
 ///
-/// @p drift_m_per_ep adds a slow PHASE-ONLY common bias (metres per epoch) that the
-/// model has no state for — a drifting receiver phase bias, which the four-row design
-/// cannot put in @c dt_r (that is common to the code rows too) nor in @c I (dispersive).
-/// It therefore ratchets into the carried ambiguities, which is design §3.5's
-/// "any real drift in what the ambiguity column ABSORBS has nowhere to go".  0 = the
+/// @p drift_m_per_ep adds a slow phase-only common bias (metres per epoch) that the
+/// model has no state for: a drifting receiver phase bias, which the four-row design
+/// cannot put in @c dt_r (common to the code rows too) nor in @c I (dispersive).  It
+/// therefore ratchets into the carried ambiguities, the case of design §3.5 in which
+/// real drift in what the ambiguity column absorbs has nowhere to go.  0 gives the
 /// clean fixture.
 RecursionResult runRecursion(bool joint, int n_epochs, double drift_m_per_ep = 0.0) {
     const Eigen::MatrixXd A_r = oneEpochDesign();
@@ -543,15 +541,15 @@ RecursionResult runRecursion(bool joint, int n_epochs, double drift_m_per_ep = 0
         R.y(1) += 1.0   * rng.next();
         R.y(2) += 0.003 * rng.next();
         R.y(3) += 0.003 * rng.next();
-        // The un-modelled PHASE-ONLY drift, on the two phase rows only.
+        // The unmodelled phase-only drift, on the two phase rows only.
         const double drift = drift_m_per_ep * static_cast<double>(n - 1);
         R.y(2) += drift;
         R.y(3) += drift;
 
         if (have_carry && joint) {
-            // THE VEHICLE'S FOLD.  Sigma's diagonal is each column's carried variance;
-            // its off-diagonals come from the SHARED harvest block, which is exactly
-            // what makes this a joint prior rather than two marginals.
+            // The vehicle's fold.  Sigma's diagonal is each column's carried variance;
+            // its off-diagonals come from the shared harvest block, which makes this a
+            // joint prior rather than two marginals.
             GnssProcessor::CouplingRowBuilder cb{
                 est, shc, /*q_clock=*/0.0, /*q_cb=*/0.0, /*q_pb=*/0.0,
                 /*joint=*/false, /*tu=*/false, /*shmarg=*/false,
@@ -564,8 +562,8 @@ RecursionResult runRecursion(bool joint, int n_epochs, double drift_m_per_ep = 0
         }
         const std::size_t id = est.addStation(R.A_s, R.A_r, R.w, R.y);
         if (have_carry && !joint) {
-            // THE LEGACY FOLD.  N independent diagonal rows, each asserting its own
-            // column's MARGINAL precision — the over-count the card names.
+            // The legacy fold: N independent diagonal rows, each asserting its own
+            // column's marginal precision (the over-count the card names).
             Eigen::VectorXd lam(2), eta(2);
             lam << 1.0 / c1.var, 1.0 / c2.var;
             eta << lam(0) * c1.value_abs, lam(1) * c2.value_abs;   // x_lin = 0
@@ -574,8 +572,8 @@ RecursionResult runRecursion(bool joint, int n_epochs, double drift_m_per_ep = 0
         const Eigen::VectorXd x_s = est.solve(datum);
         const Eigen::VectorXd xr  = est.reconstructStation(id, x_s);
 
-        // The harvest: each carried column's PURE conditional variance and the SAME
-        // solve read at the sibling — the gather the block's off-diagonals are.
+        // The harvest: each carried column's pure conditional variance, and the same
+        // solve read at the sibling column, which supplies the block's off-diagonals.
         const auto r1 = est.stationRegression(id, kColN1, /*carry_aware=*/false, &carried);
         const auto r2 = est.stationRegression(id, kColN2, /*carry_aware=*/false, &carried);
         auto blk = std::make_shared<GnssProcessor::PlHarvestBlock>();
@@ -596,8 +594,8 @@ RecursionResult runRecursion(bool joint, int n_epochs, double drift_m_per_ep = 0
     return out;
 }
 
-/// b in `log var = a - b log n`, fitted by OLS over the whole trajectory — the
-/// same statistic scripts/amb_state_read.py's D1 reports from the field trace.
+/// b in `log var = a - b log n`, fitted by OLS over the whole trajectory: the same
+/// statistic that D1 in scripts/amb_state_read.py reports from the field trace.
 double fitB(const std::vector<double>& var_n) {
     const std::size_t n = var_n.size();
     double mx = 0.0, my = 0.0;
@@ -617,9 +615,9 @@ double fitB(const std::vector<double>& var_n) {
 
 }  // namespace
 
-// THE BAR (design §7.6 S4 / §7.4 D1): the joint fold makes the carried variance
-// fall as EXACTLY 1/n.  Asserted at every fold, not only at the end, so a
-// trajectory that is right only on average cannot pass.
+// The bar (design §7.6 S4 / §7.4 D1): the joint fold makes the carried variance fall
+// as exactly 1/n.  It is asserted at every fold, not only at the end, so a trajectory
+// that is right only on average cannot pass.
 TEST(AmbFloatVehicleTest, JointBlockFoldMakesTheCarriedVarianceFallAsOneOverN) {
     const RecursionResult j = runRecursion(/*joint=*/true, 30);
     ASSERT_EQ(j.var_n.size(), 30u);
@@ -631,12 +629,12 @@ TEST(AmbFloatVehicleTest, JointBlockFoldMakesTheCarriedVarianceFallAsOneOverN) {
     EXPECT_NEAR(fitB(j.var_n), 1.0, 1e-4);
 }
 
-// …and the LEGACY fold on the SAME fixture does NOT — the contrast is what proves
-// the joint block is doing the work rather than the fixture being easy.  The
-// legacy route folds each column's MARGINAL precision as an independent row, so
-// the station-common direction and the LOS's iono direction are asserted twice
-// per epoch and the variance collapses faster than 1/n, exactly as the F1 comment
-// predicts and as the field trace measured (b = 3.44, RF-1 steps 1-2).
+// The legacy fold on the same fixture does not fall as 1/n; the contrast shows that
+// the joint block does the work, not an easy fixture.  The legacy route folds each
+// column's marginal precision as an independent row, so the station-common direction
+// and the LOS's iono direction are asserted twice per epoch and the variance collapses
+// faster than 1/n, as F1 predicts and as the field trace measured (b = 3.44 in the
+// RF-1 steps 1-2 trace).
 TEST(AmbFloatVehicleTest, LegacyDiagonalFoldCollapsesFasterThanOneOverN) {
     const RecursionResult d = runRecursion(/*joint=*/false, 30);
     ASSERT_EQ(d.var_n.size(), 30u);
@@ -645,20 +643,20 @@ TEST(AmbFloatVehicleTest, LegacyDiagonalFoldCollapsesFasterThanOneOverN) {
                           "1/n test above is not discriminating on this fixture";
     const double ratio30 = d.var_n[29] * 30.0 / d.var_n[0];
     EXPECT_LT(ratio30, 0.5) << "legacy var(30)*30/var(1) = " << ratio30;
-    // And the two arms must actually differ — a guard against both routes silently
-    // taking the same code path.
+    // The two arms must differ, which guards against both routes silently taking the
+    // same code path.
     const RecursionResult j = runRecursion(/*joint=*/true, 30);
     EXPECT_LT(d.var_n[29], 0.5 * j.var_n[29]);
 }
 
 // =============================================================================
-// (7) THE DROP (design §6.2 tests 3 and 4) — RF-1 step 4.
+// (7) The drop (design §6.2 tests 3 and 4, RF-1 step 4).
 //
-// "A slip is a DROP of the prior, and only that."  The operator's contract is what
-// separates it from the two things it replaces: a free epoch (which removes ALL
-// information for one epoch, opening an unbounded direction the shared parameters
-// re-balance into) and an erase (which destroys the arc's identity along with its
-// confidence).  These cases pin both halves.
+// A slip drops the prior and does nothing else.  That contract separates the drop from
+// the two responses it replaces: a free epoch (which removes all information for one
+// epoch, opening an unbounded direction the shared parameters re-balance into) and an
+// erase (which destroys the arc's identity along with its confidence).  These cases pin
+// both halves.
 // =============================================================================
 
 TEST(AmbFloatVehicleTest, DropRestoresTheBirthVarianceAndClearsTheOldRegression) {
@@ -679,16 +677,16 @@ TEST(AmbFloatVehicleTest, DropRestoresTheBirthVarianceAndClearsTheOldRegression)
     EXPECT_TRUE(GnssProcessor::ambFloatDrop(lc, /*floor_m2=*/0.0, /*now_s=*/900.0,
                                             /*now_ep=*/31));
     EXPECT_DOUBLE_EQ(lc.var, 0.82);              // restored to the birth prior, exactly
-    EXPECT_TRUE(lc.coupling.empty());            // the regression belonged to the OLD value
+    EXPECT_TRUE(lc.coupling.empty());            // the regression belonged to the old value
     EXPECT_EQ(lc.blk, nullptr);
     EXPECT_EQ(lc.blk_idx, -1);
     EXPECT_DOUBLE_EQ(lc.relevel_s, 900.0);       // the age clock restarts
     EXPECT_EQ(lc.dropped_ep, 31);
 }
 
-// A DROP IS NOT AN ERASE (design §6.2 test 4).  The arc's identity survives, so the age
-// gates, the sim slip oracle's window floor and the restored-arc sentinel all keep their
-// meaning — and the level is still there for the lane-preserving refloat to use later.
+// A drop is not an erase (design §6.2 test 4).  The arc's identity survives, so the age
+// gates, the sim slip oracle's window floor and the restored-arc sentinel keep their
+// meaning, and the level remains available to the lane-preserving refloat.
 TEST(AmbFloatVehicleTest, DropKeepsTheValueAndTheArcsIdentity) {
     LocalCarry lc{-12.0, 1.0e-6, 500.0};
     lc.var_first = 0.82; lc.var_birth = 0.82;
@@ -703,8 +701,8 @@ TEST(AmbFloatVehicleTest, DropKeepsTheValueAndTheArcsIdentity) {
     EXPECT_EQ(lc.n_folds, 40);
 }
 
-// The floor can only LOOSEN.  An arc born tighter than the posture's floor is dropped to
-// the floor; an arc born looser keeps its own (larger) birth variance.
+// The floor can only loosen the prior.  An arc born tighter than the posture's floor
+// is dropped to the floor; an arc born looser keeps its own (larger) birth variance.
 TEST(AmbFloatVehicleTest, DropTakesTheLooserOfBirthVarianceAndFloor) {
     LocalCarry tight{0.0, 1e-6, 0.0};  tight.var_first = 0.01; tight.var_birth = 0.01;
     EXPECT_TRUE(GnssProcessor::ambFloatDrop(tight, /*floor_m2=*/0.25, 1.0, 1));
@@ -715,7 +713,7 @@ TEST(AmbFloatVehicleTest, DropTakesTheLooserOfBirthVarianceAndFloor) {
 }
 
 // An idempotent re-drop (two detectors on one arc in one epoch) must not tighten the
-// prior — and must still restart the age clock, because the LEVEL is doubted either way.
+// prior, and must still restart the age clock, because the level is doubted either way.
 TEST(AmbFloatVehicleTest, ReDroppingAnAlreadyDroppedArcDoesNotTightenIt) {
     LocalCarry lc{0.0, 1e-6, 0.0};
     lc.var_first = 0.5; lc.var_birth = 0.5;
@@ -727,9 +725,9 @@ TEST(AmbFloatVehicleTest, ReDroppingAnAlreadyDroppedArcDoesNotTightenIt) {
     EXPECT_EQ(lc.dropped_ep, 2);
 }
 
-// THE BIRTH FLOOR IS ELEVATION-MAPPED like the code row weights (design §3.3(b)).  A flat
-// zenith floor would be optimistic at exactly the low elevations that own the metre-plus
-// tail, so this pins the mapping, its zenith identity, and its two guards.
+// The birth floor is elevation-mapped like the code row weights (design §3.3(b)).  A
+// flat zenith floor would be optimistic at the low elevations that produce the
+// metre-plus tail, so this pins the mapping, its zenith identity and its guards.
 TEST(AmbFloatVehicleTest, BirthFloorIsElevationMappedLikeTheCodeWeights) {
     using GnssProcessor::ambFloatBirthFloor;
     constexpr double p = 1.0;                       // the default code elevation power
@@ -739,9 +737,9 @@ TEST(AmbFloatVehicleTest, BirthFloorIsElevationMappedLikeTheCodeWeights) {
     // 15 degrees (the usual mask) is ~14.9x zenith at p = 1.
     EXPECT_NEAR(ambFloatBirthFloor(0.25, 15.0, p),
                 0.25 / std::pow(std::sin(15.0 * 3.14159265358979323846 / 180.0), 2.0), 1e-12);
-    // A gentler power gives a gentler ramp — the knob is the posture's, not a constant.
+    // A gentler power gives a gentler ramp; the power is a posture knob, not a constant.
     EXPECT_LT(ambFloatBirthFloor(0.25, 15.0, 0.5), ambFloatBirthFloor(0.25, 15.0, 1.0));
-    // Guards: the floor is OFF at 0, an unavailable elevation reads as zenith (the
+    // Guards: the floor is off at 0, an unavailable elevation reads as zenith (the
     // conservative direction), and a grazing elevation cannot produce an infinite floor.
     EXPECT_DOUBLE_EQ(ambFloatBirthFloor(0.0, 15.0, p), 0.0);
     EXPECT_DOUBLE_EQ(ambFloatBirthFloor(0.25, -1.0, p), 0.25);
@@ -750,21 +748,21 @@ TEST(AmbFloatVehicleTest, BirthFloorIsElevationMappedLikeTheCodeWeights) {
 }
 
 // =============================================================================
-// (7b) THE DROP-ONLY FLOOR — RF-3a
-//      (docs/refound/RF-3_code_row_qc_2026-09-22.md §4 A1/A4).
+// (7b) The drop-only floor (RF-3a;
+//      docs/refound/RF-3_code_row_qc_2026-09-22.md §4 A1/A4).
 //
-// The RF-3 read separated two populations that the birth floor treats as one: a DROP
-// hands back a variance the level no longer deserves (STHL00GBR G11 restored 0.036 m2
-// from two hours earlier for a level wrong by 40 m, which then walked down for 24
-// epochs), while a BIRTH is honest and a floor there costs 0.10 m of hour 1 at the
-// held-out consumer.  These cases pin the separation: the drop floor raises what a drop
-// restores, it never touches the birth stash, and it is mapped exactly as the birth
-// floor is.
+// Card RF-3 separates two populations that the birth floor treats as one.  A drop
+// hands back a variance the level no longer supports (an arc can restore a variance
+// from hours earlier for a level now wrong by tens of metres, which then walks down
+// over many epochs), while a birth variance is correct and a floor there costs
+// position accuracy in hour 1 at the held-out consumer.  These cases pin the
+// separation: the drop floor raises what a drop restores, never touches the birth
+// stash, and is mapped exactly as the birth floor is.
 // =============================================================================
 
 TEST(AmbFloatVehicleTest, DropFloorRaisesTheRestoredVarianceAboveBirthAndVarFirst) {
-    // The arc's own history says 0.01 m2 and the posture's BIRTH floor says 0.25; the
-    // DROP floor says 4.  The drop restores the largest of the three, and reports that
+    // The arc's own history says 0.01 m2 and the posture's birth floor says 0.25; the
+    // drop floor says 4.  The drop restores the largest of the three, and reports that
     // the drop floor is where the number came from.
     LocalCarry lc{7.5, /*var=*/1.0e-6, /*last_seen_s=*/0.0};
     lc.var_first = 0.01;
@@ -783,8 +781,8 @@ TEST(AmbFloatVehicleTest, DropFloorRaisesTheRestoredVarianceAboveBirthAndVarFirs
 
 TEST(AmbFloatVehicleTest, DropFloorIsNotTheSourceWhenBirthSideAlreadyExceedsIt) {
     // An arc born looser than the drop floor keeps its own variance, and the counter
-    // must NOT claim the drop floor supplied it — otherwise the ON-path telemetry reads
-    // as evidence where there is none (standing invariant #4).
+    // must not claim the drop floor supplied it; otherwise the on-path telemetry reports
+    // an effect that did not occur (standing invariant #4).
     LocalCarry loose{0.0, 1e-6, 0.0};
     loose.var_first = 9.0;
     loose.var_birth = 9.0;
@@ -792,7 +790,7 @@ TEST(AmbFloatVehicleTest, DropFloorIsNotTheSourceWhenBirthSideAlreadyExceedsIt) 
     EXPECT_TRUE(o1.acted);
     EXPECT_FALSE(o1.from_drop_floor);
     EXPECT_DOUBLE_EQ(loose.var, 9.0);
-    // The same when the BIRTH floor is the larger of the two floors.
+    // The same holds when the birth floor is the larger of the two floors.
     LocalCarry tight{0.0, 1e-6, 0.0};
     tight.var_first = 0.01;
     tight.var_birth = 0.01;
@@ -804,7 +802,7 @@ TEST(AmbFloatVehicleTest, DropFloorIsNotTheSourceWhenBirthSideAlreadyExceedsIt) 
 }
 
 TEST(AmbFloatVehicleTest, DropFloorAtZeroIsTodaysBehaviourAndAnIdempotentDropIsNotCounted) {
-    // Byte-identity of the OFF path, stated as a test: with the drop floor at 0 the
+    // Byte-identity of the off path, stated as a test: with the drop floor at 0 the
     // operator is exactly max(var_birth, var_first, birth floor).
     LocalCarry a{0.0, 1e-6, 0.0}; a.var_first = 0.5; a.var_birth = 0.5;
     LocalCarry b = a;
@@ -813,7 +811,7 @@ TEST(AmbFloatVehicleTest, DropFloorAtZeroIsTodaysBehaviourAndAnIdempotentDropIsN
     EXPECT_TRUE(ob.acted);
     EXPECT_FALSE(ob.from_drop_floor);
     EXPECT_DOUBLE_EQ(a.var, b.var);
-    // An arc ALREADY at or above the floor is an idempotent re-drop: the variance does
+    // An arc already at or above the floor is an idempotent re-drop: the variance does
     // not move, so the drop floor is not its source even though it is armed.
     const auto o2 = GnssProcessor::ambFloatDropFloored(b, 0.0, 0.25, 20.0, 2);
     EXPECT_FALSE(o2.acted);
@@ -825,7 +823,7 @@ TEST(AmbFloatVehicleTest, DropFloorAtZeroIsTodaysBehaviourAndAnIdempotentDropIsN
 TEST(AmbFloatVehicleTest, DropFloorUsesTheSameElevationMappingAsTheBirthFloor) {
     // One mapping, one function: the drop floor is stated at zenith and read at the
     // line of sight's elevation through ambFloatBirthFloor, exactly as the birth floor
-    // is, so a floor that is honest at zenith is not optimistic at 15 degrees.
+    // is, so a floor that is adequate at zenith is not optimistic at 15 degrees.
     using GnssProcessor::ambFloatBirthFloor;
     constexpr double p = 1.0;
     const double zen = 4.0;
@@ -840,29 +838,29 @@ TEST(AmbFloatVehicleTest, DropFloorUsesTheSameElevationMappingAsTheBirthFloor) {
     EXPECT_GT(lo.var, hi.var);
 }
 
-// RF-3c: the WARM-UP GATE.  RF-3a's own G1 measured that a drop-only floor still costs
-// hour 1 (WTZZ00DEU 0.560 -> 0.651 m at 100 m2, census hour 1 median +0.034 m), because
-// drops happen during convergence too.  The gate separates the convergence population
-// from the settled one the floor is a statement about, and it must be read identically
-// at every drop site — hence the one shared resolver.
+// The warm-up gate (RF-3c).  A drop-only floor still costs hour-1 accuracy (RF-3a gate
+// G1), because drops also happen during convergence.  The gate separates the
+// convergence population from the settled population the floor is meant for.  It must
+// be read identically at every drop site, so all sites share one resolver.
 TEST(AmbFloatVehicleTest, DropFloorWarmUpGateWithholdsTheFloorUntilItOpens) {
     using GnssProcessor::ambFloatDropFloorNow;
     // No gate is RF-3a's behaviour at every epoch, including epoch 0.
     EXPECT_DOUBLE_EQ(ambFloatDropFloorNow(100.0, 0, 0), 100.0);
     EXPECT_DOUBLE_EQ(ambFloatDropFloorNow(100.0, 5000, 0), 100.0);
-    // Armed: closed strictly BEFORE the gate epoch, open from it onwards.
+    // Armed: closed strictly before the gate epoch, open from it onwards.
     EXPECT_DOUBLE_EQ(ambFloatDropFloorNow(100.0, 0, 120), 0.0);
     EXPECT_DOUBLE_EQ(ambFloatDropFloorNow(100.0, 119, 120), 0.0);
     EXPECT_DOUBLE_EQ(ambFloatDropFloorNow(100.0, 120, 120), 100.0);
     EXPECT_DOUBLE_EQ(ambFloatDropFloorNow(100.0, 121, 120), 100.0);
-    // A gate over an UNARMED floor is inert, never a floor of its own.
+    // A gate over an unarmed floor is inert, never a floor of its own.
     EXPECT_DOUBLE_EQ(ambFloatDropFloorNow(0.0, 5000, 120), 0.0);
     // A negative gate cannot arrive from the loader (it clamps), but the resolver is
     // the shared one, so it must not invent a floor from a nonsense value either.
     EXPECT_DOUBLE_EQ(ambFloatDropFloorNow(100.0, 3, -7), 100.0);
 
-    // End to end at the operator: a drop BEFORE the gate restores today's quantity, the
-    // same drop AFTER it restores the floor.  Same arc, same epoch clock, one difference.
+    // End to end at the operator: a drop before the gate restores the un-floored
+    // quantity, and the same drop after it restores the floor.  The arc and the gate are
+    // the same; only the drop epoch differs.
     LocalCarry before{0.0, 1e-6, 0.0}; before.var_first = 0.01; before.var_birth = 0.01;
     LocalCarry after = before;
     GnssProcessor::ambFloatDropFloored(
@@ -877,9 +875,9 @@ TEST(AmbFloatVehicleTest, DropFloorWarmUpGateWithholdsTheFloorUntilItOpens) {
 }
 
 TEST(AmbFloatVehicleTest, EveryDropArmsTheWalkMetricIncludingAnIdempotentOne) {
-    // RF-3a A2: the WALK metric's population is "every drop that doubted the level",
-    // which is what lets an OFF run report the walk it suffers.  The phase is armed on
-    // both branches of the operator and the harvest is what advances it.
+    // The walk metric's population is every drop that doubted the level, which lets a
+    // run with the floor off report its walk (RF-3a A2).  The phase is armed on both
+    // branches of the operator, and the harvest advances it.
     LocalCarry moved{0.0, 1e-6, 0.0}; moved.var_first = 0.5; moved.var_birth = 0.5;
     EXPECT_TRUE(GnssProcessor::ambFloatDrop(moved, 0.0, 10.0, 1));
     EXPECT_EQ(moved.drop_walk_ph, 1);
@@ -889,27 +887,28 @@ TEST(AmbFloatVehicleTest, EveryDropArmsTheWalkMetricIncludingAnIdempotentOne) {
 }
 
 // =============================================================================
-// (8) THE DECLARED ANCHOR S-TRANSFORM (design §6.2 test 6) — RF-1 step 5.
+// (8) The declared anchor S-transform (design §6.2 test 6, RF-1 step 5).
 //
-// A frame step is a KNOWN, exact basis change, so the carry is EXPRESSED in the new
-// basis rather than erased.  The operator's three references move TOGETHER — the
-// per-station ambiguity levels, the satellite phase bias, and every coupling s_prev
-// on that phase-bias column — because a Card-1 coupling row's correct y-change under
-// a known frame step is the exact CANCELLATION of the two moves, and shifting one
-// without the other injects the frame step as row bias
-// (NetworkChainDatum.cpp:852-866, the filed latent defect the design names).
+// A frame step is a known, exact basis change, so the carry is expressed in the new
+// basis rather than erased.  The operator's three references move together: the
+// per-station ambiguity levels, the satellite phase bias, and every coupling s_prev on
+// that phase-bias column.  Under a known frame step the correct y-change of a Card-1
+// coupling row is the exact cancellation of the two moves, and shifting one without
+// the other injects the frame step as row bias (the latent defect the design names;
+// the same rule governs D4's carry S-transformation in networkElectChainDatum,
+// NetworkChainDatum.cpp).
 //
 // The live seam needs the whole run context (the election, the ledger, the trace
-// streams), which a unit test cannot stand up; what IS testable, and is what the
-// defect is about, is the ALGEBRA — so these cases pin the operator's invariants on
-// the same data structures the seam mutates.
+// streams), which a unit test cannot construct.  The defect is in the algebra, which is
+// testable, so these cases pin the operator's invariants on the same data structures
+// the seam mutates.
 // =============================================================================
 
 TEST(AmbFloatVehicleTest, AnchorStransformShiftsEveryCarryByTheIncomingAnchorsLevel) {
     using Key = std::tuple<int, std::string, std::string>;
     // Three stations carrying G07/L1C; station 1 is the incoming anchor.
     const Key k0{0, "G07", "L1C"}, k1{1, "G07", "L1C"}, k2{2, "G07", "L1C"};
-    const Key kOther{0, "G07", "L2W"};                       // a DIFFERENT family
+    const Key kOther{0, "G07", "L2W"};                       // a different family
     std::map<Key, LocalCarry> carry;
     carry[k0]     = LocalCarry{12.00, 1e-4, 100.0};
     carry[k1]     = LocalCarry{-3.50, 2e-4, 100.0};          // the incoming anchor
@@ -921,25 +920,25 @@ TEST(AmbFloatVehicleTest, AnchorStransformShiftsEveryCarryByTheIncomingAnchorsLe
         if (std::get<1>(k) != "G07" || std::get<2>(k) != "L1C") continue;
         lc.value_abs -= delta;
     }
-    // The incoming anchor reads 0 — what its w = 1e10 pin is about to assert.
+    // The incoming anchor reads 0, the value its w = 1e10 pin is about to assert.
     EXPECT_NEAR(carry[k1].value_abs, 0.0, GnssProcessor::kStsExactTolM);
-    // Every other station moved by exactly the same Δ, so BETWEEN-STATION differences —
-    // the only datum-invariant content of the family — are preserved exactly.
+    // Every other station moved by exactly the same Δ, so between-station differences
+    // (the only datum-invariant content of the family) are preserved exactly.
     EXPECT_DOUBLE_EQ(carry[k0].value_abs, 12.00 + 3.50);
     EXPECT_DOUBLE_EQ(carry[k2].value_abs,  7.25 + 3.50);
     EXPECT_DOUBLE_EQ(carry[k0].value_abs - carry[k2].value_abs, 12.00 - 7.25);
-    // A different (sat, signal) family is untouched — the transform is per-family.
+    // A different (sat, signal) family is untouched; the transform is per family.
     EXPECT_DOUBLE_EQ(carry[kOther].value_abs, 99.00);
-    // VARIANCES UNTOUCHED: this is a basis change, not a refloat.  That is the whole
-    // difference from the erase it replaces and from step 4's drop.
+    // Variances are untouched: this is a basis change, not a refloat.  That separates
+    // it from the erase it replaces and from step 4's drop.
     EXPECT_DOUBLE_EQ(carry[k0].var, 1e-4);
     EXPECT_DOUBLE_EQ(carry[k1].var, 2e-4);
     EXPECT_DOUBLE_EQ(carry[k2].var, 3e-4);
 }
 
-// THE FILED LATENT DEFECT (i): the coupling s_prev on the shifted PHASE-BIAS column must
-// move WITH the levels, and only on that column.  rebaseCouplingPhaseBiasSprev is the
-// one operator both D4 and this transform call, so the rule cannot drift between them.
+// Latent defect (i): the coupling s_prev on the shifted phase-bias column must move with
+// the levels, and only on that column.  D4 and this transform both call
+// rebaseCouplingPhaseBiasSprev, so the rule cannot drift between them.
 TEST(AmbFloatVehicleTest, AnchorStransformMovesTheCouplingSprevOnTheSamePhaseBiasColumn) {
     using GnssProcessor::CoupledShared;
     using GnssProcessor::SharedParamKind;
@@ -953,13 +952,13 @@ TEST(AmbFloatVehicleTest, AnchorStransformMovesTheCouplingSprevOnTheSamePhaseBia
     const long long n = GnssProcessor::rebaseCouplingPhaseBiasSprev(coupling, shift);
     EXPECT_EQ(n, 1);
     EXPECT_DOUBLE_EQ(coupling[0].s_prev, 20.0 + delta);   // the shifted PB column
-    EXPECT_DOUBLE_EQ(coupling[1].s_prev, 30.0);           // a different signal — untouched
-    EXPECT_DOUBLE_EQ(coupling[2].s_prev,  5.0);           // the CLOCK — never moved by this
+    EXPECT_DOUBLE_EQ(coupling[1].s_prev, 30.0);           // a different signal: untouched
+    EXPECT_DOUBLE_EQ(coupling[2].s_prev,  5.0);           // the clock: never moved by this
 }
 
-// The transform is EXACTLY invertible and composes: applying it twice with the second
-// Δ read from the already-shifted carry is the identity, which is what makes a chain of
-// handovers frame-consistent instead of drifting.
+// The transform is idempotent: a second application, with Δ read from the already
+// shifted carry, has Δ = 0 and is the identity.  This keeps a chain of handovers
+// frame-consistent instead of drifting.
 TEST(AmbFloatVehicleTest, AnchorStransformIsIdempotentOnceTheAnchorReadsZero) {
     LocalCarry in{-3.5, 2e-4, 100.0};
     LocalCarry other{12.0, 1e-4, 100.0};
@@ -973,15 +972,14 @@ TEST(AmbFloatVehicleTest, AnchorStransformIsIdempotentOnceTheAnchorReadsZero) {
 }
 
 // The value must converge to the true ambiguity, not merely become precise: a
-// variance that falls as 1/n around a WRONG level is exactly design risk #1 (the
-// card could deliver a correctly-converging state carrying a wrong level).
+// variance that falls as 1/n around a wrong level is design risk #1 (a correctly
+// converging state carrying a wrong level).
 //
-// The bar is the estimator's OWN claimed precision, not a hand-picked metre
-// figure: with zero epoch redundancy the ambiguity is separated from the LOS iono
-// by CODE, so the settled error is a metre-scale draw averaged over n folds and
-// any absolute bar would be a restatement of the noise model.  |error| < 3 sigma
-// of the carried variance is the honest statement, and it tests BOTH halves at
-// once — a variance that fell too fast would fail it even with the value right.
+// The bar is the estimator's own claimed precision, not a hand-picked metre figure.
+// With zero epoch redundancy the ambiguity is separated from the LOS iono by code, so
+// the settled error is a metre-scale draw averaged over n folds, and any absolute bar
+// would restate the noise model.  |error| < 3 sigma of the carried variance tests both
+// halves at once: a variance that fell too fast fails it even with the value right.
 TEST(AmbFloatVehicleTest, JointBlockFoldConvergesToTheTrueAmbiguity) {
     const RecursionResult j = runRecursion(/*joint=*/true, 30);
     const double e1  = std::abs(j.value_n[0]  - 7.5);
@@ -993,22 +991,22 @@ TEST(AmbFloatVehicleTest, JointBlockFoldConvergesToTheTrueAmbiguity) {
         << std::sqrt(j.var_n[29]) << " m)";
 }
 
-// D4 IN ONE ASSERTION, and the reason the two halves of the card are separable.
+// D4 in one assertion, and the reason the two halves of the card are separable.
 //
-// Add the drift the ambiguity absorbs (a phase-only receiver bias the model has no
-// state for) and BOTH routes' levels move — the level's CONTENT is not what the
-// fold fixes, which is exactly the "vehicle correct but not sufficient" branch of
-// §7.6's frozen readings.  What separates them is the variance they claim while it
-// happens: the legacy route has already collapsed, so its standardized error is far
-// larger.  That ratio is D4's σ̂₀ contrast (field 101 on the collapsed route, 0.23 on
-// the sim's block route) reproduced at the seam, on 30 folds instead of 6 hours.
+// With the drift the ambiguity absorbs (a phase-only receiver bias the model has no
+// state for), the levels on both routes move: the fold does not fix the level's
+// content, which is the "vehicle correct but not sufficient" branch of §7.6's frozen
+// readings.  The routes differ in the variance they claim while it happens: the legacy
+// route has already collapsed, so its standardized error is far larger.  That ratio is
+// D4's σ̂₀ contrast between the collapsed route and the block route, reproduced at the
+// seam on 30 folds.
 //
-// ⚠ The clean fixture (no drift) does NOT show this — there both routes land on the
-// truth and σ̂₀ stays near 1 whatever the variance does.  A collapsed variance is
-// only DISHONEST against something that moves; that is why the field's σ̂₀ grows with
-// arc age and why this case carries the drift explicitly rather than inheriting it.
+// The clean fixture (no drift) does not show this: there both routes land on the truth
+// and σ̂₀ stays near 1 whatever the variance does.  A collapsed variance is only wrong
+// relative to a quantity that moves, which is why the field's σ̂₀ grows with arc age
+// and why this case sets the drift explicitly.
 TEST(AmbFloatVehicleTest, LegacyDiagonalFoldClaimsAPrecisionTheDriftingLevelDoesNotDeserve) {
-    constexpr double kDrift = 0.004;    // 4 mm/epoch of un-modelled phase bias
+    constexpr double kDrift = 0.004;    // 4 mm/epoch of unmodelled phase bias
     const RecursionResult d = runRecursion(/*joint=*/false, 30, kDrift);
     const RecursionResult j = runRecursion(/*joint=*/true,  30, kDrift);
     const double zd = std::abs(d.value_n[29] - 7.5) / std::sqrt(d.var_n[29]);
@@ -1016,8 +1014,8 @@ TEST(AmbFloatVehicleTest, LegacyDiagonalFoldClaimsAPrecisionTheDriftingLevelDoes
     EXPECT_GT(zd, 2.0 * zj)
         << "legacy |error|/sigma = " << zd << " vs joint " << zj
         << " (legacy var " << d.var_n[29] << " vs joint " << j.var_n[29] << ")";
-    // …and the drift is genuinely absorbed by the carry on BOTH routes — the
-    // control that stops this passing because one route simply diverged.
+    // Control: the carry absorbs the drift on both routes, so the case cannot pass
+    // because one route simply diverged.
     EXPECT_GT(std::abs(d.value_n[29] - 7.5), 0.01);
     EXPECT_GT(std::abs(j.value_n[29] - 7.5), 0.01);
 }

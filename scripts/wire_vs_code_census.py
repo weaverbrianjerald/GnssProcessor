@@ -2,28 +2,28 @@
 """
 wire_vs_code_census.py - the wire-vs-CODE consistency census (SPEC_event_harness section 24.5).
 
-READ-ONLY.  Compares the network wire (products.txt C / P / B records) against the
+Read-only. Compares the network wire (products.txt C / P / B records) against the
 CODE 30 s RINEX clock and the CODE OSB .BIA the run's a-priori identifies, on the
 consumer-relevant, datum-invariant contrast
 
     D(s,L,t) = X(s,L,t) - cm_L(t),      cm_L(t) = median over satellites present at t of X(.,L,t)
 
-where X is the satellite-side term the consumer ADDS to its predicted observable,
-network minus CODE.  A float user is indifferent to any per-satellite CONSTANT and
-to any per-epoch COMMON-MODE difference; D's WITHIN-ARC variation is what reaches
-the position.  A second common-mode estimator (the per-epoch median of the
-satellite-wise DIFFERENCES, integrated - immune to a rotating satellite set) is
+where X is the satellite-side term the consumer adds to its predicted observable,
+network minus CODE. A float user is indifferent to any per-satellite constant and
+to any per-epoch common-mode difference; D's within-arc variation is what reaches
+the position. A second common-mode estimator (the per-epoch median of the
+satellite-wise differences, integrated, immune to a rotating satellite set) is
 reported beside the pre-registered per-epoch median so the reading is instrument-robust.
 
 Every field order, unit and sign below was taken from the source, not from memory:
 
-  products.txt WRITER  src/core/products/NetworkProductIO.cpp
+  products.txt writer  src/core/products/NetworkProductIO.cpp
     E,week,tow,iod_ssr,provider,solution,datum_changed[,consts]   :593-601
     R,sat[,sat...]  (retro-bump / declared re-realization set)    :620-623
     C,sat,clock_c0_m[,c1_m_s,clock_disc][,key=val...]             :633-637
     B,sat,signal,code_bias_m[,code_disc]                          :671-673
     P,sat,signal,bias_m,signal_integer,wl_integer[,disc][,sigma=] :677-680
-  products.txt READER  src/core/products/NetworkProductIO.cpp (LineAssembler)
+  products.txt reader  src/core/products/NetworkProductIO.cpp (LineAssembler)
     C: f[2]=clock_c0_m, f[3]=c1 (if no '='), f[4]=clock disc       :145-159
     B: f[3]=bias_m, f[4]=code disc                                 :184-188
     P: f[3]=bias_m, f[4]=si, f[5]=wl, f[6+]=disc | sigma=          :189-206
@@ -33,7 +33,7 @@ Every field order, unit and sign below was taken from the source, not from memor
   producer fill  NetworkEstimator.cpp:1042 clock_c0_m = x_s(c) (the residual-clock column);
     NetworkEmitStore.cpp:354 overrides it with the CLK-R held/rebased value when armed.
 
-  WHAT THE CONSUMER APPLIES (signs)
+  what the consumer applies (signs)
     emitter -> store, all +1:  rec.c0 = clock_c0_m                 NetworkProductEmitter.cpp:273
                                rec.bias_per_signal[sig] = bias     NetworkProductEmitter.cpp:385
                                entry.bias_m = npb.bias_m           NetworkProductEmitter.cpp:424
@@ -41,25 +41,25 @@ Every field order, unit and sign below was taken from the source, not from memor
     clock: clock_corr(s) = interpolateClock(CLK product) [seconds] GnssCorrections.cpp:161
            clock_corr += applyClockToBias(c0,c1,c2,hr,dt)          GnssCorrections.cpp:343-345
            applyClockToBias = (c0 + c1 dt + c2 dt^2 + hr)/c [m->s] SsrCorrectionStore.cpp:666-670
-           => the C record is a DELTA on the CODE clock: c*dt_net = c*dt_CODE + C_net
+           => the C record is a delta on the CODE clock: c*dt_net = c*dt_CODE + C_net
     modeled = range - c*sat_clock - c*rel + ... + bias_corr        PppModel.cpp:1489-1495
            bias_corr = enable_code_phase_bias ? getBiasCorrection : 0   PppModel.cpp:1485-1487
            getBiasCorrection returns the OSB entry's bias (m), +1  GnssCorrections.cpp:1766-1778
     SSR biases: kSsrCodeBiasSign = +1, kSsrPhaseBiasSign = +1      MeasurementModel.cpp:1608-1609
            predicted = modeled + ... + sat_clock_term + ssr_bias_term    MeasurementModel.cpp:1642-1644
-           (sat_clock_term = -x(sc_idx) is the PRODUCER's residual-clock state, :1587;
+           (sat_clock_term = -x(sc_idx) is the producer's residual-clock state, :1587;
             "obs.modeled has already removed the a-priori product clock", :1569-1576)
     S-line bias_sign is cross-checked only, never applied           NetworkProductIO.cpp:847
-    producer posture: enable_code_phase_bias = OFF (W6 forces it)  seed gnss_config.log; the wire
-           P/B are therefore ABSOLUTE biases in the producer's datum, not residuals to the OSB
-    FULL consumer inherits enable_code_phase_bias=false, estimate_sat_biases=!consume_clock
+    producer posture: enable_code_phase_bias = off (W6 forces it)  seed gnss_config.log; the wire
+           P/B are therefore absolute biases in the producer's datum, not residuals to the OSB
+    full consumer inherits enable_code_phase_bias=false, estimate_sat_biases=!consume_clock
                                                                    GnssConfigLoadNetwork.cpp:10629-10640
   => applied-term convention used here (network minus CODE, common -c*dt_CODE cancels):
        X_phase(s,L,t) = -C_net(s,t) + PB_net(s,L,t) - OSB_m(s,L)
        X_code (s,X,t) = -C_net(s,t) + B_net(s,X,t)  - OSB_m(s,X)
        raw clock contrast  c*dt_net - c*dt_CODE = C_net(s,t)   (de-medianed per epoch)
      plus the decomposition kinds  pb = PB_net - OSB  and  cb = B_net - OSB  (each de-medianed),
-     and the SPEC-literal same-sign form (+C_net + PB_net - OSB) as a control only.
+     and the spec-literal same-sign form (+C_net + PB_net - OSB) as a control only.
 
   CODE CLK  src/core/products/ProductParser.cpp
     "AS sat Y M D h m s NV clock_bias [sigma]" whitespace tokens, seconds  :509-548
@@ -69,7 +69,7 @@ Every field order, unit and sign below was taken from the source, not from memor
     obs1[24,4) obs2[29,4) start[34,14) end[49,14) unit[64,4) bias[69,21) std[91,13)  :1121-1131
     bias_m = ns * c * 1e-9  (+1)                                            :1240
   a-priori identity  ApplicationNetworkSetup.cpp:1097-1101 = getProductPath("SP3")+"+"+getProductPath("CLK");
-    getProductPath returns the FIRST product path with that extension (GnssConfig.cpp:67-78), so a
+    getProductPath returns the first product path with that extension (GnssConfig.cpp:67-78), so a
     three-day CLK set (128/129/130, "1045243 clocks" in the seed log) is named by its lexically-first
     file; the run's epochs (DOY 129) are served by the DOY-129 file (the 128 file ends 23:59:30 of 128).
 
@@ -305,10 +305,10 @@ def sig_of(key):
 
 
 def grp_of(key):
-    """Card GAL: the common-mode group of a key, (constellation letter, signal).  The
-    clock common mode is per constellation (each has its own gauge) and a signal name
+    """The common-mode group of a key: (constellation letter, signal). The clock
+    common mode is per constellation (each has its own gauge) and a signal name
     such as C1C exists in more than one constellation; on a single-system census this
-    partition is the per-signal one it always was."""
+    partition is the per-signal one it always was (card GAL)."""
     sat = key[0] if isinstance(key, tuple) else key
     return (sat[:1], sig_of(key))
 
@@ -419,7 +419,7 @@ def pooled_table(pool, pool_signed, steps_h, hours):
 
 
 def level_table(series, t0, hours):
-    """p50 / p95 per hour of |de-medianed value| - the between-satellite LEVEL, not within-arc."""
+    """p50 / p95 per hour of |de-medianed value|: the between-satellite level, not within-arc."""
     pool = defaultdict(list)
     for key, ser in series.items():
         for (t, d, disc) in ser:

@@ -1,8 +1,8 @@
 /**
  * @file NetworkSignalIntegrity.cpp
- * @brief Flicker/gap signal integrity — the band-state classifier, the unvetted
- *        phase demotion and the regain refloat.  See the header for the
- *        epistemics, the measured case and the ordering contract.
+ * @brief Flicker/gap signal integrity: the band-state classifier, the unvetted
+ *        phase demotion and the regain refloat.  The header explains why this is
+ *        not a detector, gives the design case and states the ordering contract.
  */
 
 #include "filter/NetworkSignalIntegrity.hpp"
@@ -23,17 +23,17 @@ namespace GnssProcessor {
 
 namespace {
 
-/// Drop a LOS record that has not been seen for this many PROCESSED epochs.  Purely
-/// a memory bound (the key set is stations x satellites, ~12 k at 305 stations, so
-/// this never binds in practice); one full day at 30 s.  A record dropped here makes
-/// the arc's eventual return read as a first sighting instead of a re-entry, which
-/// is the CONSERVATIVE direction — both are unvetted, only the census label differs,
-/// and the drop is counted so the label shift is never silent.
+/// Drop a LOS record that has not been seen for this many processed epochs (one
+/// full day at 30 s).  A memory bound only: the key set is stations x satellites,
+/// about 12 k at 305 stations, so it does not bind in practice.  A dropped record
+/// makes the arc's eventual return read as a first sighting instead of a re-entry.
+/// That is the conservative direction: both are unvetted, only the census label
+/// differs, and the drop is counted in arcs_forgotten.
 constexpr long long kArcForgetEp = 2880;
 
-/// Is this a PHASE observable key?  RINEX-3 codes on the uncombined producer path
-/// are always the raw 3-character forms ("L1C", "C2W", …), so the type character is
-/// the whole test.
+/// True for a phase observable key.  RINEX-3 codes on the uncombined producer path
+/// are always the raw 3-character forms ("L1C", "C2W", …), so the type character
+/// alone decides.
 inline bool isPhaseKey(const std::string& k) { return !k.empty() && k[0] == 'L'; }
 
 } // namespace
@@ -84,13 +84,13 @@ void networkSignalIntegrity(NetworkRunContext& ctx,
     auto& ctr  = ctx.counters.sig;
     ++ctr.epochs;
 
-    // RESUME WARMUP (spec ADDENDUM).  A warm resume restores TIGHT carries but no
+    // Resume warm-up (spec ADDENDUM).  A warm resume restores tight carries but no
     // detector state, so for the first revet_ep epochs the whole network is warm and
-    // unmonitored at once.  That case is invisible to the per-arc rule below — a
-    // freshly-empty band map makes every arc look like a first sighting, and a first
-    // sighting is deliberately exempt — so it is carried as its own countdown and
-    // OVERRIDES the per-arc verdict while it lasts.  Zero on every cold start, which
-    // is what keeps cold starts exempt by principle rather than by exception.
+    // unmonitored at once.  The per-arc rule below cannot see this case: an empty
+    // band map makes every arc look like a first sighting, and a first sighting is
+    // exempt.  The case is therefore carried as its own countdown and overrides the
+    // per-arc verdict while it lasts.  The countdown is zero on every cold start, so
+    // cold starts stay exempt by rule rather than by a special case.
     const bool resume_warmup = ctx.carry.si_resume_warmup_ep > 0;
     if (resume_warmup) --ctx.carry.si_resume_warmup_ep;
 
@@ -103,17 +103,16 @@ void networkSignalIntegrity(NetworkRunContext& ctx,
     };
 
     // Every LOS touched this epoch, so the disappearance sweep below can tell a LOS
-    // that VANISHED from one that is simply at an absent station.
+    // that vanished from one that is at an absent station.
     std::set<std::pair<int, std::string>> seen;
 
     for (std::size_t i = 0; i < stations.size(); ++i) {
         NetStation& st = stations[i];
-        // Republish the per-epoch demotion map unconditionally for every station,
-        // present or not: this seam is its SOLE owner (the three existing
-        // pinned_amb_sigma_scale clears all live inside election seams that do not
-        // run at all on the legacy single-pivot datum, so none of them could be
-        // reused), and a stale scale surviving into an epoch that did not
-        // re-derive it would demote an arc nobody classified.
+        // Republish the per-epoch demotion map for every station, present or not.
+        // This seam is its only owner (the three pinned_amb_sigma_scale clears sit
+        // inside election seams that do not run on the legacy single-pivot datum,
+        // so none of them can be reused), and a stale scale carried into an epoch
+        // that did not re-derive it would demote an arc that was not classified.
         std::map<std::string, double> new_scale;
         if (!present[i] || !st.sm) { st.phase_sigma_scale.swap(new_scale); continue; }
         const int si = static_cast<int>(i);
@@ -139,13 +138,13 @@ void networkSignalIntegrity(NetworkRunContext& ctx,
             if (cur.empty()) ++ctr.no_phase_epochs;
 
             // ---- (1) classify ------------------------------------------------
-            // Order is load-bearing: a gap DOMINATES a band event (an arc that was
-            // absent and returns with fewer bands is a RE-ENTRY, whose whole band
-            // set re-establishes, not a DEGRADED continuation of a set nobody
-            // observed across the gap), and a band event dominates the steady state.
+            // The order matters: a gap dominates a band event (an arc that was absent
+            // and returns with fewer bands is a Reentry, whose whole band set is
+            // re-established, not a Degraded continuation of a set nobody observed
+            // across the gap), and a band event dominates the steady state.
             SignalIntegrityState state = SignalIntegrityState::Stable;
             bool transition = false;
-            std::set<std::string> regained;   // FLICKER-REGAIN bands (INC-3a trigger)
+            std::set<std::string> regained;   // FlickerRegain bands (INC-3a trigger)
 
             if (first) {
                 state = SignalIntegrityState::New;
@@ -153,18 +152,17 @@ void networkSignalIntegrity(NetworkRunContext& ctx,
                 a.ref_bands = cur;
                 a.missing_since.clear();
                 ++ctr.new_arcs;
-                // Deliberately NO event row: at 305 stations the first processed
-                // epoch would write ~12 000 of them, which is a flood, not a signal.
-                // The counter carries the volume and the census reads it against
-                // `los_epochs`.
+                // No event row: at 305 stations the first processed epoch would
+                // write about 12 000 of them.  The counter carries the volume and the
+                // census reads it against `los_epochs`.
             } else if (gap >= 1) {
                 state = SignalIntegrityState::Reentry;
                 transition = true;
-                // The reference set re-establishes on what actually came back.  An
-                // arc that returns single-frequency therefore re-vets on ONE band
-                // and becomes STABLE again rather than being demoted forever — the
-                // standing-single-frequency policy is explicitly deferred (spec §7),
-                // and ever_dual keeps it visible in the census meanwhile.
+                // The reference set is re-established on the bands that came back.
+                // An arc that returns single-frequency therefore re-vets on one band
+                // and returns to full weight instead of staying demoted.  The standing
+                // single-frequency policy is deferred (spec §7); ever_dual keeps such
+                // arcs visible in the census.
                 a.ref_bands = cur;
                 a.missing_since.clear();
                 ++ctr.reentries;
@@ -181,9 +179,9 @@ void networkSignalIntegrity(NetworkRunContext& ctx,
                     auto mit = a.missing_since.find(b);
                     if (mit != a.missing_since.end()) {
                         // A reference band is back and the LOS never went away, so
-                        // NO producer-registered gap exists for it: this is the
-                        // FLICKER the card is named for, and the exact shape of the
-                        // measured G21 case.
+                        // no producer-registered gap exists for it.  This is the
+                        // flicker the card is named for (the shape of the G21 design
+                        // case).
                         regained.insert(b);
                         a.missing_since.erase(mit);
                         ++ctr.band_regain;
@@ -201,7 +199,7 @@ void networkSignalIntegrity(NetworkRunContext& ctx,
                          static_cast<double>(flicker_max), "refloat",
                          fmt::format("{};bands={}", *regained.begin(), cur.size()));
                 }
-                // Reference bands that are NOT present this epoch.
+                // Reference bands that are not present this epoch.
                 for (const std::string& b : a.ref_bands) {
                     if (cur.count(b)) continue;
                     if (a.missing_since.emplace(b, epoch_idx).second) {
@@ -217,13 +215,13 @@ void networkSignalIntegrity(NetworkRunContext& ctx,
                         }
                     }
                 }
-                // A band gone longer than the flicker window is treated as GENUINELY
-                // gone: it leaves the reference set, the arc re-vets on the reduced
-                // set, and its eventual return is a band GAIN (a fresh ambiguity the
-                // estimator births normally) rather than a flicker regain.  Without
-                // this the arc would sit DEGRADED — and hence demoted — for the rest
-                // of its life, which is the policy question spec §7 defers, not one
-                // this card is entitled to answer by omission.
+                // A band whose missing_since entry is more than flicker_max epochs
+                // old is treated as gone:
+                // it leaves the reference set, the arc re-vets on the reduced set, and
+                // its eventual return is a band gain (a fresh ambiguity the estimator
+                // creates normally) rather than a flicker regain.  Without this the arc
+                // would stay Degraded, and demoted, for the rest of its life, which
+                // would settle by default the policy question spec §7 defers.
                 for (auto mit = a.missing_since.begin(); mit != a.missing_since.end();) {
                     if (epoch_idx - mit->second > flicker_max) {
                         a.ref_bands.erase(mit->first);
@@ -250,25 +248,25 @@ void networkSignalIntegrity(NetworkRunContext& ctx,
             }
 
             // ---- (2) the vet verdict, and INC-2's disposition ----------------
-            // Tested BEFORE this epoch's increment, which is what makes the demoted
-            // window run from the transition epoch through the epoch that COMPLETES
-            // the vet: transition -> vet 0 (demoted), then revet_ep full-band epochs
-            // each demoted while counting up, and full weight resumes the epoch
-            // after.  That is the spec §6D arithmetic ("regain 19:25:30 ... demoted
-            // phase through 19:27:00" at K=3), and it is the reason the vet ends
-            // exactly when monitoring begins rather than one epoch before it.
+            // Tested before this epoch's increment, so the demoted window runs from
+            // the transition epoch through the epoch that completes the vet: the
+            // transition sets vet to 0 (demoted), each of the next revet_ep
+            // full-band epochs is demoted while the count rises, and full weight
+            // resumes the epoch after.  This is the spec §6D arithmetic ("regain
+            // 19:25:30 ... demoted phase through 19:27:00" at K=3); the vet ends when
+            // monitoring begins, not one epoch before.
             if (transition || !full_band) a.vet = 0;
             const bool unvetted = a.vet < revet_ep;
 
-            // The demotion's precondition (spec ADDENDUM): there must be WARM STATE
-            // for a slip to poison.  A phase row's damage potential is its weight
-            // times the TIGHTNESS of what it updates, and an arc that has never
-            // completed a re-vet in this run has none — a diffuse ambiguity (σ 1000 m)
-            // and no accumulated carry chord — so its own priors already ARE the
-            // demotion and vetting it would only slow its convergence.  A COLD START
-            // is therefore exempt by principle, not by a special case: every arc is
-            // un-converged there.  The RESUME WARMUP overrides this, and must: after a
-            // resume the carries are tight even though every arc looks brand new here.
+            // The demotion requires warm state for a slip to corrupt (spec ADDENDUM).
+            // The damage a phase row can do scales with its weight and with how
+            // tight the state it updates is.  An arc that has never completed a
+            // re-vet in this run has a diffuse ambiguity (σ 1000 m) and no
+            // accumulated carry chord, so its own priors already act as the demotion
+            // and vetting it would only slow its convergence.  A cold start is
+            // therefore exempt by rule: no arc has converged there.  The resume
+            // warm-up overrides this, because after a resume the carries are tight
+            // even though every arc looks new here.
             const bool has_warm_state = a.ever_stable || resume_warmup;
 
             if (unvetted) {
@@ -278,16 +276,15 @@ void networkSignalIntegrity(NetworkRunContext& ctx,
             }
             if (unvetted && has_warm_state) {
                 if (withhold) {
-                    // WITHHOLD: remove this LOS's PHASE observables for the epoch.
-                    // Done HERE, on the observation, rather than by zeroing the row
-                    // weight later: a zero-weight row still contributes its (live)
-                    // H column to the local block, so its ambiguity column would
-                    // enter A_r carrying no information and trip the per-station PD
-                    // guard — turning a per-arc demotion into a whole-station
-                    // exclusion, the exact hard drop the fallback doctrine forbids.
-                    // Erasing the observable makes the column all-zero, which the
-                    // existing dead-column scan already drops cleanly.
-                    // raw_observed is deliberately untouched: it belongs to the slip
+                    // WITHHOLD: remove this LOS's phase observables for the epoch.
+                    // This is done on the observation rather than by zeroing the row
+                    // weight later.  A zero-weight row still contributes its live H
+                    // column to the local block, so its ambiguity column would enter
+                    // A_r carrying no information and trip the per-station PD guard,
+                    // turning a per-arc demotion into a whole-station exclusion (the
+                    // hard drop the fallback rule avoids).  Erasing the observable
+                    // makes the column all-zero, which the existing dead-column scan
+                    // drops.  raw_observed is left untouched: it belongs to the slip
                     // detectors, which have already run this epoch and must keep
                     // seeing the true tracking state.
                     std::size_t n_removed = 0;
@@ -299,13 +296,13 @@ void networkSignalIntegrity(NetworkRunContext& ctx,
                         ++ctr.withheld_los_epochs;
                         ctr.withheld_rows += static_cast<long long>(n_removed);
                         // Prune this station's satellite phase-bias states for the
-                        // withheld signals, exactly as the coverage gate prunes a
-                        // thin key's.  Load-bearing: the anchor election runs AFTER
-                        // this seam and derives its candidates from the phase-bias
-                        // STATES (not from the observables), so without the prune it
-                        // could elect a datum pin here whose supporting row this
-                        // seam has just removed — the pin would silently fail to
-                        // fold and the gauge would lose a constraint.
+                        // withheld signals, the same way the coverage gate prunes a
+                        // thin key's.  Required: the anchor election runs after this
+                        // seam and derives its candidates from the phase-bias states
+                        // (not from the observables).  Without the prune it could
+                        // elect a datum pin whose supporting row this seam has just
+                        // removed; the pin would then fail to fold without a message
+                        // and the gauge would lose a constraint.
                         prune_pb = true;
                         for (const std::string& b : cur)
                             withheld_pb.insert(sat + "|" + b);
@@ -320,25 +317,25 @@ void networkSignalIntegrity(NetworkRunContext& ctx,
             }
 
             // ---- (3) INC-3: the reset response --------------------------------
-            // Reset, never repair: across a loss of lock nothing bounds the slip, so
-            // there is no value to correct toward — only a state to discard.  The
-            // insertion rides the EXACT funnel the MW / LLI / IF-TD detections use
+            // Reset rather than repair: across a loss of lock nothing bounds the
+            // slip, so there is no value to correct toward, only a state to discard.
+            // The insertion uses the same funnel as the MW / LLI / IF-TD detections
             // (a parallel reset path would be a second definition of "this arc
-            // re-taps fresh"), and it covers ALL of the LOS's bands because a
+            // re-taps fresh"), and it covers all of the LOS's bands because a
             // flicker window slips all of them at once.
             if (state == SignalIntegrityState::FlickerRegain
                 || state == SignalIntegrityState::Reentry) {
-                // The keys are built from THIS epoch's bands and are deliberately
-                // NOT gated on a live StateManager ambiguity.  `ensureRequiredStates`
-                // prunes every ambiguity whose phase observable is absent, with no
-                // grace epoch, so both a re-entering LOS and a regained band have
-                // NO state at this point — gating on one would make every counter
-                // below read zero and every insertion a no-op, which is exactly the
-                // "clean log over dead wiring" failure.  The funnel is keyed by
-                // STRING and its consumers resolve the key against THIS epoch's
-                // arcs, so an insertion for a key PASS B is about to allocate lands
-                // correctly; `markAmbiguityPendingReseed` is a plain set insert and
-                // is likewise safe ahead of the allocation.
+                // The keys are built from this epoch's bands and are not gated on a
+                // live StateManager ambiguity.  `ensureRequiredStates` prunes every
+                // ambiguity whose phase observable is absent, with no grace epoch
+                // (apart from keys held by the soft-LLI / gap bridge), so a
+                // re-entering LOS and a regained band normally have no state at this
+                // point.  Gating on one would make every counter below read zero and
+                // every insertion a no-op while the log stayed clean.  The funnel is
+                // keyed by string and its consumers resolve the key against this
+                // epoch's arcs, so an insertion for a key PASS B is about to allocate
+                // lands correctly; `markAmbiguityPendingReseed` is a plain set insert
+                // and is likewise safe ahead of the allocation.
                 std::vector<std::string> amb_keys;
                 amb_keys.reserve(cur.size());
                 bool any_marked = false, any_state = false;
@@ -352,25 +349,24 @@ void networkSignalIntegrity(NetworkRunContext& ctx,
                 }
 
                 if (state == SignalIntegrityState::Reentry && !amb_keys.empty()) {
-                    // ASSERT the spec's premise; do NOT act on it.  "True REENTRY
-                    // already refloats via the funnel — no change, but assert it with
-                    // a counter" (spec §2 INC-3a).  Acting here would push ~1.7
-                    // extra funnel entries per epoch into a channel the Iono-2 v3k
-                    // erase policy is tuned on, so the honest move is to MEASURE the
-                    // premise and let the number decide the next card.
-                    // Guarded on a non-empty band set: a CODE-ONLY re-entry (measured
-                    // — G21 @ BSHM returns with bands=0) has no ambiguity to refloat,
-                    // so counting it as "not already refloated" would inflate the very
-                    // number the premise is judged on with cases the premise does not
-                    // cover.
+                    // Count against the spec's premise without acting on it: "true
+                    // REENTRY already refloats via the funnel; no change, but assert
+                    // it with a counter" (spec §2 INC-3a).  Acting here would add
+                    // about 1.7 funnel entries per epoch to a channel the Iono-2 v3k
+                    // erase policy is tuned on, so the premise is measured and the
+                    // count decides any follow-up card.
+                    // Guarded on a non-empty band set: a code-only re-entry (bands=0,
+                    // observed for G21 at BSHM00ISR) has no ambiguity to refloat, and
+                    // counting it as "not already refloated" would inflate the number
+                    // the premise is judged on with cases the premise does not cover.
                     if (any_marked) ++ctr.reentry_already_refloated;
                     else            ++ctr.reentry_unrefloated;
                     if (any_state)  ++ctr.reentry_amb_state_live;
 
-                    // INC-3c audit: does an LLI raised ON a re-entry epoch actually
-                    // reach the refloat drain when the arc is too immature for
-                    // MW/IF-TD?  The PASS-A drains ran before this seam, so what is
-                    // read here is exactly what they left.
+                    // INC-3c audit: whether an LLI raised on a re-entry epoch reaches
+                    // the refloat drain when the arc is too young for MW/IF-TD.  The
+                    // PASS-A drains ran before this seam, so the funnel read here is
+                    // what they left.
                     bool lli = false;
                     for (const auto& [okey, flag] : obs.lli_flags)
                         if (isPhaseKey(okey) && (flag & 0x01)) { lli = true; break; }
@@ -379,18 +375,17 @@ void networkSignalIntegrity(NetworkRunContext& ctx,
                         if (any_marked) ++ctr.lli_at_reentry_funnelled;
                     }
                 } else if (state == SignalIntegrityState::FlickerRegain && refloat_on) {
-                    // FLICKER-REGAIN: reset, unconditionally.  No detector can see a
-                    // flicker — MW and GF both need the SAME dual pair on both sides
-                    // of the step, and the missing band is precisely what breaks that
-                    // — so `any_marked` is expected false and is not consulted.
+                    // FlickerRegain: reset unconditionally.  No detector can see a
+                    // flicker (MW and GF both need the same dual pair on both sides
+                    // of the step, and the missing band breaks that), so `any_marked`
+                    // is expected false and is not consulted.
                     long long n_ins = 0, n_seed = 0;
                     for (const std::string& amb : amb_keys) {
-                        // Mirror the MW/LLI drain's exact gating (NetworkSlipQc).
-                        // The RAW set too: a band that physically vanished and came
-                        // back IS a raw observable event, so the Iono-2 v3k
-                        // erase-policy split must ERASE this line of sight's GM
-                        // deviation rather than D5-KEEP a level carried across a
-                        // loss of lock.
+                        // Same gating as the MW/LLI drain (NetworkSlipQc).  The raw
+                        // set is written too: a band that vanished and came back is a
+                        // raw observable event, so the Iono-2 v3k erase-policy split
+                        // must erase this line of sight's GM deviation rather than
+                        // D5-KEEP a level carried across a loss of lock.
                         if (carry_invariant) {
                             carry_slipped_raw.insert({si, amb});
                             if (carry_slipped_ambs.insert({si, amb}).second) ++n_ins;
@@ -426,13 +421,11 @@ void networkSignalIntegrity(NetworkRunContext& ctx,
     }
 
     // --- Disappearance sweep + record ageing -------------------------------
-    // A LOS that was present at the PREVIOUS processed epoch and is absent now, at
-    // a station that IS present, is the "(a) LOS dropped on band loss" candidate the
-    // census exists to size.  It is deliberately measured against
-    // sf_continuation_epochs rather than replacing it: if the producer DROPS a
-    // degrading arc, this count is large and the continuation count near zero; if it
-    // CONTINUES it single-frequency, the reverse.  Neither number alone answers the
-    // audit, and neither assumes the answer.
+    // A LOS that was present at the previous processed epoch and is absent now, at a
+    // station that is present, is the "(a) LOS dropped on band loss" candidate the
+    // census sizes.  It is read against sf_continuation_epochs: if the producer drops
+    // a degrading arc, this count is large and the continuation count near zero; if
+    // it continues the arc single-frequency, the reverse.  The audit needs both.
     for (auto it = arcs.begin(); it != arcs.end();) {
         const int si = it->first.first;
         SignalIntegrityArc& a = it->second;

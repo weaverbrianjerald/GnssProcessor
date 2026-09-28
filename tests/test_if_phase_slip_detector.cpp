@@ -1,28 +1,27 @@
 /**
  * @file test_if_phase_slip_detector.cpp
- * @brief First dedicated unit coverage of IfPhaseSlipDetector — the
- *        between-satellite / between-epoch IF phase slip detector — with the
- *        2026-07-21 Card-R reference-gate hardening
- *        (docs/SPEC_slip_qc_hardening.md §2, MUST R7) as the focus.
+ * @brief Unit tests for IfPhaseSlipDetector, the between-satellite,
+ *        between-epoch IF phase slip detector, focused on the reference-gate
+ *        hardening (Card R; docs/SPEC_slip_qc_hardening.md §2, requirement R7).
  *
- * The whole chain had ZERO dedicated tests before this file (spec rule 7).
- * Everything here drives the PUBLIC detect() API with synthetic uncombined
+ * Spec requirement R7 calls for this dedicated coverage of the chain.
+ * Every case drives the public detect() API with synthetic uncombined
  * (PPP-RTK) observation streams: each PppObservation carries phase on two
  * bands (L1C, L2W) in both @c observed and @c modeled, and the detector
- * synthesizes the IF OMC itself.  Because the IF coefficients satisfy
- * c1 + c2 == 1 exactly, giving BOTH bands the same observed-minus-modeled
- * value makes the detector's internal IF OMC equal that value — so every
- * double difference below is a DESIGNED quantity, not a derived one, and
- * every threshold crossing is a designed margin rather than a coin flip.
+ * forms the IF OMC itself.  Because the IF coefficients satisfy c1 + c2 == 1
+ * exactly, giving both bands the same observed-minus-modeled value makes the
+ * detector's internal IF OMC equal to that value.  Every double difference
+ * below is therefore a designed quantity, and every threshold crossing has a
+ * designed margin.
  *
- * Unless a case says otherwise the detector runs with setDeferFlagging(true):
- * that is the NETWORK wiring Card R hardens, and in that mode ONLY the
+ * Unless a case says otherwise the detector runs with setDeferFlagging(true),
+ * the network wiring that card R hardens.  In that mode only the
  * reference-slip branch pushes reset keys, so a nonempty return from detect()
- * is unambiguous evidence about the reference gate.  The self-contained
- * (user/kinematic) mode required by MUST R5 has its own case at the end.
+ * is evidence about the reference gate alone.  The self-contained
+ * (user/kinematic) mode required by R5 has its own case at the end.
  *
- * Card-R cases (spec R7 names them verbatim):
- *   - legacy / gate-OFF byte behaviour (the byte-identity guard),
+ * Card-R cases (the names are those listed in spec R7):
+ *   - legacy / gate-off byte behaviour (the byte-identity guard),
  *   - step-fires-once,
  *   - drift-does-not-refire (the audit's 9-consecutive-epoch pattern),
  *   - thin-family defer (both directions),
@@ -56,7 +55,7 @@ constexpr double kF1 = Constants::GPS_L1_FREQ;
 constexpr double kF2 = Constants::GPS_L2_FREQ;
 
 /// IF wavelength |c1·λ1 − c2·λ2| with c_i = f_i²/(f1² − f2²): ≈ 0.10695 m for
-/// GPS L1/L2.  This is the detector's PHYSICAL floor — the legacy reference
+/// GPS L1/L2.  It sets the detector's physical floor: the legacy reference
 /// gate fires at |median(non-ref ΔΔ)| > floor_frac·λ_IF = 0.5·λ_IF ≈ 5.35 cm.
 const double kLambdaIf =
     std::abs((kF1 * kF1 / (kF1 * kF1 - kF2 * kF2)) * (Constants::SPEED_OF_LIGHT / kF1)
@@ -65,15 +64,15 @@ const double kLambdaIf =
 /// The legacy fire threshold (and the armed gate's physical floor).
 const double kRefFloorM = 0.5 * kLambdaIf;
 
-/// The ambiguity reset key the reference branch emits for our synthetic pair
-/// (`<ref sat>_<phase IF key>`, and the uncombined path synthesizes the key
-/// as "sig1_sig2").
+/// The ambiguity reset key the reference branch emits for the synthetic pair
+/// (`<ref sat>_<phase IF key>`; the uncombined path forms the IF key as
+/// "sig1_sig2").
 std::string refKey(const std::string& sat) { return sat + "_L1C_L2W"; }
 
 /// Deterministic sub-millimetre phase wobble (m).  Keeps the non-reference
-/// family's dispersion non-degenerate — a MAD of exactly zero would make the
-/// Card-R coherence test vacuous — while staying three orders of magnitude
-/// below the 5.35 cm physical floor, so it can never move a verdict.
+/// family's dispersion non-degenerate (a MAD of exactly zero would make the
+/// card-R coherence test vacuous) while staying two orders of magnitude below
+/// the 5.35 cm physical floor, so it cannot change a verdict.
 constexpr double kWobbleM[8] = { 0.0004, -0.0003, 0.0002,  0.0005,
                                 -0.0006,  0.0001, -0.0002, 0.0003 };
 double wobble(std::size_t epoch, std::size_t sat) {
@@ -118,8 +117,8 @@ std::vector<PppObservation> makeEpoch(double tow, std::size_t epoch_idx,
     return epoch;
 }
 
-/// Card-R parameters as the network arms them: spec defaults, gate ON.
-/// The header defaults ARE the shipped config defaults (pinned by
+/// Card-R parameters as the network arms them: spec defaults, gate on.
+/// The header defaults equal the shipped config defaults (pinned by
 /// HeaderDefaultsMatchTheShippedConfigDefaults below), so arming nothing else
 /// keeps every case here testing the gate the field actually runs.
 IfPhaseSlipDetector::RefGateParams armedGate() {
@@ -156,7 +155,7 @@ struct IfHarness {
 };
 
 /// A six-satellite GPS family: G01 is the only satellite above the detector's
-/// 45 deg reference-retention threshold, so it is elected once and retained —
+/// 45 deg reference-retention threshold, so it is elected once and retained,
 /// which makes the reference identity a controlled variable.
 ElevState sixSatElevations() {
     return { { "G01", 80.0 }, { "G02", 70.0 }, { "G03", 40.0 },
@@ -168,16 +167,16 @@ OmcState sixSatOmc() {
              { "G04", 0.21 }, { "G05", -0.15 }, { "G06", 0.05 } };
 }
 
-/// Every HARDENED-GATE Card-R counter is zero (the gate never ran).
+/// Every hardened-gate card-R counter is zero (the gate never ran).
 ///
-/// @warning @c gate_opportunities / @c gate_flags are DELIBERATELY absent here.
-/// They are the tier-T1r flag-rate pair and count UNCONDITIONALLY — the legacy
+/// @warning @c gate_opportunities / @c gate_flags are left out on purpose.
+/// They are the tier-T1r flag-rate pair and count unconditionally: the legacy
 /// reference condition runs and acts whether or not the gate is armed, so on a
-/// legacy lineage they are the ONLY reference-arm telemetry there is.  Adding
-/// them to this helper would make the gate-OFF cases demand they stay zero,
-/// which is precisely the invariant-#4 blindness this pair exists to remove
+/// legacy lineage they are the only reference-arm telemetry.  Including them
+/// here would make the gate-off cases require them to stay zero, the
+/// invariant-#4 gap this pair exists to close
 /// (docs/SPEC_amb_iono_split_overcount.md §6.14.5 defect 1).  The positive
-/// assertion lives in FlagRateCountersCountTheLegacyArmToo below.
+/// assertion is in FlagRateCountersCountTheLegacyArmToo below.
 void expectAllCountersZero(const IfPhaseSlipDetector::RefGateCounters& c) {
     EXPECT_EQ(c.legacy_candidates, 0);
     EXPECT_EQ(c.fires, 0);
@@ -192,13 +191,11 @@ void expectAllCountersZero(const IfPhaseSlipDetector::RefGateCounters& c) {
 // Tier T1r + the pool-scale reference marking (§6.14.5 defects 1 and 2)
 // ---------------------------------------------------------------------------
 
-// Defect 1.  `network_flag_rates.csv` T1 counts only the network POOL arm, so
-// it read "opportunities=2754791 flags=0" for a 24 h run in which this
-// per-station REFERENCE arm drove 1917 acting refloats — the ON-path telemetry
-// did not see the ON path.  The T1r pair fixes that, and it must count on the
-// LEGACY path too: that is the configuration where no other counter moves at
-// all, so a conditional increment would leave the tier reading zero on exactly
-// the lineages that have no other instrument.
+// Defect 1.  Tier T1 in `network_flag_rates.csv` counts only the network pool
+// arm, so it does not see refloats driven by this per-station reference arm.
+// The T1r pair counts the reference arm, and it counts on the legacy path too:
+// no other counter moves in that configuration, so a conditional increment
+// would leave the tier at zero on the lineages that have no other instrument.
 TEST(IfPhaseSlipRefGate, FlagRateCountersCountTheLegacyArmToo) {
     IfHarness h;                       // never calls setRefGate => legacy
     const ElevState elev = sixSatElevations();
@@ -213,24 +210,24 @@ TEST(IfPhaseSlipRefGate, FlagRateCountersCountTheLegacyArmToo) {
     EXPECT_EQ(h.det.refGateCounters().gate_opportunities, 1);
     EXPECT_EQ(h.det.refGateCounters().gate_flags, 0);
 
-    // Epoch 2: a reference slip. One more opportunity, and this one FIRES.
+    // Epoch 2: a reference slip. One more opportunity, and this one fires.
     omc["G01"] -= 0.30;
     ASSERT_EQ(h.step(2, omc, elev).size(), 1u);
     EXPECT_EQ(h.det.refGateCounters().gate_opportunities, 2);
     EXPECT_EQ(h.det.refGateCounters().gate_flags, 1);
 
-    // The gate-OFF invariant still holds for every HARDENED counter: T1r is
-    // telemetry, and arming it changed no decision.
+    // The gate-off invariant still holds for every hardened counter: T1r is
+    // telemetry and changes no decision.
     expectAllCountersZero(h.det.refGateCounters());
 
-    // One opportunity per station-epoch-constellation — NOT per satellite.
-    // (T1's denominator is per-sample; conflating the two is what hid this.)
+    // One opportunity per station-epoch-constellation, not per satellite.
+    // (T1's denominator is per sample; the two are different units.)
     EXPECT_TRUE(h.step(3, omc, elev).empty());
     EXPECT_EQ(h.det.refGateCounters().gate_opportunities, 3);
     EXPECT_EQ(h.det.refGateCounters().gate_flags, 1);
 }
 
-// The armed gate counts the same opportunities; only the VERDICT differs.
+// The armed gate counts the same opportunities; only the verdict differs.
 // Pins that the T1r denominator is gate-independent, so an A/B across
 // `if_phase_td_ref_gate` compares two rates over the same denominator.
 TEST(IfPhaseSlipRefGate, FlagRateOpportunitiesAreIndependentOfArming) {
@@ -248,13 +245,13 @@ TEST(IfPhaseSlipRefGate, FlagRateOpportunitiesAreIndependentOfArming) {
 }
 
 // Defect 2.  The network pool arm builds its robust scale from
-// getLastIfJumps(), which includes the reference satellite — whose double
+// getLastIfJumps(), which includes the reference satellite.  Its double
 // difference is identically 0 by construction, since grad(ref) = OMC(ref) −
-// OMC(ref) = 0 every epoch.  Those exact zeros sit at the centre of the
-// distribution and deflate the MAD (measured 16.0 % on a 24 h / 60 sta run).
-// The pool cannot see which satellite is the reference, so the detector must
-// mark it — this pins both halves of that contract: the flag is set on exactly
-// one satellite, and the value it guards really is the structural zero.
+// OMC(ref) = 0 every epoch.  These exact zeros sit at the centre of the
+// distribution and deflate the MAD.  The pool cannot tell which satellite is
+// the reference, so the detector marks it.  This test pins both halves of that
+// contract: the flag is set on exactly one satellite, and the value it guards
+// is the structural zero.
 TEST(IfPhaseSlipRefGate, ReferenceSampleIsMarkedAndIsAStructuralZero) {
     IfHarness h;
     const ElevState elev = sixSatElevations();
@@ -270,7 +267,7 @@ TEST(IfPhaseSlipRefGate, ReferenceSampleIsMarkedAndIsAStructuralZero) {
         if (!jp.is_reference) continue;
         ++n_ref;
         EXPECT_EQ(sat, "G01");            // the retained 80 deg reference
-        EXPECT_TRUE(jp.valid);            // it IS a sample the pool would use
+        EXPECT_TRUE(jp.valid);            // it is a sample the pool would use
         EXPECT_DOUBLE_EQ(jp.delta_grad_m, 0.0);   // ...and it is exactly zero
     }
     EXPECT_EQ(n_ref, 1u);                 // exactly one per constellation
@@ -281,14 +278,14 @@ TEST(IfPhaseSlipRefGate, ReferenceSampleIsMarkedAndIsAStructuralZero) {
 }
 
 // ---------------------------------------------------------------------------
-// R7 case 1 — legacy (gate OFF) behaviour is untouched
+// Legacy (gate off) behaviour is unchanged (R7 case 1)
 // ---------------------------------------------------------------------------
 
 // The byte-identity guard.  With a default-constructed RefGateParams
-// (enable == false) a common step across the non-reference double differences
-// larger than 0.5·λ_IF must still push the reference reset key exactly as it
-// did before Card R, and NO counter may move — an armed-looking counter with
-// the gate off would mean the hardened path is running on the legacy config.
+// (enable == false), a common step across the non-reference double differences
+// larger than 0.5·λ_IF still pushes the reference reset key as the pre-card-R
+// detector did, and no hardened counter moves.  A moving counter with the gate
+// off would mean the hardened path runs on the legacy config.
 TEST(IfPhaseSlipRefGate, LegacyGateOffStillFiresAndLeavesCountersZero) {
     IfHarness h;                       // never calls setRefGate => legacy
     const ElevState elev = sixSatElevations();
@@ -297,7 +294,7 @@ TEST(IfPhaseSlipRefGate, LegacyGateOffStillFiresAndLeavesCountersZero) {
     EXPECT_TRUE(h.step(0, omc, elev).empty());   // no previous epoch yet
     EXPECT_TRUE(h.step(1, omc, elev).empty());   // quiet
 
-    // A reference slip IS a common step: shifting the reference's own OMC by
+    // A reference slip is a common step: shifting the reference's own OMC by
     // −0.30 m moves every non-reference double difference by +0.30 m.
     omc["G01"] -= 0.30;
     const auto keys = h.step(2, omc, elev);
@@ -305,7 +302,7 @@ TEST(IfPhaseSlipRefGate, LegacyGateOffStillFiresAndLeavesCountersZero) {
     EXPECT_EQ(keys.front(), refKey("G01"));
     expectAllCountersZero(h.det.refGateCounters());
 
-    // The step was a ONE-epoch event: the level stays put, so the next epoch's
+    // The step is a one-epoch event: the level stays put, so the next epoch's
     // double differences are back at zero and nothing re-fires.
     EXPECT_TRUE(h.step(3, omc, elev).empty());
     expectAllCountersZero(h.det.refGateCounters());
@@ -327,13 +324,13 @@ TEST(IfPhaseSlipRefGate, LegacyGateOffIgnoresSubThresholdCommonStep) {
 }
 
 // ---------------------------------------------------------------------------
-// R7 case 2 — step-fires-once
+// Step fires once (R7 case 2)
 // ---------------------------------------------------------------------------
 
-// A genuine reference slip is a one-epoch COMMON step: every non-reference
+// A genuine reference slip is a one-epoch common step: every non-reference
 // double difference moves by the same large amount with noise-level scatter.
-// The armed gate must fire it exactly once (R2's first half) and the counters
-// must show the legacy candidate was adjudicated, not merely passed through.
+// The armed gate fires it exactly once (first half of R2), and the counters
+// show the legacy candidate was adjudicated, not merely passed through.
 TEST(IfPhaseSlipRefGate, ArmedGateFiresGenuineStepExactlyOnce) {
     IfHarness h;
     h.det.setRefGate(armedGate());
@@ -362,20 +359,20 @@ TEST(IfPhaseSlipRefGate, ArmedGateFiresGenuineStepExactlyOnce) {
 }
 
 // ---------------------------------------------------------------------------
-// R7 case 3 — drift-does-not-refire (the L1 defect)
+// Drift does not re-fire (R7 case 3, defect L1)
 // ---------------------------------------------------------------------------
 
-// The audit's JPLM00USA / MKEA00USA G10 family: a persistent SUB-slip drift
-// whose per-satellite increments scatter as widely as their own median.  The
-// legacy gate re-fires on it every single epoch (9 consecutive at JPLM); the
-// armed gate must not, because the family never agrees on a common step.
+// A persistent sub-slip drift whose per-satellite increments scatter as widely
+// as their own median (the audit's JPLM00USA / MKEA00USA G10 pattern).  The
+// legacy gate re-fires on it every epoch; the armed gate does not, because the
+// family never agrees on a common step.
 //
-// Both arms run the SAME stream, so the contrast is the fix itself.
+// Both arms run the same stream, so the contrast isolates the gate.
 TEST(IfPhaseSlipRefGate, ArmedGateDriftDoesNotRefireLegacyDoes) {
     const ElevState elev = sixSatElevations();
     // Per-epoch drift increments: median 0.08 m clears the 5.35 cm legacy
-    // floor every epoch, but the scatter about that median is of the SAME
-    // order (MAD-sigma ≈ 7.4 cm) — the signature of drift, not of a step.
+    // floor every epoch, but the scatter about that median is of the same
+    // order (MAD-sigma ≈ 7.4 cm), the signature of drift rather than a step.
     const std::map<std::string, double> drift = {
         { "G02", 0.02 }, { "G03", 0.05 }, { "G04", 0.08 },
         { "G05", 0.13 }, { "G06", 0.20 } };
@@ -416,7 +413,7 @@ TEST(IfPhaseSlipRefGate, ArmedGateDriftDoesNotRefireLegacyDoes) {
     // makes an unbounded per-epoch stream impossible.
     EXPECT_LE(c.fires, static_cast<long long>(armedGate().max_consecutive));
     EXPECT_EQ(c.fires, 0);
-    // The gate genuinely RAN (invariant 4): the legacy condition held on all
+    // The gate ran (invariant #4): the legacy condition held on all
     // nine double-difference epochs and every one of them was suppressed.
     EXPECT_EQ(c.legacy_candidates, 9);
     EXPECT_GT(c.suppressed_scale + c.suppressed_thin, 0);
@@ -426,14 +423,14 @@ TEST(IfPhaseSlipRefGate, ArmedGateDriftDoesNotRefireLegacyDoes) {
 }
 
 // ---------------------------------------------------------------------------
-// R7 case 4 — thin-family defer (R3, both directions)
+// Thin-family defer, both directions (R7 case 4, R3)
 // ---------------------------------------------------------------------------
 
 // With only three non-reference double differences (the audit's L1C_L2L
 // census was ~3.7 arcs/station) the median is not a trustworthy common-mode
 // estimate, so the physical floor widens by thin_widen (3x => 16.0 cm) and the
-// deferral is COUNTED.  A modest exceedance must defer; a large coherent one
-// must still fire — "widen", never "ignore".
+// deferral is counted.  A modest exceedance defers; a large coherent one still
+// fires.  A thin family widens the threshold; it does not disable the gate.
 TEST(IfPhaseSlipRefGate, ThinFamilyDefersModestStepButStillFiresLargeOne) {
     IfHarness h;
     const auto gate = armedGate();
@@ -475,15 +472,15 @@ TEST(IfPhaseSlipRefGate, ThinFamilyDefersModestStepButStillFiresLargeOne) {
 }
 
 // ---------------------------------------------------------------------------
-// R7 case 5 — reference handover offset correctness
+// Reference handover offset correctness (R7 case 5)
 // ---------------------------------------------------------------------------
 
 // When the reference changes, every stored gradient is expressed against the
-// OLD reference and every new one against the NEW one — a constant frame shift
-// of (OMC_old − OMC_new) that the median-offset rebase in
-// processDoubleDifferences must remove.  Here that shift is 0.60 m, more than
-// ELEVEN times the 5.35 cm fire floor, so a broken rebase would manufacture a
-// reference "slip" out of a perfectly quiet stream.
+// old reference and every new one against the new reference: a constant frame
+// shift of (OMC_old − OMC_new) that the median-offset rebase in
+// processDoubleDifferences removes.  Here that shift is 0.60 m, more than
+// eleven times the 5.35 cm fire floor, so a broken rebase would produce a
+// reference "slip" from a quiet stream.
 //
 // The handover is forced the way the field forces it: the incumbent sinks
 // below the 45 deg retention threshold.
@@ -495,7 +492,7 @@ TEST(IfPhaseSlipRefGate, ReferenceHandoverDoesNotManufactureASlip) {
         ElevState elev = { { "G01", 80.0 }, { "G02", 70.0 }, { "G03", 40.0 },
                            { "G04", 35.0 }, { "G05", 30.0 } };
         // G01 (the incumbent reference) and G02 (its successor) sit 0.60 m
-        // apart in OMC — that IS the frame shift the rebase has to absorb.
+        // apart in OMC; that is the frame shift the rebase has to absorb.
         OmcState omc = { { "G01", 0.00 }, { "G02", 0.60 }, { "G03", -0.45 },
                          { "G04", 0.30 }, { "G05", -0.20 } };
         ASSERT_GT(std::abs(omc.at("G01") - omc.at("G02")), 10.0 * kRefFloorM);
@@ -505,7 +502,7 @@ TEST(IfPhaseSlipRefGate, ReferenceHandoverDoesNotManufactureASlip) {
                 << (gate_on ? "armed" : "legacy") << " pre-handover epoch " << e;
 
         // Handover epoch: G01 drops to 30 deg, so the reference is re-elected
-        // to G02 (highest remaining).  G01 stays in the family — this is a
+        // to G02 (highest remaining).  G01 stays in the family: this is a
         // reference change, not an arc death.
         elev["G01"] = 30.0;
         EXPECT_TRUE(h.step(3, omc, elev).empty())
@@ -533,24 +530,24 @@ TEST(IfPhaseSlipRefGate, ReferenceHandoverDoesNotManufactureASlip) {
 }
 
 // ---------------------------------------------------------------------------
-// R7 case 6 — persistence escalation
+// Persistence escalation (R7 case 6)
 // ---------------------------------------------------------------------------
 
-// A COHERENT step repeated on the same reference every epoch is the pathological
-// case R2 must bound: the gate fires at most max_consecutive times, then stops
-// re-firing and escalates to a forced reference re-selection, moving the
-// offender into the network pool arm where an elevation-normalized, empirically
-// scaled residual judges it.
+// A coherent step repeated on the same reference every epoch is the case R2
+// bounds: the gate fires at most max_consecutive times, then stops re-firing
+// and escalates to a forced reference re-selection, which moves the offender
+// into the network pool arm, where an elevation-normalized, empirically scaled
+// residual judges it.
 //
-// The re-selection is verified through the PUBLIC API twice over: (a) at the
-// re-election epoch the offending satellite appears as a large NON-reference
-// double difference while every other satellite sits at zero — impossible if it
-// were still the reference (its own double difference is identically zero by
-// construction); and (b) the next fire names the NEW reference in its reset key.
-// Run at the SHIPPED cap (1 — the value the network actually arms) and at 2, so
-// the run-length arithmetic itself is covered rather than one operating point:
-// the gate must fire on each of the first `cap` consecutive epochs and escalate
-// on the (cap+1)-th, whatever `cap` is.
+// The re-selection is verified through the public API in two ways: (a) at the
+// re-election epoch the offending satellite appears as a large non-reference
+// double difference while every other satellite sits at zero, which cannot
+// happen while it is the reference (its own double difference is identically
+// zero by construction); and (b) the next fire names the new reference in its
+// reset key.  The test runs at the shipped cap (1, the value the network arms)
+// and at 2, so it covers the run-length arithmetic rather than one operating
+// point: the gate fires on each of the first `cap` consecutive epochs and
+// escalates on the (cap+1)-th.
 TEST(IfPhaseSlipRefGate, PersistentCoherentStepEscalatesToReferenceReselection) {
   for (const int cap : { 1, 2 }) {
     SCOPED_TRACE("max_consecutive = " + std::to_string(cap));
@@ -579,8 +576,8 @@ TEST(IfPhaseSlipRefGate, PersistentCoherentStepEscalatesToReferenceReselection) 
         EXPECT_EQ(c.reselects, 0);
     }
 
-    // Epoch cap+1: one consecutive step too many trips the cap.  No event, no
-    // refloat — the gate escalates instead.
+    // Epoch cap+1: one consecutive step more trips the cap.  No event and no
+    // refloat; the gate escalates instead.
     omc["G01"] -= kStep;
     EXPECT_TRUE(h.step(static_cast<std::size_t>(cap + 1), omc, elev).empty());
     {
@@ -592,9 +589,9 @@ TEST(IfPhaseSlipRefGate, PersistentCoherentStepEscalatesToReferenceReselection) 
 
     // Epoch cap+2: the forced re-election runs (G01 excluded) -> G02 becomes the
     // reference.  The handover rebase absorbs the common mode, so the drifting
-    // G01 now shows up as an ORDINARY non-reference double difference: this is
+    // G01 now shows up as an ordinary non-reference double difference: this is
     // the hand-off to the pool arm, and it is only possible if the reference
-    // actually changed.
+    // changed.
     omc["G01"] -= kStep;
     EXPECT_TRUE(h.step(static_cast<std::size_t>(cap + 2), omc, elev).empty());
     {
@@ -609,9 +606,9 @@ TEST(IfPhaseSlipRefGate, PersistentCoherentStepEscalatesToReferenceReselection) 
             EXPECT_NEAR(jumps.at(sat).delta_grad_m, 0.0, 0.01) << sat;
     }
 
-    // Epoch cap+3: a genuine coherent slip on the NEW reference fires, and the
-    // reset key NAMES it — the second, independent proof that the escalation
-    // actually re-selected the reference rather than merely muting the old one.
+    // Epoch cap+3: a genuine coherent slip on the new reference fires, and the
+    // reset key names it.  This is the second, independent check that the
+    // escalation re-selected the reference rather than only muting the old one.
     omc["G02"] -= kStep;
     const auto keys = h.step(static_cast<std::size_t>(cap + 3), omc, elev);
     ASSERT_EQ(keys.size(), 1u);
@@ -629,11 +626,10 @@ TEST(IfPhaseSlipRefGate, PersistentCoherentStepEscalatesToReferenceReselection) 
   }
 }
 
-// N2 / spec-followups H1 — the header defaults and the config defaults are ONE
-// set of numbers.  They drifted once (max_consecutive: header 2, config 1), and
-// because the config is the only armed path, every unit case above would have
-// been certifying a gate the field never runs.  Pinning them together makes that
-// class of drift a test failure instead of a review finding.
+// The header defaults and the config defaults are one set of numbers.  The
+// config is the only armed path, so if the two diverged, the unit cases above
+// would test a gate the field does not run.  This test turns such a divergence
+// into a failure.  (N2 / spec-followups H1)
 TEST(IfPhaseSlipRefGate, HeaderDefaultsMatchTheShippedConfigDefaults) {
     const IfPhaseSlipDetector::RefGateParams p;   // header defaults
     GnssConfig cfg;                               // JSON-less config defaults
@@ -653,12 +649,12 @@ TEST(IfPhaseSlipRefGate, HeaderDefaultsMatchTheShippedConfigDefaults) {
 }
 
 // A station-wide receiver common mode cannot reach this gate at all: it
-// cancels in the BETWEEN-SATELLITE single difference by construction.  That is
-// why the spec's third CANDIDATE mechanism ("if the freshly re-elected
-// reference slips at once, hand it to the pool as station-local") was NOT
-// implemented — it would have been a permanently-zero counter, the exact
-// standing-invariant-#4 failure mode.  This test pins the cancellation so a
-// future implementer does not re-introduce it on a false premise.
+// cancels in the between-satellite single difference by construction.  For
+// that reason the spec's third candidate mechanism ("if the freshly re-elected
+// reference slips at once, hand it to the pool as station-local") is not
+// implemented: its counter would stay at zero permanently, the failure mode of
+// standing invariant #4.  This test pins the cancellation that the decision
+// rests on.
 TEST(IfPhaseSlipRefGate, StationWideCommonModeCancelsAndReachesNoRefCandidate) {
     IfHarness h;
     h.det.setRefGate(armedGate());
@@ -669,7 +665,7 @@ TEST(IfPhaseSlipRefGate, StationWideCommonModeCancelsAndReachesNoRefCandidate) {
     const int cap = armedGate().max_consecutive;
     EXPECT_TRUE(h.step(0, omc, elev).empty());
     // Drive the reference through fire×cap -> the cap-tripping epoch -> the
-    // forced re-election, so the scenario below runs on a FRESH reference
+    // forced re-election, so the scenario below runs on a fresh reference
     // whatever the shipped cap is.
     for (int e = 1; e <= cap + 2; ++e) {
         omc["G01"] -= kStep;
@@ -678,7 +674,7 @@ TEST(IfPhaseSlipRefGate, StationWideCommonModeCancelsAndReachesNoRefCandidate) {
     ASSERT_EQ(h.det.refGateCounters().reselects, 1);
 
     const long long cand_before = h.det.refGateCounters().legacy_candidates;
-    // Every satellite's OMC jumps together — a receiver-level event.
+    // Every satellite's OMC jumps together: a receiver-level event.
     for (auto& [sat, v] : omc) v += 0.40;
     EXPECT_TRUE(h.step(static_cast<std::size_t>(cap + 3), omc, elev).empty());
 
@@ -689,11 +685,10 @@ TEST(IfPhaseSlipRefGate, StationWideCommonModeCancelsAndReachesNoRefCandidate) {
            "cancel in the between-satellite single difference";
 }
 
-// R4 — a multi-satellite station re-lock (many INDEPENDENT slip-sized jumps,
-// so the family is incoherent and its median is a mixture) must still reset
-// the reference arc.  This is the case the 2026-07-21 ON smoke showed a
-// coherence-only gate silently losing (OWMG00NZL/G31).  It fires WITHOUT the
-// median rebase: the reference is reset, its slip magnitude is not invented.
+// A multi-satellite station re-lock (many independent slip-sized jumps, so the
+// family is incoherent and its median is a mixture) still resets the reference
+// arc; a coherence-only gate would miss it.  It fires without the median
+// rebase: the reference is reset, and no slip magnitude is assigned to it (R4).
 TEST(IfPhaseSlipRefGate, IncoherentMultiSatelliteStationEventStillResetsTheReference) {
     IfHarness h;
     h.det.setRefGate(armedGate());
@@ -702,7 +697,7 @@ TEST(IfPhaseSlipRefGate, IncoherentMultiSatelliteStationEventStillResetsTheRefer
 
     EXPECT_TRUE(h.step(0, omc, elev).empty());
 
-    // Four of the five non-reference satellites jump by DIFFERENT slip-sized
+    // Four of the five non-reference satellites jump by different slip-sized
     // amounts (>> 0.5*lambda_IF ~ 5.35 cm), all the same sign so the median is
     // large: an incoherent family whose members are individually slipping.
     omc["G02"] += 0.90;
@@ -722,9 +717,9 @@ TEST(IfPhaseSlipRefGate, IncoherentMultiSatelliteStationEventStillResetsTheRefer
         << "an incoherent slip-sized family must be classified as a station "
            "event, not as a coherent reference step";
 
-    // The rebase is what a FireNoRebase verdict refuses: the OTHER satellites'
-    // jumps must survive into the cached DDs the network pool arm consumes,
-    // not be flattened by subtracting the mixture median.
+    // A FireNoRebase verdict skips the rebase: the other satellites' jumps
+    // survive into the cached DDs the network pool arm consumes instead of being
+    // flattened by subtracting the mixture median.
     const auto& jumps = h.det.getLastIfJumps();
     ASSERT_EQ(jumps.count("G04"), 1u);
     EXPECT_NEAR(jumps.at("G04").delta_grad_m, 1.60, 0.02)
@@ -732,17 +727,16 @@ TEST(IfPhaseSlipRefGate, IncoherentMultiSatelliteStationEventStillResetsTheRefer
 }
 
 // ---------------------------------------------------------------------------
-// §6.14.6 item 1 — abstain while the empirical arm is cold
+// Abstain while the empirical arm is cold (§6.14.6 item 1)
 // ---------------------------------------------------------------------------
 
-// With zero empirical information s_eff IS the cold prior floor_frac*lambda_IF/k,
-// so k*s_eff collapses onto phys and the ARMED gate silently reverts to the
-// legacy 3-sigma fixed bar for its first few epochs.  Measured on the 2 h golden
-// arm that is where all 118 surviving fires were (epochs 1 and 3) — and every one
-// was action=diagnostic, because carry_warm is false there and a cold detection
-// cannot refloat anything.  warmup_abstain declines to decide until the scale has
-// shrink_kappa samples.  The family here contributes 5 DDs per epoch, so the
-// scale reaches kappa=20 after four epochs.
+// With zero empirical information s_eff equals the cold prior
+// floor_frac*lambda_IF/k, so k*s_eff collapses onto phys and the armed gate
+// reverts to the legacy 3-sigma fixed bar for its first few epochs.  On the
+// network path such early fires are diagnostic only: carry_warm is false there,
+// so a cold detection cannot refloat anything.  warmup_abstain declines to
+// decide until the scale has shrink_kappa samples.  The family here contributes
+// 5 DDs per epoch, so the scale reaches kappa=20 after four epochs.
 TEST(IfPhaseSlipRefGate, WarmupAbstainDeclinesUntilTheScaleHasSamples) {
     IfHarness h;
     auto rg = armedGate();
@@ -753,13 +747,13 @@ TEST(IfPhaseSlipRefGate, WarmupAbstainDeclinesUntilTheScaleHasSamples) {
 
     EXPECT_TRUE(h.step(0, omc, elev).empty());   // no previous gradients yet
 
-    // A genuine, unambiguous reference step inside the warm-up: DECLINED.
+    // A genuine, unambiguous reference step inside the warm-up is declined.
     omc["G01"] -= 0.30;
     EXPECT_TRUE(h.step(1, omc, elev).empty());
     EXPECT_EQ(h.det.refGateCounters().suppressed_warmup, 1);
-    // It was a legacy candidate — the abstention is a REFUSAL TO DECIDE on a
-    // real candidate, not a failure to see one.  That distinction is the whole
-    // point: the counter says what was given up.
+    // It was a legacy candidate: the abstention declines to decide on a real
+    // candidate rather than failing to see one, and the counter records what
+    // was given up.
     EXPECT_EQ(h.det.refGateCounters().legacy_candidates, 1);
     EXPECT_EQ(h.det.refGateCounters().fires, 0);
 
@@ -777,11 +771,11 @@ TEST(IfPhaseSlipRefGate, WarmupAbstainDeclinesUntilTheScaleHasSamples) {
     EXPECT_EQ(h.det.refGateCounters().suppressed_warmup, 1);   // no further abstention
 }
 
-// The contrast that shows what is being fixed: WITHOUT the knob, the identical
-// cold step fires — through the legacy floor, on a bar the gate has no empirical
-// basis for.  This is the documented cold-prior fallback, not a regression, and
-// pinning it here stops a future "simplification" from removing the fallback for
-// everyone instead of behind the knob.
+// The contrast case: without the knob, the identical cold step fires through
+// the legacy floor, on a bar the gate has no empirical basis for.  This is the
+// documented cold-prior fallback, not a regression.  Pinning it here keeps the
+// fallback for runs without the knob, so a change that removes it for every
+// run, rather than behind the knob, fails this test.
 TEST(IfPhaseSlipRefGate, WarmupAbstainOffKeepsTheColdLegacyFloorFallback) {
     IfHarness h;
     h.det.setRefGate(armedGate());               // warmup_abstain defaults false
@@ -796,25 +790,26 @@ TEST(IfPhaseSlipRefGate, WarmupAbstainOffKeepsTheColdLegacyFloorFallback) {
 }
 
 // ---------------------------------------------------------------------------
-// §6.14.6 item 2 — the bar must track the REFERENCE's elevation
+// The bar tracks the reference's elevation (§6.14.6 item 2)
 // ---------------------------------------------------------------------------
 
-// 88 % of the tested median's variance is the reference satellite's own noise
-// divided by sin(el_ref) — a term in every family member that no family size
-// averages away.  The flat k*s_eff form cannot see el_ref at all, so the SAME
-// step gets the SAME verdict whether the reference is overhead or low.  Under
+// Most (88 %) of the tested median's variance is the reference satellite's own
+// noise divided by sin(el_ref), a term in every family member that no family
+// size averages away.  The flat k*s_eff form does not see el_ref, so the same
+// step gets the same verdict whether the reference is overhead or low.  Under
 // elev_norm the bar is rebuilt as hypot(s_z/sin(el_ref), 1.2533*s_raw/sqrt(n)),
-// so a lower reference — whose common term is larger — demands a larger step.
+// so a lower reference, whose common term is larger, demands a larger step.
 //
-// Single-variable contrast: the SAME stream and geometry, elev_norm the only
-// thing that differs.  The geometry is chosen to make the difference large and
-// signed — a reference overhead (its common term barely inflated by 1/sin el)
-// over a family down at 14-22 deg (whose scatter is what `disp` measures).  The
-// raw form charges 6*disp for that scatter; the normalized form recognises that
-// most of it averages down as 1.2533/sqrt(n) and only the reference's own share
-// does not, so its bar is materially LOWER and it catches steps the raw form
-// misses.  Asserted as a DIRECTION over a band of step sizes rather than a
-// knife-edge verdict, so the test pins the mechanism and not one arithmetic path.
+// Single-variable contrast: the same stream and geometry, with elev_norm the
+// only difference.  The geometry makes the difference large and signed: a
+// reference overhead (its common term barely inflated by 1/sin el) over a
+// family at 14-22 deg (whose scatter is what `disp` measures).  The raw form
+// charges 6*disp for that scatter; the normalized form treats most of it as
+// averaging down as 1.2533/sqrt(n), with only the reference's own share
+// remaining, so its bar is materially lower and it catches steps the raw form
+// misses.  The assertion is a direction over a band of step sizes rather than a
+// verdict at one step, so the test pins the mechanism and not one arithmetic
+// path.
 TEST(IfPhaseSlipRefGate, ElevationNormalizedBarIsLowerWhenTheReferenceIsOverhead) {
     const ElevState elev = { { "G01", 80.0 }, { "G02", 22.0 }, { "G03", 20.0 },
                              { "G04", 18.0 }, { "G05", 16.0 }, { "G06", 14.0 } };
@@ -864,15 +859,15 @@ TEST(IfPhaseSlipRefGate, ElevationNormalizedBarIsLowerWhenTheReferenceIsOverhead
 }
 
 // ---------------------------------------------------------------------------
-// §6.14.6 item 3 — the gate has to mean the same thing to both arms
+// The gate means the same thing to both arms (§6.14.6 item 3)
 // ---------------------------------------------------------------------------
 
-// THE LEAK.  A gated epoch suppressed this detector's own flagging but still
-// published its jumps as valid, and the network pool arm admits any sample with
-// jp.valid — so the pool went on thresholding double differences the detector had
-// just declared untrustworthy.  Gating has to reach both arms or it protects
-// neither.  The jumps stay CACHED (a caller may still want the number) and the
-// gradient chain still advances, so detection resumes seamlessly afterwards.
+// The network pool arm admits any sample with jp.valid.  A gated epoch
+// therefore suppresses this detector's own flagging and also publishes its
+// jumps as invalid; otherwise the pool would threshold double differences the
+// detector has declared untrustworthy.  The jumps stay cached (a caller may
+// still want the number) and the gradient chain still advances, so detection
+// resumes without a restart afterwards.
 TEST(IfPhaseSlipRefGate, NuisanceGateSuppressesBothArmsAndResumesCleanly) {
     IfHarness h;
     h.det.setRefGate(armedGate());
@@ -883,27 +878,28 @@ TEST(IfPhaseSlipRefGate, NuisanceGateSuppressesBothArmsAndResumesCleanly) {
     EXPECT_TRUE(h.stepNuisance(0, omc, elev, 0.0).empty());
     EXPECT_TRUE(h.stepNuisance(1, omc, elev, 0.0).empty());
 
-    // A reference step DURING a high-nuisance epoch: no reset key (this arm) ...
+    // A reference step during a high-nuisance epoch: no reset key (this arm) ...
     omc["G01"] -= 0.30;
     EXPECT_TRUE(h.stepNuisance(2, omc, elev, 0.20).empty());
-    // ... and nothing published as valid for the POOL arm either.
+    // ... and nothing published as valid for the pool arm either.
     ASSERT_FALSE(h.det.getLastIfJumps().empty());
     for (const auto& [sat, jp] : h.det.getLastIfJumps())
         EXPECT_FALSE(jp.valid) << sat << " leaked a valid jump through a closed gate";
-    // The opportunity is not counted: flagging was suppressed, so the tier-T1r
-    // denominator must not credit an epoch it never screened.
+    // The gated epoch is not screened: the detector returns before the
+    // reference arm, so it counts neither a tier-T1r opportunity nor a flag.
+    // The assertion checks the flag count.
     EXPECT_EQ(h.det.refGateCounters().gate_flags, 0);
 
-    // Nuisance clears.  The chain resumed seamlessly, so the step that was
-    // masked is still in the level and the family is quiet again.
+    // Nuisance clears.  The chain kept advancing, so the step that was masked
+    // is already in the level and the family is quiet again.
     EXPECT_TRUE(h.stepNuisance(3, omc, elev, 0.0).empty());
     bool any_valid = false;
     for (const auto& [sat, jp] : h.det.getLastIfJumps()) if (jp.valid) any_valid = true;
     EXPECT_TRUE(any_valid) << "detection did not resume after the gate reopened";
 }
 
-// A nuisance BELOW the threshold changes nothing — the gate is a threshold, not
-// a mere presence test, and a 0 threshold (the default) disables it outright.
+// A nuisance below the threshold changes nothing: the gate is a threshold, not
+// a presence test, and a 0 threshold (the default) disables it.
 TEST(IfPhaseSlipRefGate, NuisanceBelowThresholdAndDisabledGateBothPassThrough) {
     for (const double thr : { 0.0, 0.50 }) {     // 0 = disabled, 0.50 = not reached
         IfHarness h;
@@ -921,15 +917,15 @@ TEST(IfPhaseSlipRefGate, NuisanceBelowThresholdAndDisabledGateBothPassThrough) {
 }
 
 // ---------------------------------------------------------------------------
-// R5 — both detector modes keep working
+// Both detector modes keep working (R5)
 // ---------------------------------------------------------------------------
 
-// Deferred mode (network) skips the per-station MAD outlier arm entirely: the
-// driver thresholds against a network-POOLED per-signal-pair scale instead.
-// Self-contained mode (user/kinematic, currently STAGED) keeps it.  The same
+// Deferred mode (network) skips the per-station MAD outlier arm: the driver
+// thresholds against a network-pooled per-signal-pair scale instead.
+// Self-contained mode (user/kinematic, currently staged) keeps it.  The same
 // single-satellite jump therefore produces a reset key in one mode and none in
-// the other — while BOTH modes cache the identical double difference for the
-// caller, which is what makes the pooled path possible.
+// the other, while both modes cache the identical double difference for the
+// caller, which is what the pooled path relies on.
 TEST(IfPhaseSlipModes, SelfContainedFlagsNonReferenceOutlierDeferredDefersIt) {
     const ElevState elev = sixSatElevations();
 

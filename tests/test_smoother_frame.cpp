@@ -4,17 +4,19 @@
  *        compensation (audit findings F1 / P2-1).
  *
  * Two layers:
- *   1. The pure inverse-reference operator (Smoother::inverseReReferenceGroup) —
- *      it must be the EXACT inverse of PivotManager's forward re-reference and
- *      must transform the FULL covariance (ambiguity<->core cross terms), not a
+ *   1. The pure inverse-reference operator (Smoother::inverseReReferenceGroup):
+ *      it is the exact inverse of PivotManager's forward re-reference and
+ *      transforms the full covariance (ambiguity<->core cross terms), not a
  *      group-local block.
- *   2. The backward pass over hand-built snapshots — a CLEAN pivot handover must
- *      not leak the meter-scale frame offset into the preceding epoch, and the
- *      reset-satellite segmentation must match on the satellite key boundary
- *      (a reset of "G2" must not segment "G21").
+ *   2. The backward pass over hand-built snapshots: a clean pivot handover does
+ *      not leak the metre-scale frame offset into the preceding epoch, a pivot
+ *      change without a clean-handover record segments the constellation, the
+ *      reset-satellite segmentation matches on the satellite key boundary (a
+ *      reset of "G2" does not segment "G21"), and a gap teardown that shrinks the
+ *      a-priori dimension is a segment boundary.
  *
- * The new snapshot fields (pivot_satellites, clean_handovers) and the public
- * static operator are populated directly — no friend shim needed.
+ * The snapshot fields (pivot_satellites, clean_handovers) and the public static
+ * operator are set and called directly, so no friend shim is needed.
  */
 
 #include <gtest/gtest.h>
@@ -33,9 +35,9 @@ namespace {
 
 constexpr size_t kNone = std::numeric_limits<size_t>::max();
 
-// Forward BSSD re-reference is structurally identical to the inverse operator,
-// just anchored on the NEW pivot (p1) instead of the old one — so we exercise
-// it through the same public entry point.
+// The forward BSSD re-reference has the same structure as the inverse operator,
+// anchored on the new pivot (p1) instead of the old one, so it is exercised
+// through the same public entry point.
 void reReferenceTo(const std::vector<Eigen::Index>& group, Eigen::Index datum,
                    Eigen::VectorXd& x, Eigen::MatrixXd& P) {
     Smoother::inverseReReferenceGroup(group, datum, x, P);
@@ -55,7 +57,7 @@ TEST(SmootherFrame, InverseReReferenceExactlyUndoesForward) {
     x0 << 10.0, 0.0 /*p0 frozen*/, 5.0, 8.0, -3.0;
 
     // Symmetric P with the p0 row/col zeroed (frozen) and rich off-diagonals,
-    // including ambiguity<->position (idx 0) coupling — the R1 concern.
+    // including ambiguity<->position (idx 0) coupling (audit finding R1).
     Eigen::MatrixXd P0(5, 5);
     P0 << 0.50, 0.0,  0.10, 0.20, -0.05,
           0.0,  0.0,  0.0,  0.0,   0.0,
@@ -134,7 +136,7 @@ SmootherEpochSnapshot makeSnap(int week, double tow,
     return s;
 }
 
-// A clean pivot handover must NOT leak the frame offset into the prior epoch:
+// A clean pivot handover does not leak the frame offset into the prior epoch:
 // the inverse-reference brings k+1 back to epoch k's frame, so a converged
 // ambiguity on a third satellite keeps its value instead of being dragged by
 // the (large) new-pivot offset.
@@ -159,13 +161,13 @@ TEST(SmootherFrame, CleanHandoverDoesNotLeakIntoPriorEpoch) {
     s0.pivot_satellites = { { "GPS", "G01" } };
 
     // Epoch 1: clean handover G01 -> G02.
-    //   x_pred1 = F*x_post0 (OLD frame, G01 frozen):  G01=0, G02=5, G03=7.
-    //   x_post1 (NEW frame after handover, G02 frozen): G01=-5, G02=0, G03=2.
+    //   x_pred1 = F*x_post0 (old frame, G01 frozen):  G01=0, G02=5, G03=7.
+    //   x_post1 (new frame after handover, G02 frozen): G01=-5, G02=0, G03=2.
     Eigen::VectorXd x_pred1(7); x_pred1 << 1, 2, 3, 0.1, 0.0, 5.0, 7.0;
     Eigen::VectorXd x_post1(7); x_post1 << 1, 2, 3, 0.1, -5.0, 0.0, 2.0;
     SmootherEpochSnapshot s1 = makeSnap(2300, 1.0,
-        x_pred1, diagP(0.02, 0.0,  0.05, 0.05),   // P_pred OLD frame: G01 frozen
-        x_post1, diagP(0.02, 0.05, 0.0,  0.05),   // P_post NEW frame: G02 frozen
+        x_pred1, diagP(0.02, 0.0,  0.05, 0.05),   // P_pred old frame: G01 frozen
+        x_post1, diagP(0.02, 0.05, 0.0,  0.05),   // P_post new frame: G02 frozen
         amb);
     s1.pivot_satellites = { { "GPS", "G02" } };
     s1.clean_handovers  = { { "GPS", { "G01", "G02" } } };
@@ -176,18 +178,18 @@ TEST(SmootherFrame, CleanHandoverDoesNotLeakIntoPriorEpoch) {
     ASSERT_EQ(res.size(), 2u);
     ASSERT_TRUE(res[0].x.allFinite());
 
-    // With the fix the prior is reconciled into epoch 1's frame, so the
-    // smoothing innovation is ~0 and epoch 0 keeps its posterior.  In
-    // particular G03 stays at 7.0; a frame-blind smoother would drag it toward
-    // 7 + gain*(2 - 7) ~= 3.0.
+    // The prior is reconciled into epoch 1's frame, so the smoothing innovation
+    // is ~0 and epoch 0 keeps its posterior.  In particular G03 stays at 7.0; a
+    // frame-blind smoother would move it to 7 + gain*(2 - 7) = 3.0 with
+    // gain = 0.04/0.05 = 0.8.
     EXPECT_NEAR(res[0].x(6), 7.0, 1e-6) << "G03 leaked the handover offset";
     EXPECT_NEAR(res[0].x(5), 5.0, 1e-6) << "G02 leaked the handover offset";
     EXPECT_LT((res[0].x - x_post0).cwiseAbs().maxCoeff(), 1e-6);
 }
 
-// A pivot change with NO clean-handover record (disturbed / forced) must
-// SEGMENT the constellation: epoch 0 falls back to its forward posterior
-// rather than inverse-referencing against a discontinuous old pivot.
+// A pivot change with no clean-handover record (disturbed or forced) segments
+// the constellation: epoch 0 falls back to its forward posterior rather than
+// inverse-referencing against a discontinuous old pivot.
 TEST(SmootherFrame, DisturbedHandoverSegmentsConstellation) {
     LogManager log;
     const std::map<std::string, size_t> amb{
@@ -210,7 +212,7 @@ TEST(SmootherFrame, DisturbedHandoverSegmentsConstellation) {
         x_pred1, diagP(0.02, 0.0,  0.05, 0.05),
         x_post1, diagP(0.02, 0.05, 0.0,  0.05), amb);
     s1.pivot_satellites = { { "GPS", "G02" } };
-    // NO clean_handovers entry -> disturbed/forced -> segment.
+    // No clean_handovers entry -> disturbed/forced -> segment.
 
     Smoother sm({ s0, s1 }, log);
     ASSERT_TRUE(sm.run());
@@ -222,9 +224,9 @@ TEST(SmootherFrame, DisturbedHandoverSegmentsConstellation) {
     EXPECT_DOUBLE_EQ(res[0].x(6), 7.0);
 }
 
-// Reset-satellite segmentation must match on the satellite key boundary: a
-// reset of "G2" segments "G2_L1" but NOT "G21_L1" (audit R7 — the old loose
-// substring match segmented both, silently disabling smoothing on G21).
+// Reset-satellite segmentation matches on the satellite key boundary: a reset of
+// "G2" segments "G2_L1" but not "G21_L1".  A substring match would segment both
+// and disable smoothing on G21 without any message (audit finding R7).
 TEST(SmootherFrame, ResetSegmentationMatchesSatelliteKeyBoundary) {
     LogManager log;
     // dim = 6: [px,py,pz,tropo, G2_L1(4), G21_L1(5)]  (no BSSD; empty pivot map)
@@ -254,17 +256,17 @@ TEST(SmootherFrame, ResetSegmentationMatchesSatelliteKeyBoundary) {
 
     // G2 (idx4) segmented -> forward posterior retained.
     EXPECT_DOUBLE_EQ(res[0].x(4), 1.0);
-    // G21 (idx5) NOT segmented -> smoothed (gain 0.04/0.05 = 0.8 on a +0.5
-    // innovation => +0.4).  A substring match would have segmented it (==2.0).
+    // G21 (idx5) not segmented -> smoothed (gain 0.04/0.05 = 0.8 on a +0.5
+    // innovation => +0.4).  A substring match would segment it (== 2.0).
     EXPECT_NEAR(res[0].x(5), 2.4, 1e-9);
 }
 
-// A long-gap teardown (Application::handleGap) prunes ambiguity states BEFORE
-// predict, so epoch k+1's a-priori is captured at a SMALLER dimension than
-// epoch k's posterior, while k+1's posterior is rebuilt large.  The backward
-// pass must treat this as a segment boundary, not index the (smaller) a-priori
-// with the (larger) epoch-k indices.  Without the guard this is an out-of-
-// bounds read (Debug assert / Release UB).
+// A long-gap teardown (Application::handleGap) prunes ambiguity states before
+// predict, so epoch k+1's a-priori is captured at a smaller dimension than
+// epoch k's posterior, while k+1's posterior is rebuilt at full size.  The
+// backward pass treats this as a segment boundary instead of indexing the
+// (smaller) a-priori with the (larger) epoch-k indices.  Without the guard this
+// is an out-of-bounds read (Debug assert / Release UB).
 TEST(SmootherFrame, GapTeardownDimensionMismatchIsSegmented) {
     LogManager log;
 
@@ -276,7 +278,7 @@ TEST(SmootherFrame, GapTeardownDimensionMismatchIsSegmented) {
 
     // Epoch 1: a long gap tore down the ambiguities before predict, so the
     // a-priori is core-only (dim 4); the update then rebuilt the ambiguities,
-    // so the POSTERIOR is dim 6 again with the SAME keys (large indices).
+    // so the posterior is dim 6 again with the same keys (large indices).
     Eigen::VectorXd x_pred1 = Eigen::VectorXd::Zero(4);   // core only
     Eigen::MatrixXd P_pred1 = Eigen::MatrixXd::Identity(4, 4) * 0.1;
     Eigen::VectorXd x_post1(6); x_post1 << 1, 2, 3, 0.1, 9.0, 11.0;
@@ -291,7 +293,7 @@ TEST(SmootherFrame, GapTeardownDimensionMismatchIsSegmented) {
     s1.gradient_n_idx = kNone; s1.gradient_e_idx = kNone;
     s1.ambiguities = amb0;        // rebuilt at the same (large) indices 4,5
     s1.has_posterior = true;
-    s1.is_discontinuity = false;  // handleGap does NOT trip wasCompleteReset
+    s1.is_discontinuity = false;  // handleGap does not trip wasCompleteReset
 
     Smoother sm({ s0, s1 }, log);
     ASSERT_TRUE(sm.run());   // must not assert / OOB

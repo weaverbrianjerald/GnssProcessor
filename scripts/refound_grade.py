@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""RF-0 — the two instruments of the network re-founding, and NOTHING else.
+"""RF-0: the two instruments of the network re-founding, and nothing else.
 
     python scripts/refound_grade.py --field-run runs/_rf0_field6 --sim-run runs/_rf0_sim6 \
         [--hours 6] [--json runs/_rf0_baseline.json]
@@ -7,32 +7,32 @@
 docs/refound/NETWORK_REFOUNDING_2026-09-14.md names exactly two bars, and this script
 is the only thing that reports them:
 
-  1. THE COLD CONSUMER, per hour.  p50 and p90 of the held-out closed-loop consumer's
-     3D error, plus the first epoch at which 3D < 0.1 m HOLDS for 10 consecutive
-     epochs, plus resets.  Field: WTZZ00DEU against its ITRF reference; sim:
-     SZZ000SIM against truth.  Both read the SAME file and the SAME column —
-     `logs/closed_loop_trace.csv` / `pos_err_3d_m` — because that column is already
-     the error against `network.closed_loop.station.position_ecef`, and on the sim
-     bed that configured position IS the truth position (network_fixture.json /
-     scenario_summary.json static_segment.position_ecef).  Read exactly as
-     scripts/pv_consumer_read.py reads it, hour-binned from the CONSUMER's own first
-     epoch (a consumer that starts late must not be graded on a shifted clock).
+  1. The cold consumer, per hour: p50 and p90 of the held-out closed-loop consumer's
+     3D error, the first epoch at which 3D < 0.1 m holds for 10 consecutive epochs,
+     and resets. Field: WTZZ00DEU against its ITRF reference; sim: SZZ000SIM against
+     truth. Both read the same file and column, `logs/closed_loop_trace.csv` /
+     `pos_err_3d_m`, since that column is already the error against
+     `network.closed_loop.station.position_ecef`, and on the sim bed that configured
+     position is the truth position (network_fixture.json / scenario_summary.json
+     static_segment.position_ecef). Read exactly as scripts/pv_consumer_read.py
+     reads it, hour-binned from the consumer's own first epoch, so a consumer that
+     starts late is not graded on a shifted clock.
 
-  2. THE WIRE AGAINST A REFERENCE, per hour.  scripts/wire_vs_code_census.py's
-     within-arc D_phase / D_code rms and the clock LEVEL p50, on BOTH beds against
+  2. The wire against a reference, per hour: scripts/wire_vs_code_census.py's
+     within-arc D_phase / D_code rms and the clock level p50, on both beds against
      the COD 30 s CLK + COD MGX OSB .BIA.
 
-     ⚠ ON THE SIM BED THAT REFERENCE IS TRUTH, NOT A SECOND OPINION.  The fixture
+     On the sim bed that reference is truth, not a second opinion. The fixture
      injects the precise COD CLK product as the satellite clock (there is no
-     `truth_satclock.csv` in runs/simnet60_quiet_wu93_24h ⇒ no injected satellite
+     `truth_satclock.csv` in runs/simnet60_quiet_wu93_24h, so no injected satellite
      clock error; scripts/simnet_grade.py:454-466 states the same contract) and the
      COD MGX OSB .BIA verbatim as the satellite code bias (`truth_bias.csv`
      source=product, osb_ns matching the .BIA to the digit: G03 C1C 7.0592 ns, C2W
-     12.8975 ns; scenario_summary.json signal_bias.file).  So one statistic covers
-     both beds and on the sim it is an ABSOLUTE grade.
+     12.8975 ns; scenario_summary.json signal_bias.file). So one statistic covers
+     both beds, and on the sim it is an absolute grade.
 
-Everything else printed below is a DIAGNOSTIC — read to explain a delta, never a
-bar.  Each such block says so in its own header.
+Everything else printed below is a diagnostic, read to explain a delta, never a
+bar. Each such block says so in its own header.
 
 The producer is never re-run and no solve artifact is touched; the only files written
 are the optional --json summary and wire_step_audit.py's own
@@ -64,7 +64,7 @@ SUBDM_HOLD = 10
 
 
 # ----------------------------------------------------------------------------
-#  instrument 1 — the cold consumer
+#  instrument 1: the cold consumer
 # ----------------------------------------------------------------------------
 def read_consumer(run_dir):
     """-> list of {tow, err3d, e, n, u} in file order, numeric rows only."""
@@ -84,12 +84,12 @@ def read_consumer(run_dir):
 
 
 def consumer_resets(run_dir, rows, step_m=1.0):
-    """(reset lines from the producer's own voice, |d3D| > step_m step proxy).
+    """(reset lines from the producer's own log, |d3D| > step_m step proxy).
 
     closed_loop_trace.csv has no reset column, so the count is taken from stdout
     exactly as scripts/pv_consumer_read.py takes it, and the step proxy is reported
-    beside it and LABELLED a proxy.  A zero that rests only on the absence of a
-    channel says so.
+    beside it and labelled as a proxy. A zero that rests only on the absence of a
+    channel is reported as such.
     """
     hits = []
     p = os.path.join(run_dir, "stdout.txt")
@@ -106,7 +106,7 @@ def consumer_resets(run_dir, rows, step_m=1.0):
 
 
 def first_subdecimetre(rows, thresh=SUBDM_M, hold=SUBDM_HOLD):
-    """tow of the first epoch that opens `hold` CONSECUTIVE epochs all < thresh."""
+    """tow of the first epoch that opens `hold` consecutive epochs all below thresh."""
     run = 0
     start = None
     for r in rows:
@@ -122,7 +122,7 @@ def first_subdecimetre(rows, thresh=SUBDM_M, hold=SUBDM_HOLD):
 
 
 def consumer_table(rows, n_hours):
-    """per-hour [{h, n, p50, p90, max}] binned from the CONSUMER's own first epoch."""
+    """per-hour [{h, n, p50, p90, max}] binned from the consumer's own first epoch."""
     if not rows:
         return [], None
     t0 = rows[0]["tow"]
@@ -138,14 +138,14 @@ def consumer_table(rows, n_hours):
 
 
 # ----------------------------------------------------------------------------
-#  instrument 2 — the wire
+#  instrument 2: the wire
 # ----------------------------------------------------------------------------
 def wire_tables(run_dir, seed_cfg_path, data_root, label, n_hours):
-    """per-hour within-arc D_phase / D_code rms and the clock LEVEL p50.
+    """per-hour within-arc D_phase / D_code rms and the clock level p50.
 
     Delegates to scripts/wire_vs_code_census.py (the s24.5 instrument) so the
-    statistic, the common-mode estimator and every field offset are ITS source of
-    truth, not a second implementation of them here.
+    statistic, the common-mode estimator and every field offset come from its
+    own source of truth, not a second implementation of them here.
     """
     clk_paths, bia_path, tag, _ = wvc.resolve_code_products(seed_cfg_path, data_root)
     if not clk_paths:
@@ -177,8 +177,8 @@ def wire_tables(run_dir, seed_cfg_path, data_root, label, n_hours):
                         d_code_rms=float(c[4]) if c else float("nan"),
                         d_clk_rms=float(k[4]) if k else float("nan"),
                         clk_level_p50=float(l[2]) if l else float("nan"),
-                        # the SAME statistic re-segmented at the producer's OWN declared
-                        # discontinuities — what a consumer that honours the M4 contract
+                        # the same statistic re-segmented at the producer's own declared
+                        # discontinuities: what a consumer that honours the M4 contract
                         # actually integrates across.
                         d_phase_rms_declared=float(pd_[4]) if pd_ else float("nan"),
                         d_code_rms_declared=float(cd_[4]) if cd_ else float("nan"),
@@ -199,11 +199,11 @@ def wire_tables(run_dir, seed_cfg_path, data_root, label, n_hours):
 
 
 # ----------------------------------------------------------------------------
-#  diagnostics (NOT BARS)
+#  diagnostics (not bars)
 # ----------------------------------------------------------------------------
 def code_rms_table(run_dir, n_hours):
-    """DIAGNOSTIC.  Per-hour p50 / max of the per-STATION post-fit code rms
-    (network_pf_keyed.csv, kind=STA, rms_code) — the s24.8 (i) read."""
+    """Diagnostic. Per-hour p50 / max of the per-station post-fit code rms
+    (network_pf_keyed.csv, kind=STA, rms_code): the s24.8 (i) read."""
     p = os.path.join(run_dir, "logs", "network_pf_keyed.csv")
     if not os.path.isfile(p):
         return None
@@ -232,8 +232,8 @@ def code_rms_table(run_dir, n_hours):
 
 
 def zwd_table(run_dir, n_hours, bar_m=0.5):
-    """DIAGNOSTIC.  Per hour, how many DISTINCT stations hold |ZWD| > bar_m
-    (network_zwd.csv) — an unphysical zenith wet delay is the s24.9 tell."""
+    """Diagnostic. Per hour, how many distinct stations hold |ZWD| > bar_m
+    (network_zwd.csv): an unphysical zenith wet delay is the s24.9 tell."""
     p = os.path.join(run_dir, "logs", "network_zwd.csv")
     if not os.path.isfile(p):
         return None
@@ -270,7 +270,7 @@ Q3_PATTERNS = [
 
 
 def run_end_lines(run_dir, max_per=4):
-    """DIAGNOSTIC.  The producer's own run-end voice for the armed families."""
+    """Diagnostic. The producer's own run-end log lines for the armed families."""
     p = os.path.join(run_dir, "stdout.txt")
     out = {}
     if not os.path.isfile(p):
@@ -284,7 +284,7 @@ def run_end_lines(run_dir, max_per=4):
 
 
 def step_audit(runs_root, arm, tow0, python_exe=None):
-    """DIAGNOSTIC.  scripts/wire_step_audit.py — the unsignalled-step population."""
+    """Diagnostic. Runs scripts/wire_step_audit.py to get the unsignalled-step population."""
     out_json = os.path.join(runs_root, arm, "_rf0_step_audit.json")
     cmd = [python_exe or sys.executable, os.path.join(HERE, "wire_step_audit.py"),
            "--runs", runs_root, "--arms", arm, "--tow0", str(tow0), "--json", out_json]
@@ -309,19 +309,15 @@ def f(x, w=8, p=3):
 
 
 def if_dispersion(run_dir, t0_tow=259200.0, lo=(3600.0, 7200.0), hi=(18000.0, 21600.0)):
-    """Per-satellite dispersion of the IONOSPHERE-FREE correction's drift (a DIAGNOSTIC).
+    """Per-satellite dispersion of the ionosphere-free correction's drift (a diagnostic).
 
     The quantity a consumer actually applies per satellite is
-    ``IF_corr = -clock + a1*b(C1C) + a2*b(C2W)``.  Its NETWORK-COMMON drift is a datum and
+    ``IF_corr = -clock + a1*b(C1C) + a2*b(C2W)``. Its network-common drift is a datum and
     cancels in the consumer's own clock; what a consumer's phase cannot absorb is the
-    PER-SATELLITE departure from that common drift.  So this reports the common drift
+    per-satellite departure from that common drift. So this reports the common drift
     between two windows (default hour 2 and hour 6) and the spread of the per-satellite
-    deviations around it.
-
-    Introduced by RF-0e, where it separated arms the two bars could not: across RF-0 (GIM),
-    RF-0c, RF-0d and RF-0e's two level-datum arms the p90 ran 0.300 / 0.552 / 1.527 /
-    1.148 / 1.022 m and tracked the field consumer monotonically, while the common drift
-    (-1.2 / -8.1 / -17.2 / -17.1 / -16.9 m) did not.
+    deviations around it. Introduced by card RF-0e to separate arms the two bars could
+    not (docs/refound); see that card for the p90 and common-drift series across arms.
 
     Returns None when the product carries no satellite with a clock and both pinned-pair
     code biases spanning both windows.

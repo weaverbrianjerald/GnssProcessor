@@ -1,56 +1,59 @@
 /**
  * @file test_resume_coupling_restore.cpp
- * @brief Contract tests for the CARD-1 COUPLING-REGRESSOR RESUME card
- *        (SPEC_synthetic_minimum_network §18.12): the snapshot format-v3
- *        coupling records (@c QS shared-column dictionary, @c QL / @c QZ packed
- *        per-row regressions, @c QR write-epoch clock-refloat set), their
- *        backward compatibility with v1/v2 files, and the loader's side of the
- *        two new knobs (@c network.state_snapshot_coupling_capture,
+ * @brief Contract tests for the coupling-regressor resume card (card 1,
+ *        SPEC_synthetic_minimum_network §18.12): the snapshot format-v3 coupling
+ *        records (@c QS shared-column dictionary, @c QL / @c QZ packed per-row
+ *        regressions, @c QR write-epoch clock-refloat set), their backward
+ *        compatibility with v1/v2 files, and the loader's side of the two knobs
+ *        (@c network.state_snapshot_coupling_capture,
  *        @c network.resume_coupling_restore).
  *
- * WHY the format is worth locking this hard.  Under
- * @c network.carry_conditional_coupling a carried leveling column is NOT a
- * diagonal prior: it is a row @f$A_r=+1,\;A_s=M_r,\;
- * y=(value\_abs-x_{lin})+\sum_j M_{rj}\hat s_{prev,j}@f$ asserted at the PURE
- * CONDITIONAL variance, and @f$A_s=M_r@f$ is exactly what makes it
- * SHARED-NEUTRAL (its contribution to the reduced shared normals is
- * @f$\alpha(M-M_d)(M-M_d)^T@f$, which vanishes when the restored regression
- * equals this epoch's own data regression).  RTB-7 v1/v2 serialized only
- * @c (value_abs, var, last_seen_s), so a warm-resumed row injected with an EMPTY
- * regression — the @f$M=0@f$ case, a plain DIAGONAL prior at the CONDITIONAL
- * variance, a combination no continuous epoch produces.  Measured (§18.11):
- * 2811 such rows drive the border at @f$\alpha\approx10^6\,\mathrm{m^{-2}}@f$
- * against the Q3 anchored clock prior's @f$1.1\times10^4@f$, and 33 of 52
- * restored clock anchors trip at the first fold.
+ * Why the format is pinned this closely.  Under
+ * @c network.carry_conditional_coupling a carried leveling column is not a diagonal
+ * prior: it is a row @f$A_r=+1,\;A_s=M_r,\;
+ * y=(value\_abs-x_{lin})+\sum_j M_{rj}\hat s_{prev,j}@f$ asserted at the pure
+ * conditional variance.  @f$A_s=M_r@f$ is what makes the row neutral to the shared
+ * states: its contribution to the reduced shared normals is
+ * @f$\alpha(M-M_d)(M-M_d)^T@f$, which vanishes when the restored regression equals
+ * this epoch's own data regression.  The v1/v2 formats (RTB-7) serialize only
+ * @c (value_abs, var, last_seen_s), so a warm-resumed row is injected with an empty
+ * regression: the @f$M=0@f$ case, a plain diagonal prior at the conditional
+ * variance, a combination no continuous epoch produces.  §18.11 measures the
+ * effect: such rows drive the border at @f$\alpha\approx10^6\,\mathrm{m^{-2}}@f$
+ * against the Q3 anchored clock prior's @f$1.1\times10^4@f$, and restored clock
+ * anchors trip at the first fold.
  *
- * What is locked here: (1) every regressor round-trips BIT-EXACTLY and IN
- * HARVEST ORDER (the order is observable at the ulp — @c buildCplRow accumulates
- * @c rhs += coeff*s_prev in vector order, NetworkCoupling.cpp:294/:301, and
- * Card 1f's family deficit sums in the same order); (2) @c serialize is
- * idempotent through a parse; (3) the three traps the format exists to survive —
- * a Card-1e PINNED column (@c p_prev == 0 is MEANINGFUL, never "missing"), an SH
- * @c sh_layer carried as its OWN field (never the @c D record's "L1"-in-the-sat
- * hack, which would bind a layer-1 coefficient to the live layer-0 column), and
- * TWO VINTAGES of one identity coexisting (a station whose harvest failed keeps
- * an older coupling — measured 12 of 2811 rows on the branch-point file — so the
- * dictionary key is (identity, ŝ_prev, P_prev), not identity alone);
- * (4) @c hasCouplingState() is INDEPENDENT of @c hasFrameState() (widening the
- * latter would let a coupling-only snapshot claim frame state it does not have,
- * the restore would run with an empty @c anchor_incumbent, the QUEUE-1(d) erase
- * would fire and the card would silently defeat itself); (5) the OFF path is
- * byte-identical — a frame-only snapshot still writes v2 and a bare one v1;
- * (6) every structural defect is a HARD parse failure, because restoring a
- * SUBSET of a row is the Card-1e amputation (@f$M^Tg_s\neq-g_r(c)@f$ ⇒ every
- * coupling row observes the clock gauge ⇒ the W5 null-space gate WITHHOLDS the
- * epoch) and is strictly worse than no coupling at all; and (7) the loader
- * interlocks, including the rung-3 mutual exclusion with
- * @c network.amb_seam_reinflate_var_m2 (which attacked the row's WEIGHT and
- * walked the consumer 5.13 m in h12 — invariant #1, the slip-relevel-walk
- * family; this card touches DIRECTION only and never modifies @c var).
+ * What is pinned here:
+ * (1) every regressor round-trips bit-exactly and in harvest order.  The order is
+ *     observable at the ulp: @c CouplingRowBuilder::buildCplRow accumulates
+ *     @c rhs += coeff*s_prev in vector order (NetworkCoupling.cpp), and the card 1f
+ *     family deficit sums in the same order;
+ * (2) @c serialize is idempotent through a parse;
+ * (3) the three cases the format exists to handle: a card 1e pinned column
+ *     (@c p_prev == 0 is a meaningful value, not "missing"); an SH @c sh_layer
+ *     carried as its own field (not the @c D record's "L1"-in-the-sat tag, which
+ *     would bind a layer-1 coefficient to the live layer-0 column); and two
+ *     vintages of one identity side by side (a station whose harvest failed keeps
+ *     an older coupling, so the dictionary key is (identity, ŝ_prev, P_prev), not
+ *     the identity alone);
+ * (4) @c hasCouplingState() is independent of @c hasFrameState().  Widening the
+ *     latter would let a coupling-only snapshot claim frame state it lacks; the
+ *     restore would then run with an empty @c anchor_incumbent, the QUEUE-1(d)
+ *     erase would fire, and the card would undo its own restore without any sign;
+ * (5) the off path is byte-identical: a frame-only snapshot still writes v2 and a
+ *     bare one v1;
+ * (6) every structural defect is a hard parse failure, because restoring a subset
+ *     of a row is the card 1e amputation (@f$M^Tg_s\neq-g_r(c)@f$ ⇒ every coupling
+ *     row observes the clock gauge ⇒ the W5 null-space gate withholds the epoch),
+ *     which is strictly worse than no coupling at all;
+ * (7) the loader interlocks, including the rung-3 mutual exclusion with
+ *     @c network.amb_seam_reinflate_var_m2.  That knob changes the row's weight
+ *     and walked the consumer by metres (invariant #1, the slip-relevel-walk
+ *     family); this card changes the direction only and never modifies @c var.
  *
- * The seam mechanics themselves (the first PASS-B inject building a CONDITIONAL
- * row, the present/departed split, the first-harvest M-vs-M_d census) are graded
- * on the .ep1440 branch legs, not here.
+ * The seam mechanics (the first PASS-B inject building a conditional row, the
+ * present/departed split, the first-harvest M-vs-M_d census) are graded on the
+ * .ep1440 branch legs, not here.
  */
 #include <gtest/gtest.h>
 #include "config/GnssConfig.hpp"
@@ -69,11 +72,10 @@ using namespace GnssProcessor;
 namespace {
 
 // -----------------------------------------------------------------------------
-// Snapshot / config fixtures.  Deliberately DUPLICATED from
-// tests/test_resume_frame_restore.cpp rather than hoisted into a shared header:
-// they are anonymous-namespace file-local helpers and duplication is the house
-// pattern here (CLAUDE.md's one-suite-per-file rule makes a shared test header
-// the more expensive coupling).
+// Snapshot / config fixtures.  Duplicated from tests/test_resume_frame_restore.cpp
+// on purpose rather than moved into a shared header: they are anonymous-namespace
+// file-local helpers, and duplication is the convention here (under CLAUDE.md's
+// one-suite-per-file rule a shared test header is the more expensive coupling).
 // -----------------------------------------------------------------------------
 
 NetworkStateSnapshot baseSnapshot() {
@@ -110,11 +112,11 @@ NetworkStateSnapshot frameSnapshot() {
     return s;
 }
 
-/// A v3 snapshot exercising EVERY trap the §18.12 format exists to survive, in
-/// one object: an empty @c signal (Clock column) and an empty @c sat (VtecSh),
-/// a Card-1e PINNED column (@c p_prev == 0), an SH entry on LAYER 1 with the
-/// full (n, m, trig) quadruple, and a SECOND dictionary entry for an identity
-/// already present at a DIFFERENT @c p_prev — the older-vintage row.  It also
+/// A v3 snapshot exercising every case the §18.12 format exists to handle, in one
+/// object: an empty @c signal (Clock column) and an empty @c sat (VtecSh), a
+/// card 1e pinned column (@c p_prev == 0), an SH entry on layer 1 with the full
+/// (n, m, trig, layer) quadruple, and a second dictionary entry for an identity
+/// already present at a different @c p_prev (the older-vintage row).  It also
 /// carries the frame records, because the loader interlock makes the coupling
 /// restore reachable only behind @c network.resume_frame_restore.
 NetworkStateSnapshot couplingSnapshot() {
@@ -125,10 +127,10 @@ NetworkStateSnapshot couplingSnapshot() {
     s.coupling_dict = {
         {0, "G01", "",    0, 0, 'C', 0, -0.9718706123456789, 1.7312e-05},  // Clock, empty signal
         {2, "G01", "L1C", 0, 0, 'C', 0, -1.2178912315598864, 8.128093975162085e-07},
-        {1, "E02", "C1C", 0, 0, 'C', 0,  0.2675481109223,    0.0},         // Card 1e PINNED
+        {1, "E02", "C1C", 0, 0, 'C', 0,  0.2675481109223,    0.0},         // pinned (card 1e)
         {3, "",    "",    2, 1, 'S', 1,  0.4471821,          2.05e-05},    // VtecSh layer 1
         {0, "G01", "",    0, 0, 'C', 0, -0.9718706123456789, 4.4e-05},     // same identity,
-    };                                                 // OLDER VINTAGE (different p_prev)
+    };                                                 // older vintage (different p_prev)
     s.coupling_rows[{7, "G01", "L1C"}] = {{1, -0.99876543210987}, {0, 0.48312}, {3, -1.21e-04}};
     s.coupling_rows[{7, "E02", "L5Q"}] = {{4,  1.0}, {2, -0.5}};   // the stale-vintage row
     s.coupling_zrows[7]                = {{0, 0.331}, {1, -0.0042}};
@@ -137,14 +139,13 @@ NetworkStateSnapshot couplingSnapshot() {
 }
 
 // -----------------------------------------------------------------------------
-// Text surgery.  Every corruption below rewrites a WHOLE line rather than
-// patching a substring, so no case depends on fmt's exact shortest-round-trip
-// rendering of a coefficient.  @p needle always begins with '\n' so it anchors
-// on a line START and can never match mid-line (e.g. "\nL," never matches inside
-// a "QL," line).
+// Text surgery.  Every corruption below rewrites a whole line rather than patching
+// a substring, so no case depends on fmt's exact shortest-round-trip rendering of a
+// coefficient.  @p needle always begins with '\n', so it anchors on a line start
+// and cannot match mid-line (e.g. "\nL," does not match inside a "QL," line).
 // -----------------------------------------------------------------------------
 
-/// Erase the WHOLE line anchored at @p needle (leading '\n' included, so the
+/// Erase the whole line anchored at @p needle (leading '\n' included, so the
 /// previous line keeps its terminator).
 bool eraseLine(std::string& text, const std::string& needle) {
     const std::size_t p = text.find(needle);
@@ -155,7 +156,7 @@ bool eraseLine(std::string& text, const std::string& needle) {
     return true;
 }
 
-/// Replace the CONTENT of the line anchored at @p needle with @p line.
+/// Replace the content of the line anchored at @p needle with @p line.
 bool replaceLine(std::string& text, const std::string& needle, const std::string& line) {
     const std::size_t p = text.find(needle);
     if (p == std::string::npos) return false;
@@ -176,7 +177,7 @@ bool duplicateLine(std::string& text, const std::string& needle) {
 }
 
 /// Add @p delta to the trailing @c END,<n> truncation guard, so a test that
-/// removes/adds a RECORD is testing the record rule and not the line count.
+/// removes or adds a record tests the record rule and not the line count.
 bool bumpEndCount(std::string& text, long long delta) {
     const std::size_t p = text.rfind("\nEND,");
     if (p == std::string::npos) return false;
@@ -201,8 +202,8 @@ bool parseFromString(const std::string& text, NetworkStateSnapshot& out, std::st
 }
 
 // -----------------------------------------------------------------------------
-// Loader fixtures (same shape as the §18.10 suite; distinct temp-file prefix so
-// two concurrently running suites can never collide on a scratch path).
+// Loader fixtures (same shape as the §18.10 suite; a distinct temp-file prefix
+// keeps two concurrently running suites off each other's scratch paths).
 // -----------------------------------------------------------------------------
 
 fs::path writeTempConfig(const std::string& tag, const std::string& body) {
@@ -239,9 +240,10 @@ bool loadInto(const std::string& tag, const std::string& body, GnssConfig& cfg) 
     return ok;
 }
 
-/// The Card-1 arithmetic every coupling posture needs: the conditional local
-/// carry is EXACT only against a dense border carry, so the loader hard-requires
-/// @c shared_carry_full_cov (GnssConfigLoadNetwork.cpp:3022).
+/// The card 1 knobs every coupling posture needs: the conditional local carry is
+/// exact only against a dense border carry, so the loader requires
+/// @c shared_carry_full_cov for @c carry_conditional_coupling
+/// (GnssConfigLoadNetwork.cpp, network section loader).
 const char* kCard1 =
     "    \"shared_carry_full_cov\": true,\n"
     "    \"carry_conditional_coupling\": true,\n"
@@ -250,13 +252,13 @@ const char* kCard1 =
 }  // namespace
 
 // =============================================================================
-// ResumeCouplingSnapshotTest — the format-v3 contract.
+// ResumeCouplingSnapshotTest: the format-v3 contract.
 // =============================================================================
 
-// 1. The whole point of the card: every regressor comes back BIT-EXACT and in
-//    HARVEST ORDER.  Vector equality, never a set compare — the order is
-//    observable at the ulp (rhs accumulates in vector order), so a "same
-//    contents, different order" restore is a DIFFERENT row.
+// 1. The card's main requirement: every regressor comes back bit-exact and in
+//    harvest order.  Vector equality, not a set compare: the order is observable
+//    at the ulp (rhs accumulates in vector order), so a restore with the same
+//    contents in a different order is a different row.
 TEST(ResumeCouplingSnapshotTest, RegressorsRoundTripBitExactInHarvestOrder) {
     const NetworkStateSnapshot s = couplingSnapshot();
     ASSERT_TRUE(s.hasCouplingState());
@@ -284,14 +286,14 @@ TEST(ResumeCouplingSnapshotTest, RegressorsRoundTripBitExactInHarvestOrder) {
         EXPECT_DOUBLE_EQ(r.coupling_dict[i].p_prev, s.coupling_dict[i].p_prev);
     }
     // Whole-container equality: std::vector<std::pair<int,double>> compares
-    // element-wise IN ORDER, which is exactly the property under test.
+    // element-wise in order, which is the property under test.
     EXPECT_EQ(r.coupling_rows, s.coupling_rows);
     EXPECT_EQ(r.coupling_zrows, s.coupling_zrows);
     ASSERT_EQ(r.coupling_rows.count({7, "G01", "L1C"}), 1u);
     {
         const auto& v = r.coupling_rows.at({7, "G01", "L1C"});
         ASSERT_EQ(v.size(), 3u);
-        EXPECT_EQ(v[0].first, 1);            // harvest order, NOT ascending id
+        EXPECT_EQ(v[0].first, 1);            // harvest order, not ascending id
         EXPECT_EQ(v[1].first, 0);
         EXPECT_EQ(v[2].first, 3);
         EXPECT_DOUBLE_EQ(v[0].second, -0.99876543210987);
@@ -304,7 +306,7 @@ TEST(ResumeCouplingSnapshotTest, RegressorsRoundTripBitExactInHarvestOrder) {
 
 // 2. The strongest single statement of exactness available without a reference
 //    file: serialize(parse(serialize(s))) is byte-for-byte serialize(s).  It
-//    covers every field, every container's emit ORDER, and the END line count in
+//    covers every field, every container's emit order, and the END line count in
 //    one comparison.
 TEST(ResumeCouplingSnapshotTest, SerializeIsIdempotent) {
     const std::string once = serializeToString(couplingSnapshot());
@@ -314,11 +316,11 @@ TEST(ResumeCouplingSnapshotTest, SerializeIsIdempotent) {
     EXPECT_EQ(serializeToString(r), once);
 }
 
-// 3. Card 1e: p_prev == 0 is the MEANINGFUL "datum-pinned / ensemble-gauge
-//    column, exactly known" value, not a missing one.  A reader that dropped or
-//    defaulted it would activate the κ shrink (guarded on p_prev > 0,
-//    NetworkCoupling.cpp:277) on a column the datum re-applies EXACTLY, changing
-//    the row's gauge sum.
+// 3. p_prev == 0 (card 1e) is the meaningful "datum-pinned / ensemble-gauge column,
+//    exactly known" value, not a missing one.  A reader that dropped or defaulted
+//    it would activate the κ shrink (guarded on p_prev > 0 in
+//    CouplingRowBuilder::buildCplRow, NetworkCoupling.cpp) on a column the datum
+//    re-applies exactly, changing the row's gauge sum.
 TEST(ResumeCouplingSnapshotTest, PinnedColumnZeroPPrevSurvives) {
     NetworkStateSnapshot r;
     std::string err;
@@ -330,15 +332,15 @@ TEST(ResumeCouplingSnapshotTest, PinnedColumnZeroPPrevSurvives) {
     EXPECT_DOUBLE_EQ(r.coupling_dict[2].s_prev, 0.2675481109223);
 }
 
-// 4. sh_layer is its OWN field.  The D record has no room for it and smuggles
-//    layer 1 into the sat string as the literal "L1" (NetworkRunContext.cpp:
-//    1631-1634); copying that hack here would make resolveSharedCol —
-//    vtecCoeffColumn(n, m, trig, sh_layer) — bind a layer-1 coefficient to the
-//    live LAYER-0 column, which is strictly worse than departing.
+// 4. sh_layer is its own field.  The D record has no room for it and tags layer 1
+//    in the sat string as the literal "L1" (networkWriteStateSnapshot,
+//    NetworkRunContext.cpp).  Reusing that tag here would make resolveSharedCol
+//    (vtecCoeffColumn(n, m, trig, sh_layer)) bind a layer-1 coefficient to the
+//    live layer-0 column, which is strictly worse than departing.
 TEST(ResumeCouplingSnapshotTest, ShLayerRoundTripsAsItsOwnField) {
     const NetworkStateSnapshot s = couplingSnapshot();
     const std::string text = serializeToString(s);
-    // ...,sh_n=2,sh_m=1,sh_trig='S'(83),sh_layer=1 — and the sat field EMPTY.
+    // ...,sh_n=2,sh_m=1,sh_trig='S'(83),sh_layer=1, with the sat field empty.
     EXPECT_NE(text.find("\nQS,3,3,,,2,1,83,1,"), std::string::npos);
     NetworkStateSnapshot r;
     std::string err;
@@ -353,18 +355,17 @@ TEST(ResumeCouplingSnapshotTest, ShLayerRoundTripsAsItsOwnField) {
     EXPECT_EQ(r.coupling_dict[3].sh_layer, 1);
 }
 
-// 5. The dictionary key is (identity, ŝ_prev, P_prev), NOT identity alone.
-//    harvestCoupling assigns both values from the shared COLUMN, so rows of ONE
-//    harvest epoch agree — but a station whose harvest FAILED `continue`s before
-//    the stash and keeps an OLDER coupling.  Measured on the branch-point file:
-//    2799 of 2811 L rows at one stamp, 12 at three older ones.  An identity-only
-//    hoist would restore those 12 against the WRONG frame.
+// 5. The dictionary key is (identity, ŝ_prev, P_prev), not the identity alone.
+//    harvestCoupling assigns both values from the shared column, so the rows of one
+//    harvest epoch agree, but a station whose harvest failed `continue`s before the
+//    stash and keeps an older coupling (observed on the branch-point snapshot file).
+//    An identity-only key would restore those rows against the wrong frame.
 TEST(ResumeCouplingSnapshotTest, DistinctVintagesOfOneIdentityBothSurvive) {
     NetworkStateSnapshot r;
     std::string err;
     ASSERT_TRUE(parseFromString(serializeToString(couplingSnapshot()), r, err)) << err;
     ASSERT_EQ(r.coupling_dict.size(), 5u);
-    // Ids 0 and 4 are the SAME identity at two vintages.
+    // Ids 0 and 4 are the same identity at two vintages.
     EXPECT_EQ(r.coupling_dict[0].kind, r.coupling_dict[4].kind);
     EXPECT_EQ(r.coupling_dict[0].sat,  r.coupling_dict[4].sat);
     EXPECT_EQ(r.coupling_dict[0].signal, r.coupling_dict[4].signal);
@@ -372,19 +373,19 @@ TEST(ResumeCouplingSnapshotTest, DistinctVintagesOfOneIdentityBothSurvive) {
     EXPECT_DOUBLE_EQ(r.coupling_dict[0].p_prev, 1.7312e-05);
     EXPECT_DOUBLE_EQ(r.coupling_dict[4].p_prev, 4.4e-05);
     EXPECT_NE(r.coupling_dict[0].p_prev, r.coupling_dict[4].p_prev);
-    // ...and each row still points at ITS OWN vintage.
+    // ...and each row still points at its own vintage.
     ASSERT_EQ(r.coupling_rows.count({7, "G01", "L1C"}), 1u);
     ASSERT_EQ(r.coupling_rows.count({7, "E02", "L5Q"}), 1u);
     EXPECT_EQ(r.coupling_rows.at({7, "G01", "L1C"})[1].first, 0);   // fresh vintage
     EXPECT_EQ(r.coupling_rows.at({7, "E02", "L5Q"})[0].first, 4);   // stale vintage
 }
 
-// 6. hasCouplingState() is DELIBERATELY separate from hasFrameState().  The
-//    latter also gates the resume-side frame restore (NetworkRunContext.cpp:1252),
-//    so widening it would let a coupling-bearing snapshot with no PA/PT/CA rows
-//    claim frame state it does not have: the restore would proceed with an empty
-//    anchor_incumbent, the QUEUE-1(d) erase would fire anyway, and this card
-//    would silently defeat itself.
+// 6. hasCouplingState() is deliberately separate from hasFrameState().  The latter
+//    also gates the resume-side frame restore (networkTryWarmResume,
+//    NetworkRunContext.cpp), so widening it would let a coupling-bearing snapshot
+//    with no PA/PT/CA rows claim frame state it does not have: the restore would
+//    proceed with an empty anchor_incumbent, the QUEUE-1(d) erase would fire
+//    anyway, and the carries this card restores would be erased without a warning.
 TEST(ResumeCouplingSnapshotTest, HasCouplingStateIsIndependentOfHasFrameState) {
     NetworkStateSnapshot only_cpl = baseSnapshot();
     only_cpl.local_carry[{7, "G01", "L1C"}] = {-3.43, 8.1e-07, 1399204800.0};
@@ -392,20 +393,20 @@ TEST(ResumeCouplingSnapshotTest, HasCouplingStateIsIndependentOfHasFrameState) {
     only_cpl.coupling_rows[{7, "G01", "L1C"}] = {{0, 0.5}};
     EXPECT_TRUE(only_cpl.hasCouplingState());
     EXPECT_FALSE(only_cpl.hasFrameState());
-    // The QR set ALONE is coupling state too (a refloated sat is skip-stashed,
+    // The QR set alone is coupling state too (a refloated sat is skip-stashed,
     // so no other record in the file can carry the flag).
     NetworkStateSnapshot only_qr = baseSnapshot();
     only_qr.clock_refloat_sats = {"G14"};
     EXPECT_TRUE(only_qr.hasCouplingState());
     EXPECT_FALSE(only_qr.hasFrameState());
-    // ...and the converse: frame state alone is NOT coupling state.
+    // ...and the converse: frame state alone is not coupling state.
     const NetworkStateSnapshot fr = frameSnapshot();
     EXPECT_TRUE(fr.hasFrameState());
     EXPECT_FALSE(fr.hasCouplingState());
 }
 
-// 7. OFF-path byte identity, write side (a): a frame-only run still writes the
-//    v2 header and NONE of the four new tags.
+// 7. Off-path byte identity, write side (a): a frame-only run still writes the
+//    v2 header and none of the four coupling tags.
 TEST(ResumeCouplingSnapshotTest, FrameOnlySnapshotStillWritesV2Header) {
     const std::string text = serializeToString(frameSnapshot());
     EXPECT_EQ(text.rfind("# gnss_network_state_snapshot v2\n", 0), 0u) << text.substr(0, 60);
@@ -415,8 +416,8 @@ TEST(ResumeCouplingSnapshotTest, FrameOnlySnapshotStillWritesV2Header) {
     EXPECT_EQ(text.find("\nQR,"), std::string::npos);
 }
 
-// 8. OFF-path byte identity, write side (b): a bare run still writes v1 —
-//    proof that hasFrameState() was not widened into the v3 selector.
+// 8. Off-path byte identity, write side (b): a bare run still writes v1, which
+//    shows that hasFrameState() was not widened into the v3 selector.
 TEST(ResumeCouplingSnapshotTest, BareSnapshotStillWritesV1Header) {
     const NetworkStateSnapshot s = baseSnapshot();
     ASSERT_FALSE(s.hasFrameState());
@@ -425,11 +426,10 @@ TEST(ResumeCouplingSnapshotTest, BareSnapshotStillWritesV1Header) {
     EXPECT_EQ(text.rfind("# gnss_network_state_snapshot v1\n", 0), 0u) << text.substr(0, 60);
 }
 
-// 9. The INERT path (tier 2): the existing v2 branch library
-//    (runs/camp60wu_quiet12h_frwriter/*.ep1440) stays a LEGAL input — it parses,
-//    all four coupling containers come back empty, and hasCouplingState() is
-//    false, which is what makes the armed restore warn INERT instead of
-//    half-restoring.
+// 9. The inert path (tier 2): v2 files, such as the existing branch library
+//    (runs/camp60wu_quiet12h_frwriter/*.ep1440), stay legal input.  A v2 file parses,
+//    all four coupling containers come back empty, and hasCouplingState() is false,
+//    so the armed restore warns that it is inert instead of restoring half a row.
 TEST(ResumeCouplingSnapshotTest, V2FileParsesWithEmptyCouplingContainers) {
     NetworkStateSnapshot r;
     std::string err;
@@ -442,10 +442,10 @@ TEST(ResumeCouplingSnapshotTest, V2FileParsesWithEmptyCouplingContainers) {
     EXPECT_TRUE(r.hasFrameState());          // the v2 half is untouched
 }
 
-// 10. Row COMPLETENESS is parser-enforced.  The explicit k is what makes it
-//     checkable: a line that lost exactly one whole (id, M) pair still has even
-//     arity and would pass silently, and a PARTIAL coefficient vector breaks
-//     Card 1e's gauge identity (strictly worse than an empty one).
+// 10. The parser enforces row completeness.  The explicit k makes it checkable: a
+//     line that lost exactly one whole (id, M) pair still has even arity and would
+//     pass unnoticed, and a partial coefficient vector breaks the card 1e gauge
+//     identity (strictly worse than an empty one).
 TEST(ResumeCouplingSnapshotTest, EntryCountMismatchFailsParse) {
     std::string text = serializeToString(couplingSnapshot());
     ASSERT_TRUE(replaceLine(text, "\nQL,7,G01,L1C,",
@@ -469,8 +469,8 @@ TEST(ResumeCouplingSnapshotTest, OutOfRangeDictionaryIdFailsParse) {
     EXPECT_NE(err.find("out of range"), std::string::npos) << err;
 }
 
-// 12. Ids must be DENSE and ascending: the id IS the vector index, so a gap
-//     would silently re-map every later row's regression onto the wrong columns.
+// 12. Ids must be dense and ascending: the id is the vector index, so a gap would
+//     re-map every later row's regression onto the wrong columns without an error.
 TEST(ResumeCouplingSnapshotTest, NonDenseDictionaryIdFailsParse) {
     std::string text = serializeToString(couplingSnapshot());
     ASSERT_TRUE(eraseLine(text, "\nQS,1,"));
@@ -481,11 +481,11 @@ TEST(ResumeCouplingSnapshotTest, NonDenseDictionaryIdFailsParse) {
     EXPECT_NE(err.find("dense"), std::string::npos) << err;
 }
 
-// 13. A QL with no L row to attach to is a hard failure, not a silent orphan:
+// 13. A QL with no L row to attach to is a hard failure, not an ignored orphan:
 //     the regression is meaningless without the (value_abs, var) it conditions.
 TEST(ResumeCouplingSnapshotTest, OrphanQlWithoutLRowFailsParse) {
     std::string text = serializeToString(couplingSnapshot());
-    ASSERT_TRUE(eraseLine(text, "\nL,7,G01,L1C,"));   // anchored at line start: never a QL
+    ASSERT_TRUE(eraseLine(text, "\nL,7,G01,L1C,"));   // anchored at line start, so not a QL
     ASSERT_TRUE(bumpEndCount(text, -1));
     NetworkStateSnapshot r;
     std::string err;
@@ -494,7 +494,7 @@ TEST(ResumeCouplingSnapshotTest, OrphanQlWithoutLRowFailsParse) {
 }
 
 // 14. Two QL rows on one key would make the restored regression depend on file
-//     order — refused.
+//     order, so the parser refuses them.
 TEST(ResumeCouplingSnapshotTest, DuplicateQlRowFailsParse) {
     std::string text = serializeToString(couplingSnapshot());
     ASSERT_TRUE(duplicateLine(text, "\nQL,7,E02,L5Q,"));
@@ -505,11 +505,11 @@ TEST(ResumeCouplingSnapshotTest, DuplicateQlRowFailsParse) {
     EXPECT_NE(err.find("duplicate"), std::string::npos) << err;
 }
 
-// 15. The one SILENT-POISON path this format has: fmt writes "nan"/"inf" and
-//     parseD's strtod ACCEPTS and fully consumes them, so without an explicit
-//     finite screen a poisoned coefficient round-trips and then hits
-//     buildCplRow's own guard (NetworkCoupling.cpp:305), which DROPS THE WHOLE
-//     ROW — losing the arc's LEVEL, not just its coupling.
+// 15. The one path in this format where a bad value passes without an error: fmt
+//     writes "nan"/"inf" and parseD's strtod accepts and fully consumes them.
+//     Without an explicit finite screen, a non-finite coefficient round-trips and
+//     then hits buildCplRow's own non-finite-RHS guard (NetworkCoupling.cpp), which
+//     drops the whole row: the arc loses its level, not just its coupling.
 TEST(ResumeCouplingSnapshotTest, NonFiniteCoefficientFailsParse) {
     std::string text = serializeToString(couplingSnapshot());
     ASSERT_TRUE(replaceLine(text, "\nQZ,7,", "QZ,7,2,0,nan,1,-0.0042"));
@@ -519,8 +519,8 @@ TEST(ResumeCouplingSnapshotTest, NonFiniteCoefficientFailsParse) {
     EXPECT_NE(err.find("finite"), std::string::npos) << err;
 }
 
-// 16. p_prev == 0 is legal (case 3); a NEGATIVE one is corrupt — it is a
-//     variance, and the departed route marginalizes M²·P_prev into σ².
+// 16. p_prev == 0 is legal (case 3); a negative one is corrupt: it is a variance,
+//     and the departed route marginalizes M²·P_prev into σ².
 TEST(ResumeCouplingSnapshotTest, NegativePPrevFailsParse) {
     std::string text = serializeToString(couplingSnapshot());
     ASSERT_TRUE(replaceLine(text, "\nQS,2,", "QS,2,1,E02,C1C,0,0,67,0,0.5,-1"));
@@ -529,12 +529,12 @@ TEST(ResumeCouplingSnapshotTest, NegativePPrevFailsParse) {
     EXPECT_FALSE(parseFromString(text, r, err));
 }
 
-// 17. Every new line went through the `put` lambda, so the END,<n> truncation
-//     guard still counts them: deleting a QS WITHOUT fixing END must be caught
-//     by the line count.  The LAST dictionary entry is the one to delete — the
-//     ids that remain are still dense, so the id rule cannot fire first and mask
-//     what is under test (the dict-id range failure lives in the post-loop
-//     splice, which the in-loop END check precedes).
+// 17. Every coupling line goes through the `put` lambda, so the END,<n> truncation
+//     guard counts them: deleting a QS without fixing END is caught by the line
+//     count.  The deleted entry is the last dictionary entry, so the remaining ids
+//     are still dense and the id rule cannot fire first and mask the case under
+//     test (the dict-id range failure lives in the post-loop splice, which the
+//     in-loop END check precedes).
 TEST(ResumeCouplingSnapshotTest, EndLineCountCoversCouplingRecords) {
     std::string text = serializeToString(couplingSnapshot());
     ASSERT_TRUE(eraseLine(text, "\nQS,4,"));          // END deliberately untouched
@@ -544,9 +544,9 @@ TEST(ResumeCouplingSnapshotTest, EndLineCountCoversCouplingRecords) {
     EXPECT_NE(err.find("line-count mismatch"), std::string::npos) << err;
 }
 
-// 18. File POSITION is load-bearing: the CARRY and EMITTER blobs are swallowed
-//     VERBATIM by the parser's blob state machines, so any record emitted after
-//     either would be lost.  The coupling records must precede both.
+// 18. File position matters: the parser's blob state machines consume the CARRY
+//     and EMITTER blobs verbatim, so any record emitted after either would be
+//     lost.  The coupling records must precede both.
 TEST(ResumeCouplingSnapshotTest, CouplingRecordsPrecedeTheBlobs) {
     NetworkStateSnapshot s = couplingSnapshot();
     s.carry_state   = "CARRY,v1,0\nCEND\n";
@@ -567,8 +567,8 @@ TEST(ResumeCouplingSnapshotTest, CouplingRecordsPrecedeTheBlobs) {
 }
 
 // 19. Non-collision, statically.  "END," / "EMITTER," / "CARRY," are matched
-//     with rfind(p, 0) == 0 PREFIX tests, not tag equality, so a new tag that
-//     were a prefix of (or prefixed by) one of them would be mis-dispatched.
+//     with rfind(p, 0) == 0 prefix tests, not tag equality, so a coupling tag that
+//     was a prefix of (or prefixed by) one of them would be mis-dispatched.
 TEST(ResumeCouplingSnapshotTest, NoNewTagCollidesWithStructuralPrefixes) {
     const std::vector<std::string> tags{"QS,", "QL,", "QZ,", "QR,"};
     const std::vector<std::string> structural{"END,", "EMITTER,", "CARRY,"};
@@ -583,16 +583,17 @@ TEST(ResumeCouplingSnapshotTest, NoNewTagCollidesWithStructuralPrefixes) {
 }
 
 // =============================================================================
-// ResumeCouplingConfig — the loader interlocks.
+// ResumeCouplingConfig: the loader interlocks.
 //
-// NOTE: GnssConfig::loadFromJson CATCHES std::runtime_error and returns false
-// (GnssConfigLoad.cpp:259-262), logging the message, so these cases can assert
-// the REFUSAL but not the message text.  The message content is reviewed at the
-// throw sites in loadNetworkObservabilityAndSnapshot_ / loadNetworkCarries_.
+// GnssConfig::loadFromJson catches the std::runtime_error (its handler catches
+// std::exception, GnssConfigLoad.cpp), logs the message and returns false, so
+// these cases can assert the refusal but not the message text.  The message
+// content is reviewed at the throw sites in loadNetworkObservabilityAndSnapshot_ /
+// loadNetworkCarries_.
 // =============================================================================
 
-// 20. Both knobs default OFF — a stock network run writes v1/v2 and restores
-//     nothing (the byte-identity floor).
+// 20. Both knobs default to off: a stock network run writes v1/v2 and restores
+//     nothing (the byte-identity baseline).
 TEST(ResumeCouplingConfig, DefaultsAreOff) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("cpl_defaults", networkConfig(), cfg));
@@ -600,9 +601,9 @@ TEST(ResumeCouplingConfig, DefaultsAreOff) {
     EXPECT_FALSE(cfg.networkResumeCouplingRestore());
 }
 
-// 21. The capture rides its OWN knob but is unusable without the frame capture:
-//     the coupling restore is only reachable behind resume_frame_restore, which
-//     is INERT on a snapshot with no frame rows.
+// 21. The capture has its own knob but is unusable without the frame capture: the
+//     coupling restore is reachable only behind resume_frame_restore, which is
+//     inert on a snapshot with no frame rows.
 TEST(ResumeCouplingConfig, CaptureRequiresFrameCapture) {
     GnssConfig cfg;
     EXPECT_FALSE(loadInto("cpl_capture_nofr",
@@ -610,8 +611,9 @@ TEST(ResumeCouplingConfig, CaptureRequiresFrameCapture) {
                       "    \"state_snapshot_coupling_capture\": true,\n"), cfg));
 }
 
-// 22. Warn-inert, not illegal (the :2089-2092 frame-capture precedent): armed
-//     with no snapshot path, nothing is written and the run proceeds.
+// 22. Warn-inert, not illegal (the same rule as state_snapshot_frame_capture in
+//     GnssConfigLoadNetwork.cpp): armed with no snapshot path, nothing is written
+//     and the run proceeds.
 TEST(ResumeCouplingConfig, CaptureWithoutSnapshotPathIsWarnInert) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("cpl_capture_nopath",
@@ -622,8 +624,8 @@ TEST(ResumeCouplingConfig, CaptureWithoutSnapshotPathIsWarnInert) {
 
 // 23. The restored ŝ_prev are frame-valid only once the pre-seam realization is
 //     restored; without resume_frame_restore the first incumbent-less election's
-//     QUEUE-1(d) clause erases the leveling carries — coupling and all — before
-//     PASS B ever reads them.
+//     QUEUE-1(d) clause erases the leveling carries, coupling included, before
+//     PASS B reads them.
 TEST(ResumeCouplingConfig, RestoreRequiresFrameRestore) {
     GnssConfig cfg;
     EXPECT_FALSE(loadInto("cpl_restore_nofr",
@@ -644,10 +646,10 @@ TEST(ResumeCouplingConfig, RestoreRequiresConditionalCoupling) {
                       "    \"resume_coupling_restore\": true,\n"), cfg));
 }
 
-// 25. Card 1f is the shipped repair for the family-sum defect a TRUNCATED row
-//     leaves (Mᵀg_s = −g_r(c)), and the resume seam is the maximum-scale
-//     truncation regime — without it the W5 null-space gate can withhold every
-//     rows-carrying epoch.
+// 25. carry_coupling_gauge_project (card 1f) repairs the family-sum defect that a
+//     truncated row leaves (it restores Mᵀg_s = −g_r(c)), and the resume seam is
+//     the largest-scale truncation regime.  Without it the W5 null-space gate can
+//     withhold every epoch that carries coupling rows.
 TEST(ResumeCouplingConfig, RestoreRequiresGaugeProject) {
     GnssConfig cfg;
     EXPECT_FALSE(loadInto("cpl_restore_nogauge",
@@ -660,16 +662,16 @@ TEST(ResumeCouplingConfig, RestoreRequiresGaugeProject) {
                       "    \"resume_coupling_restore\": true,\n"), cfg));
 }
 
-// 26. ⚠ THE RUNG-3 REGRESSION TEST.  amb_seam_reinflate_var_m2 attacked the
-//     row's WEIGHT and walked the consumer 5.13 m in h12 by letting the level
-//     re-float on the cold station layer (standing invariant #1, the
-//     slip-relevel-walk family).  Under conditional coupling `var` IS the row's
-//     pure conditional variance, so inflating it loosens the very row the
-//     regressors make border-neutral WHILE the row still asserts Σ M_j·ŝ_prev,j
-//     — a combination no continuous epoch produces, and the in-tree precedent
-//     runs the other way (NetworkRaim.cpp:771-772 CLEARS the regression whenever
-//     it loosens the variance).  The two must be structurally exclusive, not
-//     merely discouraged.
+// 26. Rung-3 regression test.  amb_seam_reinflate_var_m2 changes the row's weight
+//     and, by letting the level re-float on the cold station layer, walked the
+//     consumer by metres (standing invariant #1, the slip-relevel-walk family).
+//     Under conditional coupling `var` is the row's pure conditional variance, so
+//     inflating it loosens the row the regressors make border-neutral while the
+//     row still asserts Σ M_j·ŝ_prev,j.  No continuous epoch produces that
+//     combination, and the in-tree precedent runs the other way (the relevel
+//     re-tap in networkPostFitRaim, NetworkRaim.cpp, clears the regression when it
+//     loosens the variance).  The loader therefore makes the two knobs mutually
+//     exclusive.
 TEST(ResumeCouplingConfig, RestoreRefusesSeamReinflate) {
     GnssConfig cfg;
     EXPECT_FALSE(loadInto("cpl_restore_reinflate",

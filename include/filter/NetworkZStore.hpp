@@ -1,82 +1,90 @@
 #pragma once
 /**
  * @file NetworkZStore.hpp
- * @brief Card 4 (M1) phase B — the DD cycle-basis z-store: the S-system-invariant
- *        carry the generalized-LS network filter time-links.
+ * @brief DD cycle-basis z-store: the S-system-invariant quantities that the
+ *        generalized-LS network filter time-links (Card 4, M1, phase B).
  *
- * This is the numerical heart of the "invariant-function carry" (design handoff
- * `docs/SPEC_card4_invariant_carry.md`, foundations Teunissen/Khodabandeh/
- * Psychas 2021 J Geod 95:108 generalized Kalman filter + Hou & Zhang 2025
- * J Geod 99:3 generalized-LS filter).  It answers the question the 2021 paper
- * left open — how to construct the transition @f$\Phi^z@f$ of the time-linked
- * functions @f$z=F^\top x@f$ across a CHANGING linked set — by choosing @f$z@f$
- * to be the double-differenced (DD) ambiguities, i.e. the **fundamental cycles**
- * of the receiver–satellite observation graph's spanning tree.  Those are
- * S-system invariants: estimable under every datum, integer, constant between
- * cycle slips (@f$q_z=0@f$), and — crucially — their basis change under any
- * pivot/tree/handover event is a **unimodular integer matrix** (exact, zero
- * information loss).  Basis churn, which poisoned every Card-3 stabilization arm,
- * becomes a non-event by construction rather than by hygiene.
+ * Core numerics of the "invariant-function carry" (design handoff
+ * `docs/SPEC_card4_invariant_carry.md`; foundations: Teunissen/Khodabandeh/
+ * Psychas 2021 J Geod 95:108, generalized Kalman filter, and Hou & Zhang 2025
+ * J Geod 99:3, generalized-LS filter).  The 2021 paper leaves open how to
+ * construct the transition @f$\Phi^z@f$ of the time-linked functions
+ * @f$z=F^\top x@f$ across a changing linked set.  This file answers it by
+ * choosing @f$z@f$ to be the double-differenced (DD) ambiguities, i.e. the
+ * **fundamental cycles** of a spanning tree of the receiver–satellite
+ * observation graph.  These are S-system invariants: estimable under every
+ * datum, integer, constant between cycle slips (@f$q_z=0@f$), and their basis
+ * change under any pivot, tree or handover event is a **unimodular integer
+ * matrix** (exact, with no information loss).  Basis churn, which defeated the
+ * Card-3 stabilization arms, therefore leaves the carried information unchanged
+ * by construction.
  *
  * ## Cycle-space identification (why @f$\Phi^z@f$ is trivial)
  *
- * For one @f$(\text{const},\sigma)@f$ observation graph — a BIPARTITE graph whose
- * vertices are the receivers and satellites and whose ARCS are the
- * receiver–satellite ambiguities present this epoch — a spanning tree of a
+ * For one @f$(\text{const},\sigma)@f$ observation graph (a bipartite graph whose
+ * vertices are the receivers and satellites and whose arcs are the
+ * receiver–satellite ambiguities present this epoch), a spanning tree of a
  * connected component with @f$n_c@f$ receivers and @f$m_c@f$ satellites has
- * @f$n_c+m_c-1@f$ tree edges.  The independent DDs are exactly the
+ * @f$n_c+m_c-1@f$ tree edges.  The independent DDs are the
  * @f$E-(n_c+m_c-1)@f$ **chords** (non-tree arcs); each chord's DD is the signed
  * sum of ambiguities around its **fundamental cycle** (the chord plus the tree
  * path joining its endpoints).  Because the graph is bipartite every cycle
- * alternates receiver/satellite, so a fundamental-cycle sum is a genuine double
- * (or higher-order alternating) difference: the receiver phase bias and the
- * satellite phase bias cancel analytically, leaving @f$\pm1@f$ on four (or more)
- * ambiguity columns only — a **gauge-free** quantity (spec D6).
+ * alternates receiver and satellite, so a fundamental-cycle sum is a double (or
+ * higher-order alternating) difference: the receiver and satellite phase biases
+ * cancel analytically, leaving @f$\pm1@f$ on four or more ambiguity columns
+ * only, a **gauge-free** quantity (spec D6).
  *
  * Graph events map to exact z-store operations:
  *
- *   - **chord death** (@ref ZComponent::killChord) → drop that z row/col of
- *     @f$P^z@f$ — pure marginalization (the covariance sub-block IS the marginal;
- *     equivalently the Schur complement of the information form);
- *   - **chord birth** (@ref ZComponent::birthChord) → append a z entry
+ *   - **chord death** (@ref ZComponent::killChord): drop that z row/col of
+ *     @f$P^z@f$.  This is pure marginalization (the covariance sub-block is the
+ *     marginal; equivalently the Schur complement of the information form).
+ *   - **chord birth** (@ref ZComponent::birthChord): append a z entry
  *     initialized by tap-off @f$\hat z_{\text{new}}=f^\top\hat x@f$ (GKF Eq. 22)
- *     with its conditional variance + cross-covariance (supplied by the caller;
- *     the network solve in phase C, a reference batch in the unit gates);
- *   - **leaf growth** (@ref ZComponent::addLeafArc) → a new arc that brings in a
- *     fresh vertex extends the tree, adds no cycle, touches no z;
- *   - **tree-edge death** → @ref ZComponent::pivot a covering chord into the tree
- *     (a unimodular basis change, @f$z'=Tz,\ P^{z\prime}=TP^zT^\top@f$), THEN
- *     @ref ZComponent::killChord the now-chord dead arc.  If no chord covers the
- *     dying tree edge it is a cut edge and its death SPLITS the component into two —
- *     but no z entry references a cut edge, so the split merely re-partitions the
- *     existing blocks into the two sides (no transform); the phase-C epoch driver
- *     re-derives the component set each epoch (the eq34 union-find), so an explicit
- *     split primitive is unnecessary here and deferred to that driver;
- *   - **component merge** (@ref ZComponent::mergedWith) → union the two z-blocks
- *     block-diagonally (they were independent), promote ONE bridge arc to the
- *     tree, tap-off any surplus bridges as new chords — @f$T@f$ is block-IDENTITY
- *     on the carried z (the bridge is a cut edge, so every pre-existing chord's
- *     fundamental cycle is unchanged; OPEN-2 of the phase-A scout).
+ *     with its conditional variance and cross-covariance, supplied by the caller
+ *     (the network solve in phase C, a reference batch in the unit gates).
+ *   - **leaf growth** (@ref ZComponent::addLeafArc): a new arc that brings in a
+ *     new vertex extends the tree, adds no cycle and touches no z.
+ *   - **tree-edge death**: @ref ZComponent::pivot a covering chord into the tree
+ *     (a unimodular basis change, @f$z'=Tz,\ P^{z\prime}=TP^zT^\top@f$), then
+ *     @ref ZComponent::killChord the dead arc, which is now a chord.  If no chord
+ *     covers the dying tree edge it is a cut edge and its death splits the
+ *     component in two.  No z entry references a cut edge, so the split only
+ *     re-partitions the existing blocks between the two sides (no transform).
+ *     The phase-C epoch driver re-derives the component set each epoch (the eq34
+ *     union-find), so this file has no split primitive; splitting is left to that
+ *     driver.
+ *   - **component merge** (@ref ZComponent::mergedWith): union the two z-blocks
+ *     block-diagonally (they were independent), promote one bridge arc to the
+ *     tree, and tap off any surplus bridges as new chords.  @f$T@f$ is the block
+ *     identity on the carried z: the bridge is a cut edge, so every pre-existing
+ *     chord's fundamental cycle is unchanged (OPEN-2 of the phase-A scout).
  *
- * ## Scope of THIS file (Card 4 phase B)
+ * ## Scope of this file (Card 4 phase B)
  *
- * Pure numeric leaf, header-only, no `ApplicationNetwork` / `StateManager` /
- * `NetworkNormalEquations` coupling (the standalone-class precedent of
+ * Pure numeric leaf, header-only, with no `ApplicationNetwork` / `StateManager` /
+ * `NetworkNormalEquations` coupling (following the standalone classes
  * `NetworkCarryVce` / `NeqAccumulator`).  It owns the z-store data structure, the
  * fundamental-cycle algebra, the lifecycle transforms, and a small Kalman
- * predict/update on z.  It is driven directly by `tests/test_network_zstore.cpp`
- * with synthetic components of known truth (unit gates 1–3: CycleBasisUnimodular,
- * ChordLifecycle, FilterEqualsBatch).  Deliberately NOT here (later phases):
- *   - phase C: wiring the store to the producer solve — the joint rank-K
- *     per-component Woodbury DD-prior fold on the retained Schur factors
- *     (`foldReducedSumZeroGauges` generalized; scout OPEN-1) and the per-epoch
- *     tree hand-off from the eq34 election, plus gate 4 DatumFreedom;
- *   - phase D: the emit-layer frame re-basing, run-end counter line, config
- *     toggles (`network.carry_invariant*`), and the field falsifier.
+ * predict/update on z.  `tests/test_network_zstore.cpp` drives it directly with
+ * synthetic components of known truth (unit gates 1–3: CycleBasisUnimodular,
+ * ChordLifecycle, FilterEqualsBatch).  Not in this file:
+ *   - phase C: wiring the store to the producer solve, i.e. the joint rank-K
+ *     per-component Woodbury DD-prior fold on the retained Schur factors (the
+ *     generalization of `foldReducedSumZeroGauges`; scout OPEN-1) and the
+ *     per-epoch tree hand-off from the eq34 election, plus gate 4 DatumFreedom.
+ *     These are in `NetworkInvariantCarryDriver` and
+ *     `NetworkNormalEquations::foldReducedDdPriors`;
+ *   - phase D: the emit-layer frame re-basing, the run-end counter line, the
+ *     config toggles (`network.carry_invariant*`), and the field falsifier.
  *
- * Because nothing in `gnss_core` includes this header yet, arming it in phase C
- * is the first byte-affecting change; phase B is byte-identical by construction
- * (the header is compiled only into `gnss_tests`).
+ * Production use: `gnss_core` includes this header.  @ref ArcKey keys the carry
+ * maps (NetworkRunContext, NetworkDdPriorBuild, NetworkInstallCarry,
+ * NetworkWlRunTypes), and `NetworkInvariantCarryDriver` builds a @ref ZComponent
+ * per component for its fundamental cycles, only under
+ * `network.carry_invariant`.  The @ref NetworkZStore container, the lifecycle
+ * transforms and the Kalman recursion on z are exercised by the unit gates (the
+ * driver's gate uses them as the phase-B oracle), not by the producer.
  */
 
 #include <Eigen/Dense>
@@ -98,15 +106,15 @@ namespace GnssProcessor {
  *        vertex ids in a canonical (ascending) orientation.
  *
  * Vertices are opaque integer ids in one flat id space per @f$(\text{const},
- * \sigma)@f$ group; the store does not care which ids are receivers and which are
- * satellites (the cycle-space algebra is identical for any bipartite graph).  The
- * caller allocates disjoint id ranges for receivers vs satellites (phase C maps a
- * receiver pool index and a satellite label to two ids).  There is at most one
+ * \sigma)@f$ group; the store does not distinguish receiver ids from satellite
+ * ids (the cycle-space algebra is identical for any bipartite graph).  The
+ * caller allocates disjoint id ranges for receivers and satellites (phase C maps
+ * a receiver pool index and a satellite label to two ids).  There is at most one
  * arc between any (receiver, satellite) pair, so the unordered vertex pair is a
  * unique arc identity; @ref u < @ref v is enforced so equal arcs compare equal.
- * The +1 REFERENCE ORIENTATION of an arc is @ref u → @ref v (min → max); every
- * signed cycle sum is taken in that convention (the physical DD sign only matters
- * to the phase-D emit re-basing, which sees the same convention on both sides).
+ * The +1 reference orientation of an arc is @ref u → @ref v (min → max); every
+ * signed cycle sum uses that convention (the physical DD sign matters only to the
+ * phase-D emit re-basing, which uses the same convention on both sides).
  */
 struct ArcKey {
     int u{0};  ///< lower-id endpoint (reference-orientation tail).
@@ -128,7 +136,7 @@ struct ArcKey {
 /**
  * @brief One connected @f$(\text{const},\sigma)@f$ component's z-block: its chord
  *        set (the DD basis), the carried DD means @f$\hat z@f$ and covariance
- *        @f$P^z@f$, and the spanning tree that DEFINES the fundamental cycles.
+ *        @f$P^z@f$, and the spanning tree that defines the fundamental cycles.
  *
  * Invariant: @ref chords_ .size() == @ref z_ .size() == @ref Pz_ rows == cols,
  * and the tree edges (@ref treeAdj_) plus the chords are exactly the component's
@@ -145,19 +153,19 @@ public:
         long long tree_swaps{0};        ///< unimodular pivots (@ref pivot).
         long long tapoffs{0};           ///< z entries initialized by tap-off (births + merge surplus bridges).
         long long leaf_growths{0};      ///< tree extensions with no new cycle (@ref addLeafArc).
-        long long predicts{0};          ///< @ref predict invocations (a per-CHORD prediction-only tally is a
-                                        ///  phase-C epoch-driver concern — the store cannot see which chords
-                                        ///  lacked a phase row this epoch).
+        long long predicts{0};          ///< @ref predict invocations.  A per-chord prediction-only
+                                        ///  tally belongs to the phase-C epoch driver: the store
+                                        ///  cannot see which chords lacked a phase row this epoch.
     };
 
     ZComponent() = default;
 
     /**
-     * @brief Seed a component from a spanning tree (edge list) — no chords yet.
+     * @brief Seed a component from a spanning tree (edge list), with no chords.
      *
      * The @p tree_edges must form a connected acyclic subgraph; the vertex set is
-     * their union.  Chords are then added incrementally (@ref birthChord) as arcs
-     * that close cycles appear, matching how phase C grows the store from the
+     * their union.  Chords are then added one at a time (@ref birthChord) as arcs
+     * that close cycles appear, the way phase C grows the store from the
      * election's tree.  A single-vertex or empty component is legal (no edges).
      *
      * @param tree_edges The spanning-tree arcs.
@@ -213,7 +221,7 @@ public:
      * tree edge on the path contributes +1 when traversed in its reference
      * orientation (min→max) and −1 otherwise.  Works for any arc whose endpoints
      * are both in the component (a chord or, for a hypothetical arc, its would-be
-     * cycle); the arc's own endpoints must be tree-connected.
+     * cycle); the arc's endpoints must be tree-connected.
      *
      * @param arc The arc whose fundamental cycle is wanted.
      * @return Map arc → signed coefficient (nonzero entries only; includes @p arc
@@ -230,16 +238,18 @@ public:
     // --- lifecycle: births --------------------------------------------------
 
     /**
-     * @brief Grow the tree by an arc that introduces a NEW vertex (leaf growth) —
-     *        adds no cycle, no z entry.
+     * @brief Grow the tree by an arc that introduces a new vertex (leaf growth);
+     *        adds no cycle and no z entry.
      *
-     * Exactly one endpoint must already be in the component and the other must be
-     * new; the arc becomes a tree edge.  (An arc whose both endpoints are already
-     * present closes a cycle → @ref birthChord; an arc joining two separate
-     * components is a merge bridge → @ref mergedWith.)
+     * One endpoint must already be in the component and the other must be new;
+     * the arc becomes a tree edge.  On an empty component the first arc is
+     * accepted with both endpoints new.  (An arc whose endpoints are both present
+     * closes a cycle: use @ref birthChord.  An arc joining two separate
+     * components is a merge bridge: use @ref mergedWith.)
      *
      * @param arc The new tree arc (one new endpoint).
-     * @throws std::invalid_argument if neither or both endpoints are new.
+     * @throws std::invalid_argument if neither or both endpoints are new
+     *         (non-empty component).
      */
     void addLeafArc(const ArcKey& arc) {
         const bool hu = hasVertex(arc.u), hv = hasVertex(arc.v);
@@ -252,22 +262,22 @@ public:
 
     /**
      * @brief Tap-off birth of a new chord: append its DD mean and covariance
-     *        (variance + cross-covariance to the existing z) — GKF Eq. 22.
+     *        (variance + cross-covariance to the existing z), GKF Eq. 22.
      *
      * Both endpoints must already be tree-connected in the component (the arc
-     * closes a cycle).  The existing z entries are UNCHANGED (their fundamental
-     * cycles do not involve a brand-new chord); only the appended entry is new.
-     * The supplied @p zhat / @p var / @p cross ARE the conditional distribution of
-     * this DD given the current data — @f$\hat z_{\text{new}}=f^\top\hat x@f$,
+     * closes a cycle).  The existing z entries are unchanged (their fundamental
+     * cycles do not involve a new chord); only the appended entry is new.  The
+     * supplied @p zhat / @p var / @p cross are the conditional distribution of
+     * this DD given the current data, @f$\hat z_{\text{new}}=f^\top\hat x@f$,
      * @f$\mathrm{Var}=f^\top P_x f@f$, @f$\mathrm{Cov}(z_{\text{new}},z_{\text{old}})
-     * =f^\top P_x C_{\text{old}}^\top@f$ — computed by the caller from the solve
-     * (phase C) or the reference batch (the unit gates); the store just appends.
+     * =f^\top P_x C_{\text{old}}^\top@f$, computed by the caller from the solve
+     * (phase C) or the reference batch (the unit gates); the store only appends.
      *
-     * @param chord The birthing chord arc (both endpoints already present).
+     * @param chord The new chord arc (both endpoints already present).
      * @param zhat  Tap-off DD mean.
      * @param var   Tap-off DD variance (> 0).
      * @param cross Cross-covariance to the existing z entries (length @ref zDim();
-     *              empty is treated as zero for the first chord).
+     *              an empty vector is treated as zero).
      * @throws std::invalid_argument on a bad arc, non-positive variance, or a
      *         @p cross size mismatch.
      */
@@ -308,12 +318,12 @@ public:
      * @brief Marginalize out a dead chord: drop its z row/col from
      *        @f$\hat z@f$ / @f$P^z@f$.
      *
-     * For a joint Gaussian the marginal over the KEPT entries is exactly the
-     * corresponding covariance SUB-BLOCK — no Schur step is needed in covariance
-     * form (equivalently, it equals the Schur-complement marginalization of the
-     * information matrix; the two are the block-inverse identity the unit gate
-     * checks).  The chord's arc leaves the graph; its endpoints remain
-     * tree-connected so no vertex is orphaned.
+     * For a joint Gaussian the marginal over the kept entries is the
+     * corresponding covariance sub-block; no Schur step is needed in covariance
+     * form (it equals the Schur-complement marginalization of the information
+     * matrix, by the block-inverse identity the unit gate checks).  The chord's
+     * arc leaves the graph; its endpoints stay tree-connected, so no vertex is
+     * orphaned.
      *
      * @param chord The dying chord arc.
      * @throws std::invalid_argument if @p chord is not a current chord.
@@ -332,26 +342,27 @@ public:
     // --- lifecycle: the unimodular pivot ------------------------------------
 
     /**
-     * @brief Swap a chord into the tree in place of a dying tree edge — the
-     *        exact unimodular basis change @f$z'=Tz,\ P^{z\prime}=TP^zT^\top@f$.
+     * @brief Swap a chord into the tree in place of a dying tree edge: the exact
+     *        unimodular basis change @f$z'=Tz,\ P^{z\prime}=TP^zT^\top@f$.
      *
-     * This is the @f$\Phi^z@f$ the 2021 paper left open, made trivial by the cycle
-     * basis.  @p dying_tree_edge @f$e@f$ must be a tree edge and @p entering_chord
-     * @f$f@f$ a chord whose fundamental cycle CONTAINS @f$e@f$ (so that removing
-     * @f$e@f$ and adding @f$f@f$ still spans).  Writing @f$\sigma=\chi_f(e)=\pm1@f$
-     * and @f$\tau_c=\chi_c(e)@f$ for every other chord @f$c@f$, the new DDs are
+     * This is the @f$\Phi^z@f$ the 2021 paper leaves open, made trivial by the
+     * cycle basis.  @p dying_tree_edge @f$e@f$ must be a tree edge and
+     * @p entering_chord @f$f@f$ a chord whose fundamental cycle contains @f$e@f$
+     * (so removing @f$e@f$ and adding @f$f@f$ still spans).  Writing
+     * @f$\sigma=\chi_f(e)=\pm1@f$ and @f$\tau_c=\chi_c(e)@f$ for every other chord
+     * @f$c@f$, the new DDs are
      * @f[
      *   z'_e=\sigma\,z_f,\qquad z'_c=z_c-\tau_c\,\sigma\,z_f\ (c\neq f),
      * @f]
-     * i.e. @f$T@f$ is the identity except: column @f$p_f@f$ picks up
+     * i.e. @f$T@f$ is the identity except that column @f$p_f@f$ holds
      * @f$-\tau_c\sigma@f$ in every other row, and row @f$p_f@f$ (now @f$e@f$) is
      * @f$\sigma\,e_{p_f}^\top@f$.  Expanding along that row gives
-     * @f$\det T=\sigma=\pm1@f$: an INTEGER matrix with unit determinant, so the
+     * @f$\det T=\sigma=\pm1@f$: an integer matrix with unit determinant, so the
      * transform is lossless and keeps the DDs integer.  The new chord list is the
-     * old one with @f$f@f$ replaced by @f$e@f$ at the same index (so unrelated z
-     * entries keep their slot).  This is a pure basis change: the ARC SET is
-     * unchanged (use @ref killChord on @f$e@f$ afterwards to model @f$e@f$'s arc
-     * actually dying).
+     * old one with @f$f@f$ replaced by @f$e@f$ at the same index, so unrelated z
+     * entries keep their slot.  This is a pure basis change and the arc set is
+     * unchanged; call @ref killChord on @f$e@f$ afterwards to model the death of
+     * @f$e@f$'s arc.
      *
      * @param dying_tree_edge The tree edge to demote to a chord.
      * @param entering_chord  The chord to promote to a tree edge (must cover @p dying_tree_edge).
@@ -387,7 +398,7 @@ public:
         T.row(pf).setZero();
         T(pf, pf) = static_cast<double>(sigma);          // z'_e = sigma * z_f
 
-        // Apply the transform BEFORE mutating the graph (cycles read the old tree).
+        // Apply the transform before mutating the graph (the cycles read the old tree).
         z_ = T * z_;
         Pz_ = T * Pz_ * T.transpose();
         Pz_ = 0.5 * (Pz_ + Pz_.transpose());             // symmetrize against round-off
@@ -401,22 +412,29 @@ public:
         return T;
     }
 
-    // --- lifecycle: merge (OPEN-2: T = block-identity) ----------------------
+    // --- lifecycle: merge (OPEN-2: T = block identity) ----------------------
 
+    struct SurplusBridge {
+        ArcKey arc;
+        double zhat{0.0};
+        double var{1.0};
+        Eigen::VectorXd cross;   ///< cross-cov to the merged z as it stands when this bridge is folded.
+    };
     /**
-     * @brief Merge another component into this one via a bridge arc — a
-     *        block-IDENTITY union (the bridge is a cut edge).
+     * @brief Merge another component into this one via a bridge arc: a
+     *        block-identity union (the bridge is a cut edge).
      *
-     * The bridge joins a vertex of @c *this to a vertex of @p other; since it is a
-     * cut edge, every pre-existing chord's fundamental cycle on EITHER side is
+     * The bridge joins a vertex of @c *this to a vertex of @p other.  Since it is a
+     * cut edge, every pre-existing chord's fundamental cycle on either side is
      * unchanged, so the carried @f$\hat z@f$ / @f$P^z@f$ of both sides transfer
      * verbatim: the merged z is the concatenation @f$[\hat z_A;\hat z_B]@f$ and the
      * merged covariance is block-diagonal @f$\mathrm{diag}(P^z_A,P^z_B)@f$ (the two
-     * were independent — zero cross-covariance).  The bridge becomes a tree edge
-     * (no z).  Any @p surplus_bridges (additional arcs also joining the two former
-     * components) close cycles and are tapped off as new chords with the supplied
-     * (mean, var, cross-to-the-merged-z) — cross ordered as the merged z:
-     * @c *this 's entries first, then @p other 's.
+     * were independent, with zero cross-covariance).  The bridge becomes a tree
+     * edge (no z).  Any @p surplus_bridges (additional arcs also joining the two
+     * former components) close cycles and are tapped off as new chords with the
+     * supplied (mean, var, cross-to-the-merged-z); cross is ordered as the merged
+     * z, @c *this 's entries first, then @p other 's.  Lifecycle counters of both
+     * sides are summed into the result.
      *
      * @param other          The component to absorb (must be vertex-disjoint from @c *this).
      * @param bridge          The arc promoted to a tree edge (one endpoint in each side).
@@ -427,12 +445,6 @@ public:
      * @throws std::invalid_argument on overlapping vertices or a bridge not
      *         spanning the two sides.
      */
-    struct SurplusBridge {
-        ArcKey arc;
-        double zhat{0.0};
-        double var{1.0};
-        Eigen::VectorXd cross;   ///< cross-cov to the merged z as it stands when this bridge is folded.
-    };
     ZComponent mergedWith(const ZComponent& other, const ArcKey& bridge,
                           const std::vector<SurplusBridge>& surplus_bridges = {}) const {
         for (int w : other.vertices_)
@@ -455,7 +467,7 @@ public:
         m.arcs_.insert(other.arcs_.begin(), other.arcs_.end());
         m.addTreeEdgeRaw(bridge);
 
-        // chords: this side's first, then other's (block-identity ⇒ verbatim).
+        // chords: this side's first, then other's (block identity, so copied verbatim).
         m.chords_ = chords_;
         m.chords_.insert(m.chords_.end(), other.chords_.begin(), other.chords_.end());
         const Eigen::Index na = zDim(), nb = other.zDim();
@@ -482,7 +494,7 @@ public:
 
     /**
      * @brief Time update: @f$\hat z@f$ unchanged (@f$\Phi=I@f$), @f$P^z\mathrel{+}=
-     *        q_z\,\Delta t\,I@f$ (default @f$q_z=0@f$ — ambiguities are constant
+     *        q_z\,\Delta t\,I@f$ (default @f$q_z=0@f$: ambiguities are constant
      *        between slips).
      *
      * @param q_z Process-noise PSD on the DDs (m²/s); 0 = exact random constant.
@@ -495,18 +507,18 @@ public:
     }
 
     /**
-     * @brief Measurement update of the DDs — the exact recursive-least-squares
+     * @brief Measurement update of the DDs: the exact recursive-least-squares
      *        (information-preserving) Kalman fold, Joseph-stabilized.
      *
      * Folds an observation @f$o=Hz+\eta,\ \eta\sim N(0,R)@f$ of the current z:
      * @f$S=HP^zH^\top+R@f$, @f$K=P^zH^\top S^{-1}@f$,
      * @f$\hat z\mathrel{+}=K(o-H\hat z)@f$,
      * @f$P^z\leftarrow(I-KH)P^z(I-KH)^\top+KRK^\top@f$.  Equivalent to adding
-     * @f$H^\top R^{-1}H@f$ to the information — the property the FilterEqualsBatch
-     * gate exploits (sequential folds == one batch WLS).  An @p H with fewer rows
-     * than @ref zDim() leaves the unobserved DDs updated only through their
-     * covariance coupling (a chord with no phase row this epoch is
-     * "prediction-only", never deleted).
+     * @f$H^\top R^{-1}H@f$ to the information, the property the FilterEqualsBatch
+     * gate uses (sequential folds equal one batch WLS).  DDs with a zero column in
+     * @p H are updated only through their covariance coupling (a chord with no
+     * phase row this epoch is prediction-only, never deleted).  Returns without
+     * change when @p o or z is empty.
      *
      * @param H Observation design (m × @ref zDim()).
      * @param o Observation vector (length m).
@@ -530,12 +542,13 @@ public:
 
     /**
      * @brief The fundamental-cycle incidence matrix @f$C@f$ (chords × arcs) over a
-     *        given arc ordering — the "from-scratch" reference for the gates.
+     *        given arc ordering: the from-scratch reference for the gates.
      *
      * Row @f$i@f$ is @ref fundamentalCycle of @c chords()[i], projected onto
-     * @p arc_order.  Then @f$z=C\,N@f$ and @f$P^z=C\,\mathrm{Cov}(N)\,C^\top@f$ from
-     * the raw ambiguity mean/cov reproduce the carried store — independent of the
-     * incremental transforms, which is what CycleBasisUnimodular checks.
+     * @p arc_order (arcs absent from @p arc_order are omitted).  Then @f$z=C\,N@f$
+     * and @f$P^z=C\,\mathrm{Cov}(N)\,C^\top@f$ from the raw ambiguity mean and
+     * covariance reproduce the carried store independently of the incremental
+     * transforms, which is what CycleBasisUnimodular checks.
      */
     Eigen::MatrixXd cycleMatrix(const std::vector<ArcKey>& arc_order) const {
         std::map<ArcKey, Eigen::Index> col;
@@ -550,7 +563,7 @@ public:
         return C;
     }
 
-    /// All arcs (tree edges + chords), for building a @ref cycleMatrix column order.
+    /// All arcs (tree edges + chords), sorted, for building a @ref cycleMatrix column order.
     std::vector<ArcKey> allArcs() const {
         std::vector<ArcKey> out(arcs_.begin(), arcs_.end());
         std::sort(out.begin(), out.end());
@@ -558,12 +571,13 @@ public:
     }
 
     /**
-     * @brief Directly install a chord set + carried estimate — the gates' seam for
+     * @brief Install a chord set and carried estimate directly: the gates' seam for
      *        seeding a component with a known @f$z=CN@f$ / @f$P^z=C\,\mathrm{Cov}\,C^\top@f$.
      *
      * Every arc in @p chord_order must have both endpoints already in the tree and
-     * must NOT be a tree edge (i.e. it genuinely closes a cycle).  Replaces the
-     * current chord list, @f$\hat z@f$ and @f$P^z@f$.
+     * must not be a tree edge (it closes a cycle).  Replaces the current chord
+     * list, @f$\hat z@f$ and @f$P^z@f$.  Throws std::invalid_argument on a size
+     * mismatch or an invalid chord.
      */
     void setEstimate(const std::vector<ArcKey>& chord_order,
                      const Eigen::VectorXd& z, const Eigen::MatrixXd& Pz) {
@@ -577,8 +591,8 @@ public:
                 throw std::invalid_argument("ZComponent::setEstimate: arc is a tree edge, not a chord");
         }
         chords_.assign(chord_order.begin(), chord_order.end());
-        // Rebuild the arc set from tree ∪ chords so a RE-seed with a smaller/different
-        // chord set does not leave phantom arcs (the invariant allArcs() documents).
+        // Rebuild the arc set from tree ∪ chords, so a re-seed with a smaller or
+        // different chord set leaves no stale arcs (the invariant allArcs() relies on).
         arcs_.clear();
         for (const ArcKey& e : treeEdges()) arcs_.insert(e);
         for (const ArcKey& c : chords_) arcs_.insert(c);
@@ -669,8 +683,8 @@ private:
         int cur = to;
         while (cur != from) {
             const int par = parent.at(cur);
-            // We traverse from `par` to `cur` along the path from→to; but we are
-            // accumulating the path from→to, so step order is par→cur.
+            // The walk goes backwards, but the path being accumulated runs
+            // from → to, so each step is traversed par → cur.
             const ArcKey e(par, cur);
             acc[e] += (par < cur) ? +1 : -1;   // +1 if traversed in reference (min→max) orientation
             cur = par;
@@ -704,16 +718,19 @@ private:
 
 /**
  * @brief The whole-network z-store: one @ref ZComponent per connected
- *        @f$(\text{const},\sigma)@f$ component, keyed by a PER-EPOCH CANONICAL id
- *        (scout OPEN-2: min satellite label per component, anchored on the sat
- *        label — receiver pool indices are reused), plus aggregate counters.
+ *        @f$(\text{const},\sigma)@f$ component, keyed by a per-epoch canonical id,
+ *        plus aggregate counters.
  *
- * Phase B provides the container + the merge/split entry points + the counter
- * aggregation; the per-epoch DELTA driver that maps the eq34 election's tree to
- * these lifecycle calls (birth/death/pivot/merge/split sequencing) is phase C.
- * The z-store is keyed by chord identity inside each component, so a component
- * label change across epochs is a harmless block rename — no cross-epoch-stable
- * id is required.
+ * The canonical id follows scout OPEN-2: the minimum satellite label of the
+ * component, anchored on the satellite label because receiver pool indices are
+ * reused.  The container provides storage, the merge entry point and counter
+ * aggregation; it has no split primitive (a split is a re-partition, see the file
+ * header).  Mapping the eq34 election's tree to lifecycle calls each epoch is the
+ * phase-C driver's job; `NetworkInvariantCarryDriver` computes the composed
+ * change-of-basis projection directly and uses this lifecycle as the reference
+ * in its unit gate.  The z-store is keyed by chord identity inside each
+ * component, so a component id that changes across epochs is only a block
+ * rename; no cross-epoch-stable id is required.
  */
 class NetworkZStore {
 public:
@@ -733,8 +750,9 @@ public:
 
     /**
      * @brief Merge component @p b into @p a via @p bridge, replacing @p a with the
-     *        block-identity union and erasing @p b.  @p a keeps the smaller id
-     *        (the merged canonical id = min(a,b) is the caller's contract).
+     *        block-identity union and erasing @p b.  The result is stored under
+     *        @p a; passing @p a = min(a, b) to keep the canonical id is the
+     *        caller's contract.  Throws std::invalid_argument on an unknown id.
      */
     void merge(ComponentId a, ComponentId b, const ArcKey& bridge,
                const std::vector<ZComponent::SurplusBridge>& surplus = {}) {
@@ -753,7 +771,8 @@ public:
         return t;
     }
 
-    /// Sum the per-component lifecycle counters plus the container's merge count.
+    /// Sum of the lifecycle counters of the components currently held (the
+    /// container's merge count is separate: @ref merges).
     ZComponent::Counters aggregateCounters() const {
         ZComponent::Counters t;
         for (const auto& [id, c] : comps_) {

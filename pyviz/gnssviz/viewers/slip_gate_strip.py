@@ -1,4 +1,4 @@
-"""Cycle-slip detector *gate* strip viewer -- the port of
+"""Cycle-slip detector *gate* strip viewer, the port of
 ``view_slip_gate_strip.m``.
 
 (satellite x epoch) raster charts of the cycle-slip detector gate: the
@@ -7,10 +7,10 @@ across the whole constellation at once.  Complements the per-arc line plots in
 ``view_mwwl_trace.m`` / ``view_turbo_edit_trace.m``: the raster reveals whether a
 near-gate epoch is one satellite or a constellation-wide event, and where each
 detector runs hot.  Built on the shared :func:`gnssviz.strip.build_sat_epoch_strip`
-renderer -- one tile per signal pair (e.g. L1C/L2W); slip-flag epochs overlaid as
+renderer: one tile per signal pair (e.g. L1C/L2W); slip-flag epochs overlaid as
 glyphs.
 
-``source`` selects the trace + statistic:
+``source`` selects the trace and statistic:
   * ``'mw'`` -> ``mwwl_trace.csv``      (Melbourne-Wubbena wide-lane), default;
   * ``'gf'`` -> ``turbo_edit_trace.csv`` (TurboEdit geometry-free TD2).
 
@@ -21,8 +21,8 @@ the MATLAB script's ``plotValue`` default):
   * ``'deviation'`` -> the raw statistic tested (cyc for MW, m for GF), vik autosym;
   * ``'threshold'`` -> the adaptive threshold itself, viridis, auto limits.
 
-Markers: detector-flagged slip epochs.  For MW, slip (circle) vs LLI-only
-(square); for GF, the action that touched the state -- repair (circle) vs reset
+Markers: detector-flagged slip epochs.  For MW, slip (circle) versus LLI-only
+(square); for GF, the action that touched the state: repair (circle) or reset
 (magenta x).
 """
 

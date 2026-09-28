@@ -4,11 +4,11 @@
  *        (@c network.zwd_seam_reseed + @c network.zwd_seam_reseed_epochs,
  *        SPEC_synthetic_minimum_network §17 carry_zwd re-base arms, finding 3).
  *
- * What these tests lock is the loader's side of the safety story: the defaults
- * (OFF, 480-epoch horizon), the hard rejection of a non-positive horizon and a
- * negative RW q, and that the warn-only inert postures (no snapshot path / no
- * phase-leveling / carry_zwd also armed) still LOAD — they are wiring-inert,
- * not illegal, and the runtime logs which.  The seam-window mechanics (arm at
+ * These tests cover the loader's side: the defaults (off, 480-epoch horizon),
+ * the load failure on a non-positive horizon and on a negative RW q, and that
+ * the inert postures (no snapshot path / no phase-leveling / carry_zwd also
+ * armed) still load: they are inert in wiring, not illegal, and the runtime logs
+ * which one applies.  The seam-window mechanics (arm at
  * resume, rolling B9 fold, retire at horizon) and the unconditional Z-row
  * capture are graded on the sim fixture ladder, not here.
  */
@@ -85,7 +85,7 @@ TEST(ZwdSeamReseedConfig, ArmedHappyPathSurvivesLoad) {
                       "    \"zwd_seam_reseed\": true,\n"), cfg));
     EXPECT_TRUE(cfg.networkZwdSeamReseed());
     EXPECT_EQ(cfg.networkZwdSeamReseedEpochs(), 480);
-    EXPECT_FALSE(cfg.networkCarryZwd());   // the seam does NOT arm B9
+    EXPECT_FALSE(cfg.networkCarryZwd());   // the seam does not arm B9
 }
 
 TEST(ZwdSeamReseedConfig, ExplicitHorizonParses) {
@@ -124,13 +124,13 @@ TEST(ZwdSeamReseedConfig, NegativeCarryQIsRejectedWhenSeamArmed) {
 }
 
 TEST(ZwdSeamReseedConfig, InertPosturesStillLoad) {
-    // No snapshot path: no resume can happen — warn-inert, not illegal.
+    // No snapshot path: no resume can happen; warns and stays inert, not illegal.
     GnssConfig cfg1;
     ASSERT_TRUE(loadInto("no_snap",
         networkConfig("    \"phase_leveling\": true,\n"
                       "    \"zwd_seam_reseed\": true,\n"), cfg1));
     EXPECT_TRUE(cfg1.networkZwdSeamReseed());
-    // No phase-leveling: the inject rides the carry_warm gate — warn-inert.
+    // No phase-leveling: the inject sits behind the carry_warm gate; warns and stays inert.
     GnssConfig cfg2;
     ASSERT_TRUE(loadInto("no_pl",
         networkConfig("    \"state_snapshot_path\": \"state_snapshot.snap\",\n"
@@ -139,8 +139,8 @@ TEST(ZwdSeamReseedConfig, InertPosturesStillLoad) {
 }
 
 TEST(ZwdSeamReseedConfig, CoexistsWithContinuousCarry) {
-    // B9 + seam both armed: B9 subsumes the window (info-logged), still legal —
-    // this is exactly the (cz) reference posture plus the seam knob.
+    // Continuous carry (carry_zwd, B9) and the seam both armed: the carry subsumes
+    // the window (info-logged) and the combination is legal.  This is the (cz) reference posture plus the seam knob.
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("with_b9",
         networkConfig("    \"phase_leveling\": true,\n"

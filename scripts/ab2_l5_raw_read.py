@@ -1,6 +1,6 @@
 """Estimator-free characterization of GPS L5 carrier phase and C5 code from raw RINEX 3.
 
-The instrument is the triple-carrier geometry-free AND first-order-ionosphere-free
+The instrument is the triple-carrier geometry-free and first-order-ionosphere-free
 phase combination, reported in L5-equivalent metres:
 
     G5 = b1*PHI1 + b2*PHI2 + PHI5        (metres)
@@ -14,7 +14,7 @@ ionosphere cancel exactly. What remains is the per-arc constant (ambiguities, ph
 shifts), cycle slips, the satellite inter-frequency clock variation, inter-band antenna
 phase-centre differences, higher-order ionosphere, multipath and noise.
 
-The same coefficients applied to the three CODE observables give the band-5 code-bias
+The same coefficients applied to the three code observables give the band-5 code-bias
 inconsistency (per-arc mean) and the code noise/multipath (per-arc scatter).
 
 No estimator, no orbit, no clock product is used.
@@ -333,8 +333,8 @@ def selftest():
     check("L1 one-cycle step 0.0430 m", abs(STEP_L1 - 0.0430) < 5e-5, "%.6f m" % STEP_L1)
 
     # exact cancellation of an arbitrary geometry term and an arbitrary 1/f^2 term.
-    # NOTE: the 1e-9 m absolute bar is NOT attainable in float64 at full pseudorange
-    # magnitude. At |geo| = 2.4e7 m the double rounding floor of a three-term sum with
+    # The 1e-9 m absolute bar is not attainable in float64 at full pseudorange
+    # magnitude: at |geo| = 2.4e7 m the double rounding floor of a three-term sum with
     # O(1) coefficients is about 4*eps*|geo| = 2e-8 m. The bar is therefore checked as
     # 1e-9 m at |geo| <= 1e6 m, and as the float64 floor at full magnitude.
     rng = np.random.default_rng(20260920)

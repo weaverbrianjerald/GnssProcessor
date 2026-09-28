@@ -9,12 +9,15 @@
  *  - BssdPivotManager:  pivot selection, handover, and state re-referencing.
  *  - BssdTransform:     between-satellite single-difference S-transformation.
  *
- * This file retains:
- *  - ensureRequiredStates()    — per-epoch state creation/pruning pre-pass.
- *  - isUsableMeasurement()     — per-measurement filtering predicate.
- *  - buildJacobianRow()        — single-row Jacobian + predicted observable.
- *  - computeMeasurementUpdate  — top-level orchestrator.
- *  - validateMeasurementUpdate — post-assembly validation.
+ * Implemented here:
+ *  - ensureRequiredStates():      per-epoch state creation/pruning pre-pass.
+ *  - ensureNetworkSharedStates(): the same pre-pass for the network producer's
+ *                                 shared states.
+ *  - isUsableMeasurement():       per-measurement filtering predicate.
+ *  - buildJacobianRow():          single-row Jacobian + predicted observable.
+ *  - computeMeasurementUpdate():  top-level orchestrator.
+ *  - buildDdMeasurement():        double-differenced (baseline) assembly.
+ *  - validateMeasurementUpdate(): post-assembly validation.
  */
 
 #include "model/PppModel.hpp"
@@ -90,11 +93,12 @@ namespace GnssProcessor {
     }
 
     void MeasurementModel::setGlonassSlots(const std::map<std::string, int>& slots) {
-        // Seed this station's frequency helper with its RINEX-header FCN slots so
-        // GLONASS-frequency-dependent Jacobian terms — the iono coefficient
-        // alpha=(f_L1/f)^2 and the per-slot carrier wavelength — use the actual
-        // channel rather than the compiled-in default table.  Mirrors PppModel's
-        // own one-shot seed; the network driver calls this per station.
+        // Seeds this station's frequency helper with the FCN slots from its RINEX
+        // header, so the GLONASS frequency-dependent Jacobian terms (the iono
+        // coefficient alpha = (f_L1/f)^2 and the per-slot carrier wavelength) use
+        // the actual channel instead of the compiled-in default table.  PppModel
+        // seeds its own helper the same way, once; the network driver calls this
+        // for each station.
         ppp_utils_.setGlonassSlots(slots);
     }
 
@@ -173,7 +177,7 @@ namespace GnssProcessor {
                                              const std::string& if_key) const {
         const size_t us = if_key.find('_');
         if (us == std::string::npos || us == 0 || us + 1 >= if_key.size())
-            return true; // not an IF key — assume covered
+            return true; // not an IF key: treated as covered
         const std::string sig1 = if_key.substr(0, us);
         const std::string sig2 = if_key.substr(us + 1);
         return ppp_model_.hasBiasEntry(satellite, sig1)
@@ -183,18 +187,19 @@ namespace GnssProcessor {
     bool MeasurementModel::ssrCoversCodeSignal(const std::string& satellite,
                                                const std::string& signal,
                                                const GnssTime& obs_time) const {
-        // Match buildJacobianRow's ssr_bias_term gate exactly: the network
-        // producer ESTIMATES satellite biases (importing them would render those
-        // states unobservable), so it never imports SSR code biases and must
-        // keep estimating them.  Everywhere else, a presence check against the
-        // live store: true iff a non-trivial ssr_bias_term will load this exact
-        // (sat, raw signal) row, in which case an estimated sat-bias state for
-        // the same row would be redundant.  Empty store in post-processing -> false.
+        // Matches the ssr_bias_term gate in buildJacobianRow.  The network producer
+        // estimates satellite biases as states (importing them would make those
+        // states unobservable), so it never imports SSR code biases and this
+        // returns false.  In every other mode this is a presence check against the
+        // live store: true iff a non-trivial ssr_bias_term will be applied to this
+        // (sat, raw signal) row, in which case an estimated sat-bias state for the
+        // same row would be redundant.  With an empty store (post-processing), false.
         if (config_.getProcessingMode() == ProcessingMode::PPP_RTK_Network)
             return false;
-        // A5: with the staleness gate on, coverage must track the aged apply gate
-        // (same effective stale-hold limit) — once the gate drops a bias, the row
-        // is uncorrected, so the sat-bias state and no-BIA downweight re-engage.
+        // With the staleness gate on, coverage uses the same limit as the apply gate
+        // (max age × stale-hold factor).  Once the gate drops a bias the row is
+        // uncorrected, so the sat-bias state and the no-BIA downweight apply again
+        // (A5).
         if (config_.enableSsrBiasMaxAge())
             return ssrStore().hasCodeBias(satellite, signal, obs_time,
                                           config_.getSsrBiasMaxAge()
@@ -216,11 +221,11 @@ namespace GnssProcessor {
     bool MeasurementModel::ssrCoversPhaseSignal(const std::string& satellite,
                                                 const std::string& signal,
                                                 const GnssTime& obs_time) const {
-        // Mirror ssrCoversCodeSignal exactly, on the phase channel: the network
-        // producer estimates satellite phase biases as states and never imports
-        // them; everywhere else, presence in the live store — age-gated with the
-        // same effective stale-hold limit as the apply site so coverage tracks
-        // what buildJacobianRow actually folds into the row.
+        // Phase-channel counterpart of ssrCoversCodeSignal.  The network producer
+        // estimates satellite phase biases as states and never imports them, so it
+        // returns false.  In every other mode this is a presence check against the
+        // live store, age-gated with the same limit as the apply site, so coverage
+        // matches what buildJacobianRow applies to the row.
         if (config_.getProcessingMode() == ProcessingMode::PPP_RTK_Network)
             return false;
         if (config_.enableSsrBiasMaxAge())
@@ -236,10 +241,12 @@ namespace GnssProcessor {
                                                  const GnssTime& obs_time) const {
         const size_t us = signal.find('_');
         const bool is_if = (us != std::string::npos && us > 0 && us + 1 < signal.size());
-        // T3a: veto AR-eligibility when the covering network phase bias explicitly declares
-        // signal_integer=false (the anchor-free ensemble datum emits a non-integer bias).
-        // Fresh-coverage-gated + toggle-gated, so an absent bias / .BIA-only / OFF path is
-        // byte-identical.  For an IF combo BOTH component biases must be integer-grade.
+        // Veto AR eligibility when the covering network phase bias declares
+        // signal_integer=false (the anchor-free ensemble datum emits non-integer biases).
+        // Only a bias present in the store (age-gated when the staleness gate is on) can
+        // veto, and only with the toggle on, so an absent bias, a .BIA-only path and the
+        // toggle off are byte-identical.  For an IF combination, both component biases
+        // must be integer-grade (T3a).
         if (config_.networkRequireSignalIntegerForAr()) {
             const bool   gate    = config_.enableSsrBiasMaxAge();
             const double max_age = config_.getSsrBiasMaxAge() * config_.getSsrBiasStaleHoldFactor();
@@ -295,21 +302,20 @@ namespace GnssProcessor {
         std::set<std::string> required_ambiguities;
         std::set<std::string> required_iono_sats;
 
-        // For the NlWl path: collect the phase signals seen per (satellite,
-        // band) so we can pick a deterministic reference band per satellite
-        // and seed states from the ref-band phase observation.  Key formed
-        // by RINEX band digit (signal[1]); value is the *first* signal we
-        // saw on that band so seeding is reproducible across rebuilds.
+        // NlWl path: the phase signals seen per (satellite, band).  They determine
+        // a deterministic reference band per satellite, and states are seeded from
+        // the reference-band phase observation.  The inner key is the RINEX band digit
+        // (signal[1]); the value is the first signal seen on that band (obs.observed
+        // is an ordered map), so seeding is reproducible across rebuilds.
         std::map<std::string, std::map<char, std::string>> nlwl_phase_signals;
 
         // --- First pass: collect required satellites and ambiguity keys ---
         for (const auto& obs : observations) {
-            // Skip GLONASS in BSSD by default — its FDMA per-channel
-            // receiver delay does not cancel in between-satellite SD.
-            // The user can opt back in with enable_glonass_bssd=true,
-            // in which case the per-(sat, signal) sat-bias machinery
-            // (estimate_sat_biases) absorbs the ICB on code rows and
-            // float ambiguities absorb it on phase rows.
+            // Under BSSD, GLONASS is skipped by default: its FDMA per-channel
+            // receiver delay does not cancel in a between-satellite SD.  With
+            // enable_glonass_bssd=true it is kept; the per-(sat, signal)
+            // sat-bias states (estimate_sat_biases) then absorb the ICB on code
+            // rows and the float ambiguities absorb it on phase rows.
             if (obs.system == System::GLONASS && config_.enableBetweenSatelliteSd()
                 && !config_.enableGlonassBssd())
                 continue;
@@ -318,12 +324,12 @@ namespace GnssProcessor {
                 if (ref_type.empty()) continue;
                 if (!obs.observed.count(ref_type) || !obs.variances.count(ref_type) || !obs.modeled.count(ref_type)) continue;
 
-                // When BSSD is active, skip signals not tracked by the
-                // pivot — they cannot form same-signal SDs and the
-                // ambiguity state would be unobservable.  The pivot must
-                // track the identical full signal key (raw signal in
-                // uncombined mode, iono-free combo in IF mode), since
-                // BssdTransform groups SD rows by that exact key.
+                // When BSSD is active, skip signals that the constellation's
+                // pivot does not track: they cannot form same-signal SDs and
+                // the ambiguity state would be unobservable.  The pivot must
+                // track the same full signal key (the raw signal in uncombined
+                // mode, the iono-free combination in IF mode), because
+                // BssdTransform groups SD rows by that key.
                 if (!bssd_pivot_signals_.empty() && ref_type.size() >= 2
                     && (ref_type[0] == 'C' || ref_type[0] == 'L')) {
                     const std::string cons = PppUtils::getSystemString(obs.satellite);
@@ -354,15 +360,14 @@ namespace GnssProcessor {
         }
 
         // --- Hold-protected keys (soft-LLI / gap bridge) ---
-        // An ambiguity held across a short tracking outage pending a
-        // TurboEdit snapshot+dN·λ repair has no observation this epoch by
-        // definition, so it never enters required_ambiguities above and the
-        // prune below would delete exactly the pre-gap state the repair
-        // restores.  Union the held keys into the keep-set (and their
-        // satellites into the iono keep-set, so a whole-satellite outage
-        // does not strand the repaired ambiguity against a reseeded iono
-        // state).  The seeding loops are observation-driven and therefore
-        // never touch these keys — the held state passes through unchanged.
+        // An ambiguity held across a short tracking outage, pending a TurboEdit
+        // snapshot + dN·λ repair, has no observation this epoch, so it is not in
+        // required_ambiguities and the prune below would delete the pre-gap state
+        // that the repair restores.  The held keys join the keep-set, and in
+        // uncombined mode their satellites join the iono keep-set, so that a
+        // whole-satellite outage does not leave the repaired ambiguity against a
+        // reseeded iono state.  The seeding loops are driven by observations and
+        // never touch these keys, so the held state passes through unchanged.
         for (const auto& key : protected_ambiguity_keys_) {
             required_ambiguities.insert(key);
             if (is_uncombined) {
@@ -373,9 +378,11 @@ namespace GnssProcessor {
         }
 
         // NlWl basis: assemble NL/WL ambiguity keys from the per-(sat, band)
-        // phase signal map.  Reference band is the lowest-numbered observed
-        // band per satellite (std::map keeps band digits sorted ascending),
-        // frozen for the lifetime of the satellite's arc.
+        // phase signal map.  The reference band is the lowest-numbered band
+        // observed this epoch (std::map keeps band digits sorted ascending).  It
+        // is recomputed every epoch, so it stays fixed while that band remains
+        // observed; the NL/WL keys carry the reference band, so a change of
+        // reference band yields new keys and the old states are pruned below.
         nlwl_ref_band_.clear();
         if (nlwl) {
             for (const auto& [sat, bands] : nlwl_phase_signals) {
@@ -390,16 +397,16 @@ namespace GnssProcessor {
             }
         }
 
-        // --- Ionosphere states (create and seed BEFORE ambiguities) ---
+        // --- Ionosphere states (created and seeded before the ambiguities) ---
         if (is_uncombined) {
-            // Card LV-1: the network
-            // producer installs this epoch's per-station seed frame (the lag-1 SH
-            // field sampled at each LOS's IPP) before calling in.  The station's
-            // median RAW seed — its receiver GF bias ⊕ median slant iono — is
-            // computed ONCE here, LAZILY (only when something is actually being
-            // allocated, so a settled epoch pays nothing), and is what the reframe
-            // removes.  Consumed once: the frame is disarmed at the end of the
-            // block so a stale field can never seed a later epoch.
+            // Iono seed frame (card LV-1): the network producer installs this
+            // epoch's per-station seed frame (the lag-1 SH field sampled at each
+            // LOS's IPP) before this call.  The reframe removes the station's
+            // median raw seed (its receiver GF bias ⊕ median slant iono).  That
+            // median is computed at most once per call, and only when a state is
+            // actually being allocated, so a settled epoch does not pay for it.
+            // The frame is disarmed at the end of the block, so a stale field
+            // cannot seed a later epoch.
             const bool lv1_on = state_initializer_.ionoSeedFrameArmed();
             std::optional<double> lv1_offset;
             bool lv1_offset_done = false;
@@ -422,9 +429,9 @@ namespace GnssProcessor {
                     constexpr double kUnseededIonoStdScale = 10.0;
                     double iono_seed = iono_seed_opt.value_or(0.0);
                     const double std_scale = iono_seed_opt.has_value() ? 1.0 : kUnseededIonoStdScale;
-                    // LV-1 reframe.  Applied ONLY to a real seed: an unseeded state
+                    // The reframe (LV-1) applies to a real seed only: an unseeded state
                     // (no BIA-covered pair) has no receiver-bias content to remove
-                    // and keeps its 0 / std×10 fallback exactly as before.
+                    // and keeps the fallback of seed 0 with std×10.
                     if (lv1_on && iono_seed_opt.has_value()) {
                         if (!lv1_offset_done) {
                             lv1_offset = state_initializer_.computeStationSeedOffset(
@@ -441,10 +448,10 @@ namespace GnssProcessor {
                         iono_seed_opt.has_value() ? "" : " (no BIA-covered pair, std×10)");
                 }
             }
-            // Consume-once: whether or not anything was allocated, this epoch's
-            // frame is spent.  A producer that stops installing it (station absent,
-            // knob flipped) therefore falls back to RAW seeds visibly, via the
-            // fallback counter — never silently onto a stale field.
+            // The frame is used for one epoch, whether or not a state was
+            // allocated.  A producer that stops installing it (station absent,
+            // knob turned off) therefore falls back to raw seeds, which the
+            // fallback counter records, and never seeds from a stale field.
             if (lv1_on) state_initializer_.clearIonoSeedFrame();
             state_manager_.pruneIonosphereStatesExcept(required_iono_sats);
 
@@ -457,15 +464,15 @@ namespace GnssProcessor {
         }
 
         // --- Cold-start receiver-clock pre-seed (network.cold_clock_seed) ---
-        // Runs AFTER the iono seed (so computeRawResidual removes the seeded
-        // slant iono from the code residual) and BEFORE the ambiguity seed
-        // (below), once per station.  On the network path nothing else solves
-        // the receiver clock before the ambiguities are first seeded, so a
-        // free-running receiver's whole clock offset (e.g. JPLM ≈ 0.856 ms →
-        // 2.6e5 m) would otherwise leak UNIFORMLY into every cold ambiguity
-        // seed via computeAmbiguitySeed's clk_term=x(clock)=0.  Gated + latched
-        // (mark only on success, mirroring the ISB init contract): an OFF run
-        // never calls the seeder and is byte-identical.
+        // Runs after the iono seed (so computeRawResidual removes the seeded
+        // slant iono from the code residual) and before the ambiguity seed
+        // below, once per station.  On the network path nothing else solves the
+        // receiver clock before the ambiguities are first seeded, so without
+        // this step a free-running receiver's full clock offset (1 ms is about
+        // 3e5 m) enters every cold ambiguity seed equally, through
+        // computeAmbiguitySeed's clk_term = x(clock) = 0.  The latch is set only
+        // on success, as for the ISB initialization.  With the knob off the
+        // seeder is never called and the output is byte-identical.
         if (config_.networkColdClockSeed()
             && !state_initializer_.isClockSeedInitialized()) {
             if (state_initializer_.seedColdReceiverClock(observations, epoch_prefix))
@@ -475,18 +482,19 @@ namespace GnssProcessor {
         // --- Ambiguity states ---
         const bool bssd_active = config_.enableBetweenSatelliteSd();
 
-        // Pivot absolute seeds, keyed by constellation + full signal type
-        // (e.g. "GPS|L1W", "GPS|L1C") — one anchor per (sat, signal) pair.
-        // Under channel_mode=all the pivot tracks several signals per band and
-        // each gets its own SD frame — non-pivot L1W differences against pivot
-        // L1W, L1C against L1C.  BssdTransform's group key uses the same
-        // full-signal granularity, so both sides agree on what "the pivot row"
-        // means for a given ambiguity state.
+        // Pivot absolute seeds, keyed by constellation and full signal type
+        // (e.g. "GPS|L1W", "GPS|L1C"): one anchor per (sat, signal) pair.  Under
+        // channel_mode=all the pivot tracks several signals per band and each
+        // has its own SD frame (non-pivot L1W is differenced against pivot L1W,
+        // L1C against L1C).  BssdTransform's group key uses the same full-signal
+        // granularity, so both sides refer to the same pivot row for a given
+        // ambiguity state.
         //
-        // On the NlWl basis the seeds are pre-converted to cycles (NL: the pivot's
-        // L_ref_band cycle ambiguity; WL: its N_a − N_b difference per band-pair
-        // beyond ref_band).  Keys "<cons>|NL" and "<cons>|WL|<a>_<b>" keep the
-        // non-pivot seeding lookup a flat string→double map.
+        // On the NlWl basis the seeds are converted to cycles here (NL: the
+        // pivot's cycle ambiguity on L_ref_band; WL: its N_a − N_b difference for
+        // each band pair beyond ref_band).  The keys "<cons>|NL" and
+        // "<cons>|WL|<a>_<b>" keep the non-pivot seeding lookup a flat
+        // string→double map.
         std::map<std::string, double> pivot_abs_seeds;
         if (bssd_active && !nlwl) {
             const Eigen::VectorXd x_seed = state_manager_.getStateVector();
@@ -534,11 +542,12 @@ namespace GnssProcessor {
                     const double n_b_cyc =
                         state_manager_.computeAmbiguitySeed(obs, b_sig, x_seed)
                         / lambda_b;
-                    // WL canonical = N_low_band - N_high_band.  When ref_band
-                    // is the lower of the pair (the typical case, e.g. L1
-                    // ref + L2/L5 WL) WL = NL - N_b.  When ref_band > b
-                    // (rare: sat first observed only on L2, then L1 appears),
-                    // the canonical key has b first, so WL = N_b - NL.
+                    // WL canonical = N_low_band - N_high_band.  ref_band is the
+                    // lowest observed band, so it is the lower of the pair and
+                    // WL = NL - N_b (e.g. L1 ref + L2/L5 WL).  The ref_band > b
+                    // branch (canonical key with b first, WL = N_b - NL) keeps
+                    // the sign right if ref_band is ever above b; the current
+                    // reference-band choice never takes it.
                     const char a = std::min(ref_band, b);
                     const char z = std::max(ref_band, b);
                     const double wl_seed_cyc = (a == ref_band)
@@ -550,7 +559,7 @@ namespace GnssProcessor {
             }
         }
 
-        // Per-band seed/add loop (skipped under NlWl basis — see below).
+        // Per-band seed/add loop (skipped under the NlWl basis; see below).
         if (!nlwl) {
             for (const auto& obs : observations) {
                 for (const auto& [ref_type, observed] : obs.observed) {
@@ -608,43 +617,42 @@ namespace GnssProcessor {
                     }
                 }
 
-                // ---- seed-site lane snap: DELETED, do NOT rebuild ----------
-                // The mechanism that lived here could not act on the network
-                // solve at all, so its three iterations were debugging a no-op:
+                // ---- No seed-site lane snap -----------------------------------
+                // A seed-site lane snap was removed from this point and is not to
+                // be rebuilt: an edit to the seeds here cannot act on the network
+                // solve.
                 //
                 //   1. Its only write was setStateVector on a local ambiguity
-                //      column.  On the network producer that vector is a
-                //      LINEARIZATION POINT — the solve is never written back into
-                //      it — so every write is a pre-solve frame edit, and an x_lin
-                //      shift on a local column is absorbed EXACTLY by the reduced
-                //      solve: data rows move as y → y − A_r e_c δ while the carried
+                //      column.  On the network producer that vector is the
+                //      linearization point x_lin and the solve is never written
+                //      back into it, so the write is a pre-solve frame edit.  The
+                //      reduced solve absorbs an x_lin shift δ on a local column
+                //      exactly: data rows move as y → y − A_r e_c δ, the carried
                 //      prior's RHS absorbs the same shift through
-                //      η = Λ·(value_abs − x_lin), leaving b_red invariant and the
-                //      absolute estimate x_lin + x_r unchanged.
-                //      The one exception: the shift is not byte-neutral through
-                //      the two PREFIT screens that gate on H·x_lin rather than on
-                //      the estimate — the SD-EWL correction-frame cut
-                //      (`network.sd_ewl.max_abs_z_m`, a row-SET change) and the
-                //      prefit fuse (`network.prefit_fuse_sigma`, a row-WEIGHT
-                //      change).  Both default OFF and the fuse's default classes
-                //      exclude phase, so deleting this is behaviour-preserving at
-                //      defaults; arming either alongside the snap did leak.
-                //   2. The graded instrument is x_lin-invariant too (NetworkDdFrac
-                //      forms value_m = x_lin + x_r), so the snap could neither be
-                //      right nor be seen.
-                //   3. Its `d` was not a lane error.  With a kept anchor the anchor
-                //      term cancels identically and the integer cancels against
-                //      s·ΔMW, leaving d = −Δe_b/λ_b: one band's frozen-frame model
-                //      error (frozen receiver clock, ZWD, iono seed) over a SINGLE
-                //      band wavelength.  1/λ_L2 = 4.095 cyc/m is 3.53× the lane
-                //      coefficient 1/λ_WL = 1.160 cyc/m, so an applied mean
-                //      |d| = 15.9 cyc was really 3.9 m of frozen-frame drift.
+                //      η = Λ·(value_abs − x_lin), b_red is invariant and the
+                //      absolute estimate x_lin + x_r is unchanged.
+                //      The exceptions are the two prefit screens that gate on
+                //      H·x_lin rather than on the estimate: the SD-EWL
+                //      correction-frame cut (`network.sd_ewl.max_abs_z_m`, which
+                //      changes the row set) and the prefit fuse
+                //      (`network.prefit_fuse_sigma`, which changes row weights).
+                //      Both are off by default and the fuse's default classes
+                //      exclude phase, so the removal leaves default output
+                //      unchanged; with either armed, a seed edit does change it.
+                //   2. The DD-fraction trace is x_lin-invariant as well
+                //      (NetworkDdFrac forms value_m = x_lin + x_r), so the snap was
+                //      also invisible to it.
+                //   3. The snap offset `d` was not a lane error.  With a kept
+                //      anchor, the anchor term cancels identically and the integer
+                //      cancels against s·ΔMW, leaving d = −Δe_b/λ_b: one band's
+                //      frozen-frame model error (frozen receiver clock, ZWD, iono
+                //      seed) over a single-band wavelength.  1/λ_L2 = 4.095 cyc/m
+                //      is 3.53× the lane coefficient 1/λ_WL = 1.160 cyc/m.
                 //
-                // The lane lives in the CARRY (local_carry.value_abs = x_lin +
-                // back-substituted Δx, an absolute metre level in the epoch's
-                // realized gauge), which is where it is now measured.  No
-                // seed-domain edit can move this solve's estimate, and the only
-                // channels one CAN move are those two default-off prefit screens.
+                // The lane is measured in the carry instead (local_carry.value_abs
+                // = x_lin + back-substituted Δx, an absolute metre level in the
+                // epoch's realized gauge).  See docs/SPEC_lane_slip_response.md
+                // §7.2.
 
             }
         }
@@ -781,23 +789,23 @@ namespace GnssProcessor {
             }
         }
 
-        // Card SID phase 3 (R3b): the prune is unchanged, but the CALL SITE records
-        // which columns went, so the arc ledger can state that the column a later
-        // re-entry lands on is a fresh one.  The sink is null unless the network
-        // producer armed the recorder, so every other path is untouched.
+        // The prune passes the ambiguity prune sink, which records the removed
+        // columns so the arc ledger can state that the column a later re-entry
+        // lands on is a fresh one.  The sink is null unless the network producer
+        // armed the recorder, so every other path is unaffected (card SID phase 3,
+        // R3b).
         state_manager_.pruneAmbiguitiesExcept(required_ambiguities,
                                               state_manager_.ambiguityPruneSink());
 
-        // Defensive band-count check.  A correctly-functioning band
-        // filter should produce at most N distinct phase bands per
-        // satellite, where N corresponds to the configured signal_mode
-        // (Dual = 2, Triple = 3, All = unbounded).  If a satellite ends
-        // up with more bands than expected, some upstream path has
-        // bypassed the filter (e.g., a slip detector emitting a reset
-        // key for a band-filtered signal, or a PPP_RTK overrides we
-        // missed).  The pruneAmbiguitiesExcept call above clears any
-        // such state immediately, but the warning surfaces the
-        // mechanism so it can be tracked down at the source.
+        // Defensive band-count check.  The band filter admits at most N
+        // distinct phase bands per satellite, where N follows the configured
+        // signal_mode (Dual = 2, Triple = 3; All and Independent are uncapped).
+        // A satellite with more bands than that means some upstream path has
+        // bypassed the filter (e.g. a slip detector emitting a reset key for a
+        // band-filtered signal, or a PPP_RTK override that skips the filter).
+        // The check reads the keep-set, so the states it flags survive the
+        // prune above; the warning names the satellite and bands so the path
+        // can be traced to its source.
         if (!nlwl) {
             int expected_bands = 0;
             switch (config_.getFrequencyMode()) {
@@ -916,16 +924,16 @@ namespace GnssProcessor {
                     if (ref_type.empty() || ref_type[0] != 'C') continue;
                     const auto bias = state_initializer_.resolveReceiverBias(ref_type, obs.system, obs.satellite);
                     if (!std::isfinite(bias.coefficient) || bias.state_key.empty()) continue;
-                    // GLONASS network producer: allocate ONLY the GLONASS per-FCN-slot
+                    // GLONASS network producer: allocate only the GLONASS per-FCN-slot
                     // IFB.  GPS/Galileo receiver DCB/IFB states are intentionally absent
-                    // (as in the GPS+Galileo network) — a non-reference-band IFB has no
+                    // (as in the GPS+Galileo network): a non-reference-band IFB has no
                     // IFB-free reference code to anchor the slant iono, so creating one
                     // adds a per-satellite iono<->IFB<->ambiguity rank deficiency to the
                     // absolute per-epoch local block.  The GPS+Galileo network avoids it
                     // by absorbing the receiver code bias into the clock/iono (the L1-
-                    // referenced convention), so we keep those bands IFB-free here.  The
+                    // referenced convention), so those bands stay IFB-free here.  The
                     // GLONASS per-slot IFB is the one receiver bias the network needs
-                    // (its FDMA group delay is otherwise unmodellable); its residual
+                    // (its FDMA group delay cannot be modelled otherwise); its residual
                     // iono/common-mode gauges are pinned by soft anchors in the driver.
                     if (config_.enableGlonassNetwork()
                         && !StateKeys::isGlonassPerSlotIfbKey(bias.state_key)) continue;
@@ -945,17 +953,17 @@ namespace GnssProcessor {
         // Phase ambiguities absorb satellite phase biases, so only code rows
         // without BIA coverage need a per-satellite bias state.
         //
-        // First creation seeds from the row's innovation (observed − predicted-
-        // without-bias), not 0.  Hardware delays on uncovered signals (BeiDou C7I,
-        // say, where MGEX BIA ships only C2I/C6I) routinely run 100+ m once
+        // A new state is seeded from the row's innovation (observed − predicted
+        // without the bias), not from 0.  Hardware delays on uncovered signals (e.g.
+        // BeiDou C7I, where the MGEX BIA carries only C2I/C6I) can exceed 100 m once
         // differenced against a same-band pivot whose bias state is also unset.  A
-        // fresh state at 0 with initial_std.sat_bias = 10 m gives sres ≫ threshold
-        // on epoch 1, and the row is excluded before the state ever sees a
-        // measurement update — pinning the signal as a permanent outlier.  Seeding
-        // collapses that first innovation to ~0 instead.  It also absorbs whatever
-        // else is unmodeled this epoch (clock/iono/ISB residuals); BSSD cancels the
-        // common-mode part across SD pairs and the small initial std lets later
-        // epochs refine the rest.
+        // new state at 0 with initial_std.sat_bias = 10 m then gives sres ≫ threshold
+        // on its first epoch, and the row is excluded before the state receives any
+        // update, so the signal stays an outlier permanently.  The seed brings that
+        // first innovation to about 0.  It also absorbs whatever else is unmodeled
+        // this epoch (clock/iono/ISB residuals); BSSD cancels the common-mode part
+        // across SD pairs, and the small initial std lets later epochs refine the
+        // rest.
         auto seedSatBias = [&](const PppObservation& obs,
                                const std::string& ref_type,
                                double observed) -> double {
@@ -970,21 +978,21 @@ namespace GnssProcessor {
             double seed = observed - predicted;
 
             // BSSD frame consistency.  The raw seed zeroes this satellite's
-            // UNDIFFERENCED innovation, which — since BSSD allocates no
-            // receiver-clock state — absorbs the full receiver clock at this
-            // epoch.  A satellite appearing later than the incumbents therefore
-            // bakes a different clock epoch into its bias than the pivot it is
-            // differenced against, and that gap (the receiver-clock drift between
-            // the two seeding epochs) is a permanent SD offset: the row is pinned
-            // as an outlier and, once excluded, never gets an update to recover.
+            // undifferenced innovation, which absorbs the full receiver clock at
+            // this epoch because BSSD allocates no receiver-clock state.  A
+            // satellite that appears later than the incumbents therefore carries a
+            // different clock epoch in its bias than the pivot it is differenced
+            // against, and that gap (the receiver-clock drift between the two
+            // seeding epochs) is a permanent SD offset: the row is flagged as an
+            // outlier and, once excluded, receives no update to recover.
             //
-            // Re-referencing the seed to the pivot's CURRENT undifferenced
-            // innovation lands the new bias in the same frame as the established
-            // states (seed → clock(t0)+dcb, SD residual ~0) — the code-bias
-            // analogue of pivot-relative ambiguity seeding.  Applied only when the
-            // pivot already carries a same-band bias state, since that is what
-            // signals a frame exists to reference; otherwise the raw
-            // frame-defining seed is correct.
+            // Re-referencing the seed to the pivot's current undifferenced
+            // innovation places the new bias in the same frame as the established
+            // states (seed → clock(t0)+dcb, SD residual about 0), the code-bias
+            // analogue of pivot-relative ambiguity seeding.  It applies only when
+            // the pivot already carries a same-band bias state, which shows that a
+            // frame exists to reference; otherwise the raw seed defines the frame
+            // and is correct.
             if (config_.enableBetweenSatelliteSd()) {
                 const std::string cons = PppUtils::getSystemString(obs.satellite);
                 const auto& pivots = pivot_manager_.getPivotSatellites();
@@ -1029,15 +1037,14 @@ namespace GnssProcessor {
             return seed;
         };
 
-        // Band gate: under BSSD only signals whose bands the current pivot covers
-        // are observable in SD.  Creating a sat-bias state for an uncovered band
-        // would seed against the current state vector — including an unconverged
-        // iono state — and freeze that contaminated value, since sat-bias process
-        // noise is essentially zero.  A later pivot rotation would then use the
-        // stale seed, produce a huge innovation, and get excluded as an outlier,
-        // so the state never recovers.  Gating on bssd_pivot_signals_ makes the
-        // seed happen against the converged state, at the moment the signal first
-        // becomes usable.
+        // Band gate: under BSSD, only signals the current pivot tracks are
+        // observable in SD.  A sat-bias state created for an untracked signal would
+        // be seeded against the current state vector, including an unconverged iono
+        // state, and would keep that contaminated value, since sat-bias process
+        // noise is essentially zero.  After a later pivot rotation the stale seed
+        // produces a large innovation, the row is excluded as an outlier, and the
+        // state never recovers.  Gating on bssd_pivot_signals_ defers the seed to
+        // the epoch the signal first becomes usable, against the converged state.
         auto signalCoveredByPivot = [&](const std::string& sat,
                                          const std::string& sig) -> bool {
             if (bssd_pivot_signals_.empty()) return true;  // BSSD off
@@ -1052,17 +1059,16 @@ namespace GnssProcessor {
         };
 
         // Helper: try the sat-bias cache before falling back to the
-        // WLS-based seed.  When a (sat, signal) has been pruned recently
-        // (visibility gap, brief masking, geometry hole) the cache
+        // innovation seed (seedSatBias).  When a (sat, signal) has been pruned
+        // recently (visibility gap, brief masking, geometry hole) the cache
         // holds its last-known value + diagonal variance.  Restoring it
-        // skips a full re-convergence cycle and prevents the new state
-        // from re-seeding via the first innovation against a not-yet-
-        // converged neighbor state vector.
+        // skips a full re-convergence cycle and keeps the new state from
+        // re-seeding via the first innovation against a not-yet-converged
+        // neighbour state vector.
         //
-        // Reports back whether a cache restore happened so the caller's
-        // log line can distinguish the "warm restored" vs "WLS seeded"
-        // cases.  Always consumes the cache entry on restore — a key
-        // is either in the active state or in the cache, never both.
+        // The helper logs which case applied (restored from the cache, warm or
+        // cold-value, or newly seeded).  A restore consumes the cache entry,
+        // so a key is in either the active state or the cache, not both.
         auto addOrRestoreSatBias = [&](const std::string& key,
                                        const PppObservation& obs,
                                        const std::string& ref_type,
@@ -1090,14 +1096,14 @@ namespace GnssProcessor {
             }
         };
 
-        // In the PPP-RTK NETWORK producer the satellite code-bias state lifecycle is
-        // owned by ensureNetworkSharedStates (a SHARED border column, allocated and
-        // pruned in lockstep with the satellite clock + phase bias), NOT by this
-        // single-receiver fallback path — exactly as the satellite clock and phase
-        // bias are network-owned.  Skip it here so the two paths never fight over the
-        // same per-(sat,signal) states (the network admits every GPS/Galileo raw code
-        // signal regardless of .BIA coverage; the .BIA/SSR gate below is a user-side
-        // concern that does not apply when the network estimates its own OSB).
+        // In the PPP-RTK network producer, ensureNetworkSharedStates owns the
+        // satellite code-bias states (a shared border column, allocated and pruned
+        // together with the satellite clock and phase bias), as it owns the
+        // satellite clock and phase bias.  This single-receiver fallback path skips
+        // them, so the two paths never manage the same per-(sat,signal) states.  The
+        // network admits every GPS/Galileo raw code signal regardless of .BIA
+        // coverage; the .BIA/SSR gate below is a user-side concern that does not
+        // apply when the network estimates its own OSB.
         const bool network_owns_sat_bias =
             config_.getProcessingMode() == ProcessingMode::PPP_RTK_Network;
         std::set<std::string> required_sat_biases;
@@ -1119,17 +1125,18 @@ namespace GnssProcessor {
                         && !state_initializer_.resolveReceiverBias(
                                 ref_type, obs.system, obs.satellite).state_key.empty())
                         continue;
-                    // "Already corrected?" consults BOTH bias sources, not just the
+                    // "Already corrected?" consults both bias sources, not only the
                     // static .BIA product.  Real-time has no .BIA, so hasBiasEntry
                     // is false everywhere and the live SSR stream is the actual
-                    // correction source (applied ungated as ssr_bias_term in
-                    // buildJacobianRow).  Without the SSR check, every SSR-covered
-                    // signal gets a redundant near-frozen state.  The test is
-                    // per-(sat,signal) because IGS streams are partial (E1 covered,
-                    // E5a/E5b not), so a signal SSR does NOT carry still gets its
-                    // state as its only code correction.  The strict prune below
-                    // drops the state on the epoch SSR coverage arrives mid-arc;
-                    // ensureRequiredStates re-creates it if coverage disappears.
+                    // correction source (applied as ssr_bias_term in
+                    // buildJacobianRow, gated only by the staleness gate).  Without
+                    // the SSR check, every SSR-covered signal gets a redundant
+                    // near-frozen state.  The test is per-(sat,signal) because IGS
+                    // streams are partial (E1 covered, E5a/E5b not), so a signal
+                    // that SSR does not carry still gets its state as its only code
+                    // correction.  The strict prune below drops the state on the
+                    // epoch SSR coverage arrives mid-arc; ensureRequiredStates
+                    // re-creates it if coverage disappears.
                     if (biaCoversSignal(obs.satellite, ref_type)
                         || ssrCoversCodeSignal(obs.satellite, ref_type, obs.time)) continue;
                     if (!signalCoveredByPivot(obs.satellite, ref_type)) continue;
@@ -1157,14 +1164,14 @@ namespace GnssProcessor {
             }
         }
 
-        // Strict prune: drop every sat-bias state whose (sat, signal)
-        // isn't required *this* epoch — matches the ambiguity prune
-        // policy.  No state for an invisible satellite or for a signal
-        // that fell out of pivot coverage survives in the active filter.
-        // The pruned states are stashed in the StateManager's sat-bias
-        // cache so a near-term re-acquisition can warm-restart instead
-        // of paying a cold-start re-seed (which is fragile against
-        // un-converged neighbor states — see seedSatBias comment).
+        // Strict prune: drop every sat-bias state whose (sat, signal) is not
+        // required this epoch, the same policy as the ambiguity prune.  No
+        // state for an invisible satellite or for a signal that left pivot
+        // coverage survives in the active filter.  The pruned states are
+        // stashed in the StateManager's sat-bias cache, so a near-term
+        // re-acquisition can warm-restart instead of taking a cold re-seed
+        // (which is fragile against unconverged neighbour states; see
+        // seedSatBias and the band gate above).
         if (!network_owns_sat_bias && config_.estimateSatBiases()) {
             state_manager_.pruneSatBiasStatesExcept(required_sat_biases);
         }
@@ -1192,12 +1199,12 @@ namespace GnssProcessor {
 
         for (const auto& obs : observations) {
             // GLONASS in the network product (code-only scope, enableGlonassNetwork):
-            // it gets a shared satellite CLOCK column (allocated below), but its
-            // FDMA per-(sat,signal) PHASE BIAS is unphysical (the receiver group-
-            // delay-vs-frequency response is per-receiver/per-antenna), so the
-            // phase-bias branch is skipped for GLONASS.  The receiver group delay
-            // is carried by the per-FCN-slot receiver IFB as a local nuisance.
-            // When the flag is off, GLONASS is excluded entirely (legacy default).
+            // it gets a shared satellite clock column (allocated below), but a
+            // shared per-(sat,signal) phase bias is unphysical under FDMA (the
+            // receiver group-delay-vs-frequency response is per receiver and
+            // antenna), so the phase-bias branch skips GLONASS.  The receiver group
+            // delay is carried by the per-FCN-slot receiver IFB as a local
+            // nuisance.  With the flag off (the default), GLONASS is excluded.
             if (obs.system == System::GLONASS && !config_.enableGlonassNetwork())
                 continue;
 
@@ -1220,23 +1227,23 @@ namespace GnssProcessor {
                 // Per-(sat,signal) phase bias on raw phase rows.  Skipped for
                 // GLONASS (code-only network scope): a shared per-(sat,signal)
                 // satellite phase bias is unphysical for FDMA, so GLONASS phase
-                // observations contribute to the satellite CLOCK only (the float
+                // observations contribute to the satellite clock only (the float
                 // ambiguity absorbs the per-receiver phase nuisance).
                 if (config_.estimateSatPhaseBiases()
                     && obs.system != System::GLONASS
                     && classifyMeasurement(ref_type) == MeasurementType::Phase) {
                     // Per-station phase-bias exclusion (network.phase_bias_exclude_unmatched_antenna):
-                    // an unmatched-receiver-antenna station gets NO phase-bias state for ANY
-                    // signal — its uncalibrated (zero receiver PCV) carrier phase must not leak
-                    // into the shared satellite phase biases.  Same withhold-not-drop semantics
-                    // as the coverage gate below: the phase row is still built (feeding the sat
-                    // clock and the local float ambiguity), only the shared bias column is
-                    // withheld.  Default false ⇒ byte-identical.
+                    // a station with an unmatched receiver antenna gets no phase-bias state for
+                    // any signal, so its uncalibrated (zero receiver PCV) carrier phase cannot
+                    // enter the shared satellite phase biases.  As with the coverage gate below,
+                    // the observation is withheld from the bias, not dropped: the phase row is
+                    // still built (feeding the sat clock and the local float ambiguity) and
+                    // only the shared bias column is withheld.  Default false: byte-identical.
                     if (phase_bias_emission_excluded_)
                         continue;
                     // Phase-bias coverage gate (network.phase_bias_min_station_fraction):
-                    // a signal too sparsely tracked across the network gets NO phase-bias
-                    // state — the float ambiguity absorbs the bias and the signal is not
+                    // a signal tracked too sparsely across the network gets no phase-bias
+                    // state; the float ambiguity absorbs the bias and the signal is not
                     // AR-eligible.  The observation is still used (the phase row is built);
                     // only the shared bias column is withheld.  Empty allowlist = admit all.
                     if (!phaseBiasAdmitted(PppUtils::getSystemString(obs.satellite), ref_type))
@@ -1245,18 +1252,18 @@ namespace GnssProcessor {
                         StateKeys::makeSatPhaseBiasKey(obs.satellite, ref_type);
                     if (!allowed_phase_keys.empty() && !allowed_phase_keys.count(pk))
                         continue;
-                    // CB-ADM phase co-gate (symmetric with the code sponge): when
-                    // the run-latched census QUARANTINED this signal's code pair,
-                    // withhold its shared PHASE bias too — the phase folds into each
-                    // station's float ambiguity exactly as the code folds into the
+                    // Phase co-gate, symmetric with the code sponge (CB-ADM): when
+                    // the run-latched census has quarantined this signal's code pair,
+                    // its shared phase bias is withheld as well.  The phase then folds
+                    // into each station's float ambiguity as the code folds into the
                     // local sponge, so a 2-station signal leaves the shared system on
-                    // BOTH families and cannot orphan a pure-PB near-null gauge (the
-                    // measured code-only-quarantine failure).  Gated at STATE
-                    // ALLOCATION so getSatPhaseBiasStates()/shared_phase_keys stay
-                    // consistent everywhere (a registration-site gate breaks the
-                    // "every shared_phase_key is a column" invariant).  Companion
-                    // code key = same sat + L<band><attr> -> C<band><attr>.  Null
-                    // pointer (flag off / census inactive) ⇒ byte-identical.
+                    // both families and cannot leave an orphaned pure-PB near-null
+                    // gauge (which a code-only quarantine produces).  The gate sits at
+                    // state allocation so getSatPhaseBiasStates()/shared_phase_keys stay
+                    // consistent everywhere (a gate at the registration site breaks
+                    // the invariant that every shared_phase_key is a column).
+                    // Companion code key = same sat + L<band><attr> -> C<band><attr>.
+                    // A null pointer (flag off or census inactive) is byte-identical.
                     if (cbadm_admitted_code_keys) {
                         std::string csig = ref_type;
                         if (!csig.empty()) csig[0] = 'C';
@@ -1268,15 +1275,16 @@ namespace GnssProcessor {
                         state_manager_.addSatPhaseBiasState(pk, 0.0);
                 }
 
-                // Per-(sat,signal) CODE bias (OSB) on raw code rows.  Promoted to a
-                // shared border column for GPS + Galileo only: FDMA makes a single
-                // shared per-(sat,signal) OSB unphysical for GLONASS, whose receiver
-                // group delay stays the per-FCN-slot rx IFB and feeds the satellite
-                // CLOCK alone.  Allocated at 0 because — like the clock and phase
-                // bias — this is a SHARED state the network solve treats as absolute
-                // (lin point 0, never written back), so the innovation carries the
-                // full bias and the joint solve recovers it.  buildJacobianRow's
-                // sat_bias_term writes the +1 Jacobian.
+                // Per-(sat,signal) code bias (OSB) on raw code rows, a shared border
+                // column for every constellation except GLONASS (GPS and Galileo in
+                // the network scope): FDMA makes a single shared per-(sat,signal) OSB
+                // unphysical for GLONASS, whose receiver group delay stays in the
+                // per-FCN-slot rx IFB and whose code feeds the satellite clock alone.
+                // Allocated at 0 because, like the clock and phase bias, this is a
+                // shared state that the network solve treats as absolute
+                // (linearization point 0, never written back), so the innovation
+                // carries the full bias and the joint solve recovers it.
+                // buildJacobianRow's sat_bias_term writes the +1 Jacobian.
                 if (config_.estimateNetworkSatCodeBias()
                     && obs.system != System::GLONASS
                     && classifyMeasurement(ref_type) == MeasurementType::Code) {
@@ -1296,8 +1304,8 @@ namespace GnssProcessor {
             }
         }
 
-        // Drop stale shared states (satellite/signal no longer usable this epoch),
-        // so the per-station column set is exactly this epoch's required set.
+        // Drop shared states whose satellite/signal is not usable this epoch, so
+        // the per-station column set equals this epoch's required set.
         if (config_.estimateSatClocks())
             state_manager_.pruneSatClockStatesExcept(required_clock_keys);
         if (config_.estimateSatPhaseBiases())
@@ -1325,9 +1333,9 @@ namespace GnssProcessor {
         // signals not tracked by the pivot satellite.  Such measurements
         // cannot be same-signal differenced and would be rejected by
         // BssdTransform's purity rule anyway; filtering here is an upstream
-        // optimization.  Doppler is included — under BSSD it is SD-transformed
-        // alongside code/phase, which is what cancels the receiver clock-rate
-        // and ISBR in same-system pairs.
+        // optimization.  Doppler is included: under BSSD it is SD-transformed
+        // alongside code/phase, which cancels the receiver clock rate and the
+        // ISBR in same-system pairs.
         if (!bssd_pivot_signals_.empty() && ref_type.size() >= 2
             && (ref_type[0] == 'C' || ref_type[0] == 'L' || ref_type[0] == 'D')) {
             const std::string cons = PppUtils::getSystemString(obs.satellite);
@@ -1394,19 +1402,20 @@ namespace GnssProcessor {
             const Eigen::Vector3d rx_vel = x.segment<3>(state_manager_.getVelocityIndex());
             predicted = obs.modeled.at(ref_type) - obs.los.dot(rx_vel);
 
-            // Receiver clock-rate partial — Doppler observes the GPS-referenced
+            // Receiver clock-rate partial: Doppler observes the GPS-referenced
             // rate (c · dδt_r/dt) with unit coefficient.  Without this term the
-            // receiver oscillator drift has nowhere to go but the velocity
-            // state, contaminating position via the F[pos, vel] = dt coupling.
+            // receiver oscillator drift can only enter the velocity state, and
+            // from there the position through the F[pos, vel] = dt coupling.
             if (state_manager_.hasClockRate()) {
                 const size_t cr_idx = state_manager_.getClockRateIndex();
                 jacobian(cr_idx) = 1.0;
                 predicted += x(cr_idx);
             }
 
-            // Inter-system clock-rate offset (ISBR) for non-GPS observations.
-            // Mirrors the ISB partial in the code/phase branch — total observed
-            // rate on a non-GPS Doppler is (global clock-rate + ISBR_sys).
+            // Inter-system clock-rate offset (ISBR) for non-GPS observations, the
+            // rate counterpart of the ISB partial in the code/phase branch: the
+            // total observed rate on a non-GPS Doppler is (global clock rate +
+            // ISBR_sys).
             const std::string sys_name = StateInitializer::systemToIsbName(obs.system);
             if (!sys_name.empty()) {
                 const size_t isbr_idx = state_manager_.getSystemTimeRateOffsetIndex(sys_name);
@@ -1440,8 +1449,8 @@ namespace GnssProcessor {
         jacobian(state_manager_.getTropoIndex()) = mapping_wet;
 
         // Receiver clock.  Under BSSD the clock cancels in SD and has no
-        // state — skip the Jacobian write and treat the clock contribution
-        // as zero (BssdTransform would have zeroed this column anyway).
+        // state, so the Jacobian write is skipped and the clock contribution
+        // is zero (BssdTransform would zero this column anyway).
         double rx_clk = 0.0;
         if (state_manager_.hasClock()) {
             jacobian(state_manager_.getClockIndex()) = 1.0;
@@ -1500,7 +1509,7 @@ namespace GnssProcessor {
             }
         }
 
-        // Receiver bias — DCB / IFB (code only, uncombined)
+        // Receiver bias: DCB / IFB (code only, uncombined)
         double code_bias_term = 0.0;
         if (config_.estimateIfb() && is_uncombined && !is_phase) {
             const auto bias = state_initializer_.resolveReceiverBias(ref_type, obs.system, obs.satellite);
@@ -1530,15 +1539,15 @@ namespace GnssProcessor {
             }
         }
 
-        // Per-satellite signal PHASE bias (network producer only).  On the
+        // Per-satellite signal phase bias (network producer only).  On the
         // single-receiver user side the satellite phase bias is imported as a
         // known SSR correction (below) or absorbed into the float ambiguity; the
-        // network ESTIMATES it as an explicit per-(sat,signal) state on
-        // undifferenced phase rows (Odijk Eq. 4 — it carries the network pivot-
-        // receiver ambiguity lump).  Co-linear with the per-receiver float
-        // ambiguity on a single row — separable only ACROSS stations (W4).  This
-        // only CONSUMES an already-present column (creation/ownership is the
-        // network estimator's); gated on estimateSatPhaseBiases() (default off),
+        // network estimates it as an explicit per-(sat,signal) state on
+        // undifferenced phase rows (Odijk Eq. 4; it carries the network pivot-
+        // receiver ambiguity lump).  On a single row it is collinear with the
+        // per-receiver float ambiguity; it is separable only across stations
+        // (W4).  This code only reads an existing column (the network estimator
+        // creates and owns it); gated on estimateSatPhaseBiases() (default off),
         // so it is inert in every other mode.
         double sat_phase_bias_term = 0.0;
         if (config_.estimateSatPhaseBiases() && is_phase && is_uncombined
@@ -1548,18 +1557,18 @@ namespace GnssProcessor {
             if (spb_idx >= 0 && spb_idx < static_cast<int>(state_size)) {
                 jacobian(spb_idx) = 1.0;
                 sat_phase_bias_term = x(spb_idx);
-                // The per-(receiver,system,
-                // signal) receiver phase-bias split state δ_{r,σ}.  It rides
-                // EXACTLY the phase rows whose (sat,σ) has an UNGATED shared
-                // phase-bias column (spb_idx >= 0 here — the D2-graph vertices;
-                // a gated (sat,σ) keeps legacy per-station lumping, no RPB).  It
-                // enters with +1 — the SAME sign as the ambiguity column it
-                // splits (Odijk §4/§6: the phase row is …+δ_{r,σ}−δ^s_σ+z^s_r) —
-                // so the receiver fractional phase bias gets its own estimable
-                // state instead of lumping into the emitted satellite phase bias.
-                // Folded into sat_phase_bias_term (both are +1 phase-bias-family
-                // predicted terms) so the predicted assembly below is byte-
-                // identical when the toggle is off.
+                // The receiver phase-bias split state δ_{r,σ}, one per
+                // (receiver, system, signal).  It appears on exactly the phase
+                // rows whose (sat,σ) has an ungated shared phase-bias column
+                // (spb_idx >= 0 here: the D2-graph vertices; a gated (sat,σ)
+                // keeps the per-station lumping and gets no RPB).  It enters
+                // with +1, the same sign as the ambiguity column it splits
+                // (Odijk §4/§6: the phase row is …+δ_{r,σ}−δ^s_σ+z^s_r), so the
+                // receiver fractional phase bias gets its own estimable state
+                // instead of lumping into the emitted satellite phase bias.  It
+                // is folded into sat_phase_bias_term (both are +1
+                // phase-bias-family predicted terms), so the predicted assembly
+                // below is byte-identical when the toggle is off.
                 if (config_.networkPhaseDatumEq34()) {
                     const std::string rpb_key = StateKeys::makeReceiverPhaseBiasKey(
                         PppUtils::getSystemString(obs.satellite), ref_type);
@@ -1572,17 +1581,17 @@ namespace GnssProcessor {
             }
         }
 
-        // Per-satellite CLOCK (network producer only).  The orbit is held FIXED
-        // from the product while the network ESTIMATES a per-satellite clock
+        // Per-satellite clock (network producer only).  The orbit is held fixed
+        // at the product while the network estimates a per-satellite clock
         // correction Δδtˢ (metres) consistent with the chosen S-system datum.  The
         // observable carries the satellite clock as −c·δtˢ and obs.modeled has
         // already removed the a-priori product clock, so the residual-clock state
-        // enters with a −1 Jacobian on BOTH code and phase rows — one clock per
-        // satellite, all signals.  Like the bias states it CONSUMES an
-        // already-present column owned by the network estimator; gated on
-        // estimateSatClocks() (default off),
-        // inert in every other mode.  Single-station PPP would be rank-deficient
-        // here (rx-clock ↔ common sat-clock), which is why it is network-only.
+        // enters with a −1 Jacobian on both code and phase rows: one clock per
+        // satellite, shared by all signals.  Like the bias states, this only reads
+        // an existing column owned by the network estimator; gated on
+        // estimateSatClocks() (default off), so it is inert in every other mode.
+        // Single-station PPP would be rank-deficient here (rx-clock ↔ common
+        // sat-clock), which is why it is network-only.
         double sat_clock_term = 0.0;
         if (config_.estimateSatClocks() && is_uncombined) {
             const std::string sc_key = StateKeys::makeSatClockKey(obs.satellite);
@@ -1593,32 +1602,33 @@ namespace GnssProcessor {
             }
         }
 
-        // SSR satellite biases (PPP-RTK): a KNOWN correction added to the
+        // SSR satellite biases (PPP-RTK): a known correction added to the
         // predicted observable (no state, no Jacobian).  getCodeBias /
         // getPhaseBias return the per-(sat, signal) value in metres; combined
-        // iono-free keys like "C1W_C5X" return 0/nullopt and are skipped — SSR
-        // biases are per raw signal.  No-op in post-processing (empty store).
+        // iono-free keys such as "C1W_C5X" return 0/nullopt and contribute
+        // nothing, since SSR biases are per raw signal.  No-op in
+        // post-processing (empty store).
         //
-        // SIGN CONVENTION: the decoded bias is the satellite signal bias
-        // PRESENT in the observation, so it is added to the clean model.  This
-        // is the one convention that can only be confirmed empirically against
-        // the provider's stream — if the float ambiguity fractions cluster near
-        // 0.5 instead of 0, flip the corresponding sign constant and rebuild.
+        // Sign convention: the decoded bias is the satellite signal bias present
+        // in the observation, so it is added to the clean model.  This convention
+        // can only be confirmed empirically against the provider's stream: float
+        // ambiguity fractions that cluster near 0.5 instead of 0 mean the
+        // corresponding sign constant must be flipped (and the code rebuilt).
         //
-        // NETWORK PRODUCER: gated OFF — the network estimates the satellite
-        // code/phase bias as states above, so importing the same quantity here
-        // would double-count and render those bias states unobservable.
+        // Network producer: disabled.  The network estimates the satellite
+        // code/phase biases as states (above), so importing the same quantity
+        // here would double-count it and make those bias states unobservable.
         double ssr_bias_term = 0.0;
         if (config_.getProcessingMode() != ProcessingMode::PPP_RTK_Network) {
             constexpr double kSsrCodeBiasSign  = +1.0;
             constexpr double kSsrPhaseBiasSign = +1.0;
             const auto& ssr_store = ssrStore();
-            const bool   gate    = config_.enableSsrBiasMaxAge();  // A5: reject stale biases by obs-vs-record age
-            // A5 stale-hold: the APPLY limit is hold_factor × max_age — the last
-            // record keeps being applied over sub-limit staleness gaps so a provider
-            // interval hovering near max_age produces no model step (and no
+            const bool   gate    = config_.enableSsrBiasMaxAge();  // reject stale biases by obs-vs-record age (A5)
+            // Stale hold (A5): the apply limit is hold_factor × max_age.  The last
+            // record stays applied across staleness gaps below that limit, so a
+            // provider interval near max_age produces no model step (and no
             // freshness-flip ambiguity reset; RealTimeEngine keys its flip detector
-            // to this SAME limit).  A held bias is applied at full weight — the
+            // to the same limit).  A held bias is applied at full weight; the
             // network URA/staleness channel (consume_ura, ssr_max_age_s) is a
             // separate knob and does not cover this hold zone.
             const double max_age = config_.getSsrBiasMaxAge()
@@ -1701,15 +1711,16 @@ namespace GnssProcessor {
         }
 
         // PHASE-DECOMP diagnostic (trace, "measurement_model"): the phase-row
-        // mirror of CODE-DECOMP below — break the zero-difference predicted
-        // phase into its term-level parts so a wandering float or a product
-        // datum step can be attributed to the exact channel.  ssr_pbias is the
-        // APPLIED network/SSR satellite phase-bias term (0 when the store has
-        // no entry for this exact (sat, signal) — the probe term the
-        // closed-loop datum attribution needed); sat_pbias is the network
-        // producer's estimated per-(sat,signal) phase-bias STATE (inert
-        // elsewhere); sat_clk the producer's residual satellite-clock state;
-        // amb the float-ambiguity contribution in metres (NL/WL basis included).
+        // counterpart of CODE-DECOMP below.  It breaks the zero-difference
+        // predicted phase into its terms so that a wandering float or a product
+        // datum step can be attributed to one channel.  ssr_pbias is the applied
+        // network/SSR satellite phase-bias term (0 when the store has no entry
+        // for this (sat, signal); the closed-loop datum attribution uses this
+        // term); sat_pbias is the network producer's estimated per-(sat,signal)
+        // phase-bias state, plus the receiver phase-bias split state when that
+        // is armed (inert elsewhere); sat_clk is the producer's residual
+        // satellite-clock state; amb is the float-ambiguity contribution in
+        // metres (NL/WL basis included).
         if (is_phase && !obs.satellite.empty()) {
             if (auto lg = log_manager_.getLogger("measurement_model");
                 lg->should_log(spdlog::level::trace)) {
@@ -1725,18 +1736,18 @@ namespace GnssProcessor {
             }
         }
 
-        // CODE-DECOMP diagnostic (trace, "measurement_model"): for ANY code
-        // signal, break the zero-difference predicted observable into its terms
-        // so a hundreds-of-metre / kilometre residual can be attributed (GPS
-        // IF-code km residuals on the live IGS-station path motivated lifting
-        // this off the original Galileo-only gate).  rx_clk is the
-        // receiver-clock STATE (0 in BSSD, where the between-sat SD removes the
-        // physical clock — so zd_innov here still CARRIES it, equally on every
-        // signal, and it cancels only after differencing); iono is the per-sat
-        // slant-iono term (+alpha*I on code); ssr_cbias is the SSR code bias
-        // matched by EXACT RINEX obs code (0 if the provider's set lacks this
-        // code); sat_bias is the estimated per-(sat,signal) state; bia_cbias is
-        // the external .BIA term (0 unless enable_code_phase_bias).
+        // CODE-DECOMP diagnostic (trace, "measurement_model"): for any code
+        // signal, breaks the zero-difference predicted observable into its terms
+        // so that a residual of hundreds of metres or kilometres can be
+        // attributed.  rx_clk is the receiver-clock state (0 under BSSD, where
+        // the between-sat SD removes the physical clock, so zd_innov here still
+        // contains it, equally on every signal, and it cancels only after
+        // differencing); iono is the per-sat slant-iono term (+alpha*I on code);
+        // ssr_cbias is the SSR code bias matched by the exact RINEX obs code (0
+        // if the provider's set lacks this code); sat_bias is the estimated
+        // per-(sat,signal) state; bia_cbias prints code_bias_term, the receiver
+        // DCB/IFB state term.  A .BIA code bias (enable_code_phase_bias) is
+        // applied in PppModel and is already part of obs.modeled.
         if (!is_phase && !obs.satellite.empty()) {
             if (auto lg = log_manager_.getLogger("measurement_model");
                 lg->should_log(spdlog::level::trace)) {
@@ -1773,10 +1784,10 @@ namespace GnssProcessor {
         }
 
         // --- First-epoch initialization (delegated to StateInitializer) ---
-        // Latch "ISB initialized" ONLY when the seed actually succeeded.  If GPS
-        // (the ISB reference) is absent this epoch the call bails and returns
-        // false; marking it done anyway would freeze every non-GPS ISB at 0 for
-        // the whole session when GPS joins later.  Retry until GPS is present.
+        // Latch "ISB initialized" only when the seed succeeded.  If GPS (the ISB
+        // reference) is absent this epoch, the call returns false; latching anyway
+        // would freeze every non-GPS ISB at 0 for the whole session once GPS joins
+        // later.  The seed is retried each epoch until GPS is present.
         if (!state_initializer_.isIsbInitialized()) {
             if (state_initializer_.initializeInterSystemBiases(observations, epoch_prefix))
                 state_initializer_.markIsbInitialized();
@@ -1892,22 +1903,23 @@ namespace GnssProcessor {
                     update.innovations(row) = observed - predicted;
                     update.R_v(row) = obs.variances.at(ref_type);
 
-                    // When the network product carries a per-key COMBINED-correction σ
-                    // and closed_loop.consume_combined_sigma is on, fold THAT σ
-                    // (age-inflated) into this row's variance instead of the individual
-                    // URA + phase-bias-σ RSS below.  For a fresh, reconverging satellite
-                    // the combined σ is mm-level where the individual clock/bias σ are
-                    // cm-level, so the row keeps its weight rather than being deweighted
-                    // 10–100× (Zhang 2021 / Psychas 2024b).  Using both would
-                    // DOUBLE-COUNT the shared clock variance and reintroduce that cliff,
-                    // so an active combined row suppresses the two blocks below.
+                    // When the network product carries a per-key combined-correction σ
+                    // and closed_loop.consume_combined_sigma is on, that σ (age-inflated)
+                    // goes into this row's variance in place of the individual URA +
+                    // phase-bias-σ RSS below.  For a fresh, reconverging satellite the
+                    // combined σ is at the mm level where the individual clock/bias σ
+                    // are at the cm level, so the row keeps its weight instead of being
+                    // deweighted 10–100× (Zhang 2021 / Psychas 2024b).  Using both would
+                    // double-count the shared clock variance and bring that deweighting
+                    // back, so an active combined row suppresses the two blocks below.
                     //
-                    // Fallback is per-key: an absent or too-stale token fails the
-                    // freshness gate → combined_active false → the URA path (which owns
-                    // staleness) handles it, so mixed streams stay safe.  The product's
-                    // rho is NOT applied — measurement R is diagonal, with no
-                    // off-diagonal code/phase slot.  Off / non-network / producer rows
-                    // leave R byte-identical.
+                    // The fallback is per key: an absent or too-stale token fails the
+                    // freshness gate, combined_active stays false, and the URA path
+                    // (which owns staleness) handles the row, so mixed streams stay
+                    // safe.  The product's rho is not applied: the measurement R is
+                    // diagonal, with no off-diagonal code/phase slot.  With the knob off,
+                    // on rows without network corrections and on producer rows, R is
+                    // byte-identical.
                     bool   combined_active = false;
                     double combined_var    = 0.0;
                     if (config_.networkConsumeCombinedSigma()
@@ -1917,15 +1929,15 @@ namespace GnssProcessor {
                         const double clk_hold = config_.getSsrClockStaleHoldFactor();
                         const double window   = SsrCorrectionStore::clockHoldWindow(
                             config_.getSsrMaxAge(), clk_hold);
-                        // Apply the combined σ only to a FRESH network correction.  A
-                        // stale-HELD clock (RTA-9(b): content age in (max_age, hold_window])
-                        // keeps the v1 URA path below, so its ZOH clock-staleness growth
-                        // (q²·dt³/3) is NOT lost — combined_var carries no staleness term
-                        // when the producer advertised no agek, and a held clock must never
-                        // be consumed at full weight.  agek covers latency WITHIN the fresh
-                        // window; beyond it the conservative v1 staleness model owns the
-                        // weighting.  With clk_hold ≤ 1 (default) every accepted clock is
-                        // Fresh, so this never changes the common case.
+                        // The combined σ applies only to a fresh network correction.  A
+                        // stale-held clock (content age in (max_age, hold_window],
+                        // RTA-9(b)) keeps the v1 URA path below, so its ZOH clock-staleness
+                        // growth (q²·dt³/3) is retained: combined_var carries no staleness
+                        // term when the producer advertised no agek, and a held clock is
+                        // never consumed at full weight.  agek covers latency within the
+                        // fresh window; beyond it the conservative v1 staleness model sets
+                        // the weighting.  With clk_hold ≤ 1 (default) every accepted clock
+                        // is Fresh, so the common case is unchanged.
                         bool clock_fresh = true;
                         if (clk_hold > 1.0) {
                             if (auto ep = ssr.getSsrEpoch(obs.satellite)) {
@@ -1937,7 +1949,7 @@ namespace GnssProcessor {
                             }
                         }
                         double sig_c = 0.0;
-                        if (ref_type[0] == 'L') {          // PHASE row: combined phase σ (sigc)
+                        if (ref_type[0] == 'L') {          // phase row: combined phase σ (sigc)
                             const bool   pb_gate    = config_.enableSsrBiasMaxAge();
                             const double pb_max_age = config_.getSsrBiasMaxAge()
                                                     * config_.getSsrBiasStaleHoldFactor();
@@ -1947,7 +1959,7 @@ namespace GnssProcessor {
                             if (pb && pb->combined_sigma_m > 0.0
                                    && std::isfinite(pb->combined_sigma_m))
                                 sig_c = pb->combined_sigma_m;
-                        } else if (ref_type[0] == 'C') {   // CODE row: combined code σ (sigcc, per-sat)
+                        } else if (ref_type[0] == 'C') {   // code row: combined code σ (sigcc, per-sat)
                             if (auto oc = ssr.getOrbitClock(obs.satellite, obs.time, window);
                                 oc && oc->has_clock && oc->combined_code_sigma_m > 0.0
                                    && std::isfinite(oc->combined_code_sigma_m))
@@ -1971,37 +1983,38 @@ namespace GnssProcessor {
                         }
                     }
 
-                    // B1: inflate R by the network URA on rows carrying this satellite's
-                    // SSR corrections (an independent clock/bias error variance), plus the
-                    // ZOH clock-staleness q²·dt³/3.  Gated (default off) + not on the
-                    // producer's own rows ⇒ R byte-identical when off.
+                    // Inflate R by the network URA on rows carrying this satellite's SSR
+                    // corrections (an independent clock/bias error variance), plus the ZOH
+                    // clock-staleness term q²·dt³/3 (B1).  Off by default and never applied
+                    // to the producer's own rows, so with it off R is byte-identical.
                     //
-                    // RTA-9(b): the clock stale-hold rung EXTENDS this machinery (never a
-                    // second inflation path).  With processing.ssr_clock_stale_hold_factor
-                    // > 1: (1) the URA freshness window widens to the SAME clockHoldWindow
-                    // the clock apply gate uses (a URA exactly as stale as the held clock
-                    // still qualifies, and the q²·dt³/3 term then grows with the true dt);
-                    // (2) when the URA channel does NOT deliver the staleness term for a
-                    // stale-HELD clock (consume_ura off, no URA record for the sat, or
-                    // ura_staleness_q2 explicitly 0), the same q²·dt³/3 form is applied
-                    // with a documented fallback q² so a held clock is never consumed at
-                    // full weight.  Factor 0 (default) leaves the original branch exactly.
+                    // The clock stale-hold rung extends this block rather than adding a
+                    // second inflation path (RTA-9(b)).  With
+                    // processing.ssr_clock_stale_hold_factor > 1: (1) the URA freshness
+                    // window widens to the same clockHoldWindow that the clock apply gate
+                    // uses (a URA as stale as the held clock still qualifies, and the
+                    // q²·dt³/3 term then grows with the true dt); (2) when the URA channel
+                    // does not deliver the staleness term for a stale-held clock
+                    // (consume_ura off, no URA record for the sat, or ura_staleness_q2
+                    // explicitly 0), the same q²·dt³/3 form is applied with a fallback q²,
+                    // so a held clock is never consumed at full weight.  Factor 0 (default)
+                    // leaves the branch unchanged.
                     {
                         const double clk_hold = config_.getSsrClockStaleHoldFactor();
                         const bool consumer_rows =
                             config_.getProcessingMode() != ProcessingMode::PPP_RTK_Network;
                         if ((config_.networkConsumeUra() || clk_hold > 1.0) && consumer_rows
-                            && !combined_active) {   // M4: combined σ supersedes URA on this row
+                            && !combined_active) {   // combined σ supersedes URA on this row (M4)
                             const auto& ssr = ssrStore();
                             const double max_age = config_.getSsrMaxAge();
-                            // Gate URA freshness on the SAME window as the clock/orbit
-                            // overlay.  getUra's own default is a looser 60 s, so a URA
-                            // 60 s stale could qualify a clock the store rejects at
+                            // URA freshness is gated on the same window as the
+                            // clock/orbit overlay.  getUra's own default is a looser 60 s,
+                            // so a 60 s old URA could qualify a clock the store rejects at
                             // 30 s; clockHoldWindow widens both together.
                             const double window =
                                 SsrCorrectionStore::clockHoldWindow(max_age, clk_hold);
-                            // Content-epoch age — the dt the clock polynomial extrapolates
-                            // over and the ZOH variance grows with.
+                            // Content-epoch age: the dt over which the clock polynomial
+                            // extrapolates and with which the ZOH variance grows.
                             double dt = 0.0;
                             bool   have_dt = false;
                             if (auto ep = ssr.getSsrEpoch(obs.satellite)) {
@@ -2021,14 +2034,14 @@ namespace GnssProcessor {
                                     }
                                 }
                             }
-                            // RTA-9(b) fallback rung: a stale-HELD clock (age in
+                            // Fallback rung (RTA-9(b)): a stale-held clock (age in
                             // (max_age, window]) whose staleness the URA channel did not
-                            // fold gets the same q²·dt³/3 growth.  Fallback q² = 1.5e-7
-                            // m²/s³ — the network.clock_model_q2 default (the white-FM
-                            // random-walk density the producer's own clock model assumes),
+                            // fold in gets the same q²·dt³/3 growth.  The fallback
+                            // q² = 1.5e-7 m²/s³ is the network.clock_model_q2 default (the
+                            // random-walk-FM density of the producer's own clock model),
                             // so the held-clock variance grows at the rate the product's
                             // clock is modelled to wander.  Only rows whose satellite
-                            // actually carries an applied (held) SSR clock qualify.
+                            // carries an applied (held) SSR clock qualify.
                             if (clk_hold > 1.0 && !staleness_folded && have_dt
                                 && SsrCorrectionStore::classifyClockAge(dt, max_age, clk_hold)
                                        == SsrCorrectionStore::ClockAgeRung::StaleHeld) {
@@ -2043,24 +2056,25 @@ namespace GnssProcessor {
                         }
                     }
 
-                    // B1b (defect-2 lever B, Tienstra §6.6): inflate a PHASE row's
-                    // measurement variance by the network phase-bias correction σ² — the
-                    // phase-bias block of Qŷ_B1 the clock-only URA channel omits.  The
-                    // consumer otherwise applies phase-bias corrections as if EXACT; a
-                    // wandering bias (the named defect-2 driver) is down-weighted instead.
+                    // Inflate a phase row's measurement variance by the network phase-bias
+                    // correction σ² (B1b; defect-2 lever B, Tienstra §6.6): the phase-bias
+                    // block of Qŷ_B1 that the clock-only URA channel omits.  Without it the
+                    // consumer applies phase-bias corrections as if exact; with it a
+                    // wandering bias (the defect-2 driver) is down-weighted.
                     // Per-(sat,signal) via getPhaseBias; IF rows return nullopt (per-signal
                     // biases only) and are untouched.  Producer rows are excluded.  σ is 0
-                    // for RTCM/IGS-SSR biases and when emit_phase_bias_sigma is off, so
-                    // OFF (or a non-network stream) ⇒ R byte-identical.
+                    // for RTCM/IGS-SSR biases and when emit_phase_bias_sigma is off, so with
+                    // the knob off (or on a non-network stream) R is byte-identical.
                     if (config_.networkConsumePhaseBiasSigma() && !combined_active
                         && ref_type.size() >= 2 && ref_type[0] == 'L'
                         && config_.getProcessingMode() != ProcessingMode::PPP_RTK_Network) {
-                        // T3e: use the SAME freshness decision as the apply site
-                        // (buildJacobianRow ~1482) so R is inflated by the σ of exactly the
-                        // bias that was applied — not one the apply path already aged out (or,
-                        // at the hold boundary, the reverse).  gate/max_age are recomputed here
-                        // (out of scope in this function).  A5 gate OFF ⇒ plain overload ⇒
-                        // byte-identical to before.
+                        // Use the same freshness decision as the SSR apply site in
+                        // buildJacobianRow, so R is inflated by the σ of the bias that was
+                        // applied, not of one the apply path has already aged out (or, at
+                        // the hold boundary, the reverse) (T3e).  gate/max_age are
+                        // recomputed here because they are out of scope in this function.
+                        // With the A5 gate off, the plain overload is used and the result
+                        // is byte-identical.
                         const bool   pb_gate    = config_.enableSsrBiasMaxAge();
                         const double pb_max_age = config_.getSsrBiasMaxAge()
                                                 * config_.getSsrBiasStaleHoldFactor();
@@ -2072,8 +2086,8 @@ namespace GnssProcessor {
                         }
                     }
 
-                    // M4 (contract v2): apply the combined-correction variance for this row
-                    // (the URA + B1b additions above were suppressed by !combined_active).
+                    // Apply the combined-correction variance for this row; the URA and B1b
+                    // additions above were suppressed by !combined_active (M4, contract v2).
                     if (combined_active)
                         update.R_v(row) += combined_var;
 
@@ -2082,11 +2096,11 @@ namespace GnssProcessor {
                         && config_.noBiaCodeDownweight() > 1.0
                         && ref_type.size() >= 2 && ref_type[0] == 'C') {
                         const bool is_if = (ref_type.find('_') != std::string::npos);
-                        // A signal the live SSR stream corrects is NOT missing
-                        // bias coverage — ssr_bias_term loads the row — so it must
-                        // not be downweighted as if uncorrected.  (Raw signals
-                        // only; IF rows get ssr_bias_term=0, so the IF branch is
-                        // left on the .BIA check alone.)
+                        // A signal the live SSR stream corrects is not missing
+                        // bias coverage (ssr_bias_term applies to the row), so it
+                        // is not downweighted as if uncorrected.  (Raw signals
+                        // only; IF rows get ssr_bias_term = 0, so the IF branch
+                        // keeps the .BIA check alone.)
                         const bool missing_bia = is_if
                             ? !ifCombHasFullBia(obs.satellite, ref_type)
                             : (config_.isUncombinedEnabled()
@@ -2222,10 +2236,9 @@ namespace GnssProcessor {
     }
 
     // -------------------------------------------------------------------
-    // DD pivot handover (S-transform) moved to DdPivotManager.
-    // The legacy MeasurementModel::handleBaselinePivotHandover method
-    // is gone; @c dd_pivot_manager_.selectPivots applies the handover
-    // internally when the chosen pivot differs from the sticky one.
+    // The DD pivot handover (S-transform) lives in DdPivotManager:
+    // @c dd_pivot_manager_.selectPivots applies the handover internally
+    // when the chosen pivot differs from the sticky one.
     // -------------------------------------------------------------------
 
     void MeasurementModel::freezePivotAmbiguityCovariance()
@@ -2239,16 +2252,16 @@ namespace GnssProcessor {
     }
 
     // =================================================================
-    // Baseline (DD) measurement update — Slice 5e+
+    // Baseline (DD) measurement update (Slice 5e+)
     //
-    // Unified path: DD rows are built from two per-receiver PppModel
-    // outputs rather than a separate geometry layer.  The per-receiver
-    // residuals (observed - modeled) already incorporate Sagnac, emission
-    // time, satellite clock, Shapiro, antenna PCO/PCV, solid tide, and
-    // stochastic-model variances — DD cancels the parts that are common
-    // between receivers (sat clock on short baselines, most propagation
-    // terms) and leaves the position-dependent geometry + ambiguity
-    // signal the filter needs.
+    // DD rows are built from two per-receiver PppModel outputs rather
+    // than from a separate geometry layer.  The per-receiver residuals
+    // (observed - modeled) already include Sagnac, emission time,
+    // satellite clock, Shapiro, antenna PCO/PCV, solid tide, and
+    // stochastic-model variances.  DD cancels the parts common to both
+    // receivers (sat clock on short baselines, most propagation terms)
+    // and leaves the position-dependent geometry + ambiguity signal the
+    // filter needs.
     // =================================================================
 
     namespace {
@@ -2318,12 +2331,13 @@ namespace GnssProcessor {
         // only this pass's additions, and a satellite with two bad
         // signals would oscillate (pass N excludes C1C; pass N+1 starts
         // fresh, excludes C2W, forgets C1C; pass N+2 sees C1C again).
-        // Mirrors the PPP overload's behavior at line 595.
+        // The PPP overload of computeMeasurementUpdate does the same.
         em.excluded_measurements = excluded_measurements;
 
         auto klog = log_manager_.getLogger("measurement_model");
-        // First-epoch diagnostic: reveal whether shared sats / signals exist.
-        // Off after first call via a static flag so we don't spam the log.
+        // First-epoch diagnostic: shows whether shared sats / signals exist.
+        // A function-local static flag turns it off after the first call, so
+        // the log is not flooded.
         static bool first_dd_call = true;
         const bool diag = first_dd_call;
         if (diag) {
@@ -2362,11 +2376,11 @@ namespace GnssProcessor {
         // Aliasing policy: when true, codes that share the same (System, Band)
         // but differ in tracking attribute (e.g. rov C2W vs ref C2C) are
         // paired across receivers.  When false, only exact-string code
-        // matches are kept (legacy strict behavior).  Off-band cancellation
-        // properties of DD do NOT depend on identical attributes — a small
-        // sat-DCB residual remains on code DDs (absorbed by the ambiguity
-        // float on phase DDs in non-code-only mode).  See Phase 2 plan for
-        // DCB harmonization.
+        // matches are kept (the strict behavior).  The off-band cancellation
+        // properties of DD do not depend on identical attributes; a small
+        // sat-DCB residual remains on code DDs (absorbed by the float
+        // ambiguity on phase DDs in non-code-only mode).  See the Phase 2
+        // plan for DCB harmonization.
         const bool signal_aliasing = config_.getBaselineConfig().signal_aliasing;
 
         // Per-band canonical code chosen at one receiver: pick the
@@ -2396,11 +2410,10 @@ namespace GnssProcessor {
         // residual + variance + rover-side LOS once.  Downstream BSSD
         // pivot-differencing then forms DD rows from BRSD entries.
         //
-        // BRSD output replaces what used to be a thin SharedSignal
-        // metadata struct: BrsdObservation already carries the same
-        // (band, obs_type, rov_code, ref_code, brsd_aliased) metadata
-        // plus the freshly-computed residual / variance / LOS, so the
-        // canonical-code selection and BRSD math live in a single pass.
+        // BrsdObservation carries the (band, obs_type, rov_code, ref_code,
+        // brsd_aliased) metadata together with the computed residual /
+        // variance / LOS, so the canonical-code selection and the BRSD
+        // math run in a single pass.
         struct SharedInfo {
             const PppObservation* rov{ nullptr };
             const PppObservation* ref{ nullptr };
@@ -2440,7 +2453,7 @@ namespace GnssProcessor {
                 info.brsd_signals.push_back(std::move(*brsd));
             }
 
-            // SNR averaging — any 'S*' RINEX code on the rover side.
+            // SNR averaging: any 'S*' RINEX code on the rover side.
             double snr_sum = 0.0; size_t snr_cnt = 0;
             for (const auto& [code, val] : rov_ptr->observed) {
                 if (!code.empty() && code[0] == 'S') { snr_sum += val; ++snr_cnt; }
@@ -2485,7 +2498,7 @@ namespace GnssProcessor {
         // BRSD-populated by_cons structure and hand it to DdPivotManager.
         // The manager's selectPivots applies the sticky-or-rerank logic
         // and, on a pivot change, the S-transform handover (gated by
-        // BaselineConfig::enable_pivot_handover) — preserving DD
+        // BaselineConfig::enable_pivot_handover), which preserves the DD
         // ambiguity integer cycles across handovers.
         DdPivotManager::CandidateMap pivot_candidates;
         for (const auto& [cons, sats] : by_cons) {
@@ -2509,19 +2522,19 @@ namespace GnssProcessor {
 
         // --- Collect DD rows ---
         // Each row carries both rover and reference RINEX codes.  When
-        // aliasing is off they are equal (legacy behavior).  When on and
-        // the receivers report different tracking attributes on the same
-        // band, the row is built cross-attribute — residuals and variances
-        // are looked up under each receiver's own code.
+        // aliasing is off they are equal.  When it is on and the receivers
+        // report different tracking attributes on the same band, the row
+        // is built cross-attribute: residuals and variances are looked up
+        // under each receiver's own code.
         //
         // @c integer_capable is true iff all four observations in the DD
         // (rov_i, rov_p, ref_i, ref_p) use the same RINEX code.  Only
         // those rows have receiver-bias and satellite-bias terms that
-        // cancel pairwise; the float ambiguity is then a clean integer
+        // cancel pairwise; the float ambiguity is then an integer
         // multiple of the carrier wavelength and is eligible for AR.
-        // Any other combination (rov/ref mismatch on this row, OR rover
-        // code differs between sat_i and pivot, OR reference code does)
-        // carries a non-integer DCB / IFB residual.
+        // Any other combination (rov/ref mismatch on this row, a rover
+        // code that differs between sat_i and pivot, or a reference code
+        // that does) carries a non-integer DCB / IFB residual.
         // The DD row carries the BRSD-combined variance for the non-pivot
         // (var_brsd_i = var_rov_i + var_ref_i) and pivot (var_brsd_p =
         // var_rov_p + var_ref_p).  Diagonal R = var_brsd_i + var_brsd_p;
@@ -2539,11 +2552,11 @@ namespace GnssProcessor {
             double innov_pre{ 0.0 };
             double var_brsd_i{ 0.0 };  ///< BRSD variance on the non-pivot side (var_rov + var_ref).
             double var_brsd_p{ 0.0 };  ///< BRSD variance on the pivot side (var_rov + var_ref).
-            ///< Rover-side wet mapping function values for the non-pivot and
-            ///< pivot satellites.  Used to populate the H column for the
-            ///< differential ZWD state when @c estimate_differential_tropo
-            ///< is on.  Values are nearly band-independent so the IF
-            ///< collapse just propagates the per-band values from r1.
+            /// Rover-side wet mapping function values for the non-pivot and
+            /// pivot satellites.  They populate the H column for the
+            /// differential ZWD state when @c estimate_differential_tropo
+            /// is on.  The values are nearly band-independent, so the IF
+            /// collapse propagates the per-band values from r1.
             double mf_w_rov_i{ 0.0 };
             double mf_w_rov_p{ 0.0 };
             std::string group_key;
@@ -2553,17 +2566,17 @@ namespace GnssProcessor {
         std::vector<DdRow> rows;
 
         // ---- BSSD step: BRSD entries → DD rows ----
-        // Hand the BRSD inputs and pivot map to BssdTransform::differenceBrsd,
+        // The BRSD inputs and the pivot map go to BssdTransform::differenceBrsd,
         // which performs the BSSD differencing per (cons, band, obs_type)
         // group and returns BssdDdRow entries (residual, variance pair,
         // rover-side LOS pair, integer-capability flag, metadata).
-        // MeasurementModel then layers on its private bookkeeping —
-        // group_key for R off-diagonal correlation and the H_pos partial
-        // derived from the LOS pair — to produce a DdRow.
+        // MeasurementModel then adds its own bookkeeping (group_key for the
+        // R off-diagonal correlation, and the H_pos partial derived from the
+        // LOS pair) to produce a DdRow.
         //
-        // The differencing math now lives entirely inside BssdTransform;
-        // the same class also serves PPP-RTK SD via apply().  See the
-        // class header for the architectural notes on the two methods.
+        // The differencing math lives entirely in BssdTransform; the same
+        // class also serves PPP-RTK SD via apply().  See the class header
+        // for the architectural notes on the two methods.
         {
             // Build a (cons, sat) → vector<BrsdObservation> view over
             // by_cons.  The static differenceBrsd signature wants this
@@ -2602,10 +2615,11 @@ namespace GnssProcessor {
                 // Wet mapping function values for the differential-ZWD H
                 // column.  PppModel populates @c mf_w on each PppObservation
                 // from the GMF/VMF wet mapping function at the rover's
-                // elevation; nearly band-independent so any band's per-row
-                // value is fine.  Default 0.0 if the satellite isn't in
-                // rov_by_sat (shouldn't happen — both stations agreed on
-                // the satellite at the BRSD layer — but be defensive).
+                // elevation; it is nearly band-independent, so any band's
+                // per-row value serves.  Defaults to 0.0 if the satellite is
+                // not in rov_by_sat, a defensive fallback that is not expected
+                // to trigger (both stations agreed on the satellite at the
+                // BRSD layer).
                 {
                     auto it_i = rov_by_sat.find(br.sat_i);
                     auto it_p = rov_by_sat.find(br.sat_p);
@@ -2629,17 +2643,16 @@ namespace GnssProcessor {
         //     y_IF = α·y_1 + β·y_2,   α = f1²/(f1²-f2²),  β = -f2²/(f1²-f2²)
         //
         // where (f1, y_1) is the higher-frequency band and (f2, y_2) is
-        // the lower.  This eliminates the first-order ionospheric delay
-        // — required for long baselines (>10-20 km) where the DD does
-        // NOT cancel iono between receivers.  Cost: ~3x amplified code
-        // noise on GPS L1+L2 (the variance scales by α²+β² ≈ 9.5), and
-        // the ambiguity is no longer integer-cycle (it's a non-trivial
-        // linear combination of N1 and N2 in cycles), so AR is excluded
-        // for IF phase rows via @c integer_capable=false.  Sat-pairs
-        // with fewer than two shared bands are dropped — IF needs two.
-        // The H_pos block is unchanged: the geometry partial is the
-        // same linear combination's derivative w.r.t. position, which
-        // factors out of α and β (both scaled the same).
+        // the lower.  This eliminates the first-order ionospheric delay,
+        // which is needed on long baselines (>10-20 km), where the DD
+        // does not cancel the ionosphere between receivers.  Cost: ~3x
+        // amplified code noise on GPS L1+L2 (the variance scales by
+        // α²+β² ≈ 8.87), and the ambiguity is not integer-cycle (it is a
+        // non-trivial linear combination of N1 and N2 in cycles), so AR
+        // is excluded for IF phase rows via @c integer_capable=false.
+        // Satellite pairs with fewer than two shared bands are dropped,
+        // since IF needs two.  The H_pos block is unchanged: the geometry
+        // partial is common to both bands and α + β = 1.
         if (config_.getBaselineConfig().use_iono_free && !rows.empty()) {
             // Group row indices by (cons, sat_i, sat_p, obs_type).
             std::map<std::string, std::vector<size_t>> if_groups;
@@ -2744,9 +2757,10 @@ namespace GnssProcessor {
                 // don't; rows is fully replaced below).
                 ifr.group_key = ifr.cons + "|IF|" + std::string(1, ifr.obs_type);
                 ifr.amb_idx   = -1;
-                // IF ambiguity is c·(f1·N1 - f2·N2)/(f1²-f2²) — never an
-                // integer cycle.  Force float-only so AR's exclusion set
-                // catches it at @c getNonIntegerCapableDdAmbiguityKeys().
+                // The IF ambiguity is c·(f1·N1 - f2·N2)/(f1²-f2²), never an
+                // integer number of cycles.  It is forced float-only so AR's
+                // exclusion set catches it at
+                // @c getNonIntegerCapableDdAmbiguityKeys().
                 ifr.integer_capable = false;
                 if_rows.push_back(std::move(ifr));
             }
@@ -2773,22 +2787,23 @@ namespace GnssProcessor {
         // row contributes one expected key built from its rov_code, which
         // is either a single RINEX code ("L1C") in per-band mode or the
         // concatenated IF label ("L1C+L2W") after iono-free collapse.
-        // Any DD-keyed ambiguity in the state that's NOT in this set is
-        // stale and removed.  This catches every leak path in one pass:
+        // Any DD-keyed ambiguity in the state that is not in this set is
+        // stale and removed.  This covers every leak path in one pass:
         //   - pivot change for a group (old pivot's keys vanish from the set)
         //   - rover or reference tracker switching codes mid-arc
         //   - satellite leaving view at either receiver
         //   - satellite added to excluded_satellites at runtime
         //   - iono-free toggle changing the code segment of every key
         //   - any other condition that produces no row this epoch
-        // Must run BEFORE em.H column indices are sized below — the H
-        // matrix uses state_manager.getStateSize(), and removeAmbiguity()
-        // compacts the state vector and shifts dynamic-state indices.
-        // Building the expected set from @c rows (rather than from the
-        // pre-collapse @c by_cons / @c brsd_signals) ensures the expected
-        // and added keys agree on whether the code segment is per-band or
-        // an IF concatenation; otherwise every IF DD ambiguity is pruned
-        // and re-added each epoch, losing covariance.
+        // This must run before the em.H column indices are sized below:
+        // the H matrix uses state_manager.getStateSize(), and
+        // removeAmbiguity() compacts the state vector and shifts
+        // dynamic-state indices.  Building the expected set from @c rows
+        // (rather than from the pre-collapse @c by_cons / @c brsd_signals)
+        // makes the expected and added keys agree on whether the code
+        // segment is per-band or an IF concatenation; otherwise every IF DD
+        // ambiguity would be pruned and re-added each epoch, losing its
+        // covariance.
         {
             // Build the expected set as parsed (cons, sat_i, code, pivot) tuples
             // so the prune doesn't depend on string-formatting details of
@@ -2801,19 +2816,19 @@ namespace GnssProcessor {
                 if (r.obs_type != 'L') continue;
                 expected.emplace(r.cons, r.sat_i, r.rov_code, r.sat_p);
             }
-            // Protect ambiguities for phase rows EXCLUDED this pass by the KF
+            // Protect the ambiguities of phase rows excluded this pass by the KF
             // rebuild loop.  An excluded row never enters @c rows, so its
-            // (cons,sat_i,code,pivot) tuple is absent from @c expected above and
-            // the prune below would delete the very ambiguity state the KF just
-            // soft-reset — undoing the outlier-recovery reseed and forcing a
-            // from-scratch reinit (innov_pre, amb_init_var) next epoch, which
-            // loses the converged float + covariance.  Reconstruct each excluded
-            // row's expected tuple under this epoch's pivot and keep it live.
+            // (cons,sat_i,code,pivot) tuple is absent from @c expected above, and
+            // the prune below would delete the ambiguity state the KF has just
+            // soft-reset.  That would undo the outlier-recovery reseed and force a
+            // from-scratch reinit (innov_pre, amb_init_var) next epoch, losing the
+            // converged float and its covariance.  Each excluded row's expected
+            // tuple is therefore reconstructed under this epoch's pivot and kept.
             // The KF exclusion token is "sat_i_<rov_code>" (or "..._<rov>/<ref>"
             // when aliased); the DD ambiguity key uses rov_code.  Genuine leak
             // paths (sat dropout, code switch, pivot change) never appear in
-            // @c excluded_measurements — those sats produce no row to exclude —
-            // so this does not weaken the prune.
+            // @c excluded_measurements, since those sats produce no row to
+            // exclude, so this does not weaken the prune.
             for (const auto& ex : excluded_measurements) {
                 const auto us = ex.find('_');
                 if (us == std::string::npos || us + 1 >= ex.size()) continue;
@@ -2843,12 +2858,13 @@ namespace GnssProcessor {
         }
 
         // --- Refresh the AR-exclusion-key snapshot ---
-        // Any phase row whose four observations are NOT all the same
+        // A phase row whose four observations do not all use the same
         // RINEX code carries a residual receiver IFB or satellite DCB
-        // term that does not round to integer.  Those keys are exposed
-        // to AmbiguityResolver::resolveDd via getNonIntegerCapableDdAmbiguityKeys()
-        // so they remain float-only.  Rebuilt from scratch each epoch
-        // from the current phase rows; code rows are skipped because
+        // term that does not round to an integer (and every IF row is
+        // non-integer).  Those keys are exposed to
+        // AmbiguityResolver::resolveDd via getNonIntegerCapableDdAmbiguityKeys()
+        // so they stay float-only.  The set is rebuilt from scratch each
+        // epoch from the current phase rows; code rows are skipped because
         // they do not create ambiguity states.
         non_integer_capable_dd_ambiguity_keys_.clear();
         for (const auto& r : rows) {
@@ -2941,8 +2957,8 @@ namespace GnssProcessor {
             em.satellite_ids.reserve(static_cast<size_t>(m));
             em.signal_types.reserve(static_cast<size_t>(m));
 
-            // Differential ZWD column index — pulled once outside the row
-            // loop; max() if not present (PPP / PPP-RTK or baseline with
+            // Differential ZWD column index, read once outside the row
+            // loop; max() if not present (PPP / PPP-RTK, or baseline with
             // estimate_differential_tropo=false).
             const size_t diff_tropo_idx = state_manager_.getDifferentialTropoIndex();
             const bool has_diff_tropo = state_manager_.hasDifferentialTropo()

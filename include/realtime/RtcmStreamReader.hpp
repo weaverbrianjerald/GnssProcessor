@@ -55,13 +55,15 @@ public:
      * @brief Receipt stamp of the most recent frame returned by nextFrame()
      *        (RTB-1(b)).
      *
-     * The @c std::chrono::steady_clock instant of the @c feed() call — the
-     * transport hand-off — that delivered the bytes completing that frame.
-     * This is the earliest point the process can observe a frame, so it is
-     * the reference for sub-second receive→process latency accounting (the
-     * poll loop forwards it into @c RealTimeEngine::feedRtcmFrame).  Steady
-     * clock by design: latency intervals must be immune to wall-clock steps.
-     * Default-constructed (epoch) until the first frame is extracted.
+     * The @c std::chrono::steady_clock instant of the last @c feed() call (the
+     * transport hand-off) before that frame was extracted.  When the caller drains
+     * nextFrame() after every feed(), as the real-time poll loop does, this is the
+     * feed() that delivered the bytes completing the frame.  It is the earliest
+     * point the process can observe a frame, so it is the reference for sub-second
+     * receive→process latency accounting (the poll loop forwards it into
+     * @c RealTimeEngine::feedRtcmFrame).  A steady clock is used so that latency
+     * intervals are unaffected by wall-clock steps.  Default-constructed (clock
+     * epoch) until the first frame is extracted.
      */
     std::chrono::steady_clock::time_point lastFrameReceipt() const {
         return last_frame_receipt_;
@@ -77,7 +79,7 @@ private:
 
     /// Steady-clock instant of the most recent feed() (transport hand-off).
     std::chrono::steady_clock::time_point last_feed_time_{};
-    /// Stamp of the feed() that completed the most recently extracted frame.
+    /// Value of last_feed_time_ when the most recent frame was extracted.
     std::chrono::steady_clock::time_point last_frame_receipt_{};
 };
 

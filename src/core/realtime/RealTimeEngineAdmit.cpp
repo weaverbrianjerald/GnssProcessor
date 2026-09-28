@@ -4,8 +4,8 @@
  *
  * The only seams that can end an epoch early.  Each returns false to mean
  * "processEpoch returns false".  Every early exit in these bodies was
- * ALREADY a `return false` in the pre-cut driver, so the relocation is
- * verbatim and the whole control-flow transformation is the appended
+ * already a `return false` in the pre-cut driver, so the relocation is
+ * verbatim and the only control-flow change is the appended
  * `return true` � see scripts/rt_seam_verify.py, which proves that
  * mechanically against the frozen pre-cut source.
  */
@@ -36,12 +36,12 @@ bool RealTimeEngine::admitBacklogAndSync(RtEpochContext& ctx) {
     const double lag_s   = now_gps - obs_gps;
     if (config_.rtBacklogWarnSeconds() > 0.0 && lag_s > config_.rtBacklogWarnSeconds()) {
         if ((backlog_warn_ctr_++ % 30) == 0) {
-            // RTB-1(b): lag_s (wall clock vs obs epoch) is truncated to
-            // whole seconds by nowContinuousGpsSeconds — good enough for
-            // the gates, coarse for diagnosis.  The framer receipt stamp
-            // gives the SUB-SECOND receive→process component (assembly
-            // wait + backlog queueing) on the steady clock, immune to
-            // wall-clock steps.  Diagnostic only; no gate reads it.
+            // lag_s (wall clock against the obs epoch) is truncated to whole
+            // seconds by nowContinuousGpsSeconds: adequate for the gates,
+            // coarse for diagnosis.  The framer receipt stamp gives the
+            // sub-second receive-to-process component (assembly wait plus
+            // backlog queueing) on the steady clock, which wall-clock steps do
+            // not affect.  Diagnostic only; no gate reads it (RTB-1(b)).
             double rx_to_proc_s = -1.0;
             if (processing_epoch_receipt_valid_) {
                 rx_to_proc_s = std::chrono::duration<double>(
@@ -59,16 +59,17 @@ bool RealTimeEngine::admitBacklogAndSync(RtEpochContext& ctx) {
     }
 
     // --- obs↔SSR sync: hold obs ahead of the SSR coverage horizon ---
-    // PPP-RTK needs obs time-ALIGNED with the corrections, not pinned to wall
+    // PPP-RTK needs obs time-aligned with the corrections, not pinned to wall
     // clock.  An obs epoch newer than (freshest SSR content epoch + ssr_max_age)
-    // has no SSR any satellite can use, so processing it now would drive the
-    // whole epoch broadcast-grade (and, with drop_broadcast_grade, wipe it).
-    // Defer it instead; drainHeldObs() re-attempts it the moment the SSR stream
-    // advances.  Liveness: if the feed stalls longer than obs_ssr_sync_max_hold_s
-    // we latch a degraded "outage" and pass every epoch through (broadcast-grade
-    // / dropped via the existing path) until SSR re-covers the obs — a dead feed
-    // can never starve the filter.  Live-SSR real-time only; never on the final
-    // flush drain or before the first epoch.
+    // has no SSR any satellite can use, so processing it now would make the whole
+    // epoch broadcast-grade (and, with drop_broadcast_grade, drop all of it).  The
+    // epoch is deferred instead; drainHeldObs() re-attempts it when the SSR
+    // stream advances.  Liveness: if the feed stalls longer than
+    // obs_ssr_sync_max_hold_s, a degraded "outage" state latches and every epoch
+    // passes through (broadcast-grade, or dropped by the existing path) until SSR
+    // covers the obs again, so a dead feed cannot starve the filter.  Applies to
+    // live-SSR real-time only; never on the final flush drain or before the first
+    // epoch.
     if (config_.enableObsSsrSync() && !first_epoch_ && !draining_final_
         && config_.realtimeUsesLiveOrbitClockSource()) {
         const auto newest = ssrStore().newestSsrEpoch();
@@ -76,11 +77,11 @@ bool RealTimeEngine::admitBacklogAndSync(RtEpochContext& ctx) {
             const double horizon = TimeUtils::continuousGpsSeconds(*newest)
                                  + config_.getSsrMaxAge();
             if (obs_gps <= horizon) {
-                sync_hold_since_s_ = 0.0;   // SSR covers this epoch — resume normal
+                sync_hold_since_s_ = 0.0;   // SSR covers this epoch: resume normal
                 sync_outage_       = false;
                 held_obs_.clear();
             } else if (sync_outage_) {
-                held_obs_.clear();          // confirmed outage — pass through degraded
+                held_obs_.clear();          // confirmed outage: pass through degraded
             } else {
                 if (sync_hold_since_s_ <= 0.0) sync_hold_since_s_ = now_gps;
                 const double held_for = now_gps - sync_hold_since_s_;
@@ -93,7 +94,7 @@ bool RealTimeEngine::admitBacklogAndSync(RtEpochContext& ctx) {
                                    epoch_prefix, current_time.tow, newest->tow,
                                    config_.getSsrMaxAge(), held_for,
                                    config_.getObsSsrSyncMaxHoldS());
-                    return false;   // deferred — drained when SSR advances
+                    return false;   // deferred; drained when SSR advances
                 }
                 // Held past the budget: the SSR feed is stalled.  Latch degraded.
                 sync_outage_       = true;
@@ -163,18 +164,18 @@ bool RealTimeEngine::stepTimeAndDetectGap(RtEpochContext& ctx) {
         dt = current_time.tow - prev_tow_;
         if (dt < 0.0) dt += TimeUtils::SECONDS_IN_WEEK; // week rollover
         if (dt <= 0.0) {
-            // Non-advancing TOW: this is the SAME physical epoch arriving a
-            // second time, not a new time step.  A single GNSS epoch reaches the
-            // engine as more than one observation-bearing SBF block whenever the
-            // receiver co-logs MeasEpoch (4027) AND Meas3Ranges (4109): both
-            // decode to observations at the identical TOW (SbfParser::parseFrame)
-            // and each independently drives processEpoch via feedSbfFrame.  A
-            // retransmitted frame looks the same.  Folding the duplicate in would
-            // (a) double-count its measurements in the KF update and (b) feed
-            // dt=0 into KalmanFilter::predict -> StateManager::getProcessNoiseMatrix,
-            // which hard-throws "Invalid time step: 0" and aborts the session.
-            // Skip it cleanly — leave prev_tow_ / state untouched so the next
-            // genuinely-advancing epoch steps off the last accepted one.
+            // Non-advancing TOW: the same physical epoch arriving a second time,
+            // not a new time step.  One GNSS epoch reaches the engine as more than
+            // one observation-bearing SBF block whenever the receiver co-logs
+            // MeasEpoch (4027) and Meas3Ranges (4109): both decode to observations
+            // at the identical TOW (SbfParser::parseFrame), and each drives
+            // processEpoch through feedSbfFrame.  A retransmitted frame looks the
+            // same.  Folding the duplicate in would (a) double-count its
+            // measurements in the KF update and (b) feed dt=0 into
+            // KalmanFilter::predict -> StateManager::getProcessNoiseMatrix, which
+            // throws "Invalid time step: 0" and aborts the session.  The epoch is
+            // skipped with prev_tow_ and the state untouched, so the next advancing
+            // epoch steps from the last accepted one.
             log->debug("{}Skipping duplicate epoch at TOW {:.3f} (no time advance; "
                        "second co-timestamped SBF block or retransmit)",
                        epoch_prefix, current_time.tow);
@@ -185,11 +186,11 @@ bool RealTimeEngine::stepTimeAndDetectGap(RtEpochContext& ctx) {
                              : 1.0;  // default: 1 s (typical RT rate)
         gap_detected = dt > gap_tol;
     }
-    // Capture the pre-update epoch boundary + first-epoch flag for aiding-source
-    // prediction below: prev_epoch_time_ and first_epoch_ are both clobbered
-    // before the predict site, but predictAided needs the (prev, current]
-    // integration interval and the first-epoch skip.  Unused on the GNSS-only
-    // path (empty aiding manager).
+    // Capture the pre-update epoch boundary and first-epoch flag for aiding-source
+    // prediction: prev_epoch_time_ and first_epoch_ are both overwritten before
+    // the predict site, but predictAided needs the (prev, current] integration
+    // interval and the first-epoch skip.  Unused on the GNSS-only path (empty
+    // aiding manager).
     ctx.aiding_t_prev = prev_epoch_time_;
     ctx.aiding_first  = first_epoch_;
 
@@ -200,7 +201,7 @@ bool RealTimeEngine::stepTimeAndDetectGap(RtEpochContext& ctx) {
 }
 
 /**
- * @brief Corrections-ready startup gate: defer ALL estimation until every modeled above-mask satellite is broadcast+SSR.
+ * @brief Corrections-ready startup gate: defer all estimation until the cm-grade (broadcast+SSR) quorum is met (with require_all_above_mask, every modeled above-mask satellite) or the gate times out.
  *
  * Relocated verbatim from the pre-cut RealTimeEngine::processEpoch
  * (frozen lines 1019-1120); see scripts/rt_seam_verify.py.
@@ -226,18 +227,18 @@ bool RealTimeEngine::gateCorrectionsReady(RtEpochContext& ctx) {
             else { ++n_cm; ++cm_per_cons[cons]; }
         }
 
-        // Per-constellation quorum: every CONFIGURED constellation must field a
-        // cm-grade SD quorum before estimation starts — not just the ones that
-        // happen to be present this epoch.  Iterating active_systems (rather than
-        // total_per_cons) is the crux: a constellation whose broadcast ephemeris
-        // is still assembling contributes ZERO satellites, so it is absent from
-        // total_per_cons and the old present-only loop waved it through.  That
-        // let the gate latch single-constellation (Galileo-only while GPS had no
-        // orbit yet); GPS then joined mid-run and perturbed an already-converging
-        // filter, driving the ZWD<->height null-space runaway and flagging code.
-        // Holding the gate for the absent constellation forces a multi-system
-        // start — or the timeout below forces a degraded one.  per_system <= 0
-        // disables the per-system check (flat global floor only).
+        // Per-constellation quorum: every configured constellation must field a
+        // cm-grade SD quorum before estimation starts, including one with no
+        // satellite present this epoch.  The loop therefore runs over
+        // active_systems rather than total_per_cons: a constellation whose
+        // broadcast ephemeris is still assembling contributes zero satellites
+        // and is absent from total_per_cons.  Letting the gate latch on a
+        // single constellation (Galileo only, while GPS had no orbit yet) lets
+        // GPS join mid-run and perturb an already-converging filter, which drove
+        // the ZWD<->height null-space runaway and flagged code.  Holding the gate
+        // for the absent constellation forces a multi-system start, or the
+        // timeout below forces a degraded one.  per_system <= 0 disables the
+        // per-system check (flat global floor only).
         bool per_system_ok = true;
         std::vector<std::string> cons_waiting;
         if (gate.min_satellites_per_system > 0) {
@@ -251,9 +252,10 @@ bool RealTimeEngine::gateCorrectionsReady(RtEpochContext& ctx) {
                 const int total = total_per_cons.count(cons) ? total_per_cons[cons] : 0;
                 const int have  = cm_per_cons.count(cons)    ? cm_per_cons[cons]    : 0;
                 // Smaller of the configured floor and what the constellation can
-                // currently field, but never below 2 (an SD pair): an absent or
-                // single-sat constellation (total < 2) still demands 2 cm-grade
-                // sats and holds the gate until it shows up.
+                // currently field, with the fielded count raised to 2 (an SD pair):
+                // an absent or single-satellite constellation (total < 2) still
+                // needs min(floor, 2) cm-grade satellites and holds the gate
+                // until it shows up.
                 const int need = std::min(gate.min_satellites_per_system,
                                           std::max(total, 2));
                 if (have < need) {
@@ -293,10 +295,11 @@ bool RealTimeEngine::gateCorrectionsReady(RtEpochContext& ctx) {
                           epoch_prefix, n_cm, gate.min_satellites,
                           cons_short.empty() ? "ok" : cons_short,
                           not_ready.size(), waiting);
-                // SSR-store census localises the problem: zero orbit/clock counts
-                // for a constellation => decode/store gap; non-zero counts while it
-                // stays broadcast-only => an IODE-match issue (see the per-sat
-                // "SSR clock present ... but NOT applied" trace in GnssCorrections).
+                // The SSR-store census localises the problem: zero orbit/clock
+                // counts for a constellation indicate a decode/store gap; nonzero
+                // counts while it stays broadcast-only indicate an IODE-match issue
+                // (see the per-satellite "SSR clock present ... but NOT applied"
+                // trace in GnssCorrections).
                 log->info("{}  SSR store census: {}",
                           epoch_prefix, ssrStore().censusSummary());
             }

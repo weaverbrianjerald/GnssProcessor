@@ -4,32 +4,31 @@
  * @file BaselineFixtures.hpp
  * @brief Named test-fixture presets for baseline / DD processing.
  *
- * The baseline pipeline needs four pieces of input that are tedious
- * to type into a JSON config: reference station name, reference ECEF
- * (mm-accurate so the rover absolute solution doesn't drift), rover
- * name, and the date the obs files cover.  This header bundles those
- * pieces into named presets that the user picks via the
- * @c baseline_fixture top-level config field:
+ * The baseline pipeline needs four inputs that are tedious to type into a
+ * JSON config: reference station name, reference ECEF (mm-accurate, so the
+ * rover absolute solution does not inherit a reference error), rover name,
+ * and the date the obs files cover.  This header bundles them into named
+ * presets selected by the @c baseline_fixture top-level config field:
  *
  *   "baseline_fixture": "IGS_Pasadena"   // or "OSU_Campus", or "Custom"
  *
- * Recognised preset names are case-insensitive.  When a known preset
- * is selected, @c GnssConfig::loadBaselineSection_ fills in any field
- * the user left blank.  User-typed values in the @c baseline JSON
- * block always override preset defaults — the preset is purely a
- * convenience for "I want the standard X test."
+ * Preset names are matched case-insensitively (the loader also maps '-' and
+ * ' ' to '_'); an absent or empty field means "Custom".  When a known preset
+ * is selected, @c GnssConfig::loadBaselineSection_ fills in any field left
+ * blank.  Values given in the @c baseline JSON block always override the
+ * preset, which only supplies defaults for a standard test.
  *
  * To add a preset:
  *   1. Append a row to @c baselineFixturePresets() below.
  *   2. If the obs files are on CDDIS, add a matching entry to
  *      @c FIXTURE_OBSERVATIONS in @c scripts/bootstrap_internal_data.py
- *      so internal-mode users can fetch the data.
+ *      so internal-mode runs can fetch the data.
  *   3. If the date is new, add it to @c FIXTURE_DATES in the same
  *      script so the bootstrap pulls SP3/CLK/BIA/ERP/BRDC for it.
  *
- * Coordinates are ITRF2014 epoch 2010.0 unless noted.  IGS stations
- * are accurate to ~mm; verify against the current site log if you
- * need sub-cm absolute positioning out of the rover.
+ * Coordinates are ITRF2014 epoch 2010.0 unless noted.  IGS stations are
+ * accurate to about 1 mm; sub-cm absolute positioning of the rover requires
+ * checking the reference against the current site log.
  */
 
 #include <array>
@@ -41,10 +40,9 @@ namespace GnssProcessor {
 /**
  * @brief One named baseline test-fixture bundle.
  *
- * Empty strings in @c rover_name signal a single-station fixture
- * (rare; the baseline pipeline needs at least one rover, but we keep
- * the field nullable so future "PPP-only" presets could share this
- * catalog if the design ever extends that way).
+ * An empty @c rover_name denotes a single-station fixture.  The baseline
+ * pipeline needs at least one rover, so no current preset uses this; the
+ * field is nullable so that PPP-only presets could share this catalog.
  */
 struct BaselineFixturePreset {
     std::string ref_name;                  ///< Reference station ID (e.g. "CIT100USA" or "NARY").
@@ -65,12 +63,12 @@ struct BaselineFixturePreset {
 inline const std::map<std::string, BaselineFixturePreset>& baselineFixturePresets() {
     static const std::map<std::string, BaselineFixturePreset> kPresets = {
         // -----------------------------------------------------------
-        // OSU_Campus — short local survey.  Not on any public archive,
-        // so internal-mode users must drop the obs files in manually
-        // (the bootstrap script prints instructions).  Reference ECEF
-        // is the "NARY" mark surveyed by the OSU geomatics group;
-        // verify against your local survey records before trusting
-        // mm-level rover positioning.
+        // OSU_Campus: short local survey.  Not on any public archive,
+        // so for internal-mode runs the obs files are placed manually
+        // (the bootstrap script prints instructions).  The reference
+        // ECEF is the "NARY" mark surveyed by the OSU geomatics group;
+        // mm-level rover positioning requires checking it against the
+        // local survey records.
         // -----------------------------------------------------------
         {"osu_campus", BaselineFixturePreset{
             "NARY",
@@ -82,21 +80,21 @@ inline const std::map<std::string, BaselineFixturePreset>& baselineFixturePreset
         }},
 
         // -----------------------------------------------------------
-        // IGS_Pasadena — Caltech (CIT1) vs JPL (JPLM), ~10 km baseline,
+        // IGS_Pasadena: Caltech (CIT1) vs JPL (JPLM), ~10 km baseline,
         // both stations on the IGS daily archive at CDDIS.  Recommended
-        // default for repeatable testing — anyone can re-fetch the
-        // data and the coordinates are published on igs.org.
+        // for repeatable testing: the data can be re-fetched and the
+        // coordinates are published on igs.org.
         //
-        // ECEF below is the CIT100USA (Caltech) monument in ITRF2020,
+        // The ECEF below is the CIT100USA (Caltech) monument in ITRF2020,
         // from the NGS Station Info File (data/static/sif/igs20_SIF.json),
         // propagated with the station velocity to the fixture's
-        // observation epoch (2024-DOY129 ≈ 2024.35) so the held-fixed DD
-        // reference matches where the antenna actually is on the obs day.
-        // It converts to lat 34.1367°, lon -118.1273°, h 215 m — Caltech.
-        // (The prior value { -2492006.9389, -4659170.3174, 3559273.6829 }
-        // was wrong by ~1.7 km — it converted to a -694 m height — so the
-        // rover absolute solution inherited that ~1.7 km error.  See
-        // docs/test_suite.md, "Findings".)
+        // observation epoch (2024-DOY129 ≈ 2024.35), so the held-fixed DD
+        // reference matches the antenna position on the observation day.
+        // It converts to lat 34.1367°, lon -118.1273°, h 215 m (Caltech).
+        // The earlier value { -2492006.9389, -4659170.3174, 3559273.6829 }
+        // was off by about 1.7 km (it converts to a -694 m height), and
+        // the rover absolute solution inherited that error.  See
+        // docs/test_suite.md, "Findings".
         // -----------------------------------------------------------
         {"igs_pasadena", BaselineFixturePreset{
             "CIT100USA",

@@ -1,12 +1,12 @@
-"""gnssviz -- Python port of the GnssProcessor MATLAB visualization suite.
+"""gnssviz: Python port of the GnssProcessor MATLAB visualization suite.
 
 Backend-agnostic by design:
 
-    data layer  (io, geodesy, colormaps, trace_paths)   -- pure pandas/numpy
+    data layer  (io, geodesy, colormaps, trace_paths)   : pure pandas/numpy
         |
-    viewers      build  Figure  specs (figures.py)        -- no plotting library
+    viewers      build  Figure  specs (figures.py)        : no plotting library
         |
-    backends     render Figure -> pixels                  -- matplotlib today,
+    backends     render Figure -> pixels                  : matplotlib today,
                                                              plotly/real-time later
 
 Typical offline use::

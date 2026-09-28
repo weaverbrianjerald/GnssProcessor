@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
 """Independent reference oracle for HigherOrderIonosphere (I2 + I3).
 
-Locks the May-2026 second/third-order ionosphere fixes:
+Fixes the second/third-order ionosphere coefficients (May 2026):
 
-  1. I2 (second-order, group/code) coefficient is 7527*c, NOT 7527*c/2.
-     The /2 form is the *phase* coefficient; using it for the code delay
+  1. The I2 (second-order, group/code) coefficient is 7527*c, not 7527*c/2.
+     The /2 form is the phase coefficient; using it for the code delay
      made both code and phase I2 a factor of two too small.
 
   2. I3 (third-order, group/code) scales with the integral of N_e^2 along
-     the ray, which the shape factor eta=0.66 relates to N_max*STEC -- it
-     is NOT proportional to STEC^2.  The old STEC^2 form was ~2.3e5x too
-     large (hundreds of metres instead of ~mm).
+     the ray, which the shape factor eta=0.66 relates to N_max*STEC. It
+     is not proportional to STEC^2; the STEC^2 form is about 2.3e5 times
+     too large (hundreds of metres instead of millimetres).
 
 Methodology note (matches scripts/solid_tide_reference.py, nmf_reference.py):
 the dipole magnetic-field constants are parsed straight out of
-MagneticField.cpp so the B-field geometry matches the engine bit-for-bit
-(MagneticField was audited clean -- it is not the thing under test).  The
-I2/I3 coefficients here are derived INDEPENDENTLY from first principles and
-the POINT reference (higher_order_iono/Class_Iono.cpp Iono_Second_Order /
-Iono_Third_Order), so reverting either engine coefficient breaks the gtest.
+MagneticField.cpp so the B-field geometry matches the engine bit for bit
+(MagneticField is not the model under test here). The I2/I3 coefficients
+are derived independently from first principles and the POINT reference
+(higher_order_iono/Class_Iono.cpp Iono_Second_Order / Iono_Third_Order),
+so reverting either engine coefficient breaks the gtest.
 
 First principles (quasi-longitudinal Appleton-Hartree):
     n_ph = 1 - X/2 - (1/2) X Y_L - (1/8) X^2 - ...
@@ -43,13 +43,13 @@ from pathlib import Path
 C = 299792458.0                     # speed of light (m/s), matches Constants.hpp
 TECU_TO_ELECTRONS = 1.0e16          # 1 TECU = 1e16 el/m^2
 
-# Second-order GROUP (code) coefficient: 7527*c  (== A*e/(2 pi m_e), 2.2564e12).
+# Second-order group (code) coefficient: 7527*c  (== A*e/(2 pi m_e), 2.2564e12).
 KI2_CODE = 7527.0 * C
-# Third-order GROUP (code): (3 A^2 / 8) * eta * N_max * STEC / f^4.
+# Third-order group (code): (3 A^2 / 8) * eta * N_max * STEC / f^4.
 KI3_BASE = 2437.0                   # = 3 * 80.6^2 / 8
 KI3_ETA = 0.66
 # Hoque & Jakowski (2008) linear N_max(STEC) fit (also POINT Iono_Third_Order):
-# anchors TEC=1.38e18<->N_max=6e12 and TEC=4.55e18<->N_max=20e12.
+# anchors TEC=1.38e18 to N_max=6e12 and TEC=4.55e18 to N_max=20e12.
 KNMAX_PER_STEC = (20.0 - 6.0) * 1.0e12 / ((4.55 - 1.38) * 1.0e18)
 
 
@@ -122,7 +122,7 @@ def main():
     for k, v in mf.items():
         print(f"#   {k} = {v!r}")
 
-    # Fixed geometry (explicit ECEF literals -- the gtest uses the same ones).
+    # Fixed geometry (explicit ECEF literals; the gtest uses the same ones).
     rx = (4.6e6, 0.8e6, 4.3e6)          # ~lat 40N lon 10E, on the surface
     sat = (1.5e7, 1.0e7, 2.0e7)         # an above-horizon line of sight
     ipp_lat = 0.70                      # rad (~40.1 N)

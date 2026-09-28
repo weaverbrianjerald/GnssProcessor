@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Hourly LEVEL bands of the in-process closed-loop consumer, for Card Q3 A/B arms.
+"""Hourly level bands of the in-process closed-loop consumer, for Card Q3 A/B arms.
 
-Grades ``logs/closed_loop_trace.csv`` (the live WTZZ holdout) as hourly medians /
-p95 / worst 3D, plus the AR fix tallies.
+Grades ``logs/closed_loop_trace.csv`` (the live WTZZ holdout) as hourly medians,
+p95, worst 3D, plus the AR fix tallies.
 
-Why hourly LEVELS and never a slope: a warm-resumed or cold-started filter's
-error is NOT monotone — ep20 is a local minimum ~30 % below the true floor, so a
-line fitted through the early window reads climb-back as drift
-(``project_day129_pivot_cb_ratchet``, "Judge hourly LEVEL bands, never slopes").
-The first hour is ignition on a cold lineage and is reported but never used for a
-verdict on its own.
+Hourly level bands are graded instead of a slope because a warm-resumed or
+cold-started filter's error is not monotone: ep20 is a local minimum about 30 %
+below the true floor, so a line fitted through the early window reads the
+climb-back as drift (``project_day129_pivot_cb_ratchet``, "Judge hourly LEVEL
+bands, never slopes"). The first hour is ignition on a cold lineage and is
+reported but never used for a verdict on its own.
 
 Usage:
     python scripts/q3_consumer_hours.py <run_dir_or_trace.csv> [...]

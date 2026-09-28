@@ -1,17 +1,17 @@
 """Build-time tests for the L12 network-discontinuities viewer.
 
 Two half-sources, each exercised in isolation and together, plus the
-both-absent :class:`ViewerSkip` path.  Figures are *built* (spec objects), not
+both-absent :class:`ViewerSkip` path.  Figures are built (spec objects), not
 rendered, so these stay fast and backend-free.
 
 Half B (network_solution.csv):
-  * a constellation-wide bump (>=80% of GPS sats step at one epoch) → "datum";
-  * an isolated single-sat bump → "per-sat";
+  * a constellation-wide bump (>=80% of GPS sats step at one epoch): "datum";
+  * an isolated single-sat bump: "per-sat";
   * both classifications asserted via the summary read-out.
 
 Half A (network_products*.txt product file):
-  * a healthy sat (4-field C records, honest 3-field reset after a gap);
-  * a stale-C1 sat (4-field non-zero c1 on the first post-gap epoch) → flagged.
+  * a sat with a correct 3-field reset after a gap (4-field C records otherwise);
+  * a stale-C1 sat (4-field non-zero c1 on the first post-gap epoch): flagged.
 """
 import pytest
 
@@ -32,8 +32,8 @@ def _write_solution(tmp_path):
     """network_solution.csv with one constellation-wide GPS bump + one isolated bump.
 
     GPS sats G01,G02,G03 all step their PB disc_counter at epoch k==2 (3/3 =
-    100% ≥ 80% → 'datum').  Galileo E11 steps alone at k==3 while E12/E13 hold
-    (1/3 → 'per-sat').
+    100%, at or above the 80% threshold, so 'datum').  Galileo E11 steps alone
+    at k==3 while E12/E13 hold (1/3, so 'per-sat').
     """
     rows = ["week,tow,sat,kind,signal,value_m,disc_counter"]
     for k in range(5):
@@ -52,11 +52,11 @@ def _write_solution(tmp_path):
 
 
 def _write_product(tmp_path, name="network_products.txt"):
-    """Product file: healthy G05 (post-gap 3-field reset) + stale G07 (4-field post-gap).
+    """Product file: G05 resets cleanly post-gap, G07 (4-field) carries a stale value.
 
     Epochs at 30 s cadence, then a >120 s gap, then resume.  G05 writes a
-    3-field C record on the first post-gap epoch (honest drift reset).  G07
-    writes a 4-field non-zero-c1 record there (stale carry → flagged).
+    3-field C record on the first post-gap epoch (correct reset).  G07 writes
+    a 4-field non-zero-c1 record there (stale carry, flagged).
     """
     lines = [
         "# gnss_network_product v1",
@@ -67,13 +67,13 @@ def _write_product(tmp_path, name="network_products.txt"):
     pre = [259200, 259230, 259260]
     for i, tow in enumerate(pre):
         lines.append(f"E,2313,{tow}.000,1,1,1,0")
-        lines.append(f"C,G05,{0.400 + 0.001 * i:.6f},1.0e-4")   # 4-field, healthy drift
+        lines.append(f"C,G05,{0.400 + 0.001 * i:.6f},1.0e-4")   # 4-field, normal drift
         lines.append(f"C,G07,{0.500 + 0.002 * i:.6f},2.0e-4")   # 4-field
-    # Gap: next epoch is 300 s later (>120 s) → drift state should reset.
+    # Gap: next epoch is 300 s later (>120 s), so drift state should reset.
     post_tow = 259260 + 300
     lines.append(f"E,2313,{post_tow}.000,1,1,1,0")
-    lines.append("C,G05,0.410000")                # 3-field: honest reset (has_c1 False)
-    lines.append(f"C,G07,0.530000,2.0e-4")        # 4-field non-zero c1 → STALE
+    lines.append("C,G05,0.410000")                # 3-field: correct reset (has_c1 False)
+    lines.append(f"C,G07,0.530000,2.0e-4")        # 4-field non-zero c1: stale
     # One more post-gap epoch (30 s) so G05/G07 each have a post-gap FD pair.
     lines.append(f"E,2313,{post_tow + 30}.000,1,1,1,0")
     lines.append("C,G05,0.410300,1.0e-4")
@@ -82,7 +82,7 @@ def _write_product(tmp_path, name="network_products.txt"):
 
 
 # --------------------------------------------------------------------------- #
-#  Half B — disc-counter timelines
+#  Half B: disc-counter timelines
 # --------------------------------------------------------------------------- #
 def test_counter_half_classifies_datum_and_persat(tmp_path):
     _write_solution(tmp_path)
@@ -103,7 +103,7 @@ def test_counter_half_clock_allzero_note(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-#  Half A — C1 honesty
+#  Half A: C1 field consistency
 # --------------------------------------------------------------------------- #
 def test_c1_half_flags_stale(tmp_path):
     _write_product(tmp_path)
@@ -171,7 +171,7 @@ def test_both_halves_present(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-#  Skip when BOTH sources absent
+#  Skip when both sources are absent
 # --------------------------------------------------------------------------- #
 def test_skip_when_both_absent(tmp_path):
     with pytest.raises(ViewerSkip):

@@ -2,11 +2,17 @@
  * @file TraceLogger.cpp
  * @brief Implementation of TraceLogger for writing epoch-level CSV traces.
  *
- * The TraceLogger writes four CSV trace files:
- * - state_trace.csv          : receiver state vector and per-state std.dev
- * - ambiguity_trace.csv      : ambiguity estimates and standard deviations
- * - measurement_residuals.csv: per-observation innovations/residuals/standardized residuals
- * - wls_trace.csv            : WLS estimation and seeding diagnostics
+ * The TraceLogger writes up to nine CSV trace files, one per armed
+ * logging_config.enable_*_trace toggle:
+ * - state_trace.csv            : receiver state vector and per-state std.dev
+ * - ambiguity_trace.csv        : ambiguity estimates and standard deviations
+ * - ionosphere_trace.csv       : per-satellite slant ionosphere states
+ * - sat_bias_trace.csv         : per-(satellite, signal) code-bias states
+ * - code_bias_trace.csv        : receiver code-bias states
+ * - satellite_status_trace.csv : per-satellite epoch status codes
+ * - dop_trace.csv              : per-epoch satellite counts and DOPs
+ * - measurement_residuals.csv  : per-observation innovations/residuals/standardized residuals
+ * - wls_trace.csv              : WLS estimation and receiver-clock seeding diagnostics
  *
  * Streams are opened in the constructor and written from logically-const methods;
  * stream members are therefore declared mutable in the header to allow writes
@@ -127,19 +133,19 @@ if (logging_config.enable_wls_trace) {
     }
 }
 
-    // Write base header to state trace file but do NOT terminate with newline.
-    // The clock columns, phase clock, gradient and per-system time offset
-    // columns are appended on the first call to logState() based on what
-    // the StateManager has actually allocated (e.g. clock is omitted under
-    // BSSD where it isn't a state).
+    // Write the base header of the state trace without a terminating newline.
+    // The clock, phase clock, gradient and per-system time offset columns are
+    // appended on the first call to logState() based on what the StateManager
+    // has actually allocated (e.g. clock is omitted under BSSD, where it is not
+    // a state).
     if (state_trace_.is_open()) {
         // cov_xy/xz/yz complete the 3x3 ECEF position block.  The diagonal std
-        // columns alone cannot describe an error ellipse's ORIENTATION -- rotating
-        // a diagonal-only ECEF covariance into ENU produces an off-diagonal term
-        // that is an artifact of the rotation, not the estimator's real
-        // correlation -- so a consumer asked for the ENU 2x2 (semi-axes AND
-        // bearing) needs these.  Consumers must treat them as OPTIONAL: older
-        // traces and external submissions do not carry them.
+        // columns alone cannot describe the orientation of an error ellipse:
+        // rotating a diagonal-only ECEF covariance into ENU produces an
+        // off-diagonal term that comes from the rotation, not from the
+        // estimator's correlation.  A consumer that needs the ENU 2x2 (semi-axes
+        // and bearing) needs these columns.  Consumers treat them as optional,
+        // because older traces and external submissions do not carry them.
         state_trace_ << "week,tow_s,x_m,y_m,z_m,x_std_m,y_std_m,z_std_m,"
                         "cov_xy_m2,cov_xz_m2,cov_yz_m2,tropo_m,tropo_std_m";
         if (is_ppp_rtk_) state_trace_ << ",iono_mean_m,iono_count";
@@ -190,14 +196,13 @@ if (logging_config.enable_wls_trace) {
                 || sat_bias_trace_.is_open() || code_bias_trace_.is_open() || sat_status_trace_.is_open()
                 || dop_trace_.is_open() || residual_trace_.is_open() || wls_trace_.is_open();
 
-    // Not-initialized has two entirely different causes, and only one of them is
-    // a fault.  With no enable_*_trace toggle armed nothing was ever opened, so
-    // there is nothing to report -- that is the common case on a network
-    // production run, where the producer's own traces come from NetworkRunTraces
-    // and the user-side streams are deliberately off.  A spurious [error] there
-    // trains readers to ignore the real ones, and run-time log severity is
-    // ON-path telemetry (standing invariant #4).  Only a wholly failed set of
-    // REQUESTED opens is a genuine error; per-file failures already warned above.
+    // Not-initialized has two causes, and one of them is a fault.  With no
+    // enable_*_trace toggle armed nothing was opened and nothing is reported at
+    // warn/error; this is the usual case on a network production run, where
+    // the producer's traces come from NetworkRunTraces and the user-side
+    // streams are off.  Log severity is on-path telemetry (standing
+    // invariant #4), so this case logs at debug.  An error is logged only when every
+    // requested open failed; each per-file failure was already warned above.
     if (!initialized_) {
         try {
             auto log = log_manager_.getLogger("main_log");
@@ -234,9 +239,9 @@ void TraceLogger::flush() const {
 void TraceLogger::logState(const GnssTime& time, const StateManager& state_manager) const {
 if (!state_trace_.is_open()) return;
 
-// On first call, complete the header line with dynamic columns.  Clock
-// is dynamic because BSSD strips the receiver clock state — its column
-// is omitted entirely rather than emitted as zeros.
+// On first call, complete the header line with dynamic columns.  The clock
+// columns are dynamic because BSSD removes the receiver clock state; they
+// are then omitted rather than emitted as zeros.
 if (!state_header_written_) {
     if (state_manager.hasClock()) {
         state_trace_ << ",clock_m,clock_std_m";
@@ -327,7 +332,7 @@ auto cov_at = [&cov](size_t i, size_t j) -> double {
                      << static_cast<int>(iono_states.size());
     }
 
-    // Receiver clock — omitted under BSSD (no state allocated).
+    // Receiver clock: omitted under BSSD (no state allocated).
     if (state_manager.hasClock()) {
         const size_t clk_idx = state_manager.getClockIndex();
         state_trace_ << ","
@@ -444,9 +449,8 @@ void TraceLogger::logIonosphere(const GnssTime& time, const StateManager& state_
 
     // Map satellite-system prefix to a human-readable constellation name and
     // to that constellation's BSSD pivot (if any).  The frozen-pivot set is a
-    // flat set of sat IDs; we bucket by leading character to recover the
-    // per-constellation pivot without plumbing PivotManager through to the
-    // logger.
+    // flat set of sat IDs; bucketing by leading character recovers the
+    // per-constellation pivot without passing PivotManager to the logger.
     auto systemFor = [](char c) -> const char* {
         switch (c) {
             case 'G': return "GPS";
@@ -463,9 +467,11 @@ void TraceLogger::logIonosphere(const GnssTime& time, const StateManager& state_
         if (!sat.empty()) pivot_by_constellation[sat[0]] = sat;
     }
 
-    // Thin-shell single-layer mapping factor: same Earth radius / shell
-    // height (450 km) that GlobalIonosphereMap uses for VTEC<->STEC, so the
-    // vtec_m column is comparable across the codebase.
+    // Thin-shell single-layer mapping factor on a fixed 450 km shell over
+    // Constants::EARTH_RADIUS.  These match the IONEX defaults that
+    // GlobalIonosphereMap falls back to for VTEC<->STEC (450 km, 6371 km; a
+    // loaded map uses its own HGT1 and BASE RADIUS), so the vtec_m column is
+    // comparable with GIM VTEC.
     auto mappingFactor = [](double el_deg) -> double {
         static constexpr double kEarthRadius_m = Constants::EARTH_RADIUS;
         static constexpr double kIonoShell_m   = 450.0e3;
@@ -610,10 +616,11 @@ void TraceLogger::logSatelliteStatus(const GnssTime& time,
 
     // -------------------------------------------------------------------
     // Derive per-sat "used signals" + "code outlier" sets from the applied
-    // measurement.  applied_meas may be empty if @c have_applied is false
-    // (e.g. epoch was skipped due to insufficient observations); in that
-    // case every tracked sat collapses to BelowMask or NotUsed based on
-    // elevation alone.
+    // measurement.  When @c have_applied is false (e.g. the epoch was
+    // skipped for insufficient observations) applied_meas is not read: both
+    // sets stay empty, geometry-resolved sats are classified as Slip, Pivot
+    // or Clean with n_signals_used = 0, and dropped sats still take their
+    // drop_reasons code.
     // -------------------------------------------------------------------
     std::map<std::string, int> n_signals_used;       // sat -> count
     std::set<std::string> sats_with_code_outlier;
@@ -658,8 +665,8 @@ void TraceLogger::logSatelliteStatus(const GnssTime& time,
     };
 
     // Deduplicate modeled observations by satellite (multiple PppObservation
-    // rows can share a satellite for different signals; we want one status
-    // row per (epoch, sat), with n_signals_total counting tracked signals).
+    // rows can share a satellite for different signals; the trace has one
+    // status row per (epoch, sat), with n_signals_total counting tracked signals).
     struct SatObsSummary {
         double elevation{0.0};
         double azimuth{0.0};
@@ -678,10 +685,10 @@ void TraceLogger::logSatelliteStatus(const GnssTime& time,
     // Raw-RINEX-only sats: in epoch_obs but absent from modeled_obs.  These
     // were dropped by ModelGeometry (most often "elevation < mask", but
     // also missing ephemeris / unsupported system / nan-position) and so
-    // never reach the iono / sat-bias / Kalman update.  We surface them as
-    // "BelowMask" rows so the strip chart shows the FULL constellation,
-    // not just the geometry-resolved subset.  Deduplicated by sat across
-    // any per-signal duplicates in epoch_obs.
+    // never reach the iono / sat-bias / Kalman update.  Pass 2 emits a row
+    // for each of them, labelled from drop_reasons, so the strip chart shows
+    // every tracked satellite rather than only the geometry-resolved subset.
+    // Deduplicated by sat across any per-signal duplicates in epoch_obs.
     std::map<std::string, int> per_sat_raw_signal_count;
     for (const auto& obs : epoch_obs) {
         if (obs.satellite.empty()) continue;
@@ -704,11 +711,11 @@ void TraceLogger::logSatelliteStatus(const GnssTime& time,
 
     // -------------------------------------------------------------------
     // Pass 1: geometry-resolved sats (in modeled_obs).  Status precedence
-    // (most actionable wins): Slip > CodeOutlier > Pivot > Clean.  Sats
-    // that made it through geometry but aren't in applied_meas (rare
-    // edge case) fall through to Clean with n_used=0 -- if the upstream
-    // taxonomy is correct, this means a downstream filter accepted the
-    // sat with zero rows, which is a tripwire worth surfacing.
+    // (most actionable wins): Slip > CodeOutlier > Pivot > Clean.  A sat
+    // that passed geometry but is absent from applied_meas falls through to
+    // Clean with n_used=0.  With have_applied true and a correct upstream
+    // taxonomy, such a row means a downstream filter accepted the sat with
+    // zero rows, so the row is kept as a visible marker of that case.
     // -------------------------------------------------------------------
     for (const auto& [sat, s] : per_sat) {
         const int n_used = [&]() {
@@ -734,12 +741,12 @@ void TraceLogger::logSatelliteStatus(const GnssTime& time,
 
     // -------------------------------------------------------------------
     // Pass 2: tracked-but-dropped sats (in epoch_obs, absent from
-    // modeled_obs).  Use drop_reasons (populated by PppModel) to split
-    // into BelowMask / NoProduct / NoModel.  Elevation is NaN -- the
-    // geometry drop path doesn't preserve it.  If the reason is missing
-    // from the map (rare: every drop site is annotated), default to
-    // NoModel so the row is still rendered with a "this needs attention"
-    // colour instead of disappearing entirely.
+    // modeled_obs).  drop_reasons (populated by PppModel) splits them into
+    // BelowMask / NoProduct / Eclipsing / NoModel.  Elevation and azimuth
+    // are NaN because the geometry drop path does not preserve them.  A
+    // reason missing from the map, or DropReason::None, defaults to NoModel
+    // (every drop site is meant to be annotated), so the row is still
+    // rendered in the attention colour instead of disappearing.
     // -------------------------------------------------------------------
     const double kNaN = std::numeric_limits<double>::quiet_NaN();
     for (const auto& [sat, n_total_raw] : per_sat_raw_signal_count) {
@@ -879,14 +886,16 @@ void TraceLogger::logDops(const GnssTime& time,
     // ADOP: Teunissen ambiguity DOP = (det Q_a)^(1/(2n)), in meters.
     //
     // Q_a is the ambiguity-subblock of the filter covariance.  Frozen
-    // pivot ambiguities are EXCLUDED -- their variance is zero by BSSD
-    // construction (S-transform freezes them to value=0, var=0) and
+    // pivot ambiguities are excluded: their variance is zero by BSSD
+    // construction (the S-transform freezes them to value=0, var=0), and
     // including them would force det(Q_a) -> 0 -> ADOP -> 0 regardless
-    // of actual ambiguity precision.
+    // of actual ambiguity precision.  Any ambiguity with a non-finite
+    // variance or one at or below 1e-15 is excluded for the same reason.
     //
     // Computation: eigenvalue decomposition of Q_a, then
-    //   log_det = sum(log(eigenvalue_i)) over the positive eigenvalues
+    //   log_det = sum(log(eigenvalue_i)) over the eigenvalues > 1e-15
     //   adop_m = exp(log_det / (2 * n_eff))
+    // n_eff is written as the n_ambiguities column.
     // Eigenvalue decomposition is O(n³) but n is the ambiguity count
     // (~50-100), and the alternative (Cholesky) breaks down on near-
     // singular Q_a.
@@ -949,7 +958,8 @@ void TraceLogger::logDops(const GnssTime& time,
     }
 
     // -------------------------------------------------------------------
-    // Write row.  Format: counts as ints, DOPs at 4 sig figs, ADOP at 6.
+    // Write row.  Format: counts as ints, DOPs fixed at 4 decimal places,
+    // ADOP at 6.
     // -------------------------------------------------------------------
     dop_trace_ << std::fixed
                << time.week << "," << std::setprecision(3) << time.tow << ","

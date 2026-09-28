@@ -33,11 +33,11 @@ namespace GnssProcessor {
             return Logging::safeDefaultLogger();
         }
 
-        // RTB-1(c): GPS-UTC leap seconds used by the WALL-CLOCK → GPS
-        // conversion (nowContinuousGpsSeconds).  Defaults to the compiled
-        // constant; realtime.leap_seconds overrides it at RT startup so a
-        // future leap-second insertion doesn't strand the binary.  Atomic:
-        // set on the main thread, read from receive/processing threads.
+        // GPS-UTC leap seconds used by the wall-clock → GPS conversion
+        // (nowContinuousGpsSeconds).  Defaults to the compiled constant;
+        // realtime.leap_seconds overrides it at RT startup, so a future
+        // leap-second insertion does not require a rebuild.  Atomic: set on the
+        // main thread, read from the receive and processing threads (RTB-1(c)).
         std::atomic<double> g_leap_seconds_override{ TimeUtils::LEAP_SECONDS };
     } // namespace
 
@@ -53,8 +53,11 @@ namespace GnssProcessor {
     // Leap second table
     // =================================================================
 
-    // Each entry: { GPS_JD at insertion, GPS-UTC offset after insertion }.
-    // GPS epoch (1980-01-06) has GPS-UTC = 0.  Source: IERS Bulletin C.
+    // Each entry: { JD of 0h UTC on the insertion date, GPS-UTC offset from then on }.
+    // The GPS epoch (1980-01-06) has GPS-UTC = 0.  Source: IERS Bulletin C.
+    // leapSecondsGpsUtc() compares a GPS-scale JD against these entries, so on the
+    // GPS scale the new offset takes effect that many seconds (the new GPS-UTC)
+    // before the actual insertion.
     struct LeapSecondEntry {
         double gps_jd;
         double gps_utc;
@@ -212,12 +215,12 @@ namespace GnssProcessor {
             return GnssTime{ 0, 0.0 };
         }
 
-        // GPS / Galileo: already on GPS time scale  no leap second correction
+        // GPS / Galileo: already on the GPS time scale, no leap-second correction.
         if (time_system == "GPS" || time_system == "GAL" || time_system.empty()) {
             return gregorianGpsToGpsTime(year, month, day, hour, minute, second);
         }
 
-        // BDT = GPS - 14 s  ?  add 14 s to get GPS time
+        // BDT = GPS - 14 s, so add 14 s to get GPS time.
         if (time_system == "BDS") {
             GnssTime t = gregorianGpsToGpsTime(year, month, day, hour, minute, second);
             t.tow += 14.0;
@@ -225,12 +228,12 @@ namespace GnssProcessor {
             return t;
         }
 
-        // GLONASS: RINEX timestamps are UTC  apply leap seconds
+        // GLONASS: RINEX timestamps are UTC, so the leap seconds are applied.
         if (time_system == "GLO") {
             return gregorianToGpsTime(year, month, day, hour, minute, second);
         }
 
-        // Unknown  assume GPS scale
+        // Unknown: assume the GPS scale.
         timeLog()->trace("Unsupported time system {}, assuming GPS time scale", time_system);
         return gregorianGpsToGpsTime(year, month, day, hour, minute, second);
     }
@@ -292,19 +295,18 @@ namespace GnssProcessor {
 
     double TimeUtils::nowContinuousGpsSeconds() {
         using namespace std::chrono;
-        // POSIX system_clock is UTC (no leap seconds); GPS time runs ahead of UTC
-        // by currentLeapSeconds() — the compiled LEAP_SECONDS unless overridden
-        // via realtime.leap_seconds (RTB-1(c)) — added exactly once, matching the
-        // rest of the codebase's UTC→GPS convention.  Returns continuous GPS
-        // seconds since the GPS epoch.
+        // POSIX system_clock is UTC without leap seconds.  GPS time runs ahead of
+        // UTC by currentLeapSeconds() (the compiled LEAP_SECONDS unless overridden
+        // via realtime.leap_seconds, RTB-1(c)), added once, as in the other
+        // UTC→GPS conversions.  Returns continuous GPS seconds since the GPS epoch.
         const auto since = duration_cast<seconds>(system_clock::now().time_since_epoch()).count();
         constexpr int64_t kGpsEpochUnix = 315964800; // Jan 6 1980 00:00:00 UTC
         return static_cast<double>(since - kGpsEpochUnix) + currentLeapSeconds();
     }
 
     GnssTime TimeUtils::nowGpsTime() {
-        // Invert nowContinuousGpsSeconds() back into (week, tow) — one source of
-        // wall-clock→GPS truth (the leap-second offset lives in that helper).
+        // Split nowContinuousGpsSeconds() into (week, tow), so the wall-clock → GPS
+        // conversion and its leap-second offset live in one place.
         const double s = nowContinuousGpsSeconds();
         constexpr double kSecondsPerWeek = 604800.0;
         GnssTime t;
@@ -320,10 +322,11 @@ namespace GnssProcessor {
     bool TimeUtils::isValidGregorianDate(int year, int month, int day,
         int hour, int minute, double second) {
         // Year >= 1970 admits pre-GPS-epoch dates (Block I satellite ATX
-        // VALID FROM lines from 1978, etc.).  These convert to negative
-        // GPS weeks via gregorianGpsToGpsTime, which downstream callers
-        // handle correctly — the antenna matcher treats them as
-        // "no covering window" for any modern epoch.
+        // VALID FROM lines from 1978, etc.).  These convert to negative GPS
+        // weeks via gregorianGpsToGpsTime.  The satellite-antenna matcher
+        // (Antenna.cpp) reads a valid_from week <= 0 as "no validity
+        // information", so such an entry is used only as a fallback when no
+        // dated entry covers the epoch.
         if (year < 1970 || month < 1 || month > 12 || day < 1 ||
             hour < 0 || hour > 23 || minute < 0 || minute > 59 ||
             second < 0.0 || second >= 60.0)
@@ -385,8 +388,8 @@ namespace GnssProcessor {
         const double gps_seconds = static_cast<double>(gpsTime.week)
                                  * static_cast<double>(SECONDS_IN_WEEK) + gpsTime.tow;
         const double jd_gps = GPS_EPOCH_JD + gps_seconds / static_cast<double>(SECONDS_IN_DAY);
-        // No leap-second subtraction — the calendar fields end up on the
-        // same grid as TOW (e.g. TOW=281400 → 06:10:00.000, not 06:09:42).
+        // No leap-second subtraction: the calendar fields stay on the TOW grid
+        // (e.g. TOW=281400 → 06:10:00.000, not 06:09:42).
         julianDayToGregorian(jd_gps, year, month, day, hour, minute, second);
     }
 

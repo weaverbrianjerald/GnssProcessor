@@ -1,4 +1,4 @@
-"""Satellite visibility & DOP from the answer key — the exam's geometry panel.
+"""Satellite visibility and DOP from the answer key: the exam's geometry panel.
 
 Reads the GnssSimulator answer key ``truth_visibility.csv`` (one row per epoch:
 per-constellation counts + the position/geometry DOPs the synthesizer computed
@@ -7,12 +7,12 @@ receiver actually saw against how strong that geometry was:
 
   * a per-constellation stacked area of the used counts (GPS / Galileo, coloured
     by :func:`gnssviz.palettes.system_color`) with a bold black total overlay on
-    the LEFT axis (``Number of satellites``);
-  * PDOP and GDOP as lines on the RIGHT axis (``DOP``), with a PDOP = 6 geometry-
+    the left axis (``Number of satellites``);
+  * PDOP and GDOP as lines on the right axis (``DOP``), with a PDOP = 6 geometry-
     quality reference pinned to that same DOP scale.
 
 Unlike the processor-side :mod:`dops` viewer (which reads ``dop_trace.csv``), this
-is the *truth* geometry — the sky the simulator built — so it degrades cleanly on
+is the *truth* geometry, the sky the simulator built, so it degrades cleanly on
 a non-exam run (``truth_visibility.csv`` absent → :class:`ViewerSkip`).  The storm
 window overlays the time series so the reader can tell whether a DOP excursion is
 geometry or ionosphere.
@@ -59,7 +59,7 @@ def build_exam_visibility(ctx) -> ViewerResult:
               xlabel="GPS Time", ylabel="Number of satellites",
               y2label="DOP", legend=Legend(loc="bestoutside"))
 
-    # LEFT axis: stacked per-constellation counts + bold total overlay.
+    # Left axis: stacked per-constellation counts + bold total overlay.
     if sys_present:
         ys = [df[col].to_numpy(float) for (_, col, _) in sys_present]
         ax.traces.append(
@@ -73,9 +73,9 @@ def build_exam_visibility(ctx) -> ViewerResult:
         top = max(float(np.nanmax(n_sats)) + 2, 8)
         ax.ylim = (0, top)
 
-    # RIGHT axis: position/geometry DOPs + a PDOP=6 reference on the DOP scale.
+    # Right axis: position/geometry DOPs + a PDOP=6 reference on the DOP scale.
     # (HLine can only draw on the primary axis, so the reference is a flat Line
-    #  pinned to axis="right" — otherwise a y=6 line would land on the count axis.)
+    #  pinned to axis="right"; otherwise a y=6 line would land on the count axis.)
     for col, lbl, c, lw in _DOPS:
         if col in df.columns:
             ax.traces.append(Line(x=t, y=df[col].to_numpy(float), color=c,

@@ -1,9 +1,9 @@
-"""Card CB-Q leg C — the invariant-#4 read-first sheet for a 2-signal arm.
+"""Read-first sheet for a 2-signal code-bias arm, ordered by invariant #4 (card CB-Q leg C).
 
-Reads the ON-PATH counters BEFORE any quality number, because the failure mode
+Reads the on-path counters before any quality number, because the failure mode
 this arm risks (Odijk two-frequency OSB non-estimability) looks like a clean run:
 every tier prints ARMED, ingest is perfect, every epoch walks, and nothing is
-produced.  Order here is the order of the questions.
+produced.  The print order below is the order the questions must be answered in.
 
 Usage: python scripts/cbq305_readfirst.py <run_dir> [run_dir ...]
 """
@@ -23,7 +23,7 @@ def main():
         s = open(con, "rb").read().decode("utf-8", "replace") if os.path.exists(con) else ""
         print(f"\n================ {run} ================")
 
-        # 1. Did it solve at all?  D0 section timers print per SOLVED epoch.
+        # 1. Did it solve at all?  D0 section timers print per solved epoch.
         d0 = len(re.findall(r"Network \(D0\) TOW", s))
         eps = len(re.findall(r"^E,", open(prod, errors="replace").read(), re.M)) \
             if os.path.exists(prod) else 0
@@ -45,7 +45,7 @@ def main():
         print(f"[2] CANONICALS : {len(can)} station lock line(s); distinct signals = "
               f"{dict(sorted(seen.items()))}")
 
-        # 3. The emitted signal set — the wire is the authority, not the log.
+        # 3. The emitted signal set: the wire is the authority, not the log.
         if os.path.exists(prod):
             bs = collections.Counter()
             for line in open(prod, errors="replace"):

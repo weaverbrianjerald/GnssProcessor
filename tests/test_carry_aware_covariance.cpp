@@ -3,30 +3,31 @@
  * @brief Gates for the carry-aware (rank-K) covariance readback
  *        (docs/SPEC_carry_aware_covariance.md).
  *
- * @c foldReducedDdPriors is a per-block rank-K Woodbury update on the PRISTINE per-station
+ * @c foldReducedDdPriors is a per-block rank-K Woodbury update on the pristine per-station
  * factors, i.e. exactly the Schur complement of
- * @f$\tilde A^{-1}=N_{rr}^{-1}-\sum_b Y_bM_bY_b^\top@f$.  @c reconstructStation already
- * reads that model back on the MEAN.  The four covariance readbacks did not — they used
- * @f$N_{rr}^{-1}@f$ while @c NetworkEstimator's shared covariance, inverted from the FOLDED
- * reduced normals, was carry-AWARE.  The published σ was therefore a HYBRID: the covariance
- * of no estimator at all.
+ * @f$\tilde A^{-1}=N_{rr}^{-1}-\sum_b Y_bM_bY_b^\top@f$.  @c reconstructStation reads that
+ * model back on the mean.  The carry-blind covariance readbacks use @f$N_{rr}^{-1}@f$,
+ * while @c NetworkEstimator's shared covariance, inverted from the folded reduced normals,
+ * is carry-aware.  A σ published from the blind readbacks is therefore a hybrid: the
+ * covariance of no estimator.  The carry-aware readbacks use @f$\tilde A^{-1}@f$.
  *
  * Suite name @c CarryAwareCovarianceTest is owned solely by this file (suite-hygiene rule:
- * one suite, one file).  The config-knob default-OFF gate lives with the other network
+ * one suite, one file).  The config-knob default-off gate lives with the other network
  * config cases in tests/test_codebias_network_config.cpp for the same reason.
  *
- * The oracle throughout is an INDEPENDENT dense augmented solve — build the full bordered
- * normal matrix, add @f$C^\top (P^z)^{-1} C@f$, invert, and read the block wanted — the same
+ * The oracle throughout is an independent dense augmented solve (build the full bordered
+ * normal matrix, add @f$C^\top (P^z)^{-1} C@f$, invert, and read the block wanted), the same
  * reference @c FoldReducedDdPriorsMatchesDenseAugmentedSolve uses for the mean.
  *
  * The gates, in SPEC §7 order:
- *  1. @c LocalCovarianceMatchesDenseAugmentedSolve — all four readbacks equal the dense
- *     augmented inverse, and the BLIND path must keep failing (the falsifier).
- *  2. @c CrossStationLocalTermIsRecovered — the term @f$N_{rr}^{-1}@f$ cannot express.
- *  3. @c MatureCarryCollapsesDdSigma — the quantitative statement of the defect.
- *  4. @c OverSubtractionIsRefusedAndCounted — §5b, and the fold's cross-block error.
- *  5. @c DegenerateBlockContributesNothing — the inert fold carries through for free.
- *  6. @c BlindPathIsIdenticalFoldOrNot — invariant #6 AND the defect, in one assertion.
+ *  1. @c LocalCovarianceMatchesDenseAugmentedSolve: all four readbacks equal the dense
+ *     augmented inverse, and the blind path keeps failing (the falsifier).
+ *  2. @c CrossStationLocalTermIsRecovered: the term @f$N_{rr}^{-1}@f$ cannot express.
+ *  3. @c MatureCarryCollapsesDdSigma: the quantitative statement of the defect.
+ *  4. @c OverSubtractionIsRefusedAndCounted: §5b, and the fold's cross-block error.
+ *  5. @c DegenerateBlockContributesNothing: the inert fold carries through with no
+ *     special case.
+ *  6. @c BlindPathIsIdenticalFoldOrNot: invariant #6 and the defect, in one assertion.
  */
 
 #include <gtest/gtest.h>
@@ -44,7 +45,7 @@ namespace {
 using Term = NetworkNormalEquations::DdPriorBlock::Term;
 
 // ---------------------------------------------------------------------------
-// Local fixture — a small bordered network, built twice: once densely (the
+// Local fixture: a small bordered network, built twice, once densely (the
 // independent oracle) and once through the Schur kernel under test.
 // ---------------------------------------------------------------------------
 struct StationData {
@@ -127,7 +128,7 @@ Dense denseBuild(const std::vector<StationData>& st, Eigen::Index n_shared) {
     return d;
 }
 
-/// Feed the SAME raw data + priors into the Schur kernel.
+/// Feed the same raw data + priors into the Schur kernel.
 void schurBuild(NetworkNormalEquations& neq, const std::vector<StationData>& st,
                 Eigen::Index n_shared) {
     neq.addSharedInfo(kSharedPrior * Eigen::MatrixXd::Identity(n_shared, n_shared),
@@ -153,8 +154,8 @@ Eigen::MatrixXd denseC(const NetworkNormalEquations::DdPriorBlock& blk, const De
     return C;
 }
 
-/// A three-station block whose single chord spans stations 0 and 1, plus a second chord on
-/// stations 1 and 2 — i.e. the shape a real DD carry has: one block, several stations.
+/// A three-station block: one chord spans stations 0 and 1, a second chord stations 1 and
+/// 2.  This is the shape a field DD carry has: one block, several stations.
 NetworkNormalEquations::DdPriorBlock makeBlock(double p00, double p11) {
     NetworkNormalEquations::DdPriorBlock blk;
     blk.rows = {
@@ -169,9 +170,9 @@ NetworkNormalEquations::DdPriorBlock makeBlock(double p00, double p11) {
 }  // namespace
 
 // ---------------------------------------------------------------------------------------
-// GATE 1 (SPEC §7.1) — all four readbacks equal the dense augmented inverse when armed,
-// and the BLIND path must NOT.  The second half is the falsifier: if the carry-blind form
-// ever starts matching, this fixture no longer models the defect and must be re-derived.
+// Gate 1 (SPEC §7.1): all four readbacks equal the dense augmented inverse when armed,
+// and the blind path does not.  The second half is the falsifier: if the carry-blind form
+// starts matching, this fixture no longer models the defect and is re-derived.
 // ---------------------------------------------------------------------------------------
 TEST(CarryAwareCovarianceTest, LocalCovarianceMatchesDenseAugmentedSolve) {
     std::mt19937 gen(20260803);
@@ -185,7 +186,7 @@ TEST(CarryAwareCovarianceTest, LocalCovarianceMatchesDenseAugmentedSolve) {
     const Eigen::MatrixXd PzInv = blk.Pz.inverse();
     const Eigen::MatrixXd Sigma_aug = (d.N + C.transpose() * PzInv * C).inverse();
     const Eigen::MatrixXd cov_free = Sigma_aug.topLeftCorner(n_shared, n_shared);
-    // The purely LOCAL augmented inverse — the conditional-given-the-whole-border frame
+    // The purely local augmented inverse: the frame conditional on the whole border that
     // stationRegression reports (Ã⁻¹, no Σ_ss propagation).
     const Eigen::MatrixXd C_loc = C.rightCols(d.n_local_all);
     const Eigen::MatrixXd A_loc_inv =
@@ -208,7 +209,7 @@ TEST(CarryAwareCovarianceTest, LocalCovarianceMatchesDenseAugmentedSolve) {
         EXPECT_FALSE(blind.isApprox(ref, 1e-6))
             << "station " << r << ": the CARRY-BLIND covariance matched the augmented "
                "inverse — the fixture no longer reproduces the defect (SPEC §7.1)";
-        // …and the direction: the carry only ADDS information to the local block.
+        // The direction: the carry only adds information to the local block.
         for (Eigen::Index c = 0; c < n_r; ++c)
             EXPECT_LT(aware(c, c), blind(c, c)) << "station " << r << " col " << c;
     }
@@ -238,8 +239,8 @@ TEST(CarryAwareCovarianceTest, LocalCovarianceMatchesDenseAugmentedSolve) {
                 << "joint(" << a << "," << b << ")";
         }
 
-    // Regression form: cond_var = (Ã⁻¹)_rr and row = N_sr Ã⁻¹ e_r — note the row picks up
-    // OTHER stations' locals through the chord, which is exactly the point.
+    // Regression form: cond_var = (Ã⁻¹)_rr and row = N_sr Ã⁻¹ e_r.  The row picks up other
+    // stations' locals through the chord, which the blind form cannot.
     for (std::size_t r = 0; r < st.size(); ++r) {
         const auto reg = neq.stationRegression(r, 0, true);
         const Eigen::Index g = d.off[r] - n_shared;   // column in the local-only layout
@@ -252,11 +253,11 @@ TEST(CarryAwareCovarianceTest, LocalCovarianceMatchesDenseAugmentedSolve) {
 }
 
 // ---------------------------------------------------------------------------------------
-// GATE 2 (SPEC §7.2) — the CROSS-STATION local term.  N_rr⁻¹ is block-diagonal, so the
-// blind form can only couple two stations through Σ_ss; Ã⁻¹ is not, and a DD chord spans
-// two stations by construction.  This is the term that makes a between-station DD σ mean
-// anything, and it is the one jointConditionalCovariance's "same local space only" branch
-// (NetworkNormalEquations.cpp) cannot express.
+// Gate 2 (SPEC §7.2): the cross-station local term.  N_rr⁻¹ is block-diagonal, so the
+// blind form can only couple two stations through Σ_ss; Ã⁻¹ is not block-diagonal, and a
+// DD chord spans two stations by construction.  A between-station DD σ is meaningful only
+// with this term, and jointConditionalCovariance's "same local space only" branch
+// (NetworkNormalEquations.cpp) cannot express it.
 // ---------------------------------------------------------------------------------------
 TEST(CarryAwareCovarianceTest, CrossStationLocalTermIsRecovered) {
     std::mt19937 gen(20260804);
@@ -264,7 +265,7 @@ TEST(CarryAwareCovarianceTest, CrossStationLocalTermIsRecovered) {
     const auto st = makeStations(gen, n_shared, {2, 2, 2}, {9, 9, 9});
     const Dense d = denseBuild(st, n_shared);
 
-    const auto blk = makeBlock(1e-4, 1e-4);   // a MATURE carry: the chords are tight
+    const auto blk = makeBlock(1e-4, 1e-4);   // a mature carry: the chords are tight
     const Eigen::MatrixXd C = denseC(blk, d, d.N.rows());
     const Eigen::MatrixXd Sigma_aug =
         (d.N + C.transpose() * blk.Pz.inverse() * C).inverse();
@@ -281,16 +282,17 @@ TEST(CarryAwareCovarianceTest, CrossStationLocalTermIsRecovered) {
 
     const double ref01 = Sigma_aug(d.off[0] + 0, d.off[1] + 0);
     EXPECT_NEAR(aware(0, 1), ref01, 1e-9 * std::abs(ref01) + 1e-12);
-    // The blind form is not merely less accurate here — it is missing a whole term, and a
-    // tight chord makes the two stations STRONGLY correlated.
+    // The blind form is not merely less accurate here: it lacks a whole term, and a tight
+    // chord makes the two stations strongly correlated.
     EXPECT_GT(std::abs(aware(0, 1) - blind(0, 1)), 1e-3 * std::abs(ref01));
     EXPECT_FALSE(blind.isApprox(aware, 1e-6));
 }
 
 // ---------------------------------------------------------------------------------------
-// GATE 3 (SPEC §7.3) — the quantitative statement of the defect.  A DD whose chord the
-// carry holds at 1e-8 m² must READ as tight; the blind form reports the epoch-local float
-// uncertainty instead, which is why dd_sigma_cyc sat pinned for a whole campaign.
+// Gate 3 (SPEC §7.3): the quantitative statement of the defect.  A DD whose chord the
+// carry holds at 1e-8 m² reads as tight; the blind form reports the epoch-local float
+// uncertainty instead, so a dd_sigma_cyc taken from it stays at the float level however
+// mature the carry.
 // ---------------------------------------------------------------------------------------
 TEST(CarryAwareCovarianceTest, MatureCarryCollapsesDdSigma) {
     std::mt19937 gen(20260805);
@@ -323,18 +325,18 @@ TEST(CarryAwareCovarianceTest, MatureCarryCollapsesDdSigma) {
     EXPECT_GT(var_aware, 0.0);
     // The carried variance is the ceiling: folding data can only tighten it further.
     EXPECT_LE(var_aware, blk.Pz(0, 0) * (1.0 + 1e-9));
-    // …and the blind reading is orders above it — the defect, as a number.
+    // The blind reading is orders of magnitude above it: the defect, as a number.
     EXPECT_LT(var_aware, 1e-3 * var_blind)
         << "carry-aware DD variance " << var_aware << " vs blind " << var_blind;
 }
 
 // ---------------------------------------------------------------------------------------
-// GATE 4 (SPEC §7.4 / §3) — the fold composes ONE Woodbury update per block against the
+// Gate 4 (SPEC §7.4 / §3): the fold composes one Woodbury update per block against the
 // pristine N_rr⁻¹, which is exact only when no station is touched by two blocks.  Two
-// blocks carrying the SAME tight chord is the extreme of that violation: each subtracts
-// nearly the whole information, so the SUM over-subtracts and Ã⁻¹ leaves the PSD cone.
-// The readback must REFUSE (never clamp), fall back, and COUNT — and the counter is the
-// first measurement anywhere of the fold's cross-block approximation error.
+// blocks carrying the same tight chord are the extreme case: each subtracts nearly the
+// whole information, so the sum over-subtracts and Ã⁻¹ leaves the PSD cone.  The readback
+// refuses (never clamps), falls back, and counts; the counter is the only measurement of
+// the fold's cross-block approximation error.
 // ---------------------------------------------------------------------------------------
 TEST(CarryAwareCovarianceTest, OverSubtractionIsRefusedAndCounted) {
     std::mt19937 gen(20260806);
@@ -346,7 +348,7 @@ TEST(CarryAwareCovarianceTest, OverSubtractionIsRefusedAndCounted) {
     b1.rows = {{Term{0, 0, +1.0}, Term{1, 0, -1.0}}};
     b1.Pz = (Eigen::MatrixXd(1, 1) << 1e-12).finished();
     b1.zhat = (Eigen::VectorXd(1) << 0.0).finished();
-    NetworkNormalEquations::DdPriorBlock b2 = b1;   // the SAME chord, a second time
+    NetworkNormalEquations::DdPriorBlock b2 = b1;   // the same chord, a second time
 
     NetworkNormalEquations neq(n_shared);
     schurBuild(neq, st, n_shared);
@@ -364,16 +366,16 @@ TEST(CarryAwareCovarianceTest, OverSubtractionIsRefusedAndCounted) {
     EXPECT_GT(s.nonpos_rows, 0) << "the duplicated tight chord did not over-subtract — "
                                    "re-derive the fixture, the guard is untested";
     EXPECT_EQ(s.refused_calls, 1);
-    // Refused means the BLIND matrix comes back untouched, not a clamped hybrid.
+    // Refused means the blind matrix comes back untouched, not a clamped hybrid.
     EXPECT_TRUE(aware.isApprox(blind, 0.0));
-    // And no consumer can ever be handed a non-positive variance.
+    // No consumer is ever handed a non-positive variance.
     for (Eigen::Index i = 0; i < aware.rows(); ++i) EXPECT_GT(aware(i, i), 0.0);
 
-    // The per-column form refuses PER COLUMN and keeps the blind value there — and note
-    // which column refuses is a property of the fixture, not of the guard: with the two
-    // duplicated blocks the downdate on station r's column is 2a²/(Pz+a+b), so it exceeds
-    // the blind a exactly on the station with the LARGER (N_rr⁻¹)_00.  Assert over both
-    // rather than pinning the arithmetic's answer.
+    // The per-column form refuses per column and keeps the blind value there.  Which
+    // column refuses is a property of the fixture, not of the guard: with the two
+    // duplicated blocks the downdate on station r's column is 2a²/(Pz+a+b) (a, b the two
+    // stations' (N_rr⁻¹)_00), so it exceeds the blind a exactly on the station with the
+    // larger (N_rr⁻¹)_00.  The test asserts over both rather than pinning which one.
     neq.resetCarryCovStats();
     const std::vector<Eigen::Index> cols = {0};
     long long refused = 0;
@@ -398,9 +400,9 @@ TEST(CarryAwareCovarianceTest, OverSubtractionIsRefusedAndCounted) {
 }
 
 // ---------------------------------------------------------------------------------------
-// GATE 5 (SPEC §7.5) — a DEGENERATE block folded inertly (M = 0, the parent card's INC-0)
-// contributes exactly nothing to the correction, with no special case in the readback.
-// The inert-fold semantics — posterior == the untouched prior — carry through for free.
+// Gate 5 (SPEC §7.5): a degenerate block folded inertly (M = 0, the parent card's INC-0)
+// contributes nothing to the correction, with no special case in the readback.  The
+// inert-fold semantics (posterior == the untouched prior) carry through unchanged.
 // ---------------------------------------------------------------------------------------
 TEST(CarryAwareCovarianceTest, DegenerateBlockContributesNothing) {
     std::mt19937 gen(20260807);
@@ -410,9 +412,9 @@ TEST(CarryAwareCovarianceTest, DegenerateBlockContributesNothing) {
     (void)d;
 
     auto bad = makeBlock(0.04, 0.09);
-    // Emphatically not SPD: Pᶻ+B must stay indefinite AFTER the data information B is
-    // added, or the screen legitimately passes and the fixture tests nothing (−1.0 is not
-    // enough at this fixture's weighting — B covers it).
+    // Far from SPD: Pᶻ+B has to stay indefinite after the data information B is added,
+    // or the screen legitimately passes and the fixture tests nothing (−1.0 is not enough
+    // at this fixture's weighting; B covers it).
     bad.Pz(0, 0) = -1e6;   // ⇒ the PD screen trips ⇒ M = 0 ⇒ the fold is inert
 
     NetworkNormalEquations neq(n_shared);
@@ -429,21 +431,21 @@ TEST(CarryAwareCovarianceTest, DegenerateBlockContributesNothing) {
     const Eigen::MatrixXd aware = neq.jointConditionalCovariance(reqs, cov_free, true);
     // isApprox, not bitwise: the correction is exactly zero, but the armed body evaluates
     // (Nrr⁻¹ − 0) + (M − 0)Σ(M − 0)ᵀ as two statements where the blind body is one fused
-    // expression, so the two may differ in the last ulp.  The MODEL is identical.
+    // expression, so the two may differ in the last ulp.  The model is identical.
     EXPECT_TRUE(aware.isApprox(blind, 1e-14)) << aware << "\nvs\n" << blind;
     EXPECT_EQ(neq.carryCovStats().nonpos_rows, 0);
-    // The correction ran (the block exists) and moved nothing — the one case where a
-    // ratio of exactly 1 is the CORRECT reading rather than dead wiring.
+    // The correction ran (the block exists) and moved nothing: the one case where a
+    // ratio of exactly 1 is the correct reading rather than a sign of inert wiring.
     EXPECT_EQ(neq.carryCovStats().calls, 1);
     EXPECT_NEAR(neq.carryCovStats().ratio_min, 1.0, 1e-12);
 }
 
 // ---------------------------------------------------------------------------------------
-// GATE 6 (SPEC §7.6) — invariant #6 and the defect statement, in one assertion.  The BLIND
-// readback does not depend on the fold at ALL: fold the DD priors or do not, and every one
-// of the four returns bit-for-bit the same matrix.  That is simultaneously (a) the
-// structural OFF-path guarantee this card needs and (b) the cleanest possible statement of
-// what "carry-blind" means — the covariance could not see the carry even in principle.
+// Gate 6 (SPEC §7.6): invariant #6 and the defect statement, in one assertion.  The blind
+// readback does not depend on the fold at all: with or without the DD priors folded, each
+// of the four returns bit-for-bit the same matrix.  That is both (a) the structural
+// off-path guarantee the card needs and (b) the plainest statement of what "carry-blind"
+// means: the covariance cannot see the carry even in principle.
 // ---------------------------------------------------------------------------------------
 TEST(CarryAwareCovarianceTest, BlindPathIsIdenticalFoldOrNot) {
     std::mt19937 gen(20260808);
@@ -484,8 +486,8 @@ TEST(CarryAwareCovarianceTest, BlindPathIsIdenticalFoldOrNot) {
         EXPECT_EQ(rf.cond_var, ru.cond_var) << "station " << r;
         EXPECT_TRUE(exact(rf.row, ru.row)) << "station " << r;
     }
-    // A blind call must never touch the telemetry either — an instrument that counts work
-    // it did not do is the failure this card's parent exists to end.
+    // A blind call does not touch the telemetry either: an instrument that counts work it
+    // did not do would misreport the carry-aware path (invariant #4).
     EXPECT_EQ(folded.carryCovStats().calls, 0);
     EXPECT_EQ(folded.carryCovStats().rows, 0);
 }

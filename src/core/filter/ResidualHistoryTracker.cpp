@@ -70,9 +70,9 @@ namespace GnssProcessor {
         const std::string key = makeKey(sat, signal);
         Entry& e = entries_[key];
 
-        // A row that has a post-fit residual was kept this epoch, so
-        // it breaks any previously-running rejection streak.  Cleared
-        // up front so the cold-start return path below still wipes it.
+        // A row with a post-fit residual was kept this epoch, which
+        // breaks any running rejection streak.  The counter is cleared
+        // first so the n == 0 return path below also clears it.
         e.consecutive_rejections = 0;
 
         if (e.n == 0) {
@@ -120,9 +120,9 @@ namespace GnssProcessor {
         const Entry& e = it->second;
         if (e.n < cfg_.warmup_n) return ev;
 
-        // Floor the variance so a momentarily-tiny σ doesn't blow up
-        // the z-score.  10^-12 m² ≈ 1 µm σ — below carrier-tracking
-        // noise, an effective floor that prevents pathologies.
+        // Floor the variance so a momentarily tiny σ cannot inflate
+        // the z-score without bound.  10^-12 m² is a σ of 1 µm, below
+        // carrier-tracking noise, so the floor affects no real row.
         const double sigma = std::sqrt(std::max(e.var, 1e-12));
         ev.warmed_up = true;
         ev.z_score   = (residual_m - e.mean) / sigma;
@@ -155,8 +155,8 @@ namespace GnssProcessor {
         if (!cfg_.enabled) return;
         // Keys have the form "<sat>_<signal>" where <sat> starts with
         // the constellation prefix character.  Without a prefix-aware
-        // multimap we walk the whole map; entries_ is small (~10² in
-        // typical multi-constellation runs) so the linear scan is fine.
+        // index the whole map is walked; entries_ is small (about 10² in
+        // typical multi-constellation runs), so the linear scan is cheap.
         for (auto it = entries_.begin(); it != entries_.end(); ) {
             const std::string& key = it->first;
             const bool cons_match = !key.empty() && key[0] == constellation_prefix;
@@ -220,9 +220,8 @@ namespace GnssProcessor {
             out.ewma_std  = std::sqrt(std::max(e.var, 0.0));
         }
 
-        // Trigger A: persistent rejection streak.  A non-positive
-        // @c min_streak disables this branch — callers can opt into
-        // the EWMA-only mode.
+        // Trigger A: persistent rejection streak.  @c min_streak = 0
+        // disables this branch, which leaves the EWMA-only mode.
         const bool streak_trigger =
             (min_streak > 0) && (e.consecutive_rejections >= min_streak);
 

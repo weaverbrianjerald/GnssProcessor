@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
-"""FIELD WIRE — a-priori CLK common-drift probe (SPEC_synthetic_minimum_network §9.9.1).
+"""Field wire: a-priori CLK common-drift probe (SPEC_synthetic_minimum_network §9.9.1).
 
 §9.9 eliminated the receiver-code driver of the field wire's common-level
-wander (1.735 m).  The next candidate is the A-PRIORI FRAME itself: the C
+wander (1.735 m).  The next candidate is the a-priori frame itself: the C
 records are corrections about the resolved CLK product, so
 
     w(t) = fleet-common(C) = [estimator common realization] − [product common]
 
-and a fleet-common drift of the PRODUCT enters w(t) directly with slope −1 —
+and a fleet-common drift of the product enters w(t) directly with slope −1,
 trackable by no station observable (exactly the §9.9 signature).  This probe
 computes the product's own fleet-common series A(t) = c · median_s dt_s(t)
 from the cached RINEX CLK and correlates it with w(t) on the joint epochs.
 
-  corr(w, A) ≈ −1 (slope ≈ −1)  => the wander IS the a-priori frame moving
+  corr(w, A) ≈ −1 (slope ≈ −1)  => the wander is the a-priori frame moving
                                     (product-side; datum-invariant consumers
-                                    never see it — Psychas mandate)
+                                    never see it, per the Psychas mandate)
   corr ≈ 0                      => the wander is estimator-internal (the
-                                    CB/iono common exchanges — the level
+                                    CB/iono common exchanges, the level
                                     channel campaign target)
 
-Both the demeaned LEVEL correlation (within the longest datum-stable settled
-segment) and the 30 s INCREMENT correlation are reported; a linear trend is
+Both the demeaned level correlation (within the longest datum-stable settled
+segment) and the 30 s increment correlation are reported; a linear trend is
 also removed from both series as a variant (a linear timescale drift is
 conventional and absorbable).
 
@@ -64,9 +64,9 @@ def parse_clk(paths, dow):
                     bias = float(p[9])
                 except ValueError:
                     continue
-                # day-of-week offset from the file's own calendar date: the
-                # caller anchors day `dow` (DOY 129 = 2024-05-08 = Wednesday=3);
-                # neighbouring-day files land one day earlier/later.
+                # Day-of-week offset from the file's own calendar date. The
+                # caller anchors day `dow` (DOY 129 = 2024-05-08 = Wednesday = 3);
+                # neighbouring-day files land one day earlier or later.
                 tow = (dow + (dd - 8)) * 86400.0 + hh * 3600.0 + mi * 60.0 + sec
                 out.setdefault(qtow(tow), {})[p[1]] = bias * C_LIGHT
     return out

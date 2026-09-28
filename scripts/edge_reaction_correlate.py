@@ -1,27 +1,28 @@
-"""Consumer-side datum-break REACTION census, and the v1-contract threshold audit.
+"""Consumer-side datum-break reaction census, and the v1-contract threshold audit.
 
-Companion to product_step_census.py.  That script asks what the producer SHIPPED;
-this one asks what the consumer DID ABOUT IT, and whether the two are even counting
-the same events.
+Companion to product_step_census.py: that script reports what the producer shipped;
+this one reports what the consumer did about it, and whether the two count the same
+events.
 
 Three readouts (docs/HANDOFF_edge_response_queue.md edge 1):
 
-  1. WIRE + THRESHOLD SPLIT.  Mid-arc phase-bias steps, classified against BOTH
+  1. Wire and threshold split.  Mid-arc phase-bias steps, classified against both
      thresholds: the producer's per-lambda gate (network.disc_threshold_frac_cycles)
      and the flat kDefaultDiscThresholdM the replay consumer falls back to when the
      product is a v1 file with no S contract line (written before card OWD, when
      network.serialize_sbasis_contract was off: NetworkProductReader::makeReplayEmitter
-     returns the DEFAULT emitter, and since card OWD a replay admits such a wire only
-     with network.replay_allow_undeclared_wire).  The two disagree in BOTH directions
-     depending on band, so the split is reported per direction and per band.
+     returns the default emitter, and since card OWD a replay admits such a wire only
+     with network.replay_allow_undeclared_wire).  The two thresholds disagree in
+     either direction depending on band, so the split is reported per direction and
+     per band.
 
-  2. REACTIONS.  What RealTimeEngineSsrBreaks actually fired, parsed from rt_engine.log.
-     NOTE: logging.enable_rt_engine defaults to FALSE, so an empty rt_engine.log means
-     the LOGGER was off, NOT that the reaction path is inert.  The toggle is
-     solve-neutral (verified byte-identical on closed_loop_trace.csv), so re-running an
-     arm with it armed is a free way to make the layer visible.
+  2. Reactions.  What RealTimeEngineSsrBreaks actually fired, parsed from rt_engine.log.
+     logging.enable_rt_engine defaults to false, so an empty rt_engine.log means the
+     logger was off, not that the reaction path is inert.  The toggle is solve-neutral
+     (verified byte-identical on closed_loop_trace.csv), so re-running an arm with it
+     armed is a free way to make the layer visible.
 
-  3. EXCURSION CORRELATION.  Whether those reactions cluster at the onsets of the
+  3. Excursion correlation.  Whether those reactions cluster at the onsets of the
      consumer's own position excursions, or merely occur at base rate.  Base-rate
      enrichment is the grade: a reaction channel that fires at 1.0x inside excursions
      is not the channel driving them.

@@ -1,7 +1,7 @@
 /**
  * @file NetworkStationBlock.cpp
- * @brief Implementation of the SPEC_event_harness §24.10 card-ZP station-block
- *        audit — the pure algebra (@ref GnssProcessor::StationBlockAudit) and the
+ * @brief Implementation of the station-block audit (SPEC_event_harness §24.10,
+ *        card ZP): the pure algebra (@ref GnssProcessor::StationBlockAudit) and the
  *        measure-only seam that writes @c network_station_block.csv.
  */
 
@@ -40,9 +40,9 @@ std::string spanOf(const Eigen::VectorXd& v, const std::vector<std::string>& lab
 
     std::vector<Eigen::Index> order(static_cast<std::size_t>(n));
     std::iota(order.begin(), order.end(), Eigen::Index{0});
-    // DESCENDING squared loading, ties broken by column index so the field is a
-    // deterministic function of the eigenvector (an A/B of two arms must not
-    // differ because std::sort saw an equal pair in another order).
+    // Descending squared loading, ties broken by column index, so the field is a
+    // deterministic function of the eigenvector and two arms of an A/B cannot
+    // differ through the order of an equal pair.
     std::stable_sort(order.begin(), order.end(),
                      [&v](Eigen::Index a, Eigen::Index b) {
                          const double sa = v(a) * v(a), sb = v(b) * v(b);
@@ -67,7 +67,7 @@ std::string spanOf(const Eigen::VectorXd& v, const std::vector<std::string>& lab
         out.push_back('=');
         out += fmt::format("{:.3f}", share);
         cum += share;
-        if (cum >= cover) break;   // the span is covered; the tail is noise
+        if (cum >= cover) break;   // the requested share is covered; the tail is omitted
     }
     return out;
 }
@@ -76,17 +76,17 @@ Spectrum spectrum(const Eigen::MatrixXd& Nrr, const std::vector<std::string>& la
     Spectrum sp;
     sp.n_local = Nrr.rows();
     if (Nrr.rows() <= 0 || Nrr.rows() != Nrr.cols()) return sp;
-    if (!Nrr.allFinite()) return sp;   // a poisoned block is a refusal, not a number
+    if (!Nrr.allFinite()) return sp;   // a non-finite block is refused (ok=false)
 
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(Nrr);
     if (es.info() != Eigen::Success) return sp;
 
-    sp.eigenvalues  = es.eigenvalues();    // ASCENDING, by Eigen's contract
+    sp.eigenvalues  = es.eigenvalues();    // ascending, by Eigen's contract
     sp.eigenvectors = es.eigenvectors();
     const Eigen::Index n = sp.eigenvalues.size();
     const double lmax = sp.eigenvalues(n - 1);
-    // A block whose LARGEST eigenvalue is not positive carries no information at
-    // all; report rank 0 rather than dividing by it.
+    // A block whose largest eigenvalue is not positive carries no information;
+    // report rank 0 rather than dividing by it.
     const double floor_abs = (lmax > 0.0) ? kRankTolRel * lmax : 0.0;
 
     Eigen::Index rank = 0;
@@ -122,7 +122,7 @@ double effectiveInformation(const Spectrum& sp, Eigen::Index col) {
     if (n <= 0) return 0.0;
     const double lmax = sp.eigenvalues(n - 1);
     const double floor_abs = (lmax > 0.0) ? kRankTolRel * lmax : 0.0;
-    // (N^+)_{zz} = sum over the NON-NULL subspace of V_{zk}^2 / lambda_k.  The
+    // (N^+)_{zz} = sum over the non-null subspace of V_{zk}^2 / lambda_k.  The
     // Schur complement of the column against every other local state is its
     // reciprocal; see the header for why the identity is used instead of an
     // explicit elimination of N_oo.
@@ -176,12 +176,11 @@ namespace {
 
 /// One local column's kind label for the span field.  Built from the station's
 /// StateManager key maps through the assembly's H-column -> A_r-column map, so
-/// the labels are correct under BOTH vehicles (nothing here is carry-gated).
+/// the labels are correct under both vehicles (nothing here is carry-gated).
 ///
-/// EVERY state kind the manager exposes is covered, deliberately: an unlabelled
-/// column in a span reads as `col<k>`, which is precisely the blind spot this
-/// trace exists to remove -- "the weak direction is columns 2, 3 and 4" names no
-/// mechanism.  Kinds: the card's `clk`, `zwd`, `rxcb:<sig>`, `iono:<sat>`,
+/// Every state kind the manager exposes is covered, because an unlabelled column
+/// appears in a span as `col<k>`, which names no state and so no mechanism.
+/// Kinds: the card's `clk`, `zwd`, `rxcb:<sig>`, `iono:<sat>`,
 /// `amb:<sat>:<sig>`, plus `pos:<xyz>`, `vel:<xyz>`, `clkrate`, `phclk`,
 /// `grdn` / `grde`, `dzwd`, `iono` (the single-LOS state), `ionorate:<sat>`,
 /// `isb:<sys>`, `satbias:<key>`, `satpb:<key>`, `rxpb:<key>` and
@@ -234,9 +233,9 @@ std::vector<std::string> buildLocalLabels(const StationAssembly& R,
     for (const auto& [key, idx] : sm.getReceiverPhaseBiasStates())put(idx, "rxpb:" + key, false);
     for (const auto& [sat, idx] : sm.getSatClockStates())         put(idx, "satclk:" + sat, false);
     for (const auto& [key, idx] : sm.getAmbiguities()) {
-        // "<sat>_<signal>" -> "amb:<sat>:<signal>"; an unparseable key keeps its
-        // raw form rather than being dropped (a mislabelled column is still a
-        // named column, an unlabelled one reads as a structural hole).
+        // "<sat>_<signal>" -> "amb:<sat>:<signal>"; an unparseable key is labelled
+        // "amb:<raw key>" rather than dropped, so the column is still named and
+        // still marked as an ambiguity column.
         const auto parts = StateKeys::parseAmbiguityKey(key);
         put(idx,
             parts ? ("amb:" + parts->satellite + ':' + parts->signal) : ("amb:" + key),
@@ -257,26 +256,27 @@ void networkStationBlock(NetworkRunContext& ctx, const GnssConfig& config_,
                          const std::vector<int>& est_index_of) {
     (void)config_;   // the toggle is expressed through which trace is open
     auto& t = traces.station_block_trace;
-    if (!t.is_open()) return;   // OFF path: not called; defensive all the same
+    if (!t.is_open()) return;   // off path: the driver does not call this; guard kept
 
-    // Cadence: one row-set per EMITTED epoch, for emissions 1..20 and every 60th
-    // thereafter.  Keying on n_emitted rather than on the seam running is the
-    // C1/R11 discipline — an epoch withheld by the observability gate, the A4
-    // sigma0 ceiling or the SH health gate still reaches this group, and auditing
-    // its block would silently mix withheld epochs into a trace the reader takes
-    // to describe the wire.
+    // Cadence: one row set per emitted epoch, for emissions 1..20 and every 60th
+    // thereafter.  The gate keys on n_emitted rather than on the seam running
+    // (C1/R11): an epoch withheld by the observability gate, the A4 sigma0 ceiling
+    // or the SH health gate still reaches this group, and auditing it would mix
+    // withheld epochs into a trace that describes the wire.  sb_last_emitted keeps
+    // a repeated emission count from writing twice.
     const std::size_t ne = ctx.counters.n_emitted;
     if (ne == 0 || ne == ctx.carry.sb_last_emitted) return;
     ctx.carry.sb_last_emitted = ne;
     if (!(ne <= 20 || (ne % 60) == 0)) return;
 
-    // The PHASE/CODE discriminator, exactly as the P1-4 post-fit pass builds it:
-    // a satellite PHASE-bias shared column marks a phase row, a satellite
-    // CODE-bias column a code row, and an SH-VTEC column marks the SH<->slant-iono
-    // pseudo-observation, which is not data.  The ambiguity LOCAL columns are the
-    // second phase signal (a posture that estimates no satellite phase biases has
-    // no PB columns at all) and, unlike the pass's `pl_amb` set, they are read off
-    // the StateManager, so the discriminator survives `carry_invariant`.
+    // Phase/code discriminator, built as the P1-4 post-fit pass builds it: a
+    // satellite phase-bias shared column ("PB:") marks a phase row, a satellite
+    // code-bias column ("CB:") a code row, and an SH-VTEC column ("SH") marks the
+    // SH<->slant-iono pseudo-observation, which is not data.  The ambiguity local
+    // columns are the second phase marker (a posture that estimates no satellite
+    // phase biases has no PB columns).  Unlike the pass's `pl_amb` set, they are
+    // read from the StateManager, so the discriminator also works under
+    // `carry_invariant`.
     std::vector<char> is_sh_col, is_pb_col, is_cb_col;
     if (x_s.size() > 0) {
         const std::size_t nsh = static_cast<std::size_t>(x_s.size());
@@ -310,10 +310,11 @@ void networkStationBlock(NetworkRunContext& ctx, const GnssConfig& config_,
         Eigen::MatrixXd Nrr;
         Eigen::VectorXd x_r;
         try {
-            // Rebuilt from the cached LDL^T factor, so the folded station priors
-            // (NetworkEstimator::addStationPrior — the leveling carry, the F3
-            // block, the pivot pins) ARE in it.  That inclusion is the whole point:
-            // it is the only structural difference between the two vehicles' blocks.
+            // Rebuilt from the cached LDL^T factor, so the station priors folded
+            // through NetworkEstimator::addStationPrior (the leveling carry, the F3
+            // block, the pivot pins) are included.  They are the only structural
+            // difference between the two vehicles' blocks, which is why the audit
+            // reads this matrix.
             Nrr = est.normals().stationLocalNormals(ei);
             x_r = est.reconstructStation(ei, x_s);
         } catch (...) {
@@ -335,8 +336,8 @@ void networkStationBlock(NetworkRunContext& ctx, const GnssConfig& config_,
         const StationBlockAudit::Spectrum sp = StationBlockAudit::spectrum(Nrr, labels);
         if (!sp.ok) { ++ctx.carry.sb_decomp_failed; continue; }
 
-        // The ZWD column, located through getTropoIndex + h2local (never through a
-        // carry-gated flag — see networkIonoDiag's L7 block for the same reason).
+        // The ZWD column, located through getTropoIndex + h2local rather than a
+        // carry-gated flag (see networkIonoDiag's L7 block for the same reason).
         Eigen::Index zcol = -1;
         if (stations[i].sm) {
             const std::size_t tropo_sz = stations[i].sm->getTropoIndex();
@@ -352,11 +353,12 @@ void networkStationBlock(NetworkRunContext& ctx, const GnssConfig& config_,
                                    ? StationBlockAudit::effectiveInformation(sp, zcol)
                                    : 0.0;
 
-        // Row census.  Redundancy is computed over EVERY row of A_r (they all sit
-        // in N_rr), but only DATA rows are counted into the per-kind totals: the
-        // SH pseudo-observation is a statement about the field and the Card-1
-        // coupling rows are statements about the CARRY, so neither is an
-        // observation whose checkability the card is asking about.
+        // Row census.  Redundancy is computed over every row of A_r (all of them
+        // enter N_rr), but only data rows are counted: the SH pseudo-observation
+        // constrains the iono field and the Card-1 coupling rows (from
+        // cpl_row_start on) constrain the carry, so neither is an observation whose
+        // checkability the card measures.  A data row that is neither phase nor
+        // code counts toward n_data only.
         const Eigen::VectorXd red = StationBlockAudit::redundancy(sp, R.A_r, R.w);
         long long n_code = 0, n_phase = 0, n_data = 0, zr_code = 0, zr_phase = 0;
         for (Eigen::Index row = 0; row < R.A_r.rows() && row < red.size(); ++row) {
@@ -395,7 +397,7 @@ void networkStationBlock(NetworkRunContext& ctx, const GnssConfig& config_,
               << num(x_r.norm()) << ',' << fmt::format("{:.6f}", x_r(zcol)) << ',';
         } else {
             // No ZWD column in this epoch's A_r: zwd_info_eff / zwd_info_raw /
-            // zwd_info_ratio / x_r_zwd are EMPTY rather than 0, so a reader cannot
+            // zwd_info_ratio / x_r_zwd are empty rather than 0, so a reader cannot
             // average a missing state into a ratio.
             t << /* zwd_info_eff   */ ','
               << /* zwd_info_raw   */ ','
@@ -409,8 +411,8 @@ void networkStationBlock(NetworkRunContext& ctx, const GnssConfig& config_,
     }
     if (rows_this_epoch > 0) ++ctx.carry.sb_epochs_written;
     else
-        // Invariant #4: an armed sweep that audits nothing must SAY so, once per
-        // traced epoch, rather than leaving a silent gap in the CSV.
+        // Invariant #4: an armed sweep that audits no station logs one line per
+        // traced epoch instead of leaving an unexplained gap in the CSV.
         log->debug("Network (§24.10 station block): traced emission {} audited 0 station(s) "
                    "({} skipped, {} undecomposable)",
                    ne, ctx.carry.sb_stations_skipped, ctx.carry.sb_decomp_failed);

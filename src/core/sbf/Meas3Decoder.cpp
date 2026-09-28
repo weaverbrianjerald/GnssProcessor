@@ -4,12 +4,14 @@
  *
  * Clean-room port of the rtklibexplorer/RTKLIB demo5 decode_meas3ranges()
  * (src/rcv/septentrio.c), re-expressed in the engine's types and validated
- * bit-exactly against the 4027 MeasEpoch blocks co-logged in a live mosaic-X5
- * capture.  See Meas3Decoder.hpp for the format overview.
+ * against the 4027 MeasEpoch blocks co-logged in a live mosaic-X5 capture
+ * (agreement figures in Meas3Decoder.hpp).  See Meas3Decoder.hpp for the
+ * format overview.
  *
  * Layout, in brief (offsets into the SBF body, i.e. block + 8):
- *   +0  u4  TOW [ms]            +6 u1 CommonFlags      +7 u1 CumClkJumps
- *   +8  u2  Constellations      +10 u1 Misc            +11 u1 Reserved(version)
+ *   +0  u4  TOW [ms]            +4 u2 WNc              +6 u1 CommonFlags
+ *   +7  u1  CumClkJumps         +8 u2 Constellations   +10 u1 Misc
+ *   +11 u1  Reserved(version)
  *   +12 ..  per-constellation { header, satellites }
  * Misc: bits0-2 antenna, bit3 PR-rate present, bits4-7 reference-epoch interval
  * index into Meas3_EpochIntervals.  An epoch is a reference epoch when

@@ -1,7 +1,7 @@
-"""Network ionosphere pierce-point map -- the network's OWN estimated VTEC.
+"""Network ionosphere pierce-point map: the network's own estimated VTEC.
 
 Consumes ``network_ionosphere.csv`` (per-station, per-satellite back-substituted
-slant ionosphere + elevation/azimuth, emitted when ``network.trace_ionosphere``
+slant ionosphere plus elevation/azimuth, emitted when ``network.trace_ionosphere``
 is on) and the station roster, and renders the network's estimated ionosphere as
 **ionospheric pierce points** on a world map: each (station, satellite) slant
 delay is mapped to its thin-shell pierce point and converted to vertical TEC, so
@@ -9,17 +9,17 @@ the whole network paints a snapshot of the ionosphere it sees.
 
 Three products:
 
-  1. **Coverage** -- every pierce point over the whole run, coloured by VTEC: the
+  1. **Coverage**: every pierce point over the whole run, coloured by VTEC, the
      spatial footprint of the network's ionospheric sampling.
-  2. **Snapshot** -- one epoch's pierce points over the faint CODE IONEX VTEC
-     field (when a GIM is found), so the network estimate can be eyeballed
+  2. **Snapshot**: one epoch's pierce points over the faint CODE IONEX VTEC
+     field (when a GIM is found), so the network estimate can be compared
      against the published global map on the same colour scale.
-  3. **Animation** -- a GIF stepping through epochs (the "ionosphere movie").
+  3. **Animation**: a GIF stepping through epochs (the "ionosphere movie").
 
-VTEC is ``slant_iono(L1, m) / K_L1 * cos(z')`` -- the slant delay converted to
+VTEC is ``slant_iono(L1, m) / K_L1 * cos(z')``: the slant delay converted to
 STEC (TECU) and de-projected through the thin-shell mapping the C++ pierce-point
-code uses (Re=6371 km, H=450 km).  Skips (not fails) when the iono trace or the
-station roster/config is absent.
+code uses (Re=6371 km, H=450 km).  Skips (does not fail) when the iono trace or
+the station roster/config is absent.
 """
 
 from __future__ import annotations

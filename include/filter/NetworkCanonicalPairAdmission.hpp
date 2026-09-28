@@ -1,82 +1,78 @@
 /**
  * @file NetworkCanonicalPairAdmission.hpp
- * @brief Card CPA: admit a (station, satellite) to the network path only while
- *        the station's CANONICAL phase and code pair on bands 1 and 2 is held.
+ * @brief Admit a (station, satellite) to the network path only while the station's
+ *        canonical phase and code pair on bands 1 and 2 is held (card CPA).
  *
- * ### The defect this answers
+ * ### Problem addressed
  *
  * A receiver tracks a satellite on its civil signals for a while before (and
- * after) it holds the semi-codeless pair the station's canonical latch actually
+ * after) it holds the semi-codeless pair that the station's canonical latch
  * selected.  Such a (station, satellite) epoch reaches the solve with one band
- * short, or with a FALLBACK tracking attribute on the band the latch did not
- * pick, and it is harmful on both beds: removed from the RINEX files by an
- * emulation of the rule below, the dual field network went from 203 to 627
- * epochs below a decimetre of 720 and its first hour from 0.53 to 0.19 m, and
- * the triple network with L5 at all 59 stations from 6 to 461
- * (docs/refound/GRS_gap_reentry_per_signal_2026-09-20.md §5 and §6).  This seam
- * moves that rule into the producer.
+ * missing, or with a fallback tracking attribute on the band the latch did not
+ * pick, and it degrades the solution on both beds.  An emulation of the rule below
+ * that removed these records from the RINEX files increased the number of epochs
+ * below a decimetre on the dual-frequency field network and on the triple-frequency
+ * network with L5 at all 59 stations, and lowered the dual network's first-hour
+ * error (docs/refound/GRS_gap_reentry_per_signal_2026-09-20.md §5 and §6).  This
+ * seam applies that rule inside the producer.
  *
  * ### The rule
  *
- * For every (station, satellite) the CANONICAL PAIR is the station's canonical
- * phase and code signal on band 1 and on band 2, as the producer's OWN latch
- * decided them (@c PppModel::decideConstellationCanonicals, exported through
- * @c PppModel::exportCanonicalSignals).  Band 1 and band 2 are read as the
- * RINEX band DIGIT of the latched code, which is what the evidence's emulation
- * meant by "band" and what makes the four slots well defined without a second
- * band-name table here.  An epoch is GOOD for that (station, satellite) when
- * all four canonical observables are present in the epoch's raw data.  The
- * satellite's observation at that station is ADMITTED when the epoch is good,
- * or when the last good PROCESSED epoch is at most
- * @c network.canonical_pair_keep_epochs epochs back; it is WITHHELD before the
- * first good epoch (@c before_first) and beyond the tolerance
- * (@c beyond_keep), until the pair returns.
+ * For every (station, satellite), the canonical pair is the station's canonical
+ * phase and code signal on band 1 and on band 2, as decided by the producer's own
+ * latch (@c PppModel::decideConstellationCanonicals, exported through
+ * @c PppModel::exportCanonicalSignals).  Bands 1 and 2 are the RINEX band digit
+ * of each latched signal code, which matches what the emulation meant by "band"
+ * and defines the four slots without a second band-name table.  An epoch is good
+ * for that (station, satellite) when all four canonical observables are present in
+ * the epoch's raw data.  The satellite's observation at that station is admitted
+ * when the epoch is good, or when the last good processed epoch is at most
+ * @c network.canonical_pair_keep_epochs epochs back.  It is withheld before the
+ * first good epoch (@c before_first) and beyond the tolerance (@c beyond_keep),
+ * until the pair returns.
  *
- * A constellation for which the latch has decided NO canonical pair (no code
- * and phase on both band digits: every constellation on its first processed
- * epoch, and structurally e.g. Galileo, whose bands are 1/5/7/6 and which
- * therefore has no band-2 canonical at all) is LEFT UNTOUCHED: its
- * observations pass exactly as they do today.  Only GPS is in scope on the
- * RF-0hv postures this card was measured on.
+ * A constellation for which the latch has decided no canonical pair (no code and
+ * phase on both band digits) is left untouched: its observations pass unchanged.
+ * This covers every constellation on its first processed epoch, and structurally
+ * Galileo, whose bands are 1/5/7/6 and which has no band-2 canonical.  On the
+ * RF-0hv postures the card was measured on, only GPS is in scope.
  *
  * ### Where it acts, and why there
  *
  * At the top of the epoch body, on a per-epoch mutable copy of the
- * @c SyncedEpoch, immediately after the EVENT HARNESS injector and therefore
- * upstream of @c networkFastClockTick, of @c PppModel::computeModels, of every
- * T0 detector, of @c networkComputeRawObservables and of assembly. That is the same
- * single site and the same scratch-buffer contract as
- * @ref networkInjectEpoch, for the same reason: everything downstream is
- * DERIVED from the @c RinexObservation, so dropping the record here is exactly
- * "as if the RINEX record were missing".  That is what makes the row-level gap
- * re-entry tier see the satellite's return as a RE-ENTRY, which is what the
- * emulation relied on.
+ * @c SyncedEpoch, immediately after the event-harness injector and therefore
+ * upstream of @c networkFastClockTick, @c PppModel::computeModels, every T0
+ * detector, @c networkComputeRawObservables and assembly.  It uses the same site
+ * and the same scratch-buffer contract as @ref networkInjectEpoch, for the same
+ * reason: everything downstream is derived from the @c RinexObservation, so
+ * dropping the record here is equivalent to a missing RINEX record.  The row-level
+ * gap re-entry tier then reads the satellite's return as a re-entry, which is what
+ * the emulation relied on.
  *
- * The ordering has one consequence worth stating plainly: the latch is decided
- * INSIDE @c computeModels, on the first epoch a station reports the
- * constellation, so on that one epoch this seam has no pair to screen against
- * and leaves the station alone.  The alternative (screen the epoch the latch is
- * decided on) is not available to a causal rule at all, and would change the
- * latch's own tally.
+ * Consequence of this ordering: the latch is decided inside @c computeModels, on
+ * the first epoch a station reports the constellation, so on that epoch this seam
+ * has no pair to screen against and leaves the station alone.  Screening the epoch
+ * on which the latch is decided is not possible for a causal rule, and would
+ * change the latch's own tally.
  *
- * The held-out closed-loop consumer is NOT touched: the seam walks the
- * PRODUCER roster, which never contains it.
+ * The held-out closed-loop consumer is not touched: the seam walks the producer
+ * roster, which never contains it.
  *
- * ### Byte-identity when OFF
+ * ### Byte-identity when off
  *
- * @c network.canonical_pair_admission false leaves
- * @c NetworkCanonicalPairState::armed false.  The seam then returns a reference
- * to the caller's own @c SyncedEpoch (no copy, no roster walk, no counter
- * moved), so an OFF run is structurally byte-identical.
+ * With @c network.canonical_pair_admission false,
+ * @c NetworkCanonicalPairState::armed stays false.  The seam then returns a
+ * reference to the caller's own @c SyncedEpoch (no copy, no roster walk, no
+ * counter changed), so an off run is structurally byte-identical.
  *
  * ### Both edges are events (standing invariants 4 and 7)
  *
- * The DECOUPLING edge (@c withhold) and the RE-COUPLING edge (@c readmit) each
- * emit one @c ADMISSION / @c canonical_pair row on the TRANSITION only, never
- * once per withheld epoch, with the reason and the gap length in the detail.
- * The run-end counters (records withheld per reason, distinct (station,
- * satellite) pairs affected, readmissions) are the ON-path telemetry: an armed
- * run that withheld nothing is reported as ARMED AND INERT.
+ * The decoupling edge (@c withhold) and the re-coupling edge (@c readmit) each
+ * emit one @c ADMISSION / @c canonical_pair row on the transition only, never one
+ * per withheld epoch, with the reason and the gap length in the detail.  The
+ * run-end counters (records withheld per reason, distinct (station, satellite)
+ * pairs affected, readmissions) are the on-path telemetry: an armed run that
+ * withheld nothing is reported as ARMED AND INERT.
  */
 #pragma once
 
@@ -101,23 +97,23 @@ namespace GnssProcessor {
      * @brief The four latched observables that make up one constellation's
      *        canonical pair at one station.
      *
-     * Filled from @c PppModel::exportCanonicalSignals by band DIGIT: @c l1 / @c c1
+     * Filled from @c PppModel::exportCanonicalSignals by band digit: @c l1 / @c c1
      * are the phase and code whose RINEX code has digit '1', @c l2 / @c c2 those
-     * with digit '2'.  A constellation whose latch supplies fewer than all four
-     * is not screened at all (@ref decided is then false).
+     * with digit '2'.  A constellation whose latch supplies fewer than all four is
+     * not screened (@ref decided is then false).
      */
     struct CanonicalPair {
-        std::string l1;   ///< canonical PHASE on band digit 1 (e.g. "L1W").
-        std::string c1;   ///< canonical CODE  on band digit 1 (e.g. "C1W").
-        std::string l2;   ///< canonical PHASE on band digit 2 (e.g. "L2W").
-        std::string c2;   ///< canonical CODE  on band digit 2 (e.g. "C2W").
+        std::string l1;   ///< canonical phase on band digit 1 (e.g. "L1W").
+        std::string c1;   ///< canonical code on band digit 1 (e.g. "C1W").
+        std::string l2;   ///< canonical phase on band digit 2 (e.g. "L2W").
+        std::string c2;   ///< canonical code on band digit 2 (e.g. "C2W").
         /// @brief True when the latch supplied all four slots (the only case screened).
         bool decided() const {
             return !l1.empty() && !c1.empty() && !l2.empty() && !c2.empty();
         }
     };
 
-    /// @brief What the state machine decided for one (station, satellite) epoch.
+    /// @brief Decision of the state machine for one (station, satellite) epoch.
     enum class CanonicalPairAction {
         AdmitGood,            ///< the pair is held this epoch.
         AdmitWithinKeep,      ///< the pair is absent but the last good epoch is inside the tolerance.
@@ -126,16 +122,15 @@ namespace GnssProcessor {
     };
 
     /**
-     * @brief Per (station, satellite) admission state: the whole memory the rule needs.
+     * @brief Per (station, satellite) admission state: all the memory the rule needs.
      *
-     * Lives in @c NetworkCarryState (the anti-regrowth rule for carried state);
-     * nothing here is a function local and nothing here is snapshotted.  A warm
-     * resume therefore starts every pair at "never good", which is the same
-     * forward-only posture the other observer states on this path take: the
-     * first good epoch after the resume seats it.
+     * Lives in @c NetworkCarryState (the anti-regrowth rule for carried state); it
+     * is neither a function local nor snapshotted.  A warm resume therefore starts
+     * every pair at "never good", the same forward-only posture as the other
+     * observer states on this path: the first good epoch after the resume seats it.
      */
     struct CanonicalPairTrack {
-        long long last_good{ -1 };    ///< processed-epoch index of the last GOOD epoch; -1 = never good.
+        long long last_good{ -1 };    ///< processed-epoch index of the last good epoch; -1 = never good.
         long long withheld_ep{ 0 };   ///< consecutive epochs withheld so far (0 = currently admitted).
     };
 
@@ -144,18 +139,19 @@ namespace GnssProcessor {
      */
     struct CanonicalPairStep {
         CanonicalPairAction action{ CanonicalPairAction::AdmitGood };
-        bool      withhold_edge{ false }; ///< FIRST withheld epoch of this run of withholds.
+        bool      withhold_edge{ false }; ///< first withheld epoch of this run of withholds.
         bool      readmit_edge{ false };  ///< first admitted epoch after at least one withheld one.
-        /// At a withhold edge: processed epochs since the last good one (0 when there
-        /// has never been one).  At a readmit edge: the number of epochs just withheld.
+        /// On a step that is not good (including a withhold edge): processed epochs
+        /// since the last good one (0 when there has never been one).  On a good step
+        /// (including a readmit edge): the number of epochs just withheld.
         long long gap_ep{ 0 };
     };
 
     /**
      * @brief Advance one (station, satellite)'s admission state by one processed epoch.
      *
-     * The PURE state machine of the card, free of the roster, the config and the
-     * traces so it can be driven directly by the unit suite.
+     * The pure state machine of the card, independent of the roster, the config and
+     * the traces, so the unit suite can drive it directly.
      *
      * @param tr        [in/out] that pair's carried state.
      * @param good      all four canonical observables are present this epoch.
@@ -172,21 +168,21 @@ namespace GnssProcessor {
             || a == CanonicalPairAction::WithholdBeyondKeep;
     }
 
-    /// @brief The event/counter reason string for a withholding action ("" otherwise).
+    /// @brief The event and counter reason string for a withholding action ("" otherwise).
     const char* canonicalPairReason(CanonicalPairAction a);
 
     /**
      * @brief Run-scope state of the rule: the arm, the epoch clock, the per-pair
      *        memory and the latched per-station canonical pairs.
      *
-     * Deliberately NOT part of the warm-resume fingerprint and not snapshotted
-     * (same posture as the other forward-only observer states on this path).
-     * @c armed == false leaves every member untouched and the seam unreachable.
+     * Not part of the warm-resume fingerprint and not snapshotted, like the other
+     * forward-only observer states on this path.  With @c armed false, every
+     * member stays untouched and the seam is unreachable.
      */
     struct NetworkCanonicalPairState {
         bool armed{ false };      ///< network.canonical_pair_admission.
         int  keep_ep{ 3 };        ///< network.canonical_pair_keep_epochs (clamped at 0).
-        long long epochs{ 0 };    ///< seam invocations: THE processed-epoch clock of this card.
+        long long epochs{ 0 };    ///< seam invocations: the processed-epoch clock of this card.
         /// (station index, satellite) -> its admission state.
         std::map<std::pair<int, std::string>, CanonicalPairTrack> track;
         /// station index -> constellation -> its latched canonical pair.  Refreshed
@@ -198,12 +194,12 @@ namespace GnssProcessor {
     };
 
     /**
-     * @brief Run-end counters: the ON-path telemetry of the card (invariant 4).
+     * @brief Run-end counters: the on-path telemetry of the card (invariant 4).
      *
      * Lives in @c NetworkServiceCounters.  Every disposition is counted against a
-     * denominator, so "the log looks clean" can never be mistaken for "the rule
-     * acted": @c withheld_total at zero on an armed run is dead wiring, and the
-     * teardown says so in those words.
+     * denominator, so a clean log is not mistaken for evidence that the rule acted:
+     * @c withheld_total at zero on an armed run is reported by the teardown as
+     * ARMED AND INERT.
      */
     struct NetworkCanonicalPairCounters {
         long long epochs{ 0 };               ///< epochs the seam ran (denominator).
@@ -213,8 +209,8 @@ namespace GnssProcessor {
         long long withheld_beyond_keep{ 0 }; ///< records withheld because the last good epoch is past the tolerance.
         long long withheld_total{ 0 };       ///< sum of the two above (the headline).
         long long admit_within_keep{ 0 };    ///< records admitted by the tolerance alone (the knob's own effect).
-        long long withhold_edges{ 0 };       ///< DECOUPLING edges (invariant 7).
-        long long readmit_edges{ 0 };        ///< RE-COUPLING edges (invariant 7).
+        long long withhold_edges{ 0 };       ///< decoupling edges (invariant 7).
+        long long readmit_edges{ 0 };        ///< re-coupling edges (invariant 7).
         long long max_gap_ep{ 0 };           ///< longest withheld run that ended in a readmission.
         long long epochs_copied{ 0 };        ///< epochs that took the scratch copy (something was withheld).
     };
@@ -226,7 +222,7 @@ namespace GnssProcessor {
      * @param config_ The run's config (reads the two @c network.canonical_pair_* knobs).
      * @param n_sta   Producer roster size (sizes the per-station latch cache).
      *
-     * Disabled ⇒ @c armed stays false and nothing else in the card is reachable.
+     * When disabled, @c armed stays false and nothing else in the card is reachable.
      */
     void networkCanonicalPairArm(NetworkRunContext& ctx, const GnssConfig& config_,
                                  int n_sta);
@@ -234,16 +230,16 @@ namespace GnssProcessor {
     /**
      * @brief Apply the rule to this epoch's observations.
      *
-     * @param ctx      Run context (state + counters).
+     * @param ctx      Run context (state and counters).
      * @param log      Producer logger (the first withhold is logged once, at debug).
-     * @param traces   Trace bundle; one @c ADMISSION row per TRANSITION.
-     * @param stations The PRODUCER roster: the screened set, and the source of
-     *                 each station's canonical latch.  The held-out closed-loop
-     *                 consumer is not on it and is therefore never screened.
-     * @param se_in    The epoch as it reaches the seam (post-injector).
+     * @param traces   Trace bundle; one @c ADMISSION row per transition.
+     * @param stations The producer roster: the screened set, and the source of each
+     *                 station's canonical latch.  The held-out closed-loop consumer
+     *                 is not on it and is therefore never screened.
+     * @param se_in    The epoch as it reaches the seam (after the injector).
      * @param scratch  Caller-owned buffer that receives the pruned copy.
      * @return @p se_in itself when the rule is disarmed or withheld nothing this
-     *         epoch (NO copy is taken, the byte-identical path), otherwise a
+     *         epoch (no copy is taken; the byte-identical path), otherwise a
      *         reference to @p scratch with the withheld records erased.
      *
      * @note @p scratch must outlive the returned reference for the whole epoch
@@ -259,7 +255,7 @@ namespace GnssProcessor {
     /**
      * @brief Run-end readout: one line, or nothing when the rule is disarmed.
      *
-     * @param ctx Run context (counters + state).
+     * @param ctx Run context (counters and state).
      * @param log Producer logger.
      */
     void networkCanonicalPairRunEnd(NetworkRunContext& ctx,

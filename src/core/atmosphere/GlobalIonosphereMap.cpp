@@ -119,9 +119,9 @@ namespace GnssProcessor {
         GimQuery q;
         if (!isLoaded() || frequency_hz <= 0.0) return q;
 
-        // Single-layer pierce-point geometry — shared with the SH ionosphere model
-        // so the two never drift (the math here is unchanged: the helper reproduces
-        // this block verbatim, so the GIM result stays byte-identical).
+        // Single-layer pierce-point geometry from computeIppGeometry, shared with the
+        // SH ionosphere model so the two cannot diverge.  The helper reproduces the
+        // former inline computation exactly, so GIM results are byte-identical to it.
         const double Re = data_.base_radius_km * 1000.0;
         const double H  = data_.height_km * 1000.0;
         const IppGeometry g = computeIppGeometry(rx_pos_ecef, sat_pos_ecef, Re, H);

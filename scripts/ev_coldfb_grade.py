@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""COLD ANCHOR-FALLBACK (SPEC_event_harness §15) — the ELECTION channels of a leg.
+"""Cold anchor-fallback grading (SPEC_event_harness §15): the election channels of a leg.
 
 `scripts/event_grade.py` grades the wire and consumer channels of an event leg
-against its null.  It cannot see the channel this card acts on: WHICH station the
-anchor election picked, whether the handover it made was continuous or cold, what
-the candidacy pass walked past to get there, and how old the successor's arc was.
-Those live in `logs/network_events.csv` (PBGAUGE / PHASE_ANCHOR / INJECT rows),
-in the run-end clauses of `stdout.txt`, and — for the successor's AGE and
-ELEVATION — in the leg's own `logs/network_slip_raw.csv`, the only trace that
-carries a pinned arc at all (a pinned arc never appears in the residual trace).
+against its null. It does not see the channel this script covers: which station
+the anchor election picked, whether the handover it made was continuous or cold,
+what the candidacy pass walked past to get there, and how old the successor's arc
+was. Those live in `logs/network_events.csv` (PBGAUGE / PHASE_ANCHOR / INJECT rows),
+in the run-end clauses of `stdout.txt`, and, for the successor's age and elevation,
+in the leg's own `logs/network_slip_raw.csv`, the only trace that carries a pinned
+arc at all (a pinned arc never appears in the residual trace).
 
     python scripts/ev_coldfb_grade.py runs/evleg_<leg> [runs/evleg_<other> ...]
         [--window 40] [--json out.json]
@@ -52,10 +52,10 @@ def arc_state(d, tow, sat):
     """(age_epochs, elev_deg) per station for `sat` at `tow`, from the leg's trace.
 
     Age is the number of consecutive 30 s epochs the satellite has been seen at
-    that station INSIDE this leg, plus nothing — a 60-epoch leg cannot see an
-    older arc than it is long, so the SEED's census is the authority on absolute
-    age and this is the leg-local cross-check (a successor that first appears
-    mid-leg reads young here and is young in truth).
+    that station inside this leg: a 60-epoch leg cannot see an older arc than it
+    is long, so the seed's census is the authority on absolute age and this is
+    the leg-local cross-check (a successor that first appears mid-leg reads
+    young here and is young in truth).
     """
     p = os.path.join(d, "logs", "network_slip_raw.csv")
     if not os.path.exists(p):
@@ -129,9 +129,9 @@ def grade(d, window):
         out["exit"] = int(ln[0]) if ln else None
         out["wall_s"] = float(ln[1]) if len(ln) > 1 else None
 
-    # ⚠ the leg's recorded event_tow carries the resume recurrence's double
-    # residue (…480.0000178814), so a HALF-EPOCH back-off is required or the
-    # event's own rows — written at the exact tow — fall outside the window.
+    # The leg's recorded event_tow carries the resume recurrence's double
+    # residue (...480.0000178814), so a half-epoch back-off is required, or the
+    # event's own rows, written at the exact tow, fall outside the window.
     hi = (t0 + window * EPOCH_S) if t0 else None
     def inwin(r):
         if t0 is None:
@@ -143,7 +143,7 @@ def grade(d, window):
         return (int(round((float(r["tow"]) - t0) / EPOCH_S)) if t0 else
                 int(round((float(r["tow"]) - m["first_tow"]) / EPOCH_S)))
 
-    # The gauge handovers themselves — both edges in one row (invariant #7).
+    # The gauge handovers themselves: both edges in one row (invariant #7).
     hand = []
     for r in ev_rows:
         if r["tier"] != "PBGAUGE" or not r["event"].startswith("handover") or not inwin(r):
@@ -173,8 +173,8 @@ def grade(d, window):
         for r in ev_rows
         if r["tier"] == "PHASE_ANCHOR" and r["action"] == "handover" and inwin(r)]
 
-    # T4 attribution erases on the event satellite's arcs in the window, and
-    # network-wide (the §12.7 damage channel: healthy arcs erased elsewhere).
+    # Counts T4 attribution erases on the event satellite's arcs in the window
+    # and network-wide; erases on healthy arcs elsewhere are the §12.7 side effect.
     t4 = [r for r in ev_rows if r["tier"].startswith("T4") and inwin(r)]
     out["t4_total"] = len(t4)
     out["t4_on_sat"] = sum(1 for r in t4 if sat and r["sat"].startswith(sat))

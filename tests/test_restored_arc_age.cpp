@@ -1,55 +1,50 @@
 /**
  * @file test_restored_arc_age.cpp
- * @brief The RESTORED-ARC AGE convention (SPEC_event_harness §15.4): a
- *        warm-resume-restored @ref GnssProcessor::LocalCarry reads MATURE for
- *        its whole restored life, and the first post-resume harvest must NOT
- *        re-brand it as newborn.
+ * @brief Restored-arc age convention (SPEC_event_harness §15.4): a
+ *        warm-resume-restored @ref GnssProcessor::LocalCarry reads mature for its
+ *        whole restored life, and the first post-resume harvest does not re-stamp
+ *        it as newborn.
  *
- * ## The defect this file pins
+ * ## Behavior under test
  *
- * `LocalCarry::birth_ep` / `birth_s` are deliberately NOT snapshotted: a restored
- * entry's true birth predates the snapshot, so the documented contract is that it
- * reads MATURE (refusing it would refuse the whole network for `min_age` epochs
- * after every resume).  Leaving the fields at their 0 default did not deliver that
- * contract, because 0 ALSO means "never stashed" — which is exactly what the
- * phase-leveling harvest's first-stash-wins rule read it as, so ONE post-resume
- * harvest stamped every restored arc with the CURRENT loop epoch.  Measured on a
- * 60-epoch warm-resume leg: 390 of 414 cold-anchor-fallback candidacy skips read
- * `younger than 60 epochs`, i.e. the maturity bar was structurally inert on every
- * warm-resume leg and every age-gated knob was measuring nothing.
+ * `LocalCarry::birth_ep` / `birth_s` are not snapshotted: a restored entry's true
+ * birth predates the snapshot, so the contract is that it reads mature (refusing it
+ * would refuse the whole network for `min_age` epochs after every resume).  The
+ * value 0 cannot express that, because 0 also means "never stashed", and the
+ * phase-leveling harvest's first-stash-wins rule treats an unstamped predecessor as
+ * absent.  A single post-resume harvest would then stamp every restored arc with
+ * the current loop epoch, and on a warm-resume leg shorter than the bar every
+ * age-gated knob would see only young arcs.
  *
- * The fix is a SENTINEL, not a format bump: the restore stamps
- * @ref LocalCarry::kBirthEpRestored / @ref LocalCarry::kBirthSRestored, the
- * first-stash-wins rule tests `!= 0` instead of `> 0`, and every age reader (all
- * of which already tested `> 0`) therefore reads the sentinel as mature.  Nothing
- * is added to the snapshot record or to the warm-resume fingerprint, so the fix
- * applies to snapshots ALREADY on disk — which is also why a format bump would not
- * have been testable on the existing harness seeds.
+ * The restore therefore stamps a sentinel, @ref LocalCarry::kBirthEpRestored /
+ * @ref LocalCarry::kBirthSRestored (both −1).  The first-stash-wins rule tests
+ * `!= 0` rather than `> 0`, so the sentinel is kept, and every age reader tests
+ * `> 0`, so it reads the sentinel as mature.  Nothing is added to the snapshot
+ * record or to the warm-resume fingerprint, so the convention also applies to
+ * snapshots already on disk.
  *
- * ## What the cases are, and why each one is here
+ * ## Cases
  *
- * 1. **The stamp rule** (@ref GnssProcessor::localCarryStampBirth) — the sentinel
- *    survives a harvest and a re-stash; a genuinely new entry is stamped at
- *    creation; an erased-and-reborn entry is re-stamped.  The regression is
- *    one-sided in a way no run-end counter can see (a re-stamped restored arc
- *    looks exactly like a fresh one), so it is asserted directly.
- * 2. **Every age reader, on the sentinel.**  There are three, and they are listed
- *    explicitly here because "audit the readers" is the part of this card that
- *    rots: the F3 block admission gate and the candidacy maturity bar (both
- *    @ref GnssProcessor::localCarryYoung — one definition, two readers), and the
- *    sim-only slip oracle's window floor (`birth_s`).  Each gets the sentinel and
- *    a stamped entry, so a reader that starts treating −1 as "born at epoch −1"
- *    fails here rather than in a field leg.
- * 3. **The snapshot round trip.**  A real write → read through
- *    @ref GnssProcessor::NetworkStateSnapshotIO, then the exact conversion the
- *    restore site performs (@ref GnssProcessor::makeRestoredLocalCarry), so the
- *    file-format half of the contract — the snapshot carries no birth field, and
- *    the reader must therefore sentinel-stamp — is pinned end to end.
+ * 1. The stamp rule (@ref GnssProcessor::localCarryStampBirth): the sentinel
+ *    survives a harvest and a re-stash; a new entry is stamped at creation; an
+ *    erased-and-reborn entry is re-stamped.  A re-stamped restored arc looks the
+ *    same as a fresh one to every run-end counter, so the rule is asserted directly.
+ * 2. Every age reader, on the sentinel.  There are three, listed here so that a new
+ *    reader is added to the list: the F3 block admission gate and the candidacy
+ *    maturity bar (both through @ref GnssProcessor::localCarryYoung, one definition
+ *    with two readers), and the sim-only slip oracle's window floor (`birth_s`).
+ *    Each is given the sentinel and a stamped entry, so a reader that treats −1 as
+ *    "born at epoch −1" fails here.
+ * 3. The snapshot round trip: a real write and read through
+ *    @ref GnssProcessor::NetworkStateSnapshotIO, then the conversion the restore
+ *    site performs (@ref GnssProcessor::makeRestoredLocalCarry).  This pins the
+ *    file-format half of the contract end to end: the snapshot carries no birth
+ *    field, so the reader applies the sentinel.
  *
- * Out of scope: the per-epoch harvest LOOP itself (it lives inside `runNetwork`
- * and is certified by the same-build byte-identity A/B and the harness leg pair
- * in SPEC_event_harness §15.4), and the election's own non-age branches (those
- * are tests/test_candidacy_usable.cpp's).
+ * Out of scope: the per-epoch harvest loop itself (inside `runNetwork`, certified by
+ * the same-build byte-identity A/B and the harness leg pair in SPEC_event_harness
+ * §15.4), and the election's non-age branches (covered by
+ * tests/test_candidacy_usable.cpp).
  */
 
 #include <gtest/gtest.h>
@@ -77,7 +72,7 @@ namespace {
 
 constexpr const char* kSat = "G10";
 constexpr const char* kSig = "L1C";
-/// GPS week 2313 — the harness fixture's frame; 30 s cadence.
+/// GPS week 2313 (the harness fixture's frame); 30 s cadence.
 constexpr double kW = 2313.0 * 604800.0;
 constexpr double kMaxVar = 1e-2;   // the golden's phase_datum_handover_max_var_m2
 
@@ -89,7 +84,7 @@ LocalCarry restored(double value_abs = 12.5, double var = 1e-6,
     return makeRestoredLocalCarry(value_abs, var, last_seen_s);
 }
 
-/// A carried entry as a HARVEST produces it: stamped at @p birth_ep / @p birth_s.
+/// A carried entry as a harvest produces it: stamped at @p birth_ep / @p birth_s.
 LocalCarry stamped(long long birth_ep, double birth_s,
                    double value_abs = 12.5, double var = 1e-6) {
     LocalCarry lc{value_abs, var, birth_s};
@@ -99,12 +94,12 @@ LocalCarry stamped(long long birth_ep, double birth_s,
 }
 
 // ===========================================================================
-// 1: the stamp rule — localCarryStampBirth, the harvest's first-stash-wins test
+// 1: the stamp rule (localCarryStampBirth, the harvest's first-stash-wins test)
 // ===========================================================================
 
-// THE defect, in one assertion pair.  The harvest builds a fresh LocalCarry and
-// asks the stamp rule what its birth is; with the old `> 0` test the restored
-// entry's −1 lost to "unstamped" and the arc was re-branded as born NOW.
+// The harvest builds a fresh LocalCarry and asks the stamp rule for its birth.  A
+// `> 0` test would treat the restored entry's −1 as unstamped and stamp the arc
+// with the current epoch; the `!= 0` test keeps the sentinel.
 TEST(RestoredArcAge, TheSentinelSurvivesAHarvestAndARestash) {
     const LocalCarry restored_entry = restored();
     ASSERT_EQ(restored_entry.birth_ep, LocalCarry::kBirthEpRestored);
@@ -117,16 +112,16 @@ TEST(RestoredArcAge, TheSentinelSurvivesAHarvestAndARestash) {
         << "one post-resume harvest must not re-brand a restored arc as newborn";
     EXPECT_DOUBLE_EQ(h1.birth_s, LocalCarry::kBirthSRestored);
 
-    // Harvest #2, 59 epochs later — still the sentinel, so the arc reads mature
-    // for its WHOLE restored life, not just for the first epoch.
+    // Harvest #2, 59 epochs later: still the sentinel, so the arc reads mature for
+    // its whole restored life, not only at the first epoch.
     LocalCarry h60{98.0, 2e-6, kW + 280950.0};
     localCarryStampBirth(h60, &h1, /*now_ep=*/60, kW + 280950.0);
     EXPECT_EQ(h60.birth_ep, LocalCarry::kBirthEpRestored);
     EXPECT_DOUBLE_EQ(h60.birth_s, LocalCarry::kBirthSRestored);
 }
 
-// The other half of the contract: nothing about a genuinely NEW arc changes.  A
-// first stash is stamped at today's epoch, and an ordinary re-stash keeps it.
+// The other half of the contract: a new arc is unaffected.  A first stash is
+// stamped at the current epoch, and an ordinary re-stash keeps that stamp.
 TEST(RestoredArcAge, ANewEntryIsStampedAtCreationAndKeptAcrossRestashes) {
     LocalCarry born{50.0, 1e-4, kW + 279180.0};
     localCarryStampBirth(born, /*prev=*/nullptr, /*now_ep=*/7, kW + 279180.0);
@@ -140,10 +135,10 @@ TEST(RestoredArcAge, ANewEntryIsStampedAtCreationAndKeptAcrossRestashes) {
 }
 
 // An erase-and-rebirth (a T4 attribution erase, a gap prune, a re-admission)
-// RESTARTS the clock — including for an entry that was restored.  It needs no
-// clause of its own precisely because the erase DELETES the entry, so the next
-// harvest sees no previous entry at all; the case exists so that a future "keep
-// the sentinel forever" shortcut cannot pass.
+// restarts the age clock, also for an entry that was restored.  The rule needs no
+// clause for this: the erase deletes the entry, so the next harvest sees no
+// previous entry.  The case fails any change that keeps the sentinel across an
+// erase.
 TEST(RestoredArcAge, AnErasedAndRebornEntryIsRestamped) {
     std::map<std::tuple<int, std::string, std::string>, LocalCarry> carry;
     const auto key = std::make_tuple(0, std::string(kSat), std::string(kSig));
@@ -161,19 +156,19 @@ TEST(RestoredArcAge, AnErasedAndRebornEntryIsRestamped) {
 }
 
 // ===========================================================================
-// 2a: age reader 1+2 — localCarryYoung (the F3 block gate and the candidacy bar
-//     share this ONE definition)
+// 2a: age readers 1 and 2, localCarryYoung (the F3 block gate and the candidacy
+//     bar share this one definition)
 // ===========================================================================
 
 TEST(RestoredArcAge, TheSharedAgeReaderCallsTheSentinelMature) {
     const LocalCarry r = restored();
-    // now_ep 1 on a 60-epoch bar: a re-stamped restored arc would read as 0
-    // epochs old, which is the inert-bar regime the defect produced.
+    // now_ep 1 on a 60-epoch bar: a re-stamped restored arc would read as 0 epochs
+    // old and be refused.
     EXPECT_FALSE(localCarryYoung(r, /*now_ep=*/1,  /*min_age_ep=*/60));
     EXPECT_FALSE(localCarryYoung(r, /*now_ep=*/60, /*min_age_ep=*/60));
     EXPECT_FALSE(localCarryYoung(r, /*now_ep=*/1,  /*min_age_ep=*/1));
 
-    // An unstamped (0) entry is the same case — never stashed, age unknown.
+    // An unstamped (0) entry is treated the same way: never stashed, age unknown.
     LocalCarry never{};
     EXPECT_FALSE(localCarryYoung(never, /*now_ep=*/1000, /*min_age_ep=*/60));
 }
@@ -184,7 +179,7 @@ TEST(RestoredArcAge, TheSharedAgeReaderStillMeasuresAStampedEntry) {
 
     EXPECT_TRUE (localCarryYoung(young,  /*now_ep=*/1000, /*min_age_ep=*/60));
     EXPECT_FALSE(localCarryYoung(mature, /*now_ep=*/1000, /*min_age_ep=*/60));
-    // The bar is a >= test on the age: exactly at the bar is MATURE.
+    // The bar is a >= test on the age: an age equal to the bar is mature.
     EXPECT_FALSE(localCarryYoung(stamped(940, kW), /*now_ep=*/1000, 60));
     EXPECT_TRUE (localCarryYoung(stamped(941, kW), /*now_ep=*/1000, 60));
     // 0 disables the test outright.
@@ -192,10 +187,10 @@ TEST(RestoredArcAge, TheSharedAgeReaderStillMeasuresAStampedEntry) {
 }
 
 // ===========================================================================
-// 2b: age reader 2, END TO END — the cold anchor-fallback candidacy bar
+// 2b: age reader 2 end to end (the cold anchor-fallback candidacy bar)
 // ===========================================================================
 
-/// Station roster + this epoch's candidate census, exactly what the election
+/// Station roster and this epoch's candidate census, the inputs the election
 /// reads.  Four stations, all tracking G10/L1C, ranked A > B > C > D by coverage
 /// so the election's sweep walks them in that order.
 struct Roster {
@@ -233,10 +228,10 @@ Outcome elect(Roster& r, int min_age_ep, long long now_ep,
               const std::map<std::tuple<int, std::string, std::string>,
                              LocalCarry>* lc) {
     AnchorHandoverLedger ledger;
-    // BBBB (rank 1, the top non-incumbent) and CCCC (rank 2) both have immaculate
-    // ledger values, so the ONLY thing that can move the election off BBBB is the
-    // maturity bar — and CCCC exists so that a refused BBBB produces a RANK CHANGE
-    // rather than a fall-through, which is the observable the bar is there for.
+    // BBBB (rank 1, the top non-incumbent) and CCCC (rank 2) both have clean ledger
+    // values, so only the maturity bar can move the election off BBBB.  CCCC makes a
+    // refused BBBB produce a rank change rather than a fall-through, and the rank
+    // change is the observable the assertions read.
     ledger.value_abs[{1, ambKey()}] = {7.0,  1e-6, 1e-3};
     ledger.value_abs[{2, ambKey()}] = {12.5, 1e-6, 1e-3};
 
@@ -267,10 +262,10 @@ Outcome elect(Roster& r, int min_age_ep, long long now_ep,
     return o;
 }
 
-// The production reading of the defect: on a warm-resume leg shorter than the
-// bar, EVERY candidate is restored, so with the re-stamp the pass skips them all
-// as `young` and falls through to today's sweep.  With the sentinel the same
-// candidate is screened on its ledger value, which is what the bar is for.
+// On a warm-resume leg shorter than the bar every candidate is restored; a
+// re-stamp would make the pass skip them all as `young` and fall through to the
+// current epoch's sweep.  With the sentinel the restored candidate is screened on
+// its ledger value.
 TEST(RestoredArcAge, ARestoredCandidateIsNotRefusedByTheMaturityBar) {
     std::map<std::tuple<int, std::string, std::string>, LocalCarry> lc;
     lc[{1, kSat, kSig}] = restored();
@@ -287,8 +282,7 @@ TEST(RestoredArcAge, ARestoredCandidateIsNotRefusedByTheMaturityBar) {
     EXPECT_EQ(o.tally.handover_cold, 0);
 }
 
-// The bar must still BITE on a genuinely young arc — the sentinel is not a way
-// of switching the screen off.
+// The bar still refuses a young arc: the sentinel does not switch the screen off.
 TEST(RestoredArcAge, AGenuinelyYoungCandidateIsStillRefused) {
     std::map<std::tuple<int, std::string, std::string>, LocalCarry> lc;
     lc[{1, kSat, kSig}] = stamped(/*birth_ep=*/980, kW + 279150.0);   // 20 ep old
@@ -304,11 +298,11 @@ TEST(RestoredArcAge, AGenuinelyYoungCandidateIsStillRefused) {
 }
 
 // ===========================================================================
-// 2c: age reader 3 — the sim-only slip oracle's `birth_s` window floor
+// 2c: age reader 3, the sim-only slip oracle's `birth_s` window floor
 // ===========================================================================
 
 /// One oracle wired to a hand-built carry (same construction as
-/// tests/test_slip_oracle.cpp's Harness, trimmed to this card's question).
+/// tests/test_slip_oracle.cpp's Harness, reduced to what these cases need).
 struct OracleHarness {
     LogManager        log_manager;
     NetworkSlipOracle oracle;
@@ -333,11 +327,10 @@ struct OracleHarness {
 };
 
 // The oracle's window is ( max(last_applied, birth_s, now − window_s), now ].
-// A restored arc's TRUE birth is un-snapshotted, so the documented behaviour is
-// "no floor — fall back to the latency bound".  Before the sentinel the first
-// post-resume harvest stamped birth_s with the RESUME second, which floored the
-// window there and reported the arc as `bound_birth`; the sentinel keeps losing
-// the max for the arc's whole restored life.
+// A restored arc's true birth is not snapshotted, so the documented behaviour is no
+// birth floor: the latency bound applies.  A re-stamp would set birth_s to the
+// resume second, floor the window there and count the arc as `bound_birth`; the
+// sentinel (−1) never wins the max, for the arc's whole restored life.
 TEST(RestoredArcAge, TheOracleWindowIsNotFlooredByARestoredBirth) {
     OracleHarness h;
     LocalCarry lc = restored(/*value_abs=*/100.0, /*var=*/1e-5,
@@ -353,13 +346,13 @@ TEST(RestoredArcAge, TheOracleWindowIsNotFlooredByARestoredBirth) {
     EXPECT_EQ(h.oracle.bound_birth, 0);
 }
 
-// …and the floor still works when the birth IS known, so the sentinel has not
-// disarmed the "already absorbed" guard.
+// The floor still applies when the birth is known, so the sentinel leaves the
+// "already absorbed" guard in place.
 TEST(RestoredArcAge, TheOracleWindowIsStillFlooredByARealBirth) {
     OracleHarness h;
     h.put(stamped(/*birth_ep=*/5, /*birth_s=*/kW + 302820.0,
                   /*value_abs=*/100.0, /*var=*/1e-5));
-    h.addTruth(302790.0, -12);          // inside the window, but PRE-birth
+    h.addTruth(302790.0, -12);          // inside the window, but before the birth
 
     std::string detail; OracleOutcome oc{};
     ASSERT_TRUE(h.run(302850.0, detail, oc));
@@ -369,8 +362,8 @@ TEST(RestoredArcAge, TheOracleWindowIsStillFlooredByARealBirth) {
 }
 
 // ===========================================================================
-// 3: the snapshot round trip — the file carries no birth field, so the READER
-//    is where the convention has to be applied
+// 3: the snapshot round trip (the file carries no birth field, so the reader
+//    applies the convention)
 // ===========================================================================
 
 TEST(RestoredArcAge, ASnapshotRoundTripYieldsSentinelAgesOnEveryRestoredEntry) {
@@ -384,8 +377,8 @@ TEST(RestoredArcAge, ASnapshotRoundTripYieldsSentinelAgesOnEveryRestoredEntry) {
     snap.snap_tow  = 279150.0;
     snap.n_emitted = 665;
     snap.config_fingerprint = 0xc5b5df834d185ac8ULL;
-    // Two L rows (one with the optional var_first field, one without) and a Z row
-    // — the three shapes the restore loop actually meets on the harness seeds.
+    // Two L rows (one with the optional var_first field, one without) and a Z row:
+    // the three row shapes the restore loop meets on the harness seeds.
     snap.local_carry[{0, "G10", "L1C"}] = {-13.371942948457217, 0.016046053590845624,
                                            kW + 279150.0, 0.0};
     snap.local_carry[{3, "E03", "L5Q"}] = {-1.4035410604255958, 0.050056665667344,
@@ -406,7 +399,7 @@ TEST(RestoredArcAge, ASnapshotRoundTripYieldsSentinelAgesOnEveryRestoredEntry) {
         EXPECT_EQ(lc.birth_ep, LocalCarry::kBirthEpRestored) << std::get<1>(key);
         EXPECT_DOUBLE_EQ(lc.birth_s, LocalCarry::kBirthSRestored);
         EXPECT_FALSE(localCarryYoung(lc, /*now_ep=*/1, /*min_age_ep=*/60));
-        // Everything the row DOES carry must survive untouched.
+        // Every field the row carries survives unchanged.
         EXPECT_DOUBLE_EQ(lc.value_abs, l.value_abs);
         EXPECT_DOUBLE_EQ(lc.var, l.var);
         EXPECT_DOUBLE_EQ(lc.last_seen_s, l.last_seen_s);
@@ -417,9 +410,9 @@ TEST(RestoredArcAge, ASnapshotRoundTripYieldsSentinelAgesOnEveryRestoredEntry) {
         EXPECT_EQ(lc.birth_ep, LocalCarry::kBirthEpRestored) << idx;
         EXPECT_DOUBLE_EQ(lc.birth_s, LocalCarry::kBirthSRestored);
     }
-    // The record itself carries NO birth field — that is why the reader has to
-    // apply the convention.  A future format bump that adds one must delete this
-    // assertion deliberately, not by accident.
+    // The record carries no birth field, which is why the reader applies the
+    // convention.  A format change that adds one has to remove this assertion
+    // explicitly.
     EXPECT_DOUBLE_EQ(back.local_carry.at({0, "G10", "L1C"}).var_first, 0.0);
 
     std::filesystem::remove(path, ec);

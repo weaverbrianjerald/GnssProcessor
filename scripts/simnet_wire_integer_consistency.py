@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""WIRE INTEGER CONSISTENCY -- is the PRODUCER's emitted (satellite clock + phase bias)
-integer-consistent between satellites, measured DIRECTLY against the simulator's truth
-with NO consumer in the loop?
+"""Wire integer consistency: is the producer's emitted (satellite clock + phase bias)
+integer-consistent between satellites, measured directly against the simulator's truth
+with no consumer in the loop?
 
-WHY
----
-``scripts/consumer_float_truth_join.py`` showed that the closed-loop consumer's float
-ambiguities on the quiet 24 h truth bed are PRECISE within an arc (EWL 0.015-0.026 cyc,
-WL 0.055-0.085, NL 0.053) but that each arc's between-satellite SD ambiguity sits at a
+Motivation
+----------
+``scripts/consumer_float_truth_join.py`` shows that the closed-loop consumer's float
+ambiguities on the quiet 24 h truth bed are precise within an arc (EWL 0.015-0.026 cyc,
+WL 0.055-0.085, NL 0.053), but that each arc's between-satellite SD ambiguity sits at a
 fractional offset uniformly distributed on the circle (p50 |frac| ~ 0.25 = the uniform
-null) -- except GPS EWL, partially concentrated.  That is the consumer's report on the
-WIRE.  This script measures the wire itself.
+null), except GPS EWL, which is partially concentrated.  That is the consumer's view of
+the wire; this script measures the wire itself.
 
-THE QUANTITY, AND ITS SIGN (all four conventions traced in source, then verified)
+The quantity and its sign (all four conventions traced in source, then verified)
 --------------------------------------------------------------------------------
 Simulator (``src/sim/main.cpp``, the ``row.values`` block):
 
@@ -22,58 +22,58 @@ Simulator (``src/sim/main.cpp``, the ``row.values`` block):
     L_b * lambda_b     = P + tropo + m7 + ant + bias_phase + rxb_phase + isb
                          - I_b + windup_m + lambda_b*N + np + np_scint + mp_phase
 
-so the SATELLITE-dependent content of a phase observation, over and above the a-priori
-CLK product both sides share, is exactly
+so the satellite-dependent content of a phase observation, over and above the a-priori
+CLK product both sides share, is
 
     -clk_err_m(s,t)  +  osb_phase(s,b)                       ... (OBS)
 
-``osb_phase`` is ``truth_bias.csv``'s ``osb_m`` on the PHASE RINEX code (the sim writes a
-row per (sat, signal) for BOTH the code and the phase observable of every band --
-``record(band.code, bias_code, ...)`` and ``record(band.phase, bias_phase, ...)`` -- and
-they DIFFER, e.g. G03 C1C = +2.116295 m vs G03 L1C = -0.017022 m).  ``osb_m`` is the TOTAL
-injected bias (``product_m`` + ``synth_m``), which is what the writer's own comment says
-the estimator must reproduce.
+``osb_phase`` is ``truth_bias.csv``'s ``osb_m`` on the phase RINEX code.  The sim writes
+a row per (sat, signal) for both the code and the phase observable of every band
+(``record(band.code, bias_code, ...)`` and ``record(band.phase, bias_phase, ...)``), and
+the two differ, e.g. G03 C1C = +2.116295 m vs G03 L1C = -0.017022 m.  ``osb_m`` is the
+total injected bias (``product_m`` + ``synth_m``), which is what the writer's own comment
+says the estimator must reproduce.
 
-Consumer / any user of the wire:
+Consumer, or any other user of the wire:
 
     satellite clock bias  = product_clk + C_record / c        (SsrCorrectionStore::
                             applyClockToBias: "Clock correction in seconds; ADD to
-                            broadcast clock bias"; GnssCorrections.cpp:346)
+                            broadcast clock bias"; GnssCorrections.cpp)
     modeled range         = ... - c * (product_clk + C/c)  =>  contributes  -C
     phase bias term       = + kSsrPhaseBiasSign * P_record,  kSsrPhaseBiasSign = +1.0
-                            (MeasurementModel.cpp:1609/1624; docs/network_ambiguity_
-                            resolution_design.md:192 "bias added to clean model,
+                            (MeasurementModel.cpp; docs/network_ambiguity_
+                            resolution_design.md "bias added to clean model,
                             identical producer and consumer")
 
-so the satellite-dependent content of the MODEL is
+so the satellite-dependent content of the model is
 
     -C(s,t)  +  P(s,b,t)                                     ... (MODEL)
 
-and the wire error a user's phase ambiguity must absorb is (OBS) - (MODEL):
+and the wire error a user's phase ambiguity has to absorb is (OBS) - (MODEL):
 
     W(s,b,t) = [C(s,t) - clk_true(s,t)] - [P(s,b,t) - osb_phase(s,b)]
-             = dC(s,t) - dP(s,b,t)                            <- PRIMARY ("minus")
+             = dC(s,t) - dP(s,b,t)                            <- primary ("minus")
 
-The task statement's literal form, E = [C + P] - [clk_true + osb_true] = dC + dP, is the
-OTHER relative sign; it is computed and tabulated alongside as "plus".  Step 5 decides
-between them empirically against the consumer's own float ambiguities and the answer is
-printed as a verdict rather than assumed.
+The literal form of the task statement, E = [C + P] - [clk_true + osb_true] = dC + dP,
+has the other relative sign; it is computed and tabulated alongside as "plus".  Step 5
+decides between the two empirically against the consumer's own float ambiguities and
+prints the answer as a verdict.
 
-NO IF LUMP IS ADDED TO THE CLOCK TRUTH.  ``simnet_grade.grade_clock`` grades the C record
+No IF lump is added to the clock truth.  ``simnet_grade.grade_clock`` grades the C record
 against ``sc_truth + if_lump`` because the producer does not apply the .BIA, so the
-IONO-FREE lump of the injected CODE OSB over the pinned pair is absorbed by the estimated
-satellite clock.  That lump is a real, per-satellite, band-common METRES offset seen from
-the PHASE side, and whether the emitted phase bias gives it back is precisely what this
-script measures -- folding it into the truth would define the answer away.  It is reported
-separately (a leading candidate for the range-like term r_s of the shape model) and a
-lump-removed variant of the clock channel is tabulated as a diagnostic.
+iono-free lump of the injected code OSB over the pinned pair is absorbed by the estimated
+satellite clock.  That lump is a real, per-satellite, band-common offset in metres seen
+from the phase side, and whether the emitted phase bias gives it back is what this script
+measures; folding it into the truth would remove the quantity under test.  It is
+reported separately (a leading candidate for the range-like term r_s of the shape model),
+and a lump-removed variant of the clock channel is tabulated as a diagnostic.
 
-WRAPPING
+Wrapping
 --------
-The producer pins each (sat, signal) phase bias at an ANCHOR receiver's own absolute
+The producer pins each (sat, signal) phase bias at an anchor receiver's own absolute
 ambiguity estimate, so P carries -lambda * N_anchor: the raw SD error is tens of cycles of
-gauge integer.  The WRAPPED fraction f = e - round(e) is the fixability quantity, exactly
-as in consumer_float_truth_join.  Every wrapped statistic is quoted against its own
+gauge integer.  The wrapped fraction f = e - round(e) is the fixability quantity, as in
+consumer_float_truth_join.  Every wrapped statistic is quoted against its own
 size-matched uniform null (|f| p50 0.25; P(<0.15) 0.30; P(<0.25) 0.50; R ~ sqrt(pi/4n)).
 
 Usage
@@ -101,10 +101,10 @@ if _SCRIPTS not in sys.path:
 import simnet_grade as SG                      # noqa: E402  product parser + truth semantics
 import consumer_float_truth_join as CJ         # noqa: E402  wrap/stat_block/lane algebra
 
-# The true integer is TIME-DEPENDENT on a slipped bed: N(t) = N_int + SUM of the
-# truth_slips.csv delta_cycles with tow_s <= t.  Reuse simnet_amb_integer's accumulator
-# rather than growing a second copy of it -- the same code path simnet_dd_reref and
-# simnet_t4_census already share.
+# The true integer is time-dependent on a slipped bed: N(t) = N_int + the sum of the
+# truth_slips.csv delta_cycles with tow_s <= t.  simnet_amb_integer's accumulator is
+# reused rather than copied; simnet_dd_reref and simnet_t4_census share the same code
+# path.
 from simnet_amb_integer import load_truth as load_truth_amb, n_at   # noqa: E402
 
 C_LIGHT = CJ.C_LIGHT
@@ -132,7 +132,7 @@ def load_osb_truth(stations):
     """(sat, RINEX signal) -> injected OSB in metres, asserted identical at every station.
 
     Satellite-side and time-constant by construction (SG.osb_truth_by_key's contract).
-    Both the CODE row (C1C) and the PHASE row (L1C) of each band are present and differ.
+    Both the code row (C1C) and the phase row (L1C) of each band are present and differ.
     """
     series, disagree = {}, 0
     for _name, d in stations:
@@ -149,9 +149,9 @@ def load_osb_truth(stations):
 def load_satclock_truth(stations):
     """(tow, sat) -> injected satellite-clock error in metres; empty when not armed.
 
-    The sim writes truth_satclock.csv ONLY when sat_clk_err.active() (src/sim/main.cpp
-    :3052).  Absent => zero injected satellite-clock error, which is STATED in the report
-    rather than silently defaulted.
+    The sim writes truth_satclock.csv only when sat_clk_err.active() (src/sim/main.cpp).
+    An absent file means zero injected satellite-clock error, and the report states
+    that instead of defaulting silently.
     """
     series, disagree, files = {}, 0, 0
     for _name, d in stations:
@@ -170,17 +170,17 @@ def load_satclock_truth(stations):
 
 
 def load_truth_amb_series(fixture, stations):
-    """(n_int, slips, n_stations) -- the SLIP-ACCUMULATED truth integer, not a static one.
+    """(n_int, slips, n_stations): the slip-accumulated truth integer, not a static one.
 
     ``n_int[(sta, sat, sig)]`` is the pre-slip base and ``slips[(sta, sat, sig)]`` the
     sorted [(tow_s, delta_cycles)] list; the value at an epoch is
-    ``n_at(n_int, slips, sta, sat, sig, tow)``.  Both come straight from
-    ``simnet_amb_integer.load_truth`` so there is exactly ONE accumulator in the tree.
+    ``n_at(n_int, slips, sta, sat, sig, tow)``.  Both come from
+    ``simnet_amb_integer.load_truth``, so the tree has a single accumulator.
 
-    Two adaptations to that loader's contract: it takes bare station NAMES where this
-    script carries (name, dir) pairs, and it raises SystemExit on a missing truth file
-    where this script's older static loader silently OMITTED the station -- so only the
-    stations that actually have one are handed to it, preserving the old behaviour.
+    Two adaptations to that loader's contract: it takes bare station names where this
+    script carries (name, dir) pairs, and it raises SystemExit on a missing truth file.
+    Only the stations that have a truth_ambiguities.csv are handed to it, so a station
+    without one is skipped rather than aborting the run.
     """
     names = [name for name, d in stations
              if os.path.isfile(os.path.join(d, "truth_ambiguities.csv"))]
@@ -193,7 +193,7 @@ def load_truth_amb_series(fixture, stations):
 def load_phase_anchor(run):
     """(tow, sat, signal) -> anchoring station, from logs/network_phase_anchor.csv.
 
-    Header: week,tow,cons,signal,sat,anchor_sta -- one row per emitted P record.
+    Header: week,tow,cons,signal,sat,anchor_sta; one row per emitted P record.
     """
     p = os.path.join(run, "logs", "network_phase_anchor.csv")
     if not os.path.isfile(p):
@@ -258,11 +258,12 @@ def wire_sd(wire, mode="minus", clock_key="dC", fixed_ref=None):
     mode "minus": W = dC - dP  (the quantity a consumer's phase ambiguity absorbs)
     mode "plus" : E = dC + dP  (the task statement's literal form)
 
-    Reference rule (mirrors consumer_float_truth_join.compute): ONE satellite per
-    (epoch, constellation) -- among those carrying a clock AND all three bands' P
-    records, the one with the smallest SUM of emitted phase-bias sigma (the wire's
-    analogue of the consumer's sum-of-float-std).  A single reference across bands is
-    REQUIRED for the lanes to be defined.  `fixed_ref` pins one satellite instead.
+    Reference rule (as in consumer_float_truth_join.compute): one satellite per
+    (epoch, constellation), chosen among those carrying a clock and all three bands' P
+    records as the one with the smallest sum of emitted phase-bias sigma (the wire's
+    analogue of the consumer's sum-of-float-std; ties break on the satellite ID).  The
+    lanes are defined only with a single reference across bands.  `fixed_ref` pins one
+    satellite instead, when that satellite is a candidate at the epoch.
 
     -> per_ep[tow][const] = {"ref": sat, "e": {sat: {band: e_cycles}}}
     """
@@ -316,31 +317,32 @@ def band_lane_records(per_ep):
 # shape decomposition
 # --------------------------------------------------------------------------- #
 class ShapeFitter:
-    """dE_b = r + gamma_b*i + lambda_b*n_b + eps_b, fitted on the WRAPPED values.
+    """dE_b = r + gamma_b*i + lambda_b*n_b + eps_b, fitted on the wrapped values.
 
     Objective (task statement):  min over r,i in [-3,3]^2 of
         sum_b [ lambda_b * wrap( f_b - (r + gamma_b*i)/lambda_b ) ]^2      [m^2]
-    where f_b = wrap(dE_b / lambda_b).  The objective depends ONLY on the wrapped
-    fractions -- as it must, since the free integers absorb any whole cycle.
+    where f_b = wrap(dE_b / lambda_b).  The objective depends only on the wrapped
+    fractions, since the free integers absorb any whole cycle.
 
-    TWO SOLVERS, and they are cross-checked against each other:
+    Two solvers, cross-checked against each other:
 
     * CELL (default, exact): every interior stationary point of the objective is the
       unconstrained LS solution of some integer triple n, and every reachable n is
       generated by an (n1, n2) pair, so enumerating (n1, n2) over the box-implied range
-      (67 x 69 = 4623 candidates) and evaluating the TRUE objective at each induced
-      (r, i) finds the interior optimum exactly -- no discretization at all.
+      (67 x 69 = 4623 candidates for both GPS and Galileo) and evaluating the true
+      objective at each induced (r, i) finds the interior optimum exactly, with no
+      discretization.
     * GRID (validation): the literal 1 cm grid over [-3,3]^2 (601 x 601 = 361 201
       points), run on a random subsample and compared cell-for-cell.
 
-    ⚠ IDENTIFIABILITY.  With 3 bands the model has 3 observations, 2 real parameters and
-    3 free integers -- ONE degree of freedom -- and the box contains a few hundred integer
-    cells.  A near-zero residual under the 2-parameter model is therefore NOT evidence of
-    a range/iono shape: it is what a uniformly random fraction triple also produces.  Every
-    share below is quoted against a size-matched MONTE-CARLO NULL drawn from independent
-    U(-0.5, 0.5) fractions and run through the identical solver, and the GAP is the
-    finding.  The falsifiable statements live in the 1-parameter fits (2 dof each) and in
-    the TIME BEHAVIOUR of the fitted r_s, i_s.
+    Identifiability.  With 3 bands the model has 3 observations, 2 real parameters and
+    3 free integers (one degree of freedom), and the box contains a few hundred integer
+    cells.  A near-zero residual under the 2-parameter model is therefore not evidence of
+    a range/iono shape: a uniformly random fraction triple produces one too.  Every
+    share below is quoted against a size-matched Monte-Carlo null drawn from independent
+    U(-0.5, 0.5) fractions and run through the identical solver, and the gap to that null
+    is the result.  The falsifiable statements are the 1-parameter fits (2 dof each) and
+    the time behaviour of the fitted r_s, i_s.
     """
 
     def __init__(self, const, box=3.0, step=0.01):
@@ -370,7 +372,7 @@ class ShapeFitter:
         return np.sum((res * self.lam) ** 2, axis=-1), res
 
     def fit_full(self, f):
-        """(N,3) -> r, i, cost_m2, res_cyc (N,3).  Exact interior optimum (CELL)."""
+        """(N,3) -> r, i, cost_m2, res_cyc (N,3).  Exact interior optimum (cell solver)."""
         N = f.shape[0]
         l1, l2 = self.lam[0], self.lam[1]
         g1, g2 = self.gam[0], self.gam[1]
@@ -435,12 +437,12 @@ class ShapeFitter:
         return c, res
 
     def grid_full(self, f):
-        """Literal 1 cm grid over [-3,3]^2 -- the validation path (slow)."""
+        """Literal 1 cm grid over [-3,3]^2: the validation path (slow)."""
         if self._grid is None:
             g = np.arange(-self.box, self.box + 0.5 * self._step, self._step)
             R, I = np.meshgrid(g, g, indexing="ij")
             R, I = R.ravel(), I.ravel()
-            # (G, 3) cycles of (r + gamma_b*i)/lambda_b -- built ONCE, not per sample
+            # (G, 3) cycles of (r + gamma_b*i)/lambda_b, built once rather than per sample
             self._grid = (R, I, (R[:, None] + I[:, None] * self.gam) / self.lam)
         R, I, u = self._grid
         out_r, out_i, out_c = [], [], []
@@ -456,13 +458,13 @@ def res_rms_cyc(res_cyc):
 
 
 def linear_shape(d, gam):
-    """INTEGER-FREE shape decomposition of d (N, 3) metres onto [1, gamma].
+    """Integer-free shape decomposition of d (N, 3) metres onto [1, gamma].
 
-    Used wherever the integers have already been removed -- by TIME-DIFFERENCING within
+    Used wherever the integers have already been removed: by time-differencing within
     an arc (they are arc-constant, so they cancel exactly) or by the anchor-gauge unwrap.
-    3 observations, 2 parameters, ONE degree of freedom and NO free integers, so unlike
+    3 observations, 2 parameters, one degree of freedom and no free integers, so unlike
     the wrapped per-(s,t) fit this one is identifiable and falsifiable: R^2 against the
-    null (no shape at all) is a real number.
+    null (no shape at all) is meaningful.
 
     -> {model: {"p": params, "res": (N,3), "ss": scalar SS of residuals}}, ss_tot
     """
@@ -665,7 +667,7 @@ def main():
     per_ep_nl, _ = wire_sd(wire, mode="minus", clock_key="dCl")
     be_nl, _le_nl = band_lane_records(per_ep_nl)
 
-    # consumer side, recomputed through consumer_float_truth_join's OWN code path
+    # consumer side, recomputed through consumer_float_truth_join's own code path
     cons_station = CJ.find_station(run, None)
     ctruthN, _ctruthLam, _c_slip = CJ.load_truth(fixture, cons_station)
     cper_epoch, _cweek = CJ.load_float(run)
@@ -773,7 +775,7 @@ def main():
                                                     "frac_lt_025", "R", "R_null", "mu")}}
     J["side_by_side"] = sbs
 
-    # ---- 1c: the UNDIFFERENCED (ZD) channels -------------------------------
+    # ---- 1c: the undifferenced (ZD) channels -------------------------------
     P("")
     P("=" * 128)
     P("STEP 1c  --  the UNDIFFERENCED channels: is each emitted quantity an INTEGER number")
@@ -826,7 +828,7 @@ def main():
     P("uniform null                    -     0.2500     0.3000     0.5000   ~R_null        -")
     J["zd_channels_settled"] = zd_j
 
-    # ---- 3: SHAPE decomposition -------------------------------------------
+    # ---- 3: shape decomposition -------------------------------------------
     P("")
     P("=" * 128)
     P("STEP 3  --  SHAPE of the wire's SD error across the three bands of a constellation")
@@ -999,7 +1001,7 @@ def main():
                 "n_tenures": len(tsr), "n_steps": len(spr)}
     J["shape_time"] = tb
 
-    # ---- 3b: INTEGER-FREE shape decomposition on the TIME DIFFERENCE -------
+    # ---- 3b: integer-free shape decomposition on the time difference -------
     P("")
     P("=" * 128)
     P("STEP 3b  --  the SAME shape question, made IDENTIFIABLE: consecutive-epoch DIFFERENCE")
@@ -1095,7 +1097,7 @@ def main():
         P("")
     J["shape_time_differenced"] = td_j
 
-    # ---- 4: ANCHOR-GAUGE UNWRAP -------------------------------------------
+    # ---- 4: anchor-gauge unwrap -------------------------------------------
     P("")
     P("=" * 128)
     P("STEP 4  --  ANCHOR-GAUGE UNWRAP")
@@ -1179,7 +1181,7 @@ def main():
         anch_j["n_anchor_stations"] = len(n_st)
     J["anchor_unwrap"] = anch_j
 
-    # ---- 4a: GAUGE IDENTIFICATION -----------------------------------------
+    # ---- 4a: gauge identification -----------------------------------------
     P("")
     P("=" * 128)
     P("STEP 4a  --  GAUGE IDENTIFICATION: whose integer does the emitted phase bias carry?")
@@ -1256,7 +1258,7 @@ def main():
                 "top_stations": dict(who.most_common(5))}
     J["gauge_identification"] = gid
 
-    # ---- 4c: SAME-ANCHOR vs CROSS-ANCHOR chords ---------------------------
+    # ---- 4c: same-anchor vs cross-anchor chords ---------------------------
     if anchors is not None:
         P("")
         P("=" * 128)
@@ -1322,7 +1324,7 @@ def main():
         P("  uniform null: p50|fr| 0.2500, <0.15 0.3000, R ~ sqrt(pi/4n)")
         J["anchor_match_ab"] = aab
 
-    # ---- 4b: shape of the ANCHOR-UNWRAPPED LEVEL (integer-free) ------------
+    # ---- 4b: shape of the anchor-unwrapped level (integer-free) ------------
     if anchors is not None:
         settled_name = WINDOWS[-1][0]
         pick_minus = None
@@ -1407,14 +1409,14 @@ def main():
                   % ("", "  full params", pctl(np.abs(full[:, 0]), 50),
                      pctl(np.abs(full[:, 0]), 90), pctl(np.abs(full[:, 1]), 50),
                      pctl(np.abs(full[:, 1]), 90)))
-                # per-band residual in cycles after the full fit -- what a fixer sees
+                # per-band residual in cycles after the full fit (what a fixer sees)
                 rc = models["full (r,i)"]["res"] / lam
                 P("%-9s %-18s   per-band residual after (r,i): %s"
                   % ("", "", "  ".join("%s p50|.| %.4f cyc" % (b, pctl(np.abs(rc[:, k]), 50))
                                        for k, b in enumerate(BANDS[const]))))
         J["unwrapped_level_shape"] = ul_j
 
-    # ---- 5: CONSISTENCY WITH THE CONSUMER ---------------------------------
+    # ---- 5: consistency with the consumer ---------------------------------
     P("")
     P("=" * 128)
     P("STEP 5  --  DOES THE CONSUMER INHERIT THE WIRE'S OFFSET?  (and which sign is right)")
@@ -1622,8 +1624,8 @@ def main():
                     dp2.append(float(wrap(aa[:, 0].mean() + aa[:, 1].mean())))
             if len(dm) < 4:
                 continue
-            # SIGNED values into circ_R -- feeding it |x| would fake a high resultant
-            # by confining every sample to a half-circle.
+            # Signed values go into circ_R: |x| would confine every sample to a
+            # half-circle and inflate the resultant.
             R, mu, n = circ_R(dm)
             Rp3, _mp, _ = circ_R(dp2)
             P("%-14s %7d | %10.4f %10.4f %10.4f %10.4f %10.4f"
@@ -1639,7 +1641,7 @@ def main():
     J["consumer_join_arcmean_settled"] = arcj
     P("")
 
-    # verdict -- from the UNWRAPPED regression, not the wrapped test
+    # verdict: from the unwrapped regression, not the wrapped test
     settled = WINDOWS[-1][0]
     if reg:
         sm = float(np.mean([v["slope_minus"] for v in reg.values()]))
@@ -1669,7 +1671,7 @@ def main():
                           "resid_sd_cyc_mean": sd}
     J["consumer_join"] = jj
 
-    # ---- 6: TIME STRUCTURE -------------------------------------------------
+    # ---- 6: time structure -------------------------------------------------
     P("")
     P("=" * 128)
     P("STEP 6  --  TIME STRUCTURE of the wire's wrapped SD fraction")

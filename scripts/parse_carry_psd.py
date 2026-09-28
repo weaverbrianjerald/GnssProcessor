@@ -1,37 +1,38 @@
-"""Carry-PSD audit of a network state snapshot — THE gate of the PD-safe fold card.
+"""Carry-PSD audit of a network state snapshot: the gate of the PD-safe fold card.
 
     python scripts/parse_carry_psd.py <snapshot.bin> [more_snapshots ...] [--fresh 1e6]
                                       [--top N] [--json OUT.json] [--quiet]
 
 docs/SPEC_pd_safe_dd_fold.md §7.1.  Positive-definiteness of the carried Pz is an
-ALGEBRAIC INVARIANT of the exact invariant-carry recursion — independent chords give a
+algebraic invariant of the exact invariant-carry recursion: independent chords give a
 full-row-rank projection W, so W·PSD·Wᵀ plus a fresh diagonal is PD, and the exact
-posterior of a PD prior is PD.  It can therefore break ONLY numerically, and when it does
-the fold's `M := 0` branch freezes the whole block silently and permanently.  Measured
-2026-08-02 on runs/churn_base (63 sta, 3 h, DOY-129): 568 of 686 carried rows — 78 % of
-the state — were diffusing behind exactly that, in the control and in every arm.
+posterior of a PD prior is PD.  It can therefore break only numerically, and when it does
+the fold's `M := 0` branch freezes the whole block silently and permanently.  A frozen
+block still reports PD (its rows never move enough to go non-finite or negative), so a
+large share of a lineage's carried state can sit frozen without failing a naive PD check;
+see docs/SPEC_pd_safe_dd_fold.md §7.1 for the field measurement that motivated this gate.
 
 The gate, per block:
-  * PD            — the correlation-normalized spectrum is strictly positive.  Graded
-                    normalized, NOT absolutely: a block carrying a 1e-4 .. 1e6 variance
+  * PD            : the correlation-normalized spectrum is strictly positive.  Graded
+                    normalized, not absolutely: a block carrying a 1e-4 .. 1e6 variance
                     spread has an eigensolver round-off floor around 1e-10 in absolute
                     terms, so an absolute test measures numpy, not the carry.
-  * diagonal      — every variance strictly positive and finite.  A negative variance is
+  * diagonal      : every variance strictly positive and finite.  A negative variance is
                     decisive on its own and needs no eigenvalue to reject.
-  * too-fresh count — ADVISORY only.  Nothing the RECURSION produces exceeds the prior it
+  * too-fresh count : advisory only.  Nothing the recursion produces exceeds the prior it
                     started from, but the recursion is not the only writer: a D5 re-tap
-                    installs sigma0^2 * Cov(v)_ii, and sigma0 is both > 1 and TIME-VARYING
+                    installs sigma0^2 * Cov(v)_ii, and sigma0 is both above 1 and time-varying
                     under LS-VCE calibration, so no ceiling readable from a snapshot is a
                     hard bound.  Reported against sigma0^2 * fresh from the blob's "S" line;
                     never fails the gate.
-  * diffuse rows  — rows still at (≥ half) the fresh prior.  These should be THIS epoch's
+  * diffuse rows  : rows still at (≥ half) the fresh prior.  These should be this epoch's
                     births only.  A standing diffuse set is the frozen-block signature:
                     the block takes no data, so its rows never leave the prior.
 
 Exit status is the gate: 0 = every block passed, 1 = at least one block failed, 2 = the
-snapshot carried no z-store at all (which is not a pass — it is "nothing was measured").
+snapshot carried no z-store at all (which is not a pass: it is "nothing was measured").
 
-Run it on the ON and OFF arms of the same lineage.  The OFF arm is EXPECTED to fail; that
+Run it on the ON and OFF arms of the same lineage.  The OFF arm is expected to fail; that
 failure is the card's field evidence, not a problem with the script.
 """
 import argparse
@@ -53,8 +54,8 @@ def read_carry_section(path):
 
     The snapshot is a plain text file; the z-store blob is embedded verbatim between a
     ``CARRY,v<n>,<count>`` header and a ``CEND`` terminator (NetworkStateSnapshot.cpp).
-    Reading it directly — rather than through any C++ path — is deliberate: this script is
-    the INDEPENDENT audit of what the producer actually wrote.
+    Reading it directly, rather than through any C++ path, is deliberate: this script is
+    an independent audit of what the producer actually wrote.
     """
     out, inside = [], False
     with open(path, "r", encoding="utf-8", errors="replace") as fh:
@@ -77,7 +78,7 @@ def parse_blocks(lines):
     Row shapes (NetworkInvariantCarryDriver::serializeCarry):
       B,group,pair,lambda1,lambda2,zdim,n_chords,n_vertices,n_arcs
       Z,<zdim values>
-      P,<zdim values>   x zdim      (v1/v2 dense)   ── OR ──   PD,<zdim values> (v3 diagonal)
+      P,<zdim values>   x zdim      (v1/v2 dense), or  PD,<zdim values> (v3 diagonal)
       H,<chord u,v pairs>   X,<vertex ids>   A,<arc u,v pairs>
     """
     blocks, i, n = [], 0, len(lines)
@@ -90,8 +91,9 @@ def parse_blocks(lines):
         line = lines[i]
         if line == "CEND":
             break
-        # RE-1 v2: "S,<sigma0_sq>,<eff_rows>" — the D5 LS-VCE inflation state.  It is the
-        # ceiling this audit must grade "too fresh" against; see audit_block.
+        # The v2 "S,<sigma0_sq>,<eff_rows>" line holds the D5 LS-VCE inflation state
+        # (card RE-1); it is the ceiling this audit must grade "too fresh" against, see
+        # audit_block.
         if line.startswith("S,"):
             f = line.split(",")
             if len(f) == 3:
@@ -187,25 +189,24 @@ def audit_block(blk, fresh, sigma0_sq=1.0):
     if r["n_nonpos_diag"]:
         r["reasons"].append("%d non-positive variance(s)" % r["n_nonpos_diag"])
 
-    # Anything above the diffuse fresh prior cannot be produced by the RECURSION: the
+    # Anything above the diffuse fresh prior cannot be produced by the recursion: the
     # posterior of a prior is never looser than that prior.  But the recursion is not the
     # only writer.  A D5 re-tap (network.carry_invariant_innov_gate) installs the chord's
     # honest post-fit variance sigma0^2 * Cov(v)_ii, and under LS-VCE calibration
-    # (innov_calibrate) sigma0 is measured, not 1 -- 4.05 on the 2026-08-03 3 h leg, so a
-    # re-tapped diffuse chord legitimately lands at 16 x the fresh prior.  Grading against
-    # a bare `fresh` therefore flags the D5 gate doing exactly its job, on BOTH arms, and
-    # buries the real signal (the control's failure is its 100 NEGATIVE variances).  The
-    # blob carries the number needed: the v2 "S," line is sigma0^2.
+    # (innov_calibrate) sigma0 is measured and typically runs above 1, so a re-tapped
+    # diffuse chord can legitimately land well above the fresh prior.  Grading against a
+    # bare `fresh` would therefore flag the D5 gate doing its job on both arms and bury
+    # the real signal, a negative variance.  The blob carries the number needed: the v2
+    # "S," line is sigma0^2.
     ceiling = fresh * sigma0_sq
     r["ceiling"] = ceiling
     if fresh > 0.0:
-        # ADVISORY, not a gate item.  sigma0 is TIME-VARYING (LS-VCE with a 15-epoch
-        # forgetting half-life), so the sigma0^2 in the final blob does not bound what a
-        # re-tap installed three hours earlier: the 2026-08-03 3 h leg wrote entries at
-        # 1.593e7 from an epoch where sigma0^2 was 15.93 and closed the run at 15.85.  No
-        # single ceiling read from the snapshot can be a hard bound, so this is REPORTED
-        # and never fails the gate.  SPEC 7.1 names the gate as "every block PD ... diffuse
-        # rows ~ current-epoch births only" — that is what `ok` grades.
+        # Advisory only, not a gate item.  sigma0 is time-varying (LS-VCE with a 15-epoch
+        # forgetting half-life), so the sigma0^2 stored in the final blob does not bound
+        # what an earlier re-tap installed: sigma0^2 can be higher mid-run than at the
+        # snapshot.  No single ceiling read from the snapshot can be a hard bound, so this
+        # is reported and never fails the gate.  SPEC 7.1 names the gate as "every block
+        # PD ... diffuse rows ~ current-epoch births only", that is what `ok` grades.
         r["n_superfresh"] = int(np.count_nonzero(np.abs(P) > ceiling * (1.0 + 1e-9)))
         r["n_diffuse_rows"] = int(np.count_nonzero(d >= 0.5 * fresh))
 

@@ -3,10 +3,11 @@
  * @file Namespaces.hpp
  * @brief Lightweight namespace grouping and aliases for incremental refactor.
  *
- * Provide `GnssProcessor::Model`, `GnssProcessor::IO`, `GnssProcessor::Filter`
- * as grouping namespaces via type aliases to allow stepwise migration.
+ * Provides `GnssProcessor::Model`, `GnssProcessor::Atmosphere`, `GnssProcessor::IO`
+ * and `GnssProcessor::Filter` as grouping namespaces through using-declarations, so
+ * types can be migrated into nested namespaces step by step.
  *
- * Add or remove aliases as you move types into actual nested namespaces.
+ * Aliases are added or removed here as types move into real nested namespaces.
  */
 
 #include "model/PppModel.hpp"
@@ -30,9 +31,10 @@ namespace GnssProcessor {
  * @namespace GnssProcessor::Model
  * @brief Grouping aliases for model-related public types.
  *
- * This namespace re-exports model types from the top-level `GnssProcessor`
- * to provide a single place to migrate types into a true nested namespace
- * during incremental refactor.
+ * Re-exports model types from the top-level `GnssProcessor` namespace, giving a
+ * single place to migrate them into a true nested namespace during incremental
+ * refactor.  `Geometry` is already declared in `GnssProcessor::Model`
+ * (model/ModelGeometry.hpp); its using-declaration here is redundant but harmless.
  *
  * Included types:
  * - PppModel
@@ -51,7 +53,7 @@ namespace Model {
  * @namespace GnssProcessor::Atmosphere
  * @brief Grouping aliases for atmospheric model types.
  *
- * Re-exports ionosphere and troposphere related types to ease migration.
+ * Re-exports the ionosphere and troposphere types to ease migration.
  */
 namespace Atmosphere {
     using ::GnssProcessor::Ionosphere;
@@ -76,8 +78,8 @@ namespace IO {
  * @namespace GnssProcessor::Filter
  * @brief Grouping aliases for filtering, estimation and state management.
  *
- * Contains Kalman, WLS and other estimator/state manager types to support
- * incremental namespace migration.
+ * Re-exports the Kalman filter, state manager, WLS estimator and MW slip detector
+ * types to support incremental namespace migration.
  */
 namespace Filter {
     using ::GnssProcessor::KalmanFilter;
@@ -90,12 +92,11 @@ namespace Filter {
  * @namespace GnssProcessor::internal
  * @brief Implementation-only aliases.
  *
- * Use this namespace for aliases intended only for internal implementation
- * and not for the public API. Keep contents private to the translation unit
- * where possible.
+ * Holds aliases intended for internal implementation only, not for the public
+ * API.  Contents are kept private to the translation unit where possible.
  */
 namespace internal {
-    // Add implementation-only aliases as you create them.
+    // Implementation-only aliases go here; currently empty.
 }
 
 } // namespace GnssProcessor

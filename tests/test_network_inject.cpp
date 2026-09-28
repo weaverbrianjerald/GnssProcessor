@@ -1,17 +1,18 @@
 /**
  * @file test_network_inject.cpp
- * @brief EVENT HARNESS — the fault injector's parse contract and epoch semantics.
+ * @brief Event harness: the fault injector's parse contract and epoch semantics.
  *
  * Two halves, both structural (the suite does not validate estimation accuracy):
  *
- *  * `NetworkInjectConfig` — every kind parses, and every REQUIRED-field omission
- *    is a LOUD load failure.  The last one matters most: a typo that fell through
- *    to another kind's defaults would arm a different event than the operator
- *    wrote, and the leg would be graded as though it were the intended one.
- *  * `NetworkInjectEpoch` — the step is applied ONCE PER EPOCH from `tow` on and
- *    never accumulates; the outage drops exactly its window; an armed-but-unfired
- *    event is reported (and fails the run); unarmed is a no-op that does not even
- *    copy the epoch.
+ *  * `NetworkInjectConfig`: six of the seven accepted kinds parse (oracle_pin is
+ *    not covered here), and every omitted required field fails the load.  The
+ *    failure matters because a typo that fell through to another kind's defaults
+ *    would arm a different event than the operator wrote, and the leg would be
+ *    graded as though it were the intended one.
+ *  * `NetworkInjectEpoch`: a step is applied once per epoch from `tow` on to that
+ *    epoch's raw observables and does not accumulate; an outage drops exactly its
+ *    window; an armed event that never fires is reported and fails the run; with
+ *    nothing armed the call is a no-op that does not copy the epoch.
  *
  * The epoch half drives `networkInjectEpoch` directly against a hand-built
  * `SyncedEpoch`, so it needs no fixtures and no solve.
@@ -69,7 +70,7 @@ namespace {
             "}\n";
     }
 
-    /// @c "inject": { ... },  ready to splice.  @p j is the inject OBJECT.
+    /// @c "inject": { ... }, ready to splice.  @p j is the inject object.
     std::string injectBlock(const nlohmann::json& j) {
         if (j.is_null()) return "";
         return "    \"inject\": " + j.dump() + ",\n";
@@ -167,7 +168,7 @@ TEST(NetworkInjectConfig, EachKindParses) {
     EXPECT_EQ(ic.events[2].mode, "cold");
     EXPECT_EQ(ic.events[2].signal, "all");        // defaulted
     EXPECT_DOUBLE_EQ(ic.events[4].step_m, 0.5);
-    // rx_clock_step: the DUAL of sat_clock_step — a station, no satellite, no signal.
+    // rx_clock_step, the dual of sat_clock_step: a station, no satellite, no signal.
     EXPECT_EQ(ic.events[5].kind, "rx_clock_step");
     EXPECT_EQ(ic.events[5].station, "STA1");
     EXPECT_TRUE(ic.events[5].sat.empty());
@@ -185,7 +186,7 @@ TEST(NetworkInjectConfig, EnableFalseParksTheSchedule) {
     EXPECT_EQ(cfg.getNetworkConfig().inject.events.size(), 1u);
 }
 
-/// A required field missing must FAIL the load — never fall through to a default
+/// A missing required field fails the load instead of falling through to a default
 /// that arms a different event than the operator wrote.
 class NetworkInjectRejects : public ::testing::TestWithParam<nlohmann::json> {};
 
@@ -237,12 +238,12 @@ INSTANTIATE_TEST_SUITE_P(
         // rx_clock_step with a zero step
         nlohmann::json{{"kind", "rx_clock_step"}, {"tow", 1.0}, {"station", "STA1"},
                        {"step_m", 0.0}},
-        // rx_clock_step with a `sat`: it READS as a scope and is not one — a receiver
+        // rx_clock_step with a `sat`: it reads as a scope but is not one.  A receiver
         // clock jump is station-common, so accepting it would arm a different event
         // than the operator wrote
         nlohmann::json{{"kind", "rx_clock_step"}, {"tow", 1.0}, {"station", "STA1"},
                        {"sat", "G05"}, {"step_m", 0.5}},
-        // rx_clock_step with a `signal`: same trap on the dispersive axis
+        // rx_clock_step with a `signal`: the same reasoning on the dispersive axis
         nlohmann::json{{"kind", "rx_clock_step"}, {"tow", 1.0}, {"station", "STA1"},
                        {"signal", "L1C"}, {"step_m", 0.5}}));
 
@@ -268,7 +269,7 @@ TEST(NetworkInjectEpoch, SlipIsAStepNotARamp) {
     EXPECT_EQ(&o0, &pre);
     EXPECT_DOUBLE_EQ(o0.by_station.at("STA1")[0].measurements.at("L1C"), l0);
 
-    // Onset and three more epochs: the SAME +10 cyc every time.
+    // Onset and three more epochs: the same +10 cyc every time.
     for (int k = 0; k < 4; ++k) {
         SyncedEpoch se = epochAt(1000.0 + 30.0 * k), scratch;
         const SyncedEpoch& out =
@@ -312,7 +313,7 @@ TEST(NetworkInjectEpoch, OutageDropsExactlyTheWindow) {
         for (const auto& o : out.by_station.at("STA1"))
             if (o.satellite == "G05") ++n_g05;
         EXPECT_EQ(n_g05, gone[k] ? 0u : 1u) << "tow " << tows[k];
-        // The station's OTHER satellite never leaves.
+        // The station's other satellite is never dropped.
         std::size_t n_g07 = 0;
         for (const auto& o : out.by_station.at("STA1"))
             if (o.satellite == "G07") ++n_g07;
@@ -345,7 +346,7 @@ TEST(NetworkInjectEpoch, SatClockStepMovesEveryStationAndBothChannels) {
 }
 
 TEST(NetworkInjectEpoch, RxClockStepMovesEverySignalOfOneStationOnly) {
-    // The DUAL of sat_clock_step: one station, EVERY satellite, both channels.
+    // The dual of sat_clock_step: one station, every satellite, both channels.
     nlohmann::json ij = {{"events", nlohmann::json::array({
         {{"kind", "rx_clock_step"}, {"tow", 1000.0}, {"station", "STA1"},
          {"step_m", 0.5}}})}};
@@ -353,20 +354,20 @@ TEST(NetworkInjectEpoch, RxClockStepMovesEverySignalOfOneStationOnly) {
     SyncedEpoch se = epochAt(1000.0), scratch;
     const SyncedEpoch& out = networkInjectEpoch(*h.ctx, h.log, *h.traces, se, scratch);
 
-    // Every satellite of the stepped station moved, and by the SAME metres on code.
+    // Every satellite of the stepped station moved, by the same metres on code.
     const auto& s1 = out.by_station.at("STA1");
     ASSERT_EQ(s1.size(), 2u);
     EXPECT_DOUBLE_EQ(s1[0].measurements.at("C1C"), 2.0e7 + 0.5);   // G05
     EXPECT_DOUBLE_EQ(s1[1].measurements.at("C1C"), 2.1e7 + 0.5);   // G07
-    // Phase moved by step/lambda cycles (L1 lambda ~ 0.1903 m => ~2.63 cyc), the SAME
-    // cycle count on both satellites because the band is the same — non-dispersive.
+    // Phase moved by step/lambda cycles (L1 lambda ~ 0.1903 m => ~2.63 cyc), the same
+    // cycle count on both satellites because the band is the same (non-dispersive).
     const double d05 = s1[0].measurements.at("L1C") - 1.0e8;
     const double d07 = s1[1].measurements.at("L1C") - 1.1e8;
     EXPECT_GT(d05, 2.5);
     EXPECT_LT(d05, 2.7);
     EXPECT_NEAR(d05, d07, 1e-9);
 
-    // A DIFFERENT station is untouched on both channels — this is the half that
+    // A different station is untouched on both channels; this is the half that
     // separates a receiver-clock jump from a satellite-clock jump.
     const auto& s2 = out.by_station.at("STA2");
     ASSERT_EQ(s2.size(), 1u);
@@ -381,9 +382,9 @@ TEST(NetworkInjectEpoch, RxClockStepMovesEverySignalOfOneStationOnly) {
 }
 
 TEST(NetworkInjectEpoch, RxClockStepPersistsAndDoesNotAccumulate) {
-    // A receiver that stepped its clock does not step it back: the SAME delta on
-    // every later epoch, applied to that epoch's own raw observables (never a ramp,
-    // never a one-epoch spike).  Nothing before tow moves.
+    // A receiver that stepped its clock does not step it back: the same delta on
+    // every later epoch, applied to that epoch's own raw observables (neither a
+    // ramp nor a one-epoch spike).  Nothing before tow moves.
     nlohmann::json ij = {{"events", nlohmann::json::array({
         {{"kind", "rx_clock_step"}, {"tow", 1000.0}, {"station", "STA1"},
          {"step_m", 0.5}}})}};
@@ -407,8 +408,8 @@ TEST(NetworkInjectEpoch, RxClockStepPersistsAndDoesNotAccumulate) {
 }
 
 TEST(NetworkInjectEpoch, RxClockStepOnAnAbsentStationNeverFires) {
-    // The harness rule: a fixture that silently did not exist is worse than a run
-    // that refuses to finish (a leg would otherwise be graded as a null).
+    // The harness rule: an event whose target does not exist fails the run at the
+    // end; otherwise the leg would be graded as a null result.
     nlohmann::json ij = {{"events", nlohmann::json::array({
         {{"kind", "rx_clock_step"}, {"tow", 1000.0}, {"station", "NOPE"},
          {"step_m", 0.5}}})}};
@@ -435,15 +436,15 @@ TEST(NetworkInjectEpoch, DecisionKindsStageAOneEpochDirective) {
     ASSERT_EQ(h.ctx->inject.arc_erase_now.size(), 1u);
     EXPECT_EQ(h.ctx->inject.arc_erase_now[0].station, "STA1");
     EXPECT_EQ(h.ctx->inject.arc_erase_now[0].sat, "G07");
-    // Study 1: no mode named => the PRODUCTION erase, whole satellite.
+    // Study 1: no mode named => the production erase, whole satellite.
     EXPECT_EQ(h.ctx->inject.arc_erase_now[0].mode, "erase");
     EXPECT_TRUE(h.ctx->inject.arc_erase_now[0].isErase());
     EXPECT_TRUE(h.ctx->inject.arc_erase_now[0].signals.empty());
     EXPECT_TRUE(h.ctx->inject.arc_erase_now[0].coversSignal("L5Q"));
 
-    // The NEXT epoch clears them — a directive must never fire twice.  (The
-    // consumers close the firing ledger, so onset_logged is still false here and
-    // the directives would restage; the harness's real legs consume them.)
+    // The next epoch clears them, so a directive fires once.  In a real leg the
+    // consumers close the firing ledger by setting onset_logged; no consumer runs
+    // here, so the test sets it by hand, since otherwise the directives restage.
     h.ctx->inject.onset_logged[0] = true;
     h.ctx->inject.onset_logged[1] = true;
     SyncedEpoch b = epochAt(1030.0), sb;
@@ -453,8 +454,8 @@ TEST(NetworkInjectEpoch, DecisionKindsStageAOneEpochDirective) {
 }
 
 TEST(NetworkInjectEpoch, ArcEraseStudy1ModeAndBandScope) {
-    // docs/SPEC_event_harness.md SS9: the diagnostic sub-knobs are parsed onto
-    // the staged directive, free_epoch is routed AWAY from the T4 block
+    // docs/SPEC_event_harness.md §9: the diagnostic sub-knobs are parsed onto
+    // the staged directive, free_epoch is routed away from the T4 block
     // (isErase() false), and a ";"-separated `signal` narrows the band scope.
     nlohmann::json ij = {{"events", nlohmann::json::array({
         {{"kind", "arc_erase"}, {"tow", 1000.0}, {"station", "STA1"},

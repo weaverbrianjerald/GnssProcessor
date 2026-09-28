@@ -1,38 +1,38 @@
 #!/usr/bin/env python3
 """Score the engine's MW widelane integers against the estimator-free MW census.
 
-WHY
+Why
 ---
 ``AmbiguityResolver::resolveWlConstrained`` anchors the narrow-lane search on a
-HARD widelane integer taken from the MW cycle-slip detector:
+hard widelane integer taken from the MW cycle-slip detector:
 
     dd_wl = SD_WL(sat_i) - SD_WL(sat_ref)          (AmbiguityResolver.cpp ~:1183)
     y     = N1 - f2/(f1+f2) * dd_wl                (the N1-aligned search target)
 
 For GPS L1/L2, ``f2/(f1+f2) = 0.4379``.  A 1-cycle error in ``dd_wl`` therefore
-shifts the N1 target by 0.438 cycles -- almost exactly half a cycle, the
+shifts the N1 target by 0.438 cycles, almost exactly half a cycle, the
 maximally ambiguous displacement.  A wrong widelane deterministically produces a
 wrong narrow-lane.  This script measures how often that happens.
 
-METHOD (bias-immune)
---------------------
+Method (bias-immune)
+---------------------
 The census MW comes straight from raw RINEX and still carries the receiver MW
-bias (common to all satellites, cancels in the between-satellite SD) AND the
-satellite MW bias (per-satellite, does NOT cancel in an SD).  The engine's MW is
-OSB-corrected.  So the two cannot be compared in absolute terms.
+bias (common to all satellites, cancels in the between-satellite SD) and the
+satellite MW bias (per-satellite, does not cancel in an SD).  The engine's MW is
+OSB-corrected, so the two cannot be compared in absolute terms.
 
-They CAN be compared in time.  For a continuous arc the true widelane ambiguity
+They can be compared in time.  For a continuous arc the true widelane ambiguity
 is a constant, so for each satellite pair
 
     resid(t) = SD_MW_census(t) - dd_wl_engine(t)
 
-must be CONSTANT (it equals the fixed satellite-MW-bias difference plus MW
-noise).  Any integer STEP in resid is a disagreement: either the engine changed
+must be constant (it equals the fixed satellite-MW-bias difference plus MW
+noise).  Any integer step in resid is a disagreement: either the engine changed
 its integer when the data did not, or the data stepped and the engine did not.
 
 Reported per pair, against the pair's own median resid:
-  * n_bad   -- epochs with |resid - median| >= 0.5 cyc  (an integer disagreement)
-  * scatter -- robust sigma of resid  (should be MW noise, ~0.1-0.3 cyc)
+  * n_bad   -- epochs with |resid - median| >= 0.5 cyc (an integer disagreement)
+  * scatter -- robust sigma of resid (should be MW noise, ~0.1-0.3 cyc)
   * n_flip  -- times the engine's dd_wl changed value within the arc
 
 Usage
@@ -143,9 +143,9 @@ def main():
         print(f"median per-pair MAD sigma : {st.median(mads):.3f} cyc  "
               f"(MW noise expectation ~0.1-0.3)")
         sig = st.median(mads)
-        # A 0.5-cyc threshold against sigma this size is only ~2 sigma, so pure
-        # MW noise already crosses it this often — quote the null so the raw rate
-        # is not over-read.
+        # A 0.5-cyc threshold against sigma this size is only about 2 sigma, so
+        # pure MW noise already crosses it this often; quote the null so the raw
+        # rate is not over-read.
         z = 0.5 / sig if sig > 0 else float("inf")
         null = 100.0 * math.erfc(z / math.sqrt(2.0))
         print(f"  ...but the NOISE-ONLY null at that sigma is {null:.1f}% "
@@ -154,16 +154,15 @@ def main():
               f"{sum(1 for r in per_pair if r[2] > 0)}/{len(per_pair)}")
         print(f"total engine WL flips      : {sum(r[5] for r in per_pair)}")
 
-    # ---- ZERO-DIFFERENCE arc medians — DIAGNOSTIC ONLY, NOT a validity test --
-    # ⚠️ The absolute ZD widelane level is NOT OBSERVABLE and the engine's
+    # ---- zero-difference arc medians: diagnostic only, not a validity test ----
+    # The absolute ZD widelane level is not observable, and the engine's
     # per-satellite wl_i is arc-relative (the MW detector latches a level at arc
-    # start).  So a large per-satellite offset here is EXPECTED and is NOT
-    # evidence of a wrong integer — an earlier version of this script reported
-    # those offsets as "WRONG by N cyc", which was a test-design error.
-    # Only the between-satellite SD comparison above is a validity test: taking
-    # the per-pair median absorbs any per-satellite constant, leaving noise.
-    # This block is kept because the SPREAD is a useful sanity read on whether
-    # the engine and the census are even on the same scale.
+    # start), so a large per-satellite offset here is expected and is not
+    # evidence of a wrong integer.  Only the between-satellite SD comparison
+    # above is a validity test: taking the per-pair median absorbs any
+    # per-satellite constant, leaving noise.  This block is kept because the
+    # spread is a useful sanity read on whether the engine and the census are
+    # on the same scale.
     zd = defaultdict(list)
     pat = re.compile(r"WLDUMP tow=([\d.]+) sat_i=(\S+) sat_ref=(\S+) \S+ \S+ "
                      r"wl_i=(-?\d+) wl_ref=(-?\d+)")

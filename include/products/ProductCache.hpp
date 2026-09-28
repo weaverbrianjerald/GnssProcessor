@@ -4,12 +4,12 @@
  * @brief Singleton cache for GNSS product data to avoid repeated loading.
  *
  * Provides a thread-safe singleton that loads and caches all product data
- * (orbits, clocks, antennas, biases, ERPs, Klobuchar coefficients) once
- * and shares them across all model components.
+ * (orbits, clocks, antennas, biases, ERPs, Klobuchar coefficients, clock
+ * reference signals) once and shares them across all model components.
  *
- * NOTE: Binary persistence helpers for antenna data (save/load) have been
- * added to avoid reparsing ATX on subsequent runs. Helpers are declared
- * below as private static methods.
+ * NOTE: Binary persistence helpers for antenna data (save/load, intended to
+ * avoid reparsing ATX on later runs) are declared below as private static
+ * methods. loadProducts() does not call them; see the note at their declarations.
  */
 
 #include "common/PppTypes.hpp"
@@ -34,7 +34,10 @@ class ProductParser;
  * to ensure products are loaded only once and shared across all
  * components that need them (PppModel, Geometry, Ionosphere, etc.).
  *
- * Thread-safety is guaranteed for both initialization and access.
+ * Instance creation is thread-safe (function-local static), and loadProducts()
+ * serializes loading with a mutex and double-checked flag. The accessors take no
+ * lock: concurrent reads are safe once loading has completed, but not while
+ * clearCache() runs.
  */
 class ProductCache {
 public:
@@ -85,12 +88,12 @@ public:
     const std::vector<double>& getKlobucharCoeffs() const { return klobuchar_coeffs_; }
     const ClockRefMap& getClockRefSignals() const { return clock_ref_signals_; }
 
-    // SHARED owners — hand these to per-instance model components (Geometry,
-    // GnssCorrections) so they REFERENCE the single cached copy instead of each
-    // copying the (read-only, MB-to-GB) product/antenna vectors.  This is what
-    // eliminates the per-station product duplication at network scale (~0.5 GB ×
-    // N stations otherwise).  Each is const, so sharing is safe; an SSR consumer
-    // that needs to OVERRIDE clocks simply rebinds its own shared_ptr.
+    // Shared owners. Per-instance model components (Geometry, GnssCorrections) hold
+    // these so they reference the single cached copy instead of each copying the
+    // read-only product and antenna vectors (MB to GB). Without them, a network run
+    // holds one copy per station (about 0.5 GB × N stations). The vectors are const,
+    // so sharing is safe; an SSR consumer that overrides clocks rebinds its own
+    // shared_ptr.
     std::shared_ptr<const std::vector<OrbitData>>   getOrbitsShared() const { return orbits_; }
     std::shared_ptr<const std::vector<ClockData>>   getClocksShared() const { return clocks_; }
     std::shared_ptr<const std::vector<AntennaData>> getAntennasShared() const { return antennas_; }
@@ -134,17 +137,18 @@ private:
     //
     // Binary persistence helpers for antenna data
     //
-    // These helpers are used internally by loadProducts() to attempt to
-    // load/store `antennas_` to a compact binary file in the project
-    // directory (default filename: "antennas.bin"). They are intentionally
-    // private and static to avoid adding state to the singleton beyond the
-    // existing cached vectors.
+    // These helpers load/store `antennas_` to a compact binary file in the process
+    // current working directory (filename "antennas.bin"). They are private and
+    // static so the singleton holds no state beyond the cached vectors.
+    // loadProducts() does not call them, and ProductCache.cpp defines same-named
+    // file-local free functions rather than these members, so these declarations
+    // have no definition.
     //
 
-    // Return the default antenna binary path (project current working directory).
+    // Return the default antenna binary path (process current working directory).
     static std::filesystem::path getAntennaBinPath() noexcept;
 
-    // Save the provided antennas to the given path (logs via LogManager).
+    // Save the provided antennas to the default path (logs via LogManager).
     // Returns true on success.
     static bool saveAntennasToBinary(const std::vector<AntennaData>& antennas, LogManager& log_manager);
 

@@ -1,52 +1,58 @@
 #!/usr/bin/env python3
-"""ORACLE SLIP-RESPONSE REPAIR-EFFECT CENSUS — did the truth-fed repair actuate?
+"""Oracle slip-response repair-effect census: grades whether the truth-fed repair actuated.
 
 `network.cycle_slip.oracle_relevel` (include/slip/NetworkSlipOracle.hpp) answers
-every detector actuation on a CARRIED arc by shifting `LocalCarry::value_abs` by
-the TRUE integer jump sum d*lambda instead of freeing the arc.  The run-end
-counters say how many arcs it TOUCHED; they cannot say whether the touch had the
-right SIGN, landed on the right KEY, or moved the estimate at all.  This script
-answers that, on the one instrument that carries truth: the chord-median DD error
-of the repaired arc, reused verbatim from `scripts/simnet_t4_census.py`
-(`scan_dd` + `ArcStat`) so the two censuses cannot disagree about what `e` means.
+every detector actuation on a carried arc by shifting `LocalCarry::value_abs` by
+the true integer jump sum d*lambda instead of freeing the arc.  The run-end
+counters report how many arcs it touched; they cannot show whether the touch had
+the right sign, landed on the right key, or moved the estimate at all.  This
+script measures that on the one instrument that carries truth: the chord-median
+DD error of the repaired arc, reused unchanged from `scripts/simnet_t4_census.py`
+(`scan_dd` + `ArcStat`) so the two censuses share one definition of `e`.
 
-THE SIGN TEST (the single most important number)
-------------------------------------------------
+The sign test (the primary result)
+----------------------------------
 Convention, fixed by `scan_dd`: for a chord (sta_a, sta_b) it forms
 `e = dd_cyc - dd_true` and attributes `+e` to sta_a's leg and `-e` to sta_b's, so
-`e(S, s, sig, t)` is the SIGNED error of that arc's estimated ambiguity minus its
-TRUE integer, in cycles.  A truth slip of delta cycles at time t raises the TRUE
+`e(S, s, sig, t)` is the signed error of that arc's estimated ambiguity minus its
+true integer, in cycles.  A truth slip of delta cycles at time t raises the true
 integer by delta while a stiff zero-q carried level does not move, so the
 pre-repair error reads
 
     e(t0 - 30) ~ ambient - delta
 
-and a CORRECT repair (which adds +delta cycles to the carried level) returns it to
+and a correct repair (which adds +delta cycles to the carried level) returns it to
 
     e(t0) ~ ambient,          i.e.  e(t0) - e(t0 - 30) ~ +delta   (slope +1)
 
-A repair applied with the WRONG SIGN lands at e(t0) ~ -2*delta (slope -1,
+A repair applied with the wrong sign lands at e(t0) ~ -2*delta (slope -1,
 |e(t0)| ~ 2|delta|); a repair that never reaches the solved state leaves
-e(t0) ~ -delta (slope 0, |e(t0)| ~ |delta|).  All three are separated by the
-regression of (e(t0) - e(t0-30)) on delta AND by the |e(t0)| distribution
-against |delta|, which is why both are reported.
+e(t0) ~ -delta (slope 0, |e(t0)| ~ |delta|).  The three cases are separated both
+by the regression of (e(t0) - e(t0-30)) on delta and by the |e(t0)|
+distribution against |delta|, so both are reported.
 
-  * The slope is reported for the RAW pair and for the ref-free (leave-one-out
+These expectations assume the detector fired at least one epoch after the
+slip.  With detection latency 0 the slip lands in the repair epoch, e(t0-30) is
+a pre-slip sample, and the slope map shifts by -1 (0 = exact, -1 = inert,
+-2 = wrong sign); effect_report() therefore also splits by latency.
+
+  * The slope is reported for the raw pair and for the ref-free (leave-one-out
     per-station-signal median removed, SPEC_amb_iono 6.12) pair.
-  * `slope_pre` — the regression of e(t0-30) on delta — is the CONTROL: it must
-    be ~ -1 for the census to be measuring what it claims (the pre-repair trace
-    really does carry the un-absorbed slip).  If slope_pre is ~0 the arcs being
-    repaired were not the arcs that jumped, and the sign test says nothing.
+  * `slope_pre` (the regression of e(t0-30) on delta) is the control: for late
+    detections it should be ~ -1, showing that the pre-repair trace carries the
+    un-absorbed slip.  If it is ~0 there, the arcs being repaired were not the
+    arcs that jumped, and the sign test carries no information.
 
-WHICH SIGNAL WAS REPAIRED
--------------------------
-`network_events.csv` carries ONE row per satellite but the oracle decides per
-SIGNAL, so the row's `delta=` names the band that won and the row's prefix names
-the CANDIDATE bands (`L1C;L2W`, or the bare token `LLI`, which names none).  The
+Identification of the repaired signal
+-------------------------------------
+`network_events.csv` carries one row per satellite, but the oracle decides per
+signal, so the row's `delta=` names the band that won and the row's prefix names
+the candidate bands (`L1C;L2W`, or the bare token `LLI`, which names none).  The
 signal is recovered by matching the row's delta against the truth table: the
 repaired signal is the one whose truth slips inside the oracle's own window
-`(t0 - window_s, t0]` sum to exactly that delta.  Rows where zero or several
-candidate signals match are counted and EXCLUDED, never guessed.
+`(t0 - window_s, t0]` sum to exactly that delta.  When no candidate band
+matches, the match is retried over every signal.  Rows where no signal or
+several signals match are counted and excluded, not guessed.
 
 Usage
 -----
@@ -246,7 +252,10 @@ def window_sum(by_sig, sta, sat, sig, t_hi, window_s):
 def identify_signal(rec, by_sig, window_s):
     """Recover the repaired signal by matching the row's delta against truth.
 
-    Returns (sig, status) with status in {ok, ok_prefix, ambiguous, nomatch}.
+    Returns (sig, status, delta, n) with status in {ok, ok_wide, ambiguous,
+    nomatch}: `ok` is a unique match among the row's named bands, `ok_wide` a
+    unique match after widening to every signal; sig is None unless status is
+    ok or ok_wide.
     """
     sigs, delta, n = parse_detail(rec["detail"])
     sta, sat, t0 = rec["sta"], rec["sat"], rec["s"]
@@ -308,11 +317,11 @@ def repair_effect(evs, stat, any_qc, by_sig, window_s, ref_free):
         ti = rec["ti"]
         nxt = next_event_after(any_qc, rec["sta"], rec["sat"], ti)
         prv = prev_event_before(any_qc, rec["sta"], rec["sat"], ti)
-        # DETECTION LATENCY — how far back in the window the repaired jump sits.
-        # This is load-bearing for reading e(t0-30): a latency-0 repair has NO
-        # slip yet at t0-30, so an ambient e(t0-30) is expected and the pre-slope
-        # is uninformative.  Only latency >= 1 epoch puts the un-absorbed jump
-        # into the PRE sample.
+        # Detection latency: how far back in the window the repaired jump sits.
+        # It determines how e(t0-30) reads: a latency-0 repair has no slip yet
+        # at t0-30, so an ambient e(t0-30) is expected and the pre-slope is
+        # uninformative.  Only latency >= 1 epoch puts the un-absorbed jump into
+        # the pre-repair sample.
         lst = by_sig.get((rec["sta"], rec["sat"], sig), ())
         w = [s for s, d in lst if rec["s"] - window_s < s <= rec["s"]]
         lat = (rec["s"] - max(w)) if w else None
@@ -324,9 +333,9 @@ def repair_effect(evs, stat, any_qc, by_sig, window_s, ref_free):
         for k in OFFSETS:
             tk = ti + k * EPOCH_S
             if k > 0 and nxt is not None and tk >= nxt:
-                continue                      # censored by the NEXT event on (S,s)
+                continue                      # censored by the next event on (S,s)
             if k < 0 and prv is not None and tk <= prv:
-                continue                      # censored by the PREVIOUS event
+                continue                      # censored by the previous event
             v = measure(stat, tk, rec["sta"], rec["sat"], sig, ref_free)
             if v is not None:
                 out["e"][k] = v
@@ -343,12 +352,12 @@ def effect_report(recs, label):
     for k, name in ((-1, "e_pre"), (0, "e_at"), (1, "e_p1"), (5, "e_p5")):
         res[name + "_abs"] = summ([abs(r["e"][k]) for r in recs if k in r["e"]])
         res[name + "_sgn"] = summ([r["e"][k] for r in recs if k in r["e"]])
-    # ratio |e| / |delta| — the three hypotheses sit at 0 / 1 / 2
+    # ratio |e| / |delta|: the three hypotheses sit at 0 / 1 / 2
     for k, name in ((-1, "e_pre"), (0, "e_at"), (1, "e_p1"), (5, "e_p5")):
         res[name + "_over_delta"] = summ(
             [abs(r["e"][k]) / abs(r["delta"]) for r in recs
              if k in r["e"] and abs(r["delta"]) > 0])
-    # THE regression: (e(t0) - e(t0-30)) on delta
+    # the primary regression: (e(t0) - e(t0-30)) on delta
     xs = [float(r["delta"]) for r in have]
     ys = [r["e"][0] - r["e"][-1] for r in have]
     res["slope_delta_e"] = ols(xs, ys)
@@ -360,12 +369,12 @@ def effect_report(recs, label):
                           [r["e"][1] for r in recs if 1 in r["e"]])
     res["slope_p5"] = ols([float(r["delta"]) for r in recs if 5 in r["e"]],
                           [r["e"][5] for r in recs if 5 in r["e"]])
-    # LATENCY SPLIT — the pre-sample only carries the jump when the detector was
-    # late.  lat = 0 s means the slip landed in THIS epoch, so e(t0-30) is a
-    # PRE-SLIP sample and must read ambient whatever the repair did.
-    # THE CEILING NUMBER: with latency 0 an EXACT repair leaves e continuous across
+    # Latency split: the pre-sample carries the jump only when the detector was
+    # late.  lat = 0 s means the slip landed in this epoch, so e(t0-30) is a
+    # pre-slip sample and reads ambient whatever the repair did.
+    # Ceiling figure: with latency 0 an exact repair leaves e continuous across
     # its own slip epoch, so |e(t0) - e(t0-30)| / |delta| is the fraction of the
-    # true jump the repair FAILED to remove.  1.0 = the level never moved.
+    # true jump the repair failed to remove (1.0 = the level never moved).
     res["unrepaired_frac"] = summ(
         [abs(r["e"][0] - r["e"][-1]) / abs(r["delta"]) for r in have
          if r["lat_s"] == 0 and r["delta"]])
@@ -415,19 +424,21 @@ def effect_report(recs, label):
 def classify_keeps(keeps, repairs, t4, by_sat, by_sig, stat, any_qc, window_s, ref_free):
     """Sort every `oracle_keep` row into the reason it was kept.
 
-    The naive read — "a truth slip exists on (S,s) within +/-90 s, therefore the
-    oracle missed it" — is WRONG twice over, and both confounders are large:
+    A truth slip on (S,s) inside the window does not by itself mean the oracle
+    missed it.  Two large confounders are removed first:
 
-      * the SAME slip keeps the detector firing for 2-3 epochs, and the oracle's
+      * the same slip keeps the detector firing for 2-3 epochs, and the oracle's
         `last_applied_s` lower bound correctly refuses the second and third
         actuation (run-end counter: "lower bound set by an earlier repair");
-      * a fixture slip lands on a SUBSET of the satellite's signals, while a
-        detector fires on the satellite (LLI) or on a BAND PAIR, so the arcs that
+      * a fixture slip lands on a subset of the satellite's signals, while a
+        detector fires on the satellite (LLI) or on a band pair, so the arcs that
         did not jump are correctly kept.
 
     Only what survives both is a real miss, and those are then split by whether a
-    T4 erase re-BORN the carry between the slip and the actuation (the design's
-    `carry.birth_s` floor) or not (an unexplained miss).
+    T4 erase re-born the carry between the slip and the actuation (the design's
+    `carry.birth_s` floor) or not (an unexplained miss).  Keeps with no truth slip
+    in the window are classed by whether a slip follows t0, falls within
+    +/-600 s, or is absent (a detector false alarm).
     """
     rep_key = {(r["ti"], r["sta"], r["sat"]) for r in repairs}
     rep_idx = defaultdict(list)
@@ -461,7 +472,7 @@ def classify_keeps(keeps, repairs, t4, by_sat, by_sig, stat, any_qc, window_s, r
             if any(max(back) <= tr <= s0 for tr in rl):
                 cls = "already_repaired"
             else:
-                # (ii) did the NAMED signals actually jump inside the window?
+                # (ii) did the named signals jump inside the window?
                 cand = named if named else list(ALL_SIGS)
                 jumped = [sg for sg in cand
                           if window_sum(by_sig, sta, sat, sg, s0, window_s)[1] > 0]
@@ -484,9 +495,9 @@ def classify_keeps(keeps, repairs, t4, by_sat, by_sig, stat, any_qc, window_s, r
         if cls in ("miss_t4_reborn", "miss_unexplained", "other_band"):
             b = {"ti": ti, "sta": sta, "sat": sat, "tier": rec["tier"], "cls": cls,
                  "e": {}, "sig_e": {}}
-            # THE decisive one: measure the SIGNAL THAT TRULY JUMPED, not the
-            # arc's worst band.  |e| / |delta| ~ 1 there means the jump was never
-            # repaired on that band at all (freed, or missed); ~0 means it was.
+            # The decisive measurement is on the signal that jumped in truth, not
+            # on the arc's worst band.  |e| / |delta| ~ 1 there means the jump was
+            # never repaired on that band (freed, or missed); ~0 means it was.
             for sg in ALL_SIGS:
                 tot, k = window_sum(by_sig, sta, sat, sg, s0, window_s)
                 if k > 0 and tot != 0:
@@ -527,17 +538,17 @@ def classify_keeps(keeps, repairs, t4, by_sat, by_sig, stat, any_qc, window_s, r
 
 
 # --------------------------------------------------------------------------
-# SLIP-SIDE census: where did the ceiling leak?
+# slip-side census: which injected jumps the ceiling did not repair
 # --------------------------------------------------------------------------
 def slip_side_census(by_sig, recs, ev, stat, window_s, ref_free):
-    """Walk the TRUTH slips, not the events.
+    """Walk the truth slips, not the events.
 
-    The event-side classification cannot close because one row is emitted per
-    SATELLITE while the oracle decides per SIGNAL, and the row's action is an OR
-    across bands — a band that fell through with NO CARRY (and was therefore
-    FREED, today's response) is invisible whenever a sibling band was handled.
-    Walking the truth table instead gives an exhaustive, row-shape-independent
-    account of every injected jump.
+    The event-side classification cannot be complete: one row is emitted per
+    satellite while the oracle decides per signal, and the row's action is an OR
+    across bands, so a band that fell through with no carry (and was therefore
+    freed by the standard response) is invisible whenever a sibling band was
+    handled.  Walking the truth table gives an exhaustive account of every
+    injected jump, independent of the row shape.
     """
     covered = set()
     for r in recs:
@@ -576,7 +587,7 @@ def slip_side_census(by_sig, recs, ev, stat, window_s, ref_free):
             else:
                 cls = "detected, KEPT on every row"
             out["cls"][cls] += 1
-            # `s` is continuous-GPS seconds; ArcStat is keyed on the epoch's TOW.
+            # `s` is continuous-GPS seconds; ArcStat is keyed on the epoch's tow.
             ti = int(round(s)) % 604800
             for koff, tag in ((0, "t0"), (5, "t0+150")):
                 v = stat.value(ti + koff * EPOCH_S, sta, sat, sig, ref_free)
@@ -827,9 +838,9 @@ def main():
         if tag == "astraced":
             R["_recs_n"] = len(recs)
 
-    # ---- TRUTH-SLIP COVERAGE: what fraction of the bed's injected jumps did the
-    # ceiling actually get to repair?  A ceiling applied to half the population is
-    # half a ceiling, and the plateau verdict must be read against this number.
+    # ---- truth-slip coverage: the fraction of the bed's injected jumps the
+    # ceiling repaired.  A ceiling applied to half the population bounds only
+    # that half, so the plateau verdict is read against this number.
     recs0, _ = repair_effect(ev["repairs"], stat, ev["any_qc"], by_sig,
                              args.window_s, False)
     covered = set()

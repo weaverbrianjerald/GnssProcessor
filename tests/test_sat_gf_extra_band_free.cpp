@@ -1,28 +1,29 @@
 /**
  * @file test_sat_gf_extra_band_free.cpp
- * @brief Card B5D — @c network.sat_gf_extra_band_free, the band-5 code datum.
+ * @brief Tests for @c network.sat_gf_extra_band_free, the band-5 code datum (card B5D).
  *
- * Card: docs/refound/B5D_band5_code_datum_2026-09-20.md (requirements R1..R3, R7);
+ * Card B5D: docs/refound/B5D_band5_code_datum_2026-09-20.md (requirements R1..R3, R7);
  * evidence: docs/refound/TBI_three_band_ignition_2026-09-20.md section 5.
  *
  * RF-0d pins every registered code column beyond the ionosphere-free pair through its
  * geometry-free combination at @c c*T_GD, which asserts an inter-signal correction of
- * ZERO.  Between same-band channels that is centimetres (and RF-0f freed the band-2 one
- * where a station bridges it).  Across a BAND it is metres: the estimator-free triple-code
- * combination puts the Block III satellites 4 to 5 m above the Block IIF ones, and with
- * the slant ionosphere and the clock fixed by the pinned pair the column is ESTIMABLE up
- * to one constant per (constellation, signal) family.  This knob frees it where the data
- * determine it and lets the channel's sum-to-zero row datum the constant.
+ * zero.  Between same-band channels the error of that assertion is centimetres (RF-0f
+ * frees the band-2 one where a station bridges it).  Across bands it is metres: the
+ * estimator-free triple-code combination places the Block III satellites 4 to 5 m above
+ * the Block IIF ones.  With the slant ionosphere and the clock fixed by the pinned pair,
+ * the column is estimable up to one constant per (constellation, signal) family.  The
+ * knob frees the column where the data determine it, and the channel's sum-to-zero row
+ * supplies the datum for the constant.
  *
- * The cases are on the PURE ROW BUILDER, which is where the datum is decided.  They are
- * arithmetic on the folded stack, not log inspection: the card's bars are "no assertion
- * row on a determined column", "exactly one level row per channel", "no absolute
- * broadcast-frame value in a sum-to-zero family", and "byte-identical OFF", and each of
- * those is a statement about @c H and @c z.
+ * The cases exercise the pure row builder, where the datum is decided.  They check the
+ * folded stack arithmetically, not through logs: the card's bars are "no assertion row
+ * on a determined column", "exactly one level row per channel", "no absolute
+ * broadcast-frame value in a sum-to-zero family" and "byte-identical OFF", and each is a
+ * statement about @c H and @c z.
  *
- * Suite name @c SatGfExtraBandFreeTest is owned by this file alone (the suite-hygiene
- * convention: one suite name, one file), and the harness below is deliberately its own
- * rather than shared with the RF-0b/RF-0f suite's.
+ * Suite name @c SatGfExtraBandFreeTest is owned by this file alone (suite-hygiene
+ * convention: one suite name, one file).  The harness below is separate from the
+ * RF-0b/RF-0f suite's on purpose.
  */
 
 #include <gtest/gtest.h>
@@ -57,19 +58,19 @@ double gpsCodeFreq(const std::string& /*sat*/, const std::string& sig) {
     }
 }
 
-/// mu_k = (f_ref / f_k)^2 relative to @p base_sig — the geometry-free row's divisor
-/// `mu_k - 1` and therefore the coefficient the assertion row would carry.
+/// mu_k = (f_ref / f_k)^2 relative to @p base_sig.  The geometry-free row divides by
+/// `mu_k - 1`, so 1/(mu_k - 1) is the coefficient the assertion row carries.
 double muRel(const std::string& base_sig, const std::string& sig) {
     const double f1 = gpsCodeFreq("", base_sig), fk = gpsCodeFreq("", sig);
     return (f1 * f1) / (fk * fk);
 }
 
 /// Owns the builder's side channels and clears the per-epoch scratch before each call,
-/// exactly as the driver contract requires ("cleared by caller").
+/// as the driver contract requires ("cleared by caller").
 struct Harness {
     using Pair = std::pair<std::string, std::string>;
 
-    bool cb_time_linked{true};        ///< every RF-0h lineage runs code_datum_time_linked.
+    bool cb_time_linked{true};        ///< on in RF-0h lineages (code_datum_time_linked).
     bool clock_signal_basis_hold{false};
     bool emit_clock_disc{false};
     bool gf_datum{false};
@@ -142,8 +143,8 @@ std::vector<Harness::Pair> registerRoster(NetworkEstimator& est,
     return keys;
 }
 
-/// The rows that touch one column, and their coefficients — the card's bars are all
-/// statements about this list, so it is read once and asserted on.
+/// The rows that touch one column, with their coefficients.  The card's bars are
+/// statements about this list.
 std::vector<std::pair<Eigen::Index, double>> rowsOn(const Eigen::MatrixXd& H,
                                                     Eigen::Index col) {
     std::vector<std::pair<Eigen::Index, double>> out;
@@ -164,13 +165,13 @@ std::set<std::string> determinedAll(const std::vector<std::string>& sats,
 }  // namespace
 
 // ===========================================================================
-// R1 — default OFF is RF-0d, row for row and target for target.
+// With the knob off, the rows and targets are RF-0d's (R1).
 // ===========================================================================
 
-// Standing invariant #6.  Unarmed, the knob changes nothing: the band-5 columns keep
-// their geometry-free assertion rows, the channel keeps its suppression, and neither
-// counter moves.  Asserted as an exact matrix comparison, because "byte-identical OFF"
-// is the claim the field arms rest on.
+// Standing invariant #6.  With the knob off nothing changes: the band-5 columns keep
+// their geometry-free assertion rows, the channel keeps its suppression, and the
+// extra-band counters stay at zero.  The check is an exact matrix comparison, because
+// the field arms rely on "byte-identical OFF".
 TEST(SatGfExtraBandFreeTest, UnarmedIsIdenticalToRf0d) {
     NetworkEstimator est;
     const auto sats = gpsSats(8);
@@ -181,9 +182,8 @@ TEST(SatGfExtraBandFreeTest, UnarmedIsIdenticalToRf0d) {
     for (const auto& s : sats) off.sat_gf_target_m[s] = -2.0;
     const auto a = off.build(est, keys);
 
-    // Armed, but with the roster the driver builds when NO station bridges the three
-    // codes and nothing has a previous value: every column is held, not pinned — so the
-    // only way to reproduce RF-0d exactly is with the knob genuinely off.
+    // Second build: knob still off, but with the full determination roster supplied.
+    // With the knob off the roster is ignored, so the rows match the first build.
     Harness on = off;
     on.sat_gf_extra_band_free = false;
     on.extra_band_determined  = determinedAll(sats, "C5X");
@@ -192,7 +192,7 @@ TEST(SatGfExtraBandFreeTest, UnarmedIsIdenticalToRf0d) {
     EXPECT_EQ(a.n_extra_band_free, 0);
     EXPECT_EQ(a.n_extra_band_carried, 0);
     EXPECT_EQ(a.n_extra_band_held, 0);
-    EXPECT_EQ(a.n_sat_gf_extra_rows, 8);     // RF-0d's assertion, one per satellite
+    EXPECT_EQ(a.n_sat_gf_extra_rows, 8);     // one assertion per satellite, as in RF-0d
     EXPECT_EQ(a.n_sat_gf_isc_zero, 8);
     ASSERT_EQ(a.H.rows(), b.H.rows());
     EXPECT_LT((a.H - b.H).cwiseAbs().maxCoeff(), 1e-15);
@@ -201,14 +201,14 @@ TEST(SatGfExtraBandFreeTest, UnarmedIsIdenticalToRf0d) {
 }
 
 // ===========================================================================
-// R2 — a determined extra-band column: no assertion row, one level row.
+// A determined extra-band column gets no assertion row and one level row (R2).
 // ===========================================================================
 
-// THE CARD'S FIRST BAR.  With the data determining the column, it gets NO geometry-free
-// row at all, and the channel's sum-to-zero row — which RF-0d suppresses once every
-// column of a channel is pinned — comes back on its own, because a freed column is not in
-// the pinned set.  Exactly ONE such row per (constellation, signal) channel: the level is
-// the one thing the data cannot reach, and it needs one datum, not n.
+// The card's first bar.  A column the data determine gets no geometry-free row.  The
+// channel's sum-to-zero row, which RF-0d suppresses once every column of a channel is
+// pinned, returns because a freed column is not in the pinned set.  There is exactly one
+// such row per (constellation, signal) channel: the data do not determine the level, and
+// the level needs one datum, not n.
 TEST(SatGfExtraBandFreeTest, DeterminedExtraBandColumnGetsNoAssertionAndOneLevelRow) {
     NetworkEstimator est;
     const auto sats = gpsSats(8);
@@ -226,15 +226,15 @@ TEST(SatGfExtraBandFreeTest, DeterminedExtraBandColumnGetsNoAssertionAndOneLevel
     EXPECT_EQ(rows.n_extra_band_held, 0);
     EXPECT_EQ(rows.n_sat_gf_extra_rows, 0);   // no assertion row anywhere
     EXPECT_EQ(rows.n_sat_gf_isc_zero, 0);
-    EXPECT_EQ(rows.n_sat_gf_rows, 8);         // the pair pin itself is UNTOUCHED
+    EXPECT_EQ(rows.n_sat_gf_rows, 8);         // the pair pin itself is unchanged
 
     // The pinned pair's two channels are still fully pinned, so their sum-to-zero rows
     // stay suppressed; C5X's does not.
     EXPECT_EQ(rows.n_s2z_channels, 3);
     EXPECT_EQ(rows.n_s2z_suppressed, 2);
 
-    // Every C5X column carries exactly ONE row, with coefficient +1 — the channel level.
-    // Never the assertion's 1/(mu_5 - 1), which is what the old row put there.
+    // Every C5X column carries exactly one row, with coefficient +1 (the channel level),
+    // not the assertion row's 1/(mu_5 - 1).
     const double assertion_coeff = 1.0 / (muRel("C1W", "C5X") - 1.0);
     int level_rows_seen = 0;
     std::set<Eigen::Index> level_row_ids;
@@ -247,21 +247,21 @@ TEST(SatGfExtraBandFreeTest, DeterminedExtraBandColumnGetsNoAssertionAndOneLevel
         ++level_rows_seen;
     }
     EXPECT_EQ(level_rows_seen, 8);
-    EXPECT_EQ(level_row_ids.size(), 1u);   // one row, shared — the channel's level datum
+    EXPECT_EQ(level_row_ids.size(), 1u);   // one shared row: the channel's level datum
 
-    // ...and that row's RHS is 0 on a first epoch with no veterans: the sum-to-zero seed,
-    // NOT the broadcast target.  R3's frame statement, on the level row itself.
+    // On a first epoch with no veterans that row's RHS is 0, the sum-to-zero seed, not
+    // the broadcast target (R3's frame statement, checked on the level row).
     EXPECT_DOUBLE_EQ(rows.z(*level_row_ids.begin()), 0.0);
 }
 
-// A two-family roster (the field's own: C5Q at one group of stations, C5X at another)
-// gauges to full rank with TWO level rows, one per family — the family constant is per
-// (constellation, signal), so two channels need two datums and neither may borrow the
+// A two-family roster (as in the field: C5Q at one group of stations, C5X at another)
+// gauges to full rank with two level rows, one per family.  The family constant is per
+// (constellation, signal), so two channels need two datums and neither may use the
 // other's.
 TEST(SatGfExtraBandFreeTest, TwoExtraBandFamiliesGaugeWithOneLevelRowEach) {
     NetworkEstimator est;
     const auto sats = gpsSats(6);
-    // Half the satellites carry C5Q, half C5X — the field's split roster in miniature.
+    // Half the satellites carry C5Q and half C5X, a small version of the field's split roster.
     std::vector<Harness::Pair> keys;
     for (size_t i = 0; i < sats.size(); ++i) {
         const std::string extra = (i % 2 == 0) ? "C5Q" : "C5X";
@@ -285,9 +285,9 @@ TEST(SatGfExtraBandFreeTest, TwoExtraBandFamiliesGaugeWithOneLevelRowEach) {
     EXPECT_EQ(rows.n_s2z_channels, 4);     // C1W, C2W, C5Q, C5X
     EXPECT_EQ(rows.n_s2z_suppressed, 2);   // the pinned pair's two
 
-    // Two level rows, and they are DISJOINT: no satellite's C5Q column appears in the
-    // C5X row.  A shared row would gauge the two families' difference, which is exactly
-    // the between-family constant nothing in the data determines.
+    // Two level rows, and they are disjoint: no satellite's C5Q column appears in the
+    // C5X row.  A shared row would gauge the difference between the two families, the
+    // between-family constant that nothing in the data determines.
     std::set<Eigen::Index> q_rows, x_rows;
     for (size_t i = 0; i < sats.size(); ++i) {
         const std::string extra = (i % 2 == 0) ? "C5Q" : "C5X";
@@ -302,13 +302,13 @@ TEST(SatGfExtraBandFreeTest, TwoExtraBandFamiliesGaugeWithOneLevelRowEach) {
 }
 
 // ===========================================================================
-// R3 — an UNDETERMINED column never brings the broadcast frame into the family.
+// An undetermined column never brings the broadcast frame into the family (R3).
 // ===========================================================================
 
-// Undetermined WITH a previous value: the row carries that column's OWN previous
-// geometry-free combination, not `c*T_GD`.  The difference is the whole point — the
-// family now stands in the sum-to-zero frame, and folding an absolute broadcast target on
-// one of its columns is RF-0d's "two families fighting at one gauge weight" in reverse.
+// Undetermined with a previous value: the row carries that column's own previous
+// geometry-free combination, not `c*T_GD`.  The family stands in the sum-to-zero frame;
+// an absolute broadcast target on one of its columns would put two frames on the same
+// family at one gauge weight (RF-0d's conflict, in the opposite direction).
 TEST(SatGfExtraBandFreeTest, UndeterminedColumnWithAVeteranCarriesItsOwnCombination) {
     NetworkEstimator est;
     const auto sats = gpsSats(4);
@@ -316,7 +316,7 @@ TEST(SatGfExtraBandFreeTest, UndeterminedColumnWithAVeteranCarriesItsOwnCombinat
     const auto keys = registerRoster(est, sats, sigs);
 
     Harness h;
-    h.sat_gf_extra_band_free = true;   // ...and the roster is EMPTY: nothing determined
+    h.sat_gf_extra_band_free = true;   // the roster is empty: nothing is determined
     const double tgd = -2.0;
     for (const auto& s : sats) {
         h.sat_gf_target_m[s] = tgd;
@@ -330,7 +330,7 @@ TEST(SatGfExtraBandFreeTest, UndeterminedColumnWithAVeteranCarriesItsOwnCombinat
     EXPECT_EQ(rows.n_extra_band_free, 0);
     EXPECT_EQ(rows.n_extra_band_carried, 4);
     EXPECT_EQ(rows.n_extra_band_held, 0);
-    EXPECT_EQ(rows.n_sat_gf_extra_rows, 4);   // the rows exist — it is their TARGET that moved
+    EXPECT_EQ(rows.n_sat_gf_extra_rows, 4);   // the rows exist; their target changed
     EXPECT_TRUE(rows.extra_band_held.empty());
 
     // The carried target is (b5_prev - b1_prev) / (mu_5 - 1), and it is nowhere near the
@@ -343,10 +343,10 @@ TEST(SatGfExtraBandFreeTest, UndeterminedColumnWithAVeteranCarriesItsOwnCombinat
     EXPECT_GT(std::abs(want - tgd), 1.0);
 }
 
-// Undetermined at a FIRST SIGHTING: nothing to carry, so the column is HELD by a single
-// level row in the channel's own frame (coefficient +1, target 0) and its key is returned
-// for the emit prep to withhold.  It is NOT the geometry-free assertion row: that would
-// put `c*T_GD` into a family the sum-to-zero row is levelling.
+// Undetermined at a first sighting: nothing to carry, so the column is held by a single
+// row in the channel's own frame (coefficient +1, target 0), and its key is returned for
+// the emit prep to withhold.  The geometry-free assertion row is not used, because it
+// would put `c*T_GD` into a family that the sum-to-zero row is levelling.
 TEST(SatGfExtraBandFreeTest, UndeterminedFirstSightingIsHeldInTheChannelFrameAndWithheld) {
     NetworkEstimator est;
     const auto sats = gpsSats(4);
@@ -363,14 +363,14 @@ TEST(SatGfExtraBandFreeTest, UndeterminedFirstSightingIsHeldInTheChannelFrameAnd
     EXPECT_EQ(rows.n_extra_band_free, 1);
     EXPECT_EQ(rows.n_extra_band_carried, 0);
     EXPECT_EQ(rows.n_extra_band_held, 3);
-    EXPECT_EQ(rows.n_sat_gf_extra_rows, 0);   // no assertion row was folded for ANY of them
+    EXPECT_EQ(rows.n_sat_gf_extra_rows, 0);   // no assertion row was folded for any of them
     EXPECT_EQ(rows.n_sat_gf_isc_zero, 0);
     EXPECT_EQ(rows.extra_band_held,
               (std::set<std::string>{"G01|C5X", "G02|C5X", "G03|C5X"}));
 
-    // The channel keeps its level row (nothing pinned it), so a held column carries TWO
-    // entries: the level row it shares and its own hold.  Both are +1 with target 0 —
-    // the channel's own frame, never the broadcast one.
+    // The channel keeps its level row (nothing pinned it), so a held column appears in
+    // two rows: the shared level row and its own hold.  Both have coefficient +1 and
+    // target 0, in the channel's own frame, not the broadcast one.
     for (const auto& s : {"G01", "G02", "G03"}) {
         const auto on = rowsOn(rows.H, est.codeBiasColumn(s, "C5X"));
         ASSERT_EQ(on.size(), 2u) << s;
@@ -384,9 +384,9 @@ TEST(SatGfExtraBandFreeTest, UndeterminedFirstSightingIsHeldInTheChannelFrameAnd
     EXPECT_EQ(rows.n_s2z_suppressed, 2);
 }
 
-// The knob touches the EXTRA band only.  RF-0d's band-1 same-band rule and the pin pair's
-// own rows are unchanged, and a same-band companion on the pin's SECOND band still falls
-// to RF-0f's decision rather than to this one — the three rules must not overlap.
+// The knob affects the extra band only.  RF-0d's band-1 same-band rule and the pin
+// pair's own rows are unchanged, and a same-band companion on the pin's second band is
+// still decided by RF-0f's rule, not this one.  The three rules must not overlap.
 TEST(SatGfExtraBandFreeTest, SameBandCompanionsAreUntouchedByTheExtraBandRule) {
     NetworkEstimator est;
     const auto sats = gpsSats(4);
@@ -417,15 +417,15 @@ TEST(SatGfExtraBandFreeTest, SameBandCompanionsAreUntouchedByTheExtraBandRule) {
 }
 
 // ===========================================================================
-// R5 — the freed channel's LEVEL re-references, and it is an event at both edges.
+// A re-reference of the freed channel's level is an event at both edges (R5).
 // ===========================================================================
 
-// The level the freed columns now stand on is the veteran-linked sum-to-zero row.  When
-// the satellite SET changes so that no veteran is present, that row re-seeds: the
-// channel's level genuinely re-references, every satellite that has been seen before is
-// MARKED for the consumer's discontinuity channel, and the marks are COUNTED.  Standing
-// invariant #7 — a mechanism that moves a frame is an event at both edges, and a count of
-// zero is how "it never happened" is told from "nothing was instrumented".
+// The freed columns stand on the veteran-linked sum-to-zero row.  When the satellite set
+// changes so that no veteran is present, that row re-seeds: the channel's level
+// re-references, every satellite seen before is marked for the consumer's discontinuity
+// channel, and the marks are counted.  Standing invariant #7: a mechanism that moves a
+// frame is an event at both edges, and the counters separate a re-reference that did not
+// happen from one that was not instrumented.
 TEST(SatGfExtraBandFreeTest, LevelReseedOnASetChangeIsMarkedAndCounted) {
     NetworkEstimator est;
     const auto sats = gpsSats(3);
@@ -437,24 +437,24 @@ TEST(SatGfExtraBandFreeTest, LevelReseedOnASetChangeIsMarkedAndCounted) {
     h.extra_band_determined  = determinedAll(sats, "C5X");
     for (const auto& s : sats) {
         h.sat_gf_target_m[s] = -2.0;
-        h.code_bias_sat_seen.insert(s);          // all three are veterans of the RUN...
+        h.code_bias_sat_seen.insert(s);          // all three are veterans of the run
         h.code_bias_prev["G|C1W"][s] = 0.4;
         h.code_bias_prev["G|C2W"][s] = 1.1;
-        // ...and their ionosphere-free pin carries cleanly (same pair, both values), so
-        // the Card-2 IF-pin re-seed cannot contribute a mark and the set below is the
-        // sum-to-zero re-reference alone.
+        // Their ionosphere-free pin carries cleanly (same pair, both values), so the
+        // Card-2 IF-pin re-seed adds no mark and the set below comes from the sum-to-zero
+        // re-reference alone.
         h.code_bias_ifpin_pair[s] = {"C1W", "C2W"};
     }
-    // ...but NONE of them has a previous C5X value: the C5X channel's veteran link has
-    // nothing to reference, so its level row re-seeds at 0.
+    // None of them has a previous C5X value: the C5X channel's veteran link has nothing
+    // to reference, so its level row re-seeds at 0.
     const auto reseeded = h.build(est, keys);
     EXPECT_EQ(reseeded.n_s2z_reseed_rows, 1);        // the C5X channel alone
     EXPECT_EQ(reseeded.n_s2z_reseed_sats, 3);
     EXPECT_EQ(h.this_epoch_cb_reseed,
               (std::set<std::string>{"G01", "G02", "G03"}));
 
-    // With the channel's veterans present the row carries instead, and nothing is marked:
-    // the counter is not simply always-on.
+    // With the channel's veterans present the row carries instead and nothing is marked,
+    // which shows the counter does not fire unconditionally.
     Harness carried = h;
     for (const auto& s : sats) carried.code_bias_prev["G|C5X"][s] = 3.7;
     const auto rows = carried.build(est, keys);
@@ -462,7 +462,7 @@ TEST(SatGfExtraBandFreeTest, LevelReseedOnASetChangeIsMarkedAndCounted) {
     EXPECT_EQ(rows.n_s2z_reseed_sats, 0);
     EXPECT_TRUE(carried.this_epoch_cb_reseed.empty());
 
-    // ...and the carried level row's RHS is the veterans' sum, so the level is CARRIED
+    // The carried level row's RHS is the sum over the veterans, so the level is carried
     // rather than re-zeroed.
     const auto on = rowsOn(rows.H, est.codeBiasColumn("G01", "C5X"));
     ASSERT_EQ(on.size(), 1u);
@@ -470,12 +470,11 @@ TEST(SatGfExtraBandFreeTest, LevelReseedOnASetChangeIsMarkedAndCounted) {
 }
 
 // ===========================================================================
-// The loader — the knob's default and its interlock.
+// The loader: the knob's default.
 // ===========================================================================
 
-// R1 at the config layer: absent knob is OFF.  A getter is deliberately not added (the
-// sat_isc_state precedent — the network sub-struct is read directly), so the member is
-// what the test reads.
+// The knob defaults to off (R1 at the config layer).  There is no getter (as with
+// sat_isc_state, the network sub-struct is read directly), so the test reads the member.
 TEST(SatGfExtraBandFreeTest, ConfigDefaultIsOff) {
     NetworkConfig nc;
     EXPECT_FALSE(nc.sat_gf_extra_band_free);

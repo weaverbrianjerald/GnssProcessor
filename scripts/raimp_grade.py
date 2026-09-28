@@ -1,76 +1,79 @@
 #!/usr/bin/env python3
-"""RAIM POWER leg grader — docs/SPEC_raim_pool_rehost.md §7.2, the pre-registered P0–P3 bars,
-plus the manager's P0' extension (n = 1 re-drawn at three more event epochs).
+"""RAIM POWER leg grader (docs/SPEC_raim_pool_rehost.md §7.2, the pre-registered P0-P3 bars,
+plus the manager's P0' extension: n = 1 re-drawn at three more event epochs).
 
     python scripts/raimp_grade.py [--runs C:/GnssProcessor/runs] [--json out.json]
                                   [--batch-status runs/_raimp_batch_status.json ...]
 
 Legs from the v8 field seed (ep0604, 60 epochs): ``raimp_null_screen`` and, for
-n in {1, 2, 4}, ``raimp_n<n>_{off,screen,act}`` — the (n, n, n) equal-cycle slip on
-L1C / L2W / L5X of G24 at GOPE00CZE at tow 277620 (leg epoch k = 11); then the
+n in {1, 2, 4}, ``raimp_n<n>_{off,screen,act}`` (the (n, n, n) equal-cycle slip on
+L1C / L2W / L5X of G24 at GOPE00CZE at tow 277620, leg epoch k = 11); then the
 P0' draws ``raimp_n1e<at_ep>_{off,act}`` for at_ep in {14, 18, 22} (event at leg
-epoch k = at_ep + 1).  The OFF arms' null is ``evleg_cert_null_v8`` (same posture:
+epoch k = at_ep + 1). The OFF arms' null is ``evleg_cert_null_v8`` (same posture,
 no screen); the screen / act arms' null is ``raimp_null_screen`` (the actuator is
 inert on a null, so it is the act posture's null too).
 
-EPOCH AXIS.  The brief's convention: ``k = 1 + (tow - 277320)/30`` — the leg's
-1-based epoch number.  The brief quotes every window for the k = 11 event
+EPOCH AXIS. The brief's convention is ``k = 1 + (tow - 277320)/30``, the leg's
+1-based epoch number. The brief quotes every window for the k = 11 event
 ("k 9..15", "sigma0 k 5..25", "wire +10..+50", "P2 +20..+50"); each is applied as
-an OFFSET from the leg's own event epoch kev, so a draw at kev = 19 reads the
-same event-relative windows.  dk = k - kev is printed beside k where the fp1
+an offset from the leg's own event epoch kev, so a draw at kev = 19 reads the
+same event-relative windows. dk = k - kev is printed beside k where the fp1
 gate-table's event-relative read is reproduced.
 
 What is read, and from which instrument (formats read from source, cited):
 
-  VERIFY   fp2_leg_verify.py's checks: rc, wall, no COLD START, WARM RESUME, 61
-           product epochs / consumer rows, run-end emitted triple, RS-8 / RS-9
-           restore lines, the posture spoken by the producer itself
-           (GnssConfigLoadNetwork.cpp:10362 "RAIM POOL RE-HOST ... Refloat actuator
-           is ARMED | OFF (measure-only)"; :10374 "post-fit RAIM is INERT" on an
-           OFF leg), leg_meta's recorded extra and event tow, and the flattened
-           leg.json diff inside each triple / pair (the knob(s) + the two per-leg
-           paths only, the inject block byte-equal across the arms and equal to
-           the E3 shape plus the L2W event at the leg's own tow).
+  VERIFY   fp2_leg_verify.py's checks: rc, wall, absence of ``COLD START``,
+           presence of a ``WARM RESUME`` line, 61 product epochs / consumer
+           rows, the run-end emitted triple, the RS-8 / RS-9 restore lines, the
+           posture the producer itself reports (GnssConfigLoadNetwork.cpp:10362
+           "RAIM POOL RE-HOST ... Refloat actuator is ARMED | OFF (measure-only)";
+           :10374 "post-fit RAIM is INERT" on an OFF leg), leg_meta's recorded
+           extra and event tow, and the flattened leg.json diff inside each
+           triple / pair (the knob(s) and the two per-leg paths only; the inject
+           block is byte-equal across the arms and matches the E3 shape plus the
+           L2W event at the leg's own tow).
   CENSUS   detector rows at (GOPE00CZE, G24), k in [kev-2, kev+4]: T1 IF-TD
-           (network_if_slip.csv + T1_if_slip events), T0 MW / LLI / band-scope
+           (network_if_slip.csv plus T1_if_slip events), T0 MW / LLI / band-scope
            events, LLI bits (network_slip_raw.csv), the mw_slip_detector.log DET
            lines for G24 (station-blind by design), and D5 rows on the arc
            (network_d5_flags.csv: chord = (receiver u, satellite 1000000+j),
            NetworkDdPriorBuild.cpp:182; `station` is u, `amb_key` the arc).
-           ⚠ A D5 trip the v3 corroboration gate SUPPRESSES never reaches the dump
-           (NetworkInvariantCarryDriver.cpp:1646-1648 `continue`s before
-           last_innov_flags_), so the "refused" outcome is visible only in the
-           run-end "N of M gate trips SUPPRESSED" total (leg minus null) and in the
-           tri-state `raw_stepped` of the rows that DID land (0 = measured flat =
-           the corroboration set, NetworkInstallCarry.cpp:152-170).
-           THE (1,2) IF-TD BAR: max(k_mad·s_eff·elev_map, floor_frac·λ_IF(1,1))
+           A D5 trip that the v3 corroboration gate suppresses never reaches the
+           dump (NetworkInvariantCarryDriver.cpp:1646-1648 `continue`s before
+           last_innov_flags_), so the refused outcome is visible only in the
+           run-end "{} of {} gate trips SUPPRESSED" total (leg minus null,
+           NetworkTeardown.cpp:5021) and in the tri-state `raw_stepped` of the
+           rows that do land (0 = measured flat, i.e. the corroboration set;
+           NetworkInstallCarry.cpp:152-170).
+           The (1,2) IF-TD bar is max(k_mad·s_eff·elev_map, floor_frac·λ_IF(1,1))
            (NetworkSlipQc.cpp:1194-1197; if_phase_td_floor_frac default 1.0,
-           GnssConfigLoadNetwork.cpp:4600) = 0.106953 m on this chain, EXACTLY the
-           step an equal-count n = 1 slip adds to the chain's dd — so the margin
-           |dd| - thr at the event epoch is the number that decides P0 per draw.
-  SIGMA0   three instruments, because the pre-registered column is NOT the
+           GnssConfigLoadNetwork.cpp:4600) = 0.106953 m on this chain, equal to
+           the step an equal-count n = 1 slip adds to the chain's dd, so the
+           margin |dd| - thr at the event epoch is what decides P0 per draw.
+  SIGMA0   three instruments, because the pre-registered column is not the
            re-hosted statistic: (a) network_epoch_status.csv `sigma0` is the
-           WITHIN-EPOCH tier's `sigma0_adapt` (NetworkStashStatus.cpp:530, "0.0
+           within-epoch tier's `sigma0_adapt` (NetworkStashStatus.cpp:530, "0.0
            unless within-epoch RAIM ran"), pooled over R.pl_amb which is empty on
-           this lineage — printed anyway as pre-registered; (b) the re-hosted
-           σ̂0 (NetworkRaim.cpp:417-428) is tallied only at run end (mean / max
-           over live-pool epochs) AND feeds ura_sigma0_ewma (:435, alpha 0.1)
-           which scales the emitted URA by max(1, ewma) (NetworkSolPrep.cpp:433)
-           — so the per-epoch U-record ratio leg/twin (same solve) reads the
-           EWMA, and sigma0_k = (ewma_k - 0.9 ewma_{k-1}) / 0.1 inverts it where
-           both sides are above the clip (raim_gate_grade.py's inversion); (c)
-           network_raim.csv rows (spiked cells only) and network_raim_attrib.csv
-           rows carry σ̂0 per flagged cell.  network_pf_keyed.csv STA / SAT rows
-           (trace_postfit_keyed, NetworkFrameDiag.cpp) are the coarse post-fit
-           residual read on the FAIL branch.
+           this lineage, printed anyway because it is pre-registered; (b) the
+           re-hosted σ̂0 (NetworkRaim.cpp:417-428) is tallied only at run end
+           (mean / max over live-pool epochs) and feeds ura_sigma0_ewma
+           (:435, alpha 0.1), which scales the emitted URA by max(1, ewma)
+           (NetworkSolPrep.cpp:433); the per-epoch U-record ratio leg/twin (same
+           solve) therefore reads the EWMA, and sigma0_k = (ewma_k - 0.9
+           ewma_{k-1}) / 0.1 inverts it where both sides are above the clip
+           (raim_gate_grade.py's inversion); (c) network_raim.csv rows (spiked
+           cells only) and network_raim_attrib.csv rows carry σ̂0 per flagged
+           cell. network_pf_keyed.csv STA / SAT rows (trace_postfit_keyed,
+           NetworkFrameDiag.cpp) are the coarse post-fit residual read on the
+           failure branch.
   T3/T4    every T3_* / T4_* event row per leg, with identity; raim_attribution
-           is ON on this lineage so the T4 path DRIVES the refloat and the T3
+           is on for this lineage, so the T4 path drives the refloat and the T3
            consensus block (NetworkRaim.cpp:1180, `!attrib_act`) never emits.
   DRAIN    act legs: run-end "queued into the deferred funnel and delivered"
-           (NetworkTeardown.cpp:868) — the drain itself (ApplicationNetwork.cpp
+           (NetworkTeardown.cpp:868); the drain itself (ApplicationNetwork.cpp
            :1590-1596) logs no identity, so the identity is the T4_attrib row
            that queued it plus the next epoch's chord births / arc refloats.
-  WIRE     products.txt G24 CLK / per-signal PB, event MINUS null at the SAME
+  WIRE     products.txt G24 CLK / per-signal PB, event minus null at the same
            posture: max |d| over k kev-1..kev+39 (the brief's "+10..+50") and
            over dk 0..45 (the fp1 G-C read); worst other key; blast radius at the
            event epoch; the declared discontinuity load (C clock_disc / P
@@ -78,8 +81,8 @@ What is read, and from which instrument (formats read from source, cited):
   HASHES   sha256 of every products.txt; null_screen == cert_null_v8; screen ==
            off per n; act vs screen per record kind with the first differing
            epoch; the extension's act vs off likewise.
-  CONSUMER closed_loop_trace.csv ENU event - null, REPORTED only (SPEC_event_
-           harness §24.1), printed against the consumer's OWN ignition curve (it
+  CONSUMER closed_loop_trace.csv ENU event - null, reported only (SPEC_event_
+           harness §24.1), printed against the consumer's own ignition curve (it
            cold-starts on every leg).
 """
 import argparse
@@ -392,7 +395,7 @@ def census(legdir, lo, hi):
                 det.append((k, float(lam.group(1)) if lam else None,
                             float(dev.group(2)) if dev else None))
     c["mw_det_lines"] = det
-    # D5 rows: the arc itself, plus collateral at the station / on the satellite
+    # Rows from the D5 detector: the arc itself, plus collateral at the station or on the satellite
     d5 = csv_rows(os.path.join(legdir, "logs", "network_d5_flags.csv")) or []
     arc, sta_other, sat_other = [], [], []
     for r in d5:
@@ -610,14 +613,14 @@ def records_diff(a_path, b_path):
 
 
 def disc_delta(legdir, nulldir, lo, hi, kev):
-    """Products C / P records whose DISCONTINUITY counter differs from the null.
+    """Products C / P records whose discontinuity counter differs from the null.
 
     A refloat that re-realizes a satellite's phase-bias level declares itself on
     the wire through the P record's phase_disc (and a C record's clock_disc); the
     count of (k, sat, signal) records whose counter differs from the null's over
     the window is the declared re-realization load the event put on the consumer
-    (the FP-2 6 h twin failed on exactly this number).  Also the per-epoch
-    INCREMENT count (leg vs null) at kev-1..kev+3 — where the response landed.
+    (the FP-2 6 h twin failed on this number). Also the per-epoch increment count
+    (leg vs null) at kev-1..kev+3, showing where the response landed.
     """
     def load(p):
         out, k = {}, None
@@ -970,7 +973,7 @@ def main():
         kev = lg["kev"]
         w1 = wire(ld, nd, kev - 1, min(kev + 39, N_EPOCHS))          # the brief: +10..+50
         w2 = wire(ld, nd, kev, min(kev + 45, N_EPOCHS))              # fp1 G-C: dk 0..45
-        w3 = wire(ld, nd, kev + 9, min(kev + 39, N_EPOCHS))          # P2: +20..+50
+        w3 = wire(ld, nd, kev + 9, min(kev + 39, N_EPOCHS))          # matches the P2 window, +20..+50
         bl = blast(ld, nd, kev)
         W[lg["name"]] = {"brief": w1, "gc": w2, "p2": w3, "blast_kev": bl}
         res["legs"][lg["name"]]["wire"] = {kk: {k: v for k, v in ww.items() if k != "clk_series"}
@@ -1049,7 +1052,7 @@ def main():
     # ------------------------------------------------------------- VERDICTS
     hdr("9. PRE-REGISTERED BARS P0..P3 (the numbers; the manager decides)")
     ver = {}
-    # ---- P0 on the (n, n, n) matrix at kev = 11
+    # ---- the P0 bar on the (n, n, n) matrix at kev = 11
     p0 = {}
     for n in NS:
         c = C.get(f"raimp_n{n}_off")
@@ -1095,7 +1098,7 @@ def main():
         print("     n=1 predicted margin |null_dd + lambda| - thr per event epoch k (m): "
               + " ".join(f"{k}:{m:+.4f}" for k, m in pred[1].items() if 5 <= k <= 30))
 
-    # ---- P0' — the draws
+    # ---- the P0' extension: the draws
     hdr("9'. P0' EXTENSION — n = 1 re-drawn at event epochs k = 15 / 19 / 23 (--at-ep 14 / 18 / 22), "
         "graded on the FIRST draw whose OFF arm has zero detector rows in [kev-1, kev+5]", "-")
     draws = {}
@@ -1130,7 +1133,7 @@ def main():
     else:
         print(f"     -> first blind draw: at_ep {graded} (k {graded + 1}) — P1 / P2 / P3 graded on it below")
 
-    # ---- P1 — the screen's power.  On the main matrix (screen arms, kev 11) and on the graded draw (act arm).
+    # ---- the P1 bar: the screen's power, on the main matrix (screen arms, kev 11) and on the graded draw (act arm).
     def p1_read(name, kev):
         s = S.get(name) or {}
         null_s = S.get("raimp_null_screen") or {}
@@ -1166,7 +1169,7 @@ def main():
               f"URA ratio {q['ura_ratio']} rise={q['rise_ura']}; T3/T4 arc rows {q['t34_arc_hits']}; "
               f"run-end {q['rehost_run_end']}  ->  {'PASS' if q['PASS'] else 'FAIL'}"
               + ("   <- the graded leg" if key == ver["P1"]["graded"] else ""))
-    # ---- P2 — actuation (only where P1 PASSED)
+    # ---- the P2 bar: actuation (only where P1 passed)
     p2 = {}
     for lg in legs:
         if lg["arm"] != "act":
@@ -1199,7 +1202,7 @@ def main():
               f"CLK mean act {fnum(q['act_clk_mean'], 5, 1).strip()} vs {q['comparator'].replace('evleg_', '')} "
               f"{fnum(q['comp_clk_mean'], 5, 1).strip()} over k {q['window']}  ->  "
               f"{('PASS' if q['PASS'] else 'FAIL') if q['applicable'] else 'n/a (P1 not PASS)'}")
-    # ---- P3 — the cost of the miss (OFF arm vs cert_null over +10..+50)
+    # ---- the P3 bar: the cost of the miss (off arm vs cert_null over +10..+50)
     p3 = {}
     for lg in legs:
         if lg["arm"] != "off":

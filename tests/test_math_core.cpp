@@ -18,11 +18,11 @@
  * The fixture path is injected via the GNSS_TEST_DATA_DIR macro defined by
  * CMake; if the file is absent the test is skipped, not failed.
  *
- * Target note: no translation unit in `gnss_tests` defines main() — the entry
+ * Target note: no translation unit in `gnss_tests` defines main(); the entry
  * point comes from the GTest::Main library linked via target_link_libraries,
  * since multiple TUs each defining main() would conflict at link time.
  *
- * NOT covered here (deferred):
+ * Not covered here (deferred):
  *  - WlsEstimator: its only public API (estimate) requires GnssConfig +
  *    StateManager + LogManager, which is not a unit-test surface; better
  *    exercised via integration tests.
@@ -158,9 +158,9 @@ TEST(CoordinatesTest, EnuEcefRoundTrip) {
 // ============================================================================
 
 // SP3 / CLK products carry timestamps already on the GPS time scale, so
-// gregorianGpsToGpsTime must NOT add leap seconds. The fixture under
+// gregorianGpsToGpsTime adds no leap seconds. The fixture under
 // data/products/sp3/ has header lines stating both 2024-05-08 00:00:00
-// and "GPS week 2313, TOW 259200" -- those values are the ground truth.
+// and "GPS week 2313, TOW 259200"; those values are the ground truth.
 TEST(TimeUtilsTest, GregorianGpsToGpsTimeMatchesSp3Header) {
     GnssTime t = TimeUtils::gregorianGpsToGpsTime(2024, 5, 8, 0, 0, 0.0);
     EXPECT_EQ(t.week, 2313);
@@ -177,8 +177,8 @@ TEST(TimeUtilsTest, GregorianUtcToGpsTimeAppliesLeapSeconds) {
 }
 
 // GPS-time round-trip via Gregorian. The conversion goes through UTC
-// (gpsTimeToGregorian subtracts leap seconds), so we re-apply them on
-// the way back with gregorianToGpsTime to close the loop.
+// (gpsTimeToGregorian subtracts leap seconds), so gregorianToGpsTime
+// re-applies them on the way back to close the loop.
 TEST(TimeUtilsTest, GpsTimeGregorianRoundTrip) {
     GnssTime original{ 2200, 123456.789 };
 
@@ -260,10 +260,10 @@ TEST(TimeUtilsTest, IsValidGregorianDateEdgeCases) {
     EXPECT_FALSE(TimeUtils::isValidGregorianDate(2024, 1, 1, 24, 0, 0.0));  // Bad hour
     EXPECT_FALSE(TimeUtils::isValidGregorianDate(2024, 1, 1, 0, 0, 60.0));  // Bad seconds
 
-    // The validity floor is 1970, NOT the GPS epoch (1980-01-06). Pre-GPS-epoch
-    // dates back to 1970 are accepted by design so Block I satellite ATX
-    // "VALID FROM" lines (from 1978) parse. See commit a2fa2ab and the comment
-    // in TimeUtils::isValidGregorianDate.
+    // The validity floor is 1970, not the GPS epoch (1980-01-06). Dates from
+    // 1970 up to the GPS epoch are accepted so that the ATX "VALID FROM" lines
+    // of Block I satellites (from 1978) parse. See the comment in
+    // TimeUtils::isValidGregorianDate (commit a2fa2ab).
     EXPECT_TRUE(TimeUtils::isValidGregorianDate(1979, 12, 31, 0, 0, 0.0));  // Pre-GPS epoch, >= 1970: OK
     EXPECT_FALSE(TimeUtils::isValidGregorianDate(1969, 12, 31, 0, 0, 0.0)); // Before 1970 floor: rejected
 }
@@ -297,8 +297,8 @@ TEST(TimeUtilsTest, GpsToTtJdOffsetIsConstant) {
     // Recovering a sub-second offset by differencing two ~2.46e6-magnitude
     // Julian Dates is limited by double precision: the ULP at this magnitude is
     // ~4.7e-10 days (~4e-5 s), so the round-trip cannot resolve the offset to
-    // better than ~1e-5 s. The tolerance reflects that floor, not a model error
-    // — the applied offset is exactly TT_GPS_OFFSET (51.184 s).
+    // better than ~1e-5 s. The tolerance reflects that floor, not a model error:
+    // the applied offset is exactly TT_GPS_OFFSET (51.184 s).
     EXPECT_NEAR((tt_jd - gps_jd) * 86400.0, TimeUtils::TT_GPS_OFFSET, 1e-4);
 }
 
@@ -510,8 +510,8 @@ TEST(FixtureSmokeTest, Sp3HeaderTimeConversionMatches) {
     ASSERT_TRUE(std::getline(in, line2)) << "Could not read SP3 line 2";
 
     // Line 1: "#dPYYYY MM DD HH MM SS.sssssss ..."
-    //         char positions are SP3-c/d fixed-width; we tokenize after the
-    //         "#dP" tag and let the stream skip whitespace.
+    //         char positions are SP3-c/d fixed-width; the parse tokenizes
+    //         after the "#dP" tag and lets the stream skip whitespace.
     ASSERT_GE(line1.size(), 30u) << "SP3 line 1 unexpectedly short";
     ASSERT_EQ(line1.substr(0, 3), "#dP") << "SP3 line 1 does not start with #dP";
 
@@ -548,8 +548,8 @@ TEST(FixtureSmokeTest, Sp3HeaderTimeConversionMatches) {
 // ============================================================================
 //
 // Geometry::getSatellitePV rotates each SP3 node's (X, Y) into the ECEF
-// frame at the query epoch before fitting the Neville polynomial — the
-// RTKLIB / cssrlib / IGS convention — and then converts the polynomial's
+// frame at the query epoch before fitting the Neville polynomial (the
+// RTKLIB / cssrlib / IGS convention), and then converts the polynomial's
 // inertial-frame velocity back to ECEF via v_ecef = v_inertial − ω×pos.
 //
 // This test exercises that arithmetic on a synthetic orbit with known
@@ -559,15 +559,14 @@ TEST(FixtureSmokeTest, Sp3HeaderTimeConversionMatches) {
 //   (b) the inertial-to-ECEF velocity correction reproduces ECEF
 //       velocity to mm/s.
 //
-// Note: we deliberately do NOT assert "pre-rotation has smaller error
-// than no pre-rotation" on this trajectory.  For a circular equatorial
-// orbit, the ECEF frequency is the beat |ω−n| and the inertial frequency
-// is n (about 2× larger for GPS) — so on this particular toy case the
-// pre-rotated polynomial fits a higher-frequency sinusoid and the
-// comparison can go either way.  The real-world benefit of pre-rotation
-// is for inclined / perturbed orbits where ECEF picks up an (ω+n)
-// component whose amplitude is much larger than the smooth inertial
-// trajectory; that's outside the scope of a deterministic synthetic
+// The test intentionally does not assert that pre-rotation has a smaller
+// error than no pre-rotation on this trajectory.  For a circular equatorial
+// orbit the ECEF frequency is the beat |ω−n| and the inertial frequency is
+// n (about 2× larger for GPS), so in this case the pre-rotated polynomial
+// fits a higher-frequency sinusoid and the comparison can go either way.
+// Pre-rotation helps on inclined or perturbed orbits, where ECEF picks up an
+// (ω+n) component whose amplitude is much larger than the smooth inertial
+// trajectory; that is outside the scope of a deterministic synthetic
 // fixture.
 TEST(OrbitInterpTest, EarthRotationPreCorrectionGivesCorrectECEFState) {
     constexpr double OMEGA_E = 7.2921151467e-5;   // rad/s  (Constants::EARTH_ANGULAR_VELOCITY)

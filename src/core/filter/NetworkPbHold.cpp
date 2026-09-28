@@ -1,11 +1,11 @@
 /**
  * @file NetworkPbHold.cpp
- * @brief Implementation of @ref networkPbHold — card PBH's emit-side phase-bias
- *        hold (@c network.emit_pb_hold).
+ * @brief Implementation of @ref networkPbHold, the emit-side phase-bias hold
+ *        (@c network.emit_pb_hold, card PBH).
  *
- * New code, not a relocation.  Seam contract: a free function over
- * @c (NetworkRunContext&, const GnssConfig&, log, NetworkRunTraces&, …) that owns
- * NO state — every persistent object is a reference into @c ctx.carry.
+ * Written as a seam, not relocated from the driver.  Seam contract: a free function
+ * over @c (NetworkRunContext&, const GnssConfig&, log, NetworkRunTraces&, …) that
+ * owns no state; every persistent object is a reference into @c ctx.carry.
  */
 
 #include "filter/NetworkPbHold.hpp"
@@ -31,12 +31,12 @@ namespace {
 
 /// The epoch's de-commoned clock step per satellite, in metres.
 ///
-/// `d_s = (c_s(k) - c_s(k-1)) - median_s(c_s(k) - c_s(k-1))`.  The median over the
-/// satellites present at BOTH epochs removes the per-constellation common mode a
-/// clock datum re-realization injects, which is exactly the part a consumer's own
-/// receiver clock absorbs — so what is left is the satellite-specific step, the
-/// quantity a coupled frame move would have to transfer.  Satellites without a
-/// previous emission are absent from the result (no step is defined for them).
+/// `d_s = (c_s(k) - c_s(k-1)) - median_s(c_s(k) - c_s(k-1))`.  The median is taken
+/// over the satellites with a clock at both epochs, across all constellations at
+/// once.  It removes the common mode a clock datum re-realization injects, which a
+/// consumer's own receiver clock absorbs; the remainder is the satellite-specific
+/// step, the quantity a coupled frame move would have to transfer.  Satellites
+/// without a previous clock are absent from the result (no step is defined).
 std::map<std::string, double> decommonedClockStep(
     const NetworkSolutionEpoch& sol,
     const std::map<std::string, double>& prev_clock_m) {
@@ -76,14 +76,13 @@ void networkPbHold(NetworkRunContext& ctx,
     const double max_gap_s = ctx.knobs.emit_pb_hold_max_gap_s;
     const double epoch_s   = sol.epoch_time.week * 604800.0 + sol.epoch_time.tow;
 
-    // Invariant #7, the COUPLED edge.  A mark naming BOTH the clock and the phase
-    // bias of a satellite asserts that the two moved together — the one case where
-    // an identity-passing contract is knowingly lossy, because the hold refuses the
-    // phase-bias half of the move.  The refusal is not hidden: the satellite's
-    // de-commoned clock step at that epoch is recorded, so the run-end summary
-    // states the SIZE of what was not transferred.  Computed from the marks PENDING
-    // at this point, which is the complete set: this seam is the last thing before
-    // emitToStore, and emitToStore is what consumes them.
+    // Coupled marks (invariant #7).  A mark naming both the clock and the phase bias
+    // of a satellite states that the two moved together.  This is the one case in
+    // which the identity-passing contract loses information, because the hold does
+    // not pass on the phase-bias half of the move.  The satellite's de-commoned clock
+    // step at that epoch is recorded, so the run-end summary states the size of what
+    // was not transferred.  The marks pending at this point are the complete set:
+    // every marking site has run, and emitToStore, which consumes them, follows.
     const std::map<std::string, double> clk_step = decommonedClockStep(sol, prev_clk);
 
     bool logged_arm = ctx.counters.n_pbh_held_emissions > 0
@@ -91,11 +90,11 @@ void networkPbHold(NetworkRunContext& ctx,
 
     for (auto& s : sol.sats) {
         if (s.sat.empty() || s.phase_bias.empty()) continue;
-        // Card CLV (network.clock_level_carry): the satellite's accumulated level shift
-        // per signal.  The re-base moves the carried clock AND every phase bias of the
-        // satellite by the same amount, so the estimator's phase side does not move; a
-        // hold that froze P while C moved would move the wire's phase side instead.
-        // Null on an unarmed run (never read).
+        // The satellite's accumulated clock-level shift per signal
+        // (network.clock_level_carry, card CLV).  The re-base moves the carried clock
+        // and every phase bias of the satellite by the same amount, so the estimator's
+        // phase side does not move; a hold that froze P while C moved would move the
+        // wire's phase side instead.  Null when CLV is not armed (then never read).
         const std::map<std::string, double>* xfer = nullptr;
         if (ctx.knobs.clv_on) {
             const auto lit = ctx.carry.clk_level.sat.find(s.sat);
@@ -108,7 +107,7 @@ void networkPbHold(NetworkRunContext& ctx,
 
         for (auto& [signal, npb] : s.phase_bias) {
             const std::string key = s.sat + "|" + signal;
-            double level_acc = 0.0;   // card CLV: this signal's accumulated level shift
+            double level_acc = 0.0;   // this signal's accumulated level shift (card CLV)
             if (xfer) {
                 const auto xit = xfer->find(signal);
                 if (xit != xfer->end()) level_acc = xit->second;
@@ -119,15 +118,15 @@ void networkPbHold(NetworkRunContext& ctx,
                                && (epoch_s - it->second.last_emit_s) > max_gap_s;
 
             if (first || gap) {
-                // RE-COUPLING edge: a generation STARTS here.  The current estimate
-                // becomes the held value — the one epoch per generation at which the
-                // wire tracks the estimator — and the declaration rides the stamped
-                // generation, which the consumer reacts to.
+                // Re-coupling edge: a generation starts here.  The current estimate
+                // becomes the held value (the one epoch per generation at which the
+                // wire equals the estimate), and the declaration is the stamped
+                // generation number, which the consumer reacts to.
                 NetworkCarryState::PbHoldKey st;
                 st.generation  = first ? 1u : (it->second.generation + 1u);
                 st.held_m      = npb.bias_m;
                 st.last_emit_s = epoch_s;
-                st.level_ref   = level_acc;   // card CLV: the transfer counts from here
+                st.level_ref   = level_acc;   // the level transfer counts from here (card CLV)
                 if (first) {
                     hold.emplace(key, st);
                     ++ctx.counters.n_pbh_keys;
@@ -152,13 +151,14 @@ void networkPbHold(NetworkRunContext& ctx,
                 continue;
             }
 
-            // DECOUPLING edge: the hold writes.  |estimate - held| is the whole cost,
-            // and it is measured on EVERY held emission rather than sampled.
+            // Decoupling edge: the hold writes.  |estimate - held| is the whole cost,
+            // and it is recorded on every held emission, not sampled.
             auto& st = it->second;
-            // Card CLV: the held value follows the level shift (the satellite's level
-            // step is declared on its C record, see networkClockLevelDeclare, so the
-            // emitter's value-jump test does not read the level as a discontinuity).
-            // OFF: the arithmetic is the pre-card one.
+            // With card CLV armed, the held value follows the level shift (the
+            // satellite's level step is declared on its C record, see
+            // networkClockLevelDeclare, so the emitter's value-jump test does not read
+            // the level as a discontinuity).  With it off, the held value is emitted
+            // unchanged.
             double held_emit = st.held_m;
             if (ctx.knobs.clv_on) {
                 const double level_off = level_acc - st.level_ref;
@@ -187,9 +187,9 @@ void networkPbHold(NetworkRunContext& ctx,
         }
     }
 
-    // Refresh the clock baseline for the next epoch's de-commoned step.  Written
-    // AFTER the sweep so the step above is against the previous EMISSION, and only
-    // for satellites this epoch actually carries a clock for.
+    // Refresh the clock baseline for the next epoch's de-commoned step.  Written after
+    // the sweep, so the step above is taken against the previous emission, and only
+    // for satellites that carry a clock this epoch.
     for (const auto& s : sol.sats)
         if (s.has_clock && !s.sat.empty()) prev_clk[s.sat] = s.clock_c0_m;
 

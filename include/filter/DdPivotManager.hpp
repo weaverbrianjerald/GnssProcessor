@@ -11,11 +11,11 @@
  * DD ambiguity states when the pivot changes (so cycle-integer
  * information is preserved across handovers instead of being reseeded).
  *
- * The two manager classes don't share an interface — their inputs
- * differ (SD per-receiver observations vs. DD shared-sat candidates)
- * and their handover math differs (BSSD-on-SD vs. DD-direct).  But
- * the conceptual responsibility is the same: own the sticky pivot
- * state, handle the change events, and expose the current pivots.
+ * The two manager classes do not share an interface: their inputs
+ * differ (SD per-receiver observations against DD shared-satellite
+ * candidates) and so does their handover math (BSSD on SD against
+ * DD direct).  Both have the same responsibility: own the sticky pivot
+ * state, handle pivot changes, and expose the current pivots.
  */
 
 #include "config/GnssConfig.hpp"
@@ -33,21 +33,19 @@ namespace GnssProcessor {
      *
      * Holds the per-constellation pivot map across epochs.  Each call
      * to @c selectPivots takes the current epoch's candidate set
-     * (sat → ranking-info) per constellation, decides whether to keep
-     * the incumbent (it's still in the candidate set) or re-rank, and
+     * (sat → ranking-info) per constellation, keeps the incumbent when
+     * it is still in the candidate set or re-ranks otherwise, and
      * applies the DD pivot-handover S-transform when the chosen pivot
-     * differs from last epoch's.  The handover is gated by the same
-     * @c BaselineConfig::enable_pivot_handover toggle that previously
-     * gated the inline implementation in @c MeasurementModel.
+     * differs from the previous epoch's.  The handover is gated by
+     * @c BaselineConfig::enable_pivot_handover.
      *
-     * The selection ranking is the same one used inline previously:
-     * a linear combination of average SNR (primary) and number of
-     * shared signals (small tiebreak).  Highest score wins.
+     * The ranking score is average SNR (primary) plus 0.01 times the
+     * number of shared signals (tiebreak).  The highest score wins.
      *
-     * State and covariance are mutated in @c StateManager only inside
-     * @c selectPivots() — and only when the handover branch fires.
-     * Outside of that, this class holds no references to the filter
-     * state and is safe to use from any rover context.
+     * State and covariance in @c StateManager are mutated only inside
+     * @c selectPivots(), and only when the handover branch runs.  The
+     * class holds no reference to the filter state between calls, so it
+     * can be used from any rover context.
      */
     class DdPivotManager {
     public:
@@ -55,9 +53,8 @@ namespace GnssProcessor {
          * @brief Per-(cons, sat) ranking information for pivot selection.
          *
          * Slim view over @c MeasurementModel's @c SharedInfo so the
-         * pivot manager doesn't take a structural dependency on the
-         * BRSD / row-builder data types.  The two fields are exactly
-         * what the legacy inline ranking used.
+         * pivot manager does not depend on the BRSD / row-builder data
+         * types.  The two fields are the inputs of the ranking score.
          */
         struct CandidateInfo {
             double avg_snr{ 0.0 };  ///< Mean SNR across rover-side signals (dB-Hz).
@@ -90,7 +87,7 @@ namespace GnssProcessor {
          * map by value (callers usually want both).
          *
          * @param candidates    Per-constellation candidate set for this epoch.
-         * @param state_manager Mutable filter state — used by the
+         * @param state_manager Mutable filter state, used by the
          *                      handover branch to read DD ambiguities,
          *                      apply @c x_new = T·x and @c P_new = T·P·Tᵀ,
          *                      and rename keys on the surviving rows.
@@ -111,10 +108,12 @@ namespace GnssProcessor {
         /**
          * @brief Forget all sticky pivots.
          *
-         * Used by the baseline epoch loop on hard-gap detection so the
-         * post-gap epoch picks fresh pivots rather than inheriting the
-         * pre-gap incumbent.  Also called between rovers in
-         * Baseline-Multi processing for the same reason.
+         * Called by the baseline epoch loop on a hard gap (so the
+         * post-gap epoch picks fresh pivots instead of inheriting the
+         * pre-gap incumbent) and after an MW slip, and by the
+         * application's heavy filter reset.  With no previous pivot, the
+         * next @c selectPivots applies no handover.  Each rover gets its
+         * own @c MeasurementModel, so pivots never carry across rovers.
          */
         void reset() { sticky_.clear(); forced_rerank_.clear(); }
 
@@ -123,13 +122,14 @@ namespace GnssProcessor {
          *
          * Routed from the baseline driver when @c KalmanFilter's coherent
          * pivot-slip detector flags @p cons.  On the next @c selectPivots the
-         * sticky incumbent for @p cons is NOT kept even if it is still a
-         * candidate; the re-rank instead skips @p exclude_sats (the offset
-         * pivot plus any co-disturbed satellites the KF identified) so the new
-         * pivot lands on a clean satellite.  The previous-pivot snapshot is
-         * preserved, so the handover S-transform still re-references existing
-         * DD ambiguities onto the new pivot (integer cycles preserved) rather
-         * than resetting them.  One-shot: cleared after the next @c selectPivots.
+         * sticky incumbent for @p cons is dropped even if it is still a
+         * candidate, and the re-rank skips @p exclude_sats (the offset pivot
+         * plus any co-disturbed satellites the KF identified) so the new pivot
+         * lands on a clean satellite.  The previous-pivot snapshot is kept, so
+         * with @c enable_pivot_handover on, the handover S-transform
+         * re-references existing DD ambiguities onto the new pivot (integer
+         * cycles preserved) instead of resetting them.  The request is
+         * one-shot: it is cleared by the next @c selectPivots.
          *
          * @param cons         Constellation name (e.g. "GPS").
          * @param exclude_sats Satellites to exclude from the re-rank candidates.
@@ -171,9 +171,10 @@ namespace GnssProcessor {
          *     downstream expected-keys prune erases the stale rows so
          *     the row builder reseeds on the new pivot.
          *
-         * Multiple constellations and codes coalesce into a single
-         * full-state T matrix and are applied in one shot.  Identity
-         * rows cover non-affected states.
+         * All changed (cons, code) groups form one full-state transform
+         * T, identity outside the groups.  T is never materialized: it is
+         * applied in place as a row pass (x and P) followed by a column
+         * pass (P), and the result goes through the shared PSD guard.
          */
         void handleHandover(
             StateManager& state_manager,

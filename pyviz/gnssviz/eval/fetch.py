@@ -1,19 +1,20 @@
 """Auto-download of station-coordinate truth files for the test suite.
 
-The primary source is the **ITRF2020 IGS combined SSC** from IGN
-(`itrf.ign.fr`): a 2.4 MB SINEX-format file with position + velocity for every
-IGS station, **no authentication**, so it auto-downloads cleanly for any IGS
-station the harness processes.  It is consumed by :class:`SinexTruth`.
+The primary source is the ITRF2020 IGS combined SSC from IGN (`itrf.ign.fr`): a
+2.4 MB SINEX-format file with position and velocity for every IGS station,
+requiring no authentication, so it auto-downloads cleanly for any IGS station
+the harness processes.  It is consumed by :class:`SinexTruth`.
 
-Why not CDDIS?  CDDIS (which hosts the IGS *weekly* SINEX) sits behind NASA
-Earthdata OAuth; a plain ``urllib`` GET returns the HTML login page, not the
-file.  A documented Earthdata-aware path is provided (:func:`cddis_weekly_sinex_url`)
-for users who have a ``.netrc`` + cookie flow, but the default truth source is
-the no-auth IGN SSC, which is sufficient (it covers every IGS station and
-propagates by velocity to any epoch).
+CDDIS (which hosts the IGS weekly SINEX) sits behind NASA Earthdata OAuth, so a
+plain ``urllib`` GET returns the HTML login page instead of the file.  A
+documented Earthdata-aware path is provided (:func:`cddis_weekly_sinex_url`)
+for callers with a ``.netrc`` and cookie flow, but the default truth source is
+the no-auth IGN SSC, which is sufficient: it covers every IGS station and
+propagates by velocity to any epoch.
 
-The full ITRF2020 SINEX *with* the variance-covariance matrix is 3.3 GB and is
-deliberately **not** used -- the SSC carries the position+velocity we need.
+The full ITRF2020 SINEX with the variance-covariance matrix is 3.3 GB and is
+deliberately not used here; the SSC carries the position and velocity the
+callers need.
 """
 
 from __future__ import annotations
@@ -46,9 +47,9 @@ def find_sinex_files(sinex_dir) -> List[Path]:
     seen, out = set(), []
     for pat in SINEX_GLOBS:
         for p in sorted(d.glob(pat)):
-            # Key on the normalized resolved path so the .snx/.SNX globs don't
-            # double-list one file on Windows, yet genuinely case-distinct files
-            # survive on POSIX.
+            # Key on the normalized resolved path so the .snx/.SNX globs do not
+            # double-list one file on Windows, while genuinely case-distinct
+            # files still survive on POSIX.
             key = os.path.normcase(str(p.resolve()))
             if key not in seen:
                 seen.add(key)
@@ -62,8 +63,9 @@ def ensure_itrf_ssc(sinex_dir, *, url: str = ITRF2020_IGS_SSC_URL,
     """Ensure the ITRF2020 IGS SSC is present in ``sinex_dir``; download if not.
 
     Idempotent: returns the cached path immediately if the file already exists
-    (and ``force`` is False).  Returns ``None`` on any download error (the caller
-    then degrades to whatever truth is already on disk -- e.g. SIF).
+    (and ``force`` is False). Returns ``None`` on any download error, in which
+    case the caller degrades to whatever truth is already on disk (for example
+    SIF).
 
     Transparently gunzips if the URL serves ``.gz``.
     """
@@ -81,10 +83,10 @@ def ensure_itrf_ssc(sinex_dir, *, url: str = ITRF2020_IGS_SSC_URL,
             raw = resp.read()
         if url.lower().endswith(".gz") or raw[:2] == b"\x1f\x8b":
             raw = gzip.GzipFile(fileobj=io.BytesIO(raw)).read()
-        # An HTTP 200 can still carry an empty body or a captive-portal / error
-        # HTML page (CDDIS does exactly this on auth failure).  Writing that as
-        # the SSC would silently degrade every truth lookup, so require the
-        # SINEX magic before accepting it.
+        # An HTTP 200 can still carry an empty body or a captive-portal or error
+        # HTML page (CDDIS does this on auth failure). Writing that as the SSC
+        # would silently degrade every truth lookup, so the SINEX magic bytes
+        # are required before the response is accepted.
         if not raw or raw.lstrip()[:5] != b"%=SNX":
             print(f"[sinex] rejected non-SINEX response (empty or not %=SNX) "
                   f"from {url}", file=sys.stderr)
@@ -105,20 +107,20 @@ def ensure_itrf_ssc(sinex_dir, *, url: str = ITRF2020_IGS_SSC_URL,
 
 
 def gps_week(year: int, doy: int) -> int:
-    """GPS week number for a (year, doy) -- the CDDIS products subdirectory."""
+    """GPS week number for a (year, doy): the CDDIS products subdirectory."""
     from datetime import date, timedelta
     d = date(year, 1, 1) + timedelta(days=doy - 1)
     return (d - date(1980, 1, 6)).days // 7
 
 
 def cddis_products_week_dir(year: int, doy: int) -> str:
-    """CDDIS products directory for the GPS week of a date (Earthdata auth req'd).
+    """CDDIS products directory for the GPS week of a date (Earthdata auth required).
 
-    Provided for users who want the operational IGS *weekly* SINEX combination
-    instead of the cumulative SSC.  The default truth path uses the no-auth IGN
+    Provided for callers that want the operational IGS weekly SINEX combination
+    instead of the cumulative SSC. The default truth path uses the no-auth IGN
     SSC, because a plain ``urllib`` GET against CDDIS returns the Earthdata login
-    page -- fetching from here needs a ``.netrc`` + cookie-jar opener (or the C++
-    ``DataDownloader``).  The weekly file is named
+    page; fetching from here needs a ``.netrc`` and cookie-jar opener (or the C++
+    ``DataDownloader``). The weekly file is named
     ``IGS0OPSSNX_<yyyyddd>0000_07D_07D_SOL.SNX.gz`` for the week's day-0.
     """
     return f"https://cddis.nasa.gov/archive/gnss/products/{gps_week(year, doy)}/"

@@ -1,23 +1,22 @@
 #!/usr/bin/env python3
-"""Lane-ladder spectrometer — project the network's own float DDs onto the MW/EWL
+"""Lane-ladder spectrometer: project the network's own float DDs onto the MW/EWL
 lane ladder and grade them against the MW integers (docs/SPEC_lane_spectrometer.md §3).
 
-READ-ONLY instrument.  It folds nothing and changes no estimate.  That is the point of
-increment S1: the soft version of "fold it in and see" was already run (the WL-1 float
-layer) and the injected tension did not settle into a legible residual — it exited
-through the QC machinery (D5 flags 3.48x, refloats 205/ep) and the post-mortem could not
-separate mechanisms.  A read-only projection gives attribution FIRST; the fold confirms.
+Read-only instrument: it folds nothing and changes no estimate (increment S1).  A
+fold-in test mixes the injected tension with the QC response (D5 flags, refloats), so
+the mechanisms cannot be separated afterwards; a read-only projection gives the
+attribution first, and a fold then confirms it.
 
-THE PHYSICS — why a ladder localizes the defect
------------------------------------------------
+Physics: why a ladder localizes the defect
+------------------------------------------
 Three error classes reach a float ambiguity estimate N_j (cycles):
 
   * dispersive (ionospheric): enters band j as  f1^2 * dI1 / (c * f_j)  cyc per metre
-    of L1-equivalent DD slant delay — LARGER on the lower-frequency band;
+    of L1-equivalent DD slant delay, larger on the lower-frequency band;
   * non-dispersive metre-level (geometry / tropo / clock / orbit leakage): enters as
-    dp / lambda_j = dp * f_j / c  cyc per metre — LARGER on the HIGHER band;
+    dp / lambda_j = dp * f_j / c  cyc per metre, larger on the higher band;
   * per-signal cycle-structured (phase-bias / datum realization): arbitrary per
-    signal, with NO ladder structure at all.
+    signal, with no ladder structure at all.
 
 A lane N_lane = N_hi - N_lo (f_hi > f_lo) compresses the first two by fixed, known
 ratios while leaving the third untouched:
@@ -27,58 +26,56 @@ ratios while leaving the third untouched:
     d frac / d(range-like) = (f_hi - f_lo)/c = 1/lambda_lane  [cyc/m]
 
 so the extra-wide lanes (GPS L2/L5 lambda 5.861 m, Galileo E5b/E5a 9.768 m) are 18-40x
-less sensitive to both than the per-band rungs.  Consequences — the decision content of
-the whole script:
+less sensitive to both than the per-band rungs.  The script's decisions follow from this:
 
-  * the rung where fractions go UNIFORM -> CONCENTRATED brackets the
+  * the rung where fractions go from uniform to concentrated brackets the
     dispersive/metre-level error magnitude between that rung's threshold and the next;
-  * UNIFORM AT EVERY RUNG INCLUDING EWL, while the measurement-side MW DD on the same
-    channels is clean, convicts the cycle-structured per-signal class;
-  * converting each rung's fraction to metres through that rung's OWN sensitivity turns
-    the ladder into a hypothesis test: a single physical error gives the SAME metres on
+  * uniform at every rung including EWL, while the measurement-side MW DD on the same
+    channels is clean, identifies the cycle-structured per-signal class;
+  * converting each rung's fraction to metres through that rung's own sensitivity turns
+    the ladder into a hypothesis test: a single physical error gives the same metres on
     every rung, and a structureless per-signal error gives metres that fan out by the
-    full SENSITIVITY ratio of the rungs compared.  That null (~60x over lambda
-    0.19->19.5 m) is what the observed ratio must be judged against — never a fixed
-    threshold, or a hypothesis explaining 96 % of the spread gets rejected for missing
-    an arbitrary 2x bar.
+    full sensitivity ratio of the rungs compared.  The observed ratio is judged against
+    that null (~60x over lambda 0.19->19.5 m), not against a fixed threshold, since a
+    fixed bar such as 2x can reject a hypothesis that explains most of the spread.
 
-Honest limit: the ladder spans WL DIRECTIONS only.  The NL direction, where the
-user-visible symptom lives, is orthogonal to every rung here.  Localization is by
-magnitude bracketing plus class elimination — never by probing NL directly.
+Limit: the ladder spans WL directions only.  The NL direction, where the user-visible
+symptom lives, is orthogonal to every rung here.  Localization is by magnitude
+bracketing plus class elimination; NL is not probed directly.
 
-Also honest: a between-station, between-satellite DD cancels the per-station and
-per-satellite gauge freedoms, but it does NOT cancel anything varying per
-(station, satellite) — the slant-iono residual above all.  So DD motion is the natural
-place for an iono-REPRESENTATION error to show up, and that is why a network producer
-can churn its DDs at the cycle level while a single-station user filter, whose satellite
-biases arrive fixed from a product, converges to stable ambiguities.
+A between-station, between-satellite DD cancels the per-station and per-satellite gauge
+freedoms, but not anything that varies per (station, satellite), above all the
+slant-iono residual.  DD motion is therefore where an iono-representation error shows
+up, which is why a network producer can churn its DDs at the cycle level while a
+single-station user filter, whose satellite biases arrive fixed from a product,
+converges to stable ambiguities.
 
-THE TRAP THIS SCRIPT EXISTS TO AVOID
-------------------------------------
-`network_dd_fractional.csv` carries `ref_sat` per (constellation, SIGNAL), elected
-independently per signal and per epoch.  So `dd_cyc` on L2W and on L5Q are referenced to
-DIFFERENT satellites and JOINING THEM DIRECTLY IS POISON.  This script RE-REFERENCES
-WITHIN SIGNAL first: inside one (epoch, cons, signal, sta_a, sta_b) group it forms
+Reference satellites: re-reference within a signal before joining
+-----------------------------------------------------------------
+`network_dd_fractional.csv` carries `ref_sat` per (constellation, signal), elected
+independently per signal and per epoch.  So `dd_cyc` on L2W and on L5Q are referenced
+to different satellites, and joining them directly is wrong.  This script re-references
+within the signal first: inside one (epoch, cons, signal, sta_a, sta_b) group it forms
 dd(sat_i) - dd(sat_j), where the reference term cancels exactly, and only then combines
 across signals on common (sat_i, sat_j, sta_a, sta_b, epoch) keys.  The reference
-satellite is carried as a VIRTUAL member with dd = 0 (the producer emits no row for it,
-but dd(ref) is identically zero by construction) — exact, and the single biggest source
-of joinable pairs.  `--selftest` proves the cancellation, the join across DIFFERING
-references, and that the naive join is wrong.
+satellite is carried as a virtual member with dd = 0 (the producer emits no row for it,
+but dd(ref) is identically zero by construction); this is exact and is the largest
+source of joinable pairs.  `--selftest` checks the cancellation, the join across
+differing references, and that the naive join is wrong.
 
-ARC MEANS, NOT POOLED SAMPLES (the R6 method)
+Arc means, not pooled samples (the R6 method)
 ---------------------------------------------
-DD point estimates wander, so a pooled instantaneous fraction histogram measures CHURN,
-not bias.  The graded statistic is the mean over a SEGMENTED WINDOW of >= --min-window
+DD point estimates wander, so a pooled instantaneous fraction histogram measures churn,
+not bias.  The graded statistic is the mean over a segmented window of >= --min-window
 epoch-adjacent samples, cut at any epoch gap or any adjacent-epoch |delta| >
---split-cyc.  A rung whose MEDIAN step already exceeds that threshold cannot form a
-window at all — it is churn-gated (R6's third state) and gets no class verdict.  The
-gate is PER RUNG: a single global gate would throw away the EWL rungs, which are the
-ones with any chance of being gradeable.
+--split-cyc.  A rung whose median step already exceeds that threshold cannot form a
+window at all: it is churn-gated (R6's third state) and gets no class verdict.  The
+gate is per rung, because a single global gate would discard the EWL rungs, which are
+the ones most likely to be gradeable.
 
-CONVENTION SCREENS (never averaged into the main pool)
------------------------------------------------------
-  * GPS lanes involving L2W / L2S are ALSO graded on the HALF-cycle lattice (the
+Convention screens (never averaged into the main pool)
+------------------------------------------------------
+  * GPS lanes involving L2W / L2S are also graded on the half-cycle lattice (the
     semi-codeless half-cycle artifact is real).  Fractions are expressed in units of the
     lattice so the uniform benchmarks (0.25 / 0.20 / 0.0) are unchanged.
   * Galileo X-attribute families are reported per family (L6X/L7X sit 0.131 cyc
@@ -96,6 +93,9 @@ Usage
       --min-n N        graded windows needed before a rung is judged (default 30)
       --selftest       run the algebra self-tests and exit
       --csv PATH       dump every graded window for external plotting
+
+The MW side is on by default when a `data` directory exists under the working
+directory.
 """
 import cmath
 import csv
@@ -109,7 +109,7 @@ from collections import defaultdict
 C = 299792458.0
 F1 = 1575.42e6          # the L1 reference the iono sensitivity is expressed against
 
-# Nominal per-band carrier frequencies.  GLONASS (FDMA) is absent by construction: its
+# Nominal per-band carrier frequencies, Hz.  GLONASS (FDMA) is absent by construction: its
 # per-satellite frequency makes a between-satellite lane non-integer, and the producer's
 # DD-fractional tracer already excludes it.
 FREQ = {
@@ -126,8 +126,8 @@ SPEC_RUNGS = {('G', '1'), ('G', '2'), ('G', '5'), ('E', '1'), ('E', '5'), ('E', 
 
 # A fraction distribution is effectively uniform once the underlying error exceeds ~0.4
 # cycles of the rung (the SPEC table's "frac ~ uniform when |err| >~" column is this
-# constant over the rung's sensitivity).  Not a threshold on the DATA — it converts a
-# rung into the error magnitude it can still see.
+# constant over the rung's sensitivity).  It is not a threshold on the data: it converts
+# a rung into the error magnitude it can still see.
 UNIFORMIZING_FRAC_CYC = 0.4
 
 UNIFORM_MED, UNIFORM_P10, UNIFORM_R = 0.25, 0.20, 0.0
@@ -145,9 +145,9 @@ def band_props(sysc, band):
 def lane_props(sysc, b_hi, b_lo):
     """(lambda_m, |iono_sens|, |range_sens|) for the lane N_hi - N_lo, cyc per metre.
 
-    b_hi must be the HIGHER-frequency band; the caller orders them.  The iono
-    sensitivity is negative (the lower band absorbs more delay) — the magnitude is what
-    the ladder reads, so it is returned as such."""
+    b_hi must be the higher-frequency band; the caller orders them.  The iono
+    sensitivity is negative (the lower band absorbs more delay); the ladder reads the
+    magnitude, so the magnitude is returned."""
     f_hi, f_lo = FREQ[sysc][b_hi], FREQ[sysc][b_lo]
     return (C / (f_hi - f_lo),
             abs(F1 * F1 / C * (1.0 / f_hi - 1.0 / f_lo)),
@@ -171,7 +171,7 @@ def rung_label(rung):
 # Statistics
 # ---------------------------------------------------------------------------
 def frac_stats(vals, lattice=1.0):
-    """Fractional-lattice statistics of `vals` (cycles), reported in LATTICE UNITS.
+    """Fractional-lattice statistics of `vals` (cycles), reported in lattice units.
 
     Dividing by the lattice before taking the fraction means the uniform benchmarks
     (0.25 / 0.20 / 0) hold for the half-cycle screen too, so the two screens are
@@ -194,12 +194,11 @@ def frac_stats(vals, lattice=1.0):
 
 
 def verdict(s, min_n, churn_gated=False):
-    """churn-gated / thin / UNIFORM / partial / CONCENTRATED — the per-rung read.
+    """Per-rung verdict: churn-gated / thin / UNIFORM / partial / CONCENTRATED.
 
-    Deliberately conservative in both directions: `partial` is a real answer (it is what
-    "the error sits near this rung's threshold" looks like), `thin` refuses to classify a
-    rung the run did not measure, and `churn-gated` refuses to classify a rung where no
-    window can form."""
+    Conservative in both directions: `partial` is a real answer (the error sits near
+    this rung's threshold), `thin` declines to classify a rung the run did not measure,
+    and `churn-gated` declines to classify a rung where no window can form."""
     if churn_gated:
         return 'churn-gated'
     if s is None or s['n'] < min_n:
@@ -212,13 +211,13 @@ def verdict(s, min_n, churn_gated=False):
 
 
 def explained(ratio, null):
-    """How much of a structureless-error NULL a single-magnitude hypothesis explains.
+    """How much of a structureless-error null a single-magnitude hypothesis explains.
 
     A per-signal error with no lane structure produces implied-metre columns that fan out
-    by exactly the rungs' SENSITIVITY ratio (`null`).  A perfect single physical error
-    produces 1.0.  Scoring log(observed)/log(null) puts the two hypotheses on a scale
-    where "2.5x across a 60x null" reads as the ~78 % agreement it is, instead of failing
-    an arbitrary absolute bar."""
+    by the rungs' sensitivity ratio (`null`).  A single physical error produces a ratio
+    of 1.0.  The score 1 - log(observed)/log(null) places both hypotheses on one scale,
+    so that 2.5x across a 60x null reads as ~78 % agreement rather than failing a fixed
+    absolute bar."""
     if not (null > 1.0):
         return 0.0
     return max(0.0, 1.0 - math.log(max(ratio, 1.0 + 1e-9)) / math.log(null))
@@ -235,11 +234,11 @@ def _f(x, default=None):
 
 
 def infer_epoch_dt(tows):
-    """Nominal epoch spacing = median gap between DISTINCT sorted tows.
+    """Nominal epoch spacing = median gap between distinct sorted tows.
 
-    Robust to the ~1e-5 s product-tow jitter and to multi-epoch gaps.  Note
-    `trace_dd_fractional_epoch_stride` makes this the STRIDED spacing, which is exactly
-    what "epoch-adjacent" must mean for a strided trace."""
+    Robust to the ~1e-5 s product-tow jitter and to multi-epoch gaps.  Under
+    `trace_dd_fractional_epoch_stride` this is the strided spacing, which is what
+    "epoch-adjacent" means for a strided trace."""
     u = sorted({round(t, 3) for t in tows})
     d = [b - a for a, b in zip(u, u[1:]) if b - a > 1e-6]
     return st.median(d) if d else 1.0
@@ -256,8 +255,8 @@ def load_ddfrac(run, tail_s, ctr):
             ctr['rows_read'] += 1
             tow, dd = _f(r.get('tow')), _f(r.get('dd_cyc'))
             lam = _f(r.get('lambda_m'), 0.0)
-            # dd_cyc / frac_cyc are written as exactly 0 when lambda is unknown — an
-            # IN-BAND sentinel, so a grader that does not filter reports spurious
+            # dd_cyc / frac_cyc are written as exactly 0 when lambda is unknown.  That is
+            # an in-band sentinel, so a grader that does not filter it reports spurious
             # perfect integers.
             if tow is None or dd is None or not lam or lam <= 0.0:
                 ctr['rows_unusable'] += 1
@@ -275,26 +274,25 @@ def load_ddfrac(run, tail_s, ctr):
 
 
 def load_anchors(run):
-    """(cons,signal,sat) -> frozenset of stations that GAUGE-PIN that freedom.
+    """(cons,signal,sat) -> frozenset of stations that gauge-pin that freedom.
 
-    MEASURED, and it changes what the SPEC §3.3 partition can mean: under the eq34 chain
-    datum (the graded lineage's posture) the pins are spanning-TREE EDGES, so a satellite
-    is pinned at EVERY station incident to it in the tree — up to 17 stations per
-    (cons, signal, satellite) at 50 stations.  The map is one-to-many, so "the anchor
-    station" is not well defined and the spec's binary split has to be generalized.
+    Measured, and it changes what the SPEC §3.3 partition can mean: under the eq34 chain
+    datum (the graded lineage's posture) the pins are spanning-tree edges, so a satellite
+    is pinned at every station incident to it in the tree (up to 17 stations per
+    (cons, signal, satellite) at 50 stations).  The map is one-to-many, so "the anchor
+    station" is not well defined and the spec's binary split is generalized here.
 
-    The generalization: two satellites are SAME-anchor on a signal if their pin SETS
-    intersect, CROSS-anchor if disjoint.  That preserves the question the partition asks
-    — does the datum realize these two satellites through a shared station or through
-    unrelated ones — and it degrades correctly: on the legacy single-pivot datum every
-    set is {pivot}, every pair is same-anchor, and the partition exonerates the election
-    by construction, exactly as the SPEC says.
+    Two satellites are same-anchor on a signal if their pin sets intersect, and
+    cross-anchor if the sets are disjoint.  That keeps the question the partition asks
+    (does the datum realize these two satellites through a shared station or through
+    unrelated ones?) and reduces to the spec's case: on the legacy single-pivot datum
+    every set is {pivot}, every pair is same-anchor, and the partition clears the
+    election by construction, as the SPEC says.
 
-    Note the complement, which is why no DD is ever `pinned_local`: the DD-fractional
-    trace SKIPS pinned ambiguities, so a station in a satellite's pin set never appears
-    as that satellite's DD member on that signal.  Sets are unioned over the window (the
-    sticky tree re-elects often, so an epoch-exact join would shred the arcs for no
-    gain)."""
+    No DD is ever `pinned_local`, because the DD-fractional trace skips pinned
+    ambiguities: a station in a satellite's pin set never appears as that satellite's
+    DD member on that signal.  Sets are unioned over the window (the sticky tree
+    re-elects often, so an epoch-exact join would break the arcs up for no gain)."""
     p = os.path.join(run, 'logs', 'network_phase_anchor.csv')
     if not os.path.exists(p):
         return None
@@ -327,7 +325,7 @@ def baseline_bucket(ecef, a, b):
 
 
 # ---------------------------------------------------------------------------
-# Step 1 — re-reference WITHIN signal (the trap), then join ACROSS signals
+# Step 1: re-reference within a signal, then join across signals
 # ---------------------------------------------------------------------------
 def reref(rows, dt0, t0, ctr):
     """-> ({(epoch,cons,signal,a,b): {sat: dd_cyc}}, same-keyed sigma map).
@@ -342,21 +340,21 @@ def reref(rows, dt0, t0, ctr):
         k = (e, r['cons'], r['signal'], r['a'], r['b'])
         grp[k][r['sat']] = r['dd']
         # dd_sigma_cyc is -1 when the joint conditional covariance was unavailable that
-        # epoch (another in-band sentinel) — never propagate it as a variance.
+        # epoch (another in-band sentinel); it is not propagated as a variance.
         if r['sig'] is not None and r['sig'] > 0.0:
             sig[k][r['sat']] = r['sig']
         refs[k].add(r['ref'])
     for k, rs in refs.items():
         if len(rs) != 1:
             # Two references inside one group would break the cancellation.  The producer
-            # elects one per (cons,signal) per epoch so this must stay empty; it is
-            # CHECKED rather than assumed because a silent violation is exactly the
-            # poison this script exists to avoid.
+            # elects one per (cons,signal) per epoch, so this should stay empty; it is
+            # checked rather than assumed because an unnoticed violation would corrupt
+            # every difference formed in the group.  Such groups are dropped and counted.
             ctr['dropped_ref_mismatch'] += 1
             grp.pop(k, None)
             continue
         ref = next(iter(rs))
-        grp[k].setdefault(ref, 0.0)   # the reference IS a member, at dd == 0
+        grp[k].setdefault(ref, 0.0)   # the reference is a member, at dd == 0
         sig[k].setdefault(ref, 0.0)   # ... and carries no formal sigma of its own
     ctr['reref_groups'] = len(grp)
     return grp, sig
@@ -365,10 +363,10 @@ def reref(rows, dt0, t0, ctr):
 def pair_series(grp, sig, ctr):
     """-> ({key: {epoch: ddr_cyc}}, {key: indicative_sigma_cyc}) for sat_i < sat_j.
 
-    ddr = dd(sat_i) - dd(sat_j): the between-station, between-satellite DD on ONE signal
-    with the reference satellite algebraically gone.  The sigma is INDICATIVE only — the
-    trace carries each DD's own formal sigma but not the cross-covariance between two DDs
-    sharing a reference, so sqrt(sA^2+sB^2) over-counts the shared term."""
+    ddr = dd(sat_i) - dd(sat_j): the between-station, between-satellite DD on one signal
+    with the reference satellite algebraically removed.  The sigma is indicative only:
+    the trace carries each DD's own formal sigma but not the cross-covariance between two
+    DDs sharing a reference, so sqrt(sA^2+sB^2) over-counts the shared term."""
     out = defaultdict(dict)
     sigs = defaultdict(list)
     for (e, cons, s, a, b), sats in grp.items():
@@ -389,7 +387,7 @@ def lane_series(ps, ps_sig, ctr, extra_rungs=True):
     """-> ({rung: {key: {epoch: cyc}}}, {rung: {key: indicative_sigma}}).
 
     Per-band rungs are the re-referenced DDs as they stand; lane rungs are the
-    cross-signal difference N_hi - N_lo on COMMON (sat pair, station pair, epoch) keys.
+    cross-signal difference N_hi - N_lo on common (sat pair, station pair, epoch) keys.
     `family` in the key is the tracking-attribute pair (the Galileo X-family screen)."""
     per_band = defaultdict(dict)
     for key, series in ps.items():
@@ -447,15 +445,15 @@ def lane_series(ps, ps_sig, ctr, extra_rungs=True):
 
 
 # ---------------------------------------------------------------------------
-# Step 2 — segment into windows and grade the ARC MEANS
+# Step 2: segment into windows and grade the arc means
 # ---------------------------------------------------------------------------
 def windows(series, min_window, split_cyc):
     """-> maximal epoch-adjacent runs with no jump.
 
-    Two cutting rules, both mandatory: an epoch INDEX gap (the trace is strided and the
-    producer skips epochs, so consecutive SAMPLES are not consecutive EPOCHS) and an
+    Two cutting rules, both applied: an epoch index gap (the trace is strided and the
+    producer skips epochs, so consecutive samples are not consecutive epochs) and an
     adjacent-epoch |delta| over `split_cyc` (a refloat or a network re-level moves a DD
-    by O(1) cycle; averaging across it manufactures a fraction that never existed)."""
+    by O(1) cycle; averaging across it produces a fraction that never existed)."""
     out, cur = [], []
     for e in sorted(series):
         v = series[e]
@@ -469,7 +467,7 @@ def windows(series, min_window, split_cyc):
 
 
 def step_stats(keyed):
-    """Adjacent-epoch |delta| over every series of one rung — the CHURN read.
+    """Adjacent-epoch |delta| over every series of one rung (the churn read).
 
     Gradeability evidence and a ladder measurement in its own right: if a rung's median
     step already exceeds the window-splitting threshold, no window can form and that
@@ -486,7 +484,7 @@ def step_stats(keyed):
 
 
 def grade(rungs, min_window, split_cyc, ctr):
-    """-> ({rung: [record]}, {rung: step_stats}) — arc means plus the churn read."""
+    """-> ({rung: [record]}, {rung: step_stats}): arc means plus the churn read."""
     graded = defaultdict(list)
     steps = {}
     wlen = []
@@ -514,15 +512,16 @@ def grade(rungs, min_window, split_cyc, ctr):
 
 
 # ---------------------------------------------------------------------------
-# Step 3 — measurement side: DD of the raw MW statistic (the trusted reference)
+# Step 3: measurement side, DD of the raw MW statistic (the trusted reference)
 # ---------------------------------------------------------------------------
 def mw_reference(obs_glob, sod_lo, sod_hi, want_sta, max_sta, log=print):
     """-> {(cons, sig_hi, sig_lo, station, sat): {sod: mw_cyc}} from raw RINEX.
 
-    Receiver AND satellite MW biases cancel exactly in the between-station DD of the same
+    Receiver and satellite MW biases cancel exactly in the between-station DD of the same
     satellite pair, so the DD is a pure integer x lambda_lane against decimetre averaged
-    noise — ground truth the estimator never touched.  Parsing is delegated to the census
-    parser so there is exactly one RINEX MW implementation in the tree."""
+    noise: ground truth independent of the estimator.  Parsing is delegated to the census
+    parser (mw_census_allpairs.parse_station_tow) so there is one RINEX MW implementation
+    in the tree."""
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     try:
         from mw_census_allpairs import parse_station_tow
@@ -575,26 +574,26 @@ def _mad(vals, centre):
 
 
 def report_mw(rungs, mw, dt0, t0, min_ep, ctr):
-    """State-vs-MW per-arc bias: the UNWRAPPED error gauge, needing NO windows.
+    """State-vs-MW per-arc bias: the unwrapped error gauge, which needs no windows.
 
-    This is the instrument that survives a churn-dominated producer.  The arc-mean method
-    needs >= min_window epoch-ADJACENT samples, which a DD wandering cycles per epoch
-    never supplies.  Here the MW statistic supplies a per-EPOCH truth, so each epoch is
+    This instrument still works on a churn-dominated producer.  The arc-mean method
+    needs >= min_window epoch-adjacent samples, which a DD wandering cycles per epoch
+    never supplies.  Here the MW statistic supplies a per-epoch truth, so each epoch is
     its own comparison:  d(e) = state_lane(e) - MW_lane(e).  That decomposes into a
-    per-arc CONSTANT (the model bias) plus epoch-to-epoch motion (the churn), so the
-    median of d over an arc is a robust bias estimate immune to the churn that shreds the
+    per-arc constant (the model bias) plus epoch-to-epoch motion (the churn), so the
+    median of d over an arc is a bias estimate robust to the churn that breaks up the
     windows, and the scaled MAD of d measures the churn on the same arc.  Neither needs
     contiguity.
 
-    The disagreement then splits into a WHOLE-LANE-CYCLE part and a sub-cycle part, and
+    The disagreement then splits into a whole-lane-cycle part and a sub-cycle part, and
     they are different findings.  The integer part says the state DD is not on the same
-    lattice member as the truth (SPEC §3.4's "instrument first" row) — the SYMPTOM.  Only
-    the sub-cycle part is a model-error magnitude that converts to metres, which is why
-    the class test below uses it."""
+    lattice member as the truth (SPEC §3.4's "instrument first" row), which is the
+    symptom.  Only the sub-cycle part is a model-error magnitude that converts to
+    metres, which is why the class test below uses it."""
     summary = []
     for rung in sorted(rungs, key=lambda r: rung_props(r)[0]):
         if len(rung) != 3:
-            continue            # the MW statistic IS a lane; a band alone has none
+            continue            # the MW statistic is a lane; a single band has none
         lam, si, sr = rung_props(rung)
         bias, churn, mwfrac, nep = [], [], [], []
         attempted = 0
@@ -740,8 +739,8 @@ def print_churn(steps, split_cyc):
                '   <-- CHURN-GATED' if s['med'] > split_cyc else ''))
         if s['n'] >= 100:
             pool.append((rung, s['med'] / si, s['med'] / sr))
-    # The churn is itself a ladder measurement and it needs no MW side.  Scored against
-    # the structureless null, exactly as the MW class test is.
+    # The churn is itself a ladder measurement and needs no MW side.  It is scored
+    # against the structureless null, in the same way as the MW class test.
     for tag, sub in (('SPEC-table rungs', [x for x in pool if x[0] in SPEC_RUNGS]),
                      ('all well-sampled', pool)):
         if len(sub) < 3:
@@ -780,10 +779,10 @@ def half_cycle_screened(rec, cons):
 
 
 def anchor_class(anchors, cons, rec):
-    """same / cross / unknown for one graded DD record (pin-SET intersection).
+    """same / cross / unknown for one graded DD record (pin-set intersection).
 
     A lane record spans two signals and therefore two pin-set pairs; it counts as `same`
-    only when BOTH signals share a pinning station between the two satellites, because a
+    only when both signals share a pinning station between the two satellites, because a
     disjoint realization on either signal contaminates the lane."""
     got = []
     for s in [x for x in (rec['s_hi'], rec['s_lo']) if x]:
@@ -1006,7 +1005,7 @@ def main(argv):
         print('\n== MEASUREMENT SIDE: DD of the raw MW statistic (ground truth) ==')
         obs_glob = opt('--obs-glob',
                        'C:/GnssProcessor/data/2024-129/obs/*/*_30S_MO.rnx', str)
-        # From EVERY state arc, not just the window-graded ones: under a churn-dominated
+        # From every state arc, not just the window-graded ones: under a churn-dominated
         # producer `graded` can be empty while the per-epoch MW gauge is fully available.
         want_sta = {k[6] for keyed in rungs.values() for k in keyed} | \
                    {k[7] for keyed in rungs.values() for k in keyed}
@@ -1045,7 +1044,7 @@ def main(argv):
 
 
 # ---------------------------------------------------------------------------
-# Self-tests — the ref_sat algebra and the cross-signal join keying (9.2 / 10)
+# Self-tests: the ref_sat algebra and the cross-signal join keying (9.2 / 10)
 # ---------------------------------------------------------------------------
 def selftest():
     fails = []
@@ -1082,7 +1081,7 @@ def selftest():
         any(REF in (k[2], k[3]) for k in ps))
     chk('pair count = C(n+1,2) with the virtual ref', len(ps) == 6, 'got %d' % len(ps))
 
-    # THE TRAP: two signals with DIFFERENT ref_sat must still join correctly.
+    # Two signals with different ref_sat must still join correctly.
     ctr2 = defaultdict(int)
     N = {('G02', 'L2W'): 12.0, ('G05', 'L2W'): -3.0, ('G09', 'L2W'): 7.0,
          ('G02', 'L5Q'): 4.0, ('G05', 'L5Q'): -9.0, ('G09', 'L5Q'): 2.0}
@@ -1140,8 +1139,8 @@ def selftest():
         verdict(frac_stats(con), 30, True) == 'churn-gated')
 
     # The null-scored class test: a perfect single magnitude explains 100 %, a ratio equal
-    # to the null explains 0 %, and 2.5x across a 60x null explains ~78 % — which is why
-    # judging it against a fixed 2x bar would have rejected the right answer.
+    # to the null explains 0 %, and 2.5x across a 60x null explains ~78 %, a case that a
+    # fixed 2x bar would reject.
     chk('explained(1.0, 60) == 1', abs(explained(1.0, 60.0) - 1.0) < 1e-9)
     chk('explained(60, 60) == 0', abs(explained(60.0, 60.0)) < 1e-9)
     chk('explained(2.5, 60) ~ 0.78', abs(explained(2.5, 60.0) - 0.776) < 0.01,

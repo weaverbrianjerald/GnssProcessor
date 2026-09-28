@@ -4,11 +4,11 @@
  *        (filter/NetworkBiasAdmission.hpp).
  *
  * The census is a pure scan over a synthetic std::vector<SyncedEpoch>: it
- * classifies each (satellite,signal) raw-code pair into ADMITTED (shared
- * column) or QUARANTINED (station-local sponge) using a sustained-support
- * count floor (tier 1) and an IF-pinnability band-distinctness rule (tier 2).
- * These tests assert the classification directly on the returned POD — no
- * estimator, no modeling pipeline, fully deterministic.
+ * classifies each (satellite, signal) raw-code pair as admitted (shared column)
+ * or quarantined (station-local column that absorbs the bias), using a
+ * sustained-support count floor (tier 1) and an IF-pinnability band-distinctness
+ * rule (tier 2).  The tests assert the classification directly on the returned
+ * POD, with no estimator and no modeling pipeline, so they are deterministic.
  */
 
 #include <gtest/gtest.h>
@@ -46,7 +46,7 @@ const NetworkBiasAdmission::Pair* find(const NetworkBiasAdmission& a,
     return nullptr;
 }
 
-/// @brief Fixture builder: a run of @p n_epochs, each carrying the SAME set of
+/// @brief Fixture builder: a run of @p n_epochs, each carrying the same set of
 ///        (station -> [obs...]) observations (a fully-tracked steady roster).
 ///        Individual tests mutate the returned vector to introduce gaps.
 struct CensusBuilder {
@@ -62,7 +62,7 @@ struct CensusBuilder {
 };
 
 // A GPS satellite tracked on two distinct bands (L1 + L2) at two stations, over
-// a steady window, is ADMITTED on both pairs (both tiers pass).
+// a steady window, is admitted on both pairs (both tiers pass).
 TEST(NetworkBiasAdmissionTest, SteadyTwoBandTwoStationAdmitted) {
     CensusBuilder b;
     const std::vector<std::pair<std::string, double>> g01 = {{"C1C", 2.4e7}, {"C2W", 2.4e7}};
@@ -85,8 +85,8 @@ TEST(NetworkBiasAdmissionTest, SteadyTwoBandTwoStationAdmitted) {
     EXPECT_EQ(p->verdict, Verdict::Admitted);
 }
 
-// Tier-2 demotion: a satellite tracked at enough stations but on a SINGLE band
-// cannot form an IF pin — ALL its candidates are quarantined (NoIfPin).
+// Tier-2 demotion: a satellite tracked at enough stations but on a single band
+// cannot form an IF pin, so all its candidates are quarantined (NoIfPin).
 TEST(NetworkBiasAdmissionTest, SingleBandSatelliteDemotedNoIfPin) {
     CensusBuilder b;
     const std::vector<std::pair<std::string, double>> g01 = {{"C1C", 2.4e7}};  // L1 only
@@ -99,11 +99,11 @@ TEST(NetworkBiasAdmissionTest, SingleBandSatelliteDemotedNoIfPin) {
     EXPECT_FALSE(a.isAdmitted(StateKeys::makeSatBiasKey("G01", "C1C")));
     const auto* p = find(a, "G01", "C1C");
     ASSERT_NE(p, nullptr);
-    EXPECT_EQ(p->support, 2);                 // tier-1 PASSES (2 stations)...
+    EXPECT_EQ(p->support, 2);                 // tier 1 passes (2 stations)...
     EXPECT_EQ(p->verdict, Verdict::NoIfPin);  // ...but tier-2 (IF pin) fails.
 }
 
-// Two same-band co-channels (C1C + C1W, both L1) are NOT distinct frequencies,
+// Two same-band co-channels (C1C + C1W, both L1) are not distinct frequencies,
 // so the satellite still fails tier-2 (mirrors selectIfPinPair skipping a
 // same-band co-channel).
 TEST(NetworkBiasAdmissionTest, SameBandCoChannelsNotDistinct) {
@@ -117,7 +117,7 @@ TEST(NetworkBiasAdmissionTest, SameBandCoChannelsNotDistinct) {
     EXPECT_EQ(find(a, "G01", "C1W")->verdict, Verdict::NoIfPin);
 }
 
-// Sustained-support floor: a station that tracks the pair in FEWER than
+// Sustained-support floor: a station that tracks the pair in fewer than
 // ceil(K_eff/2) epochs does not "support" it, so a 2-station pair where one
 // station is gappy drops to support=1 and quarantines (LowCount).
 TEST(NetworkBiasAdmissionTest, SustainedSupportFloorRejectsGappyStation) {
@@ -162,14 +162,14 @@ TEST(NetworkBiasAdmissionTest, EffectiveMinClampThreeStationRoster) {
     EXPECT_EQ(a2.n_admitted, 2);              // 2 supporting == effective_min(2) => admit
 }
 
-// Late-seen default: a pair appearing only AFTER the census window is never
+// Late-seen default: a pair appearing only after the census window is never
 // classified (quarantined by default at the registration site later).
 TEST(NetworkBiasAdmissionTest, LateSeenPairNotInCensus) {
     CensusBuilder b;
     const std::vector<std::pair<std::string, double>> g01 = {{"C1C", 2.4e7}, {"C2W", 2.4e7}};
     b.addEpochs(4, {{"STA0", {makeObs("G01", g01)}},
                     {"STA1", {makeObs("G01", g01)}}});
-    // A late epoch introduces G05 — beyond census_epochs=4, so it is unseen.
+    // A late epoch introduces G05 beyond census_epochs=4, so the census never sees it.
     SyncedEpoch late;
     late.by_station = {{"STA0", {makeObs("G05", g01)}}, {"STA1", {makeObs("G05", g01)}}};
     b.synced.push_back(std::move(late));
@@ -224,7 +224,7 @@ TEST(NetworkBiasAdmissionTest, ExcludesGlonassPhaseAndZeroValues) {
 TEST(NetworkBiasAdmissionTest, RespectsI0Offset) {
     CensusBuilder b;
     const std::vector<std::pair<std::string, double>> g01 = {{"C1C", 2.4e7}, {"C2W", 2.4e7}};
-    // Epoch 0 carries a decoy satellite G09 that appears NOWHERE else.
+    // Epoch 0 carries a decoy satellite G09 that appears in no other epoch.
     SyncedEpoch e0;
     e0.by_station = {{"STA0", {makeObs("G09", g01)}}, {"STA1", {makeObs("G09", g01)}}};
     b.synced.push_back(std::move(e0));
@@ -251,7 +251,7 @@ TEST(NetworkBiasAdmissionTest, Deterministic) {
         EXPECT_EQ(a1.census[i].key, a2.census[i].key);
         EXPECT_EQ(a1.census[i].verdict, a2.census[i].verdict);
     }
-    // BeiDou two-band pair admitted alongside GPS — the card's target case.
+    // BeiDou two-band pair admitted alongside GPS (the target case of card CB-ADM).
     EXPECT_TRUE(a1.isAdmitted(StateKeys::makeSatBiasKey("C21", "C2I")));
     EXPECT_TRUE(a1.isAdmitted(StateKeys::makeSatBiasKey("C21", "C6I")));
 }
@@ -267,17 +267,19 @@ TEST(NetworkBiasAdmissionTest, EmptyWindowInactive) {
     b.addEpochs(3, {{"STA0", {makeObs("G01", g01)}}});
     EXPECT_FALSE(NetworkBiasAdmission::runCensus(b.synced, /*i0=*/5, 15, 2).active);   // i0 past end
     EXPECT_FALSE(NetworkBiasAdmission::runCensus(b.synced, 0, /*census_epochs=*/0, 2).active);
-    // A default-constructed result is the OFF state.
+    // A default-constructed result is the off state.
     EXPECT_FALSE(NetworkBiasAdmission{}.active);
     EXPECT_FALSE(NetworkBiasAdmission{}.isAdmitted("G01|C1C"));
 }
 
-// INC-2 registration-swap contract (mirrors ApplicationNetworkAssembly's ON
-// branch): an ADMITTED (sat,signal) registers a shared column that
-// codeBiasColumn resolves; a QUARANTINED (unregistered) pair makes
-// codeBiasColumn THROW — the exact signal the scatter's catch{continue} uses to
-// leave that state a station-local column.  Also exercises the late-quarantine
-// dedup used to drive n_cb_late_quarantined.
+// Registration-swap contract, a simplified copy of the armed branch in
+// ApplicationNetworkAssembly (INC-2): an admitted (sat, signal) registers a shared
+// column that codeBiasColumn resolves; a quarantined (unregistered) pair makes
+// codeBiasColumn throw, which is the signal the scatter's catch{continue} uses to
+// leave that state a station-local column.  The real site registers an admitted
+// pair only when at least 2 present stations hold its state that epoch; this test
+// registers on admission alone.  Also exercises the late-quarantine dedup that
+// drives n_cb_late_quarantined.
 TEST(NetworkBiasAdmissionTest, RegistrationSwapContract) {
     NetworkBiasAdmission adm;              // simulate: census admitted C21|C2I only
     adm.active   = true;
@@ -285,7 +287,7 @@ TEST(NetworkBiasAdmissionTest, RegistrationSwapContract) {
     adm.seen     = {"C21|C2I", "C21|C6I"};  // C6I was seen but quarantined at census
 
     NetworkEstimator est;
-    // Mirror the reg-site swap: register ONLY admitted keys.
+    // Mirror the registration-site swap: register admitted keys and no others.
     for (const std::string& key : {std::string("C21|C2I"), std::string("C21|C6I")}) {
         const auto parts = StateKeys::parseSatBiasKey(key);
         ASSERT_TRUE(parts.has_value());

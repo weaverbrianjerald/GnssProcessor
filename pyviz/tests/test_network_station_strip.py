@@ -1,7 +1,7 @@
 """Build-time tests for the network per-station residual-field viewer (L13).
 
-Exercises ``build_network_station_strip`` against a synthetic two-station fixture
--- enough to catch schema / contract regressions -- plus the ``ViewerSkip`` path.
+Exercises ``build_network_station_strip`` against a synthetic two-station fixture,
+enough to catch schema and contract regressions, plus the ``ViewerSkip`` path.
 Figures are *built* (spec objects), not rendered, so these stay fast and
 backend-free.
 """
@@ -40,8 +40,8 @@ def test_two_station_worst_ranks_first(tmp_path):
 
     res = build_network_station_strip(_ctx(tmp_path))
 
-    # Figure 0 is the station-health raster; its row_labels are RMS-ranked with
-    # the worst on top (row 0).
+    # Figure 0 is the station-health raster; its row_labels are RMS-ranked, worst
+    # station first (row 0).
     raster_fig = res.figures[0]
     assert isinstance(raster_fig, Figure)
     raster = next(t for ax in raster_fig.axes for t in ax.traces

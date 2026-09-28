@@ -1,12 +1,12 @@
 #pragma once
 /**
  * @file NetworkStashStatus.hpp
- * @brief Network producer epoch block: D2/C1/SH carry re-stash + LS-VCE fold + epoch-status QC row.
+ * @brief Network producer epoch block: D2/C1/SH carry re-stash, LS-VCE fold and the epoch-status QC row.
  *
- * Relocated VERBATIM (dedent-only, zero substitution) out of Application::runNetwork
- * at decomposition INC-11b (2026-07-22).  void, self-contained (produces no crossing
- * locals); every carry / trace object is an explicit reference into the caller's
- * state.  The caller keeps the subBegin/subEnd(SB_STASH_STATUS) brackets.
+ * Relocated without change (dedent only, no substitution) out of Application::runNetwork
+ * at decomposition INC-11b.  Returns void and produces no locals the caller reads; every
+ * carry and trace object is an explicit reference into the caller's state.  The caller
+ * keeps the subBegin/subEnd(SB_STASH_STATUS) brackets.
  */
 
 #include "app/NetworkSetupResult.hpp"
@@ -32,17 +32,19 @@ namespace spdlog { class logger; }
 namespace GnssProcessor {
 
 class GnssConfig;
-class NetworkCarryVce;      // full type in app/NetworkRunContext.hpp (the .cpp)
-class NetworkPriorResidual; // filter/NetworkPriorResidual.hpp — included in the .cpp only
-struct NetworkRunContext;   // app/NetworkRunContext.hpp — included in the .cpp only
-struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp — included in the .cpp only
+class NetworkCarryVce;      // filter/NetworkCarryVce.hpp, included in the .cpp only
+class NetworkPriorResidual; // filter/NetworkPriorResidual.hpp, included in the .cpp only
+struct NetworkRunContext;   // app/NetworkRunContext.hpp, included in the .cpp only
+struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cpp only
 
 /**
  * @brief Re-stash the D2/C1/SH carried quantities, fold this epoch into the carry
  *        LS-VCE monitor, and emit the epoch-status QC row.  This is the per-epoch
- *        producer bookkeeping tail (run after the solve/emit) that persists the carries
- *        for the next epoch's prior and records the epoch's QC census (present / clock /
- *        PB / CB / dropped-sat counts).  Keeps the subBegin/subEnd(SB_STASH_STATUS) brackets.
+ *        producer bookkeeping tail (run after the solve and emit): it persists the carries
+ *        for the next epoch's prior, feeds and drains the prior-residual census, steps the
+ *        carry VCE apply factor, and writes the per-epoch trace row, the epoch-status
+ *        disposition row and the periodic progress log line (present / clock / PB / CB /
+ *        dropped-sat counts).  The caller keeps the subBegin/subEnd(SB_STASH_STATUS) brackets.
  */
 void networkStashStatus(
     NetworkRunContext& ctx,

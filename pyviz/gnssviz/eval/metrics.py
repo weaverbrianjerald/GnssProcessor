@@ -144,7 +144,7 @@ class ErrorSeries:
 def _project_enu(df: pd.DataFrame, truth: np.ndarray):
     """ENU error (about ``truth``) + elapsed seconds for a loaded, utc-stamped trace.
 
-    Pure projection -- ``df`` must already carry the position columns and a
+    Pure projection: ``df`` must already carry the position columns and a
     ``utc`` column (no validation / early-exit here).  Shared by
     :func:`evaluate_state_trace` and :func:`enu_error_series` so both use the
     identical sign convention and time origin.
@@ -165,9 +165,9 @@ def enu_error_series(state_csv_path: str, truth_ecef) -> Optional[ErrorSeries]:
     """Best-effort ENU error time series for plotting a run's convergence.
 
     Unlike :func:`evaluate_state_trace` (which returns a degenerate all-NaN
-    metric carrying a reason), this returns ``None`` on any structural problem
-    -- trace unreadable, no epochs, missing position column, or missing time
-    columns -- because its only caller (the suite report's convergence figures)
+    metric carrying a reason), this returns ``None`` on any structural problem:
+    trace unreadable, no epochs, missing position column, or missing time
+    columns, because its only caller (the suite report's convergence figures)
     simply skips a cell it cannot plot.
     """
     truth = np.asarray(truth_ecef, dtype=float).reshape(3)
@@ -279,7 +279,7 @@ def evaluate_state_trace(state_csv_path: str,
     sb = _stat_block(e, n, u, conv)
 
     # Time to first reach the 3D threshold (and stay below for the rest of the
-    # run) -- a convergence-time proxy that ignores brief early dips.
+    # run): a convergence-time proxy that ignores brief early dips.
     err3d = np.sqrt(e ** 2 + n ** 2 + u ** 2)
     ttc = None
     fin_idx = np.where(finite)[0]

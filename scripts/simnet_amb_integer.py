@@ -1,30 +1,30 @@
 #!/usr/bin/env python3
-"""SYNTHETIC MINIMUM NETWORK — the ambiguity-INTEGER grader
+"""Synthetic minimum network: the ambiguity-integer grader
 (docs/SPEC_synthetic_minimum_network.md §13.6 (method rules §13.8); SPEC_synthetic_minimum_network §13).
 
-The first absolute integer test the network has ever had.  The field can only
-measure the FRACTIONAL part of a DD ambiguity (med|frac| 0.248 says "no integer
-structure" but cannot say why); on the sim fixture the true integers are known
-per (station, satellite, signal), so the graded quantity is
+Grades the absolute DD ambiguity against truth.  On field data only the
+fractional part of a DD ambiguity is measurable (a uniform med|frac| near 0.25
+shows no integer structure but not why); on the sim fixture the true integers are
+known per (station, satellite, signal), so the graded quantity is
 
-    e = dd_cyc_est − DD_true          (cycles, FULL value — not the fractional part)
+    e = dd_cyc_est − DD_true          (cycles, full value, not the fractional part)
 
 with  DD_true = [N(a,i) − N(a,ref)] − [N(b,i) − N(b,ref)]  (+ cumulative
-truth_slips deltas up to the epoch), formed in PYTHON INTS before any float
-touches it — the integers are km-scale by construction (N ∈ [1e5, 1e6): the sim
+truth_slips deltas up to the epoch), formed in Python ints before any float
+touches it.  The integers are large by construction (N ∈ [1e5, 1e6): the sim
 draws them unguessable for the MW/NL exercise), so float differencing would
 grade cancellation error, not the estimator.
 
-Lane combinations are formed from matched per-band DDs on the SAME
+Lane combinations are formed from matched per-band DDs on the same
 (sat, ref, sta_a, sta_b) quadruple in cycle-difference form:
 
     e_WL(1,2)  = e_L1C − e_L2W        N_WL  = N1 − N2  (integer by construction)
     e_EWL(2,5) = e_L2W − e_L5Q        N_EWL = N2 − N5  (integer by construction)
 
 Iono sensitivity per metre of L1 DD-iono error in these units: L1 5.26 cyc,
-WL 1.49 cyc, EWL 0.29 cyc — an 18× ladder, which is the cascade the third band
+WL 1.49 cyc, EWL 0.29 cyc, an 18× ladder, which is the cascade the third band
 opens.  The pre-registered expected shape (handoff §3.3): EWL near-integer, WL
-plausible, NL not — the value is WHICH RUNG BREAKS.
+plausible, NL not; the result of interest is which rung breaks.
 
 Reads:  <run>/logs/network_dd_fractional.csv   (trace_dd_fractional, stride 1)
         <fixture>/<station>/truth_ambiguities.csv   (satellite,signal,N_int,wavelength_m)
@@ -35,32 +35,32 @@ Reads:  <run>/logs/network_dd_fractional.csv   (trace_dd_fractional, stride 1)
         optional (--sigma-ratio):
         <run>/logs/network_run_manifest.json        (network.phase_leveling_warmup_epochs)
 
-The trace is STREAMED (csv.reader, one pass after a cheap epoch pre-scan); the
+The trace is streamed (csv.reader, one pass after a cheap epoch pre-scan); the
 only per-row state kept is the per-band error lists the grade needs, plus a
 compact per-chord run buffer when --by-age is on.
 
 --------------------------------------------------------------------------
-MECHANISM SIGNATURES (round-2 tooling, 2026-09-04) — all default-OFF flags, the
-default output is unchanged byte-for-byte (docs quote it):
+Mechanism signatures.  All are off by default; with them off the default output
+is byte-identical (docs quote it).
 
   --ref-free      per (epoch, ref_sat, sta_a, sta_b, signal) group with >= 3 graded
-                  satellites, u_i = e_i - median_j e_j: the trace's REFERENCE satellite
+                  satellites, u_i = e_i - median_j e_j.  The trace's reference satellite
                   (the lexically-lowest one present at >= 2 stations, G01/E02 all day)
-                  carries its own between-station SD error into EVERY chord, e_i = s_i -
-                  s_ref, and the "post-eclipse network-wide DD episode" of SPEC_amb_iono
-                  §6.11 was exactly that satellite returning from eclipse with newborn
-                  legs at every station (§6.12, 2026-09-06).  The ref-free block
-                  reports per band + lanes over all / last-window epochs; groups with
-                  < 3 satellites are skipped and counted.  scripts/simnet_dd_reref.py
-                  is the hourly, per-constellation form of the same test.
+                  carries its own between-station SD error into every chord, e_i = s_i -
+                  s_ref; the "post-eclipse network-wide DD episode" of SPEC_amb_iono
+                  §6.11 was that satellite returning from eclipse with newborn legs at
+                  every station (§6.12).  The ref-free block reports per band + lanes
+                  over all / last-window epochs; groups with < 3 satellites are skipped
+                  and counted.  scripts/simnet_dd_reref.py is the hourly,
+                  per-constellation form of the same test.
   --sigma-ratio   per band, median formal dd_sigma_cyc at emitted-epoch index
-                  k = 0..12, 20, 60, 120, last (k is 0-BASED: k=0 is the first
-                  emitted epoch, the pure single-epoch solve), the FIRST-INJECT
+                  k = 0..12, 20, 60, 120, last (k is 0-based: k=0 is the first
+                  emitted epoch, the pure single-epoch solve), the first-inject
                   ratio sigma(k=w+1)/sigma(k=w) with w = phase_leveling_warmup_epochs
-                  (manifest, else --warmup), and median |e|/sigma over the LAST
+                  (manifest, else --warmup), and median |e|/sigma over the last
                   window.  A correct recursion gives 1/sqrt(2) = 0.707 at the
                   first inject; B same-LOS ambiguity rows re-injected as
-                  INDEPENDENT priors give 1/sqrt(B+1): 0.577 (B=2), 0.500 (B=3).
+                  independent priors give 1/sqrt(B+1): 0.577 (B=2), 0.500 (B=3).
   --by-age        median |e| by chord age (epochs since the chord's run start;
                   a run = consecutive epochs on which the (signal,sat,ref,sta_a,
                   sta_b) key appears; a gap > 1 epoch starts a new run; age 0 =
@@ -73,7 +73,7 @@ default output is unchanged byte-for-byte (docs quote it):
                   dI = iono_total_m − I_L1_m per LOS-epoch (mu_b = (lambda_b /
                   lambda_L1)^2, phase = rho − mu_b I + lambda_b N): residual
                   e − pred (median, med|.|, p90|.|, round0 %) and the slope /
-                  intercept / r² of e on pred, per band, all epochs and LAST
+                  intercept / r² of e on pred, per band, all epochs and last
                   window; sampled every --stride epochs (default 4).
   --gal-lanes     Galileo lanes EWL(5,7) = e_L5Q − e_L7Q and WL(1,5) = e_L1C −
                   e_L5Q on Galileo quadruples (sat_i starts with 'E'); printed
@@ -82,12 +82,11 @@ default output is unchanged byte-for-byte (docs quote it):
                   truth_ambiguities.csv wavelength_m to 1e-6 (exit 2 on FAIL),
                   and prints the Gaussian-consistency check (sigma from
                   med|e|/0.6745 vs sigma from the round(e)=0 share) per band and
-                  lane — the check the theory lens used to validate the truth
-                  join.  NOTE: the frac_cyc cross-check in the main loop is a
-                  TAUTOLOGY — e − round(e) == frac_cyc for ANY integer DD_true,
-                  so '0 dropped' proves parsing, not the join; the join is
-                  validated by the wavelength assertion and the Gaussian
-                  consistency (no integer-offset population).
+                  lane, the check that validates the truth join.  The frac_cyc
+                  cross-check in the main loop is a tautology: e − round(e) ==
+                  frac_cyc for any integer DD_true, so '0 dropped' proves parsing,
+                  not the join.  The join is validated by the wavelength assertion
+                  and the Gaussian consistency (no integer-offset population).
 --------------------------------------------------------------------------
 
 Usage:
@@ -187,7 +186,7 @@ def fmt_row(label, st):
 
 
 # --------------------------------------------------------------------------
-# small numeric helpers (pure python — the grader has no numpy dependency)
+# small numeric helpers (pure python; the grader has no numpy dependency)
 # --------------------------------------------------------------------------
 def pct(v, p):
     """Percentile with the same index rule as stats(): v may be any iterable."""
@@ -200,8 +199,8 @@ def pct(v, p):
 
 
 def gaussian_sigmas(med_abs, round0_pct):
-    """The theory lens's consistency test: for a zero-mean Gaussian e ~ N(0, s²)
-    with NO integer-offset population, med|e| = 0.6745 s and
+    """Gaussian consistency test: for a zero-mean Gaussian e ~ N(0, s²) with no
+    integer-offset population, med|e| = 0.6745 s and
     P(round(e)=0) = P(|e| < 0.5) = erf(0.5 / (s sqrt2)).  Returns
     (s_from_med, s_from_round0 or None)."""
     s_med = med_abs / 0.6745 if med_abs is not None else None
@@ -270,12 +269,12 @@ def read_manifest_warmup(run_dir):
     return None
 
 
-# ORACLE PIN (docs/SPEC_oracle_pin.md): an optional grading WINDOW on the DD
-# trace.  `--last-frac` can only express a TRAILING fraction, and the pin legs
-# grade two short windows inside one 60-epoch leg.  Filtered at the two points
-# the DD trace is read (the epoch prescan and the pass-1 stream) so the epoch
-# INDEX k is the index within the window and every downstream count agrees.
-# Default (None, None) => not one row is filtered; every existing caller is
+# Optional grading window on the DD trace (oracle pin, docs/SPEC_oracle_pin.md).
+# `--last-frac` can only express a trailing fraction, and the pin legs grade two
+# short windows inside one 60-epoch leg.  The filter is applied at the two points
+# the DD trace is read (the epoch prescan and the pass-1 stream), so the epoch
+# index k is the index within the window and every downstream count agrees.
+# The default (None, None) filters no row, so every existing caller's output is
 # byte-identical.
 TOW_WINDOW = (None, None)
 
@@ -293,8 +292,8 @@ def _tow_in_window(t):
 
 def prescan_epochs(dd_path):
     """Pass 0 (no csv parse): the distinct `tow` strings of the DD trace in
-    first-appearance order.  Cheap — the tow field repeats within an epoch, so
-    only a string compare per line."""
+    first-appearance order.  Cheap: the tow field repeats within an epoch, so
+    it costs one string compare per line."""
     tows = []
     seen = set()
     prev = None
@@ -325,9 +324,9 @@ def prescan_epochs(dd_path):
 
 
 class AgeTracker:
-    """|e| by chord age.  A run is a maximal set of CONSECUTIVE epoch indices on
+    """|e| by chord age.  A run is a maximal set of consecutive epoch indices on
     which a key appears; age = epochs since the run start (0 = birth).  Only the
-    CURRENT run's values are buffered per key (compact); runs are closed when
+    current run's values are buffered per key (compact); runs are closed when
     the key skips an epoch, on the periodic sweep, or at finish()."""
 
     def __init__(self, minlen):
@@ -549,7 +548,7 @@ def grade(args, out=None):
         join_towint = {int(round(tows[k])) for k in range(0, len(tows), stride)}
         prod_iono = load_producer_iono(iono_path, join_towint)
 
-    # --- truth (lazy per station, same SystemExit semantics as before) --------
+    # --- truth (loaded lazily per station; missing files raise SystemExit) ---
     n_int, slips = {}, {}
     wl_truth = {} if want_lam else None
     truth_loaded = set()
@@ -670,8 +669,8 @@ def grade(args, out=None):
         k_sel = False
         k_join = False
         for r in rd:
-            # ORACLE PIN window: drop the row BEFORE n_rows so every count, the
-            # epoch flush and the k index describe the window alone.
+            # Oracle-pin window: the row is dropped before n_rows is counted, so
+            # every count, the epoch flush and the k index describe the window alone.
             if TOW_WINDOW != (None, None):
                 try:
                     if not _tow_in_window(float(r[i_tow])):
@@ -715,9 +714,9 @@ def grade(args, out=None):
                 continue
             dd_true = (legs[0] - legs[1]) - (legs[2] - legs[3])     # python ints
             e = float(r[i_ddc]) - dd_true
-            # sanity: our e and the trace's own frac agree modulo integers
-            # (a TAUTOLOGY for the truth join — see the docstring; kept as the
-            # parse guard it actually is)
+            # Sanity check: e and the trace's own frac agree modulo integers.  For
+            # the truth join this is a tautology (see the module docstring); it is
+            # kept as a parse guard.
             frac_trace = float(r[i_frac])
             if abs((e - round(e)) - frac_trace) > 2e-3 and abs(abs(e - round(e)) - abs(frac_trace)) > 2e-3:
                 n_unmatched += 1
@@ -773,7 +772,7 @@ def grade(args, out=None):
     res = {"n_rows": n_rows, "n_unmatched": n_unmatched, "n_epochs": len(tows), "t_last": t_last,
            "band_all": {}, "band_last": {}, "lane_all": {}, "lane_last": {}}
 
-    # --- the default report (BYTE-IDENTICAL to the pre-round-2 grader) --------
+    # --- the default report (byte-identical to the pre-round-2 grader) --------
     P("=" * 78)
     P("AMBIGUITY-INTEGER GRADE — DD estimates vs KNOWN true integers (cycles)")
     P("=" * 78)
@@ -1013,10 +1012,10 @@ def build_parser():
                     help="DD identity e_b vs mu_b*DD(dI)/lambda_b from network_ionosphere.csv + truth_atmo.csv")
     ap.add_argument("--stride", type=int, default=4, help="--iono-join epoch stride (default 4)")
     ap.add_argument("--gal-lanes", action="store_true", help="Galileo lanes EWL(5,7) and WL(1,5)")
-    # ORACLE PIN (docs/SPEC_oracle_pin.md): grade only DD rows inside
-    # [tow-min, tow-max] (inclusive).  `--last-frac` can only name a TRAILING
-    # fraction; the pin legs grade two short windows inside one 60-epoch leg.
-    # Omitted => unchanged behaviour, not one row filtered.
+    # Grade only DD rows inside [tow-min, tow-max] (inclusive; oracle pin,
+    # docs/SPEC_oracle_pin.md).  `--last-frac` can only name a trailing fraction;
+    # the pin legs grade two short windows inside one 60-epoch leg.  Omitted, no
+    # row is filtered and the behaviour is unchanged.
     ap.add_argument("--tow-min", type=float, default=None)
     ap.add_argument("--tow-max", type=float, default=None)
     ap.add_argument("--ref-free", action="store_true",
@@ -1047,10 +1046,11 @@ _WL = {"L1C": 0.190293672798, "L2W": 0.244210213425, "L5Q": 0.254828048790, "L7Q
 
 
 def _write_reffree_bed(td):
-    """A 2-station GPS bed whose REFERENCE (G01) carries a between-station SD ambiguity error of +0.70 cyc
+    """A 2-station GPS bed whose reference (G01) carries a between-station SD ambiguity error of +0.70 cyc
     on every band, three graded satellites (G02 / G03 exact, G04 at +0.30 cyc on L1C only), 12 epochs.
-    As-traced every chord reads the reference's 0.70; ref-free the group median is 0 (two exact sats out of
-    three) so u = 0 for G02/G03 and 0.30 for G04 on L1C.  Returns the expectations."""
+    As traced, every chord carries the reference's error (e = s_i − s_ref: −0.70, or −0.40 for G04 on L1C);
+    ref-free, subtracting the group median (−0.70, set by the two exact satellites) leaves u = 0 for
+    G02/G03 and +0.30 for G04 on L1C.  Returns the expectations."""
     fx = os.path.join(td, "fixture")
     run = os.path.join(td, "run")
     os.makedirs(os.path.join(run, "logs"))
@@ -1087,7 +1087,7 @@ def _write_mini_bed(td, warmup=2, bad_lambda=False, with_manifest=True):
     """A hand-built 2-station bed: GPS quad (G02 vs G01, L1C/L2W/L5Q) on every
     epoch, Galileo quad (E02 vs E01, L1C/L5Q/L7Q) on epochs 0-9 and 20-39, a
     truth slip on (SBBB, G02, L1C) at tow 150, the per-band error engineered as
-    EXACTLY the DD identity of a known per-LOS iono error, and a formal sigma
+    exactly the DD identity of a known per-LOS iono error, and a formal sigma
     that halves per epoch after the warm-up (floor 0.01).  Returns the expected
     values the selftest asserts against, computed independently here."""
     fx = os.path.join(td, "fixture")
@@ -1281,7 +1281,7 @@ def selftest():
         text = buf.getvalue()
         check(res["n_rows"] == exp["n_rows"] and res["n_unmatched"] == 0, "mini rows/unmatched")
         check(res["n_epochs"] == exp["n_epochs"], "mini epochs")
-        # per-band e recovered exactly (4-decimal trace) — the slip on L1C is absorbed into DD_true
+        # per-band e recovered exactly (4-decimal trace); the slip on L1C is absorbed into DD_true
         check(all(res["band_all"][s][2] > 1.0 for s in ("L1C", "L2W", "L5Q", "L7Q")), "mini band med|e|")
         # (a) sigma schedule + ratio
         sg = res["sigma"]

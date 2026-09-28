@@ -14,25 +14,23 @@ namespace GnssProcessor {
         // Transform nodes to small indices to keep products well-conditioned.
         //
         // Reference implementations (e.g. IGS/JPL) use integer-stride indices
-        // {1,2,...,n} instead of raw times {0,900,...,7200}. With raw 900 s SP3
-        // spacing the product of 8 differences reaches ~1.7e26, giving weights
-        // ~5.8e-27; with unit-stride indices the product is at most 9! = 362880,
-        // giving weights ~2.8e-6  well within double precision.
+        // {1,2,...,n} instead of raw times {0,900,...,7200}.  For 9 nodes at 900 s
+        // SP3 spacing, the product of the 8 differences at an end node is
+        // 900^8 · 8! ≈ 1.7e28 (weight ≈ 5.8e-29); with unit-stride indices it is
+        // 8! = 40320 (weight ≈ 2.5e-5), well within double precision.
         //
-        // We shift to center around zero (to avoid cancellation for large
-        // absolute values like GPS seconds ~1.36e8), then divide by the minimum
-        // node spacing to produce near-unit-stride indices. The resulting
-        // weights differ from the "true" weights by a common factor of
-        // s^(n-1) which cancels exactly in the barycentric N/D ratio used by
-        // barycentricEval  so the interpolated values are unchanged.
-        // barycentricDeriv replicates this normalization and applies the
-        // chain-rule correction dp/dx = dp/ds / min_spacing.
+        // The nodes are shifted to centre on zero (to avoid cancellation for large
+        // absolute values such as GPS seconds ~1.36e8) and divided by the minimum
+        // node spacing s, which gives near-unit-stride indices.  The resulting
+        // weights differ from the unscaled weights by the common factor s^(n-1),
+        // and the rescaling to max|w| = 1 below adds another common factor.
         //
-        // IMPORTANT: this normalization is internal to weight computation only.
-        // Callers pass the original (un-normalized) x to barycentricEval/Deriv.
-        // In barycentricEval the common scaling factor cancels in the N/D ratio.
-        // In barycentricDeriv the same normalization is replicated and the
-        // chain-rule correction (divide by min_spacing) is applied.
+        // The normalization is internal to the weight computation.  Callers pass
+        // the original (un-normalized) x to barycentricEval/Deriv.  In
+        // barycentricEval the common factors cancel in the N/D ratio, so the
+        // interpolated values are unchanged.  barycentricDeriv replicates the
+        // normalization and applies the chain-rule correction
+        // dp/dx = dp/ds / min_spacing.
         double x_center = 0.5 * (x.front() + x.back());
 
         // Find minimum spacing for scale normalization
@@ -180,17 +178,17 @@ namespace GnssProcessor {
         if (w.size() != n || y.size() != n) return 0.0;
         if (n == 1) return 0.0;  // Constant interpolant has zero derivative
 
-        // Apply the SAME centering + spacing normalization used by barycentricWeights
-        // so that w[j] and 1/(xq_s - x_s[j]) are at consistent O(1) magnitudes.
+        // Apply the centering and spacing normalization of barycentricWeights, so
+        // that w[j] and 1/(xq_s - x_s[j]) are at consistent O(1) magnitudes.
         //
         // Without spacing normalization, the differences (xq - x[j]) are O(300..3000)
         // for 5-min SP3 with 11 nodes, while weights computed from unit-stride indices
         // are O(1). This magnitude mismatch degrades precision in the derivative's
         // quotient-rule formula, especially for the 1/(xq-xj)^2 terms.
         //
-        // By normalizing to s = (x - x_center) / min_spacing we get near-integer
+        // Normalizing to s = (x - x_center) / min_spacing gives near-integer
         // differences that match the weight magnitudes. The derivative in normalized
-        // coordinates dp/ds must then be converted back via the chain rule:
+        // coordinates dp/ds is converted back via the chain rule:
         //   dp/dx = dp/ds * ds/dx = dp/ds * (1 / min_spacing)
         //
         // This matches the integer-index approach used by IGS/JPL reference software.
@@ -454,7 +452,7 @@ namespace GnssProcessor {
     }
 
 
-    // Compute monotone cubic-Hermite slopes (FritschCarlson style)
+    // Compute monotone cubic-Hermite slopes (Fritsch–Carlson style)
     std::vector<double> Interpolate::monotoneHermiteSlopes(const std::vector<double>& x,
         const std::vector<double>& y) {
         const size_t n = x.size();
@@ -486,7 +484,7 @@ namespace GnssProcessor {
                 m[i] = 0.0;
             }
             else {
-                // FritschCarlson weighted harmonic mean
+                // Fritsch–Carlson weighted harmonic mean
                 double w1 = 2.0 * h[i] + h[i - 1];
                 double w2 = h[i] + 2.0 * h[i - 1];
                 double denom = (w1 / dkm1 + w2 / dk);
@@ -495,7 +493,7 @@ namespace GnssProcessor {
                 }
                 else {
                     double mi = (w1 + w2) / denom;
-                    // clamp to avoid overshoot: no larger than max of adjacent secants
+                    // Limit the magnitude to the smaller adjacent secant to avoid overshoot.
                     double lim = std::min(std::abs(dkm1), std::abs(dk));
                     if (mi == 0.0) {
                         m[i] = 0.0;
@@ -706,9 +704,10 @@ namespace GnssProcessor {
         if (n == 0 || y.size() != n) return;
 
         // 9-term sidereal trig basis: constant + 4 (sin, cos) harmonic pairs.
-        // P0 is expressed PER SECOND so the basis argument tau = (x - x0) is in
-        // the caller's seconds and the analytic derivative comes out per second
-        // (M-PAGES uses rad/day then divides the velocity by 86400 — identical).
+        // P0 is in rad per second, so the basis argument tau = (x - x0) is in the
+        // caller's seconds and the analytic derivative comes out per second.
+        // M-PAGES uses rad/day and then divides the velocity by 86400; the result
+        // is identical.
         constexpr int kNumTerms = 9;
         constexpr double kPi = 3.14159265358979;            // M-PAGES TrigExt literal
         constexpr double kSiderealDaySec = 0.99726956634 * 86400.0;
@@ -719,9 +718,10 @@ namespace GnssProcessor {
         // to this choice while the small tau keeps the design matrix well-conditioned.
         const double t0 = x[0];
 
-        // Detect an inert weight set (empty / all<=0 / all-equal): a uniform sigma
-        // cancels from the normal equations, so fall back to unit weights (the
-        // M-PAGES per-satellite SVsig case, and the numerically identical fit).
+        // Detect an inert weight set (size other than n, no entry > 0, or all
+        // positive entries equal): a uniform sigma cancels from the normal
+        // equations, so unit weights are used instead (the M-PAGES per-satellite
+        // SVsig case, and the numerically identical fit).
         bool uniform_weight = true;
         if (sigmas.size() == n) {
             double first = 0.0;
@@ -756,9 +756,9 @@ namespace GnssProcessor {
         }
 
         // SVD least-squares solve with a relative singular-value cutoff.  Eigen's
-        // setThreshold is RELATIVE to the largest singular value, so 1e-15 zeroes
-        // singular values below 1e-15 * sigma_max in the min-norm pseudoinverse —
-        // the Numerical-Recipes svbksb convention M-PAGES' svdfit uses.
+        // setThreshold is relative to the largest singular value, so 1e-15 zeroes
+        // singular values below 1e-15 * sigma_max in the min-norm pseudoinverse.
+        // This is the Numerical-Recipes svbksb convention that M-PAGES' svdfit uses.
         Eigen::JacobiSVD<Eigen::MatrixXd> svd(A,
             Eigen::ComputeThinU | Eigen::ComputeThinV);
         svd.setThreshold(1.0e-15);

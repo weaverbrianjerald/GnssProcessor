@@ -1,24 +1,24 @@
 /**
  * @file test_sd_ewl_integer.cpp
- * @brief SD EWL INTEGER path (increments 2a + 2b) — Route-B DD rounding, the A2
+ * @brief SD EWL integer path (increments 2a and 2b): Route-B DD rounding, the A2
  *        DD-to-SD datum propagation, the standing-invariant-#1 flip response, the
- *        fixed-row design + correction frame, and the A1 weight accounting.
+ *        fixed-row design and correction frame, and the A1 weight accounting.
  *        See docs/SPEC_sd_ewl_prereduce.md §8 (increment 2) and §10 (the amendments).
  *
- * Suite names owned by this file ONLY (the suite-per-file rule):
+ * Suite names owned by this file only (the suite-per-file rule):
  *   SdEwlDatumTest, SdEwlFfrTest, SdEwlFlipTest, SdEwlFixedRowTest, SdEwlBandTableTest,
  *   SdEwlFixConfigTest.
  * (tests/test_sd_ewl_prereduce.cpp owns SdEwl{Algebra,Whitening,PivotElection,Config,
- *  ArcSource,ChannelSearch}Test — do not add to those from here.)
+ *  ArcSource,ChannelSearch}Test; do not add to those from here.)
  *
- * Unlike the increment-1 file, most of this is NOT a contract restatement: 2a's algebra
- * was deliberately extracted into pure free functions (@ref sdEwlPropagate,
- * @ref sdEwlRoundingFfr, @ref sdEwlFlipCheck, @ref sdEwlBands) precisely so the property
- * that carries the risk — that a propagated integer is the true SD integer up to ONE
- * per-satellite-pair constant, independent of the spanning tree — is testable directly.
- * The 2b row build stays inside a private Application member, so SdEwlFixedRowTest pins
- * the fixed row's design and frame as independent algebra, the same way
- * SdEwlAlgebraTest does for the float row.
+ * Unlike the increment-1 file, most of this file tests real code rather than restating a
+ * contract: 2a's algebra is extracted into free functions without side effects
+ * (@ref sdEwlPropagate, @ref sdEwlRoundingFfr, @ref sdEwlFlipCheck, @ref sdEwlBands) so
+ * that the property carrying the risk is testable directly: a propagated integer equals
+ * the true SD integer up to one per-satellite-pair constant, independent of the
+ * spanning tree.  The 2b row build stays inside a private Application member, so
+ * SdEwlFixedRowTest pins the fixed row's design and frame as independent algebra, the
+ * same way SdEwlAlgebraTest does for the float row.
  */
 
 #include <gtest/gtest.h>
@@ -41,11 +41,11 @@ using namespace GnssProcessor;
 
 namespace {
 
-/// Build a synthetic Route-B graph from TRUTH: per-station receiver EWL bias, per-satellite
+/// Build a synthetic Route-B graph from truth: per-station receiver EWL bias, per-satellite
 /// satellite EWL bias, and the true undifferenced integers.  The MW statistic a station
-/// actually holds is  u(r,s) = N_true(r,s) + a_r + b_s (+ noise), and Route B must recover
-/// the SD integers from the DDs alone — with no knowledge of a_r or b_s.  That is the whole
-/// claim, so the fixture supplies biases large enough that any leakage would be obvious.
+/// holds is  u(r,s) = N_true(r,s) + a_r + b_s (+ noise), and Route B recovers the SD
+/// integers from the DDs alone, with no knowledge of a_r or b_s.  The fixture therefore
+/// supplies biases large enough that any leakage would be obvious.
 struct Truth {
     std::map<std::string, double> rx_bias;    ///< a_r, cycles (station EWL bias)
     std::map<std::string, double> sat_bias;   ///< b_s, cycles (satellite EWL bias)
@@ -87,7 +87,7 @@ constexpr const char* kMinimalStations = R"(
             "position_ecef": [ 4100000.0, 1100000.0, 4400000.0 ] }
         ])";
 
-/// The loader takes a PATH, so each config test writes a throwaway file next to the
+/// The loader takes a path, so each config test writes a throwaway file next to the
 /// test binary and removes it again (the same helper shape test_sd_ewl_prereduce.cpp
 /// uses; the rinex paths are never opened).
 std::string writeTempConfig(const std::string& body, const char* tag) {
@@ -101,7 +101,7 @@ std::string writeTempConfig(const std::string& body, const char* tag) {
 }  // namespace
 
 // =================================================================================
-// SdEwlBandTableTest — the shared EWL tier table (one definition for 2a and 2b).
+// SdEwlBandTableTest: the shared EWL tier table (one definition for 2a and 2b).
 // =================================================================================
 
 TEST(SdEwlBandTableTest, GpsAndGalileoTiersAreTheKnownWavelengths) {
@@ -118,8 +118,8 @@ TEST(SdEwlBandTableTest, GpsAndGalileoTiersAreTheKnownWavelengths) {
 }
 
 // BeiDou is deferred (clock divergence) and GLONASS excluded (FDMA makes the
-// between-satellite lane non-integer).  Both must simply produce no tier, which is why
-// neither needs a skip counter anywhere downstream.
+// between-satellite lane non-integer).  Both produce no tier, which is why neither
+// needs a skip counter anywhere downstream.  QZSS ('J') has no tier either.
 TEST(SdEwlBandTableTest, BeiDouAndGlonassHaveNoTier) {
     char b1 = 0, b2 = 0;
     double f1 = 0.0, f2 = 0.0;
@@ -129,7 +129,7 @@ TEST(SdEwlBandTableTest, BeiDouAndGlonassHaveNoTier) {
 }
 
 // =================================================================================
-// SdEwlFfrTest — the rounding success probability (FFR, not ADOP).
+// SdEwlFfrTest: the rounding success probability (FFR, not ADOP).
 // =================================================================================
 
 TEST(SdEwlFfrTest, NoiselessRoundingSucceedsAndWideNoiseIsHopeless) {
@@ -139,14 +139,14 @@ TEST(SdEwlFfrTest, NoiselessRoundingSucceedsAndWideNoiseIsHopeless) {
     EXPECT_LT(sdEwlRoundingFfr(1.0), 0.4);           // sigma of a whole cycle: useless
 }
 
-// The gate must be monotone and must land where the SPEC's numbers say it does: a
+// The gate is monotone and lands where the spec's numbers say it does: a
 // 4-leg DD of arcs at the A1 per-sample scale (1.0 m over lambda_EWL 5.861 m, 10
 // samples) is decisive, and a 2-sample arc is not.
 TEST(SdEwlFfrTest, GateIsMonotoneAndMatchesTheEwlMaturityLadder) {
     EXPECT_GT(sdEwlRoundingFfr(0.05), sdEwlRoundingFfr(0.10));
     const double lam = 5.861;
     const auto ddSigma = [lam](double sample_m, double n) {
-        const double per_arc = (sample_m / std::sqrt(n)) / lam;   // sigma of the MEAN
+        const double per_arc = (sample_m / std::sqrt(n)) / lam;   // sigma of the mean
         return std::sqrt(4.0) * per_arc;                          // four legs
     };
     EXPECT_GT(sdEwlRoundingFfr(ddSigma(1.0, 10.0)), 0.999);   // mature: decisive
@@ -154,13 +154,14 @@ TEST(SdEwlFfrTest, GateIsMonotoneAndMatchesTheEwlMaturityLadder) {
 }
 
 // =================================================================================
-// SdEwlFlipTest — the standing-invariant-#1 event response.
+// SdEwlFlipTest: the standing-invariant-#1 event response.
 // =================================================================================
 
 TEST(SdEwlFlipTest, FreshDecisionFoldsAndStableDecisionFolds) {
     // Fresh matters for the S2 single-epoch virtual fold: after a warm resume there is
-    // no previous decision, so requiring agreement would make the A/B byte-identical —
-    // the Card-1e trap ("byte-identical A/B means the feature never ran").
+    // no previous decision, so requiring agreement would keep the feature from ever
+    // folding and make the A/B byte-identical (the Card-1e trap: a byte-identical A/B
+    // can mean the feature never ran).
     EXPECT_EQ(sdEwlFlipCheck(false, 0, 0, 42, 10), SdEwlFlipVerdict::Fresh);
     EXPECT_EQ(sdEwlFlipCheck(true, 42, 10, 42, 11), SdEwlFlipVerdict::Stable);
 }
@@ -170,24 +171,24 @@ TEST(SdEwlFlipTest, DifferentIntegerOnAContinuousArcIsAFlip) {
     EXPECT_EQ(sdEwlFlipCheck(true, 42, 10, 42 - 1, 10), SdEwlFlipVerdict::Flip);
 }
 
-// A falling lagged sample count means the MW accumulator reset — slip, gap or
-// re-acquisition — so the true integer legitimately changed and no flip is charged.
-// Deliberately keyed on the COUNT rather than a slip flag: the slip funnel is
+// A falling lagged sample count means the MW accumulator reset (slip, gap or
+// re-acquisition), so the true integer may have changed and no flip is charged.
+// Keyed on the count rather than a slip flag because the slip funnel is
 // carry_invariant-gated and therefore empty in some legal configurations.
 TEST(SdEwlFlipTest, RestartedArcChangesItsIntegerWithoutChargingAFlip) {
     EXPECT_EQ(sdEwlFlipCheck(true, 42, 30, 7, 2), SdEwlFlipVerdict::Restart);
-    // Same integer after a restart is still a restart, not "stable": the memory must be
+    // The same integer after a restart is still a restart, not "stable": the memory is
     // replaced from the new arc either way.
     EXPECT_EQ(sdEwlFlipCheck(true, 42, 30, 42, 2), SdEwlFlipVerdict::Restart);
 }
 
 // =================================================================================
-// SdEwlDatumTest — Route B + the A2 DD-to-SD datum propagation.
+// SdEwlDatumTest: Route B and the A2 DD-to-SD datum propagation.
 // =================================================================================
 
-// The core claim of Route B: the DD needs NO knowledge of the receiver or satellite EWL
-// bias.  Feed biases of tens of cycles and check that every recovered SD integer is the
-// truth minus ONE per-satellite-pair constant, namely the reference station's own SD.
+// The core claim of Route B: the DD needs no knowledge of the receiver or satellite EWL
+// bias.  With biases of tens of cycles, every recovered SD integer is the truth minus
+// one per-satellite-pair constant, namely the reference station's own SD.
 TEST(SdEwlDatumTest, RecoversTrueSdIntegersUpToTheReferenceStationConstant) {
     Truth t;
     t.rx_bias = { { "AAAA", 11.37 }, { "BBBB", -4.62 }, { "CCCC", 27.05 } };
@@ -214,9 +215,9 @@ TEST(SdEwlDatumTest, RecoversTrueSdIntegersUpToTheReferenceStationConstant) {
     EXPECT_EQ(sd(d, "AAAA", "G23", "G11"), 0);
 }
 
-// The A2 frame constant must be the SAME for every station in the component — that is
-// what makes it a re-datum (the classical WL-FCB modulo-lambda definition) rather than a
-// per-station error.
+// The A2 frame constant is the same for every station in the component, which makes it
+// a re-datum (the classical WL-FCB modulo-lambda definition) rather than a per-station
+// error.
 TEST(SdEwlDatumTest, TheFrameOffsetIsOneConstantPerSatellitePairNotPerStation) {
     Truth t;
     t.rx_bias = { { "AAAA", 0.31 }, { "BBBB", 19.8 }, { "CCCC", -7.2 }, { "DDDD", 3.0 } };
@@ -237,11 +238,11 @@ TEST(SdEwlDatumTest, TheFrameOffsetIsOneConstantPerSatellitePairNotPerStation) {
     }
 }
 
-// The spanning tree and each station's link satellite shift n by a PER-STATION constant,
-// which the between-satellite difference removes.  So changing the reference station
-// changes the frame constant but must NOT change any station's SD integers relative to
-// each other beyond that single shift.  This is the property that lets the seam keep r0
-// sticky and ignore tree churn entirely.
+// The spanning tree and each station's link satellite shift n by a per-station constant,
+// which the between-satellite difference removes.  Changing the reference station
+// therefore changes the frame constant but does not change any station's SD integers
+// relative to each other beyond that single shift.  This property lets the seam keep r0
+// sticky and ignore tree churn.
 TEST(SdEwlDatumTest, SdIntegersAreIndependentOfTheTreeAndShiftOnlyWithTheReference) {
     Truth t;
     t.rx_bias = { { "AAAA", 2.0 }, { "BBBB", -30.0 }, { "CCCC", 14.0 } };
@@ -257,15 +258,15 @@ TEST(SdEwlDatumTest, SdIntegersAreIndependentOfTheTreeAndShiftOnlyWithTheReferen
     const auto db = sdEwlPropagate(g, "CCCC", 0.15, 0.999, tb);
     ASSERT_EQ(da.size(), 3u);
     ASSERT_EQ(db.size(), 3u);
-    // The DIFFERENCE of the two realizations' SD integers is one constant, the same for
+    // The difference of the two realizations' SD integers is one constant, the same for
     // every station: n_A(sd) - n_C(sd) = -[SD_true(AAAA) - SD_true(CCCC)].
     const long long shift = sd(da, "AAAA", "G01", "G02") - sd(db, "AAAA", "G01", "G02");
     for (const std::string& sta : { "AAAA", "BBBB", "CCCC" })
         EXPECT_EQ(sd(da, sta, "G01", "G02") - sd(db, sta, "G01", "G02"), shift) << sta;
 }
 
-// Noise inside the pull-in region must not change a single integer; noise beyond the
-// |frac| gate must be REJECTED rather than rounded to a neighbour.
+// Noise inside the pull-in region changes no integer; noise beyond the |frac| gate is
+// rejected rather than rounded to a neighbour.
 TEST(SdEwlDatumTest, NoiseInsideThePullInRegionIsHarmlessAndTheFracGateRejects) {
     Truth t;
     t.rx_bias = { { "AAAA", 1.0 }, { "BBBB", 2.0 } };
@@ -281,14 +282,14 @@ TEST(SdEwlDatumTest, NoiseInsideThePullInRegionIsHarmlessAndTheFracGateRejects) 
         EXPECT_EQ(sd(d, "BBBB", "G05", "G11"), -2 - 5);
     }
     {
-        // 0.3 cyc of DD-scale noise: past the 0.15 gate, so nothing is fixed and nothing
-        // is quietly rounded to the wrong integer.
+        // Per-arc noise of amplitude 0.3 cyc: the DDs fall past the 0.15 gate, so
+        // nothing is fixed and nothing is silently rounded to the wrong integer.
         SdEwlPropagateTally tally;
         const auto d = sdEwlPropagate(makeGraph(t, 1e-3, 20, 0.30), "AAAA", 0.15,
                                       0.999, tally);
         EXPECT_GT(tally.reject_frac, 0);
         EXPECT_EQ(tally.fixed, 0);
-        // r0's own values are a DATUM, not a measurement, so they survive the gate.
+        // r0's own values are a datum, not a measurement, so they survive the gate.
         EXPECT_EQ(d.count("AAAA"), 1u);
     }
 }
@@ -301,15 +302,15 @@ TEST(SdEwlDatumTest, FfrGateRejectsAnImmatureArcEvenWhenTheFractionLooksClean) {
             { "BBBB", { { "G05", 4 }, { "G11", 0 } } } };
     SdEwlPropagateTally tally;
     // sigma 0.3 cyc per arc: the fraction is exactly 0 (no noise injected) but the DD
-    // cannot be TRUSTED, and FFR is the gate that says so.
+    // is not reliable, and FFR is the gate that rejects it.
     const auto d = sdEwlPropagate(makeGraph(t, 0.3, 20, 0.0), "AAAA", 0.15, 0.999, tally);
     EXPECT_GT(tally.reject_ffr, 0);
     EXPECT_EQ(tally.fixed, 0);
 }
 
-// Route B needs TWO co-visible satellites per station pair: one to be the quantity and
-// one to be the link that removes the station terms.  A single shared satellite forms no
-// DD at all, and the propagation must leave that station empty rather than guess.
+// Route B needs two co-visible satellites per station pair: one is the quantity and one
+// is the link that removes the station terms.  A single shared satellite forms no DD,
+// and the propagation leaves that station empty rather than guess.
 TEST(SdEwlDatumTest, OneSharedSatelliteFormsNoDoubleDifference) {
     Truth t;
     t.rx_bias = { { "AAAA", 0.0 }, { "BBBB", 0.0 } };
@@ -322,9 +323,9 @@ TEST(SdEwlDatumTest, OneSharedSatelliteFormsNoDoubleDifference) {
     EXPECT_EQ(tally.attempts, 0);
 }
 
-// A station reachable only through a chain must still land in the same frame — the
-// propagation is transitive, which is what makes "one component per constellation"
-// (measured) enough.
+// A station reachable only through a chain still lands in the same frame: the
+// propagation is transitive, which is why one component per constellation (measured)
+// is enough.
 TEST(SdEwlDatumTest, PropagationIsTransitiveAlongAChain) {
     Truth t;
     t.rx_bias = { { "AAAA", 0.0 }, { "BBBB", 5.0 }, { "CCCC", -9.0 } };
@@ -337,10 +338,10 @@ TEST(SdEwlDatumTest, PropagationIsTransitiveAlongAChain) {
     const auto d = sdEwlPropagate(makeGraph(t), "AAAA", 0.15, 0.999, tally);
     ASSERT_EQ(d.count("CCCC"), 1u);
     ASSERT_EQ(d.at("CCCC").count("G03"), 1u);
-    // CCCC's SD(G03,G02) must equal its truth minus BBBB-relayed r0 frame.  r0 (AAAA)
-    // does not see G03, so the frame constant for the (G03,G02) pair is set where the
-    // pair first becomes observable — the value must at least be CONSISTENT between the
-    // two stations that see it.
+    // CCCC's SD(G03,G02) equals its truth minus the r0 frame relayed through BBBB.  r0
+    // (AAAA) does not see G03, so the frame constant for the (G03,G02) pair is set where
+    // the pair first becomes observable; the assertion is that the constant is the same
+    // at the two stations that see the pair.
     const long long c_b = d.at("BBBB").at("G03").n_cyc - d.at("BBBB").at("G02").n_cyc
                           - (t.n.at("BBBB").at("G03") - t.n.at("BBBB").at("G02"));
     const long long c_c = d.at("CCCC").at("G03").n_cyc - d.at("CCCC").at("G02").n_cyc
@@ -349,13 +350,13 @@ TEST(SdEwlDatumTest, PropagationIsTransitiveAlongAChain) {
 }
 
 // =================================================================================
-// SdEwlFixedRowTest — 2b's design, RHS and correction frame (independent algebra).
+// SdEwlFixedRowTest: 2b's design, RHS and correction frame (independent algebra).
 // =================================================================================
 
 namespace {
 
-/// The four LOCAL coefficients of a FLOAT SD EWL row (SPEC_sd_ewl_prereduce §3), and the
-/// fixed row's requirement that all four be ZERO.
+/// The four local coefficients of a float SD EWL row (SPEC_sd_ewl_prereduce §3); the
+/// fixed row requires all four to be zero.
 struct LocalCoeffs { double s_b1, s_b2, p_b1, p_b2; };
 
 LocalCoeffs floatLocal(double lam_ewl, double lam_b1, double lam_b2) {
@@ -364,16 +365,16 @@ LocalCoeffs floatLocal(double lam_ewl, double lam_b1, double lam_b2) {
 
 }  // namespace
 
-// The fixed row REMOVES the local degree of freedom: no coefficient, not a small one.
+// The fixed row removes the local degree of freedom: no coefficient, not a small one.
 // A tight prior on a gauge-adjacent local column would be a stiff prior, not a rank
-// reduction, and increment 2 exists precisely so the local nuisance stops absorbing the
-// row's information.
+// reduction, and the purpose of increment 2 is that the local nuisance stops absorbing
+// the row's information.
 TEST(SdEwlFixedRowTest, FixedRowCarriesNoLocalAmbiguityCoefficients) {
     const double f1 = Constants::GPS_L2_FREQ, f2 = Constants::GPS_L5_FREQ;
     const double lam_ewl = Constants::SPEED_OF_LIGHT / (f1 - f2);
     const LocalCoeffs fl = floatLocal(lam_ewl, Constants::SPEED_OF_LIGHT / f1,
                                       Constants::SPEED_OF_LIGHT / f2);
-    // The float row's coefficients are large — this is what the fixed row drops.
+    // The float row's coefficients are large (about 24 and 23); the fixed row drops them.
     EXPECT_GT(std::abs(fl.s_b1), 20.0);
     EXPECT_GT(std::abs(fl.s_b2), 20.0);
     const LocalCoeffs fixed{ 0.0, 0.0, 0.0, 0.0 };
@@ -381,10 +382,10 @@ TEST(SdEwlFixedRowTest, FixedRowCarriesNoLocalAmbiguityCoefficients) {
     EXPECT_DOUBLE_EQ(fixed.s_b2, 0.0);
     EXPECT_DOUBLE_EQ(fixed.p_b1, 0.0);
     EXPECT_DOUBLE_EQ(fixed.p_b2, 0.0);
-    // Whitening cannot resurrect them: an ALL-fixed group's local block is identically
-    // zero, so L^-1 * 0 == 0 for any L.  That is exactly why fixed and float rows are
-    // emitted as SEPARATE whitened groups — in a mixed group the dense L^-1 would
-    // re-populate a fixed row's zeroed columns out of its float siblings.
+    // Whitening cannot restore them: an all-fixed group's local block is identically
+    // zero, so L^-1 * 0 == 0 for any L.  This is why fixed and float rows are emitted as
+    // separate whitened groups: in a mixed group the dense L^-1 would re-populate a
+    // fixed row's zeroed columns from its float siblings.
     Eigen::MatrixXd Hr = Eigen::MatrixXd::Zero(3, 5);
     Eigen::MatrixXd R = Eigen::MatrixXd::Identity(3, 3) * 2.0;
     R.array() += 0.7;                          // diag + var_p * 11^T, the group's R
@@ -394,9 +395,9 @@ TEST(SdEwlFixedRowTest, FixedRowCarriesNoLocalAmbiguityCoefficients) {
     EXPECT_DOUBLE_EQ(whitened.cwiseAbs().maxCoeff(), 0.0);
 }
 
-// The RHS must lose exactly lambda_EWL * (N_s - N_p) AND the ambiguity half of H*x_lin,
-// together.  A row whose design changed and whose linearization point did not is folded
-// in a MIXED frame — this pins that the two edits cancel at the linearization point.
+// The RHS loses lambda_EWL * (N_s - N_p) and the ambiguity half of H*x_lin together.  A
+// row whose design changed and whose linearization point did not is folded in a mixed
+// frame; this test pins that the two edits cancel at the linearization point.
 TEST(SdEwlFixedRowTest, FixedRowResidualVanishesWhenTheIntegerAndTheStateAgree) {
     const double f1 = Constants::GPS_L2_FREQ, f2 = Constants::GPS_L5_FREQ;
     const double lam_ewl = Constants::SPEED_OF_LIGHT / (f1 - f2);
@@ -416,27 +417,28 @@ TEST(SdEwlFixedRowTest, FixedRowResidualVanishesWhenTheIntegerAndTheStateAgree) 
     const double mean_p = predAmb(x_p_b1, x_p_b2);
     const long long n_fix_s = Ns1 - Ns2, n_fix_p = Np1 - Np2;
 
-    // FLOAT row: y = (mean_s - mean_p) - (pred_s - pred_p) == 0.
+    // Float row: y = (mean_s - mean_p) - (pred_s - pred_p) == 0.
     const double y_float = (mean_s - mean_p)
                            - (predAmb(x_s_b1, x_s_b2) - predAmb(x_p_b1, x_p_b2));
     EXPECT_NEAR(y_float, 0.0, 1e-6);
-    // FIXED row: the integer leaves the RHS and the ambiguity terms leave the frame.
-    // Both, or neither — dropping only one leaves hundreds of metres behind.
+    // Fixed row: the integer leaves the RHS and the ambiguity terms leave the frame.
+    // Both, or neither: dropping only one leaves lambda_EWL * DD_integer behind (about
+    // 111 m for these integers).
     const double y_fixed = (mean_s - mean_p)
                            - lam_ewl * static_cast<double>(n_fix_s - n_fix_p);
     EXPECT_NEAR(y_fixed, 0.0, 1e-6);
-    // Dropping the integer but KEEPING the ambiguity frame terms (the mistake this test
-    // exists to catch) leaves the whole lambda_EWL * DD_integer behind.
+    // Dropping the integer but keeping the ambiguity frame terms (the mistake this test
+    // catches) leaves the whole lambda_EWL * DD_integer behind.
     const double y_wrong = (mean_s - mean_p)
                            - (predAmb(x_s_b1, x_s_b2) - predAmb(x_p_b1, x_p_b2))
                            - lam_ewl * static_cast<double>(n_fix_s - n_fix_p);
     EXPECT_GT(std::abs(y_wrong), 50.0);
 }
 
-// The r0 frame constant is HARMLESS to the row: an SD integer offset by a constant per
-// satellite pair moves the row's RHS by exactly lambda * that constant, which the shared
-// satellite bias absorbs — the classical WL-FCB modulo-lambda re-datum, identical for
-// every station, so no DD or SD-graded quantity moves.
+// The r0 frame constant does not affect the row's SD content: an SD integer offset by a
+// constant per satellite pair moves the row's RHS by lambda * that constant, which the
+// shared satellite bias absorbs.  This is the classical WL-FCB modulo-lambda re-datum,
+// identical for every station, so no DD or SD-graded quantity moves.
 TEST(SdEwlFixedRowTest, A2FrameConstantShiftsOnlyTheAbsorbedBiasNotAnySdQuantity) {
     const double lam = 5.861;
     const long long true_sd = 34;
@@ -445,17 +447,17 @@ TEST(SdEwlFixedRowTest, A2FrameConstantShiftsOnlyTheAbsorbedBiasNotAnySdQuantity
         const double absorbed = lam * static_cast<double>(c);
         // What the network then observes in place of B^s - B^p:
         const double observed_bias = 0.0 + absorbed;
-        // Two stations in the same component share c, so their DIFFERENCE is clean.
+        // Two stations in the same component share c, so their difference is clean.
         EXPECT_DOUBLE_EQ(observed_bias - absorbed, 0.0);
         EXPECT_EQ(folded + c, true_sd);
     }
 }
 
-// Amendment A1's two floors are DIFFERENT quantities and must not be conflated: the
-// DECISION floors the variance of the MEAN (sigma^2/n, because arcZdMean's served
-// variance shrinks as 1/n and measured 13-60x optimistic), while the fixed ROW floors at
-// the flat PER-SAMPLE scale (because the accumulator is arc-cumulative, so refolding a
-// variance-of-mean as white every epoch over-claims information as sqrt(k)).
+// Amendment A1's two floors are different quantities: the decision floors the variance
+// of the mean (sigma^2/n, because arcZdMean's served variance shrinks as 1/n and measured
+// 13-60x optimistic), while the fixed row floors at the flat per-sample scale (because
+// the accumulator is arc-cumulative, so refolding a variance-of-mean as white every
+// epoch over-claims information as sqrt(k)).
 TEST(SdEwlFixedRowTest, A1WeightAccountingUsesMeanVarianceToDecideAndSampleVarianceToFold) {
     const double sample_m = 1.0;
     for (double n : { 2.0, 10.0, 60.0 }) {
@@ -470,13 +472,13 @@ TEST(SdEwlFixedRowTest, A1WeightAccountingUsesMeanVarianceToDecideAndSampleVaria
     const double k = 36.0;
     EXPECT_NEAR(std::sqrt(k), 6.0, 1e-12);
     // At the flat per-sample floor the row accretes ~1 sample of information per epoch,
-    // so after k epochs it claims k samples — exactly what it has.
+    // so after k epochs it claims k samples, which is what it has.
     const double info_per_epoch = 1.0 / (sample_m * sample_m);
     EXPECT_DOUBLE_EQ(k * info_per_epoch, k);
 }
 
 // =================================================================================
-// SdEwlFixConfigTest — the 2a/2b knobs: defaults, clamps, and the inert-arming refusal.
+// SdEwlFixConfigTest: defaults, clamps and the inert-arming refusal of the 2a/2b knobs.
 // =================================================================================
 
 TEST(SdEwlFixConfigTest, IntegerPathDefaultsOffSoTheRunIsByteIdentical) {
@@ -494,14 +496,14 @@ TEST(SdEwlFixConfigTest, IntegerPathDefaultsOffSoTheRunIsByteIdentical) {
     EXPECT_FALSE(se.fix_enable);
     EXPECT_NEAR(se.fix_min_ffr, 0.999, 1e-12);
     EXPECT_NEAR(se.fix_max_frac_cyc, 0.15, 1e-12);
-    // Amendment A1's measured honest point — the per-SAMPLE MW residual scale.
+    // Amendment A1's measured per-sample MW residual scale.
     EXPECT_NEAR(se.fix_sigma_floor_m, 1.0, 1e-12);
     std::remove(path.c_str());
 }
 
-// fix_enable without enable has NO row layer to fold into (the appender returns
-// immediately), i.e. armed-and-dead — the exact shape standing invariant #4 exists to
-// catch.  The loader must refuse it rather than let the run report zero fixed rows.
+// fix_enable without enable has no row layer to fold into (the appender returns
+// immediately), so the knob would be armed and inert, the case standing invariant #4
+// describes.  The loader disarms it rather than let the run report zero fixed rows.
 TEST(SdEwlFixConfigTest, FixWithoutTheRowLayerIsDisarmedAtLoad) {
     const std::string body = std::string() + R"({
       "processing": { "mode": "ppp-rtk-network" },

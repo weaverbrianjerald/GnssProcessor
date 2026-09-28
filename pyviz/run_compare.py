@@ -1,10 +1,10 @@
 #!/usr/bin/env python
-"""Generate an A/B HTML comparison report for two GnssProcessor NETWORK runs.
+"""Generate an A/B HTML comparison report for two GnssProcessor network runs.
 
 A validation card ("floors OFF locks in at epoch 42; floors ON stays fixed") is a
-statement about *two* runs.  ``run_report.py`` summarizes one run; this driver
-lays run **B** against run **A** over the same epochs and writes a single HTML
-report built with the same :func:`gnssviz.report.write_html_report` assembler.
+statement about two runs. ``run_report.py`` summarizes one run; this driver lays
+run **B** against run **A** over the same epochs and writes a single HTML report
+built with the same :func:`gnssviz.report.write_html_report` assembler.
 
 Examples
 --------

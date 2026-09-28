@@ -20,7 +20,7 @@ ClockStransformResult applyClockStransform(
     ClockStransformResult out;
     if (v_c.empty() || q.empty()) return out;
 
-    // Membership + coefficients, read from the STRUCTURAL direction only.
+    // Membership and coefficients come from the structural direction alone.
     std::map<std::string, double> coeff;
     for (const auto& e : v_c) coeff.emplace(e.first, e.second);
 
@@ -28,9 +28,10 @@ ClockStransformResult applyClockStransform(
     if (qit == coeff.end() || !(std::abs(qit->second) > 0.0)) return out;
     const double vq = qit->second;
 
-    // x_q_pre / var_q: the incoming pivot's carried level in the OUTGOING frame.
-    // Absent ⇒ nothing to re-reference FROM (a first sighting, or a vanish-return
-    // whose carry aged out): a legitimate no-op the caller counts and events.
+    // x_q_pre / var_q: the incoming pivot's carried level in the outgoing frame.
+    // If it is absent there is nothing to re-reference from (a first sighting, or a
+    // vanish-return whose carry aged out); the caller counts this no-op and writes
+    // an event.
     const CarryPrior* qrow = nullptr;
     for (const auto& cp : carry)
         if (cp.kind == SharedParamKind::Clock && cp.sat == q) { qrow = &cp; break; }
@@ -40,8 +41,9 @@ ClockStransformResult applyClockStransform(
     out.var_q = qrow->var;
 
     // x <- x - v_c*c0 ; var <- var + v_c[i]^2 * var_q.  Clocks only: every other
-    // shared family has a zero component along this direction (its gauge is realized
-    // independently — NetworkSbasis::clockNullDirection documents the measurement).
+    // shared family has a zero component along this direction because its gauge is
+    // realized independently (NetworkSbasis::clockNullDirection documents the
+    // measurement).
     for (auto& cp : carry) {
         if (cp.kind != SharedParamKind::Clock) continue;
         const auto cit = coeff.find(cp.sat);
@@ -54,9 +56,9 @@ ClockStransformResult applyClockStransform(
     if (out.rows == 0) return out;
     out.applied = true;
 
-    // §8.4 INC-3 — exactness self-check: the incoming pivot's carried level must now
-    // be EXACTLY its pinned value (0), and re-deriving the coefficient must return 0
-    // (idempotence).  Reported, never thrown.
+    // Exactness self-check (§8.4 INC-3): the incoming pivot's carried level must now
+    // equal its pinned value (0) within kStsExactTolM, and re-deriving the coefficient
+    // must also give 0 (idempotence).  A failure is reported, not thrown.
     for (const auto& cp : carry)
         if (cp.kind == SharedParamKind::Clock && cp.sat == q) { out.x_q_post = cp.value; break; }
     out.selfcheck_ok = std::abs(out.x_q_post) <= kStsExactTolM
@@ -75,19 +77,19 @@ void networkHandoverStransform(NetworkRunContext& ctx,
                                const std::vector<std::string>& registered_clock_sats) {
     (void)config_;   // seam signature is uniform across the run loop
 
-    // The release set is per-EPOCH state: clear it unconditionally and FIRST, so a
-    // handover epoch's release can never leak into the next epoch's folds (which would
-    // silently un-skip a genuinely retired datum).  Every non-handover epoch, and every
-    // epoch with the knob off, therefore leaves an EMPTY set — the byte-identical OFF
-    // path, with no dependence on how the caller is ordered.
+    // The release set is per-epoch state.  Clear it unconditionally and first, so a
+    // handover epoch's release cannot reach the next epoch's folds (which would
+    // un-skip a retired datum without any signal).  Every non-handover epoch, and
+    // every epoch with the knob off, therefore leaves an empty set: the off path is
+    // byte-identical regardless of call order.
     ctx.carry.sts_consts.clear();
     ctx.carry.sts_c0.clear();
 
     if (!datum_changed || changed_consts.empty()) return;
 
-    // The MISSING baseline (increment 0's named observability gap): count the edge
-    // whether or not the transform is armed, so an OFF run states the population an ON
-    // run acts on.
+    // Count every handover edge whether or not the transform is armed (the baseline
+    // count increment 0 called for), so an off run reports the population an on run
+    // acts on.
     for (char c : changed_consts) ++ctx.counters.pivot_handovers[c];
 
     if (!ctx.knobs.handover_stransform) return;
@@ -96,9 +98,9 @@ void networkHandoverStransform(NetworkRunContext& ctx,
         const std::string key(1, c);
         const auto pit = plan.clock_pivot.find(key);
         if (pit == plan.clock_pivot.end() || pit->second.empty()) continue;
-        const std::string& q = pit->second;   // the INCOMING pivot
+        const std::string& q = pit->second;   // the incoming pivot
 
-        // v_c — the STRUCTURAL direction NetworkSbasis owns (§8.1 rule 1).
+        // v_c: the structural direction that NetworkSbasis owns (§8.1 rule 1).
         const auto v_c = NetworkSbasis::clockNullDirection(registered_clock_sats, key);
         if (v_c.empty()) continue;
 
@@ -117,7 +119,7 @@ void networkHandoverStransform(NetworkRunContext& ctx,
         ctx.counters.sts_last_c0 = r.c0;
         ctx.counters.sts_max_abs_c0 = std::max(ctx.counters.sts_max_abs_c0, std::abs(r.c0));
         ctx.carry.sts_c0[c] = r.c0;
-        ctx.carry.sts_consts.insert(c);   // INC-1: release the fold skip for this constellation
+        ctx.carry.sts_consts.insert(c);   // release the fold skip for this constellation (INC-1)
 
         if (!r.selfcheck_ok) {
             ++ctx.counters.sts_selfcheck_fail;
@@ -130,9 +132,10 @@ void networkHandoverStransform(NetworkRunContext& ctx,
                              "fail", fmt::format("const={};c0={:.6e}", key, r.c0));
         }
 
-        // The DECOUPLING edge, evented with identities (invariant #7, §8.4 INC-2).  The
-        // RE-COUPLING edge is the transformed carry's first fold: counted as
-        // sts_rows_retained at the fold sites and summarised in the run-end clause.
+        // The decoupling edge, written as an event with identities (invariant #7,
+        // §8.4 INC-2).  The re-coupling edge is the transformed carry's first fold:
+        // counted as sts_rows_retained at the fold sites and summarised in the
+        // run-end clause.
         traces.emitEvent(t, "STRANSFORM", "sts_applied", q, "", r.c0, std::nullopt,
                          "transform",
                          fmt::format("const={};c0={:.6f};rows={};var_q={:.6e};nv={}",

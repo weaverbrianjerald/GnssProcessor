@@ -1,50 +1,46 @@
 /**
  * @file test_network_mdb.cpp
- * @brief BAARDA RELIABILITY NUMBERS / MDB on the network path
+ * @brief Baarda reliability numbers (MDB) on the network path
  *        (docs/SPEC_redundancy_census.md).
  *
- * MDB answers the service question the redundancy census only answers yes/no:
- * not "is this row checkable?" but "how large a fault could hide in it right
- * now?", in metres.  Everything about it fails SILENTLY if it is wrong — a
- * mis-derived δ₀ still produces plausible metres, a scaled column quietly
- * back-filled with the formal value still produces a number, and a feed site
- * that skips the uncheckable rows still produces a clean-looking distribution
- * that says the network cross-checks everything.  So the tests here pin the four
- * claims, not the arithmetic running:
+ * The redundancy census says whether a row is checkable; the MDB says how large a
+ * fault could hide in it this epoch, in metres.  An error here produces no visible
+ * failure: a mis-derived δ₀ still yields plausible metres, a scaled column
+ * back-filled with the formal value still yields a number, and a feed site that
+ * skips the uncheckable rows still yields a distribution that suggests the network
+ * cross-checks everything.  The tests therefore pin five claims:
  *
- *   1. THE CONVENTION IS BAARDA'S, not merely self-consistent.  δ₀ = k + Φ⁻¹(0.80)
- *      and MDB = σδ₀/√r are checked against an INDEPENDENT closed form across a
- *      (σ, r, k) grid, and test 4 checks the whole thing against its physical
- *      meaning by Monte Carlo.  Two files agreeing on a WRONG δ₀ would pass a
+ *   1. The convention is Baarda's, not merely self-consistent.  δ₀ = k + Φ⁻¹(0.80)
+ *      and MDB = σδ₀/√r are checked against an independent closed form across a
+ *      (σ, r, k) grid, and section 4 checks the result against its physical
+ *      meaning by Monte Carlo.  Two files agreeing on a wrong δ₀ would pass a
  *      file-to-file comparison and fail both of these.
- *   2. r → 0 gives +infinity, and the infinite population reconciles with the
- *      redundancy census's uncheckable population as a strict SUBSET — the two
- *      thresholds differ (1e-6 arithmetic vs network.redundancy_eps policy) and
- *      an equality assertion between them would be a bug, not a check.
+ *   2. r → 0 gives +infinity, and the infinite population is a strict subset of
+ *      the redundancy census's uncheckable population.  The two thresholds differ
+ *      (1e-6 arithmetic floor against the network.redundancy_eps policy), so an
+ *      equality assertion between them would be wrong.
  *   3. mdb_scaled = mdb_formal × σ̂₀,f exactly (a positive scale commutes with
- *      every order statistic), AND absent σ̂₀ is FLAGGED rather than back-filled
- *      — in particular the free-ambiguity phase pool's σ̂₀ = 0 must read absent,
- *      because scaling by it would publish "any fault is detectable" for exactly
- *      the rows that carry no redundancy at all.
- *   4. An injected bias of exactly MDBᵢ is detected with ~80 % power at the k
- *      threshold.  This is what pins δ₀ to its BAARDA MEANING rather than to the
- *      other file: it would fail for any other power convention.
- *   5. OFF is structurally inert — default config, no knobs, no accumulation —
- *      and an armed config WITHOUT a redundancy source is a HARD ERROR, because
- *      that configuration would otherwise report a clean zero-row run that reads
- *      exactly like "this network cross-checks everything".
+ *      every order statistic), and an absent σ̂₀ is flagged rather than
+ *      back-filled.  In particular the free-ambiguity phase pool's σ̂₀ = 0 reads
+ *      absent: scaling by it would publish "any fault is detectable" for the rows
+ *      that carry no redundancy at all.
+ *   4. An injected bias of exactly MDBᵢ is detected with about 80 % power at the
+ *      k threshold.  This ties δ₀ to Baarda's meaning rather than to another
+ *      file; any other power convention fails it.
+ *   5. With the feature off, the default config sets no knobs and nothing
+ *      accumulates.  An armed config without a redundancy source is a hard
+ *      error, because it would otherwise report a zero-row run that reads like
+ *      "this network cross-checks everything".
  *
- * ⚠ A note on test 1 and the spec's wording.  §5.1 asks the network helper to
- * reproduce "the KalmanFilter path's MDB … one convention, two paths".  This
- * card implemented the port by SHARING the convention
- * (filter/BaardaReliability.hpp) rather than by copying it, so a file-to-file
- * comparison is now a tautology; constructing a KalmanFilter here would need a
- * ProductParser + RinexParser + PppModel fixture to compare a formula against
- * itself.  What is pinned instead is strictly stronger: the shared helper
- * against an independent oracle, the two frozen constants as literals, and the
- * δ₀ the PPP path actually forms from a stock config's
- * `dataSnoopingCritical()`.  The CONVENTION is what has to hold, and any edit
- * that moves it moves both paths and fails here.
+ * Note on section 1 and the spec's wording: §5.1 asks the network helper to
+ * reproduce "the KalmanFilter path's MDB … one convention, two paths".  The
+ * convention is shared (filter/BaardaReliability.hpp) rather than copied, so a
+ * file-to-file comparison would be a tautology; constructing a KalmanFilter here
+ * would need a ProductParser + RinexParser + PppModel fixture to compare a
+ * formula against itself.  The tests pin instead the shared helper against an
+ * independent oracle, the two frozen constants as literals, and the δ₀ the PPP
+ * path forms from a stock config's `dataSnoopingCritical()`.  An edit that moves
+ * the convention moves both paths and fails here.
  */
 
 #include <gtest/gtest.h>
@@ -73,9 +69,9 @@ using namespace GnssProcessor;
 
 namespace {
 
-/// Independent closed form of Baarda's MDB — deliberately NOT the production
-/// helper, and deliberately spelled with the quantile as a literal so a change
-/// to kBaardaPowerQuantile has to be made in two places to pass.
+/// Independent closed form of Baarda's MDB.  It does not call the production
+/// helper, and it spells the quantile as a literal, so a change to
+/// kBaardaPowerQuantile has to be made in two places to pass.
 double oracleMdb(double sigma, double r, double k) {
     return sigma * (k + 0.8416) / std::sqrt(r);
 }
@@ -90,7 +86,7 @@ fs::path writeTempConfig(const std::string& tag, const std::string& body) {
     return p;
 }
 
-/// A minimal but loadable PPP-RTK network config; @p extra is spliced into the
+/// A minimal loadable PPP-RTK network config; @p extra is spliced into the
 /// network block.
 std::string networkConfig(const std::string& extra = "") {
     return std::string(
@@ -119,8 +115,9 @@ bool loadConfig(const std::string& tag, const std::string& body, GnssConfig& cfg
     return ok;
 }
 
-/// Load @p body expecting the loader to REJECT it (the hard-error path surfaces
-/// as loadFromJson == false: GnssConfig::loadFromJson catches std::exception).
+/// Load @p body expecting the loader to reject it.  The hard-error path surfaces
+/// as loadFromJson == false, because GnssConfig::loadFromJson catches
+/// std::exception.
 bool loadFails(const std::string& tag, const std::string& body) {
     GnssConfig cfg;
     return !loadConfig(tag, body, cfg);
@@ -132,9 +129,9 @@ bool loadFails(const std::string& tag, const std::string& body) {
 //  1. The convention
 // ===========================================================================
 
-// The two frozen constants, as LITERALS.  They are the whole reason a PPP MDB
-// and a network MDB are commensurable, and nothing else in the tree would fail
-// if someone "tidied" 0.8416 into 0.84.
+// The two frozen constants, as literals.  They make a PPP MDB and a network MDB
+// commensurable, and nothing else in the tree would fail if 0.8416 were rounded
+// to 0.84.
 TEST(NetworkMdbReliability, ConventionConstantsAreFrozen) {
     EXPECT_DOUBLE_EQ(kBaardaPowerQuantile, 0.8416);      // Phi^-1(0.80), beta = 0.20
     EXPECT_DOUBLE_EQ(kBaardaRedundancyFloor, 1e-6);      // the arithmetic r-floor
@@ -142,8 +139,8 @@ TEST(NetworkMdbReliability, ConventionConstantsAreFrozen) {
     EXPECT_NEAR(baardaDelta0(3.29), 4.1316, 1e-12);
 }
 
-// The helper against an INDEPENDENT closed form over a grid.  Agreement with
-// another FILE would not establish this: two copies of a wrong delta_0 agree
+// The helper against an independent closed form over a grid.  Agreement with
+// another file would not establish this: two copies of a wrong delta_0 agree
 // perfectly.
 TEST(NetworkMdbReliability, MdbMatchesTheBaardaClosedFormAcrossAGrid) {
     const double sigmas[] = {0.003, 0.3, 1.0, 12.7};
@@ -160,9 +157,9 @@ TEST(NetworkMdbReliability, MdbMatchesTheBaardaClosedFormAcrossAGrid) {
 }
 
 // The PPP path forms delta_0 as baardaDelta0(config.dataSnoopingCritical()); the
-// network path does the same.  Pin the STOCK value that makes them equal, so a
-// drift in the config default (which would silently re-scale every MDB in both
-// paths at once) fails here rather than in a graded run.
+// network path does the same.  Pin the stock value that makes them equal, so a
+// drift in the config default (which would re-scale every MDB in both paths at
+// once, with no other symptom) fails here rather than in a graded run.
 TEST(NetworkMdbReliability, StockConfigGivesTheDocumentedDelta0) {
     GnssConfig cfg;
     EXPECT_DOUBLE_EQ(cfg.dataSnoopingCritical(), 3.29);
@@ -174,8 +171,8 @@ TEST(NetworkMdbReliability, StockConfigGivesTheDocumentedDelta0) {
 }
 
 // sigma comes from the assembled information weight on the network path.  A
-// non-usable weight must produce a NON-FINITE sigma so the caller can COUNT the
-// row rather than bin a fabricated MDB.
+// non-usable weight produces a non-finite sigma, so the caller counts the row
+// instead of binning a fabricated MDB.
 TEST(NetworkMdbReliability, SigmaFromWeightRejectsUnusableWeights) {
     EXPECT_DOUBLE_EQ(baardaSigmaFromWeight(4.0), 0.5);
     EXPECT_DOUBLE_EQ(baardaSigmaFromWeight(1.0), 1.0);
@@ -189,25 +186,25 @@ TEST(NetworkMdbReliability, SigmaFromWeightRejectsUnusableWeights) {
 //  2. r -> 0 and the uncheckable join
 // ===========================================================================
 
-// The r -> 0 convention is +infinity, NOT a large finite number and NOT a clamp.
-// A finite value there would be a lie a consumer could act on: no residual-based
-// test can see that row's misfit at any magnitude.
+// The r -> 0 convention is +infinity, not a large finite number and not a clamp.
+// A consumer could act on a finite value there, yet no residual-based test can
+// see that row's misfit at any magnitude.
 TEST(NetworkMdbReliability, UncheckableRowIsInfiniteNotMerelyLarge) {
     const double d0 = baardaDelta0(3.29);
     EXPECT_TRUE(std::isinf(baardaMinimalDetectableBias(0.3, 0.0, d0)));
     EXPECT_TRUE(std::isinf(baardaMinimalDetectableBias(0.3, kBaardaRedundancyFloor, d0)));
     EXPECT_TRUE(std::isinf(baardaMinimalDetectableBias(0.3, -0.5, d0)));
-    // Just ABOVE the floor it is finite — and enormous, which is the honest
-    // statement about a nearly-uncheckable row.
+    // Just above the floor it is finite and very large (about 876 m here), as it
+    // should be for a nearly uncheckable row.
     const double just_above = baardaMinimalDetectableBias(0.3, 2e-6, d0);
     EXPECT_TRUE(std::isfinite(just_above));
     EXPECT_GT(just_above, 800.0);
 }
 
-// THE JOIN.  Two thresholds, one domain.  The seam's independent recount of
-// "DATA rows" and "rows below network.redundancy_eps" must match what the
-// redundancy census counts over the same rows, and the infinite population must
-// be a strict SUBSET of the uncheckable one (1e-6 vs 0.05 — four decades apart).
+// The join: two thresholds over one domain.  The seam's independent recount of
+// data rows and of rows below network.redundancy_eps matches what the redundancy
+// census counts over the same rows, and the infinite population is a strict
+// subset of the uncheckable one (1e-6 against 0.05, about four decades apart).
 TEST(NetworkMdbReliability, InfiniteRowsAreASubsetOfTheCensusUncheckablePopulation) {
     constexpr double kEps = 0.05;                 // network.redundancy_eps default
     NetworkMdbEpoch acc;
@@ -225,9 +222,9 @@ TEST(NetworkMdbReliability, InfiniteRowsAreASubsetOfTheCensusUncheckablePopulati
         NetworkMdbStationFeed feed(acc, 100.0, baardaDelta0(3.29), /*event_m=*/1.0,
                                    station, NetMdbSource::Census, kEps);
         for (double r : rs) feed.add("G07", NetRowClass::ObsCode, /*w=*/11.1, r);
-        // Non-DATA rows are NOT part of either instrument's domain: a pivot pin
-        // runs a standardized deviation of ~1e7 by design and its MDB is not a
-        // statement about data.  Feeding one must move NOTHING.
+        // Non-data rows are outside both instruments' domain: a pivot pin runs a
+        // standardized deviation of ~1e7 by design, and its MDB says nothing about
+        // data.  Feeding one changes no counter.
         feed.add("", NetRowClass::PivotPin, 1e18, 0.9);
         feed.add("", NetRowClass::CplRow, 1.0, 0.5);
         feed.finish();
@@ -244,8 +241,8 @@ TEST(NetworkMdbReliability, InfiniteRowsAreASubsetOfTheCensusUncheckablePopulati
         }
     EXPECT_EQ(got_rows, static_cast<long long>(std::size(rs)));
     EXPECT_EQ(got_inf, want_inf);
-    // The SUBSET relation the spec's "reconcile" actually means.  Equality here
-    // would be wrong, and asserting it would have hard-coded a bug.
+    // The subset relation is what the spec's "reconcile" means.  Equality here
+    // would be wrong, so it is not asserted.
     EXPECT_LE(got_inf, acc.census_unchk);
     EXPECT_LT(got_inf, acc.census_unchk) << "the fixture must exercise the gap "
                                             "between the two thresholds";
@@ -254,9 +251,9 @@ TEST(NetworkMdbReliability, InfiniteRowsAreASubsetOfTheCensusUncheckablePopulati
               static_cast<long long>(std::size(rs)));
 }
 
-// A row whose weight is unusable is COUNTED as skipped, never binned with a
-// fabricated sigma — but it still joins the census recount, because the census
-// counts it too and a join is only a check if both walk one domain.
+// A row whose weight is unusable is counted as skipped, never binned with a
+// fabricated sigma.  It still joins the census recount, because the census counts
+// it too and the join is a check only when both sides walk one domain.
 TEST(NetworkMdbReliability, UnusableWeightIsCountedNotFabricated) {
     NetworkMdbEpoch acc;
     const std::string station = "BBBB";
@@ -277,9 +274,9 @@ TEST(NetworkMdbReliability, UnusableWeightIsCountedNotFabricated) {
     EXPECT_NEAR(b.mdb[0], oracleMdb(0.5, 0.5, 3.29), 1e-12);
 }
 
-// The accumulator is STAMPED, not driver-cleared: a feed for a new epoch resets
-// it.  That is what makes an epoch which fed rows and never reached the flush
-// (a withhold, a failed solve) leak nothing into the next epoch's aggregates.
+// The accumulator is stamped, not cleared by the driver: a feed for a new epoch
+// resets it.  An epoch that fed rows and never reached the flush (a withhold, a
+// failed solve) therefore leaks nothing into the next epoch's aggregates.
 TEST(NetworkMdbReliability, ANewEpochStampResetsTheAccumulator) {
     NetworkMdbEpoch acc;
     const std::string station = "AAAA";
@@ -305,7 +302,7 @@ TEST(NetworkMdbReliability, ANewEpochStampResetsTheAccumulator) {
 //  3. The scaled variant and the absent flag
 // ===========================================================================
 
-// Order statistics, and the property that makes flush-time scaling EXACT rather
+// Order statistics, and the property that makes flush-time scaling exact rather
 // than approximate: a positive scale commutes with the median, the p95 and the
 // maximum, so aggregating the formal pool and multiplying the three numbers is
 // identical to scaling every row first.
@@ -343,9 +340,9 @@ TEST(NetworkMdbReliability, StatsDegradeHonestlyOnTinyPools) {
     EXPECT_DOUBLE_EQ(s1.max, 42.0);
 }
 
-// Honesty rule 1.  Absent sigma0 must be FLAGGED — never back-filled with the
-// formal value and never with 1.0 — and the four reasons must stay
-// distinguishable, because they demand different fixes.
+// An absent sigma0 is flagged, never back-filled with the formal value or with
+// 1.0, and the four reasons stay distinguishable because each needs a different
+// fix.
 TEST(NetworkMdbReliability, AbsentSigma0IsFlaggedWithItsReason) {
     const int code  = static_cast<int>(NetRowClass::ObsCode);
     const int phase = static_cast<int>(NetRowClass::ObsPhase);
@@ -370,17 +367,17 @@ TEST(NetworkMdbReliability, AbsentSigma0IsFlaggedWithItsReason) {
     EXPECT_FALSE(f.have);
     EXPECT_STREQ(f.src, "absent_pool_empty");
 
-    // Armed, rows present, sigma0 == 0 — THE free-ambiguity phase case.  This is
-    // the one that matters: back-filling it (or treating 0 as a scale) would
-    // publish every phase row's MDB as 0 m, i.e. "a fault of any size is
-    // detectable here", for exactly the rows that carry no redundancy at all.
+    // Armed, rows present, sigma0 == 0: the free-ambiguity phase case.
+    // Back-filling it (or treating 0 as a scale) would publish every phase row's
+    // MDB as 0 m, i.e. "a fault of any size is detectable here", for the rows
+    // that carry no redundancy at all.
     f = networkMdbFamilyScale(phase, 100, 60, /*pf_phase_rows=*/40,
                               0.31, /*s0_phase=*/0.0);
     EXPECT_FALSE(f.have);
     EXPECT_STREQ(f.src, "absent_sigma0_zero");
     EXPECT_DOUBLE_EQ(f.sigma0, 1.0) << "the inert value must never reach the wire";
 
-    // And the two paths that DO produce an INFLATING scale (sigma0 >= 1).
+    // The two paths that produce an inflating scale (sigma0 >= 1).
     f = networkMdbFamilyScale(code, 100, 60, 40, /*s0_code=*/3.29, 0.0);
     EXPECT_TRUE(f.have);
     EXPECT_STREQ(f.src, "postfit_code");
@@ -391,15 +388,15 @@ TEST(NetworkMdbReliability, AbsentSigma0IsFlaggedWithItsReason) {
     EXPECT_DOUBLE_EQ(f.sigma0, 12.5);
 }
 
-// THE MIRROR-IMAGE TRAP.  sigma0 < 1 scales the MDB DOWN, which reads as a
-// TIGHTER reliability guarantee — and on the phase family it is the exact
-// opposite: that pool's post-fit dispersion is near zero precisely BECAUSE each
-// phase row is fitted by its own free ambiguity, i.e. the same fact as "these
-// rows carry no redundancy".  Measured on the FT63 cold smoke, sigma0_phase =
-// 0.041 pulls the phase median MDB from 4.58 m to 0.19 m on rows that are 78 %
-// uncheckable.  The value is REPORTED, never clamped (the prior-residual
-// census's rule: the deflation is the measurement) — but it must be TAGGED, or
-// a consumer keying on sigma0_src cannot tell it from a calibrated tightening.
+// sigma0 < 1 scales the MDB down, which reads as a tighter reliability
+// guarantee.  On the phase family it means the opposite: that pool's post-fit
+// dispersion is near zero because each phase row is fitted by its own free
+// ambiguity, which is the same fact as "these rows carry no redundancy".  (On
+// an FT63 cold smoke, sigma0_phase = 0.041 pulled the phase median MDB from
+// 4.58 m to 0.19 m on rows that were 78 % uncheckable.)  The value is reported,
+// never clamped (the prior-residual census's rule: the deflation is the
+// measurement), but it is tagged, so a consumer keying on sigma0_src can tell it
+// from a calibrated tightening.
 TEST(NetworkMdbReliability, DeflatingSigma0IsReportedButTagged) {
     const int code  = static_cast<int>(NetRowClass::ObsCode);
     const int phase = static_cast<int>(NetRowClass::ObsPhase);
@@ -414,18 +411,18 @@ TEST(NetworkMdbReliability, DeflatingSigma0IsReportedButTagged) {
     EXPECT_TRUE(f.have);
     EXPECT_STREQ(f.src, "postfit_code_deflating");
 
-    // Exactly 1.0 is the boundary and is NOT a deflation.
+    // Exactly 1.0 is the boundary and is not a deflation.
     f = networkMdbFamilyScale(code, 100, 60, 40, /*s0_code=*/1.0, 0.0);
     EXPECT_TRUE(f.have);
     EXPECT_STREQ(f.src, "postfit_code");
 }
 
 // ===========================================================================
-//  4. The physical meaning — Monte Carlo Baarda power
+//  4. The physical meaning: Monte Carlo Baarda power
 // ===========================================================================
 
 /**
- * THE test that pins delta_0 to Baarda rather than to another file.
+ * The test that ties delta_0 to Baarda's definition rather than to another file.
  *
  * On a 2-parameter weighted LS toy, inject a bias of exactly MDB_i into row i
  * and count how often the w-test flags it.  The theory this must reproduce:
@@ -471,7 +468,7 @@ TEST(NetworkMdbReliability, InjectedMdbBiasIsDetectedAtEightyPercentPower) {
         for (int t = 0; t < kTrials; ++t) {
             Eigen::VectorXd y(5);
             for (Eigen::Index j = 0; j < 5; ++j) y(j) = gauss(rng);   // x_true = 0
-            y(i) += mdb;                                              // THE fault
+            y(i) += mdb;                                              // the fault
             const Eigen::VectorXd xhat = cov * (w * (A.transpose() * y));
             const Eigen::VectorXd v = y - A * xhat;
             const double w_i = v(i) / (kSigma * std::sqrt(r_i));
@@ -487,9 +484,9 @@ TEST(NetworkMdbReliability, InjectedMdbBiasIsDetectedAtEightyPercentPower) {
     }
 }
 
-// The same toy, read the other way: a fault SMALLER than the MDB is detected
-// less than 80 % of the time, and a much larger one essentially always.  This is
-// the "minimal" in minimal detectable bias — without it, a delta_0 that was
+// The same toy, read the other way: a fault smaller than the MDB is detected
+// less than 80 % of the time, and a much larger one almost always.  This checks
+// the "minimal" in minimal detectable bias; without it, a delta_0 that was
 // merely large would also pass the test above.
 TEST(NetworkMdbReliability, PowerIsMonotoneAndTheMdbIsTheThreshold) {
     constexpr double kSigma = 0.25, kK = 3.29;
@@ -528,13 +525,13 @@ TEST(NetworkMdbReliability, PowerIsMonotoneAndTheMdbIsTheThreshold) {
 }
 
 // ===========================================================================
-//  5. OFF inertness and the arming contract
+//  5. Inertness when off, and the arming contract
 // ===========================================================================
 
-// Structural OFF.  A stock network config leaves every MDB path dead: the knob
-// is false, both source flags are irrelevant, and the master predicate the two
-// feed sites and the flush read is false — so an unarmed run never enters the
-// translation unit and never allocates the accumulator.
+// A stock network config leaves every MDB path inactive: the knob is false, both
+// source flags are irrelevant, and the master predicate read by the two feed
+// sites and the flush is false, so an unarmed run never enters the translation
+// unit and never allocates the accumulator.
 TEST(NetworkMdbReliability, StockConfigLeavesEveryMdbPathInert) {
     GnssConfig cfg;
     ASSERT_TRUE(loadConfig("off", networkConfig(), cfg));
@@ -546,7 +543,7 @@ TEST(NetworkMdbReliability, StockConfigLeavesEveryMdbPathInert) {
     const NetworkKnobs k = NetworkKnobs::snapshot(cfg, nc);
     EXPECT_FALSE(k.mdb_on);
 
-    // And the accumulator itself is inert until something feeds it.
+    // The accumulator itself is inert until something feeds it.
     NetworkMdbEpoch acc;
     EXPECT_DOUBLE_EQ(acc.tow, -1.0);
     EXPECT_FALSE(acc.fed_raim);
@@ -560,14 +557,14 @@ TEST(NetworkMdbReliability, StockConfigLeavesEveryMdbPathInert) {
         }
 }
 
-// THE arming contract.  network.mdb with no r_i source is a HARD ERROR, not a
-// silent disarm: that configuration runs, bins zero rows and prints a clean
-// summary indistinguishable from "this network cross-checks everything" — the
-// live-counter-over-dead-wiring failure this project keeps paying for.
+// The arming contract: network.mdb with no r_i source is a hard error, not a
+// silent disarm.  Such a configuration would run, bin zero rows and print a
+// summary indistinguishable from "this network cross-checks everything", i.e. a
+// counter that reads clean over wiring that never runs (invariant #4).
 TEST(NetworkMdbReliability, ArmingWithoutARedundancySourceIsRejected) {
     EXPECT_TRUE(loadFails("nosrc", networkConfig("    \"mdb\": true,\n")))
         << "network.mdb with neither the census nor RAIM redundancy must not load";
-    // raim_redundancy_normalize WITHOUT network.raim is equally dead — the
+    // raim_redundancy_normalize without network.raim is equally inactive: the
     // post-fit RAIM seam is not called at all, so no r_i is ever formed.
     EXPECT_TRUE(loadFails("raimoff", networkConfig(
         "    \"mdb\": true,\n"
@@ -575,8 +572,8 @@ TEST(NetworkMdbReliability, ArmingWithoutARedundancySourceIsRejected) {
         "    \"raim_redundancy_normalize\": true,\n")));
 }
 
-// Armed via the redundancy census: loads, and the resolved knobs say WHICH feed
-// site is live (the run-end invariant-#4 lines depend on that distinction).
+// Armed via the redundancy census: the config loads, and the resolved knobs say
+// which feed site is live (the run-end invariant-#4 lines depend on that).
 TEST(NetworkMdbReliability, ArmedViaTheCensusResolvesTheCensusFeed) {
     GnssConfig cfg;
     ASSERT_TRUE(loadConfig("census", networkConfig(
@@ -612,8 +609,7 @@ TEST(NetworkMdbReliability, ArmedViaRaimResolvesTheRaimFeed) {
 }
 
 // A negative reporting threshold would event every finite row; the loader
-// restores the default rather than accepting it.  (Zero is legal and means "no
-// events" — the aggregates are the product, the events are a convenience.)
+// restores the default rather than accepting it.
 TEST(NetworkMdbReliability, NegativeReportingThresholdIsClamped) {
     GnssConfig cfg;
     ASSERT_TRUE(loadConfig("negthr", networkConfig(
@@ -622,8 +618,8 @@ TEST(NetworkMdbReliability, NegativeReportingThresholdIsClamped) {
         "    \"redundancy_census_stride\": 10,\n"), cfg));
     EXPECT_DOUBLE_EQ(cfg.getNetworkConfig().mdb_event_m, 1.0);
 
-    // Zero is LEGAL and means "aggregates only, no events" — the trace is the
-    // product; the event stream is a convenience.  It must survive the loader.
+    // Zero is legal and means "aggregates only, no events": the trace is the
+    // product and the event stream a convenience.  The loader keeps it.
     GnssConfig zcfg;
     ASSERT_TRUE(loadConfig("zerothr", networkConfig(
         "    \"mdb\": true,\n"
@@ -633,10 +629,10 @@ TEST(NetworkMdbReliability, NegativeReportingThresholdIsClamped) {
     EXPECT_DOUBLE_EQ(NetworkKnobs::snapshot(zcfg, zcfg.getNetworkConfig()).mdb_event_m, 0.0);
 }
 
-// The event candidates are the per (station x class) WORST finite row — the
-// bounded reporting stream.  An uncheckable row can never BE a candidate (its
-// MDB is not a finite metre count), which is what keeps the event channel about
-// "how big a fault could hide here" rather than "here is another infinity".
+// The event candidates are the worst finite row per (station x class), which
+// bounds the reporting stream.  An uncheckable row is never a candidate (its MDB
+// is not a finite metre count), so the event channel reports how large a fault
+// could hide rather than listing infinities.
 TEST(NetworkMdbReliability, CandidatesAreThePerClassWorstFiniteRow) {
     NetworkMdbEpoch acc;
     const std::string station = "CCCC";
@@ -662,7 +658,7 @@ TEST(NetworkMdbReliability, CandidatesAreThePerClassWorstFiniteRow) {
     EXPECT_EQ(phase->station, station);
     EXPECT_NEAR(phase->mdb, oracleMdb(0.01, 0.02, 3.29), 1e-12);
     EXPECT_EQ(code->sat, "G04");
-    // And the bin-level worst identity agrees with the candidate.
+    // The bin-level worst identity agrees with the candidate.
     const NetworkMdbBin& b =
         acc.bin[netMdbConstIndex('G')][static_cast<int>(NetRowClass::ObsPhase)];
     EXPECT_EQ(b.worst_sat, "G02");
@@ -672,8 +668,8 @@ TEST(NetworkMdbReliability, CandidatesAreThePerClassWorstFiniteRow) {
 }
 
 // Constellation binning: known letters get their own bin, an unknown letter and
-// an unlabelled row share the catch-all.  A dropped row would silently break
-// the census join, so nothing is ever dropped for want of a name.
+// an unlabelled row share the catch-all.  A dropped row would break the census
+// join without a symptom, so no row is dropped for want of a name.
 TEST(NetworkMdbReliability, UnknownConstellationsAreBinnedNotDropped) {
     EXPECT_EQ(netMdbConstIndex('G'), 0);
     EXPECT_EQ(netMdbConstIndex('R'), 1);

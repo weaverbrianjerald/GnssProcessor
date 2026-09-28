@@ -1,37 +1,41 @@
 /**
  * @file test_clock_anchor.cpp
- * @brief Card Q3 (docs/SPEC_clock_temporal_anchor.md) — the guarded temporal
- *        clock anchor: the fold-side variance decision, the per-satellite
- *        elapsed-time staleness guard, the LOOSE/ANCHORED state machine, the
- *        guard's in-epoch refloat + re-solve, and the loader contract.
+ * @brief Tests for the guarded temporal clock anchor: the fold-side variance
+ *        decision, the per-satellite elapsed-time staleness guard, the
+ *        LOOSE/ANCHORED state machine, the guard's in-epoch refloat and
+ *        re-solve, the gauge-free fold, and the loader contract (card Q3,
+ *        docs/SPEC_clock_temporal_anchor.md).
  *
- * What is pinned here, and why each one is worth a case:
+ * Properties pinned here:
  *
- *  1. **OFF is the legacy expression, exactly.**  The fold seam is on the hot
- *     path of every network run; if its OFF branch is not bit-identical to
- *     `cp.var + sat_clock_q·dt`, the card's whole byte-identity claim is void.
- *  2. **A satellite is born LOOSE and must EARN the anchor.**  The stiffness
- *     must never precede the evidence — that is the standing-invariant-#7
- *     re-coupling rule applied to first sighting and to a warm resume alike.
- *  3. **The inflation basis is the PER-SATELLITE elapsed time, not the epoch
- *     dt.**  Every skip path advances the driver's dt while the carry survives,
- *     so this is the difference between folding a 30 s-old value and folding a
- *     95-minute-old one at 30 s stiffness (DOY-129 withheld 278 consecutive
- *     epochs).  Both the correct inflation and the staleness fallback are pinned.
- *  4. **The variance floor binds** (assessment deviation #1's cap).
- *  5. **The guard recovers a genuine step in the SAME epoch.**  A satellite
- *     whose true clock jumps under a stiff anchor is dragged by the prior; the
- *     guard must detect it on the standardized predicted residual, withdraw the
- *     prior, re-solve, and land within rounding of the solve that never folded
- *     it — that IS adapt-and-EMIT, and it is the difference between correcting
- *     the epoch and merely annotating it.
- *  6. **Both edges.**  The decoupling edge marks the wire and drops the
- *     satellite to LOOSE; the re-coupling edge re-engages only after the
- *     configured consecutive in-band run, and does NOT mark.
- *  7. **The per-constellation common mode is removed** — a whole-constellation
- *     gauge re-realization must not trip a single satellite (invariant #5).
- *  8. Loader contract: defaults OFF, every knob parses, the values a run would
- *     actually use.
+ *  1. With the anchor off, the fold variance is the legacy expression
+ *     `cp.var + sat_clock_q·dt`, bit for bit.  The fold seam runs in every
+ *     network run, so the card's byte-identity claim depends on it.
+ *  2. A satellite starts LOOSE and becomes ANCHORED only after the guard has
+ *     validated it.  Stiffness never precedes the evidence for it; this is the
+ *     re-coupling rule of invariant #7, applied to a first sighting and to a
+ *     warm resume alike.
+ *  3. The inflation uses the per-satellite elapsed time, not the epoch dt.
+ *     Every skip path advances the driver's dt while the carry survives, so a
+ *     withheld era can leave a carry many minutes old while dt reads 30 s.
+ *     Both the inflation over the true elapsed time and the staleness
+ *     fallback are pinned.
+ *  4. The variance floor binds (the cap from assessment deviation #1).
+ *  5. The guard recovers a genuine step within the same epoch.  A satellite
+ *     whose true clock jumps under a stiff anchor is pulled toward the prior;
+ *     the guard detects it on the standardized predicted residual, withdraws
+ *     the prior and re-solves, and the result matches the solve that never
+ *     folded the prior to rounding.  This is adapt-and-emit: the epoch is
+ *     corrected, not only annotated.
+ *  6. Both edges: the decoupling edge marks the wire and returns the satellite
+ *     to LOOSE; the re-coupling edge re-engages only after the configured run
+ *     of consecutive in-band epochs, and does not mark.
+ *  7. The per-constellation common mode is removed, so a whole-constellation
+ *     gauge re-realization does not trip a single satellite (invariant #5).
+ *  8. Loader contract: defaults off, every knob parses, and the knob snapshot
+ *     holds the values a run would use.
+ *  9. The gauge-free fold (card Q3 §2.1) carries no information along the
+ *     per-constellation clock common direction.
  */
 
 #include <gtest/gtest.h>
@@ -107,9 +111,9 @@ struct Loaded {
     ~Loaded() { std::error_code ec; fs::remove(path, ec); }
 };
 
-/// The armed knob block used by every mechanics case below.  q = 1e-5 targets a
-/// √(q·Δt) = 1.7 cm walk at 30 s — the FC-1 physical floor — which makes the
-/// anchor decisively stiffer than the 1e-3 legacy carry it replaces.
+/// The armed knob block used by every mechanics case below.  q = 1e-5 gives a
+/// √(q·Δt) = 1.7 cm walk at 30 s (the FC-1 physical floor), which makes the
+/// anchor much stiffer than the 1e-3 legacy carry it replaces.
 const char* const kArmed =
     "    \"clock_temporal_anchor\": true,\n"
     "    \"clock_anchor_q\": 1e-5,\n"
@@ -124,8 +128,8 @@ const char* const kArmed =
 // A minimal but genuinely solvable network: rows are (station, satellite) pairs
 // of a clock-only observable  y = δt^s + δt_r.  Shared columns are the satellite
 // clocks; local columns the receiver clocks.  One satellite clock is pinned, so
-// the system has full rank and every satellite clock is data-supported — which
-// is exactly the population the guard's refloat is admissible on.
+// the system has full rank and every satellite clock is data-supported, which is
+// the population on which the guard's refloat is admissible.
 // ---------------------------------------------------------------------------
 
 struct ToyNet {
@@ -174,7 +178,7 @@ TEST(ClockAnchorFold, OffPathIsTheLegacyExpressionExactly) {
     ASSERT_FALSE(ctx.knobs.cta_on);
     const double prev_var = 3.7e-3, dt = 30.0;
     const auto f = clockAnchorFoldVariance(ctx, "G01", prev_var, dt, 1000.0, 0.5);
-    EXPECT_EQ(f.var_eff, prev_var + ctx.knobs.q_clock * dt);   // BIT equality, not NEAR
+    EXPECT_EQ(f.var_eff, prev_var + ctx.knobs.q_clock * dt);   // bit equality, not NEAR
     EXPECT_FALSE(f.anchored);
     EXPECT_FALSE(f.floor_hit);
     EXPECT_TRUE(ctx.carry.clk_anchor.sat.empty());   // nothing allocated when OFF
@@ -187,7 +191,7 @@ TEST(ClockAnchorFold, BornLooseAndMustEarnTheAnchor) {
     ASSERT_TRUE(ctx.knobs.cta_on);
     clockAnchorBeginEpoch(ctx);
     const auto f = clockAnchorFoldVariance(ctx, "G01", 1e-3, 30.0, 1000.0, 0.5);
-    // First sighting folds at the LEGACY rate — the stiffness never precedes the
+    // A first sighting folds at the legacy rate: the stiffness never precedes the
     // evidence for it.
     EXPECT_EQ(f.var_eff, 1e-3 + ctx.knobs.q_clock * 30.0);
     EXPECT_FALSE(f.anchored);
@@ -207,8 +211,8 @@ TEST(ClockAnchorFold, AnchoredFoldUsesPerSatelliteElapsedTime) {
     clockAnchorFoldVariance(ctx, "G01", 1e-3, 30.0, 1000.0, 0.0);   // seed t_last
     ctx.carry.clk_anchor.sat["G01"].anchored = true;
 
-    // The DRIVER's dt says 30 s (every skip path advances prev_tow); this
-    // satellite's carry is actually 90 s old.  The anchor must inflate over 90.
+    // The driver's dt says 30 s (every skip path advances prev_tow), but this
+    // satellite's carry is 90 s old.  The anchor inflates over 90 s.
     clockAnchorBeginEpoch(ctx);
     const auto f = clockAnchorFoldVariance(ctx, "G01", 1e-3, 30.0, 1090.0, 0.0);
     EXPECT_TRUE(f.anchored);
@@ -223,15 +227,15 @@ TEST(ClockAnchorFold, StaleCarryFallsBackToLooseAndFlagsTheEdge) {
     clockAnchorFoldVariance(ctx, "G01", 1e-3, 30.0, 1000.0, 0.0);
     ctx.carry.clk_anchor.sat["G01"].anchored = true;
 
-    // 300 s > the 120 s bound: folding a stiff prior here is the invariant-#1
-    // catastrophe, so the anchor must NOT be used and the edge must be flagged
-    // for the guard to event and mark.
+    // 300 s exceeds the 120 s bound.  Folding a stiff prior across that gap is
+    // the failure invariant #1 describes, so the anchor is not used and the edge
+    // is flagged for the guard to emit an event and mark the wire.
     clockAnchorBeginEpoch(ctx);
     const auto f = clockAnchorFoldVariance(ctx, "G01", 1e-3, 30.0, 1300.0, 0.0);
     EXPECT_FALSE(f.anchored);
     EXPECT_TRUE(f.decoupled);
     EXPECT_TRUE(ctx.carry.clk_anchor.sat.at("G01").stale_pending);
-    EXPECT_EQ(f.var_eff, 1e-3 + ctx.knobs.q_clock * 30.0);   // the LEGACY carry bounds it
+    EXPECT_EQ(f.var_eff, 1e-3 + ctx.knobs.q_clock * 30.0);   // the legacy carry bounds it
 }
 
 TEST(ClockAnchorFold, VarianceFloorBinds) {
@@ -241,21 +245,22 @@ TEST(ClockAnchorFold, VarianceFloorBinds) {
     clockAnchorFoldVariance(ctx, "G01", 1e-9, 30.0, 1000.0, 0.0);
     ctx.carry.clk_anchor.sat["G01"].anchored = true;
     clockAnchorBeginEpoch(ctx);
-    // prev_var 1e-9 + q·Δt 3e-4 = 3.0e-4 … which is ABOVE the 1e-6 floor, so it
-    // does not bind; drive it below with a tiny Δt to prove the cap is live.
+    // At Δt = 30 s, prev_var 1e-9 + q·Δt 3e-4 = 3.0e-4 is above the 1e-6 floor,
+    // so the floor would not bind.  A Δt of 0.01 s gives 1.01e-7, below it.
     const auto f = clockAnchorFoldVariance(ctx, "G01", 1e-9, 30.0, 1000.01, 0.0);
     EXPECT_TRUE(f.floor_hit);
     EXPECT_DOUBLE_EQ(f.var_eff, ctx.knobs.cta_var_floor);
     EXPECT_EQ(ctx.counters.cta_floor_hits, 1);
 }
 
-/// READMIT continuity (network.readmit_seed_horizon_s): a PARKED pre-gap realization
-/// seeding a re-registered column is stale only beyond the SEED horizon.  A 3300 s
-/// eclipse gap — 27× the 120 s staleness bound — folds ANCHORED over the true gap
-/// (prev_var + cta_q·gap), flags no edge, and leaves the guard to re-validate it;
-/// the unseeded call at the same gap is the stale/decouple path (the case above), so
-/// the two folds differ ONLY through the bound.  Beyond the horizon a seed is stale
-/// like any other carry, and a LOOSE seed inflates over the TRUE gap, not the dt.
+/// Readmission continuity (network.readmit_seed_horizon_s): a parked pre-gap
+/// realization that seeds a re-registered column is stale only beyond the seed
+/// horizon.  A 3300 s eclipse gap (27.5 times the 120 s staleness bound) folds
+/// ANCHORED over the true gap (prev_var + cta_q·gap), flags no edge, and leaves the
+/// guard to re-validate it.  The unseeded call at the same gap takes the
+/// stale/decouple path (the case above), so the two folds differ only through the
+/// bound.  Beyond the horizon a seed is stale like any other carry, and a LOOSE seed
+/// inflates over the true gap, not over the dt.
 TEST(ClockAnchorFold, SeededReturnFoldsAnchoredOverTheTrueGap) {
     Loaded L("seed", kArmed);
     NetworkRunContext ctx(L.cfg, L.cfg.getNetworkConfig());
@@ -279,7 +284,7 @@ TEST(ClockAnchorFold, SeededReturnFoldsAnchoredOverTheTrueGap) {
     EXPECT_TRUE(g.decoupled);
     EXPECT_TRUE(ctx.carry.clk_anchor.sat.at("G01").stale_pending);
 
-    // A LOOSE seed inflates over the TRUE gap, not the driver's dt.
+    // A LOOSE seed inflates over the true gap, not over the driver's dt.
     ctx.carry.clk_anchor.sat["G02"].t_last   = 1000.0;
     ctx.carry.clk_anchor.sat["G02"].anchored = false;
     clockAnchorBeginEpoch(ctx);
@@ -360,13 +365,12 @@ TEST(ClockAnchorGuard, GenuineStepIsDetectedRefloatedAndValueCorrectedInEpoch) {
     NetworkSbasis::Plan plan;
     plan.shared_datum = {{est.clockColumn(t.sats[0]), 0.0}};
 
-    // Truth: G03's clock STEPS by 3 m between the carried level and this epoch.
+    // Truth: G03's clock steps by 3 m between the carried level and this epoch.
     const std::vector<double> truth{0.0, 1.0, -0.5, 2.0};
     std::map<std::string, double> carried{{"G02", 1.0}, {"G03", -3.5}, {"G04", 2.0}};
 
-    // Seed t_last and hand every carried satellite the anchor (in a run it would
-    // have earned it through the re-validation; here we grant it so the test
-    // isolates the guard).
+    // Seed t_last and set every carried satellite ANCHORED.  In a run the state
+    // is reached through re-validation; setting it directly isolates the guard.
     clockAnchorBeginEpoch(ctx);
     for (const auto& [sat, v] : carried) {
         clockAnchorFoldVariance(ctx, sat, 1e-4, 30.0, 1000.0, v);
@@ -397,9 +401,9 @@ TEST(ClockAnchorGuard, GenuineStepIsDetectedRefloatedAndValueCorrectedInEpoch) {
     EXPECT_FALSE(ctx.carry.clk_anchor.sat.at("G03").anchored);       // decoupled
     EXPECT_TRUE(ctx.carry.clk_anchor_disc_pending.count("G03") > 0);  // wire-marked
     EXPECT_EQ(ctx.counters.cta_marks, 1);
-    // … and the EMITTED value is the data's, not the stale anchor's.  This is
-    // the whole point of adapt-and-EMIT: without the re-solve the epoch would
-    // publish a clock dragged most of 3 m toward the carried value.
+    // … and the emitted value follows the data, not the stale anchor.  Without
+    // the re-solve the epoch would publish a clock pulled most of the 3 m toward
+    // the carried value (adapt-and-emit).
     const Eigen::Index c3 = est.clockColumn("G03");
     EXPECT_NEAR(run.x(c3), x_ref(ref.clockColumn("G03")), 1e-6);
     EXPECT_NEAR(run.x(c3) - run.x(est.clockColumn("G02")),
@@ -424,9 +428,10 @@ TEST(ClockAnchorGuard, WholeConstellationCommonModeDoesNotTrip) {
     NetworkSbasis::Plan plan;
     plan.shared_datum = {{est.clockColumn(t.sats[0]), 0.0}};
 
-    // Every satellite's carried level is displaced by the SAME 5 m — a gauge
-    // re-realization, not per-satellite content.  Removing the per-constellation
-    // median is standing invariant #5; without it this trips the whole fleet.
+    // Every satellite's carried level is displaced by the same 5 m: a gauge
+    // re-realization, not per-satellite content.  The guard removes the
+    // per-constellation median (invariant #5); without that, every satellite
+    // would trip.
     const std::vector<double> truth{0.0, 1.0, -0.5, 2.0};
     std::map<std::string, double> carried{
         {"G02", 1.0 - 5.0}, {"G03", -0.5 - 5.0}, {"G04", 2.0 - 5.0}};
@@ -462,8 +467,8 @@ TEST(ClockAnchorGuard, RecouplingNeedsTheConsecutiveInBandRunAndDoesNotMark) {
     const std::vector<double> truth{0.0, 1.0, -0.5, 2.0};
     std::map<std::string, double> carried{{"G02", 1.0}, {"G03", -0.5}, {"G04", 2.0}};
 
-    // Every satellite starts LOOSE (born LOOSE — the state a decoupled satellite
-    // is left in).  It must serve the full in-band run before re-engaging.
+    // Every satellite starts LOOSE, the same state a decoupled satellite is left
+    // in.  It re-engages only after the full run of in-band epochs.
     double now = 1000.0;
     for (int ep = 1; ep <= 3; ++ep) {
         guardedEpoch(ctx, L.cfg, traces, est, t, truth, plan, carried, now, 30.0);
@@ -473,7 +478,7 @@ TEST(ClockAnchorGuard, RecouplingNeedsTheConsecutiveInBandRunAndDoesNotMark) {
             << "after epoch " << ep;
     }
     EXPECT_EQ(ctx.counters.cta_recouples, 3);   // one per carried satellite
-    EXPECT_EQ(ctx.counters.cta_marks, 0);       // a re-coupling edge is NOT wire-marked
+    EXPECT_EQ(ctx.counters.cta_marks, 0);       // a re-coupling edge is not wire-marked
     std::error_code ec; fs::remove_all(dir, ec);
 }
 
@@ -529,8 +534,8 @@ TEST(ClockAnchorLoader, EveryKnobParses) {
 
 TEST(ClockAnchorLoader, ClockModelInterlockDisarmsTheAnchor) {
     // Under the two-state oscillator the clock is never stashed to the D2 carry,
-    // so the anchor has nothing to fold.  The knob snapshot resolves that ONCE so
-    // no downstream site can read an armed flag that cannot act.
+    // so the anchor has nothing to fold.  The knob snapshot resolves that once,
+    // so no downstream site reads an armed flag that cannot act.
     LogManager log;
     const fs::path p = writeTempConfig("interlock",
         std::string(kArmed) + "    \"clock_model\": true,\n");
@@ -544,16 +549,16 @@ TEST(ClockAnchorLoader, ClockModelInterlockDisarmsTheAnchor) {
 }
 
 // ===========================================================================
-// 9: Card Q3 §2.1 — the gauge-free fold
+// 9: the gauge-free fold (card Q3 §2.1)
 // ===========================================================================
 //
-// The property that matters is ALGEBRAIC and checkable exactly: after the
-// downdate the folded prior must carry ZERO information along the
-// per-constellation clock common direction, while the information it carries on
-// the DIFFERENCES is untouched.  Both are pinned against a SOLVE rather than
-// against Λ, because "no information along u" has an operational meaning the
-// algebra alone does not show: shifting every carried clock of a constellation
-// by a common amount must move the solution not at all.
+// The property is algebraic and can be checked exactly: after the downdate the
+// folded prior carries no information along the per-constellation clock common
+// direction, and the information it carries on the differences is unchanged.
+// Both are checked against a solve rather than against Λ, because "no
+// information along u" has an operational meaning the algebra alone does not
+// show: shifting every carried clock of a constellation by a common amount
+// leaves the solution unchanged.
 
 namespace {
 
@@ -598,7 +603,7 @@ TEST(ClockAnchorGaugeFree, CommonShiftOfEveryCarriedClockDoesNotMoveTheSolution)
     const std::vector<double> truth{0.0, 1.0, -0.5, 2.0};
     std::map<std::string, double> carried{{"G02", 1.0}, {"G03", -0.5}, {"G04", 2.0}};
     std::map<std::string, double> shifted;
-    for (const auto& kv : carried) shifted[kv.first] = kv.second + 5.0;   // a pure GAUGE move
+    for (const auto& kv : carried) shifted[kv.first] = kv.second + 5.0;   // a pure gauge move
 
     NetworkEstimator a, b, c;
     for (auto* e : {&a, &b, &c}) for (const auto& s : t.sats) e->registerClock(s);
@@ -612,17 +617,17 @@ TEST(ClockAnchorGaugeFree, CommonShiftOfEveryCarriedClockDoesNotMoveTheSolution)
     const Eigen::VectorXd x_raw = solveWithClockPriors(c, t, truth, dc, shifted, 4e-4, false);
 
     EXPECT_EQ(n_gf, 3u);                                   // all three downdated
-    EXPECT_LT((x_gf - x_gfs).cwiseAbs().maxCoeff(), 1e-9);  // the gauge move is INVISIBLE
-    // …and the same shift drags a RAW fold.  Without this the test above would
-    // pass trivially on a prior that does nothing at all.
+    EXPECT_LT((x_gf - x_gfs).cwiseAbs().maxCoeff(), 1e-9);  // the gauge move has no effect
+    // …and the same shift moves a raw fold.  Without this check the test above
+    // would also pass on a prior that does nothing at all.
     EXPECT_GT((x_gf - x_raw).cwiseAbs().maxCoeff(), 0.1);
 }
 
 TEST(ClockAnchorGaugeFree, DifferenceInformationSurvivesAndALoneClockFoldsNothing) {
     ToyNet t;
     const std::vector<double> truth{0.0, 1.0, -0.5, 2.0};
-    // G03 carried 1 m off truth, the others at truth: that is a DIFFERENCE, not
-    // the gauge, so a gauge-free anchor must still pull it.
+    // G03 is carried 1 m off truth and the others at truth.  That is a
+    // difference, not the gauge, so a gauge-free anchor still pulls it.
     std::map<std::string, double> carried{{"G02", 1.0}, {"G03", 0.5}, {"G04", 2.0}};
     NetworkEstimator a;
     for (const auto& s : t.sats) a.registerClock(s);
@@ -630,8 +635,8 @@ TEST(ClockAnchorGaugeFree, DifferenceInformationSurvivesAndALoneClockFoldsNothin
     const Eigen::VectorXd x = solveWithClockPriors(a, t, truth, da, carried, 4e-4, true);
     EXPECT_GT(x(a.clockColumn("G03")) - truth[2], 0.3);
 
-    // A constellation contributing a SINGLE carried clock is entirely gauge —
-    // no estimable content to anchor, so nothing may be folded.
+    // A constellation contributing a single carried clock is entirely gauge: it
+    // has no estimable content to anchor, so nothing is folded.
     NetworkEstimator b;
     for (const auto& s : t.sats) b.registerClock(s);
     const NetworkEstimator::Datum db = {{b.clockColumn(t.sats[0]), 0.0}};

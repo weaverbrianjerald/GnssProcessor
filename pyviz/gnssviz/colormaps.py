@@ -1,4 +1,4 @@
-"""Perceptually-uniform / colourblind-aware colormaps -- the port of
+"""Perceptually-uniform / colourblind-aware colormaps: the port of
 ``stripColormap.m``.
 
 Returns an ``(n, 3)`` RGB array for a named map so every strip viewer shares one
@@ -52,10 +52,10 @@ _INFERNO = np.array([
 ])
 #: Google's `turbo` (the modern, luminance-monotonic replacement for `jet`),
 #: sampled at 0:0.05:1 from the reference table.  A rainbow map is the wrong
-#: default for most data, but it is the right one for a *slant-delay* raster,
+#: default for most data, but it is the right one for a slant-delay raster,
 #: where the reader is picking out fine structure inside a narrow band rather
-#: than ranking magnitudes -- turbo has far more perceptual resolution there
-#: than viridis (professor request, 2026-08-06).
+#: than ranking magnitudes: turbo has far more perceptual resolution there
+#: than viridis.
 _TURBO = np.array([
     [0.189950, 0.071760, 0.232170], [0.239150, 0.208330, 0.546860],
     [0.269670, 0.348780, 0.796310], [0.276480, 0.481440, 0.950640],
@@ -109,13 +109,13 @@ def _bwr(n: int) -> np.ndarray:
     return np.vstack([blue, red])
 
 
-# `parula` (MATLAB-proprietary) has no portable anchor table here, so the *pure
-# data layer* maps it to viridis -- deterministic and free of any plotting-library
+# `parula` (MATLAB-proprietary) has no portable anchor table here, so the pure
+# data layer maps it to viridis: deterministic and free of any plotting-library
 # import (the architectural boundary: nothing below the backend touches
 # matplotlib).  A backend that wants the genuine builtin can special-case the
-# name.  `turbo` USED to fall back here too; it now has a real anchor table
-# (:data:`_TURBO`, transcribed from the reference map), so both backends render
-# the genuine colours from the same array.
+# name.  `turbo` now has a real anchor table (:data:`_TURBO`, transcribed from
+# the reference map) and is looked up through `_ANCHORS` instead of falling
+# back here, so both backends render the genuine colours from the same array.
 _VIRIDIS_FALLBACK = {"parula"}
 
 
@@ -136,7 +136,7 @@ def strip_colormap(name, n: int = 256) -> np.ndarray:
     elif nm in _ANCHORS:
         base = _interp(_ANCHORS[nm], n)
     else:
-        base = _interp(_VIRIDIS, n)        # parula/turbo/unknown -> viridis
+        base = _interp(_VIRIDIS, n)        # parula/unknown -> viridis (turbo is in _ANCHORS)
 
     if rev:
         base = np.flipud(base)

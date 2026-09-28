@@ -1,11 +1,12 @@
 /**
  * @file NetworkAnchorReentry.cpp
- * @brief Card SID phase 4 (S2 and B1) — see NetworkAnchorReentry.hpp.
+ * @brief Anchor re-entry against the arc ledger (card SID phase 4, S2 and B1); see
+ *        NetworkAnchorReentry.hpp.
  *
- * Every function here is PURE over the ledger and the run-scope memory: no
- * context, no config, no estimator.  The election stays the only scope that knows
- * about traces, counters and the pin, exactly as the card EV7 drop-edge predicate
- * (@c NetworkPhaseGateDrop.hpp) does for its own rule.
+ * Every function here is a pure function of the ledger and the run-scope memory: no
+ * context, no config, no estimator.  The election remains the only scope that knows
+ * about traces, counters and the pin, as with the card EV7 drop-edge predicate
+ * (@c NetworkPhaseGateDrop.hpp) and its own rule.
  */
 #include "filter/NetworkAnchorReentry.hpp"
 
@@ -28,7 +29,7 @@ void anchorReentryFamilyCensus(const ArcLedger& led, const std::string& sat,
     if (gen) gen->clear();
     for (const auto& [key, a] : led.arcs()) {
         if (std::get<1>(key) != sat || std::get<2>(key) != signal) continue;
-        // The ADMITTED side throughout: the carried ambiguity, the leveling level
+        // The admitted side throughout: the carried ambiguity, the leveling level
         // and the phase-bias column are admitted-side objects, so a raw-side state
         // would answer a different question than the one the election is asking.
         switch (a.adm_state) {
@@ -80,10 +81,9 @@ void anchorReentryNoteDrop(AnchorReentryState& st, const ArcLedger& led,
     m.returned    = false;
     anchorReentryFamilyCensus(led, sat, signal, m.n_tracking, m.n_gap, m.n_dead,
                               &m.generation);
-    // A second drop of the same family REPLACES the memo rather than merging: the
-    // question a return has to answer is about the LAST era the family was
-    // anchored in, and merging two eras would let an arc that died between them
-    // read as continuous.
+    // A second drop of the same family replaces the memo rather than merging: a
+    // return is judged against the last era the family was anchored in, and
+    // merging two eras would let an arc that died between them read as continuous.
     st.drop[amb] = std::move(m);
 }
 

@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""One-command HTML dashboard for a SIMULATED NETWORK run.
+"""One-command HTML dashboard for a simulated network run.
 
 Chains the two halves that already exist, in the order the artifacts flow:
 
-  1. ``scripts/simnet_grade.py``  — the truth grader (SPEC_synthetic_minimum_network
-     §4), writing its verdict INTO the run's log dir so the report can bind it:
+  1. ``scripts/simnet_grade.py``: the truth grader (SPEC_synthetic_minimum_network
+     §4), writing its verdict into the run's log dir so the report can bind it:
          logs/simnet_grade.json         machine-readable channel grades
          logs/simnet_grade.txt          the full console readout (verbatim caveats)
          logs/simnet_grade_series.csv   per-epoch truth-error series (--series)
-  2. ``pyviz/run_report.py``      — the standard offline HTML report; the simnet
+  2. ``pyviz/run_report.py``: the standard offline HTML report. The simnet
      viewers (scorecard / theory / truth series) light up on the artifacts above,
      and the ordinary network viewers cover the run's own traces.
 
@@ -16,12 +16,12 @@ Usage:
     python scripts/simnet_report.py <fixture_dir> --run <run_dir> [-o out.html]
     python scripts/simnet_report.py runs/simnet60_campaign_wu93 --run runs/camp60wu_f5c
 
-The output defaults to ``<run_dir>/simnet_dashboard.html`` — one self-contained
+The output defaults to ``<run_dir>/simnet_dashboard.html``: one self-contained
 offline file (matplotlib figures base64-embedded), the same artifact shape as the
 GnssSimulator exam dashboard.
 
-``--skip-grade`` reuses grade artifacts already in the log dir (e.g. to iterate
-on report composition without re-grading a long run).
+``--skip-grade`` reuses grade artifacts already in the log dir, for example to
+iterate on report composition without re-grading a long run.
 """
 
 from __future__ import annotations
@@ -33,8 +33,8 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# The grader's readout carries σ/⚠/− etc.; a cp1252 Windows console must not be
-# able to kill the pipeline over a glyph.
+# The grader's readout carries sigma/warning/minus glyphs and similar; a cp1252
+# Windows console must not be able to kill the pipeline over one of them.
 for _stream in (sys.stdout, sys.stderr):
     try:
         _stream.reconfigure(encoding="utf-8", errors="replace")
@@ -43,7 +43,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 
 def _python():
-    """The interpreter pyviz needs (pandas/matplotlib): venv first, then us."""
+    """The interpreter pyviz needs (pandas/matplotlib): the venv one if present, else this one."""
     venv = os.path.join(ROOT, "venv", "Scripts", "python.exe")
     return venv if os.path.exists(venv) else sys.executable
 

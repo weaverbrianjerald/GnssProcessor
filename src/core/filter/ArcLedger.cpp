@@ -1,6 +1,6 @@
 /**
  * @file ArcLedger.cpp
- * @brief Card SID phase 1: the arc lifecycle state machine (see ArcLedger.hpp).
+ * @brief The arc lifecycle state machine (card SID phase 1; see ArcLedger.hpp).
  */
 #include "filter/ArcLedger.hpp"
 
@@ -31,7 +31,7 @@ namespace GnssProcessor {
     }
 
     // =====================================================================
-    // Card SID phase 4 (S1): the REASON vocabulary and the per-epoch buffer
+    // Reason vocabulary and the per-epoch buffer (card SID phase 4, S1)
     // =====================================================================
 
     const char* arcReasonName(unsigned bit) {
@@ -72,12 +72,11 @@ namespace GnssProcessor {
 
     void arcReasonBeginEpoch(ArcReasonEpoch& buf, long long ep) {
         buf.late.clear();
-        // The LATE bits (the readmit park, which runs downstream of the fold) are
-        // promoted to their own map and kept for exactly one epoch, which is the
-        // earliest a gap they can explain is able to open.  Everything else is
-        // dropped: an early writer's record has already been folded at its own
-        // epoch, and letting it survive would attribute the next gap to a screen
-        // that did not open it.
+        // The late bits (the readmit park, which runs after the fold) are moved to
+        // their own map and kept for one epoch, the earliest epoch at which a gap they
+        // can explain can open.  Everything else is dropped: an early writer's record
+        // has already been folded at its own epoch, and keeping it would attribute
+        // the next gap to a screen that did not open it.
         if (buf.armed)
             for (const auto& [k, r] : buf.rec) {
                 const unsigned keep = r.bits & kArcReasonLateMask;
@@ -117,12 +116,12 @@ namespace GnssProcessor {
         // The key orders on the station index first, then the satellite, so one
         // station's arcs of one satellite are a contiguous range and the expansion
         // stays O(arcs of that satellite) rather than O(network).
-        // ⚠ The STATION bound is load-bearing, not tidiness.  `lower_bound` on
-        // (station, sat, "") returns the first key at or after it, which for a
-        // station holding no arc of `sat` is the FIRST KEY OF A LATER STATION — and
-        // if that station does hold `sat`, an unbounded scan would write the bit on
-        // another station's arcs.  The satellite test alone does not catch it,
-        // because the satellite is exactly what matches there.
+        // The station bound in the loop is required for correctness.  `lower_bound`
+        // on (station, sat, "") returns the first key at or after it, which for a
+        // station holding no arc of `sat` can be the first key of a later station;
+        // if that station holds `sat`, an unbounded scan would write the bit on
+        // another station's arcs.  The satellite test alone does not catch this,
+        // because the satellite matches there.
         const auto scan = [&](int want_sta) {
             for (auto it = arcs.lower_bound(ArcLedger::Key{ want_sta, sat, "" });
                  it != arcs.end(); ++it) {
@@ -206,9 +205,9 @@ namespace GnssProcessor {
         switch (a.state) {
         case ArcState::Absent:
         case ArcState::Dead:
-            // A BIRTH.  The previous generation travels out on the step so a caller
-            // can tell a true first sighting (0) from a return after a death, which
-            // is the distinction the anchor election does not make today.
+            // A birth.  The previous generation is returned on the step so a caller can
+            // tell a true first sighting (0) from a return after a death, a distinction
+            // the anchor election does not make.
             s.transition     = ArcTransition::Birth;
             s.prev_generation = a.generation;
             s.gap_len_ep     = (a.ep_last_seen < 0)
@@ -222,8 +221,8 @@ namespace GnssProcessor {
             a.reason_mask    = kArcReasonNone;
             break;
         case ArcState::Gap:
-            // A RE-ENTRY inside the horizon.  The gap length is the epochs missed,
-            // which is the unit every existing re-entry instrument reports.
+            // A re-entry inside the horizon.  The gap length is the number of epochs
+            // missed, the unit every existing re-entry instrument reports.
             s.transition = ArcTransition::Reentry;
             s.gap_len_ep = static_cast<int>(epoch_idx_ - a.ep_last_seen - 1);
             a.gap_len_ep = s.gap_len_ep;
@@ -245,11 +244,10 @@ namespace GnssProcessor {
         s.to            = a.state;
         s.generation    = a.generation;
         s.reason_mask   = a.reason_mask;
-        // Card SID phase 2: the admitted side as it stands at this epoch, so a raw
-        // re-entry event states BOTH gap lengths.  The admitted pass of this epoch
-        // has not run yet (it is downstream), so the number is the admitted gap that
-        // is OPEN as the raw arc returns, which is the quantity a reader of the raw
-        // edge wants.
+        // The admitted side as it stands at this epoch (card SID phase 2), so a raw
+        // re-entry event states both gap lengths.  This epoch's admitted pass runs
+        // later (downstream), so the number is the admitted gap that is open as the
+        // raw arc returns, which is the quantity a reader of the raw edge needs.
         s.adm_state      = a.adm_state;
         s.adm_gap_len_ep = a.admittedGapEp(epoch_idx_);
         s.adm_generation = a.adm_generation;
@@ -263,9 +261,9 @@ namespace GnssProcessor {
         for (auto& [key, a] : arcs_) {
             const int sta = std::get<0>(key);
             if (a.state == ArcState::Dead) {
-                // The forget sweep runs for EVERY station, present or not: a record
-                // that has been dead for the whole window carries no information a
-                // station's return could revive.
+                // The forget sweep runs at every station, present or not: a record that
+                // has been dead for the whole window carries no information a station's
+                // return could use.
                 if (forget_ep_ > 0 && epoch_idx_ - a.ep_state_changed > forget_ep_)
                     forget.push_back(key);
                 continue;
@@ -309,10 +307,10 @@ namespace GnssProcessor {
                                std::vector<std::pair<Key, ArcStep>>& out,
                                const ArcReasonEpoch* reasons) {
         out.clear();
-        // Card SID phase 4 (S1): the fold.  A gap opened at this call takes the
-        // reasons the screens recorded for its arc, narrowed to the bits that can
-        // explain a REMOVAL (a de-weight is not one), and `unknown` when nothing
-        // did.  Unarmed, or with no buffer, the mask stays what phase 3 wrote.
+        // The fold (card SID phase 4, S1).  A gap opened by this call takes the reasons
+        // the screens recorded for its arc, narrowed to the bits that can explain a
+        // removal (a deweight is not one), or `unknown` when none did.  Unarmed, or
+        // with no buffer, the mask stays as phase 3 wrote it.
         const bool fold = reasons != nullptr && reasons->armed;
         const auto gapReason = [&](const Key& key) -> unsigned {
             if (!fold) return kArcReasonNone;
@@ -358,9 +356,9 @@ namespace GnssProcessor {
                 a.adm_gap_len_ep       = s.gap_len_ep;
                 a.adm_state            = ArcState::Reentered;
                 a.ep_adm_state_changed = epoch_idx_;
-                // Card SID phase 3: the column this return lands on is a fresh one
-                // when the prune destroyed it inside the gap.  Reported on the edge
-                // and then cleared, so the mark describes ONE gap and never leaks
+                // The column this return lands on is a fresh one when the prune
+                // destroyed it inside the gap (card SID phase 3).  Reported on the edge
+                // and then cleared, so the mark describes one gap and does not carry
                 // into the next.
                 s.state_recreated      = a.state_pruned;
                 a.state_pruned         = false;
@@ -398,8 +396,8 @@ namespace GnssProcessor {
                 a.ep_adm_state_changed = epoch_idx_;
                 a.adm_gap_len_ep       = static_cast<int>(epoch_idx_ - a.ep_last_admitted);
                 s.gap_len_ep           = a.adm_gap_len_ep;
-                // S1: stamp WHY.  The mask survives the whole gap and is still
-                // readable at the re-entry, which is what lets phase 3's no-verdict
+                // Stamp the reason (S1).  The mask lasts through the whole gap and is
+                // still readable at the re-entry, which lets phase 3's no-verdict
                 // population be split by the screen that opened its gap.
                 a.adm_reason_mask      = gapReason(key);
             } else {   // already Gap
@@ -446,9 +444,9 @@ namespace GnssProcessor {
             const long long gap = ep - a->ep_last_admitted - 1;
             if (gap < 1) continue;                   // admitted last epoch: no gap
             const double gap_s = now_s - a->t_last_admitted_s;
-            // The horizon is the CARRY's, not the ledger's: past it the PASS-B
-            // inject would not fold the level across the break either, so there is
-            // nothing for the response to protect and nothing to report as missing.
+            // The horizon is the carry's, not the ledger's: past it, the PASS-B inject
+            // would not fold the level across the break either, so there is nothing for
+            // the response to protect and nothing to report as missing.
             if (max_gap_s > 0.0 && (gap_s < 0.0 || gap_s > max_gap_s)) {
                 ++out.outside_horizon;
                 continue;
@@ -465,9 +463,9 @@ namespace GnssProcessor {
     }
 
     bool ArcLedger::eventAllowed(int station, ArcTransition t) {
-        // The first epoch's births are the flood NetworkSignalIntegrity.cpp names
+        // The first epoch's births are the volume NetworkSignalIntegrity.cpp names
         // (about 12 000 rows at 305 stations), and they carry no information: every
-        // arc is born there.  The counter carries that volume instead.
+        // arc is born there.  The counter records that volume instead.
         if (t == ArcTransition::Birth && epoch_idx_ <= 0) return false;
         const auto key = std::make_pair(station, static_cast<int>(t));
         auto it = ev_last_.find(key);

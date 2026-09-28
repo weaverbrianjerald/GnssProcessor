@@ -1,45 +1,43 @@
 /**
  * @file test_candidacy_usable.cpp
- * @brief COLD ANCHOR-FALLBACK (network.phase_datum_candidacy_usable,
- *        docs/SPEC_event_harness.md §15) — the candidacy screen, its skip
- *        reasons, and the OFF byte-identity of the election it sits in front of.
+ * @brief Cold anchor fallback (network.phase_datum_candidacy_usable,
+ *        docs/SPEC_event_harness.md §15): the candidacy screen, its skip reasons,
+ *        and the byte-identity with the knob off of the election it sits in front of.
  *
- * The defect is a ORDERING defect, and ordering defects leave no trace at the site
- * where they happen.  `networkElectPhaseAnchors` sweeps the coverage-ranked
- * candidates and takes the FIRST that tracks the key; the continuous-handover
- * branch only afterwards looks that successor up in the one-epoch ledger and may
- * refuse its carried value as a datum — at which point the family is pinned at 0,
- * its gauge re-realizes, it is marked for re-reference and its leveling carries are
- * erased at every station.  Nothing errors.  A lower-ranked station holding a
- * mature, converged arc for the same key sits unused, and the only way to see that
- * is to compare the elected station against the ones that were passed over
- * (measured: 43 of 47 non-cold-start cold handovers on the storm arm had three or
- * more mature alternatives, and in NONE of them was the successor the best-placed
- * candidate).
+ * The defect is one of ordering, and it leaves no trace at the site where it
+ * happens.  `networkElectPhaseAnchors` sweeps the coverage-ranked candidates and
+ * takes the first that tracks the key; only afterwards does the continuous-handover
+ * branch look that successor up in the one-epoch ledger, and it may refuse the
+ * carried value as a datum.  The family is then pinned at 0, its gauge
+ * re-realizes, it is marked for re-reference and its leveling carries are erased
+ * at every station.  Nothing errors.  A lower-ranked station holding a mature,
+ * converged arc for the same key sits unused, and this is visible only by
+ * comparing the elected station with the ones passed over (the storm-arm census
+ * in §15 found mature alternatives passed over in most cold handovers).
  *
- * So the cases here pin exactly the decisions that have no other observable:
+ * The cases pin the decisions that have no other observable:
  *
- *   1. the knob defaults OFF, parses, carries a 60-epoch maturity default, and
- *      REFUSES a negative maturity bar at load time;
- *   2. with the knob OFF the election is the pre-card one — same successor, same
- *      branch, same tallies — even with a populated ledger that would have let the
- *      pass move it (the invariant #6 byte-identity, asserted as an equality
- *      against the OFF run of the identical fixture, counters included);
- *   3. with it ON, a handover whose top-ranked candidate has NO ledger entry lands
- *      on the lower-ranked candidate that HAS a usable one, takes the CONTINUOUS
- *      branch at that candidate's own carried value, and says so
+ *   1. the knob defaults off, parses, carries a 60-epoch maturity default, and
+ *      the loader refuses a negative maturity bar;
+ *   2. with the knob off the election is unchanged (same successor, same branch,
+ *      same tallies) even with a populated ledger that would let the pass move it.
+ *      This is the invariant #6 byte-identity, asserted as an equality against a
+ *      call without the view on the identical fixture, counters included;
+ *   3. with it on, a handover whose top-ranked candidate has no ledger entry lands
+ *      on the lower-ranked candidate that has a usable one, takes the continuous
+ *      branch at that candidate's own carried value, and reports it
  *      (`candidacy_rank_changed` = 1, `handover_cold` = 0);
- *   4. each refusal reason is separately reachable and separately counted —
- *      no entry, variance/ratio refused, FREED this epoch, and younger than the
- *      maturity bar — because "the pass fell back" and "the pass fell back because
+ *   4. each refusal reason is separately reachable and separately counted (no
+ *      entry, variance or ratio refused, freed this epoch, younger than the
+ *      maturity bar), because "the pass fell back" and "the pass fell back because
  *      the bar is too tight" are different findings;
- *   5. with NO usable candidate the election is today's, exactly, and the cold
- *      outcome is counted as a fallback rather than hidden;
- *   6. the pass is NOT entered when the sticky incumbent is kept, and NOT entered
- *      for an incumbent-less (first-sighting) key — the two places where there is
- *      no outgoing frame to preserve and a screen could only churn the election.
+ *   5. with no usable candidate the election is the unscreened one, and the cold
+ *      outcome is counted as a fallback;
+ *   6. the pass is not entered when the sticky incumbent is kept, nor for a key
+ *      without an incumbent (first sighting): in both cases there is no outgoing
+ *      frame to preserve, and a screen could only churn the election.
  *
- * The election is exercised directly: it reads only station NAMES, the candidate
+ * The election is exercised directly: it reads only station names, the candidate
  * census, the handover ledger and the carry view (same construction as
  * tests/test_anchor_slip_handover.cpp and tests/test_eq34_reattach_hygiene.cpp).
  */
@@ -81,8 +79,8 @@ struct Roster {
     PhaseDatumCandidates    cnd;
 };
 
-/// Four stations, all tracking G10/L1C, ranked A > B > C > D by coverage — so the
-/// election's sweep walks them in exactly that order.
+/// Stations all tracking G10/L1C, ranked by `coverage` (the tests use four, A > B >
+/// C > D), so the election's sweep walks them in that order.
 Roster makeRoster(const std::vector<std::string>& names,
                   const std::vector<int>& coverage) {
     Roster r;
@@ -110,9 +108,9 @@ struct Outcome {
     std::vector<AnchorHandoverEvent> events;
 };
 
-/// One full election over the fixture.  `usable` is the candidacy view (default =
-/// the pre-card election); `dir_on` stages the one-epoch candidacy ban that makes
-/// the handover happen at all.
+/// One full election over the fixture.  `usable` is the candidacy view (a
+/// default-constructed view gives the unscreened election); `ban_incumbent` stages
+/// the one-epoch candidacy ban that makes the handover happen at all.
 Outcome elect(Roster& r,
               std::map<std::string, std::string> incumbent,
               const AnchorHandoverLedger& ledger,
@@ -124,7 +122,7 @@ Outcome elect(Roster& r,
         InjectAnchorDirective d;
         d.sat    = kSat;
         d.signal = kSig;
-        d.cold   = false;      // CONTINUOUS: production rules pick the successor
+        d.cold   = false;      // continuous: production rules pick the successor
         inject.anchor_now_slip.push_back(std::move(d));
     }
     AnchorHygiene hyg;
@@ -154,9 +152,9 @@ std::map<std::string, std::string> incumbency(const std::string& sta) {
     return {{ambKey(), sta}};
 }
 
-/// The candidacy view, armed.  `satellite_clause` defaults FALSE here so the
-/// iteration-1 cases below read exactly as they were written; the iteration-2
-/// cases arm it explicitly, which is also the single-knob A/B.
+/// The candidacy view, armed.  `satellite_clause` defaults to false in this helper
+/// (the loader default is on), so the iteration-1 cases below run the per-family
+/// screen; the iteration-2 cases arm it explicitly, which is also the single-knob A/B.
 AnchorCandidacyUsable armed(
         int min_age_ep,
         long long now_ep = 0,
@@ -175,7 +173,7 @@ AnchorCandidacyUsable armed(
 }
 
 // ---------------------------------------------------------------------------
-// ITERATION 2 — the SATELLITE clause fixture (three bands of ONE satellite)
+// Iteration 2: the satellite-clause fixture (three bands of one satellite)
 // ---------------------------------------------------------------------------
 
 const std::vector<std::string> kSigs3{"L1C", "L2W", "L5Q"};
@@ -221,7 +219,7 @@ struct Outcome3 {
     }
 };
 
-/// One election over the three-band fixture.  `ban` names the signals whose
+/// One election over the three-band fixture.  `ban_signals` names the signals whose
 /// incumbent is retired this epoch ("all" retires every band).
 Outcome3 elect3(Roster& r,
                 std::map<std::string, std::string> incumbent,
@@ -255,7 +253,7 @@ Outcome3 elect3(Roster& r,
 }
 
 /// A loaded GnssConfig, for the loader round trip.  `ok_out` receives the parse
-/// result so the NEGATIVE case can assert a refusal instead of expecting success.
+/// result so the negative case can assert a refusal instead of expecting success.
 struct Loaded {
     LogManager log;
     GnssConfig cfg;
@@ -326,17 +324,17 @@ TEST(CandidacyUsableConfig, NegativeMaturityBarIsRefused) {
 }
 
 // ===========================================================================
-// 2: OFF is the pre-card election, ledger and all (invariant #6)
+// 2: with the knob off the election is unchanged, ledger and all (invariant #6)
 // ===========================================================================
 
 TEST(CandidacyUsableElection, KnobOffElectsTheTopRankedCandidateAndGoesCold) {
-    // A anchors; the ban retires it; B outranks C but has NO ledger entry while C
-    // has a converged one.  This is the defect, stated as a test.
+    // A anchors and the ban retires it; B outranks C but has no ledger entry, while
+    // C has a converged one.  This is the defect, stated as a test.
     auto r = makeRoster({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6});
     AnchorHandoverLedger ledger;
     ledger.value_abs[{2, ambKey()}] = {12.5, 1e-6, 1e-3};   // CCCC: usable
 
-    AnchorCandidacyUsable off;   // knob OFF — the pass is not entered
+    AnchorCandidacyUsable off;   // knob off: the pass is not entered
     const Outcome o = elect(r, incumbency("AAAA"), ledger, off, /*ban=*/true);
 
     EXPECT_EQ(o.elected, "BBBB");
@@ -354,10 +352,10 @@ TEST(CandidacyUsableElection, KnobOffElectsTheTopRankedCandidateAndGoesCold) {
 }
 
 TEST(CandidacyUsableElection, KnobOffIsByteIdenticalToTheUnarmedCall) {
-    // The invariant-#6 assertion proper: the SAME fixture, once through the
+    // The invariant #6 assertion: the same fixture, once through the
     // default-constructed view (the code path compiled but not entered) and once
-    // through a nullptr view (the pre-card signature), must agree on the elected
-    // station, the pin, the events AND every tally field the card touches.
+    // through a nullptr view (the call without the screen), must agree on the
+    // elected station, the pin, the events and the tally fields compared below.
     auto r1 = makeRoster({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6});
     auto r2 = makeRoster({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6});
     AnchorHandoverLedger ledger;
@@ -397,13 +395,13 @@ TEST(CandidacyUsableElection, KnobOffIsByteIdenticalToTheUnarmedCall) {
 }
 
 // ===========================================================================
-// 3: ON — the usable candidate is elected, and the branch is continuous
+// 3: knob on: the usable candidate is elected, and the branch is continuous
 // ===========================================================================
 
 TEST(CandidacyUsableElection, ElectsTheLowerRankedCandidateWhoseCarryIsUsable) {
     auto r = makeRoster({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6});
     AnchorHandoverLedger ledger;
-    ledger.value_abs[{2, ambKey()}] = {12.5, 1e-6, 1e-3};   // CCCC only
+    ledger.value_abs[{2, ambKey()}] = {12.5, 1e-6, 1e-3};   // CCCC alone
 
     const Outcome o = elect(r, incumbency("AAAA"), ledger, armed(/*min_age=*/0),
                             /*ban=*/true);
@@ -425,10 +423,10 @@ TEST(CandidacyUsableElection, ElectsTheLowerRankedCandidateWhoseCarryIsUsable) {
 }
 
 TEST(CandidacyUsableElection, AgreeingWithTodaysPickIsCountedButNotAsAChange) {
-    // The pass ran, found the top-ranked candidate usable, and elected it — the
-    // same station today's sweep takes.  `candidacy_rank_changed` must stay 0: an
-    // arm whose elected station always matches today's changed nothing, however
-    // busy `candidacy_usable_elected` looks.
+    // The pass ran, found the top-ranked candidate usable, and elected it: the
+    // same station the unscreened sweep takes.  `candidacy_rank_changed` stays 0,
+    // because an arm whose elected station always matches the unscreened one
+    // changed nothing, whatever `candidacy_usable_elected` counts.
     auto r = makeRoster({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6});
     AnchorHandoverLedger ledger;
     ledger.value_abs[{1, ambKey()}] = {7.0, 1e-6, 1e-3};    // BBBB: usable
@@ -464,10 +462,10 @@ TEST(CandidacyUsableElection, VarianceCeilingRefusesTheTopCandidate) {
 }
 
 TEST(CandidacyUsableElection, RatioCeilingRefusesTheTopCandidateWhenArmed) {
-    // Same absolute variance for both, but BBBB has not converged against its OWN
-    // first stash.  The screen must apply the ratio ceiling exactly as the
-    // continuous branch does — a screen that ignored it would elect a station the
-    // branch then refuses, which is the defect with extra steps.
+    // Both variances pass the absolute ceiling, but BBBB has not converged against
+    // its own first stash.  The screen applies the ratio ceiling as the continuous
+    // branch does; a screen that ignored it would elect a station the branch then
+    // refuses, which reproduces the defect.
     auto r = makeRoster({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6});
     AnchorHandoverLedger ledger;
     ledger.value_abs[{1, ambKey()}] = {7.0, 1e-4, 1e-4};    // var == var_first
@@ -485,10 +483,10 @@ TEST(CandidacyUsableElection, RatioCeilingRefusesTheTopCandidateWhenArmed) {
 }
 
 TEST(CandidacyUsableElection, AnArcFreedThisEpochIsNotACandidate) {
-    // BBBB's ledger value is immaculate and about to be meaningless: a slip response
-    // freed that very arc this epoch, so its level is re-drawn from one epoch of
-    // code before the next harvest.  Invariant #1's re-coupling edge, asked at
-    // candidacy time.
+    // BBBB's ledger value passes every other test but is about to be stale: a slip
+    // response freed that arc this epoch, so its level is re-drawn from one epoch
+    // of code before the next harvest.  This is the re-coupling edge of invariant
+    // #1, checked at candidacy time.
     auto r = makeRoster({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6});
     AnchorHandoverLedger ledger;
     ledger.value_abs[{1, ambKey()}] = {7.0, 1e-6, 1e-3};
@@ -533,10 +531,9 @@ TEST(CandidacyUsableElection, AYoungArcIsRefusedAndZeroDisablesTheTest) {
 }
 
 TEST(CandidacyUsableElection, AnUnknownArcAgeReadsAsMature) {
-    // The restored-entry convention: a warm-resume entry (or none at all) has no
+    // The restored-entry convention: a warm-resume entry (or a missing one) has no
     // birth stamp, and refusing it would refuse every candidate on the first epoch
-    // after a resume — the conservative direction is to let the variance ceiling
-    // decide.
+    // after a resume.  The variance ceiling decides instead.
     auto r = makeRoster({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6});
     AnchorHandoverLedger ledger;
     ledger.value_abs[{1, ambKey()}] = {7.0, 1e-6, 1e-3};
@@ -554,7 +551,7 @@ TEST(CandidacyUsableElection, AnUnknownArcAgeReadsAsMature) {
 }
 
 // ===========================================================================
-// 5: no usable candidate — today's election, honestly counted
+// 5: no usable candidate: the unscreened election, counted as a fallback
 // ===========================================================================
 
 TEST(CandidacyUsableElection, NoUsableCandidateFallsThroughToTodaysPick) {
@@ -578,8 +575,8 @@ TEST(CandidacyUsableElection, NoUsableCandidateFallsThroughToTodaysPick) {
 }
 
 TEST(CandidacyUsableElection, AForcedColdDirectiveMakesEveryCandidateUnusable) {
-    // The harness asking for a COLD handover is part of the shared predicate, so the
-    // pass cannot quietly re-pick the station a cold leg was written to land on.
+    // A harness directive for a cold handover is part of the shared predicate, so
+    // the pass cannot silently re-pick the station a cold leg was written to land on.
     auto r = makeRoster({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6});
     AnchorHandoverLedger ledger;
     ledger.value_abs[{1, ambKey()}] = {7.0, 1e-6, 1e-3};
@@ -587,7 +584,7 @@ TEST(CandidacyUsableElection, AForcedColdDirectiveMakesEveryCandidateUnusable) {
 
     NetworkInjectState inject;
     InjectAnchorDirective d;
-    d.sat = kSat; d.signal = kSig; d.cold = true;    // FORCED cold
+    d.sat = kSat; d.signal = kSig; d.cold = true;    // forced cold
     inject.anchor_now.push_back(std::move(d));
     inject.armed = true;
     AnchorHygiene hyg;
@@ -609,7 +606,7 @@ TEST(CandidacyUsableElection, AForcedColdDirectiveMakesEveryCandidateUnusable) {
 }
 
 // ===========================================================================
-// 6: where the pass must NOT be entered
+// 6: where the pass is not entered
 // ===========================================================================
 
 TEST(CandidacyUsableElection, AKeptStickyIncumbentNeverEntersThePass) {
@@ -634,7 +631,7 @@ TEST(CandidacyUsableElection, AKeptStickyIncumbentNeverEntersThePass) {
 TEST(CandidacyUsableElection, AFirstSightingNeverEntersThePass) {
     // No incumbent: there is no outgoing frame, the continuous branch cannot run,
     // and every pin is a 0-pin whichever station takes it.  Screening there would
-    // move elections the card cannot improve, so the pass must stay out.
+    // move elections the card cannot improve, so the pass is not entered.
     auto r = makeRoster({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6});
     AnchorHandoverLedger ledger;
     ledger.value_abs[{2, ambKey()}] = {12.5, 1e-6, 1e-3};
@@ -649,11 +646,10 @@ TEST(CandidacyUsableElection, AFirstSightingNeverEntersThePass) {
 }
 
 // ===========================================================================
-// 7: ITERATION 2 — the SATELLITE clause (§15.8).  Iteration 1 screened per
-//    FAMILY, so a satellite's three bands could elect three hosts: correct one
-//    band at a time and, jointly, an inter-frequency inconsistency the per-band
-//    producer instruments cannot see (storm arm: every producer channel better,
-//    consumer median +49 %, split-referenced satellites 0.0 -> 0.9 / 3).
+// 7: iteration 2, the satellite clause (§15.8).  Iteration 1 screens per family,
+//    so a satellite's three bands can elect three hosts: correct one band at a
+//    time and, jointly, an inter-frequency inconsistency the per-band producer
+//    instruments cannot see (§15.8 has the storm-arm figures).
 // ===========================================================================
 
 TEST(CandidacyUsableConfig, SatelliteClauseDefaultsOnAndParses) {
@@ -669,7 +665,7 @@ TEST(CandidacyUsableConfig, SatelliteClauseDefaultsOnAndParses) {
 
 TEST(CandidacyUsableElection, JointResolutionTakesTheHostUsableForTheMostBands) {
     // BBBB outranks CCCC and is usable for two of the three bands; CCCC is usable
-    // for all three.  The family-only rule sends L1C/L2W to BBBB and L5Q to CCCC —
+    // for all three.  The family-only rule sends L1C/L2W to BBBB and L5Q to CCCC,
     // a split reference.  The clause sends all three to CCCC.
     auto r = makeRoster3({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6},
                          {kSigs3, kSigs3, kSigs3, kSigs3});
@@ -700,8 +696,8 @@ TEST(CandidacyUsableElection, JointResolutionTakesTheHostUsableForTheMostBands) 
 }
 
 TEST(CandidacyUsableElection, IterationOneSplitsTheSameSatelliteTwoWays) {
-    // The single-knob A/B for the case above: with the satellite clause OFF the
-    // election is iteration 1 exactly, and the satellite ends on TWO stations.
+    // The single-knob A/B for the case above: with the satellite clause off the
+    // election is the iteration-1 one, and the satellite ends on two stations.
     auto r = makeRoster3({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6},
                          {kSigs3, kSigs3, kSigs3, kSigs3});
     AnchorHandoverLedger ledger;
@@ -725,15 +721,15 @@ TEST(CandidacyUsableElection, IterationOneSplitsTheSameSatelliteTwoWays) {
 }
 
 TEST(CandidacyUsableElection, ABandNoCandidateCanServeIsPinnedColdAtTheJointHost) {
-    // BBBB is usable for two bands and NOBODY is usable for L5Q.  The joint host is
-    // still BBBB and L5Q is pinned THERE at 0 — a frame step on the same reference,
-    // which is what the card trades a split for.
+    // BBBB is usable for two bands and no station is usable for L5Q.  The joint host
+    // is still BBBB and L5Q is pinned there at 0: a frame step on the same
+    // reference, which is what the card accepts in place of a split.
     auto r = makeRoster3({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6},
                          {kSigs3, kSigs3, kSigs3, kSigs3});
     AnchorHandoverLedger ledger;
     ledger.value_abs[{1, amb3("L1C")}] = {1.0, 1e-6, 1e-3};
     ledger.value_abs[{1, amb3("L2W")}] = {2.0, 1e-6, 1e-3};
-    ledger.value_abs[{2, amb3("L1C")}] = {3.0, 1e-6, 1e-3};   // CCCC: only one band
+    ledger.value_abs[{2, amb3("L1C")}] = {3.0, 1e-6, 1e-3};   // CCCC: one band
     std::map<std::string, std::string> inc;
     for (const auto& s : kSigs3) inc[amb3(s)] = "AAAA";
 
@@ -750,7 +746,7 @@ TEST(CandidacyUsableElection, ABandNoCandidateCanServeIsPinnedColdAtTheJointHost
 }
 
 TEST(CandidacyUsableElection, PartialHandoverPrefersTheHostOfTheOtherBands) {
-    // L1C and L2W are anchored at CCCC and KEEP it; only L5Q hands over.  BBBB
+    // L1C and L2W are anchored at CCCC and keep it; only L5Q hands over.  BBBB
     // outranks CCCC and is usable, so the family-only rule would move L5Q there and
     // split the satellite; rule (b) keeps the satellite on CCCC.
     auto r = makeRoster3({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6},
@@ -777,9 +773,9 @@ TEST(CandidacyUsableElection, PartialHandoverPrefersTheHostOfTheOtherBands) {
 
 TEST(CandidacyUsableElection, PartialHandoverFallsBackWhenTheHeldHostCannotServe) {
     // The held host CCCC does not track L5Q at all, so rule (b) has nothing to take
-    // and rule (a) elects the best usable candidate.  The satellite DOES split here
-    // — structurally, because no single station can host all three — and the clause
-    // says so rather than pretending otherwise.
+    // and rule (a) elects the best usable candidate.  The satellite splits here for
+    // a structural reason (no single station can host all three), and the tallies
+    // show it.
     auto r = makeRoster3({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6},
                          {kSigs3, kSigs3, {"L1C", "L2W"}, kSigs3});
     AnchorHandoverLedger ledger;
@@ -797,9 +793,10 @@ TEST(CandidacyUsableElection, PartialHandoverFallsBackWhenTheHeldHostCannotServe
 }
 
 TEST(CandidacyUsableElection, SatelliteClauseReportsWhenNoCandidateIsUsable) {
-    // Nobody has a usable carry: the clause finds no host, the election is today's,
-    // and the satellite still ends on ONE station because today's coverage sweep is
-    // itself per-satellite-consistent when every band's candidate order is.
+    // No station has a usable carry: the clause finds no host, the election is the
+    // unscreened one, and the satellite still ends on one station, because the
+    // coverage sweep is per-satellite-consistent when every band has the same
+    // candidate order.
     auto r = makeRoster3({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6},
                          {kSigs3, kSigs3, kSigs3, kSigs3});
     AnchorHandoverLedger ledger;   // empty

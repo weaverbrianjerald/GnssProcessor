@@ -6,8 +6,8 @@
  *
  * @c PppUtils wraps the per-(system, signal) frequency tables and the
  * GLONASS FDMA channel adjustment that turns a base frequency into a
- * satellite-specific frequency.  Hold an instance per receiver so the
- * GLONASS slot map can be set from that receiver's RINEX header
+ * satellite-specific frequency.  One instance is held per receiver, so
+ * the GLONASS slot map can be set from that receiver's RINEX header
  * before any GLONASS observation is processed.
  *
  * The static @c getSystemString helpers don't need an instance and
@@ -63,11 +63,14 @@ namespace GnssProcessor {
         /**
          * @brief Get the actual frequency (Hz) for a given frequency type and satellite.
          *
-         * For GLONASS, this returns the satellite-specific frequency computed from
-         * the base frequency and channel offset. For other systems, returns the
-         * nominal carrier frequency.
+         * For GLONASS FDMA bands (1, 2), this returns the satellite-specific frequency
+         * computed from the base frequency and channel offset; the CDMA bands (3, 4, 6)
+         * have fixed frequencies.  For other systems, returns the nominal carrier
+         * frequency.
          *
-         * @param freq_type A string identifying the frequency (e.g. "L1", "L2", "E1").
+         * @param freq_type Observable or signal string; the band is found by searching it
+         *                  for C, L, D or S followed by the band digit (e.g. "L1", "C2W",
+         *                  "L5Q").
          * @param system The GNSS system enum for the satellite.
          * @param satellite Satellite identifier string (required for GLONASS).
          * @return Frequency in Hz, or 0.0 on error.
@@ -89,7 +92,8 @@ namespace GnssProcessor {
         /**
          * @brief Get the wavelength (meters) for a given system and frequency type.
          *
-         * For non-GLONASS systems only. For GLONASS, use the overload with satellite ID.
+         * For non-GLONASS systems only.  For GLONASS, use the overload with the satellite
+         * ID: without one, the FDMA bands resolve no channel and return 0.0.
          *
          * @param system The GNSS system enum.
          * @param freq_type Frequency identifier string.
@@ -100,7 +104,8 @@ namespace GnssProcessor {
         /**
          * @brief Get a nominal reference frequency (Hz) for a frequency type and system.
          *
-         * For GLONASS, returns the base/center frequency (channel k=0).
+         * For GLONASS, returns the base/center frequency (channel k=0) for G1/G2 and the
+         * fixed frequency for the CDMA bands.
          * Use this for logging, records, or when satellite-specific frequency is not needed.
          *
          * @param freq_type Frequency identifier string.

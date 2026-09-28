@@ -1,38 +1,38 @@
 #!/usr/bin/env python3
 """Stability / convergence assessment for a DOY-129-style continuous network run.
 
-WHAT THIS GRADES, AND WHY IT CHANGED
-------------------------------------
+What this grades, and why
+--------------------------
 Earlier versions of this script graded ``rms_clock_m`` from network_trace.csv.
 That was wrong twice over:
 
-  1. ``rms_clock_m`` is RMS *about zero of the raw satellite clock state*
+  1. ``rms_clock_m`` is RMS about zero of the raw satellite clock state
      (NetworkStashStatus.cpp:149-155).  It is datum-dependent, so it confounds
-     benign frame drift with real defects -- exactly what standing invariant #5
-     ("grade only datum-invariant / SD quantities") forbids.
+     benign frame drift with real defects, which is exactly what standing
+     invariant #5 ("grade only datum-invariant / SD quantities") forbids.
 
   2. Even the datum-free clock statistics (clock_median_m / clock_std_m /
      worst_sat / worst_dev_m, NetworkStashStatus.cpp:176-195, already written to
-     network_epoch_status.csv) are INSUFFICIENT.  The clock datum pins one
-     satellite's clock to exactly 0.0000 -- measured on DOY 129: G01 for 2051 of
-     2160 epochs.  Damage that lands in that satellite's CODE BIAS is invisible
+     network_epoch_status.csv) are insufficient.  The clock datum pins one
+     satellite's clock to exactly 0.0000: measured on DOY 129, G01 for 2051 of
+     2160 epochs.  Damage that lands in that satellite's code bias is invisible
      to every clock-only metric.  On DOY 129 the only persistent damage of the
-     day did exactly that: G01's IF code bias stepped 15.488 -> 64.553 m in one
+     day landed there: G01's IF code bias stepped 15.488 -> 64.553 m in one
      30 s epoch and was still +42.68 m off the constellation at end of day,
      while its clock read 0.0000 throughout.
 
-So this script grades the TOTAL ionosphere-free code correction a consumer
+So this script grades the total ionosphere-free code correction a consumer
 actually applies:
 
     total_IF(sat) = CLK(sat) + c1*CB(sat, L1 code) - c2*CB(sat, L2 code)
     c1 = f1^2/(f1^2 - f2^2) = 2.545728      f1 = 1575.42 MHz
     c2 = f2^2/(f1^2 - f2^2) = 1.545728      f2 = 1227.60 MHz
 
-taken BETWEEN SATELLITES (deviations from the per-epoch median over all
-satellites, including the pinned one -- a user cannot exclude the pivot, it
+taken between satellites (deviations from the per-epoch median over all
+satellites, including the pinned one; a user cannot exclude the pivot, it
 applies its C and B lines like any other).  The only remaining gauge freedom is
 an epoch-common constant, which a user's receiver clock absorbs; the median
-removes it.  Phase bias (PB) is deliberately NOT graded: it is integer-ambiguous
+removes it.  Phase bias (PB) is deliberately not graded: it is integer-ambiguous
 and its between-satellite SD is dominated by whole-cycle branch offsets.
 
     python scripts/chain_stability.py [--runroot ...] [--mask 20] [--csv out.csv]
@@ -65,8 +65,8 @@ FREQ_HZ = {
 # Per-system ionosphere-free pin pair, as (band1_codes, band2_codes) in RINEX
 # attribute-preference order (most preferred first).  These mirror the pair the
 # producer's W6 code-bias IF pin actually selects for each constellation:
-#   GPS      L1/L2  -- the legacy IGS convention the .BIA products are cast in
-#   Galileo  E1/E5a -- Galileo has NO L2 band at all, so the GPS list can never
+#   GPS      L1/L2  : the legacy IGS convention the .BIA products are cast in
+#   Galileo  E1/E5a : Galileo has no L2 band at all, so the GPS list can never
 #                      match it; before this table every Galileo satellite was
 #                      silently dropped from the grade.
 #   BeiDou   B1/B2a
@@ -83,9 +83,9 @@ def if_coeffs(sysid, code1, code2):
     """(c1, c2) for the IF combination formed from two RINEX observation codes.
 
     c1 = f1^2/(f1^2-f2^2), c2 = f2^2/(f1^2-f2^2), derived from the band digit of
-    each code so that every constellation gets ITS OWN coefficients.  Applying the
-    GPS L1/L2 pair (2.545728, 1.545728) to a Galileo E1/E5a pair -- which is what
-    naively widening the band-2 code list would do -- yields a garbage combination
+    each code so that every constellation gets its own coefficients.  Applying the
+    GPS L1/L2 pair (2.545728, 1.545728) to a Galileo E1/E5a pair, which is what
+    naively widening the band-2 code list would do, yields a garbage combination
     that is not ionosphere-free at all.  Galileo E1/E5a is (2.260604, 1.260604).
     """
     f1 = FREQ_HZ[sysid][code1[1]]
@@ -100,14 +100,14 @@ def hms(tow):
 
 
 def load_solution(path, sysid="G"):
-    """tow -> {sat: total_IF_m} for ONE constellation, plus per-epoch disc bumps.
+    """tow -> {sat: total_IF_m} for one constellation, plus per-epoch disc bumps.
 
     Returns (epochs, disc_events) where epochs is an ordered list of
     (tow, {sat: total_if}) and disc_events is a list of (tow, sat, signal, counter).
 
     One constellation at a time, deliberately.  Each constellation carries its own
     clock datum and its own per-(constellation,signal) code-bias sum-to-zero, so
-    total_IF values from different systems live in DIFFERENT gauges.  Pooling them
+    total_IF values from different systems live in different gauges.  Pooling them
     into one per-epoch median would fold the inter-system time offset into the
     spread and report a datum artifact as producer error (standing invariant #5).
     """
@@ -360,15 +360,15 @@ def report_for_system(segs, sysid, args):
 
     # ---- between-hour distortion, fully datum-free ------------------------
     #
-    # NB: do NOT read per-satellite "deviation from the epoch median" changes as
+    # Do not read per-satellite "deviation from the epoch median" changes as
     # per-satellite damage.  The median itself moves, so a set of satellites that
-    # actually held station together can all appear to shift by ~equal amounts
-    # (observed on DOY 129: G02/G21/G28/G03 each "moved" 17-23 m while their
-    # MUTUAL differences changed by <5 m -- they were fine; the median moved).
-    # The only honest statement is about PAIRWISE differences, which carry no
-    # datum at all.  Report the SPAN of pairwise change across satellites, and
-    # always against quiet->quiet controls, because the quiet baseline is itself
-    # large (11-21 m/hour on DOY 129).
+    # actually held station together can all appear to shift by roughly equal
+    # amounts (observed on DOY 129: G02/G21/G28/G03 each "moved" 17-23 m while
+    # their mutual differences changed by less than 5 m; they were fine, the
+    # median moved).  The only statement that holds is about pairwise
+    # differences, which carry no datum at all.  Report the span of pairwise
+    # change across satellites, and always against quiet-to-quiet controls,
+    # because the quiet baseline is itself large (11-21 m/hour on DOY 129).
     print()
     print("BETWEEN-HOUR DISTORTION  (pairwise between-satellite change; datum-free)")
     hour_med = defaultdict(lambda: defaultdict(list))
@@ -414,10 +414,10 @@ def report_for_system(segs, sysid, args):
         by_sat = Counter(s for _, s, _, _ in disc_all)
         print(f"  {len(disc_all)} bumps; top sats: {dict(by_sat.most_common(5))}")
         # Per-hour rate, normalised per (sat,signal) channel.  The run-total alone
-        # cannot distinguish cold-start code-bias initialisation -- where every
-        # channel legitimately bumps for the first few minutes -- from steady-state
-        # disc CHURN, which disc_threshold_frac_cycles explicitly does NOT fix
-        # ("it equalizes SEMANTICS only"); the PB emit filter owns churn.  A rate
+        # cannot distinguish cold-start code-bias initialisation, where every
+        # channel legitimately bumps for the first few minutes, from steady-state
+        # disc churn, which disc_threshold_frac_cycles explicitly does not fix
+        # ("it equalizes semantics only"); the PB emit filter owns churn.  A rate
         # that decays toward zero is convergence; a flat rate is churn.
         chans = len({(s, g) for _, s, g, _ in disc_all}) or 1
         per_hr = defaultdict(int)
@@ -428,10 +428,10 @@ def report_for_system(segs, sysid, args):
             eps_hr[int((tow - DAY_ANCHOR_TOW) // 3600)].add(tow)
         print(f"  {chans} distinct (sat,signal) channels bumped")
         print(f"  {'hr':>4}{'bumps':>9}{'epochs':>8}{'bumps/ep':>10}{'per_chan/ep':>13}")
-        # Iterate the hours that have EPOCHS, not the hours that have bumps.  An hour
+        # Iterate the hours that have epochs, not the hours that have bumps.  An hour
         # with zero bumps is the best possible outcome; omitting its row makes it look
-        # like missing data instead, which is the "0 driven / 0 folded" ambiguity in
-        # reverse -- a reader cannot tell a clean hour from an absent trace.
+        # like missing data instead, the "0 driven / 0 folded" ambiguity in reverse:
+        # a reader cannot tell a clean hour from an absent trace.
         for h in sorted(eps_hr):
             ne = len(eps_hr[h]) or 1
             nb = per_hr.get(h, 0)

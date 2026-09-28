@@ -7,8 +7,8 @@
  * (iauXys00a + iauC2ixys + iauEra00 + iauSp00 + iauPom00 + iauC2tcio).  With the
  * observed celestial-pole offsets dX = dY = 0, this is algebraically identical
  * to SOFA's all-in-one iauC2t00a (whose C2I is iauC2i00a, i.e. the same
- * iauPnm00a → iauBpn2xy → iauS00 → iauC2ixys chain).  We therefore pin the
- * result against iauC2t00a as an external oracle to machine precision, then
+ * iauPnm00a → iauBpn2xy → iauS00 → iauC2ixys chain).  The tests therefore compare
+ * the result against iauC2t00a as an external oracle (to 1e-12 per element), then
  * check rotation validity and the qualitative effect of injecting dX/dY.
  */
 
@@ -39,7 +39,7 @@ const double kXpRad = 0.165 * kAs2Rad;
 const double kYpRad = 0.398 * kAs2Rad;
 }  // namespace
 
-// celestialToTerrestrial(dX=dY=0) must reproduce SOFA's iauC2t00a bit-for-bit.
+// celestialToTerrestrial(dX=dY=0) reproduces SOFA's iauC2t00a to 1e-12 per element.
 TEST(PlanetaryCio, MatchesSofaC2t00a) {
     const double tt_jd  = kMjdOffset + kTtMjd;
     const double ut1_jd = kMjdOffset + kUt1Mjd;
@@ -47,11 +47,11 @@ TEST(PlanetaryCio, MatchesSofaC2t00a) {
     const Eigen::Matrix3d R =
         Planetary::celestialToTerrestrial(tt_jd, ut1_jd, kXpRad, kYpRad, 0.0, 0.0);
 
-    // Feed the oracle the SAME two-part (MJD_OFFSET, JD - MJD_OFFSET) split the
-    // function uses internally, so this isolates the algebraic equivalence of the
-    // (X, Y, s) path (iauXys00a + iauC2ixys) against SOFA's bundled iauC2t00a
-    // (whose C2I is iauC2i00a) — not the sub-1e-10 noise of round-tripping a
-    // full Julian Date through a subtraction.
+    // The oracle gets the same two-part (MJD_OFFSET, JD - MJD_OFFSET) split the
+    // function uses internally, so the comparison isolates the algebraic
+    // equivalence of the (X, Y, s) path (iauXys00a + iauC2ixys) with SOFA's bundled
+    // iauC2t00a (whose C2I is iauC2i00a), free of the sub-1e-10 noise of
+    // round-tripping a full Julian Date through a subtraction.
     double rc2t[3][3];
     iauC2t00a(kMjdOffset, tt_jd - kMjdOffset, kMjdOffset, ut1_jd - kMjdOffset,
               kXpRad, kYpRad, rc2t);

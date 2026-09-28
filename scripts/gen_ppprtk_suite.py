@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Generate the PPP-RTK network+user constellation test-suite configs.
 
-Each combo is ONE ``ppp-rtk-network`` producer over a 50-station global subnet
+Each combo is one ``ppp-rtk-network`` producer over a 50-station global subnet
 (``config/test_suite/global_network_stations.json``) with the closed-loop,
-held-out PPP-RTK USER consumer (CIT100USA) enabled.  The consumer applies the
-network's OWN freshly-emitted products (``consume_network_products`` +
+held-out PPP-RTK user consumer (CIT100USA) enabled. The consumer applies the
+network's own freshly-emitted products (``consume_network_products`` +
 ``consume_network_clock``), so one run exercises both the network producer and
-the user consumer.  Reporting focuses on the converged final hour.
+the user consumer. Reporting focuses on the converged final hour.
 
 Bias policy ("all receiver and satellite biases enabled", best available):
   * non-GLONASS combos -> ``network.estimate_sat_code_bias=true``: satellite
@@ -14,12 +14,12 @@ Bias policy ("all receiver and satellite biases enabled", best available):
     iono weighting (all forced on together; requires a GIM, present in the
     bundled 2024-129 products).
   * GLONASS combos -> ``network.estimate_glonass=true``: satellite clock +
-    phase bias (GPS/Gal/BDS) plus the GLONASS per-FCN-slot receiver IFB.  No
-    satellite code OSB -- ``estimate_sat_code_bias`` and ``estimate_glonass``
+    phase bias (GPS/Gal/BDS) plus the GLONASS per-FCN-slot receiver IFB. No
+    satellite code OSB: ``estimate_sat_code_bias`` and ``estimate_glonass``
     are mutually exclusive in V1 (loader hard-error otherwise).
 
-All-frequency / all-channel.  Iono trace OFF (network.trace_ionosphere=false),
-per-station compute parallelism ON.  Network stays float (no network AR).
+All-frequency, all-channel. Iono trace off (network.trace_ionosphere=false),
+per-station compute parallelism on. Network stays float (no network AR).
 """
 import argparse
 import json
@@ -51,8 +51,8 @@ SIGNAL_PRIORITIES = {
 DATUM = "JPLM00USA"
 
 # Held-out PPP-RTK user consumer (Caltech CIT1, ~8.7 km from the JPLM datum,
-# NOT in the estimator station list).  position_ecef is the RINEX-header survey
-# truth used for a-priori seeding + position scoring.
+# not in the estimator station list). position_ecef is the RINEX-header survey
+# truth used for a-priori seeding and position scoring.
 CONSUMER = {
     "name": "CIT100USA",
     "rinex_path": "{data}/2024-129/obs/cit1/cit11290.24o",
@@ -105,7 +105,7 @@ def build_config(slug, systems, stations, duration_s, data_root):
             "estimate_phase_clock": False,
             "estimate_ifb": False,
             "estimate_sat_biases": False,
-            # Do NOT downweight code on no-.BIA signals; the network needs code
+            # Code on no-.BIA signals is not downweighted; the network needs code
             # to anchor the clock vs phase-bias split.
             "no_bia_code_downweight": 1.0,
             "between_satellite_sd": {"enabled": False},
@@ -171,7 +171,7 @@ def build_config(slug, systems, stations, duration_s, data_root):
                 "enable": True,
                 "consumer_undifferenced": True,
                 "consume_network_products": True,
-                "consume_network_clock": True,     # FULL: user applies OUR network clock+bias
+                "consume_network_clock": True,     # full: user applies the network clock+bias
                 "ar_mode": 1,
                 "ar_wl_only": False,
                 "ar_active_systems": ["GPS"],
@@ -192,7 +192,7 @@ def build_config(slug, systems, stations, duration_s, data_root):
         "logging": {
             "enable_main_log": True,
             "enable_ambiguity_resolver": True,
-            # CSV traces below are written by the held-out CONSUMER (CIT1).
+            # CSV traces below are written by the held-out consumer (CIT1).
             "enable_state_trace": True,
             "enable_ambiguity_trace": True,
             "enable_residual_trace": True,
@@ -218,10 +218,11 @@ def build_config(slug, systems, stations, duration_s, data_root):
         cfg["network"]["estimate_glonass"] = True
         cfg["network"]["estimate_sat_code_bias"] = False
     elif has_bds:
-        # W6 satellite OSB is GPS+Galileo-only: adding BeiDou under W6 leaves the
-        # BeiDou satellite-clock gauge unconstrained and the observability gate
-        # withholds EVERY epoch (validated in smoke).  Fall back to V1 -- satellite
-        # clock + phase bias with the external .BIA for code bias (no network OSB).
+        # The W6 satellite OSB estimate is GPS+Galileo-only: adding BeiDou under W6
+        # leaves the BeiDou satellite-clock gauge unconstrained and the
+        # observability gate withholds every epoch (validated in smoke). Fall back
+        # to V1: satellite clock + phase bias with the external .BIA for code bias
+        # (no network OSB).
         cfg["network"]["estimate_sat_code_bias"] = False
         cfg["network"]["estimate_glonass"] = False
     else:

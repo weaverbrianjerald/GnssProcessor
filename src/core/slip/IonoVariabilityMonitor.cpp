@@ -72,7 +72,7 @@ namespace GnssProcessor {
                                                    std::string& sig2) const {
         // Group phase signals by RINEX band digit; std::map keeps bands
         // ordered, so the first two entries are the lowest-band pair
-        // (typically L1 + L2) - the widest-spaced, best-calibrated pair.
+        // (typically L1 + L2).  Within a band the first key in map order is used.
         std::map<char, std::string> phase_by_band;
         for (const auto& kv : obs.raw_observed) {
             const std::string& key = kv.first;

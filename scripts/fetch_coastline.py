@@ -9,7 +9,7 @@ JSON polyline list at ``pyviz/gnssviz/assets/coastline_110m.json`` rather than
 parsed from a shapefile at runtime.
 
 This script (re)builds that asset from Natural Earth's public-domain 110 m
-coastline GeoJSON.  Run it only when refreshing the asset — the committed JSON
+coastline GeoJSON.  Run it only when refreshing the asset: the committed JSON
 is what the viewers load; no network access happens at render time.
 
     python scripts/fetch_coastline.py            # default 110 m coastline
@@ -36,7 +36,7 @@ _ASSET = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 def build(url: str = _NE_URL, out_path: str = _ASSET, ndigits: int = 2) -> str:
     """Download the NE coastline GeoJSON and write the compact polyline asset.
 
-    The asset is ``{"lon": [...], "lat": [...]}`` — two flat arrays where a
+    The asset is ``{"lon": [...], "lat": [...]}``: two flat arrays where a
     ``None`` (rendered as NaN) separates successive polylines, so the whole
     coastline draws with a single gap-aware ``plot`` call.  Coordinates are
     rounded to ``ndigits`` decimals (2 ≈ 1 km, ample for a world map).

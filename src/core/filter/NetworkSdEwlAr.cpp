@@ -1,7 +1,7 @@
 /**
  * @file NetworkSdEwlAr.cpp
- * @brief Implementation of @ref networkSdEwlAr — the SD extra-wide-lane integer
- *        decision (increment 2a, Route B + the A2 DD-to-SD datum propagation).
+ * @brief Implementation of @ref networkSdEwlAr, the SD extra-wide-lane integer
+ *        decision (increment 2a, Route B plus the A2 DD-to-SD datum propagation).
  *        See the header for the algebra, the channel-identity precondition, and the
  *        standing-invariant-#1 flip response.
  */
@@ -70,8 +70,8 @@ std::map<std::string, std::map<std::string, SdEwlDecision>> sdEwlPropagate(
     const auto r0it = arcs.find(r0);
     if (arcs.size() < 2 || r0it == arcs.end()) return out;
 
-    // Adjacency: two stations can form a DD only if they share >= 2 satellites — one to
-    // BE the quantity and one to be the link that removes the two station terms.
+    // Adjacency: two stations can form a DD only if they share >= 2 satellites, one for
+    // the quantity itself and one for the link that removes the two station terms.
     std::map<std::string, std::set<std::string>> adj;
     for (auto a = arcs.begin(); a != arcs.end(); ++a) {
         auto b = a; ++b;
@@ -87,19 +87,19 @@ std::map<std::string, std::map<std::string, SdEwlDecision>> sdEwlPropagate(
     }
     if (!adj.count(r0)) return out;
 
-    // A2: N_SD(r0) == 0.  r0's own true integers are absorbed into the per-satellite
-    // frame constant, which is exactly the classical WL-FCB modulo-lambda definition.
+    // The A2 datum is N_SD(r0) == 0.  r0's own true integers are absorbed into the
+    // per-satellite frame constant, which is the classical WL-FCB modulo-lambda
+    // definition.
     //
-    // `framed` tracks which satellites have a frame constant yet.  r0 seeds it, and a
-    // satellite that r0 cannot see is FRAMED AT THE FIRST STATION THAT REACHES IT —
-    // otherwise it could never receive an integer at all, since the propagation only
-    // relays satellites the parent already holds.  That extension is legitimate, and
-    // this is exactly why: the frame constant is per SATELLITE, so wherever it is
-    // defined, the residual offset in any SD difference stays ONE constant per
-    // (satellite pair) and is identical at every station reading it — which is the only
-    // property A2 needs (and what SdEwlDatumTest pins).  At a 50-station global roster
-    // r0 sees roughly a third of a constellation at once, so without this the yield
-    // would be a third of the arcs.
+    // `framed` tracks which satellites have a frame constant.  r0 seeds it, and a
+    // satellite that r0 cannot see is framed at the first station that reaches it;
+    // otherwise it could never receive an integer, since the propagation only relays
+    // satellites the parent already holds.  The extension is valid because the frame
+    // constant is per satellite: wherever it is defined, the residual offset in any SD
+    // difference stays one constant per satellite pair and is identical at every station
+    // reading it, which is the only property A2 needs (and what SdEwlDatumTest pins).  On
+    // a 50-station global roster r0 sees roughly a third of a constellation at once, so
+    // without the extension the yield would be about a third of the arcs.
     std::set<std::string> framed;
     for (const auto& [sat, st] : r0it->second) {
         (void)st;
@@ -120,10 +120,10 @@ std::map<std::string, std::map<std::string, SdEwlDecision>> sdEwlPropagate(
     const auto propagate = [&](const std::string& q, const std::string& r) -> bool {
         const auto qit = out.find(q);
         if (qit == out.end()) return false;
-        // Link satellite: co-visible, already assigned at q, maximizing the WEAKER of
-        // the two arc maturities; tie-break ascending satellite name.  The link absorbs
-        // the per-station free integer a_r, so it is a DATUM choice — deliberately NOT
-        // gated, because gating a gauge only shrinks coverage without adding rigour.
+        // Link satellite: co-visible, already assigned at q, maximizing the weaker of the
+        // two arc maturities; ties go to the lower satellite name.  The link absorbs the
+        // per-station free integer a_r, so it is a datum choice and is not gated: gating
+        // a gauge only shrinks coverage and adds no rigour.
         std::string link;
         std::size_t link_n = 0;
         for (const auto& [sat, dec] : qit->second) {
@@ -169,10 +169,10 @@ std::map<std::string, std::map<std::string, SdEwlDecision>> sdEwlPropagate(
             framed.insert(sat);
             ++tally.fixed;
         }
-        // Frame extension: any satellite this station holds that has NO frame constant
+        // Frame extension: any satellite this station holds that has no frame constant
         // yet gets one here, as a datum (see the `framed` note above).  Station r's own
         // constant a_r is already fixed by the link assigned above, so this is a
-        // well-defined choice of b_s and not a measurement — hence no gate.
+        // well-defined choice of b_s and not a measurement, and it is not gated.
         for (const auto& [sat, st] : arcs.at(r)) {
             (void)st;
             if (framed.count(sat) || dst.count(sat)) continue;
@@ -183,8 +183,8 @@ std::map<std::string, std::map<std::string, SdEwlDecision>> sdEwlPropagate(
         return true;
     };
 
-    // BFS spanning tree from r0, neighbours in ascending station NAME so the traversal
-    // — and therefore every rounding — is deterministic.
+    // BFS spanning tree from r0, neighbours in ascending station name, so the traversal
+    // and therefore every rounding are deterministic.
     std::set<std::string> done{ r0 };
     std::deque<std::string> queue{ r0 };
     while (!queue.empty()) {
@@ -197,10 +197,10 @@ std::map<std::string, std::map<std::string, SdEwlDecision>> sdEwlPropagate(
             queue.push_back(r);
         }
     }
-    // Bounded closure sweeps: a satellite visible at r but not at r's tree PARENT gets
+    // Bounded closure sweeps: a satellite visible at r but not at r's tree parent gets
     // no integer from the tree alone, while a different neighbour may carry both it and
-    // a link.  This is coverage, not a second estimator, and it must terminate: four
-    // sweeps, stopping early once a sweep changes nothing.
+    // a link.  This adds coverage, not a second estimator.  At most four sweeps run,
+    // stopping early once a sweep changes nothing.
     for (int sweep = 0; sweep < 4; ++sweep) {
         bool changed = false;
         for (const auto& [r, st] : arcs) {
@@ -244,8 +244,8 @@ void networkSdEwlAr(
     const std::vector<bool>& present) {
     const auto& cfg = config_.getNetworkConfig().sd_ewl;
     auto& fix = ctx.carry.sd_ewl_fix;
-    // Cleared UNCONDITIONALLY and first: with the knob off, PASS B must see an empty
-    // map, and a stale publication from a previous epoch would be a silent hold.
+    // Cleared first and unconditionally: with the knob off, PASS B must see an empty map,
+    // and a stale publication from a previous epoch would act as an unannounced hold.
     fix.clear();
     if (!cfg.enable || !cfg.fix_enable) return;
 
@@ -273,12 +273,12 @@ void networkSdEwlAr(
     };
 
     // ---------------------------------------------------------------------------
-    // 1. Collect every mature EWL arc, keyed by the CHANNEL PAIR it sits on.
+    // 1. Collect every mature EWL arc, keyed by the channel pair it sits on.
     //    Candidate phase signals come from StateManager's own ambiguity key map (the
-    //    authority — a reconstructed key that fails to round-trip makes every arc look
-    //    absent), NOT from h2local: this seam runs before assembly, and an arc without
-    //    a local column this epoch still carries perfectly good MW information for the
-    //    DD.  The row builder applies its own column test later.
+    //    authority; a reconstructed key that fails to round-trip makes every arc look
+    //    absent), not from h2local: this seam runs before assembly, and an arc without a
+    //    local column this epoch still carries valid MW information for the DD.  The row
+    //    builder applies its own column test later.
     // ---------------------------------------------------------------------------
     // cons -> sat -> channel pair -> station index -> Arc
     std::map<char, std::map<std::string, std::map<PairKey, std::map<std::size_t, Arc>>>> pool;
@@ -318,19 +318,19 @@ void networkSdEwlAr(
                     const auto q = st.mw_slip->arcZdMean(o.satellite, s1, s2);
                     if (!q.exists || !q.valid) continue;
                     if (q.count < static_cast<std::size_t>(cfg.min_arc_epochs)) continue;
-                    // Mis-tiering guard: the detector's lambda comes from the ACTUAL
-                    // frequencies, so a mismatch means this pair is not the tier whose
-                    // lambda the integer would be expressed in.
+                    // Mis-tiering guard: the detector's lambda comes from the actual
+                    // frequencies, so a mismatch (relative tolerance 1e-6) means this
+                    // pair is not the tier whose lambda the integer is expressed in.
                     if (!(q.lambda_wl > 0.0) || !std::isfinite(q.lambda_wl)
                         || std::abs(q.lambda_wl - lam_nom) > 1e-6 * std::abs(lam_nom))
                         continue;
                     if (!std::isfinite(q.mean_m)) continue;
                     Arc a;
                     a.u_cyc = q.mean_m / q.lambda_wl;
-                    // Variance OF THE MEAN, floored from the per-sample scale: the
-                    // served variance shrinks as 1/n and measured 13-60x optimistic
+                    // Variance of the mean, floored at fix_sigma_floor_m^2 / n: the
+                    // served variance shrinks as 1/n and was measured 13-60x optimistic
                     // against the rows' own residual spread, and an optimistic sigma
-                    // inflates FFR into buying wrong fixes (A1, decision half).
+                    // inflates FFR and admits wrong fixes (A1, decision half).
                     const double n = static_cast<double>(std::max<std::size_t>(q.count, 1));
                     const double floor_m2 =
                         cfg.fix_sigma_floor_m * cfg.fix_sigma_floor_m / n;
@@ -346,11 +346,12 @@ void networkSdEwlAr(
     }
 
     // ---------------------------------------------------------------------------
-    // 2. Per (constellation, satellite): elect the NETWORK-COMMON channel pair.
-    //    B_EWL^s is a per-SIGNAL combination of the satellite phase and code biases,
+    // 2. Per (constellation, satellite): elect the network-common channel pair.
+    //    B_EWL^s is a per-signal combination of the satellite phase and code biases,
     //    so it cancels in the between-station DD only if both stations' MW sits on the
-    //    SAME two channels.  Consensus (most stations), tie-break ascending pair name
-    //    for byte-identity.  Stations on any other pair are EXCLUDED and counted.
+    //    same two channels.  Consensus (most stations), ties broken by ascending pair
+    //    name for byte-identity.  Stations without an arc on the elected pair are
+    //    excluded and counted.
     // ---------------------------------------------------------------------------
     // cons -> sat -> (elected pair, station -> Arc)
     std::map<char, std::map<std::string, std::pair<PairKey, std::map<std::size_t, Arc>>>> chan;
@@ -366,11 +367,11 @@ void networkSdEwlAr(
             }
             if (!best) continue;
             const PairKey pk = *best;
-            // A station EXCLUDED by the consensus is one with no arc on the elected pair
-            // at all.  Counting every non-elected (pair, station) entry instead would
-            // double-count the stations that hold arcs on SEVERAL pairs and were
-            // admitted on the elected one — measured 41 % of resolved arcs have two
-            // candidates, so that error is large, not cosmetic.
+            // A station excluded by the consensus is one with no arc on the elected pair.
+            // Counting every non-elected (pair, station) entry instead would also count
+            // stations that hold arcs on several pairs and were admitted on the elected
+            // one; 41 % of resolved arcs have two candidates, so that error is large.
+            // A station is counted once per non-elected pair it holds.
             std::size_t excluded = 0;
             for (const auto& [other, bysta] : pairs) {
                 if (other == pk) continue;
@@ -380,11 +381,12 @@ void networkSdEwlAr(
                 }
             }
             C.sdewl_dd_skip_channel += static_cast<long long>(excluded);
-            // BIA frame must be uniform across the DD's four legs: the satellite-bias
-            // cancellation needs ONE frame (the same rule NetworkMwWlLayer applies per
-            // cycle).  Majority vote within the elected pair, minority dropped and
-            // counted — measured, every EWL arc came back bia_corrected = false, so this
-            // is a guard against a future mixed state, not a routine loss.
+            // The BIA frame must be uniform across the DD's four legs: the satellite-bias
+            // cancellation needs one frame (the same rule NetworkMwWlLayer applies per
+            // cycle).  Majority vote within the elected pair (a tie selects the
+            // uncorrected frame); the minority is dropped and counted.  Every EWL arc
+            // measured so far reports bia_corrected = false, so this guards against a
+            // future mixed state and is not a routine loss.
             const auto& bysta = pairs.at(pk);
             std::size_t n_bia = 0;
             for (const auto& [sta, a] : bysta) { (void)sta; if (a.bia) ++n_bia; }
@@ -401,7 +403,7 @@ void networkSdEwlAr(
     }
 
     // ---------------------------------------------------------------------------
-    // 3. Per constellation: elect r0 (STICKY), propagate, respond to flips, publish.
+    // 3. Per constellation: elect r0 (sticky), propagate, respond to flips, publish.
     // ---------------------------------------------------------------------------
     for (auto& [cons, sats] : chan) {
         // Re-key into the name-addressed graph the pure propagation takes, and keep the
@@ -418,12 +420,12 @@ void networkSdEwlAr(
             C.sdewl_dd_no_graph += static_cast<long long>(graph.size());
             continue;
         }
-        // r0: STICKY — the previous epoch's choice if it is still in the graph, else the
-        // station with the most admitted arcs, tie-break ascending NAME.  Only r0 sets
-        // the SD frame (the spanning tree and each station's link satellite cancel in
-        // the between-satellite difference), so stability HERE is what keeps the folded
-        // integers from re-datuming under ordinary topology churn — and a change is a
-        // counted event, because it shifts every propagated integer in the component.
+        // r0 is sticky: the previous epoch's choice if it is still in the graph, else the
+        // station with the most admitted arcs, ties broken by ascending name.  Only r0
+        // sets the SD frame (the spanning tree and each station's link satellite cancel
+        // in the between-satellite difference), so keeping r0 stable keeps the folded
+        // integers from re-datuming under ordinary topology churn.  A change is a counted
+        // event, because it shifts every propagated integer in the component.
         std::string r0 = graph.begin()->first;
         {
             const auto it = r0_sticky.find(cons);
@@ -492,9 +494,9 @@ void networkSdEwlAr(
         }
     }
 
-    // Drop the flip memory of arcs that vanished, so a satellite that disappears for
-    // an hour and returns is not compared against a stale integer (that comparison
-    // would charge a spurious flip and veto a legitimate fix forever after).
+    // Drop the flip memory of arcs that vanished, so a satellite that disappears for an
+    // hour and returns is not compared against a stale integer (that comparison would
+    // charge a spurious flip and veto a valid fix on the return epoch).
     for (auto it = prev.begin(); it != prev.end();) {
         const auto& [sta, cons, sat] = it->first;
         const auto cit = chan.find(cons);

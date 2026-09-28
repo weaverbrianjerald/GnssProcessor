@@ -5,17 +5,18 @@ and ``/* */`` comments (e.g. ``config/sbf_replay_covl145.json``), so a plain
 ``json.loads`` refuses most of them.  This module gives the report layer a
 tolerant, dependency-free reader plus the two lookups it actually needs:
 
-* the **surveyed reference position** (``receiver.reference_position_ecef``) —
+* the **surveyed reference position** (``receiver.reference_position_ecef``):
   what the :mod:`~gnssviz.viewers.rt_scorecard` viewer grades the solution
   against, and
-* the **app mode** (``app_mode == "real_time"``) — what flips the report title.
+* the **app mode** (``app_mode == "real_time"``): what flips the report title.
 
 The comment stripper is a faithful port of ``scripts/gnss_config_chain.py``'s
-``strip_json_comments`` (string-aware character scanner — a regex would corrupt
-the ``//`` inside path/URL string values).  Deliberately NOT handled here:
-config *inheritance* chains (a leg config naming a parent).  Resolving those is
-``scripts/gnss_config_chain.py``'s job; this reader sees one file only, and a
-caller holding a chained leg should pass the resolved/base config instead.
+``strip_json_comments`` (a string-aware character scanner, since a regex would
+corrupt the ``//`` inside path/URL string values).  Deliberately not handled
+here: config *inheritance* chains (a leg config naming a parent).  Resolving
+those is ``scripts/gnss_config_chain.py``'s job; this reader sees one file
+only, and a caller holding a chained leg should pass the resolved/base config
+instead.
 """
 
 from __future__ import annotations
@@ -59,7 +60,7 @@ def strip_json_comments(text: str) -> str:
             i += 2
             while i + 1 < n and not (text[i] == "*" and text[i + 1] == "/"):
                 if text[i] == "\n":
-                    out.append("\n")          # keep line numbers honest
+                    out.append("\n")          # keeps line numbers correct
                 i += 1
             i = min(i + 2, n)
             continue
@@ -72,7 +73,7 @@ def load_run_config(path: Optional[str]) -> Optional[dict]:
     """Parse one processor config JSON (comments tolerated).
 
     ``None``-safe: a ``None``/missing/unreadable/unparseable path returns
-    ``None`` rather than raising — report plumbing degrades to "no config"
+    ``None`` rather than raising, so report plumbing degrades to "no config"
     exactly like a missing trace CSV degrades to a skipped viewer.
     """
     if not path or not os.path.exists(path):
@@ -95,8 +96,8 @@ def load_run_config(path: Optional[str]) -> Optional[dict]:
 def ref_ecef_from_config(cfg: Optional[dict]) -> Optional[Tuple[float, float, float]]:
     """``receiver.reference_position_ecef`` as ``(x, y, z)`` metres, or ``None``.
 
-    Returns ``None`` unless all three components are present and finite — a
-    partially-filled block must not silently grade against a garbage point.
+    Returns ``None`` unless all three components are present and finite: a
+    partially filled block must not silently grade against an invalid point.
     """
     if not isinstance(cfg, dict):
         return None

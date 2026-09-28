@@ -1,8 +1,8 @@
 /**
  * @file EpochUpdateSupport.cpp
  * @brief Implementation of the shared per-epoch measurement-rebuild helpers.
- *        See EpochUpdateSupport.hpp for the rationale (single source of truth
- *        for the algorithm pieces shared by the post-processing and real-time
+ *        See EpochUpdateSupport.hpp for the rationale (one implementation of
+ *        the algorithm steps shared by the post-processing and real-time
  *        drivers).
  */
 
@@ -26,9 +26,9 @@ namespace GnssProcessor {
 int computeRebuildPassBudget(const StateManager& state_manager,
                              const GnssConfig& config,
                              const std::vector<PppObservation>& modeled_obs) {
-    // Hard ceiling — guarantees loop termination regardless of measurement
-    // count; the computed budget below never approaches this for any physical
-    // epoch, so it only ever clamps a pathological observation set.
+    // Hard ceiling that guarantees loop termination regardless of measurement
+    // count.  The computed budget below stays far under it for any physical
+    // epoch, so it clamps only a pathological observation set.
     constexpr int kMaxRebuildPassesHardCap = 256;
 
     size_t n_meas_start = 0;
@@ -51,9 +51,9 @@ void forwardKfPivotHandovers(KalmanFilter& kalman_filter,
                              LogManager& log_manager,
                              const std::string& epoch_prefix,
                              std::set<std::string>& carry_excluded) {
-    // Take-and-clear: the same request must not re-fire on a later pass if the
-    // detector doesn't fire again.  Drain the flagged constellations first and
-    // bail early when there are none — the common (clean) case.
+    // Take-and-clear: a request must not re-fire on a later pass unless the
+    // detector fires again.  Drain the flagged constellations first and return
+    // early when there are none, which is the common case.
     auto handover_cons = kalman_filter.takeRequestedPivotHandovers();
     if (handover_cons.empty()) return;
 
@@ -62,9 +62,9 @@ void forwardKfPivotHandovers(KalmanFilter& kalman_filter,
 
     auto& res_hist  = kalman_filter.getResidualHistoryTracker();
     auto& pivot_mgr = meas_model.getPivotManager();
-    // Snapshot the CURRENT (pre-handover) pivot map for the MW notify — the
-    // requestForcedHandover calls below only queue requests, they don't move
-    // the pivot, so this reference stays valid across the loop.
+    // The current (pre-handover) pivot map, for the MW notify.  The
+    // requestForcedHandover calls below only queue requests and do not move the
+    // pivot, so this reference stays valid across the loop.
     const auto& current_pivots = pivot_mgr.getPivotSatellites();
 
     auto main_log = log_manager.getLogger("main_log");
@@ -112,9 +112,10 @@ void forwardKfPivotHandovers(KalmanFilter& kalman_filter,
                 mw_detector->notifyPivotForcedHandover(piv_it->second, kHandoverReason);
         }
 
-        // After re-referencing to a new pivot the BSSD residuals are no longer
+        // After re-referencing to a new pivot the BSSD residuals are not
         // comparable to the pre-handover EWMA statistics, so clear them to force
-        // a fresh warm-up.  No-op when the tracker is disabled.
+        // a fresh warm-up.  No-op when the tracker is disabled or the
+        // constellation name has no prefix letter below.
         const char cons_prefix =
             cons == "GPS"     ? 'G' :
             cons == "Galileo" ? 'E' :
@@ -126,10 +127,10 @@ void forwardKfPivotHandovers(KalmanFilter& kalman_filter,
             res_hist.resetConstellationSignal(cons_prefix, /*signal=*/"");
 
         // Release this constellation's carried exclusions so the rebuild pass
-        // re-forms its SD rows against the new pivot (otherwise every row the
+        // re-forms its SD rows against the new pivot.  Otherwise every row the
         // spatial detector swept into its group stays suppressed, and the
-        // per-row dispatch never gets to catch an independent slip that
-        // coincided with the pivot's).
+        // per-row dispatch cannot catch an independent slip that coincided with
+        // the pivot's.
         if (cons_prefix != '\0') {
             size_t cleared = 0;
             for (auto it = carry_excluded.begin(); it != carry_excluded.end(); ) {
@@ -154,10 +155,10 @@ void reinflateResetSatStates(const KalmanFilter& kalman_filter,
                              StateManager& state_manager,
                              const MeasurementModel& meas_model,
                              const GnssConfig& config) {
-    // On a complete filter reset the whole covariance is re-inflated by the
-    // reset itself, so per-sat reinflation is redundant and out of scope — skip
-    // it.  Gating here (rather than at each call site) keeps the post-processing
-    // and real-time callers byte-identical so they cannot drift again.
+    // A complete filter reset re-inflates the whole covariance itself, so
+    // per-sat reinflation is redundant there and is skipped.  The gate sits here
+    // rather than at each call site, so the post-processing and real-time callers
+    // behave identically.
     if (kalman_filter.wasCompleteReset()) return;
 
     const auto& sr_cfg = config.getSlipStateReinflationConfig();
@@ -166,11 +167,11 @@ void reinflateResetSatStates(const KalmanFilter& kalman_filter,
     const double sb_std = sr_cfg.sat_bias_std_m;
     if (io_std <= 0.0 && sb_std <= 0.0) return;   // both branches disabled
 
-    // A per-(sat, signal) reset does NOT justify sat-wide reinflation: one
-    // slipped signal leaves the rest of the satellite's phase lock — and its
-    // (iono, sat-bias) partition — intact.  Only a FULL-satellite ambiguity
-    // reset does, i.e. a sat in getLastResetSatellites() WITHOUT a per-signal
-    // entry (every phase ambiguity reseeded => partition-baking risk).
+    // A per-(sat, signal) reset does not justify sat-wide reinflation: one
+    // slipped signal leaves the rest of the satellite's phase lock, and its
+    // (iono, sat-bias) partition, intact.  Only a full-satellite ambiguity reset
+    // does, i.e. a sat in getLastResetSatellites() with no per-signal entry
+    // (every phase ambiguity reseeded, so the partition would be locked in).
     std::set<std::string> per_signal_sats;
     for (const auto& kv : kalman_filter.getLastResetSignals())
         per_signal_sats.insert(kv.first);

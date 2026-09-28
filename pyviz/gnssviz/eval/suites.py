@@ -1,7 +1,8 @@
 """gnssviz.eval.suites -- declarative test-suite expansion.
 
 A *suite* is a small, purpose-built slice of config space anchored to one shared
-base config. Instead of hand-listing every ``cell`` in the manifest, you declare:
+base config. Instead of hand-listing every ``cell`` in the manifest, a suite
+declares:
 
 * ``base``     -- which base config the cells extend (e.g. ``"ppp"``),
 * ``axes``     -- named factors, each a map ``level-name -> override patch``,
@@ -19,15 +20,15 @@ The generator expands that into ordinary harness cells
 
 Designs -- the lever that tames the combinatorial explosion:
 
-* ``full``     -- the Cartesian product of all axis levels. Use for the two (or
-  few) axes whose *interaction* you actually want to read. n = product(|axis|).
+* ``full``     -- the Cartesian product of all axis levels. Fits the two (or
+  few) axes whose *interaction* matters. n = product(|axis|).
 * ``ofat``     -- one factor at a time: a baseline (every axis at its **first**
   level = its reference) plus, for each axis, one cell per non-reference level
-  with all other axes at reference. n = 1 + sum(|axis|-1) -- *linear*, not
-  exponential. Use for main-effect / sensitivity sweeps over many knobs.
+  with all other axes at reference. n = 1 + sum(|axis|-1): *linear*, not
+  exponential. Fits main-effect / sensitivity sweeps over many knobs.
 * ``pairwise`` -- a 2-wise covering array: every (level_i, level_j) pair across
   every axis pair appears in at least one cell, in ~tens of cells rather than
-  the full product. Use when you suspect 2-way coupling across many axes.
+  the full product. Fits a suspected 2-way coupling across many axes.
 
 See ``docs/test_suite.md``.
 """

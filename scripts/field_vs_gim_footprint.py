@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
-"""Compare the network's SH-VTEC field with the GIM GLOBALLY and over its FOOTPRINT.
+"""Compare the network's SH-VTEC field with the GIM, globally and over its footprint.
 
-Why this exists.  `scripts/gim_global_mean_series.py` compares a00 with the GIM's
-global mean.  That is a comparison of two GLOBAL means — and ours is not a
-measurement over the globe: a 61-station, Europe-weighted network constrains the
-field only where it has pierce points, and the rest is Kaula-extrapolated.  A
-global-mean residual therefore mixes "our field is wrong where we look" with "our
-extrapolation is wrong where we cannot look", and those are different cards.
+`scripts/gim_global_mean_series.py` compares a00 with the GIM's global mean, which
+compares two global means, and the network's is not a measurement over the globe:
+a 61-station, Europe-weighted network constrains the field only where it has pierce
+points, and the rest is Kaula-extrapolated. A global-mean residual therefore mixes
+"the field is wrong where the network looks" with "the extrapolation is wrong where
+it cannot look", which are different cards.
 
-This separates them.  It synthesizes the estimated field from
-`logs/network_vtec_sh.csv` (the coefficients ARE the product — `network_ionosphere.csv`
+This script separates them. It synthesizes the estimated field from
+`logs/network_vtec_sh.csv` (the coefficients are the product; `network_ionosphere.csv`
 is frame-broken), samples the time-interpolated IONEX on the same grid, and reports
-the cos-latitude-weighted mean difference
+the cos-latitude-weighted mean difference:
 
-  * GLOBALLY — reproduces the a00 − GIM_mean number, and
-  * over the FOOTPRINT: grid points within `--radius` degrees of any station.  At a
-    450 km shell the pierce point sits ~13 deg from the station at el 20 deg and
-    ~18 deg at el 10 deg, so 15 deg is a fair proxy for "where we actually observe".
+  * globally: reproduces the a00 - GIM_mean number, and
+  * over the footprint: grid points within `--radius` degrees of any station. At a
+    450 km shell the pierce point sits about 13 deg from the station at el 20 deg and
+    about 18 deg at el 10 deg, so 15 deg is a fair proxy for where the network observes.
 
 The basis here is a copy of `scripts/sh_vtec.py`'s port of
 `SphericalHarmonicIonosphere` (normalization N_nm = sqrt[(2-d_0m)(2n+1)(n-m)!/(n+m)!],
-no Condon-Shortley, so Pbar_00 = 1 and C_00 IS the mean VTEC).  sh_vtec.py remains
+no Condon-Shortley, so Pbar_00 = 1 and C_00 is the mean VTEC). sh_vtec.py remains
 the reference implementation and carries the `--selftest`; it is duplicated rather
 than imported only because it requires pandas, which this environment lacks.
 

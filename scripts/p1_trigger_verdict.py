@@ -5,17 +5,17 @@ Reads one instrumented leg's traces and answers the three falsifiable questions 
 spec poses about an `a00` collapse onset (default: tow 286320 = 07:32:00 on
 DOY-129):
 
-  Q1a  does lambda_min of the reduced shared normals CRATER at onset, and does its
-       eigenvector SPAN the clock and SH-VTEC families (the joint near-null slide of
-       REPORT section 3.2)?
-  Q1b  does the D5 re-tap / chord-birth count SPIKE at onset?
-  Q1c  did a deweight ENGAGE/RELEASE wave land at onset?
+  Q1a  does lambda_min of the reduced shared normals collapse at onset, and does
+       its eigenvector span the clock and SH-VTEC families (the joint near-null
+       slide of report section 3.2)?
+  Q1b  does the D5 re-tap / chord-birth count spike at onset?
+  Q1c  did a deweight engage/release wave land at onset?
 
 Method: each channel is standardized against its own pre-onset baseline window with a
-ROBUST z (median + 1.4826*MAD), because these series are heavy-tailed and a mean/sd
-z would be dominated by whatever the tail already contains.  A channel is called
-CONFIRMED only if the onset epoch exceeds `--k` robust sigma AND exceeds the largest
-value anywhere in the baseline window -- the second test is what stops a merely
+robust z (median + 1.4826*MAD), because these series are heavy-tailed and a mean/sd
+z would be dominated by whatever the tail already contains. A channel is called
+confirmed only if the onset epoch exceeds `--k` robust sigma and exceeds the largest
+value anywhere in the baseline window; the second test is what stops a merely
 noisy channel reading as a trigger.
 
 Any one channel confirmed closes Q1.  All quiet is reported as such: the standing
@@ -43,10 +43,10 @@ CHANNELS_STATUS = [
     ("worst_dev_m",     "worst clock deviation",     "up"),
     ("clock_std_m",     "clock spread (std)",        "up"),
 ]
-# NOTE ev_min is the smallest eigenvalue of the PRE-datum reduced normals, so it
-# legitimately includes the DECLARED gauge freedoms.  It is judged here as a
-# RATIO to the rank gate's own absolute cutoff when that column is present (runs
-# from 2026-07-26 onward); older files fall back to the raw eigenvalue.
+# ev_min is the smallest eigenvalue of the pre-datum reduced normals, so it
+# includes the declared gauge freedoms. It is judged here as a ratio to the rank
+# gate's own absolute cutoff when that column is present (runs from 2026-07-26
+# onward); older files fall back to the raw eigenvalue.
 CHANNELS_SPECTRUM = [
     ("ev_min",   "lambda_min of N_ss", "down"),
     ("ev_over_cutoff", "lambda_min / rank-gate cutoff", "down"),
@@ -58,7 +58,7 @@ CHANNELS_SPECTRUM = [
 
 
 def load(path):
-    """Read a trace CSV, DROPPING any short/truncated row.
+    """Read a trace CSV, dropping any short or truncated row.
 
     These files are read while the producer is still appending to them, so the
     final line is routinely a partially-flushed fragment; csv.DictReader turns
@@ -107,8 +107,8 @@ def robust_z(baseline, value):
     mad = statistics.median([abs(x - med) for x in baseline])
     scale = 1.4826 * mad
     if scale <= 0.0:
-        # Degenerate (constant) baseline: any departure is infinitely significant,
-        # but say so honestly rather than dividing by zero.
+        # Degenerate (constant) baseline: any departure is infinitely significant.
+        # Report it as such instead of dividing by zero.
         return (float("inf") if value != med else 0.0), med, 0.0
     return (value - med) / scale, med, scale
 

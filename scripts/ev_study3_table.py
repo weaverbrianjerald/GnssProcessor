@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""EVENT HARNESS Study 3 — the BAND-SCOPED response summary table (§Z).
+"""Event harness study 3: the band-scoped response summary table (§Z).
 
 Same reduction as ``ev_study1_table.py`` (which it reuses wholesale), over the
-Study-3 matrix: every A/B pair differs ONLY in
+Study-3 matrix: every A/B pair differs only in
 
     network.raim_erase_band_scope        all -> min_keep_one
     network.cycle_slip.refloat_band_scope all -> implicated
@@ -96,13 +96,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--null", default="runs/evleg_null",
                     help="the OFF arms' control leg (knobs off, no event)")
-    # ⚠ THE ON ARMS NEED THEIR OWN NULL.  The detector scope is NOT inert on the
-    # quiet bed — it acted on 20 arcs in 61 epochs of the null-ON leg, because MW
-    # fires on two pairs of the same satellite in one epoch and their UNION covers
+    # The ON arms need their own null: the detector scope is not inert on the
+    # quiet bed, it acted on 20 arcs in 61 epochs of the null-ON leg, because MW
+    # fires on two pairs of the same satellite in one epoch and their union covers
     # the arc.  Grading an ON event leg against the OFF null therefore measures the
-    # event PLUS that background (it showed up as a pre-event |e| peak at ep −1 and
+    # event plus that background (it showed up as a pre-event |e| peak at ep −1 and
     # an identical +0.021 m consumer offset on every ON row).  Each arm is graded
-    # against the null of its OWN posture, so each cancels its own background.
+    # against the null of its own posture, so each cancels its own background.
     ap.add_argument("--null-on", default="runs/evleg_z_null_on",
                     help="the ON arms' control leg (knobs on, no event)")
     ap.add_argument("--bands", action="store_true")

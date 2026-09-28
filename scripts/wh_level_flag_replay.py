@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 """Phase A of SPEC_withhold_era_release §12: replay the level-health classifier
-over a recorded run's own artifacts — zero C++ — and grade it against the
-labeled truth set (era-3's 7 toxic / era-2's 16 clean recovered epochs).
+over a recorded run's own artifacts, with no C++ involved, and grade it against
+the labeled truth set (era-3's 7 toxic / era-2's 16 clean recovered epochs).
 
-Implements §12.2's CAUSAL limb exactly:
+Implements §12.2's causal limb exactly:
   d_causal(t) = a00(t) − median{ last K=--ref-epochs a00 of class-`ok` emitted
                 epochs with content age ≤ --ref-max-age s }
   classes: c = T2 emitted_contaminated event row on the epoch (the existing
                trigger criterion, replayed from the events trace);
            r = within --relevel-hold s after a mass-re-level edge (replay
                detector: first emitted epoch after a withhold streak of
-               ≥ --cliff-epochs consecutive withheld epochs — the 900 s
+               ≥ --cliff-epochs consecutive withheld epochs, the 900 s
                cliff signature);
            s = |d_causal| > --dev-tecu with a valid reference;
            na = reference starved (< K valid entries in the age window).
-  c/r/s/na epochs are all EXCLUDED from the reference (self-exclusion is
-  load-bearing: without it the reference tracks the dip and the recovery
-  false-flags).
+  c/r/s/na epochs are all excluded from the reference: without that
+  self-exclusion the reference tracks the dip and the recovery is
+  misclassified.
 
 Inputs (run working dir with logs/): network_vtec_sh.csv (a00 = n=0,m=0,trig=C),
 network_epoch_status.csv (dispositions), network_events.csv (T2 rows).
@@ -114,10 +114,10 @@ def main():
         if d is not None and abs(d) > args.dev_tecu:
             flags += "s"
         # Reference maintenance: c/r/s epochs are excluded (self-exclusion is
-        # load-bearing), but a WARMING epoch (d None for want of references)
-        # with no c/r flag MUST seed the reference — §12.2 as first written
-        # excluded `na` too, which is a bootstrap deadlock (the reference can
-        # never fill).  Phase A finding; the card is amended to match.
+        # load-bearing), but a warming epoch (d None for want of references)
+        # with no c/r flag must seed the reference. §12.2 as first written
+        # excluded `na` too, which is a bootstrap deadlock: the reference can
+        # never fill. Phase A finding; the card is amended to match.
         if not flags:
             refs.append((tow, v))
             if len(refs) > args.ref_epochs:

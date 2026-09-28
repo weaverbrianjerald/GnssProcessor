@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""gal_grade.py -- card GAL (GPS and Galileo on the network path) grading instruments.
+"""gal_grade.py: card GAL (GPS and Galileo on the network path) grading instruments.
 
-READ-ONLY.  Reads one run directory (products.txt and logs/) and, on the simulator bed,
+Read-only.  Reads one run directory (products.txt and logs/) and, on the simulator bed,
 the fixture's truth files reached through the RINEX paths of the run's arm.json.
 Every section states the file it read.
 
@@ -41,8 +41,8 @@ Sections (each prints only when its inputs exist):
                       geometry-free datum choice can move.
            The inter-family geometry-free difference (b5 - b1) is observed by no
            station (the two families share no receiver, and the slant ionosphere is
-           free per line of sight), so the 'raw' grade carries it whatever datum the
-           producer chooses; the 'datum' and 'IF' grades do not.  The FROZEN-SPLIT
+           free per line of sight), so the raw grade carries it whatever datum the
+           producer chooses; the datum and IF grades do not.  The frozen-split
            test (card SID section 12): per satellite, the error at the end of hour 1,
            3 and 6 beside the walk of the combined-family receivers' inter-system bias
            and Galileo receiver DCB over hours 2 to 6.
@@ -122,7 +122,7 @@ def read_products(run):
 
 
 def fixture_dirs(run):
-    """Station name -> fixture directory, from the arm's RINEX paths (the ORIGINAL fixture
+    """Station name -> fixture directory, from the arm's RINEX paths (the original fixture
     directory when a rapid_arm op rewrote the file into the arm's rinex/ folder)."""
     ap = os.path.join(run, "arm.json")
     out = {}
@@ -353,7 +353,7 @@ def section_isbtruth(run, eps):
         print("pairs or truth missing")
         return
     # Truth of a relabelled / biased signal: the product OSB of the signal it was
-    # relabelled FROM plus the injected constant.
+    # relabelled from, plus the injected constant.
     def truth_osb(sat, sig):
         src = inj.get("relabel_from", {}).get(sig, sig)
         v = osb.get((sat, src))
@@ -400,7 +400,7 @@ def section_isbtruth(run, eps):
         print(f"  {h:4d} {len(v):4d} {med([y for y, _, _ in v]):14.4f} {med([p for _, p, _ in v]):15.4f} "
               f"{med([y - p for y, p, _ in v]):21.4f} {diffs[int(0.9 * (len(diffs) - 1))]:10.4f} "
               f"{med([dm for _, _, dm in v]):16.4f}")
-    # The same prediction with the datum taken over the CONSUMER'S OWN satellites (the
+    # The same prediction with the datum taken over the consumer's own satellites (the
     # ones in closed_loop_sat_trace.csv that epoch, a plain mean per constellation): the
     # consumer's receiver clock and inter-system bias absorb its own satellites' errors,
     # not the network median, and the two differ by the per-satellite scatter of E_s.
@@ -557,13 +557,13 @@ def section_inject(run, eps):
 
 
 def section_cbtruth(run, eps):
-    """(simulator) The satellite code biases against truth_bias.csv in the REALIZED datum.
+    """(simulator) The satellite code biases against truth_bias.csv in the realized datum.
 
     The realized datum of a satellite's pinned pair is its ionosphere-free pin and its
     geometry-free pin (c*T_GD for GPS, c*BGD(E1, E5a) for Galileo), both anchored at the
-    satellite's first sighting and CARRIED afterwards (code_datum_time_linked and
+    satellite's first sighting and carried afterwards (code_datum_time_linked and
     sat_gf_datum_time_linked).  Transformed into that datum, the truth of the pinned pair
-    is a per-satellite CONSTANT (the pair carries no estimable content, Odijk section
+    is a per-satellite constant (the pair carries no estimable content, Odijk section
     5.1), so the grade is the variation of (B - OSB) about its per-satellite mean over the
     satellite's emitted arc: what the carried datum let move.  Gaps above 120 s split an arc."""
     fx = fixture_dirs(run)

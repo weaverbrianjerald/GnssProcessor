@@ -7,7 +7,9 @@
  *  - Signal helpers
  *  - EWL MW computation
  *  - Statistics / threshold
+ *  - Resolved ambiguities
  *  - Core detection logic
+ *  - ISlipDetector contract
  *  - External reset
  */
 
@@ -109,7 +111,8 @@ namespace GnssProcessor {
 
         for (size_t i = 0; i < valid_bands.size(); ++i) {
             for (size_t j = i + 1; j < valid_bands.size(); ++j) {
-                // Order by frequency: higher freq first (lower band number)
+                // Order by frequency, higher first (not always the lower band number:
+                // Galileo E5b, band 7, is above E5a, band 5)
                 const auto& [band_a, bs_a] = valid_bands[i];
                 const auto& [band_b, bs_b] = valid_bands[j];
 
@@ -430,7 +433,9 @@ namespace GnssProcessor {
                 stats.last_epoch_s = epoch_s;
                 stats.bia_corrected = bia_ok;
 
-                // Lock EWL integer once we have enough samples or immediately for BIA-corrected
+                // Lock the EWL integer: immediately for a BIA-corrected arc, otherwise once
+                // the arc has kMinEpochsForAdaptive samples and the mean is within 0.15 cycles
+                // of an integer.
                 if (!stats.ewl_locked && bia_ok) {
                     stats.rounded_ewl = static_cast<int>(std::round(stats.mean / lambda_ewl));
                     stats.ewl_locked = true;

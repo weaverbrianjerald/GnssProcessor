@@ -1,38 +1,37 @@
 /**
  * @file test_datum_graph_census.cpp
- * @brief THE DATUM GRAPH CENSUS — structural S-basis dimension, predicted from
- *        topology and reconciled against the spectrum
+ * @brief Tests for the datum graph census: the structural S-basis dimension,
+ *        predicted from topology and reconciled against the spectrum
  *        (docs/SPEC_datum_graph_census.md §5).
  *
- * This card is a PREDICTOR wired next to a DETECTOR, and every way it can be
- * wrong is quiet:
+ * The census is a predictor placed next to a detector, and each of its failure
+ * modes produces plausible output rather than an error:
  *
- *   - a union-find bug that merges two disjoint networks reports k = 1, which is
- *     the healthy reading, so the one epoch the census exists for looks normal;
+ *   - a union-find bug that merges two disjoint networks reports k = 1, the
+ *     healthy reading, so the epoch the census exists for looks normal;
  *   - a tier-2 predicate that fires on every cell (the no-code-bias-layer case)
- *     produces hundreds of confident predictions that are all noise, and the
- *     contingency then reads as a catastrophically bad predictor rather than as
- *     a mis-armed one;
- *   - an over-claiming predicate that swallows the weak-support class would make
- *     `observed only` read empty, i.e. would delete exactly the measurement of
- *     this predictor's honest boundary;
+ *     produces hundreds of predictions that are all noise, and the contingency
+ *     then reads as a bad predictor rather than a mis-armed one;
+ *   - an over-claiming predicate that absorbs the weak-support class would leave
+ *     `observed only` empty, removing the measurement of where this predictor
+ *     stops;
  *   - a contingency that double-counts the many-to-many join produces a coverage
  *     percentage that cannot be checked against anything.
  *
- * So the tests pin the CLAIMS, not the arithmetic running:
+ * The tests therefore check the claims rather than the arithmetic:
  *
- *   1. Component multiplicity is the LASER 5-63 quantity — two disjoint station
+ *   1. Component multiplicity is the LASER 5-63 quantity: two disjoint station
  *      groups read k = 2, one bridging edge collapses them, and the predicted
  *      deficiency is (k−1)·d.
  *   2. The tier-2 predicate localizes to the exact (sat, family) whose code keys
- *      left, and restoring ONE code key clears it.
- *   3. The census UNDER-claims: thin-but-nonzero support predicts nothing, and a
- *      constellation with no code-bias layer at all predicts nothing either
- *      (the failure mode that would otherwise flood the run).
- *   4. The two contingency partitions are exact, over their own populations, and
+ *      left, and restoring one code key clears it.
+ *   3. The census under-claims: thin but nonzero support predicts nothing, and a
+ *      constellation with no code-bias layer predicts nothing either (otherwise
+ *      every cell would be predicted).
+ *   4. The two contingency partitions are exact over their own populations, and
  *      the `predicted only` label follows the KP arming and nothing else.
- *   5. OFF is structurally inert: default knobs, no resolved arm, nothing
- *      accumulated — and the trace/loader wiring exists (an armed config loads
+ *   5. Off is structurally inert (default knobs, no resolved arm, nothing
+ *      accumulated), and the trace/loader wiring exists (an armed config loads
  *      and resolves).
  */
 
@@ -59,7 +58,7 @@ namespace {
 
 // --- graph fixtures ---------------------------------------------------------
 
-/// Fully connect @p stations to @p sats — the healthy global-roster shape.
+/// Fully connect @p stations to @p sats (the healthy global-roster shape).
 void connect(std::vector<NetDatumGraphEdge>& e, const std::vector<int>& stations,
              const std::vector<std::string>& sats) {
     for (int s : stations)
@@ -147,7 +146,7 @@ bool loadConfig(const std::string& tag, const std::string& body, GnssConfig& cfg
 }  // namespace
 
 // ===========================================================================
-//  1. TIER 1 — component multiplicity is the LASER 5-63 quantity
+//  1. Tier 1: component multiplicity is the LASER 5-63 quantity
 // ===========================================================================
 
 // Two station groups tracking two disjoint satellite sets: k = 2, and the
@@ -156,7 +155,7 @@ bool loadConfig(const std::string& tag, const std::string& body, GnssConfig& cfg
 TEST(NetworkDatumGraphCensus, DisjointStationGroupsReadTwoComponents) {
     std::vector<NetDatumGraphEdge> e;
     connect(e, {0, 1, 2}, {"G01", "G02"});          // group A
-    connect(e, {7, 8},    {"G20", "G21", "G22"});   // group B — no shared satellite
+    connect(e, {7, 8},    {"G20", "G21", "G22"});   // group B: no shared satellite
 
     const auto cen = netDatumGraphComponents(e);
     ASSERT_EQ(cen.size(), 1u) << "one constellation";
@@ -172,7 +171,7 @@ TEST(NetworkDatumGraphCensus, DisjointStationGroupsReadTwoComponents) {
     const int d = 1;
     EXPECT_EQ((t1.k - 1) * d, 1);
 
-    // Both components are reported with their rosters, LARGEST FIRST — a
+    // Both components are reported with their rosters, largest first; a
     // fragmentation event that cannot name the smaller island is not actionable.
     ASSERT_EQ(t1.comps.size(), 2u);
     EXPECT_GE(t1.comps[0].n_stations + t1.comps[0].n_sats,
@@ -189,9 +188,9 @@ TEST(NetworkDatumGraphCensus, DisjointStationGroupsReadTwoComponents) {
     EXPECT_EQ(b->sample_station, 7);
 }
 
-// ONE bridging edge — a single station that tracks one satellite from each
-// island — collapses the multiplicity.  That is the whole content of the
-// rank-deficiency statement: connectivity, not counts.
+// One bridging edge (a station that tracks a satellite from each island)
+// collapses the multiplicity.  The rank-deficiency statement is about
+// connectivity, not counts.
 TEST(NetworkDatumGraphCensus, OneBridgingEdgeCollapsesTheMultiplicity) {
     std::vector<NetDatumGraphEdge> e;
     connect(e, {0, 1, 2}, {"G01", "G02"});
@@ -208,8 +207,8 @@ TEST(NetworkDatumGraphCensus, OneBridgingEdgeCollapsesTheMultiplicity) {
     EXPECT_EQ(t1.comps[0].n_sats, 5);
 }
 
-// Constellations are independent graphs.  A Galileo outage must not read as a
-// GPS fragmentation, and vice versa — the gauges are per-constellation.
+// Constellations are independent graphs.  A Galileo outage does not read as a
+// GPS fragmentation, and vice versa; the gauges are per constellation.
 TEST(NetworkDatumGraphCensus, ConstellationsAreSeparateGraphs) {
     std::vector<NetDatumGraphEdge> e;
     connect(e, {0, 1}, {"G01", "G02"});
@@ -225,8 +224,8 @@ TEST(NetworkDatumGraphCensus, ConstellationsAreSeparateGraphs) {
 }
 
 // Vertices with no edge are not components.  Counting an untracked satellite or
-// a station that folded nothing would inflate k with vertices carrying no datum
-// — a fragmentation alarm that fires on an empty roster.
+// a station that folded nothing would inflate k with vertices carrying no datum,
+// and the fragmentation alarm would fire on an empty roster.
 TEST(NetworkDatumGraphCensus, EdgelessInputYieldsNoConstellations) {
     EXPECT_TRUE(netDatumGraphComponents({}).empty());
     // Malformed edges are dropped, never guessed into a vertex.
@@ -234,9 +233,9 @@ TEST(NetworkDatumGraphCensus, EdgelessInputYieldsNoConstellations) {
     EXPECT_TRUE(netDatumGraphComponents(e).empty());
 }
 
-// Determinism: the same epoch must produce the same rows whatever order the
-// driver assembled stations in.  A diagnostic that is the one irreproducible
-// artifact in the run is worse than none.
+// Determinism: the same epoch produces the same rows whatever order the driver
+// assembled stations in.  An irreproducible diagnostic cannot be compared
+// across runs.
 TEST(NetworkDatumGraphCensus, ComponentOrderIsIndependentOfEdgeOrder) {
     std::vector<NetDatumGraphEdge> e;
     connect(e, {0, 1, 2}, {"G01", "G02"});
@@ -255,13 +254,13 @@ TEST(NetworkDatumGraphCensus, ComponentOrderIsIndependentOfEdgeOrder) {
 }
 
 // ===========================================================================
-//  2. TIER 2 — the channel-family predicate
+//  2. Tier 2: the channel-family predicate
 // ===========================================================================
 
-// The family partition is the RINEX-3 tracking attribute — the thing that split
-// the STATION set on Aug-2.  A two-character RINEX-2 code has no attribute and
-// forms its OWN family: merging it into an attributed one would silently credit
-// an unattributed code column with supporting an X-family phase bias.
+// The family partition is the RINEX-3 tracking attribute, which is what splits
+// the station set.  A two-character RINEX-2 code has no attribute and forms its
+// own family; merging it into an attributed one would credit an unattributed
+// code column with supporting an X-family phase bias.
 TEST(NetworkDatumGraphCensus, FamilyIsTheRinexTrackingAttribute) {
     EXPECT_EQ(netDatumGraphFamily("L5X"), "X");
     EXPECT_EQ(netDatumGraphFamily("C5X"), "X");
@@ -273,9 +272,9 @@ TEST(NetworkDatumGraphCensus, FamilyIsTheRinexTrackingAttribute) {
 }
 
 // The E03-style toy: the X-family stations drop out of code registration while
-// the X-family PHASE-bias columns stay registered.  Exactly ONE direction is
-// predicted, with the right (sat, family), and the Q-family cell — whose code
-// keys are intact — predicts nothing.
+// the X-family phase-bias columns stay registered.  Exactly one direction is
+// predicted, with the right (sat, family), and the Q-family cell, whose code
+// keys are intact, predicts nothing.
 TEST(NetworkDatumGraphCensus, XFamilyLosingItsCodeKeysPredictsOneDirection) {
     const std::set<std::string> pb{
         pbKey("E03", "L5X"), pbKey("E03", "L7X"), pbKey("E03", "L8X"),
@@ -318,9 +317,9 @@ TEST(NetworkDatumGraphCensus, XFamilyLosingItsCodeKeysPredictsOneDirection) {
     EXPECT_TRUE(std::is_sorted(ids.begin(), ids.end()));
 }
 
-// Restoring ONE X-family code key clears the prediction.  The predicate is about
-// the presence of an anchor, not about how strong it is — strength is the
-// spectral side's question.
+// Restoring one X-family code key clears the prediction.  The predicate tests
+// the presence of an anchor, not its strength; strength is for the spectral
+// side.
 TEST(NetworkDatumGraphCensus, RestoringOneCodeKeyClearsThePrediction) {
     const std::set<std::string> pb{
         pbKey("E03", "L5X"), pbKey("E03", "L7X"), pbKey("E03", "L8X"),
@@ -349,19 +348,18 @@ TEST(NetworkDatumGraphCensus, CellsWithoutPhaseBiasAreNotCensused) {
 }
 
 // ===========================================================================
-//  3. THE BOUNDARY — the census must UNDER-claim, never over-claim
+//  3. The boundary: the census under-claims and never over-claims
 // ===========================================================================
 
-// Thin-but-nonzero support is the Aug-2 ORPHAN class (eigenvalue ~1e-6, well
-// below the cutoff, invisible to topology because the column and its support
-// both exist).  Predicting it would be a claim about WEIGHTS that this card
-// deliberately does not make; the `observed only` cell is where it is supposed
-// to land instead.
+// Thin but nonzero support is the orphan class (eigenvalue ~1e-6, well below
+// the cutoff, invisible to topology because the column and its support both
+// exist).  Predicting it would be a claim about weights, which this card does
+// not make; such a direction belongs in the `observed only` cell.
 TEST(NetworkDatumGraphCensus, ThinButNonzeroSupportPredictsNothing) {
     const std::set<std::string> pb{pbKey("E03", "L5X"), pbKey("E03", "L7X")};
     const std::vector<std::pair<std::string, std::string>> cb{{"E03", "C5X"}};
-    // A single admitted code observable across the whole network — as thin as
-    // support gets without being zero.
+    // A single admitted code observable across the whole network: the thinnest
+    // support that is not zero.
     const auto cells = netDatumGraphChannelFamilies(
         pb, cb, {{netDatumGraphSupportKey("E03", "X"), 1}});
     EXPECT_TRUE(predictedIds(cells).empty());
@@ -371,11 +369,11 @@ TEST(NetworkDatumGraphCensus, ThinButNonzeroSupportPredictsNothing) {
     EXPECT_FALSE(x->zero_support) << "one observable is support; thinness is not this card's call";
 }
 
-// THE flooding failure mode.  With no satellite code-bias column anywhere, the
-// literal predicate ("no code key in this family") is true of EVERY cell — and
+// The flooding failure mode.  With no satellite code-bias column anywhere, the
+// literal predicate ("no code key in this family") is true of every cell and
 // meaningless, because the code observations then pin the slant ionosphere
-// directly and no trade direction exists.  Both predicates must be held off, and
-// the cell must still be REPORTED (cb_layer = false) rather than vanish.
+// directly and no trade direction exists.  Both predicates are held off, and the
+// cell is still reported (cb_layer = false) rather than dropped.
 TEST(NetworkDatumGraphCensus, NoCodeBiasLayerHoldsBothPredicatesOff) {
     const std::set<std::string> pb{
         pbKey("E03", "L5X"), pbKey("E03", "L7Q"), pbKey("G01", "L1W"),
@@ -390,9 +388,9 @@ TEST(NetworkDatumGraphCensus, NoCodeBiasLayerHoldsBothPredicatesOff) {
     EXPECT_TRUE(predictedIds(cells).empty());
 }
 
-// The layer precondition is PER CONSTELLATION: Galileo estimating code biases
-// must not lend its layer to a GPS cell that has none, or the flooding failure
-// returns one constellation at a time.
+// The layer precondition is per constellation: Galileo estimating code biases
+// does not lend its layer to a GPS cell that has none, or the flooding failure
+// would return one constellation at a time.
 TEST(NetworkDatumGraphCensus, TheCodeBiasLayerIsPerConstellation) {
     const std::set<std::string> pb{pbKey("E03", "L5X"), pbKey("G01", "L1W")};
     const std::vector<std::pair<std::string, std::string>> cb{{"E11", "C1C"}};
@@ -408,12 +406,12 @@ TEST(NetworkDatumGraphCensus, TheCodeBiasLayerIsPerConstellation) {
 }
 
 // ===========================================================================
-//  4. THE CONTINGENCY — exact, and over the right populations
+//  4. The contingency: exact, and over the right populations
 // ===========================================================================
 
-// Identity parsing rides SBC's OWN attribution string, so the census and the
-// sbc_engage event can never disagree about what a direction is.  Only the two
-// BIAS kinds carry a signal; a clock or SH participant contributes no identity.
+// Identity parsing reads SBC's own attribution string, so the census and the
+// sbc_engage event cannot disagree about what a direction is.  Only the two
+// bias kinds carry a signal; a clock or SH participant contributes no identity.
 TEST(NetworkDatumGraphCensus, DirectionIdentitiesComeFromTheSbcAttribution) {
     // The measured FT63 GPS+Gal engage line, verbatim in shape.
     const auto ids = netDatumGraphDetailIds(
@@ -431,26 +429,27 @@ TEST(NetworkDatumGraphCensus, DirectionIdentitiesComeFromTheSbcAttribution) {
     EXPECT_TRUE(netDatumGraphDetailIds("SH:C:0:0:0.99").empty());
 }
 
-// The join is many-to-many, so the two partitions are over DIFFERENT
-// populations and each must be exact on its own.  Adding them into a single 2x2
-// would require double-counting one side — the accounting error §5.4 pins.
+// The join is many-to-many, so the two partitions are over different
+// populations and each is exact on its own.  Combining them into a single 2x2
+// would double-count one side, the accounting error that §5.4 of
+// docs/SPEC_datum_graph_census.md rules out.
 TEST(NetworkDatumGraphCensus, TheThreeCellsPartitionBothPopulationsExactly) {
     const std::vector<std::string> pred{"E03/X", "E08/Q", "E14/X"};
     const std::vector<NetDatumGraphDir> dirs{
         dir({"E03/X"}),                    // matches one prediction
-        dir({"E03/X", "E14/X"}),           // matches TWO — the many-to-many case
+        dir({"E03/X", "E14/X"}),           // matches two: the many-to-many case
         dir({"E36/C"}),                    // matches none: observed only
         dir({}, 1e-14, "CLK:E22"),         // no identity at all: observed only
     };
 
     const auto c = netDatumGraphReconcile(pred, dirs);
 
-    // Over PREDICTIONS.
+    // Over predictions.
     EXPECT_EQ(c.pred_observed, (std::vector<std::string>{"E03/X", "E14/X"}));
     EXPECT_EQ(c.pred_only,     (std::vector<std::string>{"E08/Q"}));
     EXPECT_EQ(c.pred_observed.size() + c.pred_only.size(), pred.size());
 
-    // Over DIRECTIONS.
+    // Over directions.
     EXPECT_EQ(c.n_obs_matched, 2);
     ASSERT_EQ(c.obs_only.size(), 2u);
     EXPECT_EQ(c.obs_only[0], "CLK:E22") << "an unnamed direction is named by its heaviest column";
@@ -471,9 +470,9 @@ TEST(NetworkDatumGraphCensus, RepeatedMatchesAreCountedOnce) {
     EXPECT_TRUE(c.obs_only.empty());
 }
 
-// The degenerate arms, both of which are real configurations: nothing predicted
-// (a healthy epoch — every direction is `observed only`) and nothing observed
-// (the SBC+KP recipe — every prediction is `predicted only`, which IS the map).
+// The degenerate arms, both real configurations: nothing predicted (a healthy
+// epoch; every direction is `observed only`) and nothing observed (the SBC+KP
+// recipe; every prediction is `predicted only`, and that list is the map).
 TEST(NetworkDatumGraphCensus, EmptySidesDegradeIntoTheRightCell) {
     const auto no_pred = netDatumGraphReconcile({}, {dir({"E03/X"})});
     EXPECT_TRUE(no_pred.pred_observed.empty());
@@ -488,10 +487,10 @@ TEST(NetworkDatumGraphCensus, EmptySidesDegradeIntoTheRightCell) {
     EXPECT_EQ(no_obs.n_obs_matched, 0);
 }
 
-// The `predicted only` cell means two DIFFERENT things and the label must follow
-// the KP arming and nothing else: with KP it is the load-bearing map (the
-// direction exists, the prior lifts it above the cutoff), without KP it is
-// over-prediction — a finding about the predictor.
+// The `predicted only` cell means two different things, and the label follows
+// the KP arming and nothing else.  With KP it is the load-bearing map (the
+// direction exists and the prior lifts it above the cutoff); without KP it is
+// over-prediction, a finding about the predictor.
 TEST(NetworkDatumGraphCensus, PredictedOnlyIsLabelledKpLiftedIffKpIsArmed) {
     EXPECT_STREQ(netDatumGraphPredOnlyEvent(true),  "dg_kp_load_bearing");
     EXPECT_STREQ(netDatumGraphPredOnlyAction(true), "kp_lifted");
@@ -499,9 +498,9 @@ TEST(NetworkDatumGraphCensus, PredictedOnlyIsLabelledKpLiftedIffKpIsArmed) {
     EXPECT_STREQ(netDatumGraphPredOnlyAction(false), "over_predict");
 }
 
-// The spectral hand-off is a ONE-EPOCH value and `extras` never goes negative:
+// The spectral hand-off is a one-epoch value and `extras` never goes negative:
 // observed < declared is the gate's "over-specified" verdict, a different
-// finding, and treating it as −1 extras would corrupt the run totals.
+// finding, and counting it as −1 extras would corrupt the run totals.
 TEST(NetworkDatumGraphCensus, TheSpectralHandoffClearsAndNeverReportsNegativeExtras) {
     NetDatumGraphSpectral s;
     EXPECT_FALSE(s.valid);
@@ -524,7 +523,7 @@ TEST(NetworkDatumGraphCensus, TheSpectralHandoffClearsAndNeverReportsNegativeExt
 }
 
 // ===========================================================================
-//  5. OFF is structurally inert; ON resolves
+//  5. Off is structurally inert; on resolves
 // ===========================================================================
 
 TEST(NetworkDatumGraphCensus, StockConfigLeavesEveryCensusPathInert) {
@@ -571,9 +570,9 @@ TEST(NetworkDatumGraphCensus, ArmingResolvesTheKnobAndClampsTheHoldoff) {
     EXPECT_EQ(NetworkKnobs::snapshot(neg, neg.getNetworkConfig()).dg_event_holdoff, 0);
 }
 
-// The census does NOT require SBC.  Without it the spectral side still supplies
-// the observed-vs-declared COUNT and tier 1 needs no spectrum at all, so
-// AND-ing the two arms would silently delete the fragmentation reading.
+// The census does not require SBC.  Without it the spectral side still supplies
+// the observed-vs-declared count and tier 1 needs no spectrum at all, so
+// requiring both arms would remove the fragmentation reading.
 TEST(NetworkDatumGraphCensus, ArmingIsIndependentOfTheSbasisCompletion) {
     GnssConfig cfg;
     ASSERT_TRUE(loadConfig("nosbc", networkConfig(

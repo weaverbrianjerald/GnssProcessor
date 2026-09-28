@@ -1,35 +1,36 @@
 #pragma once
 /**
  * @file NetworkPhaseDatum.hpp
- * @brief Phase-bias↔ambiguity datum maintenance for the PPP-RTK network
- *        producer: the prioritized-datum spectrum-based drop-and-heal.
+ * @brief Phase-bias datum seam of the PPP-RTK network producer: the prioritized
+ *        candidate census and coverage gate, the ensemble datum, the anchor election
+ *        with its handover, held S-basis, candidacy, gate-drop and re-entry options,
+ *        the anchor-slip handover staging, the re-reference carry erase, and the
+ *        near-null phase-bias soft-anchor.
  *
- * The prioritized union registers a phase-bias column for every (sat,signal)
- * that any two stations track.  Two things can leave such a column below the
- * rank-gate cutoff and would withhold the WHOLE epoch (every well-anchored
- * satellite lost to one bad column): (1) its ONLY ambiguity pin lived in an
- * anchor station that was DROPPED in the serial consume (a rank-deficient
- * local block) — a pure near-null orphan; (2) the joint W6 code-bias
- * estimation leaves a marginally-tracked satellite's phase bias weakly
- * separated from its clock — a near-null-but-real column.  The heal
- * soft-anchors exactly those columns toward 0 (σ = 1 m: far above the cutoff
- * so the residual gauge is resolved, negligible against the 1e10 ambiguity
- * pins so well-anchored columns are untouched) — a bounded, signalled
- * one-epoch degradation (the emitter bias-jump disc bumps when the proper
- * ambiguity anchor returns).
+ * Near-null soft-anchor (@ref healNearNullPhaseBias).  The prioritized union registers
+ * a phase-bias column for every (sat,signal) that any two stations track.  Two cases
+ * can leave such a column below the rank-gate cutoff, and the gate would then
+ * withhold the whole epoch, losing every well-anchored satellite to one column:
+ * (1) the column's only ambiguity pin was at an anchor station dropped in the serial
+ * consume (a rank-deficient local block), which leaves a pure near-null orphan;
+ * (2) the joint W6 code-bias estimation leaves a marginally tracked satellite's phase
+ * bias weakly separated from its clock, a near-null but real column.  Those columns
+ * are soft-anchored toward 0 with σ = 1 m: far above the cutoff, so the residual
+ * gauge is resolved, and negligible against the 1e10 ambiguity pins, so
+ * well-anchored columns are unaffected.  The result is a bounded one-epoch
+ * degradation that is signalled: the emitter's bias-jump discontinuity counter
+ * increments when the proper ambiguity anchor returns.
  *
- * Seeded at decomposition INC-8 (2026-07-17), which relocated
- * healNearNullPhaseBias VERBATIM out of ApplicationNetwork.cpp; the candidate
- * census + ensemble datum + anchor election joined at INC-8b (2026-07-22),
- * which relocated them VERBATIM from the same place (the Card-3 eq34 chain
- * election went to the sibling @ref NetworkChainDatum).  See
- * docs/SPEC_inc8b_election_split.md.  These functions own NO state: every
- * carry/workspace object is an explicit reference into the caller's
- * NetworkRunContext / EpochWorkspace.
+ * The functions were relocated unchanged out of ApplicationNetwork.cpp at
+ * decomposition INC-8 (the soft-anchor) and INC-8b (the census, the ensemble datum
+ * and the anchor election; the eq34 chain election went to the sibling
+ * @ref NetworkChainDatum).  See docs/SPEC_inc8b_election_split.md.  They own no
+ * state: every carry and workspace object is an explicit reference into the
+ * caller's NetworkRunContext / EpochWorkspace.
  *
- * The three INC-8b entry points realize the phase-bias gauge three different
- * ways; the run TU's `if/else-if/else` mode dispatch stays the contract, and
- * exactly one election runs per epoch over a census built once:
+ * The three elections realize the phase-bias gauge in three different ways.  The run
+ * TU's `if/else-if/else` mode dispatch is the contract: one election runs per epoch,
+ * over a census built once:
  *
  *   networkBuildPhaseDatumCandidates   (always, under phase_datum_prioritized)
  *     ├── networkElectEnsembleDatum    network.phase_datum_ensemble
@@ -40,29 +41,29 @@
 #include "filter/NetworkEstimator.hpp"
 #include "filter/NetworkRunTypes.hpp"    // NetStation / PhaseDatumCandidates
 #include "filter/NetworkAnchorHygiene.hpp"  // AnchorHygiene / NetworkAnchorTallies
-#include "filter/NetworkPhaseGateDrop.hpp"  // Card EV7 §6: PhaseGateDropEvent / the edge rule
-#include "filter/NetworkAnchorReentry.hpp"  // Card SID phase 4: AnchorReentry / the drop memo
+#include "filter/NetworkPhaseGateDrop.hpp"  // PhaseGateDropEvent and the edge rule (card EV7 §6)
+#include "filter/NetworkAnchorReentry.hpp"  // AnchorReentry and the drop memo (card SID phase 4)
 
 #include <cstddef>
 #include <map>
 #include <set>
-#include <tuple>    // COLD ANCHOR-FALLBACK: the local-carry key (station, sat, signal)
+#include <tuple>    // the local-carry key (station, sat, signal)
 #include <string>
 #include <vector>
 
 namespace GnssProcessor {
 
-    struct NetworkInjectState;   // filter/NetworkInject.hpp — the EVENT HARNESS directive set
+    struct NetworkInjectState;   // filter/NetworkInject.hpp: the event-harness directive set
 
 
 class GnssConfig;
 struct PppObservation;
 
-/// One soft-anchored phase-bias column (Card PA2 attribution): which
-/// (sat, signal) was healed, the eigenvalue of the near-null direction it spans
-/// most heavily, and that |component|.  The caller emits these as @c trace_events
-/// rows so a healed column is attributable from the trace alone — a run that
-/// heals every epoch otherwise "succeeds" silently (the heal-success log is debug).
+/// One soft-anchored phase-bias column: the (sat, signal), the eigenvalue of the
+/// near-null direction the column spans most heavily, and that |component|.  The
+/// caller emits these as @c trace_events rows so every soft-anchored column is
+/// attributable from the trace; the success log line is at debug level, so without
+/// the rows a run that soft-anchors every epoch shows nothing (card PA2).
 struct PhaseHealEvent {
     std::string sat;      ///< satellite id
     std::string signal;   ///< signal id
@@ -72,43 +73,42 @@ struct PhaseHealEvent {
 
 /**
  * @brief Identify near-null phase-bias directions of the reduced shared
- *        normals and soft-anchor exactly those columns toward 0 (σ = 1 m), so
- *        one weak column cannot withhold the whole epoch.
+ *        normals and soft-anchor those columns toward 0 (σ = 1 m), so that
+ *        one weak column does not withhold the whole epoch.
  *
- * The cutoff is @ref NetworkEstimator::rankGateTol · max(λmax, 1) —
- * deliberately the SAME resolved cutoff as the rank gate this heal protects
- * (Card DG2; it defaults to @ref NetworkEstimator::kNullSpaceTol).  Reading the
- * gate's own value is load-bearing: with an ARMED (deeper) tolerance the heal
- * must NOT keep soft-anchoring the weak-but-real families the calibration just
- * moved above the cutoff — that would be prior information on real parameters.
- * A direction counts as a heal target when a phase-bias column spans it with
- * |component| > 0.3 (a clock-gauge direction has ~zero phase-bias weight, so
- * its minor PB participants stay below the fraction and are left alone).
+ * The cutoff is @ref NetworkEstimator::rankGateTol · max(λmax, 1), the same
+ * resolved cutoff as the rank gate this function protects (card DG2; it defaults to
+ * @ref NetworkEstimator::kNullSpaceTol).  Reading the gate's own value matters: with
+ * an armed (deeper) tolerance, the families the calibration moved above the cutoff
+ * are weak but real, and soft-anchoring them would put prior information on real
+ * parameters.  A direction is a target when a phase-bias column spans it with
+ * |component| > 0.3 (kSpanFrac).  A clock-gauge direction has almost no phase-bias
+ * weight, so its minor PB participants stay below that fraction and are left alone.
  *
- * ★ PERF: this does a FULL eigenVECTOR decomposition of the reduced normals
- * (O(n_shared³) — ~1156³ at 305 stations), so invoke it ONLY from the
- * gate-failure path, never every epoch.  A healthy network passes the cheap
- * eigenvalue-only gate on the first try and never pays this cost.
+ * Cost: a full eigenvector decomposition of the reduced normals, O(n_shared³)
+ * (n_shared is about 1156 at 305 stations).  Call it only from the gate-failure
+ * path, not every epoch.  A healthy network passes the eigenvalue-only gate on the
+ * first try and never reaches this function.
  *
  * @param est                     Joint estimator (non-const:
- *                                reducedSharedNormals lazily reduces;
- *                                addSharedPrior folds the heal anchors).
+ *                                reducedSharedNormals reduces lazily;
+ *                                addSharedPrior folds the soft anchors).
  * @param shared_phase_keys       This epoch's shared phase-bias key set.
- * @param phase_datum_prioritized network.phase_datum_prioritized; false ⇒
- *                                immediate 0 (the legacy datum heals nothing).
- * @param within_epoch_armed      network.raim_within_epoch: mirror the heal
+ * @param phase_datum_prioritized network.phase_datum_prioritized; false returns
+ *                                0 immediately (the legacy datum is not treated).
+ * @param within_epoch_armed      network.raim_within_epoch: mirror the soft
  *                                anchors into @p cap_priors for the replay.
- * @param cap_priors              RAIM-replay capture channel (ws.cap_priors —
+ * @param cap_priors              RAIM-replay capture channel (ws.cap_priors;
  *                                see the EpochWorkspace writer-site contract in
  *                                filter/NetworkRunTypes.hpp).
- * @param healed_out              [out, optional] APPENDED per-column attribution
- *                                (@ref PhaseHealEvent) for the caller's
- *                                trace_events rows; @c nullptr (the default) is
- *                                the pre-PA2 behaviour exactly.  Purely
- *                                observational — it never changes which columns
- *                                are selected or what prior is folded.
- * @return Number of phase-bias columns soft-anchored (0 = nothing healed /
- *         not prioritized / eigensolve failed).
+ * @param healed_out              [out, optional] per-column attribution
+ *                                (@ref PhaseHealEvent), appended, for the caller's
+ *                                trace_events rows.  @c nullptr (the default)
+ *                                records nothing.  Observational only: it does not
+ *                                change which columns are selected or what prior
+ *                                is folded.
+ * @return Number of phase-bias columns soft-anchored (0 when nothing is below the
+ *         cutoff, the datum is not prioritized, or the eigensolve fails).
  */
 int healNearNullPhaseBias(NetworkEstimator& est,
                           const std::set<std::string>& shared_phase_keys,
@@ -121,28 +121,30 @@ int healNearNullPhaseBias(NetworkEstimator& est,
  * @brief Build this epoch's prioritized phase-datum candidate census and apply
  *        the network.phase_datum_min_stations coverage gate.
  *
- * Relocated VERBATIM from Application::runNetwork at INC-8b.  Runs for EVERY
- * prioritized realization (ensemble / eq34 chain / anchor election), exactly
- * once per epoch, before the mode dispatch picks an election.
+ * Relocated unchanged from Application::runNetwork (INC-8b).  Runs for every
+ * prioritized realization (ensemble, eq34 chain, anchor election), once per epoch,
+ * before the mode dispatch picks an election.
  *
- * NOTE on the timing (preserved from the original site): the ambiguity states
- * are allocated later, in PASS B's computeMeasurementUpdate, so this cannot
- * test getAmbiguityIndex — it keys off the phase-bias states PASS A allocated
- * through the same usability gate as the row build.
+ * Timing: the ambiguity states are allocated later, in PASS B's
+ * computeMeasurementUpdate, so this function cannot test getAmbiguityIndex.  It
+ * keys off the phase-bias states PASS A allocated through the same usability gate
+ * as the row build.
  *
- * ⚠ SIDE EFFECT: when the coverage gate fires it PRUNES each tracking
- * station's satellite phase-bias states (StateManager::pruneSatPhaseBiasStatesExcept)
- * so per-station column sets stay consistent with the gated union.  BOTH
- * elections depend on that prune having already happened, and this function is
- * the sole writer of the two run-end gate counters — computing the census twice
- * would double-count them (standing invariant #4 telemetry).
+ * Side effect: when the coverage gate excludes keys, it prunes those keys'
+ * phase-bias states at every present station
+ * (StateManager::pruneSatPhaseBiasStatesExcept), so the per-station column sets stay
+ * consistent with the gated union.  All three elections depend on that prune having
+ * happened.  This function is also the sole writer of the two run-end gate
+ * counters, so computing the census twice would double-count them (standing
+ * invariant #4 telemetry).
  *
  * @param config_             networkPhaseDatumPrefElevDeg / MinStations.
  * @param stations            [in/out] non-const: the gate prunes PB states.
  * @param present             This epoch's presence mask.
  * @param modeled             Pruned per-station observations (elevation source).
- * @param cnd                 [out] census; every member is fully overwritten,
- *                            so caller storage may be reused.
+ * @param cnd                 [out] census, including the gate's exclusions
+ *                            (@c gated_keys); every member is overwritten, so
+ *                            caller storage may be reused.
  * @param n_gated_epochs      [in/out] ctx.counters run-end telemetry.
  * @param n_gated_key_epochs  [in/out] ctx.counters run-end telemetry.
  */
@@ -156,17 +158,17 @@ void networkBuildPhaseDatumCandidates(
         std::size_t& n_gated_key_epochs);
 
 /**
- * @brief Fix-A ANCHOR-FREE ENSEMBLE datum: the shared phase-bias set is the
- *        coverage-gated union, every station's pins are cleared and NO anchor
- *        is elected.  Relocated VERBATIM at INC-8b.
+ * @brief Anchor-free ensemble datum (Fix A): the shared phase-bias set is the
+ *        coverage-gated union, every station's pins are cleared and no anchor
+ *        is elected.  Relocated unchanged at INC-8b.
  *
- * The gauge is realized instead by the kernel sum-to-zero fold built from every
- * tracking station's ambiguity column AFTER the reduce (buildEnsembleGauges,
- * which stays in the run TU — it runs post-beginEpoch/PASS-B).  With no station
- * holding a pinned_amb_key, do_fold stays false and isGaugePinned false, so
- * every station carries all its arcs and there is no anchor to hand over.
+ * The gauge is realized instead by the kernel sum-to-zero fold, built from every
+ * tracking station's ambiguity column after the reduce (buildEnsembleGauges, which
+ * stays in the run TU because it runs after beginEpoch and PASS B).  With no station
+ * holding a pinned_amb_targets entry, do_fold stays false and isGaugePinned false,
+ * so every station carries all its arcs and there is no anchor to hand over.
  *
- * @param this_epoch_anchor  [out] cleared; the ensemble elects no anchor.  MUST
+ * @param this_epoch_anchor  [out] cleared; the ensemble elects no anchor.  Must
  *                           be the run's ctx.carry instance (the emit-site
  *                           handover loop is its sole consumer).
  */
@@ -176,280 +178,337 @@ void networkElectEnsembleDatum(
         std::map<std::string, std::string>& this_epoch_anchor,
         std::set<std::string>& shared_phase_keys);
 
-/**
- * @brief COLD ANCHOR-FALLBACK inputs (@c network.phase_datum_candidacy_usable,
- *        docs/SPEC_event_harness.md §15) — a read-only view, exactly the shape
- *        @ref AnchorHygiene is, so an election handed a default instance behaves
- *        precisely as it did before this card.
- *
- * The election's sweep takes the FIRST coverage-ranked tracker of the key; the
- * continuous branch then looks that successor up in the handover ledger and may
- * refuse it, which pins at 0 and re-realizes the family's gauge.  Everything here
- * is what the sweep needs to ask the refusal question FIRST, for every candidate,
- * in the same coverage order:
- *
- *   * the ledger itself is already a parameter of the election (@p handover), as
- *     are both variance ceilings — the predicate is SHARED with the continuous
- *     branch (one lambda, two readers) so a screen can never drift from the
- *     decision it previews;
- *   * @ref free_ambs / @ref slipped_ambs are this epoch's freed sets — a candidate
- *     whose own arc a slip response just freed is about to have its level re-drawn
- *     from one epoch of code, so its carried value is not a datum however good its
- *     variance looks (standing invariant #1's re-coupling edge, in the candidacy);
- *   * @ref local_carry + @ref now_ep supply the arc AGE (@c LocalCarry::birth_ep),
- *     the maturity bar the §15 census separated the cold and continuous
- *     populations with.
- */
-/// RF-2 — the HELD S-BASIS bundle the election needs, and the record it writes back.
+/// Held S-basis bundle for the anchor election, and the counters the election writes
+/// back (RF-2).
 ///
-/// Passed as a POINTER, null on every unarmed run, so the OFF path is byte-identical:
-/// the election's existing branches are untouched and nothing below is allocated.
+/// Passed as a pointer that is null on every unarmed run, so with it off the election
+/// is byte-identical: its existing branches are unchanged and nothing below is
+/// allocated.
 ///
 /// The four items of the card, in the order they act inside one election:
-///  1. **held basis** — a RETAINED incumbent re-pins at the FROZEN @c basis value rather
-///     than re-deriving it, so the datum is a constant for the whole tenure;
-///  2. **every handover declared** — a new election records @c prev_value / @c prev_station
-///     in its entry, which is the Δ item 2 declares to the consumer;
-///  3. **election** — the candidate order becomes ELEVATION-descending, gated by arc age
-///     (@c min_age_ep) and by a screen-flag quiet window (@c flag_quiet_ep);
-///  4. **T4 on the anchor** — @c flag_ep carries the last epoch each arc was flagged by any
-///     screen, which is both the quiet-window input and the trigger that deposes a basis
-///     holder BEFORE the response acts on its column.
+///  1. Held basis: a retained incumbent re-pins at the frozen @c basis value instead of
+///     re-deriving it, so the datum is constant for the whole tenure.
+///  2. Every handover declared: a new election records @c prev_value / @c prev_station
+///     in its entry, which is the Δ item 2 declares to the consumer.
+///  3. Election: when no earlier branch (sticky incumbent, candidacy pass, re-entry
+///     restore) has chosen a station, the candidates that pass the arc-age gate
+///     (@c min_age_ep) and the screen-flag quiet window (@c flag_quiet_ep) are ranked
+///     by descending elevation.  The highest one whose carried level passes the
+///     handover ledger verdict is elected; with none passing it, the highest eligible
+///     one is elected (@c n_elev_fallback).  With no eligible candidate the
+///     coverage-ranked sweeps elect as they do unarmed.
+///  4. T4 on the anchor: @c flag_ep holds the last epoch each arc was flagged by any
+///     screen.  It is the quiet-window input and also the trigger that deposes a basis
+///     holder at the election, before the response acts on its column.
 struct PhaseHeldBasis {
     bool      on = false;             ///< network.phase_datum_held_basis, already ANDed with float_kf.
     int       min_age_ep = 0;         ///< network.phase_anchor_min_age_ep (0 = no age gate).
-    int       flag_quiet_ep = 0;      ///< network.phase_anchor_flag_quiet_ep (0 = no quiet gate).
-    long long now_ep = 0;             ///< ctx.counters.n_loop_epochs — the tenure and age clock.
-    /// THE LEDGER, in/out: ambiguity key -> the frozen basis.  Owned by
-    /// @c NetworkCarryState so it survives the epoch; the election reads it to hold a
-    /// retained incumbent's value and writes a new entry on every election.
+    int       flag_quiet_ep = 0;      ///< network.phase_anchor_flag_quiet_ep (0 = no quiet gate and no flag deposition).
+    long long now_ep = 0;             ///< ctx.counters.n_loop_epochs: the tenure and age clock.
+    /// The basis ledger, in/out: ambiguity key -> the frozen basis.  Owned by
+    /// @c NetworkCarryState so it survives the epoch.  The election reads it to hold a
+    /// retained incumbent's value and writes a new entry on every other election.
     std::map<std::string, PhaseBasisEntry>* basis = nullptr;
-    /// Per station, this epoch's LOS elevation by satellite (degrees) — the election's
-    /// rank key.  Empty / null ⇒ the pre-card coverage order is kept.
+    /// Per station, this epoch's LOS elevation by satellite (degrees): the election's
+    /// rank key.  A null map, or a missing station or satellite, reads as −1 and ranks
+    /// last; with no elevations at all the rank reduces to coverage order among the
+    /// eligible candidates.
     const std::vector<std::map<std::string, double>>* elev = nullptr;
     /// (station idx, ambiguity key) -> the loop epoch of its last screen flag (slip
-    /// response, T4 / T3 refloat, gross-LOS declaration).  Null ⇒ no quiet-window gate.
+    /// response, T4 / T3 refloat, gross-LOS declaration).  Null: no quiet-window gate
+    /// and no flag deposition.
     const std::map<std::pair<int, std::string>, long long>* flag_ep = nullptr;
-    /// The phase-leveling carry — the arc-age gate reads @c LocalCarry::birth_ep, on the
-    /// RESTORED-ARC convention (@ref localCarryYoung), so a warm-resume-restored entry
-    /// reads mature rather than being refused for min_age epochs after every resume.
+    /// The phase-leveling carry.  The arc-age gate reads @c LocalCarry::birth_ep on the
+    /// restored-arc convention (@ref localCarryYoung), so a warm-resume-restored entry
+    /// reads mature instead of being refused for min_age epochs after every resume.
+    /// An arc with no carry entry is refused as newborn.  Null: no age gate.
     const std::map<std::tuple<int, std::string, std::string>, LocalCarry>* carry = nullptr;
-    // ---- write-back --------------------------------------------------------------
-    long long n_held = 0;             ///< families re-pinned at their FROZEN basis value this epoch.
-    long long n_elected = 0;          ///< new basis entries written (first sightings + handovers).
-    long long n_elected_cold = 0;     ///< …of which could not inherit a level (value 0; the family stepped).
-    long long n_refused_young = 0;    ///< candidates refused by the arc-age gate.
-    long long n_refused_flagged = 0;  ///< candidates refused by the screen-flag quiet window.
-    long long n_rank_changed = 0;     ///< elections whose elevation rank picked a DIFFERENT station than the coverage order would have.
-    long long n_value_drift = 0;      ///< ⚠ mid-tenure basis-value changes REFUSED — the held property's own evidence; any nonzero value is a defect.
-    // ---- RF-2b: WHY the datum moved.  One counter per deposition cause, so a run can
-    //      say which lever to pull instead of only how often the basis changed.
-    long long n_refused_unusable = 0; ///< candidate-family evaluations refused because the candidate's carried level is not usable AS A DATUM by the continuous branch's own ledgerVerdict (var over network.phase_datum_handover_max_var_m2, or the ratio ceiling).  RF-2's defect was that this test did not exist in the rank at all.
-    long long n_elev_fallback = 0;    ///< elections where NO candidate was ledger-usable and the rank fell back to elevation-only — a COLD pin, counted because it is a different event from a clean handover.
-    long long n_depose_flag = 0;      ///< incumbents deposed by a screen flag ON THEIR OWN BASIS COLUMN (item 4's trigger) — never by a flag elsewhere at that station.
-    long long n_depose_arc_death = 0; ///< …deposed because the basis arc has no carry any more (pruned / never stashed): no level to hold, no age to qualify on.
-    long long n_depose_unusable = 0;  ///< …deposed because the incumbent's OWN carried level stopped passing the ledger verdict (its arc drifted out of the datum tolerance).
+    // ---- write-back (per call; the driver sums them into the run-end readout) ----
+    long long n_held = 0;             ///< families re-pinned at their frozen basis value this epoch.
+    /// New basis entries written: every election that did not re-pin a retained
+    /// incumbent at its frozen value (first sightings, handovers, and a retained
+    /// incumbent with no matching entry).
+    long long n_elected = 0;
+    long long n_elected_cold = 0;     ///< …of which were cold handovers (value 0; the family stepped).
+    long long n_refused_young = 0;    ///< candidate evaluations refused by the arc-age gate.
+    long long n_refused_flagged = 0;  ///< candidate evaluations refused by the screen-flag quiet window.
+    /// Elections whose elevation rank picked a different station than the coverage
+    /// sweep would have, plus one per flag deposition (@c n_depose_flag).
+    long long n_rank_changed = 0;
+    /// Retained-incumbent epochs whose sticky R2 target differed from the frozen basis
+    /// value; the frozen value is pinned.  This is the held property's own check, and
+    /// any nonzero value is a defect.
+    long long n_value_drift = 0;
+    // ---- Deposition and fallback causes (RF-2b): one counter per cause, so a run
+    //      shows why the datum moved and not only how often the basis changed.
+    /// Candidate evaluations in the elevation rank refused because the continuous
+    /// branch's own ledgerVerdict does not accept the candidate's carried level as a
+    /// datum: no ledger entry, a non-finite value, a variance that is non-positive,
+    /// non-finite or over network.phase_datum_handover_max_var_m2, the ratio ceiling,
+    /// or a forced-cold directive.
+    long long n_refused_unusable = 0;
+    /// Elections where no candidate passed the ledger verdict and the rank fell back
+    /// to elevation only.  The pin is then not continuous (a cold handover, or a 0-pin
+    /// on a first sighting), which is a different event from a clean handover.
+    long long n_elev_fallback = 0;
+    /// Incumbents deposed by a screen flag on their own basis column (item 4's
+    /// trigger), never by a flag elsewhere at that station.
+    long long n_depose_flag = 0;
+    /// Incumbents that no earlier branch kept or replaced: absent, no longer tracking
+    /// the key, banned by a directive, or deposed by a basis flag (so also counted in
+    /// @c n_depose_flag).  Counted only when the elevation rank runs for the family,
+    /// that is when its constellation has candidates.
+    long long n_depose_arc_death = 0;
+    /// Always 0.  The incumbent's own ledger verdict is not tested: a gauge-pinned
+    /// column is excluded from the carry (the S-basis contract), so the handover ledger
+    /// has no live entry for the station holding the basis.  Nothing increments this
+    /// counter; it is kept so a build can show that it reads 0.
+    long long n_depose_unusable = 0;
 };
 
-/// Card EV7 §6 — the COVERAGE-GATE DROP EDGE bundle
-/// (@c network.phase_datum_gate_drop_erase; the rule itself is
-/// @ref networkPhaseGateDropEdges in filter/NetworkPhaseGateDrop.hpp).
+/// Coverage-gate drop-edge bundle (card EV7 §6, @c network.phase_datum_gate_drop_erase;
+/// the rule itself is @ref networkPhaseGateDropEdges in filter/NetworkPhaseGateDrop.hpp).
 ///
-/// Passed by the driver on EVERY run, armed or not, because requirement F2 asks
-/// the OFF run to report the SIZE OF THE CLASS (standing invariant #4: a counter
-/// that only exists on the armed path cannot say whether arming would matter).
-/// The OFF path is therefore telemetry only — @ref events is filled, @c reref_out
-/// is not touched, and the solve is byte-identical.
+/// The driver passes it on every run, armed or not, because requirement F2 asks the
+/// unarmed run to report the size of the class (standing invariant #4: a counter that
+/// exists only on the armed path cannot say whether arming would matter).  Unarmed, it
+/// is telemetry only: @ref events is filled, @c reref_out is not touched, and the solve
+/// is byte-identical.
 struct PhaseGateDrop {
-    /// network.phase_datum_gate_drop_erase.  false ⇒ the edges are DETECTED and
-    /// counted but the family is NOT added to the re-reference set.
+    /// network.phase_datum_gate_drop_erase.  false: the edges are detected and
+    /// counted, but the family is not added to the re-reference set.
     bool on = false;
     /// [out] one entry per drop edge found this epoch, in ambiguity-key order.
     /// The driver turns these into @c PHASE_ANCHOR / @c gate_drop trace rows and
-    /// folds the counts into the run-end readout; the election itself neither
-    /// reads them back nor lets them reach the solve.
+    /// folds the counts into the run-end readout; the election neither reads them
+    /// back nor lets them reach the solve.
     std::vector<PhaseGateDropEvent> events;
 };
 
+/**
+ * @brief Cold anchor-fallback inputs (@c network.phase_datum_candidacy_usable,
+ *        docs/SPEC_event_harness.md §15): a read-only view shaped like
+ *        @ref AnchorHygiene, so an election handed a default instance behaves as it
+ *        does without the card.
+ *
+ * The election's sweep takes the first coverage-ranked tracker of the key; the
+ * continuous branch then looks that successor up in the handover ledger and may
+ * refuse it, which pins at 0 and re-realizes the family's gauge.  These members let
+ * the sweep ask the refusal question first, of every candidate, in the same coverage
+ * order:
+ *
+ *   * the ledger is already a parameter of the election (@p handover), as are both
+ *     variance ceilings.  The predicate is shared with the continuous branch (one
+ *     lambda, two readers), so the screen cannot drift from the decision it previews;
+ *   * @ref free_ambs / @ref slipped_ambs are this epoch's freed sets.  A candidate
+ *     whose own arc a slip response just freed is about to have its level re-drawn
+ *     from one epoch of code, so its carried value is not a datum however small its
+ *     variance (the re-coupling edge of standing invariant #1, applied at candidacy);
+ *   * @ref local_carry and @ref now_ep supply the arc age (@c LocalCarry::birth_ep),
+ *     the maturity bar with which the §15 census separated the cold and continuous
+ *     populations.
+ */
 struct AnchorCandidacyUsable {
     /// network.phase_datum_candidacy_usable, already ANDed with the handover
-    /// mechanism being armed — false ⇒ the pass is not entered at all.
+    /// mechanism being armed.  false: neither the pass nor the satellite clause runs.
     bool on = false;
     /// network.phase_datum_candidacy_min_age_ep (0 = no age test).
     int  min_age_ep = 0;
-    /// ITERATION 2 — the SATELLITE clause (network.phase_datum_candidacy_satellite,
-    /// SPEC_event_harness §15.8).  false = iteration 1's per-FAMILY screen, which is
-    /// what the single-knob A/B needs; true = a satellite's families that hand over in
-    /// the SAME epoch take ONE successor, and a PARTIAL handover prefers the station
-    /// already anchoring the satellite's other families.  The per-family screen bought
-    /// producer quality with split references and cost the consumer 49 % (§15.6).
+    /// Iteration 2, the satellite clause (network.phase_datum_candidacy_satellite,
+    /// SPEC_event_harness §15.8).  false: iteration 1's per-family screen, which the
+    /// single-knob A/B needs.  true: the families of a satellite that hand over in the
+    /// same epoch take one successor, and a partial handover prefers the station
+    /// already anchoring the satellite's other families.  The per-family screen
+    /// improved producer quality but referenced one satellite's bands to different
+    /// stations, which the consumer pays for (§15.6).
     bool satellite_clause = false;
     /// The loop-epoch counter the carries' @c birth_ep is stamped from
     /// (`ctx.counters.n_loop_epochs`); age = now_ep − birth_ep.
     long long now_ep = 0;
-    /// `ctx.carry.relevel.free_ambs` — the leveling free-epoch latch (structurally
-    /// empty on carry_invariant lineages); null ⇒ no freed test from this vehicle.
+    /// `ctx.carry.relevel.free_ambs`: the leveling free-epoch latch (structurally
+    /// empty on carry_invariant lineages).  Null: no freed test from this vehicle.
     const std::set<std::pair<int, std::string>>* free_ambs = nullptr;
     /// This epoch's DD invariant-carry slip funnel, same encoding; the vehicle on
-    /// carry_invariant lineages.  Both are consulted.
+    /// carry_invariant lineages.  Both sets are consulted.
     const std::set<std::pair<int, std::string>>* slipped_ambs = nullptr;
-    /// `ctx.carry.local_carry`, keyed (station index, sat, signal) — read ONLY for
-    /// @c birth_ep, through @ref localCarryYoung.  Null ⇒ every age is unknown ⇒
-    /// mature (the restored-entry convention), which degrades the pass to the
-    /// variance ceilings alone; so does a non-positive @c birth_ep — never stashed
-    /// (0) or warm-resume-restored (@ref LocalCarry::kBirthEpRestored).
+    /// `ctx.carry.local_carry`, keyed (station index, sat, signal), read only for
+    /// @c birth_ep through @ref localCarryYoung.  An unknown age counts as mature (the
+    /// restored-entry convention): a null map, no entry for the arc, or a
+    /// non-positive @c birth_ep, meaning never stashed (0) or warm-resume-restored
+    /// (@ref LocalCarry::kBirthEpRestored).  The age test then passes and the ledger
+    /// verdict and the freed test decide.
     const std::map<std::tuple<int, std::string, std::string>, LocalCarry>*
         local_carry = nullptr;
 };
 
 /**
- * @brief Prioritized per-(sat,signal) ANCHOR election with stickiness.
- *        Relocated VERBATIM at INC-8b.
+ * @brief Prioritized per-(sat,signal) anchor election with stickiness.
+ *        Relocated unchanged at INC-8b.
  *
- * Keeps the sticky incumbent while it is present AND still holds the key
- * (fewest handovers), else takes the highest-ranked candidate of that
- * constellation that tracks it — concentrating most of a constellation on one
- * receiver (frame-consistent) with graceful per-satellite fallback.  The pin
- * lands in the anchor's OWN pinned_amb_targets at target 0.0 — its local block,
- * the load-bearing invariant.  A key with no tracker is dropped from
- * @p shared_phase_keys entirely, which is what keeps the shared set and the pin
- * set in bijection (that orphan case is exactly what @ref healNearNullPhaseBias
- * exists to rescue when it slips through).
+ * Keeps the sticky incumbent while it is present, still tracks the key, and is
+ * neither banned by a directive nor deposed by a held-basis flag (fewest handovers).
+ * Otherwise the successor comes from the first of these branches that yields one:
+ * the candidacy pass (@p cand_usable), the re-entry restore (@p reentry, first
+ * sightings only), the held-basis elevation rank (@p held), then the coverage-ranked
+ * sweeps over the constellation's trackers.  Most of a constellation then sits on one
+ * receiver (frame-consistent), with per-satellite fallback.  The pin is written to
+ * the anchor's own pinned_amb_targets (its local block, which the datum depends on).
+ * Its target is 0.0 except for a continuous handover (the successor's ledger value),
+ * a retained incumbent with a sticky R2 target in @p anchor_pin_target, and a
+ * retained incumbent re-pinned at its held-basis value.  A key with no tracker is
+ * left out of @p shared_phase_keys, so every shared key other than a bridged one
+ * (see @p hyg) has exactly one pin.  A key whose pin still fails to fold is
+ * orphaned, which is a case @ref healNearNullPhaseBias exists to catch.
  *
  * @param sticky            network.phase_datum_sticky (passed as a scalar so
  *                          this header needs no GnssConfig definition).
- * @param hyg               eq34 REATTACH HYGIENE verdicts (see
+ * @param hyg               eq34 reattach hygiene verdicts (see
  *                          filter/NetworkAnchorHygiene.hpp).  Default-constructed
- *                          (inactive) this is the pre-card election exactly.  When
- *                          active it makes a converged candidate outrank a fresh one
- *                          on a REATTACH (the sticky incumbent is exempt — keeping it
- *                          is not a reattach), leaves a BRIDGED key in the shared set
- *                          with no pin at all (its soft shared row is the datum), and
+ *                          (inactive), it leaves the election unchanged.  When
+ *                          active, it makes a converged candidate outrank a fresh
+ *                          one whenever the sticky incumbent is not kept (keeping it
+ *                          is not a reattach), leaves a bridged key in the shared set
+ *                          with no pin (its soft shared row is the datum), and
  *                          supplies the INC-3 σ multiplier for an unavoidable fresh
  *                          pin.
- * @param tally             [in/out] run counters (reattaches / cold fallbacks /
- *                          ramped pins).  Pass @c ctx.counters.hyg.
- * @param anchor_incumbent  [in/out] sticky baseline; swapped at the end.  MUST
- *                          be the run's ctx.carry instance — a copy silently
- *                          degrades the election to a fresh one every epoch,
- *                          which is invisible except as handover churn.
+ * @param tally             [in/out] run counters (reattaches, cold fallbacks,
+ *                          ramped pins, candidacy and satellite-clause splits,
+ *                          handover outcomes).  Pass @c ctx.counters.hyg.
+ * @param anchor_incumbent  [in/out] sticky baseline; swapped at the end.  Must
+ *                          be the run's ctx.carry instance: a copy degrades the
+ *                          election to a fresh one every epoch, which shows only
+ *                          as handover churn.
  * @param this_epoch_anchor [out] read at the emit site for handover signalling.
- * @param handover          TWO-EDGE CONTINUOUS HANDOVER
+ * @param handover          Two-edge continuous handover
  *                          (docs/SPEC_pivot_visibility_gauge_defect.md §5.1).
- *                          @c nullptr (the default) is the pre-card election
- *                          EXACTLY: every pin target is 0.0.  When supplied, a
- *                          handover pins the INCOMING anchor at its own absolute
- *                          ambiguity estimate from the ledger — i.e. at its value
- *                          in the OUTGOING frame — so the gauge change is an
+ *                          @c nullptr (the default) is the election without the
+ *                          card: every pin target is 0.0.  When supplied, a
+ *                          handover pins the incoming anchor at its own absolute
+ *                          ambiguity estimate from the ledger, which is its value
+ *                          in the outgoing frame, so the gauge change is an
  *                          S-transform and the emitted (sat,signal) family does
- *                          not step.  A successor with no ledger entry (fresh arc
- *                          / first epoch) still pins at 0 and is counted as a COLD
- *                          handover: an unavoidable re-realization the consumer is
- *                          TOLD about is a different object from a silent one.
- *                          R2 (§5.09): a continuous target is STICKY — it is
+ *                          not step.  A successor with no ledger entry (a fresh
+ *                          arc, or the first epoch), or one refused by the
+ *                          variance ceilings @p max_var and @p max_var_ratio,
+ *                          still pins at 0 and is counted as a cold handover: an
+ *                          unavoidable re-realization declared to the consumer is
+ *                          a different event from a silent one.
+ *                          R2 (§5.09): a continuous target is sticky.  It is
  *                          stored in @p anchor_pin_target and re-applied every
  *                          epoch the incoming anchor remains incumbent, so the
  *                          inherited frame persists for the anchor's whole
- *                          tenure instead of reverting to 0 at T+1 (the §5.07.3
- *                          one-epoch deferral that made the unsticky version
- *                          measure null).  A key with no stored target keeps its
- *                          0.0 pin, so a settled network that never handed over
- *                          is byte-identical even with the ledger supplied.
- * @param handovers_out     [out, optional] APPENDED per-handover attribution
- *                          (@ref AnchorHandoverEvent) for the caller's
- *                          @c trace_events rows — BOTH edges in one record.
- *                          Purely observational: it never changes which station is
- *                          elected or what target is pinned.  Populated whenever
- *                          it is non-null, including on the @c handover ==
- *                          @c nullptr path, so the churn a legacy arm suffers can
- *                          be MEASURED before the fix is armed.
- * @param reref_out         [out, optional] QUEUE item 1(d)
+ *                          tenure instead of reverting to 0 at T+1 (per §5.07.3
+ *                          a one-epoch target only defers the step to T+1).  A key
+ *                          with no stored target keeps its 0.0 pin, so a settled
+ *                          network that never handed over is byte-identical even
+ *                          with the ledger supplied.
+ * @param handovers_out     [out, optional] per-handover attribution
+ *                          (@ref AnchorHandoverEvent), appended, for the caller's
+ *                          @c trace_events rows; one record holds both edges.
+ *                          Observational only: it does not change which station is
+ *                          elected or what target is pinned.  Filled whenever it
+ *                          is non-null, including when @p handover is @c nullptr,
+ *                          so the churn of an unarmed arm can be measured before
+ *                          the fix is armed.
+ * @param reref_out         [out, optional] queue item 1(d)
  *                          (docs/SPEC_pivot_visibility_gauge_defect.md §5.07.5 R1):
- *                          INSERTED (sat, signal) of every COLD handover this
- *                          epoch — the families whose datum re-realized and whose
- *                          carried state therefore belongs to the RETIRED frame.
- *                          A CONTINUOUS handover is deliberately NOT marked
- *                          (§5.09): under the sticky target the successor is
- *                          pinned in the outgoing frame for its whole tenure, the
- *                          family provably does not step at T or T+1, and the
- *                          carried state remains in-frame — erasing it would be
- *                          exactly the arc-truncation this card exists to stop
- *                          (measured: 582/621 cold handovers erased 10 236
- *                          leveling carries on a 12 h zero-slip fixture).  The
- *                          caller routes it to ctx.carry.phase_anchor_reref, where
- *                          the D2/C1 shared-carry consume marginalizes those PB
- *                          keys for one epoch (exactly as @c eq34_reref) and
+ *                          the (sat, signal) families, inserted, whose pin this
+ *                          epoch is not continuously inherited from an incumbent,
+ *                          so their carried state may belong to a retired frame.
+ *                          Three classes are inserted: every cold handover; every
+ *                          pin with no incumbent (a first sighting, or a bridge
+ *                          exit, whose incumbent record lapses while the key is
+ *                          bridged); and, with @p gate_drop armed, every
+ *                          coverage-gate drop edge.  A continuous handover is not
+ *                          inserted (§5.09): under the sticky target the successor
+ *                          stays pinned in the outgoing frame for its whole tenure,
+ *                          the family does not step at T or T+1, and the carried
+ *                          state remains in frame, so erasing it would only
+ *                          truncate arcs.  The caller routes the set to
+ *                          ctx.carry.phase_anchor_reref, where the D2/C1
+ *                          shared-carry consume marginalizes those PB keys for one
+ *                          epoch (as for @c eq34_reref) and
  *                          @ref networkApplyPhaseAnchorCarryReref erases the
- *                          family's phase-leveling local carries.  @c nullptr
- *                          (the default, and the knob-OFF path) is byte-identical:
- *                          nothing is populated and nothing downstream fires.
- *                          Unlike @p handovers_out this is NOT purely
- *                          observational — its consumers change which priors fold.
- * @param inject        EVENT HARNESS directive set (filter/NetworkInject.hpp), or
- *                      @c nullptr — which is the normal path AND every unarmed
- *                      run.  When a staged @c anchor_handover covers a family,
- *                      the incumbent is excluded from candidacy for THIS epoch
- *                      only (forcing a successor), and in @c cold mode the
- *                      continuous-handover branch is refused so the family takes
- *                      the honest re-realize + re-reference path.  The directive
- *                      records which station it retired and which was elected.
- * @param cand_usable   COLD ANCHOR-FALLBACK (@c network.phase_datum_candidacy_usable,
+ *                          families' phase-leveling local carries.  @c nullptr
+ *                          (the default, and the knob-off path) is byte-identical:
+ *                          nothing is inserted and nothing downstream fires.
+ *                          Unlike @p handovers_out this output is not
+ *                          observational: its consumers change which priors fold.
+ * @param inject        Event-harness directive set (filter/NetworkInject.hpp), or
+ *                      @c nullptr, which is the normal path and every unarmed run.
+ *                      It also carries the anchor-slip handovers staged by
+ *                      @ref networkStageAnchorSlipHandovers.  When a staged
+ *                      @c anchor_handover covers a family, the incumbent is
+ *                      excluded from candidacy for this epoch only (forcing a
+ *                      successor).  In @c cold mode the continuous-handover branch
+ *                      is refused, so the family takes the re-realize and
+ *                      re-reference path.  The directive records which station it
+ *                      retired and which was elected.
+ * @param cand_usable   Cold anchor fallback (@c network.phase_datum_candidacy_usable,
  *                      docs/SPEC_event_harness.md §15), or @c nullptr / a default
- *                      instance — which is the pre-card election EXACTLY.
+ *                      instance, which leaves the election unchanged.
  *
- *                      When @c on, and ONLY where a handover is about to happen (an
- *                      incumbent EXISTS for the key and the sticky branch did not
- *                      keep it — absent, lost the key, or banned by a directive),
- *                      the candidate sweep gains a FIRST pass over the SAME
- *                      coverage-ranked list that accepts only candidates whose
- *                      carried value is USABLE: the continuous branch's own
- *                      predicate (shared lambda, not a copy), plus "not itself
- *                      freed this epoch" and the arc-age bar.  The existing
- *                      coverage order ranks the usable candidates and the FIRST is
- *                      elected; with none usable the election falls through to
- *                      today's two sweeps unchanged, counted.
+ *                      When @c on, and only where a handover is about to happen (an
+ *                      incumbent exists for the key and the sticky branch did not
+ *                      keep it: absent, no longer tracking the key, banned by a
+ *                      directive, or deposed by a held-basis flag), the election
+ *                      first sweeps the same coverage-ranked list and accepts only
+ *                      a candidate whose carried value is usable: the continuous
+ *                      branch's own predicate (the shared lambda, not a copy),
+ *                      plus "not itself freed this epoch" and the arc-age bar.
+ *                      The first usable candidate in coverage order is elected.
+ *                      With none usable, the election falls through to its
+ *                      remaining branches unchanged (the held-basis rank when
+ *                      armed, then the coverage sweeps), counted in
+ *                      @c tally.candidacy_no_usable_fallback.
  *
- *                      An incumbent-LESS key (a first sighting / bridge exit) is
- *                      deliberately NOT screened: there is no outgoing frame, the
+ *                      A key without an incumbent (a first sighting or a bridge
+ *                      exit) is not screened: there is no outgoing frame, the
  *                      continuous branch cannot run, and every such pin is a 0-pin
- *                      whatever station takes it — screening there would move
- *                      elections the card cannot improve.  The hygiene eligibility
- *                      test is applied inside the pass as well, so the elected
- *                      station is always one today's FIRST sweep would also have
- *                      accepted — just, possibly, a later-ranked one.
+ *                      whichever station takes it, so screening would move
+ *                      elections without improving them.  The hygiene eligibility
+ *                      test is part of the screen, so the per-family pick is always
+ *                      a station the first coverage sweep would also accept,
+ *                      possibly a later-ranked one.  With @c satellite_clause on,
+ *                      the satellite's joint host overrides the per-family pick
+ *                      and needs only to track the key, so that guarantee then
+ *                      covers the per-family pick alone.
  *
- *                      PROPERTY: with this armed a handover goes COLD only when NO
- *                      tracking candidate satisfies the continuous branch's own
- *                      predicate, i.e. @c tally.handover_cold then counts exactly
- *                      the unavoidable re-realizations.  Everything else — the
- *                      sticky branch, the bridged branch, the hygiene sweeps, the
- *                      continuous/cold decision, every target computation — is
- *                      untouched; the ONLY change is WHICH station reaches the
- *                      continuous branch.
- * @param gate_drop     Card EV7 §6 (@c network.phase_datum_gate_drop_erase), or
- *                      @c nullptr — which is the pre-card election EXACTLY.  When
- *                      supplied, the COVERAGE-GATE DROP EDGES of this epoch are
- *                      detected immediately before the incumbent swap (the last
- *                      point at which @p anchor_incumbent still describes the
- *                      PREVIOUS epoch) and appended to @c gate_drop->events.  With
- *                      @c gate_drop->on AND @p reref_out non-null, each edge's
- *                      (sat, signal) is ALSO inserted into @p reref_out, so the
- *                      family takes the path the RETURN edge already takes: the
- *                      D2/C1 shared-carry consume marginalizes its PB key for one
- *                      epoch and @ref networkApplyPhaseAnchorCarryReref erases every
- *                      station's carried ambiguity of it BEFORE assembly, in this
- *                      same epoch, instead of leaving the survivor's carried float
- *                      to absorb the removed bias whole (EV7 §5.3).
+ *                      Property: with the satellite clause off, a handover goes
+ *                      cold only when no hygiene-eligible tracking candidate passes
+ *                      the screen, so @c tally.handover_cold then counts the
+ *                      handovers the screen could not make continuous.  With the
+ *                      clause on, a family may also take a cold pin on the
+ *                      satellite's joint host (@c tally.sat_clause_cold_colocated).
+ *                      The sticky branch, the bridged branch, the hygiene sweeps,
+ *                      the continuous/cold decision and every target computation
+ *                      are unchanged; the pass changes only which station reaches
+ *                      the continuous branch.
+ * @param gate_drop     Coverage-gate drop edge (card EV7 §6,
+ *                      @c network.phase_datum_gate_drop_erase), or @c nullptr, which
+ *                      leaves the election unchanged.  When supplied, this epoch's
+ *                      coverage-gate drop edges are detected immediately before the
+ *                      incumbent swap (the last point at which @p anchor_incumbent
+ *                      still describes the previous epoch) and appended to
+ *                      @c gate_drop->events.  With @c gate_drop->on and @p reref_out
+ *                      non-null, each edge's (sat, signal) is also inserted into
+ *                      @p reref_out, so the family takes the path the return edge
+ *                      already takes: the D2/C1 shared-carry consume marginalizes
+ *                      its PB key for one epoch and
+ *                      @ref networkApplyPhaseAnchorCarryReref erases every
+ *                      station's carried ambiguity of it before assembly, in the
+ *                      same epoch.  Otherwise the surviving stations' carried
+ *                      floats absorb the removed bias whole (EV7 §5.3).
  *
- *                      ⚠ The erase therefore rides @p reref_out and is INERT
- *                      without @c network.phase_anchor_carry_reref, which is what
+ *                      The erase therefore depends on @p reref_out and has no
+ *                      effect without @c network.phase_anchor_carry_reref, which
  *                      supplies that pointer.  Both working bases
  *                      (config/refound/{field,sim}_gps_dual_rf0hv.json) arm it.
  *
  *                      A gated key is erased from @c cnd.union_keys before the
- *                      election's loop, so it can never be a handover or a first
- *                      sighting in the SAME epoch: the drop-edge marks and the
- *                      existing §5.07.5 R1 marks are disjoint populations.
+ *                      election's loop, so it cannot be a handover or a first
+ *                      sighting in the same epoch: the drop-edge marks and the
+ *                      §5.07.5 R1 marks are disjoint populations.
  */
 void networkElectPhaseAnchors(
         bool sticky,
@@ -471,62 +530,60 @@ void networkElectPhaseAnchors(
         const AnchorCandidacyUsable* cand_usable = nullptr,
         PhaseHeldBasis* held = nullptr,
         PhaseGateDrop* gate_drop = nullptr,
-        /// Card SID phase 4 (S2 / B1): the ledger read at the first-sighting
-        /// branch, and the drop-edge memory the restore decides on.  Null (the
-        /// default) leaves the election byte-identical; armed in its OBSERVE half
-        /// alone it counts and events and still changes nothing.
+        /// Anchor re-entry (card SID phase 4, S2 / B1): the ledger read at the
+        /// first-sighting branch, and the drop-edge memory the restore decides on.
+        /// Null (the default) leaves the election byte-identical; with only its
+        /// observe half armed it counts and records events and changes nothing else.
         AnchorReentry* reentry = nullptr);
 
 /**
- * @brief ANCHOR-SLIP HANDOVER (network.cycle_slip.anchor_slip_handover):
- *        stage a one-epoch candidacy ban for every (sat, signal) family whose
- *        ANCHOR arc a slip response freed THIS epoch.
+ * @brief Anchor-slip handover (network.cycle_slip.anchor_slip_handover): stage a
+ *        one-epoch candidacy ban for every (sat, signal) family whose anchor arc a
+ *        slip response freed this epoch.
  *
- * The defect it closes (docs/SPEC_event_harness.md §12.6/§12.7, measured).  Each
- * phase-bias family is realized at exactly one station's ambiguity — the anchor
- * @ref networkElectPhaseAnchors elected, and keeps electing while it is sticky.
- * When a detector drain FREES that very arc, nothing hands the family over: the
- * sticky election re-elects the slipped incumbent and the gauge is re-realized
- * from an arc whose level is about to be re-drawn from ONE epoch of code.  On the
- * harness a single +40-cycle L1C slip on an anchor arc cost 157 T4 erases of
- * HEALTHY arcs at eight other stations, a 10.7 m swing in the station's own clock
- * and a 9 m step in the satellite's emitted clock; with the handover forced in the
- * SAME epoch the identical slip cost 0 erases, 2 mm of wire and 1 cm of clock.
+ * Each phase-bias family is realized at one station's ambiguity: the anchor
+ * @ref networkElectPhaseAnchors elected and keeps electing while it is sticky.  When
+ * a detector drain frees that arc, nothing else hands the family over: the sticky
+ * election re-elects the slipped incumbent, and the gauge is re-realized from an arc
+ * whose level is about to be re-drawn from one epoch of code.  The error then spreads
+ * to healthy arcs at other stations and to the station and satellite clocks; a
+ * handover in the same epoch avoids it (docs/SPEC_event_harness.md §12.6/§12.7
+ * has the measurements).
  *
  * The staging is expressed as the injector's candidacy ban (a directive in
  * @c NetworkInjectState::anchor_now_slip, @c cold = false) rather than a direct
- * assignment, for the same reason the harness does: the SUCCESSOR is then chosen
- * by the production rules — coverage rank, hygiene eligibility, the variance gates
- * on the continuous branch, and the honest cold fallback when none of them is
- * satisfiable.  This seam forces the EVENT, never the outcome.
+ * assignment, as the harness does, so the successor is chosen by the production
+ * rules: coverage rank, hygiene eligibility, the variance gates on the continuous
+ * branch, and the cold fallback when none of them can be satisfied.  This function
+ * forces the event, not the outcome.
  *
- * MUST be called AFTER every PASS-A slip drain (both freed sets must be complete)
- * and IMMEDIATELY BEFORE @ref networkElectPhaseAnchors, whose @p inject argument
- * must then be non-null whenever this returned a positive count.
+ * Call it after every PASS-A slip drain (both freed sets must be complete) and
+ * immediately before @ref networkElectPhaseAnchors, whose @p inject argument must
+ * then be non-null whenever this function returned a positive count.
  *
- * @param stations            The station roster — only @c name is read; index
+ * @param stations            The station roster; only @c name is read.  Index
  *                            @c i of each freed pair indexes into it.
  * @param anchor_incumbent    amb key ("<sat>_<signal>") -> anchoring station name,
- *                            as it stands BEFORE this epoch's election.  A freed
+ *                            as it stands before this epoch's election.  A freed
  *                            arc whose station is not this map's entry for its key
  *                            is a non-anchor arc and stages nothing.
- * @param free_ambs           @c ctx.carry.relevel.free_ambs — the latched
+ * @param free_ambs           @c ctx.carry.relevel.free_ambs: the latched
  *                            (station index, amb key) set the leveling free-epoch
  *                            response marked (empty unless
  *                            network.cycle_slip.relevel_free_epoch).
  * @param carry_slipped_ambs  The epoch's DD invariant-carry slip funnel, the same
- *                            pairs in the same encoding — the vehicle on
+ *                            pairs in the same encoding: the vehicle on
  *                            @c carry_invariant lineages, where the leveling latch
  *                            is structurally empty.  Both are consulted; a family
- *                            named by both stages ONE directive.
+ *                            named by both stages one directive.
  * @param inject              Run-scope directive state; @c anchor_now_slip is
- *                            APPENDED to (it was cleared at the top of the epoch).
- *                            Nothing else in it is touched — the injector's own
- *                            schedule, ledger and never-fired logic are untouched.
- * @return The number of directives staged (= families whose anchor arc was freed).
- *         0 means no anchor arc was freed this epoch, which on a run whose
- *         detectors never fired is the honest zero and on one whose detectors DID
- *         fire is simply a slip that did not land on a gauge arc.
+ *                            appended to (it was cleared at the top of the epoch).
+ *                            Nothing else in it is touched: the injector's own
+ *                            schedule, ledger and never-fired logic are unchanged.
+ * @return The number of directives staged (the families whose anchor arc was freed).
+ *         0 means no anchor arc was freed this epoch (or there is no incumbent map
+ *         yet, on the run's first epoch).  On a run whose detectors fired, 0 means
+ *         the slips did not land on a gauge arc.
  */
 int networkStageAnchorSlipHandovers(
         const std::vector<NetStation>& stations,
@@ -536,29 +593,29 @@ int networkStageAnchorSlipHandovers(
         NetworkInjectState& inject);
 
 /**
- * @brief QUEUE item 1(d): erase the phase-leveling local ambiguity carries of
- *        every re-referenced (sat, signal) family, at EVERY station.
+ * @brief Queue item 1(d): erase the phase-leveling local ambiguity carries of
+ *        every re-referenced (sat, signal) family, at every station.
  *
- * The local ambiguities are frame-DEPENDENT quantities (z ≈ range − bˢ_σ − …),
- * so when the family's phase-bias datum re-realizes at a handover the carried
- * floats are stale in exactly the way the shared PB carry is; they refloat next
- * epoch.  Verbatim the eq34 D4 carry-hygiene erase
- * (@c NetworkChainDatum.cpp), applied to the anchored election's re-reference
- * set.  Runs at the election site, BEFORE PASS B consumes the carry.
+ * The local ambiguities depend on the frame (z ≈ range − bˢ_σ − …), so when the
+ * family's phase-bias datum re-realizes at a handover the carried floats are stale in
+ * the same way the shared PB carry is; they refloat next epoch.  The same erase as
+ * the eq34 D4 carry hygiene (@c NetworkChainDatum.cpp), applied to the anchor
+ * election's re-reference set.  Runs at the election site, before PASS B consumes
+ * the carry.
  *
  * @param reref        This epoch's re-referenced (sat, signal) families
- *                     (ctx.carry.phase_anchor_reref).  Empty ⇒ immediate 0.
- * @param local_carry  ctx.carry.local_carry — the phase-leveling per-station
+ *                     (ctx.carry.phase_anchor_reref).  Empty: returns 0 immediately.
+ * @param local_carry  ctx.carry.local_carry: the phase-leveling per-station
  *                     ambiguity carry, keyed (station idx, sat, signal).  Inert
  *                     (empty map) unless network.phase_leveling.
- * @param erased_out   RF-1 §7.4 (optional, null on every unarmed run): receives one
- *                     (key, entry) pair per erased entry, captured BEFORE the erase,
- *                     so @c network_amb_state.csv can carry this class in its D3
- *                     inventory.  The caller — which is the only scope that knows the
- *                     station NAMES and the epoch stamp — turns them into rows.  An
- *                     out-parameter rather than a context handle so this function stays
- *                     a pure map operation and its existing unit test keeps calling it
- *                     with two arguments.
+ * @param erased_out   [out, optional] RF-1 §7.4; null on every unarmed run.  Receives
+ *                     one (key, entry) pair per erased entry, captured before the
+ *                     erase, so @c network_amb_state.csv can carry this class in its
+ *                     D3 inventory.  The caller, the only scope that knows the station
+ *                     names and the epoch stamp, turns them into rows.  It is an
+ *                     out-parameter rather than a context handle so this function
+ *                     stays a pure map operation and its unit test can keep calling
+ *                     it with two arguments.
  * @return Number of local carry entries erased.
  */
 int networkApplyPhaseAnchorCarryReref(

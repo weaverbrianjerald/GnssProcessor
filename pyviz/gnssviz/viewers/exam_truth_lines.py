@@ -2,20 +2,20 @@
 
 The self-referenced :mod:`gnssviz.viewers.state` viewer draws the processor's
 ``tropo_m`` / ``Galileo_m`` / ``clock_m`` states but has no way to draw the
-*truth* they should converge to — those live in the GnssSimulator answer key as
+*truth* they should converge to: those live in the GnssSimulator answer key as
 constants (``truth_scalars.csv``: ``zwd_m``, ``isb_gps_gal_m``) or a per-epoch
 truth series (``truth_clock.csv``).  This viewer supplies exactly those overlay
 lines so the exam reader can eyeball recovery against the construction truth:
 
-  1. Estimated ZWD (``tropo_m`` ±1σ) vs the truth wet delay — the **per-epoch**
+  1. Estimated ZWD (``tropo_m`` ±1σ) vs the truth wet delay: the **per-epoch**
      ``truth_tropo.csv`` series when it exists (``truth_scalars``' ``zwd_m`` is
      only the arc *mean* once the wet delay is time-varying, and drawing a mean
      as a flat truth line fabricates an error that is really the truth moving),
      else the legacy constant.  Graded as RMS over epochs, like the Verifier.
-  2. Recovered GPS→Galileo ISB (``Galileo_m`` ±1σ) vs the truth ISB
-     (``isb_gps_gal_m``) — skipped on a GPS-only run (no ``Galileo_m`` column).
+  2. Recovered GPS to Galileo ISB (``Galileo_m`` ±1σ) vs the truth ISB
+     (``isb_gps_gal_m``), skipped on a GPS-only run (no ``Galileo_m`` column).
   3. Receiver clock residual ``clock_m − clock_bias_m`` on the (week, tow-ms)
-     grid — only when ``truth_clock.csv`` is present.
+     grid, only when ``truth_clock.csv`` is present.
 
 The truth constants have no ``(week, tow)`` stamp, so figures 1–2 read the state
 trace straight (``load_trace`` + ``add_utc``) and pull the constants from
@@ -33,11 +33,11 @@ from ..io import add_utc, first_col, load_trace
 from .base import Viewer, ViewerResult
 from . import exam_common as ec
 
-_C_ZWD = (0.0, 0.6, 0.0)          # green  — estimated ZWD
-_C_ISB = (0.15, 0.35, 0.75)       # blue   — recovered ISB
-_C_CLK = (0.55, 0.25, 0.70)       # purple — clock residual
-_C_TRUTH = (0.0, 0.0, 0.0)        # black  — truth reference lines
-_C_ZERO = (0.5, 0.5, 0.5)         # grey   — zero reference
+_C_ZWD = (0.0, 0.6, 0.0)          # green: estimated ZWD
+_C_ISB = (0.15, 0.35, 0.75)       # blue: recovered ISB
+_C_CLK = (0.55, 0.25, 0.70)       # purple: clock residual
+_C_TRUTH = (0.0, 0.0, 0.0)        # black: truth reference lines
+_C_ZERO = (0.5, 0.5, 0.5)         # grey: zero reference
 
 
 def _num(v):
@@ -49,7 +49,7 @@ def _num(v):
 
 
 def _last_finite(a):
-    """Final finite sample of ``a`` (``NaN`` if none) — the 'recovered' value."""
+    """Final finite sample of ``a`` (``NaN`` if none): the 'recovered' value."""
     a = np.asarray(a, float)
     a = a[np.isfinite(a)]
     return float(a[-1]) if a.size else float("nan")
@@ -59,7 +59,7 @@ def _est_vs_truth_fig(t, est, sig, truth_val, *, est_color, name, title,
                       ylabel, est_label, truth_label, storm, truth_series=None):
     """One tile: estimate (±1σ shaded band) against the truth.
 
-    ``truth_series`` is an optional ``(t, y)`` pair drawn as a line — use it
+    ``truth_series`` is an optional ``(t, y)`` pair drawn as a line, used
     whenever the truth actually moves.  Falling back to ``truth_val`` as a flat
     :class:`HLine` is only correct for a genuinely constant truth; drawing a
     *mean* as a flat line invites the reader to measure the estimate against a
@@ -95,7 +95,7 @@ def build_exam_truth_lines(ctx) -> ViewerResult:
     lines = ["=== Answer-key constants vs recovered states ==="]
 
     # --- Figure 1: estimated ZWD vs truth ZWD (guarded on tropo_m) -----------
-    # truth_scalars' zwd_m is the ARC MEAN once the wet delay is time-varying
+    # truth_scalars' zwd_m is the arc mean once the wet delay is time-varying
     # (sim_sar_fiji swings 0.09-0.21 m), so measuring the estimate against it as
     # a constant manufactures an error that is really just the truth moving.
     # Prefer the per-epoch truth_tropo.csv series and grade RMS over epochs, the
@@ -115,8 +115,8 @@ def build_exam_truth_lines(ctx) -> ViewerResult:
             m_tru = first_col(m, "zwd_m")
             if not m.empty and m_est is not None and m_tru is not None:
                 series = (m["utc"], m_tru.to_numpy(float))
-                # Grade the steady state only, with the SAME skip the Verifier
-                # applies — otherwise this panel and the scorecard beside it
+                # Grade the steady state only, with the same skip the Verifier
+                # applies; otherwise this panel and the scorecard beside it
                 # report different ZWD errors for the same run.
                 skip = min(ec.converge_skip(ctx), max(0, len(m) - 1))
                 resid = (m_est.to_numpy(float) - m_tru.to_numpy(float))[skip:]
@@ -162,7 +162,7 @@ def build_exam_truth_lines(ctx) -> ViewerResult:
         else:
             lines.append(f"ISB  : recovered {rec:8.3f} m (no truth constant)")
 
-    # --- Figure 3: clock residual (est - truth) — only if truth_clock present -
+    # --- Figure 3: clock residual (est - truth), only if truth_clock present -
     tclk = ec.truth_frame(ctx, "truth_clock.csv")
     if (tclk is not None and "clock_bias_m" in tclk.columns
             and first_col(state, "clock_m") is not None):

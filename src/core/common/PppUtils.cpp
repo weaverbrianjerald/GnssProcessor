@@ -3,11 +3,9 @@
  * @brief Implementations of PPP utility helpers declared in PppUtils.hpp.
  *
  * This file contains implementations for frequency/wavelength lookups and
- * system string conversion used throughout the PPP processing code.
- *
- * Renamed from @c PppTypes.cpp when @c PppTypes.hpp was split into
- * focused headers; this translation unit only ever implemented the
- * @c PppUtils class so the rename matches the file's actual contents.
+ * system string conversion used throughout the PPP processing code.  It
+ * implements only the @c PppUtils class (formerly @c PppTypes.cpp, renamed
+ * when @c PppTypes.hpp was split into focused headers).
  */
 
 #include "common/PppUtils.hpp"
@@ -18,8 +16,9 @@ namespace GnssProcessor {
     /**
      * @brief Default GLONASS frequency channel assignments.
      *
-     * Used as fallback when RINEX header lacks GLONASS SLOT/FRQ records.
-     * Note: These may change over time as satellites are replaced.
+     * Used as the fallback for a satellite absent from the slot map given to
+     * setGlonassSlots() (for example when the RINEX header lacks GLONASS SLOT/FRQ
+     * records).  The assignments change over time as satellites are replaced.
      */
     const std::unordered_map<std::string, int> PppUtils::DEFAULT_GLONASS_CHANNELS = {
         {"R01",  1}, {"R02", -4}, {"R03",  5}, {"R04",  6},
@@ -55,7 +54,7 @@ namespace GnssProcessor {
     /**
      * @brief Get the GLONASS frequency channel for a satellite.
      *
-     * Looks up in user-provided slots first, then falls back to defaults.
+     * Looks up the slot map from setGlonassSlots() first, then the default table.
      *
      * @param satellite Satellite identifier (e.g., "R01").
      * @return FDMA channel k from the slot map or the default table; the
@@ -130,9 +129,14 @@ namespace GnssProcessor {
      * For GLONASS, computes the satellite-specific frequency using FDMA:
      *   G1 = 1602.0 MHz + k * 0.5625 MHz
      *   G2 = 1246.0 MHz + k * 0.4375 MHz
-     *   G3 = 1202.025 MHz (CDMA, no channel offset)
+     * The CDMA bands have fixed frequencies with no channel offset:
+     *   G3 = 1202.025 MHz (band 3), G1a = 1600.995 MHz (band 4),
+     *   G2a = 1248.06 MHz (band 6)
      *
      * For other systems, returns the nominal carrier frequency.
+     *
+     * The band is found by searching @p freq_type for any of C, L, D or S followed
+     * by the band digit.
      *
      * @param freq_type Observable or signal string (e.g. "C1", "L1", "C5").
      * @param system GNSS system enumeration value.
@@ -142,7 +146,7 @@ namespace GnssProcessor {
     double PppUtils::getFrequency(const std::string& freq_type, System system, const std::string& satellite) const {
         // Helper: check whether freq_type matches any observable type for a given band digit.
         // RINEX observable codes follow {type}{band}{attr} (e.g. C1W, L1C, D1C, S1C).
-        // We match on all four observable type prefixes (C, L, D, S) for each band.
+        // All four observable type prefixes (C, L, D, S) are matched for each band.
         auto matchesBand = [&freq_type](char band) -> bool {
             const char prefixes[] = { 'C', 'L', 'D', 'S' };
             const std::string target(1, band);
@@ -166,7 +170,7 @@ namespace GnssProcessor {
             if (matchesBand('8')) return Constants::GAL_E5_FREQ;
         }
         else if (system == System::GLONASS) {
-            // CDMA signals (bands 3, 4, 6) have fixed frequencies  no channel offset
+            // CDMA signals (bands 3, 4, 6) have fixed frequencies (no channel offset)
             if (matchesBand('3')) {
                 log_manager_.getLogger("ppp_utils")->trace("GLONASS G3 frequency for {} (CDMA): {:.3f} MHz",
                     satellite, Constants::GLONASS_G3_BASE_FREQ / 1e6);
@@ -183,7 +187,7 @@ namespace GnssProcessor {
                 return Constants::GLONASS_G2A_FREQ;
             }
 
-            // FDMA signals (bands 1, 2) require satellite-specific channel
+            // FDMA signals (bands 1, 2) require the satellite-specific channel
             int channel = getGlonassChannel(satellite);
 
             // Validate channel range
@@ -244,7 +248,8 @@ namespace GnssProcessor {
     /**
      * @brief Get a reference (nominal) frequency for a given observable type and system.
      *
-     * For GLONASS this returns the system's center/reference frequency (G1/G2/G3 at k=0).
+     * For GLONASS this returns the center frequency of G1/G2 (channel k=0) or the fixed
+     * frequency of the CDMA bands G3/G1a/G2a; only C and L observable prefixes match.
      * Use this for logging, records, or when satellite-specific frequency is not needed.
      * For other systems it forwards to getFrequency() to return the nominal carrier frequency.
      *
@@ -272,10 +277,10 @@ namespace GnssProcessor {
                 return Constants::GLONASS_G3_BASE_FREQ; // Center frequency: 1202.025 MHz
             }
             if (freq_type.find("C4") != std::string::npos || freq_type.find("L4") != std::string::npos) {
-                return Constants::GLONASS_G1A_FREQ; // G1a CDMA: 1600.995 MHz
+                return Constants::GLONASS_G1A_FREQ; // 1600.995 MHz (G1a, CDMA)
             }
             if (freq_type.find("C6") != std::string::npos || freq_type.find("L6") != std::string::npos) {
-                return Constants::GLONASS_G2A_FREQ; // G2a CDMA: 1248.06 MHz
+                return Constants::GLONASS_G2A_FREQ; // 1248.06 MHz (G2a, CDMA)
             }
             log_manager_.getLogger("ppp_utils")->warn("Invalid GLONASS frequency type for reference: {}", freq_type);
             return 0.0;
@@ -293,8 +298,8 @@ namespace GnssProcessor {
     /**
      * @brief Compute the wavelength (meters) for a given system, frequency type, and satellite.
      *
-     * For GLONASS, computes satellite-specific wavelength using actual FDMA frequency.
-     * Wavelength is computed as SPEED_OF_LIGHT / frequency.
+     * For GLONASS, computes the satellite-specific wavelength from the FDMA frequency.
+     * Wavelength is computed as Constants::SPEED_OF_LIGHT / frequency.
      *
      * @param system GNSS system enumeration value.
      * @param freq_type Observable or signal identifier (e.g. "L1", "C5").
@@ -318,7 +323,7 @@ namespace GnssProcessor {
         }
 
         // Compute wavelength (meters) = speed of light / frequency
-		// TODO: Use CONSTANTS::WAVELENGTH_xx if available
+		// TODO: use the Constants::*_WAVELENGTH values where they exist
         double wavelength = Constants::SPEED_OF_LIGHT / freq;
         if (!std::isfinite(wavelength) || wavelength <= 0.0) {
             log_manager_.getLogger("ppp_utils")->warn("Invalid wavelength for type {} on system {}, satellite {}: {:.3f} m",
@@ -334,7 +339,8 @@ namespace GnssProcessor {
     /**
      * @brief Compute the wavelength (meters) for a given system and frequency type.
      *
-     * For non-GLONASS systems. For GLONASS, use the overload with satellite ID.
+     * For non-GLONASS systems.  For GLONASS, use the overload with the satellite ID:
+     * without one, the FDMA bands resolve no channel and return 0.0.
      *
      * @param system GNSS system enumeration value.
      * @param freq_type Observable or signal identifier (e.g. "L1", "C5").

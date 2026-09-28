@@ -4,17 +4,16 @@
  *        the shared RobustStats median / MAD-sigma utility.
  *
  * PppUtils is the single source of per-(system, signal) carrier frequencies and
- * the GLONASS FDMA channel arithmetic that turns a base frequency into a
- * satellite-specific one.  Every wavelength, every linear combination, and the
- * geometry of every observation depends on these returning the right number,
- * so the lookup logic and the FDMA channel math are worth pinning explicitly.
+ * of the GLONASS FDMA channel arithmetic that turns a base frequency into a
+ * satellite-specific one.  Every wavelength, linear combination and observation
+ * model depends on these values, so the lookup logic and the FDMA channel math
+ * are pinned here.
  *
- * All expected values are exact: frequencies compare against the named
- * Constants (and the GLONASS FDMA results are exactly representable doubles),
- * wavelengths against SPEED_OF_LIGHT / frequency plus a coarse physical sanity
- * check.  No data fixtures — PppUtils only needs a LogManager, and a
- * default-constructed one creates its loggers lazily (the StateManager tests
- * use the same bare-LogManager pattern).
+ * Expected values are exact: frequencies compare against the named Constants
+ * (the GLONASS FDMA results are exactly representable doubles), and wavelengths
+ * against SPEED_OF_LIGHT / frequency plus a coarse physical range check.  No data
+ * fixtures are needed: PppUtils only needs a LogManager, and a default-constructed
+ * one creates its loggers lazily (the StateManager tests use the same pattern).
  */
 
 #include <gtest/gtest.h>
@@ -83,7 +82,7 @@ TEST(PppUtilsFrequencyTest, GlonassFdmaUsesChannelOffset) {
     EXPECT_DOUBLE_EQ(h.ppp.getFrequency("L2C", System::GLONASS, "R01"), 1246437500.0);  // 1246.0 + 1*0.4375
     EXPECT_DOUBLE_EQ(h.ppp.getFrequency("L1C", System::GLONASS, "R02"), 1599750000.0);  // 1602.0 - 4*0.5625
 
-    // Band 3 is CDMA — a fixed frequency with no channel term.
+    // Band 3 is CDMA: a fixed frequency with no channel term.
     EXPECT_DOUBLE_EQ(h.ppp.getFrequency("L3I", System::GLONASS, "R01"),
                      Constants::GLONASS_G3_BASE_FREQ);
 }
@@ -139,9 +138,8 @@ TEST(PppUtilsGlonassChannelTest, DefaultsOverridesAndUnknownSentinel) {
     EXPECT_EQ(h.ppp.getGlonassChannel("R01"), 3);
     EXPECT_EQ(h.ppp.getGlonassChannel("R02"), -4);   // untouched entries still default
 
-    // Unknown satellite -> -999 skip sentinel.  (The header doc says "0";
-    // the implementation returns -999, which is the value getFrequency relies
-    // on to reject the satellite.  Test pins the real behavior.)
+    // Unknown satellite -> -999 sentinel, the value getFrequency relies on to
+    // reject the satellite.
     EXPECT_EQ(h.ppp.getGlonassChannel("R99"), -999);
 }
 
@@ -171,8 +169,8 @@ TEST(PppUtilsSystemStringTest, SatelliteIdOverload) {
 }
 
 // ---------------------------------------------------------------------------
-// RobustStats — the median / MAD-sigma math extracted from the slip detectors
-// (Mw, GF, EWL, GRAPHIC, IonoVariabilityMonitor, IF-phase) into one utility.
+// RobustStats: the median / MAD-sigma math shared by the slip detectors
+// (MW, GF, EWL, GRAPHIC, IonoVariabilityMonitor, IF-phase).
 // ---------------------------------------------------------------------------
 
 TEST(RobustStatsTest, MedianOddEvenSingleAndEmpty) {

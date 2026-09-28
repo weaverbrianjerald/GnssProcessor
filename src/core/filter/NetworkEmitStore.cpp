@@ -1,15 +1,13 @@
 /**
  * @file NetworkEmitStore.cpp
- * @brief Implementation of @ref networkEmitStore — the SB_EMITSTORE emit/store/
- *        product-write + closed-loop block relocated VERBATIM (dedent-only, zero
- *        substitution) out of Application::runNetwork at decomposition INC-11
- *        (2026-07-22).
+ * @brief Implementation of @ref networkEmitStore: the SB_EMITSTORE emit/store/
+ *        product-write + closed-loop block, relocated out of Application::runNetwork
+ *        at decomposition INC-11.
  *
- * Body = byte-copy of the former SB_EMITSTORE block (ApplicationNetwork.cpp lines
- * 5045-5522), dedented 4 spaces.  Alias preamble = mechanically-derived run-TU
- * aliases + 5 reconstructions (cl / shc / cl_truth / cl_truth_llh / kClRecentWindow).
- * Carries the dormant Iono-2 dual-layer edits verbatim.  See NetworkEmitStore.hpp
- * for the ordering contract.
+ * The alias preamble reproduces the driver's names, with five locals reconstructed
+ * here (cl / shc / cl_truth / cl_truth_llh / kClRecentWindow).  The Iono-2
+ * dual-layer path (sh_model2) is inert unless that layer is armed.  See
+ * NetworkEmitStore.hpp for the step list and the ordering contract.
  */
 
 #include "filter/NetworkEmitStore.hpp"
@@ -18,7 +16,7 @@
 #include "config/GnssConfig.hpp"
 #include "logging/NetworkRunTraces.hpp"
 #include "common/Constants.hpp"
-#include "filter/NetworkClockLevel.hpp"        // card CLV: networkClockLevelDeclare
+#include "filter/NetworkClockLevel.hpp"        // networkClockLevelDeclare (card CLV)
 #include "filter/NetworkLedgerEmit.hpp"
 #include "filter/NetworkPbHold.hpp"
 #include "filter/StateKeySchema.hpp"
@@ -78,9 +76,8 @@ void networkEmitStore(
                      double& cl_first_fix_tow,
                      int& cl_first_fix_week,
                      std::deque<double>& cl_recent_err3d) {
-    // --- Alias preamble: mechanically-derived byte-copies of the former
-    //     Application::runNetwork alias block + 5 reconstructions, so the relocated
-    //     SB_EMITSTORE body reads the original names. ---------------------------
+    // --- Alias preamble: the Application::runNetwork aliases plus 5 reconstructed
+    //     locals, so the relocated SB_EMITSTORE body reads the driver's names. ---
     const auto& nc = config_.getNetworkConfig();
     const bool closed_loop_on = setup.closed_loop_on;
     auto& sh_model = setup.sh_model;
@@ -98,9 +95,9 @@ void networkEmitStore(
     auto& eq34_emitted_pdr = ctx.carry.eq34_emitted_pdr;
     auto& eq34_ppp_utils = ctx.carry.eq34_ppp_utils;
     auto& first_emit_content_s = ctx.carry.first_emit_content_s;
-    const bool   ser_disc_ctrs   = ctx.knobs.ser_disc_ctrs;    // RTA-4: serialize post-emit disc-counter VALUES on C/B/P records
-    const double contract_rebroadcast_s = ctx.knobs.contract_rebroadcast_s; // RTA-5: S-contract re-broadcast period (product time, s; 0 = off)
-    const bool   emit_epoch_status = ctx.knobs.emit_epoch_status;     // RTA-10: per-epoch H heartbeat in the product file (incl. withheld epochs)
+    const bool   ser_disc_ctrs   = ctx.knobs.ser_disc_ctrs;    // serialize post-emit disc-counter values on C/B/P records (RTA-4)
+    const double contract_rebroadcast_s = ctx.knobs.contract_rebroadcast_s; // S-contract re-broadcast period (product time, s; 0 = off) (RTA-5)
+    const bool   emit_epoch_status = ctx.knobs.emit_epoch_status;     // per-epoch H heartbeat in the product file, withheld epochs included (RTA-10)
     auto& last_contract_emit_s = ctx.counters.last_contract_emit_s;
     auto& n_emitted = ctx.counters.n_emitted;
     auto& last_emit_content_s = ctx.counters.last_emit_content_s;
@@ -114,13 +111,13 @@ void networkEmitStore(
         closed_loop_on ? Coordinates::ecefToLlh(cl_truth) : Coordinates::Llh{};
     constexpr std::size_t kClRecentWindow = 30;
 
-    // SPEC_day129_frame_guards Phase 2.2: an ENGAGED SH health gate withholds
-    // this epoch's EMISSION — no store push, no product write, no closed-loop
-    // consume/iono supply, no n_emitted advance (NetworkSolPrep already
-    // early-returned on the same flag, so `sol` is empty).  The withheld H
-    // heartbeat + per-epoch event keep the era visible on the wire and in the
-    // traces; NetworkStashStatus stamps the epoch-status disposition.  The
-    // carry stash and every QC tier still run — emission-only by design.
+    // An engaged SH health gate withholds this epoch's emission: no store push, no
+    // product write, no closed-loop consume or iono supply, no n_emitted advance
+    // (NetworkSolPrep already returned early on the same flag, so `sol` is empty).
+    // The withheld H heartbeat and the per-epoch SH_GATE event keep the withheld era
+    // visible on the wire and in the traces; NetworkStashStatus stamps the
+    // epoch-status disposition.  The carry stash and every QC tier still run; the gate
+    // acts on emission only.  See SPEC_day129_frame_guards Phase 2.2.
     if (nc.sh_health_gate && ctx.carry.sh_gate_engaged) {
         ++ctx.counters.n_sh_gate_withheld;
         traces.emitEvent(se.time, "SH_GATE", "withhold", "", "",
@@ -128,47 +125,49 @@ void networkEmitStore(
                          fmt::format("rms_all={:.2f} oob_run={}",
                                      ctx.carry.sh_gate_last_rms,
                                      ctx.carry.sh_gate_oob_run));
-        // RTA-10: product-level heartbeat for the WITHHELD epoch (H line, no E
-        // line) — a live tail can tell "SH gate withheld" from "producer died".
-        // Before the deferred writer opens (the first emit) the heartbeat is
-        // BUFFERED in setup.pending_h_pre_open and flushed at the open.
+        // Product-level heartbeat for the withheld epoch (H line, no E line), so a
+        // live tail can tell "SH gate withheld" from "producer stopped".  Before the
+        // deferred writer opens (at the first emit) the heartbeat is buffered in
+        // setup.pending_h_pre_open and flushed at the open (RTA-10).
         if (emit_epoch_status) {
             NetworkProducerStatus hst;
             hst.time.week = se.time.week;
             hst.time.tow  = se.time.tow;
             hst.state     = NetworkProducerStatus::State::WithheldShGate;
-            // H-rider: the census σ̂₀ exists on a withheld epoch too (pre-solve).
+            // H-rider: the census σ̂₀ is computed pre-solve, so it exists on a withheld
+            // epoch too.
             if (ctx.knobs.h_sigma0_census) hst.sigma0 = ctx.carry.ep_h_sigma0_census;
             hst.withheld  = "*";
             if (product_writer) {
                 product_writer->writeEpochStatus(hst);
                 if (nc.product_flush_per_epoch) product_writer->flush();
             } else if (setup.contract_pending) {
-                // Buffer ONLY while a v2 writer open is still coming — with no
-                // product path (or v1 immediate open) there is nothing to flush into.
+                // Buffer only while a deferred (v2) writer open is still pending; with
+                // no product path, or a v1 immediate open, there is nothing to flush into.
                 setup.pending_h_pre_open.push_back(hst);
             }
         }
         return;
     }
 
-    // Card 4 (M1) phase D: emit-layer frame re-base (docs/SPEC_card4_invariant_carry.md §10
-    // §1).  Under carry_invariant the eq34 datum is re-realized freely, so the raw
-    // emitted per-(sat,σ) phase bias churns every epoch by a gauge element (a common
-    // per-component fractional + a per-sat integer×λ) that leaves user DDs invariant
-    // but would trip the emitter's 0.05 m jump test and storm the consumer with
-    // spurious resets.  Re-reference the emitted biases onto the PREVIOUS EMISSION
-    // frame BEFORE the store push + on-disk write, so both the in-process consumer
-    // and a NetworkProductIO replay carry the re-based values (the transform is baked
-    // into the product — replay reproduces the disc counters with no re-base rerun).
-    // A genuine reference-path (tree-edge) slip's integer step is left INTACT so the
-    // jump test still fires (never laundered — standing invariant #1).  Gated on
-    // carry_invariant && emit_rebase ⇒ OFF path (carry_invariant=false) byte-identical.
+    // Emit-layer frame re-base (docs/SPEC_card4_invariant_carry.md §10 §1; Card 4 (M1)
+    // phase D).  Under carry_invariant the eq34 datum is re-realized freely, so the raw
+    // emitted per-(sat,σ) phase bias changes every epoch by a gauge element (a common
+    // per-component fractional + a per-sat integer×λ).  That element leaves user DDs
+    // invariant but would trip the emitter's 0.05 m jump test and send the consumer
+    // spurious resets.  The emitted biases are therefore re-referenced onto the previous
+    // emission frame before the store push and the on-disk write, so the in-process
+    // consumer and a NetworkProductIO replay both carry the re-based values (the
+    // transform is in the product; replay reproduces the disc counters without re-running
+    // the re-base).  The integer step of a genuine reference-path (tree-edge) slip is left
+    // in place so the jump test still fires (standing invariant #1).  emit_rebase_on is
+    // carry_invariant && network.carry_invariant_emit_rebase, so with carry_invariant off
+    // the output is byte-identical.
     if (emit_rebase_on && !sol.sats.empty()) {
-        // (a) Reference-path slip set: (sat,σ) whose emission reference — a spanning-
-        //     tree/chain (pinned_amb_targets) edge — slipped this epoch.  Only a
+        // (a) Reference-path slip set: (sat,σ) whose emission reference, a spanning-
+        //     tree/chain (pinned_amb_targets) edge, slipped this epoch.  Only a
         //     tree-edge slip moves the emitted b_s; a chord slip refloats its DD
-        //     without touching the reference, so it is NOT a re-base survivor.
+        //     without touching the reference, so it does not enter this set.
         std::set<std::pair<std::string, std::string>> rb_slipped_ref;   // (sat, signal)
         for (const auto& [sta_i, amb_key] : carry_slipped_ambs) {
             if (sta_i < 0 || sta_i >= static_cast<int>(stations.size())) continue;
@@ -180,8 +179,8 @@ void networkEmitStore(
 
         // (b) Connected-component partition of the (receiver,satellite) bipartite
         //     graph per (const,signal): the common fractional δ is shared only within
-        //     a component (each elects its OWN datum receiver r1).  Union-find over
-        //     this epoch's shared arcs — the same walk buildCarryDdPriors does.
+        //     a component (each elects its own datum receiver r1).  Union-find over
+        //     this epoch's shared arcs, the same walk buildCarryDdPriors does.
         std::map<std::pair<char, std::string>, std::map<std::string, std::string>> dsu;
         auto findRoot = [](const std::map<std::string, std::string>& p,
                            std::string v) -> std::string {
@@ -222,8 +221,8 @@ void networkEmitStore(
             }
         }
 
-        // (c) Build re-base entries from the emitted phase biases (GLONASS + non-eq34
-        //     keys excluded ⇒ their raw emitted frame is untouched).  λ per (const,σ).
+        // (c) Build re-base entries from the emitted phase biases.  GLONASS and non-eq34
+        //     keys are excluded, so their raw emitted frame is untouched.  λ per (const,σ).
         std::vector<NetworkEmitRebase::Entry> rb_entries;
         std::map<std::pair<char, std::string>, double> lambda_of;
         auto sysOfChar = [](char c) -> System {
@@ -259,18 +258,19 @@ void networkEmitStore(
                 if (it != rb_out.end()) npb.bias_m = it->second;
             }
 
-        // M5 prerequisite: PB emission-continuity filter on the RE-BASED values.
-        // A per-key scalar KF + self-tuning k·σ̂_step jump gate smooths the per-
-        // epoch estimation noise the re-base leaves, so the emitter's (unchanged)
-        // jump test fires only at genuine events — clearing the threshold-in-noise
-        // discontinuity floor.  Filters EXACTLY the keys the re-base put into the
-        // emission frame (rb_out); legacy/gated/GLONASS keys keep their raw value
-        // + the emitter's normal jump test.  A reference-path slip (rb_slipped_ref,
-        // the same set the re-base used) forces a reset that PASSES THE RAW VALUE
-        // THROUGH, so the genuine step survives to the emitter — never laundered
-        // (invariant #1).  Baked into sol BEFORE emitToStore + the on-disk write,
-        // so a NetworkProductIO replay reproduces the emitter's disc counters with
-        // no filter rerun (the transform is in the product, like the re-base).
+        // PB emission-continuity filter on the re-based values (M5 prerequisite;
+        // network.emit_pb_filter, armed only together with the re-base).  A per-key
+        // scalar KF with a self-tuning k·σ̂_step jump gate smooths the per-epoch
+        // estimation noise the re-base leaves, so the emitter's unchanged jump test
+        // fires at genuine events rather than at noise crossing the threshold.  It
+        // filters exactly the keys the re-base put into the emission frame (rb_out);
+        // legacy, gated and GLONASS keys keep their raw value and the emitter's normal
+        // jump test.  A reference-path slip (rb_slipped_ref, the set the re-base used)
+        // forces a reset that passes the raw value through, so the genuine step reaches
+        // the emitter (invariant #1).  The result is written into sol before
+        // emitToStore and the on-disk write, so a NetworkProductIO replay reproduces the
+        // emitter's disc counters without re-running the filter (the transform is in the
+        // product, like the re-base).
         if (emit_pb_filter_on) {
             const double pbf_epoch_s =
                 sol.epoch_time.week * 604800.0 + sol.epoch_time.tow;
@@ -300,15 +300,15 @@ void networkEmitStore(
                 }
         }
     }
-    // Card CLK-R (docs/SPEC_clock_emit_rebase.md): clock emission re-base — the
-    // per-constellation common-mode FRAME HOLD (stage 1) + the census-aligned
-    // per-sat STEP MARKS (stage 2).  Baked into sol BEFORE emitToStore + the
-    // on-disk write, so both the in-process consumer and a NetworkProductIO
-    // replay carry the held-frame values, and the marks reproduce from the
-    // serialized E/R records with no re-run.  Outputs-only: the solve is
-    // byte-identical, and between-sat differences are preserved exactly (one
-    // shared subtrahend per constellation), so user SD/DD quantities are
-    // untouched by construction.  Both knobs OFF ⇒ this block never runs.
+    // Clock emission re-base (docs/SPEC_clock_emit_rebase.md, card CLK-R): the
+    // per-constellation common-mode frame hold (stage 1) and the census-aligned
+    // per-sat step marks (stage 2).  Written into sol before emitToStore and the
+    // on-disk write, so the in-process consumer and a NetworkProductIO replay both
+    // carry the held-frame values, and the marks reproduce from the serialized E/R
+    // records without a re-run.  Outputs only: the solve is byte-identical, and
+    // between-sat differences are preserved exactly (one shared subtrahend per
+    // constellation), so user SD/DD quantities are unchanged by construction.  With
+    // both knobs (clk_frame_hold, clk_jump_test) off, the block does not run.
     // Card CLV: stamp each satellite's level step since its previous emission (the
     // code-only re-base moved its clock and phase biases together) before anything
     // reads the clock values, so the clock re-base below, the emitter's phase-bias
@@ -323,8 +323,8 @@ void networkEmitStore(
     if ((ctx.knobs.clk_frame_hold || ctx.knobs.clk_jump_test) && !sol.sats.empty()) {
         const double clk_epoch_s = sol.epoch_time.week * 604800.0 + sol.epoch_time.tow;
         // Forced keys: a per-sat retro bump or a datum-changed constellation this
-        // epoch — marked upstream already, so they must neither drag the μ vote
-        // nor double-mark.
+        // epoch.  They are already marked upstream, so they are kept out of the μ vote
+        // and are not marked twice.
         auto clkForced = [&](const std::string& sat) {
             if (retro_emit_sats.count(sat)) return true;
             if (sat.empty()) return false;
@@ -338,13 +338,14 @@ void networkEmitStore(
             e.sat    = s.sat;
             e.c0_m   = s.clock_c0_m;
             e.forced = clkForced(s.sat);
-            e.level_step_m = s.level_step_m;   // card CLV: 0 unless armed
+            e.level_step_m = s.level_step_m;   // 0 unless card CLV is armed
             ce.push_back(std::move(e));
         }
         if (!ce.empty()) {
-            // F1 seam rule: a warm-resumed lineage's first ARMED epoch is a datum
-            // event — the engine cold-starts in the solve frame while a consumer
-            // may still hold the previous run's held-frame products.  Mark it.
+            // Seam rule (F1): the first armed epoch of a warm-resumed lineage is a
+            // datum event, because the engine cold-starts in the solve frame while a
+            // consumer may still hold the previous run's held-frame products.  It is
+            // marked as a re-anchor of every constellation present.
             const bool resume_seam = ctx.knobs.clk_frame_hold
                                      && clk_rebase_engine.counters().epochs == 0
                                      && n_emitted > 0;
@@ -369,7 +370,8 @@ void networkEmitStore(
                     if (!e.sat.empty()) reanchored.insert(e.sat.front());
             if (!reanchored.empty()) {
                 // Invariant #7: the re-anchor (or resume seam) is a re-coupling
-                // edge — mark it so no consumer integrates across it silently.
+                // edge; the datum mark keeps a consumer from integrating across it
+                // unsignalled.
                 emitter.markDatumChange(reanchored);
                 clk_ser_consts = serialized_consts;
                 clk_ser_consts.insert(reanchored.begin(), reanchored.end());
@@ -387,9 +389,9 @@ void networkEmitStore(
             for (const auto& e : ce)
                 if (e.marked) clk_marks.insert(e.sat);
             if (!clk_marks.empty()) {
-                // Card MS: CLK-R stage 2 is a CLOCK step test — the emitted clock
-                // value moved and nothing says the biases did, so under the
-                // per-channel scope this mark reports the clock channel only.
+                // CLK-R stage 2 is a clock step test: the emitted clock value moved
+                // and nothing says the biases did, so under the per-channel scope
+                // this mark reports the clock channel only (card MS).
                 emitter.markSatDiscontinuity(clk_marks,   // R record + per-sat counters (B1 retro path)
                                              NetworkProductEmitter::kDiscChanClock);
                 clk_retro_merged = retro_emit_sats;
@@ -398,16 +400,15 @@ void networkEmitStore(
             }
         }
     }
-    // RS-4 (SPEC_event_harness §21.9): the warm-resume PHASE-BIAS seam declaration.
+    // Warm-resume phase-bias seam declaration (SPEC_event_harness §21.9, RS-4).
     // The CLK-R rule above marks a resume only when the held-frame clock engine comes
-    // back COLD (`epochs == 0`), so a lineage that RESTORES the frame is never marked —
-    // exactly the case where the clock is continuous across the seam and the phase-bias
-    // LEVEL is not (measured on the field golden: ~17 m p50 per (sat,σ) against the
-    // restored baselines, with `datum_changed 0` and no R record on the wire).  The
-    // emitter's per-key baselines are the previous run's emitted values only until
-    // emitToStore overwrites them, so the census MUST be taken here, before that call.
+    // back cold (`epochs == 0`), so a lineage that restores the frame is not marked
+    // there.  In that case the clock is continuous across the seam but the phase-bias
+    // level need not be, and nothing else (`datum_changed`, an R record) declares it.
+    // The emitter's per-key baselines hold the previous run's emitted values only until
+    // emitToStore overwrites them, so the census is taken here, before that call.
     // One shot (the latch is cleared whether or not anything is marked), warm resumes
-    // only (nothing sets the latch on a cold start), and outputs-only: `sol` is not
+    // only (nothing sets the latch on a cold start), and outputs only: `sol` is not
     // touched, so every estimate and every between-satellite difference is unchanged.
     std::set<char>        pb_ser_consts;    // alive until the writer call below
     if (ctx.knobs.resume_pb_seam_mark && ctx.carry.resume_pb_seam_pending
@@ -433,38 +434,39 @@ void networkEmitStore(
         }
         if (!pb_marked.empty()) {
             // Same wiring as the CLK-R mark: the emitter consumes the forced bump inside
-            // emitToStore, so the on-disk E record must carry the SAME constellation set
-            // or a replay diverges from live.  Merge onto whatever the CLK-R block left
-            // in *ser_consts_use (which is `serialized_consts` unless it re-anchored).
+            // emitToStore, so the on-disk E record carries the same constellation set;
+            // otherwise a replay diverges from live.  The set is merged onto whatever the
+            // CLK-R block left in *ser_consts_use (`serialized_consts` unless it
+            // re-anchored).
             emitter.markDatumChange(pb_marked);
             pb_ser_consts = *ser_consts_use;
             pb_ser_consts.insert(pb_marked.begin(), pb_marked.end());
             ser_consts_use = &pb_ser_consts;
         }
     }
-    // Card PBH (docs/refound/PBH_phase_bias_hold_2026-09-19.md §5): the emit-side
-    // phase-bias HOLD.  Deliberately the LAST writer of the emitted phase bias and
-    // the last statement before emitToStore, which buys three things at once: it
-    // freezes what the card-4 emission re-base and the PB emission filter produced
-    // rather than being overwritten by them; it sits AHEAD of the emitter's
-    // phase-bias value-jump test, so the declared population screens the value the
-    // consumer actually receives; and every marking site of the epoch has already
-    // run, so the seam's pendingMarkChannels read sees the complete set of channels
-    // about to be declared (which is what the coupled clock+phase-bias cost census
+    // Emit-side phase-bias hold (docs/refound/PBH_phase_bias_hold_2026-09-19.md §5,
+    // card PBH).  It is the last writer of the emitted phase bias; only read-only
+    // steps (the SID capture and declaration build) follow it before emitToStore.
+    // That position has three consequences: it holds what the card-4 emission re-base
+    // and the PB emission filter produced instead of being overwritten by them; it
+    // runs before the emitter's phase-bias value-jump test, so the declared population
+    // screens the value the consumer receives; and every marking site of the epoch has
+    // already run, so the seam's pendingMarkChannels read sees the complete set of
+    // channels about to be declared (which the coupled clock+phase-bias cost census
     // needs).  The on-disk write below consumes the same `sol`, so the file and the
-    // in-process store carry the same held values.  OFF ⇒ immediate return ⇒
+    // in-process store carry the same held values.  Off: immediate return,
     // byte-identical.
     networkPbHold(ctx, config_, log, traces, emitter, se, sol);
-    // Card SID phase 5a (E1): the CAPTURE half, between the hold (which stamps the
-    // generations into `sol`) and emitToStore (which overwrites the emitter's
-    // per-family baselines, after which every key answers "not a first sighting").
-    // Reads only; the fold that compares it with the ledger runs after the
-    // roster's audit pass, where this epoch's admitted machine has been advanced.
-    // OFF ⇒ immediate return ⇒ byte-identical.
+    // Ledger-emit capture (card SID phase 5a, E1).  It runs between the hold (which
+    // stamps the generations into `sol`) and emitToStore (which overwrites the
+    // emitter's per-family baselines, after which every key answers "not a first
+    // sighting").  Reads only; the fold that compares it with the ledger runs after
+    // the roster's audit pass, where this epoch's admitted machine has been advanced.
+    // Off: immediate return, byte-identical.
     networkLedgerEmitCapture(ctx, emitter, sol);
-    // Card SID phase 5a (E2): the declaration the producer is about to state on
-    // the wire, built from the roster as it stands AFTER the datum-pin writer, so
-    // the dph= / dco= designations describe this epoch's realized S-basis pin.
+    // Signal-roster declaration (card SID phase 5a, E2): the statement the producer is
+    // about to put on the wire, built from the roster as it stands after the datum-pin
+    // writer, so the dph= / dco= designations describe this epoch's realized S-basis pin.
     // Built here rather than at the writer so the in-process store and the file
     // carry the same statement even when the writer is absent.
     if (ctx.ledger_emit.armed) {
@@ -483,20 +485,20 @@ void networkEmitStore(
         }
     }
     emitter.emitToStore(sol, network_store);
-    // Card SID phase 5a (E2): the declaration reaches the IN-PROCESS consumer here,
-    // immediately after this epoch's records and before the closed-loop consumer
-    // reads them below, which is the same position the file replay gives it.
+    // The declaration reaches the in-process consumer here, immediately after this
+    // epoch's records and before the closed-loop consumer reads them below, which is
+    // the position the file replay gives it (card SID phase 5a, E2).
     if (ctx.ledger_emit.armed && ctx.ledger_emit.decl.present)
         network_store.setDeclaredRoster(ctx.ledger_emit.decl);
-    // --- Card JT: drain the de-commoned jump test's classified cells ----------
-    // Invariant #7 at BOTH edges with identities: the DECOUPLING edge is the
-    // declaration this test raises (decl_decommon_only / decl_both) and the
-    // RE-COUPLING edge is the declaration it withholds (raw_only_suppressed — the
+    // --- Drain the de-commoned jump test's classified cells (card JT) ----------
+    // Invariant #7, both edges with identities: the decoupling edge is the
+    // declaration this test raises (decl_decommon_only / decl_both), and the
+    // re-coupling edge is the declaration it withholds (raw_only_suppressed: the
     // frame moved, this satellite did not, and the consumer's receiver phase clock
-    // absorbs it by construction).  Both are events, both are counted, and a
-    // fallback_raw row names every cell whose signal was too thin for a frame
-    // estimate.  The vector is EMPTY on an OFF run, so this loop never runs and the
-    // OFF path stays byte-identical.
+    // absorbs the move by construction).  Both are events and both are counted; a
+    // fallback_raw row names each unforced cell whose signal had too few satellites
+    // for a frame estimate.  The vector is empty on an off run, so this loop does not
+    // execute and the off path stays byte-identical.
     for (const auto& e : emitter.pbJumpDecommonEvents()) {
         const char* kind = "decl_both";
         switch (e.cls) {
@@ -517,16 +519,15 @@ void networkEmitStore(
                                      e.signal, e.raw_delta_m, e.common_m, e.decommon_m,
                                      e.threshold_m, e.population));
     }
-    // --- Card MS: drain the mark-scope census of this emit --------------------
-    // Invariant #7 at BOTH edges with identities.  The DECOUPLING edge is what a
-    // per-satellite mark actually stepped (n_mark_clk / n_mark_cb / n_mark_pb) and
-    // what it was WITHHELD from (n_mark_suppressed_by_scope, one MARK_SCOPE row per
-    // suppressed (sat, channel) with the mask the marking sites asked for).  The
-    // RE-COUPLING edge is not this card's: a channel the mark did not name is still
-    // declared by the emitter's own per-(sat, signal) jump test if its value
-    // genuinely re-realized — that is what the TOW 276810 population rides.  Both
-    // the tally and the vector are zero/empty under the default `sat` scope, so the
-    // OFF path stays byte-identical and this block is a no-op.
+    // --- Drain the mark-scope census of this emit (card MS) --------------------
+    // Invariant #7, both edges with identities.  The decoupling edge is what a
+    // per-satellite mark stepped (n_mark_clk / n_mark_cb / n_mark_pb) and what it was
+    // withheld from (n_mark_suppressed_by_scope, one MARK_SCOPE row per suppressed
+    // (sat, channel) with the mask the marking sites asked for).  The re-coupling edge
+    // is handled elsewhere: a channel the mark did not name is still declared by the
+    // emitter's own per-(sat, signal) jump test if its value re-realized.  Both the
+    // tally and the vector are zero/empty under the default `sat` scope, so the off
+    // path stays byte-identical and this block is a no-op.
     {
         const auto& mt = emitter.markChannelTally();
         ctx.counters.n_mark_clk += mt.clk;
@@ -552,27 +553,27 @@ void networkEmitStore(
                                          (e.marked & NetworkProductEmitter::kDiscChanPhaseBias) ? "pb" : ""));
         }
     }
-    // RTA-5: periodic S-contract re-broadcast — a CURRENT S line (refreshed
-    // realized pivots) every N seconds of PRODUCT time, and additionally on any
-    // epoch whose emit carried a datum change (markDatumChange fired above), so a
+    // Periodic S-contract re-broadcast (RTA-5): a current S line (refreshed realized
+    // pivots) every contract_rebroadcast_s seconds of product time, and also on any
+    // epoch with a datum change, a phase-datum root change or a clock re-anchor, so a
     // late joiner sees the contract and a post-handover reader sees the pivots the
-    // product is NOW realized in.  Pivots refresh from last_pivot — the merged
-    // emit-baseline map that advanced just above, paired with this epoch's bump:
-    // it holds this epoch's realized pivot for every present constellation and the
-    // last-EMITTED pivot for an absent one, i.e. exactly the datum of the product
-    // as of this emit.  pending_contract is refreshed in place so the end-of-run
-    // round-trip self-check compares against the LAST written contract.  Written
-    // BEFORE the epoch block so the S line positionally precedes the epochs it
-    // describes; the elapsed>0 guard keeps the first-emit epoch single-S (the
-    // header line just written).  OFF (0) ⇒ no extra S lines (byte-identical).  Card OWD:
-    // the contract is on every wire, so contract_rebroadcast_s alone governs.
+    // product is now realized in.  Pivots refresh from last_pivot, the merged
+    // emit-baseline map NetworkSolPrep advanced this epoch together with this epoch's
+    // bump: it holds this epoch's realized pivot for every present constellation and
+    // the last emitted pivot for an absent one, i.e. the datum of the product as of
+    // this emit.  pending_contract is refreshed in place so the end-of-run round-trip
+    // self-check compares against the last written contract.  The S line is written
+    // before the epoch block so it positionally precedes the epochs it describes; the
+    // elapsed > 0 guard keeps the first emitted epoch to a single S line (the header
+    // line just written).  Off (0): no extra S lines, byte-identical.  The contract is
+    // on every wire, so contract_rebroadcast_s alone governs (card OWD).
     if (contract_rebroadcast_s > 0.0 && product_writer
         && last_contract_emit_s >= 0.0 && pl_now_s > last_contract_emit_s) {
         const bool due = (pl_now_s - last_contract_emit_s) >= contract_rebroadcast_s;
-        // Card 3 (D4): a datum-receiver (root) handover re-references the whole
-        // component's biases by a common fractional + per-sat integers — a
-        // materially softer event than a clock-pivot handover, but still a
-        // datum break the consumer should re-sync the contract on.
+        // A datum-receiver (root) handover re-references the whole component's
+        // biases by a common fractional + per-sat integers.  That is a smaller event
+        // than a clock-pivot handover but still a datum break on which the consumer
+        // re-syncs the contract (Card 3, D4).
         const std::string cur_pdr = (phase_datum_eq34 && !eq34_datum_rx.empty())
                                       ? eq34_datum_rx.begin()->second : std::string{};
         const bool eq34_root_changed = phase_datum_eq34 && cur_pdr != eq34_emitted_pdr;
@@ -588,15 +589,15 @@ void networkEmitStore(
         }
     }
     if (product_writer) {
-        // Card SID phase 5a (E2): the DECLARED SIGNAL ROSTER, written as a
-        // contiguous N block immediately before this epoch's heartbeat and epoch
-        // block: the S-line positional precedent, so a positional reader holds
-        // the declaration for the epochs that follow it.  Written only when the
-        // declaration CHANGED (and therefore always at the first emitted epoch),
-        // which is what keeps the wire's growth proportional to the roster's
-        // motion rather than to the run's length.  ⚠ A consumer that joins
-        // mid-file sees none until the next change; the wire carries no periodic
-        // re-broadcast in this revision.
+        // Declared signal roster (card SID phase 5a, E2), written as a contiguous
+        // N block immediately before this epoch's heartbeat and epoch block,
+        // following the S-line positional precedent, so a positional reader holds
+        // the declaration for the epochs that follow it.  It is written only when
+        // the declaration changed (and therefore always at the first emitted
+        // epoch), which keeps the wire's growth proportional to the roster's motion
+        // rather than to the run's length.  A consumer that joins mid-file sees no
+        // declaration until the next change; the wire carries no periodic
+        // re-broadcast of it.
         if (ctx.ledger_emit.decl_pending) {
             ctx.ledger_emit.decl_pending = false;
             const std::size_t n = product_writer->writeSignalDeclaration(ctx.ledger_emit.decl);
@@ -607,13 +608,12 @@ void networkEmitStore(
                       "({} N record(s), TOW {:.1f}): {}",
                       n, se.time.tow, signalDeclarationSummary(ctx.ledger_emit.decl));
         }
-        // RTA-10: the emitted epoch's heartbeat, written immediately BEFORE its epoch
-        // block (the S-line positional precedent — an H describes what follows).
+        // The emitted epoch's heartbeat (RTA-10), written immediately before its
+        // epoch block (the S-line positional precedent: an H describes what follows).
         // status=partial iff any constellation was withheld from this emission (the
         // RT0-5 runaway quarantine and/or the per-constellation σ̂0 carve-out);
-        // sigma0 = the global within-epoch σ̂0 (0 when the within-epoch RAIM did not
-        // run this epoch — "unavailable" per the H grammar); n_sats counts the
-        // POST-prune emission.  Never feeds replay; flushed with the epoch below.
+        // sigma0 is described below; n_sats counts the post-prune emission.  The H
+        // line never feeds replay; it is flushed with the epoch below.
         if (emit_epoch_status) {
             NetworkProducerStatus hst;
             hst.time.week        = se.time.week;
@@ -621,12 +621,14 @@ void networkEmitStore(
             hst.state            = epoch_withheld_consts.empty()
                                        ? NetworkProducerStatus::State::Ok
                                        : NetworkProducerStatus::State::Partial;
-            // H-rider (network.h_sigma0_prefit_census): the census-fed σ̂₀,
-            // UNIFORM across every H site when armed (the S contract carries
-            // hsig=pc so a consumer knows which population field 5 is).  The
-            // legacy feed (sigma0_adapt) is structurally 0.0000 on every
-            // no-leveling lineage and a degenerate 1.0000 on quiet leveled
-            // ones — the wire shipped with no usable residual statistic.
+            // H-rider (network.h_sigma0_prefit_census): when armed, the census-fed
+            // σ̂₀, the same population at every H site (the S contract carries
+            // hsig=pc so a consumer knows which population field 5 is).  Otherwise
+            // the legacy feed sigma0_adapt: the global within-epoch σ̂0, 0 when the
+            // within-epoch RAIM did not run ("unavailable" per the H grammar).  That
+            // feed is structurally 0 on every lineage without phase leveling and a
+            // degenerate 1.0 on quiet leveled ones, so it carries no usable residual
+            // statistic.
             hst.sigma0           = ctx.knobs.h_sigma0_census
                                        ? ctx.carry.ep_h_sigma0_census
                                        : sigma0_adapt;
@@ -642,49 +644,52 @@ void networkEmitStore(
             }
             product_writer->writeEpochStatus(hst);
         }
-        // Card CLK-R: *_use point at the caller's sets unless this epoch added a
-        // frame re-anchor datum mark / step marks (then they point at the merged
-        // locals above) — the on-disk E/R records must describe every bump the
-        // emitToStore call above consumed, or replay diverges from live.
+        // *_use point at the caller's sets unless this epoch added a clock frame
+        // re-anchor mark, clock step marks or a phase-bias resume-seam mark (then they
+        // point at the merged locals above).  The on-disk E/R records describe every
+        // bump the emitToStore call above consumed; otherwise replay diverges from
+        // live (card CLK-R).
         const bool any_bump = global_bump || !ser_consts_use->empty();
         product_writer->write(sol, any_bump, global_bump ? std::set<char>{} : *ser_consts_use,
                               *retro_use,
-                              // RTA-4: post-emit counter source — emitToStore ran
-                              // above, so the emitter's counters ARE this epoch's
+                              // Post-emit counter source (RTA-4): emitToStore ran
+                              // above, so the emitter's counters are this epoch's
                               // store-record values.
                               ser_disc_ctrs ? &emitter : nullptr);
-        // RTA-6: per-epoch flush so a live tail consumer (NetworkProductTail)
-        // sees this epoch block now, not at an ofstream-buffer boundary.
-        // Covers the RTA-5 S re-broadcast written above too (same stream).
-        // Changes no bytes; default-off toggle discipline.
+        // Per-epoch flush (RTA-6) so a live tail consumer (NetworkProductTail)
+        // sees this epoch block now, not at an ofstream-buffer boundary.  It also
+        // covers the S re-broadcast written above (same stream).  Changes no bytes;
+        // off by default.
         if (nc.product_flush_per_epoch) product_writer->flush();
     }
-    if (n_emitted == 0) first_emit_content_s = pl_now_s;   // RTB-7(c): grade-metric anchor
+    if (n_emitted == 0) first_emit_content_s = pl_now_s;   // grade-metric anchor (RTB-7(c))
     ++n_emitted;
-    last_emit_content_s = pl_now_s;   // RTB-6: content time of this emit (health last-emit age)
-    // R12: commit the B8/T2 within-epoch-trigger flag-rate now that the epoch has EMITTED
-    // (withheld/skipped epochs never reach here, so T2's denominator = emitted epochs, the
-    // same population T3–T6 count over).  Guarded by trace_flag_rates ⇒ OFF byte-identical.
+    last_emit_content_s = pl_now_s;   // content time of this emit, for the health last-emit age (RTB-6)
+    // Commit the B8/T2 within-epoch-trigger flag rate now that the epoch has been emitted
+    // (R12).  Withheld and skipped epochs do not reach here, so T2's denominator is the
+    // emitted epochs, the population T3–T6 count over.  Guarded by trace_flag_rates, so
+    // with it off the output is byte-identical.
     if (trace_flag_rates && we_t2_opp) {
         ++fr_we_trigger.opp;
         if (we_t2_flag) ++fr_we_trigger.flag;
     }
 
     // --- Closed-loop consume: held-out station vs the fresh network store -
-    // Run the consumer ONLY now that this epoch's products are in the store,
-    // so its SSR clock + phase bias reflect the just-solved network solution.
+    // The consumer runs only after this epoch's products are in the store, so its
+    // SSR clock + phase bias reflect the just-solved network solution.
     if (closed_loop_on && consumer) {
         auto cit = se.by_station.find(cl.station.name);
         if (cit != se.by_station.end() && !cit->second.empty()) {
             // --- Supply this epoch's SH-VTEC slant ionosphere to the consumer -
             // Evaluate the just-solved global VTEC field at the consumer's own
-            // pierce points and push an UNDIFFERENCED per-satellite slant-iono
-            // value (metres on L1, Odijk-2016 Table 11) into the store BEFORE
+            // pierce points and push an undifferenced per-satellite slant-iono
+            // value (metres on L1, Odijk-2016 Table 11) into the store before
             // the consumer reads it, so it applies the tight ionosphere-weighted
-            // prior in place of floating its slant iono.  Reuses the producer's
-            // own SH→slant machinery (appendShIonoRows) at the consumer geometry.
-            // OFF (default) ⇒ nothing pushed, consumer applies nothing (byte-
-            // identical).  In-process only — not part of the on-disk product.
+            // prior instead of floating its slant iono.  Uses the same IPP geometry
+            // and SH evaluation as the producer's SH iono rows (appendShIonoRows),
+            // at the consumer geometry.  Off (default): nothing is pushed and the
+            // consumer applies nothing (byte-identical).  In-process only; not part
+            // of the on-disk product.
             if (cl.consume_network_products && cl.consume_network_iono && sh_model) {
                 const auto& iw = config_.getIonosphereWeightingConfig();
                 const double Re = shc.earth_radius_km * 1000.0;
@@ -704,7 +709,7 @@ void networkEmitStore(
                     } catch (...) { coeff_ok = false; }
                 }
                 // Iono-2 dual-layer: second-shell coefficients for the layer-sum
-                // supply (the consumer receives the SUMMED slant — it is
+                // supply (the consumer receives the summed slant; it is
                 // layer-agnostic by design).
                 Eigen::VectorXd coeff2;
                 if (coeff_ok && sh_model2) {
@@ -726,8 +731,8 @@ void networkEmitStore(
                         for (const auto& o : mv)
                             if (!o.satellite.empty() && o.sat_pos.allFinite())
                                 sat_pos.emplace(o.satellite, o.sat_pos);
-                    // T3f: SH-coefficient covariance + column map + fresh-OSB set (built ONLY
-                    // when the formal-σ supply is armed; unused/empty otherwise).
+                    // SH-coefficient covariance + column map + fresh-OSB set, built only
+                    // when the formal-σ supply is armed and empty otherwise (T3f).
                     std::vector<Eigen::Index> sh_cols;
                     std::set<std::string>     fresh_osb;
                     const Eigen::MatrixXd*    shcov_p = nullptr;
@@ -745,12 +750,13 @@ void networkEmitStore(
                     int n_iono = 0;
                     for (const auto& o : cit->second) {
                         if (o.satellite.empty() || o.satellite.front() == 'R')
-                            continue;   // GPS/Galileo only — the SH field excludes GLONASS
+                            continue;   // GLONASS skipped: the SH field excludes it
                         const auto pit = sat_pos.find(o.satellite);
                         if (pit == sat_pos.end()) continue;
-                        // T3f: skip the supply for a sat without FRESH OSB coverage this epoch
-                        // — the SH-implied slant leans on the code-bias observability, so an
-                        // OSB-less sat's field value is not trustworthy enough to inject.
+                        // Skip the supply for a sat without fresh OSB coverage this epoch
+                        // (T3f): the SH-implied slant depends on code-bias observability, so
+                        // the field value of a sat without an OSB is not reliable enough to
+                        // inject.
                         if (nc.iono_supply_formal_sigma
                             && config_.estimateNetworkSatCodeBias()
                             && !fresh_osb.count(o.satellite)) continue;
@@ -778,9 +784,9 @@ void networkEmitStore(
                         double sigma = std::max(iw.floor_m,
                                                 shc.representation_sigma_tecu * map);
                         if (nc.iono_supply_formal_sigma && shcov_p) {
-                            // T3f: RSS the SH-coefficient FORMAL σ onto the representativeness
-                            // floor.  aᵀ Q_sh a (a = ∂VTEC/∂coeff basis row, Q_sh = SH coeff
-                            // covariance, TECU²) → VTEC variance; ×map → slant metres.
+                            // RSS the SH-coefficient formal σ onto the representativeness
+                            // floor (T3f).  aᵀ Q_sh a (a = ∂VTEC/∂coeff basis row, Q_sh = SH
+                            // coeff covariance, TECU²) → VTEC variance; ×map → slant metres.
                             std::vector<double> a;
                             sh_model->basis(g.ipp_lat_rad, lon_sf, a);
                             if (!sh_model2) {
@@ -797,9 +803,9 @@ void networkEmitStore(
                                 sigma = std::max(iw.floor_m, std::sqrt(repr * repr + formal * formal));
                             } else {
                                 // Dual-layer: exact slant formal σ over the
-                                // CONCATENATED per-layer weighted basis
+                                // concatenated per-layer weighted basis
                                 // w = [map₁·a₁ ; map₂·a₂] (cross-layer
-                                // covariance included) — wᵀ Q w is already m².
+                                // covariance included); wᵀ Q w is already m².
                                 std::vector<std::pair<Eigen::Index, double>> wv;
                                 wv.reserve(sh_cols.size() + 64);
                                 for (std::size_t j = 0; j < sh_cols.size(); ++j)
@@ -860,13 +866,13 @@ void networkEmitStore(
                 }
             }
             // Converged-segment position RMS: rolling window over the most
-            // recent epochs (the float transient + any early wrong-fix
-            // excursions are not a fair measure of steady-state quality).
+            // recent kClRecentWindow (30) epochs, because the float transient and
+            // any early wrong-fix excursions do not measure steady-state quality.
             cl_recent_err3d.push_back(err3d);
             if (cl_recent_err3d.size() > kClRecentWindow) cl_recent_err3d.pop_front();
 
             if (cl_trace) {
-                // T2c: attribute WHICH gate zeroed AR this epoch.  gate_reason is set at
+                // Record which gate stopped AR this epoch (T2c).  gate_reason is set at
                 // the pre-MLAMBDA early gates; reason 0 means MLAMBDA was reached, so the
                 // outcome is read from success/ratio (fixed / ratio-battery reject / a
                 // degenerate MLAMBDA that produced no ratio).
@@ -895,8 +901,9 @@ void networkEmitStore(
                          << ar_gate << ','
                          << fmt::format("{:.6f}", ar_ran ? ar.p_succ : 0.0) << '\n';
             }
-            // Card GAL: the consumer's receiver inter-system bias, same stamp as the
-            // row above.  The stream is open only with a second constellation active.
+            // The consumer's receiver inter-system bias, with the same stamp as the row
+            // above (card GAL).  The stream is open only with a second constellation
+            // active.
             if (traces.cl_isb_trace.is_open()) {
                 const double clk = consumer->getClockBias();
                 for (const auto& [sys, vs] : consumer->getSystemTimeOffsets())
@@ -906,26 +913,26 @@ void networkEmitStore(
                                         << fmt::format("{:.4f}", vs.second) << ','
                                         << fmt::format("{:.4f}", clk) << '\n';
             }
-            // Card CST: the per-SATELLITE twin of the row above.  The engine
-            // harvested its own epoch at the processEpoch tail (traceConsumerSat_);
+            // Per-satellite counterpart of the closed-loop row (card CST).  The engine
+            // collects its own epoch at the processEpoch tail (traceConsumerSat_);
             // this seam only moves the buffer to the stream NetworkRunTraces owns,
-            // stamped with the SAME (week, tow) closed_loop_trace.csv just used, so
-            // the two files join with no tolerance.  Both counters are invariant
-            // #4's ON-path telemetry: rows == 0 on an armed run means the consumer
-            // deferred every epoch, which no absence-of-crash reading would show.
+            // stamped with the (week, tow) closed_loop_trace.csv just used, so the two
+            // files join with no tolerance.  Both counters are invariant #4's on-path
+            // telemetry: rows == 0 on an armed run means the consumer deferred every
+            // epoch, which a run that merely completes would not show.
             if (nc.trace_consumer_sat) {
                 const std::size_t n_cst =
                     traces.writeConsumerSatRows(se.time, consumer->consumerSatRows());
                 if (n_cst > 0) ++ctx.counters.n_cst_epochs;
                 ctx.counters.n_cst_rows += static_cast<long long>(n_cst);
             }
-            // Card ALC: drain the consumer's AMB_LEVEL events into network_events.csv
-            // and the run counters -- invariant #7's BOTH edges with identities.  The
-            // DECOUPLING edge is the `trip` row (which test, |state-level|, sigma_level,
-            // n, and both statistics in the detail); the RE-COUPLING edge is the
+            // Drain the consumer's AMB_LEVEL events into network_events.csv and the run
+            // counters (card ALC; invariant #7, both edges with identities).  The
+            // decoupling edge is the `trip` row (which test, |state-level|, sigma_level,
+            // n, and both statistics in the detail); the re-coupling edge is the
             // `refloat` row naming the two ambiguity keys re-floated and the std they
             // were re-floated at.  In `observe` mode the trip rows appear and the
-            // refloat rows do not, which is the mode read back off the artefact.  The
+            // refloat rows do not, so the mode can be read back from the output.  The
             // engine's buffer is cleared at the top of every processEpoch, so an epoch
             // the consumer deferred drains nothing rather than repeating the last one.
             if (consumer->ambLevelCheckArmed()) {
@@ -953,12 +960,12 @@ void networkEmitStore(
             if (s.has_clock)
                 soln << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
                      << s.sat << ",CLK,," << fmt::format("{:.4f}", s.clock_c0_m)
-                     << ',' << emitter.clockDiscontinuityCounter(s.sat) << '\n';  // A2: 0 when off (byte-identical)
+                     << ',' << emitter.clockDiscontinuityCounter(s.sat) << '\n';  // 0 when off, byte-identical (A2)
             for (const auto& [signal, pb] : s.phase_bias)
                 soln << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
                      << s.sat << ",PB," << signal << ',' << fmt::format("{:.4f}", pb.bias_m)
                      << ',' << emitter.discontinuityCounter(s.sat, signal) << '\n';
-            for (const auto& [signal, cb] : s.code_bias_m)   // W6 satellite code bias (OSB)
+            for (const auto& [signal, cb] : s.code_bias_m)   // satellite code bias (OSB), W6
                 soln << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
                      << s.sat << ",CB," << signal << ',' << fmt::format("{:.4f}", cb)
                      << ',' << emitter.codeBiasDiscontinuityCounter(s.sat, signal) << '\n';

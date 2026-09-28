@@ -1,26 +1,25 @@
 /**
  * @file NetworkProducerAr.cpp
- * @brief Implementation of @ref networkProducerAr — the log-only producer-side
- *        network-AR (Phase 2) diagnostic + one-shot NEQ export, relocated VERBATIM
- *        (dedent-4, zero substitution) out of Application::runNetwork at decomposition
- *        INC-9b (2026-07-22).
+ * @brief Implementation of @ref networkProducerAr: the log-only producer-side
+ *        network-AR (Phase 2) diagnostic and the one-shot NEQ export, relocated
+ *        out of Application::runNetwork at decomposition INC-9b.
  *
- * The body below was a byte-copy of the former SB_NETAR block, dedented 4 spaces (the
- * block sat at loop-body indent, no wrapping if).  The alias preamble reconstructs the
- * three run-TU aliases the body reads (nc / netar / n_emitted); every other name is a
- * parameter named exactly as the former run-TU local.  See NetworkProducerAr.hpp.
+ * The body started as a copy of the former SB_NETAR block, dedented 4 spaces.  The
+ * alias preamble reconstructs the three run-TU aliases the body reads (nc / netar /
+ * n_emitted); every other name is a parameter named as the former run-TU local.  See
+ * NetworkProducerAr.hpp.
  *
- * ⚠ NO LONGER VERBATIM (2026-09-10, the trace card — docs/network_ambiguity_resolution_
- * design.md's 2026-09-10 note §4.1, "a fix count is not a grade").  Three deliberate
- * departures, all additive and all outside the arithmetic:
- *   1. `DDrow` carries the six IDENTITY strings a truth join needs;
- *   2. the cap's `order` is hoisted out of the branch into @ref netar::lowestSigmaOrder
- *      so the trace can invert it (@ref netar::mapFixToBasis) — same sort, same
- *      comparator, same subset, so the SEARCH is unchanged;
- *   3. run-end tallies + the per-DD `network_producer_ar.csv` writer.
- * The solve is still untouched and the block is still skipped entirely when
- * `network.ambiguity_resolution.enable` is off, so the OFF product stays byte-identical
- * (certified same-build on the 60-epoch golden twin, 2026-09-10).
+ * Three additive departures from the relocated text, all outside the arithmetic (the
+ * trace card; docs/network_ambiguity_resolution_
+ * design.md, 2026-09-10 note §4.1, "a fix count is not a grade"):
+ *   1. `DDrow` carries the six identity strings a truth join needs;
+ *   2. the cap's `order` comes from @ref netar::lowestSigmaOrder so the trace can
+ *      invert it (@ref netar::mapFixToBasis); the sort, comparator and subset are
+ *      the same, so the search is unchanged;
+ *   3. run-end tallies and the per-DD `network_producer_ar.csv` writer.
+ * The solve is untouched, and the block is skipped entirely when
+ * `network.ambiguity_resolution.enable` is off, so with it off the products are
+ * byte-identical.
  */
 
 #include "filter/NetworkProducerAr.hpp"
@@ -74,11 +73,10 @@ std::vector<DdFixLabel> mapFixToBasis(int n_dd,
     std::vector<DdFixLabel> out(static_cast<std::size_t>(std::max(0, n_dd)));
     for (int s : search_of)
         if (s >= 0 && s < n_dd) out[static_cast<std::size_t>(s)].in_subset = true;
-    // `kept[m]` indexes the SEARCH vector; `afix(m)` is that entry's integer.  The
-    // double indirection kept -> search_of -> basis is the whole point of this
-    // function: skipping it silently attributes an integer to the DD that happens
-    // to sit at the same ORDINAL in the basis, which on a capped, sigma-sorted
-    // search is essentially a random satellite.
+    // `kept[m]` indexes the search vector; `afix(m)` is that entry's integer.  The
+    // integer goes to basis entry search_of[kept[m]].  Using kept[m] directly as a
+    // basis index would attribute it to whichever DD sits at that ordinal in the
+    // basis, which on a capped, sigma-sorted search is an unrelated satellite.
     const int n_af = static_cast<int>(afix.size());
     for (std::size_t m = 0; m < kept.size() && static_cast<int>(m) < n_af; ++m) {
         const int s = kept[m];
@@ -113,15 +111,16 @@ void networkProducerAr(NetworkRunContext& ctx,
     const auto& netar     = nc.ambiguity_resolution;
     auto&       n_emitted = ctx.counters.n_emitted;
 
-    // --- Producer-side network AR (Phase 2: DD fixability attempt, LOG ONLY) ---
-    // The between-station double-difference ambiguities are datum-INVARIANT
+    // --- Producer-side network AR (Phase 2: DD fixability attempt, log only) ---
+    // The between-station double-difference ambiguities are datum-invariant
     // estimable quantities, so this fix attempt is independent of the phase-bias
-    // datum in use.  Phase 2 is READ-ONLY (no re-pin / re-solve yet — that is
-    // Phase 3): it reconstructs the per-station float ambiguities, forms an
-    // independent DD basis (star topology per (const,signal)), builds the exact
-    // DD covariance from est.jointConditionalCovariance, converts to cycles, and
-    // runs ils::ilsFix to log how many integers the network COULD fix.  Gated on
-    // network.ambiguity_resolution.enable + min_epochs; byte-identical when off.
+    // datum in use.  Phase 2 is read-only (re-pin and re-solve belong to Phase 3):
+    // it reconstructs the per-station float ambiguities, forms an independent DD
+    // basis (star topology per (const,signal)), builds the exact DD covariance
+    // from est.jointConditionalCovariance, converts to cycles, and runs
+    // ils::ilsFix to log how many integers the network could fix.  Gated on
+    // network.ambiguity_resolution.enable and min_epochs (and a non-null
+    // ar_ppp_utils); byte-identical when off.
     if (netar.enable && n_emitted >= static_cast<size_t>(std::max(0, netar.min_epochs))
         && x_s.size() > 0 && ar_ppp_utils) {
         struct ArRec { double value_m; std::size_t est_id; Eigen::Index col; };
@@ -166,12 +165,12 @@ void networkProducerAr(NetworkRunContext& ctx,
             const int idx = static_cast<int>(reqs.size());
             reqs.push_back(k); req_idx[k] = idx; return idx;
         };
-        // The IDENTITY fields are what turn a fix count into a grade: without
-        // (cons, signal, sat_j, ref_sat, sta_r, ref_sta) a traced DD cannot be joined
-        // to truth_ambiguities.csv, and the star reference cannot be differenced away
-        // (SPEC_amb_iono_split_overcount §6.12).  They are filled unconditionally —
-        // the whole block is already gated on `netar.enable`, and six short strings per
-        // DD is dust next to the joint conditional covariance below.
+        // The identity fields (cons, signal, sat_j, ref_sat, sta_r, ref_sta) let a
+        // traced DD be joined to truth_ambiguities.csv and the star reference be
+        // differenced away (SPEC_amb_iono_split_overcount §6.12); without them the
+        // trace gives only a fix count.  They are filled unconditionally: the block is
+        // already gated on `netar.enable`, and six short strings per DD cost little
+        // next to the joint conditional covariance below.
         struct DDrow {
             int i_rj, i_rp, i_fj, i_fp; double dd_m, lambda;
             std::string cons, signal, sat_j, ref_sat, sta_r, ref_sta;
@@ -216,10 +215,11 @@ void networkProducerAr(NetworkRunContext& ctx,
         if (!dds.empty() && reqs.size() >= 2) {
             const bool ar_carry_aware = ctx.knobs.carry_aware_covariance;
             Eigen::MatrixXd cov_undiff;
-            // Carry-aware readback (docs/SPEC_carry_aware_covariance.md §6).  Q_cyc — and
-            // therefore FFR, ADOP and the partial-AR ordering below — was built from a
-            // covariance the SOLVE never used.  OFF (default) keeps that expression
-            // verbatim; ON makes the probe's uncertainty the estimator's own.
+            // Carry-aware readback (docs/SPEC_carry_aware_covariance.md §6).  With the
+            // knob off (default), Q_cyc, and with it FFR, ADOP and the partial-AR
+            // ordering below, is built from a covariance the solve does not use; that
+            // expression is kept unchanged.  With it on, the probe uses the
+            // estimator's own covariance.
             try { cov_undiff = est.jointConditionalCovariance(reqs, plan.shared_datum,
                                                               ar_carry_aware); }
             catch (...) { cov_undiff = Eigen::MatrixXd(); }
@@ -244,17 +244,16 @@ void networkProducerAr(NetworkRunContext& ctx,
                 Q_cyc = 0.5 * (Q_cyc + Q_cyc.transpose());
                 // --- ILS dimension cap (network.ambiguity_resolution.ils_max_dim) ---
                 // MLAMBDA's search does not return on the uncapped full-network basis
-                // (~2500 DDs at 305 stations, Jul-15).  When armed (> 0), search only
-                // the ils_max_dim lowest-formal-σ DDs — the standard partial-AR
-                // subset (ascending Q_aa) — and leave the rest float.  The summary
-                // statistics (med σ / med frac / near-int) stay FULL-basis so the
+                // (about 2500 DDs at 305 stations).  When armed (> 0), only the
+                // ils_max_dim lowest-formal-σ DDs are searched (the standard partial-AR
+                // subset, ascending Q_aa) and the rest stay float.  The summary
+                // statistics (med σ / med frac / near-int) use the full basis, so the
                 // convergence gauge is unaffected by the cap.
                 Eigen::VectorXd y_fix = y_cyc;
                 Eigen::MatrixXd Q_fix = Q_cyc;
                 int nd_fix = nd;
-                // search row -> basis index.  HOISTED out of the cap branch (it used to
-                // be a block-local `order`) because the trace has to invert it: see
-                // netar::mapFixToBasis.
+                // search row -> basis index.  Computed outside the cap branch because
+                // the trace has to invert it (see netar::mapFixToBasis).
                 const std::vector<int> order = netar::lowestSigmaOrder(Q_cyc, netar.ils_max_dim);
                 if (netar.ils_max_dim > 0 && nd > netar.ils_max_dim) {
                     nd_fix = netar.ils_max_dim;
@@ -276,10 +275,11 @@ void networkProducerAr(NetworkRunContext& ctx,
                 ils::IlsResult fix;
                 try { fix = ils::ilsFix(y_fix, Q_fix, gates); }
                 catch (...) { fix = ils::IlsResult(); }
-                // Median DD formal σ (cycles) — the convergence gauge: as the
-                // network float tightens toward cm this drops and the DDs become
-                // fixable.  Also the worst float-fraction (evidence the products
-                // are integer-consistent even before they are confidently fixable).
+                // Median DD formal σ (cycles) is the convergence gauge: as the
+                // network float tightens toward cm it drops and the DDs become
+                // fixable.  The median float fraction and the near-integer count
+                // show whether the products are integer-consistent before they are
+                // confidently fixable.
                 std::vector<double> dsig; dsig.reserve(nd);
                 std::vector<double> dfrac; dfrac.reserve(nd);
                 int n_near = 0;   // DDs whose float is within 0.15 cyc of an integer
@@ -296,9 +296,9 @@ void networkProducerAr(NetworkRunContext& ctx,
                 };
                 const double med_sig  = med(dsig);
                 const double med_frac = med(dfrac);
-                // The covariance MODE is part of the reading, not a footnote: med_DD_sigma
-                // and every ratio/p_succ derived from it mean different things under the
-                // two forms (docs/SPEC_carry_aware_covariance.md §4).
+                // The covariance mode is logged on the same line because med_DD_sigma
+                // and every ratio/p_succ derived from the covariance mean different
+                // things under the two forms (docs/SPEC_carry_aware_covariance.md §4).
                 log->info("Network AR (Phase 2, log-only): TOW {:.1f} — {} DD / {} undiff-amb / "
                           "{} (const,signal); fixed {}{} of {} searched{} (ratio {:.2f}, "
                           "p_succ {:.4f}, med_DD_sigma {:.4f} cyc, med_DD_frac {:.3f}, "
@@ -309,9 +309,9 @@ void networkProducerAr(NetworkRunContext& ctx,
                           nd_fix < nd ? " (ILS-capped)" : "", fix.ratio, fix.p_succ,
                           med_sig, med_frac, n_near, nd,
                           ar_carry_aware ? "CARRY-AWARE" : "carry-blind");
-                // --- Run-end tallies (standing invariant #4: the log line above is
-                //     per-epoch, so without these a run has no denominator and an
-                //     ARMED-but-inert search reads exactly like a quiet one). --------
+                // --- Run-end tallies (invariant #4): the log line above is per-epoch;
+                //     the tallies give the run a denominator, so an armed but inert
+                //     search is distinguishable from a quiet one. ---------------------
                 auto& c = ctx.counters;
                 ++c.netar_epochs;
                 c.netar_carry_aware = ar_carry_aware;
@@ -322,26 +322,26 @@ void networkProducerAr(NetworkRunContext& ctx,
                 if (fix.ok) {
                     ++c.netar_fix_epochs;
                     c.netar_dd_fixed += n_fixed;
-                    // ratio / p_succ describe an ACCEPTED fix; on a rejected epoch they
-                    // are the failure diagnostics, and mixing the two populations into
-                    // one median is what makes a "ratio p50 1.01" unreadable.
+                    // ratio / p_succ describe an accepted fix; on a rejected epoch they
+                    // are failure diagnostics, and one median over both populations
+                    // cannot be interpreted.  Only accepted epochs are tallied.
                     c.netar_ratio.push_back(fix.ratio);
                     c.netar_p_succ.push_back(fix.p_succ);
                 }
                 // --- Per-DD trace (network.ambiguity_resolution.trace) --------------
-                // Every DD in the BASIS gets a row, not just the searched subset: the
+                // Every DD in the basis gets a row, not only the searched subset: the
                 // fixability ceiling the grader reports (share of DDs whose float is
-                // within 0.25 cyc of truth) is a statement about the population the cap
-                // chose FROM, and a trace that only carries the subset cannot make it.
+                // within 0.25 cyc of truth) refers to the population the cap chose
+                // from, which a subset-only trace cannot provide.
                 if (traces.producer_ar_trace.is_open()) {
                     const auto labels = netar::mapFixToBasis(nd, order, fix.kept, fix.afix);
                     auto& os = traces.producer_ar_trace;
-                    // ratio / p_succ: the ACCEPTED fix's on a fixed epoch, the FULL-SET
-                    // attempt's otherwise.  IlsResult zeroes the accepted fields when
-                    // nothing was accepted, and a column of zeros on the majority of
-                    // epochs carries no information at all — the failure diagnostics do.
-                    // `n_fixed` is the discriminator and is on the same row, so the two
-                    // populations stay separable (the grader splits on it).
+                    // ratio / p_succ: the accepted fix's values on a fixed epoch, the
+                    // full-set attempt's otherwise.  IlsResult zeroes the accepted fields
+                    // when nothing was accepted, so on most epochs they would be a column
+                    // of zeros; the full-set values are the failure diagnostics.
+                    // `n_fixed` on the same row separates the two populations (the
+                    // grader splits on it).
                     const double ep_ratio  = fix.ok ? fix.ratio  : fix.full_ratio;
                     const double ep_psucc  = fix.ok ? fix.p_succ : fix.full_p_succ;
                     for (int a = 0; a < nd; ++a) {
@@ -366,11 +366,12 @@ void networkProducerAr(NetworkRunContext& ctx,
     }
 
     // --- One-shot full-arrowhead NEQ export (network.neq_export_epoch) -----------
-    // Post-solve READ-ONLY dump of the assembled normal equations for offline
-    // spectral / weak-direction attribution: border N_ss (raw + reduced) + RHS,
-    // every station's N_sr / N_rr (rebuilt from its LDLᵀ) / u_r as row-major
+    // Post-solve, read-only dump of the assembled normal equations for offline
+    // spectral / weak-direction attribution: border N_ss (raw and reduced) with
+    // RHS, every station's N_sr / N_rr (rebuilt from its LDLᵀ) / u_r as row-major
     // little-endian double .bin, plus shared-column and per-station local-column
-    // labels.  Solution is untouched; fires on exactly one epoch per run.
+    // labels.  The solution is untouched; fires on the epoch where
+    // n_emitted + 1 == neq_export_epoch, once per run.
     if (nc.neq_export_epoch > 0
         && n_emitted + 1 == static_cast<size_t>(nc.neq_export_epoch)
         && x_s.size() > 0) {

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Per-hour + per-bucket DD-step breakdown for the Card-4 D5 acceptance.
 
-Reuses grade_ddfrac's EXACT methodology (epoch-adjacent |ΔDD| within a fixed
+Reuses grade_ddfrac's methodology exactly (epoch-adjacent |ΔDD| within a fixed
 (cons,signal,sat_i,ref_sat,sta_a,sta_b) series, gap-aware) but buckets the steps
 by wall-clock hour (and optional 10-min event buckets) instead of one tail window.
 
@@ -53,11 +53,10 @@ def main():
     print(f"run: {os.path.basename(run.rstrip('/'))}  tow0={tow0:.0f} tmax={tmax:.0f} "
           f"span={span_h:.2f}h  n_rows={len(rows)}")
 
-    # per-bucket step (bucket the LATER sample of each adjacent pair by (tow-tow0)/bucket).
-    # We approximate by bucketing rows first, then differencing within the bucket — but to
-    # keep adjacency across bucket edges we bucket by the step's later-epoch tow.  Simpler &
-    # faithful: split rows into buckets, steps only within a bucket (drops one step per
-    # bucket edge — negligible vs the per-bucket count).
+    # Per-bucket step: rows are bucketed first by (tow-tow0)/bucket, then differenced
+    # within each bucket, which is an approximation of bucketing the later sample of
+    # each adjacent pair by its own tow.  This drops one step per bucket edge, which
+    # is negligible against the per-bucket step count.
     nb = int(math.ceil((tmax - tow0) / bucket))
     print(f"  bucket={bucket:.0f}s  ({nb} buckets)")
     for b in range(nb):

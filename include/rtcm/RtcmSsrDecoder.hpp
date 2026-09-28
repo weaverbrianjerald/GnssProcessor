@@ -4,19 +4,19 @@
  * @brief Per-message-body decoders for legacy RTCM SSR (1057-1068, 1240-1270)
  *        and IGS-SSR 4076 sub-types.
  *
- * Bit-level extraction from RTCM 3.x payloads.  Header bytes (preamble +
- * length) are stripped by @c RtcmStreamReader; CRC is verified there; the
- * 12-bit message-type field is consumed by @c RtcmParser::parseHeader
- * before invoking the decoders here.  Each decoder therefore starts at
- * bit offset 12 of the payload (i.e. immediately past DF002).
+ * Bit-level extraction from RTCM 3.x payloads.  @c RtcmStreamReader strips the
+ * header bytes (preamble and length) and verifies the CRC.
+ * @c RtcmParser::parseHeader reads the 12-bit message-type field (DF002) to
+ * select a decoder; each decoder skips those 12 bits and starts reading at bit
+ * offset 12 of the payload.
  *
  * Decoders append per-satellite records to caller-owned output vectors
  * and return a @c DecodeResult carrying the shared SSR header info
  * (epoch time, IOD-SSR, multi-message bit, etc.).  They never throw.
  *
- * Field widths and scale factors transcribed from RTCM Standard 10403.3
- * Annex A (Tables A.1-1 to A.1-6).  Sign-magnitude is NOT used by SSR;
- * all signed fields are two's-complement.
+ * Field widths and scale factors are transcribed from RTCM Standard 10403.3
+ * Annex A (Tables A.1-1 to A.1-6).  SSR does not use sign-magnitude; all
+ * signed fields are two's-complement.
  */
 
 #include "rtcm/RtcmTypes.hpp"
@@ -48,31 +48,33 @@ struct DecodeResult {
  *   - 1061/1067/1244/1250/1256/1262                → @p uras
  *   - 1062/1068/1245/1251/1257/1263                → @p hrclocks
  *
- * Orbit-bearing records (orbit + combined) are tagged
+ * Orbit-bearing records (orbit and combined) are tagged
  * @c SsrReferencePoint::APC: legacy RTCM SSR corrects the broadcast orbit to
- * the satellite antenna phase center (RTCM 10403.3 sec. 3.5.12), unlike
- * IGS-SSR 4076's center-of-mass convention (RTB-5(b)).  The legacy Galileo
+ * the satellite antenna phase center (RTCM 10403.3 sec. 3.5.12), whereas
+ * IGS-SSR 4076 uses the center of mass (RTB-5(b)).  The legacy Galileo
  * 10-bit IODnav is masked to 8 bits at decode so it matches the broadcast
  * side's @c IODnav&0xFF convention (see @c LiveEphemerisStore::ssrMatchIode;
  * RTB-5(a)).
  *
  * @param payload     Pointer to the message payload (excluding 3-byte header
- *                    and 3-byte CRC).  First 12 bits are DF002 (message type)
- *                    and will be consumed by the decoder.
+ *                    and 3-byte CRC).  The first 12 bits are DF002 (message
+ *                    type); the decoder skips them.
  * @param len_bytes   Payload length in bytes.
  * @param msg_type    The 12-bit DF002 value extracted from the payload header.
- * @param anchor_gps_seconds  Continuous GPS seconds of a known nearby epoch,
- *                    used to promote the 20-bit GPS TOW into the full week
- *                    minimizing |Δt| to the anchor (nearest continuation,
- *                    RTKLIB adjweek) and to anchor the 17-bit GLO TOD → GPS
- *                    day resolution.  Supplied by @c RtcmParser's per-parser
- *                    stream-time tracker (host clock at cold start only —
- *                    RTB-1(a)).  Pass ≤ 0 to leave @c epoch_time.week zero.
+ * @param anchor_gps_seconds  Continuous GPS seconds of a known nearby epoch.
+ *                    The 20-bit GPS TOW is promoted into the week that
+ *                    minimizes |Δt| to the anchor (nearest continuation,
+ *                    RTKLIB adjweek), and the 17-bit GLONASS TOD is placed in
+ *                    the GPS day around the anchor.  @c RtcmParser supplies it
+ *                    from its per-parser stream-time tracker, which uses the
+ *                    host clock only at cold start (RTB-1(a)).  With a value
+ *                    ≤ 0, @c epoch_time.week stays zero (for GLONASS the
+ *                    whole epoch is {0, 0}).
  *
  * @return @c DecodeResult.ok = true if the entire message decoded without
- *         truncation; the @c header field is always populated when the
- *         shared SSR header parsed successfully, even if per-satellite
- *         body decode hit an issue partway through.
+ *         truncation.  The @c header field is populated whenever the shared
+ *         SSR header parsed, even if the per-satellite body decode stopped
+ *         partway through.
  */
 DecodeResult decodeLegacy(
     const uint8_t* payload,
@@ -91,33 +93,34 @@ DecodeResult decodeLegacy(
  * @brief Decode an IGS-SSR (RTCM 4076) message.
  *
  * 4076 wraps an 11-bit prefix (3-bit IGS version + 8-bit IGS Message
- * Number) around a body that is otherwise identical to the legacy
- * RTCM-SSR per-system-per-body messages (1057-1068, 1240-1270).  This
- * function reads the wrapper, dispatches on the IM number to a
- * (system, body type) pair, and reuses the same per-satellite decoders
- * as @c decodeLegacy.
+ * Number) around a body with the same per-satellite fields as the legacy
+ * RTCM-SSR per-system messages (1057-1068, 1240-1270), but with uniform
+ * widths: 6-bit satellite ID, 8-bit IOD and a 20-bit GPS TOW epoch for every
+ * system, GLONASS included.  This function reads the wrapper, dispatches on
+ * the IM number to a (system, body type) pair, applies the 4076 widths, and
+ * reuses the per-satellite decoders of @c decodeLegacy.
  *
  * IM mapping (per IGS-SSR v1.00):
- *   IM = 10·sys + offset, where:
- *     sys ∈ {1=GPS, 2=GLO, 4=GAL, 5=QZS, 6=BDS, 7=SBAS}
+ *   IM = 10·k + offset, where:
+ *     k ∈ {2=GPS, 4=GLO, 6=GAL, 8=QZS, 10=BDS, 12=SBAS}
  *     offset ∈ {1=Orbit, 2=Clock, 3=Combined, 4=HighRate,
  *               5=CodeBias, 6=PhaseBias, 7=URA}
  *
- * VTEC (IM=201) and NavIC (IM=81-87) are not yet supported and decoded
- * as @c ok=false.  The shared header is still populated for diagnostics.
+ * VTEC (IM=201) and NavIC (IM=141-147) are not supported and return
+ * @c ok=false before the shared header is read.
  *
- * Orbit-bearing records are tagged @c SsrReferencePoint::CoM — IGS-SSR
+ * Orbit-bearing records are tagged @c SsrReferencePoint::CoM: IGS-SSR
  * corrects the broadcast orbit to the satellite center of mass (IGS SSR
- * Format v1.00 sec. 4), matching the SP3 convention, so the user-side
- * satellite PCO must still be applied (RTB-5(b)).  The IOD field is a
- * uniform 8 bits here (no masking needed — see decodeLegacy for the
- * legacy Galileo 10-bit case).
+ * Format v1.00 sec. 4), matching the SP3 convention, so the user side still
+ * applies the satellite PCO (RTB-5(b)).  The IOD field is 8 bits for every
+ * system, so no masking is needed (see @c decodeLegacy for the legacy
+ * Galileo 10-bit case).
  *
  * @param payload          Pointer to the message payload (DF002 included).
  * @param len_bytes        Payload length in bytes.
- * @param anchor_gps_seconds Continuous GPS seconds of a known nearby epoch —
- *                         nearest-continuation week promotion of the 20-bit
- *                         TOW epoch, as @ref decodeLegacy (RTB-1(a)).
+ * @param anchor_gps_seconds Continuous GPS seconds of a known nearby epoch,
+ *                         used for nearest-continuation week promotion of the
+ *                         20-bit TOW epoch as in @ref decodeLegacy (RTB-1(a)).
  *
  * @return @c DecodeResult.ok = true if the entire message decoded cleanly.
  */

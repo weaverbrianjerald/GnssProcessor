@@ -1,6 +1,7 @@
 /**
  * @file SignalRoster.cpp
- * @brief Card SID phase 1: the signal roster and its observatory (see SignalRoster.hpp).
+ * @brief The signal roster, its builders and its observatory (card SID, from phase 1;
+ *        see SignalRoster.hpp).
  */
 #include "app/SignalRoster.hpp"
 
@@ -8,7 +9,7 @@
 #include "common/PppUtils.hpp"
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkRunTypes.hpp"        // NetStation (roster + its PppModel / StateManager)
-#include "filter/StateKeySchema.hpp"         // Card SID phase 3: parseAmbiguityKey (the prune's keys)
+#include "filter/StateKeySchema.hpp"         // parseAmbiguityKey, for the prune's keys (card SID phase 3)
 #include "filter/StateManager.hpp"
 #include "logging/NetworkRunTraces.hpp"
 #include "math/TimeUtils.hpp"
@@ -95,7 +96,7 @@ namespace GnssProcessor {
             bool all_channels) {
         std::map<char, BandRoster> out;
 
-        // 1. The TRACKED sets, per band digit, deduplicated and ascending.
+        // 1. The tracked sets, per band digit, deduplicated and ascending.
         for (const std::string& k : tracked) {
             if (isObsKey(k, 'L'))      out[k[1]].tracked_phase.push_back(k);
             else if (isObsKey(k, 'C')) out[k[1]].tracked_code.push_back(k);
@@ -108,11 +109,11 @@ namespace GnssProcessor {
             }
         }
 
-        // 2. The MODELLED roles, REPRODUCED from the latch and never re-derived.
-        //    A band the latch names but the receiver does not report this epoch
-        //    still gets its cell: the latch is the estimator's key, and a reader
-        //    asking "what does this station carry on band 1" must get an answer on
-        //    the epochs the arc is absent too.
+        // 2. The modelled roles, copied from the latch and never re-derived.  A band
+        //    the latch names but the receiver does not report this epoch still gets
+        //    its cell: the latch is the estimator's key, so the cell states which
+        //    signal the station carries on that band on the epochs the arc is absent
+        //    as well.
         for (const RosterLatchRow& r : latch) {
             if (r.signal.size() < 2) continue;
             const char band = r.signal[1];
@@ -120,10 +121,11 @@ namespace GnssProcessor {
             else if (r.obs_type == 'C') out[band].modelled_code  = r.signal;
         }
 
-        // 3. The COMPANION codes (card SCC).  Band 1 only, the allow list walked in
-        //    its configured order, the canonical skipped, the untracked skipped and
-        //    duplicates skipped, with the canonical required PRESENT this epoch,
-        //    which is the rule NetworkSecondCodeScope.cpp and PppModel implement.
+        // 3. The companion codes (card SCC).  Band 1 only, the allow list walked in
+        //    its configured order, skipping the canonical code, untracked codes, codes
+        //    outside the allowlist and duplicates, with the canonical code required
+        //    present this epoch.  NetworkSecondCodeScope.cpp and PppModel implement
+        //    the same rule.
         if (companions_armed) {
             auto bit = out.find('1');
             if (bit != out.end()) {
@@ -147,13 +149,12 @@ namespace GnssProcessor {
             }
         }
 
-        // 3b. The SECOND PHASES (card SID phase 6a).  Exactly the shape of the
-        //     companion walk above and exactly the rule
-        //     NetworkSecondPhaseScope.cpp and PppModel implement: band 1 only, the
-        //     allow list in its configured order, the latched phase skipped, the
-        //     untracked skipped, duplicates skipped, and the latched phase required
-        //     PRESENT this epoch (otherwise it is the FALLBACK case, which adds
-        //     nothing).
+        // 3b. The second phases (card SID phase 6a).  The same walk as the companion
+        //     codes above and the rule NetworkSecondPhaseScope.cpp and PppModel
+        //     implement: band 1 only, the allow list in its configured order, skipping
+        //     the latched phase, untracked phases, phases outside the allowlist and
+        //     duplicates, with the latched phase required present this epoch
+        //     (otherwise it is the fallback case, which adds nothing).
         if (second_phase_armed) {
             auto bit = out.find('1');
             if (bit != out.end()) {
@@ -177,14 +178,14 @@ namespace GnssProcessor {
             }
         }
 
-        // 3c. Card SID phase 6b: the ALL-CHANNEL widening.  It subsumes 3 and 3b, so it
-        //     runs INSTEAD of them (the caller passes their flags down as false) and
-        //     over EVERY band rather than band 1 alone: every tracked, admitted phase
-        //     of a band besides its modelled one joins `modelled_extra`, and every
-        //     tracked, admitted code besides its modelled one joins `companion_code`,
-        //     which is exactly the row set PppModel::selectUncombinedSignals adds.  The
-        //     canonical row must be TRACKED this epoch for the extra one to be a
-        //     second, which is the same clause the two cards above apply.
+        // 3c. The all-channel widening (card SID phase 6b).  It subsumes 3 and 3b, so it
+        //     runs in their place (the caller passes their flags as false) and over
+        //     every band rather than band 1 alone: every tracked, admitted phase of a
+        //     band other than its modelled one joins `modelled_extra`, and every
+        //     tracked, admitted code other than its modelled one joins
+        //     `companion_code`.  That is the row set PppModel::selectUncombinedSignals
+        //     adds.  The modelled row must be tracked this epoch for any extra row to
+        //     be added, the same clause steps 3 and 3b apply.
         if (all_channels) {
             for (auto& [band, br] : out) {
                 (void)band;
@@ -207,16 +208,16 @@ namespace GnssProcessor {
             }
         }
 
-        // 4. The EXCLUDED signals, with the reason that actually applies.  The allow
-        //    list is the earlier gate, so it names the exclusion where it bites; a
-        //    band the latch carries names the signal it chose instead; a band with
-        //    no latch at all is a different statement and gets its own reason.
+        // 4. The excluded signals, each with the reason that applies.  The allowlist
+        //    is the earlier gate, so a signal outside it reads "allowlist"; on a band
+        //    the latch carries, any other signal reads "not_latched" (the latch chose
+        //    another one); on a band with no latch, the reason is "no_latch".
         for (auto& [band, br] : out) {
             (void)band;
             const auto note = [&](const std::string& sig, const std::string& modelled,
                                   bool companion) {
                 if (sig == modelled) return;
-                if (companion) return;   // a companion code or a second phase is MODELLED
+                if (companion) return;   // a companion code or a second phase is modelled
                 const char* reason = "no_latch";
                 if (allowlist && !allowlist->empty() && !allowlist->count(sig))
                     reason = "allowlist";
@@ -241,7 +242,7 @@ namespace GnssProcessor {
         std::set<std::string> keys(tracked.begin(), tracked.end());
         std::map<char, std::string> out;
         // The tracker keeps a phase only when its matching code is reported too, and
-        // then takes the LEXICALLY LOWEST such phase of the band, which is what the
+        // then takes the lexically lowest such phase of the band, which is what the
         // band-digit-only comparator under std::sort produces on this toolchain.
         // std::set iterates ascending, so the first hit per band is that signal.
         for (const std::string& k : keys) {
@@ -253,7 +254,7 @@ namespace GnssProcessor {
     }
 
     // =====================================================================
-    // PHASE 2: the read side, and the IF pin as a writer
+    // Phase 2: the read side, and the IF pin as a writer
     // =====================================================================
 
     std::string signalRosterModelledPhase(const SignalRoster& rs, int station,
@@ -301,8 +302,8 @@ namespace GnssProcessor {
                 for (const auto& [key, val] : o.observed) {
                     (void)val;
                     if (key.size() < 3 || key[0] != 'L') continue;
-                    // The ROLE decides, not the fact that a row exists: an arc the
-                    // roster does not call Modelled on this band has no carried
+                    // The role decides, not the presence of a row: an arc the
+                    // roster does not mark Modelled on this band has no carried
                     // level for the response to protect.
                     if (signalRosterModelledPhase(rs, static_cast<int>(i), cons, key[1])
                         != key) {
@@ -319,14 +320,14 @@ namespace GnssProcessor {
             const std::map<std::string, std::pair<std::string, std::string>>& if_pin_real,
             std::map<std::string, std::map<std::string, long long>>* votes_out,
             std::set<std::string>* ambiguous) {
-        // Tally the per-SATELLITE pins into (constellation, band) votes.
+        // Tally the per-satellite pins into (constellation, band) votes.
         //
-        // ⚠ THE KEY IS THE ROSTER'S, NOT THE S-BASIS'S.  The datum seam keys a
-        // constellation by the satellite id's first CHARACTER ("G"), while the roster
-        // keys it by the system STRING PppUtils::getSystemString gives ("GPS"), which
-        // is also the key of the signal-priority map the latch is decided from.
-        // Tallying under the letter produces picks that match no cell at all and a
-        // census of exactly zero, which is what the first armed run measured.
+        // The constellation key is the roster's, not the S-basis one.  The datum seam
+        // keys a constellation by the first character of the satellite id ("G"); the
+        // roster keys it by the system string PppUtils::getSystemString gives ("GPS"),
+        // which is also the key of the signal-priority map the latch is decided from.
+        // Votes tallied under the letter would match no roster cell, and the census
+        // would read zero.
         std::map<std::string, std::map<std::string, long long>> votes;
         for (const auto& [sat, pair] : if_pin_real) {
             if (sat.empty()) continue;
@@ -337,10 +338,10 @@ namespace GnssProcessor {
                 ++votes[cons + "|" + std::string(1, (*sig)[1])][*sig];
             }
         }
-        // Resolve each (constellation, band) to ONE designation, and say so when the
-        // satellites did not agree.  std::map iterates ascending and the replacement
-        // is strictly-greater, so the tie break is the lexically lowest code, which is
-        // the tie break the pin itself applies within a band.
+        // Resolve each (constellation, band) to one designation, and mark it ambiguous
+        // when the satellites disagree.  std::map iterates ascending and the
+        // replacement needs a strictly greater count, so a tie goes to the lexically
+        // lowest code, the same tie break the pin applies within a band.
         std::map<std::string, std::string> pick;
         for (const auto& [cb, v] : votes) {
             long long best = -1;
@@ -364,11 +365,11 @@ namespace GnssProcessor {
                 br.datum_code = pit->second;
                 ++out.cells;
                 if (ambiguous != nullptr && ambiguous->count(cb)) ++out.ambiguous;
-                // The pin names a CODE.  A datum PHASE is named only where that code
-                // IS this station's modelled code, in which case the phase it
-                // accompanies is this cell's modelled phase; anywhere else the roster
-                // says nothing rather than deriving a signal from the code's
-                // attribute (the project's "reproduced, never re-derived" rule).
+                // The pin names a code.  A datum phase is named only where that code
+                // is this station's modelled code, and then it is this cell's
+                // modelled phase; elsewhere the roster leaves the phase empty rather
+                // than deriving a signal from the code's attribute (the roster
+                // reproduces the latch and never re-derives it).
                 if (!br.modelled_code.empty() && br.modelled_code == br.datum_code
                     && !br.modelled_phase.empty()) {
                     br.datum_phase = br.modelled_phase;
@@ -444,16 +445,16 @@ namespace GnssProcessor {
 
         ctx.arc_ledger.configure(rs.horizon_s, kArcLedgerForgetEp);
 
-        // PHASE 4a (S1): arm the reason writers.  The buffer is the ONLY thing the
-        // screens touch, so an unarmed run pays one bool test per writer call and
-        // nothing else; the fold then receives a buffer that is not armed and
-        // leaves the ledger's masks exactly as phase 3 wrote them.
+        // Arm the reason writers (phase 4a, S1).  The screens touch only the buffer,
+        // so an unarmed run pays one bool test per writer call and nothing else; the
+        // fold then receives an unarmed buffer and leaves the ledger's masks as
+        // phase 3 wrote them.
         ctx.reasons.armed = config_.networkLedgerScreens();
 
-        // PHASE 3 (R3b): arm the ambiguity prune's key recorder on every station,
-        // so the audit pass can mark the arcs whose column the prune destroyed
-        // inside a gap.  The prune itself is untouched and the recorder is a
-        // per-epoch vector of strings; without the observatory it is never armed.
+        // Arm the ambiguity prune's key recorder on every station (phase 3, R3b), so
+        // the audit pass can mark the arcs whose column the prune removed inside a
+        // gap.  The prune itself is unchanged and the recorder is a per-epoch vector
+        // of strings; it is armed only together with the observatory.
         for (const auto& st : stations)
             if (st.sm) st.sm->setRecordPrunedAmbiguities(true);
 
@@ -503,19 +504,21 @@ namespace GnssProcessor {
         ++ctr.epochs;
         const double t_s = TimeUtils::continuousGpsSeconds(se.time);
         ctx.arc_ledger.beginEpoch(epoch_idx, t_s);
-        // PHASE 4a (S1): open the epoch's REASON buffer.  Here and not at the fold,
-        // because two writers (the readmit park and the gross-LOS screen) run
-        // downstream of the audit pass and their records have to survive exactly
-        // one epoch to reach the gap they can explain.
+        // Open the epoch's reason buffer (phase 4a, S1).  It opens here, at the first
+        // seam of the epoch, because the writers run between this seam and the audit
+        // pass that folds the buffer (the allowlist writer below and the screens,
+        // the gross-LOS screen included), so their bits reach the fold of their own
+        // epoch.  The one writer downstream of the audit is the readmit park;
+        // arcReasonBeginEpoch keeps its bits for one more epoch, the earliest epoch
+        // at which a gap they can explain can open.
         arcReasonBeginEpoch(ctx.reasons, epoch_idx);
-        // PHASE 3 (R4): the response's per-arc record is EPOCH-scoped.  Cleared at
-        // the first seam of the epoch so it can never describe a previous one,
-        // which is the failure mode the two earlier "answered" approximations had.
+        // The response's per-arc record is epoch-scoped (phase 3, R4).  It is cleared
+        // at the first seam of the epoch so it never describes a previous epoch.
         ctx.carry.sid_reentry_outcome.clear();
 
         const auto& nc = config_.getNetworkConfig();
-        // Card SID phase 6b: the widening SUBSUMES both cards, so the two allow-list
-        // walks stand down and the all-channel walk fills the same two fields.
+        // The all-channel widening subsumes both cards (card SID phase 6b), so the two
+        // allow-list walks stand down and the all-channel walk fills the same two fields.
         const bool all_channels = config_.networkChannelModeAll();
         const bool companions_armed = config_.networkSecondCodeChannel() && !all_channels;
         const std::vector<std::string>& companion_allow = config_.networkSecondCodeSignals();
@@ -536,12 +539,12 @@ namespace GnssProcessor {
             const PppModel* model = stations[i].model.get();
 
             // Group this epoch's raw keys by constellation.  A constellation with no
-            // PRIORITY LIST is skipped outright: the latch's candidate pool is that
-            // list, so such a constellation "silently produces no canonicals" and the
-            // roster would describe signals the producer never models.  The RINEX
-            // files carry every constellation the receiver tracked, so without this
-            // the roster would build cells (and arcs) for GLONASS, Galileo and BeiDou
-            // on a GPS-only posture, which is both wrong and the dominant cost.
+            // priority list is skipped: the latch's candidate pool is that list, so
+            // such a constellation produces no canonicals, and the roster would
+            // describe signals the producer never models.  The RINEX files carry every
+            // constellation the receiver tracked, so without this skip a GPS-only
+            // posture would get cells (and arcs) for GLONASS, Galileo and BeiDou,
+            // which is wrong and is the dominant cost.
             std::map<std::string, std::vector<std::string>> tracked_by_cons;
             std::map<std::string, std::vector<const RinexObservation*>> obs_by_cons;
             for (const RinexObservation& o : sit->second) {
@@ -557,11 +560,11 @@ namespace GnssProcessor {
             }
 
             for (auto& [cons, tracked] : tracked_by_cons) {
-                // The latch is decided ONCE per constellation and never revised, so
-                // the cache is refilled only while it is still empty.  The first
-                // epoch of a constellation is decided INSIDE computeModels, which is
-                // downstream of this seam, so that epoch has no latch and the cells
-                // carry Tracked roles alone.
+                // The latch is decided once per constellation and never revised, so
+                // the cache is filled only while it is still empty.  The latch for a
+                // constellation's first epoch is decided inside computeModels,
+                // downstream of this seam, so that epoch has no latch and its cells
+                // carry Tracked roles only.
                 auto& cache = rs.latch_cache[i];
                 auto lit = cache.find(cons);
                 if (lit == cache.end() && model) {
@@ -589,7 +592,7 @@ namespace GnssProcessor {
                                                     second_phase_allow,
                                                     second_phase_armed, all_channels);
 
-                // P2's SELF-CHECK.  The roster is built FROM the latch, so a nonzero
+                // Self-check (P2).  The roster is built from the latch, so a nonzero
                 // count here is a bug in this file, not a finding about the run.
                 if (model) {
                     for (const auto& [band, br] : cells) {
@@ -616,15 +619,15 @@ namespace GnssProcessor {
                         if (r == "allowlist")        ++ctr.excl_allowlist;
                         else if (r == "not_latched") ++ctr.excl_not_latched;
                         else                         ++ctr.excl_no_latch;
-                        // PHASE 4a (S1): the network signal ALLOW LIST writer.  The
-                        // decision itself is taken once per run inside PppModel,
-                        // which carries no station identity at all, but the roster
-                        // has already reproduced it per (station, constellation,
-                        // band, signal) with its reason, so the writer sits here
-                        // rather than being plumbed into a shared model.  The allow
-                        // list is a WHOLE-RUN exclusion, so it removes arcs that
-                        // were never admitted and the expansion normally reaches
-                        // nothing: that zero is reported, not hidden.
+                        // The network signal allowlist writer (phase 4a, S1).  The
+                        // decision is taken once per run inside PppModel, which
+                        // carries no station identity, but the roster has already
+                        // reproduced it per (station, constellation, band, signal)
+                        // with its reason, so the writer sits here rather than in a
+                        // shared model.  The allowlist is a whole-run exclusion, so
+                        // it removes arcs that were never admitted and the expansion
+                        // normally reaches nothing; that zero is counted in
+                        // calls_unknown.
                         if (!ctx.reasons.armed || r != "allowlist") continue;
                         long long n_hit = 0;
                         const auto& arcs = ctx.arc_ledger.arcs();
@@ -644,14 +647,14 @@ namespace GnssProcessor {
                     }
                 }
 
-                // Class (b): the count rule against the priority rule, run ONCE per
+                // Class (b): the count rule against the priority rule, run once per
                 // (station, constellation) as soon as the candidate list exists.
-                // A constellation with no candidate list is simply not comparable yet
-                // (the latch is decided INSIDE computeModels, downstream of this
-                // seam), and the roster sees every constellation in the RAW record,
-                // including ones this run does not process at all.  Reachability is
-                // therefore tracked POSITIVELY, per station: a station counts as
-                // reached as soon as ONE of its constellations was compared.
+                // A constellation with no candidate list is not comparable yet (the
+                // latch is decided inside computeModels, downstream of this seam),
+                // and the roster sees every constellation in the raw record,
+                // including ones this run does not process.  Reachability is
+                // therefore tracked positively, per station: a station counts as
+                // reached once one of its constellations has been compared.
                 if (!rs.rule_done[i].count(cons) && model) {
                     const auto& cand_map = model->canonicalCandidates();
                     const auto cit = cand_map.find(cons);
@@ -668,10 +671,9 @@ namespace GnssProcessor {
                             const auto cc = c.find(key);
                             if (cc != c.end() && cc->second.signal == pick.signal) continue;
                             rs.rule_differs.insert(stations[i].name);
-                            // Card CSL's own population is the BAND-1 PHASE, which is
-                            // the pick the whole estimator hangs on; the wider "any
-                            // (band, obs type)" count is reported beside it rather
-                            // than instead of it.
+                            // The population of card CSL is the band-1 phase, the pick
+                            // the estimator depends on; the wider count over any
+                            // (band, obs type) is reported beside it.
                             if (key.second == 'L' && !pick.signal.empty()
                                 && pick.signal.size() >= 2 && pick.signal[1] == '1')
                                 rs.rule_differs_b1.insert(stations[i].name);
@@ -680,7 +682,7 @@ namespace GnssProcessor {
                 }
 
                 // The ledger: every (satellite, signal) this station reported.  The
-                // arc is keyed on the SIGNAL, which is the whole point of the card.
+                // arc is keyed on the signal as well as the satellite (card SID).
                 const auto obs_it = obs_by_cons.find(cons);
                 if (obs_it != obs_by_cons.end()) {
                     for (const RinexObservation* o : obs_it->second) {
@@ -689,11 +691,12 @@ namespace GnssProcessor {
                             (void)val;
                             if (!isObsKey(key, 'L')) continue;
                             const auto cell = cells.find(key[1]);
-                            // Card SID phase 6a: a SECOND PHASE is modelled too — it
+                            // A second phase is modelled too (card SID phase 6a): it
                             // carries its own float ambiguity and joins its signal's
-                            // satellite phase-bias family — so the ledger's `modelled`
-                            // flag reads the extra set beside the latch.  Empty unless
-                            // the channel is armed, so every other posture is unchanged.
+                            // satellite phase-bias family, so the ledger's `modelled`
+                            // flag reads the extra set beside the latch.  The set is
+                            // empty unless the second-phase channel or the all-channel
+                            // mode is armed, so every other posture is unchanged.
                             const bool modelled =
                                 cell != cells.end()
                                 && (cell->second.modelled_phase == key
@@ -733,12 +736,12 @@ namespace GnssProcessor {
                                         static_cast<double>(step.gap_len_ep),
                                         static_cast<double>(step.generation),
                                         arcStateName(step.to),
-                                        // PHASE 2: BOTH gap lengths.  `gap_ep` is the raw
-                                        // one; `adm_gap_ep` is the epochs the ADMITTED side
-                                        // has missed as this raw edge is crossed (-1 when
-                                        // the arc has never been admitted at all), which is
-                                        // the number a carry reader needs and is not
-                                        // derivable from the raw one.
+                                        // Both gap lengths (phase 2).  `gap_ep` is the raw
+                                        // one; `adm_gap_ep` is the number of epochs the
+                                        // admitted side has missed when this raw edge is
+                                        // crossed (-1 when the arc has never been
+                                        // admitted).  A carry reader needs the latter, and
+                                        // it cannot be derived from the raw one.
                                         fmt::format("signal={};gen={};prev_gen={};gap_ep={};"
                                                     "adm_gap_ep={};adm_state={};role={}",
                                                     key, step.generation, step.prev_generation,
@@ -822,13 +825,13 @@ namespace GnssProcessor {
         // The epoch's continuous-GPS seconds, the unit every carry horizon is in.
         const double now_s = TimeUtils::continuousGpsSeconds(se.time);
 
-        // The ANSWERED test, hoisted above the admitted pass because that pass's own
+        // The answered test, placed above the admitted pass because that pass's
         // census uses it.  The gap re-entry response fires in PASS A, upstream of
-        // this pass, and its own latch is `ctx.carry.relevel.free_ambs` with the
-        // cause bit `kCauseGap`.  The driver's slipped set is a different, wider
-        // channel (RAIM, D5, the deweight release all write to it), so the narrow
-        // latch is what answers "was this re-entry answered by the tier that exists
-        // for it".
+        // this pass, and its latch is `ctx.carry.relevel.free_ambs` with the cause
+        // bit `kCauseGap` (an entry with no recorded cause also counts).  The
+        // driver's slipped set is a wider channel (RAIM, D5 and the deweight release
+        // all write to it), so the narrow latch is what shows whether a re-entry was
+        // answered by the tier built for it.
         const auto& rel = ctx.carry.relevel;
         const auto answered = [&](int sta, const std::string& sat,
                                   const std::string& sig) {
@@ -839,12 +842,11 @@ namespace GnssProcessor {
                    || (cit->second & RelevelEpochState::kCauseGap) != 0;
         };
 
-        // --- PHASE 3 (R3a): the carry's gap prune as an ARC DEATH ---------------
+        // --- Phase 3 (R3a): the carry's gap prune as an arc death ---------------
         // The prune runs in the harvest seam, which has neither the trace bundle
         // nor the epoch time, so it buffers its keys in the context and they are
-        // evented here.  Today that edge emits NOTHING at all (the audit's "31
-        // lifecycle holders with both edges silent"); this is the DECOUPLING edge
-        // of standing invariant 7 for the carry itself.
+        // evented here.  This is the decoupling edge of standing invariant 7 for
+        // the carry itself.
         for (const ArcLedger::Key& key : ctx.carry.sid_carry_prune_deaths) {
             ++ctr.carry_prune_deaths;
             const int sta = std::get<0>(key);
@@ -874,24 +876,23 @@ namespace GnssProcessor {
         }
         ctx.carry.sid_carry_prune_deaths.clear();
 
-        // --- PHASE 2: the ADMITTED lifecycle, before every class that reads it ---
-        // The feed is the station's MODELLED phase rows.  `modeled[i]` exists only
-        // for satellites that survived the elevation mask, and `observed` holds only
+        // --- Phase 2: the admitted lifecycle, before every class that reads it ---
+        // The feed is the station's modelled phase rows.  `modeled[i]` exists only
+        // for satellites that passed the elevation mask, and `observed` holds only
         // the signals the model built (the canonical latch, its card SCC companions
-        // and whatever the allow list admitted) — which is exactly the set
-        // `local_carry` and the ambiguity states are keyed from.  The raw side, fed
-        // at the build seam upstream of all of that, is a strict superset; the two
-        // are reported side by side and never added.
+        // and whatever the allow list admitted), which is the set `local_carry` and
+        // the ambiguity states are keyed from.  The raw side, fed at the build seam
+        // upstream of all of that, is a strict superset; the two are reported side
+        // by side and never added.
         {
-            // PHASE 4a (S1): the SLIP writer, on the one set that carries every
-            // refloat vehicle.  `relevel.free_ambs` is written by the MW / LLI
-            // drains, the IF-TD tier, the RAIM T3 and T4 responses, the gap
-            // re-entry tiers and the de-weight release alike, each with the exact
-            // (station, ambiguity key) identity, so recording it here is one site
-            // instead of a bit added at every responder — and it is upstream of the
-            // fold two lines below, which is the ordering the mask needs.  A freed
-            // arc is only a gap opener where the free is followed by the row
-            // disappearing; where it is not, the bit is simply not on a gap.
+            // The slip writer (phase 4a, S1), on the one set every refloat vehicle
+            // writes.  `relevel.free_ambs` is written by the MW / LLI drains, the
+            // IF-TD tier, the RAIM T3 and T4 responses, the gap re-entry tiers and
+            // the de-weight release, each with the exact (station, ambiguity key)
+            // identity, so recording it here is one site instead of a bit added at
+            // every responder.  It also precedes the fold below, as the mask
+            // requires.  A freed arc opens a gap only where the free is followed by
+            // the row disappearing; otherwise the bit lands on no gap.
             if (ctx.reasons.armed)
                 for (const auto& [sta, amb] : ctx.carry.relevel.free_ambs) {
                     const auto us = amb.find('_');
@@ -904,9 +905,9 @@ namespace GnssProcessor {
             signalRosterAdmittedArcs(modeled, present, admitted);
             ctr.adm_rows += static_cast<long long>(admitted.size());
             std::vector<std::pair<ArcLedger::Key, ArcStep>> adm_edges;
-            // PHASE 4a (S1): the FOLD.  Unarmed the buffer is handed over all the
-            // same and the machine sees `armed == false`, so every reason mask
-            // stays exactly what phase 3 wrote.
+            // The fold (phase 4a, S1).  When unarmed, the buffer is still passed and
+            // admitEpoch sees `armed == false`, so every reason mask stays as
+            // phase 3 wrote it.
             ctx.arc_ledger.admitEpoch(admitted, adm_edges, &ctx.reasons);
             for (const auto& [key, step] : adm_edges) {
                 const int sta = std::get<0>(key);
@@ -919,10 +920,10 @@ namespace GnssProcessor {
                 case ArcTransition::Death:   ++ctr.adm_death;   break;
                 default: break;
                 }
-                // PHASE 4a (S1): the per-reason gap census, read off the mask the
+                // The per-reason gap census (phase 4a, S1), read off the mask the
                 // fold has just stamped.  A gap with two reasons increments both
-                // bits, so the per-reason numbers do not sum to `gap_folded`; the
-                // multi count says by how much.
+                // bits, so the per-reason numbers do not sum to `gap_folded`;
+                // `gap_multi` counts the gaps with more than one reason.
                 if (ctx.reasons.armed && step.transition == ArcTransition::Gap) {
                     ++ctr.gap_folded;
                     int n_bits = 0;
@@ -933,10 +934,10 @@ namespace GnssProcessor {
                         }
                     if (n_bits > 1) ++ctr.gap_multi;
                 }
-                // The CARRY-SIDE census on the admitted lifecycle: a return at an arc
-                // whose leveling carry is still live is the population the card's
-                // 195 / 68 (and phase 1's 51 / 16) were measured on, now read off the
-                // admitted arc's own edge instead of the carry's re-stash stamp.
+                // The carry-side census on the admitted lifecycle: returns at arcs
+                // whose leveling carry is still live, the population card SID
+                // measures, read off the admitted arc's own edge rather than the
+                // carry's re-stash stamp.
                 const bool carried =
                     ctx.carry.local_carry.count(std::make_tuple(sta, sat, sig)) > 0;
                 if (step.transition == ArcTransition::Reentry && carried) {
@@ -946,13 +947,13 @@ namespace GnssProcessor {
                         if (answered(sta, sat, sig)) ++ctr.carry_adm_gap_2_30_answered;
                     }
                 }
-                // PHASE 3 (R4): the UNIFIED answered definition.  The two
-                // approximations above and in phase 1 inferred the outcome (a read
-                // of `relevel.free_ambs`, a match on `reentry_relevel` events) and
-                // disagreed by 5 of 51.  The response now RECORDS what it did per
-                // arc, in both knob states, and the census reads that.  The split
-                // is four-way and exhaustive: an arc with no record was never
-                // looked at by any tier, which is the honest fourth bucket.
+                // The unified answered definition (phase 3, R4).  The census above
+                // and phase 1 inferred the outcome (a read of `relevel.free_ambs`, a
+                // match on `reentry_relevel` events), and the two inferences
+                // disagree.  The response records what it did per arc, in both knob
+                // states, and this census reads that record.  The split of carried
+                // returns is four-way and exhaustive: an arc with no record was not
+                // examined by any tier and is counted with BridgedNoVerdict.
                 if (step.transition == ArcTransition::Reentry
                     && step.gap_len_ep >= 2 && step.gap_len_ep <= 30) {
                     ++ctr.ans_total;
@@ -970,14 +971,12 @@ namespace GnssProcessor {
                         case ArcReentryOutcome::BridgedNoVerdict:
                         case ArcReentryOutcome::None:             ++ctr.ans_bridged_nv; break;
                         }
-                        // PHASE 4a (S1): the NO-VERDICT population split by the
-                        // reason mask of the GAP THAT PRECEDED the return.  Phase 3
-                        // measured 87 of 301 returns in 6 h that no raw tier saw and
-                        // named them "a screen-side decoupling"; this is the split
-                        // that says which screen.  The mask is read off the arc
-                        // rather than the step, because the step describes the
-                        // RE-ENTRY while the mask was stamped at the gap and has
-                        // survived it untouched.
+                        // The no-verdict population split by the reason mask of the
+                        // gap that preceded the return (phase 4a, S1).  Returns that
+                        // no raw tier saw are screen-side decouplings, and this split
+                        // names the screen.  The mask is read off the arc rather than
+                        // the step, because the step describes the re-entry while the
+                        // mask was stamped at the gap and has survived it unchanged.
                         if (ctx.reasons.armed
                             && (o == ArcReentryOutcome::BridgedNoVerdict
                                 || o == ArcReentryOutcome::None)) {
@@ -1010,15 +1009,14 @@ namespace GnssProcessor {
                 static_cast<long long>(ctx.arc_ledger.admittedLiveCount()));
         }
 
-        // --- PHASE 3 (R3b): the state-vector prune as a ledger MARK -------------
-        // Drained AFTER the admitted pass, and the ordering is load-bearing: the
-        // prune ran in PASS B of THIS epoch and destroys exactly the columns this
-        // epoch did not model, so the arc it belongs to only enters its admitted
-        // GAP when `admitEpoch` above closes this epoch.  Drained before that
-        // advance the test `adm_state == Gap` is evaluated one epoch early and
-        // never fires (measured: 507 pruned columns, 0 marked, on the first
-        // field arm of this phase).  NO behaviour change: the prune is untouched
-        // and nothing here writes to the solve.
+        // --- Phase 3 (R3b): the state-vector prune as a ledger mark -------------
+        // Drained after the admitted pass, and the order matters: the prune ran in
+        // PASS B of this epoch and removes the columns this epoch did not model, so
+        // the arc a column belongs to enters its admitted Gap only when
+        // `admitEpoch` above closes this epoch.  Drained before that advance, the
+        // test `adm_state == Gap` is evaluated one epoch early and never fires.  No
+        // behaviour change: the prune is unchanged and nothing here writes to the
+        // solve.
         for (std::size_t i = 0; i < stations.size(); ++i) {
             if (!stations[i].sm) continue;
             for (const std::string& key : stations[i].sm->takePrunedAmbiguities()) {
@@ -1028,10 +1026,10 @@ namespace GnssProcessor {
                 const ArcLedger::Key ak{ static_cast<int>(i), parts->satellite,
                                          parts->signal };
                 const ArcRecord* a = ctx.arc_ledger.find(ak);
-                // Only a column destroyed while its ADMITTED arc is in a Gap
-                // INSIDE the horizon is the silent death path the card names: past
-                // the horizon the arc is dead anyway, and an arc the ledger never
-                // admitted is a key it can say nothing about.
+                // Only a column removed while its admitted arc is in a Gap inside
+                // the horizon is the silent death path the card names: past the
+                // horizon the arc is dead anyway, and the ledger can say nothing
+                // about a key it never admitted.
                 if (a == nullptr || a->ep_last_admitted < 0) {
                     ++ctr.state_prune_unknown;
                     continue;
@@ -1045,8 +1043,8 @@ namespace GnssProcessor {
 
 
         // --- (a) the arc-level tracker's band signal against modelled_phase ----
-        // Per ROW here; the (station, band) CELL census is the run-end mode of the
-        // same rows, which is how the audit's 46 cells were defined.
+        // Counted per row here; the (station, band) cell census is the run-end mode
+        // of the same rows, the definition the SID audit's 46 cells use.
         if (raw != nullptr && raw->computed) {
             for (std::size_t i = 0; i < raw->rows.size() && i < rs.by_station.size(); ++i) {
                 const StationRoster& sr = rs.by_station[i];
@@ -1073,10 +1071,10 @@ namespace GnssProcessor {
             }
         }
 
-        // --- (c) local_carry presence against the ledger, BOTH SIDES ----------
+        // --- (c) local_carry presence against the ledger, on both sides ------
         // The raw side is the phase-1 number and stays; the admitted side is the one
-        // a carry reader would key on, and the difference between them is the
-        // structural finding phase 2 exists to close.
+        // a carry reader keys on, and the difference between them is the structural
+        // gap phase 2 addresses.
         for (const auto& [key, lc] : ctx.carry.local_carry) {
             (void)lc;
             ++ctr.lc_entries;
@@ -1101,15 +1099,15 @@ namespace GnssProcessor {
         }
 
         // --- (d) StateManager ambiguity presence against the ledger ------------
-        // The prune is NOT touched: the comparison reads the surviving key set and
-        // asks the ledger what it thinks of each arc, and separately asks which
-        // GAPPED arcs inside the horizon have lost their state.  That second number
-        // is the one the audit calls the largest silent death path in the system.
+        // The prune is not touched: the comparison reads the surviving key set and
+        // looks up each arc in the ledger, and separately counts the gapped arcs
+        // inside the horizon that have lost their state.  The SID audit names that
+        // second number the largest silent death path in the system.
         {
-            // The ledger's key orders on the STATION index first, so each station's
+            // The ledger's key orders on the station index first, so each station's
             // arcs are one contiguous range.  Walking it that way keeps the class at
-            // O(arcs) for the whole network instead of O(stations x arcs), which is
-            // what lets the observatory stay inside the cost bar at 305 stations.
+            // O(arcs) for the whole network instead of O(stations x arcs), which keeps
+            // the observatory inside its cost bar at 305 stations.
             const auto& arcs = ctx.arc_ledger.arcs();
             for (std::size_t i = 0; i < stations.size(); ++i) {
                 const StateManager* sm = stations[i].sm.get();
@@ -1148,8 +1146,8 @@ namespace GnssProcessor {
         // --- (e) the anchor election's first sightings against the ledger ------
         // A key that has an incumbent now and had none at the previous epoch's read
         // is what the election treated as a first sighting.  The ledger is asked
-        // whether its arcs had just RETURNED, which is the distinction
-        // NetworkPhaseDatum.cpp deliberately does not make today.
+        // whether its arcs had just returned, a distinction NetworkPhaseDatum.cpp
+        // does not make.
         {
             std::set<std::string> now;
             for (const auto& [amb, sta] : ctx.carry.anchor_incumbent) {
@@ -1177,11 +1175,11 @@ namespace GnssProcessor {
         }
 
         // --- (f) phase-bias family support per column-epoch, from the ledger ---
-        // CARRIED support: an arc counts for its family only when it is a MODELLED
-        // phase, alive in the ledger AND present in local_carry.  The raw-side count
-        // would be a different quantity: the roster's arrival site is upstream of the
+        // Carried support: an arc counts for its family only when it is a modelled
+        // phase, alive in the ledger and present in local_carry.  The raw-side count
+        // is a different quantity: the roster's arrival site is upstream of the
         // elevation mask and of every admission screen, so a satellite below the mask
-        // is TRACKED and not carried, and the audit's medians are carried ones.
+        // is tracked and not carried, and the SID audit's medians are carried ones.
         {
             std::map<std::string, int> support;
             for (const auto& [key, a] : ctx.arc_ledger.arcs()) {
@@ -1197,8 +1195,8 @@ namespace GnssProcessor {
 
         // --- (g) wire family coverage, from the emitter's own epoch ------------
         if (emitted) {
-            // The families a consumer may ask for are the MODELLED signals of the
-            // network, so the roster itself defines the denominator.  Built once per
+            // The families a consumer may request are the modelled signals of the
+            // network, so the roster defines the denominator.  Built once per
             // epoch, not once per satellite.
             std::set<std::string> want_phase, want_code;
             for (std::size_t i = 0; i < rs.by_station.size(); ++i) {
@@ -1207,12 +1205,13 @@ namespace GnssProcessor {
                     for (const auto& [band, br] : cells) {
                         (void)band;
                         if (!br.modelled_phase.empty()) want_phase.insert(br.modelled_phase);
-                        // Card SID phase 6a: the wire's coverage DENOMINATOR is the set
-                        // of families the network models, so a second phase belongs in
-                        // it.  Without this the L1W family would never be counted on a
-                        // bed where no station LATCHES L1W (the sim with a cloned second
-                        // phase is exactly that bed) and `wire_pb_missing[L1W]` would
-                        // read zero for the wrong reason.  Empty unless armed.
+                        // The wire's coverage denominator is the set of families the
+                        // network models, so a second phase belongs in it (card SID
+                        // phase 6a).  Without it, the L1W family is never counted on a
+                        // bed where no station latches L1W (the sim with a cloned
+                        // second phase is such a bed), and `wire_pb_missing[L1W]`
+                        // reads zero for the wrong reason.  Empty unless the
+                        // second-phase channel or the all-channel mode is armed.
                         for (const auto& x : br.modelled_extra) want_phase.insert(x);
                         if (!br.modelled_code.empty())  want_code.insert(br.modelled_code);
                     }
@@ -1230,7 +1229,7 @@ namespace GnssProcessor {
             }
         }
 
-        // --- the ANSWERED half, and the CARRY-SIDE gap census ------------------
+        // --- The answered half, and the carry-side gap census ------------------
         // The `answered` test is defined at the top of this pass (the admitted census
         // uses it too).
         (void)freed;
@@ -1244,13 +1243,12 @@ namespace GnssProcessor {
                 ++ctr.gap_2_30_answered;
         }
 
-        // The CARRY-SIDE census, driven by the carry's own RE-STASH stamp epoch to
-        // epoch.  This is the audit's own population: `network_amb_state.csv` writes
-        // a row when the harvest STASHES an arc, and an entry that stays in the map
+        // The carry-side census, driven epoch to epoch by the carry's own re-stash
+        // stamp.  This is the SID audit's population: `network_amb_state.csv` writes
+        // a row when the harvest stashes an arc, and an entry that stays in the map
         // without being re-stashed leaves no row, so map presence would report almost
-        // no gaps at all (measured: 4 against the trace's 51 over the same window).
-        // The stamp is @c LocalCarry::last_seen_s, set at every stash.  Reported
-        // SEPARATELY from the raw-side population above, never added to it.
+        // no gaps.  The stamp is @c LocalCarry::last_seen_s, set at every stash.
+        // Reported separately from the raw-side population above, never added to it.
         {
             const long long ep = ctx.arc_ledger.epochIndex();
             const double now_s = TimeUtils::continuousGpsSeconds(se.time);
@@ -1302,10 +1300,10 @@ namespace GnssProcessor {
         }
         if (gapped)             ++ctr.gate_drop_edges_gapped;
         else if (tracking)      ++ctr.gate_drop_edges_tracking;
-        // PHASE 4a (S2): the same edges, read on the ADMITTED side and per ARC.
-        // Class (h) above answers "does the family hold a gapped arc" on the raw
-        // side; this answers "how many of its arcs are alive, gapped or dead", which
-        // is what the generation test at the family's return is decided against.
+        // The same edges, read on the admitted side and per arc (phase 4a, S2).
+        // Class (h) above records whether the family holds a gapped arc on the raw
+        // side; this counts how many of its arcs are alive, gapped or dead, which is
+        // what the generation test at the family's return is decided against.
         if (!ctx.reasons.armed) return;
         ++ctr.anchor_drop_edges;
         int n_tr = 0, n_gp = 0, n_dd = 0;
@@ -1333,11 +1331,12 @@ namespace GnssProcessor {
         for (const AnchorFirstSighting& fs : re.first_sightings) {
             if (fs.cls == AnchorReentryClass::SameGeneration) ++ctr.anchor_fs_same_gen;
             else if (fs.cls == AnchorReentryClass::NewGeneration) ++ctr.anchor_fs_new_gen;
-            // The IDENTITY the audit says this class has never had: which family,
+            // The identity the SID audit reports this class as lacking: which family,
             // how long it had been without an incumbent, how many of its arcs had
-            // just come back, and what the generation test made of it.  Throttled
-            // on the ledger's own per (station, transition) holdoff so the stream
-            // stays bounded at 305 stations; the counters carry the full volume.
+            // just come back, and how the generation test classified it.  Throttled
+            // on the ledger's per (station, transition) holdoff, here under station
+            // index -1, so the stream stays bounded at 305 stations; the counters
+            // carry the full volume.
             const bool interesting = fs.n_returning > 0
                                      || fs.cls != AnchorReentryClass::NoMemory;
             if (!interesting) continue;
@@ -1366,8 +1365,9 @@ namespace GnssProcessor {
                                              fs.station,
                                              fs.refused[0] == '\0' ? "-" : fs.refused));
             }
-            // B1's own two edges, emitted only where the behaviour half is armed so
-            // an observatory run cannot be mistaken for one that acted.
+            // The two edges of the restore behaviour (B1), emitted only when the
+            // behaviour half is armed, so an observatory run cannot be mistaken for
+            // one that acted.
             if (!re.restore || fs.cls == AnchorReentryClass::NoMemory) continue;
             traces.emitEvent(t, "PHASE_ANCHOR",
                              fs.restored ? "reentry_restore" : "reentry_new", sat,
@@ -1395,9 +1395,9 @@ namespace GnssProcessor {
         if (!rs.armed) return;
         auto& c = ctx.counters.sid;
 
-        // Class (a), the CELL census: per (station, band) the DOMINANT tracker
-        // signal over the run against that cell's modelled phase.  That is the
-        // audit's own definition of a mismatched station-band cell.
+        // Class (a), the cell census: per (station, band), the dominant tracker
+        // signal over the run against that cell's modelled phase.  That is the SID
+        // audit's definition of a mismatched station-band cell.
         std::map<std::pair<int, char>, std::pair<std::string, long long>> mode;
         for (const auto& [k, n] : rs.tracker_rows) {
             const auto cell = std::make_pair(std::get<0>(k), std::get<1>(k));
@@ -1556,7 +1556,7 @@ namespace GnssProcessor {
                 : "");
 
         // ---------------------------------------------------------------
-        // PHASE 2: the reader, the writer and the admitted lifecycle
+        // Phase 2: the reader, the writer and the admitted lifecycle
         // ---------------------------------------------------------------
         std::string datum_line;
         for (const auto& [k, n] : c.datum_code_census) {
@@ -1624,7 +1624,7 @@ namespace GnssProcessor {
                 : "");
 
         // ---------------------------------------------------------------
-        // PHASE 3: the prune and expiry edges, and the UNIFIED answered split
+        // Phase 3: the prune and expiry edges, and the unified answered split
         // ---------------------------------------------------------------
         log->info(
             "Network (card SID phase 3 / PRUNE AND EXPIRY EDGES): "
@@ -1675,7 +1675,7 @@ namespace GnssProcessor {
                 : "");
 
         // ---------------------------------------------------------------
-        // PHASE 4a: the REASON-MASK WRITERS (S1)
+        // Phase 4a: the reason-mask writers (S1)
         // ---------------------------------------------------------------
         if (!ctx.reasons.armed) return;
         {
@@ -1725,12 +1725,13 @@ namespace GnssProcessor {
                     ? "  ⚠ ARMED AND INERT: no admitted gap was folded at all, so the "
                       "reason masks say nothing about this run."
                     : "");
-            // ⚠ NOT the phase-3 `ledger_reentry_no_verdict` population: that one is
-            // every admitted return inside the CARRY horizon and is attributed by the
-            // response's own line in NetworkTeardown.cpp.  This is the R4 split's
-            // BRIDGED-WITH-NO-VERDICT bucket, whose population is narrowed to returns
-            // after 2 to 30 missed epochs.  The two are stated apart on purpose; a
-            // single "no-verdict by reason" number would silently be one or the other.
+            // This is not the phase-3 `ledger_reentry_no_verdict` population: that one
+            // is every admitted return inside the carry horizon and is attributed by
+            // the response's own line in NetworkTeardown.cpp.  This is the
+            // bridged-with-no-verdict bucket of the R4 split, whose population is
+            // narrowed to returns after 2 to 30 missed epochs.  The two are logged
+            // separately; a single "no-verdict by reason" number would be one or the
+            // other without saying which.
             log->info(
                 "Network (card SID phase 4a / THE R4 BRIDGED-NO-VERDICT BUCKET BY "
                 "REASON, S1): {} re-entr(y|ies) of the 2-to-30-epoch R4 population that "
@@ -1747,7 +1748,7 @@ namespace GnssProcessor {
         }
 
         // ---------------------------------------------------------------
-        // PHASE 4a / 4b: the ANCHOR ELECTION read against the ledger (S2 / B1 / B2)
+        // Phase 4a / 4b: the anchor election read against the ledger (S2 / B1 / B2)
         // ---------------------------------------------------------------
         log->info(
             "Network (card SID phase 4 / THE ANCHOR ELECTION AGAINST THE LEDGER, S2): "

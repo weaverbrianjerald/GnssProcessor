@@ -2,9 +2,9 @@
 """Fetch RINEX-3 daily obs for a station list from CDDIS into the data tree.
 
 Reads ``global_network_stations.json`` (from select_global_stations.py), pulls
-each station's ``..._01D_30S_MO.crx.gz`` from the CDDIS daily archive (curl +
-.netrc + Earthdata cookie jar + redirect-follow — the working CDDIS recipe),
-gunzips, and runs ``crx2rnx`` to the final ``.rnx``, placed at
+each station's ``..._01D_30S_MO.crx.gz`` from the CDDIS daily archive over curl
+with .netrc authentication, an Earthdata cookie jar, and redirect-follow, then
+decompresses it to the final ``.rnx``, placed at
 ``data/<YYYY-DOY>/obs/<long_lower>/`` so the C++ PathResolver finds it by
 station-name match.  Idempotent: an already-present ``.rnx`` is skipped.
 """
@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 try:
-    import hatanaka  # bundled RNXCMP 4.x — gzip + Hatanaka decompression, RINEX 2/3/4
+    import hatanaka  # bundled RNXCMP 4.x: gzip + Hatanaka decompression, RINEX 2/3/4
 except ImportError:
     sys.exit("fetch_global_obs.py requires the 'hatanaka' package (pip install hatanaka)")
 

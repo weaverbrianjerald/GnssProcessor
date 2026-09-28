@@ -1,19 +1,20 @@
 #pragma once
 /**
  * @file NetworkMwWlGlue.hpp
- * @brief The MW-WL / EWL / UWL / lane-carry INJECT step of the PPP-RTK network
- *        producer, relocated VERBATIM out of networkBuildCarryDdPriors (the second
- *        `if (mw_mach_on)` block) at decomposition INC-13 (2026-07-23).
+ * @brief The MW-WL / EWL / UWL / lane-carry inject step of the PPP-RTK network producer,
+ *        relocated unchanged out of networkBuildCarryDdPriors (the second
+ *        `if (mw_mach_on)` block) at decomposition INC-13.
  *
- * This is the back half of the WL machinery: after the census/signal-selection block
- * populates the shared per-(rx,sat) maps (revmap / lin_of / iono_of / primary /
- * band_top*_of / band_mid_of) and the Card-4 DD-carry blocks are built, this step
- * constructs the WL-1 float lane, the WL-2 EWL FFR-fixed lane, the WL-3 per-epoch MW
- * lane increments, the bridge->WL-integer hold/inject walk, and the F6 / lane-trace
- * diagnostics, appending its rows to @p blocks.  The `if (mw_mach_on)` guard stays at
- * the call site (byte-identical OFF).  Owns NO state: every WL run-state instance and
- * the three cross-epoch channels are references into the run-TU-owned objects (via ctx
- * or explicit args); the shared maps are read-only inputs the census block filled.
+ * This is the back half of the WL machinery.  After the census and signal-selection
+ * block has populated the shared per-(rx,sat) maps (revmap, lin_of, iono_of, primary,
+ * band_top*_of, band_mid_of) and the invariant DD-carry blocks (Card-4) are built, this
+ * step constructs the WL-1 float lane, the WL-2 EWL FFR-fixed lane, the WL-3 per-epoch MW
+ * lane increments, the bridge->WL-integer hold/inject walk, and the F6 and lane-trace
+ * diagnostics, and appends its rows to @p blocks.  The `if (mw_mach_on)` guard stays at
+ * the call site, so with it off the run is byte-identical.  The step owns no state:
+ * every WL run-state instance and the three cross-epoch channels are references into
+ * objects owned by the run TU (through ctx or explicit arguments), and the shared maps
+ * are read-only inputs filled by the census block.
  */
 
 #include "filter/NetworkInvariantCarryDriver.hpp" // NetworkInvariantCarryDriver
@@ -40,12 +41,15 @@ struct NetworkRunContext;
 struct NetworkRunTraces;
 
 /**
- * @brief Build + append this epoch's MW-WL / EWL / UWL / lane-carry pseudo-obs rows to
- *        @p blocks (WL-1 float lane, WL-2 EWL FFR-fixed lane, WL-3 MW lane increments,
- *        the bridge->WL-integer hold/inject walk, and the F6 / lane-trace diagnostics).
- *        Called under `if (mw_mach_on)` from networkBuildCarryDdPriors, AFTER
- *        carry_driver.buildDdPriors; the shared per-(rx,sat) maps are read-only inputs
- *        the census block populated.  See the .cpp for the verbatim body.
+ * @brief Build this epoch's MW-WL / EWL / UWL / lane-carry pseudo-observation rows and
+ *        append them to @p blocks (WL-1 float lane, WL-2 EWL FFR-fixed lane, WL-3 MW lane
+ *        increments, the bridge->WL-integer hold/inject walk, and the F6 and lane-trace
+ *        diagnostics).
+ *
+ * Called under `if (mw_mach_on)` from networkBuildCarryDdPriors, after
+ * carry_driver.buildDdPriors.  The shared per-(rx,sat) maps are read-only inputs
+ * populated by the census block.  Rows are appended in the order WL-1, then EWL (only
+ * with mw_wl.ewl_fold_rows), then WL hold rows.  See the .cpp for the relocated body.
  */
 void networkMwWlInject(
     NetworkRunContext& ctx,

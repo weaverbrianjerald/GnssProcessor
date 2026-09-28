@@ -1,25 +1,25 @@
 /**
  * @file test_resume_datum_restore.cpp
- * @brief Contract tests for the RS-3 DATUM-CONTINUITY card
- *        (docs/SPEC_event_harness.md §21.7): the snapshot's format-forward datum
+ * @brief Contract tests for the datum-continuity records of the network state snapshot
+ *        (card RS-3, docs/SPEC_event_harness.md §21.7): the format-forward datum
  *        records (@c EQD / @c EQP / @c EQS / @c EQT / @c EQE / @c EQR for the eq34
- *        chain datum's last-epoch spanning tree, @c CBP / @c CBS for the time-linked
- *        code-bias datum memory), their backward compatibility with every earlier
- *        file, and the loader's side of the two knobs
- *        (@c network.state_snapshot_datum_capture, @c network.resume_datum_restore).
+ *        chain datum's last-epoch spanning tree; @c CBP / @c CBS / @c CBI for the
+ *        time-linked code-bias datum memory and its IF-pin pairs), their backward
+ *        compatibility with every earlier file, and the loader's handling of the two
+ *        knobs (@c network.state_snapshot_datum_capture, @c network.resume_datum_restore).
  *
- * What is locked here: (1) every map round-trips EXACTLY — including a key holding a
- * '|' (the eq34 "<station>|<cons>|<signal>" receiver key) and a full station name, and
- * doubles at full precision; (2) a snapshot carrying NONE of the rows is written
- * byte-for-byte as before and parses back with every container empty, which is the
- * "reader that finds no such rows behaves exactly as today" contract and the OFF-path
- * byte-identity lock; (3) the knobs default OFF, @c resume_datum_restore hard-requires
- * @c resume_frame_restore, and the warn-inert postures still load; (4) a malformed or
- * non-finite record is a HARD parse failure, never a silent partial restore.
+ * The tests check: (1) every map round-trips exactly, including a key that holds a '|'
+ * (the eq34 "<station>|<cons>|<signal>" receiver key), a full station name, and doubles
+ * at full precision; (2) a snapshot that carries none of the rows is written as before,
+ * byte for byte, and parses back with every container empty, so a reader that finds no
+ * such rows behaves as it did before the card and the off path stays byte-identical;
+ * (3) both knobs default off, @c resume_datum_restore requires @c resume_frame_restore,
+ * and the warn-only configurations still load; (4) a malformed or non-finite record
+ * fails the parse instead of producing a partial restore.
  *
- * The seam mechanics themselves — the election's sticky seed continuing a RESTORED
- * tree, and @c code_bias_datum_resumed_ staying false so a re-seed bumps only where it
- * genuinely re-seeds — are graded on the ep0604 resume legs, not here.
+ * The seam behavior itself (the election's sticky seed continuing a restored tree, and
+ * @c code_bias_datum_resumed_ staying false so a re-seed is counted only where a re-seed
+ * happens) is graded on the ep0604 resume legs, not here.
  */
 #include <gtest/gtest.h>
 #include "config/GnssConfig.hpp"
@@ -50,8 +50,8 @@ NetworkStateSnapshot baseSnapshot() {
 
 /// A datum-bearing snapshot shaped like the field seed's: a two-signal GPS group, a
 /// receiver key carrying '|' and a full 9-character RINEX station name, one interior
-/// satellite pinned at two different stations (the per-station key the pin target MUST
-/// keep), and a code-bias family with two satellites.
+/// satellite pinned at two different stations (the pin target has to keep its
+/// per-station key), and a code-bias family with two satellites.
 NetworkStateSnapshot datumSnapshot() {
     NetworkStateSnapshot s = baseSnapshot();
     s.eq34_datum_rx["G|L1C"] = "GOPE00CZE";
@@ -60,8 +60,8 @@ NetworkStateSnapshot datumSnapshot() {
     s.eq34_rx_parent["WTZR00DEU|G|L2W"] = "G07";
     s.eq34_sat_root["G24_L1C"] = "GOPE00CZE";
     s.eq34_sat_root["G07_L2W"] = "WTZR00DEU";
-    // Same ambiguity, two stations, two targets — the collision the per-station key
-    // exists to prevent (an amb-only key measured a 4e8-cycle blow-up).
+    // Same ambiguity, two stations, two targets: the collision the per-station key
+    // prevents (a key on the ambiguity alone would merge the two targets).
     s.eq34_prev_target[{3, "G24_L1C"}]  = -118371.98765432109;
     s.eq34_prev_target[{17, "G24_L1C"}] = 44021.0;
     s.eq34_prev_el[{3, "G24"}]  = 61.284999999999997;
@@ -74,7 +74,7 @@ NetworkStateSnapshot datumSnapshot() {
     s.code_bias_sat_seen.insert("G24");
     s.code_bias_sat_seen.insert("G07");
     s.code_bias_sat_seen.insert("G12");
-    // The IF-pin pair those values were solved under — without it `pair_same` reads
+    // The IF-pin pair those values were solved under.  Without it `pair_same` reads
     // false for every satellite and the IF-pin half of the datum re-seeds anyway.
     s.code_bias_ifpin_pair["G24"] = {"C1W", "C2W"};
     s.code_bias_ifpin_pair["G07"] = {"C1C", "C2W"};
@@ -128,15 +128,15 @@ std::string roundTrip(const NetworkStateSnapshot& s, NetworkStateSnapshot& out) 
 
 }  // namespace
 
-// (a) Every map round-trips EXACTLY, keys with '|' and station names included.
+// (a) Every map round-trips exactly, keys with '|' and station names included.
 TEST(ResumeDatumRestore, DatumRecordsRoundTripExactly) {
     const NetworkStateSnapshot s = datumSnapshot();
     ASSERT_TRUE(s.hasDatumState());
     NetworkStateSnapshot r;
     const std::string text = roundTrip(s, r);
 
-    // The wire shapes, spelled out — a silent field-order change would otherwise only
-    // surface on a cross-build resume.
+    // The record formats, spelled out, so a field-order change fails here instead of
+    // surfacing only on a cross-build resume.
     EXPECT_NE(text.find("EQD,G|L1C,GOPE00CZE\n"), std::string::npos) << text;
     EXPECT_NE(text.find("EQP,GOPE00CZE|G|L1C,G24\n"), std::string::npos) << text;
     EXPECT_NE(text.find("EQS,G24_L1C,GOPE00CZE\n"), std::string::npos) << text;
@@ -168,8 +168,8 @@ TEST(ResumeDatumRestore, DatumRecordsRoundTripExactly) {
     EXPECT_TRUE(r.hasDatumState());
 }
 
-// The datum rows ride the EXISTING header literal (the optional-var_first precedent),
-// so an RS-3 A/B can diff two snapshots and see only the new rows.
+// The datum rows do not change the header literal (as with the optional var_first
+// field), so an RS-3 A/B diff of two snapshots shows only the new rows.
 TEST(ResumeDatumRestore, DatumRecordsDoNotAdvanceTheHeader) {
     NetworkStateSnapshot s = datumSnapshot();
     ASSERT_FALSE(s.hasFrameState());
@@ -188,10 +188,10 @@ TEST(ResumeDatumRestore, DatumRecordsDoNotAdvanceTheHeader) {
         << os2.str().substr(0, 60);
 }
 
-// (b) + (c) A snapshot WITHOUT the rows is written byte-for-byte as before and parses
-// back with every datum container empty — the "restores nothing" contract, which is
-// also the write-knob-off byte-identity lock (the driver leaves the containers empty
-// unless network.state_snapshot_datum_capture is armed).
+// (b) + (c) A snapshot without the rows is written as before, byte for byte, and parses
+// back with every datum container empty.  This is the "restores nothing" contract and
+// also the byte-identity check for the write knob off (the driver leaves the containers
+// empty unless network.state_snapshot_datum_capture is armed).
 TEST(ResumeDatumRestore, NoDatumRowsWhenUnpopulatedAndRestoresNothing) {
     const NetworkStateSnapshot s = baseSnapshot();
     ASSERT_FALSE(s.hasDatumState());
@@ -215,8 +215,9 @@ TEST(ResumeDatumRestore, NoDatumRowsWhenUnpopulatedAndRestoresNothing) {
     EXPECT_FALSE(r.hasDatumState());
 }
 
-// A pre-RS-3 (v1/v2/v3) file is still a legal input: the restore finds no rows, both
-// halves report INERT, and the resume behaves exactly as it does today.
+// A file written before card RS-3 (v1/v2/v3) is still legal input: the restore finds no
+// rows, both halves report inert, and the resume behaves as it did before the card.
+// This test parses a v1 file.
 TEST(ResumeDatumRestore, PreCardFileParsesWithEmptyDatumMaps) {
     const std::string v1 =
         "# gnss_network_state_snapshot v1\n"
@@ -234,9 +235,9 @@ TEST(ResumeDatumRestore, PreCardFileParsesWithEmptyDatumMaps) {
     EXPECT_EQ(r.local_carry.size(), 1u);
 }
 
-// A malformed or non-finite datum record is a HARD parse failure — the caller treats
-// that as the cold-start signal, which is byte-identical to today, rather than
-// resuming on half a spanning tree or a poisoned code-bias baseline.
+// A malformed or non-finite datum record fails the parse.  The caller treats a failed
+// parse as the cold-start signal (byte-identical to a run without the card) instead of
+// resuming on half a spanning tree or a corrupt code-bias baseline.
 TEST(ResumeDatumRestore, MalformedDatumRecordsAreHardParseFailures) {
     const std::string head =
         "# gnss_network_state_snapshot v1\n"
@@ -265,8 +266,8 @@ TEST(ResumeDatumRestore, MalformedDatumRecordsAreHardParseFailures) {
     }
 }
 
-// The loader: both knobs default OFF, and the read knob hard-requires the frame
-// restore (anchor_incumbent is the same tree's satellite side).
+// The loader: both knobs default off, and the read knob requires the frame restore
+// (anchor_incumbent is the satellite side of the same tree).
 TEST(ResumeDatumRestore, KnobsDefaultOffAndReadRequiresFrameRestore) {
     GnssConfig def;
     ASSERT_TRUE(loadInto("def", networkConfig(), def));
@@ -284,16 +285,16 @@ TEST(ResumeDatumRestore, KnobsDefaultOffAndReadRequiresFrameRestore) {
     EXPECT_TRUE(both.networkResumeDatumRestore());
 
     // resume_datum_restore without resume_frame_restore is refused.  The loader turns
-    // its own throw into a FAILED LOAD (loadFromJson catches and returns false), which
-    // is how every coupling-restore prerequisite is asserted too.
+    // its own throw into a failed load (loadFromJson catches and returns false); the
+    // coupling-restore prerequisites are asserted the same way.
     GnssConfig bad;
     EXPECT_FALSE(loadInto("bad", networkConfig(
         "    \"state_snapshot_path\": \"snap.txt\",\n"
         "    \"resume_datum_restore\": true,\n"), bad));
 }
 
-// Both warn-inert postures (armed with no snapshot path) still LOAD — they are
-// warnings, not errors, exactly like the frame-capture pattern they mirror.
+// Both knobs armed with no snapshot path still load: this is a warning, not an error,
+// as with the frame-capture knobs.
 TEST(ResumeDatumRestore, ArmedWithoutSnapshotPathStillLoads) {
     GnssConfig w;
     ASSERT_TRUE(loadInto("warn", networkConfig(

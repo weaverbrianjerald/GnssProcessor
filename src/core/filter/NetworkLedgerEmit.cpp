@@ -1,11 +1,11 @@
 /**
  * @file NetworkLedgerEmit.cpp
- * @brief Implementation of card SID phase 5a: the emitter's per-family
- *        bookkeeping read against the arc ledger, and the producer's declaration
- *        of its signal roster on the wire (@c network.ledger_emit).
+ * @brief The emitter's per-family bookkeeping read against the arc ledger, and the
+ *        producer's declaration of its signal roster on the wire
+ *        (@c network.ledger_emit; card SID phase 5a).
  *
  * New code, not a relocation.  Seam contract: free functions over
- * @c (NetworkRunContext&, …) that own NO state; every persistent object is a
+ * @c (NetworkRunContext&, …) that own no state; every persistent object is a
  * reference into @c ctx.
  */
 
@@ -139,20 +139,20 @@ NetworkSignalDeclaration networkLedgerEmitBuildDeclaration(
         if (auto it = ph.find(k);   it != ph.end())   row.phase     = orderBySupport(it->second);
         if (auto it = co.find(k);   it != co.end())   row.code      = orderBySupport(it->second);
         if (auto it = comp.find(k); it != comp.end()) row.companion = orderBySupport(it->second);
-        // The datum designation is a statement about ONE signal, so it is written
-        // only when the epoch's cells agreed; a split designation is left empty
-        // rather than collapsed to a majority the S-basis never realized.
+        // The datum designation names a single signal, so it is written only when
+        // all of the epoch's cells agreed; a split designation is left empty rather
+        // than reduced to a majority the S-basis never realized.
         if (auto it = dph.find(k); it != dph.end()) row.datum_phase = modeOrEmpty(it->second);
         if (auto it = dco.find(k); it != dco.end()) row.datum_code  = modeOrEmpty(it->second);
-        // A row that names no MODELLED signal says nothing a consumer can act on
-        // (a bare datum designation is a statement about a pin, not about a
-        // family), so it is dropped rather than written as a half-declaration.
+        // A row that names no modelled signal gives a consumer nothing to act on (a
+        // bare datum designation describes a pin, not a family), so it is dropped
+        // rather than written as a partial declaration.
         if (row.phase.empty() && row.code.empty()) continue;
         decl.bands[k.first][k.second] = std::move(row);
     }
-    // An EMPTY declaration is the one thing the wire must never carry: it tells a
-    // consumer the network models nothing, which is the false statement the
-    // loader interlock refuses the knob over.  Reported as its own class.
+    // An empty declaration is never put on the wire: it would tell a consumer that
+    // the network models nothing, the same false statement for which the loader
+    // disarms the knob when network.signal_roster is off.  Counted as its own class.
     if (decl.bands.empty()) {
         ++ctr.decl_empty;
         return NetworkSignalDeclaration{};
@@ -221,13 +221,13 @@ void networkLedgerEmitFold(NetworkRunContext& ctx, NetworkRunTraces& traces,
 
     // (1) The ledger's arcs, grouped by the family the wire emits.  The wire is
     //     keyed (satellite, signal) and the ledger (station, satellite, signal),
-    //     so the family's edge is the UNION over its stations: an arc birth
-    //     anywhere in the family is a birth of the family's information.
+    //     so a family's edge is the union over its stations: an arc birth at any
+    //     station counts as a birth for the family.
     struct FamArcs {
         long long births{ 0 };       ///< arcs whose admitted generation advanced at this epoch.
         long long known{ 0 };        ///< arcs the ledger has a record for.
         long long ever_admitted{ 0 };///< of those, with an admitted generation of 1 or more.
-        long long first_here{ 0 };   ///< of those, first admitted at THIS epoch.
+        long long first_here{ 0 };   ///< arcs first admitted at this epoch.
         long long alive{ 0 };        ///< arcs admitted-alive (Tracking or Reentered) now.
         int       max_gen{ 0 };
     };
@@ -274,9 +274,9 @@ void networkLedgerEmitFold(NetworkRunContext& ctx, NetworkRunTraces& traces,
             const auto git = le.prev_hold_gen.find(fk);
             const bool gen_changed = (git == le.prev_hold_gen.end())
                                      || (git->second != f.hold_generation);
-            // A key's FIRST emission is not a change the consumer can compare
-            // against anything, so it is excluded from both classes and reported
-            // through the first-sighting half instead.
+            // A key's first emission has no earlier generation to compare with, so
+            // it is excluded from both classes; the first-sighting half (E1b)
+            // reports it instead.
             const bool comparable = (git != le.prev_hold_gen.end());
             if (fa.known == 0) {
                 ++ctr.gen_no_arcs;
@@ -294,10 +294,10 @@ void networkLedgerEmitFold(NetworkRunContext& ctx, NetworkRunTraces& traces,
                 }
             } else if (comparable && !gen_changed && fa.births > 0) {
                 ++ctr.birth_no_gen;
-                // The SHARP case: the family itself had no admitted-alive arc at
-                // the previous epoch, so the wire's family returned.  Everything
-                // else is one more STATION joining a family the wire already
-                // carries, which is not a re-levelling and is expected.
+                // Family return: the family had no admitted-alive arc at the
+                // previous epoch, so the family returned on the wire.  Otherwise
+                // one more station joined a family the wire already carries, which
+                // is not a re-levelling and is expected.
                 const auto ait = le.prev_family_alive.find(fk);
                 const bool family_return =
                     (ait == le.prev_family_alive.end() || ait->second == 0);
@@ -319,9 +319,10 @@ void networkLedgerEmitFold(NetworkRunContext& ctx, NetworkRunTraces& traces,
             ++ctr.first_phase;
             if (fa.ever_admitted > 0) {
                 ++ctr.first_phase_return;
-                // The ledger admitted every arc of this family for the first time
-                // at THIS epoch, so "return" is the two clocks meeting rather than
-                // a re-coupling edge.  Named, because it dominates the first epoch.
+                // When the ledger admitted every arc of this family for the first
+                // time at this epoch, the "return" comes from the two bookkeepings
+                // meeting and is not a re-coupling edge.  Tagged separately because
+                // it dominates the first epoch.
                 const bool new_here = (fa.first_here == fa.ever_admitted);
                 if (new_here) ++ctr.first_phase_return_new;
                 event(le.ev_first_return, "emit_first_on_return", f.satellite,

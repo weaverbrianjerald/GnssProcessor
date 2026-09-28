@@ -30,16 +30,13 @@
 namespace GnssProcessor {
 
 /**
- * @brief Result of an integer ambiguity resolution attempt.
- */
-/**
  * @brief Quality of one MW-resolved wide-lane arc, as consumed by the WL-only
  *        acceptance gate (@ref AmbiguityResolverConfig::wl_only_ffr).
  *
  * Mirrors @c MwSlipDetector::WlLockQuality without coupling this header to the
- * detector — the caller converts.  @c count travels with σ because a 2-sample
- * arc whose samples happen to agree reports σ ≈ 0, i.e. a success rate of ≈ 1
- * on one degree of freedom.
+ * detector; the caller converts.  @c count travels with σ because a 2-sample arc
+ * whose samples happen to agree reports σ ≈ 0, i.e. a success rate of ≈ 1 on one
+ * degree of freedom.
  */
 struct WlArcQuality {
     double      sigma_cycles{ 0.0 };   ///< σ of the MW arc mean (cycles).
@@ -47,37 +44,40 @@ struct WlArcQuality {
     bool        exact{ false };        ///< SD-vs-self pivot: 0 cycles by construction, no uncertainty.
 };
 
+/**
+ * @brief Result of an integer ambiguity resolution attempt.
+ */
 struct AmbiguityResolution {
     bool success{ false };             ///< True if ambiguities were successfully fixed.
     /// Ratio test value (s2/s1).  Higher = more confident.
-    /// @warning `+inf` is a SENTINEL meaning "no LAMBDA ratio test ran" — it is
-    /// set by the WL-only / MW-WL-constraint paths, which fix by applying MW
-    /// integers directly.  It is NOT a spectacular ratio, and reading it as one
-    /// is how an ungated 35 m wrong fix passed review
-    /// (`docs/SPEC_clock_temporal_anchor.md` §8.11).  Grade those fixes on
-    /// @ref p_succ, and see @ref AmbiguityResolverConfig::wl_only_ffr.
+    /// @warning `+inf` is a sentinel meaning "no LAMBDA ratio test ran".  The WL-only
+    /// and MW-WL-constraint paths set it, because they fix by applying MW integers
+    /// directly.  It is not a large ratio and must not be graded as one; an ungated
+    /// 35 m wrong fix passed review that way (`docs/SPEC_clock_temporal_anchor.md`
+    /// §8.11).  Grade those fixes on @ref p_succ, and see
+    /// @ref AmbiguityResolverConfig::wl_only_ffr.
     double ratio{ 0.0 };
     int num_fixed{ 0 };                ///< Number of SD ambiguities fixed.
     int num_candidates{ 0 };           ///< Number of SD ambiguity candidates.
     Eigen::VectorXd fixed_state;       ///< Full state vector with fixed ambiguities applied.
     Eigen::MatrixXd fixed_covariance;  ///< Covariance after ambiguity fixing.
-    /// T2c gate attribution — WHICH early gate zeroed AR (so a run that never fixes is
-    /// diagnosable).  Set ONLY at the pre-MLAMBDA early-return gates; 0 means MLAMBDA was
-    /// reached (the outcome — fixed / ratio-battery reject / MLAMBDA fail — is then read
-    /// from @ref success + @ref ratio).  0=reached-MLAMBDA, 1=disabled(ar_mode=0),
-    /// 2=min_epochs guard, 3=position-σ gate (see @ref gate_sigma_3d), 4=no candidates
-    /// (empty DD pairs / no WL integers this epoch), 5=the WL acceptance guards
-    /// rejected every MW constraint (@ref AmbiguityResolverConfig::wl_only_ffr /
-    /// @c wl_only_max_innov_cyc).  5 exists because without it a guard rejection
-    /// reads as `mlambda_fail` — MLAMBDA never ran on these paths, and a trace
-    /// that blames the search for a decision the GUARD made is the same class of
-    /// mis-attribution as the `ratio = +inf` sentinel.
+    /// Which early gate stopped AR, so that a run that never fixes can be diagnosed
+    /// (T2c).  Set only at the early-return gates ahead of MLAMBDA; 0 means no early
+    /// gate fired.  On the LAMBDA paths MLAMBDA was then reached, and the outcome
+    /// (fixed, rejected by the ratio battery, or MLAMBDA failure) is read from
+    /// @ref success and @ref ratio.  Codes: 0 = no early gate, 1 = disabled
+    /// (ar_mode = 0), 2 = min_epochs guard, 3 = position-σ gate (see @ref gate_sigma_3d),
+    /// 4 = no candidates (empty DD pairs, or no WL integers this epoch), 5 = the WL
+    /// acceptance guards rejected every MW constraint
+    /// (@ref AmbiguityResolverConfig::wl_only_ffr / @c wl_only_max_innov_cyc).
+    /// Code 5 exists because MLAMBDA never runs on those paths: without it a guard
+    /// rejection would read as `mlambda_fail` and attribute the guard's decision to the
+    /// search, the same misreading as the `ratio = +inf` sentinel.
     int gate_reason{ 0 };
     double gate_sigma_3d{ -1.0 };      ///< 3D position σ (m) recorded when the σ-gate (gate_reason=3) fired; −1 otherwise.
-    /// Bootstrap success rate of the ACCEPTED fix — the FFR quantity, and the
-    /// only confidence number the WL-only paths can report (their @ref ratio is
-    /// the `+inf` sentinel).  0 when no fix was accepted or the path did not
-    /// compute one.
+    /// Bootstrap success rate of the accepted fix (the FFR quantity).  It is the only
+    /// confidence figure the WL-only paths can report, since their @ref ratio is the
+    /// `+inf` sentinel.  0 when no fix was accepted or the path did not compute one.
     double p_succ{ 0.0 };
     /// True when the accepted fix came from a WL-only / MW-WL-constraint path
     /// (MW integers applied directly, no LAMBDA search).  Lets a trace
@@ -97,23 +97,26 @@ struct AmbiguityResolverConfig {
     int    min_epochs{ 10 };           ///< Convergence guard: skip AR for the first N invocations.
     /**
      * @brief Per-candidate maturity gate: minimum accumulated @f$\Sigma\sin^2(el)@f$
-     *        on BOTH constituent arcs before a candidate may enter the search.
+     *        on both constituent arcs before a candidate may enter the search.
      *
-     * @c min_epochs is a GLOBAL filter-epoch counter and does not gate individual
-     * candidates, so a satellite that rose one minute ago is searched alongside
-     * one tracked for four hours.  Measured on a 24 h ALGO run: the worst NL
-     * direction is the youngest arc in 85.5% of epochs, and the full-set ratio
-     * test consequently fails 98% of the time — one immature candidate spoils
-     * the set.
+     * @c min_epochs is a global filter-epoch counter and does not gate individual
+     * candidates, so a satellite that rose one minute ago is searched alongside one
+     * tracked for four hours, and one immature candidate can fail the ratio test for
+     * the whole set.  On a 24 h ALGO run the youngest arc was the worst NL direction
+     * in 85.5 % of epochs, and the full-set ratio test failed in 98 % of epochs.
+     *
+     * Read only by the WL-constrained N_1 search
+     * (@ref AmbiguityResolver::resolveWlConstrained), on the higher-frequency arcs of
+     * the non-pivot satellite and the pivot.  The per-band, baseline DD and WL-only
+     * paths do not apply it.
      *
      * Units are epoch-equivalents at zenith (an epoch at 30 deg contributes
      * 0.25).  0 (default) disables the gate and is byte-identical to the
      * pre-gate behaviour.
      *
-     * @warning This gate makes AR SAFE, not USEFUL.  It admits candidates only
-     * once they are already well determined, which is precisely when the float
-     * needs no help — see the caveat in @ref AmbiguityResolver.  It is a
-     * wrong-fix guard, not a convergence accelerator.
+     * @warning The gate guards against wrong fixes; it does not speed convergence.
+     * It admits a candidate only once its arcs are well determined, which is when
+     * the float solution gains least from a fix.
      */
     double min_arc_info{ 0.0 };
     double max_position_sigma_m{ 0.05 };  ///< Convergence guard: skip AR when 3D position σ exceeds this (m).
@@ -123,54 +126,51 @@ struct AmbiguityResolverConfig {
     double wl_max_frac{ 0.40 };        ///< Max worst-case fractional residual (|frac|+3σ_mean/λ, cyc) for an MW WL to enter AR.
     double min_success_rate{ 0.999 };  ///< Min bootstrap success rate (FFR-style; 0.999 = 0.1% target failure rate).
     /**
-     * @brief Apply the bootstrap FFR gate to the WL-ONLY / MW-WL constraint
-     *        paths, which historically had no success-rate gate at all.
+     * @brief Apply the bootstrap FFR gate to the WL-only and MW-WL-constraint
+     *        paths, which have no success-rate gate without it.
      *
-     * `wl_max_frac` is a POINT test on each arc's running residual — it says
-     * the locked integer looks self-consistent this epoch.  It cannot bound
-     * P(the integer is wrong), and that is the quantity an acceptance decision
-     * has to control.  With this armed, @ref AmbiguityResolver::resolveWlOnly
-     * and @ref AmbiguityResolver::applyMwWlConstraintsNlWl_ run the SAME
-     * `erf(1/(2√2·σ))` bootstrap product the LAMBDA tier runs
-     * (@ref ils::computeBootstrapSuccessRate) against
-     * @ref min_success_rate, dropping the weakest arc until the set passes.
+     * `wl_max_frac` is a point test on each arc's running residual: it says the
+     * locked integer looks self-consistent this epoch.  It cannot bound
+     * P(the integer is wrong), which is the quantity an acceptance decision has to
+     * control.  With this on, @ref AmbiguityResolver::resolveWlOnly and
+     * @ref AmbiguityResolver::applyMwWlConstraintsNlWl_ evaluate the same
+     * `erf(1/(2√2·σ))` bootstrap product as the LAMBDA tier
+     * (@ref ils::computeBootstrapSuccessRate) against @ref min_success_rate,
+     * dropping the weakest arc until the set passes.
      *
-     * The product is taken over DISTINCT ARCS, not over DD constraints: many
-     * DDs share the pivot arc, so a wrong pivot makes all of them wrong
-     * together, and multiplying per-DD terms would double-count the shared
-     * failure.
+     * The product is taken over distinct arcs, not over DD constraints: many DDs
+     * share the pivot arc, so a wrong pivot makes all of them wrong together, and
+     * multiplying per-DD terms would count that shared failure once per DD.
      *
-     * Default ON.  This closes a fail-unsafe path — measured on
-     * `runs/cta4_q1e7`, an ungated 5-constraint WL-only fix put the held-out
-     * consumer 35 m off with `ratio` reporting the "no LAMBDA ran" sentinel
-     * `+inf` (`docs/SPEC_clock_temporal_anchor.md` §8.11).  Set false to
-     * reproduce the pre-fix behaviour exactly.
+     * On by default.  With it off, an ungated 5-constraint WL-only fix put a
+     * held-out consumer 35 m off while `ratio` reported the "no LAMBDA ran"
+     * sentinel `+inf` (`docs/SPEC_clock_temporal_anchor.md` §8.11).  Set false to
+     * reproduce the ungated behaviour exactly.
      */
     bool   wl_only_ffr{ true };
     /// Minimum MW arc sample count for an arc to carry a WL constraint under
-    /// @ref wl_only_ffr.  An arc with 2 samples has a σ estimate with ~1 degree
-    /// of freedom; admitting it would let a meaningless variance buy a fix.
+    /// @ref wl_only_ffr; an arc below it contributes 0 to the product.  A 2-sample
+    /// arc has a σ estimate with about one degree of freedom, and admitting it would
+    /// let an unreliable variance buy a fix.
     int    wl_only_min_arc_count{ 10 };
     /**
      * @brief Max |asserted WL integer − predicted DD widelane| (cycles) for a
-     *        WL-only constraint to be applied.  0 disables the check.
+     *        WL-only or MW-WL constraint to be applied.  0 disables the check.
      *
-     * The direct analogue of @ref nl_max_per_pair_frac, which the LAMBDA tier
-     * applies per entry and the WL-only path had no equivalent of: it asserted
-     * MW integers at `wl_only_pseudo_var` (σ ≈ 0.01 cycle) no matter how far the
-     * current float disagreed.
+     * The analogue of @ref nl_max_per_pair_frac, which the LAMBDA tier applies per
+     * entry.  Without it the WL-only paths assert MW integers at
+     * `wl_only_pseudo_var` (σ ≈ 0.01 cycle) however far the current float
+     * disagrees.
      *
-     * **This is the gate the FFR gate cannot be.**  A bootstrap success rate
-     * bounds the RANDOM failure of rounding an arc — it is computed from the
-     * arc's own dispersion and is entirely correct in saying a mature arc's
-     * widelane is precisely known.  It is blind to a SYSTEMATIC disagreement
-     * between that integer and the filter's frame, because nothing about the
-     * arc's dispersion knows which frame the filter is in.  The MW widelane
-     * lives in the .BIA frame while a network-bias consumer's ambiguities live
-     * in the consumed phase-bias frame (the conflict `setArIgnoreMwWl` exists
-     * to avoid), and asserting across that gap is what put a held-out consumer
-     * 35 m off with `p_succ = 1.0` — a perfectly confident, perfectly wrong fix
-     * (`docs/SPEC_clock_temporal_anchor.md` §8.11).
+     * The FFR gate cannot provide this check.  A bootstrap success rate bounds the
+     * random failure of rounding an arc; it is computed from the arc's own
+     * dispersion and correctly reports a mature arc's widelane as well known.  It
+     * cannot see a systematic disagreement between that integer and the filter's
+     * frame, because the arc's dispersion does not depend on the frame.  The MW
+     * widelane is in the .BIA frame, while a network-bias consumer's ambiguities
+     * are in the consumed phase-bias frame (the conflict `setArIgnoreMwWl` exists
+     * to avoid).  Asserting across that gap put a held-out consumer 35 m off with
+     * `p_succ = 1.0` (`docs/SPEC_clock_temporal_anchor.md` §8.11).
      *
      * Default 0.5 cycle: half a widelane is the largest disagreement that can
      * still be a rounding question rather than a frame question.
@@ -180,39 +180,41 @@ struct AmbiguityResolverConfig {
     bool   nl_iono_free_row{ false };
         ///< Search functional for the WL-constrained N_1 step (@ref
         ///< AmbiguityResolver::resolveWlConstrained).  Both choices target the
-        ///< SAME integer N_1 and differ only in which row of the (L1,L2) plane
+        ///< same integer N_1 and differ only in which row of the (L1,L2) plane
         ///< is used to observe it:
         ///<
-        ///< - @c false (default, legacy): the NARROWLANE row
-        ///<   @f$(f_1,f_2)/(f_1{+}f_2)@f$.  Cheap in noise, but it is NOT
-        ///<   iono-free — its slant-iono sensitivity is
-        ///<   @f$T\cdot\alpha = 5.907@f$ NL cyc per metre of slant iono
-        ///<   (0.959 cyc/TECU), so a 0.15-cycle @ref nl_max_per_pair_frac cap
-        ///<   implicitly demands the ionosphere to 0.156 TECU.
-        ///< - @c true: the exact IONOSPHERE-FREE row
+        ///< - @c false (default, legacy): the narrowlane row
+        ///<   @f$(f_1,f_2)/(f_1{+}f_2)@f$.  Low noise, but not iono-free: its
+        ///<   slant-iono sensitivity is @f$T\cdot\alpha = 5.907@f$ NL cycles per
+        ///<   metre of L1 slant delay (0.959 cycles/TECU), so a 0.15-cycle
+        ///<   @ref nl_max_per_pair_frac cap implicitly requires the ionosphere to
+        ///<   0.156 TECU.
+        ///< - @c true: the exact ionosphere-free row
         ///<   @f$(f_1^2,-f_2^2)/(f_1^2-f_2^2)@f$, for which
-        ///<   @f$c_{IF}\cdot\alpha = 0@f$ EXACTLY — the N_1 target carries no
-        ///<   slant-iono error at all.
+        ///<   @f$c_{IF}\cdot\alpha = 0@f$ exactly; the N_1 target carries no
+        ///<   slant-iono error.
         ///<
-        ///< @warning Not free.  Both the row norm and the widelane sensitivity
-        ///< grow by exactly @f$(f_1{+}f_2)/(f_1{-}f_2) = 8.06@f$ (GPS L1/L2):
-        ///< a 1-cycle WL error shifts the N_1 target by 3.53 cyc instead of
-        ///< 0.438, and the searched covariance inflates ~65× in variance.  This
-        ///< trades an ionospheric BIAS for widelane/noise AMPLIFICATION and is
-        ///< only a win with a near-perfect widelane — arm it together with WL
-        ///< hardening, never alone.  Byte-identical to legacy when off.
+        ///< @warning The iono-free row has a cost.  Both the row norm and the
+        ///< widelane sensitivity grow by the factor
+        ///< @f$(f_1{+}f_2)/(f_1{-}f_2) = 8.06@f$ (GPS L1/L2): a 1-cycle WL error
+        ///< shifts the N_1 target by 3.53 cycles instead of 0.438, and the searched
+        ///< covariance grows about 65× in variance.  The row trades an ionospheric
+        ///< bias for amplified widelane error and noise, and pays off only with a
+        ///< near-perfect widelane; arm it together with WL hardening, not alone.
+        ///< Byte-identical to legacy when off.
     bool   enable_partial_ar{ false };   ///< If true, when the full-set LAMBDA fix fails its
-        ///< acceptance gates, retry on progressively smaller subsets (drop the
-        ///< least-fixable ambiguity, re-validate ratio/bootstrap/frac) so a few
-        ///< noisy satellites no longer force the whole epoch back to float.
+        ///< acceptance gates, retry by greedy backward elimination (drop the least
+        ///< fixable ambiguity, re-validate ratio/bootstrap/frac) and accept the first
+        ///< subset that passes, so a few noisy satellites do not force the whole
+        ///< epoch back to float (@ref AmbiguityResolver::selectFixableSubset_).
         ///< Complements (does not replace) the full-set FFR/ratio/Joseph-hold
         ///< validation; bit-identical to the legacy path when off.
     std::vector<std::string> ar_active_systems;
         ///< Constellations eligible for AR (e.g. {"GPS"}, {"GPS","Galileo"}).
-        ///< Empty (default) = all active systems.  Use to keep a constellation
-        ///< in the float solution while excluding it from the LAMBDA candidate
-        ///< set — useful when one system's residual model bias is dragging
-        ///< down the ratio test even though its float contribution is healthy.
+        ///< Empty (default) = all active systems.  Keeps a constellation in the
+        ///< float solution while excluding it from the LAMBDA candidate set, for
+        ///< a system whose residual model bias lowers the ratio test even though
+        ///< its float contribution is usable.
     StateAmbiguityBasis state_ambiguity_basis{ StateAmbiguityBasis::PerBand };
         ///< Ambiguity parameterization in the Kalman state.  Mirrors
         ///< @c GnssConfig::getStateAmbiguityBasis() and is read by
@@ -224,11 +226,15 @@ struct AmbiguityResolverConfig {
  *
  * Workflow:
  *   1. Extract the SD ambiguity sub-vector and sub-covariance from the filter.
- *   2. Form DD ambiguities using a per-constellation pivot (highest-elevation).
+ *   2. Form DD ambiguities against one pivot per (constellation, signal) group,
+ *      the highest-elevation satellite.
  *   3. Apply MLAMBDA (LDL decomposition + Z-decorrelation + ILS search).
- *   4. Ratio test: accept if s2/s1 >= threshold.
+ *   4. Validate: ratio s2/s1 >= threshold (and not above ratio_upper_bound),
+ *      bootstrap success rate >= min_success_rate, and per-entry
+ *      |float − fixed| <= nl_max_per_pair_frac.
  *   5. Compute the fixed-ambiguity state and covariance.
- *   6. Optionally apply fix-and-hold constraints.
+ *   6. Optionally apply fix-and-hold constraints (see @ref holdAmbiguities for
+ *      what the SD path applies).
  */
 class AmbiguityResolver {
 public:
@@ -242,14 +248,23 @@ public:
     /**
      * @brief Attempt to resolve integer ambiguities.
      *
+     * With @c wl_only set, or under the NlWl ambiguity basis, the MW integers are
+     * applied as pseudo-observations and no LAMBDA search runs.
+     *
      * @param state_manager   Current filter state (provides ambiguity indices).
      * @param observations    Modeled observations for this epoch (for elevation, satellite info).
      * @param wl_ambiguities  Resolved SD WL integers from the MW detector.
      *                        Keys are "SAT_SIG1_SIG2" (e.g. "G01_L1C_L2W"),
-     *                        values are the rounded SD WL integer.  When
-     *                        available for a DD pair, a two-step WL/NL approach
-     *                        is used: the WL is fixed from MW, and only the NL
-     *                        is searched with LAMBDA, halving the search space.
+     *                        values are the rounded SD WL integer.  When the map
+     *                        is non-empty, the two-step WL/NL search is used: the
+     *                        WL is fixed from MW and only N_1 is searched with
+     *                        LAMBDA, one search dimension per satellite pair
+     *                        instead of two.  If that search fails, the result
+     *                        stays float; there is no fallback to the
+     *                        unconstrained per-band search.
+     * @param wl_fractions    Per-arc WL fractional residuals (same keys as
+     *                        @p wl_ambiguities), used by the @c wl_max_frac gate.
+     * @param wl_quality      Per-arc MW quality, used by the @c wl_only_ffr gate.
      * @return AmbiguityResolution result.
      */
     AmbiguityResolution resolve(const StateManager& state_manager,
@@ -269,7 +284,7 @@ public:
      *
      * Sister entry point to @c resolve() that consumes ambiguity states
      * keyed in DD form (@c "DD|cons|sat_i|rov_code|pivot") directly.
-     * Unlike the PPP/PPP-RTK path, no SD subtraction is applied — the
+     * Unlike the PPP/PPP-RTK path, no SD subtraction is applied: the
      * state values are already DD-differenced floats in meters.  The
      * meter-valued floats are converted to integer cycles using the
      * per-pair carrier wavelength before MLAMBDA, then the integer fix
@@ -299,9 +314,15 @@ public:
     /**
      * @brief Apply fix-and-hold constraints to the filter.
      *
-     * Feeds back the fixed DD ambiguities as pseudo-observations to
-     * constrain the float solution, preventing the ambiguities from
-     * drifting away from their integer values.
+     * Feeds the fixed DD ambiguities back as pseudo-observations (variance
+     * @c hold_variance, Joseph-form update) to keep the float ambiguities from
+     * drifting away from their integer values.  Runs only when @p resolution
+     * succeeded and @c ar_mode is 3; a no-op under the NlWl basis.
+     *
+     * @warning The DD pairs are rebuilt by buildDdPairs() with an empty
+     * observation list, so every ambiguity gets elevation 0 and is removed by
+     * @c elevation_mask_ar whenever that mask is positive.  Under the default
+     * mask of 20 degrees no pair survives and this call applies nothing.
      *
      * @param state_manager   Filter state to update (modified in place).
      * @param resolution      Result from a previous successful resolve() call.
@@ -315,8 +336,10 @@ public:
      * The state ambiguities are already DD-valued, so the
      * pseudo-observation matrix is a simple selector
      * (@c H(k, dd_idx)=1) rather than the (i,-1,ref) row used by the
-     * PPP / PPP-RTK SD path.  Only ambiguities whose key starts with
-     * @c "DD|" are eligible for the hold update.
+     * PPP / PPP-RTK SD path.  Every ambiguity whose key starts with
+     * @c "DD|" and whose index falls within @c resolution.fixed_state is held
+     * at its @c fixed_state value, including keys excluded from the fix.
+     * Runs only when @p resolution succeeded and @c ar_mode is 3.
      *
      * @param state_manager   Filter state to update (modified in place).
      * @param resolution      Result from a previous successful @c resolveDd() call.
@@ -339,10 +362,9 @@ private:
     friend struct MlambdaTestAccess;
     /// Test seam for @ref nlRowCoefficients (tests/test_nl_search_row.cpp).
     friend struct NlRowTestAccess;
-    /// Test seam for @ref wlArcSuccessRate_ (tests/test_wl_only_ffr.cpp) — the
-    /// WL-only acceptance gate's fail-safe behaviour is exactly the property a
-    /// field run cannot demonstrate (it can only show that nothing went wrong),
-    /// so it is pinned here.
+    /// Test seam for @ref wlArcSuccessRate_ (tests/test_wl_only_ffr.cpp).  A field
+    /// run can show only that nothing went wrong, not that the WL-only acceptance
+    /// gate fails safe, so a unit test pins that behaviour.
     friend struct WlFfrTestAccess;
 
     // -----------------------------------------------------------------------
@@ -354,7 +376,7 @@ private:
      *        observes the narrow-lane integer N_1, once the widelane is known.
      *
      * All four are exact functions of the frequency pair.  @ref t_1 / @ref t_2
-     * carry DD ambiguities from METRES into search cycles; @ref shift and
+     * carry DD ambiguities from metres into search cycles; @ref shift and
      * @ref bt_2 undo the known-widelane displacement in each direction.
      */
     struct NlRowCoefficients {
@@ -377,7 +399,7 @@ private:
      * @return The four coefficients; both rows target the same integer N_1.
      *
      * @note Caller must reject a pair with @f$f_1 \le f_2@f$ before requesting
-     *       the iono-free row — it divides by @f$f_1-f_2@f$.
+     *       the iono-free row, which divides by @f$f_1-f_2@f$.
      */
     static NlRowCoefficients nlRowCoefficients(double f1, double f2,
                                                double lam1, double lam2,
@@ -449,15 +471,16 @@ private:
      *     P_s,boot = Π_i  erf( 1 / (2·√(2 · d_i)) )
      *
      * This is a strict lower bound on the actual ILS success rate.
-     * Used as a Fixed-Failure-Rate-style acceptance criterion: AR
-     * commits a fix iff @c P_s,boot exceeds a configured threshold
-     * (e.g. 0.999 for 0.1% failure rate target).  Self-tuning: the
-     * threshold reflects actual problem geometry rather than a
-     * heuristic ratio.
+     * Used as a Fixed-Failure-Rate-style acceptance criterion: a fix
+     * is rejected when @c P_s,boot is below a configured threshold
+     * (e.g. 0.999 for 0.1% failure rate target), in addition to the
+     * ratio test.  The criterion follows the actual problem geometry
+     * rather than a heuristic ratio.
      *
      * @param d Post-reduction LDL diagonal (positive entries; n entries
      *          correspond to n decorrelated ambiguities).
-     * @return Bootstrap success rate ∈ [0, 1].  Zero if any d_i ≤ 0.
+     * @return Bootstrap success rate ∈ [0, 1].  Zero if @p d is empty or any
+     *         d_i ≤ 0.
      */
     static double computeBootstrapSuccessRate(const Eigen::VectorXd& d);
 
@@ -479,6 +502,10 @@ private:
      *
      * For each (constellation, signal) group, selects the highest-elevation
      * satellite as pivot and pairs all other ambiguities against it.
+     * Ambiguities that are unseeded (value 0), frozen (variance 0), below
+     * @c elevation_mask_ar, flagged unresolvable, or outside
+     * @c ar_active_systems are excluded first.  A satellite absent from
+     * @p observations gets elevation 0.
      *
      * @param state_manager  Filter state.
      * @param observations   Observations for elevation info.
@@ -493,7 +520,7 @@ private:
 
     /// Outcome of a partial-subset search over a cycle-domain integer set.
     struct PartialFix {
-        bool success{ false };       ///< True if a fixable subset (≥1 entry) was found.
+        bool success{ false };       ///< True if a subset (≥1 entry) passed every gate.
         std::vector<int> kept;       ///< Indices (into the caller's set) that survived and were fixed.
         Eigen::VectorXd afix_cycles; ///< Integer fix (cycles) for the kept entries, in @c kept order.
         double ratio{ 0.0 };         ///< Ratio test value of the accepted subset.
@@ -506,18 +533,19 @@ private:
      *
      * Starting from the full candidate set, repeatedly runs MLAMBDA on the
      * current subset and tests the same acceptance battery used by the
-     * full-set fix — ratio (lower and upper bound), bootstrap success rate
+     * full-set fix: ratio (lower and upper bound), bootstrap success rate
      * (FFR), and per-entry |float − fixed| cap.  On any failure the least
      * fixable entry is dropped (the largest |float − fixed| when the fractional
      * cap is the failing gate, otherwise the largest formal float variance)
      * and the search retries on the smaller subset, down to a single entry.
+     * The first subset that passes is accepted; it is not necessarily the
+     * largest passing subset.
      *
-     * The accepted subset is therefore always re-validated by the full gate
-     * battery on its own covariance sub-block, so subset selection can only
-     * fix @e fewer ambiguities than the full set, never a worse-conditioned
-     * set.  This is the safety property that lets PAR complement, rather than
-     * weaken, the existing validation: a wrong elimination order costs fixes,
-     * not integrity.
+     * The accepted subset is re-validated by the full gate battery on its own
+     * covariance sub-block, so partial AR fixes fewer ambiguities than the full
+     * set but never accepts a subset under weaker gates.  PAR therefore
+     * complements the existing validation rather than weakening it: a poor
+     * elimination order costs fixes, not integrity.
      *
      * Operates purely in the decorrelation-agnostic cycle domain, so it serves
      * the per-band SD, baseline DD, and WL-constrained NL paths uniformly; each
@@ -538,21 +566,21 @@ private:
     /**
      * @brief Per-arc maturity for an ambiguity key (@c "SAT|SIGNAL").
      *
-     * Nothing else in the tree tracks this — @c StateManager registers
+     * Nothing else in the tree tracks this: @c StateManager registers
      * ambiguities by (satellite, signal) with no birth epoch, and the MW
      * detector's arc state is per-(satellite, channel-pair) and private to the
      * slip layer.
      *
-     * @c epochs is the raw age.  @c info is the load-bearing one: an
-     * ambiguity's precision is set by ACCUMULATED CODE INFORMATION, and under
+     * @c epochs is the raw age; @c info is the maturity measure the gate uses.
+     * An ambiguity's precision is set by accumulated code information, and under
      * the elevation stochastic model each epoch contributes weight
-     * @f$\sin^2(\mathrm{el})@f$.  Two arcs of equal age are NOT equally mature —
-     * one climbing from the mask and one sitting at zenith differ by ~5x per
-     * epoch.  Measured: the hold-free log-log slope of sigma vs raw AGE is
-     * -0.816 rather than the -0.5 of white-noise averaging, and an
-     * elevation-weighted limb (@f$\Sigma \propto N^{1.4-1.5}@f$) predicts
-     * about -0.7 of that gap.  So @c info is the right maturity axis and
-     * @c epochs is only a proxy.
+     * @f$\sin^2(\mathrm{el})@f$, so two arcs of equal age are not equally mature:
+     * one climbing from the mask and one at zenith differ by ~5x per epoch.
+     * Measured: the hold-free log-log slope of sigma against raw age is -0.816
+     * rather than the -0.5 of white-noise averaging, and an elevation-weighted
+     * limb (@f$\Sigma \propto N^{1.4-1.5}@f$) predicts a slope of about -0.7,
+     * most of that gap.  @c info is therefore the maturity axis and @c epochs
+     * only a proxy.
      */
     struct ArcState {
         int    epochs{ 0 };   ///< Consecutive epochs since arc birth / last refloat.
@@ -563,16 +591,16 @@ private:
     std::map<std::string, ArcState> arcs_;
 
     /**
-     * @brief Bump/expire @ref arcs_ against the state vector.  Call ONCE per
+     * @brief Bump/expire @ref arcs_ against the state vector.  Call once per
      *        epoch, before any candidate is built.
      *
-     * Two ways an arc ends, and BOTH must reset the counter:
-     *   - the key leaves the state vector (set-out / prune) — detected by absence;
-     *   - the key is REFLOATED IN PLACE by @c StateManager::resetAmbiguity, which
-     *     zeroes the covariance row/col and re-inflates the variance but KEEPS
-     *     the key (StateManager.cpp:1150-1160).  Presence-counting alone misses
-     *     this and logs a freshly refloated arc as fully mature — the defect this
-     *     signature exists to close.  @c isAmbiguityPendingReseed is the marker.
+     * An arc ends in two ways, and each resets the counter:
+     *   - the key leaves the state vector (set-out / prune), detected by absence;
+     *     the entry is dropped, so a re-acquired key starts a new arc;
+     *   - the key is refloated in place by @c StateManager::resetAmbiguity, which
+     *     zeroes the covariance row/col and re-inflates the variance but keeps
+     *     the key.  Counting presence alone would report a freshly refloated arc
+     *     as mature; @c isAmbiguityPendingReseed is the marker that restarts it.
      */
     void refreshArcAges_(const StateManager& state_manager,
                          const std::vector<PppObservation>& observations);
@@ -582,22 +610,24 @@ private:
 
     /// Accumulated sin^2(el) information of @c "SAT|SIGNAL"; 0 if unknown.
     double arcInfoOf_(const std::string& sat, const std::string& signal) const;
-    /// Last DD WL integer applied per (sat_i, sat_ref, sig_hi, sig_lo) key,
-    /// used by resolveWlOnly to detect when MW has re-locked at a different
-    /// integer and the L1/L2 SD ambiguity covariance must be inflated so
-    /// the new constraint can take effect in a single epoch rather than
+    /// Last DD WL integer applied per (sat_i, sat_ref, sig_hi, sig_lo) key.
+    /// resolveWlOnly and applyMwWlConstraintsNlWl_ use it to detect when MW has
+    /// re-locked at a different integer; the affected ambiguity covariance (the
+    /// L1/L2 SD ambiguities, or the non-pivot WL columns under NlWl) is then
+    /// inflated so the new constraint takes effect in a single epoch rather than
     /// drifting toward the new integer slowly.
     std::map<std::string, int> previous_dd_wl_;
 
     /**
      * @brief Two-step WL/NL resolution using known WL integers.
      *
-     * For each satellite pair that has DD pairs on two frequencies AND a
+     * For each satellite pair that has DD pairs on two frequencies and a
      * known DD WL integer, the (L1, L2) DD pair is transformed to the
-     * NL domain.  LAMBDA runs on the NL-only set � unpaired DD
+     * NL domain.  LAMBDA runs on the NL-only set: unpaired DD
      * ambiguities without a matching second frequency or WL integer are
      * excluded to avoid contaminating the ratio test.  The fixed NL
-     * integers are back-transformed to the original signal domain.
+     * integers are back-transformed to the original signal domain.  The
+     * @c min_arc_info maturity gate applies here.
      *
      * @param pairs            DD pairs (from buildDdPairs).
      * @param x                Full state vector.
@@ -623,19 +653,21 @@ private:
      *     (DD_L1 / λ_L1) − (DD_L2 / λ_L2) = WL_int
      * via a Kalman update with @c wl_only_pseudo_var (cycles²) variance.  The
      * fixed_state and fixed_covariance returned reflect the WL-constrained
-     * float — *not* a full integer fix.  Useful as a conservative AR mode
+     * float, not a full integer fix.  Useful as a conservative AR mode
      * before enabling the full WL+NL LAMBDA pipeline: WL via MW is robust
      * even when float NL covariance hasn't converged enough for safe
      * integer rounding.
      *
-     * Skipped under both convergence gates same as the LAMBDA paths.
+     * Skipped under both convergence gates, as the LAMBDA paths are.
      *
      * Each DD WL integer combines two zero-difference MW arcs (N_i − N_ref);
-     * the per-fix confidence gate @c wl_max_frac is applied to *both* arcs, so
+     * the per-fix confidence gate @c wl_max_frac is applied to both arcs, so
      * a pair is left float this epoch if either arc's running fractional
      * residual exceeds the cap.  This mirrors the gate in
      * @c applyMwWlConstraintsNlWl_ but is stronger by construction (the NlWl
-     * counterpart gates a single arc).
+     * counterpart gates a single arc).  The @c wl_only_ffr gate and the
+     * @c wl_only_max_innov_cyc screen follow when armed; if they reject every
+     * constraint, the result stays float with @c gate_reason 5.
      *
      * @param pairs           DD pairs (from buildDdPairs).
      * @param x               Full state vector.
@@ -644,6 +676,7 @@ private:
      * @param wl_fractions    Per-arc WL fractional residuals (same keys as
      *                        @p wl_ambiguities); used by the @c wl_max_frac gate.
      * @param observations    Observations for system/frequency lookup.
+     * @param wl_quality      Per-arc MW quality; used by the @c wl_only_ffr gate.
      * @return AmbiguityResolution with success=true if at least one WL
      *         constraint was applied; ratio is set to +∞ as a sentinel
      *         (no LAMBDA ratio test ran).
@@ -659,26 +692,27 @@ private:
 
     /**
      * @brief Bootstrap FFR success rate of a set of MW WL constraints, taken
-     *        over the DISTINCT ARCS backing them.
+     *        over the distinct arcs backing them.
      *
-     * The failure event lives on the ARC, not on the DD: many DD constraints
+     * The failure event belongs to the arc, not to the DD: many DD constraints
      * share the pivot arc, so a wrong pivot integer makes every one of them
      * wrong together.  Multiplying a per-DD term would count that shared
-     * failure once per DD and understate the joint success — the product must
-     * run over distinct arcs.  Each arc contributes the same per-component
+     * failure once per DD and understate the joint success, so the product
+     * runs over distinct arcs.  Each arc contributes the same per-component
      * term the LAMBDA tier uses, `erf(1/(2√2·σ))`
      * (@ref ils::computeBootstrapSuccessRate), so the two tiers report one
      * comparable quantity.
      *
-     * FAIL-SAFE: an arc with no quality entry, an immature arc
-     * (`count < wl_only_min_arc_count`), or a non-finite σ contributes 0 —
-     * "we cannot bound this arc's failure rate" must never read as "it is
-     * fine".  A pivot marked @c exact contributes 1.
+     * Fail-safe: an arc with no quality entry, an immature arc
+     * (`count < wl_only_min_arc_count`), or a non-finite or negative σ
+     * contributes 0, so an arc whose failure rate cannot be bounded never
+     * reads as reliable.  A pivot marked @c exact contributes 1.  An empty
+     * @p arc_keys returns 0.
      *
      * @param arc_keys  distinct MW arc keys backing the constraint set
      * @param wl_quality per-arc quality from the caller
-     * @param worst_key  OUT (optional): the arc with the LOWEST contribution —
-     *                   the one backward elimination should drop next
+     * @param worst_key  OUT (optional): the arc with the lowest contribution,
+     *                   which backward elimination drops next
      * @return Π over arcs of the per-arc rounding success rate, in [0,1]
      */
     double wlArcSuccessRate_(const std::set<std::string>& arc_keys,
@@ -690,18 +724,22 @@ private:
      *        basis: one Kalman pseudo-observation row per (sat, band-pair).
      *
      * The WL state column under NlWl is, by construction, the SD wide-lane
-     * ambiguity (post-BSSD).  For each pair of WL states sharing a
-     * (constellation, band-pair) — picking the highest-elevation eligible
-     * satellite as the AR-internal pivot — this method forms the DD WL
-     * integer @c MW(sat_i) − MW(sat_pivot) and applies the constraint
+     * ambiguity (post-BSSD).  For each (constellation, band-pair) group, the
+     * highest-elevation eligible satellite is the AR-internal pivot; for every
+     * other satellite this method forms the DD WL integer
+     * @c MW(sat_i) − MW(sat_pivot) and applies the constraint
      * @code{.unparsed}
      *     wl_state(sat_i) − wl_state(sat_pivot) = DD_WL_int  cycles
      * @endcode
      * with measurement noise @c config_.wl_only_pseudo_var (cycles²) on
-     * a single Kalman row.  When the AR pivot happens to coincide with the
-     * BSSD pivot, that pivot's WL column is zero-covariance and the row
-     * effectively reduces to a single state (the canonical "constrain
-     * the WL diagonal" form the user-visible Phase 4 design called out).
+     * a single Kalman row.  The row is expressed through the NL and WL state
+     * columns and has 1 to 4 nonzero entries, depending on the band pair, the
+     * reference band and whether the AR pivot's columns are BSSD-frozen.  When
+     * the AR pivot coincides with the BSSD pivot, that pivot's WL column is
+     * zero-covariance and the row reduces to a single state (the diagonal WL
+     * constraint of the Phase 4 design).  The @c wl_max_frac gate (one arc),
+     * the @c wl_only_ffr gate and the @c wl_only_max_innov_cyc screen apply as
+     * in @ref resolveWlOnly.
      *
      * @param state_manager   Filter state holding NL/WL ambiguity entries.
      * @param x               Float state vector (working copy).
@@ -713,7 +751,7 @@ private:
      * @return AmbiguityResolution containing the WL-constrained float
      *         state and covariance; @c success=true when at least one
      *         constraint was applied.  @c ratio is set to +∞ as a
-     *         sentinel — no LAMBDA ratio test ran.
+     *         sentinel: no LAMBDA ratio test ran.
      */
     AmbiguityResolution applyMwWlConstraintsNlWl_(
         const StateManager& state_manager,

@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """SPEC_day129_frame_guards Phase-2 validation-gate verdict.
 
-Grades the ARMED leg (runs/day129_guards/leg01) against the spec's Phase-2
+Grades the armed leg (runs/day129_guards/leg01) against the spec's Phase-2
 gates:
 
-  (ii)  ON-path: the CB-excursion detector FIRED on the known excursion
-        epochs and n_reinit / bumps-landed are non-zero (0 = inert = FAIL).
-  (iii) The pivot-CB step at the 20:47:00 collapse (tow 334020) is BOUNDED:
-        re-tracked within ~10 epochs instead of tau = 3.8 h, and the pivot's
-        total IF(C1W,C2W) shows no multi-hour offset (reference: +49 m step,
-        still +42.7 m at end of day).
+  (ii)  On the armed path: the CB-excursion detector fires on the known
+        excursion epochs, and n_reinit / bumps-landed are non-zero (0 means
+        the detector is inert, which fails this gate).
+  (iii) The pivot-CB step at the 20:47:00 collapse (tow 334020) stays
+        bounded: re-tracked within ~10 epochs instead of tau = 3.8 h, and the
+        pivot's total IF(C1W,C2W) shows no multi-hour offset (reference: +49 m
+        step, still +42.7 m at end of day).
   (iv)  Grading is datum-invariant by construction: between-satellite
         deviation of total_IF = CLK + 2.545728*CB(L1) - 1.545728*CB(L2) from
         the per-epoch constellation median (handoff section 3 methodology,

@@ -4,11 +4,12 @@
 
 Inverts the network-emitted per-satellite clock series into the process-noise
 diffusion coefficients (q1, q2) of the Zucca-Tavella two-state clock model that
-``network.clock_model`` carries.  The estimate is what Phase B arms; this script
-produces nothing but a recommendation table (analysis-only, no C++).
+``network.clock_model`` carries.  A RINEX CLK product can be analysed the same way
+(--clk) as the intrinsic-clock reference.  The output is an analysis table
+(analysis only; no C++ change).
 
 ------------------------------------------------------------------------------
-THE MODEL (must match ``clockOscPredict`` in ApplicationNetwork.cpp)
+The model (matches ``clockOscPredict`` in include/filter/NetworkRunTypes.hpp)
 ------------------------------------------------------------------------------
 State x = [offset (m), drift (m/s)];  process noise over dt:
 
@@ -19,19 +20,19 @@ with q1 = white-FM PSD (m^2/s, phase random walk, usually ~0 for a precise-
 product residual) and q2 = random-walk-FM PSD (m^2/s^3, the dominant term).
 
 ------------------------------------------------------------------------------
-THE STATISTIC (why Hadamard, and the exact inversion law)
+The statistic (Hadamard primary, and the inversion law)
 ------------------------------------------------------------------------------
-The emitted clock ``clock_c0_m`` is an *estimable* Delta-dt^s: it carries the
-true clock's stochastics PLUS a deterministic BRDC clock-polynomial + radial
-orbit ramp (constant frequency drift / aging).  A deterministic quadratic in
-phase (= constant frequency drift) is annihilated by the THIRD phase difference
-but NOT the second, so the drift-insensitive Hadamard statistic is primary and
-the Allan (second-difference) statistic is only a cross-check.
+The emitted clock ``clock_c0_m`` is an estimable Delta-dt^s: it carries the
+true clock's stochastics plus a deterministic BRDC clock-polynomial and radial
+orbit ramp (constant frequency drift, aging).  A deterministic quadratic in
+phase (constant frequency drift) is removed by the third phase difference but
+not by the second, so the drift-insensitive Hadamard statistic is primary and
+the Allan (second-difference) statistic is a cross-check only.
 
 For a sample spacing tau = m*tau0, with additive white measurement noise
-(WPM, variance sigma_eps^2 -- the network.clock_model_meas_std_m R), the
-mean square of the overlapping differences is (derivations in the module tail,
-verified by --selftest):
+(WPM, variance sigma_eps^2, the network.clock_model_meas_std_m R), the
+mean square of the overlapping differences is (the --selftest synthetic
+recovery checks the q2 term):
 
     Hadamard  Var(x_{i+3m} - 3 x_{i+2m} + 3 x_{i+m} - x_i)
                                   = 20*sigma_eps^2 + 6*q1*tau +       q2*tau^3
@@ -41,28 +42,27 @@ verified by --selftest):
 Regressing the empirical variance over the tau grid in the {1, tau, tau^3}
 basis (non-negative least squares) separates the measurement floor (constant),
 white-FM (linear) and random-walk-FM (cubic) contributions.  q2 is read off the
-cubic coefficient; a healthy series has a flat implied q2(tau) = VarH/tau^3
-plateau at large tau.
+cubic coefficient; a series that follows the model has a flat implied
+q2(tau) = VarH/tau^3 plateau at large tau.
 
 ------------------------------------------------------------------------------
-PIPELINE (mirrors HANDOFF section 2, steps 1-4)
+Pipeline (follows HANDOFF section 2, steps 1-4)
 ------------------------------------------------------------------------------
 1. Remove the per-constellation per-epoch common mode (median across that
    constellation's estimated sats) so the datum realisation drops out.  Pinned
    reference sats (all-zero series, e.g. the clock_datum_satellite) are detected
    and excluded from both the median and the fit.
-2. Segment each series at index gaps AND value steps (robust second-difference
-   detector, MAD-scaled + absolute floor) so IODE Delta_eph rebase steps and
-   datum re-references never enter the statistics.  The CLK disc_counter column
-   is honoured too when populated (emit_clock_disc on), but it is 0 in the
-   default-off producer runs, hence the value-step detector carries segmentation.
-3. Per segment, accumulate overlapping Hadamard + Allan sums of squares over
+2. Segment each series at index gaps and at value steps (robust second-difference
+   detector, MAD-scaled with an absolute floor) so IODE Delta_eph rebase steps and
+   datum re-references do not enter the statistics.  The CLK disc_counter column
+   is parsed but not used for segmentation; it is 0 in producer runs without
+   emit_clock_disc, so the value-step detector does the segmentation.
+3. Per segment, accumulate overlapping Hadamard and Allan sums of squares over
    tau in {30,60,120,300,600,1800} s (override with --tau); fit (q1,q2,sigma).
-4. Group per satellite / per block / per constellation; flag any sat whose q2
-   deviates >10x from its block (else constellation) median (Gate A: fault-
-   history candidates, excluded from the group aggregate); emit a recommended
-   per-constellation q2 with spread, and per-constellation override keys if the
-   intra-constellation block spread exceeds 3x.
+4. Group per satellite, per block and per constellation on the q2 upper bound
+   (q2_ub); flag any sat whose value deviates by more than 10x (either direction)
+   from its constellation median (Gate A: fault-history candidates, excluded
+   from the group aggregate), and report per-constellation medians.
 
 Usage:
     python scripts/clock_hadamard_calib.py <run_dir> [<run_dir2> ...]
@@ -74,8 +74,9 @@ Usage:
         [--selftest]                     synthetic recovery test, then exit
 
 Each <run_dir> holds logs/network_solution.csv (+ optional network_trace.csv).
-Use a 30 s lineage run -- NOT a 300 s run (tau floor too high, dev-tier churn
-contaminates); see the HANDOFF section 1 dt^3 note.
+Use a 30 s lineage run, not a 300 s run (the tau floor is too high and dev-tier
+churn contaminates the series); a run whose base spacing exceeds 60 s is skipped.
+See the HANDOFF section 1 dt^3 note.
 """
 from __future__ import annotations
 
@@ -92,24 +93,24 @@ import numpy as np
 SYS_NAME = {"G": "GPS", "E": "Galileo", "C": "BeiDou", "R": "GLONASS", "J": "QZSS"}
 SEC_PER_WEEK = 604800.0
 
-# Default tau grid (s) -- HANDOFF section 2.3.
+# Default tau grid (s), HANDOFF section 2.3.
 DEFAULT_TAU = [30.0, 60.0, 120.0, 300.0, 600.0, 1800.0]
 
 # ---------------------------------------------------------------------------
 # Best-effort GPS block/clock map for the 2024 epoch (data fixture 2024-DOY129,
-# GPS week ~2313).  Block granularity is DIAGNOSTIC only -- the deliverable knob
-# is the per-CONSTELLATION q2, so a stale entry here never corrupts the headline
-# (it only re-buckets the Gate-A outlier reference from block-median to
-# constellation-median).  Override wholesale with --block-map PRN,block CSV.
+# GPS week ~2313).  Block granularity is diagnostic only: the deliverable is the
+# per-constellation q2, and the Gate-A flags are taken against the constellation
+# median, so a stale entry here changes only the per-block table rows.  Override
+# wholesale with --block-map PRN,block CSV.
 # Provenance: IIF = SVN62-73 (all Rb); GPS III (Block IIIA, SVN74-78) all Rb;
-# older IIR/IIR-M all Rb.  CHECK against the run epoch before quoting per-block.
+# older IIR/IIR-M all Rb.  Check against the run epoch before quoting per-block.
 # Unmapped GPS PRNs fall to 'GPS-?'; all Galileo -> 'Galileo-PHM'.
 GPS_BLOCK_2024 = {
-    # Block IIF (Rb) -- SVN62-73
+    # Block IIF (Rb), SVN62-73
     "G01": "IIF-Rb", "G03": "IIF-Rb", "G06": "IIF-Rb", "G08": "IIF-Rb",
     "G09": "IIF-Rb", "G10": "IIF-Rb", "G24": "IIF-Rb", "G25": "IIF-Rb",
     "G26": "IIF-Rb", "G27": "IIF-Rb", "G30": "IIF-Rb", "G32": "IIF-Rb",
-    # Block III / IIIA (Rb) -- SVN74-78
+    # Block III / IIIA (Rb), SVN74-78
     "G04": "III-Rb", "G11": "III-Rb", "G14": "III-Rb", "G18": "III-Rb",
     "G23": "III-Rb",
     # Block IIR / IIR-M (Rb)
@@ -136,7 +137,7 @@ def block_of(sat: str, block_map: dict) -> str:
 # Robust helpers
 # ---------------------------------------------------------------------------
 def mad_scale(x: np.ndarray) -> float:
-    """1.4826 * median(|x - median(x)|) -- robust sigma estimate."""
+    """1.4826 * median(|x - median(x)|), a robust sigma estimate."""
     if x.size == 0:
         return 0.0
     med = np.median(x)
@@ -211,18 +212,21 @@ def diff_var_over_tau(segments, m_list):
 
 
 def independent_count(segments, m):
-    """Non-overlapping triple count -- a conservative DOF proxy for weighting."""
+    """Non-overlapping triple count, a conservative DOF proxy for weighting."""
     return sum(max(0, seg.size // (3 * m)) for seg in segments)
 
 
 def carry_advantage(segments):
-    """The two-state-vs-scalar carry advantage, measured DIRECTLY (not via the
-    Hadamard floor).  A scalar carry predicts x(t+dt)=x(t) -> error = Δx; a
-    two-state carry with a drift state predicts x(t)+drift·dt -> error ≈ Δ²x.
-    So the one-step σ ratio is RMS(Δx)/RMS(Δ²x): >1 iff the series carries a
-    persistent, estimable drift (deterministic clock rate / orbit-rate) the
-    scalar model mispredicts.  This is the number the card's "15×" claims —
-    the Hadamard (Δ³) only measures the irreducible RWFM+WFM floor beneath it.
+    """The two-state-vs-scalar carry advantage, measured directly (not via the
+    Hadamard floor).  A scalar carry predicts x(t+dt)=x(t), so its error is Δx; a
+    two-state carry with a drift state predicts x(t)+drift·dt, so its error is
+    about Δ²x.  The one-step σ ratio is therefore RMS(Δx)/RMS(Δ²x): it exceeds 1
+    when the series carries a persistent, estimable drift (deterministic clock
+    rate or orbit rate) that the scalar model mispredicts.  This is the quantity
+    the card's "15×" figure refers to; the Hadamard (Δ³) measures only the
+    irreducible RWFM+WFM floor beneath it.
+
+    Returns (scalar_rms, twostate_rms, gain = scalar_rms / twostate_rms).
     """
     s1 = n1 = s2 = 0.0
     n2 = 0
@@ -249,9 +253,9 @@ def fit_qs(varmap, m_list, tau0, min_triples):
                     (WPM, const)       (WFM, ^1)     (RWFM, ^3)
 
     A pure two-state clock (the model's premise) is RWFM: VarH ~ tau^3, so the
-    implied q2(tau)=VarH/tau^3 is FLAT and the log-log slope p == 3.  If instead
-    p ~ 1 the series is white-FM / measurement dominated and a drift state buys
-    nothing -- exactly the go/no-go the recalibration exists to test.
+    implied q2(tau)=VarH/tau^3 is flat and the log-log slope p is 3.  If instead
+    p ~ 1 the series is white-FM or measurement dominated and a drift state gains
+    nothing; this is the go/no-go the recalibration tests.
 
     Returns q1, q2 (fitted), q2_ub (rigorous upper bound = min_tau VarH/tau^3,
     since VarH >= q2*tau^3 for all tau), sigma_eps, the log-log exponent p, the
@@ -466,8 +470,8 @@ def analyse_series(label, kind, epochs, series, m_list, step_k, step_floor,
         if vals.size and float(np.max(np.abs(vals))) < 1e-6:
             pinned.add(sat)
 
-    # per-constellation per-epoch common mode (median over ESTIMATED sats) --
-    # removes the datum / reference-clock realisation shared across a system.
+    # Per-constellation per-epoch common mode (median over the estimated, non-pinned
+    # sats): removes the datum / reference-clock realisation shared across a system.
     by_sys = defaultdict(list)
     for sat in series:
         if sat not in pinned:
@@ -517,7 +521,7 @@ def analyse_run(run_dir, m_list, tau_grid, step_k, step_floor, min_triples, bloc
 
 def analyse_clk(clk_path, m_list, tau_grid, step_k, step_floor, min_triples,
                 block_map, tmax_h=None):
-    """Analyse an INTRINSIC precise clock: the RINEX CLK product directly.
+    """Analyse an intrinsic precise clock: the RINEX CLK product directly.
     tmax_h optionally truncates to the first N hours (match a run window)."""
     epochs, series = load_clk_rinex(clk_path, tmax_h)
     r = analyse_series(os.path.basename(clk_path), "intrinsic", epochs, series,
@@ -695,7 +699,7 @@ def render(results, out_path, args):
           "(= Δδtˢ-vs-precise, `NetworkEstimator.cpp:644`).")
     W("")
 
-    # ---- DECISIVE COMPARISON (Phase A.5) ----
+    # ---- intrinsic-vs-network comparison (Phase A.5) ----
     if has_cmp:
         si = _sys_summary(intr)
         sn = _sys_summary(net)
@@ -821,8 +825,9 @@ def render(results, out_path, args):
 # ---------------------------------------------------------------------------
 def selftest():
     """Generate synthetic two-state clock series with known (q1,q2,sigma_eps)
-    plus a deterministic aging ramp, confirm the estimator recovers q2 within
-    a tolerance -- the executable proof of the inversion law."""
+    plus a deterministic aging ramp, and check that the Hadamard estimate of q2
+    (mean over 8 trials) lies within a factor 2 of truth.  Returns 0 on pass,
+    1 on fail."""
     rng = np.random.default_rng(20260714)
     tau0 = 30.0
     N = 2880  # 24 h of 30 s

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""RTB-7(d) RS card — warm-resume divergence metric (between-satellite SD-of-SD).
+"""RTB-7(d) RS card: warm-resume divergence metric (between-satellite SD-of-SD).
 
-Grades how far a resumed producer's EMITTED products drift from an inline
+Grades how far a resumed producer's emitted products drift from an inline
 (never-interrupted) reference at the same epochs.
 
 Metric (datum-invariant by construction).  For one epoch and one product kind,
@@ -12,15 +12,15 @@ the receiver-clock / per-constellation sum-to-zero datum common mode, so the two
 runs' independent datum realizations do not contaminate the comparison
 (Psychas single-realization mandate: grade datum-invariant quantities only).
 
-CLK and CB are graded.  PB is deliberately NOT graded: the emitted phase bias is
+CLK and CB are graded.  PB is deliberately not graded: the emitted phase bias is
 integer-ambiguous, so its between-satellite SD is dominated by whole-cycle branch
 offsets (tens of metres) and says nothing about drift.  Grade the phase branch
 with ``diff_carry_blobs.py`` (the carry blob is integer- and datum-invariant).
 
-Read levels AND slopes: a resumed arm pays a one-time restore transient whose
-decay constants are the adaptive windows (D5 calibrate, iono deweight).  A higher
-level inside that window with a SHALLOWER slope is a transient, not divergence —
-which is why this script fits and reports the post-transient slope.
+Read levels and slopes together: a resumed arm pays a one-time restore transient
+whose decay constants are the adaptive windows (D5 calibrate, iono deweight). A
+higher level inside that window with a shallower slope is a transient, not
+divergence, which is why this script fits and reports the post-transient slope.
 
 Usage:
     python scripts/warm_resume_sd_metric.py --ref A.csv \

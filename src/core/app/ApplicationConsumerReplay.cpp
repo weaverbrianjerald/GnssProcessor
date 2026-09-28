@@ -1,36 +1,35 @@
 /**
  * @file ApplicationConsumerReplay.cpp
- * @brief Q5 consumer-only replay driver — position-domain grading of an
- *        ALREADY-WRITTEN network product stream (no producer solve).
+ * @brief Consumer-only replay driver (Q5): position-domain grading of a network
+ *        product stream that is already written to disk, with no producer solve.
  *
  * The in-process closed-loop harness (`ApplicationNetworkSetup` +
- * `NetworkEmitStore`) answers "does our user engine recover integers from our
- * own products?" — but only while the producer is running, at producer cost
- * (a 305-station day is ~25 h wall).  A finished investigation instead needs
- * the position-domain consequence of a product stream that ALREADY EXISTS on
- * disk, graded per hour, in minutes.
+ * `NetworkEmitStore`) measures whether the user engine recovers integers from
+ * the network products, but only while the producer runs, at producer cost.
+ * This driver grades the position-domain consequence of an existing product
+ * file, per hour, at the cost of a single-station consumer run.
  *
- * This driver is that path.  It is deliberately a re-wiring, not a
- * re-implementation: every consumer-side decision is the harness's.
+ * It re-wires the harness rather than re-implementing it; every consumer-side
+ * decision is the harness's:
  *
  *   harness                         | replay (here)
  *   --------------------------------|-------------------------------------
  *   consumer config                 | GnssConfig::deriveClosedLoopConsumerConfig()   (same call)
  *   consumer engine                 | RealTimeEngine + setSsrStore(owned store)      (same call)
- *   per-epoch observations          | MultiRinexSync over a ONE-station roster       (same class)
- *   per-epoch store fill            | NetworkProductReader::replay from the FILE     (vs emitter.emitToStore)
+ *   per-epoch observations          | MultiRinexSync over a one-station roster       (same class)
+ *   per-epoch store fill            | NetworkProductReader::replay from the file     (vs emitter.emitToStore)
  *   trace                           | closed_loop_trace.csv, identical columns       (same schema)
  *
  * Because the store is filled through `NetworkProductReader::replay`, the
  * consumer sees the recorded stream's discontinuity counters reconstructed
- * exactly (replay's deterministic recompute + the RTA-4 serialized-counter
- * adoption), i.e. a byte-faithful reconstruction of what a live tail consumer
- * would have received.
+ * exactly (the replay's deterministic recompute plus adoption of the serialized
+ * counters, RTA-4), i.e. a byte-faithful reconstruction of what a live tail
+ * consumer would have received.
  *
- * What this driver does NOT do: run the joint estimator, touch the producer's
- * snapshot / fingerprint, emit any product, or supply the in-process SH-VTEC
- * slant iono (that channel has no wire record — a file consumer cannot receive
- * it; `consume_network_iono` is warned and left inert).
+ * Out of scope: running the joint estimator, touching the producer's snapshot or
+ * fingerprint, emitting any product, and supplying the in-process SH-VTEC slant
+ * iono.  That channel has no wire record, so a file consumer cannot receive it;
+ * `consume_network_iono` draws a warning and is left inert.
  *
  * Armed by @c network.closed_loop.replay_products_path; @c runNetwork
  * short-circuits here before any producer setup.
@@ -70,9 +69,9 @@ namespace GnssProcessor {
 
 namespace {
 
-/// One hour-band accumulator for the position-domain grading (handoff §4.1
-/// methodology: report LEVEL BANDS per hour, never a fitted slope — refits over
-/// different windows of this series gave slopes of both signs).
+/// One hour-band accumulator for the position-domain grading.  The series is
+/// reported as level bands per hour, not as a fitted slope, because refits over
+/// different windows of this series give slopes of both signs (handoff §4.1).
 struct HourBand {
     std::size_t n{0};
     double sum{0.0};
@@ -138,8 +137,8 @@ int Application::runConsumerReplay() {
 
     // --- Phase 1: resolve products (SP3/CLK/ATX/BIA/nav) ---------------------
     // The consumer's a-priori orbit (and, when consume_network_clock is off, its
-    // clock) is the SAME precise product the producer used; resolveData fills
-    // those paths exactly as the producer path does.
+    // clock) is the precise product the producer used; resolveData fills those
+    // paths exactly as the producer path does.
     if (!resolveData())
         log->warn("Consumer replay: resolveData() failed; relying on explicit product / "
                   "navigation paths in the config.");
@@ -149,11 +148,11 @@ int Application::runConsumerReplay() {
     // from-the-start read is what makes every discontinuity counter exact.
     SbasisContract file_contract{};
     bool products_ok = false;
-    // H-rider (edge-queue §1.6 item 3b): collect the H heartbeats too.  Before
-    // this, the batch replay dropped every H on the wire unread (1440/12 h
-    // measured) — only the live tail surfaced them — so the consumer's
+    // Collect the H heartbeats as well (H-rider, edge-queue §1.6 item 3b).  The
+    // batch read otherwise skips every H record, and the consumer's
     // producer-status channel (logProducerStatus, and any future RTF-9 gating)
-    // was structurally blind in replay.
+    // would receive nothing in replay; only the live tail surfaces them on its
+    // own.
     std::vector<NetworkProducerStatus> statuses;
     const auto records =
         NetworkProductReader::read(cl.replay_products_path, &file_contract, &products_ok,
@@ -183,17 +182,17 @@ int Application::runConsumerReplay() {
                   file_contract.emit_clock_disc ? "on" : "off");
 
     // Contract interlock (mirrors ApplicationRealtime's checkConsumerContract).
-    // The expectation ADOPTS the file's own contract pivot-less, then pins the
-    // wind-up model revision to what THIS BINARY implements — so the effective
-    // comparison here is exactly the convention the CODE fixes, not the ones the
-    // operator chooses.  This driver's whole purpose is grading already-written
-    // product streams, which makes it the path MOST exposed to pre-fix products
-    // (windup_id "nominal": satellite clocks and phase biases that absorbed
-    // +2*phi_wu).  Replaying one into a corrected consumer is a silent
-    // phase-frame mismatch — degraded integer recovery that would be
-    // misattributed to product quality — unless it is named here.  HARD-WARN,
-    // never abort: grading a legacy leg on purpose stays possible, but never
-    // silently.  See docs/SPEC_phase_windup_sign.md §8 item 2.
+    // The expectation takes the file's own contract with the clock pivot cleared,
+    // then pins the wind-up model revision to the one this binary implements.
+    // The comparison therefore checks only the convention the code fixes, not the
+    // ones the operator chooses.  This driver grades already-written product
+    // streams, so it is the path most exposed to products written before the
+    // wind-up sign fix (windup_id "nominal": satellite clocks and phase biases
+    // that absorbed +2*phi_wu).  Replaying one into a corrected consumer is a
+    // phase-frame mismatch that degrades integer recovery and would be
+    // misattributed to product quality unless it is named here.  A mismatch
+    // warns and does not abort, so a legacy leg can still be graded on purpose,
+    // but not silently.  See docs/SPEC_phase_windup_sign.md §8 item 2.
     if (file_contract.present) {
         SbasisContract replay_expectation = file_contract;
         replay_expectation.decl.clock_pivot_sat.clear();   // pivots evolve
@@ -218,11 +217,12 @@ int Application::runConsumerReplay() {
                       joined);
         }
     } else {
-        // Card OWD (O1): a wire without the S line is refused unless the consumer asks for
-        // it on purpose.  Without the contract the replay emitter falls back to the defaults
-        // (no clock-discontinuity channel among them), so the replay cannot reproduce the
-        // producer's declarations; card GAL's first census diverged at all 16 sites for
-        // exactly this reason.  Grading a legacy leg stays possible, never silently.
+        // A wire without the S line is refused unless
+        // network.replay_allow_undeclared_wire is set (card OWD, item O1).  Without the
+        // contract the replay emitter falls back to the defaults, which include no
+        // clock-discontinuity channel, so the replay cannot reproduce the producer's
+        // declarations and diverges from the in-process consumer (seen at every site of
+        // the card GAL census).  A legacy leg can still be graded, with a warning.
         std::string why;
         if (!NetworkProductReader::admitsWire(file_contract, nc.replay_allow_undeclared_wire,
                                               &why)) {
@@ -237,7 +237,7 @@ int Application::runConsumerReplay() {
     }
 
     // --- Phase 3: the consumer's observations --------------------------------
-    // MultiRinexSync with a ONE-station roster: the consumer IS the reference, so
+    // MultiRinexSync with a one-station roster: the consumer is the reference, so
     // synchronize() walks its own epoch schedule and by_station carries its
     // observations.  Reusing the synchronizer (rather than RinexParser directly)
     // keeps the observation vector byte-identical to what the live harness feeds.
@@ -249,12 +249,12 @@ int Application::runConsumerReplay() {
     roster.reference = cl.station;
 
     MultiRinexSync sync(config_, roster, log_manager_, *product_parser_);
-    // NO parse window.  The producer clips because it parses 305 full-day files;
-    // one station is seconds.  More importantly the producer's window is anchored
-    // at the FILE start, while the replay's schedule is anchored at the PRODUCT
-    // stream start (a leg's products typically begin hours into the obs day) —
-    // clipping from the file start would strip out exactly the epochs that carry
-    // products and leave the run with nothing to consume.
+    // No parse window.  The producer clips its parse because it reads hundreds of
+    // full-day files; one station parses in seconds.  The producer's window is also
+    // anchored at the file start, while the replay's schedule is anchored at the
+    // product stream start (a leg's products typically begin hours into the
+    // observation day), so clipping from the file start would remove the epochs
+    // that carry products and leave nothing to consume.
     if (!sync.load()) {
         log->error("Consumer replay: failed to parse consumer RINEX '{}'.",
                    cl.station.rinex_path.string());
@@ -264,12 +264,12 @@ int Application::runConsumerReplay() {
         log->error("Consumer replay: failed to build the synced epoch schedule.");
         return 1;
     }
-    // Card OWD (O4): the same admission door as the live harness, which strips the synced
-    // epochs of every system outside processing.active_systems right after its sync
-    // (ApplicationNetworkSetup) and feeds the closed-loop consumer from them.  Without it the
-    // replay's observation vector is no longer the one the live harness feeds (the banner's
-    // contract above), and closed_loop_trace.csv's n_sats counts every system here and the
-    // admitted systems in process.
+    // The same admission door as the live harness (card OWD, item O4).  The harness
+    // strips the synced epochs of every system outside processing.active_systems right
+    // after its sync (ApplicationNetworkSetup) and feeds the closed-loop consumer from
+    // them.  Without this step the replay's observation vector would differ from the one
+    // the live harness feeds (breaking the table in the @file comment), and closed_loop_trace.csv's
+    // n_sats would count every system here but only the admitted systems in process.
     {
         const std::map<std::string, std::size_t> removed =
             sync.retainSystems(config_.getActiveSystems());
@@ -326,7 +326,7 @@ int Application::runConsumerReplay() {
     // --- Phase 5: trace ------------------------------------------------------
     // Same schema as NetworkRunTraces' closed_loop_trace.csv so one grading
     // script reads harness runs and replay runs alike.  Written here (not
-    // through NetworkRunTraces) because that class owns the PRODUCER's stream
+    // through NetworkRunTraces) because that class owns the producer's stream
     // set and constructing it would demand producer state this driver has none
     // of; the header string is duplicated deliberately and asserted by the
     // grading script.
@@ -341,10 +341,11 @@ int Application::runConsumerReplay() {
                 "ratio,pos_err_3d_m,east_m,north_m,up_m,ar_gate,p_succ\n";
 
     // Truth in the frame the consumer estimates: the configured coordinate is a
-    // published (monument-referenced) position, the state is the ARP.  Reduce via the
-    // consumer's own RINEX eccentricity so up_m carries no antenna-height offset —
-    // an exact no-op on a 0/0/0 header, which keeps replayed arms comparable to the
-    // live-harness numbers they are graded against.
+    // published (monument-referenced) position, the state is the ARP.  The truth is
+    // reduced by the consumer's own RINEX eccentricity so up_m carries no
+    // antenna-height offset.  The reduction is an exact no-op on a 0/0/0 header,
+    // which keeps replayed arms comparable to the live-harness numbers they are
+    // graded against.
     Eigen::Vector3d truth(cl.station.position_ecef.data());
     if (const RinexParser* cl_parser = sync.parserOf(cl.station.name)) {
         const Eigen::Vector3d hen = cl_parser->getAntennaDeltaHen();
@@ -356,12 +357,12 @@ int Application::runConsumerReplay() {
     const Coordinates::Llh truth_llh = Coordinates::ecefToLlh(truth);
 
     // --- Phase 6: the replay loop --------------------------------------------
-    // Contract: the store must reflect THIS epoch's products BEFORE the consumer
-    // reads them — the live harness emits then consumes within one epoch, and a
-    // file consumer that lagged by one epoch would grade a 30 s-stale stream.
-    // The cursor therefore replays every record up to and including the current
-    // observation time (half-interval tolerance), and records are ALWAYS replayed
-    // in order even across skipped/windowed-out observation epochs so the
+    // Contract: the store reflects this epoch's products before the consumer reads
+    // them.  The live harness emits and then consumes within one epoch, and a file
+    // consumer lagging by one epoch would grade a stream one interval stale (30 s
+    // at a 30 s cadence).  The cursor therefore replays every record up to and
+    // including the current observation time plus sync_tol, and replays records
+    // in order even across skipped or windowed-out observation epochs, so the
     // emitter's cross-epoch counter state stays continuous.
     const double sync_tol = std::max(0.5, nc.epoch_sync_tolerance_s);
     const double start_offset_s = config_.networkStartOffsetHours() * 3600.0;
@@ -390,8 +391,9 @@ int Application::runConsumerReplay() {
             < TimeUtils::continuousGpsSeconds(records.front().epoch.epoch_time))
             continue;
 
-        // Producer-identical window semantics (start_offset anchors on the first
-        // eligible epoch; max_duration anchors on the first PROCESSED epoch).
+        // Window semantics identical to the producer: start_offset anchors on the
+        // first eligible epoch, max_duration on the first epoch past the start
+        // offset.
         if (start_offset_s > 0.0) {
             if (start_anchor_s < 0.0) start_anchor_s = now_s;
             if (now_s - start_anchor_s < start_offset_s) continue;
@@ -415,15 +417,15 @@ int Application::runConsumerReplay() {
             ++rec_cursor;
             ++replayed_here;
         }
-        // H-rider: advance the heartbeat stream in step and forward each H into
-        // the owned store — the batch analogue of the RTA-6 tail wiring in
-        // ApplicationRealtime (keyed on the content epoch, pushed once).  This
-        // includes the standalone H's of fully WITHHELD epochs, which complete
-        // no product record and are exactly when the consumer must hear about
-        // the producer.  The engine reads the store surface per processed epoch
-        // (logProducerStatus one-shot transitions); replay determinism of the
-        // solve is unaffected — the status channel is observability, not a
-        // correction.
+        // Advance the heartbeat stream in step and forward each H into the owned
+        // store (H-rider), the batch analogue of the RTA-6 tail wiring in
+        // ApplicationRealtime: keyed on the content epoch, pushed once.  This
+        // includes the standalone H records of fully withheld epochs, which
+        // complete no product record and are the epochs where the consumer most
+        // needs the producer's status.  The engine reads the store surface per
+        // processed epoch (logProducerStatus logs one-shot transitions).  The
+        // solve's replay determinism is unaffected: the status channel is
+        // observability, not a correction.
         while (h_cursor < statuses.size()
                && TimeUtils::continuousGpsSeconds(statuses[h_cursor].time)
                       <= now_s + sync_tol) {
@@ -467,17 +469,17 @@ int Application::runConsumerReplay() {
 
         // Hour bands anchored on the first processed epoch (handoff §4.1).
         //
-        // Banded in integer milliseconds, NOT by truncating a floating divide.
-        // `now_s` is week·604800 + tow, ~1.4e9 s, where one ulp is ~0.24 µs, and
-        // `tow` itself carries residue from the calendar→GPS conversion.  An
-        // epoch sitting exactly on an hour boundary therefore evaluates to
-        // 3599.999999999… about half the time and truncates into the PREVIOUS
-        // band: the DOY-129 arms banded 121/119/120 repeating instead of
-        // 120/120/120.  Rounding the elapsed time to the nearest millisecond —
-        // four orders of magnitude above the residue, and finer than any real
-        // epoch schedule — then dividing as integers removes the boundary case
-        // entirely.  (Same class as the `start_offset_hours` = 13.0 residue
-        // gotcha in SPEC_day129_frame_guards Appendix (start_offset_hours half-epoch residue).)
+        // Banded in integer milliseconds, not by truncating a floating divide.
+        // `now_s` is week·604800 + tow, about 1.4e9 s, where one ulp is about
+        // 0.24 µs, and `tow` itself carries residue from the calendar→GPS
+        // conversion.  An epoch on an hour boundary can therefore evaluate to
+        // 3599.999999999… and truncate into the previous band, giving uneven
+        // band counts (121/119/120 instead of 120/120/120 at 30 s).  Rounding
+        // the elapsed time to the nearest millisecond (far above the residue and
+        // finer than any real epoch schedule) and then dividing as integers
+        // removes the boundary case.  The same residue class affects
+        // `start_offset_hours`; see SPEC_day129_frame_guards Appendix
+        // (start_offset_hours half-epoch residue).
         if (hour0_s < 0.0) hour0_s = now_s;
         const long long elapsed_ms = std::llround((now_s - hour0_s) * 1.0e3);
         const int hour = static_cast<int>(elapsed_ms / 3600000LL);
@@ -519,8 +521,8 @@ int Application::runConsumerReplay() {
 
     // --- Phase 7: run-end telemetry ------------------------------------------
     // Counters, not the absence of crashes (standing invariant #4): a replay that
-    // processed epochs but never advanced the product cursor is INERT and must
-    // read as a failure, not as a clean run.
+    // processed epochs but never advanced the product cursor is inert and returns
+    // a failure rather than reading as a clean run.
     if (n_processed == 0) {
         log->error("Consumer replay: 0 epochs processed — no observation epoch overlapped "
                    "the product stream.  Check the station's date and the config window.");
@@ -553,16 +555,15 @@ int Application::runConsumerReplay() {
                                   : fmt::format("week {} tow {:.1f}", first_fix_week, first_fix_tow),
               recent_err3d.size(), recent_rms);
 
-    // Card SID phase 5: the consumer's declared-roster census: the latch against
-    // the declaration and the attributed freshness flips.  Printed here because
-    // this driver never calls RealTimeEngine::flush(); silent on a wire that
-    // carries no declaration and with the 5b knob off, so a legacy replay's log
-    // is unchanged.
+    // The consumer's declared-roster census: the latch against the declaration and
+    // the attributed freshness flips (card SID phase 5).  Printed here because this
+    // driver never calls RealTimeEngine::flush().  Silent on a wire that carries no
+    // declaration and with the 5b knob off, so a legacy replay's log is unchanged.
     consumer.logRosterConsumerSummary("end of replay");
-    consumer.logReinflateSummary("end of replay");   // card OWD (O2)
+    consumer.logReinflateSummary("end of replay");   // re-inflation summary (card OWD, O2)
 
-    // Hourly LEVEL bands — the only defensible summary of this series (handoff
-    // §4.1: a single Theil-Sen slope over it is invalid).
+    // Hourly level bands, the summary this series supports (handoff §4.1: a single
+    // Theil-Sen slope over it is invalid).
     log->info("Consumer replay hourly bands (hour from first processed epoch):");
     log->info("  hour  n     3D mean   3D med    3D p95    3D max    up mean   up min    up max");
     std::ofstream bands(log_dir_ / "consumer_replay_hourly.csv");

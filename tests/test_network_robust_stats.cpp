@@ -1,13 +1,8 @@
 /**
  * @file test_network_robust_stats.cpp
  * @brief Unit tests for the network run loop's pure robust-stats and slip-QC
- *        helpers, hoisted at decomposition INC-2 into
- *        filter/NetworkRobustStats.hpp and slip/NetworkSlipQc.hpp.
- *
- * These helpers previously lived in the ApplicationNetwork.cpp anonymous
- * namespace and had zero direct coverage — the hoist makes them testable
- * without touching behavior (INC-2 is verbatim code motion; these tests are
- * the only NEW code in the increment, per the plan's scope-creep rule).
+ *        helpers in filter/NetworkRobustStats.hpp and slip/NetworkSlipQc.hpp
+ *        (moved verbatim out of ApplicationNetwork.cpp at decomposition INC-2).
  */
 
 #include <gtest/gtest.h>
@@ -99,7 +94,7 @@ TEST(NetworkRobustStats, MedianPolishRecoversAdditiveTable) {
 
 TEST(NetworkRobustStats, MedianPolishIsolatesSingleCellOutlier) {
     // Flat table + one huge cell: the outlier must land in the interaction
-    // term, not distort the row/column effects (the whole point of medians).
+    // term and leave the row/column effects at zero, since medians ignore it.
     std::vector<std::tuple<int, std::string, double>> cells;
     std::size_t outlier_idx = 0;
     for (int r = 0; r < 4; ++r)

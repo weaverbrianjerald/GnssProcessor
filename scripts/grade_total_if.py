@@ -1,30 +1,30 @@
 #!/usr/bin/env python3
-"""Grade the total_IF level channel and test whether it has PLATEAUED.
+"""Grade the total_IF level channel and test whether it has plateaued.
 
-``total_IF`` is the ionosphere-free clock + code-bias LEVEL a consumer actually
+``total_IF`` is the ionosphere-free clock plus code-bias level a consumer actually
 forms for a satellite:
 
     total_IF(s) = CLK(s) + a1*CB(s, band1) - a2*CB(s, band2)
 
 with ``a1 = f1^2/(f1^2 - f2^2)``, ``a2 = f2^2/(f1^2 - f2^2)``.  It is graded as a
-deviation from the PER-EPOCH MEDIAN across satellites, which makes it
+deviation from the per-epoch median across satellites, which makes it
 datum-invariant (standing invariant #5): any common shift is absorbed by the
-median, so what is left is between-satellite structure -- the part a user cannot
+median, so what is left is between-satellite structure, the part a user cannot
 absorb into its receiver clock.
 
-Two traps this encodes, both previously paid for:
+Two traps this encodes:
 
-  * **Grade each constellation SEPARATELY.**  GPS L1/L2 and Galileo E1/E5a have
-    DIFFERENT IF coefficients (2.5457/1.5457 vs 2.2606/1.2610).  Applying the GPS
+  * **Grade each constellation separately.**  GPS L1/L2 and Galileo E1/E5a have
+    different IF coefficients (2.5457/1.5457 vs 2.2606/1.2610).  Applying the GPS
     pair to a Galileo signal is not ionosphere-free at all.  Coefficients here are
     derived from the carrier frequencies rather than hard-coded, so a new band
     cannot silently inherit the wrong pair.  Pooling also folds the inter-system
     time offset into the spread.
-  * **Convergence is measured, not assumed.**  The "~2 h budget" was measured at
-    63 stations; a denser network separates bias from ambiguity within an epoch
+  * **Convergence is measured, not assumed.**  The "about 2 h budget" was measured
+    at 63 stations; a denser network separates bias from ambiguity within an epoch
     (the bias is common across receivers, the ambiguities are not), so it may
-    settle sooner.  This reports per-window spread and flags a PLATEAU when the
-    relative change between consecutive windows stays under ``--tol`` -- so a run
+    settle sooner.  This reports per-window spread and flags a plateau when the
+    relative change between consecutive windows stays under ``--tol``, so a run
     is declared gradeable on evidence, not on elapsed time.
 
 Usage:
@@ -111,12 +111,12 @@ def main() -> None:
                   f"{s['dev'].abs().max():9.3f}")
         # Plateau test: consecutive relative change under tol, twice running.
         #
-        # "Stopped changing" is NOT "converged".  On the 61-station 12 h run this
-        # channel falls to 7.0 m by hour 3-4 and then DEGRADES back to ~11.9 m,
-        # and a naive plateau test happily declared victory on the degraded tail.
-        # So always report the MINIMUM window and how far the final window sits
-        # above it, and refuse to call a run gradeable while it is drifting away
-        # from its own best.
+        # A flat tail is not necessarily convergence: on the 61-station 12 h run
+        # this channel falls to 7.0 m by hour 3-4 and then rises back to about
+        # 11.9 m, and a plateau test that only looks at the tail would call the
+        # degraded tail converged.  Always report the minimum window and how far
+        # the final window sits above it, and refuse to call a run gradeable
+        # while it is drifting away from its own best.
         streak, plateau_at = 0, None
         for i in range(1, len(rows)):
             prev, cur = rows[i - 1][1], rows[i][1]

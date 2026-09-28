@@ -1,12 +1,12 @@
 #pragma once
 /**
  * @file NetworkIonoDiag.hpp
- * @brief Network producer epoch block: iono / ZWD / anchor-info viz traces (back-substitute local nuisance blocks).
+ * @brief Network producer epoch block: iono / ZWD / receiver-state / anchor-info viz traces (back-substitutes local nuisance blocks).
  *
- * Relocated VERBATIM (dedent-only, zero substitution) out of Application::runNetwork
- * at decomposition INC-11b (2026-07-22).  void, self-contained (produces no crossing
- * locals); every carry / trace object is an explicit reference into the caller's
- * state.  The caller keeps the subBegin/subEnd(SB_IONODIAG) brackets.
+ * Moved unchanged (dedent only, no substitution) out of Application::runNetwork at
+ * decomposition INC-11b.  Returns void and is self-contained (it produces no locals
+ * that later blocks read); every carry / trace object is an explicit reference into
+ * the caller's state.  The caller keeps the subBegin/subEnd(SB_IONODIAG) brackets.
  */
 
 #include "app/NetworkSetupResult.hpp"
@@ -32,16 +32,17 @@ namespace spdlog { class logger; }
 namespace GnssProcessor {
 
 class GnssConfig;
-class NetworkCarryVce;      // full type in app/NetworkRunContext.hpp (the .cpp)
-struct NetworkRunContext;   // app/NetworkRunContext.hpp — included in the .cpp only
-struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp — included in the .cpp only
+class NetworkCarryVce;      // filter/NetworkCarryVce.hpp, included in the .cpp only
+struct NetworkRunContext;   // app/NetworkRunContext.hpp, included in the .cpp only
+struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cpp only
 
 /**
- * @brief Emit this epoch's iono / ZWD / anchor-info visualization traces.  Back-
- *        substitutes each station's local nuisance blocks (slant iono, ZWD) from the
- *        shared solution and writes the per-station recon-sweep trace rows.  Log-only —
- *        mutates no estimation state and is byte-identical / no-op unless the viz traces
- *        are armed.  The caller keeps the subBegin/subEnd(SB_IONODIAG) brackets.
+ * @brief Emit this epoch's iono / ZWD / receiver-state / anchor-info visualization
+ *        traces.  Back-substitutes each station's local nuisance blocks (slant iono,
+ *        ZWD, receiver clock and biases) from the shared solution and writes the
+ *        per-station trace rows.  Diagnostic only: it mutates no estimation state, and
+ *        with the viz traces unarmed it writes nothing and the run is byte-identical.
+ *        The caller keeps the subBegin/subEnd(SB_IONODIAG) brackets.
  */
 void networkIonoDiag(
     NetworkRunContext& ctx,

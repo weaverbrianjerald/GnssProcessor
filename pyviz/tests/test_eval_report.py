@@ -1,4 +1,4 @@
-"""Tests for gnssviz.eval.report -- scorecard, regression, convergence, HTML."""
+"""Tests for gnssviz.eval.report: scorecard, regression, convergence, HTML."""
 
 from __future__ import annotations
 
@@ -209,7 +209,7 @@ def test_render_suite_report_fail_banner(tmp_path):
 
 def test_render_suite_report_missing_golden_shows_error_banner(tmp_path):
     # --golden given but the file does not exist: the suite gate exits rc=2, so
-    # the report must not look clean/green -- it shows a red ERROR banner.
+    # the report must not look clean or green: it shows a red error banner.
     suite, _ = _suite_with_traces(tmp_path)
     sp = tmp_path / "suite_metrics.json"
     sp.write_text(json.dumps(suite), encoding="utf-8")

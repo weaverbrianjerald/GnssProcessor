@@ -3,9 +3,9 @@
  * @brief Measurement-differencing strategy implementations + factory.
  *
  * The strategies are thin orchestrators: they call back into the (private)
- * building blocks of @c MeasurementModel, which declares them @c friend.  All
- * delicate measurement numerics remain owned by @c MeasurementModel; this file
- * only encodes WHICH steps run for each differencing regime.
+ * building blocks of @c MeasurementModel, which declares them @c friend.  The
+ * measurement numerics remain owned by @c MeasurementModel; this file encodes
+ * only which steps run for each differencing regime.
  */
 
 #include "measurement/MeasurementBuilder.hpp"
@@ -15,9 +15,9 @@
 namespace GnssProcessor {
 
 DifferencingMode differencingModeFor(const GnssConfig& config) {
-    // The network producer runs on undifferenced + uncombined rows and estimates
-    // the satellite-side bias lumps explicitly — it must NEVER apply receiver-side
-    // BSSD even if a between_satellite_sd toggle is present in its config.
+    // The network producer runs on undifferenced, uncombined rows and estimates the
+    // satellite-side bias lumps explicitly, so it never applies receiver-side BSSD,
+    // even when a between_satellite_sd toggle is present in its config.
     if (config.getProcessingMode() == ProcessingMode::PPP_RTK_Network)
                                           return DifferencingMode::None;
     if (config.isBaselineMode())          return DifferencingMode::DoubleDifference;
@@ -34,12 +34,13 @@ void BssdMeasurementBuilder::preparePivots(MeasurementModel& model,
                                            const std::string& epoch_prefix,
                                            const GnssTime& epoch) {
     // --- Pivot handover ---
-    // First pass of each epoch runs handover normally (forced and
-    // disturbance-detection paths both active).  Rebuild passes within the
-    // same epoch keep the pivot fixed (so SD ambiguities stay consistent),
-    // except when a forced-handover request is pending from the KF post-fit
-    // residual detector — then re-enter in forced_only mode so the same
-    // epoch's rebuild runs against the new pivot without risking a cascade.
+    // The first pass of each epoch runs the handover with both the forced and the
+    // disturbance-detection paths active.  Rebuild passes within the same epoch
+    // keep the pivot fixed, so the SD ambiguities stay consistent, unless a
+    // forced-handover request is pending (for example from the KF post-fit
+    // residual detector).  In that case the handover re-enters in forced_only
+    // mode, so the rebuild of the same epoch runs against the new pivot and the
+    // disturbance path cannot trigger a further handover.
     const bool first_pass = !(epoch == model.last_pivot_epoch_);
     const bool has_forced = model.pivot_manager_.hasPendingForcedHandover();
     if (first_pass || has_forced) {
@@ -49,9 +50,10 @@ void BssdMeasurementBuilder::preparePivots(MeasurementModel& model,
     }
 
     // --- Pivot signal-coverage map ---
-    // Only signals tracked by the pivot satellite may enter the SD update —
-    // BssdTransform groups SD pairs per full signal type, so a non-pivot's
-    // L1C with no L1C row on the pivot would become an undifferenced singleton.
+    // Records the signals tracked by each constellation's pivot satellite; only
+    // those may enter the SD update.  BssdTransform groups SD pairs per full signal
+    // type, so a non-pivot L1C row with no L1C row on the pivot would become an
+    // undifferenced singleton.
     const auto& pivot_sats = model.pivot_manager_.getPivotSatellites();
     for (const auto& obs : observations) {
         const std::string cons = PppUtils::getSystemString(obs.satellite);

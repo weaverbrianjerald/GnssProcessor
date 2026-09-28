@@ -1,45 +1,45 @@
 #!/usr/bin/env python3
-"""R-CL — the CLOCK-LEVEL read: does the ramp RESET at a basis handover, or run through it?
+"""R-CL, the clock-level read: does the ramp reset at a basis handover, or run through it?
 
 Card: docs/refound/RF-2_held_basis_2026-09-15.md (RF-2b item c).
 
     python scripts/clock_level_read.py <run_dir> [<run_dir> ...] [--window 10] [--json out.json]
 
-THE QUESTION, and why it is the one that matters.  RF-2 held each satellite's phase-bias
+The question, and why it is the one that matters. RF-2 held each satellite's phase-bias
 datum as a constant and the field's within-arc phase wire crossed every bar (D_phase
-0.22-0.90x RF-0, from 9-115 m under RF-1).  But the consumer kept degrading, and the
-CLOCK LEVEL against COD ramped monotonically -- 0.70 m at RF-0 to 1.22 / 1.41 / 1.50 /
-1.67 / 2.23 / 2.29 m per hour.  Two readings, and they point at different cards:
+0.22-0.90x RF-0, from 9-115 m under RF-1). But the consumer kept degrading, and the
+clock level against COD ramped monotonically: 0.70 m at RF-0 to 1.22 / 1.41 / 1.50 /
+1.67 / 2.23 / 2.29 m per hour. Two readings, and they point at different cards:
 
-  * the level RESETS at handovers  => the HELD VALUE carries the basis station's own bias
-    at election.  Each new tenure stamps in a fresh bias and the clock inherits it; the
-    ramp is a staircase of tenures, not a drift.  Lever: the ledger screen (RF-2b's
+  * the level resets at handovers => the held value carries the basis station's own bias
+    at election. Each new tenure stamps in a fresh bias and the clock inherits it; the
+    ramp is a staircase of tenures, not a drift. Lever: the ledger screen (RF-2b's
     composed rank) and a higher `phase_anchor_min_age_ep`;
-  * the level RUNS THROUGH handovers => the clock has lost the level datum the CHURNING
-    phase bias used to supply.  Before RF-2 the datum moved constantly, and that motion
-    was (accidentally) re-referencing the clock level every few epochs; freezing it took
-    the level anchor away.  Lever: the clock needs its OWN level datum -- a
+  * the level runs through handovers => the clock has lost the level datum that the
+    churning phase bias used to supply. Before RF-2 the datum moved constantly, and that
+    motion was (accidentally) re-referencing the clock level every few epochs; freezing
+    it took the level anchor away. Lever: the clock needs its own level datum, a
     per-constellation clock level row, or the Q3 anchor in a gauge-free mode.
 
-THE STATISTIC.  Per satellite, per `--window` epochs: the median of
+The statistic. Per satellite, per `--window` epochs: the median of
 (emitted clock - COD clock) in metres, de-meaned across the satellites of that window so
-the NETWORK-COMMON clock datum (which is a free gauge and must never be graded raw --
-standing invariant #5) cancels.  What is left is the per-satellite LEVEL relative to the
-constellation, which is datum-invariant and is exactly what a consumer sees.
+the network-common clock datum (a free gauge that is never graded raw, standing invariant
+#5) cancels. What is left is the per-satellite level relative to the constellation, which
+is datum-invariant and is exactly what a consumer sees.
 
-THE JOIN.  Beside each satellite's level series, that satellite's BASIS TENURE from the
+The join. Beside each satellite's level series, that satellite's basis tenure from the
 event log: PBGAUGE / STRANSFORM rows give the handover epochs, the incoming station and
-whether the handover was continuous or cold.  The test is then a paired comparison:
+whether the handover was continuous or cold. The test is then a paired comparison:
 
   |level(t+) - level(t-)| at handover epochs   vs   |level(t+) - level(t-)| at matched
-                                                    NON-handover epoch boundaries
+                                                    non-handover epoch boundaries
 
-A reset shows as a step concentrated AT handovers (the ratio >> 1); a drift shows as the
-same step size either side (ratio ~ 1) with a nonzero mean slope through them.  The
+A reset shows as a step concentrated at handovers (the ratio >> 1); a drift shows as the
+same step size either side (ratio ~ 1) with a nonzero mean slope through them. The
 non-handover control is size-matched per satellite, because a satellite with many
 handovers also has many epochs.
 
-Also reported: the Q3 clock-anchor DECOUPLES (`Q3` / anchor trip rows in the event log),
+Also reported: the Q3 clock-anchor decouples (`Q3` / anchor trip rows in the event log),
 because an anchor trip is itself a level event and must not be read as a handover's.
 """
 from __future__ import annotations
@@ -91,7 +91,7 @@ _sorted_keys: dict = {}
 
 
 def clk_lookup(clk, sat, t):
-    """Exact node, else linear inside a 65 s bracket — GnssCorrections::interpolateClock."""
+    """Exact node, else linear inside a 65 s bracket (GnssCorrections::interpolateClock)."""
     d = clk.get(sat)
     if not d:
         return None
@@ -203,7 +203,7 @@ def analyse(run_dir, window, data_root=None):
         return {"run": run_dir, "error": "no COD CLK product resolved"}
     hand, anchor = read_events(run_dir)
 
-    # Per epoch: the raw (emitted - COD) residual per satellite, then DE-MEANED across
+    # Per epoch: the raw (emitted - COD) residual per satellite, then de-meaned across
     # that epoch's satellites.  The network-common clock datum is a free gauge; grading
     # it raw would confound a benign frame move with a per-satellite level error
     # (standing invariant #5).
@@ -242,7 +242,7 @@ def analyse(run_dir, window, data_root=None):
             steps[sat].append((t0 + b * 30.0 * window,
                                abs(wmed[sat][b] - wmed[sat][a])))
 
-    # Split each satellite's window boundaries into HANDOVER and CONTROL, size-matched
+    # Split each satellite's window boundaries into handover and control, size-matched
     # per satellite (a satellite with many handovers also has many epochs).
     at_h, at_c, at_h_cold, at_h_cont = [], [], [], []
     per_sat = {}
@@ -263,7 +263,7 @@ def analyse(run_dir, window, data_root=None):
             per_sat[sat] = {"n_h": len(hh), "n_c": len(cc),
                             "med_h": med(hh), "med_c": med(cc),
                             "n_handovers": len(hts)}
-    # The through-handover DRIFT: the net level change over the run, per satellite.
+    # The through-handover drift: the net level change over the run, per satellite.
     drift = {}
     for sat, wm in wmed.items():
         ws = sorted(wm)
@@ -293,20 +293,20 @@ def analyse(run_dir, window, data_root=None):
 
 
 def verdict(r):
-    """The card's two readings, decided on the RATIO alone.
+    """The card's two readings, decided on the ratio alone.
 
-    ⚠ The verdict deliberately does NOT use `net_drift_med_m`.  That statistic is
-    ARC-CONFOUNDED: a satellite that sets and rises re-enters with a legitimately
+    The verdict deliberately does not use `net_drift_med_m`.  That statistic is
+    arc-confounded: a satellite that sets and rises re-enters with a legitimately
     different ambiguity-absorbed level, so the net change over a run measures arc
-    turnover as much as datum drift — measured identically (−20.1 m vs −21.4 m median)
+    turnover as much as datum drift, measured identically (−20.1 m vs −21.4 m median)
     on the RF-0 baseline and the RF-2 arm, which is exactly what a statistic that cannot
     discriminate looks like.  It is printed because it bounds the channel, not because it
     decides anything.
 
-    The discriminating pair is the |level step| AT a handover boundary against the SAME
-    run's non-handover boundaries, plus the handover RATE.  A reset shows as a step
+    The discriminating pair is the |level step| at a handover boundary against the same
+    run's non-handover boundaries, plus the handover rate.  A reset shows as a step
     concentrated at handovers (ratio >> 1); a level that moves anyway shows the same step
-    either side (ratio ~ 1), and then the arm's level cost is the RATE, not the event.
+    either side (ratio ~ 1), and then the arm's level cost is the rate, not the event.
     """
     if "error" in r:
         return r["error"]

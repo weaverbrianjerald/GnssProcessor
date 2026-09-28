@@ -1,92 +1,84 @@
 #pragma once
 /**
  * @file NetworkPrefitCensus.hpp
- * @brief INC-1..4 of docs/SPEC_prefit_census_observability.md — the PREFIT
- *        innovation census, the structural fuse, the seed-birth tripwire and
- *        the estimation-topology ledger.
+ * @brief Prefit innovation census, structural fuse, seed-birth tripwire and
+ *        estimation-topology ledger (INC-1..4 of
+ *        docs/SPEC_prefit_census_observability.md).
  *
- * ## Why a PREFIT instrument at all
+ * ## Purpose of a prefit instrument
  *
- * The producer monitors POST-fit σ̂₀ (P1-4).  Free ambiguities and free local
- * states launder inconsistency out of the post-fit residual by construction —
- * the P1-4 line says so itself (the phase pool is identically zero on the FT63
- * stack).  Era-2's injector was a STEADY +1.88e5 m prefit code innovation on
- * (BSHM00ISR, G07), folded at w ≈ 2 every epoch for minutes, and nothing in the
- * producer could see it: `raim_within_epoch` — the one pre-solve row screen —
- * is carry_warm-gated and inert with leveling OFF.
+ * The producer monitors post-fit σ̂₀ (P1-4).  Free ambiguities and free local
+ * states absorb inconsistency, so it does not reach the post-fit residual; the
+ * post-fit phase pool can be identically zero.  A persistent large code
+ * innovation on one cell, folded at full weight every epoch, is then invisible
+ * to the producer.  The only other pre-solve row screen, `raim_within_epoch`, is
+ * gated on carry_warm and is inert with phase leveling off.
  *
- * ## The metric: common-mode REMOVED, not raw
+ * ## The metric: common mode removed, not raw
  *
- * A raw |y| of 188 km is not inherently absurd.  Receiver clock offsets and
- * steps are ms-scale — URUM00CHN and INEG00MEX take clean 1 ms steps on this
- * very leg, putting |y| ≈ 3·10⁵ m on EVERY row of the station for one epoch,
- * absorbed exactly by the white receiver-clock state in the solve.  A raw-|y|
- * screen would fire on those and miss nothing else; it would be a
- * false-positive generator with a fuse attached.
+ * A raw |y| of order 10⁵ m is not by itself a fault.  Receiver clock offsets and
+ * steps are millisecond-scale: a 1 ms step puts |y| ≈ 3·10⁵ m on every row of the
+ * station for one epoch, and the white receiver-clock state absorbs it in the
+ * solve.  A raw-|y| screen would fire on every such step.
  *
- * So the census statistic is per station, per row TYPE, robust-centred:
+ * The census statistic is therefore computed per station and per row type,
+ * robustly centred:
  * @f[
  *   m_t = \operatorname{median}_{i \in t}\, y_i, \qquad
  *   s_i = |y_i - m_t|\,\sqrt{w_i},
  * @f]
- * which is a between-satellite single difference in all but name and is
- * receiver-clock-free by construction.  A whole-station clock step cancels to
- * ~0; BSHM's G07 code row stays at s ≈ 2.6·10⁵ because its station's code
- * median is ~10 m.  @c iono_sh_row rows carry no receiver clock and are NOT
- * centred (m ≡ 0).  A type with fewer than @ref kNetPrefitMinTypeRows rows has
- * no trustworthy centre: the type is SKIPPED for that station-epoch and the
- * skip is counted (never silently treated as m = 0).
+ * which is in effect a between-satellite single difference and is free of the
+ * receiver clock.  A whole-station clock step cancels to about 0, while a single
+ * bad code row keeps its full deviation.  @c iono_sh_row rows carry no receiver
+ * clock and are not centred (m ≡ 0).  A type with fewer than
+ * @ref kNetPrefitMinTypeRows rows has no trustworthy centre: the type is skipped
+ * for that station-epoch and the skip is counted (it is never treated as m = 0).
  *
  * ## Scope
  *
- * The census flags MAGNITUDE.  It cannot by itself separate "parked garbage"
- * from "storm extreme on a well-checked cell" — that discrimination is the
- * companion redundancy card's cross-flag (docs/SPEC_redundancy_census.md).
- * The census is the free trigger; redundancy is the targeted verdict.
+ * The census flags magnitude.  It cannot by itself separate a parked bad cell
+ * from a storm extreme on a well-checked cell; that discrimination is the
+ * cross-flag of the companion redundancy census (docs/SPEC_redundancy_census.md).
+ * The census is the cheap trigger; the redundancy census gives the targeted
+ * verdict.
  *
- * ## Births are not exceedances (INC-1 yields to INC-3)
+ * ## Births are not exceedances (INC-1 defers to INC-3)
  *
- * The centring works — measured on the FT63 leg-19 replay, CAS100ATA's sixteen
- * phase rows all sit at 177037.1…177037.6 m (a 0.59 ms receiver-clock offset
- * the phase model has not absorbed) and every one of them centres to ~0; the
- * median |station phase level| across the network is 0.46 m.  What does NOT
- * centre is a cell BORN this epoch inside such a station: the state initializer
- * seeds a fresh ambiguity so its OWN innovation is ~0, which against an
- * established station level of 115 km reads as s ≈ 1e7.  Measured on a first
- * cut: 10077 exceedances and 666 events in one hour, essentially all of them
- * healthy births.  A tripwire that cries wolf 666 times an hour is not a
- * tripwire.
+ * Centring removes a station-wide level such as an unabsorbed receiver-clock
+ * offset on the phase rows.  It does not handle a cell born this epoch inside
+ * such a station: the state initializer seeds a fresh ambiguity so that the
+ * cell's own innovation is about 0, which against an established station level
+ * of 10⁵ m reads as s ≈ 10⁷.  Counted as exceedances, healthy births would
+ * dominate the event stream.
  *
- * So INC-1's statistic and its events cover ESTABLISHED cells only, and every
- * born cell is handed to INC-3 — which exists for exactly this question, at a
- * tighter threshold, with the seed values in its event detail.  Both halves are
- * counted (@c rows_born_deferred, @c cells_born_deferred) so the hand-off is
- * visible rather than a silent filter, and births are detected whenever the
- * walk runs — not only when INC-3 is armed, because the deferral must not
- * depend on whether anyone is listening on the other side.
+ * INC-1's statistic and events therefore cover established cells only, and every
+ * born cell is handed to INC-3, which tests births at a tighter threshold with
+ * the seed values in its event detail.  Both halves are counted
+ * (@c rows_born_deferred, @c cells_born_deferred), so the hand-off is visible.
+ * Births are detected whenever the walk runs, not only when INC-3 is armed, so
+ * the deferral and the census numbers do not depend on INC-3's configuration.
  *
  * ## Increments
  *
- *  - INC-1 @c network.trace_prefit_census — per-class epoch statistics into
- *    `network_epoch_status.csv` + PREFIT-tier `prefit_exceedance` events.
- *    MEASURE-ONLY.
- *  - INC-2 @c network.prefit_fuse_sigma — the structural fuse.  The ONLY
- *    solve-affecting knob in this card: a row over @f$S_\text{fuse}@f$ has its
- *    weight capped to @f$w\,(S_\text{fuse}/s)^2@f$ so it contributes at most an
- *    @f$S_\text{fuse}@f$-equivalent standardized load.  A CAP, not a drop (the
- *    prefer-fallback directive): order-preserving, smooth, sign retained.  It
- *    is NOT robustness tuning — Huber and the deweight gate own the 3–10σ
- *    regime; the fuse exists for the 10³σ+ regime where a "measurement" is
- *    actually a wiring / seed / model fault.
- *  - INC-3 @c network.seed_birth_check_sigma — the same statistic at a tighter
- *    threshold, applied only to LOS whose per-LOS states were BORN this epoch.
- *    A correctly self-seeded birth has s ≈ 0 by construction, so ANY fire
- *    localizes a seed-path defect to an exact epoch and site.  MEASURE-ONLY.
- *  - INC-4 @c network.trace_topology — estimation-topology changes as EVENTS
- *    with identities: SH-tie row-set presence deltas per station (the deweight
- *    valve — era-2's whole story was one such event that nothing logged),
- *    per-(station, satellite) row-KIND changes while the satellite stays
- *    present, and shared-column registry deltas.  MEASURE-ONLY.
+ *  - INC-1 @c network.trace_prefit_census: per-class epoch statistics into
+ *    `network_epoch_status.csv` and PREFIT-tier `prefit_exceedance` events.
+ *    Measure-only.
+ *  - INC-2 @c network.prefit_fuse_sigma: the structural fuse, the only
+ *    solve-affecting knob among INC-1..4.  A row over @f$S_\text{fuse}@f$ has its
+ *    weight capped to @f$w\,(S_\text{fuse}/s)^2@f$, so it contributes at most an
+ *    @f$S_\text{fuse}@f$-equivalent standardized load.  It is a cap, not a drop:
+ *    order-preserving, smooth, with the sign retained.  It is not robustness
+ *    tuning: Huber and the deweight gate cover the 3–10σ regime; the fuse targets
+ *    the 10³σ and larger regime, where the "measurement" is a wiring, seed or
+ *    model fault.
+ *  - INC-3 @c network.seed_birth_check_sigma: the same statistic at a tighter
+ *    threshold, applied only to LOS whose per-LOS states were born this epoch.
+ *    A correctly self-seeded birth has s ≈ 0 by construction, so any fire
+ *    localizes a seed-path defect to one epoch and site.  Measure-only.
+ *  - INC-4 @c network.trace_topology: estimation-topology changes as events with
+ *    identities: per-station SH-tie row-count deltas (the edges of the iono
+ *    deweight valve), per-(station, satellite) row-kind changes while the
+ *    satellite stays present, and shared-column registry deltas.  Measure-only.
  */
 
 #include <memory>
@@ -110,12 +102,12 @@ struct NetworkRunContext;
 struct NetworkRunTraces;
 
 /// Minimum rows a station's DATA type needs before its median is trusted as a
-/// common-mode centre.  Below it the type is skipped for that station-epoch
-/// (and counted) — a 2-row "median" would BE the outlier it is meant to remove.
+/// common-mode centre.  Below it the type is skipped for that station-epoch and
+/// counted: the median of two rows would be the outlier it is meant to remove.
 inline constexpr int kNetPrefitMinTypeRows = 4;
 
-/// Weight regime above which a row is a pin / hard constraint, never data.
-/// The fuse skips these outright: a healthy gauge pin runs s ≈ 1e7 by design.
+/// Weight at or above which a row is a pin or hard constraint rather than data.
+/// The fuse skips these rows: a healthy gauge pin runs at s ≈ 1e7 by design.
 inline constexpr double kNetPrefitPinWeight = 1e6;
 
 /// Bit of one DATA class in the fuse-domain mask (@c network.prefit_fuse_classes).
@@ -126,11 +118,11 @@ inline constexpr unsigned dataClassBit(NetRowClass c) {
 /**
  * @brief Parse a DATA-class token list into a class mask.
  *
- * Tokens (comma or space separated, case-insensitive): @c code, @c phase,
- * @c other, @c sh, plus @c all and @c none.  Unknown tokens are IGNORED here and
- * reported to @p unknown so the loader can warn with the offending text —
- * silently dropping a misspelt class would silently widen or narrow a
- * solve-affecting domain.
+ * Tokens (case-insensitive, separated by comma, space, tab, `+` or `|`):
+ * @c code, @c phase, @c other, @c sh (also @c iono_sh_row, @c iono), plus
+ * @c all and @c none.  Unknown tokens are ignored and appended to @p unknown so
+ * the loader can warn with the offending text; a misspelt class dropped without
+ * a warning would silently widen or narrow a solve-affecting domain.
  *
  * @param spec     the raw config string.
  * @param unknown  [out, optional] appended with each unrecognized token.
@@ -142,10 +134,10 @@ unsigned parseDataClassMask(const std::string& spec,
 /// Human-readable rendering of a DATA-class mask ("code+sh", "none", …).
 std::string dataClassMaskName(unsigned mask);
 
-/// Per-epoch, per-run tallies of every increment in this card (standing
-/// invariant #4 — inert wiring is only visible through the denominators).
+/// Run-total tallies of every prefit-census increment (INC-1..5).  Inert wiring is visible
+/// only through these denominators (invariant #4).
 struct NetworkPrefitCensusTallies {
-    // --- INC-1 census walk ---------------------------------------------------
+    // --- census walk (INC-1) -------------------------------------------------
     long long epochs = 0;              ///< census/topology walk passes (the denominator).
     long long station_epochs = 0;      ///< (station, epoch) blocks walked.
     long long rows = 0;                ///< DATA rows walked.
@@ -154,14 +146,14 @@ struct NetworkPrefitCensusTallies {
     long long exceedances = 0;         ///< DATA rows over prefit_event_sigma.
     long long events = 0;              ///< PREFIT exceedance events emitted.
     long long events_held = 0;         ///< …suppressed by the per-cell holdoff.
-    long long events_class_skipped = 0;///< exceedances on a class OUTSIDE network.prefit_event_classes — suppressed, but counted, so a narrowed event domain is never a silent filter.
-    long long rows_born_deferred = 0;  ///< DATA rows withheld from the INC-1 statistic because their cell was BORN this epoch — INC-3's business, at INC-3's threshold (see the header's "births are not exceedances").
-    long long cells_born_deferred = 0; ///< (cell, class) exceedances INC-1 handed to INC-3 rather than evented.
+    long long events_class_skipped = 0;///< exceedances on a class outside network.prefit_event_classes: suppressed and counted, so a narrowed event domain stays visible.
+    long long rows_born_deferred = 0;  ///< DATA rows withheld from the INC-1 statistic because their cell was born this epoch; INC-3 tests them at its own threshold (see "Births are not exceedances" in the file header).
+    long long cells_born_deferred = 0; ///< (cell, class) exceedances INC-1 handed to INC-3 instead of emitting an event.
     double    max_s = 0.0;             ///< run maximum standardized deviation.
     double    max_s_tow = -1.0;        ///< its epoch.
     std::string max_s_id;              ///< its "STATION|SAT|class".
 
-    // --- INC-2 structural fuse ----------------------------------------------
+    // --- structural fuse (INC-2) --------------------------------------------
     long long fuse_epochs = 0;         ///< assembly passes with the fuse armed.
     long long fuse_station_epochs = 0; ///< (station, epoch) blocks screened.
     long long fuse_rows = 0;           ///< DATA rows screened.
@@ -171,33 +163,33 @@ struct NetworkPrefitCensusTallies {
     long long fuse_skip_pin_w = 0;     ///< rows skipped: w >= kNetPrefitPinWeight.
     long long fuse_skip_thin = 0;      ///< rows skipped: their type had n < 4.
     long long fuse_skip_class = 0;     ///< rows skipped: their DATA class is outside network.prefit_fuse_classes.
-    long long fuse_would_class = 0;    ///< …of those, how many WOULD have been capped — the measured cost of the domain restriction, so narrowing it is never a silent choice.
-    double    fuse_max_s = 0.0;        ///< largest PRE-cap s the fuse acted on.
+    long long fuse_would_class = 0;    ///< …of those, the rows that would have been capped: the measured cost of the domain restriction.
+    double    fuse_max_s = 0.0;        ///< largest pre-cap s the fuse acted on.
     double    fuse_min_ratio = 1.0;    ///< smallest w_eff/w applied (the deepest cut).
 
-    // --- INC-3 seed-birth tripwire ------------------------------------------
-    long long births = 0;              ///< (station, satellite) LOS born this epoch.
+    // --- seed-birth tripwire (INC-3) ----------------------------------------
+    long long births = 0;              ///< (station, satellite) LOS born, summed over epochs.
     long long birth_rows = 0;          ///< DATA rows belonging to a born LOS.
     long long birth_events = 0;        ///< seed_birth_exceedance events emitted.
-    long long birth_seed_suppressed = 0;///< births ignored on the FIRST walked epoch (no prior presence map).
+    long long birth_seed_suppressed = 0;///< (station, satellite) cells present on the first walked epoch, not treated as births (no prior presence map).
 
-    // --- INC-4 topology ledger ----------------------------------------------
+    // --- topology ledger (INC-4) --------------------------------------------
     long long topo_tie_events = 0;     ///< per-station SH-tie row-count deltas.
-    long long topo_kind_events = 0;    ///< per-(station, sat) row-KIND changes.
+    long long topo_kind_events = 0;    ///< per-(station, sat) row-kind changes.
     long long topo_col_add = 0;        ///< shared columns added vs the previous epoch.
     long long topo_col_rm = 0;         ///< …removed.
-    long long topo_truncated = 0;      ///< column-delta events dropped by the per-epoch cap (LOGGED, never silent).
+    long long topo_truncated = 0;      ///< column-delta events dropped by the per-epoch cap (counted and logged).
 
-    // --- INC-5 flight recorder (filter/NetworkRhsAttrib) --------------------
-    long long rec_consults = 0;        ///< trigger-site latch consultations (0 ⇒ NO site ever asked).
+    // --- flight recorder (INC-5, filter/NetworkRhsAttrib) -------------------
+    long long rec_consults = 0;        ///< trigger-site latch consultations (0 means no site ever consulted it).
     long long rec_trips = 0;           ///< rising edges that armed a dump.
     long long rec_dumps = 0;           ///< attribution dumps written.
-    long long rec_prev_dumps = 0;      ///< …of which retained PREVIOUS-epoch frames.
+    long long rec_prev_dumps = 0;      ///< …of which retained previous-epoch frames.
     long long rec_frames_retained = 0; ///< epochs captured into the retention slot.
     long long rec_prev_bytes_last = 0; ///< bytes of the most recent retained frame.
 };
 
-/// The per-DATA-type robust centres of ONE station's assembled rows.
+/// The per-DATA-type robust centres of one station's assembled rows.
 struct PrefitStationCentres {
     double    m[kNetDataClasses]{};      ///< the centre (0 for @c iono_sh_row).
     bool      have[kNetDataClasses]{};   ///< the type has a usable centre this epoch.
@@ -208,44 +200,47 @@ struct PrefitStationCentres {
  * @brief Per-type robust centres of one station's DATA rows.
  *
  * Centred types are @c obs_code / @c obs_phase / @c obs_other (median of @c y,
- * requiring @ref kNetPrefitMinTypeRows rows); @c iono_sh_row is NOT centred
- * (m ≡ 0) because it carries no receiver clock.  Rows with a non-finite y or w
- * never enter a median.
+ * requiring @ref kNetPrefitMinTypeRows rows); @c iono_sh_row is not centred
+ * (m ≡ 0) because it carries no receiver clock, and it has a usable centre
+ * whenever it has one finite row.  Rows with a non-finite y or w never enter a
+ * median.
  */
 PrefitStationCentres prefitStationCentres(const SharedColumnMap& cm,
                                           const StationAssembly& R);
 
-/// @return @f$s = |y - m|\sqrt{\max(w,0)}@f$ — the card's standardized
-///         prefit deviation.  Non-finite inputs yield 0 (the caller counts
-///         those separately rather than propagating a NaN into a max).
+/// @return @f$s = |y - m|\sqrt{\max(w,0)}@f$, the card's standardized prefit
+///         deviation.  Non-finite inputs yield 0 (the caller counts those
+///         separately instead of propagating a NaN into a maximum).
 double prefitStandardizedDeviation(double y, double w, double m);
 
 /**
- * @brief H-rider (edge-queue §1.6 item 3a): the pooled robust prefit σ̂₀ for the
- *        H heartbeat's sigma0 field (@c network.h_sigma0_prefit_census).
+ * @brief Pooled robust prefit σ̂₀ for the sigma0 field of the H heartbeat
+ *        (@c network.h_sigma0_prefit_census; H-rider, edge-queue §1.6 item 3a).
  *
- * One light pass over this epoch's assembled rows — the same statistic, centres
- * and class taxonomy as the INC-1 census (per-station per-type robust centres;
+ * One light pass over this epoch's assembled rows with the statistic, centres
+ * and class taxonomy of the INC-1 census (per-station per-type robust centres;
  * @f$s = |y-m|\sqrt{w}@f$), pooled across stations over the classes in
  * @p class_mask and reduced to @f$\hat\sigma_0 = 1.4826\cdot\mathrm{median}(s)@f$.
- * Deliberate alignments with the census, so the wire statistic matches the
- * event population a reader of `network_events.csv` sees:
+ * It follows the census in these respects, so the wire statistic matches the
+ * event population in `network_events.csv`:
  *
- *  - @c obs_phase should stay OUT of the mask by default (census deviation 2c:
+ *  - @c obs_phase should stay out of the mask by default (census deviation 2c:
  *    phase prefit innovations are arc-specific, not a common-mode population);
  *  - pin-regime rows (w ≥ @ref kNetPrefitPinWeight) are excluded;
- *  - rows of a type with no usable centre are excluded (counted upstream);
- *  - cells BORN this epoch are excluded where the shared labels name the
- *    satellite (INC-1's "births are not exceedances"), read from the SAME lag-1
- *    presence map the census maintains — which is why the loader requires
- *    @c network.trace_prefit_census with this knob.  SH tie rows (no satellite
- *    label without the slant-column recovery) pass through un-deferred — a
- *    documented, cheap deviation; they are structural rows, not per-cell births.
+ *  - rows of a type with no usable centre are excluded (the census walk counts
+ *    these);
+ *  - cells born this epoch are excluded where the shared labels name the
+ *    satellite ("Births are not exceedances"), read from the lag-1 presence map
+ *    the census walk maintains; for this reason the loader forces this knob off
+ *    unless @c network.trace_prefit_census is armed.  SH tie rows have no
+ *    satellite label here (the census recovers it from the slant column; this
+ *    pass does not), so they are never deferred; they are structural rows, not
+ *    per-cell births.
  *
- * Computed PRE-solve at the top of @c networkSolveGlue so every H site —
- * including the pre-solve observability-gate withhold — reads one per-epoch
- * value.  Returns 0.0 on an empty pool, which is exactly the H grammar's
- * "unavailable" sentinel.  MEASURE-ONLY: reads @c asm_res, writes nothing.
+ * Computed before the solve, at the top of @c networkSolveGlue, so every H site,
+ * including the pre-solve observability-gate withhold, reads the same per-epoch
+ * value.  Returns 0.0 on an empty pool, which is the H grammar's "unavailable"
+ * sentinel.  Measure-only: reads @c asm_res, writes nothing.
  */
 double networkPrefitSigma0(const NetworkRunContext& ctx,
                            const std::vector<NetStation>& stations,
@@ -255,17 +250,19 @@ double networkPrefitSigma0(const NetworkRunContext& ctx,
                            unsigned class_mask);
 
 /**
- * @brief INC-2: cap the fused weight of one station's over-threshold DATA rows.
+ * @brief Structural fuse (INC-2): cap the weight of one station's over-threshold
+ *        DATA rows.
  *
- * Call from the SERIAL pre-@c addStation site — the single point where every
- * appender has finished touching @c R.w — so the event order is deterministic
- * and thread-count independent.
+ * Call from the serial site before @c addStation, the one point where every
+ * appender has finished writing @c R.w, so the event order is deterministic and
+ * independent of the thread count.
  *
  * Exclusions, all counted: rows with @c w >= @ref kNetPrefitPinWeight (pin /
- * constraint regime) and rows whose type had no usable centre.  Single-frequency
- * cells are deliberately NOT excluded as a class: a 10³σ common-removed
- * excursion is ≳1800 TECU/30 s even at code noise — physically impossible
- * ionosphere — so the cap cannot bite genuine single-frequency storm dynamics.
+ * constraint regime), rows whose type had no usable centre, and rows whose class
+ * is outside @c network.prefit_fuse_classes.  Single-frequency cells are not
+ * excluded as a class: a 10³σ common-removed excursion is ≳1800 TECU per 30 s
+ * even at code noise, which is not physical ionosphere, so the cap does not
+ * affect genuine single-frequency storm dynamics.
  *
  * @param ctx     Run context (counters + the per-cell event holdoff).
  * @param traces  PREFIT-tier `prefit_fused` events.
@@ -282,17 +279,18 @@ int networkPrefitFuseStation(NetworkRunContext& ctx, NetworkRunTraces& traces,
                              double s_fuse);
 
 /**
- * @brief INC-1 / INC-3 / INC-4: the post-solve census, seed-birth tripwire and
- *        topology ledger — one walk over the epoch's assembled row stacks.
+ * @brief Post-solve census, seed-birth tripwire and topology ledger
+ *        (INC-1 / INC-3 / INC-4), in one walk over the epoch's assembled row stacks.
  *
- * MEASURE-ONLY: it reads @c asm_res and writes only trace rows, events, run
- * counters and the per-epoch census scalars the epoch-status writer picks up.
- * Placed in SB_FRAMEDIAG BEFORE the stash/status block for exactly that reason.
+ * Measure-only: it reads @c asm_res and writes only trace rows, events, run
+ * counters, the per-epoch census scalars the epoch-status writer picks up, and
+ * the carried presence and code-flag maps.  It is placed in SB_FRAMEDIAG, before
+ * the stash/status block, so those scalars are ready when the block runs.
  *
- * Note on composition with INC-2: when the fuse is armed it has ALREADY capped
- * the weights this walk reads, so the census reports the POST-cap statistic and
- * the pre-cap magnitude lives in the `prefit_fused` events.  That is the honest
- * split — the fuse leg and the census leg are separate validation arms.
+ * Composition with INC-2: when the fuse is armed it has already capped the
+ * weights this walk reads, so the census reports the post-cap statistic and the
+ * pre-cap magnitude is in the `prefit_fused` events.  The fuse and the census
+ * are validated as separate arms.
  *
  * @param ctx           Run context (knobs, carry maps, counters).
  * @param config_       Full configuration (the @c network.prefit_* / topology knobs).
@@ -303,9 +301,9 @@ int networkPrefitFuseStation(NetworkRunContext& ctx, NetworkRunTraces& traces,
  * @param est           The solved estimator (shared-column labels).
  * @param asm_res       PASS A/B station assemblies.
  * @param est_index_of  Station → kernel slot (−1 = not folded this epoch).
- * @param iono_deweight The SH-constraint deweight gate, or nullptr — read-only,
- *                      supplies the per-station weight the INC-4 tie-row event
- *                      names ("BSHM +1 tie row, w 0 → 0.25").
+ * @param iono_deweight The SH-constraint deweight gate, or nullptr.  Read-only;
+ *                      supplies the per-station weight named in the INC-4
+ *                      tie-row event (w_prev, w_now).
  */
 void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
                          const std::shared_ptr<spdlog::logger>& log,

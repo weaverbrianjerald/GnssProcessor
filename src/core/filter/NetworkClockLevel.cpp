@@ -1,12 +1,11 @@
 /**
  * @file NetworkClockLevel.cpp
- * @brief Implementation of card CLV, the code-only re-base of the satellite clock LEVEL
+ * @brief Implementation of card CLV, the code-only re-base of the satellite clock level
  *        (docs/refound/CLV_clock_level_2026-09-22.md).  The direction, why the carry
  *        freezes it and what the re-base does are described in the header banner.
  *
- * New code, not a relocation.  Seam contract: free functions over
- * @c NetworkRunContext that own NO state; every persistent value is a reference into
- * @c ctx.carry.clk_level.
+ * Seam contract: free functions over @c NetworkRunContext that own no state; every
+ * persistent value is a reference into @c ctx.carry.clk_level.
  */
 
 #include "filter/NetworkClockLevel.hpp"
@@ -168,8 +167,9 @@ ClockLevelTwoWay clockLevelTwoWay(const std::vector<ClockLevelPair>& pairs, int 
     }
     out.used = static_cast<long long>(use.size());
     // Sum-to-zero on the satellite effects of each constellation, as a stiff
-    // pseudo-observation (ten times the largest satellite diagonal): it fixes the one
-    // direction the station offsets cannot separate, the common level (the datum).
+    // pseudo-observation (ten times the largest satellite diagonal, at least 10): it
+    // fixes the one direction the station offsets cannot separate, the common level
+    // (the datum).
     double big = 0.0;
     for (int i = 0; i < S; ++i) big = std::max(big, N(i, i));
     big = 10.0 * std::max(1.0, big);
@@ -360,7 +360,7 @@ void networkClockLevelRebase(NetworkRunContext& ctx, NetworkRunTraces& traces,
     if (cbs.empty()) return;
 
     // (1) One ionosphere-free pair per (station, satellite): the heaviest full-weight
-    //     DATA code row on each of the constellation's two pin bands.
+    //     data code row on each of the constellation's two pin bands.
     std::vector<ClockLevelPair> pairs;
     std::map<char, NetworkPinBands> pin_of;
     for (std::size_t i = 0; i < asm_res.size(); ++i) {
@@ -503,7 +503,7 @@ void networkClockLevelTeardown(const NetworkRunContext& ctx, const NetworkProduc
                                const std::shared_ptr<spdlog::logger>& log) {
     if (!ctx.knobs.clv_on || !log) return;
     const auto& c = ctx.counters;
-    // R6: per constellation, V_L of each armed satellite at its last update.
+    // Per constellation, V_L of each armed satellite at its last update (R6).
     std::map<char, std::vector<double>> v_by;
     std::map<char, int> floor_by, unarmed_by;
     for (const auto& [sat, ls] : ctx.carry.clk_level.sat) {

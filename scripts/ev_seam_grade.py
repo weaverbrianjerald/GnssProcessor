@@ -1,44 +1,44 @@
 #!/usr/bin/env python3
-"""WARM-RESUME SEAM grader (card RS-2) — a NULL leg against its own SEED's traces.
+"""Warm-resume seam grader (card RS-2): grades a null leg against its own seed's traces.
 
     python scripts/ev_seam_grade.py runs/evleg_rs_null_nocarry \
         --seed runs/evseed_field6h [--json out.json]
 
-The seed run is CONTINUOUS through the leg's whole window (the leg resumes from a
-snapshot the seed dropped mid-run), so the seed's traces at the MATCHED tows are
-the reference a warm resume is supposed to reproduce.  Everything here is
+The seed run is continuous through the leg's whole window (the leg resumes from a
+snapshot the seed dropped mid-run), so the seed's traces at the matched tows are
+the reference a warm resume is supposed to reproduce. Everything here is
 leg-minus-seed at the same tow; nothing is truth and nothing is a verdict beyond
-the pre-registered PASS/FAIL rows of ``docs/SPEC_event_harness.md`` §21.3.
+the pre-registered pass/fail rows of ``docs/SPEC_event_harness.md`` §21.3.
 
 Epoch axis ``k = 1 + (tow - first_tow)/30`` with ``first_tow`` from the leg's
-``leg_meta.json`` — so ``+1`` is the leg's FIRST processed epoch, the one the
+``leg_meta.json``, so ``+1`` is the leg's first processed epoch, the one the
 rhs-attrib flight recorder fires on.
 
 Channels
-  STATUS   ``logs/network_epoch_status.csv`` — disposition, ``clock_std_m``,
+  STATUS   ``logs/network_epoch_status.csv``: disposition, ``clock_std_m``,
            ``sigma0_pf_code``, ``sigma0_pf``, ``n_d5_flags``, ``n_d5_retaps``,
            ``n_chord_births``, ``n_slip_refloats``.
   FRAME    ``logs/network_vtec_sh.csv`` a₀₀ = the (layer 0, n 0, m 0, trig C) row's
-           ``value_tecu`` (§Amendment 4: a sun-fixed a₀₀ IS the global mean VTEC —
+           ``value_tecu`` (§Amendment 4: a sun-fixed a₀₀ is the global mean VTEC,
            the only SH coefficient that is frame-meaningful on its own).
   ZWD      ``logs/network_zwd.csv`` per station (``zwd_m``), |leg − seed| over the
            stations present in both.
-  WIRE     ``products.txt`` — satellite clock as the DATUM-INVARIANT CONTRAST (each
-           arm's per-epoch median over satellites removed FIRST, then differenced:
-           a raw clock step confounds benign frame drift with a real defect,
+  WIRE     ``products.txt``: satellite clock as the datum-invariant contrast (each
+           arm's per-epoch median over satellites removed first, then differenced,
+           since a raw clock step confounds benign frame drift with a real defect,
            standing invariant #5), W6 per-signal code bias (B rows) and per-signal
-           phase bias (P rows) as raw |Δ| (both are datum-pinned by the S-record's
-           ``cbpin`` / ``amb_datum``).
-  DISC     the emitter's DECLARED discontinuities in the window: the ``R`` record
+           phase bias (P rows) as raw |Δ| (both are datum-pinned by the
+           S-record's ``cbpin`` / ``amb_datum``).
+  DISC     the emitter's declared discontinuities in the window: the ``R`` record
            (B1 per-satellite bump) and, when ``network.serialize_disc_counters`` is
-           armed, the optional trailing counter field of each C/B/P row.  A silent
-           |ΔPB| > 5 cm on > 10 % of keys is invariant #7's failure; a DECLARED one
+           armed, the optional trailing counter field of each C/B/P row. A silent
+           |ΔPB| > 5 cm on > 10 % of keys is invariant #7's failure; a declared one
            is the emitter doing its job.
-  CONSUMER ``logs/closed_loop_trace.csv`` ``pos_err_3d_m`` — REPORTED, never gated
+  CONSUMER ``logs/closed_loop_trace.csv`` ``pos_err_3d_m``: reported, never gated
            (the closed-loop consumer is not snapshotted; its own cold start
-           dominates a 30-minute window — §18.14).
+           dominates a 30-minute window, §18.14).
   RHS      ``logs/rhs_attrib/attrib_<first_tow>.csv`` when the recorder tripped:
-           the TOTAL rows' ``norm_total`` per class, the first-epoch discharge
+           the total rows' ``norm_total`` per class, the first-epoch discharge
            attribution.
 """
 import argparse
@@ -127,7 +127,7 @@ def read_status(rundir):
 
 
 def read_a00(rundir):
-    """{tow_int: a00_tecu} — the (layer 0, n 0, m 0, trig C) row of network_vtec_sh.csv."""
+    """{tow_int: a00_tecu}, the (layer 0, n 0, m 0, trig C) row of network_vtec_sh.csv."""
     p = os.path.join(rundir, "logs", "network_vtec_sh.csv")
     out = {}
     if not os.path.isfile(p):
@@ -145,7 +145,7 @@ def read_a00(rundir):
 
 
 def _zwd_value_column(fieldnames):
-    """Find the ZWD value column by NAME (the trace has grown columns over time)."""
+    """Find the ZWD value column by name (the trace has grown columns over time)."""
     if not fieldnames:
         return None
     for cand in ("zwd_m", "zwd", "value_m", "zwd_total_m"):
@@ -201,16 +201,16 @@ def read_consumer(rundir):
 def read_code_bias_and_disc(path, lo=None, hi=None):
     """products.txt -> ({tow: {(sat,signal): bias_m}}, {tow: {...declarations...}}).
 
-    ``event_grade.read_products`` is the project's ONE products parser but covers
+    ``event_grade.read_products`` is the project's single products parser but covers
     only the C (clock) and P (phase-bias) records; the B (code-bias) record and the
     declaration channels are read here in a second pass rather than by forking it.
 
-    Declarations per epoch: ``R`` = the B1 per-satellite discontinuity-bump record,
-    and the optional TRAILING counter field of a C/B/P row (RTA-4,
+    Declarations per epoch: ``R`` is the B1 per-satellite discontinuity-bump record,
+    and the optional trailing counter field of a C/B/P row (RTA-4,
     ``network.serialize_disc_counters``; absent on a lineage that does not arm it,
-    in which case ``ctr_*`` stay empty and only the R record is available).  A field
-    containing '=' is a self-describing key=value token, never a positional number —
-    the positional parse stops at the first one, exactly as the writer documents.
+    in which case ``ctr_*`` stay empty and only the R record is available). A field
+    containing '=' is a self-describing key=value token, never a positional number:
+    the positional parse stops at the first one, matching what the writer documents.
     """
     bias = {}
     decl = {}
@@ -249,17 +249,17 @@ def read_code_bias_and_disc(path, lo=None, hi=None):
                     bias[tow][(pos[1], pos[2])] = float(pos[3])
                 except ValueError:
                     pass
-                if len(pos) >= 5:                       # RTA-4 code-bias counter
+                if len(pos) >= 5:                       # code-bias counter (RTA-4)
                     try:
                         decl[tow]["ctr_cb"][(pos[1], pos[2])] = int(pos[4])
                     except ValueError:
                         pass
-            elif tag == "P" and len(pos) >= 7:          # RTA-4 phase-bias counter
+            elif tag == "P" and len(pos) >= 7:          # phase-bias counter (RTA-4)
                 try:
                     decl[tow]["ctr_pb"][(pos[1], pos[2])] = int(pos[6])
                 except ValueError:
                     pass
-            elif tag == "C" and len(pos) >= 5:          # RTA-4 clock counter (field 5)
+            elif tag == "C" and len(pos) >= 5:          # clock counter, field 5 (RTA-4)
                 try:
                     decl[tow]["ctr_clk"][pos[1]] = int(pos[4])
                 except ValueError:
@@ -271,12 +271,12 @@ def read_code_bias_and_disc(path, lo=None, hi=None):
 
 # ------------------------------------------------------------------- channels
 def clock_contrast(a_epoch, b_epoch):
-    """|Δ| per satellite after removing EACH arm's own per-epoch median clock.
+    """|Δ| per satellite after removing each arm's own per-epoch median clock.
 
     The satellite-clock wire carries an arbitrary per-epoch datum; a raw step
-    confounds benign frame drift with a real defect (standing invariant #5).  The
-    median over the satellites common to both arms is removed from each arm FIRST,
-    which is exactly the datum-free contrast the ledger grades on.
+    confounds benign frame drift with a real defect (standing invariant #5). The
+    median over the satellites common to both arms is removed from each arm first,
+    giving the datum-free contrast the ledger grades on.
     """
     sats = sorted({k[1] for k in a_epoch if k[0] == "C"} &
                   {k[1] for k in b_epoch if k[0] == "C"})
@@ -298,12 +298,12 @@ def pb_deltas(a_epoch, b_epoch):
 
 
 def pb_desat(a_epoch, b_epoch):
-    """|ΔPB| after removing each SATELLITE's own median ΔPB — the de-referenced view.
+    """|ΔPB| after removing each satellite's own median ΔPB, the de-referenced view.
 
     A branch re-realization at the seam moves a satellite's whole phase-bias column by a
-    common amount (its ambiguity datum lands elsewhere), and the RAW |ΔPB| therefore reads
-    that one re-realization on every signal of that satellite forever.  Removing the
-    per-satellite median leaves only the part that is NOT a per-satellite datum — a
+    common amount (its ambiguity datum lands elsewhere), so the raw |ΔPB| reads that one
+    re-realization on every signal of that satellite from then on. Removing the
+    per-satellite median leaves only the part that is not a per-satellite datum; a
     satellite with a single signal in common drops out, since its residual is 0 by
     construction and would dilute the quantile.
     """
@@ -325,14 +325,13 @@ _SHGATE_RE = None
 
 
 def read_shgate_a00(rundir):
-    """{tow_int: a00_tecu} as the SH HEALTH GATE itself read it, from main_log.log.
+    """{tow_int: a00_tecu} as the SH health gate itself read it, from main_log.log.
 
-    NOT the same number as ``network_vtec_sh.csv``'s (0,0,C) row — the gate
-    evaluates its own candidate a₀₀ and the trace records the epoch's stored
-    coefficient, and on a torn first epoch the two differ by ~2× (measured
-    2026-09-12: gate −11109.1 vs trace −4810.41 at the same tow).  §21.3's G1 bar
-    was quoted from the GATE line, so both are reported and neither is silently
-    substituted for the other.
+    Not the same number as ``network_vtec_sh.csv``'s (0,0,C) row: the gate
+    evaluates its own candidate a₀₀ while the trace records the epoch's stored
+    coefficient, and on a torn first epoch the two can differ by roughly a factor
+    of two at the same tow. §21.3's G1 bar was quoted from the gate line, so both
+    are reported and neither is silently substituted for the other.
     """
     global _SHGATE_RE
     if _SHGATE_RE is None:
@@ -457,7 +456,7 @@ def gates(rows, legdir, meta, have_wire):
     out["withheld_k"] = [r["k"] for r in withheld]
     out["dispositions"] = sorted({(r["disposition"] or "?") for r in rows})
 
-    # ---- G1 (the L0 control): the failure must reproduce on this exe.
+    # The L0 control (gate G1): the failure must reproduce on this exe.
     rhs = read_rhs_total(legdir, first)
     out["rhs_total"] = ([{"class": c, "norm_total": v, "c00_l1": a, "c00_l2": b}
                          for c, v, a, b in rhs] if rhs else None)
@@ -479,12 +478,12 @@ def gates(rows, legdir, meta, have_wire):
                                        and out["G1"]["a00_p1_lt_-5000"]
                                        and out["G1"]["dd_fold_gt_1e7"]) else "FAIL")
 
-    # ---- G2 availability.
+    # Availability (gate G2).
     bad_k = [k for k in out["withheld_k"] if not (1 <= k <= 5)]
     out["G2"] = {"emitted": len(emitted), "need": 55, "withheld_outside_1_5": bad_k,
                  "verdict": "PASS" if (len(emitted) >= 55 and not bad_k) else "FAIL"}
 
-    # ---- G3 frame, EVERY epoch from +5 on.
+    # Frame consistency (gate G3), checked at every epoch from +5 on.
     g3 = {"a00_worst": None, "a00_worst_k": None, "clkstd_worst_ratio": None,
           "clkstd_worst_k": None, "s0code_worst_ratio": None, "s0code_worst_k": None,
           "n_missing": 0}
@@ -511,7 +510,7 @@ def gates(rows, legdir, meta, have_wire):
     ) else "FAIL"
     out["G3"] = g3
 
-    # ---- G4 branch cost: births summed over +5..+60.
+    # Branch cost (gate G4): births summed over +5..+60.
     bl = sum((r["n_chord_births_leg"] or 0.0) for r in rows if r["k"] >= 5)
     bs = sum((r["n_chord_births_seed"] or 0.0) for r in rows if r["k"] >= 5)
     out["G4"] = {"births_leg_5_end": bl, "births_seed_5_end": bs,
@@ -520,15 +519,15 @@ def gates(rows, legdir, meta, have_wire):
                  "verdict": "PASS" if (bl <= 5.0 * bs or (bs == 0.0 and bl == 0.0))
                             else "FAIL"}
 
-    # G5 needs the POOLED raw |Δ| samples, not a percentile-of-percentiles (the
-    # per-epoch table keeps only percentiles).  @ref pooled_g5 rebuilds them and
-    # @ref g5_verdict scores them; the caller installs the result under "G5".
+    # Gate G5 needs the pooled raw |Δ| samples, not a percentile-of-percentiles
+    # (the per-epoch table keeps only percentiles). ``pooled_g5`` rebuilds them and
+    # ``g5_verdict`` scores them; the caller installs the result under "G5".
     out["G5"] = None
     return out
 
 
 def pooled_g5(legdir, seeddir, meta, rows):
-    """Pooled |Δ| samples from +5 on — the exact distributions G5's bars read."""
+    """Pooled |Δ| samples from +5 on: the exact distributions G5's bars read."""
     first = itow(meta["first_tow"])
     nep = int(meta["epochs"])
     tows = [first + i * int(EPOCH_S) for i in range(nep)]
@@ -570,12 +569,12 @@ def pooled_g5(legdir, seeddir, meta, rows):
 
 
 def seed_yardsticks(seeddir, tows):
-    """The SEED's OWN epoch-to-epoch step over the leg window — the calibration scale.
+    """The seed's own epoch-to-epoch step over the leg window: the calibration scale.
 
-    Every leg-minus-seed bar is meaningless until it is read against how far the
-    CONTINUOUS run's own wire moves between consecutive epochs.  Measured on exactly the
+    A leg-minus-seed bar is only meaningful read against how far the continuous
+    run's own wire moves between consecutive epochs. Measured on exactly the
     leg's tow window so the comparison is time-matched (the wire's step rate is not
-    constant through the day).  Returns p50/p95 per channel, in metres.
+    constant through the day). Returns p50/p95 per channel, in metres.
     """
     lo, hi = tows[0], tows[-1]
     sp = os.path.join(seeddir, "products.txt")
@@ -740,7 +739,7 @@ def main():
                                      for e in G5["pb_bad_epochs"][:12])))
         print(f"                       emitter-DECLARED discontinuity bumps (R records) "
               f"in +5..end: {G5['declared_pb_bumps']}")
-    # G7 is an L4 readout, always printed: a00 at the last epoch vs the seed's.
+    # a00 at the last epoch vs the seed's (readout G7, an L4 readout, always printed).
     last = rows[-1]
     print(f"  G7 readout     a00(+{last['k']}) leg {fnum(last['a00_leg'], 2, 0).strip()} "
           f"vs seed {fnum(last['a00_seed'], 2, 0).strip()}  d = "
@@ -762,8 +761,8 @@ def main():
         print("  CONSUMER       (report only) no overlapping closed-loop rows")
         g["consumer"] = None
 
-    # --- RS-2 §21.5 readouts: the per-epoch detail a seam A/B is read on, beside the
-    # --- gates.  Everything here is REPORTED, never scored.
+    # Per-epoch detail a seam A/B is read on, beside the gates (RS-2 §21.5). Everything
+    # here is reported, never scored.
     print()
     print("SEAM DETAIL (RS-2)")
     at = {r["k"]: r for r in rows}

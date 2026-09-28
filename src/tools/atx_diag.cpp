@@ -4,9 +4,9 @@
  *
  * Parses an ANTEX file through the production @c ProductParser and prints, for
  * every entry whose type contains the given substring, the PCO and PCV
- * frequency keys actually populated.  Used to ground-truth receiver/satellite
- * ATX coverage questions (e.g. "why is rx PCV empty / a signal dropped under
- * require_atx_coverage?") against what the parser really loaded.
+ * frequency keys that are populated.  The output shows receiver and satellite
+ * ATX coverage as the parser loaded it, for example when a receiver PCV is
+ * empty or a signal is dropped under require_atx_coverage.
  *
  * Usage:  gnss_atx_diag <igs20.atx> [type-substring=LEIAR25]
  */
@@ -50,7 +50,9 @@ int main(int argc, char** argv) {
             std::printf(" %s[%zux%zu%s]", k.c_str(), zen, az, grid.empty() ? " EMPTY" : "");
         }
         std::printf("\n");
-        // Explicit PCO-without-PCV report (the exact require_atx_coverage condition).
+        // Report each frequency key with a PCO but a missing or empty PCV grid: one of
+        // the conditions under which require_atx_coverage rejects a signal (the strict
+        // check also needs a finite PCO on both the satellite and receiver entries).
         for (const auto& [k, v] : a.pco) {
             auto it = a.pcv.find(k);
             if (it == a.pcv.end() || it->second.empty())

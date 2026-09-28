@@ -17,7 +17,7 @@ namespace GnssProcessor {
 namespace {
 
 /// ASCII-only lowercase helper (file-local; the config helper lives
-/// in the @c GnssConfig translation unit which we don't include here).
+/// in the @c GnssConfig translation unit, which is not included here).
 std::string toLowerLocal(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(),
         [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -34,13 +34,13 @@ bool icontains(const std::string& haystack, const std::string& needle) {
 
 /// Best-effort date extraction from a RINEX or IGS-product filename.
 /// Returns a 7-character "YYYYDOY" string on success, empty string
-/// otherwise.  Used as a date hint when the user pins
+/// otherwise.  Used as a date hint when the config pins
 /// @c observation_path / a baseline @c rinex_path.
 ///
 /// Recognises both IGS long-name variants and RINEX-2 short names:
 ///
 ///  - Observation long name (9-char station block):
-///      @c SSSSCCCNNN_R_YYYYDOY????_...  → YYYYDOY at offset 12
+///      @c SSSSMRCCC_R_YYYYDOY????_...   → YYYYDOY at offset 12
 ///  - Product long name (10-char source/type block):
 ///      @c AAAVPPPTTT_YYYYDOY????_...    → YYYYDOY at offset 11
 ///  - Broadcast nav long name (9-char station + _R_ data flag):
@@ -48,13 +48,12 @@ bool icontains(const std::string& haystack, const std::string& needle) {
 ///  - RINEX-2 short name (8.3 form):
 ///      @c SSSSDDDH.YYO / .YYD           → year=2000+YY, doy=DDD
 ///
-/// The long-name path is implemented as a generic scan rather than a
-/// fixed offset because the 9-vs-10-char prefix difference between
-/// observation/nav and product files would otherwise need a per-file
-/// lookup.  The scan picks the first 7-digit substring that is
-/// preceded by a non-digit character (so we're at the start of a
-/// digit block, not mid-stream) and whose decoded (year, doy) parses
-/// as a plausible date.
+/// The long-name path is a generic scan rather than a fixed offset, so
+/// the 9- versus 10-char prefix of observation/nav and product files
+/// needs no per-file lookup.  The scan picks the first 7-digit substring
+/// that is preceded by a non-digit character (the start of a digit
+/// block, not its middle) and whose decoded (year, doy) is a plausible
+/// date: year in [1990, 2100], doy in [1, 366].
 std::string extractYyyyDoy(const std::filesystem::path& p) {
     const std::string fname = p.filename().string();
 
@@ -69,14 +68,14 @@ std::string extractYyyyDoy(const std::filesystem::path& p) {
         return year >= 1990 && year <= 2100 && doy >= 1 && doy <= 366;
     };
 
-    // RINEX-2 short name first.  YYYY and DOY straddle the dot
-    // separator, so the contiguous-digit scan below would never find
-    // them as a single token.
+    // RINEX-2 short name first.  The year and DOY sit on either side of
+    // the dot separator, so the contiguous-digit scan below cannot find
+    // them as a single token.  The DOY is not range-checked here.
     if (fname.size() >= 12 && fname[8] == '.') {
         const std::string doy_str = fname.substr(4, 3);
         const std::string yy_str  = fname.substr(9, 2);
         if (allDigits(doy_str) && allDigits(yy_str)) {
-            // Two-digit year: assume 2000+YY (pre-2000 fixtures aren't expected).
+            // Two-digit year: taken as 2000+YY (no pre-2000 fixtures are expected).
             const int year = 2000 + std::stoi(yy_str);
             char buf[8];
             std::snprintf(buf, sizeof(buf), "%04d%s", year, doy_str.c_str());
@@ -84,11 +83,9 @@ std::string extractYyyyDoy(const std::filesystem::path& p) {
         }
     }
 
-    // Long-name scan.  Walk the filename, take the first 7-digit
-    // window that starts a fresh digit block and parses to a valid
-    // year/DOY.  This makes the extractor agnostic to whether the
-    // YYYYDOY sits at offset 11 (products: COD0MGXFIN_...) or
-    // offset 12 (obs/nav: SSSSCCCNNN_R_...).
+    // Long-name scan: the first 7-digit window that starts a digit block
+    // and parses to a valid year/DOY.  It finds YYYYDOY at offset 11
+    // (products: COD0MGXFIN_...) and at offset 12 (obs/nav: SSSSMRCCC_R_...).
     for (size_t i = 0; i + 7 <= fname.size(); ++i) {
         if (i > 0 && std::isdigit(static_cast<unsigned char>(fname[i - 1]))) continue;
         const std::string candidate = fname.substr(i, 7);
@@ -106,7 +103,7 @@ std::string dateDirName(int year, int doy) {
 }
 
 /// True if @p name matches the @c "YYYY-DOY" date-dir convention.
-/// Used to enumerate the per-date subdirs under @c <root>.
+/// Selects the per-date subdirs under @c <root>.
 bool isDateDirName(const std::string& name) {
     if (name.size() != 8 || name[4] != '-') return false;
     for (size_t i = 0; i < 4; ++i) {
@@ -199,9 +196,9 @@ std::filesystem::path PathResolver::pickStationRnx(
 
     // Build the list of name fragments to try.  The fixture catalog
     // and most production configs use the IGS 9-char long-name form
-    // (SSSS00CCC, e.g. "CIT100USA"), but some directories may be
-    // named with the 4-char station ID alone (matches lower-case
-    // production cache convention) — accept both.
+    // (SSSS00CCC, e.g. "CIT100USA"), but some directories are named
+    // with the 4-char station ID alone (the lower-case production cache
+    // convention), so both are accepted.
     std::vector<std::string> needles{ station_name };
     if (station_name.size() == 9 &&
         std::isalpha(static_cast<unsigned char>(station_name[0])) &&
@@ -324,10 +321,11 @@ bool PathResolver::resolveInternal(ResolvedPaths& resolved) {
     }
 
     // -------- Step 2: discover products by date --------------------
-    // Orbit + clock pull from a 3-day window (prev/obs/next) so
-    // satellite interpolation has boundary points.  BIA/ERP/BRDC
-    // are obs-day only — they're piecewise constant or interpolated
-    // across the day boundary differently.
+    // Orbit and clock files come from a 3-day window (prev/obs/next) so
+    // satellite interpolation has points across the day boundaries.
+    // BIA/BSX, ERP, INX and broadcast nav come from the observation day
+    // only: they are piecewise constant or are not interpolated across
+    // the day boundary the same way.
     const auto [yp, dp] = shiftDate(year, doy, -1);
     const auto [yn, dn] = shiftDate(year, doy, +1);
 
@@ -340,10 +338,11 @@ bool PathResolver::resolveInternal(ResolvedPaths& resolved) {
     };
 
     // Precise orbits/clocks are not inputs when a live broadcast+SSR source
-    // drives real-time geometry — skip discovery so a stale fixture can't
-    // shadow today's live PRNs (see GnssConfig::realtimeUsesLiveOrbitClockSource).
-    // RTB-4: SP3 (orbit) and CLK (clock) discovery are gated independently so a
-    // "precise (ULT) orbits + network clocks" config discovers SP3 but not CLK.
+    // drives real-time geometry, so discovery is skipped and a stale fixture
+    // cannot shadow the live PRNs (see GnssConfig::realtimeUsesLiveOrbitClockSource).
+    // SP3 (orbit) and CLK (clock) discovery are gated independently, so a
+    // "precise (ULT) orbits + network clocks" config discovers SP3 but not CLK
+    // (RTB-4).
     const bool skip_orbit_disc = config_.realtimeUsesLiveOrbitSource();
     const bool skip_clock_disc = config_.realtimeUsesLiveOrbitClockSource();
     for (const auto& d : { prev_day_products, obs_day_products, next_day_products }) {
@@ -358,7 +357,7 @@ bool PathResolver::resolveInternal(ResolvedPaths& resolved) {
     append(globByExtension(obs_day_products, {".erp"}));
     append(globByExtension(obs_day_products, {".inx"}));
 
-    // Static (date-less) assets.  Live under a fixed @c static/
+    // Static (date-less) assets live under a fixed @c static/
     // subtree at the root; every date shares them.
     append(globByExtension(root / "static" / "atx", {".atx"}));
     append(globByExtension(root / "static" / "nc",  {".nc"}));
@@ -387,8 +386,8 @@ bool PathResolver::resolveInternal(ResolvedPaths& resolved) {
 
     // -------- Step 4: observations ---------------------------------
     // <root>/<YYYY-DOY>/obs/<station>/.  PPP / PPP-RTK pick a single
-    // file (preferring the configured station if any); baseline mode
-    // resolves per-station against the BaselineConfig entries.
+    // file (preferring data_download.station when set); baseline mode
+    // resolves per station against the BaselineConfig entries.
     const std::filesystem::path obs_root = root / dateDirName(year, doy) / "obs";
 
     if (!config_.isBaselineMode() && config_.getObservationPath().empty()) {
@@ -398,8 +397,8 @@ bool PathResolver::resolveInternal(ResolvedPaths& resolved) {
             picked = pickStationRnx(obs_root, dl.station);
         }
         if (picked.empty()) {
-            // No station configured / no match — fall back to the
-            // first .rnx under any obs/<station>/ subdir.
+            // No station configured, or no match: fall back to the
+            // first .rnx (lex sort) under any obs/<station>/ subdir.
             std::error_code ec;
             std::vector<std::filesystem::path> all_obs;
             if (std::filesystem::exists(obs_root, ec)) {
@@ -476,8 +475,8 @@ bool PathResolver::resolveProduction(ResolvedPaths& resolved) {
     const auto& dl = config_.getDownloadConfig();
 
     if (!dl.enabled) {
-        // Source is Production but downloads are off — that's the
-        // legacy "all paths supplied manually" mode.  Nothing to do.
+        // Production source with downloads off: every path is supplied
+        // manually in the config, so there is nothing to resolve.
         log->info("Production mode with downloads disabled: trusting "
                   "manually-specified paths in the config");
         return true;
@@ -498,9 +497,9 @@ bool PathResolver::resolveProduction(ResolvedPaths& resolved) {
     rc.doy               = dl.doy;
     rc.download_rinex    = dl.download_rinex;
     rc.download_products = dl.download_products;
-    // In a live real-time session orbits/clocks come from broadcast+SSR — don't
-    // waste a CDDIS round-trip pulling daily SP3/CLK that would only be shadowed.
-    // RTB-4: gated independently so "ULT orbits + network clocks" pulls SP3 only.
+    // In a live real-time session orbits/clocks come from broadcast+SSR, so the
+    // daily SP3/CLK downloads are skipped.  The two are gated independently, so
+    // "ULT orbits + network clocks" downloads SP3 only (RTB-4).
     rc.download_orbits = !config_.realtimeUsesLiveOrbitSource();
     rc.download_clocks = !config_.realtimeUsesLiveOrbitClockSource();
     rc.download_gim      = dl.download_gim;
@@ -519,11 +518,10 @@ bool PathResolver::resolveProduction(ResolvedPaths& resolved) {
     resolved.observation_path = inner.observation_path;
     resolved.navigation_path  = inner.navigation_path;
     resolved.product_paths    = std::move(inner.product_paths);
-    // Baseline-mode RINEX paths: production downloads aren't yet wired
-    // for arbitrary-station baseline runs (ProductResolver::resolveRinex
-    // uses one configured station only).  Leave the baseline_*_path
-    // fields empty so Application::runBaseline() falls back to the
-    // explicit JSON paths, which is the expected workflow today.
+    // Baseline-mode RINEX paths: production downloads are not wired for
+    // arbitrary-station baseline runs (ProductResolver::resolveRinex uses one
+    // configured station only).  The baseline_*_path fields stay empty, so
+    // Application::runBaseline() uses the explicit JSON paths.
     return true;
 }
 

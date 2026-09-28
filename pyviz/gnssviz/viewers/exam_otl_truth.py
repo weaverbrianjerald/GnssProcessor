@@ -1,4 +1,4 @@
-"""Truth-referenced ocean tidal loading — the one term built NOT to cancel.
+"""Truth-referenced ocean tidal loading: the one term built not to cancel.
 
 Reads the GnssSimulator answer key ``truth_otl.csv`` (written whenever the
 synthesizer injects ocean loading, bound to a
@@ -8,33 +8,33 @@ Every other correction in the M7 stack is injected by *reusing* the processor's
 own model, so it cancels and leaves nothing behind.  Ocean loading is the
 exception, and deliberately so: it is a **field**, but the processor synthesizes
 its coefficients once at the RINEX ``APPROX POSITION`` and reuses them for the
-whole arc (only the ENU→ECEF rotation follows the receiver).  With
+whole arc (only the ENU-to-ECEF rotation follows the receiver).  With
 ``corrections.ocean_tide_along_track`` the simulator samples the real EOT20 grid
 *along the track*, so what is left in the data is
 
     d_up(t) = inj_up(t) − mod_up(t)
 
-— zero at the first epoch, growing as the vessel leaves ``x₀``.  Figures:
+zero at the first epoch, growing as the vessel leaves ``x₀``.  Figures:
 
   1. Two x-linked tiles: the radial loading the vessel actually felt
-     (``inj_up_m``) against what the processor models (``mod_up_m``) — visually
-     one line, because the difference is ~5% of the signal — and beneath it the
-     remainder ``d_up_m`` that no model removes.
+     (``inj_up_m``) against what the processor models (``mod_up_m``), visually
+     one line because the difference is about 5% of the signal, and beneath it
+     the remainder ``d_up_m`` that no model removes.
   2. ``d_up`` against straight-line distance from the APPROX POSITION: the
      envelope grows with distance, but the term is a *beat between two nearby
      tidal phasors*, not a ramp, so the cloud fans out rather than following a
      line.
   3. ``d_up`` on the same axes as the run's actual vertical position error (when
      ``truth_position.csv`` + ``state_trace.csv`` are present).  This is the
-     panel that matters: ``−sin(el)`` **is** the range partial with respect to
-     the up coordinate, so ``d_up`` is exactly degenerate with height and lands
-     almost entirely on the height estimate — leaving no clock/ZWD signature and
-     essentially no post-fit residual.  It is invisible because it is millimetres
-     against centimetres of vertical error, *not* because it hides beneath the
-     residual floor.
+     panel that matters: ``−sin(el)`` is exactly the range partial with respect
+     to the up coordinate, so ``d_up`` is exactly degenerate with height and
+     lands almost entirely on the height estimate, leaving no clock/ZWD
+     signature and essentially no post-fit residual.  It is invisible because
+     it is millimetres against centimetres of vertical error, not because it
+     hides beneath the residual floor.
 
 In frozen mode (``ocean_tide`` without ``ocean_tide_along_track``) ``d_up`` is
-identically zero and the viewer says so — that is the control, not a failure.
+identically zero and the viewer says so; that is the control, not a failure.
 """
 
 from __future__ import annotations
@@ -46,10 +46,10 @@ from ..io import add_utc, first_col, load_trace
 from .base import Viewer, ViewerResult, ViewerSkip
 from . import exam_common as ec
 
-_C_INJ = (0.85, 0.45, 0.10)       # amber  — loading the vessel felt
-_C_MOD = (0.15, 0.35, 0.75)       # blue   — loading the processor models
-_C_D = (0.80, 0.15, 0.15)         # red    — unmodelled remainder
-_C_VERT = (0.35, 0.35, 0.35)      # grey   — actual vertical error, for scale
+_C_INJ = (0.85, 0.45, 0.10)       # amber: loading the vessel felt
+_C_MOD = (0.15, 0.35, 0.75)       # blue: loading the processor models
+_C_D = (0.80, 0.15, 0.15)         # red: unmodelled remainder
+_C_VERT = (0.35, 0.35, 0.35)      # grey: actual vertical error, for scale
 _C_ZERO = (0.5, 0.5, 0.5)
 
 
@@ -164,12 +164,12 @@ def build_exam_otl_truth(ctx) -> ViewerResult:
     if vert is not None:
         vt, vu = vert
         f = np.isfinite(vu)
-        # MEAN |U| over steady-state epochs — exactly what the Verifier prints as
+        # Mean |U| over steady-state epochs: exactly what the Verifier prints as
         # "V" (Verifier.cpp accumulates sumv += |enu.z()| and divides by n_used),
         # so the scale quoted here is the number on the scorecard.  Not the RMS
-        # (slip transients inflate it) and not the median (the Verifier's V is a
-        # mean, and quoting a different statistic under the same name is how a
-        # dashboard starts disagreeing with the thing it is describing).
+        # (slip transients inflate it) and not the median: the Verifier's V is a
+        # mean, and quoting a different statistic under the same name would make
+        # this panel disagree with the scorecard it references.
         vert_mean = float(np.mean(np.abs(vu[f]))) if f.any() else float("nan")
         ax_v = Axes(title="Unmodelled loading against the run's actual vertical error "
                           "(same axis, same units)",

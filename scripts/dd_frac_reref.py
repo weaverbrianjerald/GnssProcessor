@@ -1,34 +1,34 @@
 #!/usr/bin/env python3
-"""TRUTH-FREE reference re-referencing of the DD fractional histogram (SPEC_amb_iono_split_overcount §6.13).
+"""Truth-free reference re-referencing of the DD fractional histogram (SPEC_amb_iono_split_overcount §6.13).
 
-The companion `simnet_dd_reref.py` grades the sim against `truth_ambiguities.csv`.  The FIELD has no truth, so
+The companion `simnet_dd_reref.py` grades the sim against `truth_ambiguities.csv`. The field has no truth, so
 the only observable is the trace's own `frac_cyc` = dd_cyc - round(dd_cyc), which lives on the unit circle.
-That is enough: the producer forms every chord of a (constellation, signal) against ONE reference satellite
+That is enough: the producer forms every chord of a (constellation, signal) against one reference satellite
 (filter/NetworkDdFrac.cpp: the lexically-lowest satellite present at >= 2 stations), so within one
 (epoch, cons, signal, sta_a, sta_b) group
 
     f_i = frac( s_i - s_ref )      s = between-station SD ambiguity error of a satellite
 
-and -s_ref is COMMON to the whole group.  Remove it circularly and what remains is per-satellite.
+and -s_ref is common to the whole group. Removing it circularly leaves the per-satellite part.
 
-⚠ THE NULL IS THE WHOLE POINT.  Subtracting a group's OWN circular median from its members shrinks |residual|
-even when the fractions are independent uniform noise — a group of 5 has 5 chances to sit near its own median.
-Every ref-free number below is therefore printed beside a size-matched Monte-Carlo null (`--null-draws`), and
-the verdict is the GAP, never the raw value.  Three independent readouts, each with its own null:
+Subtracting a group's own circular median from its members shrinks |residual| even when the fractions are
+independent uniform noise: a group of 5 has 5 chances to sit near its own median. That is why every ref-free
+number below is printed beside a size-matched Monte-Carlo null (`--null-draws`), and the verdict is the gap
+to that null, never the raw value. Three independent readouts, each with its own null:
 
   as-traced   med|f_i|, share |f| <= 0.1              what every field DD grade has reported
   resultant   R = |mean exp(2*pi*i*f)| per group      concentration; null E[R] ~ 0.886/sqrt(n)
   ref-free    med|u_i|, u = wrap(f_i - c_hat)         c_hat = circular median of the group
-  closure     wrap(c_ab + c_bc + c_ca) over triangles the STRUCTURE test (see below)
+  closure     wrap(c_ab + c_bc + c_ca) over triangles the structure test (see below)
 
-CLOSURE is a SECONDARY diagnostic and its null is subtle.  A DD is per-station additive by construction, so a
-triangle closes for any FIXED satellite whether or not the reference matters; since c_hat is a circular median
-it IS one of those data points, and a triangle closes whenever the median lands on the same satellite in all
-three pairs.  Its null therefore draws the DD structure WITHOUT a reference term (iid s per satellite-station,
-same group sizes, same estimator) — observed AT that null means the closure is the median-agreement artifact.
-The verdict rests on R and on the ref-free GAP, both of which are free of this confound.
+Closure is a secondary diagnostic and its null is subtle. A DD is per-station additive by construction, so a
+triangle closes for any fixed satellite whether or not the reference matters; since c_hat is a circular median
+it is one of those data points, so a triangle closes whenever the median lands on the same satellite in all
+three pairs. Its null therefore draws the DD structure without a reference term (iid s per satellite-station,
+same group sizes, same estimator): observed at that null means the closure is the median-agreement artifact.
+The verdict rests on R and on the ref-free gap, both free of this confound.
 
-Also reported: the reference-satellite census per hour (the field's reference ROTATES as satellites rise and
+Also reported: the reference-satellite census per hour (the field's reference rotates as satellites rise and
 set, unlike the sim's all-day G01/E02) and the as-traced grade split by whether the reference switched in the
 preceding K epochs.
 
@@ -69,7 +69,7 @@ def circ_median(vals):
 
 
 def resultant(vals):
-    """|mean exp(2*pi*i*f)| — 1 = perfectly concentrated, ~0.886/sqrt(n) under uniform noise."""
+    """|mean exp(2*pi*i*f)|: 1 means perfectly concentrated, ~0.886/sqrt(n) under uniform noise."""
     c = sum(math.cos(2 * math.pi * v) for v in vals) / len(vals)
     s = sum(math.sin(2 * math.pi * v) for v in vals) / len(vals)
     return math.hypot(c, s)
@@ -107,19 +107,19 @@ class Null:
         return out
 
     def closure(self, triangles):
-        """The DD-STRUCTURE null for the triangle closure.
+        """The DD-structure null for the triangle closure.
 
-        ⚠ An independent-uniform null is WRONG here.  A DD is per-station additive BY CONSTRUCTION —
-        f_i(a,b) = [s_i(a) - s_i(b)] - [s_ref(a) - s_ref(b)] — so for a FIXED satellite the triangle
-        closes exactly, with or without a reference effect.  c_hat is a circular median, i.e. one of
-        those data points, so a triangle closes whenever the median lands on the SAME satellite in all
-        three pairs.  That confound has nothing to do with the reference, and a null that ignores it
+        An independent-uniform null does not fit here. A DD is per-station additive by construction:
+        f_i(a,b) = [s_i(a) - s_i(b)] - [s_ref(a) - s_ref(b)], so for a fixed satellite the triangle
+        closes exactly, with or without a reference effect. c_hat is a circular median, i.e. one of
+        those data points, so a triangle closes whenever the median lands on the same satellite in all
+        three pairs. That confound has nothing to do with the reference, and a null that ignores it
         makes any trace look structured.
 
-        So this null draws the alternative with the DD structure and NO reference contribution: iid
+        So this null draws the alternative with the DD structure and no reference contribution: iid
         uniform s per (satellite, station) over three stations, groups built from the same satellite
-        pool with the observed sizes, c_hat by the same circular median.  Observed closure at this null
-        = the closure is the median-agreement artifact; observed BELOW it = structure the DD
+        pool with the observed sizes, c_hat by the same circular median. Observed closure at this null
+        means the closure is the median-agreement artifact; observed below it means structure the DD
         construction alone does not explain."""
         out = []
         for (n1, n2, n3) in triangles:
@@ -291,11 +291,11 @@ def regrade(run, sig="L1C", cons_filter=None, stride=1, null_draws=400, switch_k
 def selftest():
     """Two beds, one trace each, graded through the real path.
 
-    BED A (reference-dominated): every group's fractions are a common -s_ref plus a small per-satellite term,
-    and -s_ref is built as a per-STATION difference so the triangles must close.  Expect: as-traced ~ the
-    reference's own spread, ref-free FAR below its null, closure ~ 0.
-    BED B (pure uniform noise): as-traced, ref-free and closure must all sit AT their nulls — this is the
-    guard that makes a BED-A win meaningful rather than a median-subtraction artifact.
+    Bed A (reference-dominated): every group's fractions are a common -s_ref plus a small per-satellite term,
+    and -s_ref is built as a per-station difference so the triangles must close. Expect: as-traced close to
+    the reference's own spread, ref-free far below its null, closure near 0.
+    Bed B (pure uniform noise): as-traced, ref-free and closure must all sit at their nulls; this is the
+    guard that makes a bed-A win meaningful rather than a median-subtraction artifact.
     """
     ok = True
 
@@ -341,14 +341,14 @@ def selftest():
         print(f"  [{mode}] as-traced {m_f:.3f}  ref-free {m_u:.3f} (null {n_u:.3f})  closure {cl:.3f}")
         if mode == "ref":
             # the common part dominates: as-traced is large, ref-free collapses to the per-sat term (<= 0.06),
-            # and the triangles close because c_hat IS a per-station difference
+            # and the triangles close because c_hat is a per-station difference
             chk("ref bed: as-traced carries the reference", m_f > 0.15, f"{m_f:.3f} > 0.15")
             chk("ref bed: ref-free collapses", m_u < 0.05 and m_u < 0.5 * n_u, f"{m_u:.3f} vs null {n_u:.3f}")
             chk("ref bed: triangles close", cl < 0.02, f"{cl:.3f} < 0.02")
             chk("ref bed: near% rises", near(d["u"]) > 90 > near(d["f"]),
                 f"{near(d['f']):.0f} -> {near(d['u']):.0f} %")
         else:
-            # uniform: every readout must sit AT its null, and the closure must NOT close
+            # uniform: every readout must sit at its null, and the closure must not close
             chk("unif bed: as-traced at the null", abs(m_f - 0.25) < 0.03, f"{m_f:.3f} ~ 0.250")
             chk("unif bed: ref-free NO better than its null", m_u > 0.7 * n_u, f"{m_u:.3f} vs null {n_u:.3f}")
             chk("unif bed: the null is BELOW 0.25 (the artifact this control exists for)",

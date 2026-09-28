@@ -3,11 +3,12 @@
  * @brief Implementation of the cross-receiver RINEX-3 signal classifier.
  *
  * The classification logic follows RINEX 3.05 section 5.1 (observation
- * codes by system).  It is intentionally exhaustive on the (system,
- * frequency digit) pair so that any new tracking attribute reported by
- * a future receiver is classified correctly without code changes — the
- * attribute character is preserved as-is in the result and only used
- * when a canonical code must be picked.
+ * codes by system).  Except for BeiDou, the band depends only on the
+ * (system, frequency digit) pair, so a new tracking attribute reported by
+ * a future receiver is classified without code changes.  The attribute
+ * character is kept as-is in the result and is used only when a canonical
+ * code must be picked.  BeiDou reuses frequency digits across bands, so its
+ * band depends on the attribute and an unlisted attribute maps to Unknown.
  */
 
 #include "common/SignalBand.hpp"
@@ -39,9 +40,8 @@ namespace GnssProcessor {
          *
          * The frequency digit is the 2nd character of the RINEX-3 code
          * (e.g. '2' in "C2W"), which uniquely identifies the band within
-         * a constellation.  Some constellations (BeiDou, Galileo) overload
-         * the same digit across bands using the tracking attribute — those
-         * are disambiguated in @c classifyByDigitWithAttr().
+         * a constellation.  BeiDou reuses digits across bands and is
+         * disambiguated by the tracking attribute in @c bandFromDigitBeiDou().
          */
         FrequencyBand bandFromDigitGps(char d) {
             switch (d) {
@@ -77,12 +77,16 @@ namespace GnssProcessor {
         /**
          * @brief BeiDou disambiguation by attribute.
          *
-         * Digit 1: 'I'/'Q'/'X' = B1I (legacy), 'D'/'P'/'X' = B1C (BDS-3).
-         *          'X' is shared — interpret as B1C when at least one of
-         *          the data/pilot components ('D' or 'P') is present in
-         *          the same observation set.  Without that context here
-         *          we default 'X' on digit 1 to B1C (modernized signal).
-         * Digit 7: 'I'/'Q'/'X' = B2I, 'D'/'P'/'Z' = B2b.
+         * Digit 1: 'I'/'Q' = B1I (legacy), 'D'/'P' = B1C (BDS-3).
+         *          'X' is used by both.  Resolving it would need the rest of
+         *          the observation set (a 'D' or 'P' code implies B1C), which
+         *          this function does not see, so digit-1 'X' maps to B1C
+         *          (the modernized signal).
+         * Digit 2: 'I'/'Q'/'X' = B1I.
+         * Digit 7: 'I'/'Q'/'X' = B2I ('X' defaults to the legacy signal),
+         *          'D'/'P'/'Z' = B2b.
+         * Digits 5, 8, 6: B2a ('D'/'P'/'X'), B2a+b ('D'/'P'/'X'), B3 ('I'/'Q'/'X').
+         * Any other combination returns Unknown.
          */
         FrequencyBand bandFromDigitBeiDou(char d, char attr) {
             switch (d) {
@@ -158,7 +162,7 @@ namespace GnssProcessor {
             return {};
         }
 
-        /// Sentinel for "attribute not in priority list" — sorts last.
+        /// Sentinel for "attribute not in priority list"; sorts last.
         constexpr int kPriorityNoMatch = 999;
 
         /**
@@ -363,8 +367,8 @@ namespace GnssProcessor {
         case FrequencyBand::GalE5b:  return K::GAL_E5B_WAVELENGTH;
         case FrequencyBand::GalE5:   return K::GAL_E5_WAVELENGTH;
         case FrequencyBand::GalE6:   return K::GAL_E6_WAVELENGTH;
-        // GLONASS — FDMA bands use the base (k=0) wavelength (slot offset not
-        // applied here; see the header note), the CDMA bands are fixed.
+        // GLONASS: the FDMA bands use the base (k=0) wavelength (the slot offset
+        // is not applied here; see the header note); the CDMA bands are fixed.
         case FrequencyBand::GloG1:   return K::SPEED_OF_LIGHT / K::GLONASS_G1_BASE_FREQ;
         case FrequencyBand::GloG2:   return K::SPEED_OF_LIGHT / K::GLONASS_G2_BASE_FREQ;
         case FrequencyBand::GloG3:   return K::GLONASS_G3_WAVELENGTH;
@@ -373,7 +377,7 @@ namespace GnssProcessor {
         // BeiDou
         case FrequencyBand::BdsB1I:  return K::BDS_B1_WAVELENGTH;
         case FrequencyBand::BdsB1C:  return K::BDS_B1C_WAVELENGTH;
-        case FrequencyBand::BdsB2I:  return K::BDS_B2_WAVELENGTH;   // 1207.14 MHz (B2b freq)
+        case FrequencyBand::BdsB2I:  return K::BDS_B2_WAVELENGTH;   // 1207.14 MHz, shared with B2b
         case FrequencyBand::BdsB2a:  return K::BDS_B2A_WAVELENGTH;
         case FrequencyBand::BdsB2b:  return K::BDS_B2_WAVELENGTH;
         case FrequencyBand::BdsB2ab: return K::BDS_B2AB_WAVELENGTH;
@@ -386,7 +390,7 @@ namespace GnssProcessor {
         // SBAS
         case FrequencyBand::SbsL1:   return K::SBAS_L1_WAVELENGTH;
         case FrequencyBand::SbsL5:   return K::SBAS_L5_WAVELENGTH;
-        // IRNSS / NavIC — L5 shares the 1176.45 MHz band; the S band (2492 MHz)
+        // IRNSS / NavIC: L5 shares the 1176.45 MHz band; the S band (2492 MHz)
         // has no Constants entry, so it falls through to the 0.0 sentinel.
         case FrequencyBand::IrnL5:   return K::GPS_L5_WAVELENGTH;
         case FrequencyBand::IrnS:

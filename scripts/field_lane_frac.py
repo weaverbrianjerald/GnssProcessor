@@ -1,29 +1,29 @@
 #!/usr/bin/env python3
-"""field_lane_frac.py -- TRUTH-FREE lane-fraction grade for field (and sim) runs.
+"""field_lane_frac.py: truth-free lane-fraction grade for field (and sim) runs.
 
 The per-band DD fraction is iono-limited and uniform on every field lineage
-(med|frac| 0.25 -- project_network_ddfrac_rootcause).  The LANE fraction is a
+(med|frac| 0.25; project_network_ddfrac_rootcause).  The lane fraction is a
 different object: on matched (tow, sat, ref, sta_a, sta_b) quadruples,
 
     f_lane = wrap( dd_cyc(band_a) - dd_cyc(band_b) )      in [-0.5, 0.5)
 
-is computable with NO truth (the true lane DD is an integer, so its fraction
-is identically 0 -- any spread in f_lane is pure estimation error), and it is
-exactly the quantity the rung-3 CARRY-DOMAIN lane work targets.  Reads
+is computable with no truth (the true lane DD is an integer, so its fraction
+is identically 0; any spread in f_lane is pure estimation error), and it is
+exactly the quantity the rung-3 carry-domain lane work targets.  Reads
 <run>/logs/network_dd_fractional.csv (network.trace_dd_fractional).
 
-NOTE (2026-08-22): this script was written when relevel_lane_snap drove a
-seed-site snap.  That mechanism was deleted as a proven solve no-op
-(SPEC_lane_slip_response 7.2), and the knob now arms a MEASURE-ONLY carry-domain
-observatory (7.3).  So an observatory arm and its control must return IDENTICAL
-numbers here -- that identity is the observatory's wiring check, not a null
-result.  This script grades the lane the APPLY leg would move, if one is ever
+This script was originally written for the seed-site snap that relevel_lane_snap
+drove.  That mechanism was deleted on 2026-08-22 as a proven solve no-op
+(SPEC_lane_slip_response 7.2), and the knob now arms a measure-only carry-domain
+observatory (7.3), so an observatory arm and its control return the same
+numbers here: that agreement is the observatory's wiring check, not a null
+result.  This script grades the lane an apply leg would move, if one is ever
 built.
 
 Reports med|f|, P(|f|<0.10), P(|f|<0.25), and the circular resultant R per
 lane pair, over the full run and the settled last quarter.  Statistics
-discipline (O2 card): rows repeat per key -- medians and rates only, and the
-per-KEY collapsed view is printed beside the row view.
+discipline (O2 card): rows repeat per key, so only medians and rates are
+reported, with the per-key collapsed view printed beside the row view.
 
 Usage:
     python scripts/field_lane_frac.py runs/fld63_lanesnap4h [--last-frac 0.25]

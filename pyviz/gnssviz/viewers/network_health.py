@@ -1,18 +1,18 @@
-"""Network solver-health dashboard -- per-epoch estimability & convergence.
+"""Network solver-health dashboard: per-epoch estimability and convergence.
 
-Reads ``network_trace.csv`` (the PPP-RTK NETWORK producer's per-epoch aggregate
+Reads ``network_trace.csv`` (the PPP-RTK network producer's per-epoch aggregate
 diagnostics) and shows, over the run:
 
-  1. **Coverage** -- stations present, satellite clocks, and phase biases solved
+  1. **Coverage**: stations present, satellite clocks, and phase biases solved
      each epoch (the size of the shared satellite block), with the declared datum
      dimension.
-  2. **Clock-delta** -- the RMS and max estimable satellite-clock correction (m):
-     the convergence / stability of the network's headline product.
-  3. **Estimability** -- which epochs emitted vs were withheld by the null-space
+  2. **Clock-delta**: the RMS and max estimable satellite-clock correction (m),
+     reporting the convergence and stability of the network's headline product.
+  3. **Estimability**: which epochs emitted vs were withheld by the null-space
      observability gate, plus the pivot-ambiguity pin count.
 
-This is the at-a-glance "is the network healthy?" view: long stretches of
-withheld epochs or a growing clock-delta RMS flag a thin or ill-posed network.
+This is a summary view of network health: long stretches of withheld epochs or
+a growing clock-delta RMS indicate a thin or ill-posed network.
 """
 
 from __future__ import annotations

@@ -196,14 +196,15 @@ def unit(v):
     n = sqrt(sum(x * x for x in v)); return [x / n for x in v]
 
 # --------------------------------------------------------------------------
-# Geodesy -- port of math/Coordinates.cpp, so the pierce point this script
-# builds is the SAME one computeIppGeometry() builds in the C++.  The seed and
-# the local frame were previously GEOCENTRIC (lat = asin(z/|r|), up = r/|r|)
-# where the C++ uses the GEODETIC latitude and the ellipsoid-normal ENU frame:
-# up to 0.192 deg of latitude at 45 deg, carried into el -> psi -> the mapping
-# m(el) that multiplies GIM VTEC in the residual.  Same fixed-point iteration
-# as scripts/q5_reanchor_hourly.py, for the same reason -- a different but
-# equally valid solver would leave a residue indistinguishable from a defect.
+# Geodesy: port of math/Coordinates.cpp, so the pierce point this script
+# builds is the one computeIppGeometry() builds in the C++. The seed and the
+# local frame use the geodetic latitude and the ellipsoid-normal ENU frame,
+# matching the C++, not the geocentric latitude (lat = asin(z/|r|)) and
+# up = r/|r| convention, which differs by up to 0.192 deg of latitude at
+# 45 deg and would carry into el -> psi -> the mapping m(el) that multiplies
+# GIM VTEC in the residual. Uses the same fixed-point iteration as
+# scripts/q5_reanchor_hourly.py, for the same reason: a different but equally
+# valid solver would leave a residue indistinguishable from a defect.
 # --------------------------------------------------------------------------
 _A = 6378137.0
 _F = 1.0 / 298.257223563
@@ -245,7 +246,7 @@ for sta in stations:
     files = glob.glob(root + r"\obs" + "\\" + sta.lower() + r"\*.rnx")
     if not files: continue
     rx = sta_xyz[sta]
-    lat_r, lon_r, _ = ecef_to_llh(rx)          # GEODETIC, matching computeIppGeometry
+    lat_r, lon_r, _ = ecef_to_llh(rx)          # geodetic, matching computeIppGeometry
     up_r = geodetic_up(lat_r, lon_r)           # ellipsoid normal, not r/|r|
     try:
         data = read_rnx(files[0], set(EPOCH_SODS))

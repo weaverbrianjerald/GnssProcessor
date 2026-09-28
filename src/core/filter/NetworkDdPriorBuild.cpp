@@ -1,11 +1,12 @@
 /**
  * @file NetworkDdPriorBuild.cpp
  * @brief Implementation of the network DD-prior build steps (see the header banner).
- *        Bodies relocated VERBATIM (dedent-8, zero substitution) out of
- *        Application::runNetwork at decomposition INC-9b (2026-07-22).
- *        networkBuildEnsembleGauges needs no alias preamble (params == captures);
- *        networkBuildCarryDdPriors opens with a byte-copy of the run-TU nc/nmw/trace +
- *        ctx.carry alias block so its 1,400-line body reads the original names.
+ *        Bodies relocated verbatim (8-column dedent, no substitutions) from
+ *        Application::runNetwork at decomposition INC-9b.
+ *        networkBuildEnsembleGauges needs no alias preamble (its parameters are the
+ *        former captures); networkBuildCarryDdPriors opens with a copy of the run TU's
+ *        nmw/trace and ctx.carry aliases so its body reads the original names.  The
+ *        MW/WL inject part of the original body now lives in NetworkMwWlGlue.cpp.
  */
 
 #include "filter/NetworkDdPriorBuild.hpp"
@@ -54,19 +55,20 @@ void networkBuildEnsembleGauges(NetworkEstimator& est,
         const auto p = StateKeys::parseSatPhaseBiasKey(pk);
         if (p) shared_ss.insert(p->satellite + "\x1f" + p->signal);
     }
-    // Seed-once + time-lock: a (sat,signal) that already carries a HELD bias
-    // (from the previous epoch's D2 stash) is datumed by that stiff carried
-    // prior — do NOT also fold Σz=0 for it (a hard w→∞ fold would override the
-    // finite hold prior and re-realize the churny level).  Only fresh /
-    // re-seeded (sat,signal) get a gauge this epoch.  Empty when hold is off.
+    // Seed-once and time-lock: a (sat,signal) that already carries a held bias
+    // (from the previous epoch's D2 stash) takes its datum from that stiff carried
+    // prior, so no Σz=0 gauge is folded for it; a hard (w→∞) fold would override
+    // the finite hold prior and re-realize the level, which then changes from
+    // epoch to epoch.  Only fresh or re-seeded (sat,signal) get a gauge this
+    // epoch.  Empty when the hold is off.
     std::set<std::string> held;
     if (phase_hold_on)
         for (const CarryPrior& cp : prev_carry)
-            // var>0 mirrors the hold-prior injector's guard EXACTLY, so a
-            // (sat,signal) is fold-skipped iff it will actually get a hold
-            // prior — a var<=0 carry (e.g. a corrupt warm-resume snapshot) is
-            // NOT held here, so it re-seeds via the fold instead of ending up
-            // un-datumed.
+            // var>0 is the same guard the hold-prior injector applies, so a
+            // (sat,signal) skips the fold iff it will get a hold prior.  A
+            // var<=0 carry (for example from a corrupt warm-resume snapshot) is
+            // not treated as held here; it re-seeds via the fold instead of
+            // being left without a datum.
             if (cp.kind == SharedParamKind::PhaseBias && cp.var > 0.0)
                 held.insert(cp.sat + "\x1f" + cp.signal);
     std::map<std::string, NetworkNormalEquations::SumZeroGauge> by_key;
@@ -85,9 +87,9 @@ void networkBuildEnsembleGauges(NetworkEstimator& est,
     for (auto& [k, gz] : by_key) {
         if (gz.terms.empty()) continue;
         // Record the shared phase-bias column this gauge fixes, so the
-        // estimator can treat it as an EXACT datum column in the datum-frame
-        // conditional covariance (the fold leaves it carrying an artificial
-        // gauge-direction variance — see SumZeroGauge::shared_col).  k is
+        // estimator can treat it as an exact datum column in the datum-frame
+        // conditional covariance (the fold leaves it with an artificial
+        // gauge-direction variance; see SumZeroGauge::shared_col).  k is
         // "sat\x1fsignal"; every key in by_key came from shared_ss, so it has
         // a registered phase-bias column.
         const auto us = k.find('\x1f');
@@ -154,8 +156,8 @@ void networkBuildCarryDdPriors(
     bool mw_lane_trace,
     bool mw_tagsets,
     bool mw_wl_f6_dump) {
-    // --- Alias preamble: byte-copies of the run-TU aliases the relocated
-    //     buildCarryDdPriors body reads (nc/nmw/trace + the ctx.carry aliases). ----
+    // --- Alias preamble: copies of the run-TU aliases the relocated
+    //     buildCarryDdPriors body reads (nmw/trace and the ctx.carry aliases). ----
     const auto& nmw = config_.getNetworkConfig().mw_wl;
     auto& trace = traces.trace;
     auto& carry_glonass_warned = ctx.carry.carry_glonass_warned;
@@ -172,22 +174,22 @@ void networkBuildCarryDdPriors(
     auto& lane_resid_arcs = ctx.carry.lane_resid_arcs;
     auto& n_loop_epochs = ctx.counters.n_loop_epochs;
     auto& uwl_warned_cons = ctx.carry.uwl_warned_cons;
-    // Card 4 (M1) D5 v4: keep a D5-ONLY funnel entry out of the carry-membership
-    // exclusion (see ambSlipped below).  The loader already forces it false without
-    // carry_innov_gate, so the && is belt-and-braces against a hand-built ctx.
+    // Keep a funnel entry made only by D5 out of the carry-membership exclusion (see
+    // ambSlipped below; card 4, M1, D5 v4).  The loader already forces the knob false
+    // without carry_innov_gate; the && also covers a context not built by the loader.
     const bool retap_only =
         carry_innov_gate && config_.networkCarryInvariantInnovRetapOnly();
 
     if (!carry_invariant) return;
     constexpr int kSatBase = 1000000;   // satellite vertices sit above every receiver index
     std::map<int, NetworkInvariantCarryDriver::GroupInput> groups;
-    if (carry_innov_gate) { carry_arc_amb_key.clear(); carry_arc_amb_key2.clear(); }  // D5: rebuilt with this call's arcs
+    if (carry_innov_gate) { carry_arc_amb_key.clear(); carry_arc_amb_key2.clear(); }  // rebuilt with this call's arcs (D5)
 
     // --- Shared WL-1/WL-2/WL-3 machinery (revmap / arc_signals / lin_of / iono_of /
-    // primary / band_top_of / λ cache).  HOISTED above the group build because the WL-3
+    // primary / band_top_of / λ cache).  Built before the group build because the WL-3
     // pair regroup routes each primary-band ambiguity by its (rx,sat) primary pair.
     // Byte-identical when every lane is off: nothing here is populated, and building
-    // it earlier has no effect on the solve (pure reads of station state).
+    // it earlier has no effect on the solve (it only reads station state).
     const bool mw_mach_on = mw_wl_on || ewl_on || lane_on;
     auto sysFromSat = [](const std::string& sat) -> System {
         if (sat.empty()) return System::Unknown;
@@ -199,42 +201,46 @@ void networkBuildCarryDdPriors(
         }
     };
     // Reverse map (est_station,col)->arc identity and per-(rx,sat) ambiguity
-    // signals over ALL resolvable ambiguities (both bands, incl. those NOT in
-    // shared_phase_keys — the WL row needs the L2 column even when L2 is not an
-    // eq34 arc).  GLONASS excluded (never enters the carry blocks anyway).
+    // signals over all resolvable ambiguities (both bands, including those not in
+    // shared_phase_keys: the WL row needs the L2 column even when L2 is not an eq34
+    // arc).  GLONASS is excluded (it never enters the carry blocks).
     std::map<std::pair<int, int>, Rev> revmap;
     std::map<std::pair<int, std::string>, std::vector<std::pair<std::string, int>>> arc_signals;
-    // (est_station, local col) → ambiguity LINEARIZATION value (m).  The kernel
-    // solves corrections about x_lin (no KF write-back), so the WL layer must
-    // re-express the absolute MW measurement in the correction frame (F5).
+    // (est_station, local col) → ambiguity linearization value (m).  The kernel
+    // solves corrections about x_lin (no KF write-back), so the WL layer
+    // re-expresses the absolute MW measurement in the correction frame (F5).
     std::map<std::pair<int, int>, double> lin_of;
-    // WL-2 §3.4 v2: (rx app index, sat) → the estimated L1-referenced slant iono (m)
-    // for the bridge de-bias.  The v1 Welford-only guard is falsified by a STABLE
-    // differential iono (Fable): a constant iono bias has ~0 Welford variance yet
-    // biases the rounded WL integer (near-integer bias ⇒ slips the FFR frac gate).
-    // We subtract the network's own iono estimate; the residual DD-iono estimate
-    // error surfaces in |frac| and is caught by the FFR gate + MW(1,2) closure.
+    // (rx app index, sat) → the estimated L1-referenced slant iono (m) for the bridge
+    // de-bias (WL-2 §3.4 v2).  A Welford-variance guard alone (v1) misses a stable
+    // differential iono: a constant iono bias has ~0 Welford variance but still biases
+    // the rounded WL integer (a near-integer bias passes the FFR fraction gate).  The
+    // network's own iono estimate is therefore subtracted; the remaining DD-iono
+    // estimate error shows in |frac| and is caught by the FFR gate and the MW(1,2)
+    // closure.
     std::map<std::pair<int, std::string>, double> iono_of;
-    // Estimator primary pair per (rx,sat): the two lowest DISTINCT bands (ties
+    // Estimator primary pair per (rx,sat): the two lowest distinct bands (ties
     // lexicographic for determinism); v1 restricts WL rows to this pair (§11 Q3).
     std::map<std::pair<int, std::string>, PP> primary;
-    // WL-2 EWL: the band-5 (GPS L5 / Galileo E5a) signal + column per (rx,sat),
-    // for the (band2, band5) extra-wide lane.  arc_signals is sorted by band digit
-    // then name, so the first '5' is deterministic.
+    // Top-tier band signal and column per (rx,sat), for the (band2, top band)
+    // extra-wide lane (WL-2 EWL).  The top digit is '5' (GPS L5 / Galileo E5a)
+    // unless uwl is armed, in which case the lane-tier table's b_top is used (see the
+    // top_digit loop below).  arc_signals is sorted by band digit then name, so the
+    // first match is deterministic.
     std::map<std::pair<int, std::string>, std::pair<std::string, int>> band_top_of;
-    // Increment 5 (uwl_dual_top): the FALLBACK top rung's signal + column per
-    // (rx,sat) (Galileo '7' when the preferred b_top is '8').  Empty unless a
-    // tier arms a fallback rung; the fallback lane instance's resolver and the
-    // walk's fallback-tagged rows read THIS map instead of band_top_of.
+    // The fallback top rung's signal and column per (rx,sat) (Galileo '7' when the
+    // preferred b_top is '8'; increment 5, uwl_dual_top).  Empty unless a tier arms a
+    // fallback rung; the fallback lane instance's resolver and the walk's
+    // fallback-tagged rows read this map instead of band_top_of.
     std::map<std::pair<int, std::string>, std::pair<std::string, int>> band_top2_of;
-    // E6 mid hop (uwl_mid_enable): the mid-rung band signal per (rx,sat) — only
-    // the SIGNAL is needed (the hops are phase-only detector reads; no estimator
-    // column enters the chain).  Empty unless the tier arms a mid rung.
+    // The mid-rung band signal per (rx,sat) (E6 mid hop, uwl_mid_enable).  Only the
+    // signal is needed: the hops are phase-only detector reads, and no estimator
+    // column enters the chain.  Empty unless the tier arms a mid rung.
     std::map<std::pair<int, std::string>, std::string> band_mid_of;
-    // WL-3: the constellation's ONE census-preferred primary pair — only arcs whose
-    // primary pair matches it join the pair group; minority-channel arcs stay fully
-    // per-band (as today), so they keep their own carried cycles instead of spawning
-    // flickering micro pair-groups.  The third (EWL) band never becomes a pair band.
+    // The constellation's single census-preferred primary pair (WL-3).  Only arcs
+    // whose primary pair matches it join the pair group; minority-channel arcs stay
+    // fully per-band, so they keep their own carried cycles instead of forming small
+    // pair groups that appear and disappear.  The third (EWL) band never becomes a
+    // pair band.
     std::map<char, std::pair<std::string, std::string>> lane_pref_pair;
     // Per-(sat,signal) wavelength cache (FDMA-correct via the satellite id).
     std::map<std::pair<std::string, std::string>, double> lam_cache;
@@ -274,23 +280,23 @@ void networkBuildCarryDdPriors(
                         if (bridge_debias_on) sat_iono[sat] = x_lin(ii);
                     }
                 }
-                // 60-ep age-bias fix: push this station's estimable slant-iono
-                // values for the detector's per-sample bridge de-bias.  Applies
-                // from the NEXT detector pass (one-epoch lag, F1-consistent);
-                // idempotent within an epoch (RAIM re-solve safe).
+                // Age-bias fix: push this station's estimable slant-iono values for
+                // the detector's per-sample bridge de-bias.  Takes effect from the
+                // next detector pass (one-epoch lag, consistent with F1); idempotent
+                // within an epoch, so the RAIM re-solve can repeat it.
                 if (bridge_debias_on && stations[i].mw_slip)
                     stations[i].mw_slip->setBridgeIonoEstimates(std::move(sat_iono));
             }
         }
-        // WL-3: network-preferred channel per (constellation, band).  The
-        // lexicographic tie-break fragments the primary pairs across stations
-        // (L2L where tracked, L2W elsewhere), which splits the pair groups'
-        // graphs and forfeits every cross-boundary cycle (~1/3 of the primary
-        // cycle space at 50 stations, measured).  Under lane_carry the pair
-        // prefers the constellation's MAJORITY channel per band (deterministic
-        // census over this build's resolvable ambiguities; ties lexicographic),
-        // falling back to the arc's own lowest channel where the majority one
-        // is untracked.  WL-1/WL-2-only shapes keep the legacy tie-break.
+        // Network-preferred channel per (constellation, band) (WL-3).  The
+        // lexicographic tie-break alone fragments the primary pairs across stations
+        // (L2L where tracked, L2W elsewhere), which splits the pair groups' graphs
+        // and loses every cycle that crosses the boundary (about 1/3 of the primary
+        // cycle space at 50 stations).  Under lane_carry the pair prefers the
+        // constellation's majority channel per band (deterministic census over this
+        // build's resolvable ambiguities; ties lexicographic), and falls back to the
+        // arc's own lowest channel where the majority channel is not tracked.
+        // WL-1/WL-2-only shapes keep the legacy tie-break.
         std::map<std::pair<char, char>, std::string> chan_pref;
         if (lane_on) {
             std::map<std::pair<char, std::string>, long long> chan_count;
@@ -310,21 +316,19 @@ void networkBuildCarryDdPriors(
                 if (best.empty() || cnt > bc || (cnt == bc && k.second < best))
                     best = k.second;
             }
-            // UWL-1 (measured falsification of the per-band census): channel
-            // choices are CORRELATED per receiver family — Galileo splits into
-            // (L1C,L5Q) and (L1X,L5X) families, and the per-band majorities
-            // composed the PHANTOM pair (L1C,L5X) that NO station tracks: zero
-            // pair arcs formed and the whole constellation silently stayed
-            // per-band (group census, 10-ep GPS+GAL smoke).  Under the armed
-            // card the census is therefore JOINT: count each (rx,sat)'s raw
-            // two-lowest-band channel pair and elect the majority pair per
-            // constellation (ties lexicographic — the §8.2 deterministic seam),
-            // then steer the per-band preferences to the elected pair so
-            // preferChan / the bridge keys align with it.  The minority FAMILY
-            // stays fully per-band (v1 accepts ~half the Galileo pair space;
-            // per-family pair groups are the v2 recovery — the group keying
-            // already supports them).  uwl_enable=false keeps the per-band
-            // census verbatim (the WL-3 validated shape, byte-identical).
+            // Joint pair census (UWL-1).  Channel choices are correlated per
+            // receiver family: Galileo splits into (L1C,L5Q) and (L1X,L5X)
+            // families, so independent per-band majorities can compose a pair such
+            // as (L1C,L5X) that no station tracks, in which case no pair arc forms
+            // and the whole constellation stays per-band without any warning.
+            // With uwl armed, each (rx,sat)'s raw two-lowest-band channel pair is
+            // counted, the majority pair per constellation is elected (ties
+            // lexicographic, the §8.2 deterministic rule), and the per-band
+            // preferences are steered to it so preferChan and the bridge keys
+            // align with it.  The minority family stays per-band here (about half
+            // the Galileo pair space); uwl_family_pairs admits it into its own pair
+            // group further below.  uwl_enable=false keeps the per-band census
+            // unchanged (the validated WL-3 shape, byte-identical).
             if (uwl_on) {
                 std::map<std::pair<char, std::pair<std::string, std::string>>,
                          long long> pair_count;
@@ -339,8 +343,8 @@ void networkBuildCarryDdPriors(
                     });
                     if (sigs.empty()) continue;
                     const char cons = rs.second.empty() ? '?' : rs.second.front();
-                    // Two lowest CARRIED bands (the uncarried top band never
-                    // pairs — mirror the routing's exclusion exactly).
+                    // Two lowest carried bands (the uncarried top band never
+                    // pairs; this is the same exclusion the routing applies).
                     std::string s1;
                     char b1 = '\0';
                     for (const auto& [sig, col] : sigs)
@@ -406,16 +410,16 @@ void networkBuildCarryDdPriors(
             pp.ok = (!pp.sig1.empty() && !pp.sig2.empty());
             primary[rs] = pp;
         }
-        // v2 (uwl_family_pairs): admit MINORITY family pairs into the run-latched
-        // admissible set.  Counted over the STEERED primary pairs — the exact
-        // quantity the routing below matches — NOT the raw two-lowest census
-        // (measured defect, smoke E: L2L < L2W lexicographically, so every GPS
-        // dual-tracker's RAW pair read (L1C,L2L) and inflated its count to 143
-        // while routing saw 1 steered arc — a stranded 1-arc micro pair-group
-        // that forfeits the arc's per-band cycles).  The majority pair routes
-        // through lane_pref_pair exactly as v1 (its admission here is a harmless
-        // duplicate); a minority pair is admitted the first epoch its steered
-        // count reaches the floor, then stays latched (see the declaration).
+        // Admit minority family pairs into the run-latched admissible set (v2,
+        // uwl_family_pairs).  The count is over the steered primary pairs, the
+        // quantity the routing below matches, and not over the raw two-lowest census:
+        // L2L sorts before L2W, so every GPS dual-tracker's raw pair reads (L1C,L2L),
+        // which can inflate a pair's count while routing sees a single steered arc
+        // and leaves a one-arc pair group that loses the arc's per-band cycles.  The
+        // majority pair routes through lane_pref_pair as in v1 (its admission here is
+        // a duplicate with no effect); a minority pair is admitted at the first epoch
+        // its steered count reaches the floor (nmw.uwl_family_min_arcs), then stays
+        // latched (see the declaration).
         if (uwl_family_on) {
             std::map<std::pair<char, std::pair<std::string, std::string>>,
                      long long> pp_count;
@@ -439,8 +443,8 @@ void networkBuildCarryDdPriors(
             }
         }
         if (lane_on) {
-            // The constellation's ONE preferred pair: the two lowest census bands,
-            // skipping the EWL third band (it must stay UNCARRIED — WL-2 §3.1).
+            // The constellation's single preferred pair: the two lowest census bands,
+            // skipping the EWL third band, which stays uncarried (WL-2 §3.1).
             std::map<char, std::vector<char>> cons_bands;
             for (const auto& [k, sig] : chan_pref) {
                 const std::string probe = std::string("L") + k.second;   // "L<band>"
@@ -452,9 +456,9 @@ void networkBuildCarryDdPriors(
                 if (bands.size() < 2) continue;
                 lane_pref_pair[cons] = { chan_pref[{cons, bands[0]}],
                                          chan_pref[{cons, bands[1]}] };
-                // Census visibility (once per run per cons): which pair the lane
-                // carries — fragmentation across channels is the WL-3 lesson and
-                // a Galileo pre-flight (SPEC_uwl_card.md §8.1); measure, don't assume.
+                // Census log (once per run per constellation): which pair the lane
+                // carries.  Fragmentation across channels is the WL-3 failure mode
+                // and a Galileo pre-flight check (SPEC_uwl_card.md §8.1).
                 if (lane_census_logged.insert(cons).second)
                     log->info("Network (M5/WL-3 census): constellation '{}' preferred "
                               "primary pair = ({}, {}) over census bands [{}].",
@@ -462,22 +466,23 @@ void networkBuildCarryDdPriors(
                               lane_pref_pair[cons].second,
                               std::string(bands.begin(), bands.end()));
             }
-            // Align the detector-side bridge arcs with the census: without this,
-            // every (rx,sat) whose min-name channel differs from the census pair
-            // has NO bridge arc under the caller's key and the WL decision path
-            // starves (measured 9-of-29 decided cycles).  Applies from the next
-            // detector pass; the re-keyed arcs re-warm in ~2 epochs.
+            // Align the detector-side bridge arcs with the census.  Otherwise every
+            // (rx,sat) whose lowest-name channel differs from the census pair has no
+            // bridge arc under the caller's key, and the WL decision path gets few
+            // inputs (9 of 29 cycles decided in the measurement).  Takes effect from
+            // the next detector pass; the re-keyed arcs re-warm in about 2 epochs.
             if (lane_bridge_on && !chan_pref.empty())
                 for (size_t i = 0; i < stations.size(); ++i)
                     if (stations[i].mw_slip)
                         stations[i].mw_slip->setBridgePreferredChannels(chan_pref);
         }
         for (auto& [rs, sigs] : arc_signals) {
-            // UWL-1 §3.1: the top-tier partner band digit.  Legacy (card OFF) =
-            // first '5' for EVERY constellation — which is what silently killed
-            // Galileo (its '5' is E5a, the primary sig2 itself ⇒ the degenerate
-            // (L5Q,L5Q) pair with no detector arc).  Armed = the lane-tier table
-            // (GPS '5' reproduces the legacy pick bit-exactly; Galileo '7'/'8').
+            // The top-tier partner band digit (UWL-1 §3.1).  With uwl off it is the
+            // first '5' for every constellation, which is degenerate for Galileo:
+            // its '5' is E5a, the primary sig2 itself, giving the (L5Q,L5Q) pair
+            // with no detector arc and no warning other than the one below.  With
+            // uwl armed it comes from the lane-tier table (GPS '5' reproduces the
+            // legacy pick bit-exactly; Galileo '7'/'8').
             char top_digit  = '5';
             char mid_digit  = '\0';
             char top2_digit = '\0';   // increment 5: the fallback rung's digit
@@ -515,10 +520,11 @@ void networkBuildCarryDdPriors(
                     if (sig.size() >= 2 && sig[1] == mid_digit) { band_mid_of[rs] = sig; break; }
         }
     }
-    // RS-2 (SPEC_event_harness §21.4): the carry driver needs this arc's ambiguity
-    // LINEARIZATION value when either half of the linearization-frame carry is armed — the
-    // write half stores Σ c·x_lin per chord, the read half re-bases a restored branch onto
-    // it.  Nothing else reads it, so the OFF path never takes the per-station state copy.
+    // The carry driver needs this arc's ambiguity linearization value when either half
+    // of the linearization-frame carry is armed: the write half stores Σ c·x_lin per
+    // chord, and the read half re-bases a restored branch onto it (RS-2,
+    // SPEC_event_harness §21.4).  Nothing else reads it, so with both off the
+    // per-station state copy is not taken.
     const bool carry_lin_needed = config_.getNetworkConfig().state_snapshot_carry_lin
                                   || config_.networkResumeCarryRebase();
     for (size_t i = 0; i < stations.size(); ++i) {
@@ -543,45 +549,47 @@ void networkBuildCarryDdPriors(
                 }
                 continue;
             }
-            // The satellite phase-bias key is per-SATELLITE ("<sat>|<sig>|PB") — NOT
-            // the per-system receiver-bias key.  Only ambiguities backing an ungated
-            // shared phase bias (a vertex of the eq34 graph) become DD arcs.
-            // WL-2 §3.1: keep the constellation's EWL third band OUT of the carry
-            // (uncarried lane ⇒ no stiff prior ⇒ EWL rows win).  OFF ⇒ not taken.
+            // The satellite phase-bias key is per satellite ("<sat>|<sig>|PB"), not the
+            // per-system receiver-bias key.  Only ambiguities backing an ungated shared
+            // phase bias (a vertex of the eq34 graph) become DD arcs.
+            // With ewl_carry_exclude, the constellation's EWL third band is kept out of
+            // the carry (an uncarried lane has no stiff prior, so the EWL rows govern;
+            // WL-2 §3.1).  Off: the branch is not taken.
             if (ewl_carry_exclude && isUncarriedThirdBand(cons, parts->signal)) continue;
             const std::string pbkey =
                 StateKeys::makeSatPhaseBiasKey(parts->satellite, parts->signal);
             if (!shared_phase_keys.count(pbkey)) continue;   // not an eq34 arc (gated/legacy lump)
             const auto hit = h2l.find(static_cast<int>(sidx));
             if (hit == h2l.end() || hit->second < 0) continue;   // unresolvable ⇒ chord refloats
-            // C3c slip feed: a PASS-A slip detection (MW wide-lane / LLI / IF-phase,
-            // recorded at the detector so the PASS-B pending-reseed clear can't hide
-            // it) or a within-epoch RAIM culprit (§3) invalidates this arc's carried
-            // DD — re-tap it fresh this epoch instead of folding a stiff pre-slip prior.
+            // Slip feed (C3c): an entry in the slip funnel carry_slipped_ambs (a PASS-A
+            // detection by MW wide-lane / LLI / IF-phase, recorded at the detector so the
+            // PASS-B pending-reseed clear cannot hide it, or another funnel source) or a
+            // within-epoch RAIM culprit (§3) invalidates this arc's carried DD.  The arc
+            // is then re-tapped fresh this epoch instead of folding a stiff pre-slip prior.
             auto ambSlipped = [&](const std::string& amb_key) -> bool {
                 if (carry_slipped_ambs.count({static_cast<int>(i), amb_key})) {
-                    // D5 v4 (network.carry_invariant_innov_retap_only): a funnel entry made
-                    // by a D5 innovation flag whose arc the RAW observables MEASURED as
-                    // continuous has no integer jump behind it, and the flag has already
-                    // done everything it usefully can — installPosterior re-tapped the chord
-                    // in-epoch last epoch (mean ẑ+v, variance σ̂₀²·Cov(v)_ii, cross zeroed).
-                    // Excluding the arc from A_old here would additionally throw that reset
-                    // away and refloat the DD from a diffuse prior.  Under a stable tree a
-                    // CHORD arc lies in exactly ONE fundamental cycle — its own (GATE 8) —
-                    // so the exclusion protects no OTHER carried DD; on this population it
-                    // is pure churn, and it is what pinned mean chord lifetime at 4.3
-                    // epochs and dd_sigma_cyc at ~3.9 cyc on `runs/ft63_24h_conv`.
+                    // Retap-only exception (D5 v4, network.carry_invariant_innov_retap_only).
+                    // A funnel entry made by a D5 innovation flag, on an arc whose raw
+                    // observables were measured as continuous, has no integer jump behind
+                    // it, and the flag has already had its effect: installPosterior
+                    // re-tapped the chord in-epoch at the previous epoch (mean ẑ+v,
+                    // variance σ̂₀²·Cov(v)_ii, cross terms zeroed).  Excluding the arc from
+                    // A_old here would discard that reset and refloat the DD from a diffuse
+                    // prior.  Under a stable tree a chord arc lies in exactly one
+                    // fundamental cycle, its own (GATE 8), so the exclusion protects no
+                    // other carried DD; on this population it only shortens chord
+                    // lifetimes and inflates dd_sigma_cyc.
                     //
-                    // NOT a general removal of the refloat.  GATE 10b measures the refloat
-                    // completing a REAL slip's reset to 0.48 cyc, so membership in the flat
-                    // set requires POSITIVE evidence of continuity (measured-and-flat at
-                    // flag time), and this ALSO re-checks the CURRENT epoch's raw funnel:
-                    // a detector that fired since still kills the cycle.  Stepped and
-                    // unmeasurable arcs were never in the set.  Standing invariant #1.
+                    // The refloat is kept for real slips (GATE 10b measures it completing
+                    // a real slip's reset).  Membership in the flat set therefore requires
+                    // positive evidence of continuity (measured and flat at flag time), and
+                    // this test also re-checks the current epoch's raw funnel: a detector
+                    // that fired since still excludes the arc.  Stepped and unmeasurable
+                    // arcs are never in the set.  Standing invariant #1.
                     //
-                    // The funnel ENTRY is untouched either way — the Iono-2 v3k erase
+                    // The funnel entry itself is unchanged either way: the Iono-2 v3k erase
                     // classifier, the WL-3 MW-row slip-skip, anchor hygiene, the PB emit
-                    // filter and Card G all read the same union they always read.
+                    // filter and card G all read the same union as before.
                     const std::pair<int, std::string> sk{static_cast<int>(i), amb_key};
                     if (!(retap_only && ctx.carry.carry_innov_flat_now.count(sk)
                           && !carry_slipped_raw.count(sk)))
@@ -601,21 +609,21 @@ void networkBuildCarryDdPriors(
             if (sv == 0) sv = kSatBase + static_cast<int>(carry_sat_vertex.size());
 
             // --- WL-3 pair routing (SPEC_lane_carry_card.md §2): a primary-pair
-            // ambiguity whose partner band ALSO passes every per-band test (eq34-
-            // shared pbkey + resolvable column) joins the constellation's PAIR
-            // group (emitted once, from the band-1 iteration, with both columns);
-            // otherwise it falls through to the residual per-band group as today.
+            // ambiguity whose partner band also passes every per-band test (eq34-shared
+            // pbkey and resolvable column) joins the constellation's pair group (emitted
+            // once, from the band-1 iteration, with both columns); otherwise it falls
+            // through to the residual per-band group.
             if (lane_on) {
                 const auto pit = primary.find({ static_cast<int>(i), parts->satellite });
                 const PP* pp = (pit != primary.end() && pit->second.ok)
                                    ? &pit->second : nullptr;
-                // Only the constellation's census-preferred pair joins the pair
-                // group — a minority-channel (rx,sat) keeps today's per-band carry
-                // (its cycles survive per band instead of spawning a flickering
-                // micro pair-group), and the EWL third band never pairs.
-                // v2 (uwl_family_pairs): additionally, a LATCHED minority-family
-                // pair routes into its OWN pair group (the group key is already
-                // the pair string, so families stay disjoint graphs).
+                // Only the constellation's census-preferred pair joins the pair group.
+                // A minority-channel (rx,sat) keeps the per-band carry (its cycles
+                // survive per band instead of forming a small pair group that appears
+                // and disappears), and the EWL third band never pairs.
+                // With uwl_family_pairs (v2), a latched minority-family pair also routes
+                // into its own pair group (the group key is the pair string, so
+                // families stay disjoint graphs).
                 const auto lpp = lane_pref_pair.find(cons);
                 bool pair_admissible =
                     pp && lpp != lane_pref_pair.end()
@@ -653,10 +661,10 @@ void networkBuildCarryDdPriors(
                         a.est_station = est_index_of[i];
                         a.local_col   = static_cast<int>(hit->second);
                         a.local_col2  = pp->col2;
-                        // Per-band slip states; the driver unions them under the LANE
-                        // shape (§3.4 — either band refloats both) and keeps them
-                        // per-band under the §6.1 equivalence shape (exactly the two
-                        // per-band groups' behavior).
+                        // Per-band slip states.  The driver unions them under the lane
+                        // shape (§3.4: either band refloats both) and keeps them per
+                        // band under the §6.1 equivalence shape (the same behavior as
+                        // the two per-band groups).
                         a.slipped     = ambSlipped(key);
                         a.slipped2    = ambSlipped(key2);
                         if (carry_lin_needed) {   // RS-2: both bands' linearization values
@@ -696,8 +704,9 @@ void networkBuildCarryDdPriors(
             if (carry_lin_needed) a.x_lin = linOf(sidx);   // RS-2
             groups[gk].key = gk;
             groups[gk].arcs.push_back(a);
-            // D5: record chord arcs for the innovation-flag reverse lookup (tree edges
-            // never carry a DD, so they cannot be flagged — but record all; harmless).
+            // Record arcs for the innovation-flag reverse lookup (D5).  Only chords can be
+            // flagged, since tree edges carry no DD; tree edges are recorded too, which
+            // has no effect.
             if (carry_innov_gate)
                 carry_arc_amb_key[gk][ArcKey(static_cast<int>(i), sv)] = key;
         }
@@ -706,8 +715,8 @@ void networkBuildCarryDdPriors(
     glist.reserve(groups.size());
     for (auto& [k, g] : groups) glist.push_back(std::move(g));
     auto blocks = carry_driver.buildDdPriors(glist);
-    // UWL-1 group census (once per run, log-only): which carry groups exist and
-    // which are PAIR groups — the WL-3 fragmentation pre-flight (SPEC §8.1).
+    // Group census (UWL-1; once per run, log only): which carry groups exist and which
+    // are pair groups, the WL-3 fragmentation pre-flight check (SPEC §8.1).
     if (uwl_on && lane_census_logged.insert('#').second)
         for (const auto& [gk, gid] : carry_group_id) {
             std::size_t n_arcs = 0; bool is_pair = false;
@@ -718,11 +727,11 @@ void networkBuildCarryDdPriors(
                       gid, gk.first, gk.second, is_pair ? " [PAIR]" : "", n_arcs);
         }
 
-    // --- M5 card WL-1: append the MW-seeded wide-lane pseudo-obs blocks. ---
-    // Ride the carry's chord basis: each carry block row is a fundamental cycle on
-    // ONE band's ambiguity columns; the WL layer pairs each cycle arc to its L2
+    // --- Append the MW-seeded wide-lane pseudo-obs blocks (M5 card WL-1). ---
+    // They use the carry's chord basis: each carry block row is a fundamental cycle on
+    // one band's ambiguity columns; the WL layer pairs each cycle arc with its L2
     // ambiguity column and folds Σ c·MW̄/λ_WL as a rank-K constraint on the
-    // cross-band columns.  Appended AFTER the carry blocks so their indices [0,Nc)
+    // cross-band columns.  Appended after the carry blocks so their indices [0,Nc)
     // stay valid for installPosterior (which reads only its own Nc blocks).
     if (mw_mach_on)
         networkMwWlInject(
@@ -734,10 +743,10 @@ void networkBuildCarryDdPriors(
             ewl_on, uwl_on, uwl_cold_on, uwl_mid_on, uwl_dual_on, uwl_sib_gate_on,
             wl_inject_on, bridge_debias_on, lane_on, lane_meas_on, lane_bridge_on, lane_fix_on,
             lane_parallel_components, mw_d5_dump, mw_lane_trace, mw_tagsets, mw_wl_f6_dump);
-    // LF-1 INC-1: under fold_blocked the lane primitives skipped their per-row
-    // re-symmetrize; restore exact symmetry once per joint block now that this epoch's
-    // MW / bridge / fix rows are all applied (no-op unless fold_blocked).  Runs on every
-    // build incl. the RAIM re-solve — the blocks are rebuilt each pass.
+    // Under fold_blocked the lane primitives skip their per-row re-symmetrize, so exact
+    // symmetry is restored here once per joint block, after all of this epoch's MW /
+    // bridge / fix rows are applied (no-op unless fold_blocked; LF-1 INC-1).  Runs on
+    // every build including the RAIM re-solve, because the blocks are rebuilt each pass.
     carry_driver.finalizeLaneBatch(blocks);
     est.setDdPriors(std::move(blocks));
 }

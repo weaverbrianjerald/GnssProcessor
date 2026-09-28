@@ -1,8 +1,8 @@
 """Rendering backends.
 
-``Backend`` is the abstract contract; ``MatplotlibBackend`` is the first concrete
-implementation (static figures / report PNGs).  A future ``PlotlyBackend`` would
-live here and implement the same interface for interactive / real-time output.
+``Backend`` is the abstract contract. ``MatplotlibBackend`` implements it for
+static figures and report PNGs; ``PlotlyBackend`` implements the same interface
+for interactive and real-time output.
 """
 
 from __future__ import annotations

@@ -24,31 +24,31 @@ NetworkMwWlLayer::build(
 
     std::vector<NetworkNormalEquations::DdPriorBlock> out;
     if (!cfg_.enable) {
-        return out;   // OFF ⇒ no blocks ⇒ producer byte-identical.
+        return out;   // Off: no blocks, so the producer output is byte-identical.
     }
 
     const double floor_R = cfg_.sigma_floor_cyc * cfg_.sigma_floor_cyc;
 
-    // One eligible WL row candidate: the folded terms + measured WL (cycles) + R (cyc²).
+    // One eligible WL row candidate: the folded terms, the measured WL (cycles) and R (cyc²).
     // `contribs` records each arc's noise contribution g_a = c·√var_a/λ_WL keyed by the
-    // arc's identity (station, band-1 col): two cycles of one component that share an
-    // arc share that arc's MW̄ noise, so the block covariance is Pz(i,j) = Σ_shared
-    // g_i(a)·g_j(a) — the diagonal-only form would double-count the shared arcs.
+    // arc's identity (station, band-1 col).  Two cycles of one component that share an
+    // arc share that arc's MW-mean noise, so the block covariance is Pz(i,j) = Σ_shared
+    // g_i(a)·g_j(a); a diagonal-only Pz would treat the shared noise as independent.
     struct Cand {
         std::size_t          block;   ///< source carry-block index (WL rows of one component group together).
-        std::size_t          row{0};  ///< WL-2: source row (fundamental-cycle / chord) index within @c block.
+        std::size_t          row{0};  ///< source row (fundamental-cycle / chord) index within @c block (WL-2).
         std::vector<Term>    terms;   ///< +c/λ1 on col1, -c/λ2 on col2 per cycle arc.
-        double               z{0.0};  ///< prior mean in the CORRECTION frame (cyc): float = z_abs−z_lin; fixed = round(z_abs)−z_lin.
-        double               R{0.0};  ///< pseudo-obs variance (cyc²), floored on the DIAGONAL only.
-        bool                 fixed{false}; ///< WL-2: this row passed FFR ⇒ folded integer-hard.
-        long long            fixed_integer{0}; ///< WL-2: the FFR-fixed EWL integer round(z_abs) (exposed via @ref FixedEwlRow).
+        double               z{0.0};  ///< prior mean in the correction frame (cyc): float = z_abs−z_lin; fixed = round(z_abs)−z_lin.
+        double               R{0.0};  ///< pseudo-obs variance (cyc²), floored on the diagonal only.
+        bool                 fixed{false}; ///< this row passed FFR and folds integer-hard (WL-2).
+        long long            fixed_integer{0}; ///< the FFR-fixed EWL integer round(z_abs), exposed via @ref FixedEwlRow (WL-2).
         std::vector<std::pair<std::pair<std::size_t, Eigen::Index>, double>>
-                             contribs; ///< (arc key = (station, col1), g_a) — sorted by key.  Cleared for a fixed row.
+                             contribs; ///< (arc key = (station, col1), g_a), sorted by key.  Cleared for a fixed row.
     };
     std::vector<Cand> cands;
-    // UWL-1 §3.3: FFR-passed COLD cycles — integer exposed, row NEVER emitted
-    // (decision-only; appended to fixed_rows AFTER the normal emission loop so the
-    // legacy ordering of warm rows is untouched).
+    // Cold cycles that passed FFR (UWL-1 §3.3): the integer is exposed and the row is
+    // never emitted.  They are appended to fixed_rows after the normal emission loop,
+    // so the order of the warm rows is unchanged.
     std::vector<FixedEwlRow> cold_fixed;
 
     for (std::size_t b = 0; b < carry_blocks.size(); ++b) {
@@ -56,7 +56,7 @@ NetworkMwWlLayer::build(
         for (std::size_t ridx = 0; ridx < blk.rows.size(); ++ridx) {
             const auto& row = blk.rows[ridx];       // row = one fundamental cycle (signed Terms)
             if (row.empty()) {
-                continue;                            // chordless/degenerate carry slot — nothing to seed
+                continue;                            // chordless/degenerate carry slot: nothing to seed
             }
 
             // --- Resolve every cycle arc; classify primary vs data eligibility. ---
@@ -71,17 +71,18 @@ NetworkMwWlLayer::build(
                 ads.push_back(ad);
             }
             if (!resolved_all) { ++counters.skip_missing_band; continue; }
-            // UWL-1 per-cons routing: another instance's constellation — silently its
-            // (a resolve failure above is counted by every instance; "unexpected" path).
+            // Per-constellation routing (UWL-1): a cycle of another constellation belongs to
+            // that instance and is skipped uncounted.  A resolve failure above (an unexpected
+            // path) is counted by every instance.
             if (cfg_.cons_filter != '\0' && !ads.empty() && ads.front().cons != cfg_.cons_filter)
                 continue;
             if (!all_primary)  { ++counters.skip_not_primary;  continue; }
 
-            // A cycle we intend to seed (every arc on its estimator primary L1 signal).
+            // A cycle to seed (every arc on its estimator primary L1 signal).
             ++counters.cycles_seen;
 
             bool miss_band = false, miss_mw = false, young = false, bad_lambda = false;
-            bool cold = false;   // UWL-1 §3.3: any arc served by the unlagged cold read
+            bool cold = false;   // any arc served by the unlagged cold read (UWL-1 §3.3)
             for (const auto& ad : ads) {
                 if (ad.col2 < 0)                       { miss_band  = true; break; }
                 if (!ad.have_mw)                       { miss_mw    = true; break; }
@@ -103,10 +104,11 @@ NetworkMwWlLayer::build(
             if (young)      { ++counters.skip_young_arc;    continue; }
             if (bad_lambda) { ++counters.skip_bad_lambda;   continue; }
 
-            // WL-2 station-1 quarantine (SPEC §7 pre-flight): a pathological ambiguity
-            // linearization (the ~256 km receiver-clock-seed) ill-conditions the
-            // correction-frame row (z_lin becomes a difference of ~10⁵-scale terms and the
-            // cycle fails to converge even at authority — the probe).  Drop + count.
+            // Station-1 quarantine (WL-2, SPEC §7 pre-flight): a pathological ambiguity
+            // linearization (the ~256 km receiver-clock seed) ill-conditions the
+            // correction-frame row: z_lin becomes a difference of ~10⁵-scale terms and the
+            // cycle fails to converge even at full authority (the probe).  Such cycles are
+            // dropped and counted.
             if (cfg_.max_abs_xlin_m > 0.0) {
                 bool bad = false;
                 for (const auto& ad : ads)
@@ -115,11 +117,11 @@ NetworkMwWlLayer::build(
                 if (bad) { ++counters.skip_quarantine; continue; }
             }
 
-            // Satellite-bias frame must be UNIFORM across the cycle: cancellation of
-            // the per-satellite bias needs every arc of a satellite in the same frame
-            // (all raw or all BIA-corrected).  Dormant on the self-contained path
-            // (uniformly raw); guards the BIA era.  Strict whole-cycle check — simpler
-            // than per-satellite and costs at most a rare extra skip.
+            // The satellite-bias frame must be uniform across the cycle: cancelling the
+            // per-satellite bias needs every arc of a satellite in the same frame (all raw
+            // or all BIA-corrected).  Never fires on the self-contained path (uniformly
+            // raw); guards runs with BIA.  The check is whole-cycle rather than
+            // per-satellite: simpler, at the cost of a rare extra skip.
             {
                 bool mixed = false;
                 for (std::size_t i = 1; i < ads.size(); ++i)
@@ -127,7 +129,7 @@ NetworkMwWlLayer::build(
                 if (mixed) { ++counters.skip_mixed_frame; continue; }
             }
 
-            // --- Build the WL/EWL row: cross-band terms + measured DD cycles + variance. ---
+            // --- Build the WL/EWL row: cross-band terms, measured DD cycles, variance. ---
             Cand c;
             c.block = b;
             c.row   = ridx;
@@ -137,12 +139,12 @@ NetworkMwWlLayer::build(
             for (std::size_t i = 0; i < row.size(); ++i) {
                 const double coeff = row[i].coeff;   // ±1 (or ± integer) cycle sign
                 const ArcData& ad  = ads[i];
-                // +c/λ1 on the low-band column, -c/λ2 on the high-band column (ambiguity
-                // state is in METERS), so Σ (coeff/λ1)·Na_m − (coeff/λ2)·Nb_m =
+                // +c/λ1 on the low-band column, -c/λ2 on the high-band column (the ambiguity
+                // state is in metres), so Σ (coeff/λ1)·Na_m − (coeff/λ2)·Nb_m =
                 // Σ coeff·(Na−Nb) cycles = the lane DD (WL for (1,2), EWL for (2,5)).
                 c.terms.push_back(Term{row[i].station, ad.col1, +coeff / ad.lambda1});
                 c.terms.push_back(Term{row[i].station, ad.col2, -coeff / ad.lambda2});
-                z_abs += coeff * ad.mw_zd_mean_m / ad.lambda_wl;               // ABSOLUTE lane DD (cyc)
+                z_abs += coeff * ad.mw_zd_mean_m / ad.lambda_wl;               // absolute lane DD (cyc)
                 z_lin += (coeff / ad.lambda1) * ad.x_lin1                      // C_L·x_lin (F5 frame term)
                        - (coeff / ad.lambda2) * ad.x_lin2;
                 R_raw += (coeff * coeff) * ad.mw_var_m2 / (ad.lambda_wl * ad.lambda_wl);
@@ -150,15 +152,16 @@ NetworkMwWlLayer::build(
                                       coeff * std::sqrt(std::max(ad.mw_var_m2, 0.0))
                                           / ad.lambda_wl});
             }
-            // Correction-frame re-expression (F5): the kernel solves the CORRECTION about
+            // Correction-frame re-expression (F5): the kernel solves the correction about
             // x_lin, so the prior mean is z_abs − C_L·x_lin.
             c.z = z_abs - z_lin;
-            c.R = std::max(R_raw, floor_R);          // §4 multipath-honesty floor (diagonal only)
+            c.R = std::max(R_raw, floor_R);          // multipath floor, §4 (diagonal only)
 
-            // WL-2 FFR fix (SPEC §3.2): the DECISION reads the DETECTOR statistic (z_abs,
-            // R_raw) — never the carry-contaminated posterior.  A row that passes σ<fix_sigma
-            // AND |frac|<fix_frac folds INTEGER-hard (the rounded lane integer, tight Pz);
-            // per-epoch re-derivation from the slip-reset statistic IS the un-fix wiring.
+            // FFR fix (WL-2, SPEC §3.2): the decision reads the detector statistic (z_abs,
+            // R_raw), never the carry-contaminated posterior.  A row with σ < fix_sigma and
+            // |frac| < fix_frac folds integer-hard (the rounded lane integer, tight Pz).  The
+            // decision is re-derived every epoch from the statistic, which a slip resets, and
+            // that re-derivation is the un-fix path.
             if (cfg_.ffr_fix) {
                 const double sigma_row = std::sqrt(std::max(R_raw, 0.0));
                 const double frac      = z_abs - std::round(z_abs);
@@ -166,15 +169,15 @@ NetworkMwWlLayer::build(
                     c.z             = std::round(z_abs) - z_lin;   // integer target, correction frame
                     c.R             = cfg_.fix_weight_sigma_cyc * cfg_.fix_weight_sigma_cyc;
                     c.fixed         = true;
-                    c.fixed_integer = std::lround(z_abs);          // WL-2: exposed for the phase bridge
-                    c.contribs.clear();                    // fixed integer ⇒ diagonal-only Pz
+                    c.fixed_integer = std::lround(z_abs);          // exposed for the phase bridge (WL-2)
+                    c.contribs.clear();                    // fixed integer: diagonal-only Pz
                 }
             }
-            // UWL-1 §3.3: a COLD cycle is DECISION-ONLY.  Its statistic carries the
-            // CURRENT epoch's observation (unlagged) plus possibly an a-priori variance,
-            // so it must never become a folded row — not even under the ewl_fold_rows
-            // study shape, and not as a float.  An FFR pass exposes the integer to the
-            // bridge; an FFR fail drops the cycle entirely (both counted).
+            // A cold cycle is decision-only, per UWL-1 §3.3: its statistic carries the current
+            // epoch's observation (unlagged) and possibly an a-priori variance, so it never
+            // becomes a folded row: not as a float, and not under the ewl_fold_rows study
+            // shape.  An FFR pass exposes the integer to the bridge; an FFR fail drops the
+            // cycle.  Both are counted.
             if (cold) {
                 if (c.fixed) {
                     ++counters.rows_fixed_cold;
@@ -184,7 +187,7 @@ NetworkMwWlLayer::build(
                 }
                 continue;
             }
-            if (cfg_.debug_r_scale != 1.0 && !c.fixed) {  // F6 probe: scale Pz (diag R + off-diag cov) by s;
+            if (cfg_.debug_r_scale != 1.0 && !c.fixed) {  // debug_r_scale (F6 probe): scale Pz (diag R + off-diag cov) by s;
                 c.R *= cfg_.debug_r_scale;                // contribs carry √s so Pz(i,j)=Σ(√s g_i)(√s g_j)=s·Σg_ig_j.
                 const double rs = std::sqrt(std::max(cfg_.debug_r_scale, 0.0));
                 for (auto& g : c.contribs) g.second *= rs;
@@ -197,15 +200,15 @@ NetworkMwWlLayer::build(
 
     if (cands.empty()) {
         // Cold decisions can exist without any emittable row (e.g. every eligible
-        // cycle is in a post-slip re-warm window) — still expose them.
+        // cycle is in a post-slip re-warm window); they are still exposed.
         if (fixed_rows)
             for (const auto& f : cold_fixed) fixed_rows->push_back(f);
         return out;
     }
 
     // --- Optional perf cap: keep the lowest-R (most informative) rows first (§4). ---
-    // Deterministic: sort candidate indices by (R, block, original order) so the same
-    // set survives across runs.  Count what is dropped (no silent truncation).
+    // Deterministic: a stable sort of the candidate indices by R, ties in candidate
+    // (block, row) order, so the same set survives across runs.  Dropped rows are counted.
     std::vector<std::size_t> keep(cands.size());
     std::iota(keep.begin(), keep.end(), std::size_t{0});
     if (cfg_.max_rows_per_epoch > 0 &&
@@ -215,13 +218,13 @@ NetworkMwWlLayer::build(
         const std::size_t cap = static_cast<std::size_t>(cfg_.max_rows_per_epoch);
         counters.rows_capped += static_cast<long long>(cands.size() - cap);
         keep.resize(cap);
-        // Restore source order so the emitted blocks are deterministic & contiguous.
+        // Restore source order so the emitted blocks are deterministic and contiguous.
         std::sort(keep.begin(), keep.end());
     }
 
     // --- Regroup the kept candidates by source carry block → one WL block each. ---
-    // Rows of the SAME carry component land in ONE block so both their shared-column
-    // coupling and their shared-arc NOISE covariance are folded jointly (exact).
+    // Rows of one carry component land in one block, so both their shared-column
+    // coupling and their shared-arc noise covariance are folded jointly (exact).
     // Pz(i,j) = Σ over shared arcs g_i(a)·g_j(a); the diagonal additionally carries
     // the σ floor (adding a non-negative diagonal to the Gram matrix keeps Pz PSD).
     std::vector<std::size_t> block_of_out;   // out-block index per distinct source block, or SIZE_MAX
@@ -245,7 +248,7 @@ NetworkMwWlLayer::build(
         dst.Pz.row(k - 1).setZero();
         dst.Pz.col(k - 1).setZero();
         dst.Pz(k - 1, k - 1) = c.R;
-        // Shared-arc covariance vs every earlier row of THIS block: sorted-merge
+        // Shared-arc covariance against every earlier row of this block: sorted-merge
         // intersection of the two contrib lists (cycle lengths are ~4-10 arcs).
         const auto& prev = block_cands[ob];
         for (std::size_t j = 0; j < prev.size(); ++j) {
@@ -266,15 +269,15 @@ NetworkMwWlLayer::build(
         ++counters.rows_built;
         if (c.fixed) {
             ++counters.rows_fixed;
-            // WL-2 (§3.4): expose the FFR-fixed integer keyed to its source carry chord so
-            // the WL phase bridge can pair (block,row) → the chord's ArcKey.
+            // Expose the FFR-fixed integer keyed to its source carry chord (WL-2 §3.4),
+            // so the WL phase bridge can pair (block,row) → the chord's ArcKey.
             if (fixed_rows) fixed_rows->push_back(FixedEwlRow{ c.block, c.row, c.fixed_integer });
         }
         counters.sum_R += c.R;
     }
 
-    // UWL-1 §3.3: cold decisions append AFTER the warm rows (legacy ordering of the
-    // warm FixedEwlRows is untouched — the WL walk order feeds the solve bytes).
+    // Cold decisions are appended after the warm rows (UWL-1 §3.3), so the order of the
+    // warm FixedEwlRows is unchanged; the WL walk order affects the solve bytes.
     if (fixed_rows)
         for (const auto& f : cold_fixed) fixed_rows->push_back(f);
 

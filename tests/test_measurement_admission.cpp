@@ -1,43 +1,40 @@
 /**
  * @file test_measurement_admission.cpp
- * @brief PRODUCT-REFERENCED MEASUREMENT ADMISSION (docs/SPEC_measurement_admission.md)
- *        — the corrupt-channel screen: the statistic, the admission decision at
- *        birth and at a warm-resume restore, the mid-arc onset and heal, and the
+ * @brief Product-referenced measurement admission (docs/SPEC_measurement_admission.md):
+ *        the corrupt-channel screen.  Covers the statistic, the admission decision
+ *        at birth and at a warm-resume restore, the mid-arc onset and heal, and the
  *        station guard on an untrusted median.
  *
- * The field defect this card guards against is BSHM00ISR on DOY-129: G07 C1C+L1C
- * reported at **+198.2 km** and G16 at **+99.9 km** against SP3+CLK, with the
- * offset riding BOTH the code and the phase of the channel.  That is what makes it
- * invisible — every differential check (TD smoothness, phase-minus-code, GF, MW)
- * passes by construction, and on a single-band line of sight the error is absorbed
- * exactly by the free slant state, where no residual test can reach it.  The only
- * thing that can see this class is an absolute, product-referenced comparison; and
- * the only thing that can see it AT BIRTH is one with no filter state in it.
+ * The field defect the screen targets is BSHM00ISR on DOY-129: G07 C1C+L1C reported
+ * at **+198.2 km** and G16 at **+99.9 km** against SP3+CLK, with the offset on both
+ * the code and the phase of the channel.  Every differential check (TD smoothness,
+ * phase-minus-code, GF, MW) therefore passes by construction, and on a single-band
+ * line of sight the free slant state absorbs the error exactly, so no residual test
+ * can detect it.  Only an absolute, product-referenced comparison detects this
+ * class, and only one with no filter state in it can detect it at birth.
  *
- * So each case below pins a decision that has no other observable:
+ * Each case below pins a decision that has no other observable:
  *
  *   1. the corrupt channel is rejected at the epoch its arc would be born, while
- *      its healthy single-band sibling at the same station is admitted — the
- *      G21@BSHM control that makes "single-band is the amplifier, not the cause"
- *      a testable claim rather than a slogan;
- *   2. a station-COMMON 1 ms offset on every satellite produces ZERO rejections —
- *      the median IS the receiver clock at this precision, and a screen that fires
- *      on clock steps would be a false-positive generator with a fuse attached;
- *   3. below the median floor the station is SKIPPED and counted, never screened
+ *      its healthy single-band sibling at the same station (G21@BSHM) is admitted;
+ *      this control makes "single-band is the amplifier, not the cause" testable;
+ *   2. a station-common 1 ms offset on every satellite produces zero rejections:
+ *      at this precision the median is the receiver clock, and a screen that fired
+ *      on clock steps would generate false positives;
+ *   3. below the median floor the station is skipped and counted, never screened
  *      off a two-value "median";
- *   4. a mid-arc onset withholds the band AND refloats the arc — punching a hole
- *      in a stiff time-linked carry with no re-tap is standing invariant #1
- *      violated, which cost 10.9 cyc/ep in the field once already;
- *   5. a heal readmits only after N consecutive clean epochs, and re-taps, so it
- *      can never restore the old state;
- *   6. a RESTORED corrupt arc is rejected on the first post-resume epoch and is
- *      NOT called a birth — the one case the prefit census's seed-birth tripwire
- *      structurally cannot see, and the reason a birth (nothing seeded) and a
- *      restore (a stiff carried chord) get different responses;
- *   7. when more than max_frac of a station's channels fail, the MEDIAN is the
- *      untrustworthy thing: hold the station, claim nothing per channel;
- *   8. OFF is structurally inert — no record map, no counter, no observable
- *      touched.
+ *   4. a mid-arc onset withholds the band and refloats the arc: a hole in a stiff
+ *      time-linked carry with no re-tap violates standing invariant #1;
+ *   5. a heal readmits only after N consecutive clean epochs and re-taps, so it
+ *      cannot restore the old state;
+ *   6. a restored corrupt arc is rejected on the first post-resume epoch and is not
+ *      called a birth.  The prefit census's seed-birth tripwire cannot see this
+ *      case, and it is why a birth (nothing seeded) and a restore (a stiff carried
+ *      chord) get different responses;
+ *   7. when more than max_frac of a station's channels fail, the median is what is
+ *      untrustworthy: the station is held and no per-channel claim is made;
+ *   8. when disarmed the seam is structurally inert: no record map, no counter, no
+ *      observable touched.
  *
  * The seam is exercised directly as a free function.  It reads `observed` /
  * `modeled` and `present[]`, and needs a real StateManager only because the
@@ -95,10 +92,10 @@ fs::path writeTempConfig(const std::string& tag, const std::string& body) {
 }
 
 /// A minimal loadable PPP-RTK network config with @p net_extra spliced into the
-/// network block.  `phase_datum_eq34` + `carry_invariant` are on in every case:
-/// the loader only admits carry_invariant on the eq34 chain datum, and without it
-/// the funnel feed is silently inert — which would let a refloat assertion pass
-/// while asserting nothing.
+/// network block.  `phase_datum_eq34` and `carry_invariant` are on in every case:
+/// the loader admits carry_invariant only on the eq34 chain datum, and without it
+/// the funnel feed is inert, so a refloat assertion could pass without testing
+/// anything.
 std::string networkConfig(const std::string& net_extra) {
     return std::string("{\n")
         + "  \"processing\": {\n"
@@ -129,7 +126,7 @@ std::unique_ptr<GnssConfig> loadCfg(LogManager& log, const std::string& tag,
     return cfg;
 }
 
-/// Arm the card.  @p screen false with @p trace true is the spec's MEASURE-ONLY leg.
+/// Arm the screen.  @p screen false with @p trace true is the spec's measure-only leg.
 std::string armed(bool screen = true, double bound = 1000.0, int min_sats = 4,
                   int heal_ep = 5, double max_frac = 0.5, bool trace = true) {
     std::string s;
@@ -142,14 +139,13 @@ std::string armed(bool screen = true, double bound = 1000.0, int min_sats = 4,
     return s;
 }
 
-/// INC-4: arm the re-entry vet on top of @ref armed.
+/// Arm the re-entry vet on top of @ref armed (INC-4).
 ///
-/// @p bound_scale defaults to **1.0 here, not to the shipped 0.2**.  Every case
-/// written before the tighter bound existed isolates ONE mechanism (the relabel, the
-/// gap threshold, the census trigger, the hold posture), and a 200 m vet bound would
-/// silently co-fire on the corrupt fixtures and make those cases pass for the wrong
-/// reason.  The two cases that exercise the bound set it explicitly, which also
-/// keeps "which mechanism is under test" visible at every call site.
+/// @p bound_scale defaults to **1.0 here, not to the shipped 0.2**.  Most vet cases
+/// isolate one mechanism (the relabel, the gap threshold, the census trigger, the
+/// hold posture), and a 200 m vet bound would also fire on the corrupt fixtures and
+/// let those cases pass for the wrong reason.  The cases that exercise the bound set
+/// it explicitly, which keeps the mechanism under test visible at every call site.
 std::string revetArmed(int gap_ep = 1, int vet_ep = 8, bool use_census = true,
                        bool hold = false, int heal_ep = 5,
                        double bound_scale = 1.0) {
@@ -172,7 +168,7 @@ GnssTime epochAt(double tow) {
 
 /// One satellite's observation.  @p offsets maps an observable key to the raw term
 /// d = observed - modeled it should carry; the modeled side is a fixed plausible
-/// range so the test pins the DIFFERENCE, which is the whole statistic.
+/// range, so the test pins the difference, which is the entire statistic.
 PppObservation obsWith(const std::string& sat,
                        const std::vector<std::string>& keys, double d_term) {
     PppObservation o;
@@ -212,13 +208,12 @@ struct Rig {
         stations[1].sm = std::make_unique<StateManager>(kPppCoreSize, log, cfg);
     }
 
-    /// Run ONE epoch with the given station-0 observation set.
+    /// Run one epoch with the given station-0 observation set.
     ///
-    /// `n_loop_epochs` is advanced first, exactly as the driver does before either
-    /// this seam or the prefit census runs.  Both read that same counter, and INC-4's
-    /// census-freshness test is `flag_ep == n_loop_epochs - 1`, so a rig that left it
-    /// at zero would make every flag look fresh forever and the staleness gate would
-    /// be untested rather than tested.
+    /// `n_loop_epochs` is advanced first, as the driver does before either this seam
+    /// or the prefit census runs.  Both read that counter, and the census-freshness
+    /// test is `flag_ep == n_loop_epochs - 1` (INC-4), so a rig that left it at zero
+    /// would make every flag look fresh and leave the staleness gate untested.
     void step(NetworkRunContext& ctx, const GnssConfig& cfg,
               const std::vector<PppObservation>& obs) {
         NetworkRunTraces traces(fs::temp_directory_path());  // no stream opened => no I/O
@@ -232,9 +227,9 @@ struct Rig {
         ++ep;
     }
 
-    /// Publish a PREFIT-census `obs_code` flag for @p sat as the census would have
-    /// written it at the END of the previous epoch — the ONLY stamp INC-4 honours.
-    /// Call immediately before the `step` that should read it.
+    /// Publish a prefit-census `obs_code` flag for @p sat as the census would have
+    /// written it at the end of the previous epoch; that is the only stamp the vet
+    /// honours (INC-4).  Call immediately before the `step` that should read it.
     void censusFlag(NetworkRunContext& ctx, const std::string& sat) const {
         ctx.carry.prefit_code_flag    = {{0, sat}};
         ctx.carry.prefit_code_flag_ep =
@@ -252,9 +247,9 @@ struct Rig {
     }
 };
 
-/// Eleven healthy satellites plus the two corrupt BSHM channels, verbatim in
-/// shape: G07 is C1C+L1C only (single-band — the amplifier), G16 is C1C only, and
-/// G21 is ALSO C1C-only but perfectly healthy (the innocence control).
+/// Eleven healthy satellites plus the BSHM channel shapes: G07 is C1C+L1C only
+/// (single-band, the amplifier) and corrupt, and G21 is also C1C+L1C only but
+/// healthy (the innocence control).  The corrupt G16 channel is not modelled.
 std::vector<PppObservation> bshmEpoch(double g07 = kCorruptG07) {
     std::vector<PppObservation> v;
     const char* healthy_sats[] = {"G01", "G03", "G05", "G08", "G09",
@@ -266,10 +261,10 @@ std::vector<PppObservation> bshmEpoch(double g07 = kCorruptG07) {
     return v;
 }
 
-/// The same epoch with @p sat not tracked at all — the satellite has set, or the
-/// two-station observability gate erased it.  This is what an arc GAP looks like to
-/// the admission seam: the channel is simply not among the observations, so its
-/// record is left untouched and `last_ep` stops advancing.
+/// The same epoch with @p sat not tracked at all: the satellite has set, or the
+/// two-station observability gate erased it.  This is what an arc gap looks like to
+/// the admission seam: the channel is not among the observations, so its record is
+/// left untouched and `last_ep` stops advancing.
 std::vector<PppObservation> bshmEpochWithout(const std::string& sat,
                                              double g07 = kCorruptG07) {
     std::vector<PppObservation> v = bshmEpoch(g07);
@@ -304,16 +299,16 @@ TEST(MeasurementAdmission, CorruptChannelRejectedAtBirthWhileHealthySiblingsAdmi
            "which is exactly why no differential test sees it";
 
     // The innocence control.  G21 is single-band too; excluding single-frequency
-    // cells as a CLASS would discard a good satellite to catch a bad one.
+    // cells as a class would discard a good satellite to catch a bad one.
     EXPECT_TRUE(r.has("G21", kC1)) << "a healthy single-band channel must be admitted";
     EXPECT_TRUE(r.has("G21", kL1));
     EXPECT_TRUE(r.has("G01", kC1));
     EXPECT_TRUE(r.has("G01", kL2));
 
-    // The refloat runs on EVERY rejection, birth included.  At a true birth it is a
-    // no-op (no chord, no deviation, no allocated ambiguity) — which is exactly why
-    // it is safe to make unconditional, and why correctness must not ride the
-    // birth-vs-restore classification (see ResumeRestoredCorruptArc… below).
+    // The refloat runs on every rejection, birth included.  At a true birth it is a
+    // no-op (no chord, no deviation, no allocated ambiguity), which is why it can be
+    // unconditional and why correctness does not depend on the birth-vs-restore
+    // classification (see ResumeRestoredCorruptArc… below).
     EXPECT_GT(a.refloat_ambs, 0)
         << "every rejection re-taps: the classification that would justify skipping "
            "it is derived from a map that is not serialized and can be wrong";
@@ -325,15 +320,15 @@ TEST(MeasurementAdmission, CorruptChannelRejectedAtBirthWhileHealthySiblingsAdmi
 }
 
 // ---------------------------------------------------------------------------
-// 2. The negative gate: a station-common 1 ms step rejects NOTHING
+// 2. The negative gate: a station-common 1 ms step rejects nothing
 // ---------------------------------------------------------------------------
 //
-// URUM00CHN and INEG00MEX take clean 1 ms steps inside the FT63 leg window,
-// putting |d| ~ 3e5 m on EVERY row of the station for one epoch.  The station
-// median IS the receiver clock at this precision, so it cancels exactly.  A raw-|d|
-// screen would fire on those and find nothing else — this is the case that decides
-// whether the statistic is centred, and the prefit census validated the same
-// centring with the same negative gate.
+// Receiver clocks take clean 1 ms steps in the field (URUM00CHN and INEG00MEX in
+// the FT63 leg window), putting |d| ~ 3e5 m on every row of the station for one
+// epoch.  At this precision the station median is the receiver clock, so the step
+// cancels exactly.  A raw-|d| screen would fire on every such step; this case
+// checks that the statistic is centred.  The prefit census uses the same centring
+// and the same negative gate.
 TEST(MeasurementAdmission, StationCommonClockStepProducesZeroRejections) {
     LogManager lm;
     auto cfg = loadCfg(lm, "clockstep", armed());
@@ -362,12 +357,13 @@ TEST(MeasurementAdmission, StationCommonClockStepProducesZeroRejections) {
 }
 
 // ---------------------------------------------------------------------------
-// 3. Below the median floor the station is SKIPPED, not screened
+// 3. Below the median floor the station is skipped, not screened
 // ---------------------------------------------------------------------------
 //
-// A median of two or three values IS the outlier it is meant to remove.  A screen
-// that rejects off an untrusted centre is worse than no screen, so the floor must
-// SKIP and COUNT rather than fall back to a centre of zero.
+// A median of two or three values can be the outlier it is meant to remove.  A
+// screen that rejects off an untrusted centre is worse than no screen, so below the
+// floor the station is skipped and counted rather than screened against a centre
+// of zero.
 TEST(MeasurementAdmission, ThinStationIsSkippedAndCountedNeverScreened) {
     LogManager lm;
     auto cfg = loadCfg(lm, "thin", armed(/*screen=*/true, /*bound=*/1000.0,
@@ -375,7 +371,7 @@ TEST(MeasurementAdmission, ThinStationIsSkippedAndCountedNeverScreened) {
     NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
 
-    // Three satellites, one of them wildly corrupt.  With n < 4 nothing may happen.
+    // Three satellites, one of them corrupt by 198 km.  With n < 4 nothing happens.
     std::vector<PppObservation> v{healthy("G01", -5.0), healthy("G03", 4.0),
                                   obsWith("G07", {kC1, kL1}, kClockLevel + kCorruptG07)};
     r.step(ctx, *cfg, v);
@@ -390,14 +386,14 @@ TEST(MeasurementAdmission, ThinStationIsSkippedAndCountedNeverScreened) {
 }
 
 // ---------------------------------------------------------------------------
-// 4. A mid-arc ONSET withholds the band and refloats the arc
+// 4. A mid-arc onset withholds the band and refloats the arc
 // ---------------------------------------------------------------------------
 //
-// Standing invariant #1: any zero-q / stiff time-linked quantity must have a
-// wired slip/jump response before a hole is punched in it.  A withhold IS such a
-// hole, and the invariant-DD chord is keyed independently of the StateManager, so
-// only an explicit re-tap discards it.  Card 4 paid 10.9 cyc/ep in the field for
-// the version of this that had a slip hole and no response.
+// Standing invariant #1: a zero-q or stiff time-linked quantity needs a wired
+// slip/jump response before a hole is made in it.  A withhold is such a hole, and
+// the invariant-DD chord is keyed independently of the StateManager, so only an
+// explicit re-tap discards it.  (Card 4's slip hole without a response cost
+// 10.9 cyc/ep in the field.)
 TEST(MeasurementAdmission, MidArcOnsetWithholdsTheBandAndRefloatsTheArc) {
     LogManager lm;
     auto cfg = loadCfg(lm, "onset", armed());
@@ -428,7 +424,7 @@ TEST(MeasurementAdmission, MidArcOnsetWithholdsTheBandAndRefloatsTheArc) {
 }
 
 // ---------------------------------------------------------------------------
-// 5. A HEAL readmits only after N clean epochs, and never restores the old state
+// 5. A heal readmits only after N clean epochs, and never restores the old state
 // ---------------------------------------------------------------------------
 TEST(MeasurementAdmission, HealReadmitsAfterNCleanEpochsWithAFreshSeed) {
     LogManager lm;
@@ -442,7 +438,7 @@ TEST(MeasurementAdmission, HealReadmitsAfterNCleanEpochsWithAFreshSeed) {
     r.slipped.clear();
     r.slipped_raw.clear();
 
-    // Two clean epochs are NOT enough: the band stays out and keeps re-testing.
+    // Two clean epochs are not enough: the band stays out and keeps re-testing.
     for (int k = 0; k < 2; ++k) {
         r.step(ctx, *cfg, bshmEpoch(/*g07=*/8.0));
         EXPECT_FALSE(r.has("G07", kC1)) << "readmitted too early at k=" << k;
@@ -452,8 +448,8 @@ TEST(MeasurementAdmission, HealReadmitsAfterNCleanEpochsWithAFreshSeed) {
     EXPECT_EQ(2, ctx.counters.adm.rejects_held)
         << "a held rejection emits no transition event, so its DURATION lives here";
 
-    // The third completes the heal: the band is admitted THIS epoch (that is what
-    // admission means) and the arc is re-tapped so no old state can ride back in.
+    // The third completes the heal: the band is admitted in this epoch, and the arc
+    // is re-tapped so that no old state comes back with it.
     r.step(ctx, *cfg, bshmEpoch(/*g07=*/8.0));
     EXPECT_EQ(1, ctx.counters.adm.heals);
     EXPECT_TRUE(r.has("G07", kC1)) << "a heal ADMITS — it must not withhold its own epoch";
@@ -464,15 +460,14 @@ TEST(MeasurementAdmission, HealReadmitsAfterNCleanEpochsWithAFreshSeed) {
 }
 
 // ---------------------------------------------------------------------------
-// 6. A warm-resume RESTORE is not a birth
+// 6. A warm-resume restore is not a birth
 // ---------------------------------------------------------------------------
 //
-// The record map is not serialized, so after a resume every channel looks brand
-// new — but its estimator state crossed the snapshot boundary and may be carrying
-// the corrupt seed.  This is the one case the prefit census's seed-birth tripwire
-// structurally cannot see, and the two entry points get different responses: a
-// birth has nothing to refloat, a restore has a stiff carried chord that would
-// otherwise ride the hole.
+// The record map is not serialized, so after a resume every channel looks new,
+// but its estimator state crossed the snapshot boundary and may carry the corrupt
+// seed.  The prefit census's seed-birth tripwire cannot see this case, and the two
+// entry points get different responses: a birth has nothing to refloat, while a
+// restore has a stiff carried chord that would otherwise carry across the hole.
 TEST(MeasurementAdmission, ResumeRestoredCorruptArcIsRejectedAsARestoreAndRefloats) {
     LogManager lm;
     auto cfg = loadCfg(lm, "resume", armed());
@@ -503,12 +498,12 @@ TEST(MeasurementAdmission, ResumeRestoredCorruptArcIsRejectedAsARestoreAndRefloa
 }
 
 // ---------------------------------------------------------------------------
-// 7. Too many failures ⇒ the MEDIAN is untrusted: hold the station, claim nothing
+// 7. Too many failures ⇒ the median is untrusted: hold the station, claim nothing
 // ---------------------------------------------------------------------------
 //
 // Mirrors the IF-TD reference gate's incoherent-station verdict: when a family
-// disagrees with its own centre, the centre is the untrustworthy thing, so act at
-// the family's scope and REFUSE every per-member claim.
+// disagrees with its own centre, the centre is what is untrustworthy, so the
+// response acts at the family's scope and makes no per-member claim.
 TEST(MeasurementAdmission, StationGuardHoldsEverythingAndRejectsNothingIndividually) {
     LogManager lm;
     auto cfg = loadCfg(lm, "staguard", armed(/*screen=*/true, /*bound=*/1000.0,
@@ -517,8 +512,8 @@ TEST(MeasurementAdmission, StationGuardHoldsEverythingAndRejectsNothingIndividua
     NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
 
-    // Six satellites; four of them displaced in DIFFERENT directions, so the median
-    // is a mixture rather than a common step.  4 of 6 channels fail > 0.5.
+    // Six satellites; four of them displaced in different directions, so the median
+    // is a mixture rather than a common step.  4 of 6 channels fail, > 0.5.
     std::vector<PppObservation> v{
         obsWith("G01", {kC1, kL1}, kClockLevel + 0.0),
         obsWith("G03", {kC1, kL1}, kClockLevel + 5.0),
@@ -544,7 +539,7 @@ TEST(MeasurementAdmission, StationGuardHoldsEverythingAndRejectsNothingIndividua
 }
 
 // ---------------------------------------------------------------------------
-// 8. OFF is structurally inert
+// 8. Disarmed, the seam is structurally inert
 // ---------------------------------------------------------------------------
 TEST(MeasurementAdmission, DisarmedRunTouchesNothing) {
     LogManager lm;
@@ -565,19 +560,19 @@ TEST(MeasurementAdmission, DisarmedRunTouchesNothing) {
     EXPECT_TRUE(ctx.carry.adm_event_last.empty());
     EXPECT_DOUBLE_EQ(-1.0, ctx.carry.adm_ep_tow) << "and no epoch-status column stamped";
     EXPECT_TRUE(r.slipped.empty());
-    // Every observable of the CORRUPT channel is still there: OFF means the screen
-    // has no opinion, not that it silently agrees.
+    // Every observable of the corrupt channel is still there: disarmed means the
+    // screen makes no decision, not that it admits.
     EXPECT_TRUE(r.has("G07", kC1));
     EXPECT_TRUE(r.has("G07", kL1));
     EXPECT_TRUE(r.has("G21", kC1));
 }
 
 // ---------------------------------------------------------------------------
-// 9. MEASURE-ONLY: the census sees everything and changes nothing
+// 9. Measure-only: the census sees everything and changes nothing
 // ---------------------------------------------------------------------------
 //
-// §7 gate 5 runs the full day with adm_trace and the screen OFF to give era-1 its
-// first absolute scan.  That arm must be solve-inert while still enumerating the
+// §7 gate 5 runs the full day with adm_trace on and the screen off, to give era-1
+// its first absolute scan.  That arm is solve-inert while still enumerating the
 // over-bound channels.
 TEST(MeasurementAdmission, MeasureOnlyCensusCountsWithoutActing) {
     LogManager lm;
@@ -587,7 +582,7 @@ TEST(MeasurementAdmission, MeasureOnlyCensusCountsWithoutActing) {
     ASSERT_FALSE(ctx.knobs.adm_screen);
     Rig r(lm, *cfg);
 
-    // A SECOND, healthy station so the two census columns are distinguishable: one
+    // A second, healthy station so the two census columns are distinguishable: one
     // is a population statistic over stations, the other the network extreme.
     r.present[1] = true;
     r.modeled[1] = {healthy("G01", -5.0), healthy("G03", 2.0), healthy("G05", 6.0),
@@ -612,16 +607,16 @@ TEST(MeasurementAdmission, MeasureOnlyCensusCountsWithoutActing) {
 }
 
 // ---------------------------------------------------------------------------
-// 10. The centre is a median over SATELLITES, not over observables
+// 10. The centre is a median over satellites, not over observables
 // ---------------------------------------------------------------------------
 //
-// A flat median over code OBSERVABLES weights a satellite by how many bands it is
-// tracked on.  Three single-band satellites against one four-band satellite puts
-// four of the seven samples on ONE line of sight, so a corrupt four-band satellite
-// owns the centre: it reads z ~ 0 and is admitted, while its three healthy peers
-// read z ~ |d| and are rejected — the exact inversion the guard exists to prevent,
-// and the guard cannot fire, because it needs healthy bands to OUTNUMBER corrupt
-// ones and the capture needs the opposite.  Reachable on the repo's own shipped
+// A flat median over code observables weights a satellite by how many bands it is
+// tracked on.  Three single-band satellites against one four-band satellite put
+// four of the seven samples on one line of sight, so a corrupt four-band satellite
+// sets the centre: it reads z ~ 0 and is admitted, while its three healthy peers
+// read z ~ |d| and are rejected.  The station guard cannot catch that inversion,
+// because it needs healthy bands to outnumber corrupt ones and the capture needs
+// the opposite.  The configuration is reachable with the repository's shipped
 // network configs (GPS+Galileo, frequency_mode "all", channel_mode "all").
 TEST(MeasurementAdmission, OneMultiBandSatelliteCannotCaptureTheStationCentre) {
     LogManager lm;
@@ -649,24 +644,24 @@ TEST(MeasurementAdmission, OneMultiBandSatelliteCannotCaptureTheStationCentre) {
         EXPECT_FALSE(r.has("E11", k)) << k << " is corrupt and must be withheld";
     EXPECT_EQ(4, a.reject_birth) << "exactly the four corrupt bands";
     EXPECT_EQ(3, a.admits_birth) << "exactly the three healthy channels";
-    // n_sats is the SATELLITE count, so adm_min_sats bounds the population it names.
+    // n_sats is the satellite count, so adm_min_sats bounds the population it names.
     EXPECT_EQ(0, a.skips_thin) << "four satellites clears the 4-satellite floor";
-    // And the guard must NOT fire: one bad satellite in four is not a bad CENTRE,
-    // even though it owns four of the station's seven bands.  A band-denominated
+    // The guard does not fire: one bad satellite in four is not a bad centre, even
+    // though it holds four of the station's seven bands.  A band-denominated
     // guard would fire here (4/7 > 0.5) and refuse three sound per-channel verdicts.
     EXPECT_EQ(0, a.station_events)
         << "the guard's denominator is the population that formed the centre";
 }
 
 // ---------------------------------------------------------------------------
-// 11. The warm-resume label is PER STATION, not a global one-shot
+// 11. The warm-resume label is per station, not a global one-shot
 // ---------------------------------------------------------------------------
 //
-// The seam screens whichever stations are present AND above the satellite floor.
+// The seam screens the stations that are present and above the satellite floor.
 // A station that is absent, thin, or whose satellite the two-station observability
-// gate erased on the resume epoch must NOT have the restore rule consumed on its
-// behalf — otherwise every later first sighting there reads as a birth and a
-// restored corrupt arc is mislabelled.
+// gate erased on the resume epoch does not have the restore rule consumed on its
+// behalf; otherwise every later first sighting there would read as a birth and a
+// restored corrupt arc would be mislabelled.
 TEST(MeasurementAdmission, ResumeRestoreLabelIsPerStationNotAGlobalOneShot) {
     LogManager lm;
     auto cfg = loadCfg(lm, "resume2", armed());
@@ -675,14 +670,14 @@ TEST(MeasurementAdmission, ResumeRestoreLabelIsPerStationNotAGlobalOneShot) {
 
     ctx.carry.adm_resume_pending = true;
 
-    // Epoch 0: station 1 is ABSENT (present[1] stays false), so only station 0 is
+    // Epoch 0: station 1 is absent (present[1] stays false), so only station 0 is
     // screened.  A global one-shot would be consumed here.
     r.step(ctx, *cfg, bshmEpoch(/*g07=*/8.0));
     ASSERT_EQ(0, ctx.counters.adm.reject_resume);
     ASSERT_EQ(0, ctx.counters.adm.reject_birth);
 
     // Epoch 1: station 1 appears for the first time, carrying a restored corrupt
-    // arc.  Its first screened epoch must still take the RESTORE label.
+    // arc.  Its first screened epoch still takes the restore label.
     r.present[1] = true;
     r.modeled[1] = {healthy("G01", -5.0), healthy("G03", 2.0), healthy("G05", 6.0),
                     healthy("G08", -8.0),
@@ -694,7 +689,7 @@ TEST(MeasurementAdmission, ResumeRestoreLabelIsPerStationNotAGlobalOneShot) {
            "another station consumed the run's first seam pass";
     EXPECT_EQ(0, ctx.counters.adm.reject_birth);
 
-    // Station 0 has already had its restore epoch, so a NEW corrupt channel there
+    // Station 0 has already had its restore epoch, so a new corrupt channel there
     // now is an ordinary birth.
     auto v = bshmEpoch(/*g07=*/8.0);
     v.push_back(obsWith("G16", {kC1}, kClockLevel + 9.75e4));
@@ -709,11 +704,11 @@ TEST(MeasurementAdmission, ResumeRestoreLabelIsPerStationNotAGlobalOneShot) {
 // 12. The statistic itself: state-free, and band identity is the RINEX digit
 // ---------------------------------------------------------------------------
 //
-// Pinned directly because everything above depends on it and nothing above would
-// fail loudly if it drifted.  `observed - modeled` is what makes the screen fire
-// at a cell's BIRTH: `modeled` carries the geometric range, the satellite clock
-// and the deterministic corrections and NO filter state, unlike a prefit
-// innovation, which a correctly self-seeded birth drives to ~0 whatever the
+// Pinned directly because every case above depends on it and none of them would
+// fail clearly if it drifted.  `observed - modeled` lets the screen fire at a
+// cell's birth: `modeled` carries the geometric range, the satellite clock and the
+// deterministic corrections and no filter state.  A prefit innovation, by
+// contrast, is driven to ~0 by a correctly self-seeded birth whatever the
 // observable says.
 TEST(MeasurementAdmission, StatisticAndBandIdentityAreWellDefined) {
     EXPECT_EQ('1', measurementAdmissionBand("C1C"));
@@ -736,33 +731,30 @@ TEST(MeasurementAdmission, StatisticAndBandIdentityAreWellDefined) {
 }
 
 // ===========================================================================
-// INC-4 — the arc RE-ENTRY vet (card §10)
+// The arc re-entry vet (card §10, INC-4)
 // ===========================================================================
 //
-// The defect these pin: the admission record outlives the ARC.  It is kept for
-// kAdmArcForgetEp (2880) epochs, so a channel that leaves the model set and comes
-// back is still carrying `admitted = true` from before the gap and was dispatched
-// down the ESTABLISHED path.  On runs/ft63_24h_conv, 16 of 17 mid-arc `adm_onset`
-// events were preceded by an `arc_resume` within five minutes — there were no
-// genuine mid-arc onsets on the day at all.
+// The admission record outlives the arc: it is kept for kAdmArcForgetEp (2880)
+// epochs, so a channel that leaves the model set and comes back still carries
+// `admitted = true` from before the gap.  Without the vet it is dispatched down the
+// established path, and a bad re-entry is reported as a mid-arc onset (in a 24 h
+// FT63 run, 16 of 17 `adm_onset` events followed an `arc_resume` within five
+// minutes).
 //
-// The cost is asymmetric and that asymmetry is the whole argument: a birth
-// rejection moved a00 by a median of -0.11 TECU (max +0.32) over eight events,
-// while the re-entries that were re-admitted and only caught 2-8 epochs later
-// carried the day's two largest iono excursions (39.7 -> 59.4 and 30.8 -> 43.0
-// TECU) INSIDE the exposure window.  Refusing at admission is free; amputating an
-// established arc is not.
+// The costs are asymmetric: a birth rejection moved a00 by a median of -0.11 TECU
+// (max +0.32) over eight events, while re-entries that were re-admitted and caught
+// only 2-8 epochs later coincided with the day's two largest iono excursions.
+// Refusing at admission costs little; removing an established arc does not.
 
 // ---------------------------------------------------------------------------
-// 13. A re-entry after a gap is screened as a BIRTH, not inherited as an onset
+// 13. A re-entry after a gap is screened as a birth, not inherited as an onset
 // ---------------------------------------------------------------------------
 //
-// The twelve-of-sixteen sub-class: the screen already fired at the right epoch with
-// the right response, and only the LABEL was wrong — but the label was carrying a
-// claim ("a previously-good channel went bad") the evidence did not support, and
-// the same cell in a leg replay whose record map starts empty is called
-// `adm_reject_birth`.  A classification that depends on how long the run has been
-// going is not a classification.
+// In this sub-class the screen fires at the right epoch with the right response,
+// and only the label differs.  The onset label claims "a previously good channel
+// went bad", which the evidence does not support, and the same cell in a leg replay
+// whose record map starts empty is called `adm_reject_birth`.  The vet makes the
+// classification independent of how long the run has been going.
 TEST(MeasurementAdmission, ReEntryAfterAGapIsScreenedAsABirthNotAnOnset) {
     LogManager lm;
     auto cfg = loadCfg(lm, "revet_birth", revetArmed());
@@ -774,8 +766,8 @@ TEST(MeasurementAdmission, ReEntryAfterAGapIsScreenedAsABirthNotAnOnset) {
     ASSERT_EQ(0, ctx.counters.adm.reject_birth);
     ASSERT_EQ(0, ctx.counters.adm.reentries);
 
-    // It disappears for two epochs — the satellite set, or the observability gate
-    // erased it.  Its record survives; its arc does not.
+    // It disappears for two epochs (the satellite set, or the observability gate
+    // erased it).  Its record survives; its arc does not.
     for (int k = 0; k < 2; ++k) r.step(ctx, *cfg, bshmEpochWithout("G07"));
     ASSERT_EQ(0, ctx.counters.adm.reentries) << "an ABSENT channel is not screened at all";
 
@@ -800,13 +792,12 @@ TEST(MeasurementAdmission, ReEntryAfterAGapIsScreenedAsABirthNotAnOnset) {
 }
 
 // ---------------------------------------------------------------------------
-// 14. The control: with INC-4 disarmed the same sequence is still an onset
+// 14. The control: with the vet disarmed the same sequence is still an onset (INC-4)
 // ---------------------------------------------------------------------------
 //
-// This is the defect itself, pinned. It is the ONLY case in the file that asserts
-// behaviour the card considers wrong, and it is here so the increment's OFF path
-// stays honest: disarming INC-4 must reproduce the pre-change classification
-// exactly, not something close to it.
+// This pins the mislabel itself.  It is the only case in the file that asserts
+// behaviour the card considers wrong; it checks that disarming the vet reproduces
+// the pre-change classification exactly.
 TEST(MeasurementAdmission, DisarmedVetStillInheritsTheStaleVerdictAsAnOnset) {
     LogManager lm;
     auto cfg = loadCfg(lm, "revet_off", armed());   // INC-4 absent entirely
@@ -830,9 +821,9 @@ TEST(MeasurementAdmission, DisarmedVetStillInheritsTheStaleVerdictAsAnOnset) {
 // 15. A continuously-present channel going bad is still a genuine onset
 // ---------------------------------------------------------------------------
 //
-// The increment must not empty the onset counter by swallowing it.  A channel that
-// never left the screened set and then crosses the bound is exactly what
-// `adm_onset` is FOR, and it must survive.
+// The vet does not empty the onset counter by absorbing genuine onsets.  A channel
+// that never left the screened set and then crosses the bound is what `adm_onset`
+// is for, and it is still counted there.
 TEST(MeasurementAdmission, ContinuouslyPresentChannelGoingBadIsStillAnOnset) {
     LogManager lm;
     auto cfg = loadCfg(lm, "revet_cont", revetArmed());
@@ -872,12 +863,12 @@ TEST(MeasurementAdmission, GapBelowTheThresholdIsNotAReEntry) {
 // 17. The census trigger refuses inside the vet window where the bound would admit
 // ---------------------------------------------------------------------------
 //
-// The whole value of the cross-seam wire, isolated.  The census statistic is
-// STANDARDIZED (|y - m| sqrt(w)) so it resolves a ramping corruption while it is
-// still under this card's absolute metre bound — measured at G16@BSHM, where it
-// read s = 1439.6 on a raw y = 975.5 m one epoch before |z| reached 1000.  Here the
-// channel is comfortably inside the bound at every epoch, so the bound alone can
-// NEVER refuse it and any refusal is attributable to the census.
+// Isolates what the cross-seam census input adds.  The census statistic is
+// standardized (|y - m| sqrt(w)), so it resolves a ramping corruption while it is
+// still under this screen's absolute metre bound (at G16@BSHM it read s = 1439.6
+// on a raw y = 975.5 m one epoch before |z| reached 1000).  Here the channel stays
+// well inside the bound at every epoch, so the bound alone cannot refuse it and
+// any refusal is attributable to the census.
 TEST(MeasurementAdmission, CensusFlagRefusesInsideTheVetWindowWhereTheBoundWouldAdmit) {
     LogManager lm;
     auto cfg = loadCfg(lm, "revet_census", revetArmed());
@@ -887,8 +878,8 @@ TEST(MeasurementAdmission, CensusFlagRefusesInsideTheVetWindowWhereTheBoundWould
     for (int k = 0; k < 3; ++k) r.step(ctx, *cfg, bshmEpoch(/*g07=*/8.0));
     r.step(ctx, *cfg, bshmEpochWithout("G07"));
 
-    // It returns INSIDE the bound and is admitted provisionally — no withhold, no
-    // refloat.  That is the posture the FT63 day's four exposed cells were in.
+    // It returns inside the bound and is admitted provisionally: no withhold, no
+    // refloat.  The four exposed cells of the FT63 day were in this state.
     r.step(ctx, *cfg, bshmEpoch(/*g07=*/300.0));
     ASSERT_EQ(1, ctx.counters.adm.reentries);
     ASSERT_EQ(1, ctx.counters.adm.admits_reentry);
@@ -915,13 +906,13 @@ TEST(MeasurementAdmission, CensusFlagRefusesInsideTheVetWindowWhereTheBoundWould
 }
 
 // ---------------------------------------------------------------------------
-// 18. A stale census flag is refused as evidence and COUNTED
+// 18. A stale census flag is refused as evidence and counted
 // ---------------------------------------------------------------------------
 //
-// Invariant #4 applied to a cross-seam read: a flag set from some earlier epoch
-// names cells that may since have healed, and believing it would make the vet act
-// on evidence it does not have.  "The census said nothing" and "nobody asked the
-// census" must stay distinguishable, because only one of them is a clean run.
+// Invariant #4 applied to a cross-seam read: a flag set in an earlier epoch names
+// cells that may since have healed, and acting on it would mean acting on evidence
+// the vet does not have.  "The census said nothing" and "the census was not
+// consulted" stay distinguishable, because only the first is a clean run.
 TEST(MeasurementAdmission, StaleCensusFlagIsIgnoredAndCounted) {
     LogManager lm;
     auto cfg = loadCfg(lm, "revet_stale", revetArmed());
@@ -933,7 +924,7 @@ TEST(MeasurementAdmission, StaleCensusFlagIsIgnoredAndCounted) {
     r.step(ctx, *cfg, bshmEpoch(/*g07=*/300.0));       // re-entry, admitted, vet open
     ASSERT_EQ(1, ctx.counters.adm.admits_reentry);
 
-    // A flag naming the cell, but stamped several epochs ago — the shape a run with
+    // A flag naming the cell, but stamped several epochs ago: the shape a run with
     // the prefit walk switched off part-way through would produce.
     ctx.carry.prefit_code_flag    = {{0, std::string("G07")}};
     ctx.carry.prefit_code_flag_ep = 0;
@@ -967,12 +958,12 @@ TEST(MeasurementAdmission, VetWindowExpiresAndStopsConsultingTheCensus) {
     ASSERT_GE(ctx.counters.adm.revet_expired, 1);
     ASSERT_EQ(2, ctx.counters.adm.revet_window_ep)
         << "coverage runs from the return epoch through return + (adm_revet_ep - 1)";
-    // ONE consultation, not two.  The return epoch is inside the window but takes
-    // the birth-equivalent path, which asks the census nothing — and could not
-    // usefully, because a re-entering arc's ambiguity is fresh, so the census defers
-    // it as a BIRTH on exactly that epoch.  `revet_census_reads` is the denominator
-    // that makes this readable; without it, `absent < revet_window_ep` looks like a
-    // partial failure rather than the structure it is.
+    // One consultation, not two.  The return epoch is inside the window but takes
+    // the birth-equivalent path, which does not consult the census; it could not do
+    // so usefully, because a re-entering arc's ambiguity is fresh and the census
+    // defers it as a birth on that epoch.  `revet_census_reads` is the denominator
+    // that makes this readable; without it, `absent < revet_window_ep` would look
+    // like a partial failure.
     ASSERT_EQ(1, ctx.counters.adm.revet_census_reads);
     ASSERT_EQ(1, ctx.counters.adm.revet_census_absent)
         << "no flag has been published in this test yet — the shape a run with the "
@@ -981,7 +972,7 @@ TEST(MeasurementAdmission, VetWindowExpiresAndStopsConsultingTheCensus) {
     const long long absent_before = ctx.counters.adm.revet_census_absent;
     const long long reads_before  = ctx.counters.adm.revet_census_reads;
 
-    // The census now names the cell — but the window is closed.
+    // The census now names the cell, but the window is closed.
     r.censusFlag(ctx, "G07");
     r.step(ctx, *cfg, bshmEpoch(/*g07=*/8.0));
 
@@ -997,14 +988,13 @@ TEST(MeasurementAdmission, VetWindowExpiresAndStopsConsultingTheCensus) {
 }
 
 // ---------------------------------------------------------------------------
-// 20. The strict posture withholds a CLEAN re-entry until the heal path readmits
+// 20. The strict posture withholds a clean re-entry until the heal path readmits
 // ---------------------------------------------------------------------------
 //
-// Default OFF, and the reason is the prefer-fallback directive rather than
-// timidity: this withholds EVERY re-entry (~4650 on a 63-station day) and the
-// population it delays is dominated by legitimately RISING satellites.  It is here
-// because it is the one posture that closes the exposure window outright, so it
-// must be correct and measurable when a run needs it.
+// Off by default, per the prefer-fallback directive: it withholds every re-entry
+// (~4650 on a 63-station day), and the population it delays is dominated by
+// legitimately rising satellites.  It is the one posture that closes the exposure
+// window outright, so it is tested for correctness and measurability.
 TEST(MeasurementAdmission, StrictHoldWithholdsACleanReEntryThenHealsIt) {
     LogManager lm;
     auto cfg = loadCfg(lm, "revet_hold",
@@ -1016,7 +1006,7 @@ TEST(MeasurementAdmission, StrictHoldWithholdsACleanReEntryThenHealsIt) {
     for (int k = 0; k < 3; ++k) r.step(ctx, *cfg, bshmEpoch(/*g07=*/8.0));
     r.step(ctx, *cfg, bshmEpochWithout("G07"));
 
-    // Returns CLEAN — and is still held, because one in-bound epoch is thin evidence
+    // Returns clean and is still held, because one in-bound epoch is thin evidence
     // about a channel that has been away.  G16@BSHM and G13@BSHM both passed the
     // bound on their return epoch and crossed it 2 and 5 epochs later.
     r.step(ctx, *cfg, bshmEpoch(/*g07=*/8.0));
@@ -1039,10 +1029,10 @@ TEST(MeasurementAdmission, StrictHoldWithholdsACleanReEntryThenHealsIt) {
 // 21. A heal opens a vet window of its own
 // ---------------------------------------------------------------------------
 //
-// A heal IS a re-entry — the same arc coming back with a fresh seed after an
-// absence from the model set.  Without this, the one path that puts a
-// previously-REJECTED channel back into the solve would be the only one that puts
-// it back unvetted, which is the worst place to have the gap.
+// A heal is a re-entry: the same arc coming back with a fresh seed after an
+// absence from the model set.  Without its own window, the path that puts a
+// previously rejected channel back into the solve would be the only one that puts
+// it back unvetted, which is where an unvetted return matters most.
 TEST(MeasurementAdmission, HealOpensAVetWindowOfItsOwn) {
     LogManager lm;
     auto cfg = loadCfg(lm, "revet_heal",
@@ -1069,18 +1059,17 @@ TEST(MeasurementAdmission, HealOpensAVetWindowOfItsOwn) {
 }
 
 // ---------------------------------------------------------------------------
-// 22. The tighter vet bound refuses a re-entry ON ARRIVAL that the card's own
-//     bound would have admitted
+// 22. The tighter vet bound refuses on arrival a re-entry that the outer bound
+//     would have admitted
 // ---------------------------------------------------------------------------
 //
-// The mechanism §10.10's measurement unblocked, and the one that closes the case
-// the census structurally cannot reach.  G16@BSHM arrives at 670.3 m on its return
-// epoch and crosses the 1000 m bound two epochs later — by which time it has been
-// folded at full weight and a00 has run 39.7 -> 58.8 TECU.  A 200 m vet bound
-// refuses it at the door.
+// The mechanism the §10.10 measurement supports; it covers the case the census
+// cannot reach.  G16@BSHM arrives at 670.3 m on its return epoch and crosses the
+// 1000 m bound two epochs later, by which time it has been folded at full weight
+// and a00 has moved 39.7 -> 58.8 TECU.  A 200 m vet bound refuses it on arrival.
 //
-// The fixture is that shape exactly: a channel that returns at 670 m, which is
-// comfortably inside `adm_bound_m` and comfortably outside 0.2 x it.
+// The fixture has that shape: a channel that returns at 670 m, well inside
+// `adm_bound_m` and well outside 0.2 × it.
 TEST(MeasurementAdmission, TighterVetBoundRefusesALargeOnArrivalReEntry) {
     LogManager lm;
     auto cfg = loadCfg(lm, "revet_vbound",
@@ -1093,7 +1082,7 @@ TEST(MeasurementAdmission, TighterVetBoundRefusesALargeOnArrivalReEntry) {
     for (int k = 0; k < 3; ++k) r.step(ctx, *cfg, bshmEpoch(/*g07=*/8.0));
     r.step(ctx, *cfg, bshmEpochWithout("G07"));
 
-    // Returns at 670 m — the measured G16 arrival.  Inside 1000, outside 200.
+    // Returns at 670 m, the measured G16 arrival.  Inside 1000, outside 200.
     r.step(ctx, *cfg, bshmEpoch(/*g07=*/670.3));
 
     const auto& a = ctx.counters.adm;
@@ -1110,9 +1099,9 @@ TEST(MeasurementAdmission, TighterVetBoundRefusesALargeOnArrivalReEntry) {
     EXPECT_FALSE(r.has("G07", kL1));
     EXPECT_TRUE(r.funnelHas("G07", kL1)) << "invariant #1 still applies to a re-entry";
 
-    // A true BIRTH at the same magnitude is NOT held to the tighter bound: a
-    // first-ever sighting has no history to be suspicious about, and the rising-
-    // satellite population is largest exactly there.
+    // A true birth at the same magnitude is not held to the tighter bound: a first
+    // sighting has no history to be suspicious about, and the rising-satellite
+    // population is largest there.
     LogManager lm2;
     auto cfg2 = loadCfg(lm2, "revet_vbound_birth",
                         revetArmed(1, 8, true, false, 5, /*bound_scale=*/0.2));
@@ -1130,11 +1119,11 @@ TEST(MeasurementAdmission, TighterVetBoundRefusesALargeOnArrivalReEntry) {
 // 23. The tighter bound stays live for the whole vet window
 // ---------------------------------------------------------------------------
 //
-// Not just the return epoch: §10.10's measured population is "within 8 epochs of an
-// arc_resume" — exactly the window — and it is empty of healthy cells over 50 m, so
-// holding the window to 200 m is covered by the measurement rather than
-// extrapolated past it.  It also catches the shape neither edge alone would: a
-// channel that arrives clean and ramps through 200 m before it ramps through 1000.
+// Not only on the return epoch: §10.10's measured population is "within 8 epochs of
+// an arc_resume", which is the window, and it holds no healthy cells over 50 m, so
+// holding the whole window to 200 m stays within the measurement.  It also catches
+// a shape that neither bound catches on the return epoch: a channel that arrives
+// clean and ramps through 200 m before it ramps through 1000.
 TEST(MeasurementAdmission, TighterVetBoundStaysLiveAcrossTheWindowThenLifts) {
     LogManager lm;
     auto cfg = loadCfg(lm, "revet_vwindow",
@@ -1146,20 +1135,20 @@ TEST(MeasurementAdmission, TighterVetBoundStaysLiveAcrossTheWindowThenLifts) {
 
     for (int k = 0; k < 3; ++k) r.step(ctx, *cfg, bshmEpoch(/*g07=*/8.0));
     r.step(ctx, *cfg, bshmEpochWithout("G07"));
-    r.step(ctx, *cfg, bshmEpoch(/*g07=*/8.0));      // returns CLEAN: vet_left 3 -> 2
+    r.step(ctx, *cfg, bshmEpoch(/*g07=*/8.0));      // returns clean: vet_left 3 -> 2
     ASSERT_EQ(1, ctx.counters.adm.admits_reentry);
     ASSERT_TRUE(r.has("G07", kC1));
 
-    // Ramps to 500 m INSIDE the window — over 200, under 1000.
+    // Ramps to 500 m inside the window: over 200, under 1000.
     r.step(ctx, *cfg, bshmEpoch(/*g07=*/500.0));
     EXPECT_EQ(1, ctx.counters.adm.revet_bound_refusals)
         << "the window is a scope, not a single epoch";
     EXPECT_EQ(1, ctx.counters.adm.onsets);
     EXPECT_FALSE(r.has("G07", kC1));
 
-    // …and once the channel has healed and its windows have all expired, 500 m is
-    // an ordinary in-bound value again.  Otherwise one re-entry would hold a cell
-    // to 200 m forever.
+    // Outside any vet window, 500 m is an ordinary in-bound value; otherwise one
+    // re-entry would hold a cell to 200 m forever.  The second rig checks this on
+    // an established channel that never had a gap.
     LogManager lm2;
     auto cfg2 = loadCfg(lm2, "revet_vlift",
                         revetArmed(1, 1, false, false, /*heal_ep=*/1,
@@ -1176,24 +1165,18 @@ TEST(MeasurementAdmission, TighterVetBoundStaysLiveAcrossTheWindowThenLifts) {
 }
 
 // ---------------------------------------------------------------------------
-// 24. A channel refused by the VET bound must heal against the VET bound
+// 24. A channel refused by the vet bound heals against the vet bound
 // ---------------------------------------------------------------------------
 //
-// The §10.11 field defect, pinned.  The heal path tested the ABSOLUTE bound, so a
-// channel held out at 200 m accumulated "clean" epochs at anything under 1000 and
-// was readmitted above the bound that had just refused it.  Measured on
-// runs/ft63_adm_rv04vb, G22@BSHM went:
+// Pins the §10.11 field defect.  A heal path that tests the absolute bound lets a
+// channel held out at 200 m accumulate "clean" epochs at anything under 1000 and be
+// readmitted above the bound that refused it (G22@BSHM: refused at z = 347.6 m,
+// healed at 782.2 m, refused again at 888.5 m, with the readmission folded into
+// a00).  The heal therefore tests the bound that made the refusal.
 //
-//   273450  adm_reject_reentry  z=347.6  trigger=vet_bound
-//   273600  adm_heal            z=782.2  readmit          <- readmitted at 782 m
-//   273630  adm_revet_refuse    z=888.5  trigger=vet_bound
-//
-// a flicker, with the bad readmission visibly folded into a00 (32.60 -> 37.54).
-// An admission bound that lets a channel back in above itself is not a bound.
-//
-// The second half of the fix is that a WITHHELD epoch must not spend vet budget —
-// otherwise a channel being held out serves its window in absentia and returns
-// unvetted, which is the state INC-4 exists to abolish.
+// Second, a withheld epoch spends no vet budget; otherwise a channel held out
+// would serve its window while absent and return unvetted, the state the vet
+// exists to prevent (INC-4).
 TEST(MeasurementAdmission, VetBoundRefusalHealsAgainstTheVetBoundNotTheOuterBound) {
     LogManager lm;
     auto cfg = loadCfg(lm, "revet_healbound",
@@ -1210,9 +1193,9 @@ TEST(MeasurementAdmission, VetBoundRefusalHealsAgainstTheVetBoundNotTheOuterBoun
     ASSERT_EQ(1, ctx.counters.adm.revet_bound_refusals);
     ASSERT_FALSE(r.has("G07", kC1));
 
-    // Two epochs at 782 m — under adm_bound_m, far over the vet bound.  The old
-    // code healed here.  `adm_revet_ep` is 2, so under the old countdown the window
-    // would ALSO have expired by now while the channel sat withheld.
+    // Two epochs at 782 m: under adm_bound_m, far over the vet bound.  A heal tested
+    // against the outer bound would complete here, and with `adm_revet_ep` = 2 a
+    // countdown that ran while the channel was withheld would also have expired.
     r.step(ctx, *cfg, bshmEpoch(/*g07=*/782.2));
     r.step(ctx, *cfg, bshmEpoch(/*g07=*/782.2));
     EXPECT_EQ(0, ctx.counters.adm.heals)
@@ -1222,8 +1205,8 @@ TEST(MeasurementAdmission, VetBoundRefusalHealsAgainstTheVetBoundNotTheOuterBoun
         << "a withheld epoch spends no vet budget — otherwise the channel serves "
            "its window in absentia and comes back unvetted";
 
-    // Genuinely recovering — under the VET bound — readmits on schedule.  The hold
-    // has to be a delay, not a death sentence (prefer fallback over dropping).
+    // A channel that recovers under the vet bound is readmitted on schedule.  The
+    // hold is a delay, not a permanent exclusion (prefer fallback over dropping).
     r.step(ctx, *cfg, bshmEpoch(/*g07=*/12.0));
     r.step(ctx, *cfg, bshmEpoch(/*g07=*/12.0));
     EXPECT_EQ(1, ctx.counters.adm.heals);
@@ -1234,10 +1217,10 @@ TEST(MeasurementAdmission, VetBoundRefusalHealsAgainstTheVetBoundNotTheOuterBoun
 // 25. The vet needs the screen: arming it measure-only is refused at load
 // ---------------------------------------------------------------------------
 //
-// A vet is an ADMISSION verdict and the measure-only arm makes none.  The
-// signal-integrity block's INERT-guard precedent: disable loudly rather than accept
-// quietly, because a knob that reads ON in the manifest and does nothing in the run
-// is the "live counters, dead wiring" trap.
+// A vet is an admission verdict, and the measure-only arm makes none.  Following the
+// signal-integrity block's inert-guard precedent, the loader disables the knob with
+// a message rather than accepting it, because a knob that reads on in the manifest
+// and does nothing in the run gives live counters over dead wiring.
 TEST(MeasurementAdmission, VetIsRefusedWithoutTheScreen) {
     LogManager lm;
     std::string s = armed(/*screen=*/false, /*bound=*/1000.0, /*min_sats=*/4,

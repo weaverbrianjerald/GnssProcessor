@@ -1,15 +1,15 @@
 /**
  * @file test_network_normal_equations.cpp
  * @brief Unit tests for the arrowhead Schur-reduction kernel
- *        (NetworkNormalEquations) — W4-S1 of the PPP-RTK network producer.
+ *        (NetworkNormalEquations) of the PPP-RTK network producer (W4-S1).
  *
- * The headline guarantee is EXACTNESS: per-station local normals Schur-reduced
- * onto the shared satellite border, solved, and back-substituted reproduce a
- * dense stacked normal-equation solve to machine precision.  The dense
- * reference is assembled completely independently (one big bordered N = AᵀWA
- * built from the raw design rows, dense LDLᵀ solve) — it never touches the
- * Schur code — so agreement is a genuine cross-check of the marginalization
- * identities, including a non-diagonal (correlated) measurement weight.
+ * The main property under test is exactness: per-station local normals
+ * Schur-reduced onto the shared satellite border, solved, and back-substituted
+ * reproduce a dense stacked normal-equation solve to machine precision.  The
+ * dense reference is assembled independently of the Schur code (one bordered
+ * N = AᵀWA built from the raw design rows, dense LDLᵀ solve), so agreement
+ * cross-checks the marginalization identities, including a non-diagonal
+ * (correlated) measurement weight.
  */
 
 #include <gtest/gtest.h>
@@ -51,11 +51,11 @@ Eigen::MatrixXd makeRand(std::mt19937& gen, Eigen::Index r, Eigen::Index c) {
     return A;
 }
 
-// Solve the full bordered system densely, INDEPENDENTLY of the Schur kernel.
+// Solve the full bordered system densely, independently of the Schur kernel.
 // Layout: x = [x_s | x_0 | x_1 | ...]; station r's rows carry A_s in the shared
 // columns and A_r in station r's local columns.  Adds an isotropic prior
 // (shared_prior on the shared block, local_prior on every local block) so the
-// system is full-rank — the same priors fed to the Schur path.
+// system is full-rank; the Schur path receives the same priors.
 struct DenseSolution {
     Eigen::VectorXd x;                       // full stacked estimate
     Eigen::MatrixXd N;                        // full bordered normal matrix
@@ -314,8 +314,8 @@ TEST(NetworkNormalEquationsTest, RejectsDimensionMismatch) {
                  std::invalid_argument);
 }
 
-// reduce() recomputes from the immutable accumulated blocks: calling it twice
-// (no add* between) is idempotent — guards against an in-place mutation regression.
+// reduce() recomputes from the accumulated blocks without modifying them, so calling
+// it twice (no add* between) is idempotent.  Guards against an in-place mutation.
 TEST(NetworkNormalEquationsTest, ReduceIsIdempotent) {
     std::mt19937 gen(2024);
     const Eigen::Index n_shared = 4;
@@ -393,10 +393,10 @@ TEST(NetworkNormalEquationsTest, MatchesDenseStackedSolve_ManyStations) {
     }
 }
 
-// W5 seam: apply a datum constraint to a COPY of the reduced shared system, then
-// solveSharedConstrained — must equal the dense solve with the same constraint
-// applied to the full shared block (a pin on the shared block commutes with the
-// Schur complement).  The kernel's own reduced system stays pristine.
+// A datum constraint applied to a copy of the reduced shared system and solved with
+// solveSharedConstrained equals the dense solve with the same constraint applied to
+// the full shared block (a pin on the shared block commutes with the Schur
+// complement).  The kernel's own reduced system is left unchanged (W5 seam).
 TEST(NetworkNormalEquationsTest, SolveSharedConstrained_W5Seam) {
     std::mt19937 gen(7);
     const Eigen::Index n_shared = 4;
@@ -417,7 +417,7 @@ TEST(NetworkNormalEquationsTest, SolveSharedConstrained_W5Seam) {
     }
     neq.reduce();
 
-    // Round-trip: constrained-solve on the UNMODIFIED reduced system == solveShared.
+    // Round-trip: a constrained solve on the unmodified reduced system equals solveShared.
     EXPECT_TRUE(neq.solveSharedConstrained(neq.reducedSharedNormals(),
                                            neq.reducedSharedRhs())
                     .isApprox(neq.solveShared(), 1e-12));
@@ -491,7 +491,7 @@ TEST(NetworkNormalEquationsTest, RejectsAsymmetricInput) {
 }
 
 // A non-positive-definite (rank-deficient) local block is rejected at addStation,
-// where the diagnosis is unambiguous — not silently pseudo-inverted.
+// where the diagnosis is unambiguous, instead of being silently pseudo-inverted.
 TEST(NetworkNormalEquationsTest, RejectsRankDeficientLocalBlock) {
     NetworkNormalEquations neq(2);
     Eigen::MatrixXd N_ss(2, 2); N_ss << 3, 1, 1, 4;
@@ -515,10 +515,10 @@ TEST(NetworkNormalEquationsTest, DiagonalWeightDimMismatchThrows) {
 }
 
 // ---------------------------------------------------------------------------
-// reconstructStationCovariance (producer-side network AR, Phase 1) — the #1
-// correctness risk.  Validate the marginal-covariance identity against a fully
-// independent dense full-inverse, both unpinned and with a shared param treated
-// as exactly known (the datum-as-known frame the DD ambiguities live in).
+// reconstructStationCovariance (producer-side network AR, Phase 1).  The tests
+// validate the marginal-covariance identity against an independent dense full
+// inverse, both unpinned and with a shared param treated as exactly known (the
+// datum-as-known frame in which the DD ambiguities are defined).
 // ---------------------------------------------------------------------------
 
 // Build the Schur kernel from raw station data + isotropic priors and reduce.
@@ -548,7 +548,7 @@ TEST(NetworkNormalEquationsTest, ConditionalCovarianceMatchesFullInverseBlock) {
     const double sp = 1e-2, lp = 1e-2;
     const DenseSolution dense = denseStackedSolve(stations, n_shared, sp, lp);
 
-    // Brute-force marginal covariance of ALL params = inverse of the full
+    // Brute-force marginal covariance of all params = inverse of the full
     // bordered normal matrix (assembled independently of the Schur kernel).
     const Eigen::MatrixXd cov_full = dense.N.inverse();
 
@@ -568,10 +568,10 @@ TEST(NetworkNormalEquationsTest, ConditionalCovarianceMatchesFullInverseBlock) {
     }
 }
 
-// Pinned-as-known: feeding cov_free with shared param 0's row/col zeroed must
-// reproduce the (r,r) block of the inverse of the system CONDITIONED on x_0
-// exact (its row/col removed) — the datum-as-known frame.  Using the full
-// (un-zeroed) shared covariance instead would inflate the DD ambiguity Q.
+// Pinned-as-known: feeding cov_free with shared param 0's row/col zeroed
+// reproduces the (r,r) block of the inverse of the system conditioned on x_0
+// being exact (its row/col removed), which is the datum-as-known frame.  Using the
+// full (un-zeroed) shared covariance instead would inflate the DD ambiguity Q.
 TEST(NetworkNormalEquationsTest, ConditionalCovarianceTreatsPinnedSharedAsKnown) {
     std::mt19937 gen(424242);
     const Eigen::Index n_shared = 3;  // index 0 pinned (exact); 1..2 free
@@ -579,7 +579,7 @@ TEST(NetworkNormalEquationsTest, ConditionalCovarianceTreatsPinnedSharedAsKnown)
     const double sp = 1e-2, lp = 1e-2;
     const DenseSolution dense = denseStackedSolve(stations, n_shared, sp, lp);
 
-    // Reference: condition on shared param 0 KNOWN by removing its row/col from
+    // Reference: condition on shared param 0 as known by removing its row/col from
     // the full normal, then invert.  (Index 0 first → removal = bottom-right.)
     const Eigen::Index P = dense.N.rows();
     const Eigen::MatrixXd cov_cond = dense.N.bottomRightCorner(P - 1, P - 1).inverse();
@@ -603,12 +603,11 @@ TEST(NetworkNormalEquationsTest, ConditionalCovarianceTreatsPinnedSharedAsKnown)
     }
 }
 
-// addSharedInfo is REDUCTION-PRESERVING: a shared-border delta added AFTER reduce()
-// is folded into the cached reduced system in place (reduction stays current),
-// yielding the SAME result as adding it before reduce() and recomputing.  This is
-// the sentinel for the "stop reducing twice" optimization — a regression that
-// instead dropped the post-reduce prior (the driver's D2 carry-forward) would
-// surface here as an O(1) mismatch, not merely a ULP one.
+// addSharedInfo preserves the reduction: a shared-border delta added after reduce()
+// is folded into the cached reduced system in place (the reduction stays current),
+// giving the same result as adding it before reduce() and recomputing.  This guards
+// the "stop reducing twice" optimization: a regression that dropped the post-reduce
+// prior (the driver's D2 carry-forward) shows here as an O(1) mismatch, not a ULP one.
 TEST(NetworkNormalEquationsTest, AddSharedInfoIsReductionPreservingDiagonal) {
     std::mt19937 gen(123);
     const Eigen::Index n_shared = 5;
@@ -620,7 +619,7 @@ TEST(NetworkNormalEquationsTest, AddSharedInfoIsReductionPreservingDiagonal) {
             neq.addStationObservations(s.A_s, s.A_r, s.W, s.y);
     };
 
-    // Diagonal delta (the D2 carry-forward shape) folded AFTER reduce().
+    // Diagonal delta (the D2 carry-forward shape) folded after reduce().
     Eigen::VectorXd dvec(n_shared); dvec << 0.5, 1.0, 0.25, 2.0, 0.1;
     const Eigen::MatrixXd dDiag = Eigen::MatrixXd(dvec.asDiagonal());
     Eigen::VectorXd drhs(n_shared); drhs << 1, -2, 3, 0.5, -1;
@@ -632,14 +631,14 @@ TEST(NetworkNormalEquationsTest, AddSharedInfoIsReductionPreservingDiagonal) {
     const Eigen::VectorXd u_before = post.reducedSharedRhs();
 
     post.addSharedInfo(dDiag, drhs);
-    EXPECT_TRUE(post.isReduced());  // reduction stays current — no re-reduce needed
+    EXPECT_TRUE(post.isReduced());  // reduction stays current; no re-reduce needed
     EXPECT_TRUE(post.reducedSharedNormals().isApprox(N_before + dDiag, 1e-12));
     EXPECT_TRUE(post.reducedSharedRhs().isApprox(u_before + drhs, 1e-12));
     // A subsequent reduce() must be a no-op (guarded), preserving the folded delta.
     post.reduce();
     EXPECT_TRUE(post.reducedSharedNormals().isApprox(N_before + dDiag, 1e-12));
 
-    // From-scratch reference: same delta added BEFORE reduce() (full recompute).
+    // From-scratch reference: same delta added before reduce() (full recompute).
     NetworkNormalEquations pre(n_shared);
     build(pre);
     pre.addSharedInfo(dDiag, drhs);
@@ -649,8 +648,8 @@ TEST(NetworkNormalEquationsTest, AddSharedInfoIsReductionPreservingDiagonal) {
 }
 
 // The in-place fold symmetrizes the increment, so it is also exact for a
-// NON-diagonal symmetric delta (e.g. a wHᵀH constraint increment) — guards the
-// 0.5·(Δ+Δᵀ) hardening against a future post-reduce non-diagonal caller.
+// non-diagonal symmetric delta (e.g. a wHᵀH constraint increment).  This guards the
+// 0.5·(Δ+Δᵀ) symmetrization for a future post-reduce non-diagonal caller.
 TEST(NetworkNormalEquationsTest, AddSharedInfoIsReductionPreservingSymmetric) {
     std::mt19937 gen(321);
     const Eigen::Index n_shared = 4;
@@ -721,7 +720,7 @@ TEST(NetworkNormalEquationsTest, ParallelReduceMatchesSerial) {
 // ===========================================================================
 
 // addStationPrior folds a diagonal information increment Λ into one station's
-// N_rr and η into u_r — it must reproduce the dense stacked solve with the SAME
+// N_rr and η into u_r, and reproduces the dense stacked solve with the same
 // diagonal augmentation applied to that station's local block.
 TEST(NetworkNormalEquationsTest, AddStationPriorMatchesDenseAugmentedSolve) {
     std::mt19937 gen(20260630);
@@ -776,15 +775,15 @@ TEST(NetworkNormalEquationsTest, AddStationPriorMatchesDenseAugmentedSolve) {
 }
 
 // ===========================================================================
-// Card 4 (M1) phase C: rank-K double-difference prior fold — foldReducedDdPriors
+// Rank-K double-difference prior fold: foldReducedDdPriors (Card 4 (M1) phase C)
 // ===========================================================================
 
 // A joint rank-K DD prior z ~ N(zhat, Pz), z = C x_L, folded via the per-component
-// Woodbury update, must reproduce the dense stacked solve with the SAME prior added
-// as Cᵀ Pz⁻¹ C on the local columns + Cᵀ Pz⁻¹ zhat on the RHS.  The two DD rows SHARE
-// a local column (station 1, col 0) — as fundamental cycles share tree edges — and
-// Pz is DENSE, so this exercises the JOINT rank-K path; independent rank-1 folds
-// would be inexact (the phase-A scout's adversarial correction).
+// Woodbury update, reproduces the dense stacked solve with the same prior added as
+// Cᵀ Pz⁻¹ C on the local columns + Cᵀ Pz⁻¹ zhat on the RHS.  The two DD rows share a
+// local column (station 1, col 0), as fundamental cycles share tree edges, and Pz is
+// dense, so this exercises the joint rank-K path; independent rank-1 folds would be
+// inexact (correction raised in the phase-A review).
 TEST(NetworkNormalEquationsTest, FoldReducedDdPriorsMatchesDenseAugmentedSolve) {
     std::mt19937 gen(20260711);
     const Eigen::Index n_shared = 4;
@@ -851,9 +850,9 @@ TEST(NetworkNormalEquationsTest, FoldReducedDdPriorsMatchesDenseAugmentedSolve) 
     EXPECT_EQ(neq.numDdPriorBlocks(), 1u);
 }
 
-// Phase C3b — the posterior COVARIANCE readout (ddPriorPosteriorCovariance) must
-// equal C_L Σ_LL C_Lᵀ of the dense augmented solve: the same closed form the z-store
-// carries forward.  Independent dense reference (augment N += Cᵀ Pz⁻¹ C, invert,
+// The posterior covariance readout (ddPriorPosteriorCovariance) equals C_L Σ_LL C_Lᵀ
+// of the dense augmented solve, the same closed form the z-store carries forward
+// (phase C3b).  Independent dense reference (augment N += Cᵀ Pz⁻¹ C, invert,
 // project), fed the datum-free shared covariance Σ_ss = [N_aug⁻¹]_ss.
 TEST(NetworkNormalEquationsTest, DdPriorPosteriorCovarianceMatchesDenseAugmentedSolve) {
     std::mt19937 gen(20260714);
@@ -927,8 +926,8 @@ TEST(NetworkNormalEquationsTest, DdPriorPosteriorCovarianceMatchesDenseAugmented
 }
 
 // The hard-constraint limit: a K=1 DD prior with Pz→0 and zhat=0 (a "sum of two
-// columns = 0" constraint) must coincide with the shipped sum-to-zero gauge fold on
-// the same columns — the generalization is exact, not a new mechanism.
+// columns = 0" constraint) coincides with the existing sum-to-zero gauge fold on the
+// same columns: the DD fold generalizes the gauge fold exactly.
 TEST(NetworkNormalEquationsTest, FoldReducedDdPriorsHardLimitEqualsSumZeroGauge) {
     std::mt19937 gen(4242);
     const Eigen::Index n_shared = 3;
@@ -972,7 +971,7 @@ TEST(NetworkNormalEquationsTest, FoldReducedDdPriorsHardLimitEqualsSumZeroGauge)
             << "station " << r << " hard-limit reconstruction mismatch";
 }
 
-// OFF-path byte-identity: an empty DD-prior list is a genuine no-op.
+// Off-path byte-identity: an empty DD-prior list is a no-op.
 TEST(NetworkNormalEquationsTest, FoldReducedDdPriorsEmptyIsNoOp) {
     std::mt19937 gen(777);
     const Eigen::Index n_shared = 3;
@@ -992,15 +991,15 @@ TEST(NetworkNormalEquationsTest, FoldReducedDdPriorsEmptyIsNoOp) {
     EXPECT_EQ(empty.numDdPriorBlocks(), 0u);
 }
 
-// Gate 4 — DatumFreedom (the make-or-break falsifier of the invariant-carry concept).
-// A z-store "tree realization" IS a choice of fundamental-cycle basis; two different
-// realizations are related by a UNIMODULAR integer T (a z-store pivot).  The SAME DD
+// Datum freedom, the deciding test of the invariant-carry concept (Gate 4).
+// A z-store "tree realization" is a choice of fundamental-cycle basis; two different
+// realizations are related by a unimodular integer T (a z-store pivot).  The same DD
 // information carried in basis 1 (C1, Pz1, ẑ1) and in basis 2 = T·basis1
-// (C2 = T C1, Pz2 = T Pz1 Tᵀ, ẑ2 = T ẑ1) must fold to the IDENTICAL producer solution
-// — because C2ᵀ Pz2⁻¹ C2 = C1ᵀ Pz1⁻¹ C1 and C2ᵀ Pz2⁻¹ ẑ2 = C1ᵀ Pz1⁻¹ ẑ1 (the datum can
+// (C2 = T C1, Pz2 = T Pz1 Tᵀ, ẑ2 = T ẑ1) folds to the identical producer solution,
+// because C2ᵀ Pz2⁻¹ C2 = C1ᵀ Pz1⁻¹ C1 and C2ᵀ Pz2⁻¹ ẑ2 = C1ᵀ Pz1⁻¹ ẑ1 (the datum can
 // be re-realized freely every epoch; nothing the filter remembers depends on it).
-// This ALSO proves the fold is the JOINT rank-K Woodbury: independent rank-1 folds are
-// NOT basis-invariant, so they would fail here.
+// The test also shows the fold is the joint rank-K Woodbury: independent rank-1 folds
+// are not basis-invariant and would fail here.
 TEST(NetworkNormalEquationsTest, FoldReducedDdPriorsDatumFreedomBasisInvariant) {
     std::mt19937 gen(20260712);
     const Eigen::Index n_shared = 4;
@@ -1049,8 +1048,8 @@ TEST(NetworkNormalEquationsTest, FoldReducedDdPriorsDatumFreedomBasisInvariant) 
                       .cwiseAbs().maxCoeff(), 1e-9)
             << "station " << r << " locals must be basis-invariant";
 
-    // Negative control: a NON-congruent re-basis (rows re-based by T but Pz left = Pz1)
-    // MUST move the solution — the invariance is a real property, not vacuous.
+    // Negative control: a non-congruent re-basis (rows re-based by T but Pz left = Pz1)
+    // moves the solution, so the invariance above is not vacuous.
     NetworkNormalEquations::DdPriorBlock bad = b2;
     bad.Pz = b1.Pz;   // should have been T·Pz1·Tᵀ
     NetworkNormalEquations n3(n_shared); build(n3); n3.reduce(); n3.foldReducedDdPriors({bad});
@@ -1058,10 +1057,10 @@ TEST(NetworkNormalEquationsTest, FoldReducedDdPriorsDatumFreedomBasisInvariant) 
         << "a non-congruent re-basis must change the solution (invariance is non-vacuous)";
 }
 
-// The INTENDED Card-4 composition: a PRE-reduce local pin (addStationPrior, the tree/
-// anchor phase datum) + the POST-reduce DD fold reproduce the dense stacked solve with
-// BOTH augmentations — because the DD fold reads the ALREADY-PINNED N_rr.  (Contrast two
-// POST-reduce folds, which drop the cross term over coupled columns.)
+// The intended Card-4 composition: a pre-reduce local pin (addStationPrior, the tree/
+// anchor phase datum) plus the post-reduce DD fold reproduce the dense stacked solve
+// with both augmentations, because the DD fold reads the already-pinned N_rr.  (Two
+// post-reduce folds, by contrast, drop the cross term over coupled columns.)
 TEST(NetworkNormalEquationsTest, FoldReducedDdPriorsComposesWithStationPrior) {
     std::mt19937 gen(20260713);
     const Eigen::Index n_shared = 4;
@@ -1108,9 +1107,9 @@ TEST(NetworkNormalEquationsTest, FoldReducedDdPriorsComposesWithStationPrior) {
         neq.addStation(s.A_s.transpose() * WA_s, s.A_s.transpose() * WA_r, N_rr,
                        WA_s.transpose() * s.y, WA_r.transpose() * s.y);
     }
-    neq.addStationPrior(pin_sta, pin_cols, pinL, Eigen::VectorXd::Zero(2));  // PRE-reduce
+    neq.addStationPrior(pin_sta, pin_cols, pinL, Eigen::VectorXd::Zero(2));  // pre-reduce
     neq.reduce();
-    neq.foldReducedDdPriors({blk});                                         // POST-reduce
+    neq.foldReducedDdPriors({blk});                                         // post-reduce
     const Eigen::VectorXd x_s = neq.solveShared();
 
     EXPECT_TRUE(x_s.isApprox(x_ref.head(n_shared), 1e-9))
@@ -1123,8 +1122,8 @@ TEST(NetworkNormalEquationsTest, FoldReducedDdPriorsComposesWithStationPrior) {
     }
 }
 
-// A degenerate (non-PD Pᶻ+B) block folds INERTLY and keeps its input-index slot: the
-// solve equals folding only the healthy block, numDdPriorBlocks counts BOTH, and
+// A degenerate (non-PD Pᶻ+B) block folds inertly and keeps its input-index slot: the
+// solve equals folding only the valid block, numDdPriorBlocks counts both, and
 // ddPriorPosteriorMean(degenerate) returns the (unchanged) prior mean.
 TEST(NetworkNormalEquationsTest, FoldReducedDdPriorsDegenerateBlockIsInertAndIndexStable) {
     std::mt19937 gen(99);
@@ -1165,16 +1164,16 @@ TEST(NetworkNormalEquationsTest, FoldReducedDdPriorsDegenerateBlockIsInertAndInd
         << "the degenerate block must fold inertly (zero effect on the solve)";
     EXPECT_NEAR(n_both.ddPriorPosteriorMean(0, xb)(0), bad.zhat(0), 1e-12)
         << "an inert block's posterior is its unchanged prior (M=0 ⇒ no shrink)";
-    EXPECT_EQ(n_both.ddPriorPosteriorMean(1, xb).size(), 1);   // healthy block still valid
+    EXPECT_EQ(n_both.ddPriorPosteriorMean(1, xb).size(), 1);   // the valid block still has a readout
 }
 
 // Deterministic-parallel fold (network.parallel_seam): foldReducedDdPriors(blocks,
-// n_threads > 1) computes each block's algebra in parallel but ACCUMULATES the GMGᵀ /
-// GM(z_free−ẑ) contributions SERIALLY in block-index order, so the reduced system, the
-// solve, the per-station reconstruction and every per-block readout are BYTE-IDENTICAL
-// to the serial fold (n_threads == 1) — unlike the ULP-reassociating parallel_reduce.
-// Exercises a multi-block set incl. a chordless (K=0) inert slot and a degenerate
-// (non-PD) inert slot, so the slot bookkeeping is covered too.
+// n_threads > 1) computes each block's algebra in parallel but accumulates the GMGᵀ /
+// GM(z_free−ẑ) contributions serially in block-index order, so the reduced system, the
+// solve, the per-station reconstruction and every per-block readout are byte-identical
+// to the serial fold (n_threads == 1).  parallel_reduce, by contrast, reassociates and
+// differs at the ULP level.  The block set includes a chordless (K=0) inert slot and a
+// degenerate (non-PD) inert slot, so the slot bookkeeping is covered too.
 TEST(NetworkNormalEquationsTest, FoldReducedDdPriorsParallelMatchesSerialByteForByte) {
     std::mt19937 gen(20260713);
     const Eigen::Index n_shared = 5;
@@ -1194,7 +1193,7 @@ TEST(NetworkNormalEquationsTest, FoldReducedDdPriorsParallelMatchesSerialByteFor
     };
     using Term = NetworkNormalEquations::DdPriorBlock::Term;
     std::vector<NetworkNormalEquations::DdPriorBlock> blocks;
-    {   // (0) rank-2 JOINT block spanning 3 stations (shares station-1 col 0)
+    {   // (0) rank-2 joint block spanning 3 stations (shares station-1 col 0)
         NetworkNormalEquations::DdPriorBlock b;
         b.rows = {
             {Term{0, 0, +1.0}, Term{1, 0, -1.0}, Term{1, 1, +1.0}, Term{0, 1, -1.0}},
@@ -1262,8 +1261,8 @@ TEST(NetworkNormalEquationsTest, FoldReducedDdPriorsParallelMatchesSerialByteFor
     }
 }
 
-// An EMPTY addStationPrior is a genuine no-op: byte-identical to never calling it
-// (the OFF-state byte-identity guarantee at the kernel level).
+// An empty addStationPrior is a no-op: byte-identical to never calling it (the
+// off-state byte-identity guarantee at the kernel level).
 TEST(NetworkNormalEquationsTest, AddStationPriorEmptyIsNoOp) {
     std::mt19937 gen(555);
     const Eigen::Index n_shared = 3;
@@ -1305,9 +1304,9 @@ TEST(NetworkNormalEquationsTest, AddStationPriorRejectsBadInputs) {
 
 // Pin-aware station PD guard (network.station_pd_pin_aware): with a deliberate
 // 1e10 gauge-pin pivot inside the local block (the prioritized phase-datum
-// anchor pin), the legacy max-pivot relative rank test rejects a healthy ~1e-3
-// weakest parameter (1e-3 < 1e-12·1e10 — the TWTF/VOIM every-epoch ejection
-// class); the median-scale test accepts the same block, while a truly singular
+// anchor pin), the legacy max-pivot relative rank test rejects a valid ~1e-3
+// weakest parameter (1e-3 < 1e-12·1e10, which ejects such a station every
+// epoch); the median-scale test accepts the same block, while a singular
 // direction stays rejected under both.
 TEST(NetworkNormalEquationsTest, StationPdMedianScaleAcceptsPinnedMarginalBlock) {
     const Eigen::Index n_s = 2;
@@ -1317,13 +1316,13 @@ TEST(NetworkNormalEquationsTest, StationPdMedianScaleAcceptsPinnedMarginalBlock)
     const Eigen::VectorXd u_r = Eigen::VectorXd::Zero(3);
     auto blk = [](double weak) {
         Eigen::MatrixXd N_rr = Eigen::MatrixXd::Zero(3, 3);
-        N_rr(0, 0) = 1e10;   // gauge-pin row (deliberate, healthy)
+        N_rr(0, 0) = 1e10;   // gauge-pin row (deliberate, not a defect)
         N_rr(1, 1) = 1.0;    // ordinary local parameter
         N_rr(2, 2) = weak;   // weakest parameter under test
         return N_rr;
     };
 
-    // Legacy guard: the pin inflates the reference scale → healthy 1e-3 rejected.
+    // Legacy guard: the pin inflates the reference scale → a valid 1e-3 is rejected.
     NetworkNormalEquations legacy(n_s);
     EXPECT_THROW(legacy.addStation(N_ss, N_sr, blk(1e-3), u_s, u_r),
                  std::invalid_argument);
@@ -1332,14 +1331,14 @@ TEST(NetworkNormalEquationsTest, StationPdMedianScaleAcceptsPinnedMarginalBlock)
     NetworkNormalEquations aware(n_s);
     aware.setStationPdMedianScale(true);
     EXPECT_NO_THROW(aware.addStation(N_ss, N_sr, blk(1e-3), u_s, u_r));
-    // …and a truly singular direction is still rejected (1e-14 < 1e-12·median).
+    // …and a singular direction is still rejected (1e-14 < 1e-12·median).
     EXPECT_THROW(aware.addStation(N_ss, N_sr, blk(1e-14), u_s, u_r),
                  std::invalid_argument);
 }
 
 // Reduce-once instrumentation: the carried-prior path (addStation → addStationPrior
-// → solve) must trigger EXACTLY ONE per-station Schur recompute, and a post-reduce
-// addStationPrior must correctly invalidate the cache (forcing a second recompute).
+// → solve) triggers one Schur recompute (reduceRecomputeCount() == 1), and a
+// post-reduce addStationPrior invalidates the cache, forcing a second recompute.
 TEST(NetworkNormalEquationsTest, AddStationPriorReduceOnceInstrumentation) {
     std::mt19937 gen(8675309);
     const Eigen::Index n_shared = 3;
@@ -1351,7 +1350,7 @@ TEST(NetworkNormalEquationsTest, AddStationPriorReduceOnceInstrumentation) {
             neq.addStationObservations(s.A_s, s.A_r, s.W, s.y);
     };
 
-    // Path mirroring the driver: prior injected BEFORE the first reduce → one recompute.
+    // Path mirroring the driver: prior injected before the first reduce → one recompute.
     NetworkNormalEquations neq(n_shared);
     build(neq);
     Eigen::VectorXd one(1); one << 5.0;
@@ -1359,11 +1358,11 @@ TEST(NetworkNormalEquationsTest, AddStationPriorReduceOnceInstrumentation) {
     EXPECT_EQ(neq.reduceRecomputeCount(), 0u);
     neq.solveShared();
     EXPECT_EQ(neq.reduceRecomputeCount(), 1u);
-    neq.solveShared();                              // idempotent — no new recompute
+    neq.solveShared();                              // idempotent; no new recompute
     EXPECT_EQ(neq.reduceRecomputeCount(), 1u);
 
-    // A post-reduce prior must mark the cache stale (the design's "stray post-gate
-    // injection doubles the serial path" — detectable via the counter).
+    // A post-reduce prior marks the cache stale.  The counter makes a stray post-gate
+    // injection visible, since it doubles the serial reduce work.
     neq.addStationPrior(1, {1}, one, one);
     neq.reduce();
     EXPECT_EQ(neq.reduceRecomputeCount(), 2u);
@@ -1397,27 +1396,27 @@ TEST(NetworkNormalEquationsTest, CovarianceDiagMatchesFullDiagonal) {
         EXPECT_NEAR(diag(i), full(cols[i], cols[i]), 1e-10);
 }
 
-// FIREWALL (design §4): a carried prior is reduction-orthogonal to a SHARED gauge
-// direction the data leaves free.  A station ambiguity carry must NOT fill an
-// unpinned shared-clock gauge — so a marginal / under-determined epoch still trips
-// the null-space gate (withholds) with the carry ON.  Here two shared columns are
+// Firewall (design §4): a carried prior is reduction-orthogonal to a shared gauge
+// direction the data leaves free.  A station ambiguity carry does not fill an
+// unpinned shared-clock gauge, so a marginal or under-determined epoch still trips
+// the null-space gate (withholds) with the carry on.  Here two shared columns are
 // made co-linear (analogue of an unpinned per-constellation clock datum): the
-// direction e0−e1 is exactly null in the reduced normals, and adding a local carry
-// must leave it exactly null while still moving the reconstructed locals.
+// direction e0−e1 is null in the reduced normals, and adding a local carry leaves
+// it null while still moving the reconstructed locals.
 TEST(NetworkNormalEquationsTest, CarryDoesNotFillSharedGauge_Firewall) {
     std::mt19937 gen(31459);
     const Eigen::Index n_shared = 3;
     auto stations = makeStations(gen, n_shared, /*n_locals=*/{2, 3}, /*m_obs=*/{9, 10},
                                  /*correlated=*/false);
-    // Force shared columns 0 and 1 to be IDENTICAL at every station → only their
+    // Force shared columns 0 and 1 to be identical at every station → only their
     // difference is unobservable: v = e0 − e1 is a pure gauge (A v = 0 everywhere).
     for (auto& s : stations) s.A_s.col(1) = s.A_s.col(0);
     Eigen::VectorXd v = Eigen::VectorXd::Zero(n_shared);
     v(0) = 1.0; v(1) = -1.0;
 
     auto build = [&](NetworkNormalEquations& neq) {
-        // NO shared prior on the gauge: leave the deficiency in place (a real
-        // unpinned datum); a tiny prior only on column 2 keeps the rest sensible.
+        // No shared prior at all, so the gauge deficiency stays in place (a real
+        // unpinned datum); only the local blocks get a 1e-2 prior.
         for (const auto& s : stations) {
             const Eigen::MatrixXd WA_s = s.W * s.A_s;
             const Eigen::MatrixXd WA_r = s.W * s.A_r;
@@ -1443,15 +1442,15 @@ TEST(NetworkNormalEquationsTest, CarryDoesNotFillSharedGauge_Firewall) {
     carried.addStationPrior(1, {0, 2}, dN, du);
     carried.reduce();
 
-    // The shared gauge direction stays EXACTLY as null as before — the carry could
-    // not pin it (it touches only local columns).  The gate's null-space count is
-    // therefore unchanged → an under-determined epoch still withholds.
+    // The shared gauge direction stays as null as before: the carry cannot pin it
+    // (it touches only local columns).  The gate's null-space count is therefore
+    // unchanged, and an under-determined epoch still withholds.
     const double gauge_after = (carried.reducedSharedNormals() * v).norm();
     EXPECT_LT(gauge_after, 1e-8) << "carry must NOT fill the shared gauge";
 
-    // ...yet the carry is genuinely ACTIVE: it moves the reconstructed locals (so
-    // this is a real firewall, not a vacuous no-op).  Solve the constrained system
-    // (pin the gauge so a unique solution exists) and compare station-1 locals.
+    // The carry is still active: it moves the reconstructed locals, so the check
+    // above is not a vacuous no-op.  Solve the constrained system (pin the gauge so a
+    // unique solution exists) and compare station-1 locals.
     Eigen::MatrixXd Cb = base.reducedSharedNormals();
     Eigen::MatrixXd Cc = carried.reducedSharedNormals();
     Eigen::VectorXd ub = base.reducedSharedRhs();

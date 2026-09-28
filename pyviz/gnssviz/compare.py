@@ -1,41 +1,41 @@
-"""A/B run-comparison for two GnssProcessor NETWORK runs (matplotlib-free).
+"""A/B run-comparison for two GnssProcessor network runs (matplotlib-free).
 
-A validation run is only meaningful *against a baseline*: "floors OFF locks in at
-epoch 42, floors ON stays fixed" is a statement about two runs, not one.  The
-single-``ctx`` :mod:`~gnssviz.viewers` all answer "how did THIS run behave?"; the
-comparators here answer "how did run **B** differ from run **A**?" over the same
+A validation run is meaningful against a baseline: "floors off locks in at
+epoch 42, floors on stays fixed" is a statement about two runs, not one. The
+single-``ctx`` :mod:`~gnssviz.viewers` answer "how did this run behave?"; the
+comparators here answer "how did run B differ from run A?" over the same
 epochs.
 
 Design
 ------
 * A :class:`ComparePair` bundles two :class:`~gnssviz.trace_paths.TraceContext`
   (``a`` / ``b``) with human labels.
-* Each *comparator* is a plain function ``fn(pair) -> ViewerResult`` -- the same
+* Each comparator is a plain function ``fn(pair) -> ViewerResult``, the same
   return type the report assembler already consumes, so the A/B report reuses
   :func:`gnssviz.report.write_html_report` verbatim (no forked rendering).
-* Comparators are **not** registered in the viewers ``REGISTRY``: that driver is
-  single-``ctx`` and would call them with the wrong argument.  They live in the
+* Comparators are not registered in the viewers ``REGISTRY``: that driver is
+  single-``ctx`` and would call them with the wrong argument. They live in the
   ordered :data:`COMPARATORS` list, driven by :mod:`run_compare`.
-* A comparator that cannot run (a required CSV is absent on *either* side) raises
+* A comparator that cannot run (a required CSV is absent on either side) raises
   :class:`~gnssviz.viewers.base.ViewerSkip`; :func:`run_comparators` turns that
   into a ``(name, reason)`` skip entry, exactly like the single-ctx driver.
 
 Epoch alignment
 ---------------
-Two runs withhold *different* epochs (that is often the whole point of the A/B),
-so a naive positional zip is wrong.  :func:`align_epochs` joins on
-``(week, round(tow*1000))`` -- an **inner** join for any B-A delta series (a delta
-is only defined where both ran) and reports the per-side unmatched-epoch counts so
-a reader knows how comparable the two series even are.  Overlay traces use each
-run's *full* series (no join) so a withheld stretch shows as a gap, not a
-silently-dropped sample.
+Two runs can withhold different epochs, which is often the reason for the A/B
+comparison, so a naive positional zip is wrong. :func:`align_epochs` joins on
+``(week, round(tow*1000))``: an inner join for any B-A delta series (a delta
+is only defined where both ran), and it reports the per-side unmatched-epoch
+counts so a reader can judge how comparable the two series are. Overlay traces
+use each run's full series (no join) so a withheld stretch shows as a gap, not
+a silently dropped sample.
 
 Colours
 -------
-Run **A** is a dark neutral (the baseline); run **B** is the ``vik`` cool
-endpoint (deep blue); B-A **delta** series use the ``vik`` warm endpoint.  These
-are the same anchors the diverging strip maps use, so the A/B plots read as part
-of the same suite.
+Run A is a dark neutral (the baseline); run B is the ``vik`` cool endpoint
+(deep blue); B-A delta series use the ``vik`` warm endpoint. These are the
+same anchors the diverging strip maps use, so the A/B plots read as part of
+the same suite.
 """
 
 from __future__ import annotations
@@ -598,7 +598,7 @@ def compare_scorecard(pair: ComparePair) -> ViewerResult:
 
 
 # --------------------------------------------------------------------------- #
-#  Ordered comparator registry (NOT the single-ctx viewers REGISTRY)
+#  Ordered comparator registry (distinct from the single-ctx viewers REGISTRY)
 # --------------------------------------------------------------------------- #
 @dataclass
 class Comparator:

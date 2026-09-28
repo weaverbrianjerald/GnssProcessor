@@ -11,16 +11,16 @@ It is the single source of truth for "is my ATX current": run it by hand, wire i
 into a scheduled task, or let the engine invoke it at run start (config toggle
 ``data_download.atx_auto_refresh``). Design points:
 
-  * Conditional fetch -- sends ``If-Modified-Since`` from the local file's mtime,
+  * Conditional fetch: sends ``If-Modified-Since`` from the local file's mtime,
     so a 304 means "already current" and nothing downloads.
-  * Validated, atomic, reversible replace -- the download lands in a temp file,
+  * Validated, atomic, reversible replace: the download lands in a temp file,
     is parse-checked as real ANTEX, the previous file is backed up, then the temp
     is atomically renamed into place. A truncated/HTML-error download never
     clobbers a good ATX.
-  * Best-effort -- any network/validation failure leaves the existing file intact
+  * Best-effort: any network/validation failure leaves the existing file intact
     and exits non-zero; the engine treats that as non-fatal and proceeds with the
     local copy.
-  * Provenance -- reports the ATX's own embedded ``week NNNN`` changelog marker
+  * Provenance: reports the ATX's own embedded ``week NNNN`` changelog marker
     (more reliable than file mtime, which a copy/paste bumps without changing
     content) before and after.
 

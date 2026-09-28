@@ -1,13 +1,13 @@
 /**
  * @file NetworkCoupling.cpp
- * @brief Card-1/1b/1d conditional coupling-row builder (see the header).
+ * @brief Conditional coupling-row builder, cards 1, 1b, 1d (see the header).
  *
- * Decomposition INC-7b (2026-07-17) - the coupling cluster relocated VERBATIM
- * from Application::networkPassB_ (ApplicationNetworkAssembly.cpp); the six
- * former [&] lambdas become CouplingRowBuilder member functions whose captures
- * are now const reference / value members, and the serial counter fold +
- * Card-1d debug dump become foldAndDumpCouplingRows.  Bodies are textually
- * unchanged (dedent only; capture->member map in the INC-7b cut spec).
+ * At decomposition step INC-7b the coupling code was moved unchanged from
+ * Application::networkPassB_ (ApplicationNetworkAssembly.cpp): the six former [&]
+ * lambdas became CouplingRowBuilder member functions whose captures are const
+ * reference or value members, and the serial counter fold and the card 1d debug
+ * dump became foldAndDumpCouplingRows.  The capture-to-member map is in the INC-7b
+ * cut spec.
  */
 
 #include "filter/NetworkCoupling.hpp"
@@ -15,13 +15,13 @@
 
 #include "filter/NetworkEstimator.hpp"   // est.clockColumn / phaseBiasColumn / codeBiasColumn / vtecCoeffColumn
 #include "config/GnssConfigTypes.hpp"    // GlobalVtecShConfig::q_per_degree (couplingQ)
-#include "filter/StateKeySchema.hpp"     // StateKeys::parseSatPhaseBiasKey (Card-1d dump)
+#include "filter/StateKeySchema.hpp"     // StateKeys::parseSatPhaseBiasKey (card 1d dump)
 
-#include <spdlog/spdlog.h>               // Card-1d debug dump (log->info)
-#include <fmt/format.h>                  // Card-1d dump gauge-sum formatting
+#include <spdlog/spdlog.h>               // debug dump of card 1d (log->info)
+#include <fmt/format.h>                  // gauge-sum formatting in the card 1d dump
 
 #include <cmath>
-#include <limits>            // F3 buildLocalBlock: NaN sentinel for a missing harvest pair
+#include <limits>            // NaN sentinel for a missing harvest pair (F3 buildLocalBlock)
 #include <map>
 #include <memory>
 #include <numeric>
@@ -63,9 +63,9 @@ double CouplingRowBuilder::couplingQ(const CoupledShared& cs) const {
         case SharedParamKind::CodeBias:  return q_cb;
         case SharedParamKind::PhaseBias: return q_pb;
         case SharedParamKind::VtecSh: {
-            // Per-layer q ladder — must stay consistent with the injector's
-            // RW-toward-previous q (networkInjectShVtecPrior), which is the
-            // SAME model expressed driver-side.
+            // Per-layer q ladder.  It must stay consistent with the injector's
+            // random-walk-toward-previous q (networkInjectShVtecPrior), which is the
+            // same model expressed driver-side.
             const double q0 = (cs.sh_layer > 0) ? shc.layer2_q_per_degree
                                                 : shc.q_per_degree;
             return (cs.n == 0) ? q0 : q0 / static_cast<double>(cs.n * cs.n);
@@ -84,15 +84,14 @@ void CouplingRowBuilder::tuGaugeRestore(
             d.first += e.m_un - e.m_shr;
             ++d.second;
         }
-    // Card 1f: a TRUNCATED column's coefficient was deleted outright, so the family
-    // is short by exactly that coefficient — the same kind of deficit the κ shrink
-    // opens, and correctable the same way.  Seeding the deficit map from the
-    // truncated sums (rather than only from the present entries' shrink) is the
-    // whole fix: it restores Σ_family M to its HARVEST value instead of to the
-    // surviving-present value.  A family with truncated mass but NO present
-    // recipient has nowhere to put it — the row cannot be made gauge-invariant
-    // this epoch, so it is counted and left alone (invariant #4: the miss is
-    // TELEMETRY, not a silent partial fix).
+    // A truncated column's coefficient was deleted (card 1f), so its family's sum is
+    // short by that coefficient.  This is the same kind of deficit the κ shrink opens
+    // and is corrected the same way: seeding the deficit map with the truncated sums,
+    // in addition to the present entries' shrink, restores Σ_family M to its harvest
+    // value instead of to the surviving-present value.  A family with truncated mass
+    // and no present recipient cannot be corrected this epoch; the row stays
+    // gauge-variant for that family, and the miss is counted (cpl_gauge_orphan,
+    // cpl_orphan_fam) rather than partially fixed (invariant #4).
     if (trunc_sum)
         for (const auto& [fam, s] : *trunc_sum) {
             if (s == 0.0) continue;
@@ -117,35 +116,36 @@ void CouplingRowBuilder::tuGaugeRestore(
 }
 
 bool CouplingRowBuilder::tuReinitSince(const CoupledShared& cs, double since_s) const {
-    // Card 1g: the κ time update is no longer the sole gate.  A column that was
-    // RE-REALIZED since this row's harvest carries an unknown frame step in its
-    // stashed ŝ_prev, so folding it as a full-weight PRESENT term injects that step
-    // as row bias — independently of whether the border time update is armed.
+    // The κ time update is not the only gate (card 1g).  A column re-realized since
+    // this row's harvest carries an unknown frame step in its stashed ŝ_prev, so
+    // folding it as a full-weight present term injects that step as row bias,
+    // whether or not the border time update is armed.
     if (!carry_cpl_tu && !carry_cpl_reinit) return false;
     const auto hit = [&](const std::string& sig) {
         const auto it = tu_reinit_hist.find({cs.kind, cs.sat, sig});
         return it != tu_reinit_hist.end() && it->second > since_s;
     };
-    // Card 1g ON-path telemetry (standing invariant #4).  The run's departed-term total
-    // moves for many reasons, so it cannot answer "did the realization-step widening do
-    // anything?".  This counts the terms THIS rule diverted, and only those: the exact
-    // (kind,sat,signal) probe firing where the legacy sat-wide probe would not have.
+    // On-path telemetry for card 1g (invariant #4).  The run's departed-term total
+    // moves for many reasons and cannot show whether the per-signal widening acts;
+    // this counter counts only the terms this rule diverts, i.e. where the exact
+    // (kind, sat, signal) probe fires and the sat-wide probe would not.
     if (carry_cpl_reinit && !cs.signal.empty() && hit(cs.signal) && !hit(std::string{}))
         ++R.cpl_reinit_diverted;
     // The clock-QC feeds mark a whole satellite (empty signal = sat-wide wildcard);
-    // the realization-step feeds mark one (sat,signal) family.  Probing the exact
-    // key FIRST and the wildcard second reproduces the legacy sat-wide matching
-    // exactly when only the legacy feeds are populated.
+    // the realization-step feeds mark one (sat, signal) family.  Probing the exact
+    // key first and the wildcard second reproduces the sat-wide matching when only
+    // the sat-wide feeds are populated.
     if (!carry_cpl_reinit) return hit(std::string{});
     return hit(cs.signal) || (!cs.signal.empty() && hit(std::string{}));
 }
 
 bool CouplingRowBuilder::readmitDiverted(const CoupledShared& cs) {
-    // READMIT re-coupling edge: a satellite-side column inside its post-re-admission
-    // window takes the departed (q=∞) route regardless of the row's harvest time — the
-    // column exists and is bound, but its realization is still settling from the cold
-    // seed, so conditioning a stiff carried row on it injects that settling as row bias
-    // (F3's dense L⁻¹ then mixes it into every ambiguity of the station block).
+    // Re-admission re-coupling edge: a satellite-side column inside its
+    // post-re-admission window takes the departed (q = ∞) route regardless of the
+    // row's harvest time.  The column exists and is bound, but its realization is
+    // still settling from the cold seed, so conditioning a stiff carried row on it
+    // injects that settling as row bias (and F3's dense L⁻¹ then mixes it into every
+    // ambiguity of the station block).
     if (!readmit_marg || readmit_marg->empty() || cs.kind == SharedParamKind::VtecSh
         || cs.sat.empty())
         return false;
@@ -159,35 +159,36 @@ void CouplingRowBuilder::buildCplRow(Eigen::Index col, double x_lin_val,
                                      const LocalCarry& lc, double var_eff,
                                      double gap) {
     if (carry_cpl_joint) {
-        // Card 1b: same present/departed split as the scalar path, but the
-        // DEPARTED columns become shared M_w columns (marginalized JOINTLY
-        // at append) instead of a per-row scalar σ² addend.
+        // Joint path (card 1b): the same present/departed split as the scalar
+        // path, but the departed columns become shared M_w columns (marginalized
+        // jointly at append) instead of a per-row scalar σ² addend.
         CplRowRaw raw;
         raw.local_col = col;
         raw.var_eff   = var_eff;
         double rhs = lc.value_abs - x_lin_val;   // (r̂_prev − r_lin)
-        std::vector<TuEnt> ents;                 // Card 1d: buffered present terms
-        // Card 1f: with the gauge projection armed the buffer owns ALL present-term
-        // emission, so the restore can run with the κ time update OFF.  Iteration
-        // order is unchanged and departed terms never touch `rhs`, so the OFF path
-        // is bit-identical.
+        std::vector<TuEnt> ents;                 // buffered present terms (card 1d)
+        // With the gauge projection armed (card 1f), every present term is emitted
+        // through the buffer, so the restore also runs with the κ time update off.
+        // The iteration order is unchanged and departed terms never touch `rhs`, so
+        // the off path is bit-identical.
         const bool buffer_all = carry_cpl_tu || carry_cpl_gauge;
-        std::map<std::pair<char, int>, double> trunc;  // Card 1f: (cc,kind) → Σ truncated coeff
+        std::map<std::pair<char, int>, double> trunc;  // (cc,kind) → Σ truncated coeff (card 1f)
         for (const CoupledShared& cs : lc.coupling) {
             Eigen::Index c = resolveSharedCol(cs);
-            // Card 1d: a (kind, sat) column reinit-folded since this row's
-            // harvest is decorrelated from its stashed value — the coupling
-            // term's κ=0 (q=∞) limit IS the departed treatment, so route it
-            // to the joint M_w marginalization.  Card 1d-SH: VtecSh terms
-            // take the same route (GM border ≠ the κ update's RW model).
+            // A column reinit-folded since this row's harvest (card 1d) is
+            // decorrelated from its stashed value.  The κ = 0 (q = ∞) limit of the
+            // coupling term is the departed treatment, so the term goes to the
+            // joint M_w marginalization.  With carry_cpl_shmarg (card 1d-SH), VtecSh
+            // terms take the same route (the GM border does not follow the κ update's
+            // RW model).
             if (c >= 0 && (tuReinitSince(cs, lc.last_seen_s)
                            || (carry_cpl_shmarg
                                && cs.kind == SharedParamKind::VtecSh)))
                 c = -1;
-            // READMIT re-coupling edge (network.readmit_coupling_marg_ep): a column
-            // re-registered after a gap is still settling for K epochs — same route.
+            // Re-admission re-coupling edge (network.readmit_coupling_marg_ep): a
+            // column re-registered after a gap is still settling for K epochs; same route.
             if (c >= 0 && readmitDiverted(cs)) c = -1;
-            if (c < 0) {                          // DEPARTED → M_w column
+            if (c < 0) {                          // departed → M_w column
                 const std::string id = couplingId(cs);
                 auto it = white_map.find(id);
                 int widx;
@@ -198,9 +199,9 @@ void CouplingRowBuilder::buildCplRow(Eigen::Index col, double x_lin_val,
                 } else {
                     widx = it->second;
                     // Rows harvested at different epochs may carry slightly
-                    // different P_prev for the same departed column; take the
-                    // larger (conservative) so the shared marginalization is
-                    // never optimistic.
+                    // different P_prev for the same departed column; the larger
+                    // is kept so that the shared marginalization is never
+                    // optimistic.
                     if (cs.p_prev > white_pw[static_cast<std::size_t>(widx)])
                         white_pw[static_cast<std::size_t>(widx)] = cs.p_prev;
                 }
@@ -212,9 +213,9 @@ void CouplingRowBuilder::buildCplRow(Eigen::Index col, double x_lin_val,
                 continue;
             }
             ++R.cpl_terms_present;
-            // Card 1d: shrink the PRESENT column by κ_j and inflate this
-            // row's own diagonal by M²·κ_j·q_j·Δt — identical to the scalar
-            // path below; only the departed-column treatment differs (M_w).
+            // Time update (card 1d): shrink the present column by κ_j and inflate
+            // this row's own diagonal by M²·κ_j·q_j·Δt, as on the scalar path below;
+            // only the departed-column treatment (M_w) differs.
             if (carry_cpl_tu) {
                 const double qj = couplingQ(cs) * gap;
                 double m = cs.coeff;
@@ -229,7 +230,7 @@ void CouplingRowBuilder::buildCplRow(Eigen::Index col, double x_lin_val,
                                      cs.kind});
                 continue;
             }
-            if (buffer_all) {   // Card 1f: unshrunk, but routed through the buffer
+            if (buffer_all) {   // unshrunk, but routed through the buffer (card 1f)
                 ents.push_back(TuEnt{c, cs.coeff, cs.coeff, cs.s_prev,
                                      cs.sat.empty() ? '\0' : cs.sat[0],
                                      cs.kind});
@@ -245,14 +246,14 @@ void CouplingRowBuilder::buildCplRow(Eigen::Index col, double x_lin_val,
                 rhs += e.m_shr * e.s_prev;
             }
         }
-        if (!(raw.var_eff > 0.0) || !std::isfinite(rhs)) return;  // never poison
+        if (!(raw.var_eff > 0.0) || !std::isfinite(rhs)) return;  // skip: σ² ≤ 0 or non-finite RHS
         raw.rhs = rhs;
         craw.push_back(std::move(raw));
         return;
     }
-    // Card 1 scalar path (unchanged — byte-identical when carry_cpl_joint off).  The
-    // loop body lives in scalarRowIngredients so the F3 block path shares it
-    // verbatim; the operations and their order are the pre-F3 inline sequence.
+    // Scalar path (card 1).  The loop body lives in scalarRowIngredients so that the
+    // F3 block path shares it; the operations and their order are those of the
+    // former inline sequence, so the scalar path is byte-identical to it.
     PendCplRow row;
     double sigma2 = 0.0;
     if (!scalarRowIngredients(col, x_lin_val, lc, var_eff, gap, row, sigma2)) return;
@@ -266,37 +267,40 @@ bool CouplingRowBuilder::scalarRowIngredients(Eigen::Index col, double x_lin_val
     row.local_col = col;
     double rhs = lc.value_abs - x_lin_val;   // (r̂_prev − r_lin)
     double dep_var = 0.0;                    // Σ_departed M_rj²·P_prev,jj
-    double tu_var  = 0.0;                    // Card 1d: Σ_present M_rj²·κ_j·q_j·Δt
-    std::vector<TuEnt> ents;                 // Card 1d: buffered present terms
-    const bool buffer_all = carry_cpl_tu || carry_cpl_gauge;   // Card 1f (see the joint path)
-    std::map<std::pair<char, int>, double> trunc;              // Card 1f: (cc,kind) → Σ truncated coeff
-    // Card 1f: BOTH truncation branches below feed this — a column dropped because it
-    // left the layout and a column forced onto the departed route by a reinit/frame
-    // step are the same perturbation of the coefficient vector.
+    double tu_var  = 0.0;                    // Σ_present M_rj²·κ_j·q_j·Δt (card 1d)
+    std::vector<TuEnt> ents;                 // buffered present terms (card 1d)
+    const bool buffer_all = carry_cpl_tu || carry_cpl_gauge;   // see the joint path (card 1f)
+    std::map<std::pair<char, int>, double> trunc;              // (cc,kind) → Σ truncated coeff (card 1f)
+    // All three truncation branches below feed this map (card 1f).  A column dropped
+    // because it left the layout and a column forced onto the departed route (by a
+    // reinit or frame step, or by the re-admission window) perturb the coefficient
+    // vector in the same way.
     const auto note_trunc = [&](const CoupledShared& cs) {
         if (carry_cpl_gauge && !cs.sat.empty() && cs.kind != SharedParamKind::VtecSh)
             trunc[{cs.sat[0], static_cast<int>(cs.kind)}] += cs.coeff;
     };
     for (const CoupledShared& cs : lc.coupling) {
         const Eigen::Index c = resolveSharedCol(cs);
-        if (c < 0) {                          // DEPARTED → marginalize into σ²
+        if (c < 0) {                          // departed → marginalize into σ²
             dep_var += cs.coeff * cs.coeff * cs.p_prev;
             ++R.cpl_terms_departed;
             note_trunc(cs);
             continue;
         }
-        // READMIT re-coupling edge (network.readmit_coupling_marg_ep): the returned
-        // satellite's columns take the departed route for K epochs (see the joint path).
+        // Re-admission re-coupling edge (network.readmit_coupling_marg_ep): the
+        // returned satellite's columns take the departed route for K epochs (see the
+        // joint path).
         if (readmitDiverted(cs)) {
             dep_var += cs.coeff * cs.coeff * cs.p_prev;
             ++R.cpl_terms_departed;
             note_trunc(cs);
             continue;
         }
-        // Card 1d: a (kind, sat) column reinit-folded since this row's
-        // harvest is the q=∞ limit of the time update: fully marginalize
-        // (κ=0), mirroring the dense fold's decorrelation rule.  Card 1d-SH:
-        // VtecSh terms take the same treatment (GM border ≠ RW κ model).
+        // A column reinit-folded since this row's harvest (card 1d) is the q = ∞
+        // limit of the time update and is fully marginalized (κ = 0), mirroring the
+        // dense fold's decorrelation rule.  With carry_cpl_shmarg (card 1d-SH),
+        // VtecSh terms take the same treatment (the GM border does not follow the RW
+        // κ model).
         if (tuReinitSince(cs, lc.last_seen_s)
             || (carry_cpl_shmarg && cs.kind == SharedParamKind::VtecSh)) {
             dep_var += cs.coeff * cs.coeff * cs.p_prev;
@@ -306,10 +310,10 @@ bool CouplingRowBuilder::scalarRowIngredients(Eigen::Index col, double x_lin_val
         }
         ++R.cpl_terms_present;
         if (carry_cpl_tu) {
-            // Card 1d: the row observed u = r + M_rᵀs at HARVEST; the border
-            // has since moved s⁺ = s + w, w~N(0,Q).  Exact re-independence
-            // against s⁺: shrink M' = κ·M_r (coefficient AND its ŝ_prev RHS
-            // term) and inflate σ² by M²·κ·q·Δt = Mᵀ(P⁻¹+Q⁻¹)⁻¹M per column.
+            // Time update (card 1d): the row observed u = r + M_rᵀs at harvest; the border has
+            // since moved to s⁺ = s + w, w ~ N(0,Q).  Exact re-independence against
+            // s⁺: shrink M' = κ·M_r (the coefficient and its ŝ_prev RHS term) and
+            // inflate σ² by M²·κ·q·Δt = Mᵀ(P⁻¹+Q⁻¹)⁻¹M per column.
             const double qj = couplingQ(cs) * gap;
             double m = cs.coeff;
             if (qj > 0.0 && cs.p_prev > 0.0) {
@@ -323,7 +327,7 @@ bool CouplingRowBuilder::scalarRowIngredients(Eigen::Index col, double x_lin_val
                                  cs.kind});
             continue;
         }
-        if (buffer_all) {   // Card 1f: unshrunk, but routed through the buffer
+        if (buffer_all) {   // unshrunk, but routed through the buffer (card 1f)
             ents.push_back(TuEnt{c, cs.coeff, cs.coeff, cs.s_prev,
                                  cs.sat.empty() ? '\0' : cs.sat[0],
                                  cs.kind});
@@ -340,22 +344,22 @@ bool CouplingRowBuilder::scalarRowIngredients(Eigen::Index col, double x_lin_val
         }
     }
     sigma2 = var_eff + dep_var + tu_var;
-    if (!(sigma2 > 0.0) || !std::isfinite(rhs)) return false;  // never poison the row
+    if (!(sigma2 > 0.0) || !std::isfinite(rhs)) return false;  // skip: σ² ≤ 0 or non-finite RHS
     row.y = rhs;
     return true;
 }
 
 bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols) {
-    // F3 (network.phase_leveling_local_block, SPEC_amb_iono_split_overcount).
+    // Local block (F3, network.phase_leveling_local_block, SPEC_amb_iono_split_overcount).
     //
-    // (1) Per column, the SCALAR-path ingredients — exactly the row buildCplRow
-    //     would have emitted for it: +1/local, the present shared terms (Card-1d
-    //     κ-shrunk, Card-1f gauge-restored), the RHS, and
-    //     σ² = var_eff + Σ_departed M²P_prev + Σ_present M²κqΔt.  The departed
-    //     terms stay per-row (Σ's diagonal) — the scalar-path treatment; the joint
-    //     departed marginalization is Card 1b's and is mutually exclusive with this
-    //     block (the caller's predicate).  A column the scalar screen refuses is
-    //     dropped from the block and counted, never poisoned.
+    // (1) Per column, the scalar-path ingredients, i.e. the row buildCplRow would
+    //     have emitted for it: +1/local, the present shared terms (κ-shrunk per
+    //     card 1d, gauge-restored per card 1f), the RHS, and
+    //     σ² = var_eff + Σ_departed M²P_prev + Σ_present M²κqΔt.  The departed terms
+    //     stay per row, on Σ's diagonal, as on the scalar path; the joint departed
+    //     marginalization of card 1b is mutually exclusive with this block (the
+    //     caller's predicate).  A column refused by the scalar screen is dropped from
+    //     the block and counted.
     struct Ing { PendCplRow row; double sigma2{0.0}; const LocalBlockCol* c{nullptr}; };
     std::vector<Ing> ing;
     ing.reserve(cols.size());
@@ -366,15 +370,16 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
             ++R.pl_blk_col_refused;
             continue;
         }
-        // B9-in-block: the ZWD column is counted only once it has SURVIVED the scalar
-        // screen, i.e. once it is really a row of this block — the caller cannot know
-        // that, and a column counted at push time would report a refused ZWD as carried.
+        // The ZWD column (B9-in-block) is counted only after it survives the scalar
+        // screen, i.e. once it is a row of this block.  The caller cannot know that,
+        // and counting at push time would report a refused ZWD as carried.
         if (c.is_zwd) ++R.pl_blk_zwd_cols;
-        // I-in-block: same rule, same reason — a per-LOS iono column counts once it is
-        // really a row of this block, never at push time.
+        // A per-LOS iono column (I-in-block) follows the same rule for the same
+        // reason: it is counted once it is a row of this block, not at push time.
         if (c.is_iono) ++R.pl_blk_iono_cols;
-        // RX-CLK-in-block: same rule, same reason.  The ISB split is a sub-count, not a
-        // partition — an ISB column increments both.
+        // A receiver-clock-family column (RX-CLK-in-block) follows the same rule.
+        // The ISB count is a sub-count, not a partition: an ISB column increments
+        // both counters.
         if (c.is_rx_clk) {
             ++R.pl_blk_rxclk_cols;
             if (c.is_rx_isb) ++R.pl_blk_rxclk_isb_cols;
@@ -382,18 +387,18 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
         ing.push_back(std::move(g));
     }
     const Eigen::Index n = static_cast<Eigen::Index>(ing.size());
-    if (n == 0) return true;   // nothing to emit — the per-column route would emit nothing either
-    // (2) Σ: the diagonal from (1); the off-diagonals the HARVESTED conditional
-    //     cross covariances (N_rr⁻¹)_{c_i c_j}, valid only when BOTH entries were
-    //     stashed at the same harvest (pointer-equal PlHarvestBlock — the same
-    //     posterior, the same epoch).  Otherwise the pair is ZEROED and counted:
-    //     that makes Σ block-diagonal by harvest stamp, each block a principal
-    //     sub-matrix of one posterior, so PD is preserved by construction rather
-    //     than by luck.  The M2 v2 VCE factor α² is already in var_eff (the
-    //     diagonal), so the cross term scales by √(α_i²·α_j²) — a congruence with a
-    //     diagonal matrix, PD-preserving; the var floor was applied to the diagonal
-    //     only (raising a diagonal is PD-preserving too).  The q·gap term is on the
-    //     diagonal only (a per-column random walk has no cross term).
+    if (n == 0) return true;   // nothing to emit; the per-column route would emit nothing either
+    // (2) Σ: the diagonal from (1); off the diagonal, the harvested conditional
+    //     cross covariances (N_rr⁻¹)_{c_i c_j}, valid only when both entries were
+    //     stashed at the same harvest (pointer-equal PlHarvestBlock: the same
+    //     posterior at the same epoch).  Otherwise the pair is zeroed and counted.
+    //     Σ is then block-diagonal by harvest stamp, each block a principal
+    //     sub-matrix of one posterior, so Σ is PD by construction.  The M2 v2 VCE
+    //     factor α² is already in var_eff (the diagonal), so the cross term scales
+    //     by √(α_i²·α_j²); this is a congruence with a diagonal matrix and preserves
+    //     PD.  The variance floor was applied to the diagonal only (raising a
+    //     diagonal also preserves PD).  The q·gap term is on the diagonal only (a
+    //     per-column random walk has no cross term).
     PlBlockRaw blk;
     blk.rows.reserve(static_cast<std::size_t>(n));
     blk.Sigma = Eigen::MatrixXd::Zero(n, n);
@@ -417,31 +422,29 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
             if (li.blk && li.blk == lj.blk && li.blk_idx >= 0 && lj.blk_idx >= 0
                 && li.blk_idx < li.blk->C.rows() && lj.blk_idx < li.blk->C.cols()) {
                 v = li.blk->C(li.blk_idx, lj.blk_idx);          // n_{c_i}(c_j)
-                if (!std::isfinite(v)) v = li.blk->C(lj.blk_idx, li.blk_idx);   // n_{c_j}(c_i) — the transpose read
+                if (!std::isfinite(v)) v = li.blk->C(lj.blk_idx, li.blk_idx);   // n_{c_j}(c_i), the transpose read
             }
             if (!std::isfinite(v)) {
                 ++R.pl_blk_pair_missing;
-                // B9-in-block: split the ZWD's own missing pairs out of the aggregate.
-                // A ZWD stashed WITHOUT a harvest block (its harvest threw, or the pl
-                // loop never built one for this station) makes EVERY pair with it miss —
-                // that is exactly the shape a "carried ZWD that is not really coupled"
-                // has, and it is invisible inside pl_blk_pair_missing.
+                // The ZWD's own missing pairs, split out of the aggregate
+                // (B9-in-block).  A ZWD stashed without a harvest block (its harvest
+                // threw, or the pl loop built none for this station) makes every
+                // pair with it miss.  That is the signature of a carried ZWD that is
+                // not coupled, and it is not visible in pl_blk_pair_missing alone.
                 if (ci.is_zwd || cj.is_zwd) ++R.pl_blk_zwd_missing_cross;
-                // I-in-block: the iono columns' own share, split out for the same reason.
-                // An iono entry stashed WITHOUT a harvest block (its per-column harvest
-                // threw, or the station built no block that epoch) makes EVERY pair with
-                // it miss — the shape a "carried iono that is not actually coupled to
-                // anything" has, invisible inside the aggregate.  A pair that is BOTH
-                // (iono, zwd) counts in both splits by design: neither counter claims to
-                // partition pl_blk_pair_missing.
+                // The iono columns' own share, split out for the same reason
+                // (I-in-block).  An iono entry stashed without a harvest block (its
+                // per-column harvest threw, or the station built no block that
+                // epoch) makes every pair with it miss.  A pair that is both
+                // (iono, zwd) counts in both splits by design: neither counter
+                // partitions pl_blk_pair_missing.
                 if (ci.is_iono || cj.is_iono) ++R.pl_blk_iono_missing_cross;
-                // RX-CLK-in-block: the clock family's own share, split out for the same
-                // reason.  A clock entry stashed WITHOUT a harvest block makes EVERY pair
-                // with it miss — the shape a "carried clock that is not actually coupled
-                // to anything" has, i.e. a silently DIAGONAL prior on the most
-                // station-common direction of all, invisible inside the aggregate.  A pair
-                // that is both (clock, zwd) or (clock, iono) counts in both splits by
-                // design: no counter here claims to partition pl_blk_pair_missing.
+                // The clock family's own share, split out for the same reason
+                // (RX-CLK-in-block).  A clock entry stashed without a harvest block makes
+                // every pair with it miss, which leaves a diagonal prior on the most
+                // station-common direction.  A pair that is both (clock, zwd) or
+                // (clock, iono) counts in both splits by design: no counter here
+                // partitions pl_blk_pair_missing.
                 if (ci.is_rx_clk || cj.is_rx_clk) ++R.pl_blk_rxclk_missing_cross;
                 continue;
             }
@@ -450,23 +453,24 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
             blk.Sigma(j, i) = v;
         }
     }
-    // (2b) AGE-AWARE young-arc inflate (network.phase_leveling_young_inflate_var_m2,
-    //      SPEC_amb_iono_split_overcount §6.17–§6.18): a column whose LAST RE-LEVEL is
-    //      recent holds a CODE-quality level at the PHASE-stiff variance the conditional
-    //      hands back (it is conditioned on the station's MATURE arcs), so the T4 tier
-    //      erases an arc that is merely UNREFINED and the erase–re-level treadmill runs.
-    //      The correction is a CONGRUENCE Σ ← DΣD with D = diag(f_j),
-    //      f_j = √((Σ_jj + var_add_j)/Σ_jj) ≥ 1 — applied HERE, after the diagonal and
-    //      the harvested cross terms are both in place and BEFORE the whitening, which
-    //      is the only point at which "this column's row and column" is a well-defined
-    //      object.  Three properties, and the reason it is a congruence and not a
-    //      diagonal addition: the target diagonal is inflated EXACTLY (f_j²Σ_jj =
-    //      Σ_jj + a_j); PD is preserved by Sylvester's law of inertia (D is diagonal,
-    //      strictly positive — the scalar screen above already guaranteed Σ_jj > 0); and
-    //      every correlation coefficient is UNCHANGED, because f_jf_kΣ_jk divided by
-    //      √(f_j²Σ_jj·f_k²Σ_kk) is ρ_jk.  A freshly re-levelled arc is not LESS coupled
-    //      to its station's other columns — it is worth less on its own.  OFF (every
-    //      var_add 0) writes nothing to Σ, so the block is byte-identical.
+    // (2b) Age-aware young-arc inflation (network.phase_leveling_young_inflate_var_m2,
+    //      SPEC_amb_iono_split_overcount §6.17–§6.18): a column whose last re-level is
+    //      recent holds a code-quality level at the phase-stiff variance that the
+    //      conditional returns (it is conditioned on the station's mature arcs).
+    //      Without the inflation, the T4 tier erases an arc that is only unrefined,
+    //      and the arc cycles through erase and re-level.  The correction is a
+    //      congruence Σ ← DΣD with D = diag(f_j), f_j = √((Σ_jj + var_add_j)/Σ_jj) ≥ 1,
+    //      applied here: after the diagonal and the harvested cross terms are in
+    //      place and before the whitening, the only point at which "this column's
+    //      row and column" is well defined.  It is a congruence rather than a
+    //      diagonal addition for three properties: the target diagonal is inflated
+    //      exactly (f_j²Σ_jj = Σ_jj + a_j); PD is preserved by Sylvester's law of
+    //      inertia (D is diagonal and strictly positive, since the scalar screen
+    //      guarantees Σ_jj > 0); and every correlation coefficient is unchanged,
+    //      because f_jf_kΣ_jk divided by √(f_j²Σ_jj·f_k²Σ_kk) is ρ_jk.  A freshly
+    //      re-levelled arc is not less coupled to the station's other columns; it
+    //      is worth less on its own.  Off (every var_add 0) writes nothing to Σ, so
+    //      the block is byte-identical.
     {
         std::vector<double> yng_add(static_cast<std::size_t>(n), 0.0);
         bool any_yng = false;
@@ -479,8 +483,9 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
                 NetworkYoungInflate::congruence(blk.Sigma, yng_add));
     }
     // (3) Whiten: Σ = LLᵀ (ridge retry inside), rows L⁻¹·[I | M | y] at unit weight.
-    //     A non-SPD factor after the retry buffers NOTHING — the caller emits the
-    //     per-column rows instead and counts the fallback (invariant #4).
+    //     A non-SPD factor after the retry (or a kept-row count other than n)
+    //     buffers nothing and returns false; the caller then emits the per-column
+    //     rows and counts the fallback (invariant #4).
     Eigen::MatrixXd Hr, Hs;
     Eigen::VectorXd z;
     std::vector<Eigen::Index> kept;
@@ -488,10 +493,10 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
         || static_cast<Eigen::Index>(kept.size()) != n)
         return false;
     // (4) Buffer the n whitened rows as multi-local PendCplRow entries.  L⁻¹ is lower
-    //     triangular, so row k has local entries on block columns 0..k (all pushed —
+    //     triangular, so row k has local entries on block columns 0..k (all pushed;
     //     the diagonal 1/L_kk > 0 guarantees a non-empty `local`, which is what
     //     distinguishes a block row from a scalar +1 row at append).  local_col names
-    //     the row's PRIMARY column (block column k) for cpl_row_local_cols.
+    //     the row's primary column (block column k) for cpl_row_local_cols.
     blk.row0 = static_cast<Eigen::Index>(crows.size());
     for (Eigen::Index k = 0; k < n; ++k) {
         PendCplRow row;
@@ -519,11 +524,11 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
 
 void CouplingRowBuilder::appendCouplingRows() {
     if (carry_cpl_joint) {
-        // Card 1b: JOINTLY whiten this station's coupling rows and append them
-        // as unit-information rows (mirroring appendShIonoRows).  Retain the
-        // pre-whitening ingredients so a within-epoch RAIM refloat can
-        // re-whiten the surviving rows.  R.carry_cols stays EMPTY (the coupling
-        // lives in R.A_s/R.A_r, not the addStationPrior diagonal).
+        // Joint path (card 1b): whiten this station's coupling rows jointly and append them as
+        // unit-information rows (as appendShIonoRows does).  The pre-whitening
+        // ingredients are retained so that a within-epoch RAIM refloat can
+        // re-whiten the surviving rows.  R.carry_cols stays empty (the coupling
+        // lives in R.A_s/R.A_r, not in the addStationPrior diagonal).
         if (!craw.empty()) {
             Eigen::MatrixXd Hr, Hs;
             Eigen::VectorXd z;
@@ -548,10 +553,10 @@ void CouplingRowBuilder::appendCouplingRows() {
                 R.cpl_raw      = std::move(craw);        // for the refloat re-whiten
                 R.cpl_white_pw = std::move(white_pw);
             } else {
-                // Non-SPD joint covariance after the ridge retry → fall back to
-                // the Card-1 per-row scalar marginalization for THIS station this
-                // epoch (dep_var = Σ_departed M_rj²·P_w = the joint diagonal), and
-                // leave cpl_raw EMPTY so the refloat takes the scalar zero-row path.
+                // Non-SPD joint covariance after the ridge retry: fall back to the
+                // card 1 per-row scalar marginalization for this station this epoch
+                // (dep_var = Σ_departed M_rj²·P_w, the joint diagonal), and leave
+                // cpl_raw empty so that the refloat takes the scalar zero-row path.
                 R.cpl_joint_fallback = true;
                 R.A_s.bottomRows(add).setZero();
                 R.A_r.bottomRows(add).setZero();
@@ -571,10 +576,10 @@ void CouplingRowBuilder::appendCouplingRows() {
             }
         }
     } else {
-        // Card 1: batch-append the coupling rows to this station's block
-        // (one conservativeResize, mirroring appendShIonoRows).  R.carry_cols
-        // is left EMPTY so the serial consume's addStationPrior is skipped —
-        // the coupling now lives entirely in R.A_s/R.A_r consumed by addStation.
+        // Scalar path (card 1): batch-append the coupling rows to this station's block (one
+        // conservativeResize, as appendShIonoRows does).  R.carry_cols is left
+        // empty so that the serial consume skips addStationPrior; the coupling
+        // lives entirely in R.A_s/R.A_r, consumed by addStation.
         const Eigen::Index add = static_cast<Eigen::Index>(crows.size());
         if (add > 0) {
             const Eigen::Index m0 = R.A_s.rows();
@@ -590,7 +595,7 @@ void CouplingRowBuilder::appendCouplingRows() {
                 const PendCplRow& row = crows[static_cast<size_t>(k)];
                 if (row.local.empty())
                     R.A_r(m0 + k, row.local_col) = 1.0;
-                else   // F3 whitened block row: one row of L⁻¹ over the block's local columns
+                else   // whitened block row (F3): one row of L⁻¹ over the block's local columns
                     for (const auto& lcoef : row.local)
                         R.A_r(m0 + k, lcoef.first) = lcoef.second;
                 for (const auto& sc : row.shared)
@@ -621,8 +626,9 @@ void foldAndDumpCouplingRows(bool carry_cpl_cond,
                             int& n_cpl_row_dump,
                             std::map<std::pair<char,int>, std::pair<long long,double>>*
                                 cpl_orphan_fam_total) {
-    // Card 1/1d observability: fold the per-station coupling-term counts into the
-    // run totals (SERIAL — the parallel produce above only writes its own slot).
+    // Coupling observability (cards 1, 1d): fold the per-station coupling-term
+    // counts into the run totals.  Serial: the parallel produce writes only its own
+    // slot.
     if (carry_cpl_cond) {
         std::map<std::pair<char,int>, std::pair<long long,double>> ep_orphans;
         for (const StationAssembly& Rc : asm_res) {
@@ -639,9 +645,9 @@ void foldAndDumpCouplingRows(bool carry_cpl_cond,
                 e.second += o.second;
             }
         }
-        // Orphan ATTRIBUTION (multi-constellation owed item): one line per epoch that
-        // produced any — names the (constellation,kind) families, counts and |mass|,
-        // so the run log carries the per-epoch attribution the run-total cannot.
+        // Orphan attribution: one log line per epoch that has any orphans, naming
+        // the (constellation, kind) families with their counts and Σ|m|, so that
+        // the run log carries the per-epoch attribution the run total cannot.
         if (!ep_orphans.empty()) {
             std::string detail;
             for (const auto& [fam, o] : ep_orphans) {
@@ -666,9 +672,9 @@ void foldAndDumpCouplingRows(bool carry_cpl_cond,
                       detail);
         }
     }
-    // Card 1d debug dump: the first few ASSEMBLED coupling rows of the run
-    // (weight, RHS, A_s sparsity/magnitude) — the ground truth of what addStation
-    // actually receives, for A/B-arm comparison.  One-shot budget; log-only.
+    // Debug dump (card 1d): the first assembled coupling rows of the run (weight, RHS,
+    // A_s sparsity and magnitude), i.e. what addStation receives, for A/B-arm
+    // comparison.  The budget n_cpl_row_dump spans the run; log-only.
     std::map<Eigen::Index, CoupledShared> cpl_col2desc_dbg;
     if (carry_cpl_cond && n_cpl_row_dump > 0) {
         for (const std::string& sat : registered_clock_sats) {
@@ -700,15 +706,18 @@ void foldAndDumpCouplingRows(bool carry_cpl_cond,
                 if (row >= Rc.A_s.rows()) break;
                 const Eigen::Index nnz =
                     (Rc.A_s.row(row).array() != 0.0).count();
-                // Exact-vanishing probe: a coupling row on a local column with ZERO
-                // data rows is absorbed COMPLETELY by the free local in the Schur
-                // elimination (adds nothing to the reduced border, any weight).
+                // Exact-vanishing probe: a coupling row on a local column with no
+                // data rows is absorbed completely by the free local in the Schur
+                // elimination (it adds nothing to the reduced border, at any weight).
                 const Eigen::Index lc = Rc.cpl_row_local_cols[static_cast<size_t>(r)];
                 const Eigen::Index data_rows_on_col =
                     (Rc.A_r.col(lc).head(Rc.cpl_row_start).array() != 0.0).count();
                 // Gauge diagnostic: Σ of the row's A_s coefficients over each
-                // constellation's {clk, pb, cb} columns — ≈0 for a gauge-invariant
-                // row (the structural null direction has weight +1 on each).
+                // constellation's {clk, pb, cb} columns (the structural null
+                // direction has weight +1 on each).  A gauge-invariant row has this
+                // sum equal to minus its local's gauge weight: 0 for a local with no
+                // gauge weight, −1 for a local moved by +1 under that constellation's
+                // gauge (docs/SPEC_card1_coupling_carry.md §1).
                 std::map<char, double> gsum;
                 for (const auto& [col, d] : cpl_col2desc_dbg)
                     if (d.kind != SharedParamKind::VtecSh && col < Rc.A_s.cols()

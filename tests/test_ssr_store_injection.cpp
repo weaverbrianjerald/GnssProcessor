@@ -3,17 +3,18 @@
  * @brief DI-seam tests for SsrCorrectionStore injection (PPP-RTK closed-loop harness).
  *
  * The network closed loop feeds a held-out consumer the producer's emitted
- * products from an OWNED SsrCorrectionStore — never the process-wide singleton.
- * @c setSsrStore() is the dependency-injection seam: a null override keeps every
- * existing caller on the singleton (byte-identical, the default), while a non-null
- * pointer routes SSR consumption at the injected store.
+ * products from an owned SsrCorrectionStore, not the process-wide singleton.
+ * @c setSsrStore() is the dependency-injection seam: a null override (the
+ * default) keeps every existing caller on the singleton, byte-identical, while a
+ * non-null pointer routes SSR consumption to the injected store.
  *
- * These tests pin that contract at the GnssCorrections satellite-clock consume
- * site — the one SSR consumer that is unit-constructible without a full
- * PppModel / RINEX-parser chain (MeasurementModel and the RealTimeEngine
- * forwarder share the identical override member + resolver, and are exercised
- * end-to-end by the network closed-loop driver).  No reliance on global singleton
- * state: every assertion uses owned stores so the suite stays order-independent.
+ * These tests check that contract at the GnssCorrections satellite-clock consume
+ * site, the one SSR consumer that can be constructed in a unit test without a full
+ * PppModel / RINEX-parser chain.  MeasurementModel and the RealTimeEngine
+ * forwarder share the same override member and resolver, and are exercised end to
+ * end by the network closed-loop driver.  The first two tests use owned stores
+ * only; the Card-7 tests also use the LiveEphemerisStore singleton, which each of
+ * them clears before use (and, where it inserts ephemerides, again at the end).
  */
 
 #include <gtest/gtest.h>
@@ -49,11 +50,11 @@ SsrHeader makeHeader() {
     return h;
 }
 
-// An injected OWNED store routes the SSR clock overlay through the seam: with no
+// An injected owned store routes the SSR clock overlay through the seam: with no
 // precise CLK product loaded (post-processing minimal ctor), the returned clock
-// is exactly the emitted c0 (metres) converted to seconds.  Pointing the seam at
-// a different (empty) owned store reverts to "no correction" — the override is a
-// clean swap, and the owned stores never leak into one another or the singleton.
+// is the emitted c0 (metres) converted to seconds.  Pointing the seam at a
+// different (empty) owned store reverts to "no correction": the override is a
+// plain swap, and the owned stores do not leak into one another or the singleton.
 TEST(SsrStoreInjectionTest, RoutesToInjectedStore) {
     LogManager log;
     GnssCorrections corr(log);   // minimal ctor: no precise clocks
@@ -87,12 +88,13 @@ TEST(SsrStoreInjectionTest, OverrideIsPerInstance) {
 }
 
 // ===========================================================================
-// Card 7 (RTF-2) — the two consumer behaviours end-to-end through
+// The two consumer behaviours of Card 7 (RTF-2), end to end through
 // getSatelliteClockCorrection: (a) D7 pinned broadcast-baseline eval, (b) the
 // orbit-coherence echo withhold under the store-armed skew budget.
 // ===========================================================================
 
-// Healthy GPS Kepler skeleton with toe/toc at kT (well inside the 4 h fit window).
+// Valid GPS Kepler skeleton with toe/toc at the given time (queries at kT fall well
+// inside the 4 h fit window).
 BroadcastEphemeris gpsEphAt(const std::string& sat, int iode, double af0,
                             const GnssTime& toe) {
     BroadcastEphemeris eph;
@@ -107,19 +109,18 @@ BroadcastEphemeris gpsEphAt(const std::string& sat, int iode, double af0,
     return eph;
 }
 
-// (a) D7 pinned eval: the returned clock is broadcast(clock_iode) + SSR delta —
-// the RETAINED PREVIOUS ephemeris version when the producer stamped it — and a
-// stamp whose version is no longer held drops the clock to broadcast-grade.
+// (a) D7 pinned eval: the returned clock is broadcast(clock_iode) + SSR delta,
+// using the retained previous ephemeris version when the producer stamped that
+// one.  A stamp whose version is no longer held drops the clock to broadcast grade.
 TEST(SsrStoreInjectionTest, Card7PinnedEvalUsesStampedVersion) {
     auto& eph_store = LiveEphemerisStore::getInstance();
     eph_store.clear();
-    // v10 (af0 1e-5 s, toe kT-600) then v11 (af0 2e-5 s, toe AT the query
-    // epoch kT): v10 -> the retained "previous".  Geometry chosen so the
-    // UN-pinned selection (pickForSsr(-1) -> pick() -> toe PROXIMITY) lands
-    // unambiguously on v11 (d=0 vs 600) — a revert of the Card-7 pinned-eval
-    // expression (back to ssr->iode == -1 on a clock-only merge) therefore
-    // evaluates v11, FAILS the clock_iode=10 gate, and both assertions below
-    // flip (revert detector).
+    // v10 (af0 1e-5 s, toe kT-600) then v11 (af0 2e-5 s, toe at the query
+    // epoch kT), so v10 is the retained "previous".  The toe values make the
+    // un-pinned selection (pickForSsr(-1) -> pick() -> nearest toe) land on v11
+    // (distance 0 against 600 s).  If the Card-7 pinned-eval expression reverts
+    // to ssr->iode == -1 on a clock-only merge, the lookup evaluates v11, fails
+    // the clock_iode=10 gate, and both assertions below fail.
     eph_store.insert(gpsEphAt("G01", 10, 1e-5, GnssTime{kT.week, kT.tow - 600.0}));
     eph_store.insert(gpsEphAt("G01", 11, 2e-5, kT));
 
@@ -133,40 +134,40 @@ TEST(SsrStoreInjectionTest, Card7PinnedEvalUsesStampedVersion) {
     corr.setSsrStore(&clock_store);
 
     // Baseline pins to v10: af0 1e-5 s, plus the 12.5 m delta applied through
-    // the passing gate.  Un-pinned would pick v11 (af0 2e-5) and DROP the
-    // clock on the 11!=10 gate — a different value AND broadcast_grade.
+    // the passing gate.  Un-pinned, the lookup would pick v11 (af0 2e-5) and drop
+    // the clock on the 11 != 10 gate: a different value, and broadcast_grade set.
     bool broadcast_grade = true;
     EXPECT_NEAR(corr.getSatelliteClockCorrection("G01", kT, &broadcast_grade),
                 1e-5 + 12.5 / Constants::SPEED_OF_LIGHT, 1e-12);
     EXPECT_FALSE(broadcast_grade);   // SSR-corrected -> cm-grade
 
-    // Stamp two generations old (v9 evicted): the pinned version is gone, so
-    // pickForSsr falls back to pick() — toe PROXIMITY, which at kT is v11 —
-    // whose reported IODE (11) fails the gate against the stamp (9).  The
-    // clock is NOT applied: the return is the bare broadcast polynomial
-    // (2e-5, no 12.5 m SSR delta) flagged broadcast-grade.
+    // A stamp two generations old (v9, not held): the pinned version is absent,
+    // so pickForSsr falls back to pick() (nearest toe, which at kT is v11),
+    // whose IODE (11) fails the gate against the stamp (9).  The clock is not
+    // applied: the return is the bare broadcast polynomial (2e-5, no 12.5 m SSR
+    // delta), flagged broadcast grade.
     SsrClockCorrection stale = makeClock("G01", 12.5);
     stale.iode = 9;
     clock_store.pushClock(stale, makeHeader());
     broadcast_grade = false;
     EXPECT_NEAR(corr.getSatelliteClockCorrection("G01", kT, &broadcast_grade),
-                2e-5, 1e-12);        // fallback baseline only — no SSR delta applied
+                2e-5, 1e-12);        // fallback baseline only; no SSR delta applied
     EXPECT_TRUE(broadcast_grade);    // phase must not ride a metre-level clock
 
     eph_store.clear();
 }
 
 // (b) Orbit-coherence echo: count-only by default (clock still applied), the
-// WITHHOLD arms with the store's skew budget, and a matching applied orbit
-// passes untouched.  The orbit side reads a DIFFERENT store than the clock —
-// the RTA-8 split routing the echo seam exists for.
+// withhold arms with the store's skew budget, and a matching applied orbit
+// passes untouched.  The orbit side reads a different store than the clock,
+// which is the RTA-8 split routing the echo seam exists for.
 TEST(SsrStoreInjectionTest, Card7OrbitEchoWithholdUnderBudget) {
     LiveEphemerisStore::getInstance().clear();   // permissive gate (post-processing)
 
     LogManager log;
     GnssCorrections corr(log);
 
-    // CLOCK store: a brdc_rts-style record echoing orbit generation oiod=7.
+    // Clock store: a brdc_rts-style record echoing orbit generation oiod=7.
     SsrCorrectionStore clock_store;
     SsrClockCorrection c = makeClock("G01", 12.5);
     c.orbit_iod_ssr = 7;
@@ -174,7 +175,7 @@ TEST(SsrStoreInjectionTest, Card7OrbitEchoWithholdUnderBudget) {
     clock_store.pushClock(c, makeHeader());
     corr.setSsrStore(&clock_store);
 
-    // ORBIT store: the consumer's overlay applies a DIFFERENT generation (8).
+    // Orbit store: the consumer's overlay applies a different generation (8).
     SsrCorrectionStore orbit_store;
     SsrOrbitCorrection o;
     o.sat = "G01"; o.iode = -1; o.iod_ssr = 8;
@@ -182,12 +183,12 @@ TEST(SsrStoreInjectionTest, Card7OrbitEchoWithholdUnderBudget) {
     orbit_store.pushOrbit(o, SsrHeader{});
     corr.setOrbitEchoStore(&orbit_store);
 
-    // Budget unset (default): the mismatch is COUNTED but the clock still applies.
+    // Budget unset (default): the mismatch is counted, and the clock still applies.
     EXPECT_NEAR(corr.getSatelliteClockCorrection("G01", kT),
                 12.5 / Constants::SPEED_OF_LIGHT, 1e-12);
     EXPECT_EQ(clock_store.orbitEchoMismatchCounts()["G01|iod"], 1u);
 
-    // Budget armed on the CLOCK store: the same mismatch now WITHHOLDS the clock.
+    // Budget armed on the clock store: the same mismatch now withholds the clock.
     clock_store.setOrbitEchoMaxSkew(30.0);
     EXPECT_NEAR(corr.getSatelliteClockCorrection("G01", kT), 0.0, 1e-15);
     EXPECT_EQ(clock_store.orbitEchoMismatchCounts()["G01|iod"], 2u);
@@ -212,22 +213,22 @@ TEST(SsrStoreInjectionTest, Card7OrbitEchoWithholdUnderBudget) {
     EXPECT_EQ(counts.size(), 2u);
 }
 
-// The echo contract is about the orbit the overlay ACTUALLY APPLIES: an orbit
-// record whose IOD-SSR matches the echo but whose referenced broadcast version
-// is no longer held would NOT be applied by Geometry's overlay gate — the echo
-// check replicates that gate (through the same pinned pick) and classifies it
+// The echo contract concerns the orbit the overlay applies.  An orbit record
+// whose IOD-SSR matches the echo but whose referenced broadcast version is no
+// longer held is not applied by Geometry's overlay gate; the echo check
+// replicates that gate (through the same pinned pick) and classifies the record
 // as "no applied orbit" instead of a false Match.
 TEST(SsrStoreInjectionTest, Card7OrbitEchoRequiresApplicableOrbit) {
     auto& eph_store = LiveEphemerisStore::getInstance();
     eph_store.clear();
-    // The live store holds ONLY broadcast version 20.
+    // The live store holds broadcast version 20 and no other.
     eph_store.insert(gpsEphAt("G01", 20, 1e-5, kT));
 
     LogManager log;
     GnssCorrections corr(log);
 
     // Clock echoes orbit generation 7; the pin (clock_iode 20) matches the
-    // held broadcast, so the CLOCK gate itself passes.
+    // held broadcast, so the clock gate itself passes.
     SsrCorrectionStore clock_store;
     clock_store.setOrbitEchoMaxSkew(30.0);   // withhold armed
     SsrClockCorrection c = makeClock("G01", 12.5);
@@ -237,7 +238,7 @@ TEST(SsrStoreInjectionTest, Card7OrbitEchoRequiresApplicableOrbit) {
     clock_store.pushClock(c, makeHeader());
     corr.setSsrStore(&clock_store);
 
-    // Orbit record with the MATCHING generation (7) but stamped against
+    // Orbit record with the matching generation (7) but stamped against
     // broadcast version 25, which the store does not hold: the overlay would
     // not apply it, so record presence must not count as coherence.
     SsrCorrectionStore orbit_store;
@@ -249,11 +250,11 @@ TEST(SsrStoreInjectionTest, Card7OrbitEchoRequiresApplicableOrbit) {
 
     bool broadcast_grade = false;
     EXPECT_NEAR(corr.getSatelliteClockCorrection("G01", kT, &broadcast_grade),
-                1e-5, 1e-12);       // clock WITHHELD -> bare broadcast baseline
+                1e-5, 1e-12);       // clock withheld -> bare broadcast baseline
     EXPECT_TRUE(broadcast_grade);
     EXPECT_EQ(clock_store.orbitEchoMismatchCounts().at("G01|noorbit"), 1u);
 
-    // Same orbit re-stamped against the HELD version 20: the overlay would
+    // Same orbit re-stamped against the held version 20: the overlay would
     // apply it, the echo agrees, and the clock goes through.
     o.iode = 20;
     orbit_store.pushOrbit(o, SsrHeader{});

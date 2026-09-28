@@ -1,7 +1,7 @@
 /**
  * @file NetworkStashStatus.cpp
- * @brief Implementation of @ref networkStashStatus — the SB_STASH_STATUS block relocated VERBATIM
- *        (dedent-4, zero substitution) out of Application::runNetwork at INC-11b.
+ * @brief Implementation of @ref networkStashStatus: the SB_STASH_STATUS block relocated without
+ *        change (dedent by 4, no substitution) out of Application::runNetwork at INC-11b.
  */
 
 #include "filter/NetworkStashStatus.hpp"
@@ -12,7 +12,7 @@
 #include "common/Constants.hpp"
 #include "common/PppUtils.hpp"
 #include "filter/NetworkCarryVce.hpp"
-#include "filter/NetworkClockAnchor.hpp"     // Card Q3 §2.1 gauge projection (shared with the guard)
+#include "filter/NetworkClockAnchor.hpp"     // gauge projection shared with the guard (§2.1 of card Q3)
 #include "filter/NetworkPriorResidual.hpp"   // prior-residual census (SPEC_prior_residual_census)
 #include "filter/NetworkIonoDeweightGate.hpp"
 #include "filter/NetworkPivotHandover.hpp"
@@ -67,7 +67,7 @@ void networkStashStatus(
     int n_cb,
     int n_dropped_sats,
     int n_adapt) {
-    // --- Alias preamble: mechanically-derived run-TU aliases (+ reconstructions). --
+    // --- Alias preamble: mechanically derived run-TU aliases (and reconstructions). --
     auto& sh_model = setup.sh_model;
     auto& sh_model2 = setup.sh_model2;   // Iono-2 dual-layer second shell (null unless armed)
     auto& stations = setup.stations;
@@ -77,14 +77,14 @@ void networkStashStatus(
     auto& epoch_status_trace   = traces.epoch_status_trace;
     auto& prev_carry = ctx.carry.prev_carry;
     auto& eq34_reref = ctx.carry.eq34_reref;
-    // QUEUE item 1(d): the anchored election's re-reference set.  Every predicate
-    // below that mirrors the injector's eq34_reref skip must mirror this one too,
-    // clause for clause — the census's `folded` bit decides the dispersion branch
-    // (see the PRIOR-RESIDUAL CENSUS note), and the VCE monitor must not read a
-    // deliberately-unfolded frame row as an ordinary carry innovation.
+    // The anchored election's re-reference set (queue item 1(d)).  Every predicate
+    // below that mirrors the injector's eq34_reref skip mirrors this one too, clause
+    // for clause: the census's `folded` bit decides the dispersion branch (see the
+    // prior-residual census note), and the VCE monitor must not read a deliberately
+    // unfolded frame row as an ordinary carry innovation.
     const auto& pa_reref = ctx.carry.phase_anchor_reref;
-    const double pb_var_floor  = ctx.knobs.pb_var_floor;  // B4: D2 phase-bias carry floor; 0 = off
-    const double cb_var_floor  = ctx.knobs.cb_var_floor;  // B4: D2 code-bias carry floor;  0 = off
+    const double pb_var_floor  = ctx.knobs.pb_var_floor;  // D2 phase-bias carry floor (B4); 0 = off
+    const double cb_var_floor  = ctx.knobs.cb_var_floor;  // D2 code-bias carry floor (B4);  0 = off
     const bool   carry_vce     = ctx.knobs.carry_vce;
     auto& prev_tow = ctx.counters.prev_tow;
     auto& prev_week = ctx.counters.prev_week;
@@ -95,12 +95,12 @@ void networkStashStatus(
         return datum_changed
             && datumChangeAffectsKey(sat, changed_consts, scoped_handover);
     };
-    // Queue 1(b): mirror networkInjectD2CarryPrior's release, clause for clause.  A
-    // re-expressed key FOLDS, so the VCE monitor must see it as an ordinary carry
-    // innovation and the prior-residual census must label it CLEAN, not FRAME — the
+    // Mirrors networkInjectD2CarryPrior's release clause for clause (queue 1(b)).  A
+    // re-expressed key folds, so the VCE monitor sees it as an ordinary carry
+    // innovation and the prior-residual census labels it Clean, not Frame.  The
     // census's `folded` bit picks the dispersion branch, so a predicate that disagreed
-    // with the injector would mis-attribute exactly the rows this card fixes.  Empty
-    // set ⇒ identical to the pre-card behaviour.
+    // with the injector would mis-attribute the re-expressed rows.  With the set empty
+    // the behaviour is unchanged.
     const auto sts_released = [&](const std::string& sat) {
         return !ctx.carry.sts_consts.empty() && !sat.empty()
             && ctx.carry.sts_consts.count(sat.front()) > 0;
@@ -110,54 +110,53 @@ void networkStashStatus(
     };
 
 
-    // M2 (LS-VCE): snapshot the D2 shared-carry priors that were FOLDED this
-    // epoch, keyed by identity, BEFORE the clear — their innovations against
-    // the fresh solve are formed after the re-stash below.  Mirror the fold's
-    // skip predicate so only ordinary (non-reinit, non-held, non-retired,
+    // Snapshot the D2 shared-carry priors that were folded this epoch, keyed by
+    // identity, before the clear (M2, LS-VCE); their innovations against the fresh
+    // solve are formed after the re-stash below.  The fold's skip predicate is
+    // mirrored so only ordinary (non-reinit, non-held, non-retired,
     // non-re-referenced) carries qualify.
     std::map<std::string, std::pair<double, double>> vce_shared_prior;  // key -> (prior value, var)
     if (carry_vce && (vce_wants_pb || vce_wants_cb)) {
         for (const CarryPrior& cp : prev_carry) {
             if (cp.inflate_q) continue;                       // clock-monitor reinit, not an ordinary carry
-            if (cp.t_park_s > 0.0) continue;                  // READMIT: a parked entry folded nothing (its column is absent)
+            if (cp.t_park_s > 0.0) continue;                  // parked: not an ordinary carry (a readmit seed included)
             if (cp.kind == SharedParamKind::PhaseBias) {
                 if (!vce_wants_pb || phase_hold_on) continue;                 // hold path ≠ a q-carry
-                if (eq34_reref.count({cp.sat, cp.signal})) continue;         // Card 3 D4: marginalized
-                if (pa_reref.count({cp.sat, cp.signal})) continue;           // 1(d): marginalized
+                if (eq34_reref.count({cp.sat, cp.signal})) continue;         // marginalized (card 3 D4)
+                if (pa_reref.count({cp.sat, cp.signal})) continue;           // marginalized (queue 1(d))
             } else if (cp.kind == SharedParamKind::CodeBias) {
                 if (!vce_wants_cb) continue;
             } else {
                 continue;                                     // Clock / VtecSh out of scope (own models)
             }
-            if (handover_affects(cp.sat) && !sts_released(cp.sat)) continue;  // RTA-2 retired-datum (scoped mode); queue 1(b) re-expressed keys fold
+            if (handover_affects(cp.sat) && !sts_released(cp.sat)) continue;  // retired datum, scoped mode (RTA-2); re-expressed keys fold (queue 1(b))
             vce_shared_prior.emplace(sharedCarryKey(cp.kind, cp.sat, cp.signal),
                                      std::make_pair(cp.value, cp.var));
         }
     }
 
-    // PRIOR-RESIDUAL CENSUS (docs/SPEC_prior_residual_census.md §6): the SAME
-    // pre-clear prior snapshot, WIDENED to the kinds the monitor above skips.
-    // Widening the population IS the whole change — those skips are correct for
-    // estimating a variance component and exactly backwards for a detector,
-    // because they remove precisely the rows a screen exists to find.
+    // Prior-residual census (docs/SPEC_prior_residual_census.md §6): the same
+    // pre-clear prior snapshot, widened to the kinds the monitor above skips.  Those
+    // skips are correct for estimating a variance component and wrong for a
+    // detector, because they remove the rows a screen exists to find.
     //
-    // The fold decision and its variance are REPRODUCED here from
-    // networkInjectD2CarryPrior's predicate, clause for clause, rather than
-    // mirrored approximately: every input (prev_carry, datum_changed,
-    // changed_consts, eq34_reref, phase_hold_on, dt, the q ladder, the B4 floors,
-    // clk_mon_reinit_var) is still in scope and unchanged at this point.  That
-    // matters because the `folded` bit decides the DISPERSION BRANCH, and using
-    // the folded form on an unfolded row inflates |t| by ~x3000 through the ε
-    // clamp — every FRAME row would land in the top ladder bin by construction.
+    // The fold decision and its variance are reproduced here from
+    // networkInjectD2CarryPrior's predicate, clause for clause, not approximated:
+    // every input (prev_carry, datum_changed, changed_consts, eq34_reref,
+    // phase_hold_on, dt, the q ladder, the B4 floors, clk_mon_reinit_var) is still
+    // in scope and unchanged at this point.  The `folded` bit decides the dispersion
+    // branch, and using the folded form on an unfolded row inflates |t| by about
+    // 3000x through the ε clamp, which would put every Frame row in the top ladder
+    // bin.
     //
-    // Two rows deliberately carry no calibration weight (spec §INC-2):
-    //  * a `phase_hold` PB — the hold PINS the posterior, so ê measures
-    //    carry-vs-hold disagreement and NEITHER branch's null applies.  Its null
-    //    dispersion is UNDEFINED, which is the one admissible reason to censor a
-    //    row from σ̂₀ (never because its value is large).
-    //  * anything whose fold variance could not be reconstructed — reported RAW
-    //    FORMAL and flagged, rather than silently standardized under a nominal q
-    //    the mechanism never used.
+    // Two kinds of row carry no calibration weight (spec §INC-2):
+    //  * a `phase_hold` PB: the hold pins the posterior, so ê measures carry-vs-hold
+    //    disagreement and neither branch's null applies.  Its null dispersion is
+    //    undefined, which is the one admissible reason to censor a row from σ̂₀
+    //    (never because its value is large).
+    //  * anything whose fold variance could not be reconstructed: reported as raw
+    //    formal and flagged, rather than standardized under a nominal q the
+    //    mechanism never used.
     struct PriresSharedPrior {
         double value = 0.0, var = 0.0, fold_var = 0.0;
         bool   folded = false, hold = false;
@@ -167,25 +166,25 @@ void networkStashStatus(
     std::map<std::string, PriresSharedPrior> prires_shared_prior;
     const bool prires_pb = ctx.knobs.prires_pb && prires_est.enabled();
     const bool prires_cb = ctx.knobs.prires_cb && prires_est.enabled();
-    // Card Q3 INC-0 (docs/SPEC_clock_temporal_anchor.md §3): the satellite-CLOCK
-    // family.  It was excluded by one line ("Clock / VtecSh out of scope (own
-    // models)"), which is correct for a carry nobody is calibrating and exactly
-    // backwards for the card whose whole derivation is the measured dispersion of
-    // this prior.  The census already standardizes by `fold_var − post_var`, which
-    // IS Var(x̂ − μ) exactly and IS the anchor's guard statistic, so the clk family
-    // needs no new statistic — only the population.  Trace-only.
+    // The satellite-clock family (docs/SPEC_clock_temporal_anchor.md §3, card Q3
+    // INC-0).  The VCE monitor above excludes it ("Clock / VtecSh out of scope (own
+    // models)"), which suits a carry that is not being calibrated; the clock anchor
+    // derives its q from the measured dispersion of this prior, so the census
+    // includes it.  The census standardizes by `fold_var − post_var`, which is
+    // Var(x̂ − μ) exactly and is the anchor's guard statistic, so the clk family
+    // needs only the population, no new statistic.  Trace-only.
     const bool prires_clk = ctx.knobs.prires_clk && prires_est.enabled();
     if (prires_pb || prires_cb || prires_clk) {
         const double clk_mon_reinit_var = ctx.knobs.clk_mon_reinit_var;
         const bool   scoped_handover_k  = ctx.knobs.scoped_handover;
-        // The injector's OUTER gate: with a changed datum and scoped handover OFF
-        // the whole D2 carry block is skipped, so NOTHING folded this epoch — a
-        // whole-network FRAME edge, and one of the most informative populations
-        // this card measures (standing invariant #7 on the carry layer).
+        // The injector's outer gate: with a changed datum and scoped handover off,
+        // the whole D2 carry block is skipped and nothing folded this epoch.  That is
+        // a network-wide Frame edge (standing invariant #7 on the carry layer), and
+        // its rows are reported under that label.
         const bool outer_gate = (!datum_changed || scoped_handover_k)
                              && !prev_carry.empty();
         for (const CarryPrior& cp : prev_carry) {
-            if (cp.t_park_s > 0.0) continue;   // READMIT: a parked entry folded nothing (its column is absent)
+            if (cp.t_park_s > 0.0) continue;   // parked: skipped, even a readmit seed that folded
             const bool is_pb  = (cp.kind == SharedParamKind::PhaseBias) && prires_pb;
             const bool is_cb  = (cp.kind == SharedParamKind::CodeBias)  && prires_cb;
             const bool is_clk = (cp.kind == SharedParamKind::Clock)     && prires_clk;
@@ -196,28 +195,26 @@ void networkStashStatus(
             p.var   = cp.var;
             const double q     = is_cb ? q_cb : (is_clk ? ctx.knobs.q_clock : q_pb);
             const double floor = is_cb ? cb_var_floor : (is_clk ? 0.0 : pb_var_floor);
-            // var_eff EXACTLY as the injector forms it: the reinit variance on a
-            // clock-monitor-flagged key (a soft large-q reinitialization, NOT the
+            // var_eff as the injector forms it: the reinit variance on a
+            // clock-monitor-flagged key (a soft large-q reinitialization, not the
             // nominal q recompute), else q·Δt inflation with the B4 floor.
             double var_eff = cp.inflate_q ? clk_mon_reinit_var
                                           : cp.var + q * std::max(0.0, dt);
             if (!cp.inflate_q && floor > 0.0) var_eff = std::max(var_eff, floor);
-            // M2 v2 (SPEC_carry_vce_apply.md §3): the census standardizes by the
-            // fold variance AS USED, so its s absorbs α² automatically — which is
-            // what makes the census's per-family σ̂₀ a free cross-instrument check
-            // on the apply (field gate 4: σ̂₀,f on an applied family should walk
-            // toward 1).  Mirrors the injector's exclusion of inflate_q keys.
-            // Unity ⇒ byte-identical when the apply path is off.
+            // The census standardizes by the fold variance as used (M2 v2,
+            // SPEC_carry_vce_apply.md §3), so its s absorbs α², and the census's
+            // per-family σ̂₀ becomes an independent check on the apply (field gate 4:
+            // σ̂₀,f on an applied family should move toward 1).  Mirrors the injector's exclusion
+            // of inflate_q keys.  The factor is 1 when the apply path is off, so the
+            // output is byte-identical.
             if (!cp.inflate_q && !is_clk)
                 var_eff *= ctx.carry.vce_apply.factor(
                                is_cb ? NetworkCarryVceApply::kCb
                                      : NetworkCarryVceApply::kPb, cp.sat);
-            // Card Q3: with the anchor armed the injector did NOT use the
-            // expression above for a clock key — it used the anchor's own
-            // (per-satellite Δt, floored) variance.  Read the decision back rather
-            // than re-derive it: re-deriving is precisely how a census ends up
-            // standardizing by a variance the mechanism never used, and the
-            // `folded` bit decides the dispersion branch.
+            // With the clock anchor armed, the injector does not use the expression
+            // above for a clock key; it uses the anchor's own (per-satellite Δt,
+            // floored) variance.  The decision is read back rather than re-derived,
+            // so the census standardizes by the variance the mechanism used (card Q3).
             if (is_clk && ctx.knobs.cta_on && !cp.inflate_q) {
                 const auto ait = ctx.carry.clk_anchor.sat.find(cp.sat);
                 if (ait != ctx.carry.clk_anchor.sat.end() && ait->second.last_var_eff > 0.0)
@@ -239,33 +236,32 @@ void networkStashStatus(
                 p.label = PriorResidualLabel::Frame;
                 p.mech  = "eq34_reref";
             } else if (is_pb && pa_reref.count({cp.sat, cp.signal})) {
-                p.label = PriorResidualLabel::Frame;   // 1(d): anchored-election handover
+                p.label = PriorResidualLabel::Frame;   // anchored-election handover (queue 1(d))
                 p.mech  = "phase_anchor_reref";
             } else if (!(var_eff > 0.0)) {
                 p.mech  = "var_nonpos";          // injector's `continue`; nothing fired
             } else {
-                // NOTE the C1 dense branch (network.shared_carry_full_cov) folds
-                // the SAME key set with the SAME var_eff on the diagonal — only
-                // the retained off-diagonals differ, and the MARGINAL prior on any
-                // one state is unchanged.  That is the same property that makes
-                // the M2 carry innovation representation-independent, so `folded`
-                // and `fold_var` are identical on both branches and this chain
-                // does not have to fork.  (A dense fold that THREW degrades
-                // per-key to the diagonal path with the same var_eff, so even the
-                // fallback agrees.)
+                // The C1 dense branch (network.shared_carry_full_cov) folds the same
+                // key set with the same var_eff on the diagonal; only the retained
+                // off-diagonals differ, and the marginal prior on any one state is
+                // unchanged.  That is the property that makes the M2 carry
+                // innovation independent of the representation, so `folded` and
+                // `fold_var` are identical on both branches and this chain does not
+                // fork.  (A dense fold that throws falls back per key to the
+                // diagonal path with the same var_eff, so the fallback agrees too.)
                 p.folded = true;
-                // An inflate_q key DID fold — with the large reinit variance, not
-                // the nominal q.  That is a FRAME event (a soft reinitialization),
-                // and standardizing it under the nominal q is exactly the error
-                // spec §INC-2 names.
+                // An inflate_q key does fold, with the large reinit variance rather
+                // than the nominal q.  That is a Frame event (a soft
+                // reinitialization); standardizing it under the nominal q is the
+                // error spec §INC-2 names.
                 if (cp.inflate_q) {
                     p.label = PriorResidualLabel::Frame;
                     p.mech  = "inflate_q";
                 }
-                // Card Q3: a clock key the anchor guard WITHDREW this epoch folded
-                // and was then un-folded before the emitted solve, so its residual
-                // is neither the folded nor the unfolded statistic.  FRAME, with the
-                // mechanism named — the same treatment the held phase bias gets.
+                // A clock key the anchor guard withdrew this epoch folded and was
+                // then un-folded before the emitted solve, so its residual is neither
+                // the folded nor the unfolded statistic.  Labelled Frame with the
+                // mechanism named, the same treatment as a held phase bias (card Q3).
                 if (is_clk && ctx.knobs.cta_on) {
                     const auto ait = ctx.carry.clk_anchor.sat.find(cp.sat);
                     if (ait != ctx.carry.clk_anchor.sat.end() && !ait->second.folded) {
@@ -285,13 +281,13 @@ void networkStashStatus(
                       clock_refloat_sats, registered_clock_sats,
                       shared_phase_keys, registered_code_keys, log);
 
-    // M2 (LS-VCE): form the PB/CB shared-carry innovations against this epoch's
-    // fresh solve and fold them into the monitor (the D2 analogue of the
-    // ambiguity-carry feed above).  In the re-stashed prev_carry, cp.value /
-    // cp.var are the SOLVED value / posterior variance; the fold prior is the
-    // snapshot taken before the clear.  Gated + best-effort skip-mirroring, so
-    // OFF is byte-identical and a mis-mirrored contaminated key at most nudges
-    // a monitor number (never the solve).
+    // Form the PB/CB shared-carry innovations against this epoch's fresh solve and
+    // fold them into the monitor (M2, LS-VCE; the D2 analogue of the ambiguity-carry
+    // feed).  In the re-stashed prev_carry, cp.value / cp.var are
+    // the solved value and posterior variance; the fold prior is the snapshot taken
+    // before the clear.  Gated, with best-effort skip mirroring: off, the output is
+    // byte-identical, and a mis-mirrored contaminated key can change only a monitor
+    // number, never the solve.
     if (carry_vce && !vce_shared_prior.empty()) {
         for (const CarryPrior& cp : prev_carry) {
             if (cp.inflate_q) continue;
@@ -306,11 +302,11 @@ void networkStashStatus(
             const double floor = is_cb ? cb_var_floor : pb_var_floor;
             double fold_var_hand = var_prev + q * std::max(0.0, dt);
             if (floor > 0.0) fold_var_hand = std::max(fold_var_hand, floor);
-            // M2 v2: the D2 injector multiplied this same hand value by α² before
-            // folding (networkInjectD2CarryPrior's vce_scale_shared), and the factor
-            // table has not moved since — the step below is the epoch's only write.
-            // So the used weight is reconstructed exactly, and the hand value rides
-            // alongside as the factor iteration's α²-independent denominator.
+            // The D2 injector multiplied this same hand value by α² before folding
+            // (M2 v2; networkInjectD2CarryPrior's vce_scale_shared), and the factor
+            // table has not changed since; the step below is the epoch's only write.
+            // The used weight is therefore reconstructed exactly, and the hand value
+            // is passed alongside as the factor iteration's α²-independent denominator.
             const double fold_var =
                 fold_var_hand * ctx.carry.vce_apply.factor(
                                     is_cb ? NetworkCarryVceApply::kCb
@@ -321,22 +317,22 @@ void networkStashStatus(
         }
     }
 
-    // PRIOR-RESIDUAL CENSUS: the same innovation over the WIDENED population.
-    // In the re-stashed prev_carry, cp.value / cp.var are the SOLVED value and
+    // Prior-residual census: the same innovation over the widened population.
+    // In the re-stashed prev_carry, cp.value / cp.var are the solved value and
     // posterior variance; the prior and its fold decision come from the snapshot
     // taken before the clear.  A key with no snapshot entry had no prior last
-    // epoch (a fresh registration) and is correctly absent: there is no residual
-    // of prior information when there was no prior.
+    // epoch (a fresh registration) and is absent, since there is no prior residual
+    // without a prior.
     if (!prires_shared_prior.empty()) {
-        // Card Q3 INC-0: the satellite-CLOCK family's ê must be COMMON-MODE
-        // REMOVED per constellation before standardizing.  The clock is the one
-        // carried family with a FREE per-epoch gauge (receiver clocks are white,
+        // The satellite-clock family's ê has its per-constellation common mode (the
+        // median) removed before standardizing (card Q3 INC-0).  The clock is the one
+        // carried family with a free per-epoch gauge (receiver clocks are white,
         // q = 1000), so the raw carried−solved difference carries the epoch's whole
-        // gauge re-realization on EVERY satellite: without the removal the family
-        // would report the gauge, not the per-satellite content, and its σ̂₀ — the
-        // instrument this card derives its q from — would be meaningless.  Standing
-        // invariant #5.  Same statistic the guard uses, so the ladder measured here
-        // IS the distribution the threshold is read off.
+        // gauge re-realization on every satellite.  Without the removal the family
+        // would report the gauge, not the per-satellite content, and its σ̂₀, from
+        // which the anchor's q is derived, would be meaningless (see standing
+        // invariant #5).  The guard uses the same statistic, so the ladder measured here is the
+        // distribution its threshold is read from.
         std::map<char, double> clk_med;
         if (prires_clk) {
             std::map<char, std::vector<double>> by_const;
@@ -354,21 +350,19 @@ void networkStashStatus(
                 clk_med[c] = v[v.size() / 2];
             }
         }
-        // Card Q3 §2.1 — and the reason σ̂₀_clk was NOT comparable across the 3 h
-        // ladder's arms (0.28 / 0.75 / 4.48 for ctl / anchor / gauge-free).  The
-        // census standardizes ê by `fold_var − post_var`, but ê above has just had
-        // the per-constellation common mode removed, so both halves have to be the
-        // variances of THAT CONTRAST — while the raw marginals still carry the
-        // common-mode variance the median took out.  Under the gauge-free fold the
-        // mismatch is gross (the prior puts NO information on the gauge, so the raw
-        // posterior marginal is data-only along it and can exceed the raw prior
-        // outright, driving `disp` negative), which is exactly the 4.48.
+        // Gauge projection of the clock variances (§2.1 of card Q3).  The census
+        // standardizes ê by `fold_var − post_var`, and ê above has the
+        // per-constellation common mode removed, so both halves must be the variances
+        // of that contrast; the raw marginals still carry the common-mode variance
+        // the median took out.  Under the gauge-free fold the mismatch is large: the
+        // prior puts no information on the gauge, so the raw posterior marginal is
+        // data-only along it and can exceed the raw prior, driving `disp` negative.
         //
-        // Fixed by projecting the same way the guard does, through the SAME helper,
-        // so the census stays a genuine cross-check on the guard instead of a second
-        // implementation that can drift.  The projection is applied to whichever
-        // halves `network.clock_anchor_gauge_free_stat` selects, so census and guard
-        // are the same statistic in every arm of the bisection, `auto` included.
+        // The projection goes through the same helper the guard uses, so the census
+        // remains a cross-check on the guard rather than a second implementation
+        // that can drift.  It is applied to whichever halves
+        // `network.clock_anchor_gauge_free_stat` selects, so census and guard are the
+        // same statistic in every configuration, `auto` included.
         std::map<std::string, double> clk_proj_post, clk_proj_prior;
         if (prires_clk && ctx.knobs.cta_on
             && (ctx.knobs.cta_stat_proj_post || ctx.knobs.cta_stat_proj_prior)) {
@@ -379,9 +373,9 @@ void networkStashStatus(
                 if (cp.kind != SharedParamKind::Clock || cp.sat.empty()) continue;
                 const auto it = prires_shared_prior.find(
                     sharedCarryKey(cp.kind, cp.sat, cp.signal));
-                // Only FOLDED rows: an unfolded row is on the other dispersion
-                // branch and never reaches `fold_var − post_var` at all.  This is
-                // the same membership the guard used, so the two groups agree.
+                // Folded rows only: an unfolded row is on the other dispersion
+                // branch and never reaches `fold_var − post_var`.  This is the
+                // membership the guard uses, so the two groups agree.
                 if (it == prires_shared_prior.end() || !it->second.folded) continue;
                 Eigen::Index col;
                 try { col = est.clockColumn(cp.sat); } catch (...) { continue; }
@@ -390,7 +384,7 @@ void networkStashStatus(
             }
             for (const auto& [c, v] : by_c) {
                 (void)c;
-                if (v.size() < 2) continue;   // a lone clock IS the gauge
+                if (v.size() < 2) continue;   // a lone clock is the gauge
                 if (ctx.knobs.cta_stat_proj_post) {
                     std::vector<Eigen::Index> cols;
                     cols.reserve(v.size());
@@ -420,7 +414,7 @@ void networkStashStatus(
             in.family   = is_cb ? "cb" : (is_clk ? "clk" : "pb");
             in.sat      = cp.sat;
             in.signal   = cp.signal;
-            in.station  = -1;                    // SHARED: this prior has no station
+            in.station  = -1;                    // shared: this prior has no station
             in.e        = p.value - cp.value;    // carried − solved
             if (is_clk && !cp.sat.empty()) {
                 const auto mit = clk_med.find(cp.sat[0]);
@@ -428,13 +422,13 @@ void networkStashStatus(
             }
             in.fold_var = p.fold_var;
             in.post_var = cp.var;
-            // Card Q3 §2.1: swap in the gauge-projected halves for a clock row whose
-            // ê is common-removed, so `disp = fold_var − post_var` is the dispersion
-            // of the statistic actually reported.  Guarded on finiteness and on the
-            // pair staying ordered — a projection that produced a non-positive or
-            // inverted pair means the group was degenerate this epoch, and reporting
-            // the raw (mis-matched but well-defined) pair beats reporting a negative
-            // dispersion the ladder would clamp into its top bin.
+            // A clock row whose ê has the common mode removed uses the gauge-projected
+            // halves (§2.1 of card Q3), so `disp = fold_var − post_var` is the dispersion
+            // of the statistic reported.  Guarded on finiteness and on the
+            // pair staying ordered: a non-positive or inverted projected pair means the
+            // group was degenerate this epoch, and the raw pair (mismatched but well
+            // defined) is reported instead of a negative dispersion the ladder would
+            // clamp into its top bin.
             if (is_clk && !cp.sat.empty()) {
                 const auto fit = clk_proj_prior.find(cp.sat);
                 const auto pit = clk_proj_post.find(cp.sat);
@@ -449,46 +443,45 @@ void networkStashStatus(
             in.folded   = p.folded;
             in.label    = p.label;
             in.mech     = p.mech;
-            // The one admissible censoring: a held phase bias has NO null
-            // dispersion (the hold pins the posterior), so its ê is neither the
-            // folded nor the unfolded statistic.  Count it, report it RAW FORMAL,
-            // and keep it out of the calibration — because the null is undefined,
-            // NOT because the value is large.
+            // The one admissible censoring: a held phase bias (or a clock key the
+            // anchor guard withdrew) has no null dispersion, so its ê is neither the
+            // folded nor the unfolded statistic.  It is counted, reported as raw
+            // formal, and kept out of the calibration because the null is undefined,
+            // not because the value is large.
             if (p.hold) { in.calibrate = false; in.var_nominal = true; }
             prires_est.addRow(in);
         }
     }
 
-    // PRIOR-RESIDUAL CENSUS: drain the epoch.  MUST sit here — after the pb/cb
-    // feed above (the last of the five) and BEFORE the L1 epoch-status row below,
-    // which reads the ctx.carry.ep_prires_* scalars this call stamps.  Calling it
-    // from the driver instead would publish the census columns one epoch late.
-    // (Same reason networkStashCarry is called from this seam rather than the
-    // driver.)  No-op when the census is unarmed.
+    // Prior-residual census: drain the epoch.  This call must stay here, after the
+    // pb/cb/clk feed above (the last of the five) and before the L1 epoch-status row
+    // below, which reads the ctx.carry.ep_prires_* scalars this call stamps.  Called
+    // from the driver instead, it would publish the census columns one epoch late
+    // (the same reason networkStashCarry is called from this seam rather than the
+    // driver).  No-op when the census is unarmed.
     if (prires_est.enabled())
         networkPriorResidualEmit(ctx, config_, log, traces, se, stations, prires_est);
 
-    // M2 v2 (docs/SPEC_carry_vce_apply.md §2): ONE LASER 5-95 factor iteration per
-    // epoch.  MUST sit HERE and nowhere else.  This point is AFTER the last feed
-    // into the monitor (SB_LEVELING's pl harvest, then the pb/cb feed a few lines
-    // above) and BEFORE any fold of the next epoch, which is what makes the card's
-    // contract literally true:
+    // One LASER 5-95 factor iteration per epoch (docs/SPEC_carry_vce_apply.md §2,
+    // M2 v2).  It must run here: after the last feed into the monitor (SB_LEVELING's
+    // pl harvest, then the pb/cb feed above) and before any fold of the next epoch.
+    // That placement makes the card's contract hold:
     //
     //     the fold of epoch N is scaled by α² estimated from every clean carry row
     //     through epoch N−1
     //
-    // — a strict predict-then-update with no self-reference, and the minimum
+    // This is a strict predict-then-update with no self-reference, at the minimum
     // achievable lag (a row cannot exist until the solve that produced it has run,
     // and that solve already consumed the fold).  It also means the injector and
-    // the harvest mirrors above, which all ran earlier in THIS epoch, necessarily
-    // read one and the same factor table.
+    // the harvest mirrors above, which all ran earlier in this epoch, read the same
+    // factor table.
     //
     // `!datum_changed` is the monitor's own clean gate (NetworkCarryVce::beginEpoch),
-    // inherited deliberately: a handover's re-levels are frame steps, not carry
-    // noise, and a factor that ate them would be inflating on a datum change.
-    // Every clamp / freeze edge lands in ctx.carry.vce_apply_edges and is emitted
-    // below (standing invariant #7: this mechanism changes how much information a
-    // carried prior injects, so BOTH of its edges are evented with identities).
+    // reused here: a handover's re-levels are frame steps, not carry noise, and a
+    // factor that absorbed them would inflate on a datum change.  Every clamp /
+    // freeze edge lands in ctx.carry.vce_apply_edges and is emitted below (standing
+    // invariant #7: this mechanism changes how much information a carried prior
+    // injects, so both of its edges are evented with identities).
     if (ctx.knobs.vce_apply_on) {
         auto& edges = ctx.carry.vce_apply_edges;
         edges.clear();
@@ -522,28 +515,28 @@ void networkStashStatus(
               << fmt::format("{:.4f}", rms) << ',' << fmt::format("{:.4f}", maxabs)
               << ',' << total_pins << '\n';
     }
-    // L1: the emitted-epoch disposition row — the median+std+worst-sat clock spread
-    // (over the SAME registered_clock_sats / x_s(clockColumn) series as the rms above)
-    // plus the QC action counts.  Computed only when the trace is open.
+    // The emitted-epoch disposition row (L1): the clock spread (median, std, worst
+    // satellite) over the same registered_clock_sats / x_s(clockColumn) series as the
+    // rms above, plus the QC action counts.  Computed only when the trace is open.
     if (epoch_status_trace.is_open()) {
         EpochStatusRow es;
         es.sigma0          = sigma0_adapt;   // 0.0 unless within-epoch RAIM ran this epoch
         es.n_adapt         = n_adapt;
         es.n_present       = n_present;
         es.n_clock_sats    = n_clock;
-        // NOTE (R0): n_refloat_sats counts the clock-COUPLE set — post-fit RAIM /
-        // clock-QC culprits plus, only under clock_monitor_couple_raim, the
-        // within-epoch drops.  The within-epoch tier's OWN refloats are the
-        // appended n_we_refloat_sats column below (SPEC_pivot_visibility_gauge_
-        // defect §5.07.4 defect 5: this column read 0 on every row of an arm with
-        // 8 we_refloat_sat events, because the couple opt-in was off).
+        // n_refloat_sats counts the clock-couple set: post-fit RAIM / clock-QC
+        // culprits plus, only under clock_monitor_couple_raim, the within-epoch
+        // drops.  The within-epoch tier's own refloats are the appended
+        // n_we_refloat_sats column below, so with the couple opt-in off this column
+        // reads 0 even when the tier refloats (R0; SPEC_pivot_visibility_gauge_defect
+        // §5.07.4 defect 5).
         es.n_refloat_sats  = static_cast<int>(clock_refloat_sats.size());
-        es.n_retro_applied = static_cast<int>(retro_emit_sats.size());   // bumps APPLIED this emit
-        es.n_arc_refloat   = n_arc_refloat_epoch;   // T2d: isolated-arc RAIM refloats this epoch
+        es.n_retro_applied = static_cast<int>(retro_emit_sats.size());   // bumps applied this emit
+        es.n_arc_refloat   = n_arc_refloat_epoch;   // isolated-arc RAIM refloats this epoch (T2d)
         es.datum_changed   = datum_changed ? 1 : 0;
-        // R0: the within-epoch tier's per-epoch observability, parked in ctx.carry
-        // by the solve glue.  Sentinel < 0 = the tier did not assess this epoch ⇒
-        // columns stay BLANK ("unavailable is not 0").
+        // The within-epoch tier's per-epoch observability, parked in ctx.carry by the
+        // solve glue (R0).  Sentinel < 0 = the tier did not assess this epoch, and the
+        // columns stay blank ("unavailable is not 0").
         if (ctx.carry.ep_sigma0_first >= 0.0) {
             es.sigma0_first = ctx.carry.ep_sigma0_first;
             if (ctx.carry.ep_we_refloat_sats >= 0)
@@ -553,24 +546,24 @@ void networkStashStatus(
                 es.we_clk_move_max_sat = ctx.carry.ep_we_clk_move_sat;
             }
         }
-        // P1-1 (SPEC_day129_frame_guards): this epoch's carry churn, differenced
-        // from the run-cumulative driver counters in NetworkInstallCarry.  The
-        // §3.2 trigger hypothesis is a D5 avalanche — testable only per epoch.
+        // This epoch's carry churn, differenced from the run-cumulative driver
+        // counters in NetworkInstallCarry (P1-1, SPEC_day129_frame_guards).  The §3.2
+        // trigger hypothesis (a D5 avalanche) can only be tested per epoch.
         es.n_d5_flags      = ctx.carry.ep_d5_flags;
         es.n_d5_retaps     = ctx.carry.ep_d5_retaps;
         es.n_chord_births  = ctx.carry.ep_chord_births;
         es.n_slip_refloats = ctx.carry.ep_slip_refloats;
-        // P1-2: the iono-deweight weight field, harvested at the serial
-        // NetworkShHealth advance() site.  -1 = the gate did not advance this
-        // epoch (inactive, or a held datum epoch) ⇒ leave the columns blank
-        // rather than write a misleading "0 engaged".
+        // The iono-deweight weight field (P1-2), harvested at the serial
+        // NetworkShHealth advance() site.  -1 = the gate did not advance this epoch
+        // (inactive, or a held datum epoch); the columns are then left blank rather
+        // than written as "0 engaged".
         if (ctx.carry.ep_dw_engaged >= 0) {
             es.n_dw_engaged = ctx.carry.ep_dw_engaged;
             es.n_dw_zero    = ctx.carry.ep_dw_zero;
             es.dw_min_w     = ctx.carry.ep_dw_min_w;
             es.dw_mean_w    = ctx.carry.ep_dw_mean_w;
         }
-        // P1-4: measure-only post-fit variance factor (blank unless armed).
+        // Measure-only post-fit variance factor (P1-4; blank unless armed).
         if (ctx.carry.ep_pf_rows > 0) {
             es.sigma0_pf       = ctx.carry.ep_sigma0_pf;
             es.sigma0_pf_code  = ctx.carry.ep_sigma0_pf_code;
@@ -578,18 +571,18 @@ void networkStashStatus(
             es.n_pf_rows       = ctx.carry.ep_pf_rows;
         }
         // Redundancy census (docs/SPEC_redundancy_census.md): the seam stamps the
-        // TOW it computed for, so a strided run leaves these BLANK on the epochs
-        // between sweeps instead of repeating the last sweep's numbers.  The
-        // census seam runs in SB_FRAMEDIAG, i.e. before this block, every epoch.
+        // TOW it computed for, so a strided run leaves these blank on the epochs
+        // between sweeps instead of repeating the last sweep's numbers.  The census
+        // seam runs in SB_FRAMEDIAG, before this block, every epoch.
         if (std::abs(ctx.carry.redun_ep_tow - se.time.tow) < 1e-6) {
             es.n_redun_rows         = ctx.carry.ep_redun_rows;
             es.n_uncheckable_rows   = ctx.carry.ep_uncheckable_rows;
             es.uncheckable_max_s    = ctx.carry.ep_uncheckable_max_s;
             es.n_unobservable_local = ctx.carry.ep_unobservable_local;
         }
-        // PREFIT census (docs/SPEC_prefit_census_observability.md INC-1): the walk
-        // runs in SB_FRAMEDIAG, i.e. before this block, and sets ep_pc_rows > 0
-        // only on an epoch it actually classified rows for.  Blank otherwise.
+        // Prefit census (docs/SPEC_prefit_census_observability.md INC-1): the walk
+        // runs in SB_FRAMEDIAG, before this block, and sets ep_pc_rows > 0 only on
+        // an epoch it classified rows for.  Blank otherwise.
         if (ctx.carry.ep_pc_rows > 0) {
             EpochStatusRow::PrefitCensusStats pc;
             for (int t = 0; t < kNetDataClasses; ++t) {
@@ -601,35 +594,34 @@ void networkStashStatus(
             es.prefit_census = pc;
         }
         // Measurement-admission census (docs/SPEC_measurement_admission.md INC-3):
-        // the seam runs pre-assembly, i.e. long before this block, and stamps the
-        // TOW it screened.  An epoch it skipped (every station under adm_min_sats,
-        // or the card disarmed) leaves the columns BLANK rather than repeating the
+        // the seam runs before assembly, well before this block, and stamps the TOW
+        // it screened.  An epoch it skipped (every station under adm_min_sats, or
+        // the feature disarmed) leaves the columns blank rather than repeating the
         // last screened epoch's numbers.
         if (std::abs(ctx.carry.adm_ep_tow - se.time.tow) < 1e-6) {
             es.adm_sta_worst_z = ctx.carry.ep_adm_sta_worst_z;
             es.adm_net_worst_z = ctx.carry.ep_adm_net_worst_z;
         }
-        // PD-safe DD fold (docs/SPEC_pd_safe_dd_fold.md INC-0): read STRAIGHT off the
-        // kernel, which by this point holds the ACCEPTED solve's fold (a within-epoch RAIM
+        // PD-safe DD fold (docs/SPEC_pd_safe_dd_fold.md INC-0): read directly off the
+        // kernel, which by this point holds the accepted solve's fold (a within-epoch RAIM
         // re-solve re-folds and overwrites, and NetworkEstimator::beginEpoch resets it once
-        // per epoch).  `blocks == 0` means NO fold ran this epoch — carry off, no chords —
-        // and the columns correctly stay BLANK.  Going through a ctx.carry stamp instead
-        // would report a default-constructed min_pivot_rel of 1.0 on a chordless epoch,
-        // i.e. a perfectly conditioned factorization that was never computed, and 1.0 is
-        // ALSO what a genuine single-chord block reports (caught by the card's own review,
-        // 2026-08-03).  "Zero degenerate blocks" and "the carry never ran" are different
-        // statements, and conflating them is how the frozen 78 % stayed invisible.
+        // per epoch).  `blocks == 0` means no fold ran this epoch (carry off, no chords),
+        // and the columns stay blank.  A ctx.carry stamp would instead report a
+        // default-constructed min_pivot_rel of 1.0 on a chordless epoch, a perfectly
+        // conditioned factorization that was never computed, and 1.0 is also what a
+        // genuine single-chord block reports.  "Zero degenerate blocks" and "the carry
+        // never ran" must stay distinguishable.
         if (const auto& dfs = est.ddFoldStats(); dfs.blocks > 0) {
             es.ddfold_degen_blocks  = dfs.degen_blocks;
             es.ddfold_degen_rows    = dfs.degen_rows;
             es.ddfold_min_pivot_rel = dfs.min_pivot_rel;
         }
         // Prior-residual census (docs/SPEC_prior_residual_census.md): the emission
-        // seam ran a few lines above THIS epoch and stamped the TOW it drained, so
-        // an epoch the census did not reach leaves the columns BLANK rather than
-        // repeating stale numbers.  A genuine 0-row epoch (every carry family
-        // absent) still writes 0 — "ran, saw nothing" and "never ran" are exactly
-        // the two states standing invariant #4 requires a reader to distinguish.
+        // seam ran above in this epoch and stamped the TOW it drained, so an epoch
+        // the census did not reach leaves the columns blank rather than repeating
+        // stale numbers.  A genuine 0-row epoch (every carry family absent) still
+        // writes 0; "ran, saw nothing" and "never ran" are the two states standing
+        // invariant #4 requires a reader to distinguish.
         if (std::abs(ctx.carry.prires_ep_tow - se.time.tow) < 1e-6) {
             es.prires_rows       = ctx.carry.ep_prires_rows;
             es.prires_rows_resp  = ctx.carry.ep_prires_resp;
@@ -637,11 +629,11 @@ void networkStashStatus(
             es.prires_n_reported = ctx.carry.ep_prires_reported;
             es.prires_max_t      = ctx.carry.ep_prires_max_t;
             // Constraint-aware global σ̂₀ (docs/SPEC_prior_residual_census.md §14):
-            // same TOW stamp, same "unavailable is not 0" convention.  The FLAGS
-            // are written whenever the rider ran — including as 0 — because a
-            // clean epoch and an un-run one must be distinguishable from this
-            // file alone; the two VALUES stay blank when the epoch could not
-            // form them, so "not formed" never reads as "formed at zero".
+            // same TOW stamp, same "unavailable is not 0" convention.  The flags are
+            // written whenever the rider ran, including as 0, so a clean epoch and an
+            // un-run one are distinguishable from this file alone; the two values
+            // stay blank when the epoch could not form them, so "not formed" never
+            // reads as "formed at zero".
             if (ctx.knobs.prires_s0g) {
                 es.s0g_flags = ctx.carry.ep_s0g_flags;
                 if (ctx.carry.ep_s0g_formed)      es.s0g_sigma0  = ctx.carry.ep_s0g_sigma0;
@@ -669,9 +661,9 @@ void networkStashStatus(
             es.worst_sat      = worst_sat_name;
             es.worst_dev_m    = worst;
         }
-        // Phase 2.2: an SH-gate-withheld epoch ran the full solve/carry/QC but
-        // emitted nothing — its disposition row says so (the row itself is the
-        // per-epoch out-of-band count the handoff §4.2 lesson demands).
+        // An SH-gate-withheld epoch ran the full solve/carry/QC but emitted nothing,
+        // and its disposition row says so.  The row is the per-epoch out-of-band count
+        // that the handoff §4.2 lesson requires (Phase 2.2).
         emitEpochStatus(config_.getNetworkConfig().sh_health_gate
                             && ctx.carry.sh_gate_engaged
                         ? "sh_gate_withheld" : "emitted", es);
@@ -702,13 +694,13 @@ void networkStashStatus(
         }
     }
 
-    // QUEUE item 1(d) lifecycle (review finding, 2026-08-14): the re-reference
-    // set is cleared HERE — the epoch tail only a solve that actually COMMITTED
-    // its carry reaches — and not at the election.  A withheld epoch (rank gate
-    // / A4 σ̂₀) skips this function entirely, so its marks persist into the next
-    // epoch's fold, which still faces the retired-frame prev_carry; an SH-gate
-    // epoch runs the stash (emission-only withhold) and correctly clears.  Empty
-    // set when the knob is off ⇒ byte-identical no-op.
+    // Lifecycle of the re-reference set (queue item 1(d)): it is cleared here, in
+    // the epoch tail that only a solve that committed its carry reaches, and not at
+    // the election.  A withheld epoch (rank gate / A4 σ̂₀) skips this function, so
+    // its marks persist into the next epoch's fold, which still faces the
+    // retired-frame prev_carry; an SH-gate epoch runs the stash (emission-only
+    // withhold) and clears.  The set is empty when the knob is off, so this is a
+    // byte-identical no-op.
     ctx.carry.phase_anchor_reref.clear();
 
     prev_week = se.time.week; prev_tow = se.time.tow;

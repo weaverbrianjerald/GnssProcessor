@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Silent/fast net305 25deg producer + closed-loop HELD-OUT consumer (ZIM200CHE) for
-a quick end-to-end validation: does a user PPP-RTK station kept OUT of the network get
-a stable kinematic position using ONLY the network's products?
+"""Silent/fast net305 25deg producer plus a closed-loop, held-out consumer
+(ZIM200CHE) for a quick end-to-end validation: whether a user PPP-RTK station
+kept out of the network gets a stable kinematic position using only the
+network's products.
 
-Producer = net305 25deg all estimation/QC/datum features (the validated healthy set),
-with every network.trace_* / diagnostic turned OFF (silent) for speed.  Consumer runs
-as a derived RealTimeEngine reading the in-memory SSR store (FULL clock+bias),
-undifferenced, kinematic (inherits position_q=100).  Writes logs/closed_loop_trace.csv.
+Producer = net305 25deg with all estimation/QC/datum features (the validated
+set), with every network.trace_* / diagnostic turned off (silent) for speed.
+Consumer runs as a derived RealTimeEngine reading the in-memory SSR store
+(full clock and bias), undifferenced, kinematic (inherits position_q=100).
+Writes logs/closed_loop_trace.csv.
 """
 import json, os
 
@@ -14,14 +16,14 @@ REPO = "C:/GnssProcessor"
 BASE = os.path.join(REPO, "runs/net_matrix_2024-129/configs/net305_allfeat_10ep_em25.json")
 OUT  = os.path.join(REPO, "runs/net_matrix_2024-129/configs")
 
-# Held-out consumer (NOT in the 305 roster). Truth ECEF from the RINEX APPROX POSITION XYZ.
+# Held-out consumer (not in the 305 roster). Truth ECEF from the RINEX APPROX POSITION XYZ header field.
 CONSUMER = {
     "name": "ZIM200CHE",
     "rinex_path": "C:/GnssProcessor/data/2024-129/obs/zim200che/ZIM200CHE_R_20241290000_01D_30S_MO.rnx",
     "position_ecef": [4331300.1600, 567537.0810, 4633133.5100],
 }
 
-# Every network.trace_* / diagnostic flag we armed for the viz matrix -> OFF (silent/fast).
+# Every network.trace_* / diagnostic flag armed for the viz matrix, turned off (silent/fast).
 SILENCE = [
     "trace_stations", "trace_ionosphere", "trace_estimability", "trace_slip_events",
     "trace_slip_raw", "trace_clock_full", "trace_anchor_info", "trace_dd_fractional",
@@ -33,7 +35,7 @@ CLOSED_LOOP = {
     "enable": True,
     "station": CONSUMER,
     "consume_network_products": True,
-    "consume_network_clock": True,      # FULL: use the network satellite clocks
+    "consume_network_clock": True,      # full: use the network satellite clocks
     "consumer_undifferenced": True,     # undifferenced PPP-RTK user (preferred path)
     "ar_mode": 1,
     "ar_wl_only": False,                # full NL AR, not WL-only

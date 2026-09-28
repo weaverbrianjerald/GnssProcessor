@@ -1,29 +1,29 @@
 #!/usr/bin/env python3
-"""EV7-read: the all-satellite clock-anchor decouple of TOW 278520 (a DIAGNOSTIC).
+"""EV7-read: the all-satellite clock-anchor decouple of TOW 278520 (a diagnostic).
 
 Pre-registered in ``docs/refound/EV7_all_sat_clock_decouple_2026-09-21.md``.  Trace-only: it
 reads a finished run directory and writes nothing but stdout (no plotting, no run, no solve).
 The frozen windows of the card's section 3 are all expressed relative to the trip epoch
-``--tow`` (default 278520), so an arm that MOVED the event is read with the same instrument by
+``--tow`` (default 278520), so an arm that moved the event is read with the same instrument by
 passing the new epoch.
 
 Sections, in the order the card asks for them:
 
 (a) the event rows of ``network_events.csv`` over ``T-60 .. T+120`` counted by
-    (tow, tier, event) with the PRIORRES census excluded, plus every IDENTITY row (tiers
+    (tow, tier, event) with the PRIORRES census excluded, plus every identity row (tiers
     TOPOLOGY, READMIT, T1_if_slip, T0_mw_detect, T0_gap, PHASE_ANCHOR, PBGAUGE, STRANSFORM)
     printed in full.
 (b) the trip itself: the ``CLK_ANCHOR cta_decouple`` count, the in-epoch pass split, the sum
-    of the absolute first-solve innovations ``e=``, the five largest, and — with ``--ref`` —
+    of the absolute first-solve innovations ``e=``, the five largest, and, with ``--ref``,
     the slope through the origin and the correlation of this run's pattern against the
-    reference run's over the satellites they share.  The WHOLE run is then scanned for any
-    other epoch carrying ``--mass-n`` or more decouples (an arm may MOVE the event) and each
+    reference run's over the satellites they share.  The run is then scanned for any
+    other epoch carrying ``--mass-n`` or more decouples (an arm may move the event) and each
     is printed the same way.
 (c) the post-fit refloat count (``T4_attrib``) over ``T .. T+120`` and per hour of the run.
 (d) the ``PRIORRES`` row count at the trip epoch and at the epoch before it.
 (e) the satellite code-bias steps of ``network_sat_bias_states.csv`` across
     ``T-30 -> T -> T+30``: per signal family the median step over the satellites present at
-    both epochs, and the three largest DE-MEDIANED steps (standing invariant #5 — only the
+    both epochs, and the three largest de-medianed steps (standing invariant #5: only the
     between-satellite contrast is datum-invariant).
 (f) the frozen consumer statistic: PRE = mean 3D over ``T-300 .. T-30`` (10 epochs),
     PEAK = max over ``T .. T+120``, PLATEAU = mean over ``T+300 .. T+2250``,
@@ -118,7 +118,7 @@ def decouples(events, t):
 def trip_block(events, t, ref_events, label, ref_tow):
     """(b)/(g) core: the trip's identity numbers at epoch `t`, and the fit against `ref`.
 
-    A MOVED event is fitted against the reference run's own trip epoch (`ref_tow`), because
+    A moved event is fitted against the reference run's own trip epoch (`ref_tow`), because
     the question the fit answers is whether the arm reproduced the same satellite pattern
     somewhere else, not whether the reference also tripped at the moved epoch.
     """

@@ -37,7 +37,10 @@ namespace GnssProcessor {
         /**
          * @brief Construct a StateManager.
          *
-         * @param core_state_size Number of core states (e.g. 5 for PPP, 6 for PPP-RTK).
+         * @param core_state_size Core-state count supplied by the caller.  Only baseline
+         *        mode reads it, as the size of the fixed core (3 = position; the optional
+         *        differential ZWD is appended after it).  The other modes derive the core
+         *        layout from @p config and ignore this value.
          * @param log_manager Reference to a LogManager for diagnostic logging.
          * @param config Read-only reference to GnssConfig containing runtime parameters.
          */
@@ -168,12 +171,11 @@ namespace GnssProcessor {
         /**
          * @brief Index of the receiver clock bias state within the state vector.
          *
-         * Allocated for PPP and PPP-RTK in non-BSSD modes.  Under BSSD the
-         * receiver clock is differenced out by the SD transform — it is
-         * unobservable to code/phase measurements and would only drift on
-         * process noise, so allocation is skipped to keep the state vector
-         * tight.  Baseline (DD) modes also skip it because DD cancels the
-         * receiver clock identically.
+         * Allocated for PPP and PPP-RTK in non-BSSD modes.  Under BSSD the SD
+         * transform differences the receiver clock out: it is unobservable to
+         * code and phase measurements and would only drift on process noise, so
+         * it is not allocated.  Baseline (DD) modes also omit it because DD
+         * cancels the receiver clock identically.
          *
          * @return Index of the clock bias state, or
          *         @c std::numeric_limits<size_t>::max() if not present.
@@ -193,9 +195,10 @@ namespace GnssProcessor {
          * the GPS-system reference rate.  Doppler measurements drive it directly
          * (Jacobian coefficient +1), and it propagates the clock-bias state via
          * @f$ \delta t_r(k+1) = \delta t_r(k) + dt \cdot \dot{\delta t}_r(k) @f$
-         * in the transition matrix (continuous white-noise acceleration model
-         * mirrors the position/velocity block).  Present only when velocity
-         * estimation is enabled — same gate that opens Doppler processing.
+         * in the transition matrix (a continuous white-noise acceleration model,
+         * as for the position/velocity block).  Present only when velocity
+         * estimation is enabled (the gate that also opens Doppler processing) and
+         * BSSD is off.
          *
          * @return Index, or std::numeric_limits<size_t>::max() if not present.
          */
@@ -236,9 +239,9 @@ namespace GnssProcessor {
          * Estimable when @c BaselineConfig::estimate_differential_tropo is on.
          * The state represents Δzwd = ZWD_rover − ZWD_reference; phase DD H
          * rows write @c (mf_w_i − mf_w_p) into this column.  Returns
-         * @c std::numeric_limits<size_t>::max() when not present (which is
-         * the case in PPP / PPP-RTK modes, or in baseline mode with the flag
-         * off — wet delay is then assumed to cancel in BRSD).
+         * @c std::numeric_limits<size_t>::max() when not present: in PPP and
+         * PPP-RTK modes, and in baseline mode with the flag off, where the wet
+         * delay is assumed to cancel in BRSD.
          */
         size_t getDifferentialTropoIndex() const;
 
@@ -248,8 +251,9 @@ namespace GnssProcessor {
         bool hasDifferentialTropo() const;
 
         /**
-         * @brief Index of the ionospheric zenith delay state (PPP-RTK only).
-         * @return Index of the ionosphere state, or an index >= state size if not present.
+         * @brief Index of the single ionospheric zenith delay state (PPP-RTK only).
+         * @return Always @c std::numeric_limits<size_t>::max(): no such state is
+         *         allocated, and the ionosphere is carried in per-satellite states.
          * @deprecated Use getIonosphereIndex(satellite) for per-satellite iono states.
          */
         size_t getIonoIndex() const;
@@ -273,7 +277,7 @@ namespace GnssProcessor {
         const std::map<std::string, size_t>& getIonosphereStates() const;
 
         /**
-         * @brief Lookup the per-satellite iono RATE (Idot_s) state index.
+         * @brief Lookup the per-satellite iono-rate (Idot_s) state index.
          *
          * Present only when @c GnssConfig::enableIonoRate() is on (constant-
          * velocity slant-iono model).  The rate is a companion to the level
@@ -287,7 +291,7 @@ namespace GnssProcessor {
         int getIonosphereRateIndex(const std::string& satellite) const;
 
         /**
-         * @brief Get reference to the internal per-satellite iono-RATE index map.
+         * @brief Get reference to the internal per-satellite iono-rate index map.
          * @return Map from satellite ID to state index (empty unless enableIonoRate).
          */
         const std::map<std::string, size_t>& getIonosphereRateStates() const;
@@ -324,16 +328,16 @@ namespace GnssProcessor {
          * @brief In-place variance re-inflation of an existing iono state.
          *
          * Preserves the state value, decorrelates by zeroing the iono row/column,
-         * then RAISES the diagonal to @p new_variance: the new diagonal is the larger
-         * of the current and the requested variance (card OWD: a re-inflation never
-         * shrinks; a set would inject information).  The cycle-slip layer calls
-         * this after a sat-wide ambiguity reset to break the stale iono/sat-bias
-         * partition: the pre-reset pair may have absorbed slant iono
-         * non-uniquely, and without enough variance to re-track after the
-         * reseed, that partition stays baked in for the rest of the arc.
+         * then raises the diagonal to @p new_variance: the new diagonal is the larger
+         * of the current and the requested variance, so a re-inflation never shrinks
+         * a variance (lowering it would inject information; card OWD).  The
+         * cycle-slip layer calls this after a sat-wide ambiguity reset to break the
+         * stale iono/sat-bias partition: the pre-reset pair may have absorbed slant
+         * iono non-uniquely, and without enough variance to re-track after the
+         * reseed, that partition persists for the rest of the arc.
          *
-         * Refuses a frozen (pivot) row, identified by a zero diagonal — the BSSD
-         * pivot's iono state is held at (0, 0) and must not be disturbed.
+         * Refuses a frozen (pivot) row, identified by a diagonal ≤ 0: the BSSD
+         * pivot's iono state is held at (0, 0) and is left undisturbed.
          *
          * @param satellite Satellite identifier.  No-op when it has no iono state.
          * @param new_variance Requested diagonal (m²), a floor the current variance is
@@ -344,20 +348,19 @@ namespace GnssProcessor {
                                           double new_variance);
 
         /**
-         * @brief Re-inflate a per-satellite iono RATE (Idot_s) state on a slip.
+         * @brief Re-inflate a per-satellite iono-rate (Idot_s) state on a slip.
          *
-         * The constant-velocity companion of @c reinflateIonosphereVariance,
-         * with identical semantics: the RATE value is PRESERVED (the physical
-         * slant-iono ramp is continuous across a phase-lock loss, just like the
-         * level), while the cross-covariance partition is broken (row/column
-         * zeroed) and the diagonal reset to @p new_variance so the filter can
-         * re-learn the ramp cleanly after the ambiguity reseed.  No-op when
-         * @c enableIonoRate is off or no rate state exists.  Refuses to operate
-         * on a frozen (pivot) row (zero diagonal).
+         * The constant-velocity companion of @c reinflateIonosphereVariance, with
+         * the same semantics: the rate value is preserved (the physical slant-iono
+         * ramp is continuous across a phase-lock loss, like the level), the
+         * cross-covariance partition is broken (row/column zeroed) and the diagonal
+         * is raised to @p new_variance, so the filter can re-learn the ramp after
+         * the ambiguity reseed.  No-op when @c enableIonoRate is off or no rate
+         * state exists.  Refuses a frozen (pivot) row (diagonal ≤ 0).
          *
          * @param satellite Satellite identifier.
          * @param new_variance Requested diagonal (m²/s²), a floor the current variance
-         *                  is raised to (card OWD: never lowered).  Falls back to
+         *                  is raised to (never lowered; card OWD).  Falls back to
          *                  @c initial_std.ionosphere_rate² when non-positive.
          */
         void reinflateIonosphereRateVariance(const std::string& satellite,
@@ -367,21 +370,21 @@ namespace GnssProcessor {
          * @brief Re-inflate a receiver code-bias (DCB/IFB) state's variance.
          *
          * The code-bias analog of @c reinflateIonosphereVariance.  When a consumed
-         * satellite code-bias datum re-references — the producer's
-         * per-(const,signal) sum-to-zero level steps as satellites rise and set —
-         * the receiver code-bias state absorbing that common-mode step must be
-         * freed to take it in one epoch rather than dragging it through a
-         * near-frozen random walk.  Zeroes the row/col and RAISES the diagonal to the
-         * request (card OWD: the larger of the current and the requested variance, a
-         * re-inflation never shrinks) while PRESERVING the value: the hardware delay
-         * did not change, only the gauge it is referenced to.
+         * satellite code-bias datum re-references (the producer's per-(const,signal)
+         * sum-to-zero level steps as satellites rise and set), the receiver code-bias
+         * state that absorbs the common-mode step is freed to take it in one epoch
+         * instead of following it through a near-frozen random walk.  Zeroes the
+         * row/col and raises the diagonal to the request (the larger of the current
+         * and the requested variance, so a re-inflation never shrinks; card OWD)
+         * while preserving the value: the hardware delay is unchanged, only the
+         * gauge it is referenced to has stepped.
          *
          * @param key Receiver code-bias key (e.g. "GPS_DCB", "GPS_IFB5").  No-op
          *            when no such state exists.
          * @param new_variance Requested diagonal (m²), a floor; falls back to
          *            @c initial_std.code_bias² when non-positive.  Refused on a
-         *            frozen row (P_diag ≤ 0), which defends any BSSD-held or
-         *            GLONASS per-slot column the network path should never target.
+         *            frozen row (P_diag ≤ 0), which protects any BSSD-held or
+         *            GLONASS per-slot column; the network path does not target those.
          */
         void reinflateCodeBiasVariance(const std::string& key,
                                        double new_variance);
@@ -390,18 +393,18 @@ namespace GnssProcessor {
          * @brief Re-inflate an inter-system time-offset (ISB) state's variance.
          *
          * The clock-datum analog of @c reinflateCodeBiasVariance.  A clock-datum
-         * re-reference steps every satellite clock of ONE constellation by a
-         * common constant.  The reference constellation's step is absorbed by the
-         * receiver clock, but a non-reference constellation's is DIFFERENTIAL and
-         * lands on the ISB state, whose near-frozen random walk cannot follow a
-         * jump in one epoch — dragging every observation of that constellation
-         * until it re-converges.  Zeroes the row/col and RAISES the diagonal to the
-         * request (card OWD: the larger of the current and the requested variance)
-         * while PRESERVING the value: the inter-system hardware offset did not change,
-         * only the clock gauge stepped.
+         * re-reference steps every satellite clock of one constellation by a common
+         * constant.  The receiver clock absorbs the reference constellation's step; a
+         * non-reference constellation's step is differential and lands on the ISB
+         * state, whose near-frozen random walk cannot follow a jump in one epoch, so
+         * the step biases every observation of that constellation until the ISB
+         * re-converges.  Zeroes the row/col and raises the diagonal to the request
+         * (the larger of the current and the requested variance; card OWD) while
+         * preserving the value: the inter-system hardware offset is unchanged, only
+         * the clock gauge has stepped.
          *
          * @param system_name Constellation name as used by the ISB key map
-         *            (e.g. "GAL", "GLO"; @c StateInitializer::systemToIsbName).
+         *            (e.g. "Galileo", "GLONASS"; @c StateInitializer::systemToIsbName).
          *            No-op when no such state exists, as for the reference
          *            constellation.
          * @param new_variance Requested diagonal (m²), a floor; falls back to
@@ -411,7 +414,7 @@ namespace GnssProcessor {
         void reinflateSystemTimeOffsetVariance(const std::string& system_name,
                                                double new_variance);
 
-        /// Card OWD (O2): the seven variance re-inflations, in the order of the run-end line.
+        /// The seven variance re-inflations, in the order of the run-end line (card OWD, O2).
         enum class Reinflation : int {
             CodeBias = 0,       ///< @ref reinflateCodeBiasVariance
             SystemTimeOffset,   ///< @ref reinflateSystemTimeOffsetVariance (the ISB)
@@ -423,32 +426,31 @@ namespace GnssProcessor {
             Count
         };
 
-        /// Card OWD (O2): one re-inflation's count of states whose diagonal the request
-        /// RAISED (the request was at least the current variance: the pre-OWD result too) and
-        /// of states whose larger current variance was KEPT (where the pre-OWD rule, which set
-        /// the diagonal, deflated it).  A refused (frozen) row counts in neither.
+        /// One re-inflation's counts: states whose diagonal became the request (the request
+        /// was at least the current variance) and states that kept a larger current variance
+        /// (where writing the request would have lowered it).  A refused (frozen) row counts
+        /// in neither (card OWD, O2).
         struct ReinflateCounter {
             long long raised = 0;   ///< request >= current: the diagonal became the request
             long long kept   = 0;   ///< current > request: the diagonal kept its value
         };
 
-        /// Card OWD (O2): the counters of the seven re-inflations, indexed by @ref Reinflation.
+        /// The counters of the seven re-inflations, indexed by @ref Reinflation (card OWD, O2).
         using ReinflateCounters =
             std::array<ReinflateCounter, static_cast<std::size_t>(Reinflation::Count)>;
 
-        /// Card OWD (O2): this state manager's re-inflation counters since construction.
+        /// This state manager's re-inflation counters since construction (card OWD, O2).
         /// @return The counters, indexed by @ref Reinflation.
         const ReinflateCounters& reinflateCounters() const { return reinflate_counters_; }
 
-        /// Card OWD (O2): the stable short name of a re-inflation in the run-end lines
-        /// ("code_bias", "isb", "iono", "iono_rate", "sat_bias", "sat_phase_bias",
-        /// "sat_clock").
+        /// The stable short name of a re-inflation in the run-end lines ("code_bias", "isb",
+        /// "iono", "iono_rate", "sat_bias", "sat_phase_bias", "sat_clock"; card OWD, O2).
         /// @param r The re-inflation.
         /// @return Its name.
         static const char* reinflationName(Reinflation r);
 
         /**
-         * @brief Card OWD (O2): format counters as the run-end summary.
+         * @brief Format re-inflation counters as the run-end summary (card OWD, O2).
          *
          * One format everywhere (the consumer, the producer summed over its stations, the
          * PPP run), parsed by the card's graders:
@@ -480,12 +482,12 @@ namespace GnssProcessor {
         /**
          * @brief Store the last-known azimuth (degrees) for a per-satellite iono state.
          *
-         * Kept alongside the elevation map for offline diagnostics: it lets
-         * the ionosphere trace logger emit a sky-plot-ready (el, az) pair per
-         * row without having to plumb the original observation through to
-         * the logger.  Not used by the process-noise model (which only needs
-         * elevation), so the convention is "best-effort, last observation
-         * wins" — same as setIonosphereElevation.
+         * Kept alongside the elevation map for offline diagnostics: the
+         * ionosphere trace logger reads it to emit a sky-plot-ready (el, az)
+         * pair per row without the original observation being passed through
+         * to the logger.  The process-noise model does not use it (it needs
+         * only elevation), so the convention is best-effort, last observation
+         * wins, as for setIonosphereElevation.
          *
          * @param satellite Satellite identifier (e.g. "G01").
          * @param azimuth_deg Azimuth in degrees (0 = North, increasing East).
@@ -501,15 +503,18 @@ namespace GnssProcessor {
         /**
          * @brief Mark a set of satellites as BSSD pivots (state-freeze).
          *
-         * The pivot's per-(sat, signal) states — ionosphere, ambiguities,
-         * and sat-biases — are frozen at value=0, variance=0 by the BSSD
-         * S-transform.  This set tells @c getProcessNoiseMatrix() to skip
-         * Q for those states so process noise can't grow their variance
-         * past the disturbance-detection threshold (which would trigger a
-         * spurious pivot handover every epoch).  Real cycle slips on the
-         * pivot's *observation* are caught separately by the phase-only
-         * pivot-slip detector in @c KalmanFilter::validatePostFitResiduals
-         * and routed through @c forced_handover_requests_.
+         * The BSSD S-transform freezes the pivot's per-(sat, signal) states
+         * (ionosphere, ambiguities and sat-biases) at value=0, variance=0.
+         * This set tells @c getProcessNoiseMatrix() to skip Q for every
+         * per-satellite state of these satellites (ionosphere and iono rate,
+         * ambiguities, satellite code and phase biases, satellite clock), so
+         * process noise cannot grow their variance past the
+         * disturbance-detection threshold, which would trigger a spurious pivot
+         * handover every epoch.  @c getTransitionMatrix() also skips their
+         * iono level/rate coupling.  Real cycle slips on the pivot's
+         * observation are caught separately by the phase-only pivot-slip
+         * detector in @c KalmanFilter::validatePostFitResiduals and routed
+         * through PivotManager's @c forced_handover_requests_.
          *
          * @param sats Set of pivot satellite IDs.
          */
@@ -596,11 +601,11 @@ namespace GnssProcessor {
          * @brief Read-only view of the inter-system time-offset (ISB) key map
          *        (system name → state index).
          *
-         * Added for the RT warm-resume seam response: the ISB is the stiffest
-         * core state (near-zero random walk), so a resume across a producer
-         * frame re-realization must re-inflate every registered ISB via
-         * @ref reinflateSystemTimeOffsetVariance — enumerating them needs the
-         * map, not a per-name probe.
+         * Used by the RT warm-resume seam response: the ISB is the stiffest core
+         * state (near-zero random walk), so a resume across a producer frame
+         * re-realization re-inflates every registered ISB via
+         * @ref reinflateSystemTimeOffsetVariance, which needs the full map rather
+         * than a per-name probe.
          */
         const std::map<std::string, size_t>& getSystemTimeOffsetStates() const {
             return system_time_offset_indices_;
@@ -611,9 +616,9 @@ namespace GnssProcessor {
          *
          * Mirrors @c getSystemTimeOffsetIndex but for the rate (ISBR).  The
          * total clock-rate observed on a non-GPS Doppler measurement is
-         * @f$ \dot{\delta t}_r + \dot{\mathrm{ISB}}_\mathrm{sys} @f$ — the GPS-
-         * referenced clock-rate plus this per-system rate offset.  Present
-         * only when velocity estimation is enabled.
+         * @f$ \dot{\delta t}_r + \dot{\mathrm{ISB}}_\mathrm{sys} @f$: the
+         * GPS-referenced clock-rate plus this per-system rate offset.  Present
+         * only when velocity estimation is enabled and BSSD is off.
          *
          * @param system_name Name of the GNSS system (e.g., "Galileo", "GLONASS").
          * @return Index, or std::numeric_limits<size_t>::max() if not present.
@@ -699,7 +704,7 @@ namespace GnssProcessor {
          * @brief Reset an existing float ambiguity state.
          *
          * Zeroes the row/column cross-covariances, sets the diagonal to std_m²,
-         * and marks the key pending re-seed.  The value is left alone —
+         * and marks the key pending re-seed.  The value is left unchanged;
          * ensureRequiredStates overwrites it with a geometry-based seed. Unknown
          * keys are refused. Advances the key's continuity generation.
          *
@@ -712,25 +717,25 @@ namespace GnssProcessor {
         bool resetAmbiguity(const std::string& key, double std_m);
 
         /**
-         * @brief Translate a float ambiguity state by @p delta_m — VALUE ONLY
-         *        (card CC, the consumer's declared-step carry).
+         * @brief Translate a float ambiguity state by @p delta_m, value only
+         *        (the consumer's declared-step carry; card CC).
          *
          * The consumer's phase row is @c predicted = … + ssr_bias_term + amb_term
          * with both signs +1, so when the applied satellite phase bias moves by
-         * Δ (a DECLARED re-realization: disc-counter bump or A5 freshness flip)
+         * Δ (a declared re-realization: disc-counter bump or A5 freshness flip)
          * the ambiguity in the new datum is exactly @c amb − Δ.  This primitive
-         * applies that translation: @c state_vector_(idx) += delta_m, the
+         * applies that translation: @c state_vector_(idx) += delta_m.  The
          * covariance is untouched (no row/column zeroing, no re-inflation) and
-         * the key is NOT marked pending re-seed — the ambiguity keeps every
-         * cross-covariance it converged, which is the whole point of carrying
-         * instead of resetting.
+         * the key is not marked pending re-seed, so the ambiguity keeps every
+         * cross-covariance it has converged; a reset would discard them.  A
+         * nonzero @p delta_m advances the key's continuity generation.
          *
-         * Unknown keys are refused exactly like @ref resetAmbiguity's guard
-         * (false + a debug line): slip detectors and the SSR datum-break
-         * reactions iterate raw signals the state may not hold.
+         * Unknown keys are refused as by @ref resetAmbiguity's guard (false plus
+         * a debug line): slip detectors and the SSR datum-break reactions
+         * iterate raw signals the state may not hold.
          *
          * @param key     Ambiguity key ("G24_L5X").
-         * @param delta_m Translation to ADD to the state value (metres); the
+         * @param delta_m Translation added to the state value (metres); the
          *                caller passes −Δ for an applied-bias step of +Δ.
          * @return true iff the state existed and was translated.
          */
@@ -742,9 +747,9 @@ namespace GnssProcessor {
          * The IGS-SSR discontinuity counter increments whenever a satellite phase
          * bias jumps, breaking the integer property of that signal's ambiguity.
          * The caller queries the SSR store per (sat, signal) and passes the counter
-         * here; this tracks the last-seen value and reports any CHANGE — any, not
-         * just an increase, since the field is 4 bits and wraps — meaning the
-         * ambiguity should be reset.  A first sighting records and returns false.
+         * here; this tracks the last-seen value and reports any change, not only an
+         * increase, because the field is 4 bits and wraps.  A reported change means
+         * the ambiguity should be reset.  A first sighting records and returns false.
          *
          * @param key     Stable per-(sat, signal) key (e.g. "G01|L1C").
          * @param counter Current discontinuity counter from the SSR phase bias.
@@ -758,10 +763,10 @@ namespace GnssProcessor {
          *        @ref noteSsrDiscontinuity).
          *
          * Serialized by the RT filter-state snapshot so a warm-resumed engine
-         * keeps its counter baselines: a producer disc bump DURING the outage
+         * keeps its counter baselines: a producer disc bump during the outage
          * then fires the existing ambiguity-reset reaction at the first
-         * post-resume sighting instead of being silently absorbed as a fresh
-         * baseline (the consumer-gap silent-frame-swap class).
+         * post-resume sighting, instead of being recorded as a first sighting
+         * with no reset (the consumer-gap silent-frame-swap class).
          */
         const std::map<std::string, int>& getSsrDiscontinuityMemory() const {
             return last_ssr_discontinuity_;
@@ -769,13 +774,13 @@ namespace GnssProcessor {
 
         /**
          * @brief Replace the SSR discontinuity-counter memory wholesale (RT
-         *        warm resume only — see @ref getSsrDiscontinuityMemory).
+         *        warm resume only; see @ref getSsrDiscontinuityMemory).
          */
         void setSsrDiscontinuityMemory(std::map<std::string, int> mem) {
             last_ssr_discontinuity_ = std::move(mem);
         }
 
-        /// Dynamic state kinds the RT filter-state snapshot serializes — one per
+        /// Dynamic state kinds the RT filter-state snapshot serializes, one per
         /// dynamic key→index map.  The core block (position, clock, ZWD, …) is
         /// index-stable by construction and is not kind-tagged.
         enum class RestoredStateKind {
@@ -790,16 +795,17 @@ namespace GnssProcessor {
         };
 
         /**
-         * @brief RT warm resume: re-create one dynamic state EXACTLY as serialized.
+         * @brief Re-create one dynamic state at its serialized index and value
+         *        (RT warm resume).
          *
-         * Appends a row with @p value at placeholder unit variance — the resume
+         * Appends a row with @p value at placeholder unit variance (the resume
          * overwrites the whole covariance via @ref setCovariance once the layout
-         * is rebuilt — and registers @p key in the map @p kind selects.
+         * is rebuilt) and registers @p key in the map @p kind selects.
          *
-         * Deliberately BYPASSES the semantic add* functions, whose creation side
+         * Bypasses the semantic add* functions on purpose: their creation side
          * effects (elevation-scaled seeds, the enableIonoRate paired-rate append,
-         * duplicate-key short-circuits) would diverge the rebuilt layout from the
-         * serialized one wherever an in-run prune had interleaved the original
+         * duplicate-key short-circuits) would make the rebuilt layout differ from
+         * the serialized one wherever an in-run prune had interleaved the original
          * indices.
          *
          * @param kind        Which dynamic map owns the key.
@@ -809,8 +815,8 @@ namespace GnssProcessor {
          *                    must land exactly there (the caller replays rows in
          *                    ascending index order onto a core-only manager).
          * @return true if the row landed at @p expect_idx and the key was newly
-         *         registered.  Every refusal is MUTATION-FREE: the landing index
-         *         is checked before the append, because getStateSize() is
+         *         registered.  A refusal leaves the manager unchanged: the landing
+         *         index is checked before the append, because getStateSize() is
          *         map-derived and an unregistered appended row would desynchronize
          *         it from the actual vector length.
          */
@@ -821,17 +827,21 @@ namespace GnssProcessor {
          * @brief Compute an approximate ambiguity seed value from an observation.
          *
          * The seed is computed as:
-         *   seed = observed - modeled - rx_clock - (mf_w * zwd) - isb - tropo_grad
+         *   seed = observed - modeled - rx_clock - (mf_w * zwd) - isb - tropo_grad - iono
          *
-         * where rx_clock, zwd, inter-system time offset (isb) and tropospheric
-         * gradient contribution are read from the supplied state vector at the
-         * standard core-state indices.  This centralizes the formula used when
-         * creating new ambiguities and when re-seeding ambiguities after
-         * cycle-slip or outlier detection.
+         * where rx_clock (plus the phase-clock offset when estimated), zwd, the
+         * inter-system time offset (isb) and the tropospheric gradient contribution
+         * are read from the supplied state vector at the standard core-state
+         * indices.  In uncombined mode, for a phase key of a satellite with a
+         * slant-iono state I_s, iono = −α·I_s with α = (f_L1/f)² for the key's
+         * band; otherwise iono = 0.  This centralizes the formula used when creating new
+         * ambiguities and when re-seeding ambiguities after cycle-slip or outlier
+         * detection.
          *
          * @param obs        The PppObservation containing observed/modeled values and wet mapping factor.
-         * @param ref_type   The iono-free key into obs.observed / obs.modeled (e.g. "L1C_L2W").
-         * @param x          State vector from which rx clock, ZWD, ISB and gradients are read.
+         * @param ref_type   The key into obs.observed / obs.modeled: an iono-free pair
+         *                   (e.g. "L1C_L2W"), or a single signal in uncombined mode (e.g. "L1C").
+         * @param x          State vector from which rx clock, ZWD, ISB, gradients and iono are read.
          * @return Approximate ambiguity value in meters, or 0.0 on failure.
          */
         double computeAmbiguitySeed(const PppObservation& obs,
@@ -841,13 +851,17 @@ namespace GnssProcessor {
         /**
          * @brief Update a PppState object from a raw state-vector representation.
          *
-         * Copies relevant core states and ambiguities into the provided \p ppp_state.
-         * This function is a lightweight translator used to expose the internal
-         * state to higher-level models.
+         * Copies position, clock, ZWD and, when present, velocity, phase clock and
+         * troposphere gradients; the inter-system time offsets; the ambiguities; and
+         * in PPP-RTK mode the slant-iono and iono-rate states into \p ppp_state.
+         * A lightweight translator that exposes the internal state to higher-level
+         * models; it copies values only, not covariance.
          *
          * @param current_state State vector to interpret.
-         * @param ppp_state Output PppState that will receive values and covariance.
-         * @param state_manager Reference to the manager (kept for compatibility with callers).
+         * @param ppp_state Output PppState that receives the values.
+         * @param state_manager Manager that supplies the core-state indices and the
+         *        ambiguity map for reading \p current_state; the ionosphere and ISB
+         *        maps come from this object.
          */
         void updatePppStateFromVector(const Eigen::VectorXd& current_state, PppState& ppp_state, const StateManager& state_manager) const;
 
@@ -864,9 +878,12 @@ namespace GnssProcessor {
         /**
          * @brief Lookup a receiver code bias (IFB) state index by key.
          *
-         * Keys have the format "system_signal" (e.g. "GPS_C2W", "Galileo_C5Q").
-         * Only non-reference code signals have a code bias state; the reference
-         * signal's hardware delay is absorbed by the receiver clock / ISB.
+         * Keys follow StateKeySchema: "<system>_IFB<band>", "<system>_DCB", the
+         * per-FCN-slot GLONASS form "GLONASS_IFB<band>_k<±slot>", or the
+         * inter-signal form "<system>_ISC_<signal>" (e.g. "GPS_IFB2", "GPS_DCB",
+         * "GPS_ISC_C1W").  Only non-reference code signals have a code bias
+         * state; the reference signal's hardware delay is absorbed by the
+         * receiver clock / ISB.
          *
          * @param key Code bias key.
          * @return Zero-based state index, or -1 if not present.
@@ -879,7 +896,7 @@ namespace GnssProcessor {
          * The state is appended to the state vector and covariance with the
          * configured initial variance.
          *
-         * @param key Unique code bias key (e.g. "GPS_C2W").
+         * @param key Unique code bias key (e.g. "GPS_IFB2").
          * @param initial_value Initial bias value in meters (typically 0.0).
          * @return Index assigned to the newly-created code bias state.
          */
@@ -951,20 +968,20 @@ namespace GnssProcessor {
          * outlier-rejected for @c estimation.stuck_code_bias.min_streak
          * consecutive epochs, or its EWMA mean has drifted past
          * @c estimation.stuck_code_bias.bias_floor_m.  Either way the bias has
-         * over-converged on a value that no longer matches truth, and the closed
-         * loop (innovation → outlier-reject → bias never updates) must be broken.
+         * over-converged on a wrong value, and the reset breaks the closed loop
+         * (innovation → outlier-reject → bias never updates).
          *
          * Operationally:
          *  - x(idx) ← @p new_value, typically the current value plus the EWMA
-         *    residual mean, snapping to the estimate recent residuals imply.
-         *  - P row and column at idx ← 0, since the state's relationships are no
-         *    longer trusted after the reset.
+         *    residual mean, i.e. the estimate that recent residuals imply.
+         *  - P row and column at idx ← 0, since the state's correlations are not
+         *    trusted after the reset.
          *  - P(idx, idx) ← @p new_variance, inflated enough to absorb new
          *    innovations (typically cold-start @c initial_std.sat_bias²).
          *
-         * Refuses a frozen (pivot) row, identified by a zero diagonal: PivotManager
-         * holds the BSSD pivot's sat-bias at (0, 0), so this warns rather than
-         * silently mangling the pivot constraint.
+         * Refuses a frozen (pivot) row, identified by a diagonal ≤ 0: PivotManager
+         * holds the BSSD pivot's sat-bias at (0, 0), so this logs a warning and
+         * leaves the pivot constraint intact.
          *
          * @param key Existing key "satellite|signal".  No-op when unknown.
          * @param new_value Replacement value (m).
@@ -980,15 +997,15 @@ namespace GnssProcessor {
          *        for one satellite.
          *
          * Preserves the values, decorrelates each affected row/column, then raises
-         * each diagonal to @p new_variance (card OWD: the larger of the current and the
-         * requested variance per state).  Rows with a zero diagonal (frozen pivot) are
+         * each diagonal to @p new_variance (the larger of the current and the requested
+         * variance per state; card OWD).  Rows with a zero diagonal (frozen pivot) are
          * skipped, preserving the BSSD invariant.
          *
          * The cycle-slip layer calls this alongside @c reinflateIonosphereVariance
          * after a sat-wide ambiguity reset: the bias may have absorbed iono leakage
          * beforehand, and the extra variance gives the filter room to re-partition.
-         * The value stays put — hardware delays do not change, so the converged
-         * value remains the best estimate of the pure-bias component; only the
+         * The value is kept: hardware delays do not change, so the converged value
+         * remains the best estimate of the pure-bias component, and only the
          * cross-state correlation needs breaking.
          *
          * @param satellite Satellite identifier.  No-op when it has no sat-bias states.
@@ -1033,12 +1050,12 @@ namespace GnssProcessor {
          * the diagonal P the caller should seed the new state with:
          *  - Within @c sat_bias_cache.warm_age_s of the drop time
          *    (@c is_warm == true), @c variance is the cached value aged
-         *    forward by @c process_noise.sat_bias_q × @c gap_s — a
-         *    "warm restart" that preserves converged precision.
+         *    forward by @c process_noise.sat_bias_q × @c gap_s: a warm
+         *    restart that preserves converged precision.
          *  - Between @c warm_age_s and @c max_age_s
          *    (@c is_warm == false), @c variance is the cold-start value
-         *    @c initial_std.sat_bias² — the cache supplies a better
-         *    seed than WLS but the variance is reset.
+         *    @c initial_std.sat_bias²: the cache supplies a better seed
+         *    than WLS, but the variance is reset.
          *
          * Beyond @c max_age_s, @c tryRestoreSatBias returns
          * @c std::nullopt and the caller falls back to a WLS seed.
@@ -1060,8 +1077,8 @@ namespace GnssProcessor {
          *    @c initial_std.sat_bias² variance.
          *  - beyond that: the entry is evicted and @c std::nullopt returned.
          *
-         * A pure lookup otherwise — the entry stays put so the caller decides
-         * whether to consume it (@c consumeSatBiasCacheEntry).
+         * Otherwise a pure lookup: the entry stays in the cache, and the caller
+         * decides whether to consume it (@c consumeSatBiasCacheEntry).
          *
          * @param key  Sat-bias key "satellite|signal".
          * @param now  Current epoch time.
@@ -1102,17 +1119,17 @@ namespace GnssProcessor {
         }
 
         // -------------------------------------------------------------------
-        // Satellite PHASE-bias states (PPP_RTK_Network producer).
+        // Satellite phase-bias states (PPP_RTK_Network producer).
         //
         // Explicit per-(satellite, signal) satellite phase-bias states (Odijk
-        // Eq. 4 — each carries the network pivot-receiver ambiguity lump).
-        // Mirror the satellite CODE-bias block above but live in a SEPARATE map
-        // (@c sat_phase_bias_indices_) keyed "<sat>|<signal>|PB".  Created and
-        // owned by the network estimator (the shared satellite spine); inert in
-        // every other mode.  The warm-restart cache the code-bias block carries
-        // is deliberately NOT mirrored yet — the network's cross-epoch restart
-        // semantics are decided alongside the estimator (W4), not the
-        // single-receiver arc-continuity cache.
+        // Eq. 4; each carries the network pivot-receiver ambiguity lump).  They
+        // mirror the satellite code-bias block above but live in a separate map
+        // (@c sat_phase_bias_indices_) keyed "<sat>|<signal>|PB".  The network
+        // estimator (the shared satellite spine) creates and owns them; every
+        // other mode leaves them empty.  The code-bias block's warm-restart
+        // cache is not mirrored yet: the network's cross-epoch restart semantics
+        // are decided with the estimator (W4), not by the single-receiver
+        // arc-continuity cache.
         // -------------------------------------------------------------------
 
         /// @brief Index of a satellite phase-bias state, or -1 if absent.
@@ -1141,9 +1158,9 @@ namespace GnssProcessor {
                                     double new_variance);
 
         /// @brief Re-inflate the variances of all phase-bias states for a
-        ///        satellite (value preserved — phase HW delay is constant),
-        ///        skipping frozen-pivot rows.  Card OWD: each diagonal is raised to
-        ///        @p new_variance, never lowered.
+        ///        satellite (value preserved, since the phase hardware delay is
+        ///        constant), skipping frozen-pivot rows.  Each diagonal is raised
+        ///        to @p new_variance, never lowered (card OWD).
         /// @param satellite    Satellite identifier.
         /// @param new_variance Requested diagonal (m²), a floor per state; falls back
         ///                     to @c initial_std.sat_phase_bias² when non-positive.
@@ -1151,25 +1168,26 @@ namespace GnssProcessor {
                                                   double new_variance);
 
         /// @brief Prune satellite phase-bias states whose keys are not in
-        ///        @p keep_keys (no warm-restart cache yet — see W4).
+        ///        @p keep_keys (no warm-restart cache yet; see W4).
         void pruneSatPhaseBiasStatesExcept(const std::set<std::string>& keep_keys);
 
         // -------------------------------------------------------------------
-        // RECEIVER phase-bias states (Card 3, network.phase_datum_eq34).
+        // Receiver phase-bias states (network.phase_datum_eq34; card 3).
         //
         // Per-(receiver, system, signal) receiver phase-bias split state
-        // δ_{r,σ} (Odijk 2016 §4/§6; de Jonge 1998).  Giving the receiver
-        // fractional phase bias its OWN estimable state stops it lumping into
-        // the emitted satellite phase bias, so the Eq-34 single-receiver /
-        // chain datum can keep the emitted between-satellite reference integer-
-        // consistent across ALL satellites.  Keyed "<system>_RPB_<signal>" in
-        // the SEPARATE map @c receiver_phase_bias_indices_ (disjoint from the
-        // receiver code-bias family via the "_RPB_" infix).  These are LOCAL
-        // states (each observed by exactly one station) and are deliberately
-        // RE-ESTIMATED FRESH each epoch (the receiver-side wander sink) — no
-        // process noise, no cross-epoch carry (the Hou-Zhang-correct split:
-        // integers stay time-linked through the ambiguity carry, δ_{r,σ} does
-        // not).  Inert in every non-network mode.
+        // δ_{r,σ} (Odijk 2016 §4/§6; de Jonge 1998).  With its own estimable
+        // state, the receiver fractional phase bias does not lump into the
+        // emitted satellite phase bias, so the Eq-34 single-receiver / chain
+        // datum can keep the emitted between-satellite reference
+        // integer-consistent across all satellites.  Keyed
+        // "<system>_RPB_<signal>" in the separate map
+        // @c receiver_phase_bias_indices_ (the "_RPB_" infix keeps the keys
+        // disjoint from the receiver code-bias family).  These states are local
+        // (each is observed by one station) and are re-estimated fresh each
+        // epoch as the receiver-side wander sink, with no process noise and no
+        // cross-epoch carry.  In this split (Hou-Zhang), the integers stay
+        // time-linked through the ambiguity carry and δ_{r,σ} does not.  Unused
+        // in every non-network mode.
         // -------------------------------------------------------------------
 
         /// @brief Index of a receiver phase-bias state, or -1 if absent.
@@ -1184,22 +1202,23 @@ namespace GnssProcessor {
         size_t addReceiverPhaseBiasState(const std::string& key, double initial_value);
 
         /// @brief Prune receiver phase-bias states whose keys are not in
-        ///        @p keep_keys (no warm-restart cache — re-estimated fresh).
+        ///        @p keep_keys (no warm-restart cache: the states are re-estimated
+        ///        fresh).
         void pruneReceiverPhaseBiasStatesExcept(const std::set<std::string>& keep_keys);
 
         // -------------------------------------------------------------------
-        // Satellite CLOCK states (PPP_RTK_Network producer).
+        // Satellite clock states (PPP_RTK_Network producer).
         //
         // Explicit per-satellite clock-correction states (Δδtˢ in metres,
         // relative to the a-priori product clock already removed in obs.modeled)
-        // kept in a SEPARATE map (@c sat_clock_indices_) keyed "<sat>|SC".  The
-        // satellite ORBIT stays fixed from the precise/real-time product; only
-        // the clock is estimated, to maintain consistency with the chosen
-        // S-system datum.  Created/owned by the network estimator (the shared
-        // satellite spine); inert in every other mode.  Per-satellite (one clock
-        // per satellite, NOT per signal), so there is no signal field.  Like the
-        // phase-bias block, the warm-restart cache is deliberately NOT mirrored
-        // yet — network cross-epoch restart is decided alongside the estimator.
+        // kept in a separate map (@c sat_clock_indices_) keyed "<sat>|SC".  The
+        // satellite orbit stays fixed from the precise/real-time product; only
+        // the clock is estimated, to keep consistency with the chosen S-system
+        // datum.  The network estimator (the shared satellite spine) creates and
+        // owns these states; every other mode leaves them empty.  There is one
+        // clock per satellite, not per signal, so the key has no signal field.
+        // As for the phase-bias block, the warm-restart cache is not mirrored
+        // yet; network cross-epoch restart is decided with the estimator.
         // -------------------------------------------------------------------
 
         /// @brief Index of a satellite clock state, or -1 if absent.
@@ -1228,8 +1247,8 @@ namespace GnssProcessor {
                                 double new_variance);
 
         /// @brief Re-inflate the variance of a satellite's clock state, skipping
-        ///        a frozen-pivot row.  Value is preserved.  Card OWD: the diagonal is
-        ///        raised to @p new_variance, never lowered.
+        ///        a frozen-pivot row.  Value is preserved.  The diagonal is raised to
+        ///        @p new_variance, never lowered (card OWD).
         /// @param satellite    Satellite identifier.
         /// @param new_variance Requested diagonal (m²), a floor; falls back to
         ///                     @c initial_std.sat_clock² when non-positive.
@@ -1237,7 +1256,7 @@ namespace GnssProcessor {
                                              double new_variance);
 
         /// @brief Prune satellite clock states whose keys are not in
-        ///        @p keep_keys (no warm-restart cache yet — see W4).
+        ///        @p keep_keys (no warm-restart cache yet; see W4).
         void pruneSatClockStatesExcept(const std::set<std::string>& keep_keys);
 
         // -------------------------------------------------------------------
@@ -1317,13 +1336,13 @@ namespace GnssProcessor {
          *
          * Used by the DD baseline pivot-handover S-transform: when the
          * pivot for a constellation changes, the existing DD ambiguity
-         * row indices stay put — only the key strings need to change to
-         * reflect the new pivot.  The state value at the row index is
-         * separately transformed by the caller (T·x); this method just
-         * re-binds the key in @c ambiguity_indices_.  No covariance
-         * compaction; no index shifting.  Returns false if the old key
-         * is not present or the new key already exists (caller should
-         * resolve the collision).
+         * row indices stay in place and only the key strings change to
+         * reflect the new pivot.  The caller transforms the state value at
+         * the row index separately (T·x); this method only re-binds the key
+         * in @c ambiguity_indices_ and advances its continuity generation.
+         * No covariance compaction; no index shifting.  Returns false if the
+         * old key is not present or the new key already exists (the caller
+         * resolves the collision).
          *
          * @param old_key  Existing ambiguity key in the indices map.
          * @param new_key  Target key (must not already exist).
@@ -1338,22 +1357,22 @@ namespace GnssProcessor {
          * ambiguity keys must remain (e.g. from the current epoch measurement set).
          *
          * @param keep_keys   Set of ambiguity keys to keep.
-         * @param removed_out Card SID phase 3 (R3b): optional sink that receives the
-         *                    keys this call destroyed, APPENDED. The prune itself is
-         *                    unchanged in every respect; this only lets the arc
-         *                    ledger record that a column disappeared inside a gap, so
-         *                    the arc's next re-entry can state that it returns to a
-         *                    RE-CREATED column. Null (the default) is the historical
-         *                    behaviour and costs nothing.
+         * @param removed_out Optional sink; the keys this call removes are appended
+         *                    to it.  The prune itself does not depend on the sink,
+         *                    which only lets the arc ledger record that a column
+         *                    disappeared inside a gap, so the arc's next re-entry can
+         *                    state that it returns to a re-created column.  Null (the
+         *                    default) records nothing and costs nothing (card SID
+         *                    phase 3, R3b).
          */
         void pruneAmbiguitiesExcept(const std::set<std::string>& keep_keys,
                                     std::vector<std::string>* removed_out = nullptr);
 
         /**
-         * @brief Card SID phase 3 (R3b) — arm the prune's key recorder.
+         * @brief Arm the prune's key recorder (card SID phase 3, R3b).
          *
-         * OFF by default, so no run that does not ask for it allocates or copies
-         * anything. The network producer arms it with the card SID observatory and
+         * Off by default, so a run that does not ask for it allocates and copies
+         * nothing. The network producer arms it with the card SID observatory and
          * drains @ref takePrunedAmbiguities once per epoch.
          */
         void setRecordPrunedAmbiguities(bool on) { record_pruned_ambiguities_ = on; }
@@ -1413,25 +1432,24 @@ namespace GnssProcessor {
         // -------------------------------------------------------------------
         // Gap-recovery helpers
         //
-        // Surgical covariance edits used by @c Application::handleGap when
-        // an inter-epoch outage exceeds @c GnssConfig::getDataGapTolerance.
-        // The diagonal-only process-noise injection in
-        // @c getProcessNoiseMatrix is the right model for short, in-arc
-        // dt steps but is structurally unable to express "the satellite-
-        // specific cross-covariances we built up before the gap no longer
-        // describe the current geometry" — that requires explicitly
-        // touching the off-diagonal blocks, which these helpers do.
+        // Covariance edits used by @c Application::handleGap when an
+        // inter-epoch outage exceeds @c GnssConfig::getDataGapTolerance.
+        // The process noise from @c getProcessNoiseMatrix suits short in-arc
+        // dt steps, but adding noise cannot remove the satellite-specific
+        // cross-covariances accumulated before the gap, which no longer
+        // describe the current geometry.  Removing them takes explicit edits
+        // to the off-diagonal blocks, which these helpers make.
         // -------------------------------------------------------------------
 
         /**
          * @brief Zero cross-covariances between position and per-satellite states.
          *
-         * Sets P(pos_i, j) = P(j, pos_i) = 0 for j ∈ {ionosphere,
-         * ambiguity, satellite bias} and i ∈ {x,y,z}.  Leaves the
-         * position diagonal P(pos,pos) and cross-covariances to core
-         * states (clock, clock-rate, troposphere, velocity, IMU biases)
-         * untouched — those represent physically real correlations that
-         * survive an outage; sat-specific correlations do not.
+         * Sets P(pos_i, j) = P(j, pos_i) = 0 for j ∈ {ionosphere, iono rate,
+         * ambiguity, satellite bias} and i ∈ {x,y,z}.  Leaves the position
+         * diagonal P(pos,pos) and the cross-covariances to core states (clock,
+         * clock-rate, troposphere, velocity, IMU biases) untouched: those
+         * represent physical correlations that survive an outage, while
+         * satellite-specific correlations do not.
          *
          * Called on @c gap_detected for static-short and all other gap
          * recovery branches.
@@ -1502,10 +1520,10 @@ namespace GnssProcessor {
         size_t differential_tropo_idx_;             //!< Index of baseline-mode differential ZWD state (max if disabled).
         std::vector<std::string> systems_with_time_offsets_; //!< Systems with time offset states (excludes GPS).
         std::map<std::string, size_t> system_time_offset_indices_; //!< Map system name -> state index.
-        std::map<std::string, size_t> system_time_rate_offset_indices_; //!< Map system name -> ISBR state index (clock-rate inter-system offset; active when velocity is estimated).
+        std::map<std::string, size_t> system_time_rate_offset_indices_; //!< Map system name -> ISBR state index (clock-rate inter-system offset; allocated when velocity is estimated and BSSD is off).
         std::map<std::string, size_t> ambiguity_indices_; //!< Map ambiguity key -> state index.
-        /// Card SID phase 3 (R3b): record the keys @ref pruneAmbiguitiesExcept
-        /// destroys.  OFF by default; nothing else in the class reads either member.
+        /// Recorder for the keys @ref pruneAmbiguitiesExcept removes (card SID phase 3,
+        /// R3b).  Off by default; only the three recorder accessors touch these members.
         bool record_pruned_ambiguities_{false};
         std::vector<std::string> pruned_ambiguities_;
         std::map<std::string, uint64_t> ambiguity_generations_; //!< Continuity generation for each live ambiguity.
@@ -1516,10 +1534,10 @@ namespace GnssProcessor {
         std::map<std::string, size_t> sat_bias_indices_; //!< Map "satellite|signal" -> state index (uncorrected sat HW bias).
         std::map<std::string, SatBiasCacheEntry> sat_bias_cache_; //!< Pruned sat-bias snapshots awaiting potential re-acquisition.
         std::map<std::string, size_t> sat_phase_bias_indices_; //!< Map "satellite|signal|PB" -> state index (PPP_RTK_Network satellite phase bias).
-        std::map<std::string, size_t> receiver_phase_bias_indices_; //!< Map "system_RPB_signal" -> state index (Card 3 eq34 receiver phase-bias split δ_{r,σ}; LOCAL, re-estimated fresh each epoch).
+        std::map<std::string, size_t> receiver_phase_bias_indices_; //!< Map "system_RPB_signal" -> state index (eq34 receiver phase-bias split δ_{r,σ}; local, re-estimated fresh each epoch; card 3).
         std::map<std::string, size_t> sat_clock_indices_;      //!< Map "satellite|SC" -> state index (PPP_RTK_Network satellite clock).
         std::map<std::string, size_t> ionosphere_indices_; //!< Map satellite ID -> per-satellite iono state index (PPP-RTK).
-        std::map<std::string, size_t> iono_rate_indices_; //!< Map satellite ID -> per-satellite iono RATE (Idot_s) state index; populated only when enableIonoRate() (constant-velocity model).
+        std::map<std::string, size_t> iono_rate_indices_; //!< Map satellite ID -> per-satellite iono-rate (Idot_s) state index; populated only when enableIonoRate() (constant-velocity model).
         std::map<std::string, double> ionosphere_elevations_; //!< Map satellite ID -> last-known elevation in degrees (PPP-RTK).
         std::map<std::string, double> ionosphere_azimuths_;   //!< Map satellite ID -> last-known azimuth in degrees (PPP-RTK, diagnostics only).
         std::set<std::string> frozen_pivot_sats_; //!< BSSD pivot satellites: iono, ambiguity, and sat-bias states are frozen (Q=0).
@@ -1533,16 +1551,16 @@ namespace GnssProcessor {
         bool is_baseline_{ false };                 //!< True when configured for baseline (DD) mode: no clock/tropo/iono/system-offset states.
         std::map<std::string, double> meas_var_scale_; //!< Per-measurement variance scale map (key -> multiplier).
         std::map<std::string, int> last_ssr_discontinuity_; //!< Last-seen SSR phase-bias discontinuity counter per "sat|signal" key.
-        ReinflateCounters reinflate_counters_{};    //!< Card OWD (O2): raised / kept per re-inflation.
+        ReinflateCounters reinflate_counters_{};    //!< Raised / kept counts per re-inflation (card OWD, O2).
 
         /**
-         * @brief Card OWD (O2): the rule every re-inflation shares.
+         * @brief The rule every re-inflation shares (card OWD, O2).
          *
          * Zeroes row and column @p idx (the value is untouched) and writes the larger of
          * @p current_diag and @p requested on the diagonal, so a re-inflation never shrinks a
-         * variance (the pre-OWD rule set the request and deflated a larger variance, which
-         * injects information the data never supplied).  Counts the state as raised or kept
-         * under @p kind.
+         * variance (writing the request over a larger variance would inject information the
+         * data never supplied).  Counts the state under @p kind as raised (request ≥
+         * current) or kept (current > request).
          *
          * @param idx          State index (validated by the caller, not frozen).
          * @param current_diag The current diagonal (> 0).
@@ -1571,8 +1589,11 @@ namespace GnssProcessor {
         /**
          * @brief Remove a single row/column from the state vector and covariance.
          *
-         * After removal, all entries in ambiguity_indices_, code_bias_indices_ and
-         * ionosphere_indices_ with index > rem_idx are decremented by one.
+         * After removal, every entry with index > rem_idx in the eight dynamic maps
+         * (ambiguity, receiver code bias, sat bias, sat phase bias, receiver phase
+         * bias, sat clock, ionosphere, iono rate) is decremented by one.  The new
+         * size comes from getStateSize(), which counts the map entries, so the
+         * caller erases the removed row's map entry after this call, not before.
          *
          * @param rem_idx Zero-based index to remove (must be >= core_state_size_).
          */

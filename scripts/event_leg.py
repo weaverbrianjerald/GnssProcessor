@@ -1,75 +1,84 @@
 #!/usr/bin/env python3
-"""EVENT HARNESS — snapshot seed writer + single-event resume-leg generator.
+"""Event harness: snapshot seed writer and single-event resume-leg generator.
 
-The point of the harness is stated by the directive that motivated it: *run the
-network to convergence ONCE, then inject one simulated event and continue a few
-epochs to study the effects — minutes, not day-long runs.*
+The harness converges the network once, then injects one simulated event and
+continues for a few epochs to study its effects, so an event study takes minutes
+instead of a day-long run.
 
-Three subcommands:
+Four subcommands:
 
 ``write-seed``
-    Derive a snapshot-WRITER config from a golden (default the sim golden).  The
-    seed run is the only expensive thing in the harness: it converges the network
-    and drops a snapshot every ``--interval-ep`` epochs into
-    ``runs/evseed_<name>/state_snapshot.txt.epNNNN`` (history keyed on
-    ``n_emitted`` — ``NetworkRunContext.cpp:2045-2047``).
+    Derive a snapshot-writer config from a golden (default
+    ``config/golden/golden_sim_tri_w6.json``).  The seed run is the only expensive
+    step of the harness: it converges the network and writes a snapshot every
+    ``--interval-ep`` emitted epochs to
+    ``runs/evseed_<name>/state_snapshot.txt.epNNNN`` (the history suffix is
+    ``n_emitted``; ``networkWriteStateSnapshot`` in ``NetworkRunContext.cpp``).
 
 ``make-leg``
-    Copy ONE ``.epNNNN`` snapshot into the leg dir TWICE — ``seed.txt``, the
-    PRISTINE record the exe is never pointed at, and ``state_snapshot.txt``, which
-    ``network.state_snapshot_path`` names and the run may overwrite — then derive
-    the resume config from the seed config and arm exactly one ``network.inject``
-    event at ``snapshot_tow + at_ep*30`` s.  Never the seed run's live file: a
-    killed leg must not be able to destroy the state it resumed from.
+    Copy one ``.epNNNN`` snapshot into the leg dir twice: ``seed.txt``, the
+    pristine record the exe is never pointed at, and ``state_snapshot.txt``, which
+    ``network.state_snapshot_path`` names and the run may overwrite.  Then derive
+    the resume config from the seed config and arm one ``network.inject`` event
+    at ``snapshot_tow + (at_ep + 1)*30`` s (unless the event already carries a
+    ``tow``).  The seed run's live file is never used, so a killed leg cannot
+    destroy the state it resumed from.
 
-    The two copies close the SNAPSHOT-OVERWRITE TRAP *by construction*: the exe
-    never reads and writes the same file.  Historically both roles were the one
-    file, and since the producer's FIRST snapshot write is unconditional
-    (``NetworkRunContext.cpp`` — the write fires while ``last_snapshot_write_s <
-    0.0``, whatever ``state_snapshot_interval_s`` says) a run left its OWN second
-    epoch in ``seed.txt``, so any relaunch on the same ``leg.json`` was refused.
-    ``seed.txt``'s sha256 goes into ``leg_meta.json`` as ``snapshot_sha256``; only
-    ``state_snapshot.txt`` is disposable, and ``rerun`` restores just that one.
+    With two copies the exe never reads and writes the same file.  This matters
+    because the producer's first snapshot write is unconditional (in
+    ``NetworkRunContext.cpp`` the write fires while ``last_snapshot_write_s <
+    0.0``, whatever ``state_snapshot_interval_s`` says): a single file would hold
+    the leg's own second epoch after one run, and any relaunch on the same
+    ``leg.json`` would be refused.  ``seed.txt``'s sha256 goes into
+    ``leg_meta.json`` as ``snapshot_sha256``; only ``state_snapshot.txt`` is
+    disposable, and ``rerun`` restores only that one.
 
 ``null``
     The same leg with ``network.inject`` absent.  Every event leg is graded
     against its null so the resume seam transient cancels.
 
-THE CONSUMER'S WARM START (card CC (B), ``SPEC_event_harness.md`` §24.4).  Harness
-default since 2026-09-14: ``write-seed`` arms ``network.closed_loop.state_snapshot``
-so the producer writes the closed-loop CONSUMER's own filter-state snapshot beside
-every network history copy — ``state_snapshot.txt.consumer.epNNNN``, same suffix,
-same tow (the producer refuses the write when the consumer did not process that
-tow).  ``make-leg`` / ``null`` copy it into the leg exactly like the network one
+``rerun``
+    Restore a leg's disposable snapshot(s) from the verified pristine copy and run
+    the leg again.
+
+The consumer's warm start (card CC (B), ``SPEC_event_harness.md`` §24.4).  By
+default ``write-seed`` arms ``network.closed_loop.state_snapshot``, so the producer
+writes the closed-loop consumer's own filter-state snapshot beside every network
+history copy: ``state_snapshot.txt.consumer.epNNNN``, same suffix, same tow (the
+producer refuses the write when the consumer did not process that tow).
+``make-leg`` and ``null`` copy it into the leg the same way as the network one
 (``seed_consumer.txt`` pristine, ``consumer_snapshot.txt`` disposable), point
 ``realtime.state_snapshot_path`` at the disposable copy and park the consumer's own
-write cadence (``realtime.state_snapshot_interval_s`` 1e9 — its FIRST write is
+write cadence (``realtime.state_snapshot_interval_s`` 1e9; its first write is
 unconditional and lands on the disposable copy), so the leg's consumer resumes at
 the seam instead of cold-starting; ``rerun`` restores that copy too.  A seed
-without the file (every seed before v9) leaves the leg's consumer cold, exactly as
-before, and the leg summary's ``consumer`` line says which.  Consumer memory only:
-products and the producer's snapshot are byte-identical with and without it.
+without the file (any seed before v9) leaves the leg's consumer cold, and the leg
+summary's ``consumer`` line says which case applies.  This affects consumer memory
+only: products and the producer's snapshot are byte-identical with and without it.
 
-Resume mechanics reused verbatim from ``scripts/chain_make_leg.py``: the leg's
+The resume mechanics are those of ``scripts/chain_make_leg.py``: the leg's
 ``network.start_offset_hours`` is the self-correcting recurrence
 
     start_offset_hours = (week*604800 + tow - DAY_ANCHOR + 15) / 3600
 
 with the +15 s half-epoch back-off (epoch elapsed times carry double-precision
-residue and the fast-forward gate at ``ApplicationNetwork.cpp:1298-1302`` is a
-strict ``<``).  ``processing.max_duration_s`` is anchored on the first PROCESSED
-epoch (the offset gate returns before the duration gate is reached,
-``ApplicationNetwork.cpp:1350-1360``), so a leg's duration is relative to the
-resume point, not to the file start.
+residue and the fast-forward gate for ``network.start_offset_hours`` in
+``ApplicationNetwork.cpp`` is a strict ``<``).  DAY_ANCHOR is the fixture's first
+observation epoch (``fixture_first_obs_s``).  ``processing.max_duration_s`` is
+anchored on the first processed epoch (the offset gate returns before the duration
+gate is reached, in ``ApplicationNetwork.cpp``), so a leg's duration is relative to
+the resume point, not to the file start.
 
 The warm-restart posture is the one validated as leg E of the seam card
 (``SPEC_synthetic_minimum_network.md`` §18.14): writer armed with
 ``state_snapshot_frame_capture`` + ``state_snapshot_coupling_capture`` (QK/QP),
-reader armed with ``resume_frame_restore`` + ``resume_coupling_restore`` +
-``readmit_seed_horizon_s`` + (since 2026-09-11) ``zwd_seam_reseed``, without which
-the ZWD channel restarts at the seam (0.06-0.08 m truth rms for the whole leg
-against the seed's converged 0.008 m; ``--no-zwd-seam-reseed`` for old-leg A/Bs).  Discard the first ~5 epochs after the resume; the
-default ``--at-ep 10`` puts the event safely past that transient.
+reader armed with ``resume_frame_restore`` + ``resume_coupling_restore`` (only when
+the seed lineage carries its loader interlocks) + ``readmit_seed_horizon_s`` +
+``zwd_seam_reseed`` (only when the lineage carries the ZWD; RS-10).  Without the
+reseed on such a lineage the ZWD channel restarts at the seam (0.06-0.08 m truth
+rms for the whole leg against the seed's converged 0.008 m); ``--no-zwd-seam-reseed``
+leaves the knob at the seed config's value, for A/Bs against old legs.  Discard the first ~5 epochs after the
+resume; the default ``--at-ep 10`` puts the event past that transient.
 """
 import argparse
 import hashlib
@@ -88,7 +97,7 @@ from gnss_config_chain import load_config, ConfigChainError  # noqa: E402
 REPO = os.path.dirname(_HERE)
 
 # First synced epoch of DOY-129 = 2024-05-08 00:00:00 GPS (week 2313, tow
-# 259200) in continuous GPS seconds.  Identical anchor to chain_make_leg.py.
+# 259200) in continuous GPS seconds; the same anchor as chain_make_leg.py.
 DAY_ANCHOR_S = 1399161600.0
 EPOCH_INTERVAL_S = 30.0
 HALF_EPOCH_BACKOFF_S = 15.0
@@ -142,7 +151,7 @@ def read_rt_snapshot_header(path):
 
 
 def start_offset_hours(week, tow, anchor_s=None):
-    """Offset so the first PROCESSED epoch is the snapshot's tow + 30 s.
+    """Offset so the first processed epoch is the snapshot's tow + 30 s.
 
     anchor_s = the fixture's first observation epoch in continuous GPS seconds
     (see fixture_first_obs_s); the half-epoch back-off keeps the strict `<` gate
@@ -151,15 +160,15 @@ def start_offset_hours(week, tow, anchor_s=None):
         anchor_s = DAY_ANCHOR_S
     return (week * 604800.0 + tow - anchor_s + HALF_EPOCH_BACKOFF_S) / 3600.0
 def fixture_first_obs_s(cfg):
-    """Continuous GPS seconds of the fixture's FIRST observation epoch.
+    """Continuous GPS seconds of the fixture's first observation epoch.
 
     The producer's fast-forward gate (ApplicationNetwork.cpp, `start_offset_hours`)
-    anchors on the first SYNCED epoch of the observation files, not on the GPS day
-    start.  Read `TIME OF FIRST OBS` from the first station's RINEX header; fall back
-    to DAY_ANCHOR_S (with a loud warning) only when the header cannot be read.
-    Caught 2026-09-11: the campaign fixture starts at 12:00, so every leg on it was
-    offset 12 h and refused; the quiet fixture starts at 00:00:30, so its legs
-    resumed ONE EPOCH LATE (snapshot + 60 s) without anyone noticing.
+    anchors on the first synced epoch of the observation files, not on the GPS day
+    start.  This reads `TIME OF FIRST OBS` from the first station's RINEX header and
+    falls back to DAY_ANCHOR_S, with a warning, only when the header cannot be read.
+    A day-start anchor is wrong for any fixture that does not start at 00:00:00: a
+    12:00 start offsets every leg by 12 h (the resume is refused), and a 00:00:30
+    start resumes one epoch late (snapshot + 60 s).
     """
     import datetime as _dt
     try:
@@ -197,8 +206,8 @@ def _flatten(base):
 def _deep_merge(dst, src):
     """Recursive dict merge (same semantics as scripts/ev_dose_legs.py:deep_merge).
 
-    A dict value merges INTO an existing dict; anything else REPLACES.  Arrays
-    therefore replace wholesale — the documented config-inheritance rule.
+    A dict value merges into an existing dict; anything else replaces.  Arrays
+    therefore replace wholesale, which is the documented config-inheritance rule.
     """
     for k, v in src.items():
         if isinstance(v, dict) and isinstance(dst.get(k), dict):
@@ -247,38 +256,42 @@ def cmd_write_seed(args):
     net["state_snapshot_keep_history"] = True
     net["state_snapshot_frame_capture"] = True
     net["state_snapshot_coupling_capture"] = True
-    # RS-2 (SPEC_event_harness §21.4): also capture the invariant DD carry's
-    # LINEARIZATION frame (one ZL row per block).  The serialized chord mean is the
-    # CORRECTION-frame DD (λN − Σ c·x_lin) and a resumed run re-seeds every station
-    # ambiguity x_lin from code, so without this row every restored chord folds wrong
-    # by Σ c·Δx_lin.  Write-side only: products and traces are byte-identical, and a
-    # reader that finds no ZL row behaves exactly as before, so it is not fingerprinted.
+    # Also capture the linearization frame of the invariant DD carry (one ZL row per
+    # block).  The serialized chord mean is the correction-frame DD (λN − Σ c·x_lin),
+    # and a resumed run re-seeds every station ambiguity x_lin from code, so without
+    # this row every restored chord folds wrong by Σ c·Δx_lin.  Write-side only:
+    # products and traces are byte-identical, and a reader that finds no ZL row
+    # behaves as before, so the knob is not fingerprinted.
+    # (RS-2, SPEC_event_harness §21.4)
     net["state_snapshot_carry_lin"] = True
-    # RS-3 (SPEC_event_harness §21.7): also capture the two DATUM memories - the eq34
-    # chain tree and the time-linked code-bias datum - so a resume leg continues both
-    # datums instead of re-electing / re-seeding them (110 -> 8 rerefs, 30 -> 0 CB discs).
+    # Also capture the two datum memories (the eq34 chain tree and the time-linked
+    # code-bias datum), so a resume leg continues both datums instead of re-electing
+    # and re-seeding them (110 -> 8 rerefs, 30 -> 0 CB discs).
+    # (RS-3, SPEC_event_harness §21.7)
     net["state_snapshot_datum_capture"] = True
-    # RS-5 (SPEC_event_harness §21.10): also capture the EMIT layer - the eq34 emit
-    # re-base frame and the PB emission filter state - so a resume leg's wire continues
-    # the writer's phase-bias levels (17.7 m p50 -> 0.000 m at the first epoch).
+    # Also capture the emit layer (the eq34 emit re-base frame and the PB emission
+    # filter state), so a resume leg's wire continues the writer's phase-bias levels
+    # (17.7 m p50 -> 0.000 m at the first epoch).  (RS-5, SPEC_event_harness §21.10)
     net["state_snapshot_emit_capture"] = True
-    # RS-6a (SPEC_event_harness §21.13): also capture the STATION layer's memory - the
-    # rx-CB carry and the T5 per-LOS iono deviation carry (RC/SD rows).
+    # Also capture the station layer's memory: the rx-CB carry and the T5 per-LOS
+    # iono deviation carry (RC/SD rows).  (RS-6a, SPEC_event_harness §21.13)
     net["state_snapshot_station_capture"] = True
-    # RS-9 (SPEC_event_harness §21.18): also capture the rx-CB carry's code-bias LINEARIZATION
-    # point (RL rows beside RC) - the frame the inject gate judges the carry against.
+    # Also capture the rx-CB carry's code-bias linearization point (RL rows beside
+    # RC), the frame the inject gate judges the carry against.
+    # (RS-9, SPEC_event_harness §21.18)
     net["state_snapshot_rxcb_lin_capture"] = True
-    # RS-8 (SPEC_event_harness §21.16): also capture every station's CANONICAL-SIGNAL map (CN
-    # rows) - the per-station latch a resume otherwise re-decides on 23 of 61 stations.
+    # Also capture every station's canonical-signal map (CN rows), the per-station
+    # latch that a resume otherwise re-decides (on 23 of 61 stations).
+    # (RS-8, SPEC_event_harness §21.16)
     net["state_snapshot_signal_capture"] = True
-    # Card CC (B) (SPEC_event_harness §24.4): also write the closed-loop CONSUMER's
-    # RtStateSnapshot beside every network history copy
-    # (state_snapshot.txt.consumer.epNNNN, same suffix, same tow), so a leg's
-    # consumer can resume at the seam instead of cold-starting.  Consumer memory
-    # only: the producer's products and its own snapshot are byte-identical with it
-    # (the v9 field seed hashes v8's products).  Inert without a closed_loop block.
+    # Also write the closed-loop consumer's RtStateSnapshot beside every network
+    # history copy (state_snapshot.txt.consumer.epNNNN, same suffix, same tow), so a
+    # leg's consumer can resume at the seam instead of cold-starting.  Consumer
+    # memory only: the producer's products and its own snapshot are byte-identical
+    # with it (the v9 field seed hashes v8's products).  Inert without a closed_loop
+    # block.  (Card CC (B), SPEC_event_harness §24.4)
     net.setdefault("closed_loop", {})["state_snapshot"] = True
-    net["state_snapshot_require"] = False          # the seed IS the cold start
+    net["state_snapshot_require"] = False          # the seed is the cold start
     net["product_output_path"] = _fwd(os.path.join(rundir, "products.txt"))
     net["write_run_manifest"] = True
     net["trace_dd_fractional"] = True
@@ -287,13 +300,12 @@ def cmd_write_seed(args):
     net["trace_epoch_status"] = True
     cfg.setdefault("logging", {})["enable_rt_engine"] = True
 
-    # --extra: deep-merged LAST so it can override anything this function set.
-    # write-seed inherits the GOLDEN's config, which predates any knob added
-    # after the golden was pinned — arming those (trace-class ones especially,
-    # e.g. logging.enable_mw_slip_detector, which defaults FALSE once a logging
-    # section exists) is exactly what --extra is for.  Recorded verbatim in
-    # seed_meta.json so the seed is self-describing, exactly as leg_meta.json
-    # records make-leg's.
+    # --extra is deep-merged last, so it can override anything this function set.
+    # write-seed inherits the golden's config, which predates any knob added after
+    # the golden was pinned; --extra arms those (trace-class ones in particular,
+    # e.g. logging.enable_mw_slip_detector, which defaults to false once a logging
+    # section exists).  It is recorded verbatim in seed_meta.json so the seed is
+    # self-describing, as leg_meta.json does for make-leg.
     extra = {}
     if getattr(args, "extra", ""):
         try:
@@ -308,7 +320,7 @@ def cmd_write_seed(args):
     meta = {
         "base": args.base, "hours": args.hours,
         "interval_ep": args.interval_ep, "extra": extra, "exe": args.exe,
-        # Card CC (B): the harness default that makes the consumer snapshots exist.
+        # The harness default that makes the consumer snapshots exist (Card CC (B)).
         "harness_consumer_snapshot": bool(net.get("closed_loop", {}).get("state_snapshot", False)),
     }
     with open(os.path.join(rundir, "seed_meta.json"), "w", encoding="utf-8") as fh:
@@ -346,15 +358,15 @@ def _leg_common(args, event_json):
 
     legdir = os.path.join(REPO, "runs", f"evleg_{args.name}")
     os.makedirs(os.path.join(legdir, "logs"), exist_ok=True)
-    # TWO copies, because THE EXE MUST NEVER READ AND WRITE THE SAME FILE.  The
-    # producer's first snapshot write is unconditional — NetworkRunContext.cpp
-    # fires it while `last_snapshot_write_s < 0.0`, whatever
-    # state_snapshot_interval_s says — so whatever `state_snapshot_path` names
-    # holds the LEG's own second epoch the moment the run emits, and a relaunch on
-    # the same leg.json resumes from a snapshot that already contains the target
-    # epoch (warmResumeAllowed's non-positive-age refusal).  Point the exe at the
-    # disposable copy and keep the pristine one out of its reach; `rerun` then only
-    # has to restore state_snapshot.txt.
+    # Two copies, so the exe never reads and writes the same file.  The producer's
+    # first snapshot write is unconditional (NetworkRunContext.cpp fires it while
+    # `last_snapshot_write_s < 0.0`, whatever state_snapshot_interval_s says), so
+    # the file `state_snapshot_path` names holds the leg's own second epoch as soon
+    # as the run emits, and a relaunch on the same leg.json would resume from a
+    # snapshot that already contains the target epoch (warmResumeAllowed's
+    # non-positive-age refusal).  The exe is pointed at the disposable copy and the
+    # pristine one stays out of its reach; `rerun` then restores only
+    # state_snapshot.txt.
     pristine = os.path.join(legdir, "seed.txt")            # never handed to the exe
     leg_snap = os.path.join(legdir, "state_snapshot.txt")  # the exe may overwrite it
     shutil.copyfile(snap_src, pristine)
@@ -363,9 +375,10 @@ def _leg_common(args, event_json):
 
     week, tow, n_emitted, fingerprint = read_snapshot_header(pristine)
 
-    # Card CC (B): the closed-loop CONSUMER's snapshot beside the network copy, when
-    # the seed has one (v9 and later).  Same two-copy layout, same reason: the exe's
-    # own first cadence write is unconditional and must land on the disposable copy.
+    # The closed-loop consumer's snapshot beside the network copy, when the seed has
+    # one (v9 and later).  Same two-copy layout, for the same reason: the exe's own
+    # first cadence write is unconditional and has to land on the disposable copy.
+    # (Card CC (B))
     cons_src = os.path.join(seed_run, f"state_snapshot.txt.consumer.ep{args.snapshot_ep:04d}")
     cons_pristine = cons_leg = cons_sha = cons_tow = None
     if os.path.isfile(cons_src):
@@ -391,22 +404,21 @@ def _leg_common(args, event_json):
     net["state_snapshot_path"] = _fwd(leg_snap)
     net["state_snapshot_require"] = True
     net["state_snapshot_keep_history"] = False
-    # Suppresses every write but the FIRST, which is unconditional; that one lands
+    # Suppresses every write but the first, which is unconditional; that one lands
     # on the disposable copy above, never on seed.txt.
     net["state_snapshot_interval_s"] = 1.0e9
     net["resume_frame_restore"] = True
-    # §18.12 Card-1 coupling restore.  The LOADER THROWS on it unless the lineage
+    # Coupling restore (§18.12, Card 1).  The loader throws on it unless the lineage
     # also carries the Card-1f interlocks (GnssConfigLoadNetwork.cpp, the four
     # throws under `if (network_resume_coupling_restore_)`): resume_frame_restore
     # (set just above, always satisfied here), carry_conditional_coupling,
     # carry_coupling_gauge_project, and amb_seam_reinflate_var_m2 == 0.  The sim
-    # golden carries 1f, the FIELD golden does not — so arming this unconditionally
-    # made every field leg fail to LOAD until the caller remembered
-    # --extra '{"network":{"resume_coupling_restore":false}}'.  Read the same keys
-    # off the flattened seed config and arm it only when they hold; --extra still
-    # overrides in either direction.  The other resume_* defaults stay
-    # unconditional on purpose: they are inert-with-a-log against a seed written
-    # without their rows, where this one is a hard config error.
+    # golden carries 1f and the field golden does not, so an unconditional arm
+    # would make every field leg fail to load.  The same keys are read off the
+    # flattened seed config and the restore is armed only when they hold; --extra
+    # still overrides in either direction.  The other resume_* defaults stay
+    # unconditional on purpose: against a seed written without their rows they are
+    # inert and log it, whereas this one is a hard config error.
     cpl_missing = []
     if not net.get("carry_conditional_coupling", False):
         cpl_missing.append("network.carry_conditional_coupling")
@@ -416,54 +428,59 @@ def _leg_common(args, event_json):
         cpl_missing.append("network.amb_seam_reinflate_var_m2 == 0 (seed has "
                            f"{net.get('amb_seam_reinflate_var_m2')})")
     net["resume_coupling_restore"] = not cpl_missing
-    # RS-2 (SPEC_event_harness §21.4): re-base the restored invariant DD branch onto THIS
-    # run's linearization at the first post-resume DD prior build (ẑ += W·zl_writer −
-    # zl_now).  Inert against a seed written without state_snapshot_carry_lin — the
-    # producer says so loudly rather than silently keeping the writer's frame.  Same
-    # forward-only resume-response exemption class as the two restores above.
+    # Re-base the restored invariant DD branch onto this run's linearization at the
+    # first post-resume DD prior build (ẑ += W·zl_writer − zl_now).  Against a seed
+    # written without state_snapshot_carry_lin it is inert, and the producer logs
+    # that instead of keeping the writer's frame silently.  Same forward-only
+    # resume-response exemption class as the two restores above.
+    # (RS-2, SPEC_event_harness §21.4)
     net["resume_carry_rebase"] = True
-    # RS-2b (SPEC_event_harness §21.7): hold the restored branch through the first
-    # post-resume epoch — the D5 gate is diagnostic-only for K = 1 epoch, so the cold
-    # station layer's one-epoch disagreement (|v| ~11 m on 301 of 701 chords) does not
-    # erase a branch the data agrees with from +2 on (rebirths at +2: 305 -> 7).  MW /
-    # LLI / IF-TD drains stay live.  Inert without a restored blob.
+    # Hold the restored branch through the first post-resume epoch: the D5 gate is
+    # diagnostic-only for K = 1 epoch, so the cold station layer's one-epoch
+    # disagreement (|v| ~11 m on 301 of 701 chords) does not erase a branch the data
+    # agrees with from +2 on (rebirths at +2: 305 -> 7).  MW / LLI / IF-TD drains
+    # stay live.  Inert without a restored blob.  (RS-2b, SPEC_event_harness §21.7)
     net["resume_d5_warmup_ep"] = 1
-    # RS-3 (SPEC_event_harness §21.7): restore the eq34 tree maps and the code-bias
-    # datum memory at the seam.  Inert (logged) against a seed written without
-    # state_snapshot_datum_capture.
+    # Restore the eq34 tree maps and the code-bias datum memory at the seam.  Inert
+    # (logged) against a seed written without state_snapshot_datum_capture.
+    # (RS-3, SPEC_event_harness §21.7)
     net["resume_datum_restore"] = True
-    # RS-4 (SPEC_event_harness §21.10): declare a phase-bias LEVEL re-realization at the
-    # first post-resume emit (datum_changed for the constellation) — the CLK-R seam mark
-    # is suppressed once the held frame is restored, so without this the seam is silent.
+    # Declare a phase-bias level re-realization at the first post-resume emit
+    # (datum_changed for the constellation).  The CLK-R seam mark is suppressed once
+    # the held frame is restored, so without this the seam is not declared.
+    # (RS-4, SPEC_event_harness §21.10)
     net["resume_pb_seam_mark"] = True
-    # RS-5: restore both emit engines at the seam.  Inert (logged) against a seed
-    # written without state_snapshot_emit_capture.
+    # Restore both emit engines at the seam.  Inert (logged) against a seed written
+    # without state_snapshot_emit_capture.  (RS-5)
     net["resume_emit_restore"] = True
-    # RS-6a: restore both station-layer memories at the seam (the a00 seam transient
-    # +4.6 -> +0.4 TECU).  Inert (logged) against a seed written without the RC/SD rows.
+    # Restore both station-layer memories at the seam (the a00 seam transient
+    # +4.6 -> +0.4 TECU).  Inert (logged) against a seed written without the RC/SD
+    # rows.  (RS-6a)
     net["resume_station_restore"] = True
-    # RS-9: restore that frame at the seam (withheld share 26 % -> 10 %, the seed's 11 %).
-    # Inert (logged) against a seed written without RL rows.
+    # Restore the rx-CB carry's code-bias linearization point at the seam (withheld
+    # share 26 % -> 10 %, against the seed's 11 %).  Inert (logged) against a seed
+    # written without RL rows.  (RS-9)
     net["resume_rxcb_lin_restore"] = True
-    # RS-8: restore the canonical-signal latch at the seam (chord births at +1 64 -> 1).
-    # Inert (logged) against a seed written without CN rows.
+    # Restore the canonical-signal latch at the seam (chord births at +1: 64 -> 1).
+    # Inert (logged) against a seed written without CN rows.  (RS-8)
     net["resume_signal_canon_restore"] = True
     # Ledger row network.zwd_seam_reseed (RECOMMEND_SCOPED, regime warm +
-    # phase_leveling, "arm on the RESUME leg"): without it the ZWD channel
-    # RESTARTS at the seam.  Measured 2026-09-11 on evseed_quiet6h ep0665: the
-    # null leg's ZWD truth rms sits at 0.061-0.081 m for the whole 60-epoch leg
-    # against the seed's own converged 0.0076 m; armed, it reads 0.008-0.012 m
-    # from +1 on.  Every leg generated before this date graded ZWD (and the
-    # consumer vertical it feeds) on that restart.  --no-zwd-seam-reseed
-    # reproduces the old posture for a like-for-like A/B against an old leg.
-    # RS-10 (SPEC_event_harness §21.21, 2026-09-13): the reseed is only right where the
-    # continuous run CARRIES the ZWD (phase_leveling_local_block or carry_zwd).  On a
-    # lineage where the ZWD is a per-epoch white sink (the field golden: no F3 block, no
-    # carry_zwd) the Z rows are exact but the B9 prior at q 1e-9 is ~4000x too stiff for
-    # a channel whose own epoch step is 0.11 m p50 (zwd prior sigma0 11, refused), and
-    # from +2 the harvest turns it into the FALSIFIED diagonal ZWD carry for 480 epochs
-    # (ZWD leg-seed 0.29 -> 1.34 m over the hour, satellite-clock contrast p95 10.3 vs
-    # 5.4).  Arm it only where the lineage carries the ZWD; --extra still overrides.
+    # phase_leveling, "arm on the RESUME leg"): without it the ZWD channel restarts
+    # at the seam.  On evseed_quiet6h ep0665 the null leg's ZWD truth rms sat at
+    # 0.061-0.081 m for the whole 60-epoch leg against the seed's converged
+    # 0.0076 m; armed, it reads 0.008-0.012 m from +1 on.  Legs generated before
+    # 2026-09-11 graded ZWD (and the consumer vertical it feeds) on that restart.
+    # --no-zwd-seam-reseed leaves the knob at the seed config's value, for a
+    # like-for-like A/B against an old leg.
+    # The reseed is only right where the continuous run carries the ZWD
+    # (phase_leveling_local_block or carry_zwd).  On a lineage where the ZWD is a
+    # per-epoch white sink (the field golden: no F3 block, no carry_zwd) the Z rows
+    # are exact, but the B9 prior at q 1e-9 is ~4000x too stiff for a channel whose
+    # own epoch step is 0.11 m p50 (zwd prior sigma0 11, refused), and from +2 the
+    # harvest turns it into the FALSIFIED diagonal ZWD carry for 480 epochs (ZWD
+    # leg-seed 0.29 -> 1.34 m over the hour, satellite-clock contrast p95 10.3 vs
+    # 5.4).  It is therefore armed only where the lineage carries the ZWD; --extra
+    # still overrides.  (RS-10, SPEC_event_harness §21.21)
     zwd_carried = bool(net.get("phase_leveling_local_block", False)) or bool(net.get("carry_zwd", False))
     if getattr(args, "no_zwd_seam_reseed", False):
         pass
@@ -480,29 +497,29 @@ def _leg_common(args, event_json):
     lg = cfg.setdefault("logging", {})
     lg["enable_ambiguity_trace"] = True
     lg["enable_rt_engine"] = True
-    # Card CC (B): point the leg's consumer at the disposable consumer snapshot.  The
-    # engine stages it at initialize and applies it at its first processed epoch
-    # (age 30 s against the 300 s horizon; the fingerprint is the seed consumer's
-    # own config facts).  Interval 1e9 parks every cadence write but the first
-    # unconditional one, which lands on the disposable copy.  A seed without the
-    # file leaves the realtime block untouched (the consumer cold-starts as before).
+    # Point the leg's consumer at the disposable consumer snapshot.  The engine
+    # stages it at initialize and applies it at its first processed epoch (age 30 s
+    # against the 300 s horizon; the fingerprint is the seed consumer's own config
+    # facts).  Interval 1e9 parks every cadence write but the first unconditional
+    # one, which lands on the disposable copy.  A seed without the file leaves the
+    # realtime block untouched, and the consumer cold-starts.  (Card CC (B))
     if cons_leg is not None:
         rt = cfg.setdefault("realtime", {})
         rt["state_snapshot_path"] = _fwd(cons_leg)
         rt["state_snapshot_interval_s"] = 1.0e9
-        # Harness default since 2026-09-14 (SPEC_event_harness s24.4 G2): the loader's
-        # default restore scope "core" restores only the five core states and re-creates
-        # the dynamic ones, so the leg's consumer is effectively COLD (14.4 m at k = 1,
-        # the cold trajectory to the digit); "full" restores every state, and the seam
-        # refloat must be OFF (ON re-opens every ambiguity: worse than cold at k = 11).
-        # full + refloat OFF resumes at 0.63 m from the continuous consumer at k = 1.
+        # The loader's default restore scope "core" restores only the five core states
+        # and re-creates the dynamic ones, so the leg's consumer is effectively cold
+        # (14.4 m at k = 1, the cold trajectory to the digit).  "full" restores every
+        # state, and the seam refloat has to be off (on, it re-opens every ambiguity
+        # and is worse than cold at k = 11).  full + refloat off resumes 0.63 m from
+        # the continuous consumer at k = 1.  (SPEC_event_harness §24.4 G2)
         rt["state_snapshot_restore_scope"] = "full"
         rt["state_snapshot_seam_refloat"] = False
 
-    # Event tow: the snapshot's tow is the LAST epoch it recorded, so the leg's
+    # Event tow: the snapshot's tow is the last epoch it recorded, so the leg's
     # first processed epoch is tow + 30 s.  --at-ep is counted from that first
-    # epoch, i.e. at-ep 10 == the 11th epoch of the leg, well past the ~5-epoch
-    # resume transient.
+    # epoch (at-ep 10 is the 11th epoch of the leg, past the ~5-epoch resume
+    # transient).  An event that already carries a tow keeps it.
     first_tow = tow + EPOCH_INTERVAL_S
     ev_tow = first_tow + args.at_ep * EPOCH_INTERVAL_S
     if event_json is not None:
@@ -512,10 +529,10 @@ def _leg_common(args, event_json):
     else:
         net.pop("inject", None)
 
-    # --extra: deep-merged LAST so it can override anything this function set.
-    # make-leg inherits the SEED's config, which predates any knob added after
-    # the seed was written — arming those is exactly what --extra is for.
-    # Recorded verbatim in leg_meta.json so the leg is self-describing.
+    # --extra is deep-merged last, so it can override anything this function set.
+    # make-leg inherits the seed's config, which predates any knob added after the
+    # seed was written; --extra arms those.  It is recorded verbatim in
+    # leg_meta.json so the leg is self-describing.
     extra = {}
     if getattr(args, "extra", ""):
         try:
@@ -540,8 +557,8 @@ def _leg_common(args, event_json):
                   if event_json is not None else None),
         "max_duration_s": proc["max_duration_s"],
         "extra": extra,
-        # Card CC (B): the consumer's warm start (None/False = no consumer snapshot in
-        # the seed, the leg's consumer cold-starts as every pre-v9 leg did).
+        # The consumer's warm start (None/False = no consumer snapshot in the seed,
+        # and the leg's consumer cold-starts, as on any pre-v9 seed).  (Card CC (B))
         "harness_consumer_snapshot": cons_leg is not None,
         "consumer_snapshot": (cons_src if cons_leg is not None else None),
         "consumer_snapshot_sha256": cons_sha,
@@ -611,28 +628,28 @@ def cmd_null(args):
 def cmd_rerun(args):
     """Restore a leg's resume snapshot from a pristine copy and run it again.
 
-    THE SNAPSHOT-OVERWRITE TRAP IS CLOSED BY CONSTRUCTION (2026-09-12).  make-leg
-    lays down TWO copies of the seed snapshot and points the exe only at the
-    disposable `state_snapshot.txt`, so the exe never reads and writes the same
-    file and `seed.txt` stays pristine for the life of the leg; this command has to
-    restore only the copy the run consumed.
+    make-leg lays down two copies of the seed snapshot and points the exe only at
+    the disposable `state_snapshot.txt`, so the exe never reads and writes the same
+    file and `seed.txt` stays pristine for the life of the leg; this command
+    restores only the copy the run consumed.
 
-    What it was: both roles were the one file.  A leg WRITES its own snapshot at
-    its first emitted epoch — `state_snapshot_interval_s` does not suppress that
-    first write — so after one run `seed.txt` held the leg's OWN second epoch and
-    a relaunch on the same `leg.json` resumed to an epoch the snapshot already
-    contained (`warmResumeAllowed`'s non-positive-age refusal; a clean one-line
-    refusal + exit 1 since SPEC_event_harness §11.1, before that a `COLD START`
-    warning and a 0xC0000409 fast-fail with the reason printed nowhere, which is
-    how a relaunched leg could read as a cold one).  Still never invoke the exe on
-    an existing `leg.json` by hand — use this.
+    A leg writes its own snapshot at its first emitted epoch
+    (`state_snapshot_interval_s` does not suppress that first write), so after one
+    run the exe-facing file holds the leg's own second epoch, and a relaunch on the
+    same `leg.json` without a restore resumes to an epoch the snapshot already
+    contains.  `warmResumeAllowed` refuses that with a one-line message and exit 1
+    (SPEC_event_harness §11.1).  Do not invoke the exe on an existing `leg.json` by
+    hand; use this command.
 
     Sources, in order: `leg_meta.json`'s `snapshot` (the seed run's own `.epNNNN`),
-    else the leg's `seed.txt`.  Both are verified against the recorded
-    `snapshot_sha256` and the command refuses if neither pristine copy verifies.
-    `seed.txt` is never written.  The restore target is read from the leg's own
-    `leg.json` (`network.state_snapshot_path`), so a leg generated before the split
-    — whose exe-facing file IS `seed.txt` — still reruns, with a warning.
+    else the leg's `seed.txt`.  Each is verified against the recorded
+    `snapshot_sha256`, and the command refuses if neither pristine copy verifies.
+    With no recorded sha256 (a leg from before the two-copy layout) only the seed
+    run's `.epNNNN` is accepted, unverified.  `seed.txt` is never written, except
+    when it is itself the exe-facing file.  The restore target is read from the
+    leg's own `leg.json` (`network.state_snapshot_path`), so a leg generated before
+    the split, whose exe-facing file is `seed.txt`, still reruns, with a warning.
+    The consumer snapshot, when the leg has one, is restored the same way.
     """
     legdir = args.legdir
     if not os.path.isabs(legdir):
@@ -648,7 +665,7 @@ def cmd_rerun(args):
     with open(cfg_path, encoding="utf-8") as fh:
         leg_cfg = json.load(fh)
 
-    # Restore whatever the leg's OWN config points the exe at.
+    # Restore whatever file the leg's own config points the exe at.
     dst = (leg_cfg.get("network", {}).get("state_snapshot_path")
            or os.path.join(legdir, "state_snapshot.txt"))
     dst = os.path.abspath(dst)
@@ -670,7 +687,7 @@ def cmd_rerun(args):
                              "leg predates the two-copy split, so its seed.txt "
                              "cannot be told from the run's own overwrite")
                 continue
-            use = cand            # pre-2026-09-12 leg: the seed run's .epNNNN only
+            use = cand            # leg without a recorded sha256: the seed run's .epNNNN only
             break
         got = _sha256(cand)
         if got == want:
@@ -687,10 +704,11 @@ def cmd_rerun(args):
     print(f"re-seeded {dst} from {use}"
           + ("" if want is None else f"  (sha256 {want[:16]}... verified)"))
 
-    # Card CC (B): the consumer's disposable snapshot, restored the same way (the
-    # leg's consumer overwrote it with its own first unconditional cadence write).
-    # Sources: leg_meta's `consumer_snapshot` (the seed's .consumer.epNNNN), else the
-    # leg's seed_consumer.txt; verified against `consumer_snapshot_sha256`.
+    # The consumer's disposable snapshot, restored the same way (the leg's consumer
+    # overwrote it with its own first unconditional cadence write).  Sources:
+    # leg_meta's `consumer_snapshot` (the seed's .consumer.epNNNN), else the leg's
+    # seed_consumer.txt; verified against `consumer_snapshot_sha256` when one is
+    # recorded.  (Card CC (B))
     cdst = (leg_cfg.get("realtime", {}).get("state_snapshot_path")
             or meta.get("leg_consumer_snapshot"))
     if meta.get("harness_consumer_snapshot") and cdst:

@@ -2,19 +2,19 @@
 
 /**
  * @file ScriptedSlips.hpp
- * @brief Deterministic ("gotcha") cycle-slip schedule for the exam synthesizer.
+ * @brief Deterministic scripted cycle-slip schedule for the exam synthesizer.
  *
  * A @c ScriptedSlipSchedule replays a list of hand-authored @c ScriptedSlip
- * events (from @c SimConfig) as the synthesizer walks the arc.  It is layered ON
- * TOP of the random slip model and shares NONE of its state: this class contains
+ * events (from @c SimConfig) as the synthesizer walks the arc.  It is layered on
+ * top of the random slip model and shares none of its state: this class contains
  * no RNG, performs no I/O, and pulls in no product dependencies, so the CTest
- * battery can cover it product-free.  @c runSynth calls @c onEpoch once per
- * (visible sat, band) per epoch, AFTER the random-slip block, and applies the
- * returned deltas to the running phase ambiguity — see SPEC_scripted_slips.md §4.
+ * battery can cover it without products.  @c runSynth calls @c onEpoch once per
+ * (visible sat, band) per epoch, after the random-slip block, and applies the
+ * returned deltas to the running phase ambiguity; see SPEC_scripted_slips.md §4.
  *
- * The RNG invariant that makes the byte-identity / additivity gates hold lives in
- * the CALLER (runSynth): this class only decides WHICH deltas fire WHEN; it never
- * touches @c slip_last_epoch or the random slip/multipath streams.
+ * The RNG invariant behind the byte-identity and additivity gates is kept by the
+ * caller (runSynth): this class only decides which deltas fire at which epoch,
+ * and never touches @c slip_last_epoch or the random slip/multipath streams.
  */
 
 #include <string>
@@ -29,16 +29,16 @@ namespace sim {
  * @brief Stateful replay of a scripted cycle-slip list over an arc.
  *
  * Trigger semantics (per event):
- *  - Form A (@c epoch > 0): starts when @c epoch_counter == @c epoch exactly (so
- *    the satellite must be visible at that precise epoch, else the event never
- *    fires — a hard error surfaced by @c unfinished()).
- *  - Form B (elevation window): starts at the FIRST call with
+ *  - Form A (@c epoch > 0): starts when @c epoch_counter == @c epoch exactly, so
+ *    the satellite must be visible at that epoch; otherwise the event never
+ *    fires, which @c unfinished() reports and the synthesizer counts as a failure.
+ *  - Form B (elevation window): starts at the first call with
  *    @c epoch_counter >= @c not_before_epoch and @c elev_lo_deg <= elev <
- *    @c elev_hi_deg.  The window selects the START only.
+ *    @c elev_hi_deg.  The window selects the start only.
  *
- * Once started, the same @c delta_cycles is applied on each subsequent VISIBLE
- * epoch for that (sat, signal) — consecutive when the satellite stays up,
- * stalling across a mask gap — until @c repeat repetitions have been applied.
+ * Once started, the same @c delta_cycles is applied on each subsequent visible
+ * epoch for that (sat, signal) until @c repeat repetitions have been applied:
+ * on consecutive epochs while the satellite stays up, paused across a mask gap.
  */
 class ScriptedSlipSchedule {
 public:

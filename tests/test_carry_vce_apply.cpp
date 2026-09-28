@@ -1,26 +1,26 @@
-// M2 v2 (docs/SPEC_carry_vce_apply.md): unit tests for NetworkCarryVceApply —
-// LASER's variance-factor iteration (NGS LASER Guide v2.7 slides 5-93..5-95;
-// Koch 1999 sections 3.6.1-3.6.2) driven over the M2 monitor.
+// Unit tests for NetworkCarryVceApply (M2 v2, docs/SPEC_carry_vce_apply.md): the
+// LASER variance-factor iteration (NGS LASER Guide v2.7 slides 5-93..5-95; Koch 1999
+// sections 3.6.1-3.6.2) driven over the M2 monitor.
 //
-// Every gate drives the two standalone classes DIRECTLY with synthetic carry rows
-// of KNOWN truth (the precedent of test_network_carry_vce / test_neq_accumulator);
-// no ApplicationNetwork coupling.  The CLOSED LOOP is reproduced faithfully: each
-// epoch folds at fold_var = hand_floor * alpha2, feeds the monitor BOTH that used
-// value and the hand value, then steps the factor once — the same ordering the
-// producer uses (SB_STASH_STATUS, after every feed, before the next fold).
+// Each gate drives the two standalone classes directly with synthetic carry rows of
+// known truth (as test_network_carry_vce and test_neq_accumulator do); there is no
+// ApplicationNetwork coupling.  The closed loop is reproduced: each epoch folds at
+// fold_var = hand_floor * alpha2, feeds the monitor both that used value and the hand
+// value, then steps the factor once.  This is the producer's ordering
+// (SB_STASH_STATUS, after every feed, before the next fold).
 //
-//   Gate 1 (convergence)   — truth 25x the hand floor => alpha2 -> 25 and the
+//   Gate 1 (convergence)   : truth 25x the hand floor gives alpha2 -> 25 and the
 //                            re-standardized sigma_hat_post -> 1 (LASER 5-95).
-//   Gate 2 (inflate-only)  — truth 0.1x the floor => alpha2 stays EXACTLY 1.
-//   Gate 3 (clamps)        — slew, ceiling, freeze-on-dirty and warm-up all
-//                            engage AND release, each with an edge.
-//   Gate 4 (isolation)     — applying 'pl' leaves pb/cb and other constellations
+//   Gate 2 (inflate-only)  : truth 0.1x the floor keeps alpha2 at exactly 1.
+//   Gate 3 (clamps)        : slew, ceiling, freeze-on-dirty and warm-up each
+//                            engage and release, each with an edge.
+//   Gate 4 (isolation)     : applying 'pl' leaves pb/cb and other constellations
 //                            at exactly 1.0 (bit-identical fold variance).
-//   Gate 5 (anti-ratchet)  — an event era inflates alpha2 and the window's
+//   Gate 5 (anti-ratchet)  : an event era inflates alpha2 and the window's
 //                            forgetting brings it back down; the return is
-//                            checked against the CLOSED FORM, not a magic number.
-//   Gate 6 (OFF identity)  — unconfigured / empty-family instances are unity.
-//   Gate 7 (monitor delta) — the hand_fold_var accumulator added to
+//                            checked against the closed form.
+//   Gate 6 (off identity)  : unconfigured and empty-family instances are unity.
+//   Gate 7 (monitor delta) : the hand_fold_var accumulator added to
 //                            NetworkCarryVce is a geometric mean and defaults to
 //                            the fold value, so every pre-v2 call site is unchanged.
 
@@ -39,13 +39,13 @@ namespace {
 
 constexpr double kHandFloor = 4.0e-5;   // the FT63 phase-leveling floor (m^2)
 constexpr int    kRowsPerEpoch = 60;    // one epoch's clean carry rows for one group
-constexpr double kWindow = 60.0;        // monitor half-life (epochs) — the shipped default
+constexpr double kWindow = 60.0;        // monitor half-life (epochs); the shipped default
 
 /// One epoch of the producer's closed loop for a single (family, constellation).
 ///
-/// `innov_var` is the TRUE variance of the carry innovation (what the monitor's
+/// `innov_var` is the true variance of the carry innovation (what the monitor's
 /// robust_floor estimates).  The fold uses the hand variance scaled by the live
-/// factor, exactly as the injectors do, and both values reach the monitor.
+/// factor, as the injectors do, and both values reach the monitor.
 void feedEpoch(NetworkCarryVce& mon, const NetworkCarryVceApply& apply,
                const std::string& family, const std::string& sat,
                double innov_var, double hand_var, std::mt19937& gen,
@@ -73,8 +73,8 @@ const NetworkCarryVceApply::Group& group(const NetworkCarryVceApply& a,
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// Gate 1 — the factor iteration converges on a 25x-optimistic hand floor, and the
-// LASER convergence readout sigma_hat_post lands on 1.
+// Gate 1: the factor iteration converges on a 25x-optimistic hand floor, and the
+// LASER convergence readout sigma_hat_post reaches 1.
 // ---------------------------------------------------------------------------
 TEST(NetworkCarryVceApplyTest, FactorConvergesToTheMeasuredRatio) {
     std::mt19937 gen(20260804u);
@@ -95,12 +95,12 @@ TEST(NetworkCarryVceApplyTest, FactorConvergesToTheMeasuredRatio) {
     const auto& g = group(apply, "pl|G");
     EXPECT_NEAR(g.target, 25.0, 25.0 * 0.10);
     EXPECT_NEAR(g.alpha2, 25.0, 25.0 * 0.10);
-    // The slide's own convergence criterion: the variance of unit weight of the
-    // group, under the weights the solve ACTUALLY used, is 1.
+    // The slide's convergence criterion: the variance of unit weight of the
+    // group, under the weights the solve actually used, is 1.
     EXPECT_NEAR(g.sigma_hat_post, 1.0, 0.05);
     EXPECT_GT(g.n_steps, 300);
     // The factor moved through the limiter on the way up and was released at the
-    // top — a run that is still slew-clipped at the end has not converged.
+    // top; a run that is still slew-clipped at the end has not converged.
     EXPECT_GT(g.n_slew_up, 50);
     EXPECT_EQ(g.at_ceiling, false);
     EXPECT_EQ(g.at_unit, false);
@@ -111,9 +111,10 @@ TEST(NetworkCarryVceApplyTest, FactorConvergesToTheMeasuredRatio) {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 2 — INFLATE-ONLY.  A hand floor that is already conservative must never be
-// tightened: deflation below it is the lock-in direction (standing invariant #1,
-// the DOY-129 pivot-CB ratchet), and the clamp removes that class by construction.
+// Gate 2: inflate-only.  A hand floor that is already conservative is never
+// tightened.  Deflation below it is the lock-in direction (standing invariant #1;
+// the DOY-129 pivot-CB ratchet is an instance), and the clamp excludes it by
+// construction.
 // ---------------------------------------------------------------------------
 TEST(NetworkCarryVceApplyTest, NeverDeflatesBelowTheHandFloor) {
     std::mt19937 gen(4242u);
@@ -121,12 +122,12 @@ TEST(NetworkCarryVceApplyTest, NeverDeflatesBelowTheHandFloor) {
     NetworkCarryVceApply apply;
     apply.configure({"pl"}, 1.05, 1000.0, 200);
 
-    const double truth = 0.1 * kHandFloor;      // the model is 10x TOO LOOSE already
+    const double truth = 0.1 * kHandFloor;      // the hand floor is already 10x too loose
     for (int ep = 0; ep < 300; ++ep) {
         mon.beginEpoch(ep * 60.0, true);
         feedEpoch(mon, apply, "pl", "G01", truth, kHandFloor, gen);
         apply.stepEpoch(mon, true);
-        // Not merely "1.0 at the end" — the factor is never below 1 at ANY epoch.
+        // Checked at every epoch, not only at the end: the factor is never below 1.
         ASSERT_DOUBLE_EQ(apply.factor(NetworkCarryVceApply::kPl, "G01"), 1.0);
     }
     const auto& g = group(apply, "pl|G");
@@ -134,15 +135,16 @@ TEST(NetworkCarryVceApplyTest, NeverDeflatesBelowTheHandFloor) {
     EXPECT_DOUBLE_EQ(g.alpha2_max, 1.0);
     EXPECT_TRUE(g.at_unit);
     EXPECT_GT(g.n_unit_ep, 200);
-    // The target IS below 1 — the clamp is what refuses it, not a blind spot in
-    // the measurement.  (0.1 with a wide tolerance: the geo-mean is noisy at these
-    // row counts and the point of the assertion is the sign, not the digit.)
+    // The target itself is below 1, so the clamp refuses it; the measurement does
+    // see the low variance.  (The target is about 0.1; the tolerance is wide because
+    // the geometric mean is noisy at these row counts and the assertion is on the
+    // direction, not the value.)
     EXPECT_LT(g.target, 0.5);
     EXPECT_LT(g.sigma_hat_post, 0.5);
 }
 
 // ---------------------------------------------------------------------------
-// Gate 3a — the slew limiter binds on the way up and releases at the target.
+// Gate 3a: the slew limiter binds on the way up and releases at the target.
 // ---------------------------------------------------------------------------
 TEST(NetworkCarryVceApplyTest, SlewLimiterBindsThenReleases) {
     std::mt19937 gen(7u);
@@ -158,15 +160,16 @@ TEST(NetworkCarryVceApplyTest, SlewLimiterBindsThenReleases) {
         apply.stepEpoch(mon, true);
         a2.push_back(apply.factor(NetworkCarryVceApply::kPl, "G01"));
     }
-    // Warm-up (min_rows 200 at 60 rows/epoch) holds the first three epochs at 1,
-    // then every step is EXACTLY the limiter — the target is far above reach.
+    // Warm-up (min_rows 200 at 60 rows/epoch) holds the first three epochs at 1.
+    // The target is far above reach, so from index 6 on every step is exactly the
+    // limiter ratio.
     EXPECT_DOUBLE_EQ(a2.front(), 1.0);
     for (std::size_t i = 6; i < a2.size(); ++i)
         EXPECT_NEAR(a2[i] / a2[i - 1], 1.05, 1e-9)
             << "step " << i << " was not slew-limited";
     EXPECT_LT(a2.back(), 100.0);   // 40 epochs cannot reach 100x at 5 %/epoch
 
-    // Run it out: once the factor catches the target the limiter must stop biting.
+    // Continue: once the factor reaches the target, the limiter stops clipping.
     const long long clipped_at_40 = group(apply, "pl|G").n_slew_up;
     for (int ep = 40; ep < 400; ++ep) {
         mon.beginEpoch(ep * 60.0, true);
@@ -180,7 +183,7 @@ TEST(NetworkCarryVceApplyTest, SlewLimiterBindsThenReleases) {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 3b — the ceiling clamp: entry AND exit, each an evented edge (invariant #7).
+// Gate 3b: the ceiling clamp; entry and exit are each an evented edge (invariant #7).
 // ---------------------------------------------------------------------------
 TEST(NetworkCarryVceApplyTest, CeilingClampEngagesAndReleasesWithEdges) {
     std::mt19937 gen(99u);
@@ -204,7 +207,7 @@ TEST(NetworkCarryVceApplyTest, CeilingClampEngagesAndReleasesWithEdges) {
     EXPECT_EQ(enter, 1) << "the ceiling entry must be evented exactly once";
     EXPECT_EQ(exit, 0);
 
-    // Drop the truth well below the ceiling: the factor must come back off it.
+    // With the truth well below the ceiling, the factor comes back off it.
     for (int ep = 200; ep < 700; ++ep) {
         mon.beginEpoch(ep * 60.0, true);
         feedEpoch(mon, apply, "pl", "G01", 2.0 * kHandFloor, kHandFloor, gen);
@@ -219,7 +222,7 @@ TEST(NetworkCarryVceApplyTest, CeilingClampEngagesAndReleasesWithEdges) {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 3c — freeze on a contaminated epoch and during warm-up, both flagged.
+// Gate 3c: freeze on a contaminated epoch and during warm-up, both flagged.
 // ---------------------------------------------------------------------------
 TEST(NetworkCarryVceApplyTest, FreezesOnDirtyEpochsAndDuringWarmup) {
     std::mt19937 gen(1234u);
@@ -248,9 +251,9 @@ TEST(NetworkCarryVceApplyTest, FreezesOnDirtyEpochsAndDuringWarmup) {
     const double held = apply.factor(NetworkCarryVceApply::kPl, "G01");
     ASSERT_GT(held, 1.0);
 
-    // --- contaminated epoch: the monitor drops the rows and the factor HOLDS.
+    // --- contaminated epoch: the monitor drops the rows and the factor holds.
     // A datum handover's re-levels are a frame step, not carry noise; a factor
-    // that ate them would be inflating on a datum change.
+    // that absorbed them would inflate on a datum change.
     mon.beginEpoch(20 * 60.0, /*clean=*/false);
     feedEpoch(mon, apply, "pl", "G01", 1.0e6 * kHandFloor, kHandFloor, gen);
     apply.stepEpoch(mon, /*clean=*/false, &edges);
@@ -263,7 +266,7 @@ TEST(NetworkCarryVceApplyTest, FreezesOnDirtyEpochsAndDuringWarmup) {
             && std::string(e.reason) == "epoch_dirty") ++dirty_enter;
     EXPECT_EQ(dirty_enter, 1);
 
-    // Resuming clean releases the freeze — the other edge.
+    // A clean epoch releases the freeze (the other edge).
     mon.beginEpoch(21 * 60.0, true);
     feedEpoch(mon, apply, "pl", "G01", 25.0 * kHandFloor, kHandFloor, gen);
     apply.stepEpoch(mon, true, &edges);
@@ -276,9 +279,9 @@ TEST(NetworkCarryVceApplyTest, FreezesOnDirtyEpochsAndDuringWarmup) {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 4 — no cross-contamination.  An unarmed family, and an armed family's other
-// constellation, must return EXACTLY 1.0: the fold variance there has to be
-// bit-identical to an apply-off run (spec section 6.4 / the D5 isolation assert).
+// Gate 4: no cross-contamination.  An unarmed family, and an armed family's other
+// constellation, return exactly 1.0, so the fold variance there is bit-identical
+// to an apply-off run (spec section 6.4; the D5 isolation assert).
 // ---------------------------------------------------------------------------
 TEST(NetworkCarryVceApplyTest, ScalesOnlyTheArmedFamilyAndConstellation) {
     std::mt19937 gen(555u);
@@ -297,32 +300,33 @@ TEST(NetworkCarryVceApplyTest, ScalesOnlyTheArmedFamilyAndConstellation) {
     // pl is split per constellation and the two are independent estimates.
     EXPECT_NEAR(apply.factor(NetworkCarryVceApply::kPl, "G01"), 25.0, 3.0);
     EXPECT_NEAR(apply.factor(NetworkCarryVceApply::kPl, "E11"),  4.0, 0.6);
-    // pb / cb are MONITORED but not APPLIED: bit-identical unity.
+    // pb / cb are monitored but not applied: bit-identical unity.
     EXPECT_DOUBLE_EQ(apply.factor(NetworkCarryVceApply::kPb, "G01"), 1.0);
     EXPECT_DOUBLE_EQ(apply.factor(NetworkCarryVceApply::kCb, "G01"), 1.0);
     EXPECT_EQ(apply.groups().count("pb|G"), 0u);
     EXPECT_EQ(apply.groups().count("cb|G"), 0u);
     // A constellation with no accumulator at all is unity, not a fallback to a
-    // sibling's factor (no pooling — the D5 population precedent).
+    // sibling's factor (no pooling, as in the D5 population).
     EXPECT_DOUBLE_EQ(apply.factor(NetworkCarryVceApply::kPl, "C22"), 1.0);
     EXPECT_DOUBLE_EQ(apply.factor(NetworkCarryVceApply::kPl, std::string()), 1.0);
 }
 
 // ---------------------------------------------------------------------------
-// Gate 5 — ANTI-RATCHET round trip.  An event era inflates the factor, and the
-// monitor window's forgetting brings it back down: there is no lock-in.
+// Gate 5: anti-ratchet round trip.  An event era inflates the factor, and the
+// monitor window's forgetting brings it back down, so there is no lock-in.
 //
-// The return rate is not a tuning choice, it is the window's arithmetic.  With
-// phi = 0.5^(1/W) and an era of E epochs at a truth ratio R, k epochs after the era
+// The return rate follows from the window arithmetic, not from a tuning choice.
+// With phi = 0.5^(1/W) and an era of E epochs at a truth ratio R, k epochs after
+// the era
 //
 //     target(k) = R ^ ( phi^k * (1 - phi^E) )
 //
 // because the accumulator is a forgetting-weighted mean of log(e^2) and the era's
-// share of the total weight is exactly phi^k(1-phi^E).  For R=25, E=50, W=60 that
-// is 1.42 at two windows and 1.09 at four — so the spec's "within 10 % in ~2
-// windows" is the order of magnitude and ~4 windows is the closed-form number.
-// The test asserts the closed form, so a future change to the forgetting shows up
-// here as a mismatch rather than as a silently retuned constant.
+// share of the total weight is phi^k(1-phi^E).  For R=25, E=50, W=60 that is 1.42
+// at two windows and 1.09 at four, so the spec's "within 10 % in ~2 windows" gives
+// the order of magnitude and about four windows is the closed-form figure.  The
+// test asserts the closed form, so a change to the forgetting shows up here as a
+// mismatch rather than as a retuned constant.
 // ---------------------------------------------------------------------------
 TEST(NetworkCarryVceApplyTest, EventEraInflatesAndTheWindowGivesItBack) {
     std::mt19937 gen(31415u);
@@ -357,16 +361,16 @@ TEST(NetworkCarryVceApplyTest, EventEraInflatesAndTheWindowGivesItBack) {
 
     const double phi   = std::pow(0.5, 1.0 / kWindow);
     const double share = std::pow(phi, 250.0) * (1.0 - std::pow(phi, 50.0));
-    const double closed_form = std::pow(25.0, share);          // ~1.09
+    const double closed_form = std::pow(25.0, share);          // ~1.08 at k = 250
     EXPECT_NEAR(four_win, closed_form, 0.25);
     EXPECT_LT(four_win, 1.10 * std::max(pre, 1.0) + 0.15);
     EXPECT_GE(four_win, 1.0);                                  // still inflate-only
 }
 
 // ---------------------------------------------------------------------------
-// Gate 6 — OFF is structurally unity.  Nothing in the fold sites is conditional on
-// the knob; they multiply by factor() unconditionally, so this IS the byte-identity
-// argument for the whole card.
+// Gate 6: off is structurally unity.  The fold sites are not conditional on the
+// knob; they multiply by factor() unconditionally, so this test is the
+// byte-identity argument for the whole card.
 // ---------------------------------------------------------------------------
 TEST(NetworkCarryVceApplyTest, UnarmedInstancesAreExactlyUnity) {
     NetworkCarryVceApply fresh;
@@ -386,12 +390,12 @@ TEST(NetworkCarryVceApplyTest, UnarmedInstancesAreExactlyUnity) {
     EXPECT_FALSE(bogus.enabled());
     EXPECT_EQ(NetworkCarryVceApply::familySlot("zwd"), -1);
     EXPECT_EQ(NetworkCarryVceApply::familySlot("pl"), NetworkCarryVceApply::kPl);
-    // Spec section 3: the apply must never reach the Card-4 D5 instance, which
-    // pools under the family name "dd" and already standardizes by its own
-    // sigma_hat_0 — scaling it would double-scale.  That instance is a separate
-    // NetworkCarryVce living in NetworkInvariantCarryDriver, so the apply cannot
-    // see it at all; "dd" having no slot is the second, structural lock (and the
-    // loader rejects it outright, since it is not a carry_vce_components name).
+    // Spec section 3: the apply never reaches the Card-4 D5 instance, which pools
+    // under the family name "dd" and already standardizes by its own sigma_hat_0;
+    // scaling it would scale twice.  That instance is a separate NetworkCarryVce
+    // owned by NetworkInvariantCarryDriver, so the apply cannot see it.  "dd"
+    // having no slot is a second, structural lock (and the loader rejects it,
+    // since it is not a carry_vce_components name).
     EXPECT_EQ(NetworkCarryVceApply::familySlot("dd"), -1);
     NetworkCarryVceApply dd;
     dd.configure({"dd"}, 1.05, 1000.0, 200);
@@ -411,10 +415,10 @@ TEST(NetworkCarryVceApplyTest, UnarmedInstancesAreExactlyUnity) {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 7 — the additive change to NetworkCarryVce.  hand_fold_var is the geometric
-// mean of the HAND fold variance over the same rows, and it DEFAULTS to the fold
+// Gate 7: the additive change to NetworkCarryVce.  hand_fold_var is the geometric
+// mean of the hand fold variance over the same rows, and it defaults to the fold
 // variance, so every pre-v2 caller (D5's instance, the block-Baarda and
-// prior-residual sigma0 feeds, all of which pass fold_var = 1.0) is untouched.
+// prior-residual sigma0 feeds, all of which pass fold_var = 1.0) is unchanged.
 // ---------------------------------------------------------------------------
 TEST(NetworkCarryVceApplyTest, MonitorTracksTheHandFoldVarianceSeparately) {
     NetworkCarryVce mon = makeMonitor({"pl"});
@@ -426,8 +430,8 @@ TEST(NetworkCarryVceApplyTest, MonitorTracksTheHandFoldVarianceSeparately) {
     }
     const auto e = mon.estimate("pl", "G01");
     EXPECT_NEAR(e.hand_fold_var, std::sqrt(1.0e-5 * 1.0e-4), 1.0e-12);
-    // robust_floor is untouched by the new channel and stays alpha2-INDEPENDENT —
-    // that independence is what makes the factor loop a tracker rather than a
+    // robust_floor is not affected by the new channel and stays independent of
+    // alpha2; that independence makes the factor loop a tracker rather than a
     // feedback loop (see NetworkCarryVceApply.hpp).
     EXPECT_NEAR(e.robust_floor, 1.0e-6 / 0.2807297418, 1.0e-12);
 

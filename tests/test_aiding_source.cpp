@@ -2,9 +2,11 @@
  * @file test_aiding_source.cpp
  * @brief Unit tests for the aiding-source abstraction (nav-readiness item 1).
  *
- * Scope (Steps 0-2 of docs/aiding_source_abstraction_design.md):
- *   - AidingSourceRegistry: kind<->token mapping, availability (only IMU built),
- *     create()/createEnabled() selection, staged-source warn-skip.
+ * Scope (Steps 0-2 of docs/aiding_source_abstraction_design.md; the later
+ * sections cover streaming IMU ingest (Step 5), appendAidingRow and the ZUPT
+ * source (Step 6)):
+ *   - AidingSourceRegistry: kind<->token mapping, availability (IMU and ZUPT
+ *     built), create()/createEnabled() selection, staged-source warn-skip.
  *   - AidingSourceManager: default-config (IMU disabled) yields the empty
  *     GNSS-only fast path.
  *   - ImuAidingSource::mapPredictionToContribution (private projection kernel,
@@ -12,10 +14,10 @@
  *     the ins_map with the same nominal write-backs predictImu applies.
  *   - KalmanFilter::spliceAndPropagate (private assembly kernel, via
  *     KalmanFilterTestAccess): the aided-predict matrix assembly is exercised
- *     directly — the full KalmanFilter cannot be unit-constructed (it needs a
+ *     directly.  The full KalmanFilter cannot be unit-constructed (it needs a
  *     PppModel + parser chain; see test_filter_core.cpp), so end-to-end
  *     predictImu-vs-predictAided bit-identity is the Step-4 trace-diff gate.
- *     The kernel test pins the contract: Identity seed, ASSIGNMENT (not +=) of
+ *     The kernel test pins the contract: Identity seed, assignment (not +=) of
  *     the contribution Q, nominal write-backs, sentinel skipping, symmetrization.
  */
 

@@ -1,18 +1,18 @@
-"""Network satellite-product viewer -- the emitted clock & bias time series.
+"""Network satellite-product viewer: the emitted clock and bias time series.
 
-Reads ``network_solution.csv`` (the PPP-RTK NETWORK producer's per-epoch, per-
-parameter solution: estimable satellite clock, phase bias, and -- when enabled --
+Reads ``network_solution.csv`` (the PPP-RTK network producer's per-epoch, per-
+parameter solution: estimable satellite clock, phase bias, and, when enabled,
 satellite code bias) and plots each product over time, one constellation per
 tile, one line per satellite coloured by PRN:
 
   1. Estimable satellite clock correction (m).
-  2. Satellite phase bias (m) -- one line per (sat, signal); discontinuity bumps
+  2. Satellite phase bias (m), one line per (sat, signal); discontinuity bumps
      (the ``disc_counter`` increments the consumer turns into ambiguity resets)
      are ringed.
-  3. Satellite code bias / OSB (m) -- only when the run estimated it.
+  3. Satellite code bias / OSB (m), only when the run estimated it.
 
 This is the product-quality view: a clean, slowly-varying clock and a piecewise-
-constant phase bias mean a healthy, consumable network product.
+constant phase bias indicate a consumable network product.
 """
 
 from __future__ import annotations
@@ -71,8 +71,8 @@ def build_network_products(ctx) -> ViewerResult:
 
     summary = _summary(df, sys_present)
     # L14 hook: append the machine-readable S-contract check (network_contract_check.csv,
-    # written by the producer under network.serialize_sbasis_contract) when present.  NOT
-    # a required_csv — the block simply does not appear on a run that never checked.
+    # written by the producer under network.serialize_sbasis_contract) when present. It is
+    # not a required_csv, so the block does not appear on a run that never checked.
     if ctx.has_data("network_contract_check.csv"):
         cc = load_trace(ctx.path("network_contract_check.csv"))
         if {"check", "status", "detail"}.issubset(cc.columns) and not cc.empty:

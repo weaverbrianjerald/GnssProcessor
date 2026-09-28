@@ -1,39 +1,39 @@
 /**
  * @file test_phase_gate_drop_edge.cpp
- * @brief Card EV7 §6 (requirement F3) — the COVERAGE-GATE DROP EDGE predicate
+ * @brief Coverage-gate drop-edge predicate
  *        (@ref GnssProcessor::networkPhaseGateDropEdges,
  *        filter/NetworkPhaseGateDrop.hpp) and the knob that gates its response
- *        (@c network.phase_datum_gate_drop_erase).
+ *        (@c network.phase_datum_gate_drop_erase).  Card EV7 §6, requirement F3.
  *
- * The defect is invisible at the site where it happens
+ * The defect produces no signal at the site where it happens
  * (docs/refound/EV7_all_sat_clock_decouple_2026-09-21.md §5.3).  The coverage gate
- * removes a (satellite, signal) phase-bias column when it thins to one tracker; the
- * gate's own comment promises that "each station's float ambiguity absorbs the
- * bias"; on the FLOAT vehicle that float is a CARRIED state, so it absorbs the
- * whole removed bias in ONE epoch against a centimetre prior with no refloat, no
- * re-seed and no variance inflation.  Nothing errors and no counter moved: what
- * surfaced was 26 satellite clocks tripping the Q3 anchor gate in the same epoch.
+ * removes a (satellite, signal) phase-bias column when it thins to one tracker, on
+ * the assumption that each station's float ambiguity absorbs the bias.  On the float
+ * vehicle that float is a carried state, so it absorbs the whole removed bias in one
+ * epoch against a centimetre prior, with no refloat, no re-seed and no variance
+ * inflation.  Nothing errors and no counter moves; the visible symptom is satellite
+ * clocks tripping the Q3 anchor gate in that epoch.
  *
- * The rule the fix rests on is one line of set arithmetic, and every property below
- * is one the run loop has no other way to state:
+ * The rule is one line of set arithmetic.  Each property below is one the run loop
+ * cannot state any other way:
  *
- *   1. an EDGE is a gated key that HELD an incumbent — the second clause is what
- *      separates the one epoch where a mature carry is still defined against the
- *      departing column from the rest of the outage;
- *   2. a gated key with NO incumbent is NOT an edge, which is what makes the
- *      response fire ONCE: the election never elects a gated key, so from the epoch
- *      after the edge the incumbent map no longer names it (requirement F1's "at the
- *      edge only", proved here as a two-epoch sequence);
- *   3. an incumbent that was NOT gated is not an edge either — that family is alive
+ *   1. an edge is a gated key that held an incumbent; the second clause separates
+ *      the one epoch where a mature carry is still defined against the departing
+ *      column from the rest of the outage;
+ *   2. a gated key with no incumbent is not an edge, which makes the response fire
+ *      once: the election never elects a gated key, so from the epoch after the
+ *      edge the incumbent map no longer names it (requirement F1's "at the edge
+ *      only", shown here as a two-epoch sequence);
+ *   3. an incumbent that was not gated is not an edge either: that family is alive
  *      and its carry is still in frame;
- *   4. both empty cases short-circuit to the empty set, which is the entire cost of
- *      the predicate on the 719 of 720 epochs that have no edge;
- *   5. the knob defaults OFF and survives a round trip through the loader, because
- *      an arm that names a knob the loader does not parse is a silently null arm.
+ *   4. both empty cases short-circuit to the empty set, which is the whole cost of
+ *      the predicate on an epoch with no edge (nearly every epoch);
+ *   5. the knob defaults to off and survives a round trip through the loader,
+ *      because an arm that names a knob the loader does not parse is silently null.
  *
- * Deliberately NOT asserted here: that the erase happens.  That is the existing
- * @c networkApplyPhaseAnchorCarryReref path, already covered by its own suite; what
- * this card adds is which families enter it and when.
+ * Not asserted here: that the erase happens.  That is the existing
+ * @c networkApplyPhaseAnchorCarryReref path, covered by its own suite; this card
+ * adds which families enter it and when.
  */
 #include <gtest/gtest.h>
 
@@ -64,7 +64,7 @@ std::map<std::string, std::string> incumbents() {
             {"G19_L1W", "URUM00CHN"}};
 }
 
-/// A minimal but LOADABLE ppp-rtk-network config; @p extra is spliced into the
+/// A minimal but loadable ppp-rtk-network config; @p extra is spliced into the
 /// `network` object ahead of the station roster (the established pattern of
 /// tests/test_amb_float_vehicle.cpp).
 std::string networkConfig(const std::string& extra) {
@@ -97,7 +97,7 @@ bool loadInto(const std::string& tag, const std::string& body, GnssConfig& cfg) 
 
 } // namespace
 
-// 1. The edge rule itself: gated AND previously anchored, nothing else.
+// 1. The edge rule: gated and previously anchored, nothing else.
 TEST(PhaseGateDropEdgeTest, EdgeIsAGatedKeyThatHeldAnIncumbent) {
     const std::set<std::string> gated{"G30_L1W", "G07_L1W"};
     const auto edges = networkPhaseGateDropEdges(gated, incumbents());
@@ -119,17 +119,17 @@ TEST(PhaseGateDropEdgeTest, ReportsEveryAnchoredGatedKeyInOneEpoch) {
     EXPECT_EQ(edges.count("G07_L5Q"), 0u);
 }
 
-// 2. An incumbent that is NOT gated is not an edge: the family is alive.
+// 2. An incumbent that is not gated is not an edge: the family is alive.
 TEST(PhaseGateDropEdgeTest, LiveAnchoredFamilyIsNotAnEdge) {
     EXPECT_TRUE(networkPhaseGateDropEdges({}, incumbents()).empty());
     const std::set<std::string> gated{"G05_L1W"};   // gated, never anchored
     EXPECT_TRUE(networkPhaseGateDropEdges(gated, incumbents()).empty());
 }
 
-// 3. THE EDGE FIRES ONCE.  Epoch T: the key is gated and still anchored -> edge.
+// 3. The edge fires once.  Epoch T: the key is gated and still anchored -> edge.
 //    The election never elects a gated key (the gate erases it from union_keys
 //    before the election's loop), so the swap at the end of T drops it from the
-//    incumbent map; at T+1 the same key is still gated and is NO LONGER an edge.
+//    incumbent map; at T+1 the same key is still gated and is no longer an edge.
 //    This is requirement F1's "the re-born ambiguity absorbs the bias once and is
 //    carried normally afterwards", stated as a sequence.
 TEST(PhaseGateDropEdgeTest, EdgeFiresOnceThenTheOutageIsSilent) {
@@ -139,7 +139,7 @@ TEST(PhaseGateDropEdgeTest, EdgeFiresOnceThenTheOutageIsSilent) {
     const auto at_t = networkPhaseGateDropEdges(gated, incumbent);
     EXPECT_EQ(at_t.size(), 1u);
 
-    // The election's incumbent swap: the new map is built from the keys it ELECTED,
+    // The election's incumbent swap: the new map is built from the keys it elected,
     // and a gated key is not among them.
     std::map<std::string, std::string> new_incumbent;
     for (const auto& [amb, sta] : incumbent)
@@ -150,7 +150,7 @@ TEST(PhaseGateDropEdgeTest, EdgeFiresOnceThenTheOutageIsSilent) {
         EXPECT_TRUE(networkPhaseGateDropEdges(gated, incumbent).empty())
             << "the drop edge re-fired " << ep + 1 << " epoch(s) into the outage";
 
-    // …and the family's RETURN is the existing edge: it re-enters the union with no
+    // The family's return is an existing edge: it re-enters the union with no
     // incumbent, which the election already marks (incumbent-less pin).
     EXPECT_EQ(incumbent.count("G30_L1W"), 0u);
 }
@@ -162,7 +162,7 @@ TEST(PhaseGateDropEdgeTest, EmptyInputsGiveAnEmptyDropSet) {
     EXPECT_TRUE(networkPhaseGateDropEdges({}, incumbents()).empty());
 }
 
-// 5. The knob: default OFF, and parsed under its documented JSON name.  An arm that
+// 5. The knob: default off, and parsed under its documented JSON name.  An arm that
 //    names a knob the loader ignores is a null arm that reads as a refutation.
 TEST(PhaseGateDropEdgeTest, KnobDefaultsOffAndLoadsFromJson) {
     GnssConfig def;
@@ -178,7 +178,7 @@ TEST(PhaseGateDropEdgeTest, KnobDefaultsOffAndLoadsFromJson) {
                          cfg));
     EXPECT_TRUE(cfg.networkPhaseDatumGateDropErase());
     // The two knobs it depends on are untouched by it (it neither arms nor disarms
-    // them; the loader only WARNS when the combination is inert).
+    // them; the loader only warns when the combination is inert).
     EXPECT_EQ(cfg.networkPhaseDatumMinStations(), 2);
     EXPECT_TRUE(cfg.networkPhaseAnchorCarryReref());
 }

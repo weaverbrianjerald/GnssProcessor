@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Card CC-arm — the consumer position read the CST §7.1 bars are written against.
+"""Card CC-arm: the consumer position read the CST §7.1 bars are written against.
 
     python scripts/cc_arm_grade.py <run_dir> [<run_dir> ...]
            [--bin-s 1800] [--window TOW_MIN TOW_MAX] [--window-bin-s 300]
@@ -7,21 +7,21 @@
 Three reads of `logs/closed_loop_trace.csv`, all on `pos_err_3d_m`, all p50 unless
 labelled otherwise, so a baseline and an arm are binned identically:
 
-  * per-HOUR p50 / p90 / n            — delegated to refound_grade.consumer_table
-    (the same statistic rf2d_grade.py prints; NOT re-implemented here)
-  * per-BIN p50 (default 30 min)      — binned from the CONSUMER's own first epoch,
+  * per-hour p50 / p90 / n, delegated to refound_grade.consumer_table (the same
+    statistic rf2d_grade.py prints, not re-implemented here)
+  * per-bin p50 (default 30 min), binned from the consumer's own first epoch,
     the same t0 consumer_table uses, so bin k of two arms covers the same elapsed
     time even if the two runs start a sample apart
-  * a WINDOW read in ABSOLUTE tow     — n / p50 / first / last / max, plus the
+  * a window read in absolute tow: n / p50 / first / last / max, plus the
     window's own finer bins (default 5 min) and two drift numbers:
       `end-start`  = last bin p50 - first bin p50
       `max-rise`   = max over j > i of (p50_j - p50_i), the largest monotone climb
                      any later bin makes over any earlier one
 
-`max-rise` is the conservative one and is what a "no monotone drift > X m" bar
+`max-rise` is the conservative statistic and is what a "no monotone drift > X m" bar
 should be graded on: `end-start` alone reads 0 for an excursion that returns.
 
-TRACE-ONLY: launches nothing, writes nothing but stdout.
+Read-only: launches nothing, writes nothing but stdout.
 """
 from __future__ import annotations
 

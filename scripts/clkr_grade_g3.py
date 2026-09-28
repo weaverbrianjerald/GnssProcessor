@@ -1,16 +1,18 @@
 """Card CLK-R G3 grader (docs/SPEC_clock_emit_rebase.md §4).
 
 Grades the 12 h A/B (runs/clkr_12h_ctl vs runs/clkr_12h_on) against the stored
-denominator runs/golden63_12h_internal:
+denominator runs/golden63_12h_internal, in four checks:
 
-  G0  ctl products.txt record stream byte-identical to the stored run
-      (rebuild determinism; the card's OFF path never runs).
-  P2  ON vs ctl: non-C/R record stream byte-identical (outputs-only).
-  P1  census clock channel per arm (common epochs / outlier epochs / R marks)
-      + per-sat dev distribution unchanged between arms.
-  P4  consumer hourly medians from closed_loop_trace.csv per arm; AR fix rate.
-  Marks->consumer: R-record epochs vs the ON consumer's reset behaviour is
-      graded via the census tie-out (R count) + run-end lines (read manually).
+  G0  ctl products.txt record stream is byte-identical to the stored run:
+      confirms rebuild determinism, and that the card's off path never runs.
+  P2  ON vs ctl: the non-C/R record stream is byte-identical (outputs-only).
+  P1  census clock channel per arm (common epochs, outlier epochs, R marks),
+      and per-satellite deviation distribution, unchanged between arms.
+  P4  consumer hourly medians from closed_loop_trace.csv per arm, and the
+      AR fix rate.
+  The link between R-record epochs and the ON consumer's reset behavior is
+  graded by the census R-count tie-out together with the run-end lines,
+  which are read manually.
 """
 import os, sys, collections
 

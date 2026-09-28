@@ -2,18 +2,18 @@
 """Cold-start guards-armed window over the 20:47:00 excursion (rapid-iteration probe).
 
 Derives runs/raim_cold_event/leg.json from the Phase-2 guards config
-(_day129_guards_conv.json — full armed set: phase_leveling, within-epoch RAIM
-+ A4 ceiling, cb_excursion guard, sh_health_gate, emit_ura,
-code_bias_disc_jump_test) and re-anchors it COLD at 20:30:00 for 80 epochs
+(_day129_guards_conv.json, full armed set: phase_leveling, within-epoch RAIM
+plus A4 ceiling, cb_excursion guard, sh_health_gate, emit_ura,
+code_bias_disc_jump_test) and re-anchors it cold at 20:30:00 for 80 epochs
 (20:30:00..21:09:30; the excursion epoch tow 334020 lands at epoch ~35).
 
 Purpose (user directive Jul-28): the armed residual-domain tiers must meet the
-real 96 km epoch — detection needs no pedigreed state, and a cold start
-answers state-independence of the trigger as a side effect.  Adds the
-landing-site instruments + trace_station_residuals for row-level attribution
-of the GOLD00USA concentration.
+real 96 km epoch without a pedigreed state, and a cold start answers
+state-independence of the trigger as a side effect.  Adds the landing-site
+instruments plus trace_station_residuals for row-level attribution of the
+GOLD00USA concentration.
 
-Cold start => no resume => the fingerprint constrains nothing here.
+Cold start implies no resume, so the fingerprint constrains nothing here.
 """
 import json
 import os
@@ -24,8 +24,8 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 # Resolve any "extends" chain the base may grow.  These bases are self-contained
 # today, so this is byte-identical now; it is here so the script does not silently
-# read a four-key DELTA as a whole config the day someone rebases it (the failure
-# scripts/config_posture_check.py shipped with).
+# read a four-key delta as a whole config the day someone rebases it, the failure
+# scripts/config_posture_check.py shipped with.
 from gnss_config_chain import load_config_flat  # noqa: E402
 
 BASE = r"C:\GnssProcessor\config\test_suite\_day129_guards_conv.json"

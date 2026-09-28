@@ -1,49 +1,50 @@
 #!/usr/bin/env python3
-"""SYNTHETIC MINIMUM NETWORK — the truth grader (docs/SPEC_synthetic_minimum_network.md §4).
+"""Synthetic minimum network: the truth grader (docs/SPEC_synthetic_minimum_network.md §4).
 
-The first ABSOLUTE grade the network producer has ever had.  Every other grade in
-this repo is internal (self-consistency, datum invariance, cross-instrument
-agreement) and is satisfiable by a confidently wrong estimator; this one compares
-the emitted wire against injected truth.
+This is the absolute grade of the network producer.  The other grades in this
+repo are internal (self-consistency, datum invariance, cross-instrument
+agreement), and an estimator that is confidently wrong can satisfy them; this one
+compares the emitted wire against injected truth.
 
-THE METHOD, AND WHY IT IS NOT THE OBVIOUS ONE (SPEC §4.1)
+The method, and why it is not the obvious one (SPEC §4.1)
 ---------------------------------------------------------
-The obvious move -- difference the ESTIMATE into a between-satellite contrast so
-the datum cancels -- silently breaks the variance factor.  For a contrast,
+The obvious approach, differencing the estimate into a between-satellite contrast
+so that the datum cancels, breaks the variance factor without any visible sign.
+For a contrast,
 
     sigma_e^2  !=  sigma_s^2 + sigma_s'^2
 
 because the two estimates share the datum and are strongly correlated.  The
-marginal sigma the producer publishes therefore OVERSTATES the contrast sigma and
-biases vf DOWNWARD -- it makes a mis-calibrated estimator look calibrated.  Since
-the whole point of gate G-A is to ask "is the field code-bias vf ~ 10 the
-estimator or the data?", a downward-biased vf answers it backwards.
+marginal sigma the producer publishes therefore overstates the contrast sigma and
+biases vf downward, which makes a mis-calibrated estimator look calibrated.  Gate
+G-A asks whether the field code-bias vf ~ 10 comes from the estimator or from the
+data, and a downward-biased vf gives the wrong answer to that question.
 
-So this grader transforms TRUTH INTO THE PRODUCER'S REALIZED BASIS instead:
+This grader instead transforms truth into the producer's realized basis:
 
     e_s  = estimate_s - S[truth]_s
     vf   = mean( e_s^2 / sigma_s^2 )      sigma_s = marginal, datum-conditioned
 
-Both sides then live in the same basis and sigma_s is the marginal variance of
-exactly that quantity.  The realized datum (pivot, cbpin pair, reference receiver)
-is READ off the S line -- never assumed.  The datum-free contrast form is retained
-as a CROSS-CHECK: it must agree, and a disagreement means the datum was misread.
+Both sides then live in the same basis, and sigma_s is the marginal variance of
+that quantity.  The realized datum (pivot, cbpin pair, reference receiver) is
+read off the S line, not assumed.  The datum-free contrast form is kept as a
+cross-check: it must agree, and a disagreement means the datum was misread.
 
-TRAPS DEFENDED AGAINST (SPEC §8) -- each has produced a plausible wrong answer:
+Traps handled (SPEC §8); each has produced a plausible wrong answer:
   * join on tow, never on row index (truth files have different row counts:
     some are written before the epoch's <5-satellite `continue`, some after)
   * stop the positional parse at the first field containing '=' (trailing product
     fields are shape-dispatched, not positional, and config-dependent)
   * blank means "did not run", never 0
   * the datum pivot has no U record by construction, so it is absent from the vf
-    population -- that is not a bug and must not be counted as missing coverage
-  * truth_ambiguities.csv holds the PRE-SLIP integer; the true value at epoch k is
+    population; that is expected and is not counted as missing coverage
+  * truth_ambiguities.csv holds the pre-slip integer; the true value at epoch k is
     N_int + sum of truth_slips deltas up to k
-  * truth_atmo stec_* columns are ALREADY SLANT -- multiplying by the published
+  * truth_atmo stec_* columns are already slant; multiplying by the published
     obliquity gives a wrong value that still cancels in the iono-free combination
-  * the S line's apriori_id can name the WRONG DAY: when the product day-edge guard
-    loads the neighbouring day, getProductPath returns one of several files.  Never
-    key truth on it; it is reported, not trusted.
+  * the S line's apriori_id can name the wrong day: when the product day-edge guard
+    loads the neighbouring day, getProductPath returns one of several files.  Truth
+    is never keyed on it; it is reported, not trusted.
 
 Usage:
     python scripts/simnet_grade.py <fixture_dir> [--run <run_dir>] [--json <out>]
@@ -74,14 +75,14 @@ IF_A2 = -GPS_L2 ** 2 / (GPS_L1 ** 2 - GPS_L2 ** 2)
 GPS_L5 = 1176.45e6
 
 # (constellation, RINEX band digit) -> carrier frequency, for the §4.4 S-transform.
-# PER CONSTELLATION on purpose.  The old table was a flat signal->frequency map built
-# from GPS alone; it happened to give the right numbers for Galileo C1C/C5Q only
-# because E1 == L1 == 1575.42 MHz and E5a == L5 == 1176.45 MHz, and it had no entry
-# at all for E5b (C7Q/C7X).  A missing entry did not refuse — it fell back to mu = 1.0
-# and silently mis-projected truth on the third band, which under the geometry-free
-# datum is the ONLY band carrying estimable content.  Band digit rather than full
-# signal name keeps a new attribute (C1C vs C1X vs C1W) free.  Mirrors the table
-# already proven in scripts/cb_structure_function.py.
+# The table is per constellation: a flat signal->frequency map built from GPS gives
+# the right numbers for Galileo C1C/C5Q only because E1 == L1 == 1575.42 MHz and
+# E5a == L5 == 1176.45 MHz, and has no entry for E5b (C7Q/C7X).  An unresolved
+# frequency returns None (see freq()) instead of a default such as mu = 1.0, which
+# would mis-project truth on the third band; under the geometry-free datum that band
+# is the only one carrying estimable content.  Keying on the band digit rather than
+# the full signal name covers every attribute (C1C, C1X, C1W).  The table matches
+# the one in scripts/cb_structure_function.py.
 FREQ_BY_BAND = {
     "G": {"1": GPS_L1, "2": GPS_L2, "5": GPS_L5},
     "E": {"1": 1575.42e6, "5": 1176.45e6, "6": 1278.75e6, "7": 1207.14e6, "8": 1191.795e6},
@@ -93,9 +94,9 @@ FREQ_BY_BAND = {
 def freq(const, signal):
     """Carrier frequency (Hz) of a RINEX observable for a constellation, or None.
 
-    None is a REFUSAL, never a default: a caller that cannot resolve a frequency must
-    count and exclude the row rather than substitute one, because every downstream
-    quantity (a1/a2, mu_j) is a ratio of frequencies and a wrong one is invisible.
+    None is a refusal, not a default: a caller that cannot resolve a frequency counts
+    and excludes the row rather than substituting one, because every downstream
+    quantity (a1/a2, mu_j) is a ratio of frequencies and a wrong one leaves no trace.
     """
     if not signal or len(signal) < 2:
         return None
@@ -115,26 +116,25 @@ def wavelength(const, signal):
 def parse_products(path):
     """Return (s_line dict, epochs list, census Counter).
 
-    Each epoch: {tow, week, clocks {sat: c0_m}, ura {sat: sigma_m},
+    Each epoch: {week, tow, datum_changed, clocks {sat: c0_m}, ura {sat: sigma_m},
                  phase {(sat,signal): bias_m}, pb_sigma {(sat,signal): sigma_m},
-                 heartbeat {...}}.
+                 code_bias {(sat,signal): bias_m}, retro [...]}.
 
-    Trailing product fields are SHAPE-dispatched, not positional (a bare int is a
+    Trailing product fields are shape-dispatched, not positional (a bare int is a
     discontinuity counter; 'sigma=' / 'sigc=' / 'iode=' may appear in any order),
     and which of them exist depends on the producing toggles.  A positional parse
     calibrated on one arm reads the disc counter as a value on another, so every
     positional read below stops at the first field containing '='.
 
-    THE CENSUS IS NOT OPTIONAL BOOKKEEPING.  Records are bucketed into per-epoch
-    dicts below, so a product carrying header/epoch/S lines and NOTHING ELSE
-    parses cleanly, yields the expected epoch count, and reaches every channel
-    grader as a set of empty dicts that each skip silently.  The consumer channel
-    then reports a flattering absolute position because the consumer applied
-    nothing at all.  That is not hypothetical: on 2026-08-13 two arms of the eq34
-    bisection ladder emitted zero B/C/P records, their consumer read 0.037 m, and
-    a conclusion ("seed_round breaks the consumer 0.037 -> 585 m") was published
-    and then retracted off exactly that number.  Counting raw record types is the
-    cheapest possible defence, so it happens in the ONLY reader.
+    The census is required, not bookkeeping.  Records are bucketed into per-epoch
+    dicts below, so a product carrying only header/epoch/S lines parses cleanly,
+    yields the expected epoch count, and reaches every channel grader as a set of
+    empty dicts that each skip without a message.  The consumer channel then
+    reports a good absolute position because the consumer applied no corrections.
+    This has happened: two arms of the eq34 bisection ladder emitted zero B/C/P
+    records, their consumer read 0.037 m, and a conclusion drawn from that number
+    was later retracted.  Counting raw record types is the cheapest defence, so it
+    happens in this reader, the only one.
     """
     s_line, epochs, cur = None, [], None
     census = collections.Counter()
@@ -145,14 +145,13 @@ def parse_products(path):
                 continue
             p = line.split(",")
             rec = p[0]
-            # Count the RAW record letter before any dispatch, so types this parser
-            # does not model stay visible instead of vanishing.  (They exist: the
-            # producer emits H heartbeat records that no branch below consumes and
-            # that the docstring's promised `heartbeat` key never captured.)
+            # Count the raw record letter before any dispatch, so types this parser
+            # does not model stay visible.  (The producer emits H heartbeat records,
+            # which no branch below consumes.)
             census[rec] += 1
-            # Orphan = a record this parser WOULD have bucketed, arriving before the
-            # first E and therefore actually dropped.  An unmodelled type ahead of
-            # the first epoch is not an error, so it is deliberately not counted here.
+            # Orphan = a record this parser would have bucketed, arriving before the
+            # first E and therefore dropped.  An unmodelled type ahead of the first
+            # epoch is not an error, so it is not counted here.
             if cur is None and rec in ("C", "U", "B", "R", "P"):
                 census["_orphan"] += 1
             if rec == "S":
@@ -183,14 +182,14 @@ def parse_products(path):
 
 
 def consumer_verdict_void_reason(census):
-    """Why the consumer number must NOT be read, or None if it may be.
+    """Why the consumer number is not to be read, or None if it may be.
 
     B (satellite code bias), C (satellite clock) and P (satellite phase bias) are
-    the three record classes a consumer actually APPLIES.  With all three at zero
-    the consumer solved with an empty correction set, so its position error is a
-    verdict on the consumer's own stand-alone processing — not on the producer,
-    and not comparable with any arm that did emit.  A LOW number in that state is
-    the dangerous one: it reads as success.
+    the three record classes a consumer applies.  With all three at zero the
+    consumer solved with an empty correction set, so its position error grades the
+    consumer's own stand-alone processing, not the producer, and is not comparable
+    with any arm that did emit.  A low number in that state is the misleading case,
+    because it reads as success.
 
     Returns a short machine-readable reason string, or None.
     """
@@ -200,11 +199,11 @@ def consumer_verdict_void_reason(census):
 
 
 def consumer_verdict_caveats(census):
-    """Record classes that are absent but not ALL absent — a partial correction set.
+    """Record classes that are absent while others are present: a partial correction set.
 
-    Not a refusal: a clock-only product is a legitimate posture.  But it changes
-    what the consumer number MEANS, and comparing it against an arm with a fuller
-    record set is an unlabelled apples-to-oranges A/B, so it is named.
+    Not a refusal: a clock-only product is a legitimate posture.  It does change
+    what the consumer number means, and an A/B against an arm with a fuller record
+    set compares unlike quantities, so the missing classes are named.
     """
     return [r for r in ("C", "B", "P") if census[r] == 0]
 
@@ -213,7 +212,7 @@ def parse_s_line(p):
     """Decode the S-basis contract line.  Fields 11+ are shape-dispatched."""
     out = {"ref_rx": p[1], "apriori_id": p[10] if len(p) > 10 else "",
            # Positional field 5 = SbasisDeclaration::IsbDatum (NetworkProductIO
-           # header row): "0" pivot pin, "1" SUM-TO-ZERO per constellation,
+           # header row): "0" pivot pin, "1" sum-to-zero per constellation,
            # "2" broadcast-anchored.  The clock transform is datum-dependent, so
            # this is read off the wire, never assumed (invariant #5).
            "isb_datum": p[5] if len(p) > 5 else "",
@@ -222,15 +221,16 @@ def parse_s_line(p):
         if "=" in f:
             k, _, v = f.partition("=")
             if k in ("cbpin", "gfpin"):
-                # cbpin=<const>:<s1>-<s2>   — the IF-pinned pair (the frame the OSB
-                #                             stream is internally consistent in)
-                # gfpin=<const>:<s1>-<s2>   — Odijk rd 3b: the SAME pair also carries a
-                #                             geometry-free datum row, so both pinned
-                #                             channels' B records ARE the datum and the
-                #                             GF lump sits in the ionosphere (Table 8).
-                # A '+'-joined value is the per-family form (SPEC_family_gf_datum); this
-                # grader does not implement the per-family transform, so it records the
-                # raw value and refuses rather than grading the first family silently.
+                # cbpin=<const>:<s1>-<s2>   the IF-pinned pair (the frame in which the
+                #                            OSB stream is internally consistent)
+                # gfpin=<const>:<s1>-<s2>   Odijk rd 3b: the same pair also carries a
+                #                            geometry-free datum row, so the B records of
+                #                            both pinned channels are the datum and the
+                #                            GF lump sits in the ionosphere (Table 8).
+                # A '+'-joined value is the per-family form (SPEC_family_gf_datum).  It is
+                # stored as a ("MULTIFAMILY", raw) sentinel; grade_code_bias applies the
+                # per-family transform for gfpin and refuses a per-family cbpin, and
+                # if_lump_by_sat skips it, rather than grading the first family only.
                 cst, _, pair = v.partition(":")
                 if "+" in pair:
                     out[k][cst] = ("MULTIFAMILY", pair)
@@ -249,19 +249,19 @@ def parse_s_line(p):
 # Truth loading
 # --------------------------------------------------------------------------- #
 
-# ORACLE PIN (docs/SPEC_oracle_pin.md): an optional grading WINDOW.
+# Optional grading window (oracle pin, docs/SPEC_oracle_pin.md).
 #
-# The pin legs need every channel graded over two SHORT windows of one 60-epoch
+# The pin legs need every channel graded over two short windows of one 60-epoch
 # leg, which `--settle-frac` (a leading fraction to discard) cannot express.  The
-# filter sits at the single point every RUN trace is read and keys on the column
-# NAME: run traces carry `tow`, fixture truth files carry `tow_s`, so truth is
-# untouched by construction.  Default (None, None) => not one row is filtered and
-# every existing caller is byte-identical.
+# filter sits at the single point where every run trace is read and keys on the
+# column name: run traces carry `tow`, fixture truth files carry `tow_s`, so truth
+# is never filtered.  The default (None, None) filters no row, and output is then
+# byte-identical to a run without the window.
 TOW_WINDOW = (None, None)
 
 
 def set_tow_window(lo, hi):
-    """Set the inclusive (tow_min, tow_max) filter for RUN traces; None = open."""
+    """Set the inclusive (tow_min, tow_max) filter for run traces; None = open."""
     global TOW_WINDOW
     TOW_WINDOW = (lo, hi)
 
@@ -315,10 +315,11 @@ def load_truth(fixture_dir):
 def satclock_truth_by_tow(truth):
     """Injected satellite-clock error, metres of clock offset, keyed (tow, sat).
 
-    Satellite-side and therefore identical at every station BY CONSTRUCTION (the
-    determinism contract in SatClockError.hpp).  We read it from one station and
-    ASSERT the others agree -- if they ever do not, a satellite-side term has been
-    made station-dependent, which grades as an estimator defect.
+    Satellite-side and therefore identical at every station by construction (the
+    determinism contract in SatClockError.hpp).  All stations are read and the
+    disagreements with the stored value are counted; a nonzero count means a
+    satellite-side term has become station-dependent, which would grade as an
+    estimator defect.
     """
     series, disagreements = {}, 0
     for name, st in truth["stations"].items():
@@ -360,11 +361,11 @@ def fmt(s, unit=""):
 # --------------------------------------------------------------------------- #
 # Per-epoch series collection (--series)
 #
-# Every channel grader below optionally records per-epoch aggregates of the SAME
-# residuals it grades (same transform, same code path — never a re-derivation,
-# which is how a series would silently drift from the verdict).  The collector is
-# a plain list of (tow, channel, id, value, n) rows; None disables collection and
-# leaves every grader byte-identical in output and behavior.
+# Every channel grader below optionally records per-epoch aggregates of the same
+# residuals it grades (same transform, same code path, not a re-derivation, so the
+# series cannot drift from the verdict).  The collector is a plain list of
+# (tow, channel, id, value, n) rows; None disables collection and leaves every
+# grader byte-identical in output and behavior.
 # --------------------------------------------------------------------------- #
 
 def _rms(vals):
@@ -390,45 +391,45 @@ def _srow(series, tow, channel, sid, value, n=None):
 # --------------------------------------------------------------------------- #
 
 def if_lump_by_sat(osb_truth, pin):
-    """Per-satellite iono-free lump of the INJECTED OSB over the pinned pair (m).
+    """Per-satellite iono-free lump of the injected OSB over the pinned pair (m).
 
-    §4.2's `d_IF^s` term.  On the W6 arm the producer does NOT apply the .BIA, so this
-    lump is absorbed by the estimated satellite CLOCK and the C-record truth is
-    therefore NOT identically zero even with no injected clock error:
+    The §4.2 `d_IF^s` term.  On the W6 arm the producer does not apply the .BIA,
+    so this lump is absorbed by the estimated satellite clock, and the C-record truth
+    is not identically zero even with no injected clock error:
 
         truth_C(s) = [Δdt^s − Δdt_piv] − [d_IF^s − d_IF_piv]
 
-    ⚠ THE SIGN IS MEASURED, NOT ASSUMED, AND IT IS THE OPPOSITE OF SPEC §4.2's
-    WRITTEN `+`.  Regressing each satellite's settled mean C residual on its
-    pivot-relative lump over the graded arm gives slope **−1.08, corr −0.78** (19
-    satellites, 233 settled epochs), and removing −lump drops the per-satellite mean
-    rms 1.070 → 0.906 m while removing +lump inflates it to 1.786 m.  The convention
-    chain that produces it: a Bias-SINEX OSB is a quantity to SUBTRACT from the
-    observation, the sim ADDS it to the observable, and the estimated clock enters the
-    modeled range with the opposite sign — so the lump lands in the clock negated.
-    The magnitude ≈ 1 confirms the mechanism; the 0.9 m that remains after removal is
-    genuine per-satellite clock error, not convention.
+    The sign was measured, and it is the opposite of the `+` that SPEC §4.2 writes.
+    Regressing each satellite's settled mean C residual on its pivot-relative lump
+    over the graded arm gives slope −1.08, corr −0.78 (19 satellites, 233 settled
+    epochs); removing −lump lowers the per-satellite mean rms from 1.070 to 0.906 m,
+    while removing +lump raises it to 1.786 m.  The sign follows from the conventions:
+    a Bias-SINEX OSB is a quantity to subtract from the observation, the sim adds it
+    to the observable, and the estimated clock enters the modeled range with the
+    opposite sign, so the lump lands in the clock negated.  The magnitude ≈ 1
+    confirms the mechanism; the 0.9 m that remains after removal is per-satellite
+    clock error, not convention.
 
-    Ignoring it would charge the estimator with a ±1 m per-satellite constant that is
-    the datum working exactly as designed — the invariant-#5 mistake, on the channel
-    the fixture grades most sharply.  Empty on the INT arm (no injected OSB), where
-    the second bracket is identically zero and the null test is recovered.
+    Without this term the estimator would be charged with a ±1 m per-satellite
+    constant that is the datum working as designed (the invariant-#5 mistake, on the
+    channel the fixture grades most sharply).  Empty on the INT arm (no injected
+    OSB), where the second bracket is identically zero and the null test holds.
     """
     if not osb_truth or not pin:
         return {}
-    # `pin` is the whole cbpin MAP (constellation -> (s1,s2)).  It used to be a single
-    # pair, taken from cbpin["G"]: on a GPS+Galileo product that applied the GPS pin
-    # to Galileo satellites, whose pinned pair is a different band entirely.
+    # `pin` is the whole cbpin map (constellation -> (s1,s2)), so each satellite uses
+    # its own constellation's pinned pair; on a GPS+Galileo product the Galileo pair
+    # is on different bands from the GPS pair.
     out = {}
     for (sat, sig), v in osb_truth.items():
         if not sat:
             continue
         cst = sat[0]
         pair = pin.get(cst)
-        # The MULTIFAMILY sentinel IS a 2-tuple, so a bare `len(pair) != 2` test lets it
-        # through and unpacks ("MULTIFAMILY", "<raw>") as if they were signal names — no
-        # OSB key ever matches, so the lump silently comes out EMPTY rather than refusing.
-        # Fail closed: an unresolved per-family pin must never look like "no truth here".
+        # The MULTIFAMILY sentinel is also a 2-tuple, so `len(pair) != 2` alone would
+        # unpack ("MULTIFAMILY", "<raw>") as signal names.  It is tested explicitly: a
+        # per-family pin has no single IF pair, so that constellation gets no lump
+        # here, and grade_code_bias reports the per-family cbpin as refused.
         if not pair or len(pair) != 2 or pair[0] == "MULTIFAMILY":
             continue
         j1, j2 = pair
@@ -457,10 +458,10 @@ def grade_clock(epochs, s_line, sc_truth, settle_frac, if_lump=None, series=None
 
     Wire meaning (contract section B.1):
         dt~^s = [dt^s + d_IF^s] - [dt_pivot] - A_c
-    With the sim injecting the precise CLK product -- the SAME object the producer
-    names as its a-priori -- the truth correction is exactly the INJECTED error,
-    and the basis transform is "subtract the realized pivot's injected error".
-    The common-mode accumulator A_c drops out of that difference too.
+    The sim injects the precise CLK product, the same object the producer names as
+    its a-priori, so the truth correction is the injected error, and the basis
+    transform is "subtract the realized pivot's injected error".  The common-mode
+    accumulator A_c drops out of that difference too.
 
     With no injected error the truth is identically zero for every satellite: a
     valid null test, and the one this fixture runs at G-A.
@@ -472,27 +473,26 @@ def grade_clock(epochs, s_line, sc_truth, settle_frac, if_lump=None, series=None
     res, res_vf, contrast_res = [], [], []
     n_no_sigma, n_pivot_skipped = 0, 0
 
-    # Settled epochs feed the graded stats exactly as before; when a series
-    # collector is bound, the pre-settle epochs run the SAME transform so the
-    # ignition transient is visible on the time axis (marked, never graded).
+    # Settled epochs feed the graded stats; when a series collector is bound, the
+    # pre-settle epochs run the same transform so the ignition transient is
+    # visible on the time axis (recorded in the series, never graded).
     for i_ep, ep in enumerate(epochs):
         settled = i_ep >= start
         if series is None and not settled:
             continue
         tow = round(ep["tow"], 3)
-        # The clock gauge is PER CONSTELLATION (one pinned pivot each), so the pivot
-        # and its truth must be resolved per satellite.  Reading pivots["G"] alone
-        # left every Galileo clock carrying its own unremoved pivot datum, and on a
-        # Galileo-only product removed nothing at all.
+        # The clock gauge is per constellation (one pinned pivot each), so the pivot
+        # and its truth are resolved per satellite.  Using pivots["G"] alone would
+        # leave every Galileo clock carrying its unremoved pivot datum.
         piv_truth_of = {}
         for cst, pv in pivots.items():
             piv_truth_of[cst] = sc_truth.get((tow, pv), 0.0) + lump.get(pv, 0.0)
-        # SUM-TO-ZERO clock datum (isb_datum = 1 on the S line): the realized
-        # gauge is Σ δtˢ = 0 per constellation over THIS epoch's emitted set, so
-        # S[truth] zero-means (sc + lump) over the same set — the exact analogue
-        # of the code-bias channel's stage-2 zero-mean.  No pivot exists and no
-        # row is skipped; the datum-free contrast cross-check below is unchanged
-        # and must agree exactly as it does under the pivot datum.
+        # Sum-to-zero clock datum (isb_datum = 1 on the S line): the realized gauge
+        # is Σ δtˢ = 0 per constellation over this epoch's emitted set, so S[truth]
+        # zero-means (sc + lump) over the same set, the analogue of the code-bias
+        # channel's stage-2 zero-mean.  No pivot exists and no row is skipped; the
+        # datum-free contrast cross-check below is unchanged and must agree as it
+        # does under the pivot datum.
         s2z_mean_of = {}
         if s2z:
             by_c = {}
@@ -528,11 +528,11 @@ def grade_clock(epochs, s_line, sc_truth, settle_frac, if_lump=None, series=None
                 res_vf.append((e / sig) ** 2)
 
         # Datum-free cross-check: every between-satellite contrast must reproduce
-        # the same residual without using the pivot at all.  Disagreement here is
-        # the signature of a MISREAD datum, which is the failure this catches.
-        # Contrasts are formed WITHIN a constellation only.  A G-vs-E clock difference
-        # is not datum-invariant — each constellation carries its own pivot, so the
-        # contrast retains the inter-system bias and would read as a residual.
+        # the same residual without using the pivot.  A disagreement indicates a
+        # misread datum.  Contrasts are formed within a constellation only: a G-vs-E
+        # clock difference is not datum-invariant, because each constellation
+        # carries its own pivot, so the contrast would retain the inter-system bias
+        # and read as a residual.
         ep_con = []
         by_cst = {}
         for s in ep["clocks"]:
@@ -564,7 +564,7 @@ def grade_phase(epochs, settle_frac, series=None):
     In the INT posture (no satellite phase bias injected) the estimable content of
     a P-record SD is exactly -lambda * (N_pivot_station difference), so its residual
     modulo one cycle is the sharp test.  Grading the metre value directly would be
-    the invariant-#5 mistake: the datum receiver's ambiguity rides inside the bias.
+    the invariant-#5 mistake: the datum receiver's ambiguity is inside the bias.
     """
     n_ep = len(epochs)
     start = int(n_ep * settle_frac)
@@ -577,11 +577,11 @@ def grade_phase(epochs, settle_frac, series=None):
         for (sat, sig), v in ep["phase"].items():
             if not sat:
                 continue
-            # Key on (constellation, signal): the between-satellite SD is only
-            # integer x lambda WITHIN a constellation, and lambda itself is
+            # Key on (constellation, signal): the between-satellite SD is integer x
+            # lambda only within a constellation, and lambda itself is
             # constellation-dependent (L5 and E5a coincide, L2 and E5b do not).
-            # Pooling them was harmless while only GPS emitted; on a GPS+Galileo
-            # posture-C product it would difference across two datums.
+            # Pooling constellations on a GPS+Galileo posture-C product would
+            # difference across two datums.
             by_sig.setdefault((sat[0], sig), []).append((sat, v))
         ep_fr = {}
         for (cst, sig), items in by_sig.items():
@@ -604,7 +604,7 @@ def grade_phase(epochs, settle_frac, series=None):
 
 
 def grade_zwd(run_dir, truth, settle_frac, series=None):
-    """ZWD: not gauge-bearing, so grade it ABSOLUTELY, with the one clean vf.
+    """ZWD: not gauge-bearing, so it is graded absolutely, with the one clean vf.
 
     network_zwd.csv is the only per-station state channel emitted with a
     datum-conditioned formal sigma (zwd_m = x_lin + x_r, std_m = sqrt(conditional
@@ -616,7 +616,7 @@ def grade_zwd(run_dir, truth, settle_frac, series=None):
     if not rows:
         return None
 
-    # Truth ZWD per (station, tow).  JOIN ON TOW -- the truth writers and the
+    # Truth ZWD per (station, tow).  The join is on tow: the truth writers and the
     # RINEX epoch loop have different row counts by construction.
     tt = {}
     for name, st in truth["stations"].items():
@@ -653,10 +653,10 @@ def grade_zwd(run_dir, truth, settle_frac, series=None):
 
 
 def grade_consumer(run_dir, settle_frac):
-    """closed_loop_trace.csv already logs the ERROR vector against declared truth.
+    """closed_loop_trace.csv already logs the error vector against declared truth.
 
     For a synthetic station with zero antenna eccentricity the declared ECEF is
-    exact truth, so this is the only fully datum-free ABSOLUTE producer output.
+    exact truth, so this is the only fully datum-free absolute producer output.
     It is AR-confounded, so it is an end-to-end verdict, not a channel diagnostic.
     """
     rows = load_csv(os.path.join(run_dir, "logs", "closed_loop_trace.csv"))
@@ -685,14 +685,13 @@ EMIT_RE = re.compile(
 def grade_qc_tiers(run_dir):
     """Grade the QC stack from the run-end flag-rate summary + the event log.
 
-    THE DISTINCTION THAT MATTERS is opportunity count vs flag count (standing
-    invariant #4).  A tier reporting "0 opp" is INERT — its wiring never even got
-    a chance to look at anything — and reads in every log exactly like a tier that
-    looked and found nothing.  At 3 and 5 stations EVERY tier here is 0 opp, which
-    is why the 50-station variant exists.
+    The key distinction is opportunity count vs flag count (standing invariant #4).
+    A tier reporting "0 opp" is inert (its wiring never tested anything), yet reads
+    in every log like a tier that tested and found nothing.  At 3 and 5 stations
+    every tier here is 0 opp, which is why the 50-station variant exists.
 
-    For a LIVE tier on a QUIET arm the grade is its false-alarm rate against the
-    threshold's OWN implied Gaussian alpha, which the producer prints beside it:
+    For a live tier on a quiet arm the grade is its false-alarm rate against the
+    implied Gaussian alpha of its own threshold, which the producer prints beside it:
       observed >> implied  the threshold is mis-calibrated for this data, or the
                            residuals are heavier-tailed than Gaussian
       observed << implied  conservative; the tier will also be slow on real faults
@@ -731,13 +730,13 @@ def detect_ura_scale(run_dir):
     """Detect the scale factor the published URA carries, so vf is interpretable.
 
     URA = s0 * sqrt(scov(clock,clock)) with s0 = max(1.0, sigma0_EWMA)
-    (NetworkSolPrep.cpp:430,443).  That EWMA is STRUCTURALLY UNAVAILABLE unless
-    emit_ura + raim + phase_leveling are all armed -- the RTB-6 sentinel -- in which
-    case s0 is exactly 1.0 and the URA is the pure marginal formal sigma.
+    (networkSolPrep() in NetworkSolPrep.cpp).  That EWMA is unavailable unless
+    emit_ura + raim + phase_leveling are all armed; otherwise the RTB-6 sentinel
+    applies, s0 is exactly 1.0, and the URA is the pure marginal formal sigma.
 
-    Flipping phase_leveling therefore moves the vf DENOMINATOR silently, by s0^2.
-    Two arms that differ in it cannot have their vf pooled or compared, and nothing
-    in the product says so.  Report it explicitly.
+    Flipping phase_leveling therefore moves the vf denominator by s0^2, and nothing
+    in the product records it.  Two arms that differ in it cannot have their vf
+    pooled or compared, so the scale is reported explicitly.
     """
     console = os.path.join(run_dir, "console.txt")
     if not os.path.exists(console):
@@ -754,8 +753,8 @@ def osb_truth_by_key(truth):
     """Injected satellite OSB in metres, keyed (sat, RINEX code).
 
     Satellite-side and time-constant (it comes straight out of the shipped
-    COD0MGXFIN Bias-SINEX), so it is read from one station and the others are
-    ASSERTED to agree — the same determinism contract satclock_truth_by_tow uses.
+    COD0MGXFIN Bias-SINEX), so every station must agree; disagreements are counted,
+    under the same determinism contract satclock_truth_by_tow uses.
     Non-empty only when the sim ran `corrections.signal_bias: true`, i.e. the W6
     arm; under the INT posture the producer removes the same .BIA the sim injected,
     so there are no B records to grade and this file is absent or all-zero.
@@ -773,41 +772,41 @@ def osb_truth_by_key(truth):
 
 def grade_code_bias(epochs, s_line, osb_truth, sig_rows, settle_frac, gf_datum=False,
                     gf_forced=False, series=None):
-    """B record: apply the producer's OWN two-stage S-transform to TRUTH (SPEC §4.4).
+    """B record: apply the producer's two-stage S-transform to truth (SPEC §4.4).
 
-    The wire value is not the injected OSB — it is that OSB seen through the W6
+    The wire value is not the injected OSB; it is that OSB seen through the W6
     code-bias datum, which is two operations:
 
-      1. IF LUMPING.  The satellite's iono-free combination over the PINNED pair is
-         absorbed by the satellite clock (Odijk: the first two frequencies' code
-         biases are not separately estimable), so a1*b(s,j1) + a2*b(s,j2) is
-         subtracted from every channel of that satellite.  The pair is
-         selectIfPinPair's LEXICAL choice, read off the S line's cbpin= token —
-         NOT assumed, and not necessarily the consumer's pair
+      1. IF lumping.  The satellite's iono-free combination over the pinned pair is
+         absorbed by the satellite clock (Odijk: the code biases of the first two
+         frequencies are not separately estimable), so a1*b(s,j1) + a2*b(s,j2) is
+         subtracted from every channel of that satellite.  The pair is the lexical
+         choice of selectIfPinPair, read off the S line's cbpin= token, not
+         assumed, and not necessarily the consumer's pair
          (project_day129_pivot_cb_ratchet).
-      2. ZERO-MEAN PER CHANNEL over that epoch's registered satellite set.
+      2. Zero-mean per channel over that epoch's registered satellite set.
 
-    Both stages are applied to the truth using THIS EPOCH's emitted satellite set,
-    so a satellite rising or setting cannot masquerade as a bias error.
+    Both stages are applied to the truth using this epoch's emitted satellite set,
+    so a satellite rising or setting cannot appear as a bias error.
 
-    Reported alongside the residual: the ESTIMATE's own per-channel mean, which the
+    Reported alongside the residual: the per-channel mean of the estimate, which the
     sum-to-zero datum should hold at 0.  It is a datum-realization check, not a
-    grade — if it drifts, the residual statistics below are being measured against a
-    datum the producer is not actually realizing.
+    grade; if it drifts, the residual statistics below are measured against a datum
+    the producer is not realizing.
 
     vf uses network_sat_bias_states.csv (network.trace_sat_bias_states), because the
-    B record itself carries NO sigma in any configuration (§4.8).  Rows whose sigma
-    is blank (a datum-pinned column, whose variance is a gauge artefact) are counted
-    and excluded rather than silently treated as zero.
+    B record carries no sigma in any configuration (§4.8).  Rows whose sigma is
+    blank (a datum-pinned column, whose variance is a gauge artefact) are counted
+    and excluded rather than treated as zero.
     """
     if not osb_truth:
         return {"armed": False}
 
-    # Which constellations actually emit B records?  The datum is realized PER
-    # CONSTELLATION (its own IF pin, its own sum-to-zero channels, its own GF datum),
-    # so every quantity below is resolved per constellation.  Reading cbpin["G"] alone
-    # refused a Galileo-only product outright and, worse, applied the GPS pair and the
-    # GPS frequencies to Galileo satellites on a mixed product.
+    # Which constellations emit B records?  The datum is realized per constellation
+    # (its own IF pin, its own sum-to-zero channels, its own GF datum), so every
+    # quantity below is resolved per constellation.  A GPS-only reading of cbpin["G"]
+    # would refuse a Galileo-only product and apply the GPS pair and frequencies to
+    # Galileo satellites on a mixed product.
     consts = sorted({s[0] for (s, _) in osb_truth if s})
     emitted = sorted({s[0] for ep in epochs for (s, _) in ep["code_bias"] if s})
     consts = [c for c in consts if c in emitted] or emitted
@@ -815,10 +814,10 @@ def grade_code_bias(epochs, s_line, osb_truth, sig_rows, settle_frac, gf_datum=F
     cbpin = (s_line or {}).get("cbpin", {})
     gfpin = (s_line or {}).get("gfpin", {})
 
-    # Which receiver channel FAMILIES does each constellation actually emit?  Mirrors the
+    # Which receiver channel families does each constellation emit?  Mirrors the
     # producer's NetworkSbasis::channelFamilyOf: 'X' is the combined I+Q correlator output
-    # and a physically distinct bias; every discrete component is one family.  Deliberately
-    # NOT keyed on the raw attribute character — the Galileo primary family is C1C/C5Q/C7Q,
+    # and a physically distinct bias; every discrete component is one family.  Not keyed
+    # on the raw attribute character, since the Galileo primary family is C1C/C5Q/C7Q,
     # attributes C, Q, Q.
     def _family(sig):
         return "X" if (len(sig) > 2 and sig[2] == "X") else "P"
@@ -845,11 +844,11 @@ def grade_code_bias(epochs, s_line, osb_truth, sig_rows, settle_frac, gf_datum=F
             continue
         gf = gfpin.get(c)
         # Per-family GF datum (SPEC_family_gf_datum §5).  `gfpin=<c>:<p1>-<p2>+<s1>-<s2>`
-        # declares the PRIMARY family's pair and each partitioned SECONDARY family's pair.
-        # Removal is asymmetric and that asymmetry IS the card: the primary family loses
-        # its IF direction (the clock absorbed it) AND its GF direction; a secondary family
-        # loses ONLY its GF direction, because its IF combination is the estimable
-        # inter-family ISC and is graded, not projected away.
+        # declares the primary family's pair and the pair of each partitioned secondary
+        # family.  Removal is asymmetric, and the asymmetry is the content of the card:
+        # the primary family loses its IF direction (the clock absorbed it) and its GF
+        # direction; a secondary family loses only its GF direction, because its IF
+        # combination is the estimable inter-family ISC and is graded, not projected away.
         fam_gf = {}
         if gf and gf[0] == "MULTIFAMILY":
             ok = True
@@ -866,13 +865,13 @@ def grade_code_bias(epochs, s_line, osb_truth, sig_rows, settle_frac, gf_datum=F
             if not ok or _family(j1) not in fam_gf:
                 refused[c] = f"bad_multifamily_gfpin:{gf[1]}"
                 continue
-        # THE SCREEN §D.4 DESCRIBES, and the one that would have caught the 2026-08-12
-        # `_pc305_gg_tri_slant_20m` posture.  selectIfPinPair resolves EVERY satellite of a
-        # Q+X roster to the primary pair, deterministically and unanimously, so a producer
-        # with no family awareness emits a confident single-family `gfpin=E:C1C-C5Q` on a
-        # two-family product — and grading the X channels through the Q family's transform
-        # is exactly the silent mis-framing the token exists to prevent.  Refuse instead:
-        # more than one emitted family REQUIRES a per-family declaration.
+        # The screen described in §D.4 (it would have caught the `_pc305_gg_tri_slant_20m`
+        # posture).  selectIfPinPair resolves every satellite of a Q+X roster to the
+        # primary pair, deterministically and unanimously, so a producer with no family
+        # awareness emits a single-family `gfpin=E:C1C-C5Q` on a two-family product, and
+        # grading the X channels through the Q family's transform is the mis-framing the
+        # token exists to prevent.  More than one emitted family therefore requires a
+        # per-family declaration; without one the constellation is refused.
         if len(emitted_fams.get(c, set())) > 1 and not fam_gf:
             refused[c] = ("multifamily_emitted_no_token:"
                           f"{','.join(sorted(emitted_fams[c]))}")
@@ -894,7 +893,7 @@ def grade_code_bias(epochs, s_line, osb_truth, sig_rows, settle_frac, gf_datum=F
         return {"armed": True, "no_pin": True, "refused": refused,
                 "consts": consts, "declared": sorted(cbpin)}
 
-    # sigma lookup: (tow, sat, signal) -> sigma_m ("" = pinned / no honest variance)
+    # sigma lookup: (tow, sat, signal) -> sigma_m ("" = pinned / no meaningful variance)
     sig = {}
     for r in (sig_rows or []):
         sig[(round(float(r["tow"]), 3), r["sat"], r["signal"])] = r["sigma_m"].strip()
@@ -903,33 +902,33 @@ def grade_code_bias(epochs, s_line, osb_truth, sig_rows, settle_frac, gf_datum=F
     res, res_vf, per_sig = [], [], {}
     est_channel_mean, n_no_truth, n_no_sigma, n_pinned = [], 0, 0, 0
     n_no_freq = 0
-    # §5.3: the self-check the transform's own comment promises ("asserted below rather
-    # than assumed") and never performed.  Under the GF datum a pinned channel's projected
-    # truth must be identically 0 — Odijk §5.1's "not estimable for the first two
-    # frequencies", realized as a datum.  It is the one identity that catches a WRONG
-    # FAMILY PAIRING silently: mis-assign a family and the pinned channels stop vanishing.
+    # Self-check of the transform, §5.3 (see the Stage 1 comment).  Under the GF datum
+    # the projected truth of a pinned channel must be identically 0 (Odijk §5.1, "not
+    # estimable for the first two frequencies", realized as a datum).  It is the one
+    # identity that detects a wrong family pairing: with a family mis-assigned, the
+    # pinned channels stop vanishing.
     n_pin_residual = 0
     max_pin_residual = 0.0
     for ep in epochs[int(n_ep * settle_frac):]:
         tow = round(ep["tow"], 3)
         if not ep["code_bias"]:
             continue
-        # Stage 1 — per-satellite datum projection of the TRUTH.
+        # Stage 1: per-satellite datum projection of the truth.
         #
-        # Derived, not transcribed.  The unobservable directions in a satellite's code
-        # biases are exactly two: the CLOCK direction e = (1,1,…,1) and the IONO
+        # Derived, not transcribed.  A satellite's code biases have exactly two
+        # unobservable directions: the clock direction e = (1,1,…,1) and the iono
         # direction μ = (μ_1,…,μ_f) with μ_j = (f_1/f_j)².  The datum rows are the
-        # iono-free row μ_IF and — in the slant posture — the geometry-free row μ_GF,
-        # whose orthogonality properties are μ_IF·e = 1, μ_IF·μ = 0 (Odijk Eq. 26) and
-        # μ_GF·e = 0, μ_GF·μ = 1 (Eq. 31).  So R·N = I and the projection is simply
+        # iono-free row μ_IF and, in the slant posture, the geometry-free row μ_GF,
+        # with μ_IF·e = 1, μ_IF·μ = 0 (Odijk Eq. 26) and μ_GF·e = 0, μ_GF·μ = 1
+        # (Eq. 31).  So R·N = I and the projection is
         #
         #     t̃_j = t_j − (μ_IF·t) − μ_j·(μ_GF·t)
         #
-        # with the second term present only when the GF row is folded.  Dropping it
-        # recovers the single-layer posture's "subtract the IF lump" exactly, so one
-        # expression serves both.  Self-check: under the slant datum this forces
-        # t̃ = 0 on BOTH pinned channels, which is Odijk §5.1's "not estimable for the
-        # first two frequencies" — asserted below rather than assumed.
+        # with the last term present only when the GF row is folded.  Without it the
+        # expression reduces to the single-layer posture's "subtract the IF lump", so
+        # one expression serves both.  Self-check: under the slant datum this forces
+        # t̃ = 0 on both pinned channels (Odijk §5.1, "not estimable for the first two
+        # frequencies"); the loop below checks it (n_pin_residual).
         sats = sorted({s for (s, _) in ep["code_bias"]})
         lump, gflump, usable = {}, {}, set()
         gf_fam_lump = {}                  # sat -> {family: GF lump in that family's frame}
@@ -944,8 +943,8 @@ def grade_code_bias(epochs, s_line, osb_truth, sig_rows, settle_frac, gf_datum=F
                 continue                      # cannot transform: pinned pair not injected
             lump[s] = d["a1"] * b1 + d["a2"] * b2
             gflump[s] = ((b2 - b1) / d["mu2_minus_mu1"]) if d["gf"] else 0.0
-            # Per-family GF lumps: each family's own pinned pair, in its OWN mu convention
-            # (mu is pair-relative, exactly as the producer computes it).  A family whose
+            # Per-family GF lumps: each family's own pinned pair, in its own mu convention
+            # (mu is pair-relative, as the producer computes it).  A family whose
             # pinned pair is not present in truth contributes nothing and its channels fall
             # back to the primary lump below, where the missing-truth counter catches them.
             if d["fam_gf"]:
@@ -958,22 +957,22 @@ def grade_code_bias(epochs, s_line, osb_truth, sig_rows, settle_frac, gf_datum=F
                     fl[fam] = (v2 - v1) / fg["mu2_minus_mu1"]
                 gf_fam_lump[s] = fl
             usable.add(s)
-        # Stage 2 — zero-mean per (CONSTELLATION, channel) over THIS epoch's registered
+        # Stage 2: zero-mean per (constellation, channel) over this epoch's registered
         # set.  That is the producer's own datum key: NetworkSbasis builds the
         # sum-to-zero rows on constellationOf(sat)+"|"+signal.  Keying on the signal
-        # alone pooled G and E wherever they share a code name (C1C, C5Q on posture C)
-        # into a mean the producer never formed.
+        # alone would pool G and E wherever they share a code name (C1C, C5Q on
+        # posture C) into a mean the producer never forms.
         by_sig = {}
         for (s, j), v in ep["code_bias"].items():
             if s not in usable or (s, j) not in osb_truth:
                 n_no_truth += 1
                 continue
             d = datum[s[0]]
-            # mu_j for THIS channel (mu_1 = 1 by definition of the reference band).
-            # An unresolvable frequency is EXCLUDED and counted — never defaulted.  The
-            # old `mu_j = 1.0` fallback silently mis-projected truth on exactly the
-            # bands it could not name (E5b C7Q/C7X), which under the GF datum are the
-            # only bands carrying estimable content.
+            # mu_j for this channel (mu_1 = 1 by definition of the reference band).
+            # An unresolvable frequency is excluded and counted, never defaulted: a
+            # `mu_j = 1.0` default would mis-project truth on the bands it cannot name
+            # (E5b C7Q/C7X), which under the GF datum are the only bands carrying
+            # estimable content.
             fj = freq(s[0], j)
             if not fj:
                 n_no_freq += 1
@@ -981,11 +980,11 @@ def grade_code_bias(epochs, s_line, osb_truth, sig_rows, settle_frac, gf_datum=F
             fam = _family(j)
             fg = d["fam_gf"].get(fam) if d["fam_gf"] else None
             if fg is not None and fam != d["primary_fam"]:
-                # SECONDARY family: remove ONLY this family's geometry-free direction, in
-                # its own mu convention.  The IF direction is deliberately KEPT — it is the
-                # per-satellite inter-family ISC, a real estimated quantity graded against
-                # injected truth.  Subtracting the primary family's IF lump here would
-                # project away exactly the content this card makes estimable.
+                # Secondary family: remove only this family's geometry-free direction, in
+                # its own mu convention.  The IF direction is kept: it is the per-satellite
+                # inter-family ISC, an estimated quantity graded against injected truth.
+                # Subtracting the primary family's IF lump here would project away the
+                # content this card makes estimable.
                 fl = gf_fam_lump.get(s, {}).get(fam)
                 if fl is None:
                     n_no_truth += 1
@@ -993,20 +992,20 @@ def grade_code_bias(epochs, s_line, osb_truth, sig_rows, settle_frac, gf_datum=F
                 mu_j = (fg["f1"] * fg["f1"]) / (fj * fj)
                 t = osb_truth[(s, j)] - mu_j * fl
             else:
-                # PRIMARY family (or a single-family product): the clock absorbed the IF
+                # Primary family (or a single-family product): the clock absorbed the IF
                 # direction and the ionosphere absorbed the GF one, so both come out.
                 mu_j = (d["f1"] * d["f1"]) / (fj * fj)
                 gl = gflump[s]
                 if fg is not None:
                     gl = gf_fam_lump.get(s, {}).get(fam, gflump[s])
                 t = osb_truth[(s, j)] - lump[s] - mu_j * gl
-            # Pinned-channel identity — and it is DIFFERENT per family, which is exactly
-            # the thing worth asserting.  The PRIMARY family has both its IF and its GF
-            # direction removed, so each pinned channel projects to identically 0 (Odijk
-            # §5.1).  A SECONDARY family has only its GF direction removed, so its pinned
-            # channels do NOT vanish — they still carry the inter-family ISC.  What must
-            # vanish there is the GF COMBINATION of the pair.  Checking |t| = 0 on a
-            # secondary channel would be asserting the over-pin this card exists to avoid.
+            # Pinned-channel identity, which differs per family.  The primary family has
+            # both its IF and its GF direction removed, so each pinned channel projects
+            # to identically 0 (Odijk §5.1).  A secondary family has only its GF
+            # direction removed, so its pinned channels do not vanish; they still carry
+            # the inter-family ISC.  What must vanish there is the GF combination of the
+            # pair.  Checking |t| = 0 on a secondary channel would assert the over-pin
+            # this card exists to avoid.
             if d["gf"]:
                 if fg is None or fam == d["primary_fam"]:
                     if j in d["pin"] and abs(t) > 1e-9:
@@ -1051,9 +1050,9 @@ def grade_code_bias(epochs, s_line, osb_truth, sig_rows, settle_frac, gf_datum=F
                     sd = float(sv)
                     if sd > 0:
                         res_vf.append((e / sd) ** 2)
-        # Series rows exist for the SETTLED window only: this loop's transform
-        # (deliberately) never runs on ignition epochs, and re-running it there
-        # would double the cost for a window the grade refuses to read anyway.
+        # Series rows exist for the settled window only: this loop's transform does
+        # not run on ignition epochs, and running it there would double the cost
+        # for a window the grade does not read.
         _srow(series, tow, "cb_rms", "", _rms(ep_res), len(ep_res))
         _srow(series, tow, "cb_chmean_absmax", "",
               max(abs(v) for v in ep_chmean) if ep_chmean else None, len(ep_chmean))
@@ -1066,18 +1065,18 @@ def grade_code_bias(epochs, s_line, osb_truth, sig_rows, settle_frac, gf_datum=F
 
 
 def grade_rx_states(run_dir, truth, settle_frac, series=None):
-    """network_rx_states.csv: the receiver DCB, graded as a CONTRAST (SPEC §4.5).
+    """network_rx_states.csv: the receiver DCB, graded as a contrast (SPEC §4.5).
 
-    The estimator carries ONE receiver differential code bias per (station,
-    constellation) — key "GPS_DCB" — while the fixture injects a bias per RINEX
+    The estimator carries one receiver differential code bias per (station,
+    constellation), key "GPS_DCB", while the fixture injects a bias per RINEX
     code, so the comparable truth is the injected GF difference d(C1C) - d(C2W).
 
-    Its LEVEL is not gradeable and must not be reported as an error: the Table-8
-    identity says the fleet-mean receiver GF bias is absorbed into the ionosphere
-    (contract §B.4), so the absolute per-station DCB is datum-bearing.  What IS
-    estimable is the BETWEEN-STATION contrast, so that is what carries a verdict
-    here; the fleet-mean offset is reported separately as the absorbed gauge, which
-    is the quantity the iono channel should show with the opposite sign.
+    Its level is not gradeable and is not reported as an error: by the Table-8
+    identity the fleet-mean receiver GF bias is absorbed into the ionosphere
+    (contract §B.4), so the absolute per-station DCB is datum-bearing.  The
+    between-station contrast is estimable, so it carries the verdict here; the
+    fleet-mean offset is reported separately as the absorbed gauge, which is the
+    quantity the iono channel should show with the opposite sign.
     """
     rows = load_csv(os.path.join(run_dir, "logs", "network_rx_states.csv"))
     if not rows:
@@ -1088,9 +1087,9 @@ def grade_rx_states(run_dir, truth, settle_frac, series=None):
                 for r in (st["rx_bias"] or []) if r["kind"] == "code"}
         if "C1C" in code and "C2W" in code:
             tt[name] = code["C1C"] - code["C2W"]
-    # Receiver CLOCK: truth is truth_clock.csv's clock_bias_m per (station, tow).  Like
-    # the DCB, only the BETWEEN-STATION contrast is estimable — the network clock datum
-    # fixes the common part — so the same contrast/level split applies.
+    # Receiver clock: truth is truth_clock.csv's clock_bias_m per (station, tow).  As for
+    # the DCB, only the between-station contrast is estimable (the network clock datum
+    # fixes the common part), so the same contrast/level split applies.
     tclk = {}
     for name, st in truth["stations"].items():
         for r in (load_csv(os.path.join(
@@ -1157,18 +1156,18 @@ def grade_rx_states(run_dir, truth, settle_frac, series=None):
 
 
 def grade_iono_table8(truth):
-    """The Table-8 identity's PRECONDITION check (SPEC section 4.5).
+    """Precondition check for the Table-8 identity (SPEC section 4.5).
 
-    The headline system-level unit test is
+    The main system-level unit test is
 
         mean_s( iono~_r^s - iono_r^s )  ==  dbar_r,GF - mean_s( d_GF^s )
 
-    whose right-hand side is the FLEET-MEAN receiver GF code bias.  It is only a
-    test at all if the injected receiver biases are (a) non-zero and (b) DIFFERENT
-    across the roster -- otherwise the fleet mean is indistinguishable from its
-    members and the estimator could realize any split between them and still grade
-    as correct.  This reports whether the fixture actually satisfies that, because
-    a degenerate fixture would otherwise pass silently.
+    whose right-hand side is the fleet-mean receiver GF code bias.  It tests
+    something only if the injected receiver biases are (a) non-zero and (b)
+    different across the roster; otherwise the fleet mean is indistinguishable from
+    its members, and the estimator could realize any split between them and still
+    grade as correct.  This reports whether the fixture satisfies that, because a
+    degenerate fixture would otherwise pass without notice.
     """
     per_station = {}
     for name, st in truth["stations"].items():
@@ -1206,9 +1205,9 @@ def main():
                          "(default 0.5; the level channel needs ~2 h and a short "
                          "arc will otherwise grade the transient)")
     ap.add_argument("--json", default=None)
-    # ORACLE PIN: grade only the rows inside [tow-min, tow-max] (inclusive).
-    # Applies to RUN traces and to the product epoch list; truth files are keyed
-    # on `tow_s` and are never filtered.  Omitted => unchanged behaviour.
+    # Oracle pin: grade only the rows inside [tow-min, tow-max] (inclusive).
+    # Applies to run traces and to the product epoch list; truth files are keyed
+    # on `tow_s` and are never filtered.  Omitted => no filtering.
     ap.add_argument("--tow-min", type=float, default=None)
     ap.add_argument("--tow-max", type=float, default=None)
     ap.add_argument("--series", default=None,
@@ -1235,8 +1234,8 @@ def main():
         return 2
 
     truth = load_truth(fx)
-    # The window must be OFF while the fixture truth is read (truth is keyed on
-    # `tow_s`, so it would pass through anyway — but the order documents intent).
+    # The window is off while the fixture truth is read (truth is keyed on `tow_s`,
+    # so it would pass through anyway; the order documents the intent).
     s_line, epochs, census = parse_products(prod)
     if args.tow_min is not None or args.tow_max is not None:
         set_tow_window(args.tow_min, args.tow_max)
@@ -1283,8 +1282,8 @@ def main():
         print("                  current build.  Without it the datum must be ASSUMED, which is")
         print("                  exactly the invariant-#5 mistake this grader exists to avoid.")
 
-    # The census runs FIRST, ahead of every channel, because it decides whether the
-    # channels below are grading a product or an empty file.  Every per-channel skip
+    # The census is printed first, ahead of every channel, because it decides whether
+    # the channels below grade a product or an empty file.  Every per-channel skip
     # downstream is silent by design (an epoch with no B records just `continue`s), so
     # without this block a zero-record product is indistinguishable from a clean one.
     print("\n-- Product record census (read BEFORE any number below) " + "-" * 20)
@@ -1388,7 +1387,7 @@ def main():
 
     sig_rows = load_csv(os.path.join(run_dir, "logs", "network_sat_bias_states.csv"))
     # GF-datum detection, in precedence order: explicit flag > gfpin= on the S line >
-    # console scrape > OFF.  The wire token is the only source that travels WITH an
+    # console scrape > off.  The wire token is the only source that travels with an
     # archived product; console.txt is written by the run-arm PowerShell wrappers, not
     # by the producer, so it is absent for any product graded away from its run dir.
     gf_src = None
@@ -1548,10 +1547,9 @@ def main():
     con = grade_consumer(run_dir, args.settle_frac)
     print("\n-- Consumer position (datum-free, absolute, AR-confounded) " + "-" * 18)
     if void_reason == "no_bcp":
-        # REFUSED, not caveated.  The numbers are withheld on purpose: a reader who
-        # can see them will quote them, and the failure mode is that they look GOOD.
-        # 2026-08-13: an arm in this exact state read 0.037 m and a published verdict
-        # was built on it before the record census was run.
+        # Refused, not caveated.  The numbers are withheld on purpose: a printed number
+        # gets quoted, and in this state it looks good (an arm in this state read
+        # 0.037 m, and a verdict was built on it before the record census existed).
         print("  *** REFUSED — the product emitted ZERO B/C/P records.")
         print("      The consumer applied no clock, no code bias and no phase bias, so")
         print("      closed_loop_trace.csv measures its own stand-alone processing, not")
@@ -1597,9 +1595,9 @@ def main():
                        "consumer_absent_classes": consumer_verdict_caveats(census)},
                       fh, indent=2, default=str)
         print(f"wrote {args.json}")
-    # A voided consumer verdict is an INPUT defect, not a grading opinion, so it moves
-    # the exit code — this is the second condition in the file to do so, after a missing
-    # products.txt.  A batch harness that ignores stdout still cannot bank the number.
+    # A voided consumer verdict is an input defect, not a grading opinion, so it sets
+    # the exit code (3); the only other nonzero exit is a missing products.txt (2).  A
+    # batch harness that ignores stdout therefore still cannot record the number.
     return 3 if void_reason else 0
 
 

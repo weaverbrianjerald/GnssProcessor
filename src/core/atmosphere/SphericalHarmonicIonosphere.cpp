@@ -55,10 +55,10 @@ IppGeometry computeIppGeometry(const Eigen::Vector3d& rx_pos_ecef,
 double meanSunLongitude(const GnssTime& time) {
     // Low-order NOAA solar series + Greenwich Mean Sidereal Time → the sub-solar
     // longitude λ_ss = α_⊙ − GMST (east-positive).  Includes the equation of time
-    // (via the Sun's right ascension), so the result is accurate to ~0.01°; the
-    // GPS−UT1 offset (~18 s) we neglect costs < 0.1° of GMST, well inside the
-    // sun-fixed frame's tolerance (the field coefficients are estimated, so a
-    // small consistent offset is absorbed into them).
+    // (via the Sun's right ascension), so the solar term is accurate to ~0.01°.
+    // The GPS−UT1 offset (~18 s) is neglected; it costs < 0.1° of GMST, well
+    // inside the sun-fixed frame's tolerance (the field coefficients are
+    // estimated, so a small consistent offset is absorbed into them).
     const double jd = TimeUtils::gpsTimeToJulianDate(time);
     const double n  = jd - 2451545.0;            // days since J2000.0
     const double deg2rad = Constants::PI / 180.0;

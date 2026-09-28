@@ -1,35 +1,36 @@
 /**
  * @file test_rx_cb_harvest_demean.cpp
- * @brief Card S2H — the "S-consistent harvest" (docs/SPEC_level_information_budget.md
- *        §17 item 3 / §27 item 1): post-solve Λ-weighted de-mean of the harvested
- *        ABSOLUTE rx-CB realization, per family.
+ * @brief Tests for the "S-consistent harvest" (Card S2H;
+ *        docs/SPEC_level_information_budget.md §17 item 3 / §27 item 1): the
+ *        post-solve Λ-weighted de-mean of the harvested absolute rx-CB
+ *        realization, per family.
  *
- * The transform is one weighted mean and a subtraction, sitting on a path where a
- * wrong answer produces a plausible number rather than a crash — exactly the
- * coverage rule the LV cards set.  What is pinned here:
+ * The transform is one weighted mean and a subtraction, on a path where a wrong
+ * answer produces a plausible number rather than a crash, which is the case the
+ * LV cards' coverage rule targets.  Checked here:
  *
- *   1. μ is the INFORMATION-weighted mean of the harvested ABSOLUTE values —
- *      not the arithmetic mean, and not a mean of innovations (LV-2's measured
+ *   1. μ is the information-weighted mean of the harvested absolute values, not
+ *      the arithmetic mean and not a mean of innovations (LV-2's measured
  *      failure: de-meaning innovations pins the common mode to mean(x_lin)).
- *   2. The transformed set is zero-mean in the FOLD's own metric
- *      (Σλ·(v − μ) ≡ 0), every between-station DIFFERENCE is untouched, and the
- *      transform is IDEMPOTENT (S is a projector: a second reduction returns
+ *   2. The transformed set is zero-mean in the fold's own metric
+ *      (Σλ·(v − μ) ≡ 0), every between-station difference is unchanged, and the
+ *      transform is idempotent (S is a projector: a second reduction returns
  *      μ ≈ 0).
- *   3. λ ≡ const reduces to the LASER oracle case: subset mean subtracted from
- *      ALL points.  The golden GPS3710_test_PMINOLESS output is consumed
- *      directly when present (skip-gated like the other fixture tests): re-pin
- *      LASER's PMINOLESS shifts to a different datum realization, run the
- *      helper over the 6-member set, and require the PMINOLESS realization
- *      back — the S-transform's g-inverse invariance, exercised end to end.
+ *   3. λ ≡ const reduces to the LASER oracle case: the subset mean subtracted
+ *      from all points.  The golden GPS3710_test_PMINOLESS output is read
+ *      directly when present (skip-gated like the other fixture tests): LASER's
+ *      PMINOLESS shifts are re-pinned to a different datum realization, the
+ *      helper runs over the 6-member set, and the PMINOLESS realization must come
+ *      back (the S-transform's g-inverse invariance, end to end).
  *   4. The exact diagonal covariance co-transform the caller applies
- *      (voters var − 1/Σλ, screened var + 1/Σλ) equals diag(S·Q·Sᵀ) — verified
+ *      (voters var − 1/Σλ, screened var + 1/Σλ) equals diag(S·Q·Sᵀ), checked
  *      against a brute-force Eigen build of S.
  *   5. The robust peer screen keeps a wild cold-start realization out of the μ
- *      VOTE (SPEC §16/12.1's contamination window) while the entry is still
- *      transformed; thin epochs apply NOTHING (identity, counted) — never a
+ *      vote (SPEC §16/12.1's contamination window) while the entry is still
+ *      transformed; thin epochs apply nothing (identity, counted), never a
  *      frozen μ.
- *   6. Loader contract: default OFF; INERT-safe without the carry; forces the
- *      superseded LV-2/LV-5 fold-side de-mean OFF; hard errors on a degenerate
+ *   6. Loader contract: default off; forced off without the carry; forces the
+ *      superseded LV-2/LV-5 fold-side de-mean off; hard errors on a degenerate
  *      screen z or vote floor (standing invariant #4 throughout).
  */
 
@@ -61,7 +62,7 @@ namespace {
 
 TEST(RxCbHarvestDemean, MuIsInformationWeightedNotArithmetic) {
     // Two members, 9:1 in information (var 1/9 vs 1).  The arithmetic mean of
-    // the values would be 0.5; only the Λ-weighted one zeroes the NET
+    // the values would be 0.5; only the Λ-weighted mean (0.1) zeroes the net
     // common-mode force the folds exert.
     const std::vector<double> vals{0.0, 1.0};
     const std::vector<double> vars{1.0 / 9.0, 1.0};
@@ -99,8 +100,8 @@ TEST(RxCbHarvestDemean, TransformedSetIsZeroMeanInTheFoldMetricAndKeepsDifferenc
 }
 
 // A uniform shift of every value moves μ by exactly that shift and leaves the
-// transformed set unchanged — the transform output is invariant to the input's
-// datum realization (the property the LASER oracle exercises with real data).
+// transformed set unchanged: the output is invariant to the input's datum
+// realization (the property the LASER oracle exercises with real data).
 TEST(RxCbHarvestDemean, OutputIsInvariantToTheInputRealization) {
     const std::vector<double> vals{0.2, -0.5, 1.1, 0.0, -0.8};
     const std::vector<double> vars{0.09, 0.01, 0.16, 0.04, 0.25};
@@ -165,11 +166,11 @@ TEST(RxCbHarvestDemean, LaserGps3710PminolessOracle) {
     for (const auto& id : all) ASSERT_TRUE(shifts.count(id)) << id;
 
     // LASER's PMINOLESS shifts are zero-mean over the 6-member set (its own
-    // summary asserts the sums).  Re-pin them to a DIFFERENT realization of the
+    // summary asserts the sums).  Re-pin them to a different realization of the
     // same solution (an RLESS-style pin on DG6515), run the helper over the
-    // member set with equal weights (the LASER case), apply μ to ALL points,
-    // and require the PMINOLESS realization back — g-inverse invariance of the
-    // S-transform, on the golden data, per component.
+    // member set with equal weights (the LASER case), apply μ to all points,
+    // and require the PMINOLESS realization back: g-inverse invariance of the
+    // S-transform on the golden data, per component.
     for (int c = 0; c < 3; ++c) {
         const double pin = shifts.at("DG6515")[c];
         std::vector<double> member_vals, member_vars;
@@ -200,10 +201,10 @@ TEST(RxCbHarvestDemean, LaserGps3710PminolessOracle) {
 // ===========================================================================
 
 // The caller applies var − 1/Σλ to voters and var + 1/Σλ to screened
-// non-voters.  That closed form must BE diag(S·Q·Sᵀ) for diagonal Q and
-// S = I − 1·wᵀ (w = λ/Σλ over the voters, zero for non-voters) — a wrong sign
-// or a wrong denominator here yields plausible variances and a silently
-// mis-weighted next fold.
+// non-voters.  That closed form must equal diag(S·Q·Sᵀ) for diagonal Q and
+// S = I − 1·wᵀ (w = λ/Σλ over the voters, zero for non-voters).  A wrong sign
+// or denominator here gives plausible variances and a mis-weighted next fold
+// with no visible error.
 TEST(RxCbHarvestDemean, VarianceCoTransformMatchesBruteForceSQSt) {
     const std::vector<double> vars{0.01, 0.04, 0.25, 0.0025, 0.09, 4.0};
     const std::vector<bool> votes{true, true, true, true, true, false};
@@ -236,9 +237,9 @@ TEST(RxCbHarvestDemean, VarianceCoTransformMatchesBruteForceSQSt) {
 
 TEST(RxCbHarvestDemean, PeerScreenKeepsAColdStartRealizationOutOfTheVote) {
     // Ten settled receivers within ±1 m and one 200 km-class cold-start
-    // realization (SPEC §16/12.1's contamination window).  A naive Λ-mean is
-    // dragged by kilometres; the screen must exclude the wild vote while the
-    // entry still gets transformed by the caller.
+    // realization (SPEC §16/12.1's contamination window).  A plain Λ-mean moves
+    // by kilometres; the screen excludes the wild vote, and the caller still
+    // transforms the entry.
     std::vector<double> vals{0.2, -0.5, 1.1, 0.0, -0.8, 0.4, -0.1, 0.7, -0.3, 0.5};
     std::vector<double> vars(vals.size(), 0.01);
     const auto clean = rxCbHarvestMu(vals, vars, 2, 8.0);
@@ -252,16 +253,17 @@ TEST(RxCbHarvestDemean, PeerScreenKeepsAColdStartRealizationOutOfTheVote) {
     EXPECT_EQ(screened.n_used, static_cast<int>(vals.size()) - 1);
     EXPECT_NEAR(screened.mu, clean.mu, 1e-9);
 
-    // With the screen effectively disabled the same contaminator drags μ by
-    // ~2e4 m — what this guard exists to prevent.
+    // With the screen effectively disabled the same outlier moves μ by about
+    // 1.8e4 m (2e5 m over 11 equal weights), which the screen prevents.
     const auto unscreened = rxCbHarvestMu(vals, vars, 2, 1e12);
     ASSERT_TRUE(unscreened.applied);
     EXPECT_GT(std::abs(unscreened.mu - clean.mu), 1.0e4);
 }
 
 TEST(RxCbHarvestDemean, FlatFamilyScreensNobody) {
-    // Identical values ⇒ MAD 0 ⇒ the median-formal-σ floor is what stands; a
-    // zero scale would screen everyone and stand the transform down forever.
+    // Identical values ⇒ MAD 0 ⇒ the median-formal-σ floor sets the scale.  A
+    // zero scale would screen every entry and disable the transform for as long
+    // as the family stays flat.
     const std::vector<double> vals(12, 2.5);
     const std::vector<double> vars(12, 0.04);
     const auto red = rxCbHarvestMu(vals, vars, 2, 8.0);
@@ -272,7 +274,7 @@ TEST(RxCbHarvestDemean, FlatFamilyScreensNobody) {
 }
 
 TEST(RxCbHarvestDemean, ThinSetAppliesNothing) {
-    // Below the vote floor the transform stands down ENTIRELY — identity, not a
+    // Below the vote floor the transform stands down entirely: identity, not a
     // frozen μ (there is no held frame to re-assert; the caller counts it).
     const std::vector<double> vals{0.3, -0.3};
     const std::vector<double> vars{0.01, 0.01};
@@ -281,7 +283,7 @@ TEST(RxCbHarvestDemean, ThinSetAppliesNothing) {
     EXPECT_EQ(thin.n, 2);
     EXPECT_DOUBLE_EQ(thin.mu, 0.0);
 
-    // The floor counts VOTES, not entries: 8 entries with one screened is 7
+    // The floor counts votes, not entries: 8 entries with one screened is 7
     // votes, and a floor of 8 stands down.
     std::vector<double> vals8{0.1, 0.2, -0.1, 0.0, 0.15, -0.2, 0.05, 5.0e5};
     std::vector<double> vars8(8, 0.01);
@@ -303,8 +305,8 @@ TEST(RxCbHarvestDemean, DegenerateInputsAreSafe) {
     EXPECT_FALSE(junk.applied);
     EXPECT_EQ(junk.n, 0);
 
-    // A single member at floor 1 is the degenerate pin: μ = the value, the
-    // transformed entry is exactly zero — valid, and visible as n_used == 1.
+    // A single member at floor 1 is the degenerate pin: μ = the value and the
+    // transformed entry is exactly zero; valid, and visible as n_used == 1.
     const auto single = rxCbHarvestMu({0.42}, {0.01}, 1, 8.0);
     ASSERT_TRUE(single.applied);
     EXPECT_EQ(single.n_used, 1);
@@ -354,7 +356,7 @@ TEST(RxCbHarvestDemean, DefaultsOff) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-// No carry ⇒ no harvested set to transform ⇒ forced off, never armed-but-inert.
+// No carry ⇒ no harvested set to transform ⇒ forced off, not left armed but inert.
 TEST(RxCbHarvestDemean, ForcedOffWithoutTheCarry) {
     LogManager log;
     const fs::path p = writeTempConfig("nocarry",
@@ -381,10 +383,10 @@ TEST(RxCbHarvestDemean, SurvivesWithTheCarry) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-// The fold-side de-mean (LV-2, and its LV-5 rider) is a SUPERSEDED mechanism on
-// the same channel: composing it with the harvest transform would de-mean a set
-// that is already zero-mean-by-construction and re-pin the mode to the frozen
-// seed frame.  Arming both must resolve to the harvest alone, loudly.
+// The fold-side de-mean (LV-2, and its LV-5 rider) is a superseded mechanism on
+// the same channel: combined with the harvest transform it would de-mean a set
+// that is already zero-mean by construction and re-pin the mode to the frozen
+// seed frame.  Arming both resolves to the harvest alone, with a warning.
 TEST(RxCbHarvestDemean, ForcesTheSupersededFoldDemeanOff) {
     LogManager log;
     const fs::path p = writeTempConfig("supersede",
@@ -401,8 +403,8 @@ TEST(RxCbHarvestDemean, ForcesTheSupersededFoldDemeanOff) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-// LV-2 and LV-4 keep working alone — the supersession must not leak onto
-// postures that never armed the harvest.
+// Without the harvest, LV-2 and LV-4 keep working alone: the supersession applies
+// only to postures that arm the harvest.
 TEST(RxCbHarvestDemean, DoesNotDisturbLv2WhenNotArmed) {
     LogManager log;
     const fs::path p = writeTempConfig("lv2_alone",
@@ -429,8 +431,8 @@ TEST(RxCbHarvestDemean, RejectsANonPositiveScreenZ) {
 }
 
 // The vote floor is the shared LV knob, but LV-2's >= 1 validation only runs
-// when LV-2 is armed — the S2H-only posture must reject a degenerate floor
-// itself rather than run with "min 0 votes".
+// when LV-2 is armed, so the S2H-only posture rejects a degenerate floor itself
+// rather than run with "min 0 votes".
 TEST(RxCbHarvestDemean, RejectsADegenerateVoteFloor) {
     LogManager log;
     const fs::path p = writeTempConfig("badfloor",

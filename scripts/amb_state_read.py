@@ -1,59 +1,59 @@
 #!/usr/bin/env python3
-"""RF-1 step 2 — the four PRE-REGISTERED reads of ``network_amb_state.csv``.
+"""RF-1 step 2: the four pre-registered reads of ``network_amb_state.csv``.
 
 Card: ``docs/refound/RF-1_float_ambiguities_design.md`` §7.4, under
-``docs/refound/NETWORK_REFOUNDING_2026-09-14.md``.  The trace is written by
-``network.trace_amb_state`` and this script implements §7.4's reads VERBATIM, so the
+``docs/refound/NETWORK_REFOUNDING_2026-09-14.md``. The trace is written by
+``network.trace_amb_state`` and this script implements §7.4's reads verbatim, so the
 RF-0 baseline and every later arm are read the same way::
 
     python scripts/amb_state_read.py <run_dir_or_csv> [--json out.json] [--max-folds 30]
 
 ``<run_dir_or_csv>`` is a run directory (``<dir>/logs/network_amb_state.csv`` is found
-automatically) or the CSV itself.  ``network_prior_residual.csv`` is picked up beside it
-when present and reported as D4's UNSPLIT cross-check.
+automatically) or the CSV itself. ``network_prior_residual.csv`` is picked up beside it
+when present and reported as D4's unsplit cross-check.
 
 The four reads
 --------------
-**D1 — the variance trajectory.**  Per arc, fit ``log(fold_var) = a - b*log(n_folds)``
-over the first ``--max-folds`` (default 30) FOLDS, and report ``b`` at p50 across arcs.
-*RF-0 prediction:* ``b > 1`` — faster than 1/n, the over-count of design §1.3, because the
+**D1, the variance trajectory.** Per arc, fit ``log(fold_var) = a - b*log(n_folds)``
+over the first ``--max-folds`` (default 30) folds, and report ``b`` at p50 across arcs.
+RF-0 prediction: ``b > 1``, faster than 1/n, the over-count of design §1.3, because the
 B rows of one line of sight assert the same station-common direction B times per epoch.
-*RF-1 bar:* ``b = 1.00 +/- 0.15`` at p50.  This is the most direct test of §3.2.
+RF-1 bar: ``b = 1.00 +/- 0.15`` at p50. This is the most direct test of §3.2.
 
-**D2 — the level trajectory** (R1 re-asked on the carry instead of on the code residual).
+**D2, the level trajectory** (R1 re-asked on the carry instead of on the code residual).
 Two fractions: arcs whose ``value_abs`` at folds 1-3 is already within 0.3 m of its
-SETTLED value, and arcs whose ``|value_abs|`` GROWS monotonically over the arc.
-*RF-0 proxies (code-residual):* 0.39-0.46 and 74-77 %.  *RF-1 bar:* growing < 55 %.
+settled value, and arcs whose ``|value_abs|`` grows monotonically over the arc.
+RF-0 proxies (code-residual): 0.39-0.46 and 74-77 %. RF-1 bar: growing < 55 %.
 
-**D3 — the drop / erase inventory.**  Per hour by cause, with the fold variance
+**D3, the drop / erase inventory.** Per hour by cause, with the fold variance
 immediately before and after the event and the number of folds taken to recover the
-pre-event variance.  *Invariant #4 in the other direction:* a ``float_kf`` run with 0
-drops is a MISWIRE, not a quiet run.
+pre-event variance. Invariant #4 in the other direction: a ``float_kf`` run with 0
+drops is a miswiring, not a quiet run.
 
-**D4 — sigma0(pl) by arc age** (first 5 folds / 5-30 / > 30).  An honest prior reads
-~ 1.0 in every bucket.  This is the read that can REFUTE the card before any mechanism is
-built, and the one that calibrates the birth floor if it does not.
+**D4, sigma0(pl) by arc age** (first 5 folds / 5-30 / > 30). A prior without bias reads
+about 1.0 in every bucket. This is the read that can refute the card before any
+mechanism is built, and the one that calibrates the birth floor if it does not.
 
   .. warning::
-     D4's SPLIT cannot come from ``network_prior_residual.csv`` — that file is aggregated
-     per (family, label) per epoch and has no arc-age column.  It is formed here from
-     CONSECUTIVE rows of one arc: ``e = value_abs(t-1) - value_abs(t)`` is exactly the
+     D4's split cannot come from ``network_prior_residual.csv``: that file is aggregated
+     per (family, label) per epoch and has no arc-age column. It is formed here from
+     consecutive rows of one arc: ``e = value_abs(t-1) - value_abs(t)`` is exactly the
      harvest's own prior-residual numerator (``innov = oc->second.value_abs -
      value_abs``) and ``fold_var_m2(t)`` is exactly its denominator, so
      ``sigma0 = sqrt(mean(e^2 / fold_var))`` over a bucket is the census's statistic
-     restricted to that bucket.  The census's standing caveat travels with it: under
+     restricted to that bucket. The census's standing caveat travels with it: under
      Card-1 conditional coupling the fold's RHS is not ``value_abs`` alone (the coupling
      rows contribute ``sum M_rj * s_prev_j``), so this e-hat and the one the fold saw
-     differ by the regressor term.  That is an open card on the census numerator, not a
-     defect of this trace — and it is why the census's own unsplit sigma0 is printed
+     differ by the regressor term. That is an open card on the census numerator, not a
+     defect of this trace, and it is why the census's own unsplit sigma0 is printed
      beside the split as a cross-check.
 
   .. note::
      Rows whose fold and posterior variances are inconsistent (``post_var > fold_var``,
-     i.e. the RNEG class the census re-partitions) are DROPPED from D1 and D4 and counted
-     separately.  Their normalization is not a standardized residual: r slams into the
-     redundancy floor and |t| inflates, which is how a handful of rows came to head every
-     ladder on ``runs/fldf3_pl2``.
+     the RNEG class the census re-partitions) are dropped from D1 and D4 and counted
+     separately. Their normalization is not a standardized residual: r slams into the
+     redundancy floor and |t| inflates, which is how a handful of rows can come to head
+     every ladder in such a census.
 """
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ from collections import defaultdict
 D1_RF1_BAR = (0.85, 1.15)          # b at p50
 D2_SETTLED_BAR_M = 0.3             # "within 0.3 m of settled"
 D2_EARLY_FOLDS = 3                 # folds 1..3
-D2_GROWING_BAR = 0.55              # RF-1 bar: growing fraction < 55 %
+D2_GROWING_BAR = 0.55              # growing fraction stays below 55 % (RF-1 bar)
 D4_BUCKETS = (("first5", 1, 5), ("5to30", 6, 30), ("gt30", 31, 1 << 62))
 MIN_FOLDS_FOR_FIT = 5              # an arc needs a few points before a slope means anything
 
@@ -119,10 +119,10 @@ def load_rows(csv_path: str) -> list[dict]:
 
 
 def arcs_of(rows: list[dict]) -> "dict[tuple, list[dict]]":
-    """Group by (station, sat, signal) and split at every ERASE.
+    """Group by (station, sat, signal) and split at every erase.
 
-    An erase-and-rebirth is a DIFFERENT arc — birth stamps and ``n_folds`` restart — so
-    pooling across one would fit a slope through two unrelated trajectories.  The erase
+    An erase-and-rebirth is a different arc: birth stamps and ``n_folds`` restart, so
+    pooling across one would fit a slope through two unrelated trajectories. The erase
     row itself stays at the end of the arc it closes, where D3 reads it.
     """
     by_key: "dict[tuple, list[dict]]" = defaultdict(list)
@@ -193,8 +193,8 @@ def read_d1(arcs, max_folds: int) -> dict:
     return {"b_p50": p50(slopes), "b_p25": pct(slopes, 0.25), "b_p75": pct(slopes, 0.75),
             "n_arcs": used_arcs, "n_points": pts, "n_rneg_dropped": rneg,
             "max_folds": max_folds,
-            # The collapse in PHYSICAL units, so `b` is never quoted alone: a power-law
-            # fit to a GEOMETRIC collapse (the K_eff = (B+1)/(B-1) freeze the F1 comment
+            # The collapse in physical units, so `b` is never quoted alone: a power-law
+            # fit to a geometric collapse (the K_eff = (B+1)/(B-1) freeze the F1 comment
             # predicts) reads as a large b, and these medians say how far the variance
             # actually fell over the window.
             "fold_var_p50_at_n": {str(k): p50(v) for k, v in sorted(at_n.items())},
@@ -206,7 +206,7 @@ def read_d1(arcs, max_folds: int) -> dict:
 
 # ---------------------------------------------------------------------------- D2
 def read_d2(arcs) -> dict:
-    """Early-level accuracy and the growing fraction, on the CARRY itself."""
+    """Early-level accuracy and the growing fraction, on the carry itself."""
     near, growing_end, growing_trend, total, dev_early = 0, 0, 0, 0, []
     for rs in arcs.values():
         vals = [r["value_abs_m"] for r in rs
@@ -220,14 +220,14 @@ def read_d2(arcs) -> dict:
         dev_early.append(d)
         if d <= D2_SETTLED_BAR_M:
             near += 1
-        # "grows", TWO tests, both reported — strict monotonicity is unmeasurable against
-        # solve noise, so neither is R1's literal statistic and the pair brackets it:
-        #   * ENDPOINT — |value_abs| ends above where it started (what a single before /
-        #     after comparison sees).  Chance is 0.5 for a symmetric random walk, so a
-        #     reading near 0.5 says only "no net outward drift on this test";
-        #   * TREND — the OLS slope of |value_abs| over the arc is positive.  Sensitive to
+        # "Grows" is reported as two tests: strict monotonicity is unmeasurable against
+        # solve noise, so neither is R1's literal statistic and the pair brackets it.
+        #   * Endpoint: |value_abs| ends above where it started (what a single before /
+        #     after comparison sees). Chance is 0.5 for a symmetric random walk, so a
+        #     reading near 0.5 says only that there is no net outward drift on this test.
+        #   * Trend: the OLS slope of |value_abs| over the arc is positive. Sensitive to
         #     a sustained ramp that the endpoints can miss, and the closer analogue of
-        #     "the level GROWS over the arc".
+        #     the level growing over the arc.
         if abs(vals[-1]) > abs(vals[0]) + 1e-9:
             growing_end += 1
         n = len(vals)
@@ -256,9 +256,9 @@ def read_d3(rows, arcs) -> dict:
     hours = max((t1 - t0) / 3600.0, 1e-9)
     by_cause: "dict[str, dict]" = defaultdict(
         lambda: {"n": 0, "var_before": [], "var_after": [], "folds_to_recover": []})
-    # An ERASE ends its arc, so its "after" is the FIRST fold of the SUCCESSOR arc at the
-    # same (station, sat, signal) — that is the whole point of the read: an erase throws a
-    # converged level away and the network pays for the re-earn.  Index the successors by
+    # An erase ends its arc, so its "after" is the first fold of the successor arc at the
+    # same (station, sat, signal): an erase throws a converged level away and the network
+    # pays for the re-earn, which is what this read measures. Index the successors by
     # generation so the scan can cross the boundary.
     succ: "dict[tuple, list[dict]]" = {}
     for (sta, sat, sig, gen), rs in arcs.items():
@@ -307,7 +307,7 @@ def read_d3(rows, arcs) -> dict:
 
 # ---------------------------------------------------------------------------- D4
 def read_d4(arcs) -> dict:
-    """sigma0(pl) from consecutive rows of one arc, split by arc age in FOLDS."""
+    """sigma0(pl) from consecutive rows of one arc, split by arc age in folds."""
     buckets = {name: [] for name, _, _ in D4_BUCKETS}
     fvar = {name: [] for name, _, _ in D4_BUCKETS}
     rneg, paired = 0, 0
@@ -317,14 +317,14 @@ def read_d4(arcs) -> dict:
             if r["event"].startswith("erase:"):
                 break
             # The pair is valid only when row r's fold actually consumed row prev's
-            # value.  n_folds is the guard that makes that stride-safe: a folded row's
-            # count is exactly one above the previous FOLDED row's, so a trace stride > 1
+            # value. n_folds is the guard that makes that stride-safe: a folded row's
+            # count is exactly one above the previous folded row's, so a trace stride > 1
             # (or any epoch the carry did not act) breaks the pair instead of silently
             # differencing across a gap.
             if (r["folded"] and r["fold_var_m2"] > 0.0
                     and prev is not None and r["n_folds"] == prev["n_folds"] + 1):
                 if r["var_m2"] > r["fold_var_m2"]:
-                    rneg += 1       # RNEG: posterior above prior - |t| is not standardized
+                    rneg += 1       # RNEG: posterior above prior, |t| is not standardized
                 else:
                     e = prev["value_abs_m"] - r["value_abs_m"]
                     t2 = (e * e) / r["fold_var_m2"]
@@ -338,9 +338,9 @@ def read_d4(arcs) -> dict:
     out = {}
     for name, _, _ in D4_BUCKETS:
         v, fv = buckets[name], fvar[name]
-        # The robust twin divides the MEDIAN of t^2 by the chi2_1 median (0.4549), the
+        # The robust twin divides the median of t^2 by the chi2_1 median (0.4549), the
         # scale-consistent estimator; the plain mean is the census's own sigma0 and is
-        # what the bar is written against.  A large gap between the two is the finding,
+        # what the bar is written against. A large gap between the two is meaningful,
         # not a nuisance: it says the prior-residual population is heavy-tailed, so the
         # floor a mean implies and the floor a median implies are different decisions.
         s_mean = math.sqrt(sum(v) / len(v)) if v else float("nan")
@@ -349,8 +349,8 @@ def read_d4(arcs) -> dict:
         out[name] = {"n": len(v), "sigma0": s_mean, "sigma0_robust": s_rob,
                      "abs_t_p90": math.sqrt(pct(v, 0.90)) if v else float("nan"),
                      "fold_var_p50_m2": fv50,
-                     # §3.3(c)'s calibration input, in the units the knob takes: the
-                     # variance this bucket's residuals actually deserve.
+                     # The variance this bucket's residuals actually deserve, in the units
+                     # the knob takes: the calibration input for §3.3(c).
                      "implied_floor_m2": (s_mean * s_mean * fv50) if v else float("nan"),
                      "implied_floor_robust_m2": (s_rob * s_rob * fv50) if v else float("nan")}
     return {"buckets": out, "n_rneg_dropped": rneg, "n_paired": paired,
@@ -359,7 +359,7 @@ def read_d4(arcs) -> dict:
 
 
 def prires_pl_sigma0(path: str | None) -> dict:
-    """The census's own UNSPLIT pl sigma0 — D4's cross-check, not its source."""
+    """The census's own unsplit pl sigma0: D4's cross-check, not its source."""
     if not path or not os.path.isfile(path):
         return {"available": False}
     vals, warm = [], []

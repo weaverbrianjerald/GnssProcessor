@@ -1,18 +1,18 @@
 /**
  * @file test_antenna_model.cpp
- * @brief Unit tests for the ANTEX antenna model — PCV interpolation, mounting
- *        orientation, and the '+'-signed PCV parse path.
+ * @brief Unit tests for the ANTEX antenna model: PCV interpolation, mounting
+ *        orientation, and the parse path for '+'-signed PCV values.
  *
  * Scope: Antenna::interpolatePcv (the pure bilinear ANTEX PCV grid
  * interpolator), Antenna::correctAzimuth (mounting-orientation rotation,
  * ported from M-PAGES NGS::RxAntenna::correctAzimuth), and the
  * ProductParser::parseAtx PCV hot-loop as reached through a synthetic ATX.
  *
- * Depth: boundary + convention locks on hand-computable synthetic grids
+ * Depth: boundary and convention locks on hand-computable synthetic grids
  * (value = 10·row + col, so every corner is identifiable by inspection).
- * Two of these are May-2026 regression pins — the last-zenith-ring
- * out-of-bounds read and the from_chars '+'-sign rejection — both of which
- * failed silently in production rather than crashing.
+ * Two of these are regression pins, the last-zenith-ring out-of-bounds read
+ * and the from_chars rejection of a '+' sign; both failures are silent in
+ * production rather than crashing.
  *
  * @see test_antenna_radome_fallback.cpp  radome -> NONE type-mean fallback
  * @see test_math_core.cpp                Coordinates / TimeUtils / Interpolate
@@ -35,15 +35,14 @@ namespace GnssProcessor {
 namespace {
 
 // ============================================================================
-// Antenna PCV interpolation — bilinear, NOAZI, and the last-ring edge
+// Antenna PCV interpolation: bilinear, NOAZI, and the last-ring edge
 // ============================================================================
 //
 // Antenna::interpolatePcv is a pure ANTEX PCV grid interpolator.  These cases
 // pin the bilinear math, the NOAZI (azimuth-independent) path, the azimuth
-// wrap, and — the May-2026 fix — the last-zenith-ring boundary, which
-// previously dereferenced pcv_table[zen_idx + 1] out of bounds (the bounds
-// check was placed AFTER the access).  A query at zenith == the table's
-// largest ring must hold the value flat, not read past the table.
+// wrap, and the last-zenith-ring boundary, where reading pcv_table[zen_idx + 1]
+// before the bounds check goes out of bounds.  A query at zenith == the
+// table's largest ring holds the value flat instead of reading past the table.
 //
 // Synthetic 4×5 grid (zenith rings 0/30/60/90, azimuth cols 0/90/180/270/360):
 // value = 10·row + col, so every corner is identifiable by inspection.
@@ -60,13 +59,13 @@ TEST(AntennaPcvTest, BilinearNoaziAndLastRingClamp) {
     //     mean of corners 0,1,10,11 = 5.5.
     EXPECT_NEAR(Antenna::interpolatePcv(grid, 15.0, 45.0, dazi, dzen), 5.5, 1e-12);
 
-    // (b) Last-ring edge (the fix): zen=90 sits exactly on the last ring.
+    // (b) Last-ring edge: zen=90 sits exactly on the last ring.
     //     zen_frac=0, so the result is the last-ring value at az=45:
-    //     (30 + 31)/2 = 30.5.  Pre-fix this read pcv_table[4] out of bounds.
+    //     (30 + 31)/2 = 30.5, with no read of pcv_table[4] (out of bounds).
     EXPECT_NEAR(Antenna::interpolatePcv(grid, 90.0, 45.0, dazi, dzen), 30.5, 1e-12);
 
-    // (c) Beyond the last ring (zen=120) clamps to the last ring — same 30.5,
-    //     and again no out-of-bounds access.
+    // (c) Beyond the last ring (zen=120) clamps to the last ring: the same 30.5,
+    //     again with no out-of-bounds access.
     EXPECT_NEAR(Antenna::interpolatePcv(grid, 120.0, 45.0, dazi, dzen), 30.5, 1e-12);
 
     // (d) Azimuth wrap: az=360 → az_idx=4, az_next=(4+1)%5=0, az_frac=0 →
@@ -82,7 +81,7 @@ TEST(AntennaPcvTest, BilinearNoaziAndLastRingClamp) {
 }
 
 // ============================================================================
-// Receiver antenna orientation — azimuth correction
+// Receiver antenna orientation: azimuth correction
 // ============================================================================
 //
 // Antenna::correctAzimuth rotates a measured azimuth (CW from North) into the
@@ -107,13 +106,14 @@ TEST(AntennaOrientationTest, CorrectAzimuthMatchesMpagesReference) {
     EXPECT_NEAR(GnssProcessor::Antenna::correctAzimuth(350.0, -20.0), 10.0, 1e-12);
 }
 
-// Regression: std::from_chars' float overload accepts '-' but rejects a leading
-// '+'.  Some IGS calibration labs (Geo++ robot files — e.g. the LEIAR25 NONE /
-// LEIT type-means in igs20.atx) prefix EVERY PCV value with '+', so the parser's
-// from_chars-based PCV hot-loop stopped at the first value and stored an EMPTY
-// PCV grid.  That silently zeroed receiver PCV and, under require_atx_coverage,
-// dropped all of that antenna's signals (e.g. "Skipping C2W … no strict ATX
-// coverage").  This ATX uses '+'-signed NOAZI + azimuth PCV; the grid must parse.
+// Regression: the float overload of std::from_chars accepts '-' but rejects a
+// leading '+'.  Some IGS calibration labs (Geo++ robot files, e.g. the LEIAR25 NONE
+// and LEIT type-means in igs20.atx) prefix every PCV value with '+'.  A PCV
+// hot-loop based on from_chars alone stops at the first value and stores an
+// empty PCV grid, which zeroes receiver PCV without any error and, under
+// require_atx_coverage, drops all of that antenna's signals (e.g. "Skipping C2W …
+// no strict ATX coverage").  This ATX uses '+'-signed NOAZI and azimuth PCV; the
+// grid has to parse.
 TEST(AntennaPcvTest, AtxPlusSignedPcvGridParses) {
     auto col60 = [](std::string body, const std::string& tag) {
         if (body.size() < 60) body.resize(60, ' ');
@@ -151,11 +151,11 @@ TEST(AntennaPcvTest, AtxPlusSignedPcvGridParses) {
     for (const auto& a : ants) if (a.type == "TESTANT_NONE") { e = &a; break; }
     ASSERT_NE(e, nullptr) << "receiver entry not parsed";
 
-    // PCO (+-signed) parses via parseDouble — always worked.
+    // The '+'-signed PCO parses through parseDouble, independently of the PCV path.
     ASSERT_EQ(e->pco.count("G01"), 1u);
     EXPECT_NEAR(e->pco.at("G01").z(), 155.34, 1e-9);
 
-    // PCV grid must be NON-EMPTY (the bug) — 3 zenith (0,5,10) × 5 azimuth.
+    // The PCV grid is non-empty (the regression): 3 zenith (0,5,10) × 5 azimuth.
     ASSERT_EQ(e->pcv.count("G01"), 1u);
     const auto& grid = e->pcv.at("G01");
     ASSERT_FALSE(grid.empty()) << "PCV grid empty — '+'-signed values failed to parse";

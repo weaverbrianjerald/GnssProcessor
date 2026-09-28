@@ -4,7 +4,10 @@
  *
  * Drains a binary SBF capture through @c SbfStreamReader + @c SbfParser and
  * prints a per-block-number histogram, the decoded observation/ephemeris
- * counts, and a per-satellite dump of the first MeasEpoch.  Intended for
+ * counts, the raw navigation message counts with the words of the first GPS
+ * message, the ephemerides assembled from raw subframes, and a per-satellite
+ * dump of the first epoch with observations (MeasEpoch or Meas3Ranges,
+ * whichever block comes first).  Intended for
  * sanity-checking a real receiver capture against the decoder before
  * plumbing it through the live realtime pipeline.
  *

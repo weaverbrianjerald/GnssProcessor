@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""Card EV7 section 6 gate E1: grade a run's COVERAGE-GATE DROP EDGES.
+"""Card EV7 section 6 gate E1: grade a run's coverage-gate drop edges.
 
 Trace-only and stdout-only: nothing under the run directory is written or moved.
 
-The defect (docs/refound/EV7_all_sat_clock_decouple_2026-09-21.md section 5.3).  The
+The defect (docs/refound/EV7_all_sat_clock_decouple_2026-09-21.md section 5.3): the
 coverage gate network.phase_datum_min_stations removes a (satellite, signal)
-phase-bias column when it thins below the threshold.  On the float vehicle the
-surviving station's ambiguity is a CARRIED state, so it absorbs the whole removed
+phase-bias column when it thins below the threshold. On the float vehicle the
+surviving station's ambiguity is a carried state, so it absorbs the whole removed
 bias in one epoch against a centimetre prior, and the satellite clocks absorb what
-the prior does not yield.  The fix (network.phase_datum_gate_drop_erase) adds the
+the prior does not yield. The fix (network.phase_datum_gate_drop_erase) adds the
 family to the epoch's re-reference set at the drop edge, so every station's carried
 ambiguity of it is erased and re-born instead.
 
 What is read, and from where:
 
   logs/network_events.csv   PHASE_ANCHOR / gate_drop rows (the edges; emitted in
-                            BOTH knob states), TOPOLOGY / row_kinds rows that ADD
+                            either knob state), TOPOLOGY / row_kinds rows that add
                             obs_other (the independent cross-check the card's own
                             section 5.3 table was built from), CLK_ANCHOR /
                             cta_decouple rows with reason=nis (the clock trips),
@@ -28,10 +28,10 @@ What is read, and from where:
   logs/closed_loop_trace.csv  the consumer's 3D error and Up, for the record.
   logs/main_log.log         the run-end counters this card added.
 
-A CARRIED JUMP is measured only where the arc actually continued: an ordinary row
-at the edge epoch (event empty) against that same arc's previous row.  An arc that
+A carried jump is measured only where the arc actually continued: an ordinary row
+at the edge epoch (event empty) against that same arc's previous row. An arc that
 was erased and re-born at the edge has no carried continuation and contributes no
-jump, which is the whole point of the response.  Dispositions are listed either way
+jump; that is the response's intended effect. Dispositions are listed either way
 so a silent edge cannot be confused with an absent one.
 
     python scripts/ev7_gate_drop_grade.py runs/_rap_g1_field_on
@@ -87,7 +87,7 @@ def gate_drop_edges(events):
 
 
 def topology_add_other(events):
-    """TOPOLOGY / row_kinds edges whose `now=` ADDS obs_other — the card's own
+    """TOPOLOGY / row_kinds edges whose `now=` adds obs_other: the card's own
     independent census of the same class (a station's rows losing their shared
     column are re-classified obs_other)."""
     out = []
@@ -156,10 +156,10 @@ def grade_edges(edges, val, era):
         rows = []
         for stn in sorted(stations):
             k = (stn, sat, sig)
-            # VALUE-carrying rows only.  An arc can also have a 'drop:<cause>'
+            # Value-carrying rows only. An arc can also have a 'drop:<cause>'
             # annotation row at the same epoch (the RF-1 step-4 bounded drop
             # re-states the entry at its birth variance); it is a second row for
-            # the SAME value, and taking it as the epoch's row makes a real
+            # the same value, and taking it as the epoch's row makes a real
             # carried jump read as 'no previous row'.
             seq = [r for r in val.get(k, [])
                    if r["event"] in ("", "birth", "stransform")]

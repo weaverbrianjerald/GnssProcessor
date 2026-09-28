@@ -72,10 +72,11 @@ namespace {
 
     /// Convert a SIF timestamp ("YYYY-MM-DDTHH:MM:SS TZ") to a decimal year.
     ///
-    /// The timezone suffix (UTC / GPS) is ignored: the <=18 s GPS-UTC offset is
-    /// far below the precision at which decimal-year window selection or
-    /// velocity propagation matters.  An open-ended SIF END ("9999-...") is
-    /// mapped to a large sentinel so it always compares as "in the future".
+    /// The timezone suffix (UTC / GPS) is ignored: the GPS-UTC offset (18 s or
+    /// less) is far below the resolution that decimal-year window selection and
+    /// velocity propagation need.  Any year >= 9000 (an open-ended SIF END such as
+    /// "9999-...") maps to 9999.0, so it compares as later than any real epoch.
+    /// A string with fewer than three parsable date fields returns 0.0.
     double decimalYearFromSif(const std::string& s) {
         int Y = 0, M = 1, D = 1, h = 0, mi = 0, se = 0;
         if (std::sscanf(s.c_str(), "%d-%d-%dT%d:%d:%d", &Y, &M, &D, &h, &mi, &se) < 3)
@@ -211,11 +212,12 @@ std::size_t StationInfoFile::load(const std::filesystem::path& sif_json) {
                 o.velocity_sigmas  = jvec3(oj, "VELOCITY_SIGMAS") * 1.0e-3;
                 o.do_not_use = jbool(oj, "DO_NOT_USE");
 
-                // Assemble the full symmetric 6x6 [X Y Z Vx Vy Vz] covariance:
-                //   diagonal from the sigma arrays (already SI above), off-diagonal
-                //   from the 15-element 6X6_COVARIANCE_MATRIX (mm^2 -> m^2; the same
-                //   1e-6 factor applies to all cross terms, position and velocity
-                //   alike).  Ordering follows the SIF/M-PAGES convention.
+                // Assemble the full symmetric 6x6 [X Y Z Vx Vy Vz] covariance.  The
+                //   diagonal comes from the sigma arrays (already SI above); the
+                //   off-diagonal comes from the 15-element 6X6_COVARIANCE_MATRIX
+                //   (mm^2 -> m^2, one 1e-6 factor for every cross term, position and
+                //   velocity alike), in row-major upper-triangle order, which is the
+                //   SIF/M-PAGES convention.
                 const std::vector<double> c = jarr(oj, "6X6_COVARIANCE_MATRIX");
                 if (c.size() >= 15) {
                     Eigen::Matrix<double, 6, 6>& C = o.covariance;
@@ -322,8 +324,10 @@ const StationInfo* StationInfoFile::find(const std::string& station_key) const {
 
 namespace {
 
-    /// Pick the OCCUPATION covering @p year (start <= year < end, not flagged),
-    /// else the non-flagged occupation whose window midpoint is nearest @p year.
+    /// Pick the first non-flagged OCCUPATION record covering @p year
+    /// (start <= year < end); otherwise the non-flagged record whose window
+    /// midpoint is nearest @p year (an open END is capped at 9000 for the
+    /// midpoint).  Returns nullptr when every record is flagged DO_NOT_USE.
     const SifOccupation* selectOccupation(const StationInfo& s, double year) {
         const SifOccupation* best = nullptr;
         double best_dist = 1e30;
@@ -351,8 +355,8 @@ ResolvedStationCoord resolveStationCoordinate(const StationInfo& s,
     const double dt = decimal_year - s.reference_epoch_year;
     out.ecef = occ->coordinates + occ->velocity * dt;
 
-    // Periodic (seasonal) terms: sum over the block whose window covers the
-    // epoch.  d = A_cos*cos(w*dT) + A_sin*sin(w*dT), w = 2*pi/Period,
+    // Periodic (seasonal) terms: sum over every block whose window covers the
+    // epoch.  d = A_cos*cos(w*dT) + A_sin*sin(w*dT), w = 2*pi/period,
     // dT = (t - block ref epoch) in years (NGS / M-PAGES convention).
     if (with_periodic) {
         for (const auto& b : s.periodic) {
@@ -420,8 +424,8 @@ std::optional<SifRosterCoordinate> resolveRosterCoordinate(const StationInfoFile
     // Full SIF coordinate function at the run date (see resolveStationCoordinate):
     //   x(t) = x_ref + v * (t - t_ref) + periodic(t) + post-seismic(t)
     // with x_ref/v the occupation solution at the SIF reference epoch (typically
-    // ITRF2020 @ 2020.0), so the returned ECEF is velocity-propagated survey-grade
-    // at decimal_year — exactly what a fixed-coordinate network roster needs.
+    // ITRF2020 at 2020.0), so the returned ECEF is the survey-grade coordinate
+    // propagated to decimal_year, as a fixed-coordinate network roster requires.
     const ResolvedStationCoord rc = resolveStationCoordinate(*s, decimal_year,
                                                              /*with_periodic=*/true,
                                                              /*with_psd=*/true);

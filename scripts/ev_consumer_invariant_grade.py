@@ -1,34 +1,29 @@
 #!/usr/bin/env python3
-"""The DATUM-INVARIANT consumer census (SPEC_event_harness §15.10).
+"""The datum-invariant consumer census (SPEC_event_harness §15.10).
 
-Why it exists.  The storm arms of the cold anchor-fallback card were graded on the
-closed-loop consumer's 3D position error, and that grade said the card cost the
-user 49 %.  Decomposing the same numbers into ENU showed the settled mean EAST
-error is +7.7 / +7.8 / +7.9 cm on the scope-OFF baseline and BOTH candidacy arms
-and +3.8 cm on `cbscope5` — i.e. the reference arm is the outlier, and the pooled
-median was reading a static realization of one station's coordinate, not the card.
-Standing invariant #5 says exactly this about consumer position as a channel.
+A static position bias at one station can dominate a pooled 3D consumer-error
+grade without reflecting anything the arm under test changed (invariant #5:
+grade only datum-invariant or SD quantities).  This grades the arms instead on
+quantities a static position bias cannot enter:
 
-So this grades the arms on quantities a static position bias cannot enter:
-
-  bias      the settled mean ENU and its magnitude — reported so the confound is
-            visible rather than silently inside every other number.
-  debias    |error − the arm's OWN settled mean ENU|, p50 and rms; and the same
-            with a per-HOUR mean removed, so a slowly MOVING bias cannot hide
-            inside the static removal (if the two disagree the bias is drifting).
+  bias      the settled mean ENU and its magnitude, reported so the confound is
+            visible instead of hidden inside every other number.
+  debias    |error - the arm's own settled mean ENU|, p50 and rms; and the same
+            with a per-hour mean removed, so a slowly moving bias cannot hide
+            inside the static removal (if the two disagree, the bias is drifting).
   events    the consumer's own re-convergence work, from `logs/rt_engine.log`:
             SSR phase-bias resets, code-bias discontinuities, clock
-            discontinuities — totals and by hour.  These are what a producer
-            datum re-realization COSTS the user, and they are position-free.
+            discontinuities, totals and by hour.  These are what a producer
+            datum re-realization costs the user, and they are position-free.
   shocks    epochs after the first hour whose 3D error exceeds a threshold
-            (default 0.5 m) — a bias of 8 cm cannot manufacture one.
+            (default 0.5 m); a bias of 8 cm cannot manufacture one.
   ar        the AR channel from `closed_loop_trace.csv` (ar_ran / ar_success /
             num_fixed / num_candidates / ratio).  On a float-only consumer this
-            reports ZERO RUNS rather than a rate, which is the honest output.
+            reports zero runs rather than a rate, which is the honest output.
   pbstep    the between-satellite emitted-bias consistency: per epoch, the step of
             every emitted (sat, signal) phase bias against the previous epoch, and
-            the fraction of epochs carrying ANY |step| above a threshold.  Read
-            from `products.txt`, so it is a property of the WIRE, not of any
+            the fraction of epochs carrying any step above a threshold.  Read
+            from `products.txt`, so it is a property of the wire, not of any
             station's position.
 
     python scripts/ev_consumer_invariant_grade.py <run> [<run> ...]
@@ -103,8 +98,8 @@ def pb_steps(run, t0, thresh):
 
     Returns (n_epochs, frac_epochs_with_any_big_step, p90 of the per-epoch max
     |step|, total big steps), where a step is the change of one emitted
-    (sat, signal) bias between consecutive EMITTED epochs.  A CONTINUOUS handover
-    is an S-transform and produces no step; a COLD one re-realizes the family and
+    (sat, signal) bias between consecutive emitted epochs.  A continuous handover
+    is an S-transform and produces no step; a cold one re-realizes the family and
     does.  Nothing here depends on a station position.
     """
     p = os.path.join(run, "products.txt")

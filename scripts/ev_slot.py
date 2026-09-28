@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Box-wide PRODUCER SLOT locks for the event harness (standing cap: 2 concurrent gnss_processor runs).
+"""Box-wide producer-slot locks for the event harness (standing cap: 2 concurrent gnss_processor runs).
 
     python scripts/ev_slot.py claim <worker> [--max-wait S]   # blocks until a slot is free (default 540 s), prints the lock path;
                                                             # exit 3 = no slot within the wait: just call it again
     python scripts/ev_slot.py release <lockpath>  # after the run's exitcode.txt appeared
     python scripts/ev_slot.py status
 
-Why: several worker sessions launch producers concurrently, each polling the process list before a
-launch; two of them can read "1 running" in the same second and launch together (3 on the box).  A
-lock file created atomically (O_CREAT|O_EXCL) is a real mutex.  Two slots, `runs/_slots/slot{1,2}.lock`,
-content = worker name, pid, ISO time.  A lock older than STALE_H hours is assumed abandoned (a dead
-worker) and is broken with a printed warning.  `claim` ALSO refuses to proceed while >= 2
+Several worker sessions launch producers concurrently, each polling the process list before a
+launch; two of them can read "1 running" in the same second and launch together (3 on the box).
+A lock file created atomically (O_CREAT|O_EXCL) is a mutex. Two slots, `runs/_slots/slot{1,2}.lock`,
+content = worker name, pid, ISO time. A lock older than STALE_H hours is assumed abandoned (a dead
+worker) and is broken with a printed warning. `claim` also refuses to proceed while 2 or more
 gnss_processor*.exe are running (another session that does not use the locks), so the lock is
-necessary but not sufficient — the process count stays the backstop.
+necessary but not sufficient: the process count is the backstop.
 """
 import os
 import subprocess
@@ -27,7 +27,7 @@ POLL_S = 15
 
 
 def _running():
-    """Count gnss_processor*.exe processes (tasklist; 0 on any failure)."""
+    """Return the count of gnss_processor*.exe processes (via tasklist; 0 on any failure)."""
     try:
         out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gnss_processor*"],
                              capture_output=True, text=True, timeout=30).stdout

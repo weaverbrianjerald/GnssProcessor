@@ -1,18 +1,18 @@
-"""Card Q3 — floor-vs-walk split of the phase-measured (TDCP) satellite clock
+"""Card Q3: floor-vs-walk split of the phase-measured (TDCP) satellite clock
 correction, from the FC-1 shadow trace (network_fast_clock.csv).
 
 The per-tick TDCP change telescopes: the accumulated change over lag L is the
 direct endpoint phase difference (interior measurement noise cancels), so a
-structure function over lags separates a MEASUREMENT FLOOR (flat in L) from a
-TRUE RANDOM WALK (grows as sqrt(L)).  The walk part is the physics the anchor's
+structure function over lags separates a measurement floor (flat in L) from a
+true random walk (grows as sqrt(L)).  The walk part is the physics the anchor's
 q should model; the floor is what every per-sample "physical change" statistic
 (FC-1's 1.7-2 cm hour table, the 0.30 cm TDCP column) actually measured.
 
 First run (2026-08-10, runs/cta3_ctl, 32 sats, 3 h, common-mode removed):
   floor SF(30-120 s) = 0.27 cm flat; walk fit 300->2400 s:
   q_phys ~ 2.9e-8 m^2/s  ->  0.9 mm / 30 s  (fractional ~1e-13)
-i.e. the clock corrections beyond the COD a-priori are quasi-static at the
-mm-per-epoch level -- SPEC_clock_temporal_anchor SS7.
+The clock corrections beyond the COD a-priori are quasi-static at the
+mm-per-epoch level. See SPEC_clock_temporal_anchor §7.
 
 Usage: python scripts/q3_clock_structure_function.py <run_dir_or_csv>
        [--lags 30,60,120,300,600,1200,2400] [--fit-from 300] [--min-pairs 200]
@@ -48,7 +48,7 @@ def main():
         for row in r:
             sat = row[ix["sat"]]
             if not sat:
-                continue          # T summary rows
+                continue          # skip T summary rows
             dc = row[ix["dc_m"]]
             if not dc:
                 continue
@@ -56,7 +56,7 @@ def main():
             series[sat][round(float(row[ix["tow"]]))] = cum[sat]
 
     # Common-mode removal per epoch (median over sats present): the ensemble
-    # gauge is CLK-R's channel, not this card's.
+    # gauge is CLK-R's channel, not part of this structure-function analysis.
     tows = sorted({t for s in series.values() for t in s})
     med = {}
     for t in tows:

@@ -106,14 +106,15 @@ namespace GnssProcessor {
 
         /**
          * @brief Inject a non-owning SSR-correction store override (dependency
-         *        injection seam for the PPP-RTK closed-loop harness).
+         *        injection point for the PPP-RTK closed-loop harness).
          *
          * By default the SSR clock overlay in @c getSatelliteClockCorrection
          * reads the process-wide @c SsrCorrectionStore singleton.  The network
-         * closed-loop consumer instead points this at the producer's OWNED store
-         * so a held-out station consumes the network's freshly-emitted clock
-         * without polluting global state.  Pass @c nullptr (the default) to
-         * restore the singleton — every non-harness caller is then byte-identical.
+         * closed-loop consumer points this at the store the producer owns, so a
+         * held-out station consumes the clock the network has just emitted
+         * without writing to global state.  Pass @c nullptr (the default) to
+         * restore the singleton; callers outside the harness are then
+         * byte-identical.
          *
          * @param store Non-owning store pointer; must outlive this object, or
          *        @c nullptr to use the singleton.
@@ -121,24 +122,24 @@ namespace GnssProcessor {
         void setSsrStore(const SsrCorrectionStore* store) { ssr_store_override_ = store; }
 
         /**
-         * @brief Card 7 (RTF-2): declare where the consumer's SSR ORBIT overlay
-         *        reads from, for the orbit-coherence echo check.
+         * @brief Declare the store the consumer's SSR orbit overlay reads from,
+         *        for the orbit-coherence echo check (Card 7, RTF-2).
          *
-         * A @c brdc_rts network clock record echoes the identity (IOD-SSR +
+         * A @c brdc_rts network clock record echoes the identity (IOD-SSR and
          * content epoch) of the RTS orbit the producer estimated it against
-         * (conventions §2).  @c getSatelliteClockCorrection verifies that echo
-         * against the orbit record the consumer actually applies — which under
-         * the RTA-8 split routing lives in a DIFFERENT store than the clock
-         * (orbit on the external-RTS singleton, clock on the injected
-         * network-product store).  This seam names that orbit store; it is
-         * forwarded automatically by @c Model::Geometry::setSsrOrbitStore /
-         * @c PppModel::setSsrOrbitStore so it tracks the orbit overlay's real
-         * routing by construction.  Pass @c nullptr (the default) for the
-         * process-wide singleton — matching the orbit overlay's own default.
+         * (conventions §2).  @c getSatelliteClockCorrection checks that echo
+         * against the orbit record the consumer applies.  Under the RTA-8 split
+         * routing that record lives in a different store from the clock: the
+         * orbit on the external-RTS singleton, the clock on the injected
+         * network-product store.  This setter names the orbit store.
+         * @c Model::Geometry::setSsrOrbitStore and @c PppModel::setSsrOrbitStore
+         * forward to it, so it follows the orbit overlay's routing.  Pass
+         * @c nullptr (the default) for the process-wide singleton, which is
+         * also the orbit overlay's default.
          *
-         * Only consulted when a clock record carries an echo AND its merge does
+         * Consulted only when a clock record carries an echo and its merge does
          * not already contain the matching orbit part (a combined record is
-         * self-coherent) — every pre-Card-7 stream never reads it.
+         * self-coherent).  A stream without echo fields never reads it.
          *
          * @param store Non-owning store pointer; must outlive this object, or
          *        @c nullptr to use the singleton.
@@ -149,17 +150,20 @@ namespace GnssProcessor {
          * @brief Get satellite clock correction in seconds.
          * @param satellite Satellite identifier string (e.g. "G01", "E11").
          * @param time Epoch at which the correction is requested.
-         * @param[out] broadcast_grade Optional. Set true when the returned clock
-         *        came from the broadcast polynomial with NO precise CLK sample
-         *        and NO SSR clock delta — i.e. it is only metre-level accurate.
-         *        Carrier phase is meaningless against such a clock (the ambiguity
-         *        cannot be separated from the product error), so callers use this
-         *        to fall back to code-only for that satellite. Always false when a
-         *        precise CLK product or a fresh IODE-matched SSR clock backs it.
-         * @return Clock correction in seconds (bias + interpolation).
+         * @param[out] broadcast_grade Optional.  Set true when the returned clock
+         *        came from the broadcast polynomial with neither a precise CLK
+         *        sample nor an SSR clock delta, so it is only metre-level
+         *        accurate.  Carrier phase is not usable against such a clock (the
+         *        ambiguity cannot be separated from the product error), so callers
+         *        use this flag to fall back to code-only for that satellite.  False
+         *        when a precise CLK sample or a fresh, IODE-matched SSR clock delta
+         *        backs the value, and on the input-error paths.
+         * @return Clock correction in seconds.
          *
-         * This routine uses available CLK data to provide a best-effort clock
-         * correction for the requested satellite and epoch.
+         * The baseline is the precise CLK product (see interpolateClock()); when
+         * no CLK sample covers the epoch, the live broadcast clock is used
+         * instead.  A fresh, IODE-matched SSR clock delta is added on top when
+         * one is available.
          */
         double getSatelliteClockCorrection(const std::string& satellite, const GnssTime& time,
             bool* broadcast_grade = nullptr) const;
@@ -169,11 +173,14 @@ namespace GnssProcessor {
          * @param satellite Satellite identifier string.
          * @param time Epoch for interpolation.
          * @param clocks Container of ClockData from which to interpolate.
-         * @return Interpolated clock value in seconds.
+         * @return Interpolated clock value in seconds; 0 when no valid sample
+         *         covers the epoch.
          *
-         * Performs interpolation (or nearest-sample retrieval) using the
-         * provided clock samples. Exact interpolation method (linear, spline)
-         * is implementation-defined.
+         * The method is set by @c processing.satellite_clock_interpolation_mode:
+         * Linear (two-node bracket; the default, and the mode used when no
+         * configuration is attached), Lagrange (bracket-centred polynomial) or
+         * LsqSatClock (weighted LSQ over a multi-node window, which falls back to
+         * a simpler method when too few valid nodes are available).
          */
         double interpolateClock(const std::string& satellite, const GnssTime& time,
             const std::vector<ClockData>& clocks) const;
@@ -193,13 +200,15 @@ namespace GnssProcessor {
 
         /**
          * @brief Compute the Shapiro (relativistic path) delay.
-         * @param satellite Satellite identifier string (unused in pure geometric form).
+         * @param satellite Satellite identifier string (used only in log messages).
          * @param rx_pos Receiver ECEF position (meters).
          * @param sat_pos Satellite ECEF position (meters).
          * @return Shapiro delay in meters.
          *
-         * The Shapiro delay is the additional path length caused by the
-         * curvature of spacetime near massive bodies (primarily the Sun).
+         * The Shapiro delay is the additional path length caused by space-time
+         * curvature in the Earth's gravity field:
+         * (2·GM/c²)·ln((r_sat + r_rx + r_sr)/(r_sat + r_rx − r_sr)), with GM the
+         * Earth's gravitational parameter.
          */
         double computeShapiroDelay(const std::string& satellite, const Eigen::Vector3d& rx_pos,
             const Eigen::Vector3d& sat_pos) const;
@@ -311,15 +320,16 @@ namespace GnssProcessor {
          *
          * Models the diurnal (S1) and semidiurnal (S2) atmospheric thermal tides,
          * the sun-synchronous part of atmospheric pressure loading.  Unlike the
-         * synoptic (non-tidal) component, S1/S2 do NOT average out over a static
-         * daily PPP arc — they alias a coherent ~mm radial bias into the daily
-         * mean height, which is why this is the high-value v1 component.  The
-         * non-tidal/synoptic APL (gridded 6-hourly pressure or a precomputed
-         * displacement series) is deferred to a later phase.
+         * synoptic (non-tidal) component, S1/S2 do not average out over a static
+         * daily PPP arc: they alias a coherent millimetre-level radial bias into
+         * the daily mean height, which is why this component is implemented first.
+         * The non-tidal/synoptic APL (gridded 6-hourly pressure or a precomputed
+         * displacement series) is not implemented.
          *
          * Per component c in {East, North, Up}, with local-solar-time arguments
          *   theta_S1 = 2*pi*UT_frac + lambda,  theta_S2 = 2*(2*pi*UT_frac) + 2*lambda
-         * (lambda = station longitude, UT_frac = fractional MJD):
+         * (lambda = station longitude, UT_frac = fractional part of the MJD,
+         * computed from GPS time):
          *   d_c = aS1_c^cos*cos(theta_S1) + aS1_c^sin*sin(theta_S1)
          *       + aS2_c^cos*cos(theta_S2) + aS2_c^sin*sin(theta_S2)
          * assembled as ENU and rotated to ECEF (mirrors OceanTideModel).
@@ -336,11 +346,11 @@ namespace GnssProcessor {
          * @param station_ecef  Receiver ECEF position (meters).
          * @return True if the grid parsed and coefficients were stored.
          *
-         * @warning The exact header-line count, column order, and frame of the
+         * @warning The header-line count, column order and frame of the
          *          atmospheric-tide grid are product-specific and must be pinned
-         *          to the supplied file before enabling in production (see the
-         *          PROVISIONAL constants in the .cpp).  Gated off by default via
-         *          model_corrections.enable_atmospheric_loading.
+         *          to the supplied file before production use (see the provisional
+         *          grid constants in the .cpp).  Off by default:
+         *          model_corrections.enable_atmospheric_loading defaults to false.
          */
         bool loadAtmosphericTideFromGrid(const std::string& grid_path,
                                          const Eigen::Vector3d& station_ecef);
@@ -368,8 +378,9 @@ namespace GnssProcessor {
          * @param time Epoch for which the bias applies.
          * @return Bias correction in meters (or zero if no matching bias).
          *
-         * Searches internal bias table for an applicable entry and returns the
-         * bias value; behaviour on overlapping entries is implementation-defined.
+         * Returns the first entry in product order whose satellite and signal
+         * match and whose [start, end] validity interval contains @p time, so
+         * with overlapping entries the earlier one wins.
          */
         double getBiasCorrection(const std::string& satellite, const std::string& freq_type,
             const GnssTime& time) const;
@@ -377,12 +388,16 @@ namespace GnssProcessor {
         /**
          * @brief Check whether the BIA product contains any entry for a satellite+signal pair.
          *
-         * This is a fast O(1) lookup against a set built at construction time.
-         * It does not check time validity  only whether the pair exists at all.
+         * Looks the pair up in a set (O(log n)) built from the bias entries.  It
+         * does not check time validity, only whether the pair is indexed.  The
+         * index leaves out zero-valued code-bias entries and all GLONASS
+         * code-bias entries, so for those pairs this returns false and the
+         * per-(satellite, signal) sat-bias state absorbs the delay instead
+         * (with estimate_sat_biases=true).
          *
          * @param satellite Satellite identifier (e.g. "G01").
          * @param signal    RINEX observation code (e.g. "C1W", "L5Q").
-         * @return True if at least one BiasData entry matches the pair.
+         * @return True if at least one indexed BiasData entry matches the pair.
          */
         bool hasBiasEntry(const std::string& satellite, const std::string& signal) const;
 
@@ -394,27 +409,34 @@ namespace GnssProcessor {
          * @param sat_pos Satellite ECEF position (meters).
          * @param wavelength Carrier wavelength in meters.
          * @param time Epoch for any time-dependent quantities.
-         * @param sun_pos Sun ECEF position (meters). When provided (non-zero), the
-         *        satellite attitude is computed using the proper yaw-steering model
-         *        (Sun direction + nadir). When zero, falls back to velocity-based attitude.
-         * @param sat_vel Satellite ECEF velocity (meters/second). Used as fallback
-         *        for attitude when sun_pos is not available or during eclipse/noon turn.
+         * @param sun_pos Sun ECEF position (meters).  When supplied (norm above
+         *        1e6 m), the satellite attitude follows the yaw-steering model
+         *        (Sun direction and nadir).  When zero, the attitude is built from
+         *        the velocity instead.  BeiDou-2 GEO satellites (C01-C05, C59,
+         *        C60) use the orbit-normal frame in either case.
+         * @param sat_vel Satellite ECEF velocity (meters/second).  Used for the
+         *        attitude when sun_pos is not supplied, when the Sun direction is
+         *        collinear with nadir (yaw-steering degenerate), and for the
+         *        BeiDou-2 GEO orbit normal.  There is no separate eclipse handling.
          * @param accumulate When true, unwrap against the previous epoch so the
          *        applied correction is continuous (required for IAR).  When false
-         *        (the loader default, hence every field lineage) the raw @c atan2
-         *        angle is applied, which steps a FULL cycle at each half-cycle
-         *        crossing — see @ref enableWindUpCensus for the instrument that
-         *        counts those steps.
+         *        (the loader default, estimation.accumulate_phase_windup) the raw
+         *        @c atan2 angle is applied, which steps one full cycle at each
+         *        half-cycle crossing; @ref enableWindUpCensus counts those steps.
          * @param max_gap_s Accumulator continuity horizon (seconds).  A gap larger
-         *        than this restarts accumulation from the raw angle, which applies
-         *        an exact integer-cycle step to every signal of that satellite.
-         *        ⚠ This horizon is INDEPENDENT of, and on the field lineages
-         *        SHORTER than, @c network.phase_leveling_max_gap_s (900 s there) —
-         *        so a gap in (max_gap_s, phase_leveling_max_gap_s] steps the model
-         *        while the carried ambiguity and the zero-q leveling level survive
-         *        and are re-injected at their pre-gap values.  That is standing
-         *        invariant #1 with no wired response; the census counts the
-         *        exposure so the ordering can be fixed on evidence.
+         *        than this, or an out-of-order epoch, restarts accumulation from
+         *        the raw angle, which applies an exact integer-cycle step to every
+         *        signal of that satellite.  This horizon is independent of
+         *        @c network.phase_leveling_max_gap_s, which is longer in the golden
+         *        configurations (900 s).  A gap in (max_gap_s,
+         *        phase_leveling_max_gap_s] therefore steps the model while the
+         *        carried ambiguity and the zero-q leveling level survive and are
+         *        re-injected at their pre-gap values (standing invariant #1).  The
+         *        wired response is @c network.cycle_slip.windup_restart_refloat
+         *        (off by default; see @ref wuRestarts), and the census counts the
+         *        gaps in that interval.
+         * @param correct_velocity_frame When true, the BeiDou-2 GEO orbit normal
+         *        is built from the inertial velocity instead of the ECEF velocity.
          * @return Phase wind-up correction in meters (to add to carrier range).
          *
          * Computes the phase bias caused by relative antenna orientation
@@ -503,10 +525,10 @@ namespace GnssProcessor {
          * @brief Interpolate ocean pole tide load coefficients from the IERS grid.
          *
          * Bilinearly interpolates the global 0.5x0.5-degree Desai opole load grid
-         * (@c opoleloadcoefcmcor.txt — IERS Conventions 2010 chapter 7) at the
-         * station position and stores the resulting six coefficients.  Default
-         * runs stay byte-identical: nothing is loaded unless the caller invokes
-         * this (gated upstream by @c enable_ocean_pole_tide).
+         * (@c opoleloadcoefcmcor.txt, IERS Conventions 2010 chapter 7) at the
+         * station position and stores the resulting six coefficients.  Nothing is
+         * loaded unless the caller invokes this (gated upstream by
+         * @c enable_ocean_pole_tide), so default runs are byte-identical.
          *
          * @param grid_path     Path to @c opoleloadcoefcmcor.txt.
          * @param station_ecef  Receiver ECEF position (metres).
@@ -523,27 +545,27 @@ namespace GnssProcessor {
 
     private:
         LogManager& log_manager_;                         ///< Logger for debugging and info
-        // Shared handles to the single cached copy (ProductCache) — read-only
-        // clock/ERP/bias data is REFERENCED, not duplicated per instance (the
-        // per-station memory fix).  Non-null by default so deref is always safe;
-        // an SSR consumer that overrides clocks rebinds its own shared_ptr.
+        // Shared handles to the single cached copy in ProductCache: the read-only
+        // clock/ERP/bias data is referenced, not copied per instance (per-station
+        // memory).  Non-null by default so dereferencing is always safe; an SSR
+        // consumer that overrides clocks rebinds its own shared_ptr.
         std::shared_ptr<const std::vector<ClockData>> clocks_{std::make_shared<const std::vector<ClockData>>()};  ///< Satellite clock samples (shared).
         std::shared_ptr<const std::vector<ErpData>>   erps_{std::make_shared<const std::vector<ErpData>>()};       ///< Earth rotation parameters (shared).
         std::shared_ptr<const std::vector<BiasData>>  biases_{std::make_shared<const std::vector<BiasData>>()};    ///< Bias entries (shared).
-        std::shared_ptr<const std::vector<OrbitData>> orbits_{std::make_shared<const std::vector<OrbitData>>()};   ///< Orbit records (shared; currently unused/empty).
+        std::shared_ptr<const std::vector<OrbitData>> orbits_{std::make_shared<const std::vector<OrbitData>>()};   ///< Orbit records (shared).  Never populated; read only by the wind-up velocity fallback.
 
         // Optional external references (nullable pointers)
         const GnssConfig* config_;                        ///< Optional processing configuration (may be nullptr)
         const RinexParser* rinex_parser_;                 ///< Optional reference to a RinexParser (may be nullptr)
         const SsrCorrectionStore* ssr_store_override_{ nullptr }; ///< Non-owning SSR store override; nullptr -> process-wide singleton (see setSsrStore).
-        const SsrCorrectionStore* orbit_echo_store_override_{ nullptr }; ///< Card 7: non-owning ORBIT-overlay store for the echo check; nullptr -> singleton (see setOrbitEchoStore).
+        const SsrCorrectionStore* orbit_echo_store_override_{ nullptr }; ///< Non-owning orbit-overlay store for the echo check; nullptr -> singleton (see setOrbitEchoStore; Card 7).
 
         /// Resolve the active SSR store: the injected override when set, else the
         /// process-wide singleton.  Defined in the .cpp where the full type is visible.
         const SsrCorrectionStore& ssrStore() const;
 
-        /// Card 7: resolve the ORBIT-overlay store for the echo check (override
-        /// when set, else the singleton).  Defined in the .cpp beside ssrStore().
+        /// Resolve the orbit-overlay store for the echo check: the override when
+        /// set, else the singleton (Card 7).  Defined in the .cpp beside ssrStore().
         const SsrCorrectionStore& orbitEchoStore() const;
 
         std::unordered_map<std::string, std::vector<const ClockData*>> clock_index_;
@@ -559,60 +581,65 @@ namespace GnssProcessor {
             double angle{ 0.0 };      ///< Accumulated wind-up angle (radians).
             double epoch_s{ 0.0 };    ///< Continuous GPS seconds of last update.
         };
-        // ⚠ OWNERSHIP CONTRACT — the key is the SATELLITE ALONE, so this map is
-        // only correct if the owning GnssCorrections instance serves exactly ONE
-        // receiver.  It does on every production path: each network station owns
-        // its own PppModel (ApplicationNetworkSetup.cpp) -> Antenna (by value)
-        // -> GnssCorrections (by value), and the only caller that reaches the
-        // wind-up path is Antenna's receiver/satellite correction assembly,
-        // behind an `is_phase` gate.  (ModelGeometry's emission-time refinement
-        // calls the same instance with CODE signals only; that gate is what
-        // keeps those calls out of both the accumulator and the census.)  If this object is ever shared
-        // across receivers, accumulated mode silently interleaves their arcs and
-        // the unwrap reference becomes another station's angle.  The simulator's
-        // shared-provider fan-out already pays a process-per-station cost for
-        // exactly this reason.  Re-key to (station, satellite) before sharing.
+        // Ownership contract: the key is the satellite alone, so this map is
+        // correct only while the owning GnssCorrections instance serves one
+        // receiver.  Every production path satisfies this: each network station
+        // owns its own PppModel (ApplicationNetworkSetup.cpp), which holds an
+        // Antenna by value, which holds its GnssCorrections by value, and the
+        // only caller that reaches the wind-up path is the Antenna's
+        // receiver/satellite correction assembly, behind an `is_phase` gate.
+        // (ModelGeometry's emission-time refinement calls the same Antenna with
+        // code signals only; that gate keeps those calls out of both the
+        // accumulator and the census.)  An instance shared across receivers would
+        // interleave their arcs in accumulated mode, with no error raised, and
+        // the unwrap reference would become another station's angle.  The
+        // simulator's shared-provider fan-out runs one process per station for
+        // this reason.  Re-key to (station, satellite) before sharing an instance.
         mutable std::unordered_map<std::string, WindUpState> prev_windup_;
 
     public:
         /**
-         * @brief Per-instance (i.e. per-receiver) phase wind-up census counters.
+         * @brief Per-instance (that is, per-receiver) phase wind-up census counters.
          *
-         * Armed by @ref enableWindUpCensus; populated from @c computePhaseWindUp
-         * in BOTH accumulation postures, so the dominant field posture
-         * (fractional) is measurable for the first time.  Read-only telemetry —
-         * arming it cannot move a byte of the solve.
+         * Armed by @ref enableWindUpCensus and populated from
+         * @c computePhaseWindUp in both accumulation postures, fractional and
+         * accumulated.  Read-only telemetry: arming it does not change the
+         * solve.  A transition is a change of processed epoch for one satellite;
+         * repeated calls within an epoch are deduplicated.
          */
         struct WindUpCensus {
-            long long steps{0};          ///< FORWARD consecutive-processed-epoch transitions observed (the denominator; @ref backwards excluded).
-            /// |Delta applied| >= 0.9 cyc across an IN-HORIZON gap: the fractional
-            /// staircase.  ⚠ FRACTIONAL-POSTURE ONLY.  In accumulated mode an
-            /// in-horizon transition passes through the unwrap, which confines the
-            /// step to [-0.5, +0.5] cyc BY CONSTRUCTION, so this counter is
-            /// identically zero there — a zero must NOT be read as "no restarts".
-            /// The restart population is @ref restarts.
+            long long steps{0};          ///< Forward transitions (gap > 0) between consecutive processed epochs: the denominator (@ref backwards excluded).
+            /// Transitions with |Delta applied| >= 0.9 cyc across an in-horizon gap:
+            /// the fractional staircase.  Fractional posture only: in accumulated
+            /// mode an in-horizon transition passes through the unwrap, which by
+            /// construction confines the step to [-0.5, +0.5] cyc, so this counter
+            /// is identically zero there and a zero does not mean "no restarts".
+            /// The restart count is @ref restarts.
             long long wraps{0};
-            /// Accumulator RESTARTS, taken from the accumulator's OWN decision
-            /// rather than re-derived from a threshold on the applied step.
+            /// Accumulator restarts, taken from the accumulator's own decision
+            /// rather than from a threshold on the applied step.
             /// Zero in fractional mode (there is no accumulator to restart).
             long long restarts{0};
             long long gap_steps{0};      ///< |Delta applied| >= 0.9 cyc across an out-of-horizon gap.
-            long long backwards{0};      ///< transitions with gap <= 0 (epochs out of order); excluded from @ref steps and from every bucket, and they do NOT corrupt the next gap because the reference is still advanced.
+            long long backwards{0};      ///< transitions with gap < 0 (epochs out of order); excluded from @ref steps and from every bucket.  The reference still advances, so they do not corrupt the next gap.
             long long gap_lt_wu{0};      ///< transitions with gap < the wind-up horizon (accumulation continues).
-            /// Out-of-horizon transitions falling between the two horizons — the
-            /// model would step while the leveling carry SURVIVES.
-            /// ⚠ Meaningful ONLY when the carry horizon exceeds the wind-up
-            /// horizon.  It does on the field lineages (900 s vs 300 s) but NOT at
-            /// the loader default (@c network.phase_leveling_max_gap_s defaults to
-            /// 120 s, BELOW the wind-up horizon), where the ordering is inverted
-            /// and this bucket is structurally empty.  The teardown prints the
-            /// ordering it observed and suppresses the exposure narrative when the
-            /// ordering does not hold, so a structural zero can never be read as a
-            /// clean bill of health.
+            /// Out-of-horizon transitions with gap up to the later of the two
+            /// horizons, [wind-up horizon, max(wind-up, carry)].  When the carry
+            /// horizon exceeds the wind-up horizon, these are the gaps across
+            /// which the model steps while the leveling carry survives
+            /// (invariant #1).  It does on the golden configurations (900 s
+            /// against 300 s) but not at the loader default
+            /// (@c network.phase_leveling_max_gap_s defaults to 120 s, below the
+            /// wind-up horizon); with that inverted ordering the bucket holds only
+            /// a gap exactly equal to the wind-up horizon and is in practice
+            /// empty.  Filled only when a carry horizon above 0 was passed to
+            /// @ref enableWindUpCensus.  The teardown prints the ordering it
+            /// observed and omits the exposure reading when the ordering does not
+            /// hold, so a structural zero is not reported as a clean result.
             long long gap_wu_to_carry{0};
-            long long gap_gt_carry{0};   ///< out-of-horizon transitions beyond the carry horizon (the carry is dropped too — no invariant-#1 hole).
-            double    max_abs_step_in_cyc{0.0};  ///< largest |Delta applied| over IN-horizon transitions (cycles).
-            double    max_abs_step_gap_cyc{0.0}; ///< largest |Delta applied| over OUT-of-horizon transitions (cycles).
+            long long gap_gt_carry{0};   ///< out-of-horizon transitions beyond the later of the two horizons (the carry is dropped too, so no invariant-#1 exposure).  Filled only when a carry horizon above 0 was passed.
+            double    max_abs_step_in_cyc{0.0};  ///< largest |Delta applied| over in-horizon transitions (cycles).
+            double    max_abs_step_gap_cyc{0.0}; ///< largest |Delta applied| over out-of-horizon transitions (cycles).
             double    sum_abs_step_cyc{0.0};     ///< Sigma |Delta applied| over in-horizon transitions (cycles).
         };
 
@@ -621,7 +648,7 @@ namespace GnssProcessor {
          *
          * @param wu_gap_s    the accumulator continuity horizon in force.
          * @param carry_gap_s the phase-leveling carry horizon (@c
-         *        network.phase_leveling_max_gap_s), used ONLY to bucket gaps so
+         *        network.phase_leveling_max_gap_s), used only to bucket gaps so
          *        the invariant-#1 exposure between the two horizons is counted.
          *        Pass 0 to disable that bucketing (user path).
          */
@@ -634,39 +661,39 @@ namespace GnssProcessor {
         const WindUpCensus& windUpCensus() const { return wu_census_; }
 
         /**
-         * @brief One accumulator RESTART, recorded for the wired response
+         * @brief One accumulator restart, recorded for the wired response
          *        (SPEC_phase_windup_sign §10.4: refloat the arcs the restart
          *        stepped).  @c gap_s is the gap that tripped the horizon
-         *        (≤ 0 for out-of-order epochs — the same branch restarts);
-         *        @c epoch_s stamps WHEN, so a consumer that missed an epoch
-         *        (absent station) can refuse the stale entry instead of
-         *        responding to history.
+         *        (negative for out-of-order epochs, which take the same restart
+         *        branch).  @c epoch_s stamps when the restart happened
+         *        (continuous GPS seconds), so a consumer that missed an epoch
+         *        (absent station) can refuse the stale entry instead of acting on
+         *        an old restart.
          */
         struct WuRestart { double gap_s{0.0}; double epoch_s{0.0}; };
         /**
-         * @brief The restart ledger — filled ONLY in accumulated mode (the
-         *        restart verdict does not exist in fractional mode), keyed by
-         *        satellite, overwritten per restart, bounded at the visible
-         *        constellation.  Telemetry-class until a consumer drains it:
-         *        nothing here moves the correction itself.  The network
-         *        response drain reads and clears it per epoch
-         *        (@c network.cycle_slip.windup_restart_refloat); with no
-         *        consumer it simply holds the last restart per satellite.
+         * @brief The restart ledger: filled only in accumulated mode (fractional
+         *        mode has no restart decision), keyed by satellite, overwritten
+         *        per restart, and bounded by the visible constellation.  It does
+         *        not change the correction itself.  The network response drain
+         *        (@c network.cycle_slip.windup_restart_refloat) reads and clears
+         *        it each epoch; with no consumer it holds the last restart per
+         *        satellite.
          */
         const std::map<std::string, WuRestart>& wuRestarts() const { return wu_restarts_; }
-        /// @brief Clear the restart ledger (the consumer's drain edge).
+        /// @brief Clear the restart ledger (called by the consumer's drain).
         void clearWuRestarts() { wu_restarts_.clear(); }
 
     private:
-        /// §10.4 restart ledger (see @ref wuRestarts).  Written from the const
-        /// computePhaseWindUp, hence mutable — the same pattern as the census.
+        /// Restart ledger, §10.4 (see @ref wuRestarts).  Written from the const
+        /// computePhaseWindUp, hence mutable, as for the census.
         mutable std::map<std::string, WuRestart> wu_restarts_;
         bool   wu_census_on_{false};
         double wu_census_gap_s_{300.0};
         double wu_census_carry_gap_s_{0.0};
         mutable WindUpCensus wu_census_;
-        /// Last APPLIED wind-up in cycles per satellite, with its epoch — the
-        /// census's own state, deliberately separate from @c prev_windup_ so the
+        /// Last applied wind-up in cycles per satellite, with its epoch.  This is
+        /// the census's own state, kept separate from @c prev_windup_ so the
         /// census reads identically in both accumulation postures.  Same
         /// one-receiver-per-instance contract as @c prev_windup_ above.
         /// @c seeded is an explicit flag rather than an @c epoch_s == 0 sentinel:

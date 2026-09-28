@@ -1,30 +1,30 @@
 /**
  * @file test_network_slip_qc.cpp
- * @brief First dedicated unit coverage of the shared RAW slip-observable seam
- *        (slip/NetworkRawObservables) that Cards L and G of the 2026-07-21
- *        slip-QC hardening decide on — docs/SPEC_slip_qc_hardening.md §3
- *        (MUST M6) and §5 (MUST G1).
+ * @brief Unit coverage of the shared raw slip-observable seam
+ *        (slip/NetworkRawObservables) that Cards L and G of the slip-QC
+ *        hardening decide on: docs/SPEC_slip_qc_hardening.md §3 (requirement M6)
+ *        and §5 (requirement G1).
  *
  * Three layers are exercised, bottom-up:
  *
- *   1. The pure helpers — @c networkRobustStepScale (1.4826·median|x|) and
- *      @c networkLliCredibilityStep (the two-state hysteresis).  Pure
- *      functions, so the state machine is pinned without a station.
- *   2. @c networkComputeRawObservables — primary-pair selection (the two
- *      lowest DISTINCT bands whose phase AND matching "C"+tail code are both
- *      present), the MW / GF / phase-minus-code arithmetic and the wide-lane
- *      wavelength the MW floor is expressed in.
- *   3. @c networkQualifyRawObservables — the epoch-to-epoch adjudication:
+ *   1. The helpers without side effects: @c networkRobustStepScale
+ *      (1.4826·median|x|) and @c networkLliCredibilityStep (the two-state
+ *      hysteresis), so the state machine is pinned without a station.
+ *   2. @c networkComputeRawObservables: primary-pair selection (the two lowest
+ *      distinct bands whose phase and matching "C"+tail code are both present),
+ *      the MW / GF / phase-minus-code arithmetic, and the wide-lane wavelength the
+ *      MW floor is expressed in.
+ *   3. @c networkQualifyRawObservables: the epoch-to-epoch adjudication, that is
  *      LLI credibility (chatty vs quiet station), corroboration by a real
  *      wide-lane step, and the Card-G arc-resumption instrument.
  *
  * Every satellite here is synthesized from a textbook geometry
  *   L_i = (R − I_i)/λ_i + N_i  [cycles],  C_i = R + I_i  [m],  I_i = I_1(λ_i/λ_1)²
- * under which the Melbourne-Wübbena combination collapses EXACTLY to
+ * under which the Melbourne-Wübbena combination reduces exactly to
  * λ_WL·(N_1 − N_2): geometry, clocks and the first-order ionosphere all cancel.
  * A wide-lane slip injected as ΔN therefore appears as a step of exactly
- * ΔN_WL·λ_WL metres — a designed margin against the 0.5-cycle physical floor,
- * not a derived one.
+ * ΔN_WL·λ_WL metres.  The step sizes are chosen with a margin against the
+ * 0.5-cycle physical floor; the margin is by design, not derived.
  */
 
 #include <gtest/gtest.h>
@@ -124,7 +124,7 @@ const RawSlipObs* findRow(const std::vector<RawSlipObs>& rows, const std::string
 
 TEST(SlipQcRobustScale, EmptySampleHasNoEmpiricalInformation) {
     // 0 is the "no information yet" sentinel: the caller then falls back to
-    // the PHYSICAL floor rather than to a stochastic-model sigma (rule 4).
+    // the physical floor rather than to a stochastic-model sigma (rule 4).
     std::vector<double> empty;
     EXPECT_DOUBLE_EQ(networkRobustStepScale(empty), 0.0);
 }
@@ -135,9 +135,9 @@ TEST(SlipQcRobustScale, OddSampleIsMadToSigmaTimesTheMedian) {
 }
 
 TEST(SlipQcRobustScale, EvenSampleTakesTheUpperMiddleOrderStatistic) {
-    // nth_element at size/2 — the file's convention, deliberately NOT the
-    // averaging median of RobustStats::median.  Pinned so a future "cleanup"
-    // that swaps implementations has to notice the scale would change.
+    // nth_element at size/2 (the seam's convention), not the averaging median
+    // of RobustStats::median.  Pinned so that a change of implementation shows
+    // up here as a change of scale.
     std::vector<double> v{ 4.0, 1.0, 3.0, 2.0 };
     EXPECT_DOUBLE_EQ(networkRobustStepScale(v), 1.4826 * 3.0);
 }
@@ -148,14 +148,14 @@ TEST(SlipQcRobustScale, SingleElementSample) {
 }
 
 // ===========================================================================
-// networkLliCredibilityStep — the two-state hysteresis
+// networkLliCredibilityStep: the two-state hysteresis
 // ===========================================================================
 
 TEST(SlipQcCredibility, ArmingGateFreezesTheVerdict) {
     SlipQcParams p;
     p.chatter_min_epochs = 3;
-    // Below the arming gate NOTHING moves — neither a single chattering epoch
-    // demoting a station nor a single quiet epoch rehabilitating one.
+    // Below the arming gate nothing moves: a single chattering epoch does not
+    // demote a station, and a single quiet epoch does not promote one.
     EXPECT_TRUE(networkLliCredibilityStep(true, 1.0, 2, p));
     EXPECT_FALSE(networkLliCredibilityStep(false, 0.0, 2, p));
 }
@@ -179,9 +179,8 @@ TEST(SlipQcCredibility, PromotesOnlyBelowTheLowThreshold) {
 
 TEST(SlipQcCredibility, TheBandIsStickyInBothDirections) {
     SlipQcParams p;
-    // The SAME fraction inside (lo, hi) leaves either state untouched — that
-    // is the whole point of the hysteresis, and it is why the machine never
-    // has a third "ignore" state to fall into.
+    // A fraction inside (lo, hi) leaves either state unchanged.  That is the
+    // hysteresis, and it is why the machine needs no third "ignore" state.
     for (const double frac : { 0.31, 0.45, 0.59 }) {
         EXPECT_TRUE(networkLliCredibilityStep(true, frac, 5, p)) << frac;
         EXPECT_FALSE(networkLliCredibilityStep(false, frac, 5, p)) << frac;
@@ -193,8 +192,8 @@ TEST(SlipQcCredibility, TheBandIsStickyInBothDirections) {
 // ===========================================================================
 
 // Primary-pair selection and the raw arithmetic, over a two-station epoch
-// covering all four shapes the seam must handle: a triple-band satellite (the
-// two LOWEST distinct bands win), a dual-band satellite, a single-band
+// covering all four shapes the seam handles: a triple-band satellite (the
+// two lowest distinct bands win), a dual-band satellite, a single-band
 // satellite (dual == false but l1_c1_m still meaningful), and a phase with no
 // matching code (no row at all).
 TEST(SlipQcRawObservables, PrimaryPairSelectionAndCombinations) {
@@ -218,7 +217,7 @@ TEST(SlipQcRawObservables, PrimaryPairSelectionAndCombinations) {
     g02.elevation = 20.0;
     addBand(g02, "L1C", kL1, 4321.0);
 
-    // G03: phase with NO matching code -> contributes no row whatsoever.
+    // G03: phase with no matching code -> contributes no row.
     PppObservation g03{};
     g03.satellite = "G03";
     g03.system    = System::GPS;
@@ -241,7 +240,7 @@ TEST(SlipQcRawObservables, PrimaryPairSelectionAndCombinations) {
     EXPECT_EQ(ep.rows[0].size(), 2u) << "G03 has no coded phase and must not appear";
     EXPECT_EQ(findRow(ep.rows[0], "G03"), nullptr);
 
-    // --- G01: the two lowest DISTINCT bands, not merely the first two keys.
+    // --- G01: the two lowest distinct bands, not merely the first two keys.
     const RawSlipObs* r1 = findRow(ep.rows[0], "G01");
     ASSERT_NE(r1, nullptr);
     EXPECT_EQ(r1->sig1, "L1C");
@@ -280,8 +279,8 @@ TEST(SlipQcRawObservables, PrimaryPairSelectionAndCombinations) {
     EXPECT_NEAR(ep.rows[1][0].mw_m, kLambdaWl * (100.0 - 60.0), 1e-6);
 }
 
-// The LLI bytes ride through unmodified per band — the raw evidence Card L
-// qualifies (it never rewrites it).
+// The LLI bytes pass through unmodified per band: they are the raw evidence Card L
+// qualifies, and it never rewrites them.
 TEST(SlipQcRawObservables, LliBytesArePassedThroughPerBand) {
     LogManager log_manager;
     PppUtils   utils{ log_manager };
@@ -301,15 +300,15 @@ TEST(SlipQcRawObservables, LliBytesArePassedThroughPerBand) {
 }
 
 // ===========================================================================
-// networkQualifyRawObservables — Card L (M6)
+// networkQualifyRawObservables: Card L (M6)
 // ===========================================================================
 
-// The audit's four JPN receivers assert LLI on essentially every tracked
-// satellite every epoch with zero observable jump; a quiet station asserts it
-// on one.  The credibility state must separate them PER STATION — demoting the
-// chatty one (so an uncorroborated assertion there can be suppressed) while
-// leaving LLI decisive at the quiet one (M1: the G23@GAMB class of catches
-// where MW and IF genuinely cannot see the slip).
+// Some receivers (four JPN stations in the audit) assert LLI on nearly every
+// tracked satellite every epoch with no observable jump; a quiet station asserts
+// it on one.  The credibility state separates them per station: it demotes the
+// chatty one (so an uncorroborated assertion there can be suppressed) and leaves
+// LLI decisive at the quiet one (M1, the G23@GAMB class: slips that MW and IF
+// cannot see).
 TEST(SlipQcQualify, ChattyStationDemotesWhileQuietStationStaysCredible) {
     RawHarness h;
     h.params.lli_corroborate = true;
@@ -317,7 +316,7 @@ TEST(SlipQcQualify, ChattyStationDemotesWhileQuietStationStaysCredible) {
     for (int e = 0; e < 3; ++e) {
         const double wob = 0.002 * static_cast<double>(e % 2);
         std::vector<PppObservation> chatty, quiet;
-        // Station 0: six satellites, LLI on ALL of them, observables flat.
+        // Station 0: six satellites, LLI on all of them, observables flat.
         for (int s = 1; s <= 6; ++s)
             chatty.push_back(makeDualObs("G0" + std::to_string(s), 100.0 + s,
                                          60.0 + s, /*lli=*/true, wob));
@@ -336,9 +335,9 @@ TEST(SlipQcQualify, ChattyStationDemotesWhileQuietStationStaysCredible) {
     EXPECT_EQ(h.hist[0].lli_demotions, 1);      // one transition, then latched
     EXPECT_EQ(h.hist[0].lli_promotions, 0);
 
-    // ...and the observables are flat, so nothing corroborates those
-    // assertions: this is exactly the (demoted, unstepped) pair the drain
-    // reads to suppress an LLI-only refloat.
+    // The observables are flat, so nothing corroborates those assertions:
+    // this is the (demoted, unstepped) pair the drain reads to suppress an
+    // LLI-only refloat.
     for (int s = 1; s <= 6; ++s) {
         const auto& v = h.verdict(0, "G0" + std::to_string(s));
         EXPECT_TRUE(v.measured);
@@ -352,14 +351,15 @@ TEST(SlipQcQualify, ChattyStationDemotesWhileQuietStationStaysCredible) {
     EXPECT_TRUE(h.hist[1].lli_credible);
     EXPECT_EQ(h.hist[1].lli_demotions, 0);
 
-    // Counters are per (station, epoch) and must not be cross-contaminated.
+    // Counters are per (station, epoch); one station's state does not leak into
+    // the other's count.
     EXPECT_EQ(h.counters.lli_demoted_epochs, 3);   // station 0, three epochs
     EXPECT_EQ(h.counters.lli_credible_epochs, 3);  // station 1, three epochs
 }
 
-// M6's third case: LLI accompanied by a REAL wide-lane step.  The step is what
-// makes the assertion actionable regardless of any station-level credibility
-// state (M3 — the OWMG00NZL re-lock class must never be vetoed).
+// M6's third case: LLI accompanied by a real wide-lane step.  The step makes the
+// assertion actionable regardless of any station-level credibility state (M3, the
+// OWMG00NZL re-lock class, which is never vetoed).
 TEST(SlipQcQualify, LliWithWideLaneStepIsCorroborated) {
     RawHarness h;
     h.params.lli_corroborate = true;
@@ -380,16 +380,16 @@ TEST(SlipQcQualify, LliWithWideLaneStepIsCorroborated) {
     EXPECT_TRUE(v.measured);
     EXPECT_TRUE(v.mw_step);
     EXPECT_TRUE(v.stepped);
-    // The step is the designed 2 wide-lane cycles, and it clears the gate by
-    // ~4x — the gate itself is the 0.5-cycle physical floor because the
-    // station's own empirical scale is far tighter.
+    // The step is the designed 2 wide-lane cycles and clears the gate by about
+    // 4x; the gate is the 0.5-cycle physical floor because the station's own
+    // empirical scale is far tighter.
     EXPECT_NEAR(v.d_mw, 2.0 * kLambdaWl, 1e-4);
     EXPECT_NEAR(v.gate_mw, h.params.mw_floor_cyc * kLambdaWl, 1e-6);
     EXPECT_GT(std::abs(v.d_mw), v.gate_mw);
     EXPECT_EQ(h.epoch.stepped.count({ 0, "G01" }), 1u);
 
-    // The quiet satellites at the same station stay clean — a real step must
-    // not drag the empirical scale up and mask its neighbours.
+    // The quiet satellites at the same station stay clean: a real step does not
+    // raise the empirical scale enough to mask its neighbours.
     for (int s = 2; s <= 5; ++s) {
         const auto& q = h.verdict(0, "G0" + std::to_string(s));
         EXPECT_TRUE(q.measured);
@@ -398,7 +398,7 @@ TEST(SlipQcQualify, LliWithWideLaneStepIsCorroborated) {
     EXPECT_EQ(h.epoch.stepped.size(), 1u);
 }
 
-// A step is only ever formed against the IMMEDIATELY-adjacent processed epoch:
+// A step is formed only against the immediately adjacent processed epoch:
 // on the first sighting there is no predecessor, so `measured` is false and
 // `stepped` is false.  Absence of evidence is never evidence of a slip.
 TEST(SlipQcQualify, FirstSightingIsUnmeasurableNotClean) {
@@ -413,19 +413,18 @@ TEST(SlipQcQualify, FirstSightingIsUnmeasurableNotClean) {
 }
 
 // ===========================================================================
-// networkQualifyRawObservables — Card G (G1a)
+// networkQualifyRawObservables: Card G (G1a)
 // ===========================================================================
 
-// The instrument the spec asks for BEFORE any mechanism: an arc that
-// disappears for an epoch and comes back with a shifted raw level is the
-// poison signature (anything that BRIDGED the break is now carrying a stale
-// value); an arc that comes back clean is the benign case.  Both are counted,
-// separately.
+// The instrument the spec asks for before any mechanism: an arc that disappears
+// for an epoch and comes back with a shifted raw level is the harmful case
+// (anything that bridged the break now carries a stale value); an arc that comes
+// back clean is the benign case.  Both are counted, separately.
 TEST(SlipQcQualify, GapResumptionSeparatesShiftedFromCleanReturns) {
     RawHarness h;
     h.params.gap_instrument = true;
 
-    // G01 gaps and returns SHIFTED by +2 wide-lane cycles; G02 gaps and
+    // G01 gaps and returns shifted by +2 wide-lane cycles; G02 gaps and
     // returns clean; G03/G04 track continuously and supply the station's
     // empirical scale.
     const auto epoch0 = std::vector<PppObservation>{
@@ -441,7 +440,7 @@ TEST(SlipQcQualify, GapResumptionSeparatesShiftedFromCleanReturns) {
         // level, so its level shift across the break is exactly 2·λ_WL.
         makeDualObs("G01", 102.0, 60.0, false, 0.001),
         // G02 returns at the same ambiguity but with the epoch's code wobble:
-        // a few millimetres of MW change, i.e. a CLEAN return.
+        // a few millimetres of MW change, i.e. a clean return.
         makeDualObs("G02", 200.0, 150.0, false, 0.003),
         makeDualObs("G03", 300.0, 210.0, false, 0.003),
         makeDualObs("G04", 400.0, 260.0, false, 0.003) };
@@ -479,14 +478,14 @@ TEST(SlipQcQualify, GapResumptionSeparatesShiftedFromCleanReturns) {
     EXPECT_EQ(h.counters.gap_shifted, 1);
     EXPECT_EQ(h.counters.gap_unmeasurable, 0);
 
-    // A resumption is NOT a step: the predecessor is not adjacent, so the
-    // shifted arc's own verdict stays unmeasurable and cannot poison the
+    // A resumption is not a step: the predecessor is not adjacent, so the
+    // shifted arc's own verdict stays unmeasurable and does not enter the
     // per-station noise scale.
     EXPECT_FALSE(h.verdict(0, "G01").measured);
     EXPECT_FALSE(h.verdict(0, "G01").stepped);
 }
 
-// The instrument is default-OFF: with gap_instrument false the same stream
+// The instrument is off by default: with gap_instrument false the same stream
 // produces no resumptions and no counters (spec G2 / rule 1).
 TEST(SlipQcQualify, GapInstrumentIsInertWhenDisarmed) {
     RawHarness h;                       // params.gap_instrument == false

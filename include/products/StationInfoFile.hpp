@@ -6,30 +6,31 @@
  *
  * A SIF is a JSON bundle of per-station GNSS metadata (see @c StationInfo for
  * the data model and provenance).  @c StationInfoFile parses one or more SIF
- * JSON files once at startup, normalises units into SI, and exposes a
- * station-name lookup so that the ocean-loading models, the a-priori
- * coordinate path, and the PPP-RTK network datum can all share a single
- * authoritative source of station metadata.
+ * JSON files once at startup, normalises units to SI, and provides a
+ * station-name lookup, so the ocean-loading models, the a-priori coordinate
+ * path and the PPP-RTK network datum all read station metadata from one
+ * source.
  *
  * ## Indexing and lookup
  *
- * Stations are indexed three ways for robust joining against whatever
- * identifier a caller has on hand (RINEX marker name, configured station
- * name, baseline-fixture code):
+ * Stations are indexed three ways so that a record can be joined against the
+ * identifier a caller holds (RINEX marker name, configured station name,
+ * baseline-fixture code):
  *
  *  - by full 9-char ID (@c SSSS00CCC), upper-cased;
- *  - by 4-char station prefix (the @c SSSS of the ID), upper-cased;
- *  - by DOMES number.
+ *  - by DOMES number;
+ *  - by 4-char station prefix (the @c SSSS of the ID), upper-cased.
  *
- * @c find() tries them in that order, case-insensitively.  This lets a
- * configured "CIT100USA", a RINEX marker "CIT1", or a DOMES "40451S006"
- * all resolve to the same record.
+ * @c find() tries them in that order, case-insensitively, so a configured
+ * "CIT100USA", a RINEX marker "CIT1" and a DOMES "40451S006" all resolve to
+ * the same record.
  *
  * ## Memory
  *
- * The full SIF DOM (tens of MB for the NCN file) is parsed transiently and
- * discarded; only the compact @c StationInfo structs are retained.  Multiple
- * @c load() calls accumulate (e.g. the IGS and NCN SIFs together).
+ * The full SIF JSON document (tens of MB for the NCN file) is parsed
+ * transiently and discarded; only the compact @c StationInfo structs are
+ * retained.  Multiple @c load() calls accumulate (for example the IGS and NCN
+ * SIFs together).
  */
 
 #include "common/StationInfo.hpp"
@@ -46,11 +47,12 @@ namespace GnssProcessor {
      * @brief A station coordinate resolved to a specific observation epoch.
      *
      * The position is the full SIF coordinate function evaluated at the query
-     * epoch: the OCCUPATION reference coordinate propagated by the station
-     * velocity, plus the optional periodic (seasonal) and post-seismic terms.
-     * The covariance is the position (3x3) block propagated from the OCCUPATION
-     * 6x6 coordinate/velocity covariance to the query epoch.  All in the SIF
-     * reference frame (typically ITRF2020) and SI units (m, m^2).
+     * epoch: the reference coordinate of the selected OCCUPATION record,
+     * propagated by the station velocity, plus the optional periodic (seasonal)
+     * and post-seismic terms.  The covariance is the position (3x3) block
+     * propagated from the occupation's 6x6 coordinate/velocity covariance to the
+     * query epoch.  Everything is in the SIF reference frame (typically ITRF2020)
+     * and SI units (m, m^2).
      */
     struct ResolvedStationCoord {
         Eigen::Vector3d ecef{ Eigen::Vector3d::Zero() };       ///< ECEF position at the query epoch [m].
@@ -62,18 +64,20 @@ namespace GnssProcessor {
     /**
      * @brief Evaluate a station's SIF coordinate function at a given epoch.
      *
-     * Selects the OCCUPATION window covering @p decimal_year (falling back to
-     * the nearest non-flagged solution), then forms
+     * Selects the non-flagged OCCUPATION record whose window covers
+     * @p decimal_year, or, when none covers it, the non-flagged record whose
+     * window midpoint is nearest.  Then forms
      * @f$ x(t) = x_{ref} + v\,(t - t_{ref}) + \sum \text{periodic}(t) + \sum \text{PSD}(t) @f$
      * following the NGS / M-PAGES convention.  The periodic phase reference and
      * the post-seismic relaxation models match the SIF generator.
      *
      * @param s              Station record.
      * @param decimal_year   Observation epoch as a decimal year.
-     * @param with_periodic  Include annual/semiannual seasonal terms.
-     * @param with_psd        Include post-seismic deformation terms.
+     * @param with_periodic  Include the periodic (seasonal) terms, typically annual
+     *                       and semiannual.
+     * @param with_psd       Include post-seismic deformation terms.
      * @return Resolved coordinate; @c valid is false if @p s has no usable
-     *         occupation (caller should fall back to its own a-priori).
+     *         occupation, in which case the caller falls back to its own a-priori.
      */
     ResolvedStationCoord resolveStationCoordinate(const StationInfo& s,
                                                   double decimal_year,
@@ -96,8 +100,10 @@ namespace GnssProcessor {
          * @brief Parse one SIF JSON file, appending its stations to the registry.
          *
          * Units are normalised to SI during parsing (mm->m for periodic
-         * amplitudes, mm/y->m/y for velocities, mm^2->m^2 for covariances).
-         * On a parse error the file is skipped with a logged warning.
+         * amplitudes, mm/y->m/y for velocities and velocity sigmas, mm^2->m^2
+         * for the off-diagonal covariance terms; coordinate sigmas are already
+         * in metres).  If the file cannot be opened or parsed, or has no
+         * STATIONS array, it is skipped and an error is logged.
          *
          * @param sif_json Path to a SIF JSON file.
          * @return Number of stations successfully ingested (0 on failure).
@@ -108,12 +114,13 @@ namespace GnssProcessor {
          * @brief Resolve a station record by identifier.
          *
          * Tries, in order: full 9-char ID, DOMES number, 4-char station
-         * prefix.  Matching is case-insensitive; surrounding whitespace is
-         * trimmed.
+         * prefix (the first four characters of the key).  Matching is
+         * case-insensitive; surrounding whitespace is trimmed.
          *
          * @param station_key Marker name, station ID/prefix, or DOMES number.
          * @return Pointer to the matching record, or @c nullptr if not found.
-         *         The pointer is stable for the lifetime of this registry.
+         *         The pointer stays valid until the next @c load() call, which
+         *         may reallocate the store.
          */
         const StationInfo* find(const std::string& station_key) const;
 
@@ -132,11 +139,11 @@ namespace GnssProcessor {
     };
 
     /**
-     * @brief RTA-12: a network-roster station coordinate resolved from a SIF.
+     * @brief A network-roster station coordinate resolved from a SIF (RTA-12).
      *
-     * Thin result carrier for @ref resolveRosterCoordinate: the survey-grade ECEF
-     * at the requested run date plus that date itself (the propagation epoch a
-     * product contract should declare as @c coord_epoch).
+     * Result carrier for @ref resolveRosterCoordinate: the survey-grade ECEF at
+     * the requested run date plus that date, which is the propagation epoch a
+     * product contract declares as @c coord_epoch.
      */
     struct SifRosterCoordinate {
         Eigen::Vector3d ecef{ Eigen::Vector3d::Zero() };  ///< ECEF at @ref epoch_year [m], SIF reference frame (typically ITRF2020).
@@ -144,16 +151,16 @@ namespace GnssProcessor {
     };
 
     /**
-     * @brief RTA-12: resolve a network-roster station's fixed ECEF by name at a run date.
+     * @brief Resolve a network-roster station's fixed ECEF by name at a run date (RTA-12).
      *
-     * Composition of @c StationInfoFile::find (9-char ID / 4-char prefix / DOMES,
-     * case-insensitive) and @ref resolveStationCoordinate with periodic and
-     * post-seismic terms enabled — the full SIF coordinate function
+     * Composes @c StationInfoFile::find (9-char ID / DOMES / 4-char prefix,
+     * case-insensitive) with @ref resolveStationCoordinate, periodic and
+     * post-seismic terms enabled, which evaluates the full SIF coordinate function
      * @f$ x(t) = x_{ref} + v\,(t - t_{ref}) + \sum \text{periodic}(t) + \sum \text{PSD}(t) @f$
-     * evaluated at @p decimal_year.  Used by the config loader when
+     * at @p decimal_year.  The config loader calls it when
      * @c network.use_sif_coordinates fills roster stations whose @c position_ecef
-     * was not typed in the JSON; factored out so the resolution is unit-testable
-     * in isolation from the loader.
+     * is absent from the JSON; it is a separate function so the resolution can be
+     * unit-tested without the loader.
      *
      * @param registry     Loaded SIF registry.
      * @param station_name Station identifier (marker name, ID/prefix, or DOMES).

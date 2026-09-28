@@ -10,15 +10,16 @@ so a figure can render the field the producer actually estimated:
 with ``beta`` the geographic latitude, ``s = lon - lon_meansun`` the sun-fixed
 longitude, and ``Pbar_nm`` normalized by
 ``N_nm = sqrt[(2 - d_0m)(2n+1)(n-m)!/(n+m)!]`` (no Condon-Shortley phase), which
-makes ``Pbar_00 = 1`` so the ``C_00`` coefficient IS the mean VTEC in TECU.
+makes ``Pbar_00 = 1`` so the ``C_00`` coefficient is the mean VTEC in TECU.
 
-Why this exists: ``network_ionosphere.csv`` is NOT the absolute slant ionosphere.
+Why this exists: ``network_ionosphere.csv`` is not the absolute slant ionosphere.
 ``NetworkIonoDiag.cpp:92`` emits ``x_r`` alone, and the per-LOS iono state is
 seeded at allocation by ``computeIonosphereSeed`` (``MeasurementModel.cpp:404``,
 bounded +-200 m), so its linearization point is non-zero and the trace is a
-CORRECTION.  Measured on a converged 61-station run it medians ~10 TECU against
-the field's own ~30 TECU a00, with 37 % of values negative.  The coefficients in
-``network_vtec_sh.csv`` are the unambiguous product; use them.
+correction, not an absolute value.  Measured on a converged 61-station run it
+medians ~10 TECU against the field's own ~30 TECU a00, with 37 % of values
+negative.  The coefficients in ``network_vtec_sh.csv`` are the unambiguous
+product; use them.
 
 Self-test:  python scripts/sh_vtec.py --selftest
 """
@@ -97,13 +98,13 @@ def load_epoch(csv_path, tow=None) -> tuple[pd.DataFrame, int, float]:
 
     Trace writers in this tree are not all line-flushed, so the final line of a
     live or crash-truncated file can be partial.  Drop incomplete rows, then
-    require the chosen epoch to carry the modal coefficient count -- a short
+    require the chosen epoch to carry the modal coefficient count: a short
     epoch would silently synthesize a truncated field.
     """
     df = pd.read_csv(csv_path).dropna(subset=["n", "m", "trig", "value_tecu"])
     if df.empty:
         raise SystemExit(f"no usable SH coefficient rows in {csv_path}")
-    # A SINGLE-shell run (layer2_max_degree = 0) omits the `layer` column entirely
+    # A single-shell run (layer2_max_degree = 0) omits the `layer` column entirely
     # rather than writing a constant 0, so the schema differs between postures.
     if "layer" not in df.columns:
         df = df.assign(layer=0)

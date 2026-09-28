@@ -1,52 +1,51 @@
 /**
  * @file test_slip_oracle.cpp
- * @brief SIM-ONLY ORACLE slip response (`network.cycle_slip.oracle_relevel`,
- *        include/slip/NetworkSlipOracle.hpp) — the level-preserving re-level
- *        CEILING.
+ * @brief Simulation-only oracle slip response (`network.cycle_slip.oracle_relevel`,
+ *        include/slip/NetworkSlipOracle.hpp): the ceiling for a level-preserving
+ *        re-level.
  *
- * ## What is under test, and what is deliberately NOT
+ * ## Scope
  *
- * The oracle is a pure decision-plus-actuation layer over ONE arc: given the
- * fixture's truth jumps, the arc's carried level and this epoch's time, it
- * either shifts @c LocalCarry::value_abs by the true sum d*lambda and tells the
- * caller to skip every freeing action, or it declines.  Every case here drives
- * that layer directly on a fabricated carry, so the four detector sites that
- * CALL it (slip/NetworkSlipQc.cpp) are out of scope — their own population logic
- * has coverage in tests/test_network_slip_qc.cpp, and the hook's contract
- * ("true ⇒ the caller frees nothing") is a caller-side property a same-build
- * byte-identity A/B certifies, not a unit test.
+ * The oracle is a decision-plus-actuation layer over one arc: given the fixture's
+ * truth jumps, the arc's carried level and this epoch's time, it either shifts
+ * @c LocalCarry::value_abs by the true sum d*lambda and tells the caller to skip
+ * every freeing action, or it declines.  Every case here drives that layer
+ * directly on a fabricated carry, so the four detector sites that call it
+ * (slip/NetworkSlipQc.cpp) are out of scope.  Their population logic is covered in
+ * tests/test_network_slip_qc.cpp, and the hook's contract ("true ⇒ the caller
+ * frees nothing") is a caller-side property certified by a same-build
+ * byte-identity A/B, not by a unit test.
  *
- * ## The cases that matter most are the ones bounding what it TOUCHES
+ * ## Bounds on what the oracle modifies
  *
  * A truth-fed repair is the strongest actuation in the slip stack: it writes a
- * converged-weight carried level directly, with no data supporting it.  So the
- * assertions are deliberately two-sided — @c var unchanged, @c last_seen_s
- * unchanged, the sibling band untouched, and the arc NOT freed — because the
- * failure that would silently corrupt the whole census is an oracle that moves
- * something else as well.  @c ExactRepairLeavesEverythingButValueAbsAlone and
- * the false-alarm KEEP half are those bounds.
+ * converged-weight carried level directly, with no data supporting it.  The
+ * assertions are therefore two-sided (@c var unchanged, @c last_seen_s unchanged,
+ * the sibling band untouched, and the arc not freed), because an oracle that also
+ * moved something else would corrupt the whole census without any visible sign.
+ * @c ExactRepairLeavesEverythingButValueAbsAlone and the false-alarm keep half
+ * check those bounds.
  *
- * ## Window semantics are the second half of the correctness argument
+ * ## Window semantics
  *
- * The oracle must apply exactly the jumps the carried level does NOT already
- * contain.  The window is
- * `( max(last_applied, carry.birth_s, now − window_s), now ]` — lower bound
- * EXCLUSIVE, upper INCLUSIVE — and all three lower terms have a case here
- * because each one, got wrong, produces a ceiling no run-end counter can
- * contradict:
+ * The oracle applies exactly the jumps the carried level does not already contain.
+ * The window is `( max(last_applied, carry.birth_s, now − window_s), now ]`, with
+ * the lower bound exclusive and the upper bound inclusive.  Each of the three
+ * lower terms has a case here, because an error in any one of them produces a
+ * ceiling that no run-end counter can contradict:
  *
- * - the DETECTOR-LATENCY term (`now − window_s`) is what makes a late detector
- *   repairable.  ⚠ `carry.last_seen_s` is NOT the lower bound, though it reads
- *   like the natural "already absorbed" mark: it is the PREVIOUS epoch's stash,
- *   and a zero-q carried level is not re-set by the intervening solve, so a
- *   detector firing at t+1…t+3 on a slip at t is still looking at an un-absorbed
- *   jump.  @c LateDetectorRepairsTheSlipItFiredOnEvenAfterARestash is that
- *   regression, pinned against the same case with the window closed;
- * - `carry.birth_s` is the HARD floor (@c SlipBeforeTheCarrysBirthIsAlreadyAbsorbed):
- *   a T4 erase-and-rebirth re-creates the level from a solve that ALREADY
- *   contains the earlier jump, so re-applying it would inject the very error the
- *   card exists to remove;
- * - `last_applied` makes two detectors on one arc pay the jump ONCE
+ * - The detector-latency term (`now − window_s`) makes a late detector
+ *   repairable.  `carry.last_seen_s` is not the lower bound, although it reads
+ *   like an "already absorbed" mark: it is the previous epoch's stash, and a
+ *   zero-q carried level is not re-set by the intervening solve, so a detector
+ *   firing at t+1…t+3 on a slip at t still sees an un-absorbed jump.
+ *   @c LateDetectorRepairsTheSlipItFiredOnEvenAfterARestash covers this and
+ *   contrasts it with the same case under a window that ends at last_seen_s.
+ * - `carry.birth_s` is the hard floor (@c SlipBeforeTheCarrysBirthIsAlreadyAbsorbed):
+ *   a T4 erase-and-rebirth re-creates the level from a solve that already
+ *   contains the earlier jump, so re-applying it would inject the error the card
+ *   is meant to remove.
+ * - `last_applied` makes two detectors on one arc apply the jump once
  *   (@c ASecondDetectorInTheSameWindowCannotDoubleApply).
  */
 
@@ -75,7 +74,7 @@ namespace {
 constexpr const char* kSat  = "G22";
 constexpr const char* kSig1 = "L1C";
 constexpr const char* kSig2 = "L2W";
-/// GPS week 2313 — the campaign fixture's frame; 30 s cadence, tow ~302 8xx.
+/// GPS week 2313, the campaign fixture's frame; 30 s cadence, tow ~302 8xx.
 constexpr double kW = 2313.0 * 604800.0;
 
 std::shared_ptr<spdlog::logger> nullLogger() {
@@ -109,7 +108,7 @@ struct TempTree {
     }
 };
 
-/// Forward slashes only — the JSON body below does not escape backslashes.
+/// Forward slashes only: the JSON body below does not escape backslashes.
 std::string jsonPath(const std::filesystem::path& p) {
     std::string s = p.string();
     for (auto& ch : s) if (ch == '\\') ch = '/';
@@ -132,10 +131,10 @@ struct Harness {
     }
 
     /// A carried level last stashed at @p last_seen_s (default: one 30 s epoch
-    /// before the reference epoch, the normal warm posture) and CREATED at
-    /// @p birth_s — the window's hard floor.  The default birth is a long-
+    /// before the reference epoch, the normal warm state) and created at
+    /// @p birth_s, the window's hard floor.  The default birth is a long-
     /// established arc (~47 min before every case's epoch), so a case that does
-    /// not name it is exercising the latency bound alone.
+    /// not set it exercises the latency bound alone.
     void addCarry(const std::string& sig, double last_seen_s = kW + 302820.0,
                   double value_abs = 100.0, double var = 1.0e-5,
                   double birth_s = kW + 300000.0) {
@@ -153,9 +152,9 @@ struct Harness {
     LocalCarry& c(const std::string& sig) {
         return carry.at(std::make_tuple(0, std::string(kSat), sig));
     }
-    /// @p cause is the calling DETECTOR's tier bit — it steers only the
-    /// false-alarm KEEP attribution, never a decision, so cases that are not
-    /// about the tier split leave it at the MW drain's.
+    /// @p cause is the calling detector's tier bit.  It steers only the
+    /// false-alarm keep attribution, never a decision, so cases that are not
+    /// about the tier split leave it at the MW drain's value.
     bool run(const std::string& sig, double tow_s, std::string& detail,
              OracleOutcome& oc,
              std::uint8_t cause = RelevelEpochState::kCauseMw) {
@@ -173,13 +172,13 @@ struct Harness {
 // CSV parsing
 // ===========================================================================
 
-// The fixture writes one row per APPLIED jump, so one arc can carry several —
-// the parser must keep them all, in ascending time, keyed per (sat, signal).
+// The fixture writes one row per applied jump, so one arc can carry several; the
+// parser keeps them all, in ascending time, keyed per (sat, signal).
 TEST(SlipOracleCsv, ParsesMultipleSlipsPerArcInAscendingTime) {
     TempTree t("csv_multi");
     const auto f = t.writeStation("S01000SIM",
         "2313,304860.000,G11,L5Q,-88,1,13.90\n"
-        "2313,302820.000,G19,L1C,48,1,11.50\n"     // deliberately OUT of order
+        "2313,302820.000,G19,L1C,48,1,11.50\n"     // deliberately out of order
         "2313,303540.000,G19,L1C,-7,0,14.02\n"
         "2313,302850.000,G04,L2W,-65,0,18.00\n");
     const auto m = networkSlipOracleParseCsv(f.string());
@@ -195,9 +194,9 @@ TEST(SlipOracleCsv, ParsesMultipleSlipsPerArcInAscendingTime) {
     EXPECT_EQ(m.at({"G11", "L5Q"})[0].delta_cyc, -88);
 }
 
-// The header is pinned by NAME, not position: a fixture that grows or reorders a
-// column must fail loudly here rather than silently read the wrong field as
-// delta_cycles, which would produce a plausible-looking but wrong ceiling.
+// The header is checked by name, not position: a fixture that adds or reorders a
+// column fails here instead of reading the wrong field as delta_cycles, which
+// would produce a plausible-looking but wrong ceiling.
 TEST(SlipOracleCsv, RejectsAnUnexpectedHeaderAMalformedRowAndAMissingFile) {
     {
         TempTree t("csv_hdr");
@@ -224,16 +223,16 @@ TEST(SlipOracleCsv, RejectsAnUnexpectedHeaderAMalformedRowAndAMissingFile) {
 // Window semantics
 // ===========================================================================
 
-// Both edges of the LATENCY window in one case, because they are one decision.
-// A slip stamped AT this epoch is un-absorbed (the detector is firing on it right
-// now) and must be applied; the lower edge is EXCLUSIVE, so a slip stamped
-// exactly window_s back is out.  The carry's last stash (302820) sits in the
-// middle of the window on purpose: it must NOT move either edge.
+// Both edges of the latency window in one case, because they are one decision.
+// A slip stamped at this epoch is un-absorbed (the detector is firing on it now)
+// and is applied; the lower edge is exclusive, so a slip stamped exactly window_s
+// back is out.  The carry's last stash (302820) sits in the middle of the window
+// on purpose: it moves neither edge.
 TEST(SlipOracleWindow, LatencyWindowIsExclusiveBelowAndInclusiveAtNow) {
     Harness h;
     ASSERT_DOUBLE_EQ(h.oracle.window_s, 90.0);   // three 30 s epochs
     h.addTruth(kSig1, 302760.0, 11);   // == now - window_s -> exclusive, out
-    h.addTruth(kSig1, 302790.0, 3);    // inside, and BEFORE carry.last_seen_s
+    h.addTruth(kSig1, 302790.0, 3);    // inside, and before carry.last_seen_s
     h.addTruth(kSig1, 302850.0, 5);    // == now            -> inclusive, in
     h.addTruth(kSig1, 302880.0, 99);   // future            -> out
 
@@ -245,24 +244,22 @@ TEST(SlipOracleWindow, LatencyWindowIsExclusiveBelowAndInclusiveAtNow) {
     EXPECT_EQ(h.oracle.multi, 1);
     EXPECT_NEAR(h.oracle.sum_abs_cyc, 8.0, 1e-12);
     EXPECT_EQ(h.oracle.seen, 1);
-    // The binding-term census: the latency edge is what held here.  It is the only
-    // instrument that separates "the window is too narrow" from "nothing jumped",
-    // which have opposite fixes and identical repaired/false-alarm counts.
+    // The binding-term census: the latency edge bound the window here.  It is the
+    // only instrument that separates "the window is too narrow" from "nothing
+    // jumped", which have opposite fixes and identical repaired/false-alarm counts.
     EXPECT_EQ(h.oracle.bound_window, 1);
     EXPECT_EQ(h.oracle.bound_birth, 0);
     EXPECT_EQ(h.oracle.bound_applied, 0);
 }
 
-// WARNING - THE REGRESSION.  Detectors fire LATE - MW must fill its window, IF-TD
-// needs a triple difference - so the normal population is a slip at t caught at
-// t+1..t+3, by which time the harvest has re-stashed the carry at t+1.  The stash
-// does NOT absorb the jump: the level is zero-q, so one epoch of phase barely
-// moves the stiff prior and the integer shift still restores it.  Bounding the
-// window at carry.last_seen_s instead of at the detector latency turned this
-// whole population into "false alarms" - 701 kept against 88 repaired on a
-// 60-epoch smoke - and the ceiling that arm reported was a badly biased lower
-// bound.  The window_s = 0 half pins the old behaviour so a re-introduction fails
-// here rather than in six hours of run time.
+// Regression case.  Detectors fire late (MW has to fill its window, IF-TD needs a
+// triple difference), so the normal population is a slip at t caught at t+1..t+3,
+// by which time the harvest has re-stashed the carry at t+1.  The stash does not
+// absorb the jump: the level is zero-q, so one epoch of phase barely moves the
+// stiff prior and the integer shift still restores it.  Bounding the window at
+// carry.last_seen_s instead of at the detector latency turns this whole
+// population into false alarms and biases the reported ceiling low.  The
+// window_s = 30 half reproduces that rule so a re-introduction fails here.
 TEST(SlipOracleWindow, LateDetectorRepairsTheSlipItFiredOnEvenAfterARestash) {
     {
         Harness h;                                          // default 90 s window
@@ -278,7 +275,7 @@ TEST(SlipOracleWindow, LateDetectorRepairsTheSlipItFiredOnEvenAfterARestash) {
     }
     {
         // window_s = 30 s puts the lower edge exactly at last_seen_s, so this half
-        // IS the pre-fix rule, evaluated by the post-fix code.
+        // evaluates the pre-fix rule with the current code.
         Harness h;
         h.oracle.window_s = 30.0;
         h.addCarry(kSig1, /*last_seen_s=*/kW + 302820.0);
@@ -292,13 +289,13 @@ TEST(SlipOracleWindow, LateDetectorRepairsTheSlipItFiredOnEvenAfterARestash) {
         EXPECT_EQ(h.oracle.fa_kept, 1);
     }
     {
-        // WARNING - 0 is NOT "same-epoch only".  The lower bound is exclusive, so
-        // window 0 collapses to (now, now] and admits nothing, including this
-        // epoch's own slip.  Pinned because a reader reaching for a pessimistic
-        // rung would otherwise arm a silently dead one.
+        // window_s = 0 does not mean "same epoch only".  The lower bound is
+        // exclusive, so window 0 collapses to (now, now] and admits nothing,
+        // including this epoch's own slip.  Checked here because a pessimistic
+        // setting of 0 would otherwise disable the oracle without any sign.
         Harness h;
         h.oracle.window_s = 0.0;
-        h.addTruth(kSig1, 302850.0, 5);                     // stamped AT this epoch
+        h.addTruth(kSig1, 302850.0, 5);                     // stamped at this epoch
         std::string detail; OracleOutcome oc{};
         ASSERT_TRUE(h.run(kSig1, 302850.0, detail, oc));
         EXPECT_EQ(oc, OracleOutcome::Kept);
@@ -306,13 +303,13 @@ TEST(SlipOracleWindow, LateDetectorRepairsTheSlipItFiredOnEvenAfterARestash) {
     }
 }
 
-// The HARD floor.  A T4 attribution erase deletes the carry entry; the next
-// harvest re-CREATES it from a solve whose level already contains every earlier
-// jump.  So a truth slip stamped before birth_s is absorbed by construction and
-// re-applying it would inject exactly the error this card exists to remove - even
-// though it sits well inside the latency window.  Two-sided: the same window's
-// POST-birth slip must still be repaired, so the floor TRIMS the window rather
-// than closing it.
+// The hard floor.  A T4 attribution erase deletes the carry entry; the next
+// harvest re-creates it from a solve whose level already contains every earlier
+// jump.  A truth slip stamped before birth_s is therefore absorbed by construction,
+// and re-applying it would inject the error this card is meant to remove, even
+// though it sits well inside the latency window.  Two-sided: a post-birth slip in
+// the same window is still repaired, so the floor trims the window instead of
+// closing it.
 TEST(SlipOracleWindow, SlipBeforeTheCarrysBirthIsAlreadyAbsorbed) {
     {
         Harness h;
@@ -340,16 +337,15 @@ TEST(SlipOracleWindow, SlipBeforeTheCarrysBirthIsAlreadyAbsorbed) {
         ASSERT_TRUE(h.run(kSig1, 302850.0, detail, oc));
         EXPECT_EQ(oc, OracleOutcome::Repaired);
         EXPECT_NEAR(h.c(kSig1).value_abs, 100.0 + 4.0 * h.lambda(kSig1), 1e-9);
-        EXPECT_EQ(h.oracle.multi, 0);       // ONE jump in the trimmed window
+        EXPECT_EQ(h.oracle.multi, 0);       // one jump in the trimmed window
         EXPECT_NE(detail.find("n=1"), std::string::npos) << detail;
     }
 }
 
-// Past the latency the detectors are capable of, an actuation is a genuine FALSE
-// ALARM: nothing in this stack looks 5 epochs back, so a jump that old is either
-// already absorbed or was never this arc's.  Keeping the level is the ceiling's
-// answer, and the un-repaired population must land in fa_kept rather than quietly
-// widening the window.
+// Beyond the detectors' latency, an actuation is a false alarm: nothing in this
+// stack looks 5 epochs back, so a jump that old is either already absorbed or not
+// this arc's.  Keeping the level is the ceiling's answer, and the un-repaired
+// population is counted in fa_kept instead of widening the window.
 TEST(SlipOracleWindow, SlipOlderThanTheLatencyWindowIsAFalseAlarm) {
     Harness h;
     h.addTruth(kSig1, 302700.0, 25);   // 5 epochs back; the window is 3
@@ -363,11 +359,10 @@ TEST(SlipOracleWindow, SlipOlderThanTheLatencyWindowIsAFalseAlarm) {
     EXPECT_EQ(detail, "delta=0;n=0;noise=0");
 }
 
-// Two detectors, one arc, one jump - on DIFFERENT epochs, both inside the 90 s
+// Two detectors, one arc, one jump, on different epochs, both inside the 90 s
 // window of the slip.  Only last_applied separates them (the latency bound still
-// admits the slip at the second firing), so this is the case that would DOUBLE the
-// shift if the ledger were dropped - and the run-end applied count would read
-// better for it.
+// admits the slip at the second firing), so without it the shift would be applied
+// twice, and the run-end applied count would look better for it.
 TEST(SlipOracleWindow, ASecondDetectorInTheSameWindowCannotDoubleApply) {
     Harness h;
     h.addTruth(kSig1, 302820.0, 9);
@@ -388,8 +383,8 @@ TEST(SlipOracleWindow, ASecondDetectorInTheSameWindowCannotDoubleApply) {
     EXPECT_EQ(h.oracle.bound_window, 1);         // the first
 }
 
-// Several jumps inside one window SUM - the level is a single scalar and the
-// repair must land the arc where truth put it, not where the first jump did.
+// Several jumps inside one window are summed: the level is a single scalar and the
+// repair puts the arc where truth put it, not where the first jump did.
 TEST(SlipOracleWindow, MultipleSlipsInsideTheWindowSumAndAreCountedAsMulti) {
     Harness h;
     h.addTruth(kSig1, 302790.0, 7);
@@ -407,10 +402,11 @@ TEST(SlipOracleWindow, MultipleSlipsInsideTheWindowSumAndAreCountedAsMulti) {
     EXPECT_NE(detail.find("delta=14"), std::string::npos) << detail;
 }
 
-// `last_applied` advances so a SECOND detector firing on the same arc in the
-// same (or the next) epoch cannot re-apply a jump the first already paid.
+// `last_applied` advances so a second detector firing on the same arc in the
+// same (or the next) epoch cannot re-apply a jump the first already applied.
 // Without it the two-detector case (MW and IF-TD both flagging one arc) would
-// double the shift — and the run-end `applied` count would look BETTER for it.
+// double the shift, and the run-end `applied` count would look better for it.
+// This case covers the same epoch.
 TEST(SlipOracleWindow, LastAppliedAdvancesSoASecondActuationCannotDoubleApply) {
     Harness h;
     h.addTruth(kSig1, 302850.0, 5);
@@ -420,7 +416,7 @@ TEST(SlipOracleWindow, LastAppliedAdvancesSoASecondActuationCannotDoubleApply) {
     ASSERT_EQ(o1, OracleOutcome::Repaired);
     const double after_first = h.c(kSig1).value_abs;
 
-    // Same epoch, second detector: the window is now empty -> false alarm KEEP.
+    // Same epoch, second detector: the window is now empty -> false-alarm keep.
     ASSERT_TRUE(h.run(kSig1, 302850.0, d2, o2));
     EXPECT_EQ(o2, OracleOutcome::Kept);
     EXPECT_DOUBLE_EQ(h.c(kSig1).value_abs, after_first);
@@ -430,16 +426,15 @@ TEST(SlipOracleWindow, LastAppliedAdvancesSoASecondActuationCannotDoubleApply) {
 }
 
 // ===========================================================================
-// Actuation bounds — what it must NOT touch
+// Actuation bounds: what the oracle leaves alone
 // ===========================================================================
 
-// The ceiling's premise is that a PERFECT repair costs no information, so the
-// level keeps its converged weight: `var` is unchanged by construction.  The
-// stash stamp is unchanged too (the harvest owns it), the sibling band is
-// untouched (a slip on L1C is a slip on L1C), and — the load-bearing one — the
-// arc is NOT freed: the hook returning true is the caller's instruction to skip
-// every freeing action, and a repair that ALSO freed would measure the current
-// response, not the ceiling.
+// The ceiling assumes a perfect repair costs no information, so the level keeps
+// its converged weight: `var` is unchanged by construction.  The stash stamp is
+// unchanged too (the harvest owns it), the sibling band is untouched (a slip on
+// L1C is a slip on L1C only), and, most important, the arc is not freed: the hook
+// returning true tells the caller to skip every freeing action, and a repair that
+// also freed would measure the current response, not the ceiling.
 TEST(SlipOracleActuate, ExactRepairLeavesEverythingButValueAbsAlone) {
     Harness h;
     h.addTruth(kSig1, 302850.0, -12);
@@ -455,15 +450,15 @@ TEST(SlipOracleActuate, ExactRepairLeavesEverythingButValueAbsAlone) {
     EXPECT_DOUBLE_EQ(h.c(kSig1).last_seen_s, seen0);     // the harvest owns this
     EXPECT_DOUBLE_EQ(h.c(kSig2).value_abs, sib0);        // per-signal, not per-sat
     EXPECT_NE(detail.find("noise=0.0000"), std::string::npos) << detail;
-    // The exact ceiling: the shift is an EXACT integer number of cycles.
+    // The exact ceiling: the shift is an exact integer number of cycles.
     const double cyc = (h.c(kSig1).value_abs - 100.0) / h.lambda(kSig1);
     EXPECT_NEAR(cyc, std::round(cyc), 1e-9);
 }
 
 // An arc with no carried level has nothing to preserve, so today's response is
-// already the right one and the hook must DECLINE (return false) rather than
-// swallow the actuation.  Counted separately: a large `no_carry` inside a run
-// with many actuations would say the vehicle is not what the card assumed.
+// already the right one and the hook declines (returns false) instead of
+// consuming the actuation.  Counted separately: a large `no_carry` in a run with
+// many actuations would mean the vehicle is not what the card assumed.
 TEST(SlipOracleActuate, NoCarryEntryFallsThroughToTodaysResponse) {
     Harness h;
     h.carry.clear();
@@ -473,12 +468,12 @@ TEST(SlipOracleActuate, NoCarryEntryFallsThroughToTodaysResponse) {
     EXPECT_EQ(oc, OracleOutcome::NotHandled);
     EXPECT_EQ(h.oracle.no_carry, 1);
     EXPECT_EQ(h.oracle.applied, 0);
-    EXPECT_EQ(h.oracle.fa_kept, 0);      // ⚠ NOT a false alarm — a different fact
+    EXPECT_EQ(h.oracle.fa_kept, 0);      // not a false alarm; counted as no_carry
     EXPECT_EQ(h.oracle.seen, 1);
 }
 
 // An unknown signal has no wavelength, so the shift cannot be formed.  It falls
-// through to today's response and is counted in its OWN bucket: rolling it into
+// through to today's response and is counted in its own bucket: rolling it into
 // `fa_kept` would report "truth says nothing slipped" for an arc the oracle
 // simply could not measure, and the closure would still balance.
 TEST(SlipOracleActuate, UnknownSignalIsCountedSeparatelyAndFallsThrough) {
@@ -507,13 +502,13 @@ TEST(SlipOracleActuate, UnknownSignalIsCountedSeparatelyAndFallsThrough) {
 }
 
 // ===========================================================================
-// The false-alarm policy — the two halves of the ceiling
+// The false-alarm policy: the two halves of the ceiling
 // ===========================================================================
 
-// `keep` IS the ceiling: an oracle knows the detector was wrong and leaves the
-// converged level exactly where it was, so the arm measures repair quality with
-// the false-alarm cost REMOVED.  `free` keeps that cost, which is what separates
-// "the repair is the lever" from "the false alarms are the lever".
+// `keep` is the ceiling: the oracle knows the detector was wrong and leaves the
+// converged level where it was, so the arm measures repair quality with the
+// false-alarm cost removed.  `free` keeps that cost, which separates "the repair
+// is the lever" from "the false alarms are the lever".
 TEST(SlipOracleFalseAlarm, KeepTouchesNothingAndFreeFallsThrough) {
     {
         Harness keep;                       // default policy
@@ -543,39 +538,39 @@ TEST(SlipOracleFalseAlarm, KeepTouchesNothingAndFreeFallsThrough) {
 }
 
 // ===========================================================================
-// The true-slip policy — the FALSE-ALARM ISOLATION arm
+// The true-slip policy: the false-alarm isolation arm
 // ===========================================================================
 
-// The isolation arm's whole contract, both halves in one case because they are
-// one decision: with `true_slip = Free` a REAL slip is declined (the caller runs
-// today's ordinary free/re-level for it, exactly as on the base arm) while a
-// FALSE ALARM is still kept.  The only thing that differs from the base arm is
-// therefore the false alarms — which is what makes their cost separable from the
-// true-slip re-level's.  ⚠ `applied` is 0 by construction here, so a run-end
-// inertness check that keys on it would fire on a correctly working arm; the
-// KEEP count is this policy's actuation counter.
+// The isolation arm's contract, both halves in one case because they are one
+// decision: with `true_slip = Free` a real slip is declined (the caller runs
+// today's ordinary free/re-level for it, as on the base arm) while a false alarm
+// is still kept.  The only difference from the base arm is therefore the false
+// alarms, which makes their cost separable from the true-slip re-level's.
+// `applied` is 0 by construction here, so a run-end inertness check keyed on it
+// would fire on a correctly working arm; the keep count is this policy's
+// actuation counter.
 TEST(SlipOracleTrueSlip, FreeDeclinesARealSlipAndStillKeepsTheFalseAlarm) {
     Harness h;
     h.oracle.true_slip = NetworkSlipOracle::TrueSlip::Free;
     ASSERT_EQ(h.oracle.false_alarm, NetworkSlipOracle::FalseAlarm::Keep);
-    h.addTruth(kSig1, 302850.0, 7);          // a REAL slip on band 1
+    h.addTruth(kSig1, 302850.0, 7);          // a real slip on band 1
     const double v1 = h.c(kSig1).value_abs;
     const double v2 = h.c(kSig2).value_abs;  // band 2 never jumped
 
-    {   // true slip -> DECLINED: the caller frees, the oracle wrote nothing
+    {   // true slip -> declined: the caller frees, the oracle wrote nothing
         std::string detail; OracleOutcome oc{};
         EXPECT_FALSE(h.run(kSig1, 302850.0, detail, oc));
         EXPECT_EQ(oc, OracleOutcome::NotHandled);
         EXPECT_DOUBLE_EQ(h.c(kSig1).value_abs, v1);
         EXPECT_EQ(h.oracle.true_slip_freed, 1);
         EXPECT_EQ(h.oracle.applied, 0);
-        EXPECT_EQ(h.oracle.fa_kept, 0);      // ⚠ NOT a false alarm — truth says it jumped
-        // The ledger must NOT advance: nothing was applied, so a second detector
-        // on this arc has to see the same window (and decline again).
+        EXPECT_EQ(h.oracle.fa_kept, 0);      // not a false alarm: truth says it jumped
+        // The ledger does not advance: nothing was applied, so a second detector
+        // on this arc sees the same window (and declines again).
         EXPECT_DOUBLE_EQ(h.oracle.arcs.at(std::make_tuple(0, std::string(kSat), kSig1))
                              .last_applied_s, -1.0e18);
     }
-    {   // false alarm -> KEPT, exactly as on the ceiling arm
+    {   // false alarm -> kept, as on the ceiling arm
         std::string detail; OracleOutcome oc{};
         EXPECT_TRUE(h.run(kSig2, 302850.0, detail, oc));
         EXPECT_EQ(oc, OracleOutcome::Kept);
@@ -588,8 +583,8 @@ TEST(SlipOracleTrueSlip, FreeDeclinesARealSlipAndStillKeepsTheFalseAlarm) {
                              + h.oracle.no_carry + h.oracle.no_lambda);
 }
 
-// `repair` is the DEFAULT and must be bit-for-bit today's behaviour — the knob
-// exists to add a second arm, not to change the one already measured.  Pinned on
+// `repair` is the default and reproduces the pre-knob behaviour bit for bit: the
+// knob adds a second arm and leaves the one already measured unchanged.  Checked on
 // the same slip the isolation case declines, so the two read as a pair.
 TEST(SlipOracleTrueSlip, RepairIsTheDefaultAndKeepsTodaysBehaviour) {
     Harness h;
@@ -604,8 +599,8 @@ TEST(SlipOracleTrueSlip, RepairIsTheDefaultAndKeepsTodaysBehaviour) {
 }
 
 // The fourth corner of the 2x2: both halves decline, so the oracle actuates on
-// NOTHING.  It is a legitimate byte-identity control for the hook itself, and it
-// must be a clean no-op rather than an accidental half-response.
+// nothing.  It serves as a byte-identity control for the hook itself, and it is a
+// clean no-op, not a partial response.
 TEST(SlipOracleTrueSlip, BothPoliciesFreeIsAPureNoOp) {
     Harness h;
     h.oracle.true_slip   = NetworkSlipOracle::TrueSlip::Free;
@@ -624,11 +619,11 @@ TEST(SlipOracleTrueSlip, BothPoliciesFreeIsAPureNoOp) {
     EXPECT_EQ(h.oracle.fa_kept, 0);
 }
 
-// A signal with no wavelength AND a truth slip lands in `true_slip_freed`, not
+// A signal with no wavelength and a truth slip lands in `true_slip_freed`, not
 // `no_lambda`: on this policy no shift is ever formed, so the wavelength is never
-// consulted and counting it as an unmeasurable arc would double-book the same
-// decline and break the closure.  The decision is identical either way — decline
-// — so the only thing at stake is which bucket the census reads.
+// consulted, and counting it as an unmeasurable arc would book the same decline
+// twice and break the closure.  The decision is a decline either way; only the
+// census bucket depends on the order.
 TEST(SlipOracleTrueSlip, FreeDeclinesBeforeTheWavelengthLookup) {
     Harness h;
     h.oracle.true_slip = NetworkSlipOracle::TrueSlip::Free;
@@ -646,15 +641,15 @@ TEST(SlipOracleTrueSlip, FreeDeclinesBeforeTheWavelengthLookup) {
 }
 
 // ===========================================================================
-// The false-alarm TIER split
+// The false-alarm tier split
 // ===========================================================================
 
-// A false-alarm-isolation arm that reports one lump number cannot say WHICH
-// detector's thresholds to look at, and the four sites have four unrelated
-// statistics.  The tier bit is the site's own `kCause*`, it steers ONLY the
-// attribution (never a decision), and the split must close on `fa_kept` with an
-// empty `other` — a nonzero `other` is a call site passing a bit this split does
-// not name, i.e. a detector whose false alarms are attributed to nothing.
+// A false-alarm isolation arm that reports one total cannot say which detector's
+// thresholds to examine, and the four sites use four unrelated statistics.  The
+// tier bit is the site's own `kCause*`; it steers only the attribution (never a
+// decision), and the split closes on `fa_kept` with an empty `other`.  A nonzero
+// `other` means a call site passes a bit this split does not name, i.e. a detector
+// whose false alarms are attributed to nothing.
 TEST(SlipOracleTier, FalseAlarmKeepsAttributeToTheCallingDetectorAndClose) {
     Harness h;
     std::string detail; OracleOutcome oc{};
@@ -677,10 +672,10 @@ TEST(SlipOracleTier, FalseAlarmKeepsAttributeToTheCallingDetectorAndClose) {
                                 + h.oracle.fa_kept_other);
 }
 
-// The tier must not reach any DECISION: a REPAIRED arc and a `free`-policy
-// decline are attributed to nothing at all, so the split counts keeps and only
-// keeps.  (An unrecognised bit is the mis-wiring case, and it must be visible
-// rather than folded into one of the four.)
+// The tier does not reach any decision: a repaired arc and a `free`-policy
+// decline are attributed to nothing at all, so the split counts keeps only.  (An
+// unrecognised bit is the mis-wiring case; it is counted in `other`, not folded
+// into one of the four.)
 TEST(SlipOracleTier, OnlyKeepsAreAttributedAndAnUnknownBitIsVisible) {
     {
         Harness h;
@@ -715,9 +710,9 @@ TEST(SlipOracleTier, OnlyKeepsAreAttributedAndAnUnknownBitIsVisible) {
 // ===========================================================================
 
 // The ladder answers "how good does an integer estimate have to be?", so its
-// draws must be REPRODUCIBLE — a re-executed run, or two detectors hitting one
-// arc in one epoch, must see the same perturbation.  Determinism is the whole
-// contract; the distribution is not under test.
+// draws are reproducible: a re-executed run, or two detectors hitting one arc in
+// one epoch, sees the same perturbation.  Determinism is the contract under test;
+// the distribution is not.
 TEST(SlipOracleNoise, IsDeterministicPerKeyAndVariesAcrossKeys) {
     const double a1 = networkSlipOracleNoise(0.05, 0, kSat, kSig1, kW + 302850.0);
     const double a2 = networkSlipOracleNoise(0.05, 0, kSat, kSig1, kW + 302850.0);
@@ -726,12 +721,12 @@ TEST(SlipOracleNoise, IsDeterministicPerKeyAndVariesAcrossKeys) {
     EXPECT_NE(a1, networkSlipOracleNoise(0.05, 0, kSat, kSig2, kW + 302850.0));
     EXPECT_NE(a1, networkSlipOracleNoise(0.05, 0, "G23", kSig1, kW + 302850.0));
     EXPECT_NE(a1, networkSlipOracleNoise(0.05, 0, kSat, kSig1, kW + 302880.0));
-    // sigma 0 is the EXACT ceiling and must be exactly 0, not a tiny draw.
+    // sigma 0 is the exact ceiling and returns exactly 0, not a tiny draw.
     EXPECT_DOUBLE_EQ(networkSlipOracleNoise(0.0, 0, kSat, kSig1, kW + 302850.0), 0.0);
 }
 
 // …and the applied shift carries it, so a laddered arm is a different but
-// reproducible number rather than a different RUN.
+// reproducible number, not a different run.
 TEST(SlipOracleNoise, PerturbsTheAppliedShiftReproducibly) {
     const double expect_noise =
         networkSlipOracleNoise(0.05, 0, kSat, kSig1, kW + 302850.0);
@@ -746,8 +741,8 @@ TEST(SlipOracleNoise, PerturbsTheAppliedShiftReproducibly) {
         ASSERT_TRUE(h.run(kSig1, 302850.0, detail, oc));
         EXPECT_NEAR(h.c(kSig1).value_abs,
                     100.0 + (5.0 + expect_noise) * h.lambda(kSig1), 1e-9);
-        // sum_abs_cyc records the TRUTH magnitude, not the perturbed one — the
-        // counter must describe the population, not the injection.
+        // sum_abs_cyc records the truth magnitude, not the perturbed one: the
+        // counter describes the population, not the injection.
         EXPECT_NEAR(h.oracle.sum_abs_cyc, 5.0, 1e-12);
         if (pass == 0) first = h.c(kSig1).value_abs;
         else EXPECT_DOUBLE_EQ(h.c(kSig1).value_abs, first);
@@ -755,7 +750,7 @@ TEST(SlipOracleNoise, PerturbsTheAppliedShiftReproducibly) {
 }
 
 // ===========================================================================
-// Load-time contract — the field-inertness mechanism
+// Load-time contract: the field-inertness mechanism
 // ===========================================================================
 
 /// A minimal loadable PPP-RTK network config; @p extra splices into the network
@@ -798,11 +793,10 @@ std::string oracleArm(const std::string& root, const std::string& extra = {}) {
          + "    },\n";
 }
 
-// A sim fixture writes one truth file PER station, so a station without one
-// means the root is mis-pointed (or the roster is not this fixture's).  Silently
-// running a partial repair would produce a ceiling that is neither the current
-// response nor the perfect one — the one outcome that cannot be interpreted.
-// Hard error.
+// A sim fixture writes one truth file per station, so a station without one
+// means the root is mis-pointed (or the roster is not this fixture's).  A partial
+// repair would produce a ceiling that is neither the current response nor the
+// perfect one, which cannot be interpreted, so this is a hard error.
 TEST(SlipOracleLoad, MissingStationTruthFileIsAHardErrorAndTheRosterIndexesTheTable) {
     TempTree t("load");
     t.writeStation("S01000SIM", "2313,302820.000,G19,L1C,48,1,11.50\n");
@@ -820,7 +814,7 @@ TEST(SlipOracleLoad, MissingStationTruthFileIsAHardErrorAndTheRosterIndexesTheTa
     EXPECT_THROW(networkSlipOracleLoad(cfg, stations, lm, log), std::runtime_error);
 
     // …and with the roster trimmed to what the fixture actually has, it loads and
-    // indexes by STATION INDEX (the local_carry key's first element).
+    // indexes by station index (the local_carry key's first element).
     stations.pop_back();
     auto oracle = networkSlipOracleLoad(cfg, stations, lm, log);
     ASSERT_TRUE(oracle);
@@ -840,11 +834,11 @@ TEST(SlipOracleLoad, MissingStationTruthFileIsAHardErrorAndTheRosterIndexesTheTa
 // Interlocks (loader-side)
 // ===========================================================================
 
-// The oracle writes LocalCarry::value_abs, so it is INERT without the leveling
-// carry and structurally empty under carry_invariant.  Both DISARM (not
+// The oracle writes LocalCarry::value_abs, so it is inert without the leveling
+// carry and structurally empty under carry_invariant.  Both cases disarm it (not
 // warn-only): a ceiling measured on a vehicle the mechanism cannot actuate would
-// read as a falsification of level preservation, which is a wrong scientific
-// verdict rather than a partial one.
+// read as a falsification of level preservation, a wrong verdict rather than a
+// partial one.
 TEST(SlipOracleInterlock, DisarmedWithoutPhaseLevelingAndUnderCarryInvariant) {
     TempTree t("interlock");
     t.writeStation("S01000SIM", "2313,302820.000,G19,L1C,48,1,11.50\n");
@@ -866,10 +860,10 @@ TEST(SlipOracleInterlock, DisarmedWithoutPhaseLevelingAndUnderCarryInvariant) {
         EXPECT_FALSE(cfg.getNetworkConfig().slip_qc.oracle_relevel);
     }
     {   // The DD invariant vehicle: the leveling carry is superseded and
-        // structurally empty there.  Spelled the way a carry_invariant lineage
-        // actually is — phase_leveling OFF and the eq34 chain datum on (the
-        // loader REFUSES carry_invariant without it) — because the disarm must
-        // hold on the real posture, not a synthetic both-vehicles-on one.
+        // structurally empty there.  Configured as a carry_invariant lineage is
+        // (phase_leveling off and the eq34 chain datum on; the loader refuses
+        // carry_invariant without it), because the disarm has to hold on the real
+        // configuration, not a synthetic one with both vehicles on.
         GnssConfig cfg;
         std::string arm = oracleArm(root);
         const auto pos = arm.find("\"phase_leveling\": true");
@@ -883,11 +877,12 @@ TEST(SlipOracleInterlock, DisarmedWithoutPhaseLevelingAndUnderCarryInvariant) {
     }
 }
 
-// The loader's hard errors.  A root that does not exist IS the field-inertness
+// The loader's hard errors.  A root that does not exist is the field-inertness
 // mechanism (a field lineage has no truth file); an unrecognised false-alarm
-// policy is a typo that would silently fall back to `keep` and mislabel a whole
-// arm.  Both surface as a REFUSED load — GnssConfig::loadFromJson catches and
-// returns false, and Application treats that as fatal.
+// policy is a typo that would otherwise fall back to `keep` and mislabel a whole
+// arm; a negative noise sigma is refused too.  Each surfaces as a refused load:
+// GnssConfig::loadFromJson catches and returns false, and Application treats that
+// as fatal.
 TEST(SlipOracleInterlock, LoaderRefusesAMissingRootABadPolicyAndNegativeNoise) {
     TempTree t("loader_err");
     t.writeStation("S01000SIM", "2313,302820.000,G19,L1C,48,1,11.50\n");
@@ -907,7 +902,7 @@ TEST(SlipOracleInterlock, LoaderRefusesAMissingRootABadPolicyAndNegativeNoise) {
         EXPECT_FALSE(loadInto("err_noise",
                               oracleArm(root, "      \"oracle_noise_cyc\": -1.0\n"), cfg));
     }
-    // `free` is the other legal policy and must survive.
+    // `free` is the other legal policy and loads.
     {
         GnssConfig cfg;
         ASSERT_TRUE(loadInto("ok_free",
@@ -915,10 +910,9 @@ TEST(SlipOracleInterlock, LoaderRefusesAMissingRootABadPolicyAndNegativeNoise) {
                              cfg));
         EXPECT_EQ(cfg.getNetworkConfig().slip_qc.oracle_false_alarm, "free");
     }
-    // …and the same contract on the OTHER half of the 2x2.  A typo here would
-    // silently fall back to `repair` and the arm would report the CEILING while
-    // its author read it as the false-alarm isolation — the two verdicts point at
-    // different cards, so the mislabel is not survivable.
+    // …and the same contract on the other half of the 2x2.  A typo here would
+    // fall back to `repair`, and the arm would report the ceiling while being read
+    // as the false-alarm isolation; the two verdicts point at different cards.
     {
         GnssConfig cfg;
         EXPECT_FALSE(loadInto("err_ts",
@@ -932,7 +926,7 @@ TEST(SlipOracleInterlock, LoaderRefusesAMissingRootABadPolicyAndNegativeNoise) {
                              cfg));
         EXPECT_EQ(cfg.getNetworkConfig().slip_qc.oracle_true_slip, "free");
     }
-    {   // the isolation arm's exact spelling, and the NO-OP corner: both legal
+    {   // the isolation arm's exact spelling, and the no-op corner: both legal
         GnssConfig cfg;
         ASSERT_TRUE(loadInto("ok_noop",
                              oracleArm(root, "      \"oracle_true_slip\": \"free\",\n"
@@ -941,8 +935,8 @@ TEST(SlipOracleInterlock, LoaderRefusesAMissingRootABadPolicyAndNegativeNoise) {
         EXPECT_EQ(cfg.getNetworkConfig().slip_qc.oracle_true_slip, "free");
         EXPECT_EQ(cfg.getNetworkConfig().slip_qc.oracle_false_alarm, "free");
     }
-    // Default OFF: the knob absent leaves it off with no root required at all —
-    // the byte-identity precondition (standing invariant #6).
+    // Default off: with the knob absent it stays off and no root is required,
+    // which is the byte-identity precondition (standing invariant #6).
     {
         GnssConfig cfg;
         ASSERT_TRUE(loadInto("off", "    \"phase_leveling\": true,\n", cfg));
@@ -956,10 +950,10 @@ TEST(SlipOracleInterlock, LoaderRefusesAMissingRootABadPolicyAndNegativeNoise) {
     }
 }
 
-// …and the knob must REACH the run object, not just survive the load: the
-// policy is read once at construction, so a loader that parses it into the
-// config and never hands it over would run the CEILING while the manifest,
-// the summary line and the run-end clause all said `free`.
+// …and the knob reaches the run object, not just the loaded config: the policy
+// is read once at construction, so a loader that parsed it into the config and
+// never handed it over would run the ceiling while the manifest, the summary
+// line and the run-end clause all said `free`.
 TEST(SlipOracleTrueSlip, TheKnobReachesTheRunObject) {
     TempTree t("ts_run");
     t.writeStation("S01000SIM", "2313,302820.000,G19,L1C,48,1,11.50\n");
@@ -987,12 +981,13 @@ TEST(SlipOracleTrueSlip, TheKnobReachesTheRunObject) {
     }
 }
 
-// The detector-latency window is the knob the repaired/false-alarm SPLIT is most
-// sensitive to, so its default is pinned here rather than left to the struct: 90 s
-// is three 30 s epochs, the latency the truth census calls DETECTED.  Unlike the
-// noise sigma it is CLAMPED rather than refused - 0 (same-epoch only) is a
-// legitimate pessimistic rung of the ladder, so a negative value has exactly one
-// sensible reading and refusing the load would cost an arm for a typo.
+// The detector-latency window is the knob the repaired/false-alarm split is most
+// sensitive to, so its default is checked here instead of being left to the
+// struct: 90 s is three 30 s epochs, the latency the truth census counts as
+// detected.  Unlike the noise sigma it is clamped, not refused: 0 is a legal
+// setting (because the lower bound is exclusive, it admits no truth slip at all;
+// see LateDetectorRepairsTheSlipItFiredOnEvenAfterARestash), so a negative value
+// has one sensible reading and refusing the load would cost an arm for a typo.
 TEST(SlipOracleInterlock, WindowKnobDefaultsToNinetySecondsAndClampsNegative) {
     TempTree t("window");
     t.writeStation("S01000SIM", "2313,302820.000,G19,L1C,48,1,11.50\n");
@@ -1008,13 +1003,13 @@ TEST(SlipOracleInterlock, WindowKnobDefaultsToNinetySecondsAndClampsNegative) {
                              oracleArm(root, "      \"oracle_window_s\": 150.0\n"), cfg));
         EXPECT_DOUBLE_EQ(cfg.getNetworkConfig().slip_qc.oracle_window_s, 150.0);
     }
-    {   // 0 is the same-epoch-only rung, not an error
+    {   // 0 is legal (it admits no slip), not an error
         GnssConfig cfg;
         ASSERT_TRUE(loadInto("w_zero",
                              oracleArm(root, "      \"oracle_window_s\": 0.0\n"), cfg));
         EXPECT_DOUBLE_EQ(cfg.getNetworkConfig().slip_qc.oracle_window_s, 0.0);
     }
-    {   // negative -> warn and CLAMP, load still succeeds
+    {   // negative -> warn and clamp to 0; the load still succeeds
         GnssConfig cfg;
         ASSERT_TRUE(loadInto("w_neg",
                              oracleArm(root, "      \"oracle_window_s\": -30.0\n"), cfg));

@@ -12,9 +12,9 @@
  * @code
  *   [Sync 0x24 0x40] [CRC u16] [ID u16] [Length u16] [body ...]
  * @endcode
- * Length is the TOTAL block size in bytes INCLUDING the 8-byte header and is
+ * Length is the total block size in bytes, including the 8-byte header, and is
  * always a multiple of 4.  The CRC-16/CCITT-XMODEM (poly 0x1021, init 0x0000,
- * no reflection, no final XOR) covers bytes [offset 4 .. Length-1] — i.e.
+ * no reflection, no final XOR) covers bytes [offset 4 .. Length-1], that is,
  * everything after the 2 CRC bytes (ID + Length + body).
  */
 
@@ -54,7 +54,7 @@ public:
     uint64_t bytesDiscarded() const { return bytes_discarded_; }
 
 private:
-    /// CRC-16/CCITT-XMODEM (poly 0x1021, init 0x0000) over [data, data+len).
+    /// Computes the CRC-16/CCITT-XMODEM (poly 0x1021, init 0x0000) over [data, data+len).
     static uint16_t crc16Xmodem(const uint8_t* data, std::size_t len);
 
     static constexpr std::size_t kMaxBlock = 65532;  // max u16 length, multiple of 4

@@ -3,8 +3,8 @@
  * @brief NTRIP v2 client for receiving RTCM correction streams.
  *
  * Connects to an NTRIP caster over HTTP or HTTPS and provides a blocking
- * byte-read interface that the RTCM stream reader can consume.  Uses libcurl
- * (already linked) for the HTTP(S) transport layer.
+ * byte-read interface for the RTCM stream reader.  The HTTP(S) transport is
+ * libcurl, which the project already links.
  */
 #pragma once
 
@@ -30,29 +30,28 @@ struct NtripConfig {
     std::string username;               ///< NTRIP username (empty for anonymous).
     std::string password;               ///< NTRIP password.
     /// Optional NMEA GGA sentence for VRS / nearest-station mountpoints.
-    /// Sent as the NTRIP rev2 @c "Ntrip-GGA:" REQUEST HEADER on the GET
-    /// (RTB-2(e)).  The previous implementation put it in
-    /// @c CURLOPT_POSTFIELDS, which silently turned the request into a POST —
-    /// wrong for fixed-station rev2 casters and not the rev2 GGA mechanism
-    /// either.  NTRIP rev1-style IN-STREAM GGA upload (writing sentences into
-    /// the open connection, as some legacy VRS casters expect) is NOT
-    /// supported by this client.
+    /// Sent as the NTRIP rev2 @c "Ntrip-GGA:" request header on the GET
+    /// (RTB-2(e)).  It is not sent through @c CURLOPT_POSTFIELDS, which would turn
+    /// the request into a POST; that is wrong for fixed-station rev2 casters and is
+    /// not the rev2 GGA mechanism.  NTRIP rev1-style in-stream GGA upload (writing
+    /// sentences into the open connection, as some legacy VRS casters expect) is
+    /// not supported by this client.
     std::string nmea_gga;
     /// Base seconds to wait before reconnecting on failure.  A uniform 0-2 s
-    /// jitter is ADDED per attempt (RTB-2(b)) so N clients dropped by one
-    /// caster outage don't re-dial the recovering caster in lockstep.
+    /// jitter is added per attempt (RTB-2(b)) so that N clients dropped by one
+    /// caster outage do not re-dial the recovering caster in lockstep.
     int         reconnect_delay_s{ 5 };
     bool        use_tls{ false };       ///< Connect over HTTPS (curl SSL) instead of plain HTTP.  Required for port-443 casters (e.g. CDDIS).  Default false keeps plain-HTTP casters (igs-ip.net, SBF replay) byte-identical.
-    bool        tls_insecure{ false };  ///< When @c use_tls, disable peer/host certificate verification (CURLOPT_SSL_VERIFYPEER/VERIFYHOST → 0).  Testing only — against self-signed or mis-chained casters; default verifies the chain.
+    bool        tls_insecure{ false };  ///< When @c use_tls, disable peer/host certificate verification (CURLOPT_SSL_VERIFYPEER/VERIFYHOST → 0).  For testing against self-signed or mis-chained casters only; the default verifies the chain.
 };
 
 /**
  * @brief NTRIP v2 client that receives a continuous RTCM byte stream.
  *
- * Internally runs a background thread that keeps the HTTP connection
- * alive and pushes received bytes into a thread-safe ring buffer.
- * The public read() method blocks until the requested number of bytes
- * is available (or the connection is stopped).
+ * A background thread keeps the HTTP connection alive and appends received bytes
+ * to a mutex-protected FIFO buffer capped at 4 MB (the oldest bytes are dropped
+ * on overflow).  The public read() method blocks until at least one byte is
+ * available or the client is stopped.
  */
 class NtripClient {
 public:
@@ -65,12 +64,13 @@ public:
     /// Stop the background thread and close the connection.
     void stop();
 
-    /// True while the background thread is running and the connection is live.
+    /// True while a transfer attempt is in progress.  The flag is set just before
+    /// the transfer starts, so it also covers the connect phase.
     bool isConnected() const { return connected_.load(); }
 
-    /// True from start() until stop() — the client's intent-to-run, independent
-    /// of momentary connection state.  Used by the realtime poll loop so a
-    /// not-yet-established or transiently-dropped stream stays "active".
+    /// True from start() until stop(): the client's intent to run, independent of
+    /// the momentary connection state.  The realtime poll loop uses it so that a
+    /// stream not yet established or transiently dropped stays "active".
     bool isRunning() const { return running_.load(); }
 
     /**
@@ -85,17 +85,17 @@ public:
     size_t read(std::vector<uint8_t>& out, size_t max_bytes);
 
     /**
-     * @brief Non-blocking read with a millisecond timeout.
+     * @brief Read with a bounded wait of @p timeout_ms milliseconds.
      *
-     * Used by the multi-stream realtime loop, where blocking on one
-     * stream would starve the other.  Waits up to @p timeout_ms for
-     * data to arrive; returns 0 on timeout, on stop, or when no data
-     * is buffered after the wait.
+     * Used by the multi-stream realtime loop, where blocking on one stream would
+     * starve the other.  Waits up to @p timeout_ms for data to arrive (no wait when
+     * @p timeout_ms <= 0); returns 0 on timeout, on stop, or when no data is
+     * buffered after the wait.
      */
     size_t tryRead(std::vector<uint8_t>& out, size_t max_bytes, int timeout_ms);
 
 private:
-    /// libcurl write-callback feeds bytes into the ring buffer.
+    /// libcurl write callback: appends bytes to the buffer.
     static size_t curlWriteCallback(void* data, size_t size, size_t nmemb, void* userp);
 
     /// Background thread entry point.
@@ -104,10 +104,10 @@ private:
     /**
      * @brief Next reconnect back-off in milliseconds (RTB-2(b)).
      *
-     * @c reconnect_delay_s × 1000 plus a uniform 0-2000 ms jitter drawn from
-     * a per-client @c std::mt19937 (seeded from @c std::random_device at
-     * construction), so multiple streams dropped by a single caster outage
-     * spread their re-dials instead of hammering the recovering caster in
+     * @c reconnect_delay_s × 1000 plus a uniform 0-2000 ms jitter drawn from a
+     * per-client @c std::mt19937 (seeded from @c std::random_device at
+     * construction), so that several streams dropped by a single caster outage
+     * spread their re-dials instead of reconnecting to the recovering caster in
      * lockstep.  Called only on the receive thread.
      */
     int reconnectDelayMs();

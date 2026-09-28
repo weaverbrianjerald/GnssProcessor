@@ -4,7 +4,7 @@
 Usage:  python scripts/count_disc_bumps.py <run_dir> [<run_dir2> ...]
 
 For each run dir, prints per-epoch disc bumps split by kind (PB/CB/...) plus the
-run total — the wire-side PB-churn metric used in the Jul-2026 dev300s campaign
+run total: the wire-side PB-churn metric used in the Jul-2026 dev300s campaign
 (baseline: hand-tuned v1 arm ~10 PB/ep ref-path-only at 300 s; pre-fix ~180/ep).
 """
 import csv

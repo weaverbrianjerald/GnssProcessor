@@ -4,13 +4,11 @@
  * @file RobustStats.hpp
  * @brief Robust order-statistics shared across the cycle-slip detectors.
  *
- * The median and the median-absolute-deviation (MAD) Gaussian-equivalent sigma
- * were independently re-implemented in every slip detector (MW, GF, EWL,
- * GRAPHIC, GRAPHIC's IVI, the ionosphere-variability monitor) and in the
- * IF-phase median helper.  The arithmetic was byte-for-byte identical; only the
- * container type and the per-call-site minimum-sample guard differed.  This
- * header holds the single canonical implementation; each detector keeps its own
- * sample-count guard and sentinel at the call site and delegates the math here.
+ * Single implementation of the median and of the median-absolute-deviation (MAD)
+ * Gaussian-equivalent sigma, used by the slip detectors (MW, GF, EWL, GRAPHIC,
+ * the ionosphere-variability monitor), the IF-phase median helper and
+ * TurboEditResolver.  Each caller keeps its own minimum-sample guard and
+ * sentinel value; only the arithmetic lives here.
  *
  * Both functions take a range (or any container exposing std::begin/std::end),
  * copy it into a scratch buffer, and leave the source unmodified.

@@ -5,15 +5,15 @@
  * @brief Plain-data records for orbit, clock, antenna, bias, ERP, ocean tide, and Sun ephemeris products.
  *
  * Read by @c ProductParser, cached by @c ProductCache, consumed by
- * @c PppModel and @c GnssCorrections.  No behavior — just the shapes
- * the product loaders fill in and the model layers query.  Each type
- * carries enough metadata (timestamp, validity window where applicable)
- * for the cache to interpolate or look up by epoch.
+ * @c PppModel and @c GnssCorrections.  No behavior: only the shapes the
+ * product loaders fill in and the model layers query.  Each type carries
+ * enough metadata (timestamp, validity window where applicable) for the
+ * cache to interpolate or look up by epoch.
  *
  * @c ClockRefSignals + @c ClockRefMap describe the per-system
  * iono-free reference signal pair that satellite clocks are estimated
- * against; the BIA file's DESCRIPTION block populates this so the
- * uncombined PPP-RTK measurement model can compute the right GF-IF
+ * against.  The BIA file's DESCRIPTION block populates them so the
+ * uncombined PPP-RTK measurement model can compute the GF-IF
  * coefficients per signal.
  */
 
@@ -28,7 +28,7 @@ namespace GnssProcessor {
     /**
      * @brief Satellite orbit solution (position and velocity) at a time.
      *
-     * Used to hold ephemeris/precise orbit outputs or propagation results.
+     * Holds ephemeris or precise-orbit outputs, or propagation results.
      */
     struct OrbitData {
         std::string satellite;                       /**< Satellite identifier */
@@ -104,30 +104,30 @@ namespace GnssProcessor {
     };
 
     /**
-     * @brief RECEIVER bias entry from a SINEX_BIAS file (OSB or DSB record with a
+     * @brief Receiver bias entry from a SINEX_BIAS file (OSB or DSB record with a
      *        non-empty STATION field).
      *
-     * Item 0b of the EXT-CB ladder (docs/SPEC_level_information_budget.md §17):
-     * external receiver DCBs are the ladder's final rung — the only soft-bias
-     * absorber the network cannot self-determine — and the 2026-08-08 12 h S2H
-     * verdict measured the a₀₀ anchor's authority insufficient in BOTH carry
-     * postures, promoting this record class from "known-latent parser gap" to
-     * the level endpoint's blocker.  The parser previously SKIPPED every
-     * station-bearing line silently (satellite-only by construction): COD MGX
-     * OSB carries 6797 of them on DOY-129 (4-char stations, 1-char PRN field —
-     * note COD's GPS receiver OSBs are 0.0000 by convention, their receiver
-     * group delay lives in the receiver clock), and the CAS MGEX DCB product
-     * publishes the NONZERO receiver DCBs as DSB records.
+     * External receiver DCBs are the final rung of the EXT-CB ladder (item 0b,
+     * docs/SPEC_level_information_budget.md §17): they are the one soft-bias
+     * absorber the network cannot determine by itself, and the S2H verdict found
+     * the a₀₀ anchor's authority insufficient in both carry postures, which makes
+     * this record class the blocker for the level endpoint.  The parser keeps
+     * every station-bearing line instead of skipping it.  COD MGX OSB files carry
+     * such lines with 4-char stations and a 1-char PRN field; COD's GPS receiver
+     * OSBs are 0.0000 by convention, because their receiver group delay lives in
+     * the receiver clock.  The CAS MGEX DCB product publishes the nonzero receiver
+     * DCBs as DSB records.
      *
-     * Parsed and stored only — NOTHING consumes these yet.  The estimation rung
-     * (pinning receiver DCB states to product values) is its own default-OFF
-     * card with its own A/B, gated on the CAS product being on disk.
+     * The records are parsed and stored only; nothing consumes them yet.  The
+     * estimation rung (pinning receiver DCB states to product values) is a
+     * separate default-off card with its own A/B, gated on the CAS product being
+     * on disk.
      */
     struct ReceiverBiasData {
         std::string station;                         /**< Receiver/station id as written (4-char COD MGX, up to 9-char SINEX). */
-        char        constellation{ '?' };            /**< System char from the record's PRN/SVN field ('G','E','R','C','J','?'). */
+        char        constellation{ '?' };            /**< System char from the record's PRN field, else its SVN field, else '?' ('G','E','R','C','J','?'). */
         std::string signal;                          /**< First (or only, for OSB) observation code, e.g. "C1C". */
-        std::string signal2;                         /**< Second observation code — non-empty iff this is a DSB (bias = signal − signal2). */
+        std::string signal2;                         /**< Second observation code; non-empty iff this is a DSB (bias = signal − signal2). */
         double      bias{ 0.0 };                     /**< Bias in meters (converted from ns like the satellite path). */
         double      std_dev{ 0.0 };                  /**< Standard deviation in meters. */
         GnssTime    start_time;                      /**< Validity interval start */
@@ -141,7 +141,7 @@ namespace GnssProcessor {
      * The satellite clock for each GNSS system is estimated from an ionosphere-free
      * combination of two specific code signals (e.g. C1W+C2W for GPS).  In uncombined
      * PPP-RTK mode the receiver hardware delay for each signal relative to this IF
-     * combination must be parameterised using geometry-free ionosphere-free (GF-IF)
+     * combination is parameterised using geometry-free ionosphere-free (GF-IF)
      * coefficients.  This struct stores the two reference signal codes so the
      * measurement model can compute the correct coefficients.
      */

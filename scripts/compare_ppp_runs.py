@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""compare_ppp_runs.py -- put two single-receiver PPP runs side by side.
+"""compare_ppp_runs.py: put two single-receiver PPP runs side by side.
 
 Reads ``state_trace.csv`` from two ``logs`` folders (run A = baseline, run B =
-your change) and prints, for each run:
+the candidate change) and prints, for each run:
 
   * East / North / Up RMS about a common reference position,
   * the convergence time: first time after which the 3-D error stays below a
@@ -11,8 +11,8 @@ your change) and prints, for each run:
 
 The reference position is, in order of preference, ``--ref X Y Z`` (ECEF metres,
 e.g. from an IGS SINEX) or the median of run A over its last ``--tail-hours``
-hours.  With the second choice the numbers measure PRECISION and CONVERGENCE, not
-absolute accuracy -- say so when you quote them.
+hours.  With the second choice the numbers measure precision and convergence, not
+absolute accuracy, and should be reported as such.
 
 Usage (from the repository root)::
 

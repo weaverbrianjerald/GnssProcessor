@@ -1,24 +1,25 @@
-"""Network per-epoch disposition timeline -- the QC "verdict" per epoch.
+"""Network per-epoch disposition timeline: the QC verdict per epoch.
 
-Reads ``network_epoch_status.csv`` (the PPP-RTK NETWORK producer's L1 trace: ONE
-row per processed epoch, emitted OR skipped) and lays out three x-linked axes
-that together answer "what did the network do this epoch, and why?":
+Reads ``network_epoch_status.csv`` (the PPP-RTK network producer's per-epoch
+trace: one row per processed epoch, whether emitted or skipped) and lays out
+three x-linked axes that together answer "what did the network do this epoch,
+and why?":
 
-  1. **Disposition lanes** -- a categorical scatter placing each epoch in one of
+  1. **Disposition lanes**: a categorical scatter placing each epoch in one of
      six fixed lanes (``emitted`` / ``gate_withheld`` / ``sigma0_withheld`` /
      ``solve_failed`` / ``datum_failed`` / ``sync_skip``) with a fixed palette
-     (emitted green, sigma0 red, gate grey, failures black).  A vertical line
+     (emitted green, sigma0 red, gate grey, failures black). A vertical line
      marks every epoch where the clock datum changed (``datum_changed == 1``).
-  2. **Robust variance factor** -- the post-adaptation σ̂0 line (blank/NaN at
+  2. **Robust variance factor**: the post-adaptation σ̂0 line (blank/NaN at
      non-emitted dispositions, never plotted as zero), with the config-echoed
      trigger (dashed) and withhold ceiling (solid) horizontal lines, plus
      scatter overlays on epochs that refloated a satellite or applied a retro
      ambiguity bump.
-  3. **Clock stats** -- the estimable satellite-clock median with a ±std band
+  3. **Clock stats**: the estimable satellite-clock median with a ±std band
      and the worst-satellite deviation, the headline product-stability trace.
 
-A plateau heuristic in the summary compares the last-third vs first-third median
-``clock_std_m`` over EMITTED epochs; a ratio > 2 raises an advisory
+A plateau heuristic in the summary compares the last-third and first-third
+median ``clock_std_m`` over emitted epochs; a ratio above 2 raises an advisory
 "LOCK-IN SUSPECTED" note (a lock-in freezes the spread instead of shrinking it).
 """
 
@@ -30,8 +31,8 @@ from ..figures import Axes, Band, Figure, HLine, Legend, Line, Scatter, VLine
 from ..io import add_utc, load_trace, require_cols
 from .base import Viewer, ViewerResult, ViewerSkip
 
-# The six dispositions the producer emits, in lane order (bottom -> top), each
-# with a FIXED colour: emitted green, sigma0 red, gate grey, failures black.
+# The six dispositions the producer emits, in lane order (bottom to top), each
+# with a fixed colour: emitted green, sigma0 red, gate grey, failures black.
 _DISPOSITIONS = (
     "emitted",
     "gate_withheld",
@@ -236,7 +237,7 @@ def _summary(df, disp) -> str:
             out.append(f"Clock std (m)    : median {np.median(std_f):.3f}, "
                        f"max {np.max(std_f):.3f}")
 
-        # Run-worst satellite by NAME (per convention: never rms alone).
+        # Run-worst satellite identified by name (per convention: never rms alone).
         ws = df.loc[emitted, "worst_sat"].astype("string")
         wd = df.loc[emitted, "worst_dev_m"].to_numpy(float)
         finite = np.isfinite(wd) & ws.notna().to_numpy() & (ws != "").to_numpy()

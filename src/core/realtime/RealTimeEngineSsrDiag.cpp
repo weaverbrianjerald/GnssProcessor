@@ -2,13 +2,14 @@
  * @file RealTimeEngineSsrDiag.cpp
  * @brief Consumer-side SSR observability seams for RealTimeEngine::processEpoch.
  *
- * Pure diagnostics: neither seam mutates estimator state.  Both run BEFORE
- * the broadcast-grade drop so satellites the precise solution discards
- * still appear in the census and the trace.
+ * Diagnostics only: none of these functions mutates estimator state.  The two
+ * seams run before the broadcast-grade drop, so satellites the precise solution
+ * discards still appear in the census and the trace.  The per-satellite readout
+ * of card CST (traceConsumerSat_) runs at the epoch tail instead; see its section.
  */
 
 #include "realtime/RealTimeEngine.hpp"
-#include "filter/StateKeySchema.hpp"   // Card CST: StateKeys::makeAmbiguityKey
+#include "filter/StateKeySchema.hpp"   // StateKeys::makeAmbiguityKey (card CST)
 #include "math/TimeUtils.hpp"
 #include "products/SsrCorrectionStore.hpp"
 #include <algorithm>
@@ -21,7 +22,8 @@
 namespace GnssProcessor {
 
 /**
- * @brief One-line per-epoch SSR coverage summary (are corrections flowing AND applying?).
+ * @brief One-line per-epoch SSR coverage summary: whether corrections are arriving
+ *        and whether they are applied.
  *
  * Relocated verbatim from the pre-cut RealTimeEngine::processEpoch
  * (frozen lines 1130-1144); see scripts/rt_seam_verify.py.
@@ -62,12 +64,12 @@ void RealTimeEngine::traceSsrConsumer(RtEpochContext& ctx) {
     if (ssr_consumer_trace_.is_open()) {
         const auto& store = ssrStore();
         const double now_s = TimeUtils::continuousGpsSeconds(current_time);
-        // RTA-9(b): mirror the apply-site windows — with the clock stale-hold
-        // rung armed, the clock/URA lookups accept the same widened window the
-        // apply gate uses (the recomputed r_add_var then grows with the true dt
-        // exactly like the URA channel at the apply site; the rung's fallback-q²
-        // term for URA-less sats is NOT folded in here — clk_applied + blank
-        // ura_m identifies those rows).
+        // Mirror the apply-site windows (RTA-9(b)): with the clock stale-hold rung
+        // armed, the clock/URA lookups accept the same widened window the apply
+        // gate uses, and the recomputed r_add_var grows with the true dt as the
+        // URA channel does at the apply site.  The rung's fallback-q² term for
+        // satellites without a URA is not included here; those rows are the ones
+        // with clk_applied set and a blank ura_m.
         const double ssr_max_age = SsrCorrectionStore::clockHoldWindow(
             config_.getSsrMaxAge(), config_.getSsrClockStaleHoldFactor());
         const bool   consume_ura = config_.networkConsumeUra();
@@ -84,7 +86,7 @@ void RealTimeEngine::traceSsrConsumer(RtEpochContext& ctx) {
             if (ep) { ssr_dt = now_s - TimeUtils::continuousGpsSeconds(*ep); have_ep = true;
                       o << fmt::format("{:.3f}", ssr_dt); }
             o << ',';
-            o << (obs.broadcast_only ? 0 : 1) << ',';                       // clk_applied (TRUE signal)
+            o << (obs.broadcast_only ? 0 : 1) << ',';                       // clk_applied (whether the clock was actually applied)
             const auto oc = store.getOrbitClock(sat, current_time, ssr_max_age);
             if (oc && oc->has_clock) o << fmt::format("{:.4f}", oc->c0);
             o << ',';
@@ -132,23 +134,24 @@ void RealTimeEngine::traceSsrConsumer(RtEpochContext& ctx) {
 }
 
 // ---------------------------------------------------------------------------
-// Card CST: per-satellite readout of the closed-loop consumer's own epoch
+// Per-satellite readout of the closed-loop consumer's own epoch (card CST)
 // ---------------------------------------------------------------------------
 //
-// NEW CODE (not a relocation), and deliberately the LAST thing the epoch does.
-// The two seams above run BEFORE the broadcast-grade drop because they are about
-// what ARRIVED; this one runs at the processEpoch tail, after the update, the
-// constraints and AR, because it is about what the consumer DID — the states it
-// reads have to be the committed ones, or "a declared reset shows as variance
-// re-inflation" is a half-epoch out.
+// Added after the seam cut (not a relocation).  The two seams above run before
+// the broadcast-grade drop because they report what arrived.  traceConsumerSat_
+// reports what the consumer did, so it runs at the processEpoch tail, after the
+// update, the constraints, AR and the ambiguity level check; only the epoch stamp
+// and the state snapshot follow it.  The states it reads must be the committed
+// ones, so that a declared reset appears as variance re-inflation in the row of
+// the epoch that applied it.
 //
-// EV6 (docs/refound/EV6_hour6_decouple_event_2026-09-15.md §9 item 1) named the
-// gap this closes: closed_loop_trace.csv carries position and n_sats only, so a
-// consumer-side float re-convergence could not be separated from the slant-iono
-// half of the RF-0b applied pair, and an undeclared wire step could not be seen
-// landing at the consumer at all.
+// Purpose (docs/refound/EV6_hour6_decouple_event_2026-09-15.md §9 item 1):
+// closed_loop_trace.csv carries position and n_sats only, so from it a
+// consumer-side float re-convergence cannot be separated from the slant-iono half
+// of the RF-0b applied pair, and an undeclared wire step arriving at the consumer
+// is not visible.
 //
-// MEASURE-ONLY.  Every read is a const lookup into state the epoch has already
+// Measure-only.  Every read is a const lookup into state the epoch has already
 // committed; nothing is written back, so the consumer's solve is byte-identical
 // with the knob armed.
 
@@ -165,29 +168,29 @@ void RealTimeEngine::traceConsumerSat_(RtEpochContext& ctx) {
     const GnssTime& current_time = ctx.current_time;
     const std::vector<PppObservation>& modeled_obs = ctx.modeled_obs;
 
-    // The BIAS-routed store is what the measurement model reads for code/phase
-    // bias; the CLOCK-routed one is what the geometry/corrections read for the
-    // satellite clock.  Under the closed-loop harness's default profile
+    // The measurement model reads code/phase biases from the bias-routed store;
+    // the geometry/corrections read the satellite clock from the clock-routed
+    // one.  Under the closed-loop harness's default profile
     // (consume_clock == consume_bias == true) they are the same object, but a
-    // clock-on/bias-off profile splits them, and a row that mixed the two would
-    // report a correction the consumer never applied.
+    // clock-on/bias-off profile splits them, and a row that read the wrong one
+    // would report a correction the consumer never applied.
     const SsrCorrectionStore& bias_store = ssrStore();
     const SsrCorrectionStore& clk_store =
         clock_store_override_ ? *clock_store_override_ : bias_store;
 
     // Mirror the apply-site staleness windows exactly (the same construction the
-    // L10 trace above uses), so an age-gated-out correction reads BLANK here and
-    // the row says "the consumer applied nothing", never "it applied zero".
+    // L10 trace above uses), so a correction rejected by the age gate reads blank
+    // here: the row then means "the consumer applied nothing", not "it applied zero".
     const double ssr_max_age = SsrCorrectionStore::clockHoldWindow(
         config_.getSsrMaxAge(), config_.getSsrClockStaleHoldFactor());
     const bool   bias_age_on = config_.enableSsrBiasMaxAge();
     const double bias_limit  = config_.getSsrBiasMaxAge() * config_.getSsrBiasStaleHoldFactor();
 
     // Row-aligned (sat, signal) -> pre-fit innovation / post-fit residual from the
-    // COMMITTED update.  meas_update is per-epoch transport (RtEpochContext) and
-    // dies with the epoch — which is exactly why this harvest lives in the engine
-    // and not in the network seam that writes the file.  An epoch whose update
-    // never committed leaves both maps empty and every residual column blank.
+    // committed update.  meas_update is per-epoch transport (RtEpochContext) and
+    // does not outlive the epoch, so this harvest runs in the engine rather than
+    // in the network seam that writes the file.  An epoch whose update did not
+    // commit leaves both maps empty and every residual column blank.
     std::map<std::string, double> innov_of, resid_of;
     if (ctx.update_applied) {
         const auto& mu = ctx.meas_update;
@@ -195,7 +198,7 @@ void RealTimeEngine::traceConsumerSat_(RtEpochContext& ctx) {
             std::min(mu.satellite_ids.size(), mu.signal_types.size()));
         for (Eigen::Index i = 0; i < n_lbl; ++i) {
             const std::size_t u = static_cast<std::size_t>(i);
-            // BSSD / DD rows are labelled "<sat_i>-<sat_p>" and are NOT a
+            // BSSD / DD rows are labelled "<sat_i>-<sat_p>" and are not a
             // single-satellite quantity; skip them rather than attribute a
             // differenced residual to one satellite.  (This consumer is
             // undifferenced on the RF-0hv posture, so nothing is skipped there.)
@@ -219,9 +222,9 @@ void RealTimeEngine::traceConsumerSat_(RtEpochContext& ctx) {
         const std::string& sat = obs.satellite;
         if (sat.empty()) continue;
 
-        // n_sig first: the row-level count of RAW phase signals this satellite
-        // contributes, so a reader can tell a one-band epoch from a two-band one
-        // without grouping the whole file.
+        // n_sig first: the row-level count of raw phase signals (keys without '_')
+        // this satellite contributes, so a reader can tell a one-band epoch from a
+        // two-band one without grouping the whole file.
         int n_sig = 0;
         for (const auto& kv : obs.modeled) {
             const std::string& c = kv.first;
@@ -229,7 +232,7 @@ void RealTimeEngine::traceConsumerSat_(RtEpochContext& ctx) {
         }
         if (n_sig == 0) continue;
 
-        // Per-SATELLITE quantities, resolved once and repeated on the sat's rows.
+        // Per-satellite quantities, resolved once and repeated on the satellite's rows.
         const auto oc = clk_store.getOrbitClock(sat, current_time, ssr_max_age);
         const bool   have_clk = static_cast<bool>(oc) && oc->has_clock;
         const double clk_m    = have_clk ? oc->c0 : 0.0;
@@ -251,10 +254,10 @@ void RealTimeEngine::traceConsumerSat_(RtEpochContext& ctx) {
             r.elev_deg = obs.elevation;
             r.n_sig = n_sig;
 
-            // The band+attribute-paired CODE signal ("L1W" -> "C1W"), but only
-            // when the epoch actually carries it — the satellite code bias and
-            // the slant ionosphere are the RF-0b pair a consumer must apply
-            // TOGETHER, so they belong on one row.
+            // The code signal with the same band and attribute ("L1W" -> "C1W"),
+            // only when the epoch carries it.  The satellite code bias and the
+            // slant ionosphere are the RF-0b pair a consumer applies together,
+            // so they belong on one row.
             std::string code_sig = "C" + sig.substr(1);
             if (obs.modeled.find(code_sig) == obs.modeled.end()) code_sig.clear();
             r.code_sig = code_sig;
@@ -262,9 +265,9 @@ void RealTimeEngine::traceConsumerSat_(RtEpochContext& ctx) {
             r.have_clk = have_clk; r.clk_m = clk_m;
             if (clk_disc) { r.have_clk_disc = true; r.clk_disc = *clk_disc; }
 
-            // The phase bias the model applied THIS epoch — the model's own read
-            // (MeasurementModel ssr_bias_term: gated when the staleness gate is
-            // on, ungated otherwise).
+            // The phase bias the model applied this epoch, read the way the model
+            // reads it (MeasurementModel ssr_bias_term: gated when the staleness
+            // gate is on, ungated otherwise).
             const auto pb = bias_age_on
                 ? bias_store.getPhaseBias(sat, sig, current_time, bias_limit)
                 : bias_store.getPhaseBias(sat, sig);
@@ -289,7 +292,7 @@ void RealTimeEngine::traceConsumerSat_(RtEpochContext& ctx) {
                 if (cbd) { r.have_cb_disc = true; r.cb_disc = *cbd; }
             }
 
-            // What the consumer DID with each declaration this epoch — invariant
+            // What the consumer did with each declaration this epoch: invariant
             // #7's re-coupling edge, read from the consumer's side.
             {
                 const auto it = consumer_sat_events_.find(sat + "|" + sig);

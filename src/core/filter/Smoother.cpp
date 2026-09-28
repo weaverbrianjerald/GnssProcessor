@@ -29,11 +29,11 @@ namespace GnssProcessor {
 
         constexpr size_t kNone = std::numeric_limits<size_t>::max();
 
-        /// True if \p amb_key's satellite prefix EXACTLY matches an entry in
+        /// True if \p amb_key's satellite prefix equals an entry in
         /// \p reset_satellites.  The prefix is the substring up to the first
-        /// '_' (ambiguity keys look like "G01_L1W" or "G01_L1C_L2W").  An exact
-        /// prefix match — not a substring search — so a reset of "G1" does not
-        /// spuriously segment "G12_..." (audit R7).
+        /// '_' (ambiguity keys look like "G01_L1W" or "G01_L1C_L2W").  The
+        /// match is on the whole prefix, not a substring search, so a reset of
+        /// "G1" does not segment "G12_..." (audit R7).
         bool ambSatWasReset(const std::string& amb_key,
                             const std::set<std::string>& reset_satellites) {
             if (reset_satellites.empty()) return false;
@@ -90,7 +90,7 @@ namespace GnssProcessor {
         }
         idx_k.push_back(sk.tropo_idx);   idx_k1.push_back(sk1.tropo_idx);
 
-        // Optional core states — included only if present at BOTH epochs.
+        // Optional core states: included only if present at both epochs.
         auto both_scalar = [&](size_t a, size_t b) {
             if (a != kNone && b != kNone) {
                 idx_k.push_back(a);
@@ -98,10 +98,10 @@ namespace GnssProcessor {
             }
         };
 
-        // Receiver clock — present in non-BSSD PPP / PPP-RTK only.  Skipped
-        // under BSSD because no clock state is allocated; tropo therefore
-        // ends up at index 3 instead of 4, but consumers locate it through
-        // sk.tropo_idx so the relative shift is invisible here.
+        // Receiver clock: present in non-BSSD PPP / PPP-RTK only.  Under BSSD
+        // no clock state is allocated (clock_idx is max()), so it is skipped;
+        // tropo then sits at index 3 instead of 4, which does not matter here
+        // because it is located through sk.tropo_idx.
         both_scalar(sk.clock_idx, sk1.clock_idx);
         if (sk.velocity_idx != kNone && sk1.velocity_idx != kNone) {
             for (size_t j = 0; j < 3; ++j) {
@@ -128,11 +128,11 @@ namespace GnssProcessor {
         }
 
         intersectMaps(sk.ionospheres, sk1.ionospheres, idx_k, idx_k1, exclude_keys);
-        // Constant-velocity model: keep the iono RATE in the common subspace next
-        // to its level so F_CC carries the F(level,rate)=dt coupling (the smoother
-        // then inherits the CV transition) and the rate is smoothed jointly.  The
-        // rate is keyed by satellite ID, so the handover exclude_keys (also sat
-        // IDs, added in prepareHandoverFrame) drop it in lockstep with the level.
+        // Constant-velocity model: the iono rate stays in the common subspace next
+        // to its level, so F_CC carries the F(level,rate)=dt coupling (the smoother
+        // inherits the CV transition) and the rate is smoothed jointly.  The rate
+        // is keyed by satellite ID, so the handover exclude_keys (also satellite
+        // IDs, added in prepareHandoverFrame) drop it together with the level.
         intersectMaps(sk.iono_rates,  sk1.iono_rates,  idx_k, idx_k1, exclude_keys);
         intersectMaps(sk.code_biases, sk1.code_biases, idx_k, idx_k1, exclude_keys);
         intersectMaps(sk.sat_biases,  sk1.sat_biases,  idx_k, idx_k1, exclude_keys);
@@ -155,10 +155,11 @@ namespace GnssProcessor {
         for (const Eigen::Index gi : group_indices)
             if (gi != datum) x(gi) -= dv;
         x(datum) = 0.0;
-        // Covariance T·P·Tᵀ on FULL rows/cols (the forward re-reference coupled
-        // the group to every other state; the inverse must too — audit R1).
-        // Row ops then col ops, datum frozen — identical pattern to
-        // PivotManager::applyCovarianceReReference, anchored on the old pivot.
+        // Covariance T·P·Tᵀ on full rows and columns: the forward re-reference
+        // coupled the group to every other state, so the inverse does too
+        // (audit R1).  Row operations, then column operations, datum frozen: the
+        // pattern of PivotManager::applyCovarianceReReference, anchored on the
+        // old pivot.
         for (const Eigen::Index gi : group_indices)
             if (gi != datum) P.row(gi) -= P.row(datum);
         for (const Eigen::Index gi : group_indices)
@@ -202,7 +203,8 @@ namespace GnssProcessor {
                 if (PppUtils::getSystemString(sat) == cons) exclude_keys.insert(sb_key);
             }
 
-            // CLEAN, invertible handover?  (recorded by PivotManager, old/new match)
+            // Clean, invertible handover: recorded by PivotManager with matching
+            // old and new pivots.
             bool clean = false;
             if (has0 && has1) {
                 auto ch = sk1.clean_handovers.find(cons);
@@ -225,9 +227,9 @@ namespace GnssProcessor {
                 continue;
             }
 
-            // CLEAN handover: inverse-reference each ambiguity SIGNAL group back
-            // to the old pivot p0.  Group by signal-suffix (after the first '_'),
-            // mirroring PivotManager's grouping.
+            // Clean handover: inverse-reference each ambiguity signal group back
+            // to the old pivot p0.  Groups are formed by signal suffix (after the
+            // first '_'), as in PivotManager.
             std::map<std::string, std::vector<std::pair<std::string, Eigen::Index>>> groups;
             for (const auto& [amb_key, idx] : sk1.ambiguities) {
                 const auto us = amb_key.find('_');
@@ -238,12 +240,12 @@ namespace GnssProcessor {
                 groups[sig].emplace_back(amb_key, static_cast<Eigen::Index>(idx));
             }
 
-            // Per-signal groups have DISJOINT member and datum index sets, so
-            // their re-reference operators commute — the inverse order is
-            // irrelevant to the result (verified numerically).  Iterate in
-            // descending order purely for symmetry with PivotManager's ascending
-            // forward loop.  (Iono / sat-bias are segmented above, so only the
-            // ambiguity blocks need inverting here.)
+            // Per-signal groups have disjoint member and datum index sets, so
+            // their re-reference operators commute and the order of the inverses
+            // does not affect the result (verified numerically).  The descending
+            // loop only mirrors PivotManager's ascending forward loop.  Iono and
+            // sat-bias states are segmented above, so only the ambiguity blocks
+            // are inverted here.
             for (auto git = groups.rbegin(); git != groups.rend(); ++git) {
                 const std::string& sig = git->first;
                 const auto& members    = git->second;
@@ -251,9 +253,10 @@ namespace GnssProcessor {
                 const std::string datum_new_key = p1 + "_" + sig;  // forward datum
                 auto d_old = sk1.ambiguities.find(datum_old_key);
                 // Invertible only if the forward leg re-referenced this signal to
-                // p1 (so p1 had a state on it) AND the old pivot has a live state
-                // on it to anchor the inverse.  Otherwise the signal was orphan-
-                // reset (new pivot lacked it) or has no inverse datum — segment.
+                // p1 (so p1 has a state on it) and the old pivot has a live state
+                // on it to anchor the inverse.  Otherwise the signal was
+                // orphan-reset (the new pivot lacked it) or has no inverse datum,
+                // and the group is segmented.
                 const bool invertible = d_old != sk1.ambiguities.end()
                                         && sk1.ambiguities.count(datum_new_key) > 0;
                 if (!invertible) {
@@ -329,14 +332,14 @@ namespace GnssProcessor {
                 continue;
             }
 
-            // Dimension guard / segment boundary: a long-gap teardown
+            // Dimension guard and segment boundary: a long-gap teardown
             // (Application::handleGap) prunes ambiguity / iono / sat-bias states
-            // BEFORE predict, so this epoch's a-priori (x_pred / P_pred / F) is
-            // captured at a SMALLER dimension than epoch k's posterior.  The
-            // epoch-k indices used below to read the k+1 a-priori would then be
-            // out of bounds.  Predict never grows the state and pre-predict
-            // changes can only shrink it, so any size change is a teardown — a
-            // forward discontinuity that backward information must not cross.
+            // before predict, so epoch k+1's a-priori (x_pred / P_pred / F) has a
+            // smaller dimension than epoch k's posterior, and the epoch-k indices
+            // used below to read it would be out of bounds.  Predict never grows
+            // the state and pre-predict changes can only shrink it, so any size
+            // change is a teardown: a forward discontinuity that backward
+            // information does not cross.
             if (sk1.x_pred.size() != sk.x_post.size()) {
                 ++num_boundaries;
                 continue;
@@ -344,14 +347,14 @@ namespace GnssProcessor {
 
             // BSSD handover reconciliation.  If the pivot map changed between k
             // and k+1, a pivot handover re-referenced one or more constellations
-            // in place: x_post(k+1) / x_s(k+1) are in the NEW frame while
-            // x_pred(k+1) (captured pre-handover, epoch-k layout) is still in the
-            // OLD frame.  For CLEAN handovers we inverse-reference k+1's smoothed
-            // estimate back to the old pivot so the whole step stays consistently
-            // in epoch k's frame; disturbed/forced handovers (and iono/sat-bias
-            // groups) are segmented.  This runs on COPIES so the reported k+1
-            // result is left in its own frame (audit P2-1).  The copies are taken
-            // only when the pivot map actually changed (handovers are rare).
+            // in place: x_post(k+1) and x_s(k+1) are in the new frame, while
+            // x_pred(k+1) (captured before the handover, in epoch k's layout) is
+            // in the old frame.  For clean handovers, k+1's smoothed estimate is
+            // inverse-referenced back to the old pivot so the whole step stays in
+            // epoch k's frame; disturbed or forced handovers (and iono / sat-bias
+            // groups) are segmented.  This works on copies, so the reported k+1
+            // result stays in its own frame (audit P2-1).  The copies are taken
+            // only when the pivot map changed (handovers are rare).
             std::set<std::string> exclude_keys;
             bool frame_adjusted = false;
             Eigen::VectorXd x_s1_adj;

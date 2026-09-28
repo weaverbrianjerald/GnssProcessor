@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""FIELD WIRE — datum-station attribution probe (SPEC_synthetic_minimum_network §9.9).
+"""Field wire: datum-station attribution probe (SPEC_synthetic_minimum_network §9.9).
 
-The §9.8 sim mechanism: under the legacy pivot emit the wire's fleet-common
-clock level w(t) carries the DATUM RECEIVER's own clock-estimation error 1:1
-(the datum direction has zero redundancy — only the datum station constrains
-it, every other receiver's free clock re-zeros it).  The receiver-side driver
-of that error is the station-common part of its CODE error (multipath + noise).
+The §9.8 sim mechanism: under the legacy pivot emit, the wire's fleet-common
+clock level w(t) carries the datum receiver's own clock-estimation error 1:1
+(the datum direction has zero redundancy: only the datum station constrains
+it, and every other receiver's free clock re-zeros it). The receiver-side
+driver of that error is the station-common part of its code error (multipath
+plus noise).
 
-This probe tests the mechanism on a retained FIELD run without re-processing:
+This probe tests the mechanism on a retained field run without re-processing:
 
   w(t)        = per-epoch median over satellites of the emitted C records
                 (products.txt), increments formed per-satellite then medianed,
@@ -17,12 +18,12 @@ This probe tests the mechanism on a retained FIELD run without re-processing:
                 constants drop in increments, d(mp_proxy) ~= -d(mp_code)),
                 LLI-flagged rows excluded, increments per-satellite -> median.
 
-Then corr( dw, dmp_i ) per station i.  Prediction if the field wander is
-datum-owned like the sim: the DATUM station is the top-|corr| outlier with
-POSITIVE sign (dw = -dm and dmp = -dm); control stations' code multipath is
+Then corr( dw, dmp_i ) per station i. Prediction if the field wander is
+datum-owned like the sim: the datum station is the top-|corr| outlier with
+positive sign (dw = -dm and dmp = -dm); control stations' code multipath is
 absorbed by their own free receiver clocks and should sit at the noise floor.
-A flat table instead says the field wander is NOT receiver-code-driven
-(shared-state / product-side), which is equally a result.
+A flat table instead says the field wander is not receiver-code-driven
+(shared state or product side), which is equally a result.
 
 Usage:
   python scripts/field_wire_datum_probe.py <run_dir> [--datum MBAR00UGA]
@@ -50,7 +51,7 @@ def median(xs):
 def qtow(t):
     """Quantize a TOW to the nearest second for cross-file joins: the product
     emitter's E rows carry accumulated float dust (e.g. 302370.00000190735)
-    while the trace CSVs print %.3f — exact float keys never meet.  The epoch
+    while the trace CSVs print %.3f, so exact float keys never meet. The epoch
     grid is 30 s, so nearest-second is unambiguous."""
     return float(round(t))
 
@@ -184,7 +185,7 @@ def main():
     cut = t_start + args.settle_hours * 3600.0
 
     # Increment pairs: consecutive emitted epochs, settled, close in time, and the
-    # LATER epoch not datum_changed (a pivot handover steps every C together and
+    # later epoch not datum_changed (a pivot handover steps every C together and
     # the median would read it as wander).
     wire_by_tow = {t: v for t, _, v in epochs}
     pairs = []

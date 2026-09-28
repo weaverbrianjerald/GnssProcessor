@@ -1,44 +1,43 @@
 /**
  * @file PbDiscCarryLedger.hpp
- * @brief Card CC (A): the consumer's DECLARED-STEP ambiguity carry — the
- *        per-key applied-bias ledger, the carry-vs-reset decision and its
- *        run-end counters.
+ * @brief The consumer's declared-step ambiguity carry: the per-key applied-bias
+ *        ledger, the carry-vs-reset decision and its run-end counters (card CC, A).
  *
  * A network-product consumer's phase row is
  *
  *     predicted = … + ssr_bias_term + amb_term        (both signs +1;
  *                                                       MeasurementModel.cpp)
  *
- * so when the satellite phase bias the model APPLIES moves by Δ = PB_new − PB_old
- * — a declared re-realization (IGS-SSR discontinuity-counter bump) or the A5
- * freshness flip (applied ↔ not applied, with 0 for "not applied") — the float
- * ambiguity in the new datum is EXACTLY amb − Δ: a translation of one state,
- * covariance untouched, no re-seed.  The pre-card reaction
- * (@c RealTimeEngine::resetOnPhaseBiasDisc) threw that ambiguity away instead —
- * covariance row/column zeroed, re-seeded from one epoch of code — on every
- * declared step the consumer observed (29 per 6 h on the field seed,
- * SPEC_event_harness §24.2).
+ * so when the satellite phase bias that the model applies moves by
+ * Δ = PB_new − PB_old, the float ambiguity in the new datum is exactly amb − Δ:
+ * a translation of one state, with the covariance untouched and no re-seed.
+ * The step is either a declared re-realization (an IGS-SSR discontinuity-counter
+ * bump) or the A5 freshness flip (applied ↔ not applied, with 0 standing for
+ * "not applied").  The reset reaction (@c RealTimeEngine::resetOnPhaseBiasDisc)
+ * instead zeroes the ambiguity's covariance row and column and re-seeds it from
+ * one epoch of code on every declared step the consumer observes
+ * (SPEC_event_harness §24.2).
  *
- * This class owns the two things the carry needs and the seam does not already
- * have: the per-key RECORD of the value the model applied at the last update
- * (0.0 = not applied / absent; presence = recorded), and the counters.  The
- * decision + state mutation live in @ref react so every refusal branch is
- * unit-testable against a bare @c StateManager; the engine seam
- * (@c RealTimeEngine::carryOnPhaseBiasDisc_, RealTimeEngineSsrBreaks.cpp) only
+ * This class owns the two things the carry needs that the seam does not already
+ * hold: the per-key record of the value the model applied at the last update
+ * (0.0 = not applied or absent; presence of the key = recorded), and the
+ * counters.  The decision and the state mutation live in @ref react, so every
+ * refusal branch is unit-testable against a bare @c StateManager; the engine
+ * seam (@c RealTimeEngine::carryOnPhaseBiasDisc_, RealTimeEngineSsrBreaks.cpp)
  * computes the inputs, calls it, and logs.
  *
- * Refusals take the EXISTING reset (@c StateManager::resetAmbiguity — the same
- * call the pre-card reaction makes), each with its own counter:
- *   - no recorded value for the key (first sighting; also every key's first
- *     event after a warm restore — the RT snapshot v1 carries no value map);
+ * A refusal takes the existing reset (@c StateManager::resetAmbiguity, the same
+ * call the reset reaction makes), each reason with its own counter:
+ *   - no recorded value for the key (first sighting; also each key's first
+ *     event after a warm restore, because RT snapshot v1 carries no value map);
  *   - the state ambiguity basis is NL/WL (the shift would need the basis
- *     transform — out of scope);
+ *     transform, which is out of scope);
  *   - the consumer is BSSD (its ambiguity states are between-satellite
- *     differences, not the undifferenced value the datum step lands on);
+ *     differences, not the undifferenced value the datum step acts on);
  *   - the ambiguity key is not in the state (mirrors resetAmbiguity's guard).
  *
  * Counter closure (standing invariant #4): every event is exactly one of
- * carried-disc / carried-flip / one reset reason, so
+ * carried-disc, carried-flip or one reset reason, so
  * @c disc_carried + flip_carried + Σ reset_* == events.
  */
 #pragma once
@@ -52,12 +51,12 @@ namespace GnssProcessor {
 
 class StateManager;
 
-/// Card CC (A): applied-bias ledger + carry-vs-reset decision + counters.
+/// Applied-bias ledger, carry-vs-reset decision and counters (card CC, A).
 class PbDiscCarryLedger {
 public:
     /// What @ref react did for one (key, epoch) event.
     enum class Action {
-        None,             ///< No bump and no flip this epoch — nothing to do.
+        None,             ///< No bump and no flip this epoch; nothing to do.
         CarriedDisc,      ///< Disc-counter bump: ambiguity translated by −Δ.
         CarriedFlip,      ///< Freshness flip only (no bump): translated by −Δ.
         ResetFirstSight,  ///< No recorded applied value for the key → existing reset.
@@ -70,7 +69,7 @@ public:
     struct Counters {
         uint64_t disc_bumps{ 0 };         ///< Disc-counter changes seen (noteSsrDiscontinuity true).
         uint64_t flips{ 0 };              ///< A5 freshness flips seen (applied ↔ not applied).
-        uint64_t events{ 0 };             ///< (key, epoch) with a bump and/or a flip — the closure denominator.
+        uint64_t events{ 0 };             ///< (key, epoch) pairs with a bump, a flip or both; the closure denominator.
         uint64_t disc_carried{ 0 };       ///< Events with a bump that were carried.
         uint64_t flip_carried{ 0 };       ///< Flip-only events that were carried.
         uint64_t reset_first_sight{ 0 };  ///< Refused: no recorded applied value.
@@ -93,20 +92,20 @@ public:
     };
 
     /**
-     * @brief Decide and APPLY the reaction for one phase key this epoch.
+     * @brief Decide and apply the reaction for one phase key this epoch.
      *
      * @param sm             The consumer's state manager (mutated: shift or reset).
      * @param key            Ledger key ("sat|signal", e.g. "G24|L5X").
      * @param amb_key        Ambiguity state key ("sat_signal", e.g. "G24_L5X").
      * @param bump           The disc counter changed this epoch (noteSsrDiscontinuity).
      * @param flip           The A5 applied flag changed this epoch (fresh ↔ stale).
-     * @param applied_now_m  The bias value the model applies THIS epoch (0 = not applied).
+     * @param applied_now_m  The bias value the model applies in this epoch (0 = not applied).
      * @param basis_nlwl     The state ambiguity basis is NL/WL.
      * @param bssd           The consumer is BSSD (between-satellite SD in the filter).
      * @param reset_std_m    The reset std the existing reaction uses (ambiguity_std).
      * @return The action taken and, when carried, Δ.
      *
-     * A bump coinciding with a flip on the same key is ONE event and one
+     * A bump coinciding with a flip on the same key is one event and one
      * translation (Δ already includes both), counted as a disc carry.
      */
     Decision react(StateManager& sm, const std::string& key, const std::string& amb_key,
@@ -114,13 +113,13 @@ public:
                    bool basis_nlwl, bool bssd, double reset_std_m);
 
     /**
-     * @brief The UPDATE SITE: record the value the model applies this epoch.
+     * @brief Update site: record the value the model applies this epoch.
      *
-     * Must run AFTER @ref react for the key in the same epoch (the reaction's Δ is
-     * against the previous record; the next epoch's Δ must be against the value
-     * the model actually applied this epoch).  The engine calls it at the tail
-     * of the per-key loop in @c carryOnPhaseBiasDisc_, before the measurement
-     * update that applies exactly this value.
+     * Call after @ref react for the key in the same epoch: the reaction's Δ is
+     * taken against the previous record, and the next epoch's Δ has to be taken
+     * against the value the model applied in this epoch.  The engine calls it at
+     * the tail of the per-key loop in @c carryOnPhaseBiasDisc_, before the
+     * measurement update that applies this value.
      */
     void record(const std::string& key, double applied_now_m) { applied_m_[key] = applied_now_m; }
 

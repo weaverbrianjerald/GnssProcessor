@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""AB3-0 WIDE-LANE READINESS READ (docs/refound/AB3_lanes_2026-09-20.md section 3) -- TRACE ONLY.
+"""AB3-0 wide-lane readiness read (docs/refound/AB3_lanes_2026-09-20.md section 3): trace only.
 
-QUESTION.  Under the float ambiguity vehicle, do WIDE-LANE integers exist on the FIELD bed?
+Question: under the float ambiguity vehicle, do wide-lane integers exist on the field bed?
 On the retired vehicle the field DD fractions were uniform on [0, 0.5] (zero integer
 information) while the sim was integer.
 
-INPUT.  <run>/logs/network_dd_fractional.csv alone (no truth, no fixture, no products), one row
+Input: <run>/logs/network_dd_fractional.csv alone (no truth, no fixture, no products), one row
 per (epoch, cons, signal, sat_i, ref_sat, sta_a, sta_b) with dd_cyc / frac_cyc / dd_sigma_cyc.
-The wide lane is formed in cycle-difference form on the MATCHED quadruple, the same form
+The wide lane is formed in cycle-difference form on the matched quadruple, the same form
 scripts/simnet_amb_integer.py uses for its truth-graded lanes:
 
     WL_cyc = dd_cyc(L1 signal) - dd_cyc(L2W)      on the same (tow, sat_i, ref_sat, sta_a, sta_b)
@@ -15,24 +15,24 @@ scripts/simnet_amb_integer.py uses for its truth-graded lanes:
 ref_sat is part of the join key, so a chord whose two bands sit on different reference
 satellites is never combined (that happens on the field: L1W runs its own reference family).
 
-THE REFERENCE SATELLITE IS IN EVERY CHORD (project instructions; SPEC_amb_iono section 6.12).
+The reference satellite is in every chord (project instructions; SPEC_amb_iono section 6.12).
 Every chord of an (epoch, cons, ref_sat, sta_a, sta_b) group carries -s_ref, the reference's own
-between-station wide-lane error, as a COMMON additive term.  Two reference-free readouts, both
+between-station wide-lane error, as a common additive term.  Two reference-free readouts, both
 reported, neither of them the raw as-traced value:
 
   R   = |mean_i exp(2*pi*i*f_i)| per group, averaged over groups.  A common additive term
-        ROTATES the whole group on the unit circle and leaves |R| unchanged, so R is
-        reference-free WITHOUT subtracting anything.  This is the primary statistic and it is
+        rotates the whole group on the unit circle and leaves |R| unchanged, so R is
+        reference-free without subtracting anything.  This is the primary statistic and it is
         immune to null trap (b).
   u_i = wrap(f_i - circ_median_j f_j), the re-referencing of scripts/simnet_dd_reref.py and
-        scripts/dd_frac_reref.py.  Quoted ONLY as a gap to its own size-matched null, because
+        scripts/dd_frac_reref.py.  Quoted only as a gap to its own size-matched null, because
         the subtraction shrinks |residual| about 42 % on pure uniform noise.
 
-NULL TRAPS (both have produced false findings on this project; see the project instructions):
+Null traps (both have produced false findings on this project; see the project instructions):
   (a) every concentration number is printed beside a size-matched Monte-Carlo uniform null with
-      the same group sizes and the same estimator, and the verdict is the GAP;
+      the same group sizes and the same estimator, and the verdict is the gap;
   (b) a group's own circular median is never subtracted before grading a headline number;
-  (c) a wrapped statistic is meaningless when the underlying errors span many cycles -- the
+  (c) a wrapped statistic is meaningless when the underlying errors span many cycles: the
       formal dd_sigma_cyc census in section M4 is printed so the reader can check that first.
 
 Usage:
@@ -225,7 +225,7 @@ def grade(run, label, l1_signals, l2_signal, cons_filter, null_draws, out=sys.st
                     # conservative formal bound (the two bands are correlated; no rho in the trace)
                     sigcensus[(hour, lane)].append(math.hypot(sd1, sd2))
                     # narrow-lane-like remainder: the L1 DD with the WL integer removed.
-                    # identity: wrap(dd1 - round(wl)) == wrap(f_L2 + f_WL) -- context only.
+                    # identity: wrap(dd1 - round(wl)) == wrap(f_L2 + f_WL); context only.
                     groups[f"NLrem({s1})"][grp][sat] = wrap(dd1 - round(wl))
                     # M3 chord runs on the lane
                     ckey = (lane, sat, ref, a, b)
@@ -306,7 +306,7 @@ def grade(run, label, l1_signals, l2_signal, cons_filter, null_draws, out=sys.st
     for s1 in l1_signals:
         P(f"  {s1}-{l2_signal}: {joinable[s1]} matched quadruples over the run "
           f"({joinable[s1] / max(1, epochs_seen):.1f} per epoch)")
-    # how many (sat, a, b) had both bands but on DIFFERENT references
+    # how many (sat, a, b) had both bands but on different references
     mm = collections.defaultdict(dict)
     for (nk, sg), ref in refmismatch.items():
         mm[nk][sg] = ref
@@ -391,14 +391,14 @@ def selftest():
     """Three synthetic beds through the real path.  The point of bed INTREF is the instrument
     lesson this read turns on.
 
-    BED INTREF : the wide lane IS an integer (N + 0.06 cyc noise) but the REFERENCE satellite's
+    BED INTREF : the wide lane is an integer (N + 0.06 cyc noise) but the reference satellite's
                  own wide-lane error is large (+-0.5 cyc per station, so the reference DD term
-                 wraps uniformly).  R and the ref-free readouts must FIRE; the AS-TRACED near15
+                 wraps uniformly).  R and the ref-free readouts must fire; the as-traced near15
                  share must sit at ~30 %, because the as-traced fraction is a test of the
-                 REFERENCE, not of the lane.
+                 reference, not of the lane.
     BED INTCLN : the same integer lane with a small reference term.  Every readout fires,
                  including the as-traced share.
-    BED UNIF   : the wide lane is uniform noise.  Every readout must sit AT its null -- the guard
+    BED UNIF   : the wide lane is uniform noise.  Every readout must sit at its null: the guard
                  that makes an INT win meaningful rather than a subtraction artifact.
     """
     ok = True

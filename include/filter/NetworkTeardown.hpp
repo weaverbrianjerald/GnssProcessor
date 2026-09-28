@@ -1,28 +1,32 @@
 #pragma once
 /**
  * @file NetworkTeardown.hpp
- * @brief The post-loop run-end READOUT tail of the PPP-RTK network producer: epoch-loop
- *        timing, the Tier-D0/D0b section-timer run totals + carry-driver census, the full
- *        run-end telemetry sweep (rank-gate / KP / CB-ADM / slip-QC / eq34 / carry / SH-dev
- *        / MW-WL / EWL / UWL / lane / D5 / iono-deweight / emit-rebase / PB-filter / clock-
- *        runaway / heal / coupling / VCE / per-const), the end-of-run manifest + estimability
- *        run row + trace close, the B6 serialized-contract round-trip self-check, and the
+ * @brief The post-loop run-end readout tail of the PPP-RTK network producer: epoch-loop
+ *        timing, the Tier-D0/D0b section-timer run totals and carry-driver census, the
+ *        run-end telemetry sweep (rank gate, KP, CB-ADM, slip QC, eq34, carry, SH-dev,
+ *        MW-WL, EWL, UWL, lane, D5, iono deweight, emit rebase, PB filter, clock runaway,
+ *        heal, coupling, VCE, per-constellation), the end-of-run manifest, the estimability
+ *        run row and trace close, the B6 serialized-contract round-trip self-check, and the
  *        closed-loop integer-recovery harness summary.
  *
- * Relocated VERBATIM out of Application::runNetwork at the teardown-tail decomposition
- * (2026-07-23) — the last major run-TU block after the SOLVE-region (INC-9b) and Card-6
- * (NetworkRelevel) cuts.  Returns the process exit code (the former `return 1;` zero-emit
- * guard + `return 0;`), so the run-TU tail becomes `return networkTeardown(...);`.
+ * The body was moved out of Application::runNetwork at the teardown-tail decomposition,
+ * after the SOLVE-region (INC-9b) and NetworkRelevel (Card-6) cuts.  It returns the
+ * process exit code, so the run-TU tail is `return networkTeardown(...);`: 1 when no
+ * epoch was emitted, otherwise the injection result when it is nonzero, otherwise the
+ * joint-block PD-fallback verdict (0 or 1).
  *
- * A NEW seam (NOT folded into NetworkRunTraces): the tail reads estimation objects
- * (`est` / `carry_driver` / `slip_qc` / `carry_vce_est` / `consumer`), so hosting it in the
- * logging unit would invert the logging-unit dependency (the INC-7 P3 anti-pattern).
+ * The tail is its own seam, not part of NetworkRunTraces, because it reads estimation
+ * objects (`est`, `carry_driver`, `slip_qc`, `carry_vce_est`, `consumer`); hosting it in
+ * the logging unit would make the logging unit depend on the estimation units (the INC-7
+ * P3 anti-pattern).
  *
- * Owns NO state.  The body is a byte-copy (dedent-0 — runNetwork's body is 4-space
- * indented); the only added code is the alias preamble that byte-copies the run-TU
- * ctx/config/setup/traces aliases so the body reads the original names.  Read-only apart
- * from the trace/product finalization (traces.closeAll / product_writer.reset).
+ * Owns no state.  The body keeps the driver's indentation (dedent 0; runNetwork's body is
+ * indented 4 spaces) and opens with an alias preamble that re-creates the run-TU
+ * ctx/config/setup/traces aliases so the body reads the original names.  Apart from the
+ * trace and product finalization (traces.closeAll, product_writer.reset) it does not
+ * modify estimation state.
  */
+
 
 #include "app/NetworkSetupResult.hpp"     // NetworkSetupResult (consumer / product_writer / ...)
 #include "filter/NetworkEstimator.hpp"    // NetworkEstimator
@@ -31,7 +35,7 @@
 #include "filter/NetworkPriorResidual.hpp" // NetworkPriorResidual (prior-residual census run-end readout)
 #include "filter/NetworkMwWlLayer.hpp"    // NetworkMwWlLayer::Counters
 #include "filter/NetworkWlRunTypes.hpp"   // EwlLane / WlCounters / SubBlockTimer
-#include "products/NetworkClockEmitRebase.hpp" // NetworkClockEmitRebase (Card CLK-R)
+#include "products/NetworkClockEmitRebase.hpp" // NetworkClockEmitRebase (card CLK-R)
 #include "products/NetworkEmitRebase.hpp"   // NetworkEmitRebase
 #include "products/NetworkPbEmitFilter.hpp" // NetworkPbEmitFilter
 #include "filter/NetworkIonoDeweightGate.hpp"
@@ -59,7 +63,9 @@ struct NetworkRunTraces;
 
 /**
  * @brief Run the network producer's end-of-run readout tail and return the exit code.
- * @see the file banner for the readout inventory + the dependency-inversion rationale.
+ * @return 1 when no epoch was emitted; otherwise the injection result when nonzero,
+ *         otherwise the joint-block PD-fallback verdict (0 or 1).
+ * @see The file banner for the readout inventory and the reason this is a separate seam.
  */
 int networkTeardown(
     NetworkRunContext& ctx,

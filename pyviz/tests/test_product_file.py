@@ -21,8 +21,8 @@ def _ctx(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-# A v2 file exercising every record + CRLF line endings + an unknown tag.
-# datum_consts on the E line is a CONCATENATED string ("GE"), NOT comma-sep.
+# A v2 file exercising every record, CRLF line endings, and an unknown tag.
+# datum_consts on the E line is a concatenated string ("GE"), not comma-separated.
 _V2 = (
     "# gnss_network_product v2\r\n"
     "S,CIT100USA,-1,windup0,1,1,1,2,0.05,1,COD0MGXFIN.SP3+COD0MGXFIN.CLK,G:G05,E:E11\r\n"
@@ -208,7 +208,7 @@ def test_viewer_skip_without_product_file(tmp_path):
 
 
 def test_viewer_v1_no_ura(tmp_path):
-    # v1 file has no U records -> only the counts figure, contract NONE in summary.
+    # v1 file has no U records, so only the counts figure appears; contract is "NONE" in the summary.
     p = tmp_path / "network_products.txt"
     p.write_text(_V1, encoding="utf-8")
     res = build_network_product_file(_ctx(tmp_path))

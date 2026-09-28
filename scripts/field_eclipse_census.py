@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""field_eclipse_census.py -- wire-only per-sat exclusion/return census.
+"""field_eclipse_census.py: wire-only per-sat exclusion/return census.
 
 The field analog of simnet_sat_clock_census (STABILITY targets 1/3, SPEC_
 synthetic_minimum_network §18): on a lineage with exclude_eclipsing_satellites
-armed, a satellite's ~55-min emission absence IS the exclusion window, readable
+armed, a satellite's ~55-min emission absence is the exclusion window, readable
 straight off the products with no truth: this script finds per-sat emission
 gaps >= --min-gap epochs and measures, for each return,
 
   * the median-demeaned clock step across the gap (d = C - median_const(C),
-    post-return minus pre-gap -- the same datum-free statistic the sim census
+    post-return minus pre-gap: the same datum-free statistic the sim census
     grades, self-differenced so it needs no truth),
   * the per-signal code-bias (B record) steps across the gap (the clock<->bias
     split relocation channel), and

@@ -1,44 +1,44 @@
 #!/usr/bin/env python3
-"""Generate the S2 VIRTUAL-FOLD legs of the lane-spectrometer campaign.
+"""Generate the S2 virtual-fold legs of the lane-spectrometer campaign.
 
 docs/SPEC_lane_spectrometer.md §4: from the S1 run's snapshot, resume paired legs
 that are identical except ``network.sd_ewl.fix_enable``, and read the between-leg
-state delta — which IS the single-epoch constrained-update redistribution, exact,
+state delta, which is the single-epoch constrained-update redistribution, exact,
 per constraint, with no dynamics and no QC feedback.
 
-THREE legs, not two, and why
+Three legs, not two, and why
 ----------------------------
-``ctl``  sd_ewl entirely OFF        — the plain control resume.
-``off``  sd_ewl.enable ON, fix OFF  — the increment-1 FLOAT row layer.
-``on``   sd_ewl.enable ON, fix ON   — the increment-2 FIXED fold.
+``ctl``  sd_ewl entirely off        : the plain control resume.
+``off``  sd_ewl.enable on, fix off  : the increment-1 float row layer.
+``on``   sd_ewl.enable on, fix on   : the increment-2 fixed fold.
 
-§4.2 asks for "the OFF leg must be byte-identical to a plain control resume".  Taken
+§4.2 asks for "the off leg must be byte-identical to a plain control resume". Taken
 literally that cannot hold for a leg with the float layer armed: the float rows are
-measured to move ev1 by +0.51 %.  The honest version of the same validity check is the
-three-leg ladder — ``ctl`` vs ``off`` isolates the float layer (a known, measured
-quantity) and ``off`` vs ``on`` isolates the INTEGER, which is the question S2 exists
-to answer.  Both differences are then single-treatment.
+measured to move ev1 by +0.51 %. The applicable version of the same validity check is
+the three-leg ladder: ``ctl`` vs ``off`` isolates the float layer (a known, measured
+quantity) and ``off`` vs ``on`` isolates the integer, which is the question S2 exists
+to answer. Both differences are then single-treatment.
 
-A fourth leg, ``inert``, arms fix_enable with an impossible FFR gate.  It must be
+A fourth leg, ``inert``, arms fix_enable with an impossible FFR gate. It must be
 byte-identical to ``off``: that is the only test that the new branch does nothing when
 it does not fire, as opposed to being accidentally load-bearing.
 
-WHY THE LEGS ARE ~6 EPOCHS AND NOT 1
+Why the legs are about 6 epochs and not 1
 ------------------------------------
-The MW arc accumulator is NOT in the state snapshot, so a resumed leg starts with zero
+The MW arc accumulator is not in the state snapshot, so a resumed leg starts with zero
 MW samples and needs ``sd_ewl.min_arc_epochs`` lagged samples before any row can build.
-A literal one-epoch leg would build ZERO rows and the pair would come out
-byte-identical — precisely the Card-1e trap ("a byte-identical A/B means the feature
-never ran").  So the legs run a handful of epochs at ``min_arc_epochs = 2`` and the
-graded epoch is the FIRST one with ``rows_fixed > 0``.  That epoch is still an exact
+A literal one-epoch leg would build zero rows and the pair would come out
+byte-identical, precisely the Card-1e trap ("a byte-identical A/B means the feature
+never ran"). So the legs run a handful of epochs at ``min_arc_epochs = 2`` and the
+graded epoch is the first one with ``rows_fixed > 0``. That epoch is still an exact
 single-epoch read: every earlier epoch is bit-identical across the legs (no rows exist
-yet), so the two legs enter it from the SAME state and the delta is the constrained
-update alone.  Those identical leading epochs are also the pair's own validity check.
+yet), so the two legs enter it from the same state and the delta is the constrained
+update alone. Those identical leading epochs are also the pair's own validity check.
 
-Every key written here is verified ABSENT from the warm-resume fingerprint, so a leg may
+Every key written here is verified absent from the warm-resume fingerprint, so a leg may
 arm them against a seed that did not: ``sd_ewl.*`` (grep-verified absent from
-NetworkRunContext.cpp's fingerprint chain) and the trace knobs.  ``start_offset_hours``
-carries the +15 s HALF-EPOCH BACK-OFF for the same reason chain_make_leg.py does: epoch
+NetworkRunContext.cpp's fingerprint chain) and the trace knobs. ``start_offset_hours``
+carries the +15 s half-epoch back-off for the same reason chain_make_leg.py does: epoch
 elapsed times carry ~2e-5 s of double-precision residue and the fast-forward gate is a
 strict ``<``.
 
@@ -53,7 +53,7 @@ import os
 import shutil
 
 # First synced epoch of DOY-129 = 2024-05-08 00:00:00 GPS (week 2313, tow 259200) in
-# continuous GPS seconds.  The epoch loop latches this from the FILE start; it is not
+# continuous GPS seconds. The epoch loop latches this from the file start; it is not
 # restored from the snapshot.
 DAY_ANCHOR_S = 1399161600.0
 EPOCH_INTERVAL_S = 30.0
@@ -109,13 +109,13 @@ def main():
     week, tow, n_emitted, fp = read_snapshot_header(args.snapshot)
     resume_s = week * 604800.0 + tow
     offset_h = (resume_s - DAY_ANCHOR_S + HALF_EPOCH_BACKOFF_S) / 3600.0
-    # max_duration_s is anchored on the first epoch that SURVIVES the fast-forward, not
+    # max_duration_s is anchored on the first epoch that survives the fast-forward, not
     # on the first observation: ApplicationNetwork.cpp evaluates the start-offset
-    # `continue` BEFORE the max-duration block, so `max_dur_anchor_s` is the resume
-    # epoch.  (The startup log line "epoch time relative to first obs" describes the
-    # cold-start case.)  Measured the hard way: a leg given
-    # (resume - anchor) + 6*30 ran 368 epochs instead of 6.  So the value is just the
-    # leg length, and the `>=` comparison makes N*30 process exactly N epochs.
+    # `continue` before the max-duration block, so `max_dur_anchor_s` is the resume
+    # epoch. (The startup log line "epoch time relative to first obs" describes the
+    # cold-start case.) Measured: a leg given (resume - anchor) + 6*30 ran 368 epochs
+    # instead of 6. So the value is just the leg length, and the `>=` comparison makes
+    # N*30 process exactly N epochs.
     max_dur = args.epochs * EPOCH_INTERVAL_S
 
     print('seed snapshot   %s' % args.snapshot)
@@ -129,7 +129,7 @@ def main():
     for name, sd, why in LEGS:
         legdir = os.path.join(args.outdir, name).replace('\\', '/')
         os.makedirs(os.path.join(legdir, 'logs'), exist_ok=True)
-        # Each leg reads AND writes its OWN snapshot copy, so a killed leg can never
+        # Each leg reads and writes its own snapshot copy, so a killed leg can never
         # destroy the state it resumed from.
         leg_snap = os.path.join(legdir, 'snap.txt').replace('\\', '/')
         shutil.copyfile(args.snapshot, leg_snap)
@@ -170,8 +170,8 @@ def main():
             se = dict(sd)
             se.setdefault('trace', True)
             se.setdefault('min_arc_epochs', args.min_arc)
-            # The increment-1 MEASURED honest ladder, identical in every leg so the
-            # only difference between `off` and `on` is the integer itself.
+            # The increment-1 measured ladder, identical in every leg so the only
+            # difference between `off` and `on` is the integer itself.
             se.setdefault('sigma_floor_m', 1.0)
             se.setdefault('max_abs_z_m', 10.0)
             se.setdefault('fix_sigma_floor_m', 1.0)

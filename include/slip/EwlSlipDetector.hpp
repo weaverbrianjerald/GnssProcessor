@@ -12,30 +12,32 @@
  *            - (f_i·P_i + f_j·P_j)/(f_i + f_j)
  *
  * where (f_i, f_j) are two non-L1 frequencies, e.g.:
- *   GPS:     L2 (1227.60 MHz) & L5 (1176.45 MHz)  -> ?_EWL ? 5.861 m
- *   Galileo: E5a (1176.45 MHz) & E5b (1207.14 MHz) -> ?_EWL ? 9.768 m
+ *   GPS:     L2 (1227.60 MHz) & L5 (1176.45 MHz)  -> λ_EWL ≈ 5.861 m
+ *   Galileo: E5a (1176.45 MHz) & E5b (1207.14 MHz) -> λ_EWL ≈ 9.768 m
  *
- * The very long EWL wavelength means:
- *   - Code noise of ~0.3 m produces only ~0.05 EWL-cycle noise
- *   - EWL integer ambiguity can be resolved instantly (single epoch)
- *   - Integer cycle slips are detected and sized with high confidence
+ * Consequences of the long EWL wavelength:
+ *   - Code noise of ~0.3 m produces only ~0.05 EWL-cycle noise.
+ *   - The EWL integer ambiguity can be resolved in a single epoch.
+ *   - Integer cycle slips are detected and sized with high confidence.
  *
  * Combined with the standard WL (L1-L2) from MwSlipDetector, the EWL
- * provides a second independent WL constraint.  Together:
+ * provides a second independent WL constraint:
  *
  *   dN_WL  = dN_1 - dN_2   (from MW L1-L2)
  *   dN_EWL = dN_2 - dN_5   (from MW EWL L2-L5)
  *
- * With 2 constraints and 3 unknowns, one additional constraint from
- * code-phase divergence or round-to-nearest on the L1 ambiguity
- * (leveraging the WL+EWL narrowing) solves for individual dN_1, dN_2,
- * dN_5 deterministically.
+ * Two constraints on three unknowns; one further constraint (code-phase
+ * divergence, or rounding the L1 ambiguity after the WL+EWL narrowing)
+ * would determine dN_1, dN_2 and dN_5 individually.  This detector only
+ * detects and sizes the EWL slip.  CycleSlipManager treats its events as
+ * band-difference events and resets both ambiguities of the pair; it does
+ * not apply an integer repair.
  *
  * Usage:
- *   - For 3+ frequency users: EWL provides highly reliable slip detection
- *     and deterministic integer repair.
- *   - For dual-frequency users: EWL is not available; MW alone handles
- *     WL slip detection with reset fallback.
+ *   - Satellites with two or more non-L1 bands carrying code and phase:
+ *     EWL slip detection and sizing.
+ *   - Dual-frequency (L1 plus one other band): EWL is not available; MW
+ *     alone handles WL slip detection, with reset as the fallback.
  *
  * References:
  *   Geng & Bock (2013), "Triple-frequency GPS precise point positioning
@@ -69,8 +71,8 @@ namespace GnssProcessor {
         std::string sig1;              ///< Higher-freq signal of the EWL pair (e.g. "L2W").
         std::string sig2;              ///< Lower-freq signal of the EWL pair (e.g. "L5Q").
         std::string amb_key;           ///< Ambiguity key (e.g. "G01_L2W").
-        int    slip_ewl_cycles{ 0 };   ///< EWL slip ?N_EWL in cycles (0 if unknown).
-        bool   slip_ewl_known{ false };///< True if slip_ewl_cycles is a reliable integer.
+        int    slip_ewl_cycles{ 0 };   ///< EWL slip ΔN_EWL in cycles, rounded; set even when @c slip_ewl_known is false.
+        bool   slip_ewl_known{ false };///< True if slip_ewl_cycles is nonzero with fractional residual < kMaxFractional (0.35).
         double lambda_ewl{ 0.0 };      ///< EWL wavelength (meters) for this pair.
         double fractional{ 0.0 };      ///< Fractional residual from rounding (quality metric).
     };
@@ -100,9 +102,10 @@ namespace GnssProcessor {
         /**
          * @brief Detect EWL cycle slips for the provided epoch observations.
          *
-         * Iterates observations and returns per-pair slip results for
-         * satellites with 3+ frequencies.  Each result contains the EWL
-         * slip magnitude in integer cycles when detectable.
+         * Iterates observations above the elevation mask and returns one
+         * result per EWL pair on which a slip is flagged; the pair's arc is
+         * then reset.  Each result carries the EWL slip rounded to integer
+         * cycles and whether that integer is reliable.
          *
          * @param observations Vector of per-satellite PppObservation for the epoch.
          * @return std::vector<EwlSlipResult> Slip results for affected pairs.
@@ -177,7 +180,7 @@ namespace GnssProcessor {
          */
         struct EwlArcStats {
             double mean{ 0.0 };            ///< Running (Hatch) mean of EWL MW values (meters).
-            double M2{ 0.0 };              ///< Welford accumulator for variance (m²).
+            double M2{ 0.0 };              ///< Welford accumulator for variance (m²); not updated by the current implementation.
             size_t count{ 0 };             ///< Number of EWL samples accumulated.
             double prev_ewl{ 0.0 };        ///< Previous epoch EWL value for differencing (meters).
             double last_epoch_s{ 0.0 };    ///< Continuous GPS seconds of last update.
@@ -185,7 +188,7 @@ namespace GnssProcessor {
             bool   bia_corrected{ false }; ///< True if satellite BIA bias is removed.
             int    rounded_ewl{ 0 };       ///< Rounded EWL integer once locked.
             bool   ewl_locked{ false };    ///< True once the EWL integer has been locked.
-            double lambda_ewl{ 0.0 };      ///< EWL wavelength cached for slip repair.
+            double lambda_ewl{ 0.0 };      ///< EWL wavelength (meters), cached for the threshold floor.
         };
 
         /** Per-(satellite + pair) arc statistics.
@@ -198,7 +201,9 @@ namespace GnssProcessor {
         /** Maximum effective count for Hatch mean. */
         static constexpr size_t kMaxHatchCount = 50;
 
-        /** Minimum epochs before adaptive threshold is used. */
+        /** Minimum number of epoch-to-epoch diffs before the adaptive threshold
+         *  is defined (no slip is flagged before that), and minimum arc count
+         *  for locking the EWL integer without BIA correction. */
         static constexpr size_t kMinEpochsForAdaptive = 3;
 
         /** kσ multiplier for the adaptive threshold, from

@@ -1,21 +1,21 @@
 /**
  * @file test_sim_ambiguity_regime.cpp
- * @brief The integer-ambiguity draw and its two magnitude REGIMES.
+ * @brief The integer-ambiguity draw and its two magnitude regimes.
  *
- * Suite names here (`SimAmbiguityRegime`, `SimAmbiguityRegimeLoader`) are owned
- * by THIS FILE ONLY — the repo keeps one suite per file with zero cross-file
- * overlap.
+ * The suite names here (`SimAmbiguityRegime`, `SimAmbiguityRegimeLoader`) are
+ * owned by this file alone; the repository keeps one suite per file with no
+ * cross-file overlap.
  *
- * Every case below names the SILENT FAILURE it guards, because each one produces
- * a fixture that looks entirely healthy and grades an estimator wrongly:
+ * Several cases name the silent failure they guard: each failure produces a
+ * fixture that looks normal but grades an estimator wrongly.
  *
  *  - a lost station salt  => every between-station DD is exactly 0, so ambiguity
  *    resolution reports a 100 % fix rate while measuring nothing;
  *  - a lost per-band independence => the wide-lane becomes one network-wide
  *    constant and one MW solve generalizes to the whole constellation;
- *  - a legacy regime silently kept under a field-looking config => the fixture
- *    is 4 decades wide on disk and defeats every zero-target cold start, which
- *    is exactly the hole the 60-station bisection ladder fell into.
+ *  - a legacy regime kept under a field-looking config => the fixture is 4
+ *    decades wider on disk than the field and defeats every zero-target cold
+ *    start.
  */
 
 #include <gtest/gtest.h>
@@ -48,7 +48,7 @@ AmbiguityDrawConfig fieldCfg(int half_width) {
     return c;
 }
 
-/// A representative roster sweep: 2 systems x 32 PRN x 3 bands x N stations.
+/// A representative sweep for one station (one salt): 2 systems x 32 PRN x 3 bands.
 std::vector<int> sweep(const AmbiguityDrawConfig& cfg, std::uint64_t salt) {
     std::vector<int> out;
     for (const char* sys : { "G", "E" })
@@ -76,8 +76,8 @@ bool tryLoad(const std::string& body, std::string& err, SimConfig& out) {
 // The draw
 // ---------------------------------------------------------------------------
 
-/// The DEFAULT must stay legacy, or every archived fixture silently changes
-/// meaning the next time it is regenerated.
+/// The default stays legacy; otherwise every archived fixture would change
+/// meaning, without notice, the next time it is regenerated.
 TEST(SimAmbiguityRegime, DefaultsToLegacy) {
     const AmbiguityDrawConfig c;
     EXPECT_EQ(c.regime, AmbiguityRegime::Legacy);
@@ -88,9 +88,9 @@ TEST(SimAmbiguityRegime, DefaultsToLegacy) {
     }
 }
 
-/// Byte-identity anchor: the legacy path must reproduce the exact pre-extraction
-/// expression.  If this drifts, every existing fixture regenerates differently
-/// and no archived A/B is comparable any more.
+/// Byte-identity anchor: the legacy path reproduces the exact pre-extraction
+/// expression.  If it drifts, every existing fixture regenerates differently and
+/// no archived A/B remains comparable.
 TEST(SimAmbiguityRegime, LegacyReproducesTheHistoricalExpression) {
     const auto historical = [](const std::string& sat, int prn, int band_idx,
                                std::uint64_t seed_salt) -> int {
@@ -114,9 +114,9 @@ TEST(SimAmbiguityRegime, LegacyReproducesTheHistoricalExpression) {
                         << "sys=" << sys << " prn=" << prn << " bi=" << bi << " salt=" << salt;
 }
 
-/// The field regime must stay inside [-W, +W] and must actually USE the whole
-/// range — a draw that collapsed onto a few values would make the DD degenerate
-/// without ever leaving the declared bounds.
+/// The field regime stays inside [-W, +W] and spans the range: a draw collapsed
+/// onto a few values would make the DD degenerate without leaving the declared
+/// bounds.
 TEST(SimAmbiguityRegime, FieldRegimeStaysInRangeAndSpansIt) {
     for (int W : { 1, 8, 48, 250, 100000 }) {
         const auto c = fieldCfg(W);
@@ -139,11 +139,11 @@ TEST(SimAmbiguityRegime, FieldRegimeStaysInRangeAndSpansIt) {
     }
 }
 
-/// The field regime must land in the MEASURED field decade.  This is the whole
-/// point of the knob: eight bundled IGS stations (DOY-129, Melbourne-Wubbena,
-/// iono-free) give median |N_WL| 28.5 cyc and median |DD N_WL| 29.7 cyc, against
-/// the legacy draw's 268127 / 358244.  A regression that quietly restored a wide
-/// draw would still pass every range check above.
+/// The field regime lands in the measured field decade, which is the purpose of
+/// the knob: eight bundled IGS stations (DOY-129, Melbourne-Wubbena, iono-free)
+/// give median |N_WL| 28.5 cyc and median |DD N_WL| 29.7 cyc, against the legacy
+/// draw's 268127 / 358244.  A regression that restored a wide draw would still
+/// pass every range check above.
 TEST(SimAmbiguityRegime, FieldRegimeMatchesTheMeasuredFieldDecade) {
     const auto c = fieldCfg(48);
     std::vector<int> wl, dd;
@@ -163,19 +163,19 @@ TEST(SimAmbiguityRegime, FieldRegimeMatchesTheMeasuredFieldDecade) {
         std::sort(v.begin(), v.end());
         return v[v.size() / 2];
     };
-    // Field medians are 28.5 (WL) and 29.7 (DD); allow a wide band — the claim
-    // under test is the DECADE, not a tuned match.
+    // Field medians are 28.5 (WL) and 29.7 (DD).  The band is wide because the
+    // claim under test is the decade, not a tuned match.
     EXPECT_GE(medAbs(wl), 5);
     EXPECT_LE(medAbs(wl), 150);
     EXPECT_GE(medAbs(dd), 5);
     EXPECT_LE(medAbs(dd), 200);
 }
 
-/// SILENT FAILURE: without the station term every station gets identical
-/// integers, so every between-station SD and DD is EXACTLY ZERO and ambiguity
-/// resolution reports a perfect fix rate while measuring nothing.  Pinned in
-/// BOTH regimes — the field regime's narrow range makes accidental collisions
-/// more likely, so this is the regime where a broken salt is hardest to spot.
+/// Silent failure guarded: without the station term every station gets identical
+/// integers, so every between-station SD and DD is exactly zero and ambiguity
+/// resolution reports a perfect fix rate while measuring nothing.  Pinned in both
+/// regimes; the field regime's narrow range makes accidental collisions more
+/// likely, so a broken salt is hardest to spot there.
 TEST(SimAmbiguityRegime, StationSaltIsLoadBearingInBothRegimes) {
     for (const auto& c : { legacyCfg(), fieldCfg(48) }) {
         int n_zero_sd = 0, n_total = 0;
@@ -202,9 +202,10 @@ TEST(SimAmbiguityRegime, SaltZeroIsTheHistoricalSingleStationDraw) {
                   static_cast<int>(100000ull + ambiguityHash("G01", prn, 0, 0) % 900000ull));
 }
 
-/// SILENT FAILURE: the pre-2026 formula made the wide-lane N1-N2 the constant
-/// -137 on EVERY satellite, so one Melbourne-Wubbena solve generalized to the
-/// whole constellation.  Per-band draws must stay independent in both regimes.
+/// Silent failure guarded: a formula without per-band independence (the pre-2026
+/// one) makes the wide-lane N1-N2 the constant -137 on every satellite, so one
+/// Melbourne-Wubbena solve generalizes to the whole constellation.  Per-band
+/// draws stay independent in both regimes.
 TEST(SimAmbiguityRegime, WideLaneIsNotConstantAcrossSatellites) {
     for (const auto& c : { legacyCfg(), fieldCfg(48) }) {
         std::set<int> wl;
@@ -216,8 +217,8 @@ TEST(SimAmbiguityRegime, WideLaneIsNotConstantAcrossSatellites) {
 }
 
 /// Cross-process determinism: the network driver synthesizes each station in its
-/// OWN child process, so a draw that depended on call order or on any shared
-/// stream would desynchronize the roster silently.
+/// own child process, so a draw that depended on call order or on any shared
+/// stream would desynchronize the roster without any error.
 TEST(SimAmbiguityRegime, DrawIsPureAndOrderIndependent) {
     const auto c = fieldCfg(48);
     const auto a = sweep(c, 4242ull);
@@ -234,7 +235,7 @@ TEST(SimAmbiguityRegime, DrawIsPureAndOrderIndependent) {
     EXPECT_EQ(a, interleaved);
 }
 
-/// The two regimes share one entropy source and differ ONLY in the range
+/// The two regimes share one entropy source and differ only in the range
 /// mapping, so an A/B over the regime moves the ambiguities and nothing else.
 TEST(SimAmbiguityRegime, RegimesShareTheSameHash) {
     for (int prn = 1; prn <= 32; ++prn) {
@@ -250,7 +251,7 @@ TEST(SimAmbiguityRegime, RegimesShareTheSameHash) {
 // The loader
 // ---------------------------------------------------------------------------
 
-/// An absent "ambiguity" block must resolve to legacy — the byte-identity path.
+/// An absent "ambiguity" block resolves to legacy, the byte-identity path.
 TEST(SimAmbiguityRegimeLoader, AbsentBlockIsLegacy) {
     SimConfig cfg;
     std::string err;
@@ -275,8 +276,8 @@ TEST(SimAmbiguityRegimeLoader, FieldRegimeWithoutHalfWidthUsesTheCalibratedDefau
     EXPECT_EQ(cfg.ambiguity.half_width_cycles, 48);
 }
 
-/// ARMED-BUT-INERT is the failure this rejects: a config that reads as
-/// field-realistic while the fixture on disk is still 1e5 cycles wide.
+/// Rejects an armed-but-inert config: one that reads as field-realistic while
+/// the fixture on disk is still 1e5 cycles wide.
 TEST(SimAmbiguityRegimeLoader, RejectsHalfWidthWithoutFieldRegime) {
     SimConfig cfg;
     std::string err;

@@ -1,7 +1,7 @@
 /**
  * @file NetworkMeasurementAdmission.cpp
- * @brief Product-referenced measurement admission — the corrupt-channel screen.
- *        See the header for the statistic, the increments and the ordering
+ * @brief Product-referenced measurement admission: the screen for corrupt channels.
+ *        The header describes the statistic, the increments and the ordering
  *        contract.
  */
 
@@ -24,9 +24,9 @@ namespace GnssProcessor {
 
 namespace {
 
-/// One screened CODE observable of one line of sight, before the station centre is
+/// One screened code observable of one line of sight, before the station centre is
 /// known.  @c obs_idx indexes the station's `modeled[i]` vector, so a verdict can
-/// reach back to the exact observation whose band it must withhold.
+/// reach back to the observation whose band it must withhold.
 struct AdmSample {
     std::size_t obs_idx;
     char        band;
@@ -37,8 +37,8 @@ struct AdmSample {
 struct AdmChannel {
     std::size_t obs_idx;
     char        band;
-    double      d;      ///< the raw term of the WORST observable of this band.
-    double      z;      ///< its centred value — the screen statistic.
+    double      d;      ///< the raw term of the worst observable of this band.
+    double      z;      ///< its centred value: the screen statistic.
     double      absz;
 };
 
@@ -56,7 +56,7 @@ double medianOf(std::vector<double>& v) {
     return 0.5 * (v[m - 1] + hi);
 }
 
-/// "SAT|<band>" — the per-channel admission-record key.
+/// "SAT|<band>": the per-channel admission-record key.
 inline std::string chanKey(const std::string& sat, char band) {
     return sat + "|" + std::string(1, band);
 }
@@ -64,10 +64,10 @@ inline std::string chanKey(const std::string& sat, char band) {
 } // namespace
 
 char measurementAdmissionBand(const std::string& key) {
-    // RINEX-3 observation codes on the uncombined producer path are always the raw
-    // 3-character forms ("C1C", "L2W", …).  Anything else — most notably the
-    // iono-free path's "C1C_C2W" combination keys — has no single band to withhold
-    // and is deliberately not screened.
+    // RINEX-3 observation codes on the uncombined producer path are the raw
+    // 3-character forms ("C1C", "L2W", …).  Anything else, notably the iono-free
+    // path's "C1C_C2W" combination keys, has no single band to withhold and is not
+    // screened.
     if (key.size() != 3) return '\0';
     const char b = key[1];
     return (b >= '1' && b <= '9') ? b : '\0';
@@ -98,7 +98,7 @@ void networkMeasurementAdmission(NetworkRunContext& ctx,
                                  std::set<std::pair<int, std::string>>& carry_slipped_raw,
                                  bool carry_invariant, bool carry_warm) {
     (void)config_;   // every mode predicate is already resolved into ctx.knobs
-    if (!ctx.knobs.adm_on) return;   // OFF: no map, no event, no observable touched
+    if (!ctx.knobs.adm_on) return;   // off: no map, no event, no observable touched
 
     const bool   screen   = ctx.knobs.adm_screen;
     const bool   census   = ctx.knobs.adm_trace;
@@ -106,44 +106,42 @@ void networkMeasurementAdmission(NetworkRunContext& ctx,
     const int    min_sats = ctx.knobs.adm_min_sats;
     const int    heal_ep  = ctx.knobs.adm_heal_ep;
     const double max_frac = ctx.knobs.adm_max_frac;
-    // INC-4 the re-entry vet.  `adm_revet` already carries the `&& adm_screen`
-    // INERT-guard from both the loader and the knob snapshot.
+    // INC-4, the re-entry vet.  Both the loader and the knob snapshot already force
+    // `adm_revet` off unless `adm_screen` is on.
     const bool   revet        = ctx.knobs.adm_revet;
     const int    revet_gap    = ctx.knobs.adm_revet_gap_ep;
     const int    revet_ep     = ctx.knobs.adm_revet_ep;
     const bool   revet_hold   = ctx.knobs.adm_revet_hold;
-    // The TIGHTER bound a channel answers to while it is re-entering or vetting.
-    // Measured, not picked (card §10.10): across two legs, 272 epochs, 63 stations
-    // and 49 arc_resume cells screened at a 50 m census bound, NOT ONE healthy
-    // station's re-entry cell cleared 50 m — the whole >50 m re-entry population is
-    // BSHM00ISR, arriving at 670.3 m (G16), 347.6 m (G22) and 81.5 m (G13) on their
-    // RETURN epoch, while the healthy tail (all of it steady-state) tops out at
-    // 61.9 m.  The default 200 m therefore sits 3.2x above the worst legitimate |z|
-    // anywhere in that sample and 3.3x below the lowest corrupt arrival it is meant
-    // to reach.
+    // The tighter bound a channel answers to while it is re-entering or vetting
+    // (adm_bound_m times network.adm_revet_bound_scale; 200 m by default).  The
+    // default comes from a measurement (card §10.10): across two legs, 272 epochs,
+    // 63 stations and 49 arc_resume cells screened at a 50 m census bound, no healthy
+    // station's re-entry cell exceeded 50 m.  The re-entry population above 50 m was
+    // BSHM00ISR alone, arriving at 670.3 m (G16), 347.6 m (G22) and 81.5 m (G13) on
+    // the return epoch, while the healthy tail (all steady-state) peaked at 61.9 m.
+    // 200 m therefore sits 3.2x above the largest legitimate |z| in that sample and
+    // 3.3x below the lowest corrupt arrival it is meant to catch.
     //
-    // It deliberately does NOT reach G13 at 81.5 m.  That is 1.3x the healthy
-    // maximum and is not separable by ANY absolute bound without firing on
-    // COCO00AUS G24 — but G13 ramps slowly, so the census trigger names it at
-    // return + 4.  The two mechanisms cover DISJOINT failure shapes (fast-ramp /
-    // large-on-arrival vs slow-ramp / small-on-arrival) and neither subsumes the
-    // other, which is why a single one of them kept looking like a partial fix.
+    // It does not catch G13 at 81.5 m.  That is 1.3x the healthy maximum and no
+    // absolute bound separates it without firing on COCO00AUS G24; G13 ramps slowly,
+    // and the census trigger names it at return + 4.  The two mechanisms cover
+    // disjoint failure shapes (fast ramp, large on arrival; slow ramp, small on
+    // arrival) and neither subsumes the other, so both are needed.
     const double revet_bound  = ctx.knobs.adm_revet_bound_m;
 
-    // The PREFIT census's obs_code exceedance set, and whether it is FRESH.
+    // The PREFIT census's obs_code exceedance set, and whether it is fresh.
     //
-    // The census walk runs LATER in the epoch than this seam, so its flags are
-    // necessarily one loop epoch old — which is precisely the latency the field
-    // data says is available: the census named every one of the FT63 day's four
-    // exposed re-entries 1-4 epochs before their |z| reached this card's bound.
-    // Both seams read `n_loop_epochs`, incremented once per loop epoch before
-    // either of them runs, so `- 1` is exact rather than assumed.
+    // The census walk runs later in the epoch than this seam, so its flags are one
+    // loop epoch old.  That latency is available: the census named each of the FT63
+    // day's four exposed re-entries 1-4 epochs before their |z| reached this card's
+    // bound.  Both seams read `n_loop_epochs`, which is incremented once per loop
+    // epoch before either runs, so the `- 1` is exact.
     //
-    // Staleness is a hard gate, not a shrug: a flag set from five epochs ago names
-    // cells that may since have healed, and believing it would make the vet act on
-    // evidence it does not have.  An unusable consultation is COUNTED
-    // (`revet_census_absent`) so "the census said nothing" and "nobody asked the
-    // census" stay distinguishable — invariant #4 applied to a cross-seam read.
+    // Freshness is a hard gate: a flag set from five epochs ago names cells that may
+    // since have recovered, and acting on it would act on evidence the vet does not
+    // have.  An unusable consultation is counted (`revet_census_absent`), so "the
+    // census flagged nothing" and "the census was not consulted" stay
+    // distinguishable (invariant #4 applied to a cross-seam read).
     const long long loop_ep = static_cast<long long>(ctx.counters.n_loop_epochs);
     const bool revet_census =
         revet && ctx.knobs.adm_revet_census
@@ -154,20 +152,19 @@ void networkMeasurementAdmission(NetworkRunContext& ctx,
     auto& arcs = ctx.carry.adm_arc;
     ++ctr.epochs;
 
-    // The warm-resume RESTORE rule (INC-1, second clause).  The record map is not
-    // serialized, so on a resumed leg every channel looks brand new the first time
-    // its station is screened — but its estimator state was restored and may be
-    // carrying the corrupt seed, so a failure there is a RESTORE, not a birth.
+    // The warm-resume restore rule (INC-1, second clause).  The record map is not
+    // serialized, so on a resumed leg every channel looks new the first time its
+    // station is screened, while its estimator state was restored and may carry the
+    // corrupt seed; a failure there is a restore, not a birth.
     //
-    // The latch is PER STATION, not a single global one-shot.  A global one-shot is
-    // wrong and was measured to be: the seam's first pass screens whichever stations
-    // happen to be present AND above the satellite floor, and a station that is
-    // absent, thin, or whose satellite the two-station observability gate erased
-    // that epoch would consume the flag it never used — every later first sighting
-    // at that station then reads as a birth, mislabelling a restored corrupt arc.
-    // The RESPONSE no longer depends on this (see the refloat rule below), so the
-    // latch is now purely a LABEL — but a wrong label on the one event class this
-    // card exists to name is not a thing to leave in.
+    // The latch is per station, not one global one-shot.  A global one-shot would be
+    // consumed by the seam's first pass, which screens only the stations present and
+    // above the satellite floor; a station that was absent, thin, or had its
+    // satellite erased by the two-station observability gate on that epoch would
+    // then read every later first sighting as a birth, mislabelling a restored
+    // corrupt arc.  The response does not depend on this latch (see the refloat rule
+    // below), so it only sets the label, but that label names the event class this
+    // card exists to report.
     const bool resume_run = ctx.carry.adm_resume_pending;
     if (resume_run && ctr.epochs == 1) ++ctr.resume_passes;
 
@@ -178,12 +175,12 @@ void networkMeasurementAdmission(NetworkRunContext& ctx,
                          action, detail);
         ++ctr.events;
     };
-    // Per-(event, station, satellite, band) rate limit for the two streams that CAN
-    // repeat — the INC-3 census and a chronically-bad station's guard event.  The
-    // INC-1/INC-2 events are transitions (a birth, an onset, a heal) and never
-    // consult it.  Duplicated rather than shared with the prefit census's
-    // `holdoffAllows`, which is file-local to that translation unit; the redundancy
-    // census set the duplication precedent.
+    // Per-(event, station, satellite, band) rate limit for the two streams that can
+    // repeat: the INC-3 census and a chronically bad station's guard event.  The
+    // INC-1/INC-2 events are transitions (a birth, an onset, a heal) and do not
+    // consult it.  This duplicates the prefit census's `holdoffAllows`, which is
+    // file-local to its translation unit (the redundancy census set the same
+    // precedent).
     auto holdoff_ok = [&](const char* event, const std::string& station,
                           const std::string& sat, char band) {
         const std::string k = fmt::format("{}|{}|{}|{}", event, station, sat, band);
@@ -198,7 +195,7 @@ void networkMeasurementAdmission(NetworkRunContext& ctx,
     };
 
     // Every channel touched this epoch, so the ageing sweep can tell a channel that
-    // simply was not screened from one whose record has gone stale.
+    // was not screened this epoch from one whose record has gone stale.
     std::set<std::pair<int, std::string>> seen;
 
     // INC-3 per-epoch census accumulators.
@@ -207,11 +204,11 @@ void networkMeasurementAdmission(NetworkRunContext& ctx,
     std::string net_worst_id;
 
     for (std::size_t i = 0; i < stations.size(); ++i) {
-        // `present[i]` is the gate, not `modeled[i].empty()`: a PASS-A station that
-        // threw AFTER computeModels leaves a populated `modeled[i]` behind an absent
-        // presence flag, and screening it would invent verdicts for a station that
-        // folds no rows (NetworkSignalIntegrity.cpp:118 makes the same check for the
-        // same reason).
+        // The gate is `present[i]`, not `modeled[i].empty()`: a PASS-A station that
+        // threw after computeModels leaves a populated `modeled[i]` behind a false
+        // presence flag, and screening it would produce verdicts for a station that
+        // folds no rows (networkSignalIntegrity makes the same check for the same
+        // reason).
         if (i >= present.size() || !present[i]) continue;
         if (i >= modeled.size()) continue;
         NetStation& st = stations[i];
@@ -219,11 +216,11 @@ void networkMeasurementAdmission(NetworkRunContext& ctx,
         const int si = static_cast<int>(i);
 
         // ---- (1) gather the raw terms ------------------------------------
-        // One entry per CODE observable.  Deliberately NOT reduced per band yet:
-        // the reduction picks the worst |z|, and z is undefined until the station's
-        // centre is known.  Counted over the POST-prefilter observation set, so a
-        // satellite the two-station observability gate has just erased contributes
-        // nothing to the median and raises no verdict.
+        // One entry per code observable.  Not reduced per band yet: the reduction
+        // keeps the worst |z|, and z is undefined until the station's centre is
+        // known.  Built from the post-prefilter observation set, so a satellite the
+        // two-station observability gate has just erased contributes nothing to the
+        // median and raises no verdict.
         std::vector<AdmSample> samples;
         std::map<std::size_t, std::vector<double>> per_sat;   // obs_idx -> its code terms
         samples.reserve(modeled[i].size() * 2);
@@ -233,7 +230,7 @@ void networkMeasurementAdmission(NetworkRunContext& ctx,
             ++ctr.los_epochs;
             for (const auto& [key, val] : obs.observed) {
                 (void)val;
-                if (key.empty() || key[0] != 'C') continue;   // CODE only, by principle
+                if (key.empty() || key[0] != 'C') continue;   // code only, by design
                 const char band = measurementAdmissionBand(key);
                 if (band == '\0') continue;
                 double d = 0.0;
@@ -243,21 +240,22 @@ void networkMeasurementAdmission(NetworkRunContext& ctx,
             }
         }
 
-        // The centre is the median over SATELLITES — one representative per line of
-        // sight, itself the median of that satellite's code terms.  The
-        // two-level reduction is load-bearing, not tidiness: a flat median over
-        // OBSERVABLES weights a satellite by how many bands it happens to be tracked
-        // on, so ONE satellite tracked on four bands out-votes three tracked on one
-        // and can OWN the centre.  In that regime the screen inverts — the corrupt
-        // satellite reads z ~ 0 and is admitted while its healthy peers read z ~ |d|
-        // and are rejected — and the station guard structurally CANNOT catch it: the
-        // guard fires iff (healthy bands > corrupt bands) while the capture needs the
-        // opposite, so the two conditions are exact negations.  Reachable on the
-        // repo's own shipped network configs (GPS+Galileo, frequency_mode "all",
-        // channel_mode "all") at any station near the satellite floor.  Reducing per
-        // satellite first also makes `adm_min_sats` bound the population it names:
-        // the median's sample size IS the satellite count, exactly as spec section 2
-        // writes it ("median over the station's sats, n >= 4").
+        // The centre is the median over satellites: one representative per line of
+        // sight, itself the median of that satellite's code terms.  The two-level
+        // reduction matters: a flat median over observables weights a satellite by
+        // the number of bands it is tracked on, so one satellite tracked on four bands
+        // out-votes three tracked on one and can set the centre.  The screen then
+        // inverts (the corrupt satellite reads z ~ 0 and is admitted, its healthy
+        // peers read z ~ |d| and are rejected), and the station guard cannot catch
+        // it: the guard fires only when failing bands outnumber passing ones, while
+        // the capture needs the corrupt bands to outnumber the healthy ones, and in
+        // the inverted screen the failing bands are the healthy ones, so the two
+        // conditions exclude each other.  The case is reachable with the repository's
+        // shipped network configs (GPS+Galileo, frequency_mode "all", channel_mode
+        // "all") at any station near the satellite floor.  Reducing per satellite
+        // first also makes `adm_min_sats` bound the population it names: the median's
+        // sample size is the satellite count, as spec section 2 defines it ("median
+        // over the station's sats, n >= 4").
         std::vector<double> sat_med;
         sat_med.reserve(per_sat.size());
         for (auto& [idx, v] : per_sat) {
@@ -265,10 +263,9 @@ void networkMeasurementAdmission(NetworkRunContext& ctx,
             sat_med.push_back(medianOf(v));
         }
 
-        // A median of two or three values IS the outlier it is meant to remove.
-        // Below the floor the station is SKIPPED entirely and the skip is counted —
-        // never silently treated as a centre of zero, and never used to reject
-        // anything.
+        // A median of two or three values can be the outlier it is meant to remove.
+        // Below the floor the station is skipped entirely and the skip is counted;
+        // it is never treated as a centre of zero and never causes a rejection.
         if (static_cast<int>(sat_med.size()) < min_sats) {
             ++ctr.skips_thin;
             continue;
@@ -276,14 +273,14 @@ void networkMeasurementAdmission(NetworkRunContext& ctx,
         ++ctr.station_epochs;
         const std::size_t n_sats = sat_med.size();
         const double med = medianOf(sat_med);
-        // This station's FIRST screened epoch since a warm resume — the pass on
-        // which its restored arcs present themselves as first sightings.
+        // True on this station's first screened epoch since a warm resume, the pass
+        // on which its restored arcs appear as first sightings.
         const bool sta_resume_pass =
             resume_run && ctx.carry.adm_resume_seen.insert(si).second;
 
         // ---- (2) centre, and reduce to one verdict per (satellite, band) --
-        // Several code observables can share a band (C1C and C1W); they are ONE
-        // physical channel, so the band's verdict is that of its WORST observable.
+        // Several code observables can share a band (C1C and C1W); they are one
+        // physical channel, so the band's verdict is that of its worst observable.
         std::map<std::pair<std::size_t, char>, AdmChannel> chans;
         for (const AdmSample& s : samples) {
             const double z = s.d - med;
@@ -298,12 +295,11 @@ void networkMeasurementAdmission(NetworkRunContext& ctx,
         ctr.channels += static_cast<long long>(chans.size());
 
         // ---- (3) the census statistics + the station guard's fraction -----
-        // The fraction is computed before ANY verdict is acted on: if the CENTRE is
-        // untrusted then no per-channel verdict derived from it means anything, and
-        // the guard's whole point is to refuse those claims rather than to filter
-        // them after the fact.
+        // The fraction is computed before any verdict is acted on: if the centre is
+        // untrusted, no per-channel verdict derived from it means anything, and the
+        // guard refuses those verdicts outright instead of filtering them afterwards.
         long long n_fail = 0;
-        std::set<std::size_t> fail_sats;   // DISTINCT satellites with a failing band
+        std::set<std::size_t> fail_sats;   // distinct satellites with a failing band
         double      sta_worst = 0.0;
         std::string sta_worst_id;
         for (const auto& [k, c] : chans) {
@@ -324,16 +320,15 @@ void networkMeasurementAdmission(NetworkRunContext& ctx,
             ctr.max_z_id  = sta_worst_id;
         }
 
-        // The guard's question is "is the CENTRE trustworthy?", so its denominator
-        // must be the population that FORMED the centre — SATELLITES, one vote each.
-        // Spec §3 writes "a station's screened bands"; measured against a band
-        // denominator the guard fires on a single very bad satellite that happens to
-        // be tracked on many bands (4 of 7 channels at a 4-satellite station is one
-        // corrupt Galileo line of sight, not a corrupt station), holding the whole
-        // station and refusing the per-channel claims that were in fact perfectly
-        // sound.  Counting satellites makes the test say what §3's own justification
-        // says: the median is untrusted when most of the things that voted on it
-        // disagree with it.  Deviation recorded in the card's §9.
+        // The guard asks whether the centre is trustworthy, so its denominator is the
+        // population that formed the centre: satellites, one vote each.  Spec §3
+        // writes "a station's screened bands"; with a band denominator the guard
+        // fires on a single bad satellite tracked on many bands (4 of 7 channels at a
+        // 4-satellite station can be one corrupt Galileo line of sight, not a corrupt
+        // station), holds the whole station, and refuses per-channel verdicts that
+        // were sound.  Counting satellites makes the test match §3's own
+        // justification: the median is untrusted when most of what voted on it
+        // disagrees with it.  The deviation is recorded in the card's §9.
         const bool station_event =
             screen && n_sats > 0
             && static_cast<double>(fail_sats.size())
@@ -343,28 +338,28 @@ void networkMeasurementAdmission(NetworkRunContext& ctx,
         StateManager& sm = *st.sm;
         std::set<std::string> withheld_pb;   // "sat|signal" phase-bias identities
         std::set<std::string> withheld_cb;   // sat-code-bias state keys
-        std::set<std::string> emptied_sats;  // satellites left with NO observable at all
+        std::set<std::string> emptied_sats;  // satellites left with no observable at all
         bool prune_states = false;
 
         // Erase every observable of one band, refloat the arcs behind the hole, and
-        // account for both.
+        // count both.
         //
-        // The refloat is UNCONDITIONAL — including at a birth, where spec §3 says
-        // "no state exists yet … pure admission".  That is still true, and it is
-        // exactly why the re-tap is free there: inserting a fresh arc's key into the
-        // slip funnel erases a DD chord that does not exist and a GM deviation that
-        // does not exist, and marking a not-yet-allocated ambiguity pending-reseed
-        // is a plain set insert PASS B consumes when it allocates.  A no-op.
+        // The refloat is unconditional, including at a birth, where spec §3 says
+        // "no state exists yet … pure admission".  That holds, and it is why the
+        // re-tap costs nothing there: inserting a fresh arc's key into the slip
+        // funnel erases a DD chord and a GM deviation that do not exist, and marking
+        // a not-yet-allocated ambiguity pending-reseed is a set insert that PASS B
+        // consumes when it allocates.
         //
-        // Making it conditional was a REAL defect, not a saving.  "Is this a birth
-        // or a restore?" is answered from the seam's own record map, which is not
-        // serialized and which a station absent (or thin, or satellite-pruned) on an
-        // earlier epoch has no entry in — so a restored corrupt arc carrying a stiff
-        // Card-4 chord could present as a first sighting, be labelled a birth, and
-        // have its band erased with the chord left riding straight across the hole.
-        // That is standing invariant #1 violated, and it is the failure Card 4's
-        // slip hole cost 10.9 cyc/ep in the field.  Correctness must not depend on a
-        // classification that can be wrong when the alternative costs nothing.
+        // A conditional refloat would be a defect.  Birth versus restore is decided
+        // from the seam's own record map, which is not serialized and has no entry
+        // for a station that was absent, thin or satellite-pruned on an earlier
+        // epoch.  A restored corrupt arc carrying a stiff Card-4 chord could then
+        // appear as a first sighting, be labelled a birth, and have its band erased
+        // while the chord carries across the hole, violating standing invariant #1
+        // (the Card 4 slip-hole failure).
+        // Correctness must not depend on a classification that can be wrong when the
+        // alternative costs nothing.
         auto withhold_band = [&](std::size_t obs_idx, char band) {
             PppObservation& obs = modeled[i][obs_idx];
             std::vector<std::string> phase_keys, code_keys;
@@ -372,9 +367,9 @@ void networkMeasurementAdmission(NetworkRunContext& ctx,
                 if (measurementAdmissionBand(it->first) != band) { ++it; continue; }
                 if (it->first[0] == 'L')      phase_keys.push_back(it->first);
                 else if (it->first[0] == 'C') code_keys.push_back(it->first);
-                // raw_observed is deliberately untouched: it belongs to the slip
-                // detectors, which have already run this epoch and must keep seeing
-                // the receiver's true tracking state.
+                // raw_observed is left untouched: it belongs to the slip detectors,
+                // which have already run this epoch and must keep seeing the
+                // receiver's true tracking state.
                 it = obs.observed.erase(it);
             }
             const std::size_t n_removed = phase_keys.size() + code_keys.size();
@@ -382,33 +377,32 @@ void networkMeasurementAdmission(NetworkRunContext& ctx,
             ++ctr.withheld_channels;
             ctr.withheld_obs += static_cast<long long>(n_removed);
 
-            // Prune the now-orphaned shared states, exactly as the two-station
-            // observability gate does when IT removes observations
-            // (ApplicationNetworkAssembly.cpp:1456 "Prune the now-orphaned shared
-            // states").  This is load-bearing in three independent places, all of
-            // which run AFTER this seam and all of which derive from the STATES
-            // rather than from the observables:
+            // Prune the now-orphaned shared states, as the two-station observability
+            // gate in networkAssemblyPrefilter_ does when it removes observations
+            // ("Prune the now-orphaned shared states").  Three later consumers
+            // derive from the states rather than from the observables, and each
+            // needs the prune:
             //   * the anchor election reads the phase-bias states, so an unpruned
             //     one could be seated as a datum pin whose supporting row this seam
-            //     has just removed — the pin folds against nothing and the gauge
-            //     silently loses a constraint;
-            //   * the code-bias registration counts STATIONS HOLDING A STATE against
-            //     its >= 2 coverage gate, so an unpruned one phantom-supports a
-            //     shared OSB column that only one station actually feeds — the
-            //     single-station code column that is perfectly confounded with that
-            //     receiver's clock and goes near-null; and
+            //     has removed; the pin then folds against nothing and the gauge
+            //     loses a constraint without any signal;
+            //   * the code-bias registration counts stations holding a state against
+            //     its >= 2 coverage gate, so an unpruned one falsely supports a
+            //     shared OSB column that only one station feeds (a single-station
+            //     code column is confounded with that receiver's clock and goes
+            //     near-null); and
             //   * `registerClock` unions the satellite clock states, so a satellite
-            //     left with NO observable at all here must stop claiming to observe
+            //     left with no observable at all here must stop claiming to observe
             //     it (recorded per satellite and applied only when the observation
-            //     is emptied, since a satellite that keeps another band is still a
-            //     genuine supporter).
-            // Card SID phase 4a (S1): the ADMISSION writer.  The withhold removes
-            // the band's observables from `modeled`, which is exactly the set the
-            // admitted lifecycle is fed from, so this screen OPENS an admitted gap
-            // and the identity is exact at this line: the station index, the
-            // satellite and the erased signals themselves.  Recorded per PHASE key,
-            // because a phase arc is what the ledger tracks; the code keys of the
-            // same band go with it and are not separate arcs.
+            //     is emptied, since a satellite that keeps another band still
+            //     supports the column).
+            // Arc-ledger reason for the withhold (Card SID phase 4a, S1).  The
+            // withhold removes the band's observables from `modeled`, the set the
+            // admitted lifecycle is fed from, so this screen opens an admitted gap
+            // and the identity is exact here: the station index, the satellite and
+            // the erased signals.  Recorded per phase key, because a phase arc is
+            // what the ledger tracks; the code keys of the same band go with it and
+            // are not separate arcs.
             for (const std::string& b : phase_keys)
                 arcReasonRecord(ctx.reasons, ArcLedger::Key{ si, obs.satellite, b },
                                 kArcReasonAdmission);
@@ -424,22 +418,22 @@ void networkMeasurementAdmission(NetworkRunContext& ctx,
                 emptied_sats.insert(obs.satellite);
                 prune_states = true;
             }
-            // Reset, never repair.  Nothing bounds the error on a corrupt channel,
-            // so there is no value to correct toward — only state to discard.  The
-            // insertion rides the EXACT funnel the MW / LLI / IF-TD detections use;
-            // a parallel reset path would be a second definition of "this arc
-            // re-taps fresh".  BOTH feeds are written and counted apart: a bare
-            // `markAmbiguityPendingReseed` is a one-shot PASS-B consumes and the
+            // Reset, never repair.  Nothing bounds the error on a corrupt channel, so
+            // there is no value to correct toward, only state to discard.  The
+            // insertion uses the same funnel as the MW / LLI / IF-TD detections; a
+            // parallel reset path would be a second definition of "this arc re-taps
+            // fresh".  Both feeds are written and counted separately: a bare
+            // `markAmbiguityPendingReseed` is a one-shot that PASS B consumes and the
             // leveling harvest clears, so on a lineage without warm leveling it is
-            // not a refloat at all (NetworkIonoDwRelease.hpp:185 records that trap).
+            // not a refloat at all (NetworkIonoDwRelease.hpp describes that case).
             for (const std::string& b : phase_keys) {
                 const std::string amb = StateKeys::makeAmbiguityKey(obs.satellite, b);
                 if (carry_invariant) {
-                    // The RAW provenance set too: a withheld band IS a raw
-                    // observable event (the channel physically leaves the model
-                    // set), so the Iono-2 v3k erase-policy split must ERASE this
-                    // line of sight's GM deviation rather than D5-KEEP a level
-                    // carried across the hole this seam just punched.
+                    // Also the raw provenance set: a withheld band is a raw
+                    // observable event (the channel leaves the model set), so the
+                    // Iono-2 v3k erase-policy split must erase this line of sight's
+                    // GM deviation rather than D5-keep a level carried across the
+                    // hole this seam made.
                     carry_slipped_raw.insert({si, amb});
                     if (carry_slipped_ambs.insert({si, amb}).second) ++ctr.refloat_ambs;
                 }
@@ -451,15 +445,15 @@ void networkMeasurementAdmission(NetworkRunContext& ctx,
         };
 
         if (station_event) {
-            // The IF-TD reference gate's incoherent-station precedent
-            // (IfPhaseSlipDetector.cpp:454): when a family disagrees with its own
-            // centre, the CENTRE is the untrustworthy thing, and the honest move is
-            // to act at the family's scope while REFUSING every per-member claim.
-            // So: hold the station's screened bands, refloat the arcs behind the
-            // holes, emit ONE event — and leave every admission record untouched, so
-            // the next epoch re-tests from evidence rather than from a verdict this
-            // one was not entitled to make.  No heal counter advances either: a
-            // verdict from a corrupted centre is not evidence in EITHER direction.
+            // The IF-TD reference gate's incoherent-station rule (FireNoRebase in
+            // IfPhaseSlipDetector.cpp): when a family disagrees with its own centre,
+            // the centre is what is untrustworthy, so act at the family's scope and
+            // make no per-member claim.  The station's screened bands are held, the
+            // arcs behind the holes are refloated, one event is emitted, and every
+            // admission record is left untouched, so the next epoch re-tests from
+            // evidence rather than from a verdict this one could not support.  No heal
+            // counter advances either: a verdict from a corrupted centre is not
+            // evidence in either direction.
             ++ctr.station_events;
             ctr.station_held_channels += static_cast<long long>(chans.size());
             for (const auto& [k, c] : chans) {
@@ -482,16 +476,16 @@ void networkMeasurementAdmission(NetworkRunContext& ctx,
                 const std::string ck = chanKey(sat, c.band);
                 seen.insert({si, ck});
                 const bool fail = c.absz > bound;
-                // The tighter re-entry bound, evaluated apart from `fail` and NEVER
-                // substituted for it.  `fail` is this card's absolute admission
-                // verdict and is also the INC-3 census's domain — §7 gate 5 grades
-                // on "enumerates every |z| over the bound on the day", which is a
-                // statement about `adm_bound_m`.  Folding a vet-window threshold
-                // into it would silently redefine what the census means for the
-                // ~0.3 % of channel-epochs that happen to be vetting, and make the
-                // measure-only arm's numbers depend on a response knob.
+                // The tighter re-entry bound, evaluated separately from `fail` and
+                // never substituted for it.  `fail` is this card's absolute admission
+                // verdict and also defines the INC-3 census's domain: §7 gate 5
+                // grades on "enumerates every |z| over the bound on the day", which is
+                // a statement about `adm_bound_m`.  Folding a vet-window threshold into
+                // it would change what the census means for the ~0.3 % of
+                // channel-epochs that are vetting, and make the measure-only arm's
+                // numbers depend on a response knob.
                 const bool fail_vet = revet && c.absz > revet_bound;
-                // Built ON DEMAND: emitEvent does not short-circuit its arguments
+                // Built on demand: emitEvent does not short-circuit its arguments
                 // (its only guard is inside the callee), so formatting a detail for
                 // every channel of every station of every epoch would be paid in
                 // full on a run with trace_events off.
@@ -507,85 +501,80 @@ void networkMeasurementAdmission(NetworkRunContext& ctx,
                     if (first) it = arcs.emplace(std::make_pair(si, ck),
                                                  MeasurementAdmissionArc{}).first;
                     MeasurementAdmissionArc& a = it->second;
-                    // The PREVIOUS screened epoch, captured before it is overwritten.
-                    // `last_ep` advances only on epochs this seam actually screened
-                    // the channel, so the gap counts absence from THE MODEL SET as
-                    // this seam sees it — a satellite the two-station observability
-                    // gate erased, or a station under the median floor, reads as
-                    // absent.  That is the conservative direction: it re-screens.
+                    // The previous screened epoch, captured before it is overwritten.
+                    // `last_ep` advances only on epochs this seam screened the
+                    // channel, so the gap counts absence from the model set as this
+                    // seam sees it: a satellite the two-station observability gate
+                    // erased, or a station under the satellite floor, reads as absent.
+                    // That is the conservative direction: it re-screens.
                     const long long prev_ep = first ? -1 : a.last_ep;
                     const long long gap     = (prev_ep < 0) ? 0
                                                             : epoch_idx - prev_ep - 1;
                     a.last_ep = epoch_idx;
 
-                    // INC-4.  A RE-ENTRY is a channel whose record survives but whose
+                    // INC-4.  A re-entry is a channel whose record survives but whose
                     // arc did not: it has been absent for at least `adm_revet_gap_ep`
-                    // screened epochs, so the `admitted` verdict it is carrying was
-                    // made about a channel that is not necessarily the one now
-                    // present.  Re-screen it as a BIRTH rather than inherit that.
+                    // epochs, so its `admitted` verdict was made about a channel that
+                    // is not necessarily the one now present.  It is re-screened as a
+                    // birth rather than inheriting that verdict.
                     //
                     // This is the same defect class as §9.5's warm-resume latch, one
-                    // level down: there the record map did not survive the boundary
-                    // and a restored arc read as a birth; here the record survives a
-                    // boundary the ARC did not, and a re-entry reads as an
-                    // established arc.  Both are a stale answer to "is this the
-                    // channel I am holding a verdict about?", and both get the same
-                    // treatment — stop asking the question of a source that cannot
-                    // answer it, and re-derive from this epoch's evidence.
+                    // level down: there the record map does not survive the boundary
+                    // and a restored arc reads as a birth; here the record survives a
+                    // boundary the arc did not, and a re-entry would read as an
+                    // established arc.  Both give a stale answer to "is this the
+                    // channel the stored verdict is about?", and both are handled the
+                    // same way: the verdict is re-derived from this epoch's evidence.
                     const bool reentry = revet && !first && gap >= revet_gap;
 
                     if (first || reentry) {
                         if (reentry) {
-                            // Open the vet window.  `births` is deliberately NOT
-                            // incremented: it is the admission-opportunity denominator
-                            // the two birth rejections of §7 gate 2 are read against,
-                            // and folding re-entries into it would silently move that
-                            // gate's baseline.  The re-entry population gets its own.
+                            // Open the vet window.  `births` is not incremented: it is
+                            // the admission-opportunity denominator that the two birth
+                            // rejection counts of §7 gate 2 are read against, and
+                            // folding re-entries into it would move that gate's
+                            // baseline.  Re-entries have their own counter.
                             ++ctr.reentries;
                             a.vet_left = revet_ep;
                         } else {
                             ++ctr.births;
                         }
-                        // A RE-ENTRY answers to the tighter bound; a true BIRTH does
-                        // not.  The asymmetry is the measurement's, not a hedge: the
-                        // §10.10 population is specifically "cells within 8 epochs of
-                        // an arc_resume", and nothing licenses extending a 200 m bound
-                        // to a first-ever sighting, where the arc has no history to be
-                        // suspicious about and the rising-satellite population is
-                        // largest.
+                        // A re-entry answers to the tighter bound; a true birth does
+                        // not.  The asymmetry follows the measurement: the §10.10
+                        // population is "cells within 8 epochs of an arc_resume", and
+                        // nothing supports extending a 200 m bound to a first-ever
+                        // sighting, where the arc has no history to be suspicious of
+                        // and the rising-satellite population is largest.
                         const bool refuse = fail || (reentry && fail_vet);
                         if (refuse) {
                             a.admitted  = false;
                             a.clean_run = 0;
                             withhold_band(c.obs_idx, c.band);
-                            // `reentry` is tested FIRST although it cannot co-occur
+                            // `reentry` is tested first although it cannot co-occur
                             // with `sta_resume_pass` (a resumed run's map is empty, so
                             // every channel on a station's first screened epoch is
-                            // `first` and no re-entry is reachable there).  Ordering
-                            // it first anyway means the three labels stay mutually
-                            // exclusive by CONSTRUCTION rather than by an argument
-                            // about reachability that a later change could quietly
-                            // invalidate.
+                            // `first` and no re-entry is reachable there).  Testing it
+                            // first keeps the three labels mutually exclusive by
+                            // construction rather than by a reachability argument that
+                            // a later change could invalidate.
                             if (reentry) {
-                                // The twelve of the FT63 day.  Same response the onset
-                                // path gave them — this is a relabel, and the point of
-                                // the relabel is that the label was carrying a claim
-                                // ("a previously-good channel went bad") that the
-                                // evidence did not support.
-                                // Which bound made the call is recorded, because the
+                                // Same response as the onset path, with a label that
+                                // does not claim that a previously good channel went
+                                // bad, which the evidence does not support.
+                                // The bound that made the call is recorded, because the
                                 // two mean different things: `bound` says the channel
                                 // is in the 1e5 m corrupt class outright, `vet_bound`
-                                // says it arrived somewhere no healthy re-entry in the
-                                // §10.10 sample has ever been.  Only the latter is a
-                                // claim this increment is making on its own evidence.
+                                // says it arrived outside every healthy re-entry in the
+                                // §10.10 sample.  Only the latter is a claim this
+                                // increment makes on its own evidence.
                                 ++ctr.reject_reentry;
                                 if (!fail) ++ctr.revet_bound_refusals;
                                 emit("adm_reject_reentry", sat, st.name, c.z, "withhold",
                                      fmt::format("{};gap_ep={};trigger={}", detail(), gap,
                                                  fail ? "bound" : "vet_bound"));
                             } else if (sta_resume_pass) {
-                                // A RESTORED corrupt arc: its state crossed the snapshot
-                                // boundary even though this observer's memory did not.
+                                // A restored corrupt arc: its state crossed the snapshot
+                                // boundary although this seam's record map did not.
                                 ++ctr.reject_resume;
                                 emit("adm_reject_resume", sat, st.name, c.z, "withhold",
                                      detail());
@@ -598,24 +587,20 @@ void networkMeasurementAdmission(NetworkRunContext& ctx,
                             }
                             evented = true;
                         } else if (reentry && revet_hold) {
-                            // STRICT posture.  One in-bound epoch is thin evidence
-                            // about a channel that has been away, and the FT63 day
-                            // shows why: G16@BSHM and G13@BSHM both passed the bound
-                            // on their return epoch and crossed it 2 and 5 epochs
-                            // later, having been folded at full weight in between
-                            // (a00 39.7 -> 59.4 and 30.8 -> 43.0 TECU).  Holding the
-                            // channel until the heal path readmits it removes that
-                            // window outright.
+                            // Strict posture.  One in-bound epoch is thin evidence about
+                            // a channel that has been away: on the FT63 day, G16@BSHM
+                            // and G13@BSHM passed the bound on their return epoch,
+                            // crossed it 2 and 5 epochs later, and were folded at full
+                            // weight in between.  Holding the channel until the heal
+                            // path readmits it removes that window.
                             //
-                            // Default OFF, and the reason is the prefer-fallback
-                            // directive rather than timidity: this withholds EVERY
-                            // re-entry, ~4650 of them on a 63-station day, and the
-                            // population it delays is dominated by legitimately
-                            // RISING satellites.  A 63-station producer that admits
-                            // every rising satellite 5 epochs late is paying an
-                            // observability cost to catch a fault class that the
-                            // relabel above already refuses at the return epoch
-                            // whenever the fault is present on arrival.
+                            // Off by default because it withholds every re-entry
+                            // (~4650 on a 63-station day), a population dominated by
+                            // legitimately rising satellites.  Admitting every rising
+                            // satellite 5 epochs late costs observability, to catch a
+                            // fault class that the re-entry refusal above already
+                            // refuses at the return epoch whenever the fault is
+                            // present on arrival.
                             a.admitted  = false;
                             a.clean_run = 0;
                             ++ctr.revet_hold_ep;
@@ -626,46 +611,44 @@ void networkMeasurementAdmission(NetworkRunContext& ctx,
                             else         ++ctr.admits_birth;
                         }
                     } else if (a.admitted) {
-                        // INC-4: inside a vet window the PREFIT census is admitted as
+                        // INC-4: inside a vet window the PREFIT census counts as
                         // evidence alongside this seam's own bound.  The two see
-                        // different things — the census statistic is STANDARDIZED
+                        // different things: the census statistic is standardized
                         // (|y - m| sqrt(w)), so it resolves a ramping corruption while
-                        // it is still under this card's absolute metre bound, which is
-                        // exactly what it did at G16@BSHM (s = 1439.6 on a raw
-                        // y = 975.5 m, one epoch before |z| reached 1000).
+                        // it is still under this card's absolute metre bound (at
+                        // G16@BSHM it flagged the cell one epoch before |z| reached
+                        // 1000 m).
                         //
-                        // Scope note, stated rather than hidden: the flag is per LINE
-                        // OF SIGHT, so a flagged satellite refuses whichever of its
-                        // bands is currently vetting, not only the corrupt one.  There
-                        // is no row -> band map to do better, the flicker card's
-                        // demotion map made the same trade for the same reason (its
-                        // deviation 6), and the blast radius is bounded by the vet
-                        // window.  The refusals it makes on its own are counted apart
-                        // so the trade is auditable rather than argued.
-                        // The tighter bound stays live for the whole window, not just
+                        // Scope: the flag is per line of sight, so a flagged satellite
+                        // refuses whichever of its bands is currently vetting, not
+                        // only the corrupt one.  There is no row -> band map to do
+                        // better; the flicker card's demotion map made the same trade
+                        // for the same reason (its deviation 6), and the vet window
+                        // bounds the effect.  The refusals the census makes on its
+                        // own are counted separately so the trade can be audited.
+                        // The tighter bound stays live for the whole window, not only
                         // the return epoch.  §10.10's population is defined as "within
-                        // 8 epochs of an arc_resume" — exactly this window — and it is
-                        // empty of healthy cells over 50 m, so extending the 200 m
-                        // bound across it is covered by the measurement rather than
-                        // extrapolated past it.  It also catches the shape neither
-                        // edge alone would: a channel that arrives clean and ramps
-                        // through 200 m before it ramps through 1000.
+                        // 8 epochs of an arc_resume", which is this window, and it
+                        // holds no healthy cell over 50 m, so the 200 m bound across
+                        // the window stays inside the measurement.  It also catches a
+                        // shape neither edge alone would: a channel that arrives clean
+                        // and ramps through 200 m before it ramps through 1000 m.
                         bool vet_fail = revet && a.vet_left > 0 && fail_vet;
                         const bool vet_fail_bound = vet_fail;
                         if (a.vet_left > 0 && revet_census_wanted) {
-                            // Counted BEFORE the freshness test so `absent` has a
-                            // denominator.  Note this path is not reached on the
-                            // return epoch itself — that one takes the
-                            // birth-equivalent branch above — which is why
-                            // `revet_census_reads` sits exactly one below
-                            // `revet_window_ep` per re-entry, and why it should: the
-                            // census defers a re-entering arc as a BIRTH on its
-                            // return epoch, so there is nothing there to ask about.
+                            // Counted before the freshness test so `absent` has a
+                            // denominator.  This path is not reached on a return
+                            // epoch (a re-entry takes the birth-equivalent branch
+                            // above, a heal the rejected branch below), and the census
+                            // defers a re-entering arc as a birth on its return epoch,
+                            // so there is nothing to ask there.  Hence
+                            // `revet_census_reads` falls one short of
+                            // `revet_window_ep` per admitted return epoch, and exceeds
+                            // it by one per refusal on this path.
                             ++ctr.revet_census_reads;
                             if (!revet_census) {
-                                // Armed, but there is no fresh flag set to read.  NOT
-                                // a clean bill of health — invariant #4 applied to a
-                                // cross-seam read.
+                                // Armed, but no fresh flag set to read.  Not a clean
+                                // result (invariant #4 applied to a cross-seam read).
                                 ++ctr.revet_census_absent;
                             } else if (ctx.carry.prefit_code_flag.count({si, sat})) {
                                 vet_fail = true;
@@ -675,21 +658,20 @@ void networkMeasurementAdmission(NetworkRunContext& ctx,
                             ++ctr.onsets;
                             a.admitted  = false;
                             a.clean_run = 0;
-                            // Refusing RE-ARMS the window: the channel has to serve a
-                            // full vet again, not the remainder of an old one.
+                            // A refusal re-arms the window: the channel serves a full
+                            // vet again, not the remainder of the old one.
                             if (revet) a.vet_left = revet_ep;
                             withhold_band(c.obs_idx, c.band);
                             if (vet_fail && !fail) {
-                                // A vet-window refusal the card's own bound would NOT
-                                // have made this epoch.  Which of the two triggers
-                                // fired is recorded and counted apart, because they
-                                // are evidence of different kinds and the whole point
-                                // of §10.10 is that they reach different cells: the
-                                // vet BOUND says "no healthy re-entry in the measured
-                                // sample has ever been this far out", the CENSUS says
-                                // "a standardized prefit test flagged this line of
-                                // sight last epoch".  Fused, neither claim would be
-                                // falsifiable on its own.
+                                // A vet-window refusal that the card's own bound would
+                                // not have made this epoch.  The trigger is recorded
+                                // and counted separately, because the two are evidence
+                                // of different kinds and §10.10 shows they reach
+                                // different cells: the vet bound says "no healthy
+                                // re-entry in the measured sample has been this far
+                                // out", the census says "a standardized prefit test
+                                // flagged this line of sight last epoch".  Counted
+                                // together, neither claim could be tested on its own.
                                 if (vet_fail_bound) ++ctr.revet_bound_refusals;
                                 else                ++ctr.revet_census_refusals;
                                 emit("adm_revet_refuse", sat, st.name, c.z, "withhold",
@@ -705,38 +687,36 @@ void networkMeasurementAdmission(NetworkRunContext& ctx,
                         }
                         // In bound and admitted: the steady state.  Nothing to do.
                     } else if (fail || (revet && a.vet_left > 0 && fail_vet)) {
-                        // Rejected, and re-testing every epoch (spec §3 INC-2).
+                        // Rejected, and re-tested every epoch (spec §3 INC-2).
                         //
-                        // The re-test uses the SAME bound that refused the channel.
-                        // Testing `fail` alone here was a real defect, found by the
-                        // §10.11 field arm rather than by review: a channel held out
-                        // by the 200 m vet bound accumulated "clean" epochs at
-                        // anything under 1000, so G22@BSHM was refused at 347.6 m
-                        // (273450), readmitted by the heal path at **782.2 m**
-                        // (273600) and re-refused at 888.5 m one epoch later — a
-                        // flicker, with the bad readmission visibly folded into a00
-                        // (32.60 -> 37.54 -> 34.23).  An admission bound that lets a
-                        // channel back in above itself is not a bound.
+                        // The re-test uses the bound that refused the channel: while a
+                        // vet window is open (it does not tick down while the channel
+                        // is withheld), that includes the tighter vet bound.  Testing
+                        // `fail` alone would let a channel held out by the 200 m vet
+                        // bound accumulate clean epochs anywhere under 1000 m and be
+                        // readmitted above the bound that refused it; the §10.11 field
+                        // arm showed this on G22@BSHM as a refuse, readmit, refuse
+                        // cycle with the bad readmission folded into a00.
                         a.clean_run = 0;
                         ++ctr.rejects_held;
                         withhold_band(c.obs_idx, c.band);
                     } else if (++a.clean_run >= heal_ep) {
-                        // Readmit through the normal funnel with a FRESH seed.  The
+                        // Readmit through the normal funnel with a fresh seed.  The
                         // band has been out of `observed` for at least heal_ep
                         // epochs, so `ensureRequiredStates` has already pruned its
-                        // ambiguity and this seam pruned its bias states — but the
-                        // invariant-DD chord is keyed INDEPENDENTLY of the
-                        // StateManager, so the re-tap is what actually delivers
-                        // "a heal never restores the old states".  The band is NOT
-                        // withheld this epoch: that is what admission means.
+                        // ambiguity and this seam pruned its bias states, but the
+                        // invariant-DD chord is keyed independently of the
+                        // StateManager, so the re-tap is what delivers "a heal never
+                        // restores the old states".  The band is not withheld this
+                        // epoch: that is what admission means.
                         ++ctr.heals;
                         a.admitted  = true;
                         a.clean_run = 0;
-                        // A heal IS a re-entry — the same arc coming back with a fresh
-                        // seed after an absence from the model set — so it opens a vet
-                        // window for the same reason the gap does.  Without this, the
-                        // one path that puts a previously-REJECTED channel back into
-                        // the solve would be the only one that puts it back unvetted.
+                        // A heal is a re-entry (the same arc returning with a fresh
+                        // seed after an absence from the model set), so it opens a vet
+                        // window for the same reason a gap does.  Otherwise the one
+                        // path that returns a previously rejected channel to the solve
+                        // would be the only one that returns it unvetted.
                         if (revet) a.vet_left = revet_ep;
                         for (const auto& [okey, oval] : modeled[i][c.obs_idx].observed) {
                             (void)oval;
@@ -762,41 +742,43 @@ void networkMeasurementAdmission(NetworkRunContext& ctx,
                     }
 
                     // --- INC-4 vet-window countdown ------------------------
-                    // ONE decrement per SCREENED epoch, at the end of the verdict, so
-                    // the window is measured in epochs this seam actually looked at
-                    // the channel — the same clock `last_ep` and the gap use.  An
-                    // epoch the station was thin or absent does not burn vet budget.
+                    // One decrement per screened epoch, at the end of the verdict, so
+                    // the window is measured in epochs on which this seam looked at
+                    // the channel (the same clock `last_ep` and the gap use).  An
+                    // epoch on which the station was thin or absent does not use vet
+                    // budget.
                     //
-                    // The arithmetic, stated because the flicker card's deviation 7
-                    // shows it is the kind of thing that gets read two ways: the
-                    // window is set to `adm_revet_ep` on the return epoch and
-                    // decremented at the END of it, so coverage runs from the return
-                    // epoch through return + (adm_revet_ep - 1).  The census cannot
-                    // flag the return epoch itself (a re-entering arc's ambiguity is
-                    // fresh, so the census defers it as a BIRTH) and its flags are
-                    // read one epoch late, which puts the first readable flag at
+                    // The arithmetic (the flicker card's deviation 7 shows it can be
+                    // read two ways): the window is set to `adm_revet_ep` on the
+                    // return epoch and decremented at the end of it, so for a channel
+                    // admitted throughout, coverage runs from the return epoch
+                    // through return + (adm_revet_ep - 1).  The census cannot flag
+                    // the return epoch itself (a re-entering arc's ambiguity is
+                    // fresh, so the census defers it as a birth), and its flags are
+                    // read one epoch late, so the first readable flag is at
                     // return + 2.  On the FT63 day the four exposed cells were
-                    // flagged at return + 1, +3, +4 and +1, i.e. readable at return
-                    // + 2, +4, +5 and +2 — so the default of 8 covers every measured
-                    // case with three epochs to spare.
-                    // The window ticks down only on epochs the channel was ADMITTED.
+                    // flagged at return + 1, +3, +4 and +1, i.e. readable at
+                    // return + 2, +4, +5 and +2, so the default of 8 (coverage
+                    // through return + 7) covers every measured case with two
+                    // epochs to spare.
+                    // The window ticks down only on epochs the channel was admitted.
                     // A withheld epoch is not evidence of recovery, so spending vet
-                    // budget on it would let a channel that is being held out serve
-                    // out its window in absentia and come back UNVETTED — which is
-                    // precisely the state INC-4 exists to abolish.  It is also what
-                    // keeps the vet bound live for the whole time a channel is
-                    // rejected, which is what the heal-path fix above depends on.
+                    // budget on it would let a channel that is held out serve out
+                    // its window while withheld and return unvetted, which INC-4
+                    // exists to prevent.  It also keeps the vet bound live for as
+                    // long as a channel is rejected, which the rejected-branch
+                    // re-test above depends on.
                     if (a.vet_left > 0 && a.admitted) {
                         ++ctr.revet_window_ep;
                         if (--a.vet_left == 0) ++ctr.revet_expired;
                     }
                 }
 
-                // INC-3: NAME every over-bound cell the response did not already
-                // name this epoch.  That covers the measure-only arm outright and,
-                // on an armed arm, the HELD rejections — which emit no transition
-                // event by design, so without this their duration would be visible
-                // only as a counter.  Rate-limited per cell, like PREFIT.
+                // INC-3: name every over-bound cell that the response did not already
+                // name this epoch.  That covers the measure-only arm and, on an armed
+                // arm, the held rejections, which emit no transition event, so
+                // without this their duration would be visible only as a counter.
+                // Rate-limited per cell, like PREFIT.
                 if (census && fail && !evented
                     && holdoff_ok("adm_census", st.name, sat, c.band))
                     emit("adm_census", sat, st.name, c.z,
@@ -839,17 +821,16 @@ void networkMeasurementAdmission(NetworkRunContext& ctx,
     }
 
     // --- INC-3 per-epoch scalars for network_epoch_status.csv ---------------
-    // TWO columns, per spec §3.  The reading is recorded here because §3's
-    // "station-worst |z| and network-worst |z|" is ambiguous on a file with one row
-    // per EPOCH: a single maximum is an extreme, not a population, and the
-    // separation claim §7 gate 4 has to falsify needs both halves.  So the columns
-    // are the MEDIAN over screened stations of each station's worst |z| (the
-    // healthy sea — what a typical station's worst channel looks like) and the
-    // network MAXIMUM (the extreme).  The identity of the maximum goes to the
-    // events, exactly as §3 says.  Stamped with the TOW so an epoch this seam did
-    // not screen leaves the columns BLANK rather than repeating stale numbers (the
-    // redun_ep_tow pattern; deliberately NOT the ep_dw_engaged pattern, whose
-    // sentinel is never reset and therefore sticks).
+    // Two columns, per spec §3.  §3's "station-worst |z| and network-worst |z|" is
+    // ambiguous for a file with one row per epoch: a single maximum is an extreme,
+    // not a population, and the separation claim §7 gate 4 must test needs both.
+    // The columns are therefore the median over screened stations of each station's
+    // worst |z| (what a typical station's worst channel looks like) and the network
+    // maximum (the extreme).  The identity of over-bound cells goes to the events,
+    // as §3 says.  Stamped with the TOW so an epoch this seam did not screen leaves
+    // the columns blank rather than repeating stale numbers (the redun_ep_tow
+    // pattern, not the ep_dw_engaged pattern, whose sentinel is never reset and
+    // therefore persists).
     if (!station_worst.empty()) {
         ctx.carry.adm_ep_tow         = t.tow;
         ctx.carry.ep_adm_sta_worst_z = medianOf(station_worst);

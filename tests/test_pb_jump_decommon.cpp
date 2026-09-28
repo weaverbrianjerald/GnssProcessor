@@ -1,30 +1,32 @@
 /**
  * @file test_pb_jump_decommon.cpp
- * @brief Card JT — the DE-COMMONED phase-bias discontinuity test
- *        (@c network.disc_jump_test_decommon).
+ * @brief The de-commoned phase-bias discontinuity test
+ *        (@c network.disc_jump_test_decommon; card JT).
  *
- * The emitter's phase jump test screens the RAW epoch-to-epoch @f$\Delta PB@f$ of
- * each (sat, signal) against @c 0.25\,\lambda.  It is FRAME-BLIND: a
- * satellite-COMMON phase-bias move is absorbed by a consumer's own receiver phase
- * clock, so the quantity that lands in a consumer ambiguity is the step MINUS the
+ * The emitter's phase jump test screens the raw epoch-to-epoch @f$\Delta PB@f$ of
+ * each (sat, signal) against @c 0.25\,\lambda.  That test is frame-blind: a
+ * satellite-common phase-bias move is absorbed by a consumer's own receiver phase
+ * clock, so the quantity that reaches a consumer ambiguity is the step minus the
  * network's median step on that signal (standing invariant #5).  CST §4 measured
- * the consequence on DOY-129 — a @f$-1.451@f$ m L1W frame move at TOW 276810 hid
- * G32 L1W's real @f$+1.409@f$ m step as a raw @f$-0.042@f$ m, 29.6x under its own
- * bar, and it landed UNDECLARED in a live consumer ambiguity.
+ * the consequence on DOY-129: a @f$-1.451@f$ m L1W frame move at TOW 276810 hid
+ * G32 L1W's real @f$+1.409@f$ m step (29.6 times its bar) as a raw @f$-0.042@f$ m,
+ * below the bar, and the step reached a live consumer ambiguity undeclared.
  *
- * Pinned here, on a synthetic sky with no estimator in the loop:
- *  - a PURE common-mode move (every satellite steps by the same amount) declares
- *    NOTHING with the knob ON and every cell with it OFF — the RE-COUPLING edge of
- *    invariant #7, the declaration this test withholds;
- *  - one satellite's real step HIDDEN by an opposite common move is declared ON and
- *    missed OFF — the DECOUPLING edge, the CST §4 population reproduced exactly;
+ * Covered here, on a synthetic sky with no estimator in the loop:
+ *  - a pure common-mode move (every satellite steps by the same amount) declares
+ *    nothing with the knob on and every cell with it off; each withheld
+ *    declaration is logged as a raw_only_suppressed event (invariant #7);
+ *  - one satellite's real step hidden by an opposite common move is declared with
+ *    the knob on and missed with it off (the CST §4 case), and logged as a
+ *    decommon_only event;
  *  - below @c NetworkProductEmitter::kDiscDecommonMinSats the armed test reproduces
- *    the RAW result cell for cell (a thin signal's median is not a frame), and says
- *    so with a @c FallbackRaw class on every cell;
- *  - OFF is byte-identical to a pre-JT emitter (counters AND the event vector);
- *  - the median is taken WITHIN a signal, never across a mixed L1/L2 population;
- *  - the S contract round-trips the knob (@c discdecom=) and an OFF contract writes
- *    the pre-JT S line byte-for-byte.
+ *    the raw result cell for cell (a thin signal's median is not a frame) and
+ *    reports it with a @c FallbackRaw class on every cell;
+ *  - with the knob off, the counters and the event vector are byte-identical to
+ *    the six-parameter (pre-JT) emitter;
+ *  - the median is taken within a signal, never across a mixed L1/L2 population;
+ *  - the S contract round-trips the knob (@c discdecom=), and a contract with the
+ *    knob off writes the pre-JT S line byte-for-byte.
  */
 
 #include <gtest/gtest.h>
@@ -49,8 +51,8 @@ namespace {
 
 const GnssTime kT0{2313, 259200.0};
 
-/// GPS L1 / L2 nominal wavelengths and the 0.25-cycle bars they imply — the exact
-/// numbers CST §4 quotes, so a threshold regression shows up here as a bar change.
+/// GPS L1 / L2 nominal wavelengths and the 0.25-cycle bars they imply (the numbers
+/// CST §4 quotes), so a threshold regression shows up here as a bar change.
 constexpr double kBarL1 = 0.25 * 0.1902936727983649;   // ≈ 0.04757 m
 constexpr double kBarL2 = 0.25 * 0.2442102134245683;   // ≈ 0.06105 m
 
@@ -115,7 +117,7 @@ int totalCounters(const NetworkProductEmitter& e, int n, const char* sig = "L1W"
 } // namespace
 
 // ---------------------------------------------------------------------------
-// (1) A PURE common-mode move: ON declares nothing, OFF declares every cell.
+// (1) A pure common-mode move: armed declares nothing, raw declares every cell.
 // ---------------------------------------------------------------------------
 TEST(PbJumpDecommonTest, PureCommonModeMoveDeclaresNothingArmedAndEverythingRaw) {
     constexpr int    kN     = 10;
@@ -132,8 +134,8 @@ TEST(PbJumpDecommonTest, PureCommonModeMoveDeclaresNothingArmedAndEverythingRaw)
     ASSERT_EQ(totalCounters(e_on, kN), 0);
     ASSERT_EQ(totalCounters(e_off, kN), 0);
 
-    // Epoch 1: EVERY satellite moves by exactly the same amount — a frame move, and
-    // nothing a consumer's ambiguity can feel.
+    // Epoch 1: every satellite moves by the same amount.  This is a frame move, and
+    // it does not reach a consumer's ambiguity.
     e_on.emitToStore(makeEpoch(t1, makeSky(kN, 100.0 + kShift, 0.7)), s_on);
     e_off.emitToStore(makeEpoch(t1, makeSky(kN, 100.0 + kShift, 0.7)), s_off);
 
@@ -159,7 +161,7 @@ TEST(PbJumpDecommonTest, PureCommonModeMoveDeclaresNothingArmedAndEverythingRaw)
 }
 
 // ---------------------------------------------------------------------------
-// (2) One satellite's step HIDDEN by an opposite common move — the CST §4 cell.
+// (2) One satellite's step hidden by an opposite common move (the CST §4 cell).
 // ---------------------------------------------------------------------------
 TEST(PbJumpDecommonTest, StepHiddenByOppositeFrameMoveIsDeclaredArmedAndMissedRaw) {
     constexpr int    kN     = 10;
@@ -174,9 +176,9 @@ TEST(PbJumpDecommonTest, StepHiddenByOppositeFrameMoveIsDeclaredArmedAndMissedRa
     e_on.emitToStore(makeEpoch(kT0, makeSky(kN, 100.0, 0.7)), s_on);
     e_off.emitToStore(makeEpoch(kT0, makeSky(kN, 100.0, 0.7)), s_off);
 
-    // Every satellite takes the frame move; the LAST one additionally takes a real
-    // +1.409 m step, so its RAW delta is -1.451 + 1.409 = -0.042 m — under the
-    // 0.0476 m bar, exactly as the field measured.
+    // Every satellite takes the frame move; the last one also takes a real
+    // +1.409 m step, so its raw delta is -1.451 + 1.409 = -0.042 m, under the
+    // 0.0476 m bar, as measured in the field.
     auto sky1 = makeSky(kN, 100.0 + kShift, 0.7);
     sky1.back().second["L1W"] += kReal;
     const std::string hidden_sat = sky1.back().first;
@@ -188,13 +190,13 @@ TEST(PbJumpDecommonTest, StepHiddenByOppositeFrameMoveIsDeclaredArmedAndMissedRa
         << "the raw test misses the hidden step (|-0.042| < 0.0476)";
     EXPECT_EQ(e_on.discontinuityCounter(hidden_sat, "L1W"), 1)
         << "the de-commoned test declares it (|+1.409| > 0.0476)";
-    // ...and exactly ONE cell is declared armed: the other nine are pure frame.
+    // Armed, exactly one cell is declared; the other nine are pure frame.
     EXPECT_EQ(totalCounters(e_on, kN), 1);
-    // The raw test, meanwhile, declared all NINE frame-only cells and missed the one
-    // that mattered — the inversion this card is about.
+    // The raw test declares all nine frame-only cells and misses the real step,
+    // the inversion this card addresses.
     EXPECT_EQ(totalCounters(e_off, kN), kN - 1);
 
-    // The identity row for the previously MISSED class.
+    // The identity row for the class the raw test misses.
     const auto& ev = e_on.pbJumpDecommonEvents();
     int n_decommon_only = 0, n_raw_only = 0, n_both = 0;
     for (const auto& e : ev) {
@@ -222,7 +224,7 @@ TEST(PbJumpDecommonTest, StepHiddenByOppositeFrameMoveIsDeclaredArmedAndMissedRa
 }
 
 // ---------------------------------------------------------------------------
-// (3) Below the population minimum the ARMED test reproduces the RAW result.
+// (3) Below the population minimum the armed test reproduces the raw result.
 // ---------------------------------------------------------------------------
 TEST(PbJumpDecommonTest, BelowMinimumPopulationReproducesRawTest) {
     ASSERT_EQ(NetworkProductEmitter::kDiscDecommonMinSats, 3);
@@ -237,8 +239,8 @@ TEST(PbJumpDecommonTest, BelowMinimumPopulationReproducesRawTest) {
     e_on.emitToStore(makeEpoch(kT0, makeSky(kThin, 100.0, 0.7)), s_on);
     e_off.emitToStore(makeEpoch(kT0, makeSky(kThin, 100.0, 0.7)), s_off);
 
-    // A pure common-mode move again — which a 2-satellite "median" cannot tell from a
-    // real one, so the armed test must NOT pretend it can: it falls back to raw.
+    // A pure common-mode move again.  A 2-satellite "median" cannot tell it from a
+    // real one, so the armed test falls back to raw.
     e_on.emitToStore(makeEpoch(t1, makeSky(kThin, 100.0 + kShift, 0.7)), s_on);
     e_off.emitToStore(makeEpoch(t1, makeSky(kThin, 100.0 + kShift, 0.7)), s_off);
 
@@ -251,9 +253,9 @@ TEST(PbJumpDecommonTest, BelowMinimumPopulationReproducesRawTest) {
     }
     EXPECT_EQ(totalCounters(e_on, kThin), kThin);   // = the raw result
 
-    // ...and it SAYS so, on every cell: a silent fallback would read as a working
-    // de-common (invariant #4 — the counter is the telemetry, not the absence of a
-    // crash).
+    // The fallback is reported on every cell; a silent fallback would read as a
+    // working de-common (invariant #4: the counter is the telemetry, not the
+    // absence of a crash).
     const auto& ev = e_on.pbJumpDecommonEvents();
     ASSERT_EQ(ev.size(), static_cast<std::size_t>(kThin));
     for (const auto& e : ev) {
@@ -266,7 +268,7 @@ TEST(PbJumpDecommonTest, BelowMinimumPopulationReproducesRawTest) {
 }
 
 // ---------------------------------------------------------------------------
-// (4) OFF is byte-identical to a pre-JT emitter.
+// (4) With the knob off, the emitter is byte-identical to a pre-JT emitter.
 // ---------------------------------------------------------------------------
 TEST(PbJumpDecommonTest, OffPathMatchesPreCardEmitterExactly) {
     constexpr int kN = 6;
@@ -300,12 +302,12 @@ TEST(PbJumpDecommonTest, OffPathMatchesPreCardEmitterExactly) {
 }
 
 // ---------------------------------------------------------------------------
-// (5) The median is per SIGNAL, never across a mixed L1/L2 population.
+// (5) The median is per signal, never across a mixed L1/L2 population.
 // ---------------------------------------------------------------------------
 TEST(PbJumpDecommonTest, CommonModeIsTakenWithinEachSignal) {
     constexpr int    kN  = 9;
     constexpr double kC1 = -1.451;   // the L1W frame
-    constexpr double kC2 = +0.900;   // an INDEPENDENT L2W frame (band-differential)
+    constexpr double kC2 = +0.900;   // an independent L2W frame (band-differential)
 
     SsrCorrectionStore store;
     auto e = makeEmitter(true);
@@ -322,8 +324,8 @@ TEST(PbJumpDecommonTest, CommonModeIsTakenWithinEachSignal) {
     e.emitToStore(makeEpoch(kT0, sky0), store);
     e.emitToStore(makeEpoch(t1, sky1), store);
 
-    // Both frames are absorbed by their OWN signal's median; a single mixed median
-    // (here ≈ -0.28 m) would leave ±1.17 m on every cell and declare all 18.
+    // Each frame is absorbed by its own signal's median; a single mixed median
+    // (here ≈ -0.28 m) would leave ±1.18 m on every cell and declare all 18.
     EXPECT_EQ(totalCounters(e, kN, "L1W"), 0);
     EXPECT_EQ(totalCounters(e, kN, "L2W"), 0);
     const auto& ev = e.pbJumpDecommonEvents();
@@ -336,7 +338,7 @@ TEST(PbJumpDecommonTest, CommonModeIsTakenWithinEachSignal) {
 }
 
 // ---------------------------------------------------------------------------
-// (6) The S contract carries the knob, and an OFF contract is byte-identical.
+// (6) The S contract carries the knob; with the knob off it is byte-identical.
 // ---------------------------------------------------------------------------
 TEST(PbJumpDecommonTest, SLineDeclaresTheKnobAndOffIsByteIdentical) {
     const fs::path with_p    = fs::temp_directory_path() / "jt_discdecom_with.txt";
@@ -353,8 +355,8 @@ TEST(PbJumpDecommonTest, SLineDeclaresTheKnobAndOffIsByteIdentical) {
     { NetworkProductWriter w(without_p.string(), base);  ASSERT_TRUE(w.good()); }
     { NetworkProductWriter w(with_p.string(),    armed); ASSERT_TRUE(w.good()); }
 
-    // Compare the S LINES, not the whole files: the '#' legend is grammar-complete by
-    // contract, so it names discdecom= in BOTH files by design.
+    // Compare the S lines, not the whole files: the '#' legend is grammar-complete by
+    // contract, so it names discdecom= in both files.
     const auto sLine = [](const fs::path& p) {
         std::ifstream f(p);
         std::string ln;
@@ -369,9 +371,9 @@ TEST(PbJumpDecommonTest, SLineDeclaresTheKnobAndOffIsByteIdentical) {
         << "an OFF producer writes the pre-JT S line byte-for-byte";
     EXPECT_EQ(b, a + ",discdecom=1");
 
-    // A replay-emitter PARAMETER, not an interpretation hint: the round-trip must
-    // reach makeReplayEmitter, or a file replay mis-counts exactly the cells a frame
-    // move hid (the whole point of the card).
+    // The flag is a replay-emitter parameter, not an interpretation hint: the
+    // round-trip must reach makeReplayEmitter, or a file replay miscounts the cells
+    // a frame move hid, which are the cells this card targets.
     bool ok = false;
     SbasisContract parsed_on, parsed_off;
     NetworkProductReader::read(with_p.string(),    &parsed_on,  &ok);  ASSERT_TRUE(ok);
