@@ -37,6 +37,7 @@
  */
 
 #include "filter/NetworkRunTypes.hpp"   // CoupledShared / CplRowRaw / LocalCarry / StationAssembly / whitenCouplingRows / SharedParamKind (via NetworkEstimator.hpp)
+#include "filter/NetworkCouplingExact.hpp"  // CouplingExactEpoch / CouplingExactRow (card CTU)
 
 #include <Eigen/Dense>
 
@@ -192,6 +193,11 @@ struct CouplingRowBuilder {
     /// measurement.  Null = off.
     const std::map<std::string, long long>* readmit_marg{nullptr};
     long long                                loop_ep{0};   ///< this epoch's n_loop_epochs (the expiry basis)
+    /// The exact conditional time update (card CTU, network.carry_coupling_exact_update):
+    /// this epoch's inputs, built serially before the produce loop.  Null = off (the card
+    /// 1d route, byte-identical).  A row takes the exact route when the epoch is @c ok and
+    /// the row was harvested at the stash the epoch's dense block belongs to.
+    const CouplingExactEpoch*                cxu{nullptr};
 
     /// True (and counted) when @p cs sits on a satellite inside its re-admission window.
     bool readmitDiverted(const CoupledShared& cs);
@@ -243,9 +249,24 @@ struct CouplingRowBuilder {
     /// Returns false when σ² ≤ 0 or the RHS is non-finite (the row is not emitted).
     /// @c row.w is not set: the scalar caller writes 1/σ², and the block caller puts σ²
     /// on Σ's diagonal.  Increments the same @c R.cpl_terms_* counters in both cases.
+    ///
+    /// With @c cxu armed and the row harvested at its stash, the row takes the exact
+    /// route (@ref exactRowIngredients) instead.  A row the exact route cannot take is
+    /// counted (@c R.cxu.rows_stale / @c rows_unfactored) and built as before.
     bool scalarRowIngredients(Eigen::Index col, double x_lin_val,
                               const LocalCarry& lc, double var_eff, double gap,
                               PendCplRow& row, double& sigma2);
+    /// The exact route of one row (card CTU section 4).  Terms on a stashed dense key go
+    /// through @ref couplingExactRow (S updated, D re-attributed through P); a datum-pinned
+    /// term (@c p_prev = 0) is kept as harvested; a present term with no dense row takes
+    /// card 1d's kappa at the fold's own inflation (@c cxu->q_outside); a departed or
+    /// re-realized term with no dense row is marginalized; SH terms keep the card 1d
+    /// treatment.  The clock-family deficit goes to the constellation's pinned pivot.
+    /// σ² = var_eff + Σ_departed M²P_prev + Σ_scalar M²κqΔt + M'BM, the per-row form (the
+    /// time-update covariance between rows is dropped).  Same return and counter
+    /// contract as @ref scalarRowIngredients.
+    bool exactRowIngredients(Eigen::Index col, double x_lin_val, const LocalCarry& lc,
+                             double var_eff, double gap, PendCplRow& row, double& sigma2);
     /// Build this station's injectable carried columns as one jointly whitened local
     /// block instead of independent rows (F3, network.phase_leveling_local_block,
     /// SPEC_amb_iono_split_overcount).  Per column, the scalar-path ingredients

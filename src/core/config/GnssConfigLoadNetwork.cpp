@@ -4554,6 +4554,37 @@ namespace GnssProcessor {
             throw std::runtime_error(
                 "network.carry_coupling_time_update requires network.carry_conditional_coupling = true "
                 "(it only corrects how that card's coupling rows re-map to the moved border).");
+        // The exact conditional time update (card CTU).  It conditions every row on the
+        // stashed dense border block, so the dense carry must exist; it replaces card 1d's
+        // kappa on the rows it can take, so card 1d must be armed for the rest; and card
+        // 1b's joint departed-column whitening is a different treatment of the same terms,
+        // not built for the exact rule.
+        network_carry_coupling_exact_update_ =
+            jval<bool>(json, "network.carry_coupling_exact_update",
+                       "carry_coupling_exact_update", false);
+        if (network_carry_coupling_exact_update_) {
+            if (!network_carry_coupling_time_update_)
+                throw std::runtime_error(
+                    "network.carry_coupling_exact_update requires "
+                    "network.carry_coupling_time_update = true (the card 1d kappa stays the "
+                    "treatment of the rows and terms the exact rule cannot take).");
+            if (!network_shared_carry_full_cov_)
+                throw std::runtime_error(
+                    "network.carry_coupling_exact_update requires network.shared_carry_full_cov "
+                    "= true (the rule conditions each row on the stashed dense border block).");
+            if (network_carry_coupling_joint_whiten_)
+                throw std::runtime_error(
+                    "network.carry_coupling_exact_update refuses "
+                    "network.carry_coupling_joint_whiten (card 1b's joint marginalization of the "
+                    "departed terms is not built for the exact rule, which re-attributes them).");
+            log->info("Network producer (card CTU): coupling-row time update EXACT — each row "
+                      "harvested at the stashed border is re-expressed on the moved border by "
+                      "M_new = (P_SS + Q_S)^-1 P_S,K M_K with the fold's own inflation Q, the "
+                      "bracket variance added (and between a station's rows in the local "
+                      "block), decoupled and departed columns re-attributed through P, and the "
+                      "clock-family deficit moved onto the pinned pivot.  Card 1d's kappa "
+                      "remains for stale rows, terms with no dense row and SH terms.");
+        }
         // Full marginalization of the coupling rows' SH-VTEC terms (card 1d-SH).  The SH
         // border is a mean-reverting GM (climatology-anchored), not the pure random walk
         // the κ update models, so shrink-carrying its terms compounds row weight against
@@ -9108,6 +9139,33 @@ namespace GnssProcessor {
                           "same-band code-bias column is re-based from the same-band code "
                           "difference at the stations that track both codes, and no longer "
                           "follows the level while its filter is armed.");
+        }
+        // Card CTU (docs/refound/CTU_coupling_time_update_2026-09-28.md section 9.3): the
+        // measure-only level monitor and the raise of the stashed block to its bound.
+        network_clock_level_monitor_ =
+            jval<bool>(json, "network.clock_level_monitor", "network_clock_level_monitor", false);
+        network_clock_level_bound_raise_ =
+            jval<bool>(json, "network.clock_level_bound_raise",
+                       "network_clock_level_bound_raise", false);
+        if (network_clock_level_bound_raise_ && !network_clock_level_monitor_)
+            throw std::runtime_error(
+                "network.clock_level_bound_raise requires network.clock_level_monitor = true "
+                "(the raise reads the monitor's per-satellite information).");
+        if (network_clock_level_monitor_) {
+            if (network_clock_level_carry_)
+                throw std::runtime_error(
+                    "network.clock_level_monitor refuses network.clock_level_carry (card CTU "
+                    "measures the level the estimator holds; card CLV moves it).");
+            if (!network_shared_carry_full_cov_)
+                throw std::runtime_error(
+                    "network.clock_level_monitor requires network.shared_carry_full_cov = true "
+                    "(it reads the level variance from the stashed dense border block).");
+            log->info("Network producer (card CTU): level monitor ON: per satellite the "
+                      "code-only level information I_L (undecayed) against the stashed block's "
+                      "level variance P_L; the ratio P_L/(1/I_L) traced and read out.  Bound "
+                      "raise {}.", network_clock_level_bound_raise_
+                                   ? "ON (solve-affecting: P += (1/I_L - P_L) u u' where the ratio is below 1)"
+                                   : "off (measure-only, solve byte-identical)");
         }
         {
             // Card HLT: broadcast satellite health on the network path.

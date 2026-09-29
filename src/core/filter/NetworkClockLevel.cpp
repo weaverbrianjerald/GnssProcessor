@@ -421,29 +421,24 @@ void networkClockLevelDeclare(NetworkRunContext& ctx, NetworkSolutionEpoch& sol)
 // Seams.
 // ---------------------------------------------------------------------------
 
-void networkClockLevelRebase(NetworkRunContext& ctx, NetworkRunTraces& traces,
-                             const GnssTime& t, const NetworkEstimator& est,
-                             const Eigen::VectorXd& x_s,
-                             const std::vector<StationAssembly>& asm_res,
-                             const std::vector<int>& est_index_of, bool datum_changed) {
-    if (!ctx.knobs.clv_on) return;
-    ++ctx.counters.clv_epochs;
-    if (datum_changed) {
-        // The post-fit residuals then straddle two frames; the level waits one epoch.
-        ++ctx.counters.clv_skip_datum;
-        // R-B: the level effects are relative to the constellation, so a frame
-        // re-reference leaves every armed filter valid.  Mark them: while the anchor
-        // re-validates a paused satellite keeps its information instead of re-arming.
-        if (ctx.knobs.clv_datum_pause)
-            for (auto& [sat, ls] : ctx.carry.clk_level.sat)
-                if (ls.armed && !ls.paused_datum) {
-                    ls.paused_datum = true;
-                    ++ctx.counters.clv_pause_marks;
-                }
-        return;
-    }
+namespace {
+
+/// Step (1) of the level read, shared by the re-base (card CLV) and the level monitor
+/// (card CTU): this epoch's satellite code-bias columns, then one ionosphere-free pair per
+/// (station, satellite) from the heaviest full-weight data code row on each of the
+/// constellation's two pin bands, and, with @p free_cb_rebase, the CLV2 R-A2 same-band
+/// difference cells.  Moved here unchanged from networkClockLevelRebase, with the three
+/// knob and counter reads it made passed in, so the re-base is byte-identical.
+/// @return false when there is nothing to read (a layout mismatch or no code-bias column).
+bool clockLevelBuildPairs(NetworkRunContext& ctx, const NetworkEstimator& est,
+                          const Eigen::VectorXd& x_s,
+                          const std::vector<StationAssembly>& asm_res,
+                          const std::vector<int>& est_index_of, bool pin_pair_read,
+                          bool free_cb_rebase, long long* offpin_count,
+                          std::vector<ClockLevelPair>& pairs,
+                          std::map<std::pair<char, std::string>, std::vector<ClockLevelPair>>& fcb_pairs) {
     const Eigen::Index ns = est.numShared();
-    if (x_s.size() != ns) return;
+    if (x_s.size() != ns) return false;
 
     // This epoch's satellite code-bias columns, each with its satellite's clock column.
     struct CbCol { Eigen::Index col{-1}; Eigen::Index clk{-1}; std::string sat, sig; };
@@ -466,14 +461,13 @@ void networkClockLevelRebase(NetworkRunContext& ctx, NetworkRunTraces& traces,
         if (cb.clk < 0 || cb.clk >= ns) continue;
         cbs.push_back(std::move(cb));
     }
-    if (cbs.empty()) return;
+    if (cbs.empty()) return false;
 
     // (1) One ionosphere-free pair per (station, satellite): the heaviest full-weight
     //     data code row on each of the constellation's two pin bands.
-    std::vector<ClockLevelPair> pairs;
     std::map<char, NetworkPinBands> pin_of;
-    // CLV2 R-A2: the same-band difference cells, per (constellation, free signal).
-    std::map<std::pair<char, std::string>, std::vector<ClockLevelPair>> fcb_pairs;
+    // CLV2 R-A2: the same-band difference cells, per (constellation, free signal),
+    // go to fcb_pairs.
     for (std::size_t i = 0; i < asm_res.size(); ++i) {
         if (i >= est_index_of.size() || est_index_of[i] < 0) continue;
         const StationAssembly& R = asm_res[i];
@@ -492,7 +486,7 @@ void networkClockLevelRebase(NetworkRunContext& ctx, NetworkRunTraces& traces,
         // CLV2 R-A2: every code row's post-fit residual per (satellite, signal) at any
         // positive weight (the second code channel's rows included), then one cell per
         // free same-band signal the station holds beside the pin pair's first signal.
-        if (ctx.knobs.clv_free_cb_rebase) {
+        if (free_cb_rebase) {
             std::map<std::string, std::map<std::string, std::pair<double, double>>> res;
             for (const CbCol& cb : cbs) {
                 for (Eigen::Index r = 0; r < row_end; ++r) {
@@ -530,7 +524,7 @@ void networkClockLevelRebase(NetworkRunContext& ctx, NetworkRunTraces& traces,
             // pair (a free same-band extra, or any satellite without a pin this epoch)
             // does not enter; its first full-weight row is counted and the scan stops.
             bool offpin = false;
-            if (ctx.knobs.clv_pin_pair_read) {
+            if (pin_pair_read) {
                 const auto pr = ctx.carry.this_epoch_if_pin_real.find(cb.sat);
                 offpin = (pr == ctx.carry.this_epoch_if_pin_real.end())
                          || (cb.sig != pr->second.first && cb.sig != pr->second.second);
@@ -540,7 +534,7 @@ void networkClockLevelRebase(NetworkRunContext& ctx, NetworkRunTraces& traces,
                 const double w = R.w(r);
                 if (!(w >= kClvFullWeight) || !std::isfinite(w)) continue;
                 if (offpin) {
-                    ++ctx.counters.clv_pairs_offpin;
+                    if (offpin_count) ++*offpin_count;
                     break;
                 }
                 auto& slot = best[cb.sat][cb.sig[1]];
@@ -568,6 +562,39 @@ void networkClockLevelRebase(NetworkRunContext& ctx, NetworkRunTraces& traces,
             if (p.w_if > 0.0 && std::isfinite(p.v_if)) pairs.push_back(std::move(p));
         }
     }
+
+    return true;
+}
+
+}  // namespace
+
+void networkClockLevelRebase(NetworkRunContext& ctx, NetworkRunTraces& traces,
+                             const GnssTime& t, const NetworkEstimator& est,
+                             const Eigen::VectorXd& x_s,
+                             const std::vector<StationAssembly>& asm_res,
+                             const std::vector<int>& est_index_of, bool datum_changed) {
+    if (!ctx.knobs.clv_on) return;
+    ++ctx.counters.clv_epochs;
+    if (datum_changed) {
+        // The post-fit residuals then straddle two frames; the level waits one epoch.
+        ++ctx.counters.clv_skip_datum;
+        // R-B: the level effects are relative to the constellation, so a frame
+        // re-reference leaves every armed filter valid.  Mark them: while the anchor
+        // re-validates a paused satellite keeps its information instead of re-arming.
+        if (ctx.knobs.clv_datum_pause)
+            for (auto& [sat, ls] : ctx.carry.clk_level.sat)
+                if (ls.armed && !ls.paused_datum) {
+                    ls.paused_datum = true;
+                    ++ctx.counters.clv_pause_marks;
+                }
+        return;
+    }
+    std::vector<ClockLevelPair> pairs;
+    std::map<std::pair<char, std::string>, std::vector<ClockLevelPair>> fcb_pairs;
+    if (!clockLevelBuildPairs(ctx, est, x_s, asm_res, est_index_of, ctx.knobs.clv_pin_pair_read,
+                              ctx.knobs.clv_free_cb_rebase, &ctx.counters.clv_pairs_offpin,
+                              pairs, fcb_pairs))
+        return;
 
     // (2) The two-way fit.
     const ClockLevelTwoWay tw = clockLevelTwoWay(pairs, kClvMinPairs, kClvClipK, kClvClipFloorM);
@@ -847,6 +874,105 @@ void networkClockLevelRebase(NetworkRunContext& ctx, NetworkRunTraces& traces,
                 << fmt::format("{:.6f},{:.6f}", ls.e_last, st.d) << ','
                 << (st.u.restarted ? (st.u.broke ? "break" : "arm") : "update") << '\n';
         }
+    }
+}
+
+void networkClockLevelMonitor(NetworkRunContext& ctx, NetworkRunTraces& traces,
+                              const GnssTime& t, const NetworkEstimator& est,
+                              const Eigen::VectorXd& x_s,
+                              const std::vector<StationAssembly>& asm_res,
+                              const std::vector<int>& est_index_of, bool datum_changed) {
+    if (!ctx.knobs.clm_on) return;
+    ++ctx.counters.clm_epochs;
+    if (datum_changed) {
+        ++ctx.counters.clm_skip_datum;
+        return;
+    }
+    // (1)-(2) The level read of the re-base, on the realized pin pair only, with no
+    //         free-column cells.  Its counters are the re-base's and stay untouched.
+    std::vector<ClockLevelPair> pairs;
+    std::map<std::pair<char, std::string>, std::vector<ClockLevelPair>> fcb_unused;
+    if (!clockLevelBuildPairs(ctx, est, x_s, asm_res, est_index_of, /*pin_pair_read=*/true,
+                              /*free_cb_rebase=*/false, nullptr, pairs, fcb_unused))
+        return;
+    const ClockLevelTwoWay tw = clockLevelTwoWay(pairs, kClvMinPairs, kClvClipK, kClvClipFloorM);
+    // (3) The code-only information, accumulated without decay: the level has no process
+    //     noise, and a decaying bound would make the raise a per-epoch level variance.
+    for (const auto& [sat, info] : tw.info) {
+        if (!(info > 0.0) || !std::isfinite(info)) continue;
+        ctx.carry.clm_info[sat] += info;
+        ++ctx.carry.clm_n[sat];
+    }
+    // (4) The stashed block's variance along each satellite's level direction.
+    SharedCarryCov& pcc = ctx.carry.prev_carry_cov;
+    const Eigen::Index np = pcc.P.rows();
+    if (np == 0 || pcc.P.cols() != np) return;
+    std::map<std::string, std::vector<std::size_t>> u_rows;   // sat -> clock row first, then its PBs
+    std::map<std::string, bool> has_clk;
+    for (const auto& [key, row] : pcc.row) {
+        const std::size_t bar = key.find('|');
+        if (bar == std::string::npos || row >= static_cast<std::size_t>(np)) continue;
+        const std::string sat = key.substr(0, bar);
+        const std::string rest = key.substr(bar + 1);
+        if (rest == "CLK") {
+            u_rows[sat].insert(u_rows[sat].begin(), row);
+            has_clk[sat] = true;
+        } else if (rest.rfind("PB|", 0) == 0) {
+            u_rows[sat].push_back(row);
+        }
+    }
+    const double now_tow = t.tow;
+    for (const auto& [sat, rows] : u_rows) {
+        const auto ii = ctx.carry.clm_info.find(sat);
+        if (ii == ctx.carry.clm_info.end() || !(ii->second > 0.0)) continue;
+        if (!has_clk.count(sat)) {                       // the pinned pivot, or a clock not carried
+            ++ctx.counters.clm_no_clock;
+            continue;
+        }
+        const double uu = static_cast<double>(rows.size());
+        double upu = 0.0;
+        for (std::size_t a : rows)
+            for (std::size_t b : rows)
+                upu += pcc.P(static_cast<Eigen::Index>(a), static_cast<Eigen::Index>(b));
+        const double p_level = upu / (uu * uu);
+        const double inv     = 1.0 / ii->second;
+        const double ratio   = p_level / inv;
+        const int    n_ep    = ctx.carry.clm_n[sat];
+        if (n_ep >= 2 && std::isfinite(ratio)) {
+            ++ctx.counters.clm_rows;
+            if (ratio < 1.0) ++ctx.counters.clm_below1;
+            if (ctx.counters.clm_ratios.empty() || ratio < ctx.counters.clm_min_ratio)
+                ctx.counters.clm_min_ratio = ratio;
+            ctx.counters.clm_ratios.push_back(ratio);
+        }
+        double raised = 0.0;
+        if (ctx.knobs.clm_raise && std::isfinite(ratio) && ratio < 1.0) {
+            // P += a u u' with a = 1/I_L - P_L: the level variance becomes 1/I_L, every
+            // direction orthogonal to u is untouched, and the block stays positive
+            // definite (a positive rank-one addition).  The carried variances follow the
+            // diagonal, because the fold rebuilds the diagonal from them.
+            raised = inv - p_level;
+            for (std::size_t a : rows)
+                for (std::size_t b : rows)
+                    pcc.P(static_cast<Eigen::Index>(a), static_cast<Eigen::Index>(b)) += raised;
+            for (CarryPrior& cp : ctx.carry.prev_carry) {
+                if (cp.sat != sat || cp.t_park_s > 0.0) continue;
+                if (cp.kind == SharedParamKind::Clock || cp.kind == SharedParamKind::PhaseBias) {
+                    const auto rit = pcc.row.find(sharedCarryKey(cp.kind, cp.sat, cp.signal));
+                    if (rit != pcc.row.end()) cp.var += raised;
+                }
+            }
+            ++ctx.counters.clm_raised;
+            ++ctx.counters.clm_raised_by_sat[sat];
+            ctx.counters.clm_raised_sum += raised;
+            ctx.counters.clm_raised_max = std::max(ctx.counters.clm_raised_max, raised);
+        }
+        if (traces.level_bound_trace.is_open())
+            traces.level_bound_trace << t.week << ',' << fmt::format("{:.3f}", now_tow) << ','
+                                     << sat << ','
+                                     << fmt::format("{:.6e},{:.6e},{:.6e},{:.6e}", p_level, inv,
+                                                    ratio, raised)
+                                     << ',' << n_ep << '\n';
     }
 }
 

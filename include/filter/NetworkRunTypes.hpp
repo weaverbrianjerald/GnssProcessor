@@ -14,6 +14,7 @@
 
 #include "filter/StateManager.hpp"
 #include "filter/NetworkEstimator.hpp"      // SharedParamKind
+#include "filter/NetworkCouplingExact.hpp"  // CouplingExactCounters (StationAssembly, card CTU)
 #include "model/PppModel.hpp"
 #include "measurement/MeasurementModel.hpp"
 #include "common/PppState.hpp"
@@ -1200,6 +1201,10 @@ struct StationAssembly {
     /// satellite is inside its post-re-admission marginalization window (READMIT
     /// re-coupling edge, network.readmit_coupling_marg_ep).
     long long                 cpl_readmit_diverted{0};
+    /// Card CTU (network.carry_coupling_exact_update): this station-epoch's exact-update
+    /// row and term counts, accumulated in the parallel produce phase and folded into
+    /// the run totals serially afterwards.  All zero when the card is off.
+    CouplingExactCounters     cxu{};
     /// Inject-site free-epoch skips taken this station-epoch: the arc had a live carry
     /// that the latched set suppressed (SPEC_slip_relevel_walk).
     long long                 relevel_free_skips{0};

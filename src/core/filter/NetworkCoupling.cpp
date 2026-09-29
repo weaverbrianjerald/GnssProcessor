@@ -264,6 +264,19 @@ void CouplingRowBuilder::buildCplRow(Eigen::Index col, double x_lin_val,
 bool CouplingRowBuilder::scalarRowIngredients(Eigen::Index col, double x_lin_val,
                                               const LocalCarry& lc, double var_eff,
                                               double gap, PendCplRow& row, double& sigma2) {
+    // Card CTU: a row harvested at the stash the dense block belongs to takes the exact
+    // route; any other row (harvested earlier, so its regression is on an older border
+    // than P describes) keeps the card 1d route below, counted.  Off: cxu is null and
+    // the body below is unchanged.
+    if (cxu) {
+        if (!cxu->ok) {
+            ++R.cxu.rows_unfactored;
+        } else if (std::abs(lc.last_seen_s - cxu->stash_s) <= 1e-6) {
+            return exactRowIngredients(col, x_lin_val, lc, var_eff, gap, row, sigma2);
+        } else {
+            ++R.cxu.rows_stale;
+        }
+    }
     row.local_col = col;
     double rhs = lc.value_abs - x_lin_val;   // (r̂_prev − r_lin)
     double dep_var = 0.0;                    // Σ_departed M_rj²·P_prev,jj
@@ -345,6 +358,144 @@ bool CouplingRowBuilder::scalarRowIngredients(Eigen::Index col, double x_lin_val
     }
     sigma2 = var_eff + dep_var + tu_var;
     if (!(sigma2 > 0.0) || !std::isfinite(rhs)) return false;  // skip: σ² ≤ 0 or non-finite RHS
+    row.y = rhs;
+    return true;
+}
+
+bool CouplingRowBuilder::exactRowIngredients(Eigen::Index col, double x_lin_val,
+                                             const LocalCarry& lc, double var_eff,
+                                             double gap, PendCplRow& row, double& sigma2) {
+    const CouplingExactEpoch& xe = *cxu;
+    CouplingExactCounters& X = R.cxu;
+    row.local_col = col;
+    double rhs = lc.value_abs - x_lin_val;   // (r̂_prev − r_lin)
+    double dep_var = 0.0;                    // Σ M²·P_prev over the marginalized terms with no dense row
+    double tu_var  = 0.0;                    // Σ M²·κ·q over the scalar terms (no dense row; SH)
+    // Every coefficient is accumulated per column: the dense spread over S, a pinned term
+    // and the pivot's deficit can land on one column, and the append assigns (does not add).
+    std::map<Eigen::Index, double> emit;
+    std::map<char, double> out_clk_def;      // clock-family deficit of the terms outside the block
+    std::vector<std::pair<int, double>> pterms;
+    for (const CoupledShared& cs : lc.coupling) {
+        if (cs.kind == SharedParamKind::VtecSh) {
+            // Never in the dense block: the card 1d / 1d-SH treatment, unchanged.
+            ++X.terms_out_sh;
+            const Eigen::Index c = resolveSharedCol(cs);
+            if (c < 0 || tuReinitSince(cs, lc.last_seen_s) || carry_cpl_shmarg) {
+                dep_var += cs.coeff * cs.coeff * cs.p_prev;
+                ++R.cpl_terms_departed;
+                continue;
+            }
+            ++R.cpl_terms_present;
+            const double qj = couplingQ(cs) * gap;
+            double m = cs.coeff;
+            if (qj > 0.0 && cs.p_prev > 0.0) {
+                const double kap = cs.p_prev / (cs.p_prev + qj);
+                tu_var += cs.coeff * cs.coeff * kap * qj;
+                m = kap * cs.coeff;
+                ++R.cpl_terms_shrunk;
+            }
+            emit[c] += m;
+            rhs += m * cs.s_prev;
+            continue;
+        }
+        const std::string key = sharedCarryKey(cs.kind, cs.sat, cs.signal);
+        const auto pit = xe.p_of_key.find(key);
+        if (pit != xe.p_of_key.end()) {
+            // A stashed dense key: the one rule (S updated, D re-attributed).
+            pterms.emplace_back(pit->second, cs.coeff);
+            const int s = xe.s_of_p[static_cast<std::size_t>(pit->second)];
+            if (s >= 0) {
+                ++X.terms_s;
+                ++R.cpl_terms_present;
+                if (std::abs(cs.s_prev - xe.shat_s(s)) > 1e-9) ++X.sprev_mismatch;
+            } else {
+                const int route = xe.route_p[static_cast<std::size_t>(pit->second)];
+                if (route >= 0 && route < kCouplingExactRoutes) ++X.terms_d[route];
+                ++R.cpl_terms_departed;
+            }
+            continue;
+        }
+        const char cc      = cs.sat.empty() ? '\0' : cs.sat[0];
+        const bool is_clk  = (cs.kind == SharedParamKind::Clock);
+        const Eigen::Index c = resolveSharedCol(cs);
+        if (!(cs.p_prev > 0.0)) {
+            // Datum-pinned (card 1e): exactly known, kept as harvested.
+            if (c < 0) {
+                if (is_clk) out_clk_def[cc] += cs.coeff;
+                ++X.terms_out_departed;
+                ++R.cpl_terms_departed;
+                continue;
+            }
+            ++X.terms_pinned;
+            ++R.cpl_terms_present;
+            emit[c] += cs.coeff;
+            rhs += cs.coeff * cs.s_prev;
+            continue;
+        }
+        if (c < 0 || tuReinitSince(cs, lc.last_seen_s) || readmitDiverted(cs)) {
+            // No dense row and not carried into this epoch: marginalized, as card 1 does.
+            dep_var += cs.coeff * cs.coeff * cs.p_prev;
+            if (is_clk) out_clk_def[cc] += cs.coeff;
+            ++X.terms_out_departed;
+            ++R.cpl_terms_departed;
+            continue;
+        }
+        // Present with no dense row (the fold's diagonal leftover): card 1d's kappa at the
+        // inflation the fold applies to that key, where the mirror has it.
+        const auto qo = xe.q_outside.find(key);
+        const double qj = (qo != xe.q_outside.end()) ? qo->second : couplingQ(cs) * gap;
+        double m = cs.coeff;
+        if (qj > 0.0) {
+            const double kap = cs.p_prev / (cs.p_prev + qj);
+            tu_var += cs.coeff * cs.coeff * kap * qj;
+            m = kap * cs.coeff;
+            ++R.cpl_terms_shrunk;
+        }
+        if (is_clk) out_clk_def[cc] += cs.coeff - m;
+        ++X.terms_out_scalar;
+        ++R.cpl_terms_present;
+        emit[c] += m;
+        rhs += m * cs.s_prev;
+    }
+    CouplingExactRow xr = couplingExactRow(xe, pterms);
+    if (!xr.ok) {
+        ++X.rows_unfactored;
+        return false;                        // non-finite update: the row is not emitted
+    }
+    for (Eigen::Index s = 0; s < xe.nS(); ++s) {
+        const double m = xr.m_new(s);
+        if (m == 0.0) continue;
+        emit[xe.col_of_s[static_cast<std::size_t>(s)]] += m;
+        rhs += m * xe.shat_s(s);
+        X.shrink_abs_sum += std::abs(xr.m_s(s) - m);
+    }
+    // The clock-family deficit onto the constellation's pinned pivot: the row keeps its
+    // harvest identity along the declared clock gauge (the only null direction the rank
+    // gate declares here), so the gate sees the same null space as without the card.
+    std::map<char, double> def = xr.clk_deficit;
+    for (const auto& [cc, d] : out_clk_def) def[cc] += d;
+    for (const auto& [cc, d] : def) {
+        if (d == 0.0) continue;
+        const auto pv = xe.pivot.find(cc);
+        if (pv == xe.pivot.end()) {
+            ++X.gauge_orphan;
+            continue;
+        }
+        emit[pv->second.first] += d;
+        rhs += d * pv->second.second;
+        ++X.gauge_held;
+    }
+    if (xr.var_raw < 0.0) ++X.var_negative;
+    X.var_add_sum += xr.var_add;
+    ++X.rows_exact;
+    row.shared.clear();
+    row.shared.reserve(emit.size());
+    for (const auto& [c, m] : emit)
+        if (m != 0.0) row.shared.emplace_back(c, m);
+    X.terms_emitted += static_cast<long long>(row.shared.size());
+    sigma2 = var_eff + dep_var + tu_var + xr.var_add;
+    if (!(sigma2 > 0.0) || !std::isfinite(rhs)) return false;
     row.y = rhs;
     return true;
 }

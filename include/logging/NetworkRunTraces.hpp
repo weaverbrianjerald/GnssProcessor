@@ -688,6 +688,14 @@ namespace GnssProcessor {
         /// and fingerprint-safe.
         std::ofstream clock_level_trace;
         const std::filesystem::path clock_level_trace_path;
+        /// The level monitor of card CTU (@c network.clock_level_monitor under
+        /// @c network.trace_events): one row per satellite per kept epoch, @c p_level_m2
+        /// the stashed block's variance along the satellite's level direction,
+        /// @c inv_info_m2 the code-only bound 1/I_L, @c ratio their quotient (a
+        /// consistent estimator keeps it at or above 1), @c raised_m2 the raise applied
+        /// (0 when none), @c n_code_ep the epochs of code information in I_L.
+        std::ofstream level_bound_trace;
+        const std::filesystem::path level_bound_trace_path;
         /// Per-station local-block audit (@c network.trace_station_block;
         /// SPEC_event_harness §24.10, card ZP): one row per station per traced epoch (the
         /// first 20 emitted epochs, then every 60th) describing

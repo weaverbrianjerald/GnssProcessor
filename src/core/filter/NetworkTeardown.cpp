@@ -5807,6 +5807,77 @@ int networkTeardown(
                   n_cpl_stash, n_cpl_stash_empty, n_cpl_harvest_fail,
                   n_cpl_terms_present, n_cpl_terms_departed, n_cpl_terms_shrunk,
                   carry_cpl_tu ? "ON" : "OFF");
+    if (ctx.knobs.clm_on) {
+        // Card CTU level monitor (section 9.3): the ratio of the stashed block's level
+        // variance to the code-only bound, per satellite per kept epoch from its second
+        // epoch of code on.  A consistent estimator keeps it at or above 1; the control
+        // (the card 1d kappa) reads far below 1, the freeze's truth-free fingerprint.
+        const auto& c = ctx.counters;
+        std::vector<double> r = c.clm_ratios;
+        double med = 0.0, p10 = 0.0;
+        if (!r.empty()) {
+            std::sort(r.begin(), r.end());
+            med = r[r.size() / 2];
+            p10 = r[r.size() / 10];
+        }
+        log->info("Network (card CTU / level monitor): {} epoch(s) ({} skipped at a datum "
+                  "change); {} satellite-epoch ratio(s) P_L/(1/I_L): min {:.3e}, p10 {:.3e}, "
+                  "median {:.3e}, {} below 1 ({:.1f} %); {} satellite-epoch(s) without a carried "
+                  "clock (the pivot).  Bound raise {}: {} raise(s) over {} satellite(s), summed "
+                  "{:.4e} m^2, largest {:.4e} m^2.",
+                  c.clm_epochs, c.clm_skip_datum, c.clm_rows, c.clm_min_ratio, p10, med,
+                  c.clm_below1,
+                  c.clm_rows > 0 ? 100.0 * static_cast<double>(c.clm_below1)
+                                       / static_cast<double>(c.clm_rows) : 0.0,
+                  c.clm_no_clock, ctx.knobs.clm_raise ? "ON" : "off", c.clm_raised,
+                  c.clm_raised_by_sat.size(), c.clm_raised_sum, c.clm_raised_max);
+        if (c.clm_rows == 0)
+            log->warn("Network (card CTU): the level monitor is ARMED but counted no ratio: "
+                      "no satellite had both code information and a carried level.");
+    }
+    if (ctx.knobs.carry_cpl_exact) {
+        // Card CTU run-end telemetry (invariant 4).  `rows exact = 0` means the rule never
+        // ran and every row took card 1d's kappa, however clean the rest reads.  The
+        // mirror line is the check that the rows used the inflation the fold applied: a
+        // nonzero `set` or `q` count outside handover epochs is a mirror defect.
+        const auto& c  = ctx.counters;
+        const auto& X  = c.cxu;
+        using Rt = CouplingExactDRoute;
+        const auto d = [&](Rt r) { return X.terms_d[static_cast<int>(r)]; };
+        const auto kd = [&](Rt r) { return c.cxu_keys_d[static_cast<int>(r)]; };
+        log->info("Network (card CTU / exact coupling time update): {} epoch(s), {} built, "
+                  "{} unfactored, {} without a valid stash; keys {} in S, D {} departed / {} "
+                  "reinit / {} reref / {} skipped; {} negative inflation(s) clamped.",
+                  c.cxu_epochs, c.cxu_epochs_built, c.cxu_epochs_unfactored,
+                  c.cxu_epochs_nostash, c.cxu_keys_s, kd(Rt::Departed), kd(Rt::Reinit),
+                  kd(Rt::Reref), kd(Rt::Skipped), c.cxu_q_negative);
+        log->info("Network (card CTU): rows {} exact, {} stale (card 1d route), {} on an "
+                  "unbuilt epoch; terms {} updated in S, re-attributed {} departed / {} reinit "
+                  "/ {} reref / {} skipped, {} pinned, {} scalar outside the block, {} "
+                  "marginalized outside, {} SH; {} coefficient(s) written; clock-family "
+                  "deficit {} to the pivot, {} ORPHAN; inflation "
+                  "mass {:.4e} m^2 ({} clamped); |M - M_new| mass {:.4e}; s_prev mismatches {}.",
+                  X.rows_exact, X.rows_stale, X.rows_unfactored, X.terms_s,
+                  d(Rt::Departed), d(Rt::Reinit), d(Rt::Reref), d(Rt::Skipped), X.terms_pinned,
+                  X.terms_out_scalar, X.terms_out_departed, X.terms_out_sh, X.terms_emitted,
+                  X.gauge_held, X.gauge_orphan, X.var_add_sum, X.var_negative,
+                  X.shrink_abs_sum, X.sprev_mismatch);
+        log->info("Network (card CTU): fold check — {} key(s) checked, {} set mismatch(es), "
+                  "{} inflation mismatch(es) (largest |dQ| {:.3e} m^2), {} handover epoch(s) "
+                  "the mirror could not see, {} dense-fold diagonal fallback(s), {} epoch(s) "
+                  "with no recorded clock pivot.",
+                  c.cxu_fold_checked, c.cxu_fold_mismatch_set, c.cxu_fold_mismatch_q,
+                  c.cxu_fold_max_dq, c.cxu_fold_handover_epochs, c.cxu_fold_diag_fallback,
+                  c.cxu_pivot_missing);
+        if (X.rows_exact == 0)
+            log->warn("Network (card CTU): network.carry_coupling_exact_update is ARMED but no "
+                      "row took the exact route: the card is INERT for this run.");
+        if (c.cxu_fold_mismatch_set > 0 || c.cxu_fold_mismatch_q > 0)
+            log->warn("Network (card CTU): the fold disagreed with the rows' mirror on {} key "
+                      "disposition(s) and {} inflation(s); outside handover epochs this is a "
+                      "mirror defect, and those rows were not conditioned on the fold's Q.",
+                      c.cxu_fold_mismatch_set, c.cxu_fold_mismatch_q);
+    }
     // Gauge-free shared carry readout (card C-GF), placed outside the Card-Q3 `cta_on`
     // block above on purpose: the downdate can be armed by the carry
     // (shared_carry_gauge_free) with the Q3 temporal anchor off, and the Q3 readout would

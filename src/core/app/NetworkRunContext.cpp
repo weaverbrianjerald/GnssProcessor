@@ -120,6 +120,9 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.carry_cpl_cond = config_.networkCarryConditionalCoupling();
     k.carry_cpl_joint = config_.networkCarryCouplingJointWhiten();
     k.carry_cpl_tu = config_.networkCarryCouplingTimeUpdate();
+    k.carry_cpl_exact = config_.networkCarryCouplingExactUpdate();   // card CTU; loader guarantees tu + fullcov + !joint
+    k.clm_on    = config_.networkClockLevelMonitor();      // card CTU monitor (trace class)
+    k.clm_raise = config_.networkClockLevelBoundRaise();   // card CTU raise; loader guarantees clm_on
     k.carry_cpl_shmarg = config_.networkCarryCouplingShMarginalize();
     k.carry_cpl_gauge  = config_.networkCarryCouplingGaugeProject();
     k.carry_cpl_reinit = config_.networkCarryCouplingReinitSources();
@@ -1127,6 +1130,14 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // with it off keeps its fingerprint.
         if (carry_cpl_tu)
             add(fmt::format("carrycpltu={}", carry_cpl_tu));
+        // The exact update (card CTU) changes every injected row's coefficients and variance
+        // again, on the same footing; appended only when armed.
+        if (ctx.knobs.carry_cpl_exact)
+            add(fmt::format("carrycplexact={}", ctx.knobs.carry_cpl_exact));
+        // The bound raise (card CTU) moves the carried border block; the monitor alone is
+        // trace class and stays out of the fingerprint.
+        if (ctx.knobs.clm_raise)
+            add(fmt::format("clmraise={}", ctx.knobs.clm_raise));
         // Marginalized against carried SH coupling (card 1d-SH) changes what an armed
         // carry means; appended only when armed, so existing fingerprints are unchanged.
         if (carry_cpl_shmarg)
@@ -3766,6 +3777,41 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             dinflate.push_back(cp.inflate_q ? 1 : 0);
         }
         const std::size_t kd = dkeys.size();
+        // Card CTU: the coupling rows were built in PASS B against a mirror of this fold
+        // (networkCouplingExactPrepare).  Check it key by key against what is folded
+        // here: a key the mirror carried (S) must be folded with the same inflation, and a
+        // key folded here must be in S unless the mirror sent it to D as departed (the
+        // estimator then marginalizes it) or as decorrelated (an inflate_q reinit).
+        // Read-only: the fold below is unchanged.
+        if (ctx.knobs.carry_cpl_exact && ctx.carry.cxu_epoch.ok) {
+            const CouplingExactEpoch& xe = ctx.carry.cxu_epoch;
+            if (datum_changed) ++ctx.counters.cxu_fold_handover_epochs;
+            std::vector<char> folded(xe.s_of_p.size(), 0);
+            for (std::size_t a = 0; a < kd; ++a) {
+                const std::size_t p = drow[a];
+                if (p >= xe.s_of_p.size()) { ++ctx.counters.cxu_fold_mismatch_set; continue; }
+                folded[p] = 1;
+                ++ctx.counters.cxu_fold_checked;
+                const int s = xe.s_of_p[p];
+                if (dinflate[a]) {
+                    if (s >= 0) ++ctx.counters.cxu_fold_mismatch_set;
+                    continue;
+                }
+                if (s < 0) {
+                    if (xe.route_p[p] != static_cast<int>(CouplingExactDRoute::Departed))
+                        ++ctx.counters.cxu_fold_mismatch_set;
+                    continue;
+                }
+                const double q_fold = std::max(0.0, dvar_eff[a] - prev_carry_cov.P(
+                    static_cast<Eigen::Index>(p), static_cast<Eigen::Index>(p)));
+                const double dq = std::abs(q_fold - xe.q_s(s));
+                if (dq > ctx.counters.cxu_fold_max_dq) ctx.counters.cxu_fold_max_dq = dq;
+                if (dq > 1e-12 * std::max(q_fold, 1e-12)) ++ctx.counters.cxu_fold_mismatch_q;
+            }
+            for (Eigen::Index s = 0; s < xe.nS(); ++s)
+                if (!folded[static_cast<std::size_t>(xe.p_of_s[static_cast<std::size_t>(s)])])
+                    ++ctx.counters.cxu_fold_mismatch_set;
+        }
         if (kd > 0) {
             // P_eff over the dense set: the subset of the stashed posterior covariance,
             // with diagonal := var_eff (the stashed diagonal equals cp.var by
@@ -3817,6 +3863,8 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                 traces.emitEvent(t, "D2_DENSE", "fallback_diagonal", "", "",
                           static_cast<double>(kd), std::nullopt, "fallback",
                           e.what());   // non-PD, non-finite or conditioning budget; emitEvent sanitizes commas
+                // Card CTU: the rows of this epoch were updated against the dense block.
+                if (ctx.knobs.carry_cpl_exact) ++ctx.counters.cxu_fold_diag_fallback;
                 for (std::size_t a = 0; a < kd; ++a) {
                     if (anchor_info_trace.is_open() &&
                         dkeys[a].kind == SharedParamKind::Clock)
@@ -3858,6 +3906,169 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     // (Fix A hold: the held phase-bias datum is injected before the gate by
     // networkInjectPhaseHoldPrior, next to the SH-VTEC prior; it is a datum, so the
     // gate has to see it.)
+}
+
+void networkCouplingExactPrepare(NetworkRunContext& ctx, const NetworkEstimator& est,
+                                 const GnssTime& t, double dt,
+                                 const std::shared_ptr<spdlog::logger>& log) {
+    CouplingExactEpoch& ep = ctx.carry.cxu_epoch;
+    ep = CouplingExactEpoch{};
+    if (!ctx.knobs.carry_cpl_exact) return;
+    ++ctx.counters.cxu_epochs;
+    const SharedCarryCov& pcc = ctx.carry.prev_carry_cov;
+    if (!ctx.carry.cxu_stash_valid || pcc.P.rows() == 0 || pcc.row.empty()) {
+        ++ctx.counters.cxu_epochs_nostash;
+        return;
+    }
+    // --- The mirror of networkInjectD2CarryPrior's dense branch -------------------
+    // Clause for clause and in the same order; the fold checks the result (see the
+    // CTU block there).  VtecSh never enters the dense block, and a parked entry has no
+    // dense row, so neither clause is needed for the dense keys.
+    const bool   cta_on     = ctx.knobs.cta_on;
+    const double cta_now_s  = cta_on ? TimeUtils::continuousGpsSeconds(t) : 0.0;
+    const auto&  eq34_reref = ctx.carry.eq34_reref;
+    const auto&  pa_reref   = ctx.carry.phase_anchor_reref;
+    const auto   vce_scale  = [&](SharedParamKind kind, const std::string& sat, bool inflate_q,
+                                  double var) {
+        if (!ctx.knobs.vce_apply_on || inflate_q) return var;
+        const int slot = (kind == SharedParamKind::PhaseBias) ? NetworkCarryVceApply::kPb
+                       : (kind == SharedParamKind::CodeBias)  ? NetworkCarryVceApply::kCb
+                                                              : -1;
+        return var * ctx.carry.vce_apply.factor(slot, sat);
+    };
+    // The fold's var_eff for one entry, or NaN when the fold would skip or decorrelate it.
+    const auto foldVar = [&](const CarryPrior& cp, CouplingExactDRoute& route) -> double {
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        route = CouplingExactDRoute::Present;
+        if (ctx.knobs.phase_hold_on && cp.kind == SharedParamKind::PhaseBias) {
+            route = CouplingExactDRoute::Skipped;
+            return nan;
+        }
+        if (cp.kind == SharedParamKind::PhaseBias
+            && (eq34_reref.count({cp.sat, cp.signal}) || pa_reref.count({cp.sat, cp.signal}))) {
+            route = CouplingExactDRoute::Reref;
+            return nan;
+        }
+        if (ctx.knobs.clk_model_on && cp.kind == SharedParamKind::Clock) {
+            route = CouplingExactDRoute::Skipped;
+            return nan;
+        }
+        if (cp.t_park_s > 0.0) {             // parked: never a dense key (defensive)
+            route = CouplingExactDRoute::Skipped;
+            return nan;
+        }
+        if (cp.inflate_q) {                  // decorrelated by the fold: q = infinity
+            route = CouplingExactDRoute::Reinit;
+            return nan;
+        }
+        const double q = (cp.kind == SharedParamKind::Clock)    ? ctx.knobs.q_clock
+                       : (cp.kind == SharedParamKind::CodeBias) ? ctx.knobs.q_cb
+                                                                : ctx.knobs.q_pb;
+        double var_eff = cp.var + q * std::max(0.0, dt);
+        if (cta_on && cp.kind == SharedParamKind::Clock)
+            var_eff = clockAnchorFoldPeek(ctx, cp.sat, cp.var, dt, cta_now_s).var_eff;
+        const double floor = (cp.kind == SharedParamKind::PhaseBias) ? ctx.knobs.pb_var_floor
+                           : (cp.kind == SharedParamKind::CodeBias)  ? ctx.knobs.cb_var_floor
+                                                                     : 0.0;
+        if (floor > 0.0) var_eff = std::max(var_eff, floor);
+        var_eff = vce_scale(cp.kind, cp.sat, false, var_eff);
+        if (!(var_eff > 0.0)) {
+            route = CouplingExactDRoute::Skipped;
+            return nan;
+        }
+        return var_eff;
+    };
+    const auto columnOf = [&](const CarryPrior& cp) -> Eigen::Index {
+        try {
+            switch (cp.kind) {
+                case SharedParamKind::Clock:     return est.clockColumn(cp.sat);
+                case SharedParamKind::PhaseBias: return est.phaseBiasColumn(cp.sat, cp.signal);
+                case SharedParamKind::CodeBias:  return est.codeBiasColumn(cp.sat, cp.signal);
+                default:                         return -1;
+            }
+        } catch (...) {}
+        return -1;
+    };
+    const int np = static_cast<int>(pcc.P.rows());
+    ep.P = pcc.P;
+    ep.p_of_key.clear();
+    ep.s_of_p.assign(static_cast<std::size_t>(np), -1);
+    ep.route_p.assign(static_cast<std::size_t>(np), static_cast<int>(CouplingExactDRoute::Skipped));
+    ep.clk_p.assign(static_cast<std::size_t>(np), 0);
+    ep.cc_p.assign(static_cast<std::size_t>(np), '\0');
+    std::vector<const CarryPrior*> cp_of_p(static_cast<std::size_t>(np), nullptr);
+    for (const CarryPrior& cp : ctx.carry.prev_carry) {
+        if (cp.kind == SharedParamKind::VtecSh) continue;
+        const std::string key = sharedCarryKey(cp.kind, cp.sat, cp.signal);
+        const auto rit = pcc.row.find(key);
+        if (rit == pcc.row.end() || static_cast<int>(rit->second) >= np) {
+            // A leftover (the fold's diagonal route): its inflation is the scalar fallback
+            // of the rows' terms on it.
+            CouplingExactDRoute r;
+            const double v = foldVar(cp, r);
+            if (std::isfinite(v)) ep.q_outside[key] = std::max(0.0, v - cp.var);
+            continue;
+        }
+        cp_of_p[rit->second] = &cp;
+    }
+    std::vector<double> qs, sh;
+    for (int p = 0; p < np; ++p) {
+        const CarryPrior* cp = cp_of_p[static_cast<std::size_t>(p)];
+        if (!cp) continue;                   // a dense row with no carried entry: D (Skipped)
+        const std::string key = sharedCarryKey(cp->kind, cp->sat, cp->signal);
+        ep.p_of_key[key] = p;
+        ep.clk_p[static_cast<std::size_t>(p)] = (cp->kind == SharedParamKind::Clock) ? 1 : 0;
+        ep.cc_p[static_cast<std::size_t>(p)]  = cp->sat.empty() ? '\0' : cp->sat[0];
+        CouplingExactDRoute route;
+        const double var_eff = foldVar(*cp, route);
+        if (!std::isfinite(var_eff)) {
+            ep.route_p[static_cast<std::size_t>(p)] = static_cast<int>(route);
+            continue;
+        }
+        const Eigen::Index col = columnOf(*cp);
+        if (col < 0) {
+            ep.route_p[static_cast<std::size_t>(p)] = static_cast<int>(CouplingExactDRoute::Departed);
+            continue;
+        }
+        double q = var_eff - pcc.P(p, p);    // the fold sets the diagonal of P to var_eff
+        if (q < 0.0) {
+            ++ctx.counters.cxu_q_negative;
+            q = 0.0;
+        }
+        ep.route_p[static_cast<std::size_t>(p)] = static_cast<int>(CouplingExactDRoute::Present);
+        ep.s_of_p[static_cast<std::size_t>(p)] = static_cast<int>(ep.p_of_s.size());
+        ep.p_of_s.push_back(p);
+        ep.col_of_s.push_back(col);
+        qs.push_back(q);
+        sh.push_back(cp->value);
+    }
+    for (int p = 0; p < np; ++p) {
+        const int r = ep.route_p[static_cast<std::size_t>(p)];
+        if (r == static_cast<int>(CouplingExactDRoute::Present)) ++ctx.counters.cxu_keys_s;
+        else if (r >= 0 && r < kCouplingExactRoutes) ++ctx.counters.cxu_keys_d[r];
+    }
+    ep.q_s    = Eigen::Map<const Eigen::VectorXd>(qs.data(), static_cast<Eigen::Index>(qs.size()));
+    ep.shat_s = Eigen::Map<const Eigen::VectorXd>(sh.data(), static_cast<Eigen::Index>(sh.size()));
+    ep.stash_s = ctx.carry.cxu_stash_s;
+    // The pivots, re-resolved in this epoch's layout.  A pivot that left the layout keeps
+    // no entry, and the rows count the deficit as an orphan.
+    bool any_clk = false;
+    for (int p = 0; p < np; ++p) any_clk = any_clk || ep.clk_p[static_cast<std::size_t>(p)];
+    for (const auto& [cc, pv] : ctx.carry.cxu_pivot) {
+        try {
+            const Eigen::Index col = est.clockColumn(pv.first);
+            if (col >= 0) ep.pivot[cc] = {col, pv.second};
+        } catch (...) {}
+    }
+    if (any_clk && ep.pivot.empty()) ++ctx.counters.cxu_pivot_missing;
+    if (!couplingExactFactor(ep)) {
+        ++ctx.counters.cxu_epochs_unfactored;
+        log->warn("Network (card CTU): P_SS + Q_S over {} carried key(s) did not factor at "
+                  "TOW {:.1f}; the coupling rows take the card 1d route this epoch.",
+                  ep.nS(), t.tow);
+        return;
+    }
+    ++ctx.counters.cxu_epochs_built;
 }
 
 void networkInjectClockOscPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
@@ -6549,6 +6760,21 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                       "covariance block ({} keys) — dense carry cleared; the next "
                       "epoch folds the diagonal carry.", fc_cols.size());
             prev_carry_cov.clear();
+        }
+    }
+    // Card CTU: stamp the block with this epoch's content time (a coupling row is exact
+    // only if it was harvested now, against this same posterior) and record which clock
+    // the datum pinned (the pivot takes each exact row's clock-family deficit next epoch).
+    if (ctx.knobs.carry_cpl_exact) {
+        ctx.carry.cxu_stash_s     = TimeUtils::continuousGpsSeconds(t);
+        ctx.carry.cxu_stash_valid = prev_carry_cov.P.rows() > 0;
+        ctx.carry.cxu_pivot.clear();
+        for (const std::string& sat : registered_clock_sats) {
+            if (sat.empty()) continue;
+            Eigen::Index col = -1;
+            try { col = est.clockColumn(sat); } catch (...) { continue; }
+            if (pinned_cols.count(col) && col >= 0 && col < x_s.size())
+                ctx.carry.cxu_pivot[sat[0]] = {sat, x_s(col)};
         }
     }
     if (config_.estimateNetworkIonoSh() && sh_model) {   // SH-VTEC coefficients

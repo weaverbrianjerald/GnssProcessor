@@ -168,6 +168,42 @@ ClockAnchorFold clockAnchorFoldVariance(NetworkRunContext& ctx,
     return out;
 }
 
+ClockAnchorFold clockAnchorFoldPeek(const NetworkRunContext& ctx, const std::string& sat,
+                                    double prev_var, double dt_epoch, double pl_now_s,
+                                    double seed_horizon_s) {
+    // The expressions of clockAnchorFoldVariance, in the same order, on a copy of the
+    // state.  A satellite with no entry yet is a default-constructed one (born LOOSE),
+    // which is what the fold's operator[] would create.
+    ClockAnchorFold out;
+    const double dt_leg = std::max(0.0, dt_epoch);
+    out.var_eff = prev_var + ctx.knobs.q_clock * dt_leg;
+    if (!ctx.knobs.cta_on) return out;
+    ClockAnchorSat st;
+    const auto it = ctx.carry.clk_anchor.sat.find(sat);
+    if (it != ctx.carry.clk_anchor.sat.end()) st = it->second;
+    st.stale_pending = false;   // clockAnchorBeginEpoch clears it before the fold
+    const double dt_sat = (st.t_last > 0.0) ? (pl_now_s - st.t_last) : dt_leg;
+    const double gap_bound = (seed_horizon_s > ctx.knobs.cta_max_gap_s)
+                                 ? seed_horizon_s : ctx.knobs.cta_max_gap_s;
+    const bool stale = !(dt_sat > 0.0)
+                    || (ctx.knobs.cta_max_gap_s > 0.0 && dt_sat > gap_bound);
+    if (seed_horizon_s > 0.0 && dt_sat > 0.0)
+        out.var_eff = prev_var + ctx.knobs.q_clock * dt_sat;
+    if (stale && st.anchored) {
+        st.stale_pending = true;
+        out.decoupled    = true;
+    }
+    if (st.anchored && !st.stale_pending) {
+        out.var_eff  = prev_var + ctx.knobs.cta_q * dt_sat;
+        out.anchored = true;
+        if (ctx.knobs.cta_var_floor > 0.0 && out.var_eff < ctx.knobs.cta_var_floor) {
+            out.var_eff   = ctx.knobs.cta_var_floor;
+            out.floor_hit = true;
+        }
+    }
+    return out;
+}
+
 // ---------------------------------------------------------------------------
 // Guard side.
 // ---------------------------------------------------------------------------

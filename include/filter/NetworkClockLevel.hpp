@@ -308,6 +308,35 @@ void networkClockLevelRebase(NetworkRunContext& ctx, NetworkRunTraces& traces,
                              const std::vector<StationAssembly>& asm_res,
                              const std::vector<int>& est_index_of, bool datum_changed);
 
+/// @brief The level monitor and bound raise of card CTU
+///        (@c network.clock_level_monitor, @c network.clock_level_bound_raise;
+///        docs/refound/CTU_coupling_time_update_2026-09-28.md section 9.3).
+///
+/// Reads the level as the re-base does (the pin pair's post-fit ionosphere-free code,
+/// the two-way fit), with no shift: per satellite it accumulates the code-only level
+/// information I_L, undecayed and uncapped, and reads the stashed border block's variance
+/// along the satellite's level direction u (its clock and every carried phase bias),
+/// P_L = u'Pu/(u'u)^2.  The ratio P_L/(1/I_L) is traced (logs/network_level_bound.csv
+/// under @c network.trace_events) and read out at run end; a consistent estimator keeps
+/// it at or above 1.  With the raise armed, a satellite below 1 has the block raised,
+/// P += (1/I_L - P_L) u u', and its carried clock and phase-bias variances with it, so
+/// the next fold starts the level at its code-only bound.  A datum-changed epoch is
+/// skipped (the residuals straddle two frames).  The constellation's pinned clock is
+/// not in the block and is not read.  No-op unless the monitor is armed.
+/// @param ctx          the run context (knobs, carry, counters).
+/// @param traces       the run's traces.
+/// @param t            the epoch time.
+/// @param est          the estimator after this epoch's final solve.
+/// @param x_s          the shared-border solution.
+/// @param asm_res      the epoch's station assemblies.
+/// @param est_index_of station -> estimator index (-1 = not in the solve).
+/// @param datum_changed whether the epoch changed the datum.
+void networkClockLevelMonitor(NetworkRunContext& ctx, NetworkRunTraces& traces,
+                              const GnssTime& t, const NetworkEstimator& est,
+                              const Eigen::VectorXd& x_s,
+                              const std::vector<StationAssembly>& asm_res,
+                              const std::vector<int>& est_index_of, bool datum_changed);
+
 /// @brief Stamp each emitted satellite's level step (the shifts applied since its
 ///        previous emission) onto @c NetworkSatSolution::level_step_m and clear it.
 ///

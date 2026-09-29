@@ -24,6 +24,7 @@
  */
 
 #include "filter/NetworkRunTypes.hpp"
+#include "filter/NetworkCouplingExact.hpp"  // CouplingExactEpoch / CouplingExactCounters (card CTU)
 #include "filter/NetworkYoungInflate.hpp"   // CarryPrior, SharedCarryCov, LocalCarry, ClockOsc, ShDevCarry
 #include "filter/NetworkAnchorHygiene.hpp" // NetworkAnchorTallies (eq34 reattach hygiene)
 #include "filter/NetworkSignalIntegrity.hpp" // SignalIntegrityArc + tallies (flicker/gap signal integrity)
@@ -221,6 +222,12 @@ namespace GnssProcessor {
         bool carry_cpl_cond{};
         bool carry_cpl_joint{};
         bool carry_cpl_tu{};
+        /// network.carry_coupling_exact_update (card CTU): the exact conditional time update
+        /// of the coupling rows in place of card 1d's scalar kappa, on every row harvested
+        /// at the stash the dense border block belongs to.
+        bool carry_cpl_exact{};
+        bool clm_on{};      ///< network.clock_level_monitor (card CTU): the level monitor, measure-only
+        bool clm_raise{};   ///< network.clock_level_bound_raise (card CTU): raise the stashed block to the level bound
         bool carry_cpl_shmarg{};
         /// network.carry_coupling_gauge_project (card 1f): hold each (constellation, kind)
         /// coefficient sum of a truncated coupling row at its harvest value, so a departed
@@ -952,6 +959,18 @@ namespace GnssProcessor {
         // buildCplRow probes the exact key, then the wildcard.
         std::map<std::tuple<SharedParamKind, std::string, std::string>, double> tu_reinit_hist;
         SharedCarryCov prev_carry_cov;                      // dense covariance side-car of prev_carry, empty when off (C1)
+        // Card CTU (network.carry_coupling_exact_update).  The stash records when the dense
+        // block was taken and which clock the datum pinned then; PASS B's serial preamble
+        // builds the epoch (the fold mirror, S/D split and the factor of P_SS + Q_S), which
+        // the parallel produce reads and the D2 fold checks.  Not snapshotted: after a warm
+        // resume the stash stamp is invalid until the first kept stash, and the rows take
+        // the card 1d route for that one epoch (counted).  Empty and unread when off.
+        double cxu_stash_s{0.0};                            ///< continuous-GPS s of the stash prev_carry_cov belongs to
+        bool   cxu_stash_valid{false};                      ///< the stash was taken this run with the dense block present
+        std::map<char, std::pair<std::string, double>> cxu_pivot;  ///< constellation -> (pinned clock sat, pinned value) at the stash
+        CouplingExactEpoch cxu_epoch;                       ///< this epoch's inputs; ok = false when off or unbuilt
+        std::map<std::string, double> clm_info;             ///< card CTU monitor: satellite -> accumulated code-only level information I_L (1/m^2), undecayed
+        std::map<std::string, int>    clm_n;                ///< card CTU monitor: satellite -> epochs of code information accumulated
         // Readmit continuity: E2 seed-first re-admission and the block re-coupling edge
         // (network.readmit_seed_horizon_s / readmit_coupling_marg_ep).  Not snapshotted
         // (forward-only response policy): a seam during a satellite's absence loses its
@@ -3540,6 +3559,27 @@ namespace GnssProcessor {
         // Logged once at run end when the card is armed.
         size_t n_cpl_stash = 0, n_cpl_stash_empty = 0, n_cpl_harvest_fail = 0;
         long long n_cpl_terms_present = 0, n_cpl_terms_departed = 0, n_cpl_terms_shrunk = 0;
+        // Card CTU run totals (invariant 4): the per-station row and term counts folded
+        // serially after PASS B, the epoch builds, and the D2 fold's check of the mirror
+        // the rows read (keys whose S/D disposition or inflation differ from what the fold
+        // applied; the mirror cannot see a clock-datum handover, which is decided later
+        // in the epoch, so those epochs are counted separately).
+        CouplingExactCounters cxu{};
+        long long cxu_epochs = 0, cxu_epochs_built = 0, cxu_epochs_unfactored = 0,
+                  cxu_epochs_nostash = 0;
+        long long cxu_keys_s = 0, cxu_keys_d[kCouplingExactRoutes]{};
+        long long cxu_q_negative = 0;          ///< mirrored inflations below 0 (a VCE factor < 1), clamped to 0
+        long long cxu_fold_checked = 0, cxu_fold_mismatch_set = 0, cxu_fold_mismatch_q = 0,
+                  cxu_fold_handover_epochs = 0, cxu_fold_diag_fallback = 0;
+        double    cxu_fold_max_dq = 0.0;       ///< largest |Q_fold - Q_mirror| over checked keys (m^2)
+        long long cxu_pivot_missing = 0;       ///< built epochs with a clock constellation and no recorded pivot
+        // Card CTU level monitor and raise.  Ratios are counted for a satellite from its
+        // second epoch of code information on (its first solve is the code-only batch).
+        long long clm_epochs = 0, clm_skip_datum = 0, clm_rows = 0, clm_below1 = 0,
+                  clm_no_clock = 0, clm_raised = 0;
+        double    clm_min_ratio = 0.0, clm_raised_sum = 0.0, clm_raised_max = 0.0;
+        std::vector<double> clm_ratios;        ///< every counted ratio (the run-end median)
+        std::map<std::string, long long> clm_raised_by_sat;   ///< raises per satellite (invariant 7)
         // On-path telemetry for the departed-column gauge defect.  `held` counts
         // (constellation, kind) families whose coefficient sum was restored to its harvest
         // value against a truncated column; `orphan` counts families whose truncated mass
@@ -4358,6 +4398,28 @@ namespace GnssProcessor {
                                    const std::set<char>& changed_consts, double dt,
                                    bool within_epoch_armed,
                                    const std::shared_ptr<spdlog::logger>& log);
+
+    /**
+     * @brief Build this epoch's inputs of the exact coupling time update (card CTU,
+     *        @c network.carry_coupling_exact_update) into @c ctx.carry.cxu_epoch.
+     *
+     * Called by the driver after the epoch's shared columns are registered and before
+     * PASS B, whose parallel produce reads the result.  The coupling rows are built before
+     * @ref networkInjectD2CarryPrior runs, so the inflation each stashed key will receive
+     * is taken from a mirror of that fold's dense branch, clause for clause (the frame
+     * re-reference skips, the clock model, the reinit decorrelation, the Q3 anchor through
+     * @ref clockAnchorFoldPeek, the B4 floors, the VCE factor, the var_eff screen), and a
+     * key the fold will not carry, or whose column left the layout, goes to D.  The one
+     * clause the mirror cannot see is a clock-datum handover, decided later in the epoch;
+     * the fold checks every key against this mirror and counts both kinds of disagreement.
+     * Then @f$P_{SS}+Q_S@f$ is factored.  A no-op (with @c ok false) when the knob is off,
+     * when no dense block was stashed, or when the stash stamp is not valid (the epoch
+     * after a warm resume).
+     * @param dt the driver's inter-epoch step, the same value the fold receives.
+     */
+    void networkCouplingExactPrepare(NetworkRunContext& ctx, const NetworkEstimator& est,
+                                     const GnssTime& t, double dt,
+                                     const std::shared_ptr<spdlog::logger>& log);
 
     void networkInjectClockOscPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                                     NetworkRunTraces& traces, const GnssTime& t,

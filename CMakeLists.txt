@@ -243,6 +243,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkAnchorReentry.cpp
     src/core/filter/NetworkOraclePin.cpp
     src/core/filter/NetworkCoupling.cpp
+    src/core/filter/NetworkCouplingExact.cpp
     src/core/filter/NetworkAmbStateTrace.cpp
     src/core/filter/NetworkAmbFloat.cpp
     src/core/filter/NetworkBiasAdmission.cpp
@@ -526,6 +527,7 @@ add_executable(gnss_tests
     tests/test_channel_mode_all.cpp
     tests/test_galileo_network.cpp
     tests/test_clock_level_carry.cpp
+    tests/test_coupling_exact_update.cpp
     tests/test_owd_wire_contract.cpp
     tests/test_reinflate_never_shrinks.cpp
     tests/test_active_system_admission.cpp

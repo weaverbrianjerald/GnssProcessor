@@ -203,6 +203,21 @@ ClockAnchorFold clockAnchorFoldVariance(NetworkRunContext& ctx,
                                         double pl_now_s, double value,
                                         double seed_horizon_s = 0.0);
 
+/// @brief The variance @ref clockAnchorFoldVariance will return for this satellite this
+///        epoch, read from the current anchor state without advancing it (card CTU).
+///
+/// The coupling rows are built in PASS B, before the D2 fold runs, and the exact time
+/// update (network.carry_coupling_exact_update) has to use the fold's own inflation.
+/// This twin evaluates the same expressions on a copy of the per-satellite state, with
+/// `stale_pending` taken as cleared (@ref clockAnchorBeginEpoch clears it before the
+/// fold), and writes nothing: no state, no counter.  Its agreement with the fold is
+/// checked every armed epoch by the fold itself (the run-end mirror-mismatch count) and
+/// by the unit gate.
+/// @param ctx run context (read only); the other parameters as for the fold.
+ClockAnchorFold clockAnchorFoldPeek(const NetworkRunContext& ctx, const std::string& sat,
+                                    double prev_var, double dt_epoch, double pl_now_s,
+                                    double seed_horizon_s = 0.0);
+
 /// @brief Mark every satellite as not yet folded for a new epoch, and clear the
 ///        previous epoch's trip set (card Q3).
 ///

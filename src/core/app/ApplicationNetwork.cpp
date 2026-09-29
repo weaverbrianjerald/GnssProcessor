@@ -2424,6 +2424,12 @@ int Application::runNetwork() {
             networkAmbFloatApplyDrops(ctx, config_, log, stations, amb_elev_of,
                                       se.time.week, se.time.tow, pl_now_s);
         }
+        // --- Exact coupling time update, per-epoch inputs (card CTU) ---------------
+        // After the columns are registered (the layout the rows resolve against) and
+        // before PASS B, whose parallel produce reads the result.  It mirrors this
+        // epoch's D2 fold, which runs later in networkSolveGlue and checks the mirror.
+        // Inside the SB_PREASM bracket for the reason networkSdEwlAr gives.  No-op off.
+        networkCouplingExactPrepare(ctx, est, se.time, dt, log);
         subEnd(SB_PREASM);   // close pre-assembly; the assembly wall below is timed separately (D0b)
 
         // --- PASS B (in ApplicationNetworkAssembly.cpp): networkPassB_ owns the D0
@@ -2967,6 +2973,11 @@ int Application::runNetwork() {
         // wrote), and only on a kept epoch, which is every epoch that reaches here.
         networkClockLevelRebase(ctx, traces, se.time, est, x_s, asm_res, est_index_of,
                                 datum_changed);
+        // The level monitor of card CTU reads the same post-fit code and the block the
+        // stash just wrote; with the bound raise armed it raises that block before the
+        // next fold.  Mutually exclusive with the re-base above (loader).  No-op off.
+        networkClockLevelMonitor(ctx, traces, se.time, est, x_s, asm_res, est_index_of,
+                                 datum_changed);
         // Drains this epoch's buffered carry-state rows (RF-1 §7.4).  It is last inside
         // the bracket because this is the first point after every row source has run: the
         // leveling harvest and the gap prune (SB_LEVELING), the T4 / T3 refloats (SB_RAIM)

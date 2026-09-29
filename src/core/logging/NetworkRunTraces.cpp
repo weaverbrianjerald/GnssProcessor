@@ -69,6 +69,7 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       pf_keyed_trace_path(log_dir_ / "network_pf_keyed.csv"),
       pf_rows_trace_path(log_dir_ / "network_pf_rows.csv"),
       clock_level_trace_path(log_dir_ / "network_clock_level.csv"),
+      level_bound_trace_path(log_dir_ / "network_level_bound.csv"),
       station_block_trace_path(log_dir_ / "network_station_block.csv"),
       amb_state_trace_path(log_dir_ / "network_amb_state.csv"),
       arc_ledger_trace_path(log_dir_ / "network_arc_ledger.csv"),
@@ -493,6 +494,15 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
         else
             log->warn("Network: failed to open per-row post-fit trace {}",
                       pf_rows_trace_path.string());
+    }
+    if (config_.networkClockLevelMonitor() && nc.trace_events) {
+        // The level monitor of card CTU; the header documents the columns.
+        level_bound_trace.open(level_bound_trace_path);
+        if (level_bound_trace)
+            level_bound_trace << "week,tow,sat,p_level_m2,inv_info_m2,ratio,raised_m2,n_code_ep\n";
+        else
+            log->warn("Network: failed to open level-bound trace {}",
+                      level_bound_trace_path.string());
     }
     if (config_.networkClockLevelCarry() && nc.trace_events) {
         // The per-satellite level filter (card CLV); the header documents the columns.
@@ -2536,6 +2546,7 @@ void NetworkRunTraces::closeAll() {
     // artifact of a §24.6 attribution leg, so its tail must be flushed at teardown.
     if (pf_rows_trace.is_open()) pf_rows_trace.close();
     if (clock_level_trace.is_open()) clock_level_trace.close();
+    if (level_bound_trace.is_open()) level_bound_trace.close();
     // Same reason: added after INC-4, and the station-block audit is the graded
     // artifact of a §24.10 card-ZP arm, so its tail must be flushed at teardown.
     if (station_block_trace.is_open()) station_block_trace.close();

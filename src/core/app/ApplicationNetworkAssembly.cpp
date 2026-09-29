@@ -3799,6 +3799,9 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     cb.readmit_marg = &ctx.carry.readmit_marg;
                     cb.loop_ep      = static_cast<long long>(ctx.counters.n_loop_epochs);
                 }
+                // Card CTU: the exact time update's epoch inputs (built serially before this
+                // loop by networkCouplingExactPrepare; read-only here).
+                if (ctx.knobs.carry_cpl_exact) cb.cxu = &ctx.carry.cxu_epoch;
                 if (legacy_local_inject) {
                 // Ambiguity carry.  Legacy: the whole pivot station is skipped (all its
                 // ambiguities are gauge pins).  Prioritized: every station carries the
@@ -5057,6 +5060,10 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
         ctx.counters.n_resume_cpl_seam_present  = n_cpl_terms_present  - cpl_p0;
         ctx.counters.n_resume_cpl_seam_departed = n_cpl_terms_departed - cpl_d0;
     }
+    // Card CTU: fold each station's exact-update counts into the run totals (serial; the
+    // produce wrote only its own slot).
+    if (ctx.knobs.carry_cpl_exact)
+        for (const StationAssembly& Rc : asm_res) ctx.counters.cxu.add(Rc.cxu);
 
     // SD pre-reduce EWL trace drain (serial, post-produce; SPEC_sd_ewl_prereduce §6).
     // The rows were formatted per station inside the parallel produce; writing them

@@ -246,3 +246,17 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   census keys above 400 m in hour 1). `processing.ssr_pb_hold_presence_flip` (harness
   `network.closed_loop.pb_hold_presence_flip`) gives a held key's A5 edge the reaction of an unheld
   key; the consumer replay now writes card CST's per-satellite trace.
+- [CTU](CTU_coupling_time_update_2026-09-28.md): open (section 13, 2026-09-28: BUILT, default
+  off, not armed; floor folds 63 % to 0 % and sim level 1.15 to 0.28 m, but G1, G2 and G4 fail;
+  next: the ignition damage, the anchor guard on the level, a level instrument), 2026-09-28: pre-registered from the
+  outside review of the brief "Clock Level Handoff" (card CLV2 section 6.8). The clock level's
+  root is the coupling rows' scalar time update: a clock term is shrunk with the legacy 1e-3 m2/s
+  while the border folds the clock at the anchor's 2.9e-8 with a 1e-5 floor (kappa 3.3e-4 on the
+  clock term, 1 on the phase-bias term), so every carried ambiguity row, with the station's two
+  phase rows, fixes the satellite clock and the slant ionosphere at phase precision; the
+  switch-off arms confirm it (sim level 1.15 to 0.19 m; 4602 of 7327 clock folds at the anchor
+  floor in the control, 0 with the update off). Build: the exact conditional time update (one rule
+  for present, decoupled, departed and pinned columns, Q read from the fold), the level's
+  code-only bound 1 / I_L as a raise at the switch-on and a monitor on every run (card CLV's
+  accumulator kept, its corrector retired), and the hold decision in the same card; gates frozen
+  before any arm.
