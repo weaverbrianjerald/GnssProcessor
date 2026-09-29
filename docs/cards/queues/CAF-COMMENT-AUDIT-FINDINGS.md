@@ -286,5 +286,15 @@ Two questions about the mathematics, left unchanged for the author:
   `estimation.enable_sun_frame_correction` (default off) de-precesses them first. Owed: a
   validation on/off run (same build, golden base, only the knob differing; 2 h on both
   beds, graded on datum-invariant quantities) before it is armed; arming it changes the
-  goldens and the snapshot fingerprint, so adoption goes through a migration card. The report (frames_time.tex, sec:frame-sunmoon) now states this; it had
+  goldens and the snapshot fingerprint, so adoption goes through a migration card.
+  **2 h on/off run, 2026-09-28** (`runs/_rap_sunf_{field,sim}_{off,on}`, one Release exe,
+  golden bases, only the knob differing). Field: consumer WTZZ00DEU 3D p50 by hour
+  0.5600 0.0590 m (off) against 0.5603 0.0568 m (on), mean Up hour 2 +0.014 against
+  +0.022 m, per-epoch |on - off| median 1.4 mm (max 6.4 mm); network counters equal or
+  slightly lower (if_slip 58 to 55, STRANSFORM 52 to 47, sub-dm epochs 131 to 129).
+  Neutral at the millimetre level. Sim: 0.5979 0.1033 against 0.5980 0.1181 m, mean Up
+  hour 2 +0.080 against +0.094 m; not a verdict, because the sim truth is generated with the
+  same `Planetary` Sun (`EphemerisProvider::solidEarthTideMetres`), so the ON producer
+  disagrees with a truth that carries the old frame. Owed before adoption: a sim fixture
+  regenerated with the flag on, then the 6 h pair and the census. The report (frames_time.tex, sec:frame-sunmoon) now states this; it had
   claimed the direction was good to well under a milliarcsecond.
