@@ -5,7 +5,7 @@
 - **id:** CLV2
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** BATCH 3 READ (section 5, 2026-09-28): the census loss is in the wire's PHASE rows. A hybrid wire with the batch-1 base's code rows only costs the census nothing (C1W sites -0.001 / +0.001 m); with its phase rows only it reproduces the loss (+0.418 / +0.151 m, WTZZ00DEU 0.977 m in hour 1). The hold transfers each declared level step to the phase bias, the estimator keeps only part of it in the clock (median kept fraction 0.54 at the arm, 0.89 at 2 h), and the phase row moves by the remainder, exactly (0.07 to 0.09 m rms, band-common). ARHT00ATA's divergence is a consumer defect (card PBF). Revised batch 3: a phase-exact re-base. Earlier summary: BUILT 2026-09-25, NOT ARMED (section 4): C0 passes (default off byte-identical, the consumer knob never reaches the producer); R-A2 moves the wire's C1W - C1C bias to the dual-tracking stations (effect 0.182 to 0.055 m, against CODE 0.155 to 0.110 m) but see-saws with the solve (0.058 m per epoch, 340 breaks) and costs the census C1W sites hour 1; the consumer response repairs the split emulation's hour 1 (0.516 to 0.222 m) and does nothing at the census; the candidate fails C3 (census +0.32 / +0.11 m against the no-CLV wire, all of it at the 10 C1W sites). The field's cost is the C1W users', not in the consumer's phase-blind direction and not in the ionosphere-free code; batch 3 proposed. Original summary: Build card, pre-registered 2026-09-25 at the author's direction to continue card
+- **summary:** NOT MERGED (section 6.8, 2026-09-28): the section 6 code stays on branch `wip/clv2-station-share` (`8d33b73`) as the record; the author chose a consistent recursion (the coupling rows' time update of card CLV section 6.4 item 1, confirmed as the lock by a switch-off test) over further out-of-solve level corrections. PHASE-EXACT RE-BASE READ (section 6, 2026-09-28): the estimator gives each level step back rigidly (clock and phase biases together) because every station's ambiguities and the held phase datum keep the ionosphere share of the old level, and because the arm lands on a still-loose level; moving the station states with the level (`network.clock_level_station_kappa` 0.713, built, default off) and arming on a settled level (arm after 20 epochs) make the wire phase-exact through hour 1 (0.001 to 0.005 m against 0.076 to 0.091) and remove the census cost (all 16 sites +0.007 / +0.001 m against +0.279 / +0.047; WTZZ00DEU 0.546 / 0.063 m); the sim level stays fixed (0.13 m) with its first hour worse (0.780 m), the split emulation fails its recovery with the delay (0.285 m), QUIN00USA and ARHT00ATA regress. Next: an arm gate on the carried variance. BATCH 3 READ (section 5, 2026-09-28): the census loss is in the wire's PHASE rows. A hybrid wire with the batch-1 base's code rows only costs the census nothing (C1W sites -0.001 / +0.001 m); with its phase rows only it reproduces the loss (+0.418 / +0.151 m, WTZZ00DEU 0.977 m in hour 1). The hold transfers each declared level step to the phase bias, the estimator keeps only part of it in the clock (median kept fraction 0.54 at the arm, 0.89 at 2 h), and the phase row moves by the remainder, exactly (0.07 to 0.09 m rms, band-common). ARHT00ATA's divergence is a consumer defect (card PBF). Revised batch 3: a phase-exact re-base. Earlier summary: BUILT 2026-09-25, NOT ARMED (section 4): C0 passes (default off byte-identical, the consumer knob never reaches the producer); R-A2 moves the wire's C1W - C1C bias to the dual-tracking stations (effect 0.182 to 0.055 m, against CODE 0.155 to 0.110 m) but see-saws with the solve (0.058 m per epoch, 340 breaks) and costs the census C1W sites hour 1; the consumer response repairs the split emulation's hour 1 (0.516 to 0.222 m) and does nothing at the census; the candidate fails C3 (census +0.32 / +0.11 m against the no-CLV wire, all of it at the 10 C1W sites). The field's cost is the C1W users', not in the consumer's phase-blind direction and not in the ionosphere-free code; batch 3 proposed. Original summary: Build card, pre-registered 2026-09-25 at the author's direction to continue card
   CLV's return plan with batch 2 (card CLV section 8.6; the CLV file is near the size bar). Two
   builds, default OFF: R-A2, each free same-band code-bias column (GPS C1W, Galileo C1X) re-based
   from the same-band code difference at the stations that track both codes
@@ -28,7 +28,9 @@
   keys `c2<arm>` (`runs/_rap_msc_<site>_c2<arm>_d`); result: exe `gnss_processor_clv2.exe` sha256
   prefix `9d2d7cb13ea9f886`; section 5: exe `gnss_processor_clv3.exe` sha256 prefix
   `77643cd1db6677d9`, census keys `t3g0`, `t3b1`, `gtg0`, `gtb1`, `hbb`, `hbc`, `hbp`, hybrid
-  wires `runs/_hyb_g0_b1{code,phase,both}`
+  wires `runs/_hyb_g0_b1{code,phase,both}`; section 6: exes `gnss_processor_pxr.exe` `0e50c36f`,
+  `gnss_processor_sk.exe` `7a52f580`, arms `runs/_rap_{pxr,sk,skc10,skc20,skc40,skc20cr}_*`,
+  census keys `sk20`, `sk20p`, `sk20pcr`
 
 ## 1. What batch 1 left, and what was measured before this build
 
@@ -272,3 +274,135 @@ follow the satellites in view during the arming window rather than the code fami
    effect, and the code side is not where the census loss is.
 3. The consumer response stays a built option; R-C stays sequenced; Galileo adoption stays
    behind this card.
+
+## 6. Batch 3, item 1 read: why the estimator gives the level back, and a phase-exact re-base (2026-09-28)
+
+2 h arms on the batch-1 base `runs/_rap_clv2_f_b1` (field), `_rap_clv2_s_b1` (sim) and
+`_rap_clv2_x_b1` (the Galileo split emulation), the run paths changed and one knob each. Exes
+`gnss_processor_pxr.exe` (sha256 prefix `0e50c36f7cbc43d0`) and `gnss_processor_sk.exe`
+(`7a52f580cf47b189`), both main `448061f` plus this section's diff. Graders in the session
+scratchpad: `pullread.py`, `phaseleak.py`, `census2h.py`, and the earlier sessions' `clklevel.py`
+and `g3_recovery.py`.
+
+**6.1 The instrument.** `logs/network_clock_level_states.csv`, written only on a level-carry run
+with events traced (the gate of `network_clock_level.csv`): per epoch, before the re-base, each
+satellite's carried clock, phase-bias and code-bias posterior (value and variance), then the
+shift applied. A twin of the batch-1 base whose filter never steps
+(`network.clock_level_confirm_epochs: 1000000`, `runs/_rap_pxr_f_g0t`) reproduces the baseline
+wire `runs/_rap_clv2_f_g0` byte for byte (products, closed loop, epoch status), and the traced
+batch-1 arm `runs/_rap_pxr_f_b1` reproduces `_rap_clv2_f_b1`. The solve's pull at epoch k is
+POST(k) - POST(k-1) - SHIFT(k-1) on the arm minus POST(k) - POST(k-1) on the twin.
+
+**6.2 The estimator gives the level back rigidly.** In the first epochs after the arm the solve
+moves a satellite's clock and all its phase biases back together by 40 to 80 percent of the
+step (TOW 259530: G12 step +0.174 m, clock pull -0.138, phase-bias pulls -0.146 to -0.171; G07
++0.313, -0.192, -0.239 to -0.305). The estimator's own phase rows stay put; the wire's move,
+because the hold transfers only the declared step (section 5.2).
+
+**6.3 Two sources of the pull.** (1) The station side. At ignition each station's slant
+ionosphere absorbed part of every satellite's level error (the least-squares share kappa of a
+common code error on an L1/L2 pair, 0.71 at equal weights), its float ambiguities following so
+the phase rows stayed consistent. The per-line-of-sight ionosphere is not carried on this
+posture, so the memory is in the carried ambiguities and the held phase datum. A re-base that
+moves only the clock and phase biases leaves a geometry-free code misfit that pulls the level
+back. The station ionosphere moves 0.28 of the step in 2 h on G07; the ambiguities move along the
+phase-blind direction (L2 about 1.6 times L1) on some satellites and band-commonly on others.
+(2) The ignition itself. At the arm the carried clock variance is still 0.1 to 0.2 m2, so the
+solve's own convergence moves the loose level after the step.
+
+**6.4 The complete re-base (`network.clock_level_station_kappa`, default 0, off, inert unless
+`network.clock_level_carry`).** For every level step d it also moves each tracking station's
+carried float ambiguities by alpha_f kappa d (alpha_f = (f_L1 / f)^2, the slant delay being in
+metres at L1), any carried slant ionosphere by kappa d, and the held phase datum (the anchor's
+pinned value, the sticky continuous target, the handover ledger) by alpha_f kappa d, which
+leaves every phase row and the ionosphere-free code unchanged. Run-end line; fingerprint token
+`clv2:sk`. Tests `tests/test_clock_level_station_rebase.cpp` (3 cases). Kappa 0 is byte-identical
+to the batch-1 base.
+
+**6.5 Results.** The phase-row change is the wire's against the baseline wire, rms across
+satellites with the per-epoch median removed, by 20-minute bin; the kept fraction is the median
+at 1 h over satellites with an accumulated step above 0.05 m.
+
+| field arm | phase-row change (m) | kept | WTZZ00DEU hour 1 / 2 (m) |
+| --- | --- | --- | --- |
+| batch-1 base | 0.076 0.090 0.091 0.093 0.092 0.091 | 0.82 | 0.966 / 0.056 |
+| kappa 0.607 | 0.051 0.055 0.056 0.059 0.059 0.058 | 0.92 | 0.719 / 0.066 |
+| kappa 0.713 | 0.054 0.059 0.060 0.063 0.063 0.062 | 0.95 | 0.730 / 0.066 |
+| kappa 1.0 | 0.068 0.076 0.077 0.079 0.080 0.080 | 0.98 | 0.670 / 0.065 |
+| kappa 0.713, arm after 10 epochs | 0.002 0.003 0.006 0.022 0.023 0.023 | 1.00 | 0.552 / 0.064 |
+| kappa 0.713, arm after 20 epochs | 0.001 0.002 0.005 0.022 0.023 0.023 | 1.00 | 0.546 / 0.063 |
+| kappa 0.713, arm after 40 epochs | 0.000 0.001 0.004 0.019 0.020 0.020 | 1.00 | 0.556 / 0.063 |
+
+The delay is `network.clock_level_confirm_epochs` N (an arm waits for N consecutive epochs).
+With kappa the remainder no longer grows after the arming window; with the delay the arm lands
+on a settled level and the wire is phase-exact through the first hour. The 0.02 m after the
+first hour is not level motion: it starts at G20 (TOW 262920, each signal a different amount)
+and G25 L1W (TOW 262500, its presence edge), where the hold seats a fresh value (a new
+generation, a first sighting): declared edges the consumer re-floats. The clock anchor's events
+are identical in every field arm (34 rows, 2 decouples).
+
+The 16-site census on the arm-after-20 wire (key `sk20`, the census base's consumer; `sk20p` with
+card PBF's response; `sk20pcr` with PBF and the consumer's level-step response), hour-1 / hour-2
+change of the p50 against the baseline wire (`t3g0`; `pfg0` for the PBF keys):
+
+| key | C1W sites (10) | C1C sites (6) | all (16) |
+| --- | --- | --- | --- |
+| batch-1 base (`t3b1`) | +0.412 / +0.158 | +0.059 / -0.011 | +0.279 / +0.047 |
+| `sk20` | +0.012 / +0.003 | -0.025 / -0.004 | +0.007 / +0.001 |
+| `sk20p` | +0.012 / +0.003 | -0.025 / -0.004 | +0.007 / +0.001 |
+| `sk20pcr` | +0.004 / +0.001 | -0.021 / -0.005 | +0.003 / +0.000 |
+
+Two sites regress on every key: QUIN00USA (hour 1 0.223 to 1.317 m) and ARHT00ATA (hour 2 0.066
+to 0.741 m), both converging well until the arm lands and then drifting for 10 to 30 minutes. At
+QUIN00USA the wire's phase rows are exact (0.001 to 0.005 m) and its code rows change by the
+intended correction (0.09 to 0.13 m rms), so these read as fragile consumers rather than a wire
+defect (DAV1 improves by 1.5 m in hour 1). Section 5.5's bar for item 1 (phase-row change below
+0.01 m rms at every epoch, census C1W hour 1 at most +0.05 m) is met through the first hour.
+
+| sim / split | datum-free @240 | consumer hour 1 / 2 (m) | C1X-C1C recovery, hour 2 |
+| --- | --- | --- | --- |
+| sim baseline (no CLV) | 1.15 | 0.601 / 0.104 | |
+| sim batch-1 base | 0.07 | 0.365 / 0.088 | |
+| sim kappa 0.713 | 0.08 | 0.553 / 0.110 | |
+| sim kappa 0.713, arm after 20 | 0.13 | 0.780 / 0.062 | |
+| same, with the consumer's level-step response | | 0.729 / 0.055 | |
+| split batch-1 base | | 0.516 / 0.072 | 0.080 |
+| split kappa 0.713 | | 0.288 / 0.062 | 0.083 |
+| split kappa 0.713, arm after 20 | | 0.446 / 0.046 | 0.285 |
+
+On the sim the level is fixed on every variant; the delayed arm lands the sim's large corrections
+(about 1 m rms) as code steps at epoch 25, which costs the consumer's first hour and gives the
+best second. On the split emulation the delay fails the recovery: the confirmation logic also
+holds back breaks, and E13's level effect there is noise of 1 to 2 m (the two Galileo channel
+families disagree, card GAL's E12 class), so the delayed filter steps late and large.
+
+**6.6 Reading.** The re-base is phase-exact when the station memory moves with the level and the
+arm waits for a settled level. The field census cost of card CLV is then gone (all 16 sites
++0.007 / +0.001 m, WTZZ00DEU at its baseline). What is left is sequencing: the delay should gate
+the arm on the settled carry (its variance), not on a count that also holds back breaks; the
+Galileo families' level must be read before a Galileo arm; and the sim's first hour pays for a
+correction that lands late.
+
+**6.7 Next (proposed, rapid mode).** (1) An arm gate on the carried clock variance with breaks
+answered at once, kappa per station from its code pair (1/gamma for a free-column reader),
+graded on the four beds and the census; (2) the split emulation's family level, read before any
+Galileo arm; (3) the fragile consumers QUIN00USA and ARHT00ATA read at their divergence epochs.
+
+**6.8 Disposition (2026-09-28).** The code of this section (`network.clock_level_station_kappa`,
+the level-state instrument `logs/network_clock_level_states.csv` and
+`tests/test_clock_level_station_rebase.cpp`) is kept on branch `wip/clv2-station-share`, commit
+`8d33b73`, as the record, and is not merged: the knob and the instrument do not exist on main.
+The author chose to make the carry's recursion consistent rather than extend the out-of-solve
+corrections of cards CLV and CLV2. The root named in card CLV section 6.4 item 1 (the coupling
+rows' time update shrinks a clock term by p / (p + q dt) with the legacy clock noise, 1e-3 m2/s,
+against the anchor's 2.9e-8, keeps the phase-bias term, and so turns each carried ambiguity row
+into a statement of the level) was confirmed the same day on 2 h arms with
+`network.carry_coupling_time_update: false` (`runs/_rap_ctu_{s,f}{0,1,2,3}`, exe
+`gnss_processor_sk.exe`): the sim's datum-free level error falls from 1.15 to 0.19 m at epoch 240
+and the spread of the per-satellite ionosphere-free code residual medians from 0.97 to 0.08 m
+(field 0.27 to 0.17 m). Switching the update off is not the fix (it ignores the clock's walk:
+post-fit re-floats 0 to 46 on the sim, 18 to 41 on the field), and the consumer then loses through
+the phase side alone, because the held phase biases do not follow the converging level (hybrid
+replays, `runs/_hyb_ctu_*`). Sections 6.1 to 6.6 stand as the record of how the station memory
+holds the level; the items of 6.7 are superseded by the consistent-recursion plan, which goes into
+its own card after an outside review.

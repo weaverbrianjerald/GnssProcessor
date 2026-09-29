@@ -220,7 +220,13 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   modes side by side, "pivot" (the election passes over an unhealthy satellite) and "exclude"
   (its observations removed at the synced-epoch door), on 2 h arms of four beds and the
   16-site census.
-- [CLV2](CLV2_clock_level_batch2_2026-09-25.md): open (section 5, 2026-09-28: the census loss is in the
+- [CLV2](CLV2_clock_level_batch2_2026-09-25.md): open (section 6.8, 2026-09-28: the section 6 code kept
+  on branch `wip/clv2-station-share` as the record, not merged, the author having chosen a consistent
+  recursion instead; section 6, 2026-09-28: the re-base made phase-exact
+  on the field by moving each station's ambiguities and the held datum with the level
+  (`network.clock_level_station_kappa`, built, off) and arming on a settled level: hour-1 phase-row
+  change 0.001 to 0.005 m, census +0.007 / +0.001 m; the sim's first hour and the Galileo split
+  still owed; section 5, 2026-09-28: the census loss is in the
   wire's phase rows, not its code rows (hybrid wires: code rows only cost nothing, phase rows only
   reproduce the loss); the hold transfers each declared level step to the phase bias while the
   estimator keeps a median 0.54 to 0.89 of it in the clock, so the phase row moves by the remainder,
@@ -289,3 +295,14 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   NIS 0.87 / 1.03, NEES 0.2 / 0.3 (control / exact); field NIS 0.40 / 0.10, NEES 0.6 / 0.2. The
   covariance along D is consistent to conservative, not overconfident, which corrects card LAH's
   premise for rejecting the smoothed hold; the smoothed member is owed a build.
+- [PRM](PRM_parameter_registry_2026-09-29.md): open, 2026-09-29: pre-registered (the author's
+  question after cards CTU and CTU2: parameter objects whose properties a human can read). The
+  PPP path has a registry (`StateManager`, `StateKeySchema`); the network path has identities
+  without properties: a border parameter's process noise is decided at four sites plus card
+  CTU's mirror, its floors at two, its event responses on four paths, and the ten carried maps
+  that reference it are enumerated by hand in six functions, the shape of five defects of the
+  last month (the CTU root, the two-of-ten re-level, the rx code-bias double count, the drop
+  that did not decouple, the hand-built re-base). Build: a declared descriptor per parameter
+  kind read by every mechanism, one traversal over every carried reference, a run-end "model as
+  armed" table, a declarative knob table; five byte-identity-gated phases after CTU2's code
+  lands; no estimator class hierarchy, no unification of the epoch-skip payloads.
