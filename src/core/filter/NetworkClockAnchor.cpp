@@ -157,19 +157,24 @@ std::map<std::string, ClockAnchorPhiRow> clockAnchorPhaseStatistic(
             const Eigen::Index cc = est.clockColumn(sat);
             if (cc < 0 || cc >= x_s.size()) continue;
             double e = x_s(cc) - keys[static_cast<std::size_t>(s.ic)].value;
+            double d = x_s(cc);                  // the posterior value (card PVN)
             fn.ka.emplace_back(s.ic, 1.0);
             fn.sc.emplace_back(cc, 1.0);
             for (std::size_t j = 0; j < s.ip.size(); ++j) {
                 const Eigen::Index pc = est.phaseBiasColumn(sat, s.sig[j]);
                 if (pc < 0 || pc >= x_s.size()) { ok = false; break; }
                 e -= w[j] * (x_s(pc) - keys[static_cast<std::size_t>(s.ip[j])].value);
+                d -= w[j] * x_s(pc);
                 fn.ka.emplace_back(s.ip[j], -w[j]);
                 fn.sc.emplace_back(pc, -w[j]);
             }
             if (!ok || !std::isfinite(e)) continue;
             row.e = e;
+            row.d_post = d;
         } catch (...) { continue; }
         row.n_pb = static_cast<int>(s.ip.size());
+        for (std::size_t j = 0; j < s.sig.size(); ++j)
+            row.sigs += (j ? "+" : "") + s.sig[j];    // the functional's signals (card PVN)
         out[sat] = row;
         by_const[sat[0]].emplace_back(sat, std::move(fn));
     }
@@ -200,9 +205,18 @@ std::map<std::string, ClockAnchorPhiRow> clockAnchorPhaseStatistic(
         std::vector<double> tmp = ev;
         std::nth_element(tmp.begin(), tmp.begin() + static_cast<std::ptrdiff_t>(n / 2), tmp.end());
         const double med = tmp[n / 2];
+        // The posterior value's constellation median (card PVN; the guard reads e_hat).
+        std::vector<double> dv;
+        dv.reserve(n);
+        for (const auto& [sat, fn] : v) { (void)fn; dv.push_back(out[sat].d_post); }
+        std::nth_element(dv.begin(), dv.begin() + static_cast<std::ptrdiff_t>(n / 2), dv.end());
+        const double dmed = dv[n / 2];
         for (std::size_t a = 0; a < n; ++a) {
             ClockAnchorPhiRow& r = out[v[a].first];
             const double s = pm[a] - pp[a];
+            r.Sm = pm[a];
+            r.Sp = pp[a];
+            r.d_post_hat = r.d_post - dmed;
             r.floored = !(s > floor2);
             r.S = std::max(floor2, s);
             r.e_hat = r.e - med;

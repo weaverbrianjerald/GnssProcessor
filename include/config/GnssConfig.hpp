@@ -5433,6 +5433,27 @@ namespace GnssProcessor {
         int    networkClockLevelInnovWindowEp() const { return network_clock_level_innov_window_ep_; }
 
         /**
+         * @brief The phase-visible consistency instrument (@c network.phase_visible_monitor,
+         *        default false; card PVN, docs/refound/PVN_phase_visible_nees_2026-09-29.md).
+         *
+         * Measure-only.  Per satellite with a clock and phase biases on two bands in the
+         * folded dense block, the ionosphere-free phase-visible clock
+         * @f$D = c - \sum_j w_j p_j@f$ (@f$\sum w = 1@f$, @f$\sum w\lambda^2 = 0@f$, one phase
+         * bias per band): its contrast update against the fold's prior, normalized by the
+         * contrast-projected @f$P^- - P^+@f$ with no floor (NIS, toward 1 for an honest
+         * covariance), and its posterior contrast value and variance (the sim's within-arc
+         * state NEES is graded offline from them).  Trace @c logs/network_phase_visible.csv
+         * and a run-end line.  Requires @c network.raim_within_epoch (its fold capture is
+         * the prior).  The solve and every product are byte-identical to off.
+         */
+        bool   networkPhaseVisibleMonitor() const { return network_phase_visible_monitor_; }
+        /**
+         * @brief Window of the phase-visible instrument's run-end means, epochs
+         *        (@c network.phase_visible_window_ep, default 60; card PVN).  Must be >= 2.
+         */
+        int    networkPhaseVisibleWindowEp() const { return network_phase_visible_window_ep_; }
+
+        /**
          * @brief Raise the border block restored by a warm resume along each satellite's
          *        level direction, once, at the first leg epoch
          *        (@c network.clock_level_restore_raise; card CTU section 9.3 and G5).
@@ -9065,6 +9086,8 @@ namespace GnssProcessor {
         bool   network_clock_level_monitor_{false};      ///< Card CTU measure-only level monitor: per satellite the undecayed code-only level information I_L against the stashed block's level variance P_L, the ratio P_L/(1/I_L) traced and read out; solve byte-identical.  Requires shared_carry_full_cov; refuses clock_level_carry.
         bool   network_clock_level_bound_raise_{false};  ///< Card CTU: raise the stashed border block along each satellite's level direction to 1/I_L where the monitor ratio is below 1 (a raise, never a set), with the carried variances.  Requires clock_level_monitor.  Solve-affecting, fingerprinted.
         int    network_clock_level_innov_window_ep_{60};  ///< Window (epochs) of the level innovation instrument of the monitor (card CTU section 14).
+        bool   network_phase_visible_monitor_{false};     ///< Card PVN measure-only phase-visible consistency instrument (the ionosphere-free phase-visible clock's normalized update and posterior contrast); requires raim_within_epoch.
+        int    network_phase_visible_window_ep_{60};      ///< Window (epochs) of the phase-visible instrument's run-end means (card PVN).
         bool   network_clock_level_restore_raise_{false};    ///< Raise the restored border along each satellite's level to its code-only variance at the first leg epoch (card CTU G5).
         int    network_clock_level_restore_credit_ep_{0};     ///< Epochs of code information the restored level is credited with (card CTU G5); 0 = all.
         double network_clock_level_sigma_floor_m_{0.01};   ///< Floor (m) on the level standard deviation, V_L = max(1 / I_L, floor^2) (card CLV). Inert unless network_clock_level_carry_.

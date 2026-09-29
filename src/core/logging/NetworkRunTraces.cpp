@@ -73,6 +73,7 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       anchor_guard_trace_path(log_dir_ / "network_anchor_guard.csv"),
       level_innov_trace_path(log_dir_ / "network_level_innov.csv"),
       level_innov_win_trace_path(log_dir_ / "network_level_innov_win.csv"),
+      phase_visible_trace_path(log_dir_ / "network_phase_visible.csv"),
       station_block_trace_path(log_dir_ / "network_station_block.csv"),
       amb_state_trace_path(log_dir_ / "network_amb_state.csv"),
       arc_ledger_trace_path(log_dir_ / "network_arc_ledger.csv"),
@@ -522,6 +523,16 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
         if (level_innov_win_trace)
             level_innov_win_trace << "week,tow_end,sat,k,nubar_m,nubar_a_m,nubar_b_m,var_nubar_m2,"
                                      "pbar_m2,T\n";
+    }
+    if (config_.networkPhaseVisibleMonitor()) {
+        // The phase-visible consistency instrument (card PVN); the header documents the
+        // columns.
+        phase_visible_trace.open(phase_visible_trace_path);
+        if (phase_visible_trace)
+            phase_visible_trace << "week,tow,sat,sigs,n_pb,d_hat_m,sqrt_sp_m,e_hat_m,sqrt_su_m,nis\n";
+        else
+            log->warn("Network: failed to open phase-visible trace {}",
+                      phase_visible_trace_path.string());
     }
     if (config_.networkClockLevelCarry() && nc.trace_events) {
         // The per-satellite level filter (card CLV); the header documents the columns.

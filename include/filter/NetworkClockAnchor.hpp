@@ -169,6 +169,17 @@ struct ClockAnchorPhiRow {
     double S{0.0};       ///< P- - P+ of the contrast, floored (m^2)
     bool   floored{false};
     int    n_pb{0};      ///< phase-bias columns in the functional
+    // The same functional read as a state (card PVN, the phase-visible instrument); the
+    // guard reads none of these.
+    double Sm{0.0};         ///< the contrast-projected prior variance P- (m^2), unfloored
+    double Sp{0.0};         ///< the contrast-projected posterior variance P+ (m^2), unfloored
+    double d_post{0.0};     ///< the functional's posterior value c - sum_j w_j p_j (m)
+    double d_post_hat{0.0}; ///< …with the constellation median removed (the clock gauge)
+    /// The phase-bias signals the functional took this epoch, one per band, joined by '+'
+    /// (e.g. "L1C+L2W").  The choice is per epoch (the best-determined signal of a band), so
+    /// the functional's value changes definition when it does: a series of @c d_post is
+    /// continuous only between changes of this string.
+    std::string sigs;
 };
 
 /// Minimum-norm weights w over a satellite's phase-bias signals with sum w = 1 (blind to

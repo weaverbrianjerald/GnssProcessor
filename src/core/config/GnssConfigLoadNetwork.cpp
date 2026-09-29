@@ -9217,6 +9217,30 @@ namespace GnssProcessor {
         network_clock_level_innov_window_ep_ =
             jval<int>(json, "network.clock_level_innov_window_ep",
                       "clock_level_innov_window_ep", 60);
+        // The phase-visible consistency instrument (card PVN).  Measure-only; the prior it
+        // needs is the dense fold's capture, which only the within-epoch RAIM keeps.
+        network_phase_visible_monitor_ =
+            jval<bool>(json, "network.phase_visible_monitor", "phase_visible_monitor", false);
+        network_phase_visible_window_ep_ =
+            jval<int>(json, "network.phase_visible_window_ep", "phase_visible_window_ep", 60);
+        if (network_phase_visible_window_ep_ < 2) {
+            log->error("Network: network.phase_visible_window_ep must be >= 2.");
+            return false;
+        }
+        if (network_phase_visible_monitor_ && !network_raim_within_epoch_) {
+            log->error("Network (card PVN): network.phase_visible_monitor requires "
+                       "network.raim_within_epoch (its fold capture is the instrument's prior).");
+            return false;
+        }
+        if (network_phase_visible_monitor_)
+            log->info("Network (card PVN): network.phase_visible_monitor = true: per satellite the "
+                      "ionosphere-free phase-visible clock D = c - sum_j w_j p_j (one phase bias per "
+                      "band) is traced with its contrast update against the fold's prior, "
+                      "normalized by the contrast-projected P- - P+ without a floor (NIS toward 1 "
+                      "for an honest covariance), and its posterior contrast value and variance "
+                      "(logs/network_phase_visible.csv; window {} epochs).  Measure-only: the "
+                      "solve and every product are unchanged.",
+                      network_phase_visible_window_ep_);
         network_clock_level_restore_raise_ =
             jval<bool>(json, "network.clock_level_restore_raise", "clock_level_restore_raise", false);
         network_clock_level_restore_credit_ep_ =

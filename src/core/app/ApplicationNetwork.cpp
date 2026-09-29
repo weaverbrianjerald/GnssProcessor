@@ -122,6 +122,7 @@
 #include "filter/NetworkEmitStore.hpp"    // emit, store, product write and closed loop (INC-11)
 #include "filter/NetworkFastClock.hpp"    // split-cadence clocks-only fast pass (FC-1)
 #include "filter/NetworkTeardown.hpp"
+#include "filter/NetworkPhaseVisibleDiag.hpp"  // phase-visible consistency instrument (card PVN)
 #include "filter/NetworkProducerAr.hpp" // log-only producer AR and NEQ export (INC-9b)
 #include "filter/NetworkInject.hpp"
 #include "filter/NetworkCanonicalPairAdmission.hpp" // canonical-pair admission seam (card CPA)
@@ -2824,6 +2825,9 @@ int Application::runNetwork() {
                        clk_model_warm, emit_rate_warm, pl_now_s, dt,
                        clock_refloat_sats, retro_flag_sats, retro_feed);
         subEnd(SB_CLOCKUPD);       // close block 8, clock update + retro feed (D0b)
+        // The phase-visible consistency instrument (card PVN): measure-only, after the
+        // epoch's last re-solve, while the fold capture in ws still holds the prior.
+        networkPhaseVisibleMonitor(ctx, traces, se, est, x_s, ws);
         // Roster disagreement pass (app/SignalRoster.cpp, card SID phase 1).  It sits here
         // because this is the first point at which every input of P4 exists in one scope:
         // the arc-level tracker's rows were built in PASS A, local_carry is post-harvest

@@ -324,3 +324,16 @@ satellite's clock is worse for an L1W consumer than one frozen outright, while t
 an L1C consumer (candidates: the sparse L1W family's own phase-bias datum and generation edges, and
 an L1W inter-signal phase bias that is not constant). Owed for the consumer: whether dropping the
 band-1 code on a mixed L1C / C1W latch is intended.
+
+## 10. The premise of the smoothed member's rejection, corrected (2026-09-29)
+
+Card [PVN](PVN_phase_visible_nees_2026-09-29.md) measured the estimator's covariance of the
+ionosphere-free phase-visible clock D directly: on the sim its per-epoch update is consistent (NIS
+0.87 to 1.03) and its state conservative (stated sd 3 to 28 cm against a within-arc wander of 2 to
+5 cm, NEES 0.2 to 0.3); on the field both read below 1. Sections 2 and 8 item 3 above took D as
+stated to a few millimetres (the adversarial review's numerical toy, and card CTU2 section 5's
+2.2 mm p50, which is the size of one epoch's update, not the state's uncertainty). With the stated sd
+as measured, the smoothed member's regression of D(t0) on D(t) stays near 1 for hours, so on these
+beds it would behave like the phase-clock hold while passing the modelled walk, and would adapt to a
+broadcast a priori through the walk's own q. The rejection in section 2 therefore stands only for the
+offline proxy (rho = 1 / (1 + n / 60)); the smoothed member itself is owed a build.

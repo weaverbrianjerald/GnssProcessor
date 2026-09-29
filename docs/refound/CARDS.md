@@ -282,3 +282,10 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   0.08 / 0.10 / 0.08 with this one (control 0.67 / 0.17 / 0.10 / 0.08 / 0.09 / 0.07); named C1W
   regressions (KOKB, QUIN, UTQI, ARHT); posture limit: the a priori clock's motion is load-bearing
   on the phase side within a generation.
+- [PVN](PVN_phase_visible_nees_2026-09-29.md): open, 2026-09-29: pre-registered (card LAH's critical
+  path): the estimator's phase-visible consistency instrument, measure-only
+  (`network.phase_visible_monitor`): the normalized update of the ionosphere-free phase-visible
+  clock on both beds and its within-arc state NEES on the sim. Built and read the same day: sim
+  NIS 0.87 / 1.03, NEES 0.2 / 0.3 (control / exact); field NIS 0.40 / 0.10, NEES 0.6 / 0.2. The
+  covariance along D is consistent to conservative, not overconfident, which corrects card LAH's
+  premise for rejecting the smoothed hold; the smoothed member is owed a build.

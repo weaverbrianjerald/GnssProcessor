@@ -5914,6 +5914,39 @@ int networkTeardown(
                       phi);
         }
     }
+    if (ctx.knobs.pv_on) {
+        // The phase-visible consistency instrument (card PVN).  An honest covariance of the
+        // ionosphere-free phase-visible clock reads NIS mean ~1 and a window ratio ~1 (the
+        // rms update over the rms predicted update sd); `rows 0` means the instrument never
+        // formed a row (no capture, or no satellite with two phase-bias bands).
+        const auto& c = ctx.counters;
+        const auto med = [](std::vector<double> v) {
+            if (v.empty()) return 0.0;
+            std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(v.size() / 2), v.end());
+            return v[v.size() / 2];
+        };
+        std::string wn, wr;
+        for (std::size_t w = 0; w < c.pv_win_nis.size(); ++w) {
+            const char* sep = w ? " " : "";
+            wn += fmt::format("{}{:.2f}", sep, c.pv_win_nis[w]);
+            wr += fmt::format("{}{:.2f}", sep, c.pv_win_ratio[w]);
+        }
+        log->info("Network (card PVN / phase-visible consistency): {} epoch(s) ({} without a "
+                  "capture), {} satellite-epoch row(s) ({} with S- - S+ not positive); NIS mean "
+                  "{:.3f} over {} after epoch 15, {:.1f} % above 6.63; |update| p50 {:.4f} m, "
+                  "predicted update sd p50 {:.4f} m, stated posterior sd p50 {:.4f} m; per "
+                  "{}-epoch window: mean NIS [{}], rms update / rms predicted sd [{}].",
+                  c.pv_epochs, c.pv_epochs_nocap, c.pv_rows, c.pv_su_nonpos,
+                  c.pv_nis_n > 0 ? c.pv_nis_sum / static_cast<double>(c.pv_nis_n) : 0.0,
+                  c.pv_nis_n,
+                  c.pv_nis_n > 0 ? 100.0 * static_cast<double>(c.pv_nis_gt)
+                                       / static_cast<double>(c.pv_nis_n) : 0.0,
+                  med(c.pv_abs_e), med(c.pv_sqrt_su), med(c.pv_sqrt_sp),
+                  ctx.knobs.pv_window_ep, wn, wr);
+        if (c.pv_rows == 0)
+            log->warn("Network (card PVN): the phase-visible instrument is ARMED but formed no "
+                      "row.");
+    }
     if (ctx.knobs.carry_cpl_exact) {
         // Card CTU run-end telemetry (invariant 4).  `rows exact = 0` means the rule never
         // ran and every row took card 1d's kappa, however clean the rest reads.  The

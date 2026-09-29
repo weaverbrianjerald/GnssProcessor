@@ -125,6 +125,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.clm_on    = config_.networkClockLevelMonitor();      // card CTU monitor (trace class)
     k.clm_raise = config_.networkClockLevelBoundRaise();   // card CTU raise; loader guarantees clm_on
     k.clm_innov_window_ep = config_.networkClockLevelInnovWindowEp();   // card CTU section 14 instrument window
+    k.pv_on        = config_.networkPhaseVisibleMonitor();     // card PVN (trace class)
+    k.pv_window_ep = config_.networkPhaseVisibleWindowEp();
     k.clm_restore_credit_ep = config_.networkClockLevelRestoreCreditEp();   // card CTU G5
     k.clm_restore_raise = config_.networkClockLevelRestoreRaise();       // card CTU G5; loader guarantees clm_on
     k.carry_cpl_shmarg = config_.networkCarryCouplingShMarginalize();

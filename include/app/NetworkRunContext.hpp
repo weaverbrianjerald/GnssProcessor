@@ -232,6 +232,8 @@ namespace GnssProcessor {
         int  clm_restore_credit_ep{};   ///< network.clock_level_restore_credit_ep (card CTU G5): epochs of code information the restored level is credited with (0 = all the snapshot's)
         bool clm_restore_raise{};       ///< network.clock_level_restore_raise (card CTU G5): raise the restored border block along each satellite's level to its code-only variance, once, at the first leg epoch
         int  clm_innov_window_ep{60};   ///< network.clock_level_innov_window_ep (card CTU section 14): the level innovation instrument's window, epochs
+        bool pv_on{};                   ///< network.phase_visible_monitor (card PVN): the phase-visible consistency instrument, measure-only
+        int  pv_window_ep{60};          ///< network.phase_visible_window_ep (card PVN): its window, epochs
         bool carry_cpl_shmarg{};
         /// network.carry_coupling_gauge_project (card 1f): hold each (constellation, kind)
         /// coefficient sum of a truncated coupling row at its harvest value, so a departed
@@ -989,6 +991,12 @@ namespace GnssProcessor {
         double                        clm_prev_s{-1.0};     ///< continuous GPS seconds of the previous monitored epoch
         std::map<std::string, ClockLevelInnovWin> clm_win;  ///< per-satellite window sums
         int                           clm_win_ep{0};        ///< epochs in the current window
+        // Phase-visible consistency instrument (card PVN), measure-only: the open window's sums.
+        int       pv_win_ep{0};           ///< epochs in the current window
+        double    pv_win_nis_sum{0.0};    ///< summed NIS in the window
+        long long pv_win_nis_n{0};        ///< NIS values in the window
+        double    pv_win_e2_sum{0.0};     ///< summed squared contrast update (m^2)
+        double    pv_win_su_sum{0.0};     ///< summed predicted update variance S- - S+ (m^2)
         // Readmit continuity: E2 seed-first re-admission and the block re-coupling edge
         // (network.readmit_seed_horizon_s / readmit_coupling_marg_ep).  Not snapshotted
         // (forward-only response policy): a seam during a satellite's absence loses its
@@ -3669,6 +3677,19 @@ namespace GnssProcessor {
         std::vector<double> clm_win_T;         ///< per window: mean over satellites of T = nubar^2 / var(nubar)
         std::vector<double> clm_win_phi;       ///< per window: split-half noise over the white prediction
         long long clm_win_Tgt{0};              ///< window satellites with T above 6.63
+        // Phase-visible consistency instrument (card PVN).  `rows 0` means inert.
+        long long pv_epochs{0};                ///< epochs the instrument ran
+        long long pv_epochs_nocap{0};          ///< …of which without a dense fold capture (no rows)
+        long long pv_rows{0};                  ///< satellite-epoch rows formed
+        long long pv_su_nonpos{0};             ///< rows whose S- - S+ was not positive (no NIS)
+        double    pv_nis_sum{0.0};             ///< summed NIS after epoch 15
+        long long pv_nis_n{0};                 ///< NIS values summed
+        long long pv_nis_gt{0};                ///< NIS values above 6.63 (chi2(1), 1 %)
+        std::vector<double> pv_abs_e;          ///< |contrast update| after epoch 15 (m), the run-end median
+        std::vector<double> pv_sqrt_sp;        ///< stated posterior sd sqrt(S+) after epoch 15 (m)
+        std::vector<double> pv_sqrt_su;        ///< predicted update sd sqrt(S- - S+) after epoch 15 (m)
+        std::vector<double> pv_win_nis;        ///< per window: mean NIS
+        std::vector<double> pv_win_ratio;      ///< per window: rms update over rms predicted update sd
         long long clm_win_Tn{0};               ///< window satellites with a T
         // On-path telemetry for the departed-column gauge defect.  `held` counts
         // (constellation, kind) families whose coefficient sum was restored to its harvest

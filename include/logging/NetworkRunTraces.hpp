@@ -714,6 +714,16 @@ namespace GnssProcessor {
         /// variance and @c T = nubar^2 / var(nubar).
         std::ofstream level_innov_win_trace;
         const std::filesystem::path level_innov_win_trace_path;
+        /// The phase-visible consistency instrument (card PVN,
+        /// @c network.phase_visible_monitor): one row per satellite per epoch.
+        /// @c sigs the phase-bias signals the functional took (one per band; a change of
+        /// signal changes the functional's definition, so a series breaks there),
+        /// @c d_hat_m the posterior ionosphere-free phase-visible clock with the constellation
+        /// median removed, @c sqrt_sp_m its stated contrast sd, @c e_hat_m the contrast
+        /// update against the fold's prior, @c sqrt_su_m the predicted update sd
+        /// sqrt(S- - S+) (empty when not positive), @c nis = e^2 / (S- - S+).
+        std::ofstream phase_visible_trace;
+        const std::filesystem::path phase_visible_trace_path;
         /// Per-station local-block audit (@c network.trace_station_block;
         /// SPEC_event_harness §24.10, card ZP): one row per station per traced epoch (the
         /// first 20 emitted epochs, then every 60th) describing
