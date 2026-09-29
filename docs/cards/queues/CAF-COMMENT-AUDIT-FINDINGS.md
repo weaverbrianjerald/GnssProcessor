@@ -283,7 +283,8 @@ Two questions about the mathematics, left unchanged for the author:
   `Planetary::sunMoonPosEci` returns mean-of-date vectors, and the legacy ECI-to-ECEF
   chain applies IAU 1976 precession again, so the directions are off by the precession
   accumulated since J2000 (about 50 arcsec per year, roughly a third of a degree in 2024).
-  `estimation.enable_sun_frame_correction` (default off) de-precesses them first. Decide
-  whether to arm it (a fingerprint and golden change) or make it the default through a
-  migration card. The report (frames_time.tex, sec:frame-sunmoon) now states this; it had
+  `estimation.enable_sun_frame_correction` (default off) de-precesses them first. Owed: a
+  validation on/off run (same build, golden base, only the knob differing; 2 h on both
+  beds, graded on datum-invariant quantities) before it is armed; arming it changes the
+  goldens and the snapshot fingerprint, so adoption goes through a migration card. The report (frames_time.tex, sec:frame-sunmoon) now states this; it had
   claimed the direction was good to well under a milliarcsecond.
