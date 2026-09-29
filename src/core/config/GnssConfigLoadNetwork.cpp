@@ -2511,6 +2511,45 @@ namespace GnssProcessor {
                       "reaches a held key (the cost of not transferring a coupled frame move).",
                       network_config_.emit_pb_hold_max_gap_s);
         }
+        // The level-aware hold (card LAH): the held key keeps the satellite's
+        // phase-visible clock, not its phase bias.  Emit-side only, like the hold.
+        network_config_.emit_pb_hold_phase_clock =
+            jval<bool>(json, "network.emit_pb_hold_phase_clock", "emit_pb_hold_phase_clock", false);
+        if (network_config_.emit_pb_hold_phase_clock) {
+            if (!network_config_.emit_pb_hold)
+                throw std::runtime_error("network.emit_pb_hold_phase_clock requires "
+                                         "network.emit_pb_hold (it is a mode of the hold; card LAH)");
+            if (jval<bool>(json, "network.clock_level_carry", "network_clock_level_carry", false))
+                throw std::runtime_error("network.emit_pb_hold_phase_clock refuses "
+                                         "network.clock_level_carry: both move the held phase bias "
+                                         "with the clock level, and the phase-clock hold already "
+                                         "passes every clock move to the code side (card LAH)");
+            if (jval<bool>(json, "network.fast_clock.enable", "network_fast_clock_enable", false))
+                throw std::runtime_error("network.emit_pb_hold_phase_clock refuses "
+                                         "network.fast_clock.enable: the FC-1 K records move the "
+                                         "clock between full epochs while the held phase bias "
+                                         "stays, so the phase-visible clock would saw-tooth "
+                                         "(card LAH)");
+            log->info("Network (card LAH): network.emit_pb_hold_phase_clock = true: a held "
+                      "(satellite, signal) keeps its phase-visible clock over the generation. "
+                      "The held emission is p(t0) + [c~(t) - c~(t0)], c~ the emitted clock less "
+                      "the accumulated median clock step of the satellite's constellation over "
+                      "its satellites present at consecutive emissions, so a level move reaches "
+                      "the code side only.  Posture limit: within a generation the phase-visible "
+                      "clock motion is the a priori clock product's (valid with a precise a "
+                      "priori, not with brdc_rts).  S line pbhold=2; the solve, C and B records "
+                      "are unchanged.");
+            std::string lah_apr = jval<std::string>(json, "network.apriori_source",
+                                                    "apriori_source", std::string{"sp3"});
+            std::transform(lah_apr.begin(), lah_apr.end(), lah_apr.begin(),
+                           [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+            if (lah_apr == "brdc_rts")
+                log->warn("Network (card LAH): network.emit_pb_hold_phase_clock with "
+                          "network.apriori_source brdc_rts: within a generation the consumer's "
+                          "phase-visible clock motion is the broadcast clock's, which drops the "
+                          "network's real clock corrections (decimetres per hour).  The mode was "
+                          "validated only with a precise a priori clock.");
+        }
         // Installs the station's own datum rows before the PD test (card RF-PD-fix).
         // Solve-affecting (it changes which stations are in the network); the
         // rx_code_bias_datum cross-check is deferred to that knob's own block, which is

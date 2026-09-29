@@ -329,3 +329,10 @@ hours are the hold freezing the level motion into the phase side (section 9, ite
 same mechanism costs 14 m in hour 1 and is still 0.13 m in hour 6 against the control's 0.05 m. Without
 the hold the phase-bias wander is on the wire on both beds. Section 9's order stands; the level-aware
 hold is the item that blocks G6 and G7, and the field is where it is graded.
+
+## 11. The level-aware hold (2026-09-29)
+
+Section 9 item 1 is card [LAH](LAH_level_aware_hold_2026-09-29.md): the phase-clock hold
+(`network.emit_pb_hold_phase_clock`), built and gated, not armed. With the exact update its 6 h
+census reads 0.59 / 0.17 / 0.12 / 0.08 / 0.10 / 0.08 m by hour against 2.27 / 0.75 / 0.57 / 0.38 /
+0.26 / 0.20 under the plain hold and the control's 0.67 / 0.17 / 0.10 / 0.08 / 0.09 / 0.07.

@@ -375,7 +375,9 @@ struct LineAssembler {
                         } else if (f[k].rfind("discscope=", 0) == 0) {
                             c.disc_mark_scope_channel = (f[k].substr(10) == "channel");  // disc mark scope (Card MS)
                         } else if (f[k].rfind("pbhold=", 0) == 0) {
-                            c.emit_pb_hold = (std::stoi(f[k].substr(7)) != 0);  // phase-bias hold (Card PBH)
+                            const int ph = std::stoi(f[k].substr(7));
+                            c.emit_pb_hold = (ph != 0);               // phase-bias hold (Card PBH)
+                            c.emit_pb_hold_phase_clock = (ph == 2);   // phase-clock mode (Card LAH)
                         } else if (f[k].rfind("hsig=", 0) == 0) {
                             c.h_sigma0_source = f[k].substr(5);   // sigma0 statistic id (H-rider)
                         } else if (f[k].rfind("cbpin=", 0) == 0) {
@@ -606,8 +608,10 @@ void NetworkProductWriter::writeSLine_(const SbasisContract& contract) {
     // means the file's contract and payload disagree, which checkContract reports.
     // Written only when armed, so a producer without it writes the S line
     // byte-for-byte.
+    // pbhold=2: the hold keeps the phase-visible clock instead (card LAH), so a held
+    // bias_m moves with the satellite's common-removed clock within a generation.
     if (contract.emit_pb_hold)
-        out_ << ",pbhold=1";
+        out_ << (contract.emit_pb_hold_phase_clock ? ",pbhold=2" : ",pbhold=1");
     out_ << '\n';
 }
 
@@ -1104,6 +1108,11 @@ bool NetworkProductReader::checkContract(const SbasisContract& file,
     if (file.emit_pb_hold != expected.emit_pb_hold)
         note(fmt::format("emit_pb_hold: file {} vs expected {}",
                          file.emit_pb_hold, expected.emit_pb_hold));
+    // The phase-clock mode (Card LAH) changes what a held bias_m is (the phase-visible
+    // clock is the constant), so a disagreement is reported like the hold itself.
+    if (file.emit_pb_hold_phase_clock != expected.emit_pb_hold_phase_clock)
+        note(fmt::format("emit_pb_hold_phase_clock: file {} vs expected {}",
+                         file.emit_pb_hold_phase_clock, expected.emit_pb_hold_phase_clock));
     if (file.emit_clock_disc != expected.emit_clock_disc)
         note(fmt::format("emit_clock_disc: file {} vs expected {}",
                          file.emit_clock_disc, expected.emit_clock_disc));

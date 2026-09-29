@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -59,7 +60,28 @@ std::map<std::string, double> decommonedClockStep(
     return raw;
 }
 
+/// Card LAH: a held emission counts as moved by the transfer above this (m).
+constexpr double kFrzMovedM = 1e-6;
+
 }  // namespace
+
+bool pbHoldCommonClockStep(const NetworkSolutionEpoch& sol,
+                           const std::map<std::string, double>& prev_clock_m,
+                           char constellation, double& median_m) {
+    std::vector<double> pop;
+    for (const auto& s : sol.sats) {
+        if (!s.has_clock || s.sat.empty() || !std::isfinite(s.clock_c0_m)) continue;
+        if (s.sat[0] != constellation) continue;
+        const auto it = prev_clock_m.find(s.sat);
+        if (it == prev_clock_m.end()) continue;
+        pop.push_back(s.clock_c0_m - it->second);
+    }
+    if (pop.empty()) return false;
+    std::sort(pop.begin(), pop.end());
+    const std::size_t n = pop.size();
+    median_m = (n % 2 == 1) ? pop[n / 2] : 0.5 * (pop[n / 2 - 1] + pop[n / 2]);
+    return true;
+}
 
 void networkPbHold(NetworkRunContext& ctx,
                    const GnssConfig& config_,
@@ -69,7 +91,13 @@ void networkPbHold(NetworkRunContext& ctx,
                    const SyncedEpoch& se,
                    NetworkSolutionEpoch& sol) {
     (void)config_;   // the live values are the ctx.knobs snapshot (seam contract)
-    if (!ctx.knobs.emit_pb_hold || sol.sats.empty()) return;
+    if (!ctx.knobs.emit_pb_hold) return;
+    if (sol.sats.empty()) {
+        // An emitted epoch with no satellite (every one pruned) is still an emission, so
+        // the phase-clock mode's next step is taken against it: nothing (card LAH).
+        if (ctx.knobs.emit_pb_hold_phase_clock) ctx.carry.pb_hold_frz_prev_clk.clear();
+        return;
+    }
 
     auto&        hold      = ctx.carry.pb_hold;
     auto&        prev_clk  = ctx.carry.pb_hold_prev_clock_m;
@@ -88,6 +116,38 @@ void networkPbHold(NetworkRunContext& ctx,
     bool logged_arm = ctx.counters.n_pbh_held_emissions > 0
                       || ctx.counters.n_pbh_gen_first > 0;
 
+    // Card LAH (network.emit_pb_hold_phase_clock): the held key keeps the satellite's
+    // phase-visible clock c - p instead of its phase bias.  c~ = c - M_k, with M_k the
+    // accumulated median emitted-clock step of constellation k over its satellites
+    // present at this and the previous emission.  A move common to a constellation (its
+    // pivot handover, the frame hold's per-constellation re-anchor) therefore stays on
+    // the clock, where the consumer's receiver clock and inter-system bias absorb it on
+    // code and phase alike, and a satellite's own move (its level included) is written
+    // into its held phase biases as well.  Built before the sweep from the clocks about
+    // to be emitted (the frame-held values in sol).
+    const bool frz_on = ctx.knobs.emit_pb_hold_phase_clock;
+    std::map<std::string, double> frz_c;   // satellite -> c~(t), satellites with a clock
+    if (frz_on) {
+        std::set<char> ccs;
+        for (const auto& s : sol.sats)
+            if (s.has_clock && !s.sat.empty() && std::isfinite(s.clock_c0_m)) ccs.insert(s.sat[0]);
+        bool advanced = false;
+        for (char cc : ccs) {
+            double med = 0.0;
+            if (pbHoldCommonClockStep(sol, ctx.carry.pb_hold_frz_prev_clk, cc, med)) {
+                ctx.carry.pb_hold_frz_M[cc] += med;
+                advanced = true;
+            }
+        }
+        if (advanced) ++ctx.counters.n_pbh_frz_epochs;
+        ctx.carry.pb_hold_frz_prev_clk.clear();
+        for (const auto& s : sol.sats) {
+            if (!s.has_clock || s.sat.empty() || !std::isfinite(s.clock_c0_m)) continue;
+            ctx.carry.pb_hold_frz_prev_clk[s.sat] = s.clock_c0_m;
+            frz_c[s.sat] = s.clock_c0_m - ctx.carry.pb_hold_frz_M[s.sat[0]];
+        }
+    }
+
     for (auto& s : sol.sats) {
         if (s.sat.empty() || s.phase_bias.empty()) continue;
         // The satellite's accumulated clock-level shift per signal
@@ -100,6 +160,8 @@ void networkPbHold(NetworkRunContext& ctx,
             const auto lit = ctx.carry.clk_level.sat.find(s.sat);
             if (lit != ctx.carry.clk_level.sat.end()) xfer = &lit->second.xfer;
         }
+        const auto     fcit    = frz_on ? frz_c.find(s.sat) : frz_c.end();
+        const bool     has_frz = frz_on && fcit != frz_c.end();
         const unsigned marked  = emitter.pendingMarkChannels(s.sat);
         const bool     coupled = (marked & NetworkProductEmitter::kDiscChanClock)
                                  && (marked & NetworkProductEmitter::kDiscChanPhaseBias);
@@ -127,6 +189,10 @@ void networkPbHold(NetworkRunContext& ctx,
                 st.held_m      = npb.bias_m;
                 st.last_emit_s = epoch_s;
                 st.level_ref   = level_acc;   // the level transfer counts from here (card CLV)
+                if (has_frz) {                // the phase-visible clock is held from here (card LAH)
+                    st.frz_ref = fcit->second;
+                    st.frz_ok  = true;
+                }
                 if (first) {
                     hold.emplace(key, st);
                     ++ctx.counters.n_pbh_keys;
@@ -165,6 +231,29 @@ void networkPbHold(NetworkRunContext& ctx,
                 held_emit = st.held_m + level_off;
                 if (level_off != 0.0) ++ctx.counters.clv_held_moved;
             }
+            // Card LAH: the held phase bias moves with the satellite's common-removed
+            // clock, so c - p stays at its generation-start value.  An epoch without the
+            // satellite's clock reuses the last transfer; a generation started without
+            // one is held plainly (both counted).
+            if (frz_on) {
+                if (!st.frz_ok) {
+                    ++ctx.counters.n_pbh_frz_noref;
+                } else {
+                    double xfer_m = st.frz_last;
+                    if (has_frz) {
+                        xfer_m = fcit->second - st.frz_ref;
+                        ctx.carry.pb_hold_frz_step_abs_m.push_back(std::abs(xfer_m - st.frz_last));
+                    } else {
+                        ++ctx.counters.n_pbh_frz_noclock;
+                    }
+                    st.frz_last = xfer_m;
+                    held_emit += xfer_m;
+                    // "Moved": the transfer is above a micrometre (an exact-zero test
+                    // would count rounding residue of the median subtraction).
+                    if (std::abs(xfer_m) > kFrzMovedM) ++ctx.counters.n_pbh_frz_moved;
+                    ctx.carry.pb_hold_frz_total_abs_m.push_back(std::abs(xfer_m));
+                }
+            }
             const double dev = npb.bias_m - held_emit;
             if (std::isfinite(dev)) ctx.carry.pb_hold_dev_abs_m.push_back(std::abs(dev));
             npb.bias_m          = held_emit;
@@ -172,6 +261,12 @@ void networkPbHold(NetworkRunContext& ctx,
             st.last_emit_s      = epoch_s;
             ++ctx.counters.n_pbh_held_emissions;
 
+            if (coupled && !counted_coupled && frz_on && st.frz_ok && has_frz) {
+                // Card LAH: the mode writes the satellite's clock step into the held
+                // phase bias, so a coupled move is transferred, not lost.
+                counted_coupled = true;
+                ++ctx.counters.n_pbh_frz_coupled;
+            }
             if (coupled && !counted_coupled) {
                 counted_coupled = true;
                 ++ctx.counters.n_pbh_coupled_marks;

@@ -6458,6 +6458,32 @@ int networkTeardown(
                       "transferring a coupled frame move",
                       k.n_pbh_coupled_marks, c50, c90, cmax,
                       ctx.carry.pb_hold_coupled_step_m.size());
+            // Card LAH (network.emit_pb_hold_phase_clock): the phase-clock mode's ON-path
+            // telemetry.  `moved 0` means the mode never wrote.  Under the mode the
+            // |estimate - held| line above measures what the hold hides with the level
+            // transferred (the phase-visible wander only).
+            if (config_.getNetworkConfig().emit_pb_hold_phase_clock) {
+                auto st = ctx.carry.pb_hold_frz_step_abs_m;   // copy: run-end readout
+                auto tt = ctx.carry.pb_hold_frz_total_abs_m;
+                const double s50 = q(st, 0.50), s90 = q(st, 0.90);
+                const double smax = st.empty() ? 0.0 : *std::max_element(st.begin(), st.end());
+                const double t50 = q(tt, 0.50), t90 = q(tt, 0.90);
+                const double tmax = tt.empty() ? 0.0 : *std::max_element(tt.begin(), tt.end());
+                std::string m_final;
+                for (const auto& [cc, m] : ctx.carry.pb_hold_frz_M)
+                    m_final += fmt::format("{}{} {:.4f}", m_final.empty() ? "" : ", ", cc, m);
+                log->info("  pb hold, phase clock (LAH): {} held emission(s) moved by the clock "
+                          "transfer (> 1 um), {} on an epoch without the satellite's clock (last "
+                          "transfer reused), {} of a generation started without one (held "
+                          "plainly); M advanced on {} epoch(s), final per constellation [{}] m; "
+                          "|transfer step| p50 {:.4f} / p90 {:.4f} / max {:.4f} m over {} "
+                          "sample(s); |transfer| p50 {:.4f} / p90 {:.4f} / max {:.4f} m over {} "
+                          "sample(s); {} coupled mark(s) transferred",
+                          k.n_pbh_frz_moved, k.n_pbh_frz_noclock, k.n_pbh_frz_noref,
+                          k.n_pbh_frz_epochs, m_final, s50, s90, smax,
+                          ctx.carry.pb_hold_frz_step_abs_m.size(), t50, t90, tmax,
+                          ctx.carry.pb_hold_frz_total_abs_m.size(), k.n_pbh_frz_coupled);
+            }
         }
         // Per-channel mark scope (card MS): the ON-path telemetry (invariant #4).  Printed
         // only when armed, so a `sat`-scope run keeps a byte-identical summary.

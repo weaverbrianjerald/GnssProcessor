@@ -1606,6 +1606,8 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             pending_contract.disc_jump_test_decommon = nc.disc_jump_test_decommon;  // de-commoned phase jump test, discdecom= (Card JT)
             pending_contract.disc_mark_scope_channel = (nc.disc_mark_scope == "channel");  // per-channel mark scope, discscope= (Card MS)
             pending_contract.emit_pb_hold = nc.emit_pb_hold;  // the phase-bias hold reading rule, pbhold= (Card PBH)
+            pending_contract.emit_pb_hold_phase_clock =       // pbhold=2: the phase-visible clock is held (Card LAH)
+                nc.emit_pb_hold && nc.emit_pb_hold_phase_clock;
             // Advertise the combined-σ age-scaling coefficient on the S line only when the
             // combined-σ channel is on and a coefficient is set, so a run with the channel
             // off (or agek = 0) writes a byte-identical v2 header (no agek= token).

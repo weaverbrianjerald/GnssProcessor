@@ -256,6 +256,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // NetworkPbHold seam reads.
     k.emit_pb_hold           = config_.getNetworkConfig().emit_pb_hold;
     k.emit_pb_hold_max_gap_s = config_.getNetworkConfig().emit_pb_hold_max_gap_s;
+    k.emit_pb_hold_phase_clock = config_.getNetworkConfig().emit_pb_hold_phase_clock;   // card LAH
     // Guarded temporal clock anchor.  `cta_on` is resolved against the clock_model
     // interlock here, so every downstream site reads one predicate.  Under the two-state
     // oscillator the clock is never stashed to the D2 carry, so the anchor has nothing to

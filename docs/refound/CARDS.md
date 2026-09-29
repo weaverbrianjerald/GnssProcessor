@@ -272,3 +272,13 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   0.15; G5 fails (a switch-on keeps the level, held by the restored ambiguities); the consumer is
   worse with the exact update under every hold setting, so the hold needs a level-aware form next.
   6 h: the departed pivot's deficit is spread over the present clocks (0 withheld epochs, was 30).
+- [LAH](LAH_level_aware_hold_2026-09-29.md): open, 2026-09-29: the level-aware phase-bias hold
+  (card CTU2 section 9 item 1), built and gated, default off, not armed. Every hold that keeps the
+  phase-visible clock c - p at its generation-start value plus a motion term is level-blind; the
+  smoothed motion (the estimator's own model) passes the ionosphere-free phase-bias wander because
+  the estimator states the phase-visible clock to millimetres while it wanders centimetres, so the
+  zero-motion member is built (`network.emit_pb_hold_phase_clock`, `pbhold=2`). 6 h census with the
+  exact update: 2.27 / 0.75 / 0.57 / 0.38 / 0.26 / 0.20 m under the plain hold, 0.59 / 0.17 / 0.12 /
+  0.08 / 0.10 / 0.08 with this one (control 0.67 / 0.17 / 0.10 / 0.08 / 0.09 / 0.07); named C1W
+  regressions (KOKB, QUIN, UTQI, ARHT); posture limit: the a priori clock's motion is load-bearing
+  on the phase side within a generation.

@@ -167,6 +167,14 @@ struct SbasisContract {
     /// a @c gen= payload under a @c pbhold=0 contract (or the reverse) means the
     /// file's contract and records disagree.
     bool              emit_pb_hold{false};
+    /// Whether the hold keeps the phase-visible clock instead of the phase bias
+    /// (@c network.emit_pb_hold_phase_clock, card LAH): within a generation a held
+    /// @c bias_m moves with the satellite's common-removed clock, so @c clock - bias is
+    /// the generation constant and a clock move reaches the code side only.  Serialized
+    /// as @c pbhold=2 in place of @c pbhold=1 (a reader that tests @c pbhold != 0 still
+    /// reads a hold); @c checkContract compares it.  Never true without
+    /// @c emit_pb_hold.
+    bool              emit_pb_hold_phase_clock{false};
     /// Whether the producer's emitter maintained the per-satellite clock
     /// discontinuity counter (A2).  Second replay-emitter construction parameter;
     /// with the others in this struct it determines the @c NetworkProductEmitter

@@ -620,6 +620,7 @@ namespace GnssProcessor {
         bool clk_jump_test{};   ///< Mark per-sat common-removed clock steps through the R-record retro-bump (network.clock_disc_jump_test; card CLK-R stage 2).
         bool   emit_pb_hold{};             ///< Hold each (sat, signal) emitted phase bias at the first value of its generation (network.emit_pb_hold; card PBH); state in NetworkCarryState::pb_hold.
         double emit_pb_hold_max_gap_s{};   ///< Arc gap (s) beyond which a returning key starts a new generation (network.emit_pb_hold_max_gap_s; card PBH).  Inert unless emit_pb_hold.
+        bool   emit_pb_hold_phase_clock{}; ///< Hold the phase-visible clock instead of the phase bias (network.emit_pb_hold_phase_clock; card LAH).  Inert unless emit_pb_hold.
         // --- Guarded temporal clock anchor (card Q3) ---
         // Solve-affecting and fingerprinted.  `cta_on` is the one predicate every site reads
         // for "does this run touch the clock carry at all", so an off run never allocates the
@@ -1642,6 +1643,17 @@ namespace GnssProcessor {
             /// @c held_m + (shift - level_ref), so the wire's phase side does not move when
             /// the level is re-based.  0 and unread unless network.clock_level_carry.
             double        level_ref{0.0};
+            /// Card LAH (@c network.emit_pb_hold_phase_clock): the satellite's
+            /// common-removed emitted clock @f$\tilde c = c - M@f$ at this generation's
+            /// start.  The held emission is @c held_m + (c~(t) - frz_ref).  0 and unread
+            /// unless the mode is armed.
+            double        frz_ref{0.0};
+            /// Card LAH: false when the generation started on an epoch without an emitted
+            /// clock for the satellite (no reference; the key is held plainly).
+            bool          frz_ok{false};
+            /// Card LAH: the transfer written at this key's last held emission (m), reused
+            /// on an epoch without an emitted clock for the satellite.
+            double        frz_last{0.0};
         };
         /// "<sat>|<signal>" -> the held value and its generation (card PBH,
         /// @c network.emit_pb_hold).  Owned here rather than in the seam because it must
@@ -1664,6 +1676,20 @@ namespace GnssProcessor {
         /// emission: the baseline the coupled-mark step above is differenced against (card
         /// PBH).  Maintained only while the hold is armed.
         std::map<std::string, double> pb_hold_prev_clock_m;
+        /// Card LAH: constellation letter -> M, the accumulated common clock step (m): the
+        /// sum over emitted epochs of the median, over the constellation's satellites with
+        /// an emitted clock at both that epoch and the previous emitted epoch, of the
+        /// emitted clock step.  Empty and untouched unless network.emit_pb_hold_phase_clock.
+        std::map<char, double> pb_hold_frz_M;
+        /// Card LAH: satellite -> emitted clock (m) at the previous emitted epoch, holding
+        /// only that epoch's satellites (a satellite absent there contributes no step).
+        std::map<std::string, double> pb_hold_frz_prev_clk;
+        /// Card LAH: |transfer step| (m) per held emission, the per-epoch move the mode
+        /// writes on top of the held value (invariant #7, the decoupling edge's rate).
+        std::vector<double> pb_hold_frz_step_abs_m;
+        /// Card LAH: |transfer| (m) per held emission, the accumulated move since the
+        /// generation start.
+        std::vector<double> pb_hold_frz_total_abs_m;
         /// Per-LOS slant-iono carry (QUEUE 8b): persistent across epochs, keyed (station
         /// index, sat).  Diagonal only (the rx-CB rationale: no shared-border footprint;
         /// the coupling variant is deferred).  Not snapshotted: a warm resume cold-starts
@@ -3514,6 +3540,12 @@ namespace GnssProcessor {
         long long n_pbh_gen_gap        = 0;  ///< generations started by a gap > emit_pb_hold_max_gap_s
         long long n_pbh_held_emissions = 0;  ///< emissions whose value the hold overwrote
         long long n_pbh_coupled_marks  = 0;  ///< coupled clock+phase-bias marks reaching a held key
+        // --- Card LAH (network.emit_pb_hold_phase_clock) ---
+        long long n_pbh_frz_moved      = 0;  ///< held emissions whose value the transfer moved (non-zero)
+        long long n_pbh_frz_noclock    = 0;  ///< held emissions on an epoch without the satellite's emitted clock (last transfer reused)
+        long long n_pbh_frz_noref      = 0;  ///< held emissions of a generation started without a clock (held plainly)
+        long long n_pbh_frz_epochs     = 0;  ///< epochs that advanced M (at least one satellite with a clock at both emissions)
+        long long n_pbh_frz_coupled    = 0;  ///< coupled clock+phase-bias marks whose clock step the mode transferred
         // Observability of the prioritized-datum drop-and-heal: epochs where the gate threw
         // and the near-null phase-bias soft anchor recovered it, and the total columns
         // anchored.  Without these a run that recovers every epoch would look successful

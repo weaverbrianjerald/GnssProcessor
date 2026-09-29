@@ -2917,6 +2917,32 @@ namespace GnssProcessor {
          */
         double emit_pb_hold_max_gap_s{ 300.0 };
         /**
+         * @brief Hold the phase-visible clock instead of the phase bias
+         *        (@c network.emit_pb_hold_phase_clock, default false) (card LAH).
+         *
+         * With @ref emit_pb_hold alone, a held phase bias is frozen while the emitted
+         * clock moves, so a level move (clock and every phase bias of the satellite
+         * together, invisible to phase) reaches the wire's phase side
+         * @f$c - p@f$.  With this mode the held emission is
+         * @f$p(t_0) + [\tilde c(t) - \tilde c(t_0)]@f$, where @f$\tilde c@f$ is the
+         * emitted clock less the accumulated per-epoch median clock step of the
+         * satellite's constellation over its satellites present at consecutive
+         * emissions: the phase-visible clock is constant over a generation up to a
+         * per-constellation common mode the consumer's receiver clock and inter-system
+         * bias absorb, and every clock move (the level included) reaches the code only.
+         * Refuses @c network.fast_clock.enable (card FC-1): its K records move the clock
+         * between full epochs without the held phase bias.
+         *
+         * Posture limit: within a generation the consumer's phase-visible clock motion
+         * is the a priori clock product's.  Valid with a precise a priori clock (the
+         * simulator's truth, the COD finals on the field); with a broadcast a priori
+         * (@c apriori_source brdc_rts) it would drop the real clock motion.  Emit-side
+         * only: the solve, the C and B records are byte-identical.  Declared on the S
+         * line as @c pbhold=2.  Requires @ref emit_pb_hold; refuses
+         * @c network.clock_level_carry (card CLV), whose transfer it replaces.
+         */
+        bool emit_pb_hold_phase_clock{ false };
+        /**
          * @brief Fold the station's own datum rows into its local block before the
          *        @c addStation positive-definiteness test
          *        (@c network.station_prior_before_pd) (card RF-PD-fix).

@@ -51,11 +51,33 @@
  * coupled frame move (a mark naming the clock and the phase bias together), so that
  * cost is measured as well: the de-commoned satellite clock step at every such mark
  * that reaches a held key.
+ *
+ * ### The phase-clock mode (card LAH, @c network.emit_pb_hold_phase_clock)
+ *
+ * A held phase bias frozen while the emitted clock moves puts every clock move on the
+ * wire's phase side @f$c - p@f$.  Under the exact coupling time update (card CTU) the
+ * satellite's level converges, moving the clock and every phase bias of the satellite
+ * together (invisible to phase), and the plain hold turns that code-only correction
+ * into a phase-side drift the consumer's float ambiguities cannot follow.  The mode
+ * holds the phase-visible clock instead: the held emission is
+ * @f$p(t_0) + [\tilde c(t) - \tilde c(t_0)]@f$ with @f$\tilde c = c - M_k@f$, @f$M_k@f$ the
+ * accumulated median emitted-clock step of the satellite's constellation @f$k@f$ over its
+ * satellites present at consecutive emissions.  Every member of the family @f$c - p_{wire} = (c - p)(t_0) + \Phi(t)@f$ is
+ * blind to the level on the phase side; this mode is @f$\Phi = 0@f$ (up to the common
+ * mode).  The smoothed member (@f$\Phi@f$ = the fixed-point smoothed estimate of the
+ * clock's motion since @f$t_0@f$) was derived and rejected: under the estimator's own
+ * covariance the phase-visible ionosphere-free clock is known to a few millimetres,
+ * its regression on the generation start decays within minutes, and the rule then
+ * passes the ionosphere-free phase-bias wander (card LAH).  Posture limit: within a
+ * generation the consumer's phase-visible clock motion is the a priori clock
+ * product's, which is valid with a precise a priori clock and not with a broadcast one.
  */
 #ifndef GNSSPROCESSOR_NETWORK_PB_HOLD_HPP
 #define GNSSPROCESSOR_NETWORK_PB_HOLD_HPP
 
+#include <map>
 #include <memory>
+#include <string>
 
 namespace spdlog { class logger; }
 
@@ -81,6 +103,11 @@ struct SyncedEpoch;
  *    |estimate - held| into the run-end distribution.  With card CLV
  *    (@c network.clock_level_carry) armed, the held value is first shifted by the
  *    satellite's clock-level transfer accumulated since the generation started.
+ *    With card LAH (@c network.emit_pb_hold_phase_clock) armed, the held value is
+ *    shifted by the satellite's common-removed clock change since the generation
+ *    started, @f$\tilde c(t) - \tilde c(t_0)@f$ (see the file header), so the
+ *    phase-visible clock is held; an epoch without the satellite's clock reuses the
+ *    last transfer, and a generation started without one is held plainly.
  *
  * In both cases the entry is stamped with its generation, which travels to the
  * consumer on @c SsrPhaseBiasEntry::hold_generation and to the file on the
@@ -110,6 +137,26 @@ void networkPbHold(NetworkRunContext& ctx,
                    const NetworkProductEmitter& emitter,
                    const SyncedEpoch& se,
                    NetworkSolutionEpoch& sol);
+
+/**
+ * @brief The median emitted-clock step of one constellation in one epoch (card LAH).
+ *
+ * The median, over the satellites of @p sol of constellation @p constellation (the
+ * first character of the satellite id) with a finite emitted clock that also have an
+ * entry in @p prev_clock_m, of @c clock_c0_m minus that entry (an even count takes the
+ * mean of the two middle values).  Per constellation because each constellation's
+ * clock common mode moves on its own (its own pivot, its own frame-hold re-anchor), and
+ * the consumer absorbs it through its receiver clock and inter-system bias.
+ *
+ * @param sol            The epoch about to be emitted.
+ * @param prev_clock_m   Satellite -> emitted clock (m) at the previous emission.
+ * @param constellation  The constellation letter ('G', 'E', ...).
+ * @param median_m       Out: the median step (m); untouched when the result is false.
+ * @return false when no satellite of the constellation has a clock at both emissions.
+ */
+bool pbHoldCommonClockStep(const NetworkSolutionEpoch& sol,
+                           const std::map<std::string, double>& prev_clock_m,
+                           char constellation, double& median_m);
 
 }  // namespace GnssProcessor
 
